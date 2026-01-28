@@ -6,8 +6,8 @@ import type {
   Point2D,
   TextureSource,
 } from './types_GL';
-import { generateStrokeMesh } from '@agentcombine/power2d/core';
-import { createMaterialInstanceName } from '@agentcombine/power2d/babylon';
+import { generateStrokeMesh } from '@avtools/power2d/core';
+import { createMaterialInstanceName } from '@avtools/power2d/babylon';
 
 type MaybeMaterialDef = MaterialDef<object, string> | undefined;
 

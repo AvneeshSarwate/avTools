@@ -9,13 +9,13 @@ import { TransformEffect } from '@/rendering/postFX/transform.frag.generated';
 import { BloomEffect } from '@/rendering/postFX/bloom.frag.generated';
 import * as BABYLON from 'babylonjs';
 import Stats from 'stats-gl';
-import { createPower2DScene, StyledShape, BatchedStyledShape, CanvasTexture } from '@agentcombine/power2d/babylon';
-import { RectPts, CirclePts } from '@agentcombine/power2d/core';
-import { BasicMaterial } from '@agentcombine/power2d/generated/sketches/power2dTest/basic.material.wgsl.generated';
-import { BasicStrokeMaterial } from '@agentcombine/power2d/generated/sketches/power2dTest/basic.strokeMaterial.wgsl.generated';
-import { InstancedBasicMaterial } from '@agentcombine/power2d/generated/sketches/power2dTest/instancedBasic.material.wgsl.generated';
-import { WebcamPixelMaterial } from '@agentcombine/power2d/generated/sketches/power2dTest/webcamPixel.material.wgsl.generated';
-import { RunnerStrokeMaterial } from '@agentcombine/power2d/generated/sketches/power2dTest/runner.strokeMaterial.wgsl.generated';
+import { createPower2DScene, StyledShape, BatchedStyledShape, CanvasTexture } from '@avtools/power2d/babylon';
+import { RectPts, CirclePts } from '@avtools/power2d/core';
+import { BasicMaterial } from '@avtools/power2d/generated/sketches/power2dTest/basic.material.wgsl.generated';
+import { BasicStrokeMaterial } from '@avtools/power2d/generated/sketches/power2dTest/basic.strokeMaterial.wgsl.generated';
+import { InstancedBasicMaterial } from '@avtools/power2d/generated/sketches/power2dTest/instancedBasic.material.wgsl.generated';
+import { WebcamPixelMaterial } from '@avtools/power2d/generated/sketches/power2dTest/webcamPixel.material.wgsl.generated';
+import { RunnerStrokeMaterial } from '@avtools/power2d/generated/sketches/power2dTest/runner.strokeMaterial.wgsl.generated';
 import * as gridCircleShader from './gridCircleInstances.compute.wgsl.generated';
 
 const TEST_CANVAS_SIZE = { width: 320, height: 200 }

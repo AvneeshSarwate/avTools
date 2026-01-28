@@ -6,7 +6,7 @@ import { CanvasPaint, Passthru, type ShaderEffect } from '@/rendering/shaderFX';
 import { clearListeners, mousedownEvent, singleKeydownEvent, mousemoveEvent, targetToP5Coords, mouseupEvent, singleKeyupEvent, keydownEvent, keyupEvent } from '@/io/keyboardAndMouse';
 import type p5 from 'p5';
 import { launch, type CancelablePromiseProxy, type TimeContext, xyZip, cosN, sinN, Ramp, tri } from '@/channels/channels';
-import { directionSweep, findClosestPolygonLineAtPoint, isPointInPolygon, lineToPointDistance } from '@agentcombine/creative-algs';
+import { directionSweep, findClosestPolygonLineAtPoint, isPointInPolygon, lineToPointDistance } from '@avtools/creative-algs';
 import { clipMap, INITIALIZE_ABLETON_CLIPS, type AbletonClip } from '@/io/abletonClips';
 import { m2f } from '@/music/mpeSynth';
 import * as Tone from 'tone'

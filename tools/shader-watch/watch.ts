@@ -5,7 +5,7 @@ import {
   WGSL_STROKE_OUTPUT_SUFFIX,
   generateMaterialTypesSource,
   generateStrokeMaterialTypesSource,
-} from "@agentcombine/power2d-codegen";
+} from "@avtools/power2d-codegen";
 import { dirname, join } from "jsr:@std/path@1";
 
 export interface WatchConfig {

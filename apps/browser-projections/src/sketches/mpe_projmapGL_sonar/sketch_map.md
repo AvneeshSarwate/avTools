@@ -19,7 +19,7 @@ This sketch combines three visual systems driven by MIDI/music input:
 
 **Key External Dependencies**:
 - **CanvasRoot** (`@/canvas/CanvasRoot.vue`): External component that provides polygon/freehand drawing UI. Shape data flows INTO this sketch via `syncCanvasState()` callback.
-- **offline_time_context** (`@agentcombine/core-timing`): Custom timing library providing `TimeContext`, `launchBrowser()`, and `CancelablePromiseProxy`. This is the core timing system, NOT Tone.js.
+- **offline_time_context** (`@avtools/core-timing`): Custom timing library providing `TimeContext`, `launchBrowser()`, and `CancelablePromiseProxy`. This is the core timing system, NOT Tone.js.
 - **Tone.js**: Only used for audio synthesis triggering (`Tone.now()` for synth attacks), not for logical timing.
 
 ---

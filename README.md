@@ -26,8 +26,8 @@ avTools/
 
 ## Architecture Notes
 
-- **Deno workspace first.** The root `deno.json` defines all workspace members and the import map. Shared packages are Deno‑native and are referenced via `@agentcombine/*`.
-- **Browser app (Vue/Vite).** `apps/browser-projections` uses Vite and Vue. It aliases `@agentcombine/*` to the workspace packages so the browser app can import shared logic.
+- **Deno workspace first.** The root `deno.json` defines all workspace members and the import map. Shared packages are Deno‑native and are referenced via `@avtools/*`.
+- **Browser app (Vue/Vite).** `apps/browser-projections` uses Vite and Vue. It aliases `@avtools/*` to the workspace packages so the browser app can import shared logic.
 - **Deno notebooks.** `apps/deno-notebooks` contains TypeScript notebooks and helpers. It also includes Rust FFI libraries:
   - `native/fastsleep` – precise sleep for Deno
   - `native/midi_bridge` – MIDI I/O via `midir`
@@ -123,7 +123,7 @@ Shared packages in `packages/` are Deno‑first and use `deno.json` for exports 
 
 ## Notes on Imports
 
-- Use `@agentcombine/*` for cross‑workspace imports.
+- Use `@avtools/*` for cross‑workspace imports.
 - For Deno + Vite compatibility, use explicit `.ts` extensions for local relative imports inside packages.
 
 ## First‑Time Setup Checklist

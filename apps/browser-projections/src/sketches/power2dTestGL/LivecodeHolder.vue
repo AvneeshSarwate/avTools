@@ -10,11 +10,11 @@ import { BloomEffect } from '@/rendering/babylonGL/postFX/bloom.frag.gl.generate
 import * as BABYLON from 'babylonjs';
 import Stats from 'stats-gl';
 import { createPower2DScene, RectPts, CirclePts, StyledShape, BatchedStyledShape, CanvasTexture } from '@/rendering/babylonGL/power2d';
-import { BasicMaterial } from '@agentcombine/power2d/generated/sketches/power2dTestGL/basic.material.gl.generated';
-import { BasicStrokeMaterial } from '@agentcombine/power2d/generated/sketches/power2dTestGL/basic.strokeMaterial.gl.generated';
-import { InstancedBasicMaterial } from '@agentcombine/power2d/generated/sketches/power2dTestGL/instancedBasic.material.gl.generated';
-import { WebcamPixelMaterial } from '@agentcombine/power2d/generated/sketches/power2dTestGL/webcamPixel.material.gl.generated';
-import { RunnerStrokeMaterial } from '@agentcombine/power2d/generated/sketches/power2dTestGL/runner.strokeMaterial.gl.generated';
+import { BasicMaterial } from '@avtools/power2d/generated/sketches/power2dTestGL/basic.material.gl.generated';
+import { BasicStrokeMaterial } from '@avtools/power2d/generated/sketches/power2dTestGL/basic.strokeMaterial.gl.generated';
+import { InstancedBasicMaterial } from '@avtools/power2d/generated/sketches/power2dTestGL/instancedBasic.material.gl.generated';
+import { WebcamPixelMaterial } from '@avtools/power2d/generated/sketches/power2dTestGL/webcamPixel.material.gl.generated';
+import { RunnerStrokeMaterial } from '@avtools/power2d/generated/sketches/power2dTestGL/runner.strokeMaterial.gl.generated';
 
 const TEST_CANVAS_SIZE = { width: 320, height: 200 };
 

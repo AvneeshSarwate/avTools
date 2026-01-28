@@ -1,1 +1,1 @@
-export { Scale, bestFitScale, fitToScale, scaleFromClip } from '@agentcombine/music-types';
+export { Scale, bestFitScale, fitToScale, scaleFromClip } from '@avtools/music-types';

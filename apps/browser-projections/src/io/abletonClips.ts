@@ -11,7 +11,7 @@ import {
   pianoRollNoteToAbletonNote,
   abletonNoteToPianoRollNote,
   scaleTransposeMPE,
-} from "@agentcombine/music-types";
+} from "@avtools/music-types";
 
 export {
   AbletonClip,

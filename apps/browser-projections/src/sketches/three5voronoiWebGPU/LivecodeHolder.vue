@@ -8,7 +8,7 @@ import type p5 from 'p5';
 import { launch, type CancelablePromiseProxy, type TimeContext, xyZip, cosN, sinN, Ramp, tri, now } from '@/channels/channels';
 import { Three5 } from '@/rendering/three5';
 import * as THREE from 'three/tsl';
-import { Voronoi, directionSweep, getVoronoiPolygons } from '@agentcombine/creative-algs';
+import { Voronoi, directionSweep, getVoronoiPolygons } from '@avtools/creative-algs';
 import { HorizontalBlur, LayerBlend, Transform, VerticalBlur } from '@/rendering/customFX';
 import { If, select, uv, vec3 } from 'three/tsl';
 

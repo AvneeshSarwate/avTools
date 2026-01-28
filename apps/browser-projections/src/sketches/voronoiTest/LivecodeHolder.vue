@@ -6,7 +6,7 @@ import { CanvasPaint, Passthru, type ShaderEffect } from '@/rendering/shaderFX';
 import { clearListeners, mousedownEvent, singleKeydownEvent, mousemoveEvent, targetToP5Coords } from '@/io/keyboardAndMouse';
 import type p5 from 'p5';
 import { launch, type CancelablePromiseProxy, type TimeContext, xyZip, cosN, sinN, Ramp, tri, EventChop } from '@/channels/channels';
-import { Voronoi, filterSimilarPoints, getVoronoiPolygons } from '@agentcombine/creative-algs';
+import { Voronoi, filterSimilarPoints, getVoronoiPolygons } from '@avtools/creative-algs';
 import { getVoronoiData } from './tdWebsocket';
 import seedrandom from 'seedrandom'
 import { lerp } from 'three/src/math/MathUtils.js';

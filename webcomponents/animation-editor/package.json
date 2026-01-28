@@ -1,5 +1,5 @@
 {
-  "name": "@agentcombine/animation-editor",
+  "name": "@avtools/animation-editor",
   "version": "0.0.0",
   "private": true,
   "main": "dist/animation-editor.js"

@@ -9,4 +9,4 @@ export {
   RegularPolygonPts,
   PolygonPts,
   generateStrokeMesh,
-} from '@agentcombine/power2d/core';
+} from '@avtools/power2d/core';

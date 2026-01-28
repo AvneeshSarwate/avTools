@@ -22,7 +22,7 @@ import { runLineWithDelay } from './utils/playbackUtils'
 import { monacoEditors, codeMirrorEditors, setCodeMirrorContent, highlightCurrentLine, highlightScheduledLines, initializeMonacoEditorComplete, initializeCodeMirrorEditorComplete, highlightCurrentLineByUUID, applyScheduledHighlightByUUID, handleDslLineClick, setPianoRollFromDslLine, clickedDslRanges, highlightClickedDsl, updateDslOutlines, clearPianoRoll, clickedDslOriginalText, clearAllDslHighlights, extractDslFromLine, clickedDslSegmentCounts, codeMirrorEditorsByName } from './utils/editorManager'
 import { saveSnapshot as saveSnapshotSM, loadSnapshotStateOnly as loadSnapshotStateOnlySM, downloadSnapshotsFile, loadSnapshotsFromFile as loadSnapshotsFromFileSM, saveToLocalStorage as saveToLocalStorageSM, loadFromLocalStorage as loadFromLocalStorageSM, saveBank, loadBank, makeBankClickHandler, saveTopLevelSliderBank as saveTopLevelSliderBankSM, loadTopLevelSliderBank as loadTopLevelSliderBankSM, saveFxSliderBank as saveFxSliderBankSM, loadFxSliderBank as loadFxSliderBankSM, saveTopLevelToggleBank as saveTopLevelToggleBankSM, loadTopLevelToggleBank as loadTopLevelToggleBankSM, saveTopLevelOneShotBank as saveTopLevelOneShotBankSM, loadTopLevelOneShotBank as loadTopLevelOneShotBankSM, saveJsCodeBank as saveJsCodeBankSM, loadJsCodeBank as loadJsCodeBankSM } from './utils/snapshotManager'
 import type { LoopHandle } from '@/channels/base_time_context';
-import { launchBrowser, CancelablePromiseProxy, TimeContext, startBarrier, resolveBarrier, awaitBarrier } from '@agentcombine/core-timing';
+import { launchBrowser, CancelablePromiseProxy, TimeContext, startBarrier, resolveBarrier, awaitBarrier } from '@avtools/core-timing';
 
 // Monaco environment setup
 self.MonacoEnvironment = {

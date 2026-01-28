@@ -1,1 +1,1 @@
-export * from "@agentcombine/core-timing";
+export * from "@avtools/core-timing";

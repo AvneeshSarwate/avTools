@@ -4,7 +4,7 @@
 
 import { MidiAccess } from "../midi/mod.ts";
 import { MPEDevice } from "../midi/mpe_device.ts";
-import { launch } from "@agentcombine/core-timing";
+import { launch } from "@avtools/core-timing";
 import { AbletonWatcher } from "../tools/abletonWatcher.ts";
 import { playMPEClip } from "../tools/mpePlayback.ts";
 

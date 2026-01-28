@@ -1,5 +1,5 @@
 import { parseAbletonLiveSetDetailed } from "./alsParsing.ts";
-import type { AbletonClip } from "@agentcombine/music-types";
+import type { AbletonClip } from "@avtools/music-types";
 
 export type AbletonClipLookup = {
   clipsByName: Map<string, AbletonClip>;

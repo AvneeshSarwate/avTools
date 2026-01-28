@@ -1,7 +1,4 @@
 {
   "deno.enable": true,
-  "deno.lint": true,
-  "jupyter.kernels.filter": [
-    { "language": "typescript" }
-  ]
+  "deno.lint": true
 }

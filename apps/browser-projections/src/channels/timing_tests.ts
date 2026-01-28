@@ -29,7 +29,7 @@ import {
   type TimeContext,
   // If you exported RandomSeed, you can import it; otherwise keep local typing.
   // type RandomSeed,
-} from "@agentcombine/core-timing";
+} from "@avtools/core-timing";
 
 /* ------------------------------------------------------------------------------------------------
  * Types

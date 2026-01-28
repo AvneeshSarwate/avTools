@@ -1,5 +1,5 @@
 {
-  "name": "@agentcombine/piano-roll",
+  "name": "@avtools/piano-roll",
   "version": "0.0.0",
   "private": true,
   "main": "dist/piano-roll.js"

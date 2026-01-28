@@ -1,5 +1,5 @@
 {
-  "name": "@agentcombine/power2d-codegen",
+  "name": "@avtools/power2d-codegen",
   "version": "0.0.0",
   "exports": "./mod.ts",
   "imports": {

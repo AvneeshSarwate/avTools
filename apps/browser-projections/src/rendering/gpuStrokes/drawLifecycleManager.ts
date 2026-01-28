@@ -1,5 +1,5 @@
 import * as BABYLON from 'babylonjs';
-import { PriorityQueue } from '@agentcombine/core-timing';
+import { PriorityQueue } from '@avtools/core-timing';
 import type { LaunchConfig, AnimationControlMode, StrokeColor } from './strokeTypes';
 import { DRAWING_CONSTANTS } from './constants';
 import type { StrokeTextureManager } from './strokeTextureManager';

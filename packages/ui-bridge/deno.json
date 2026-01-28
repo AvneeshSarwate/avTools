@@ -1,5 +1,5 @@
 {
-  "name": "@agentcombine/ui-bridge",
+  "name": "@avtools/ui-bridge",
   "version": "0.0.0",
   "exports": "./mod.ts"
 }

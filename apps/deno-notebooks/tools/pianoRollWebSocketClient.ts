@@ -19,7 +19,7 @@
  * ```
  */
 
-import { WebSocketClientBase } from "@agentcombine/ui-bridge";
+import { WebSocketClientBase } from "@avtools/ui-bridge";
 
 // ============================================================================
 // Type Definitions (readonly versions for server-side state)

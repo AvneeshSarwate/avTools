@@ -10,7 +10,7 @@ import type {
   Point2D,
   TextureSource,
 } from './types_GL';
-import { createMaterialInstanceName } from '@agentcombine/power2d/babylon';
+import { createMaterialInstanceName } from '@avtools/power2d/babylon';
 
 interface BatchedStyledShapeOptions<M extends BatchMaterialDef<object, string, Record<string, unknown>>> {
   scene: BABYLON.Scene;

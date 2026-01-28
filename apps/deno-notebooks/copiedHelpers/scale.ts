@@ -1,1 +1,1 @@
-export * from "@agentcombine/music-types";
+export * from "@avtools/music-types";

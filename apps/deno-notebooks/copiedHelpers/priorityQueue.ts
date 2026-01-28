@@ -1,1 +1,1 @@
-export { PriorityQueue } from "@agentcombine/core-timing";
+export { PriorityQueue } from "@avtools/core-timing";

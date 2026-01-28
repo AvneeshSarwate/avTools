@@ -21,7 +21,7 @@ The goal is to port the MPE clip parsing and playback functionality from `kot-li
 
 ## Phase 1: MPE Data Structures
 
-### 1.1 Create `copiedHelpers/curveValue.ts`
+### 1.1 Add `CurveValue` to `packages/music-types/curve_value.ts`
 
 Port the `CurveValue` class from `AlsParsing.kt:96-138`:
 
@@ -39,7 +39,7 @@ export function createCurveValue(timeOffset: number, value: number): CurveValue;
 export function cloneCurveValue(cv: CurveValue): CurveValue;
 ```
 
-### 1.2 Create `copiedHelpers/unitBezier.ts`
+### 1.2 Add `UnitBezier` to `packages/music-types/unit_bezier.ts`
 
 Port the `UnitBezier` class from `UnitBezier.kt`:
 
@@ -55,7 +55,7 @@ Key implementation details:
 - Bisection fallback for reliability
 - Polynomial coefficients computed from control points
 
-### 1.3 Extend `copiedHelpers/abletonClip.ts`
+### 1.3 Extend `packages/music-types/ableton_clip.ts`
 
 Extend `AbletonNote` type to include MPE data:
 
@@ -254,13 +254,13 @@ watcher.dispose();
 
 ## Phase 3: Curve Interpolation
 
-### 3.1 Create `copiedHelpers/curveInterpolation.ts`
+### 3.1 Add `curve_interpolation.ts` to `packages/music-types`
 
 Port `curve2val()` and supporting functions from `AlsParsing.kt:240-280`:
 
 ```typescript
-import { UnitBezier } from "./unitBezier.ts";
-import type { CurveValue } from "./curveValue.ts";
+import { UnitBezier } from "./unit_bezier.ts";
+import type { CurveValue } from "./curve_value.ts";
 
 type LerpDef = {
   startInd: number;
@@ -323,7 +323,7 @@ export function abletonBendToMidi(abletonValue: number, pbRange: number): number
 Port `launchCurve2()` from `AlsParsing.kt:302-324`:
 
 ```typescript
-import type { TimeContext } from "../copiedHelpers/offline_time_context.ts";
+import type { TimeContext } from "@avtools/core-timing";
 import type { MPENoteRef } from "../midi/mpe_device.ts";
 
 export type CurveType = "pressure" | "pitchBend" | "timbre";
@@ -389,8 +389,8 @@ Implementation:
 The main user-facing API:
 
 ```typescript
-import type { TimeContext } from "../copiedHelpers/offline_time_context.ts";
-import type { AbletonClip } from "../copiedHelpers/abletonClip.ts";
+import type { TimeContext } from "@avtools/core-timing";
+import type { AbletonClip } from "@avtools/music-types";
 import type { MPEDevice } from "../midi/mpe_device.ts";
 
 export type ClipPlaybackOptions = {
@@ -516,9 +516,7 @@ export function playMPEClip(
 Create `tools/mpe_clip_playback/mod.ts`:
 
 ```typescript
-export * from "./curveValue.ts";
-export * from "./unitBezier.ts";
-export * from "./curveInterpolation.ts";
+export * from "@avtools/music-types";
 export * from "./alsParsing.ts";
 export * from "./alsFileWatcher.ts";
 export * from "./mpePlayback.ts";
@@ -531,7 +529,7 @@ Create `examples/mpe_clip_example.ts`:
 ```typescript
 import { MidiAccess } from "../midi/mod.ts";
 import { MPEDevice } from "../midi/mpe_device.ts";
-import { launch } from "../copiedHelpers/offline_time_context.ts";
+import { launch } from "@avtools/core-timing";
 import { AbletonWatcher } from "../tools/abletonWatcher.ts";
 import { playMPEClip } from "../tools/mpePlayback.ts";
 
@@ -584,20 +582,22 @@ Create `tools/mpe_clip_playback/tests/`:
 ## File Structure Summary
 
 ```
-denoMusicNotebook/
-├── copiedHelpers/
-│   ├── abletonClip.ts        # Extended with MPE fields
-│   ├── curveValue.ts         # NEW
-│   ├── unitBezier.ts         # NEW
-│   └── curveInterpolation.ts # NEW
-├── tools/
-│   ├── alsParsing.ts         # NEW - ALS parser with MPE
-│   ├── abletonWatcher.ts     # NEW - Live reload watcher class
-│   └── mpePlayback.ts        # NEW - playMPEClip, playMPENote
-├── midi/
-│   └── mpe_device.ts         # Existing (no changes needed)
-└── examples/
-    └── mpe_clip_example.ts   # NEW
+avTools/
+├── packages/
+│   └── music-types/
+│       ├── ableton_clip.ts        # Extended with MPE fields
+│       ├── curve_value.ts         # NEW
+│       ├── unit_bezier.ts         # NEW
+│       └── curve_interpolation.ts # NEW
+└── apps/deno-notebooks/
+    ├── tools/
+    │   ├── alsParsing.ts         # NEW - ALS parser with MPE
+    │   ├── abletonWatcher.ts     # NEW - Live reload watcher class
+    │   └── mpePlayback.ts        # NEW - playMPEClip, playMPENote
+    ├── midi/
+    │   └── mpe_device.ts         # Existing (no changes needed)
+    └── examples/
+        └── mpe_clip_example.ts   # NEW
 ```
 
 ---

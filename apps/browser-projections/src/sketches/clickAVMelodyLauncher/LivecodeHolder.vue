@@ -10,7 +10,7 @@ import { listToClip, clipToDeltas, note } from '@/music/clipPlayback';
 import { Scale } from '@/music/scale';
 import { sampler } from '@/music/synths';
 import { HorizontalBlur, LayerBlend, VerticalBlur, Transform } from '@/rendering/customFX';
-import { launchBrowser, CancelablePromiseProxy, BrowserTimeContext } from '@agentcombine/core-timing';
+import { launchBrowser, CancelablePromiseProxy, BrowserTimeContext } from '@avtools/core-timing';
 const appState = inject<ClickAVAppState>(appStateName)!!
 let shaderGraphEndNode: ShaderEffect | undefined = undefined
 let timeLoops: CancelablePromiseProxy<any>[] = []

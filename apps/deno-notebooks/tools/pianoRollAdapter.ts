@@ -27,13 +27,13 @@ import {
   DenoNotebookBridge,
   type ComponentAdapter,
   type Session
-} from "@agentcombine/ui-bridge"
+} from "@avtools/ui-bridge"
 import {
   PianoRollWebSocketClient,
   type NoteDataInput,
   type NoteData
 } from "./pianoRollWebSocketClient.ts"
-import { AbletonClip, type AbletonNote } from "@agentcombine/music-types"
+import { AbletonClip, type AbletonNote } from "@avtools/music-types"
 
 // ============================================================================
 // Type Definitions
@@ -447,4 +447,4 @@ export function createPianoRollBridge(): PianoRollBridgeAPI {
 // Re-exports for convenience
 // ============================================================================
 
-export { AbletonClip, type AbletonNote, quickNote } from "@agentcombine/music-types"
+export { AbletonClip, type AbletonNote, quickNote } from "@avtools/music-types"

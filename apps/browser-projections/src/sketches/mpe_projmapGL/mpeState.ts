@@ -1,4 +1,4 @@
-import type { CancelablePromiseProxy } from '@agentcombine/core-timing'
+import type { CancelablePromiseProxy } from '@avtools/core-timing'
 import type { Point } from './textRegionUtils'
 
 /**

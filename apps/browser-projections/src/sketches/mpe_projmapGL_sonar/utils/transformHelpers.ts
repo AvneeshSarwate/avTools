@@ -9,7 +9,7 @@ import {
   transformToRuntime as transformToRuntimeAST,
 } from './acornHelpers'
 // import type { TimeContext } from '@/channels/base_time_context'
-import type { TimeContext } from '@agentcombine/core-timing'
+import type { TimeContext } from '@avtools/core-timing'
 
 /** Split a full transform chain line into the source clip name and an array of command strings */
 export const splitTransformChainToCommandStrings = (line: string) => {

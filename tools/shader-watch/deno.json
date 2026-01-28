@@ -2,6 +2,6 @@
   "name": "shader-watch",
   "version": "0.0.0",
   "imports": {
-    "@agentcombine/power2d-codegen": "../../packages/power2d-codegen/mod.ts"
+    "@avtools/power2d-codegen": "../../packages/power2d-codegen/mod.ts"
   }
 }

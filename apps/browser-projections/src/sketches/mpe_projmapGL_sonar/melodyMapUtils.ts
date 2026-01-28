@@ -1,4 +1,4 @@
-import type { TimeContext } from '@agentcombine/core-timing'
+import type { TimeContext } from '@avtools/core-timing'
 import type { PolygonRenderData } from '@/canvas/canvasState'
 import type { Point } from './textRegionUtils'
 import { getTextAnim } from './textRegionUtils'

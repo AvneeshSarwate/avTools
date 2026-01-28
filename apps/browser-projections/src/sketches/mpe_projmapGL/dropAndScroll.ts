@@ -1,6 +1,6 @@
 import type p5 from 'p5'
 import type { PolygonRenderData } from '@/canvas/canvasState'
-import { launchBrowser, type CancelablePromiseProxy, type TimeContext } from '@agentcombine/core-timing'
+import { launchBrowser, type CancelablePromiseProxy, type TimeContext } from '@avtools/core-timing'
 import {
   type Point,
   type RenderState,

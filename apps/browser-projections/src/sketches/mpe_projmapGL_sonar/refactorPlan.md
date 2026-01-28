@@ -168,7 +168,7 @@ The key insight: **use `launchBrowser` for the fill animation, not a separate en
 ```typescript
 // mpeAnimLoop.ts
 
-import { launchBrowser, type CancelablePromiseProxy, type BrowserTimeContext } from '@agentcombine/core-timing'
+import { launchBrowser, type CancelablePromiseProxy, type BrowserTimeContext } from '@avtools/core-timing'
 
 export function startFillAnimation(
   bundle: MPEAnimBundle,

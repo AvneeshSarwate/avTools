@@ -26,7 +26,7 @@ import {
   DenoNotebookBridge,
   type ComponentAdapter,
   type Session
-} from "@agentcombine/ui-bridge"
+} from "@avtools/ui-bridge"
 import {
   AnimationEditorWebSocketClient,
   type TrackData,

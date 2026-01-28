@@ -1,4 +1,4 @@
-import { launchBrowser, type CancelablePromiseProxy } from '@agentcombine/core-timing'
+import { launchBrowser, type CancelablePromiseProxy } from '@avtools/core-timing'
 import type { MPEAnimBundle } from './mpeState'
 import type { RenderState, Point } from './textRegionUtils'
 import { FRAME_WAIT } from './textRegionUtils'

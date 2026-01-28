@@ -1,4 +1,4 @@
-import type { TimeContext } from '@agentcombine/core-timing'
+import type { TimeContext } from '@avtools/core-timing'
 import type { LoopHandle } from '@/channels/base_time_context'
 import type { AbletonClip } from '@/io/abletonClips'
 import { clipMap } from '@/io/abletonClips'

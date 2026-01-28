@@ -1,6 +1,6 @@
-import type { TimeContext } from "@agentcombine/core-timing";
-import type { AbletonClip, AbletonNote, CurveValue } from "@agentcombine/music-types";
-import { curve2val } from "@agentcombine/music-types";
+import type { TimeContext } from "@avtools/core-timing";
+import type { AbletonClip, AbletonNote, CurveValue } from "@avtools/music-types";
+import { curve2val } from "@avtools/music-types";
 import type { MPEDevice, MPENoteRef } from "../midi/mpe_device.ts";
 
 export type MPEPlaybackConfig = {

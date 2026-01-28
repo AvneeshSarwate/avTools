@@ -1,5 +1,5 @@
 import { XMLParser } from "npm:fast-xml-parser@4.3.5";
-import { AbletonClip, type AbletonNote, createCurveValue, type CurveValue } from "@agentcombine/music-types";
+import { AbletonClip, type AbletonNote, createCurveValue, type CurveValue } from "@avtools/music-types";
 
 type ParsedClips = {
   byName: Map<string, AbletonClip>;
