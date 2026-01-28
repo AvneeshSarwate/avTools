@@ -33,6 +33,7 @@ export default defineConfig({
         },
       },
       tsconfig: {
+        location: fileURLToPath(new URL('./tsconfig.app.json', import.meta.url)),
         override: {
           target: ts.ScriptTarget.ES2021,
         },

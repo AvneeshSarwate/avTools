@@ -1,7 +1,5 @@
 {
-  "deno.enable": true,
-  "deno.enablePaths": [
-    "./packages",
-    "./apps/deno-notebooks"
-  ]
+  "python.defaultInterpreterPath": "apps/deno-notebooks/.venv/bin/python",
+  "python.terminal.activateEnvironment": true,
+  "jupyter.jupyterServerType": "local"
 }

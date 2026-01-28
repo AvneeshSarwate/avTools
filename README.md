@@ -44,6 +44,35 @@ avTools/avtools.code-workspace
 
 This is configured to keep the Deno LSP enabled for the Deno packages + notebooks while letting the browser app use the standard TS/Vite tooling.
 
+### Instant Deno‑Notebook Use (no manual kernel/interpreter picking)
+
+To make “open VSCode → open a notebook → run” work without extra clicks:
+
+1. Create the notebook venv with uv (inside `apps/deno-notebooks`):
+   ```
+   uv python install 3.12
+   uv venv --seed
+   uv pip install jupyterlab
+   ```
+2. Install the Deno Jupyter kernel:
+   ```
+   deno jupyter --install
+   ```
+3. Open `avtools.code-workspace` in VSCode.
+
+VSCode will usually auto‑detect the `.venv` and use it for Jupyter. If it does not:
+- Set the interpreter to `apps/deno-notebooks/.venv/bin/python`
+- In the notebook kernel picker, choose the Deno kernel
+
+If you want this to be fully automatic for everyone, add a `.vscode/settings.json` with:
+```
+{
+  "python.defaultInterpreterPath": "apps/deno-notebooks/.venv/bin/python",
+  "python.terminal.activateEnvironment": true,
+  "jupyter.jupyterServerType": "local"
+}
+```
+
 ## Build + Type Checking
 
 ### Browser app (Vue/Vite)
@@ -96,3 +125,18 @@ Shared packages in `packages/` are Deno‑first and use `deno.json` for exports 
 
 - Use `@agentcombine/*` for cross‑workspace imports.
 - For Deno + Vite compatibility, use explicit `.ts` extensions for local relative imports inside packages.
+
+## First‑Time Setup Checklist
+
+Install:
+- Node.js (recommended: 18+)
+- Deno
+- Rust (for MIDI + fastsleep helpers)
+- Python 3.12 + `uv` (for Jupyter)
+
+Then:
+1. `cd apps/browser-projections && npm install`
+2. `cd apps/deno-notebooks && ./scripts/build_midi_bridge.sh`
+3. `cd apps/deno-notebooks && cargo build --release --manifest-path native/fastsleep/Cargo.toml`
+4. `cd apps/deno-notebooks && uv venv --seed && uv pip install jupyterlab`
+5. `deno jupyter --install`
