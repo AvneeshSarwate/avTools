@@ -1,0 +1,9 @@
+{
+  "name": "@agentcombine/power2d",
+  "version": "0.0.0",
+  "exports": "./mod.ts",
+  "imports": {
+    "babylonjs": "npm:babylonjs@^8.20.0",
+    "earcut": "npm:earcut@^3.0.0"
+  }
+}

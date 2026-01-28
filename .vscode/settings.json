@@ -1,0 +1,7 @@
+{
+  "deno.enable": true,
+  "deno.enablePaths": [
+    "./packages",
+    "./apps/deno-notebooks"
+  ]
+}

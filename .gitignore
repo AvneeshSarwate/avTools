@@ -1,0 +1,69 @@
+# OS
+.DS_Store
+Thumbs.db
+.AppleDouble
+.LSOverride
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Node / tooling
+node_modules/
+**/node_modules/
+**/.vite/
+**/.rollup.cache/
+**/.parcel-cache/
+**/.turbo/
+**/.next/
+**/.nuxt/
+**/.svelte-kit/
+**/.cache/
+**/dist/
+**/build/
+**/out/
+**/coverage/
+**/.nyc_output/
+**/.eslintcache
+*.tsbuildinfo
+
+# Deno
+.deno/
+**/.deno/
+
+# Rust
+**/target/
+**/*.dylib
+**/*.so
+**/*.dll
+**/*.rlib
+**/*.pdb
+**/*.exe
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editors / IDEs
+.idea/
+*.iml
+
+# Temp files
+*.swp
+*.swo
+*.tmp
+*~

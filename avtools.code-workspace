@@ -1,0 +1,19 @@
+{
+  "folders": [
+    {
+      "name": "packages",
+      "path": "packages"
+    },
+    {
+      "name": "browser-projections",
+      "path": "apps/browser-projections"
+    },
+    {
+      "name": "deno-notebooks",
+      "path": "apps/deno-notebooks"
+    }
+  ],
+  "settings": {
+    "deno.enable": false
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "@agentcombine/animation-editor",
+  "version": "0.0.0",
+  "private": true,
+  "main": "dist/animation-editor.js"
+}

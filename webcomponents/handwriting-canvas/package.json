@@ -1,0 +1,6 @@
+{
+  "name": "@agentcombine/handwriting-canvas",
+  "version": "0.0.0",
+  "private": true,
+  "main": "dist/handwriting-canvas.js"
+}
