@@ -1,8 +1,8 @@
 // import * as BABYLON from 'babylonjs'
 
-// import { ShaderEffect } from './shaderFXBabylon'
-// import type { ShaderInputs, ShaderUniforms } from './shaderFXBabylon'
-// import { PassthruEffect } from './postFX/passthru.frag.generated'
+// import { ShaderEffect } from '@avtools/shader-fx/babylon'
+// import type { ShaderInputs, ShaderUniforms } from '@avtools/shader-fx/babylon'
+// import { PassthruEffect } from '@avtools/shader-fx/generated/postFX/passthru.frag.generated'
 
 // export class FeedbackNode extends ShaderEffect {
 //   output: BABYLON.RenderTargetTexture

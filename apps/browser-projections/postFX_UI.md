@@ -870,7 +870,7 @@ npm install --save-dev @types/cytoscape
 
 Use `@/` alias for imports (from tsconfig path mapping):
 - `@/rendering/shaderFXBabylon` - shader effect types
-- `@/rendering/postFX/*.frag.generated` - generated shader effects
+- `@avtools/shader-fx/generated/postFX/*.frag.generated` - generated shader effects
 - Components from same directory use relative paths `./ComponentName.vue`
 
 ## Risks & Mitigations

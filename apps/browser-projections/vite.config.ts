@@ -15,11 +15,24 @@ export default defineConfig({
   plugins: [
     shaderCodegenPlugin({
       srcDir: 'src',
+      exclude: ['wgsl-fragment', 'glsl-fragment'],
       outputDirOverrides: {
         'wgsl-material': '../../packages/power2d/generated',
         'wgsl-stroke-material': '../../packages/power2d/generated',
         'glsl-material': '../../packages/power2d/generated',
         'glsl-stroke-material': '../../packages/power2d/generated',
+      },
+    }),
+    shaderCodegenPlugin({
+      srcDir: 'src/rendering',
+      include: ['wgsl-fragment', 'glsl-fragment'],
+      outputDirOverrides: {
+        'wgsl-fragment': '../../packages/shader-fx/generated',
+        'glsl-fragment': '../../packages/shader-fx/generated',
+      },
+      shaderFxImportPathOverrides: {
+        'wgsl-fragment': '@avtools/shader-fx/babylon',
+        'glsl-fragment': '@avtools/shader-fx/babylonGL',
       },
     }),
     vue(), 
@@ -55,7 +68,10 @@ export default defineConfig({
       '@avtools/power2d/core': fileURLToPath(new URL('../../packages/power2d/core/mod.ts', import.meta.url)),
       '@avtools/power2d/babylon': fileURLToPath(new URL('../../packages/power2d/babylon/mod.ts', import.meta.url)),
       '@avtools/power2d-codegen': fileURLToPath(new URL('../../packages/power2d-codegen/mod.ts', import.meta.url)),
-      '@avtools/power2d/generated': fileURLToPath(new URL('../../packages/power2d/generated', import.meta.url))
+      '@avtools/power2d/generated': fileURLToPath(new URL('../../packages/power2d/generated', import.meta.url)),
+      '@avtools/shader-fx/babylon': fileURLToPath(new URL('../../packages/shader-fx/babylon/mod.ts', import.meta.url)),
+      '@avtools/shader-fx/babylonGL': fileURLToPath(new URL('../../packages/shader-fx/babylonGL/mod.ts', import.meta.url)),
+      '@avtools/shader-fx/generated': fileURLToPath(new URL('../../packages/shader-fx/generated', import.meta.url))
     }
   },
   server: {

@@ -47,5 +47,5 @@ export {
   type ScalarFieldDebugUniforms,
   type VelocityFieldDebugUniforms,
 } from './debugVisualization';
-export { SplatEffect, type SplatUniforms, type SplatInputs } from './splat.frag.generated';
-export { AddEffect, type AddInputs } from './add.frag.generated';
+export { SplatEffect, type SplatUniforms, type SplatInputs } from '@avtools/shader-fx/generated/fluidSimulationHack/splat.frag.generated';
+export { AddEffect, type AddInputs } from '@avtools/shader-fx/generated/fluidSimulationHack/add.frag.generated';

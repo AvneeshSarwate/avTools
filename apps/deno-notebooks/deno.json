@@ -16,6 +16,10 @@
     "@avtools/power2d/babylon": "../../packages/power2d/babylon/mod.ts",
     "@avtools/power2d-codegen": "../../packages/power2d-codegen/mod.ts",
     "@avtools/power2d/generated/": "../../packages/power2d/generated/",
+    "@avtools/shader-fx": "../../packages/shader-fx/mod.ts",
+    "@avtools/shader-fx/babylon": "../../packages/shader-fx/babylon/mod.ts",
+    "@avtools/shader-fx/babylonGL": "../../packages/shader-fx/babylonGL/mod.ts",
+    "@avtools/shader-fx/generated/": "../../packages/shader-fx/generated/",
     "@/": "./"
   }
 }

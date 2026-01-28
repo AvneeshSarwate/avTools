@@ -5,7 +5,7 @@ import {
   type RenderPrecision,
   type ShaderSource,
   type ShaderUniforms,
-} from '../shaderFXBabylon';
+} from '@avtools/shader-fx/babylon';
 
 // ===== Scalar Field Debug Effect =====
 

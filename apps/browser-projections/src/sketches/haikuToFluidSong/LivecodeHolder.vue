@@ -2,7 +2,7 @@
 import { inject, onMounted, onUnmounted, ref, watch, type WatchStopHandle } from 'vue'
 import type * as BABYLON from 'babylonjs'
 import { appStateName, engineRef, DEFAULT_HAIKU, type FluidReactionAppState, type FluidDebugMode } from './appState'
-import { CanvasPaint, type ShaderEffect } from '@/rendering/shaderFXBabylon'
+import { CanvasPaint, type ShaderEffect } from '@avtools/shader-fx/babylon'
 import {
   FluidSimulationEffect,
   ScalarFieldDebugEffect,

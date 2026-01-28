@@ -4,7 +4,7 @@ This document describes how multi-pass post-processing shaders are authored in W
 
 ## Source File Layout
 
-Each post effect is described by a single `*.fragFunc.wgsl` file under `src/rendering/postFX`. The generator scans these files and produces a matching `*.frag.generated.ts` helper that encapsulates vertex/fragment WGSL sources, texture bindings, uniform setters, and the `CustomShaderEffect` wrapper used at runtime.
+Each post effect is described by a single `*.fragFunc.wgsl` file under `src/rendering/postFX`. The generator scans these files and produces a matching `*.frag.generated.ts` helper (now written under `packages/shader-fx/generated`) that encapsulates vertex/fragment WGSL sources, texture bindings, uniform setters, and the `CustomShaderEffect` wrapper used at runtime.
 
 Author the WGSL file using the following structure:
 
@@ -35,7 +35,7 @@ For each WGSL file, the generator emits:
 
 ## Runtime Execution Model
 
-`CustomShaderEffect` (defined in `src/rendering/shaderFXBabylon.ts`) consumes the generated metadata to:
+`CustomShaderEffect` (defined in `packages/shader-fx/babylon/shaderFXBabylon.ts`, exported as `@avtools/shader-fx/babylon`) consumes the generated metadata to:
 
 - Instantiate one Babylon.js `ShaderMaterial` per pass via the generated factory.
 - Maintain dedicated render targets for every non-final pass so that complex dependency graphs (beyond simple ping-pong) function correctly.

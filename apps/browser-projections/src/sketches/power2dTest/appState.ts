@@ -1,7 +1,7 @@
 import p5 from 'p5'
 import * as BABYLON from 'babylonjs'
 import { Entity, EntityList } from '@/stores/undoCommands'
-import type { ShaderEffect } from '@/rendering/shaderFXBabylon'
+import type { ShaderEffect } from '@avtools/shader-fx/babylon'
 
 
 //@ts-ignore

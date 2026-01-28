@@ -1,6 +1,6 @@
 {
   "extends": "@vue/tsconfig/tsconfig.dom.json",
-  "include": ["env.d.ts", "src/**/*", "src/**/*.vue"],
+  "include": ["env.d.ts", "src/**/*", "src/**/*.vue", "../../packages/shader-fx/**/*"],
   "exclude": [
     "src/**/__tests__/*",
     "src/sketches/tldraw_test/**",
@@ -30,6 +30,13 @@
       "@avtools/power2d-codegen": ["../../packages/power2d-codegen/mod.ts"],
       "@avtools/power2d-codegen/*": ["../../packages/power2d-codegen/*"],
       "@avtools/power2d/generated/*": ["../../packages/power2d/generated/*"],
+      "@avtools/shader-fx": ["../../packages/shader-fx/mod.ts"],
+      "@avtools/shader-fx/*": ["../../packages/shader-fx/*"],
+      "@avtools/shader-fx/babylon": ["../../packages/shader-fx/babylon/mod.ts"],
+      "@avtools/shader-fx/babylon/*": ["../../packages/shader-fx/babylon/*"],
+      "@avtools/shader-fx/babylonGL": ["../../packages/shader-fx/babylonGL/mod.ts"],
+      "@avtools/shader-fx/babylonGL/*": ["../../packages/shader-fx/babylonGL/*"],
+      "@avtools/shader-fx/generated/*": ["../../packages/shader-fx/generated/*"],
       "earcut": ["./node_modules/@types/earcut/index.d.ts"],
       "seedrandom": ["./node_modules/@types/seedrandom/index.d.ts"]
     },

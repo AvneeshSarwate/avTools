@@ -3,15 +3,15 @@ import {
   PassthruEffect,
   FeedbackNode,
   type RenderPrecision,
-} from '../shaderFXBabylon';
-import { VelocityAdvectionEffect } from './velocityAdvection.frag.generated';
-import { CurlEffect } from './curl.frag.generated';
-import { VorticityConfinementEffect } from './vorticityConfinement.frag.generated';
-import { DivergenceEffect } from './divergence.frag.generated';
-import { GradientSubtractionEffect } from './gradientSubtraction.frag.generated';
-import { DyeAdvectionEffect } from './dyeAdvection.frag.generated';
+} from '@avtools/shader-fx/babylon';
+import { VelocityAdvectionEffect } from '@avtools/shader-fx/generated/fluidSimulationHack/velocityAdvection.frag.generated';
+import { CurlEffect } from '@avtools/shader-fx/generated/fluidSimulationHack/curl.frag.generated';
+import { VorticityConfinementEffect } from '@avtools/shader-fx/generated/fluidSimulationHack/vorticityConfinement.frag.generated';
+import { DivergenceEffect } from '@avtools/shader-fx/generated/fluidSimulationHack/divergence.frag.generated';
+import { GradientSubtractionEffect } from '@avtools/shader-fx/generated/fluidSimulationHack/gradientSubtraction.frag.generated';
+import { DyeAdvectionEffect } from '@avtools/shader-fx/generated/fluidSimulationHack/dyeAdvection.frag.generated';
 import { PressureIterator } from './PressureIterator';
-import { SplatUnifiedEffect } from './splat_unified.frag.generated';
+import { SplatUnifiedEffect } from '@avtools/shader-fx/generated/fluidSimulationHack/splat_unified.frag.generated';
 
 export interface FluidSimulationInputs {}
 

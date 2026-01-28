@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { appStateName, type Power2DTestAppState, bypassPostRef, engineRef, shaderGraphEndNodeRef, resolution } from './appState';
 import { inject, onMounted, onUnmounted, watch, type WatchStopHandle } from 'vue';
-import { CanvasPaint, FeedbackNode, PassthruEffect, type ShaderEffect } from '@/rendering/shaderFXBabylon';
-import { VerticalBlurEffect } from '@/rendering/postFX/verticalBlur.frag.generated';
-import { HorizontalBlurEffect } from '@/rendering/postFX/horizontalBlur.frag.generated';
-import { LayerBlendEffect } from '@/rendering/postFX/layerBlend.frag.generated';
-import { TransformEffect } from '@/rendering/postFX/transform.frag.generated';
-import { BloomEffect } from '@/rendering/postFX/bloom.frag.generated';
+import { CanvasPaint, FeedbackNode, PassthruEffect, type ShaderEffect } from '@avtools/shader-fx/babylon';
+import { VerticalBlurEffect } from '@avtools/shader-fx/generated/postFX/verticalBlur.frag.generated';
+import { HorizontalBlurEffect } from '@avtools/shader-fx/generated/postFX/horizontalBlur.frag.generated';
+import { LayerBlendEffect } from '@avtools/shader-fx/generated/postFX/layerBlend.frag.generated';
+import { TransformEffect } from '@avtools/shader-fx/generated/postFX/transform.frag.generated';
+import { BloomEffect } from '@avtools/shader-fx/generated/postFX/bloom.frag.generated';
 import * as BABYLON from 'babylonjs';
 import Stats from 'stats-gl';
 import { createPower2DScene, StyledShape, BatchedStyledShape, CanvasTexture } from '@avtools/power2d/babylon';

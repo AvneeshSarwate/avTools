@@ -5,9 +5,9 @@ import {
   type RenderPrecision,
   type ShaderSource,
   createPassthruMaterial,
-} from '../shaderFXBabylon';
-import { createPressureJacobiMaterial } from './pressureJacobi.frag.generated';
-import { createPressureDampMaterial, type PressureDampUniforms } from './pressureDamp.frag.generated';
+} from '@avtools/shader-fx/babylon';
+import { createPressureJacobiMaterial } from '@avtools/shader-fx/generated/fluidSimulationHack/pressureJacobi.frag.generated';
+import { createPressureDampMaterial, type PressureDampUniforms } from '@avtools/shader-fx/generated/fluidSimulationHack/pressureDamp.frag.generated';
 
 export interface PressureIteratorInputs {
   divergence: ShaderSource;

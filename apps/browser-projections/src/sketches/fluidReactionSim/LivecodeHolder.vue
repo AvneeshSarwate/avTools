@@ -2,14 +2,14 @@
 import { inject, onMounted, onUnmounted, watch, type WatchStopHandle } from 'vue'
 import type * as BABYLON from 'babylonjs'
 import { appStateName, engineRef, type FluidReactionAppState } from './appState'
-import { CanvasPaint, FeedbackNode, PassthruEffect, type ShaderEffect } from '@/rendering/shaderFXBabylon'
+import { CanvasPaint, FeedbackNode, PassthruEffect, type ShaderEffect } from '@avtools/shader-fx/babylon'
 import {
   FluidSimulationEffect,
   ScalarFieldDebugEffect,
   VelocityFieldDebugEffect,
 } from '@/rendering/fluidSimulation'
-import { ReactionDiffusionEffect } from '@/rendering/postFX/reactionDiffusion.frag.generated'
-import { ReactionVisualizeEffect } from '@/rendering/postFX/reactionVisualize.frag.generated'
+import { ReactionDiffusionEffect } from '@avtools/shader-fx/generated/postFX/reactionDiffusion.frag.generated'
+import { ReactionVisualizeEffect } from '@avtools/shader-fx/generated/postFX/reactionVisualize.frag.generated'
 import { clearListeners, pointerdownEvent, pointermoveEvent, pointerupEvent, singleKeydownEvent } from '@/io/keyboardAndMouse'
 
 const state = inject<FluidReactionAppState>(appStateName)!!

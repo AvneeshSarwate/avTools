@@ -1,6 +1,6 @@
-import type * as ShaderFXGL from '../babylonGL/shaderFXBabylon_GL'
+import type * as ShaderFXGL from '@avtools/shader-fx/babylonGL'
 import type * as Power2DGL from '../babylonGL/power2d'
-import type * as ShaderFXWGSL from '../shaderFXBabylon'
+import type * as ShaderFXWGSL from '@avtools/shader-fx/babylon'
 import type * as Power2DWGSL from '../power2d'
 import type {
   CanvasPaintCtorContract,

@@ -59,6 +59,7 @@ export interface ShaderCodegenPluginOptions {
   include?: ShaderGeneratorId[];
   exclude?: ShaderGeneratorId[];
   outputDirOverrides?: Partial<Record<ShaderGeneratorId, string>>;
+  shaderFxImportPathOverrides?: Partial<Record<'wgsl-fragment' | 'glsl-fragment', string>>;
 }
 
 interface GeneratorContext {
@@ -67,6 +68,7 @@ interface GeneratorContext {
   computeOutputExtension?: string;
   quiet: boolean;
   outputDirOverrides?: Partial<Record<ShaderGeneratorId, string>>;
+  shaderFxImportPathOverrides?: Partial<Record<'wgsl-fragment' | 'glsl-fragment', string>>;
 }
 
 interface TransformInput {
@@ -110,17 +112,30 @@ const GENERATORS: GeneratorDefinition[] = [
     inputSuffix: WGSL_FRAG_SUFFIX,
     logPrefix: 'wgsl-frag',
     errorMessage: 'Failed to generate fragment shader for',
-    outputPath: (filePath) => `${filePath.slice(0, -WGSL_FRAG_SUFFIX.length)}${WGSL_FRAG_TYPES_SUFFIX}`,
+    outputPath: (filePath, context) => {
+      const overrideDir = context.outputDirOverrides?.['wgsl-fragment'];
+      if (!overrideDir) {
+        return `${filePath.slice(0, -WGSL_FRAG_SUFFIX.length)}${WGSL_FRAG_TYPES_SUFFIX}`;
+      }
+      const relative = path.relative(context.srcDir, filePath);
+      return path.join(overrideDir, `${relative.slice(0, -WGSL_FRAG_SUFFIX.length)}${WGSL_FRAG_TYPES_SUFFIX}`);
+    },
     successMessage: (relativePath) => `Updated ${relativePath}`,
     transform: ({ filePath, shaderCode, context }) => {
       const shaderBaseName = path.basename(filePath, WGSL_FRAG_SUFFIX);
       const shaderDirectory = path.dirname(filePath);
-      const shaderFxAbsolute = path.join(context.projectRoot, 'src/rendering/shaderFXBabylon.ts');
-      let shaderFxImportPath = path.relative(shaderDirectory, shaderFxAbsolute).replace(/\\/g, '/');
-      if (!shaderFxImportPath.startsWith('.')) {
-        shaderFxImportPath = `./${shaderFxImportPath}`;
+      const overridePath = context.shaderFxImportPathOverrides?.['wgsl-fragment'];
+      let shaderFxImportPath: string;
+      if (overridePath) {
+        shaderFxImportPath = overridePath;
+      } else {
+        const shaderFxAbsolute = path.join(context.projectRoot, 'src/rendering/shaderFXBabylon.ts');
+        shaderFxImportPath = path.relative(shaderDirectory, shaderFxAbsolute).replace(/\\/g, '/');
+        if (!shaderFxImportPath.startsWith('.')) {
+          shaderFxImportPath = `./${shaderFxImportPath}`;
+        }
+        shaderFxImportPath = shaderFxImportPath.replace(/\.ts$/, '');
       }
-      shaderFxImportPath = shaderFxImportPath.replace(/\.ts$/, '');
       return generateFragmentShaderArtifactsSource({
         shaderCode,
         shaderBaseName,
@@ -187,14 +202,27 @@ const GENERATORS: GeneratorDefinition[] = [
     inputSuffix: GLSL_FRAG_SUFFIX,
     logPrefix: 'glsl-frag',
     errorMessage: 'Failed to generate fragment shader for',
-    outputPath: (filePath) => `${filePath.slice(0, -GLSL_FRAG_SUFFIX.length)}${GLSL_FRAG_TYPES_SUFFIX}`,
+    outputPath: (filePath, context) => {
+      const overrideDir = context.outputDirOverrides?.['glsl-fragment'];
+      if (!overrideDir) {
+        return `${filePath.slice(0, -GLSL_FRAG_SUFFIX.length)}${GLSL_FRAG_TYPES_SUFFIX}`;
+      }
+      const relative = path.relative(context.srcDir, filePath);
+      return path.join(overrideDir, `${relative.slice(0, -GLSL_FRAG_SUFFIX.length)}${GLSL_FRAG_TYPES_SUFFIX}`);
+    },
     successMessage: (relativePath) => `Updated ${relativePath}`,
     transform: ({ filePath, shaderCode, context }) => {
       const shaderBaseName = path.basename(filePath, GLSL_FRAG_SUFFIX);
-      const shaderFxAbsolute = path.join(context.projectRoot, 'src/rendering/babylonGL/shaderFXBabylon_GL');
-      let shaderFxImportPath = path.relative(path.dirname(filePath), shaderFxAbsolute).replace(/\\/g, '/');
-      if (!shaderFxImportPath.startsWith('.')) {
-        shaderFxImportPath = `./${shaderFxImportPath}`;
+      const overridePath = context.shaderFxImportPathOverrides?.['glsl-fragment'];
+      let shaderFxImportPath: string;
+      if (overridePath) {
+        shaderFxImportPath = overridePath;
+      } else {
+        const shaderFxAbsolute = path.join(context.projectRoot, 'src/rendering/babylonGL/shaderFXBabylon_GL');
+        shaderFxImportPath = path.relative(path.dirname(filePath), shaderFxAbsolute).replace(/\\/g, '/');
+        if (!shaderFxImportPath.startsWith('.')) {
+          shaderFxImportPath = `./${shaderFxImportPath}`;
+        }
       }
       return generateFragmentShaderArtifactsSource_GL({
         shaderCode,
@@ -333,6 +361,7 @@ export function shaderCodegenPlugin(options: ShaderCodegenPluginOptions = {}): P
     computeOutputExtension,
     quiet,
     outputDirOverrides,
+    shaderFxImportPathOverrides: options.shaderFxImportPathOverrides,
   };
 
   async function processFile(filePath: string): Promise<void> {

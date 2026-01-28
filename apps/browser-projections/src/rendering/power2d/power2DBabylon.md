@@ -19,7 +19,7 @@ This system builds on patterns already established in the codebase. The followin
 ### Runtime Patterns
 - [drawingScene.ts](../gpuStrokes/drawingScene.ts) - Demonstrates storage buffers as vertex buffers for instancing, orthographic camera setup, and zero-copy GPU buffer binding (lines 205-256)
 - [letterParticles.ts](../../sketches/text_projmap_sandbox/letterParticles.ts) - Shows instanced rendering with compute-driven instance attributes and the `setupVertexBuffer()` pattern (lines 252-320)
-- [shaderFXBabylon.ts](../shaderFXBabylon.ts) - `CustomShaderEffect` class demonstrates texture resolution from multiple source types (Canvas, RenderTargetTexture, ShaderEffect)
+- [shaderFXBabylon.ts](../../../../../packages/shader-fx/babylon/shaderFXBabylon.ts) - `CustomShaderEffect` class demonstrates texture resolution from multiple source types (Canvas, RenderTargetTexture, ShaderEffect)
 
 ### Example WGSL Files
 - [strokeAnimation.compute.wgsl](../gpuStrokes/strokeAnimation.compute.wgsl) - Example compute shader with struct definitions and bindings
@@ -28,7 +28,7 @@ This system builds on patterns already established in the codebase. The followin
 
 ### Generated Output Examples
 - [strokeAnimation.compute.wgsl.generated.ts](../gpuStrokes/strokeAnimation.compute.wgsl.generated.ts) - Shows generated TypeScript interfaces, pack functions, buffer helpers, and shader bindings
-- [wobble.frag.generated.ts](../postFX/wobble.frag.generated.ts) - Shows generated material class with typed uniform setters
+- [wobble.frag.generated.ts](../../../../../packages/shader-fx/generated/postFX/wobble.frag.generated.ts) - Shows generated material class with typed uniform setters
 
 ---
 

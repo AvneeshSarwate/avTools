@@ -14,7 +14,8 @@ avTools/
 │  ├─ music-types/
 │  ├─ ui-bridge/
 │  ├─ power2d/
-│  └─ power2d-codegen/
+│  ├─ power2d-codegen/
+│  └─ shader-fx/
 ├─ apps/
 │  ├─ browser-projections/   # Vue + Vite web app
 │  └─ deno-notebooks/        # Deno notebooks + Rust FFI libs
@@ -32,6 +33,7 @@ avTools/
   - `native/fastsleep` – precise sleep for Deno
   - `native/midi_bridge` – MIDI I/O via `midir`
 - **Power2D split.** Shader codegen lives in `packages/power2d-codegen`. The Vite plugin (`tools/vite-shader-plugin`) imports from that package directly.
+- **ShaderFX split.** Babylon/WGSL + Babylon/GL post-processing runtime now lives in `packages/shader-fx`, with generated fragment wrappers emitted to `packages/shader-fx/generated`.
 - **creative-algs** is a shared tools package used by both browser sketches and Deno notebooks.
 
 ## VSCode Setup (Recommended)
@@ -98,6 +100,7 @@ deno check packages/core-timing/mod.ts \
   packages/ui-bridge/mod.ts \
   packages/power2d/mod.ts \
   packages/power2d-codegen/mod.ts \
+  packages/shader-fx/mod.ts \
   tools/shader-watch/watch.ts
 ```
 

@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { appStateName, type ClickAVAppState, engineRef, shaderGraphEndNodeRef } from './appState';
 import { inject, onMounted, onUnmounted, watch, type WatchStopHandle } from 'vue';
-import { CanvasPaint, CustomShaderEffect, FeedbackNode, PassthruEffect, type ShaderEffect } from '@/rendering/shaderFXBabylon';
+import { CanvasPaint, CustomShaderEffect, FeedbackNode, PassthruEffect, type ShaderEffect } from '@avtools/shader-fx/babylon';
 import { clearListeners, mousedownEvent, singleKeydownEvent, mousemoveEvent, targetToP5Coords, targetNormalizedCoords } from '@/io/keyboardAndMouse';
 import p5 from 'p5';
 import { launch, type CancelablePromiseProxy, type TimeContext, xyZip, cosN, sinN, Ramp, tri, EventChop, cos, sin } from '@/channels/channels';
@@ -10,11 +10,11 @@ import { listToClip, clipToDeltas, note } from '@/music/clipPlayback';
 import { Scale } from '@/music/scale';
 import { sampler } from '@/music/synths';
 import * as BABYLON from 'babylonjs';
-import { VerticalBlurEffect } from '@/rendering/postFX/verticalBlur.frag.generated';
-import { HorizontalBlurEffect } from '@/rendering/postFX/horizontalBlur.frag.generated';
-import { LayerBlendEffect } from '@/rendering/postFX/layerBlend.frag.generated';
-import { TransformEffect } from '@/rendering/postFX/transform.frag.generated';
-import { BloomEffect } from '@/rendering/postFX/bloom.frag.generated';
+import { VerticalBlurEffect } from '@avtools/shader-fx/generated/postFX/verticalBlur.frag.generated';
+import { HorizontalBlurEffect } from '@avtools/shader-fx/generated/postFX/horizontalBlur.frag.generated';
+import { LayerBlendEffect } from '@avtools/shader-fx/generated/postFX/layerBlend.frag.generated';
+import { TransformEffect } from '@avtools/shader-fx/generated/postFX/transform.frag.generated';
+import { BloomEffect } from '@avtools/shader-fx/generated/postFX/bloom.frag.generated';
 
 const appState = inject<ClickAVAppState>(appStateName)!!
 let shaderGraphEndNode: ShaderEffect | undefined = undefined
