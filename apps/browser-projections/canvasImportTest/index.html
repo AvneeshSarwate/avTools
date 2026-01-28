@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Handwriting Canvas Web Component Test</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <h1>Handwriting Canvas Component Demo</h1>
+  <p class="instructions">
+    This page demonstrates how to use the <code>&lt;handwriting-canvas&gt;</code> custom element alongside a
+    simple inline p5.js sketch. Draw inside the canvas component and the p5 preview will mirror the baked
+    stroke and polygon data supplied by the component's state updates (along with light animation driven py p5.js). 
+    The canvas component defines a callback 
+    function that will be called whenever the component's state updates, and provides the shape data from the canvas.
+    You can also add metadata to individual shapes to annotate them however you want and use that data downstream.
+    The example sketch shows how you can look for 'color' metadata on polygons to control their color in the p5.js drawing. 
+  </p>
+
+  <div class="layout">
+    <handwriting-canvas
+      id="handwritingCanvas"
+      width="450"
+      height="450"
+      initial-freehand-state=""
+      initial-polygon-state=""
+    ></handwriting-canvas>
+
+    <div id="p5-preview">
+      <h2 style="margin-top:0;font-size:1.1rem;">p5.js Preview</h2>
+      <div id="p5-container"></div>
+    </div>
+  </div>
+
+  <script src="./handwriting-canvas.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.11.10/lib/p5.js"></script>
+  <script src="./sketch.js"></script>
+</body>
+</html>

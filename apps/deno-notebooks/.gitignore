@@ -1,0 +1,9 @@
+.venv
+__pycache__/
+*.pyc
+
+native/fastsleep/target*
+native/midi_bridge/target*
+
+node_modules
+*DS_Store

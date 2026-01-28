@@ -67,3 +67,6 @@ venv/
 *.swo
 *.tmp
 *~
+
+# ableton backups
+*Backup/*als

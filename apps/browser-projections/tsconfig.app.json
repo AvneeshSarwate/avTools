@@ -1,0 +1,44 @@
+{
+  "extends": "@vue/tsconfig/tsconfig.dom.json",
+  "include": ["env.d.ts", "src/**/*", "src/**/*.vue"],
+  "exclude": [
+    "src/**/__tests__/*",
+    "src/sketches/tldraw_test/**",
+    "src/sketches/tldraw_sketch0/**",
+    "src/sketches/nov21demo/**",
+    "src/sketches/sonar_sketch/acornExample.jsx"
+  ],
+  "compilerOptions": {
+    "composite": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@agentcombine/core-timing": ["../../packages/core-timing/mod.ts"],
+      "@agentcombine/core-timing/*": ["../../packages/core-timing/*"],
+      "@agentcombine/creative-algs": ["../../packages/creative-algs/mod.ts"],
+      "@agentcombine/creative-algs/*": ["../../packages/creative-algs/*"],
+      "@agentcombine/music-types": ["../../packages/music-types/mod.ts"],
+      "@agentcombine/music-types/*": ["../../packages/music-types/*"],
+      "@agentcombine/ui-bridge": ["../../packages/ui-bridge/mod.ts"],
+      "@agentcombine/ui-bridge/*": ["../../packages/ui-bridge/*"],
+      "@agentcombine/power2d": ["../../packages/power2d/mod.ts"],
+      "@agentcombine/power2d/*": ["../../packages/power2d/*"],
+      "@agentcombine/power2d/core": ["../../packages/power2d/core/mod.ts"],
+      "@agentcombine/power2d/core/*": ["../../packages/power2d/core/*"],
+      "@agentcombine/power2d/babylon": ["../../packages/power2d/babylon/mod.ts"],
+      "@agentcombine/power2d/babylon/*": ["../../packages/power2d/babylon/*"],
+      "@agentcombine/power2d-codegen": ["../../packages/power2d-codegen/mod.ts"],
+      "@agentcombine/power2d-codegen/*": ["../../packages/power2d-codegen/*"],
+      "@agentcombine/power2d/generated/*": ["../../packages/power2d/generated/*"],
+      "earcut": ["./node_modules/@types/earcut/index.d.ts"],
+      "seedrandom": ["./node_modules/@types/seedrandom/index.d.ts"]
+    },
+    "allowImportingTsExtensions": true,
+    "types": ["earcut", "seedrandom"],
+    "resolveJsonModule": true,
+    "jsx": "react-jsx",
+    "noImplicitReturns": false,
+    "strict": true
+    // "lib": ["DOM"]
+  }
+}
