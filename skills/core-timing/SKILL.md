@@ -1,3 +1,12 @@
+---
+name: core-timing
+description: Deterministic drift-free timing engine for JavaScript/TypeScript. Provides logical-time scheduling with structured concurrency, variable tempo support, and dual execution modes (realtime and offline). Use when writing code that uses @avtools/core-timing for scheduling, timing, tempo, beat-based waits, or offline rendering.
+metadata:
+  author: avtools
+  version: "0.0.0"
+compatibility: Designed for Deno-native and browser environments via import maps or bundler aliases.
+---
+
 # @avtools/core-timing
 
 ## Summary

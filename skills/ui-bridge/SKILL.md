@@ -1,3 +1,12 @@
+---
+name: ui-bridge
+description: Deno Jupyter-to-iframe communication infrastructure for embedding interactive web components in notebooks. Provides HTTP/WebSocket bridge, session management, and adapter pattern. Use when writing code that uses @avtools/ui-bridge for notebook UI, WebSocket clients, or component adapters.
+metadata:
+  author: avtools
+  version: "0.0.0"
+compatibility: Requires Deno runtime with Deno.serve, Deno.upgradeWebSocket, and Deno.jupyter APIs.
+---
+
 # @avtools/ui-bridge
 
 ## Summary

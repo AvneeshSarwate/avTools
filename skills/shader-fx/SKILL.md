@@ -1,3 +1,12 @@
+---
+name: shader-fx
+description: GPU-accelerated shader effects framework built on Babylon.js. Provides composable graph-based post-processing, multi-pass rendering, feedback loops, and fluid simulation. Use when writing code that uses @avtools/shader-fx for shader effects, effect chains, or GPU computations.
+metadata:
+  author: avtools
+  version: "0.0.0"
+compatibility: Requires Babylon.js. WebGPU engine for WGSL path, WebGL engine for GLSL path.
+---
+
 # @avtools/shader-fx
 
 GPU-accelerated shader effects framework built on Babylon.js. Provides a composable, graph-based system for real-time post-processing effects and GPU computations. Supports both WebGPU (WGSL shaders via `babylon` subpath) and WebGL (GLSL shaders via `babylonGL` subpath).
