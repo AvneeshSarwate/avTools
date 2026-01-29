@@ -1,3 +1,11 @@
+---
+name: power2d-codegen
+description: Shader code generation framework that transforms WGSL and GLSL shader source files into TypeScript companion modules with type-safe APIs for Babylon.js. Use when writing or modifying shader codegen, material generation, or working with @avtools/power2d-codegen.
+metadata:
+  author: avtools
+  version: "0.0.0"
+compatibility: Deno runtime. Depends on wgsl_reflect for WGSL parsing.
+---
 # @avtools/power2d-codegen
 
 ## Summary

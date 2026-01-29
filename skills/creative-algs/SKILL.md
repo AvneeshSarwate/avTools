@@ -1,3 +1,12 @@
+---
+name: creative-algs
+description: Pure TypeScript utility library providing computational geometry and data structure algorithms for creative coding. Includes Voronoi diagrams, shape helpers, variation trees, and sequence combiners. Use when writing code that uses @avtools/creative-algs for geometry, polygon operations, generative exploration, or sequence generation.
+metadata:
+  author: avtools
+  version: "0.0.0"
+compatibility: Pure TypeScript with zero dependencies. Works in any JavaScript runtime (browser, Deno, Node).
+---
+
 # @avtools/creative-algs
 
 ## Summary

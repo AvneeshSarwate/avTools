@@ -1,3 +1,12 @@
+---
+name: music-types
+description: Music theory and MIDI note manipulation library. Provides type definitions, data structures, and utilities for Ableton Live clips, musical scales, Bezier curve envelopes, and MPE data. Use when writing code that uses @avtools/music-types for clips, notes, scales, curves, or MIDI operations.
+metadata:
+  author: avtools
+  version: "0.0.0"
+compatibility: Pure TypeScript with zero external dependencies. Works in any JavaScript runtime.
+---
+
 # @avtools/music-types
 
 Music theory and MIDI note manipulation library for the avTools monorepo. Provides type definitions, data structures, and utilities for working with Ableton Live clips, musical scales, Bezier curves/envelopes, and MPE (MIDI Polyphonic Expression) data.

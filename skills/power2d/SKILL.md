@@ -1,3 +1,12 @@
+---
+name: power2d
+description: GPU-accelerated 2D graphics rendering library built on Babylon.js. Provides styled shapes with custom shaders, stroke outlines, and thin instancing for 10,000+ shapes. Use when writing code that uses @avtools/power2d for 2D rendering, shape creation, materials, instancing, or canvas textures.
+metadata:
+  author: avtools
+  version: "0.0.0"
+compatibility: Requires Babylon.js and earcut. WebGPU engine required for BatchedStyledShape. Deno-native with browser support via bundlers.
+---
+
 # @avtools/power2d
 
 ## Summary
