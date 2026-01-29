@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import type { PluginOption } from 'vite';
 
-import { readTextFile, writeFileIfChanged } from '../../packages/power2d-codegen/codegen/codegenIO.ts';
+import { readTextFile, writeFileIfChanged } from '../../packages/codegen-common/codegenIO.ts';
 
 import {
   RAW_SUFFIX as WGSL_MATERIAL_SUFFIX,
@@ -20,7 +20,7 @@ import {
   buildFragmentShaderErrorArtifactSource,
   generateFragmentShaderArtifactsSource,
   getFragmentShaderNaming,
-} from '../../packages/power2d-codegen/wgsl/generateFragmentShaderCore.ts';
+} from '../../packages/shader-fx-codegen/wgsl/generateFragmentShaderCore.ts';
 import {
   DEFAULT_COMPUTE_OUTPUT_SUFFIX as WGSL_COMPUTE_DEFAULT_SUFFIX,
   RAW_SUFFIX as WGSL_COMPUTE_SUFFIX,
@@ -41,7 +41,7 @@ import {
   RAW_SUFFIX as GLSL_FRAG_SUFFIX,
   TYPES_SUFFIX as GLSL_FRAG_TYPES_SUFFIX,
   generateFragmentShaderArtifactsSource as generateFragmentShaderArtifactsSource_GL,
-} from '../../packages/power2d-codegen/glsl/generateFragmentShaderCore_GL.ts';
+} from '../../packages/shader-fx-codegen/glsl/generateFragmentShaderCore_GL.ts';
 
 export type ShaderGeneratorId =
   | 'wgsl-compute'

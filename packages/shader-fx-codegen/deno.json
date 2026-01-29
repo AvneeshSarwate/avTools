@@ -1,5 +1,5 @@
 {
-  "name": "@avtools/power2d-codegen",
+  "name": "@avtools/shader-fx-codegen",
   "version": "0.0.0",
   "exports": "./mod.ts",
   "imports": {

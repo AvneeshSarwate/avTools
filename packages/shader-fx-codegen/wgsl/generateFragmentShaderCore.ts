@@ -3,6 +3,11 @@ import {
   StructInfo,
   WgslReflect,
 } from 'wgsl_reflect';
+import {
+  HELPER_SNIPPETS as BASE_HELPER_SNIPPETS,
+  toPascalCase,
+  escapeTemplateLiteral,
+} from '../../codegen-common/utils.ts';
 
 export const RAW_SUFFIX = '.fragFunc.wgsl';
 export const TYPES_SUFFIX = '.frag.generated.ts';
@@ -120,10 +125,7 @@ const UNIFORM_TYPE_MAP: Record<string, UniformTypeMetadata> = {
 };
 
 const HELPER_SNIPPETS: Record<string, string> = {
-  ensureVector2: `function ensureVector2(value: BABYLON.Vector2 | readonly [number, number]): BABYLON.Vector2 {\n  return value instanceof BABYLON.Vector2 ? value : BABYLON.Vector2.FromArray(value as readonly [number, number]);\n}`,
-  ensureVector3: `function ensureVector3(value: BABYLON.Vector3 | readonly [number, number, number]): BABYLON.Vector3 {\n  return value instanceof BABYLON.Vector3 ? value : BABYLON.Vector3.FromArray(value as readonly [number, number, number]);\n}`,
-  ensureVector4: `function ensureVector4(value: BABYLON.Vector4 | readonly [number, number, number, number]): BABYLON.Vector4 {\n  return value instanceof BABYLON.Vector4 ? value : BABYLON.Vector4.FromArray(value as readonly [number, number, number, number]);\n}`,
-  ensureMatrix: `function ensureMatrix(value: BABYLON.Matrix | Float32Array | readonly number[]): BABYLON.Matrix {\n  if (value instanceof BABYLON.Matrix) {\n    return value;\n  }\n  const matrix = BABYLON.Matrix.Identity();\n  matrix.copyFromArray(Array.from(value));\n  return matrix;\n}`,
+  ...BASE_HELPER_SNIPPETS,
   packVec2Array: `function packVec2Array(arr: Vec2Like[]): number[] {\n  return arr.flatMap(v => [v.x, v.y]);\n}`,
   packVec2ArrayWGSL: `function packVec2ArrayWGSL(arr: Vec2Like[]): number[] {\n  return arr.flatMap(v => [v.x, v.y, 0, 0]);\n}`,
   packVec3ArrayWGSL: `function packVec3ArrayWGSL(arr: Vec3Like[]): number[] {\n  return arr.flatMap(v => [v.x, v.y, v.z, 0]);\n}`,
@@ -148,22 +150,6 @@ const ARRAY_ELEMENT_TYPE_MAP: Record<string, ArrayUniformMeta> = {
   vec3f: { tsType: 'Vec3Like[]', setter: 'setArray4', pack: 'packVec3ArrayWGSL' },
   vec4f: { tsType: 'Vec4Like[]', setter: 'setArray4', pack: 'packVec4Array' },
 };
-
-function toPascalCase(value: string): string {
-  return value
-    .replace(/[-_]/g, ' ')
-    .split(' ')
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join('');
-}
-
-function escapeTemplateLiteral(value: string): string {
-  return `\`${value
-    .replace(/\\/g, '\\\\')
-    .replace(/`/g, '\\`')
-    .replace(/\$\{/g, '\\${')}\``;
-}
 
 function validateUvArgument(argument: ArgumentInfo): void {
   const typeName = argument.type.getTypeName();

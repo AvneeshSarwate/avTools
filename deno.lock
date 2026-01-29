@@ -189,6 +189,16 @@
         "dependencies": [
           "npm:wgsl_reflect@^1.2.3"
         ]
+      },
+      "packages/shader-fx": {
+        "dependencies": [
+          "npm:babylonjs@^8.20.0"
+        ]
+      },
+      "packages/shader-fx-codegen": {
+        "dependencies": [
+          "npm:wgsl_reflect@^1.2.3"
+        ]
       }
     }
   }

@@ -1,4 +1,9 @@
 import { ArgumentInfo, StructInfo, WgslReflect } from 'wgsl_reflect';
+import {
+  HELPER_SNIPPETS,
+  toPascalCase,
+  escapeTemplateLiteral,
+} from '../../codegen-common/utils.ts';
 
 export const RAW_SUFFIX = '.material.wgsl';
 export const OUTPUT_SUFFIX = '.generated.ts';
@@ -101,29 +106,6 @@ const INSTANCE_TYPE_MAP: Record<string, { tsType: string; attributeType: string;
   vec3f: { tsType: 'readonly [number, number, number]', attributeType: 'vec3<f32>', floatCount: 3 },
   vec4f: { tsType: 'readonly [number, number, number, number]', attributeType: 'vec4<f32>', floatCount: 4 },
 };
-
-const HELPER_SNIPPETS: Record<string, string> = {
-  ensureVector2: `function ensureVector2(value: BABYLON.Vector2 | readonly [number, number]): BABYLON.Vector2 {\n  return value instanceof BABYLON.Vector2 ? value : BABYLON.Vector2.FromArray(value as readonly [number, number]);\n}`,
-  ensureVector3: `function ensureVector3(value: BABYLON.Vector3 | readonly [number, number, number]): BABYLON.Vector3 {\n  return value instanceof BABYLON.Vector3 ? value : BABYLON.Vector3.FromArray(value as readonly [number, number, number]);\n}`,
-  ensureVector4: `function ensureVector4(value: BABYLON.Vector4 | readonly [number, number, number, number]): BABYLON.Vector4 {\n  return value instanceof BABYLON.Vector4 ? value : BABYLON.Vector4.FromArray(value as readonly [number, number, number, number]);\n}`,
-  ensureMatrix: `function ensureMatrix(value: BABYLON.Matrix | Float32Array | readonly number[]): BABYLON.Matrix {\n  if (value instanceof BABYLON.Matrix) {\n    return value;\n  }\n  const matrix = BABYLON.Matrix.Identity();\n  matrix.copyFromArray(Array.from(value));\n  return matrix;\n}`,
-};
-
-function toPascalCase(value: string): string {
-  return value
-    .replace(/[-_]/g, ' ')
-    .split(' ')
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join('');
-}
-
-function escapeTemplateLiteral(value: string): string {
-  return `\`${value
-    .replace(/\\/g, '\\\\')
-    .replace(/`/g, '\\`')
-    .replace(/\$\{/g, '\\${')}\``;
-}
 
 function validateType(argument: ArgumentInfo, expected: string, label: string): void {
   const typeName = argument.type.getTypeName();

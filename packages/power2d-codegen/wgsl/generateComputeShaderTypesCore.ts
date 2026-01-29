@@ -24,6 +24,7 @@ import {
   VariableInfo,
   WgslReflect,
 } from 'wgsl_reflect';
+import { toPascalCase } from '../../codegen-common/utils.ts';
 
 export const RAW_SUFFIX = '.compute.wgsl';
 export const DEFAULT_COMPUTE_OUTPUT_SUFFIX = '.generated.ts';
@@ -106,15 +107,6 @@ interface StorageDescriptor {
   updateFn: string;
   writeFn: string;
   valueType: string;
-}
-
-function toPascalCase(value: string): string {
-  return value
-    .replace(/[-_]/g, ' ')
-    .split(' ')
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join('');
 }
 
 function indent(lines: string[], spaces = 2): string {
