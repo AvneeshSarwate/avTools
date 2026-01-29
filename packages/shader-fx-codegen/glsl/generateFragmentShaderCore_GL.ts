@@ -1,5 +1,15 @@
 /* eslint-disable no-useless-escape */
-import { parseFunctions, parseStructs, type GlslArgument, type GlslStruct } from './parseGlsl.ts';
+import {
+  parseFunctions,
+  parseStructs,
+  type GlslArgument,
+  type GlslStruct,
+} from '../../codegen-common/parseGlsl.ts';
+import {
+  HELPER_SNIPPETS as BASE_HELPER_SNIPPETS,
+  toPascalCase,
+  escapeTemplateLiteral,
+} from '../../codegen-common/utils.ts';
 
 export const RAW_SUFFIX = '.fragFunc.glsl';
 export const TYPES_SUFFIX = '.frag.gl.generated.ts';
@@ -97,10 +107,7 @@ const UNIFORM_TYPE_MAP: Record<string, UniformTypeMetadata> = {
 };
 
 const HELPER_SNIPPETS: Record<string, string> = {
-  ensureVector2: `function ensureVector2(value: BABYLON.Vector2 | readonly [number, number]): BABYLON.Vector2 {\n  return value instanceof BABYLON.Vector2 ? value : BABYLON.Vector2.FromArray(value as readonly [number, number]);\n}`,
-  ensureVector3: `function ensureVector3(value: BABYLON.Vector3 | readonly [number, number, number]): BABYLON.Vector3 {\n  return value instanceof BABYLON.Vector3 ? value : BABYLON.Vector3.FromArray(value as readonly [number, number, number]);\n}`,
-  ensureVector4: `function ensureVector4(value: BABYLON.Vector4 | readonly [number, number, number, number]): BABYLON.Vector4 {\n  return value instanceof BABYLON.Vector4 ? value : BABYLON.Vector4.FromArray(value as readonly [number, number, number, number]);\n}`,
-  ensureMatrix: `function ensureMatrix(value: BABYLON.Matrix | Float32Array | readonly number[]): BABYLON.Matrix {\n  if (value instanceof BABYLON.Matrix) {\n    return value;\n  }\n  const matrix = BABYLON.Matrix.Identity();\n  matrix.copyFromArray(Array.from(value));\n  return matrix;\n}`,
+  ...BASE_HELPER_SNIPPETS,
   packVec2Array: `function packVec2Array(arr: Vec2Like[]): number[] {\n  return arr.flatMap(v => [v.x, v.y]);\n}`,
   packVec3Array: `function packVec3Array(arr: Vec3Like[]): number[] {\n  return arr.flatMap(v => [v.x, v.y, v.z]);\n}`,
   packVec4Array: `function packVec4Array(arr: Vec4Like[]): number[] {\n  return arr.flatMap(v => [v.x, v.y, v.z, v.w]);\n}`,
@@ -124,22 +131,6 @@ const ARRAY_ELEMENT_TYPE_MAP: Record<string, ArrayUniformMeta> = {
   vec3: { tsType: 'Vec3Like[]', setter: 'setArray3', pack: 'packVec3Array' },
   vec4: { tsType: 'Vec4Like[]', setter: 'setArray4', pack: 'packVec4Array' },
 };
-
-function toPascalCase(value: string): string {
-  return value
-    .replace(/[-_]/g, ' ')
-    .split(' ')
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join('');
-}
-
-function escapeTemplateLiteral(value: string): string {
-  return `\`${value
-    .replace(/\\/g, '\\\\')
-    .replace(/`/g, '\\`')
-    .replace(/\$\{/g, '\\${')}\``;
-}
 
 function collectUniformFields(struct: GlslStruct, uniformArgName: string, shaderSource: string): UniformField[] {
   const annotationMap = extractUniformAnnotations(shaderSource, struct.name);

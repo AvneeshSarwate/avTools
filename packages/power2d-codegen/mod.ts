@@ -11,14 +11,6 @@ export {
 } from "./wgsl/generateStrokeMaterialTypesCore.ts";
 
 export {
-  RAW_SUFFIX as WGSL_FRAG_SUFFIX,
-  TYPES_SUFFIX as WGSL_FRAG_TYPES_SUFFIX,
-  generateFragmentShaderArtifactsSource,
-  buildFragmentShaderErrorArtifactSource,
-  getFragmentShaderNaming,
-} from "./wgsl/generateFragmentShaderCore.ts";
-
-export {
   RAW_SUFFIX as WGSL_COMPUTE_SUFFIX,
   DEFAULT_COMPUTE_OUTPUT_SUFFIX as WGSL_COMPUTE_DEFAULT_SUFFIX,
   generateComputeShaderTypesSource,
@@ -36,10 +28,4 @@ export {
   generateStrokeMaterialTypesSource as generateStrokeMaterialTypesSource_GL,
 } from "./glsl/generateStrokeMaterialTypesCore_GL.ts";
 
-export {
-  RAW_SUFFIX as GLSL_FRAG_SUFFIX,
-  TYPES_SUFFIX as GLSL_FRAG_TYPES_SUFFIX,
-  generateFragmentShaderArtifactsSource as generateFragmentShaderArtifactsSource_GL,
-} from "./glsl/generateFragmentShaderCore_GL.ts";
-
-export { readTextFile, writeFileIfChanged } from "./codegen/codegenIO.ts";
+export { readTextFile, writeFileIfChanged } from "../codegen-common/codegenIO.ts";
