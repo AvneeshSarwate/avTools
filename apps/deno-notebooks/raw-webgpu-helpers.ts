@@ -55,6 +55,7 @@ export async function readTextureToFloatRGBA(
   height: number,
   format: GPUTextureFormat,
 ): Promise<ReadbackResult> {
+  console.log(`[readback] begin format=${format} size=${width}x${height}`);
   const bytesPerPixel = format === 'rgba16float' ? 8 : format === 'rgba32float' ? 16 : 4;
   const bytesPerRow = align(width * bytesPerPixel, 256);
   const bufferSize = bytesPerRow * height;
@@ -67,12 +68,14 @@ export async function readTextureToFloatRGBA(
   device.pushErrorScope('out-of-memory');
 
   const encoder = device.createCommandEncoder();
+  console.log('[readback] copyTextureToBuffer...');
   encoder.copyTextureToBuffer(
     { texture },
     { buffer: readBuffer, bytesPerRow, rowsPerImage: height },
     { width, height, depthOrArrayLayers: 1 },
   );
   device.queue.submit([encoder.finish()]);
+  console.log('[readback] submitted copy commands');
   const oomError = await device.popErrorScope();
   const validationError = await device.popErrorScope();
   if (oomError) {
@@ -82,11 +85,12 @@ export async function readTextureToFloatRGBA(
     console.error('GPU validation error:', validationError);
   }
 
-  console.log('Mapping readback buffer...');
+  console.log('[readback] Mapping readback buffer...');
   await Promise.race([
     readBuffer.mapAsync(GPUMapMode.READ),
     new Promise<void>((_, reject) => setTimeout(() => reject(new Error('mapAsync timed out')), 10000)),
   ]);
+  console.log('[readback] mapAsync done');
   const mapped = readBuffer.getMappedRange();
 
   const floatPixels = new Float32Array(width * height * 4);
@@ -159,6 +163,7 @@ export async function readTextureToFloatRGBA(
   readBuffer.unmap();
   readBuffer.destroy();
 
+  console.log('[readback] done');
   return { floatPixels, rgba8, bytesPerRow };
 }
 
@@ -173,7 +178,8 @@ export async function writeTextureToPng(
   const { floatPixels, rgba8 } = await readTextureToFloatRGBA(device, texture, width, height, format);
 
   await Deno.mkdir('.output', { recursive: true });
-  const png = await encodePNG(rgba8, {
+  const pngInput = new Uint8Array(rgba8);
+  const png = await encodePNG(pngInput, {
     width,
     height,
     compression: 0,

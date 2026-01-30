@@ -20,6 +20,7 @@ interface InstanceField {
   tsType: string;
   attributeType: string;
   floatCount: number;
+  offset: number;
 }
 
 interface InstanceLayout {
@@ -83,6 +84,7 @@ function collectInstanceLayout(struct: StructInfo): InstanceLayout {
       tsType: meta.tsType,
       attributeType: meta.attributeType,
       floatCount: meta.floatCount,
+      offset,
     });
     offset += meta.floatCount;
   }
@@ -622,9 +624,9 @@ export function generateMaterialTypesSource(shaderCode: string, shaderBaseName: 
   if (instanceLayout) {
     for (const field of instanceLayout.fields) {
       vertexBuffersLines.push('      {');
-      vertexBuffersLines.push(`        arrayStride: ${field.floatCount * 4},`);
+      vertexBuffersLines.push(`        arrayStride: ${instanceLayout.totalFloats * 4},`);
       vertexBuffersLines.push(`        stepMode: 'instance',`);
-      vertexBuffersLines.push(`        attributes: [{ shaderLocation: ${location}, offset: 0, format: '${field.attributeType}' }],`);
+      vertexBuffersLines.push(`        attributes: [{ shaderLocation: ${location}, offset: ${field.offset * 4}, format: '${field.attributeType}' }],`);
       vertexBuffersLines.push('      },');
       attributeLines.push('');
       location += 1;
@@ -641,7 +643,7 @@ export function generateMaterialTypesSource(shaderCode: string, shaderBaseName: 
 
   const tsLines: string[] = [];
   tsLines.push(HEADER_COMMENT);
-  tsLines.push(`import type { MaterialDef, MaterialInstance } from '@avtools/power2d/raw';`);
+  tsLines.push(`import type { MaterialDef, MaterialInstance, BatchMaterialDef, InstanceAttrLayout } from '@avtools/power2d/raw';`);
   tsLines.push('');
   tsLines.push(`export const ${shaderPrefix}VertexSource = ${escapeTemplateLiteral(vertexSource)};`);
   tsLines.push(`export const ${shaderPrefix}FragmentSource = ${escapeTemplateLiteral(fragmentSource)};`);
@@ -653,6 +655,23 @@ export function generateMaterialTypesSource(shaderCode: string, shaderBaseName: 
   tsLines.push(`export type ${shaderPrefix}TextureName = ${textureNameUnion};`);
   tsLines.push(`export const ${shaderPrefix}TextureNames = ${textureNamesLiteral};`);
   tsLines.push('');
+  if (instanceLayout && instanceStruct) {
+    tsLines.push(`export interface ${instanceStruct.name} {`);
+    for (const field of instanceLayout.fields) {
+      tsLines.push(`  ${field.name}: ${field.tsType};`);
+    }
+    tsLines.push('}');
+    tsLines.push('');
+    tsLines.push(`export const ${shaderPrefix}InstanceAttrLayout: InstanceAttrLayout<${instanceStruct.name}> = {`);
+    tsLines.push(`  size: ${instanceLayout.totalFloats},`);
+    tsLines.push('  members: [');
+    for (const field of instanceLayout.fields) {
+      tsLines.push(`    { name: '${field.name}', offset: ${field.offset}, floatCount: ${field.floatCount} },`);
+    }
+    tsLines.push('  ],');
+    tsLines.push('};');
+    tsLines.push('');
+  }
 
   const layoutSize = uniformStruct.size;
   tsLines.push(`const ${uniformStruct.name}LayoutSize = ${layoutSize};`);
@@ -795,11 +814,18 @@ export function generateMaterialTypesSource(shaderCode: string, shaderBaseName: 
   tsLines.push('}');
   tsLines.push('');
 
-  tsLines.push(`export interface ${materialInterfaceName} extends MaterialDef<${uniformStruct.name}, ${shaderPrefix}TextureName> {}`);
+  if (instanceLayout && instanceStruct) {
+    tsLines.push(`export interface ${materialInterfaceName} extends BatchMaterialDef<${uniformStruct.name}, ${shaderPrefix}TextureName, ${instanceStruct.name}> {}`);
+  } else {
+    tsLines.push(`export interface ${materialInterfaceName} extends MaterialDef<${uniformStruct.name}, ${shaderPrefix}TextureName> {}`);
+  }
   tsLines.push(`export const ${materialConstName}: ${materialInterfaceName} = {`);
   tsLines.push(`  createMaterial: create${shaderPrefix}Material,`);
   tsLines.push(`  uniformDefaults: ${uniformStruct.name}Defaults,`);
   tsLines.push(`  textureNames: ${shaderPrefix}TextureNames,`);
+  if (instanceLayout && instanceStruct) {
+    tsLines.push(`  instanceAttrLayout: ${shaderPrefix}InstanceAttrLayout,`);
+  }
   tsLines.push('};');
   tsLines.push('');
   tsLines.push(`export default ${materialConstName};`);
