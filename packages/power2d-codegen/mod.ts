@@ -3,12 +3,22 @@ export {
   OUTPUT_SUFFIX as WGSL_MATERIAL_OUTPUT_SUFFIX,
   generateMaterialTypesSource,
 } from "./wgsl/generateMaterialTypesCore.ts";
+export {
+  RAW_SUFFIX as WGSL_MATERIAL_RAW_SUFFIX,
+  OUTPUT_SUFFIX as WGSL_MATERIAL_RAW_OUTPUT_SUFFIX,
+  generateMaterialTypesSource as generateMaterialTypesSource_RAW,
+} from "./wgsl/generateMaterialTypesCore_RAW.ts";
 
 export {
   RAW_SUFFIX as WGSL_STROKE_SUFFIX,
   OUTPUT_SUFFIX as WGSL_STROKE_OUTPUT_SUFFIX,
   generateStrokeMaterialTypesSource,
 } from "./wgsl/generateStrokeMaterialTypesCore.ts";
+export {
+  RAW_SUFFIX as WGSL_STROKE_RAW_SUFFIX,
+  OUTPUT_SUFFIX as WGSL_STROKE_RAW_OUTPUT_SUFFIX,
+  generateStrokeMaterialTypesSource as generateStrokeMaterialTypesSource_RAW,
+} from "./wgsl/generateStrokeMaterialTypesCore_RAW.ts";
 
 export {
   RAW_SUFFIX as WGSL_COMPUTE_SUFFIX,

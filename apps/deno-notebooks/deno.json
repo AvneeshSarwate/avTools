@@ -1,7 +1,9 @@
 {
   "tasks": {
     "dev": "deno run --watch main.ts",
-    "install": "deno cache --node-modules-dir=auto tools/osc.ts"
+    "install": "deno cache --node-modules-dir=auto tools/osc.ts",
+    "watch:power2d-raw": "deno run --allow-read --allow-write ../../tools/shader-watch/watch_power2d_raw.ts ./shaders ../../packages/power2d/generated-raw",
+    "watch:shaderfx-raw": "deno run --allow-read --allow-write ../../tools/shader-watch/watch_shaderfx_raw.ts ./shaders ../../packages/shader-fx/generated-raw"
   },
   "imports": {
     "@std/assert": "jsr:@std/assert@1",
@@ -14,14 +16,18 @@
     "@avtools/power2d": "../../packages/power2d/mod.ts",
     "@avtools/power2d/core": "../../packages/power2d/core/mod.ts",
     "@avtools/power2d/babylon": "../../packages/power2d/babylon/mod.ts",
+    "@avtools/power2d/raw": "../../packages/power2d/raw/mod.ts",
     "@avtools/codegen-common": "../../packages/codegen-common/mod.ts",
     "@avtools/power2d-codegen": "../../packages/power2d-codegen/mod.ts",
     "@avtools/shader-fx-codegen": "../../packages/shader-fx-codegen/mod.ts",
     "@avtools/power2d/generated/": "../../packages/power2d/generated/",
+    "@avtools/power2d/generated-raw/": "../../packages/power2d/generated-raw/",
     "@avtools/shader-fx": "../../packages/shader-fx/mod.ts",
     "@avtools/shader-fx/babylon": "../../packages/shader-fx/babylon/mod.ts",
     "@avtools/shader-fx/babylonGL": "../../packages/shader-fx/babylonGL/mod.ts",
     "@avtools/shader-fx/generated/": "../../packages/shader-fx/generated/",
+    "@avtools/shader-fx/raw": "../../packages/shader-fx/raw/mod.ts",
+    "@avtools/shader-fx/generated-raw/": "../../packages/shader-fx/generated-raw/",
     "@/": "./"
   }
 }
