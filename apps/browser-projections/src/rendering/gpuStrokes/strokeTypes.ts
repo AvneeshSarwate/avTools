@@ -1,6 +1,6 @@
 // Type definitions for stroke data
 
-import type { StrokeAnimationLaunchConfig } from './strokeAnimation.compute.wgsl.generated';
+import type { StrokeAnimationLaunchConfig } from '@avtools/compute-shader/generated/rendering/gpuStrokes/strokeAnimation.compute.wgsl.generated';
 
 export type StrokePoint = {
   x: number;

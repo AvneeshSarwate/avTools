@@ -16,7 +16,7 @@ import { BasicStrokeMaterial } from '@avtools/power2d/generated/sketches/power2d
 import { InstancedBasicMaterial } from '@avtools/power2d/generated/sketches/power2dTest/instancedBasic.material.wgsl.generated';
 import { WebcamPixelMaterial } from '@avtools/power2d/generated/sketches/power2dTest/webcamPixel.material.wgsl.generated';
 import { RunnerStrokeMaterial } from '@avtools/power2d/generated/sketches/power2dTest/runner.strokeMaterial.wgsl.generated';
-import * as gridCircleShader from './gridCircleInstances.compute.wgsl.generated';
+import * as gridCircleShader from '@avtools/compute-shader/generated/sketches/power2dTest/gridCircleInstances.compute.wgsl.generated';
 
 const TEST_CANVAS_SIZE = { width: 320, height: 200 }
 const QUAD_GRID_SIZE = 100

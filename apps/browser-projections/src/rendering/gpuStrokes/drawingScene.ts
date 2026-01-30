@@ -8,7 +8,7 @@ import { DRAWING_CONSTANTS } from './constants';
 import Stats from '@/rendering/stats';
 import type { LaunchConfig, StrokeColor } from './strokeTypes';
 import { getStrokeAnchor, getGroupAnchor, type AnchorKind } from './coordinateUtils';
-import * as strokeAnimation from './strokeAnimation.compute.wgsl.generated';
+import * as strokeAnimation from '@avtools/compute-shader/generated/rendering/gpuStrokes/strokeAnimation.compute.wgsl.generated';
 
 export interface RenderTargetOptions {
   width: number;

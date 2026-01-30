@@ -27,7 +27,7 @@ This system builds on patterns already established in the codebase. The followin
 - [edge.fragFunc.wgsl](../postFX/edge.fragFunc.wgsl) - Another fragment function example with texture sampling
 
 ### Generated Output Examples
-- [strokeAnimation.compute.wgsl.generated.ts](../gpuStrokes/strokeAnimation.compute.wgsl.generated.ts) - Shows generated TypeScript interfaces, pack functions, buffer helpers, and shader bindings
+- [strokeAnimation.compute.wgsl.generated.ts](../../../../../packages/compute-shader/generated/rendering/gpuStrokes/strokeAnimation.compute.wgsl.generated.ts) - Shows generated TypeScript interfaces, pack functions, buffer helpers, and shader bindings
 - [wobble.frag.generated.ts](../../../../../packages/shader-fx/generated/postFX/wobble.frag.generated.ts) - Shows generated material class with typed uniform setters
 
 ---
@@ -1663,7 +1663,7 @@ main();
 
 import { createPower2DScene, BatchedStyledShape, CirclePts } from '@/rendering/power2d';
 import { ParticleMaterial } from './particles.batchMaterial.wgsl.generated';
-import * as ParticleCompute from './particlePhysics.compute.wgsl.generated';
+import * as ParticleCompute from '@avtools/compute-shader/generated/rendering/power2d/particlePhysics.compute.wgsl.generated';
 
 async function main() {
   const canvas = document.getElementById('renderCanvas') as HTMLCanvasElement;

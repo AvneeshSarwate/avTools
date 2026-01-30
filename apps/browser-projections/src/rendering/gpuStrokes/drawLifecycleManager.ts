@@ -3,7 +3,7 @@ import { PriorityQueue } from '@avtools/core-timing';
 import type { LaunchConfig, AnimationControlMode, StrokeColor } from './strokeTypes';
 import { DRAWING_CONSTANTS } from './constants';
 import type { StrokeTextureManager } from './strokeTextureManager';
-import * as strokeAnimation from './strokeAnimation.compute.wgsl.generated';
+import * as strokeAnimation from '@avtools/compute-shader/generated/rendering/gpuStrokes/strokeAnimation.compute.wgsl.generated';
 
 export class DrawLifecycleManager {
   private priorityQueue: PriorityQueue<LaunchConfig>;
