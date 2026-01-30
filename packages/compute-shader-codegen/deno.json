@@ -1,0 +1,9 @@
+{
+  "name": "@avtools/compute-shader-codegen",
+  "version": "0.0.0",
+  "exports": "./mod.ts",
+  "imports": {
+    "wgsl_reflect": "npm:wgsl_reflect@^1.2.3",
+    "@avtools/codegen-common": "../codegen-common/mod.ts"
+  }
+}

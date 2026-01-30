@@ -9,8 +9,8 @@ import * as BABYLON from 'babylonjs'
 import type { FxChainMeta } from './appState'
 
 // Import generated shader helpers
-import * as compactionShader from './letterParticles.compute.wgsl.generated'
-import * as placementShader from './letterTargets.compute.wgsl.generated'
+import * as compactionShader from '@avtools/compute-shader/generated/sketches/mpe_projmap/letterParticles.compute.wgsl.generated'
+import * as placementShader from '@avtools/compute-shader/generated/sketches/mpe_projmap/letterTargets.compute.wgsl.generated'
 
 export type TargetLayout = 'ring' | 'spiral' | 'noise' | 'grid'
 

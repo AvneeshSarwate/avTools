@@ -2,7 +2,7 @@
 
 import * as BABYLON from 'babylonjs';
 
-import shaderSource from './letterTargets.compute.wgsl?raw';
+import shaderSource from '../../../../../apps/browser-projections/src/sketches/mpe_projmapGL/letterTargets.compute.wgsl?raw';
 
 export interface LetterTargetsParticle {
   uv: Float32Array | readonly number[];

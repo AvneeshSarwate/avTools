@@ -21,10 +21,13 @@ export {
 } from "./wgsl/generateStrokeMaterialTypesCore_RAW.ts";
 
 export {
-  RAW_SUFFIX as WGSL_COMPUTE_SUFFIX,
-  DEFAULT_COMPUTE_OUTPUT_SUFFIX as WGSL_COMPUTE_DEFAULT_SUFFIX,
+  WGSL_COMPUTE_SUFFIX,
+  WGSL_COMPUTE_DEFAULT_SUFFIX,
+  WGSL_COMPUTE_RAW_SUFFIX,
+  WGSL_COMPUTE_RAW_OUTPUT_SUFFIX,
   generateComputeShaderTypesSource,
-} from "./wgsl/generateComputeShaderTypesCore.ts";
+  generateComputeShaderTypesSource_RAW,
+} from "../compute-shader-codegen/mod.ts";
 
 export {
   RAW_SUFFIX as GLSL_MATERIAL_SUFFIX,

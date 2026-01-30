@@ -186,6 +186,11 @@
           "npm:node-osc@^9.1.0"
         ]
       },
+      "packages/compute-shader-codegen": {
+        "dependencies": [
+          "npm:wgsl_reflect@^1.2.3"
+        ]
+      },
       "packages/core-timing": {
         "dependencies": [
           "npm:seedrandom@^3.0.5"

@@ -2,7 +2,7 @@
 
 import * as BABYLON from 'babylonjs';
 
-import shaderSource from './gridCircleInstances.compute.wgsl?raw';
+import shaderSource from '../../../../../apps/browser-projections/src/sketches/power2dTest/gridCircleInstances.compute.wgsl?raw';
 
 export interface GridCircleInstancesGridCircleSettings {
   time: number;

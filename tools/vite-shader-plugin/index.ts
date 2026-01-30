@@ -25,7 +25,7 @@ import {
   DEFAULT_COMPUTE_OUTPUT_SUFFIX as WGSL_COMPUTE_DEFAULT_SUFFIX,
   RAW_SUFFIX as WGSL_COMPUTE_SUFFIX,
   generateComputeShaderTypesSource,
-} from '../../packages/power2d-codegen/wgsl/generateComputeShaderTypesCore.ts';
+} from '../../packages/compute-shader-codegen/wgsl/generateComputeShaderTypesCore.ts';
 
 import {
   RAW_SUFFIX as GLSL_MATERIAL_SUFFIX,
@@ -95,15 +95,36 @@ const GENERATORS: GeneratorDefinition[] = [
     inputSuffix: WGSL_COMPUTE_SUFFIX,
     logPrefix: 'wgsl-types',
     errorMessage: 'Failed to generate types for',
-    outputPath: (filePath, context) => `${filePath}${context.computeOutputExtension ?? WGSL_COMPUTE_DEFAULT_SUFFIX}`,
+    outputPath: (filePath, context) => {
+      const overrideDir = context.outputDirOverrides?.['wgsl-compute'];
+      if (!overrideDir) {
+        return `${filePath}${context.computeOutputExtension ?? WGSL_COMPUTE_DEFAULT_SUFFIX}`;
+      }
+      const relative = path.relative(context.srcDir, filePath);
+      return path.join(overrideDir, `${relative}${context.computeOutputExtension ?? WGSL_COMPUTE_DEFAULT_SUFFIX}`);
+    },
     successMessage: (relativePath) => `Updated ${relativePath}`,
-    transform: ({ filePath, shaderCode }) => {
+    transform: ({ filePath, shaderCode, context }) => {
       const shaderFileName = path.basename(filePath);
       const shaderStem = path.basename(filePath, path.extname(filePath));
+      let shaderSourceImport: string | undefined;
+      const overrideDir = context.outputDirOverrides?.['wgsl-compute'];
+      if (overrideDir) {
+        const outputPath = path.join(
+          overrideDir,
+          `${path.relative(context.srcDir, filePath)}${context.computeOutputExtension ?? WGSL_COMPUTE_DEFAULT_SUFFIX}`,
+        );
+        let relativeImport = path.relative(path.dirname(outputPath), filePath).replace(/\\/g, '/');
+        if (!relativeImport.startsWith('.')) {
+          relativeImport = `./${relativeImport}`;
+        }
+        shaderSourceImport = `${relativeImport}?raw`;
+      }
       return generateComputeShaderTypesSource({
         shaderCode,
         shaderFileName,
         shaderStem,
+        shaderSourceImport,
       }).typesSource;
     },
   },
