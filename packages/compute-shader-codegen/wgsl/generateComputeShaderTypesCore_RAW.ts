@@ -361,7 +361,10 @@ function generateStorageBlock(descriptor: StorageDescriptor, structDescriptor: S
   } else {
     createBody.push('  data.set(options.initial.flat().slice(0, totalFloats));');
   }
-  createBody.push('  device.queue.writeBuffer(buffer, 0, data);');
+  createBody.push('  const dataView = data.buffer instanceof ArrayBuffer');
+  createBody.push('    ? new Float32Array(data.buffer, data.byteOffset, data.length)');
+  createBody.push('    : new Float32Array(data);');
+  createBody.push('  device.queue.writeBuffer(buffer, 0, dataView);');
   createBody.push('}');
   createBody.push('return { device, buffer, data, capacity, floatsPerElement };');
 
@@ -394,7 +397,12 @@ function generateStorageBlock(descriptor: StorageDescriptor, structDescriptor: S
     '}',
     '',
     `export function ${updateFn}(state: ${stateName}): void {`,
-    indent(['state.device.queue.writeBuffer(state.buffer, 0, state.data);']),
+    indent([
+      'const dataView = state.data.buffer instanceof ArrayBuffer',
+      '  ? new Float32Array(state.data.buffer, state.data.byteOffset, state.data.length)',
+      '  : new Float32Array(state.data);',
+      'state.device.queue.writeBuffer(state.buffer, 0, dataView);',
+    ]),
     '}',
   ].join('\n');
 }
