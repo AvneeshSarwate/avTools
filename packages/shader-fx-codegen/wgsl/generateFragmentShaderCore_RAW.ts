@@ -1258,7 +1258,7 @@ export function generateFragmentShaderArtifactsSource(
 
   const effectLines: string[] = [];
   effectLines.push(`export class ${effectClassName} extends CustomShaderEffect<${uniformInterfaceName}, ${inputsTypeName}> {`);
-  effectLines.push(`  effectName = '${shaderPrefix}';`);
+  effectLines.push(`  override effectName = '${shaderPrefix}';`);
   effectLines.push('');
   effectLines.push(`  constructor(device: GPUDevice, inputs: ${inputsTypeName}, width = 1280, height = 720, format: GPUTextureFormat = 'rgba16float', clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 }) {`);
   effectLines.push('    super(device, inputs, {');

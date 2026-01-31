@@ -4,6 +4,7 @@ import { requestWebGpuDevice, writeTextureToPng } from './raw-webgpu-helpers.ts'
 import { createPower2DScene, selectPower2DFormat, BatchedStyledShape } from '@avtools/power2d/raw';
 import { InstancedSolidMaterial } from '@avtools/power2d/generated-raw/shaders/instancedSolid.material.raw.generated.ts';
 import * as instancedSquaresCompute from '@avtools/compute-shader/generated-raw/shaders/instancedSquares.raw.generated.ts';
+import { BloomEffect } from '@avtools/shader-fx/generated-raw/shaders/bloom.frag.raw.generated.ts';
 
 const width = 256;
 const height = 256;
@@ -56,6 +57,10 @@ function closeEnough(actual: number[], expected: number[]): boolean {
   return actual.every((value, idx) => Math.abs(value - expected[idx]) <= epsilon);
 }
 
+function maxRgb(sample: [number, number, number, number]): number {
+  return Math.max(sample[0], sample[1], sample[2]);
+}
+
 function reportSamples(label: string, pixels: Float32Array): void {
   console.log(`Float readback check (${label}):`);
   const outsideSample = sampleFloat(pixels, 10, 10);
@@ -66,6 +71,21 @@ function reportSamples(label: string, pixels: Float32Array): void {
     const ok = closeEnough(sample, insideExpected);
     console.log(`  inside @ ${Math.round(x)},${Math.round(y)} =`, sample, 'expected', insideExpected, ok ? 'OK' : 'FAIL');
   }
+}
+
+function reportBloomSamples(label: string, pixels: Float32Array, centerX: number, centerY: number, haloOffset: number): void {
+  console.log(`Bloom readback check (${label}):`);
+  const inside = sampleFloat(pixels, centerX, centerY);
+  const halo = sampleFloat(pixels, centerX + haloOffset, centerY);
+  const outside = sampleFloat(pixels, 10, 10);
+
+  const insideOk = maxRgb(inside) > 0.6;
+  const haloOk = maxRgb(halo) > 0.02;
+  const outsideOk = maxRgb(outside) < 0.05;
+
+  console.log(`  center @ ${centerX},${centerY} =`, inside, insideOk ? 'OK' : 'FAIL');
+  console.log(`  halo @ ${centerX + haloOffset},${centerY} =`, halo, haloOk ? 'OK' : 'FAIL');
+  console.log(`  far @ 10,10 =`, outside, outsideOk ? 'OK' : 'FAIL');
 }
 
 async function renderCpuInstances(): Promise<Float32Array> {
@@ -181,6 +201,72 @@ async function renderComputeInstances(): Promise<Float32Array> {
   return writeTextureToPng(device, scene.outputTexture, width, height, format, '.output/raw-webgpu-batched-compute.png');
 }
 
+async function renderBloomPingPong(): Promise<Float32Array> {
+  const bloomClear: GPUColor = { r: 0, g: 0, b: 0, a: 1 };
+  const scene = createPower2DScene({
+    device,
+    width,
+    height,
+    format,
+    clearColor: bloomClear,
+  });
+
+  const centerX = Math.round(width / 2);
+  const centerY = Math.round(height / 2);
+  const bloomSquareSize = 32;
+
+  const batch = new BatchedStyledShape({
+    scene,
+    points: squarePoints,
+    material: InstancedSolidMaterial,
+    instanceCount: 1,
+    canvasWidth: width,
+    canvasHeight: height,
+  });
+  batch.setUniforms({ color: [1, 1, 1, 1] });
+  batch.writeInstanceAttr(0, {
+    offset: [centerX, centerY],
+    scale: bloomSquareSize,
+    rotation: 0,
+  });
+  batch.beforeRender();
+
+  console.log('Bloom: rendering input square...');
+  scene.render();
+
+  const bloomEffect = new BloomEffect(device, { src: scene.outputTexture }, width, height, format, bloomClear);
+  bloomEffect.setUniforms({
+    preBlackLevel: 0.0,
+    preGamma: 1.0,
+    preBrightness: 3.0,
+    minBloomRadius: 0.2,
+    maxBloomRadius: 0.7,
+    bloomThreshold: 0.0,
+    bloomSCurve: 0.4,
+    bloomFill: 0.8,
+    bloomIntensity: 1.6,
+    outputMode: 0,
+    inputImage: 1.0,
+  });
+
+  console.log('Bloom: rendering multipass effect...');
+  bloomEffect.render();
+
+  console.log('Bloom: reading back...');
+  const pixels = await writeTextureToPng(
+    device,
+    bloomEffect.outputTexture,
+    width,
+    height,
+    format,
+    '.output/raw-webgpu-bloom-pingpong.png',
+  );
+
+  const haloOffset = Math.round(bloomSquareSize * 0.9);
+  reportBloomSamples('Bloom', pixels, centerX, centerY, haloOffset);
+  return pixels;
+}
+
 const cpuPixels = await renderCpuInstances();
 reportSamples('CPU', cpuPixels);
 console.log('Wrote .output/raw-webgpu-batched-cpu.png');
@@ -188,3 +274,6 @@ console.log('Wrote .output/raw-webgpu-batched-cpu.png');
 const computePixels = await renderComputeInstances();
 reportSamples('Compute', computePixels);
 console.log('Wrote .output/raw-webgpu-batched-compute.png');
+
+await renderBloomPingPong();
+console.log('Wrote .output/raw-webgpu-bloom-pingpong.png');

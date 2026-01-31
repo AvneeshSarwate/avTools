@@ -212,10 +212,11 @@ export type ShaderMaterialFactory<U, TName extends string = string> = (
 
 export interface CustomShaderEffectOptions<U, I extends ShaderInputShape<I> = ShaderInputs> {
   factory: ShaderMaterialFactory<U, string>;
-  textureInputKeys: Array<TextureInputKey<I>>;
-  textureBindingKeys?: string[];
+  textureInputKeys: readonly TextureInputKey<I>[];
+  textureBindingKeys?: readonly string[];
   passTextureSources?: readonly (readonly PassTextureSourceSpec<I>[])[];
   passCount?: number;
+  pingPong?: boolean;
   primaryTextureKey?: keyof I & string;
   width?: number;
   height?: number;
@@ -239,6 +240,7 @@ export class CustomShaderEffect<U extends object, I extends ShaderInputShape<I> 
   protected readonly passViews: Array<GPUTextureView | null>;
   protected readonly clearColor: GPUColor;
   public readonly uniformMeta: UniformDescriptor[];
+  protected readonly pingPong: boolean;
 
   constructor(device: GPUDevice, inputs: I, options: CustomShaderEffectOptions<U, I>) {
     super();
@@ -278,8 +280,22 @@ export class CustomShaderEffect<U extends object, I extends ShaderInputShape<I> 
     }
 
     this.passTextureSources = this.initializePassTextureSources(options.passTextureSources, passCount);
-    this.passTextures = new Array(Math.max(0, passCount - 1)).fill(null);
-    this.passViews = new Array(Math.max(0, passCount - 1)).fill(null);
+    const requestedPingPong = options.pingPong ?? (passCount > 1);
+    let pingPong = requestedPingPong && passCount > 1;
+    if (pingPong) {
+      const invalid = this.passTextureSources.some((bindings, passIndex) =>
+        bindings.some((binding) => binding.kind === 'pass' && binding.passIndex !== passIndex - 1)
+      );
+      if (invalid) {
+        console.warn('ShaderFX ping-pong disabled: passTextureSources reference non-previous passes.');
+        pingPong = false;
+      }
+    }
+    this.pingPong = pingPong;
+
+    const intermediateCount = passCount > 1 ? (this.pingPong ? 2 : passCount - 1) : 0;
+    this.passTextures = new Array(intermediateCount).fill(null);
+    this.passViews = new Array(intermediateCount).fill(null);
 
     this.uniformMeta = options.uniformMeta ? [...options.uniformMeta] : [];
 
@@ -369,7 +385,8 @@ export class CustomShaderEffect<U extends object, I extends ShaderInputShape<I> 
   }
 
   protected ensurePassTexture(passIndex: number): GPUTextureView {
-    const existing = this.passViews[passIndex];
+    const slot = this.pingPong ? passIndex % 2 : passIndex;
+    const existing = this.passViews[slot];
     if (existing) {
       return existing;
     }
@@ -379,8 +396,8 @@ export class CustomShaderEffect<U extends object, I extends ShaderInputShape<I> 
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
     });
     const view = texture.createView();
-    this.passTextures[passIndex] = texture;
-    this.passViews[passIndex] = view;
+    this.passTextures[slot] = texture;
+    this.passViews[slot] = view;
     return view;
   }
 
