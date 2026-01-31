@@ -83,27 +83,24 @@ deno task install
 
 This downloads and caches packages like `node-osc` and other dependencies.
 
-## 2) Install the Deno Jupyter kernel
+## 2) Install the avtools Deno Jupyter kernel (required for WebGPU windowing)
 
-You must run this at least once so Jupyter/VSC can see the Deno kernel.
+You must run this at least once so Jupyter/VS Code can see the **avtools Deno kernel**.
+We use a **custom kernelspec** because Deno’s built-in `deno jupyter --install` does **not**
+include the `--unstable-webgpu` flag. Without that flag, `Deno.UnsafeWindowSurface` is
+missing, so windowed WebGPU examples fail (headless WebGPU still works).
 
-Activate the venv so the `jupyter` command is available on `PATH`, then install:
-
-**macOS/Linux**
+From the repo root:
 
 ```bash
-source .venv/bin/activate
-deno jupyter --install
+bash apps/deno-notebooks/scripts/install_avtools_kernel.sh
 ```
 
-**Windows (PowerShell)**
+This installs a kernel named **“Deno (avtools unstable)”** that starts with
+`deno jupyter --unstable-webgpu ...`.
 
-```powershell
-.\.venv\Scripts\Activate.ps1
-deno jupyter --install
-```
-
-> Note: As of current Deno behavior, the Deno Jupyter kernel executes with broad permissions (often `--allow-all`). Treat notebooks as fully trusted code.
+> Note: As of current Deno behavior, the Deno Jupyter kernel executes with broad permissions
+> (often `--allow-all`). Treat notebooks as fully trusted code.
 
 ## 3) Initialize Deno workspace settings in VS Code (recommended)
 
@@ -142,9 +139,13 @@ This ensures VS Code’s Jupyter integration uses the right environment (the one
 ## C) Open your notebook and select the kernel (Deno)
 
 * Open/create a `.ipynb`
-* In the notebook kernel picker (top right), select **Deno**
+* In the notebook kernel picker (top right), select **Deno (avtools unstable)**
 
-If you don’t see “Deno”, re-run the one-time step: `deno jupyter --install` (with the venv activated so `jupyter` is on PATH).
+If you don’t see **Deno (avtools unstable)**, re-run:
+
+```bash
+bash apps/deno-notebooks/scripts/install_avtools_kernel.sh
+```
 
 ## D) Edit + run cells
 
@@ -177,12 +178,13 @@ import { foo } from "./src/foo.ts";
 
 * In the notebook kernel picker, explicitly choose **Deno**
 
-### “Deno” kernel isn’t available
+### “Deno (avtools unstable)” kernel isn’t available
 
 * Re-run:
 
-  * Activate venv
-  * `deno jupyter --install`
+```bash
+bash apps/deno-notebooks/scripts/install_avtools_kernel.sh
+```
 
 ### Imports don’t resolve
 
@@ -199,9 +201,8 @@ Run the dev task:
 deno task dev
 ```
 
-Re-install the Deno kernel (if needed):
+Re-install the avtools kernel (if needed):
 
 ```bash
-source .venv/bin/activate   # or Windows activate
-deno jupyter --install
+bash apps/deno-notebooks/scripts/install_avtools_kernel.sh
 ```
