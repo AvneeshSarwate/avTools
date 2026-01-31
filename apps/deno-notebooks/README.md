@@ -67,6 +67,14 @@ From the repo root:
 
 This builds the native library into `./native/midi_bridge/target/release/` for Deno FFI to load.
 
+> **Ableton Live + IAC Driver note:** The `midir` Rust crate sends CoreMIDI packets with a
+> timestamp of `0` by default. Ableton Live doesn't route zero-timestamped MIDI to tracks
+> (the MIDI indicator flashes but no sound plays). The `Cargo.toml` enables the
+> `coremidi_send_timestamped` feature flag on `midir` to fix this. If you see MIDI activity
+> in Ableton but hear nothing, make sure the library was built with this feature enabled.
+> Other DAWs (Bitwig, Reaper) and MIDI Monitor are unaffected.
+> See [midir#94](https://github.com/Boddlnagg/midir/issues/94) for details.
+
 ## 1d) Cache Deno dependencies
 
 Install/cache all Deno dependencies (including npm packages) from `deno.json`:
