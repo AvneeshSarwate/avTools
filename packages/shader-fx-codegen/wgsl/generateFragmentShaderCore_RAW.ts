@@ -581,9 +581,9 @@ function buildVertexSource(varyingName: string): string {
   lines.push('    vec2f(-1.0, 3.0),');
   lines.push('  );');
   lines.push('  var uvs = array<vec2f, 3>(');
-  lines.push('    vec2f(0.0, 0.0),');
-  lines.push('    vec2f(2.0, 0.0),');
-  lines.push('    vec2f(0.0, 2.0),');
+  lines.push('    vec2f(0.0, 1.0),');
+  lines.push('    vec2f(2.0, 1.0),');
+  lines.push('    vec2f(0.0, -1.0),');
   lines.push('  );');
   lines.push('  var out: VertexOutput;');
   lines.push('  out.position = vec4f(positions[index], 0.0, 1.0);');
