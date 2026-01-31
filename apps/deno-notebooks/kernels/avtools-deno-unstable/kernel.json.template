@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "__DENO_PATH__",
+    "jupyter",
+    "--unstable-webgpu",
+    "--kernel",
+    "--conn",
+    "{connection_file}"
+  ],
+  "display_name": "Deno (avtools unstable)",
+  "language": "typescript"
+}

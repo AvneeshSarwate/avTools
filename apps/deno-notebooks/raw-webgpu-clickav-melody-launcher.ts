@@ -13,6 +13,9 @@ import { MidiAccess } from "./midi/mod.ts";
 import { requestWebGpuDevice } from "./raw-webgpu-helpers.ts";
 import { blit, createBlitPipeline, createGpuWindow } from "./window/mod.ts";
 
+// Toggle for Deno notebook usage (non-blocking) vs standalone script.
+const NOTEBOOK_MODE = false;
+
 // ---------------------------------------------------------------------------
 // Inline helpers copied from channels.ts (xyZip, EventChop, cos, sin)
 // ---------------------------------------------------------------------------
@@ -339,10 +342,19 @@ const loop = async () => {
   win.close();
 };
 
-try {
-  await loop();
-} finally {
-  runner.ctx.cancel();
-  midiOutput.close();
-  midi.close();
+let loopTask: Promise<void> | undefined;
+if (NOTEBOOK_MODE) {
+  loopTask = loop();
+  (globalThis as { stopClickAv?: () => Promise<void> | undefined }).stopClickAv = () => {
+    running = false;
+    return loopTask;
+  };
+} else {
+  try {
+    await loop();
+  } finally {
+    runner.ctx.cancel();
+    midiOutput.close();
+    midi.close();
+  }
 }

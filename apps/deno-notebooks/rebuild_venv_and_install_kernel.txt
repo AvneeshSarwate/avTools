@@ -1,0 +1,5 @@
+# Run from repo root (avTools)
+(cd apps/deno-notebooks && rm -rf .venv && uv venv --seed && uv pip install jupyterlab)
+
+# Then install the avtools kernel
+bash apps/deno-notebooks/scripts/install_avtools_kernel.sh

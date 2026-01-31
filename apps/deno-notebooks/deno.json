@@ -1,4 +1,7 @@
 {
+  "unstable": [
+    "webgpu"
+  ],
   "tasks": {
     "dev": "deno run --watch main.ts",
     "install": "deno cache --node-modules-dir=auto tools/osc.ts",
