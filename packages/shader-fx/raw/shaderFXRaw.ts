@@ -19,6 +19,43 @@ export type ShaderInputs = Record<string, ShaderSource>;
 export type Dynamic<T> = T | (() => T);
 export type ShaderUniforms = Record<string, Dynamic<unknown>>;
 
+const PASSTHRU_VERTEX_SOURCE = `struct VertexOutput {
+  @builtin(position) position: vec4f,
+  @location(0) vUV: vec2f,
+};
+
+@vertex
+fn main(@builtin(vertex_index) index: u32) -> VertexOutput {
+  var positions = array<vec2f, 3>(
+    vec2f(-1.0, -1.0),
+    vec2f(3.0, -1.0),
+    vec2f(-1.0, 3.0),
+  );
+  var uvs = array<vec2f, 3>(
+    vec2f(0.0, 0.0),
+    vec2f(2.0, 0.0),
+    vec2f(0.0, 2.0),
+  );
+  var out: VertexOutput;
+  out.position = vec4f(positions[index], 0.0, 1.0);
+  out.vUV = uvs[index];
+  return out;
+}
+`;
+
+const PASSTHRU_FRAGMENT_SOURCE = `@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var srcSampler: sampler;
+
+struct FragmentInput {
+  @location(0) vUV: vec2f,
+};
+
+@fragment
+fn main(input: FragmentInput) -> @location(0) vec4f {
+  return textureSample(src, srcSampler, input.vUV);
+}
+`;
+
 async function supportsFormat(device: GPUDevice, format: GPUTextureFormat): Promise<boolean> {
   device.pushErrorScope('validation');
   let texture: GPUTexture | null = null;
@@ -475,5 +512,175 @@ export class CustomShaderEffect<U extends object, I extends ShaderInputShape<I> 
     for (const texture of this.passTextures) {
       texture?.destroy();
     }
+  }
+}
+
+export type PassthruUniforms = Record<string, never>;
+export type PassthruTextureName = 'src';
+
+export interface PassthruInputs {
+  src: ShaderSource;
+}
+
+export interface PassthruMaterialHandles extends MaterialHandles<PassthruUniforms, PassthruTextureName> {}
+
+export interface PassthruMaterialOptions {
+  name?: string;
+  sampleMode?: 'nearest' | 'linear';
+}
+
+export function createPassthruMaterial(
+  device: GPUDevice,
+  format: GPUTextureFormat,
+  options: PassthruMaterialOptions = {},
+): PassthruMaterialHandles {
+  const name = options.name ?? 'PassthruMaterial';
+  const sampleMode = options.sampleMode ?? 'linear';
+
+  const bindGroupLayout = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+      { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+    ],
+  });
+  const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
+
+  const vertexModule = device.createShaderModule({ label: `${name}Vertex`, code: PASSTHRU_VERTEX_SOURCE });
+  const fragmentModule = device.createShaderModule({ label: `${name}Fragment`, code: PASSTHRU_FRAGMENT_SOURCE });
+
+  const pipeline = device.createRenderPipeline({
+    layout: pipelineLayout,
+    vertex: { module: vertexModule, entryPoint: 'main' },
+    fragment: { module: fragmentModule, entryPoint: 'main', targets: [{ format }] },
+    primitive: { topology: 'triangle-list', cullMode: 'none' },
+  });
+
+  const sampler = device.createSampler({
+    magFilter: sampleMode,
+    minFilter: sampleMode,
+  });
+
+  const placeholder = device.createTexture({
+    size: { width: 1, height: 1 },
+    format,
+    usage: GPUTextureUsage.TEXTURE_BINDING,
+  });
+  let textureView = placeholder.createView();
+
+  let bindGroup = device.createBindGroup({
+    layout: bindGroupLayout,
+    entries: [
+      { binding: 0, resource: textureView },
+      { binding: 1, resource: sampler },
+    ],
+  });
+
+  const rebuildBindGroup = () => {
+    bindGroup = device.createBindGroup({
+      layout: bindGroupLayout,
+      entries: [
+        { binding: 0, resource: textureView },
+        { binding: 1, resource: sampler },
+      ],
+    });
+  };
+
+  const handles: PassthruMaterialHandles = {
+    pipeline,
+    get bindGroup() { return bindGroup; },
+    setTexture: (_name, texture) => {
+      textureView = texture;
+      rebuildBindGroup();
+    },
+    setUniforms: () => {},
+  };
+
+  return handles;
+}
+
+export class PassthruEffect extends CustomShaderEffect<PassthruUniforms, PassthruInputs> {
+  override effectName = 'Passthru';
+
+  constructor(
+    device: GPUDevice,
+    inputs: PassthruInputs,
+    width = 1280,
+    height = 720,
+    format: GPUTextureFormat = 'rgba16float',
+    clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 },
+    sampleMode: 'nearest' | 'linear' = 'linear',
+  ) {
+    super(device, inputs, {
+      factory: (deviceRef, formatRef, options) =>
+        createPassthruMaterial(deviceRef, formatRef, { name: options?.name, sampleMode }),
+      textureInputKeys: ['src'],
+      textureBindingKeys: ['src'],
+      passCount: 1,
+      primaryTextureKey: 'src',
+      width,
+      height,
+      format,
+      clearColor,
+    });
+  }
+}
+
+interface FeedbackInputs extends ShaderInputs {
+  initialState: ShaderEffect;
+}
+
+export class FeedbackNode extends ShaderEffect<FeedbackInputs> {
+  output: GPUTextureView;
+  private readonly passthrough: PassthruEffect;
+  private firstRender = true;
+  private feedbackSrc?: ShaderEffect;
+  override effectName = 'FeedbackNode';
+
+  constructor(
+    device: GPUDevice,
+    startState: ShaderEffect,
+    width = startState.width,
+    height = startState.height,
+    format: GPUTextureFormat = 'rgba16float',
+    clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 },
+    sampleMode: 'nearest' | 'linear' = 'linear',
+  ) {
+    super();
+    this.width = width;
+    this.height = height;
+    this.inputs = { initialState: startState };
+    this.passthrough = new PassthruEffect(device, { src: startState.output }, width, height, format, clearColor, sampleMode);
+    this.output = this.passthrough.output;
+  }
+
+  setFeedbackSrc(effect: ShaderEffect): void {
+    this.feedbackSrc = effect;
+  }
+
+  setSrcs(inputs: Partial<FeedbackInputs>): void {
+    if (!inputs.initialState) {
+      return;
+    }
+    this.inputs = { initialState: inputs.initialState };
+    this.passthrough.setSrcs({ src: inputs.initialState.output });
+    this.firstRender = true;
+  }
+
+  setUniforms(_uniforms: ShaderUniforms): void {}
+
+  updateUniforms(): void {}
+
+  render(): void {
+    this.passthrough.render();
+    if (this.firstRender) {
+      this.firstRender = false;
+      if (this.feedbackSrc) {
+        this.passthrough.setSrcs({ src: this.feedbackSrc.output });
+      }
+    }
+  }
+
+  dispose(): void {
+    this.passthrough.dispose();
   }
 }

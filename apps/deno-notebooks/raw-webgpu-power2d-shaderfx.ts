@@ -5,6 +5,8 @@ import { createPower2DScene, selectPower2DFormat, BatchedStyledShape } from '@av
 import { InstancedSolidMaterial } from '@avtools/power2d/generated-raw/shaders/instancedSolid.material.raw.generated.ts';
 import * as instancedSquaresCompute from '@avtools/compute-shader/generated-raw/shaders/instancedSquares.raw.generated.ts';
 import { BloomEffect } from '@avtools/shader-fx/generated-raw/shaders/bloom.frag.raw.generated.ts';
+import { FeedbackCompositeEffect } from '@avtools/shader-fx/generated-raw/shaders/feedbackComposite.frag.raw.generated.ts';
+import { FeedbackNode, PassthruEffect } from '@avtools/shader-fx/raw';
 
 const width = 256;
 const height = 256;
@@ -115,8 +117,6 @@ async function renderCpuInstances(): Promise<Float32Array> {
       rotation: 0,
     });
   });
-  batch.beforeRender();
-
   console.log('CPU: rendering...');
   scene.render();
   console.log('Rendered CPU-instanced batched shape');
@@ -229,8 +229,6 @@ async function renderBloomPingPong(): Promise<Float32Array> {
     scale: bloomSquareSize,
     rotation: 0,
   });
-  batch.beforeRender();
-
   console.log('Bloom: rendering input square...');
   scene.render();
 
@@ -277,3 +275,75 @@ console.log('Wrote .output/raw-webgpu-batched-compute.png');
 
 await renderBloomPingPong();
 console.log('Wrote .output/raw-webgpu-bloom-pingpong.png');
+
+async function renderFeedbackTrail(): Promise<Float32Array> {
+  const feedbackClear: GPUColor = { r: 0, g: 0, b: 0, a: 1 };
+  const scene = createPower2DScene({
+    device,
+    width,
+    height,
+    format,
+    clearColor: feedbackClear,
+  });
+
+  const centerX = Math.round(width / 2);
+  const centerY = Math.round(height / 2);
+  const squareSize = 24;
+
+  const batch = new BatchedStyledShape({
+    scene,
+    points: squarePoints,
+    material: InstancedSolidMaterial,
+    instanceCount: 1,
+    canvasWidth: width,
+    canvasHeight: height,
+  });
+  batch.setUniforms({ color: [1, 1, 1, 1] });
+  batch.writeInstanceAttr(0, {
+    offset: [centerX, centerY],
+    scale: squareSize,
+    rotation: 0,
+  });
+  const passthru = new PassthruEffect(device, { src: scene.outputTexture }, width, height, format, feedbackClear, 'linear');
+  const feedback = new FeedbackNode(device, passthru, width, height, format, feedbackClear, 'linear');
+  const composite = new FeedbackCompositeEffect(device, { src: passthru, feedback }, width, height, format, feedbackClear);
+  feedback.setFeedbackSrc(composite);
+
+  const dxPixels = 12;
+  composite.setUniforms({
+    translate: [dxPixels / width, 0],
+    decay: 0.8,
+  });
+
+  const frames = 3;
+  for (let frame = 0; frame < frames; frame += 1) {
+    console.log(`Feedback: rendering frame ${frame + 1}/${frames}...`);
+    scene.render();
+    composite.renderAll();
+  }
+
+  console.log('Feedback: reading back...');
+  const pixels = await writeTextureToPng(
+    device,
+    composite.outputTexture,
+    width,
+    height,
+    format,
+    '.output/raw-webgpu-feedback.png',
+  );
+
+  const trailX = centerX + dxPixels;
+  const centerSample = sampleFloat(pixels, centerX, centerY);
+  const trailSample = sampleFloat(pixels, trailX, centerY);
+  const farSample = sampleFloat(pixels, 10, 10);
+
+  console.log('Feedback readback check:');
+  console.log(`  center @ ${centerX},${centerY} =`, centerSample, maxRgb(centerSample) > 0.6 ? 'OK' : 'FAIL');
+  console.log(`  trail @ ${trailX},${centerY} =`, trailSample, maxRgb(trailSample) > 0.05 ? 'OK' : 'FAIL');
+  console.log(`  far @ 10,10 =`, farSample, maxRgb(farSample) < 0.05 ? 'OK' : 'FAIL');
+
+  return pixels;
+}
+
+await renderFeedbackTrail();
+console.log('Wrote .output/raw-webgpu-feedback.png');

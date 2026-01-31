@@ -49,6 +49,7 @@ export type BatchInstanceAttrs<M> = M extends { instanceAttrLayout: InstanceAttr
 
 export interface Power2DRenderable {
   alphaIndex: number;
+  beforeRender?: () => void;
   render(pass: GPURenderPassEncoder): void;
 }
 

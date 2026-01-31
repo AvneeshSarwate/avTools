@@ -82,6 +82,10 @@ export function createPower2DScene(options: Power2DSceneOptions): Power2DScene {
     },
     render(): GPUTextureView {
       const encoder = device.createCommandEncoder();
+      const ordered = Array.from(shapes).sort((a, b) => a.alphaIndex - b.alphaIndex);
+      for (const shape of ordered) {
+        shape.beforeRender?.();
+      }
       const pass = encoder.beginRenderPass({
         colorAttachments: [
           {
@@ -93,7 +97,6 @@ export function createPower2DScene(options: Power2DSceneOptions): Power2DScene {
         ],
       });
 
-      const ordered = Array.from(shapes).sort((a, b) => a.alphaIndex - b.alphaIndex);
       for (const shape of ordered) {
         shape.render(pass);
       }
