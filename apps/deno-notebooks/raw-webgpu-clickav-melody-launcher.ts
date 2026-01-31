@@ -1,6 +1,5 @@
-/// <reference lib="dom" />
-
 import { OfflineRunner } from "@avtools/core-timing";
+import { Scale } from "@avtools/music-types";
 import { CirclePts } from "@avtools/power2d/core";
 import { FlatColorMaterial } from "@avtools/power2d/generated-raw/shaders/flatColor.material.raw.generated.ts";
 import { createPower2DScene, selectPower2DFormat, StyledShape } from "@avtools/power2d/raw";
@@ -10,6 +9,7 @@ import { HorizontalBlurEffect } from "@avtools/shader-fx/generated-raw/shaders/h
 import { LayerBlendEffect } from "@avtools/shader-fx/generated-raw/shaders/layerBlend.frag.raw.generated.ts";
 import { TransformEffect } from "@avtools/shader-fx/generated-raw/shaders/transform.frag.raw.generated.ts";
 import { VerticalBlurEffect } from "@avtools/shader-fx/generated-raw/shaders/verticalBlur.frag.raw.generated.ts";
+import { MidiAccess } from "./midi/mod.ts";
 import { requestWebGpuDevice } from "./raw-webgpu-helpers.ts";
 import { blit, createBlitPipeline, createGpuWindow } from "./window/mod.ts";
 
@@ -68,11 +68,52 @@ const xyZip = (
   return out;
 };
 
+type ClipNote = {
+  position: number;
+  pitch: number;
+  duration: number;
+  velocity: number;
+};
+
+const listToClip = (pitches: number[], stepTime = 0.5, dur = 0.5, vel = 0.5): ClipNote[] => {
+  return pitches.map((pitch, i) => ({
+    pitch,
+    velocity: vel,
+    duration: dur,
+    position: i * stepTime,
+  }));
+};
+
+const clipToDeltas = (clip: ClipNote[], totalTime?: number): number[] => {
+  const deltas: number[] = [];
+  clip.forEach((note, i) => {
+    const delta = i === 0 ? note.position : note.position - clip[i - 1].position;
+    deltas.push(delta);
+  });
+  if (totalTime !== undefined && clip.length > 0) {
+    const lastNote = clip[clip.length - 1];
+    deltas.push(totalTime - lastNote.position);
+  }
+  return deltas;
+};
+
+const toMidiVelocity = (velocity: number): number => {
+  if (!Number.isFinite(velocity)) return 64;
+  const scaled = velocity <= 1 ? velocity * 127 : velocity;
+  return Math.max(0, Math.min(127, Math.round(scaled)));
+};
+
+const clampMidiNote = (note: number): number => {
+  if (!Number.isFinite(note)) return 0;
+  return Math.max(0, Math.min(127, Math.round(note)));
+};
+
 const baseSeq = [1, 3, 5, 6, 8, 10, 12];
 const baseDur = 0.125 / 2;
 const circle0 = xyZip(0, cos, sin, baseSeq.length);
 const orbitRadius = 50;
 const circleBasePoints = CirclePts({ cx: 0, cy: 0, radius: 1, segments: 32 });
+const scale = new Scale(undefined, 24);
 
 type CircleEvent = {
   r: number;
@@ -84,6 +125,20 @@ type CircleEvent = {
 
 const device = await requestWebGpuDevice();
 const format = await selectPower2DFormat(device, ["rgba16float", "rgba32float", "rgba8unorm"]);
+
+const midi = MidiAccess.open();
+const midiOutputs = midi.listOutputs();
+if (midiOutputs.length === 0) {
+  throw new Error("No MIDI outputs available. Check your MIDI bridge setup.");
+}
+const MIDI_OUTPUT_NAME = "IAC Driver Bus 1";
+const midiOutputInfo = midiOutputs.find((port) => port.name.includes(MIDI_OUTPUT_NAME));
+if (!midiOutputInfo) {
+  const available = midiOutputs.map((port) => port.name).join(", ");
+  throw new Error(`MIDI output not found: ${MIDI_OUTPUT_NAME}. Available outputs: ${available}`);
+}
+console.log("Using MIDI output:", midiOutputInfo.name);
+const midiOutput = midi.openOutput(midiOutputInfo.id);
 
 const win = await createGpuWindow(device, { width: 900, height: 700, title: "clickav melody launcher (raw)" });
 const blitPipeline = createBlitPipeline(device, win.format);
@@ -188,15 +243,20 @@ const updateShapes = (timeSec: number) => {
 };
 
 const launchClickLoop = (x: number, y: number, normX: number, normY: number) => {
+  const transposition = Math.floor((1 - normY) * 36);
+  const seq = baseSeq.map((value) => value + transposition);
   const evtDur = baseDur * Math.pow(2, (1 - normX) * 4);
-  const durs = baseSeq.map(() => baseDur);
+  const pitches = scale.getMultiple(seq);
+  const mel = listToClip(pitches, evtDur);
+  const durs = clipToDeltas(mel);
   const evtChop = new EventChop<CircleEvent>();
   eventChops.push(evtChop);
 
   runner.ctx.branch(async (ctx) => {
     while (true) {
-      for (let i = 0; i < baseSeq.length; i += 1) {
-        await ctx.waitSec(durs[i]);
+      for (let i = 0; i < mel.length; i += 1) {
+        const delta = durs[i] ?? 0;
+        await ctx.waitSec(delta);
         const orbit = circle0[i];
         const posX = orbit.x * orbitRadius + x;
         const posY = orbit.y * orbitRadius + y;
@@ -207,6 +267,15 @@ const launchClickLoop = (x: number, y: number, normX: number, normY: number) => 
           x: posX,
           y: posY,
         }, ctx.time);
+
+        const { pitch, duration, velocity } = mel[i];
+        const midiNote = clampMidiNote(pitch);
+        const midiVelocity = toMidiVelocity(velocity);
+        midiOutput.noteOn(0, midiNote, midiVelocity);
+        ctx.branch(async (noteCtx) => {
+          await noteCtx.waitSec(duration);
+          midiOutput.noteOff(0, midiNote, 0);
+        });
       }
       await ctx.waitSec(evtDur);
     }
@@ -270,4 +339,10 @@ const loop = async () => {
   win.close();
 };
 
-await loop();
+try {
+  await loop();
+} finally {
+  runner.ctx.cancel();
+  midiOutput.close();
+  midi.close();
+}
