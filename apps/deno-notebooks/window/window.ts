@@ -70,8 +70,8 @@ export async function createGpuWindow(device: GPUDevice, options: WindowOptions)
   const systemId = lib.symbols.get_window_system(state);
   const system = systemFromId(systemId);
 
-  let surfaceWindowHandle: Deno.PointerValue = windowHandle;
-  let surfaceDisplayHandle: Deno.PointerValue = displayHandle;
+  let surfaceWindowHandle = windowHandle;
+  let surfaceDisplayHandle = displayHandle;
   if (system === "cocoa") {
     // Deno expects the NSView* in displayHandle for cocoa.
     const nsView = windowHandle !== 0n ? windowHandle : displayHandle;
@@ -89,8 +89,8 @@ export async function createGpuWindow(device: GPUDevice, options: WindowOptions)
 
   const surface = new Deno.UnsafeWindowSurface({
     system,
-    windowHandle: Deno.UnsafePointer.create(surfaceWindowHandle as bigint),
-    displayHandle: Deno.UnsafePointer.create(surfaceDisplayHandle as bigint),
+    windowHandle: Deno.UnsafePointer.create(surfaceWindowHandle),
+    displayHandle: Deno.UnsafePointer.create(surfaceDisplayHandle),
     width: options.width,
     height: options.height,
   });

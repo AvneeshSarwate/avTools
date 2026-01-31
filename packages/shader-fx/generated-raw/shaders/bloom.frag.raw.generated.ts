@@ -14,9 +14,9 @@ fn main(@builtin(vertex_index) index: u32) -> VertexOutput {
     vec2f(-1.0, 3.0),
   );
   var uvs = array<vec2f, 3>(
-    vec2f(0.0, 0.0),
-    vec2f(2.0, 0.0),
-    vec2f(0.0, 2.0),
+    vec2f(0.0, 1.0),
+    vec2f(2.0, 1.0),
+    vec2f(0.0, -1.0),
   );
   var out: VertexOutput;
   out.position = vec4f(positions[index], 0.0, 1.0);
