@@ -14,6 +14,7 @@
     "@std/random": "jsr:@std/random@^0.1.4",
     "node-osc": "npm:node-osc@^9.1.0",
     "node-web-audio-api": "npm:node-web-audio-api",
+    "tone": "npm:tone",
     "@avtools/core-timing": "../../packages/core-timing/mod.ts",
     "@avtools/creative-algs": "../../packages/creative-algs/mod.ts",
     "@avtools/music-types": "../../packages/music-types/mod.ts",
