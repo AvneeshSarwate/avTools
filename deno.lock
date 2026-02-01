@@ -9,6 +9,7 @@
     "npm:earcut@3": "3.0.2",
     "npm:fast-xml-parser@4.3.5": "4.3.5",
     "npm:node-osc@^9.1.0": "9.1.7",
+    "npm:node-web-audio-api@*": "1.0.7",
     "npm:pako@2.1.0": "2.1.0",
     "npm:seedrandom@^3.0.5": "3.0.5",
     "npm:wgsl_reflect@^1.2.3": "1.2.3"
@@ -41,6 +42,12 @@
     "binpack@0.1.0": {
       "integrity": "sha512-KcSrsGiIKgklTWweVb9XnZPWO1/rGSsK3fwR7VnbDPbLKPlkvSKd/ZrJ1W712r6HzH5u0fa/AZCftATO09x8Aw=="
     },
+    "caller@1.1.0": {
+      "integrity": "sha512-n+21IZC3j06YpCWaxmUy5AnVqhmCIM2bQtqQyy00HJlmStRt6kwDX5F9Z97pqwAB+G/tgSz6q/kUBbNyQzIubw=="
+    },
+    "data-uri-to-buffer@4.0.1": {
+      "integrity": "sha512-0R9ikRb668HB7QDxT1vkpuUBtqc53YyAwMwGeUFKRojY/NWKvdZ+9UYtRfGmhqNbRkTSVpMbmyhXipFFv2cb/A=="
+    },
     "earcut@3.0.2": {
       "integrity": "sha512-X7hshQbLyMJ/3RPhyObLARM2sNxxmRALLKx1+NVFFnQ9gKzmCrxm9+uLIAdBcvc8FNLpctqlQ2V6AE92Ol9UDQ=="
     },
@@ -51,10 +58,43 @@
       ],
       "bin": true
     },
+    "fetch-blob@3.2.0": {
+      "integrity": "sha512-7yAQpD2UMJzLi1Dqv7qFYnPbaPx7ZfFK6PiIxQ4PfkGPyNyl2Ugx+a/umUonmKqjhM4DnfbMvdX6otXq83soQQ==",
+      "dependencies": [
+        "node-domexception",
+        "web-streams-polyfill"
+      ]
+    },
+    "formdata-polyfill@4.0.10": {
+      "integrity": "sha512-buewHzMvYL29jdeQTVILecSaZKnt/RJWjoZCF5OW60Z67/GmSLBkOFM7qh1PI3zFNtJbaZL5eQu1vLfazOwj4g==",
+      "dependencies": [
+        "fetch-blob"
+      ]
+    },
+    "node-domexception@1.0.0": {
+      "integrity": "sha512-/jKZoMpw0F8GRwl4/eLROPA3cfcXtLApP0QzLmUT/HuPCZWyB7IY9ZrMeKw2O/nFIqPQB3PVM9aYm0F312AXDQ==",
+      "deprecated": true
+    },
+    "node-fetch@3.3.2": {
+      "integrity": "sha512-dRB78srN/l6gqWulah9SrxeYnxeddIG30+GOqK/9OlLVyLg3HPnr6SqOWTWOXKRwC2eGYCkZ59NNuSgvSrpgOA==",
+      "dependencies": [
+        "data-uri-to-buffer",
+        "fetch-blob",
+        "formdata-polyfill"
+      ]
+    },
     "node-osc@9.1.7": {
       "integrity": "sha512-7zKoV+125AfZuDVoEKvCzAoBfqIAewf6SyI7PguB9coU+Kye6nncjeKmb3lIQUeOJHec7Ym3IUG/wzy+iXgp6Q==",
       "dependencies": [
         "osc-min"
+      ]
+    },
+    "node-web-audio-api@1.0.7": {
+      "integrity": "sha512-J1Po8THiPdh8ZOc6p8qrZau+DRK2HJkSyjGpaPGdbB5T+lugl2OmzSzc56nmESkWSEww9J30AjeAOdm94E5TBA==",
+      "dependencies": [
+        "caller",
+        "node-fetch",
+        "webidl-conversions"
       ]
     },
     "osc-min@1.1.2": {
@@ -71,6 +111,12 @@
     },
     "strnum@1.1.2": {
       "integrity": "sha512-vrN+B7DBIoTTZjnPNewwhx6cBA/H+IS7rfW68n7XxC1y7uoiGQBxaKzqucGUgavX15dJgiGztLJ8vxuEzwqBdA=="
+    },
+    "web-streams-polyfill@3.3.3": {
+      "integrity": "sha512-d2JWLCivmZYTSIoge9MsgFCZrt571BikcWGYkjC1khllbTeDlGqZ2D8vD8E/lJa8WGWbb7Plm8/XJYV7IJHZZw=="
+    },
+    "webidl-conversions@7.0.0": {
+      "integrity": "sha512-VwddBukDzu71offAQR975unBIGqfKZpM+8ZX6ySk8nYhVoo5CYaZyzt3YBvYtRtO+aoGlqxPg/B87NGVZ/fu6g=="
     },
     "wgsl_reflect@1.2.3": {
       "integrity": "sha512-BQWBIsOn411M+ffBxmA6QRLvAOVbuz3Uk4NusxnqC1H7aeQcVLhdA3k2k/EFFFtqVjhz3z7JOOZF1a9hj2tv4Q=="
@@ -183,7 +229,8 @@
         "dependencies": [
           "jsr:@std/assert@1",
           "jsr:@std/random@~0.1.4",
-          "npm:node-osc@^9.1.0"
+          "npm:node-osc@^9.1.0",
+          "npm:node-web-audio-api@*"
         ]
       },
       "packages/compute-shader-codegen": {
