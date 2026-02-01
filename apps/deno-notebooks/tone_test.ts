@@ -12,12 +12,14 @@ Tone.setContext(audioContext as unknown as AudioContext);
 console.log("Tone.js + node-web-audio-api test");
 console.log(`Sample rate: ${audioContext.sampleRate}`);
 
-// Create a Synth -> Freeverb -> destination chain
+// Create a Synth -> Freeverb -> Gain -> destination chain
+const master = new Tone.Gain(0.1).toDestination();
+
 const reverb = new Tone.Freeverb({
   roomSize: 0.8,
   dampening: 3000,
   wet: 0.6,
-}).toDestination();
+}).connect(master);
 
 const synth = new Tone.Synth({
   oscillator: { type: "triangle" },
@@ -49,6 +51,7 @@ setTimeout(() => {
   setTimeout(async () => {
     synth.dispose();
     reverb.dispose();
+    master.dispose();
     await audioContext.close();
     console.log("Done!");
   }, 2000);
