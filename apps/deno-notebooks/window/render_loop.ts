@@ -25,14 +25,20 @@ export function startRenderLoop(options: RenderLoopOptions): { stop(): void } {
           running = false;
         }
       }
-      if (!running) {
+      if (!running || options.window.closed) {
         break;
       }
 
       const outputView = options.onFrame(frame);
       frame += 1;
 
-      const swapTexture = options.window.ctx.getCurrentTexture();
+      let swapTexture: GPUTexture;
+      try {
+        swapTexture = options.window.ctx.getCurrentTexture();
+      } catch (err) {
+        console.error("render_loop: getCurrentTexture failed", err);
+        break;
+      }
       const swapView = swapTexture.createView();
 
       const encoder = options.window.device.createCommandEncoder();
@@ -42,6 +48,7 @@ export function startRenderLoop(options: RenderLoopOptions): { stop(): void } {
 
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
+    options.window.close();
   };
 
   void loop();

@@ -17,6 +17,7 @@ export interface GpuWindow {
   format: GPUTextureFormat;
   width: number;
   height: number;
+  closed: boolean;
   pollEvents(): WindowEvent[];
   present(): void;
   close(): void;
@@ -67,6 +68,15 @@ export async function createGpuWindow(device: GPUDevice, options: WindowOptions)
     throw new Error("Native window handle was not available (ns_view null).");
   }
 
+  const windowSize = new Uint32Array(2);
+  lib.symbols.get_window_size(
+    state,
+    Deno.UnsafePointer.of(windowSize.subarray(0, 1)),
+    Deno.UnsafePointer.of(windowSize.subarray(1, 2)),
+  );
+  const initialWidth = windowSize[0] > 0 ? windowSize[0] : options.width;
+  const initialHeight = windowSize[1] > 0 ? windowSize[1] : options.height;
+
   const systemId = lib.symbols.get_window_system(state);
   const system = systemFromId(systemId);
 
@@ -91,8 +101,8 @@ export async function createGpuWindow(device: GPUDevice, options: WindowOptions)
     system,
     windowHandle: Deno.UnsafePointer.create(surfaceWindowHandle),
     displayHandle: Deno.UnsafePointer.create(surfaceDisplayHandle),
-    width: options.width,
-    height: options.height,
+    width: initialWidth,
+    height: initialHeight,
   });
 
   const ctx = surface.getContext("webgpu") as GPUCanvasContext;
@@ -120,13 +130,33 @@ export async function createGpuWindow(device: GPUDevice, options: WindowOptions)
     console.log("deno_window configured surface");
   }
 
-  let width = options.width;
-  let height = options.height;
+  let width = initialWidth;
+  let height = initialHeight;
+  let closed = false;
+  let pendingCloseEvent = false;
+
+  const markClosed = () => {
+    if (!closed) {
+      closed = true;
+      pendingCloseEvent = true;
+    }
+  };
 
   const pollEvents = (): WindowEvent[] => {
+    if (closed) {
+      if (pendingCloseEvent) {
+        pendingCloseEvent = false;
+        return [{ type: "close" }];
+      }
+      return [];
+    }
     const buf = new Uint8Array(65536);
     const written = lib.symbols.poll_events(state, Deno.UnsafePointer.of(buf), buf.length);
     if (!written) {
+      if (pendingCloseEvent) {
+        pendingCloseEvent = false;
+        return [{ type: "close" }];
+      }
       return [];
     }
     const text = new TextDecoder().decode(buf.subarray(0, written));
@@ -136,18 +166,38 @@ export async function createGpuWindow(device: GPUDevice, options: WindowOptions)
         width = ev.width;
         height = ev.height;
         surface.resize(width, height);
+      } else if (ev.type === "close") {
+        markClosed();
       }
     }
     return events;
   };
 
   const present = () => {
-    surface.present();
+    if (closed) {
+      return;
+    }
+    try {
+      surface.present();
+    } catch (err) {
+      if (debug) {
+        console.error("deno_window present error", err);
+      }
+      markClosed();
+    }
   };
 
   const close = () => {
-    lib.symbols.destroy_window(state);
-    lib.close();
+    if (closed) {
+      return;
+    }
+    closed = true;
+    pendingCloseEvent = false;
+    try {
+      lib.symbols.destroy_window(state);
+    } finally {
+      lib.close();
+    }
   };
 
   return {
@@ -160,6 +210,9 @@ export async function createGpuWindow(device: GPUDevice, options: WindowOptions)
     },
     get height() {
       return height;
+    },
+    get closed() {
+      return closed;
     },
     pollEvents,
     present,

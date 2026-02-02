@@ -77,6 +77,7 @@
     "npm:stats-gl@^3.8.0": "3.8.0_three@0.178.0",
     "npm:stats.js@0.17": "0.17.0",
     "npm:sucrase@^3.35.0": "3.35.1",
+    "npm:three@*": "0.178.0",
     "npm:three@0.178": "0.178.0",
     "npm:tinycolor2@^1.6.0": "1.6.0",
     "npm:tone@*": "15.1.22",
