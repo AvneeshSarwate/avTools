@@ -1,7 +1,7 @@
 // Example: Using OSC in your Deno notebook
 // Import the OSC helper
 // Note: In notebooks, you can use "@/tools/osc.ts" thanks to the import map
-import { sendOSC, sendToSC, createOSCClient, createOSCServer } from "../tools/osc.ts";
+import { sendOSC, sendToSC, createOSCClient, createOSCServer } from "@/tools/osc.ts";
 
 // ============================================
 // Example 1: Quick send (one-off messages)

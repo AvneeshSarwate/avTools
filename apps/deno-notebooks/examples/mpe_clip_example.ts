@@ -2,11 +2,11 @@
 // Requires AbletonWatcher + playMPEClip from denoMPEPlayback.md.
 // This is notebook-friendly; split into separate cells if you want.
 
-import { MidiAccess } from "../midi/mod.ts";
-import { MPEDevice } from "../midi/mpe_device.ts";
+import { MidiAccess } from "@/midi/mod.ts";
+import { MPEDevice } from "@/midi/mpe_device.ts";
 import { launch } from "@avtools/core-timing";
-import { AbletonWatcher } from "../tools/abletonWatcher.ts";
-import { playMPEClip } from "../tools/mpePlayback.ts";
+import { AbletonWatcher } from "@/tools/abletonWatcher.ts";
+import { playMPEClip } from "@/tools/mpePlayback.ts";
 
 // ======================================================================
 // Example 0: Configure paths + MIDI output selection
@@ -51,7 +51,7 @@ try {
   await launch(async (ctx) => {
     ctx.setBpm(120);
     await playMPEClip(clip, ctx, mpeDevice, {
-      pitchBendRange: 96, //96 for bitwig, 48 for ableton (but ableton is buggy and needs max to bounce midi)
+      pitchBendRange: 96, //96 for bitwig, 48 for ableton
       curveStepMs: 10,
       noteGap: 0.975,
     }).promise;

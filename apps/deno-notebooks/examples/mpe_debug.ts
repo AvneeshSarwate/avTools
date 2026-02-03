@@ -1,11 +1,12 @@
-import { MidiAccess } from "../midi/mod.ts";
+import { MidiAccess } from "@/midi/mod.ts";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const OUTPUT_NAME = Deno.args[0] ?? "IAC Driver Bus 2";
-const ZONE = 'lower' //(Deno.args[1] ?? "lower").toLowerCase() as "lower" | "upper";
+type MPEZone = 'upper' | 'lower'
+const ZONE: MPEZone = 'lower' //(Deno.args[1] ?? "lower").toLowerCase() as "lower" | "upper";
 
 const midi = MidiAccess.open();
 const outputs = midi.listOutputs();
@@ -19,6 +20,7 @@ const output = midi.openOutput(outputInfo.id);
 
 const lowerNoteChans = [1, 2]; // channels 2-3 (0-based 1-2)
 const upperNoteChans = [13, 14]; // channels 14-15 (0-based 13-14)
+//@ts-ignore - overly strict type checking for literals
 const noteChans = ZONE === "upper" ? upperNoteChans : lowerNoteChans;
 
 console.log("Zone:", ZONE);

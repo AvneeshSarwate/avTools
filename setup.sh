@@ -1,196 +1,158 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # =============================================================================
-# Raspberry Pi Shared Setup Script
+# avTools bootstrap
 # =============================================================================
-# This script installs all global tools needed across:
-#   - browser_drawn_projections (Node.js/Vite project)
-#   - oscClapHost (Rust/CLAP audio plugin host)
-#   - denoMusicNotebook (Deno/Jupyter notebook project)
+# Goal: after cloning, run this script once and be ready to open .ipynb files
+# under apps/deno-notebooks with the Deno (avtools unstable) kernel.
 #
-# Run with: chmod +x shared_setup.sh && ./shared_setup.sh
+# This script:
+#   1) Installs missing toolchains (Rust, Deno, uv)
+#   2) Builds native Rust/FFI helpers
+#   3) Caches Deno dependencies
+#   4) Creates a uv-managed Python venv and installs Jupyter
+#   5) Installs the custom Deno Jupyter kernelspec
+#
+# Run: ./setup.sh
 # =============================================================================
 
-set -e  # Exit on any error
+set -euo pipefail
+IFS=$'\n\t'
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NOTEBOOK_DIR="$ROOT_DIR/apps/deno-notebooks"
 
 echo "================================================"
-echo "Raspberry Pi Development Environment Setup"
+echo "avTools Setup"
+echo "================================================"
+echo "Repo root: $ROOT_DIR"
+echo ""
+
+ensure_in_path() {
+  local bin="$1"
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    return 1
+  fi
+  return 0
+}
+
+install_rust() {
+  echo "[toolchain] Installing Rust via rustup..."
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  # shellcheck disable=SC1091
+  source "$HOME/.cargo/env"
+  echo "Rust $(rustc --version) installed."
+}
+
+install_deno() {
+  echo "[toolchain] Installing Deno..."
+  curl -fsSL https://deno.land/install.sh | sh
+  export DENO_INSTALL="${DENO_INSTALL:-$HOME/.deno}"
+  export PATH="$DENO_INSTALL/bin:$PATH"
+  echo "Deno $(deno --version | head -n1) installed."
+}
+
+install_uv() {
+  echo "[toolchain] Installing uv..."
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="$HOME/.local/bin:$PATH"
+  echo "uv $(uv --version) installed."
+}
+
+echo "[1/5] Ensuring toolchains are installed..."
+
+if ! ensure_in_path rustc || ! ensure_in_path cargo; then
+  install_rust
+else
+  # shellcheck disable=SC1091
+  source "$HOME/.cargo/env" || true
+  echo "Rust already installed: $(rustc --version)"
+fi
+
+if ! ensure_in_path deno; then
+  install_deno
+else
+  echo "Deno already installed: $(deno --version | head -n1)"
+fi
+
+if ! ensure_in_path uv; then
+  install_uv
+else
+  echo "uv already installed: $(uv --version)"
+fi
+
+echo ""
+
+echo "[2/5] Building native Rust/FFI helpers..."
+
+# One-liners for rebuilding specific FFI pieces (run from repo root):
+#   cargo build --release --manifest-path apps/deno-notebooks/native/fastsleep/Cargo.toml
+#   cargo build --release --manifest-path apps/deno-notebooks/native/deno_window/Cargo.toml
+#   bash apps/deno-notebooks/scripts/build_midi_bridge.sh
+
+cargo build --release --manifest-path "$NOTEBOOK_DIR/native/fastsleep/Cargo.toml"
+cargo build --release --manifest-path "$NOTEBOOK_DIR/native/deno_window/Cargo.toml"
+bash "$NOTEBOOK_DIR/scripts/build_midi_bridge.sh"
+
+echo "Native helpers built."
+echo ""
+
+echo "[3/5] Caching Deno dependencies..."
+
+shopt -s nullglob
+cache_targets=(
+  "$NOTEBOOK_DIR/libraryIntegrationTetsts/"*.ts
+  "$NOTEBOOK_DIR/examples/"*.ts
+  "$NOTEBOOK_DIR/tools/"*.ts
+  "$NOTEBOOK_DIR/window/"*.ts
+  "$NOTEBOOK_DIR/midi/"*.ts
+  "$NOTEBOOK_DIR/misc/"*.ts
+)
+shopt -u nullglob
+
+if [ "${#cache_targets[@]}" -gt 0 ]; then
+  deno cache --unstable-webgpu --config "$NOTEBOOK_DIR/deno.json" "${cache_targets[@]}"
+else
+  echo "No Deno cache targets found (skipping)."
+fi
+
+echo "Deno dependencies cached."
+echo ""
+
+echo "[4/5] Setting up Python venv with uv + Jupyter..."
+
+if ! ensure_in_path uv; then
+  echo "uv not found after install step. Aborting."
+  exit 1
+fi
+
+uv python install 3.12
+
+pushd "$NOTEBOOK_DIR" >/dev/null
+if [ ! -d ".venv" ]; then
+  uv venv --seed --python 3.12
+fi
+uv pip install jupyterlab
+popd >/dev/null
+
+echo "Python venv ready at $NOTEBOOK_DIR/.venv"
+echo ""
+
+echo "[5/5] Installing avtools Deno Jupyter kernel..."
+
+export PATH="$NOTEBOOK_DIR/.venv/bin:$PATH"
+bash "$NOTEBOOK_DIR/scripts/install_avtools_kernel.sh"
+
+echo ""
+echo "================================================"
+echo "Setup Complete"
 echo "================================================"
 echo ""
-
-# Check architecture
-ARCH=$(uname -m)
-echo "Detected architecture: $ARCH"
+echo "Next steps:"
+echo "1) Open this repo folder in VS Code."
+echo "2) Open any .ipynb under apps/deno-notebooks."
+echo "3) If prompted, pick the kernel: \"Deno (avtools unstable)\"."
 echo ""
-
-# -----------------------------------------------------------------------------
-# 1. System packages (ALSA for audio, build essentials)
-# -----------------------------------------------------------------------------
-echo "[1/5] Installing system dependencies..."
-sudo apt update
-sudo apt install -y \
-    build-essential \
-    curl \
-    wget \
-    git \
-    libasound2-dev \
-    alsa-utils \
-    pkg-config \
-    libssl-dev
-
-echo "System dependencies installed."
+echo "VS Code should already point to the uv venv at:"
+echo "  apps/deno-notebooks/.venv/bin/python"
 echo ""
-
-# -----------------------------------------------------------------------------
-# 2. Node.js via NVM
-# -----------------------------------------------------------------------------
-echo "[2/5] Installing Node.js via NVM..."
-
-# Install NVM
-if [ ! -d "$HOME/.nvm" ]; then
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-
-    # Load NVM for this session
-    export NVM_DIR="$HOME/.nvm"
-    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-else
-    echo "NVM already installed, loading..."
-    export NVM_DIR="$HOME/.nvm"
-    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-fi
-
-# Install Node.js 18 LTS (required by browser_drawn_projections)
-nvm install 18
-nvm use 18
-nvm alias default 18
-
-echo "Node.js $(node --version) installed."
-echo "npm $(npm --version) installed."
-echo ""
-
-# -----------------------------------------------------------------------------
-# 3. Rust via rustup
-# -----------------------------------------------------------------------------
-echo "[3/5] Installing Rust via rustup..."
-
-if ! command -v rustc &> /dev/null; then
-    # Note: For 32-bit OS on 64-bit hardware (Pi 4), you may need to select
-    # "Custom installation" and enter "arm-unknown-linux-gnueabihf" as the
-    # default host triple if the installer fails.
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-
-    # Load cargo for this session
-    source "$HOME/.cargo/env"
-else
-    echo "Rust already installed."
-    source "$HOME/.cargo/env"
-fi
-
-echo "Rust $(rustc --version) installed."
-echo "Cargo $(cargo --version) installed."
-echo ""
-
-# -----------------------------------------------------------------------------
-# 4. Deno
-# -----------------------------------------------------------------------------
-echo "[4/5] Installing Deno..."
-
-if ! command -v deno &> /dev/null; then
-    # Official Deno install script - supports ARM64
-    # Note: Requires 64-bit OS. For 32-bit, you'll need to build from source.
-    curl -fsSL https://deno.land/install.sh | sh
-
-    # Add deno to PATH for this session
-    export DENO_INSTALL="$HOME/.deno"
-    export PATH="$DENO_INSTALL/bin:$PATH"
-else
-    echo "Deno already installed."
-fi
-
-echo "Deno $(deno --version | head -n1) installed."
-echo ""
-
-# -----------------------------------------------------------------------------
-# 5. uv (Python package manager)
-# -----------------------------------------------------------------------------
-echo "[5/5] Installing uv (Python package manager)..."
-
-if ! command -v uv &> /dev/null; then
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-
-    # Add uv to PATH for this session
-    export PATH="$HOME/.local/bin:$PATH"
-else
-    echo "uv already installed."
-fi
-
-echo "uv $(uv --version) installed."
-echo ""
-
-# -----------------------------------------------------------------------------
-# Shell configuration reminder
-# -----------------------------------------------------------------------------
-echo "================================================"
-echo "Installation Complete!"
-echo "================================================"
-echo ""
-echo "Please restart your shell or run:"
-echo "  source ~/.bashrc"
-echo ""
-echo "To verify installations:"
-echo "  node --version"
-echo "  npm --version"
-echo "  rustc --version"
-echo "  cargo --version"
-echo "  deno --version"
-echo "  uv --version"
-echo ""
-
-# =============================================================================
-# PROJECT-SPECIFIC SETUP COMMANDS
-# =============================================================================
-# After running this script, run the following commands in each project:
-#
-# -----------------------------------------------------------------------------
-# browser_drawn_projections
-# -----------------------------------------------------------------------------
-#   cd browser_drawn_projections
-#   npm install
-#   npm run dev           # Start development server
-#
-# -----------------------------------------------------------------------------
-# oscClapHost
-# -----------------------------------------------------------------------------
-#   cd oscClapHost
-#   cargo build --release
-#   # Binary will be at: target/release/clap-osc-host
-#   # Usage: ./target/release/clap-osc-host --help
-#
-# -----------------------------------------------------------------------------
-# denoMusicNotebook
-# -----------------------------------------------------------------------------
-#   cd denoMusicNotebook
-#
-#   # 1. Create Python virtual environment and install Jupyter
-#   uv python install 3.12
-#   uv venv --seed
-#   uv pip install jupyterlab
-#
-#   # 2. (Optional) Build the Rust fast_sleep helper library
-#   cargo build --release --manifest-path native/fastsleep/Cargo.toml
-#
-#   # 3. Build the MIDI bridge native library
-#   ./scripts/build_midi_bridge.sh
-#
-#   # 4. Cache Deno dependencies
-#   deno install
-#   # OR: deno task install
-#
-#   # 5. Install the Deno Jupyter kernel
-#   source .venv/bin/activate
-#   deno jupyter --install
-#
-#   # 6. Run development task
-#   deno task dev
-#
-# =============================================================================
