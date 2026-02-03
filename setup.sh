@@ -108,9 +108,9 @@ install_node() {
     exit 1
   fi
 
-  nvm install 18
-  nvm use 18
-  nvm alias default 18
+  nvm install 24
+  nvm use 24
+  nvm alias default 24
   echo "Node $(node --version) installed."
   echo "npm $(npm --version) installed."
 }
