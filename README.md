@@ -1,6 +1,9 @@
 # avTools – Unified Deno + Browser Workspace
 
-This repo is a Deno‑workspace monorepo that unifies browser/Vite apps, Deno notebooks, shared TypeScript packages, and native Rust helpers. The goal is to make VSCode work “out of the box” across all environments (Deno LSP + TS/Vite) with minimal friction.
+This repo is both a set of libraries and a specifically built project-setup for creative coding. It is a Deno‑workspace monorepo that unifies browser/Vite apps, Deno notebooks (aka Jupyter notebooks using the Deno kernel), shared TypeScript packages, and native Rust helpers. The goal is to create a set of Typescript based libraries for creative coding that can run both "natively" via Deno and/or also in the browser. The goal of the project setup in this repo is to make VSCode intellisense work “out of the box” across all environments (Deno files, jupyter notebooks).
+
+### Why Deno (and notebooks?)
+The purpose of integrating Deno is to allow for a first-class livecoding experience for sketching and prototyping. Deno comes out of the box with support for Jupyter Notebooks. 
 
 ## First‑Time Setup Checklist
 
