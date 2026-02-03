@@ -1,4 +1,4 @@
-import { MidiAccess } from "./midi/mod.ts";
+import { MidiAccess } from "../midi/mod.ts";
 
 const midi = MidiAccess.open();
 

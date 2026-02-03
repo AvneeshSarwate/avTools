@@ -19,7 +19,7 @@ if (typeof g.document === "undefined") {
 }
 
 import { requestWebGpuDevice } from "./raw-webgpu-helpers.ts";
-import { createGpuWindow } from "./window/mod.ts";
+import { createGpuWindow } from "../window/mod.ts";
 
 const WIDTH = 512;
 const HEIGHT = 512;

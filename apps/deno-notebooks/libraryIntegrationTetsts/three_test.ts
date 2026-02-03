@@ -3,13 +3,13 @@
 /**
  * Three.js WebGPU spinning cube test on Deno with a native window.
  *
- * Run with:
- *   deno run --unstable-webgpu --unstable-ffi --allow-ffi --allow-read --allow-env --allow-net --allow-write three_test.ts
+ * Run with (from apps/deno-notebooks):
+ *   deno run --unstable-webgpu --unstable-ffi --allow-ffi --allow-read --allow-env --allow-net --allow-write libraryIntegrationTetsts/three_test.ts
  */
 
 import { requestWebGpuDevice } from "./raw-webgpu-helpers.ts";
-import { createGpuWindow } from "./window/mod.ts";
-import { createDenoThreeRenderer } from "./tools/three_deno_shim.ts";
+import { createGpuWindow } from "../window/mod.ts";
+import { createDenoThreeRenderer } from "../tools/three_deno_shim.ts";
 
 const WIDTH = 512;
 const HEIGHT = 512;

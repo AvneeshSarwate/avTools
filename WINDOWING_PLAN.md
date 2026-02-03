@@ -213,16 +213,16 @@ export type { WindowEvent } from "./events.ts";
 
 ---
 
-### 8. Windowed test script: `apps/deno-notebooks/raw-webgpu-windowed.ts`
+### 8. Windowed test script: `apps/deno-notebooks/libraryIntegrationTetsts/raw-webgpu-windowed.ts`
 
-Demonstrates the full pipeline — same scene setup as `raw-webgpu-power2d-shaderfx.ts` but rendering to a live window:
+Demonstrates the full pipeline — same scene setup as `libraryIntegrationTetsts/raw-webgpu-power2d-shaderfx.ts` but rendering to a live window:
 
 ```ts
 import { requestWebGpuDevice } from './raw-webgpu-helpers.ts';
 import { createPower2DScene, selectPower2DFormat, BatchedStyledShape } from '@avtools/power2d/raw';
 import { InstancedSolidMaterial } from '@avtools/power2d/generated-raw/shaders/instancedSolid.material.raw.generated.ts';
 import { BloomEffect } from '@avtools/shader-fx/generated-raw/shaders/bloom.frag.raw.generated.ts';
-import { createGpuWindow, createBlitPipeline, startRenderLoop } from './window/mod.ts';
+import { createGpuWindow, createBlitPipeline, startRenderLoop } from '../window/mod.ts';
 
 const device = await requestWebGpuDevice();
 const format = await selectPower2DFormat(device);
@@ -262,14 +262,14 @@ startRenderLoop({
 | `apps/deno-notebooks/window/events.ts` | Event type definitions |
 | `apps/deno-notebooks/window/render_loop.ts` | Vsync render loop |
 | `apps/deno-notebooks/window/mod.ts` | Re-exports |
-| `apps/deno-notebooks/raw-webgpu-windowed.ts` | Windowed test script |
+| `apps/deno-notebooks/libraryIntegrationTetsts/raw-webgpu-windowed.ts` | Windowed test script |
 
 ## Files unchanged
 
 - `packages/power2d/raw/*` — no changes needed
 - `packages/shader-fx/raw/*` — no changes needed
-- `apps/deno-notebooks/raw-webgpu-helpers.ts` — headless path stays as-is
-- `apps/deno-notebooks/raw-webgpu-power2d-shaderfx.ts` — headless test stays as-is
+- `apps/deno-notebooks/libraryIntegrationTetsts/raw-webgpu-helpers.ts` — headless path stays as-is
+- `apps/deno-notebooks/libraryIntegrationTetsts/raw-webgpu-power2d-shaderfx.ts` — headless test stays as-is
 
 ## Build & test
 
@@ -280,12 +280,12 @@ startRenderLoop({
 
 2. **Headless (CI, unchanged):**
    ```bash
-   deno run --allow-all --unstable-webgpu raw-webgpu-power2d-shaderfx.ts
+   deno run --allow-all --unstable-webgpu libraryIntegrationTetsts/raw-webgpu-power2d-shaderfx.ts
    ```
 
 3. **Windowed:**
    ```bash
-   deno run --allow-all --unstable-webgpu --unstable-ffi raw-webgpu-windowed.ts
+   deno run --allow-all --unstable-webgpu --unstable-ffi libraryIntegrationTetsts/raw-webgpu-windowed.ts
    ```
    - Should open a window showing the rendered scene
    - Escape key closes it

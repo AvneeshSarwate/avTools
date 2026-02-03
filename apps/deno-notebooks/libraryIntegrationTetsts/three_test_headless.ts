@@ -4,12 +4,12 @@
  * Headless Three.js WebGPU test -- renders a cube to an offscreen texture,
  * reads it back, and writes a PNG. No window required.
  *
- * Run with:
- *   deno run --unstable-webgpu --allow-read --allow-env --allow-net --allow-write three_test_headless.ts
+ * Run with (from apps/deno-notebooks):
+ *   deno run --unstable-webgpu --allow-read --allow-env --allow-net --allow-write libraryIntegrationTetsts/three_test_headless.ts
  */
 
 import { requestWebGpuDevice, writeTextureToPng } from "./raw-webgpu-helpers.ts";
-import { createDenoThreeRenderer } from "./tools/three_deno_shim.ts";
+import { createDenoThreeRenderer } from "../tools/three_deno_shim.ts";
 
 const WIDTH = 256;
 const HEIGHT = 256;

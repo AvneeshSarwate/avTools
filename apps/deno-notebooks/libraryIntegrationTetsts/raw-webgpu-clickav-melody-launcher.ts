@@ -9,9 +9,9 @@ import { HorizontalBlurEffect } from "@avtools/shader-fx/generated-raw/shaders/h
 import { LayerBlendEffect } from "@avtools/shader-fx/generated-raw/shaders/layerBlend.frag.raw.generated.ts";
 import { TransformEffect } from "@avtools/shader-fx/generated-raw/shaders/transform.frag.raw.generated.ts";
 import { VerticalBlurEffect } from "@avtools/shader-fx/generated-raw/shaders/verticalBlur.frag.raw.generated.ts";
-import { MidiAccess } from "./midi/mod.ts";
+import { MidiAccess } from "../midi/mod.ts";
 import { requestWebGpuDevice } from "./raw-webgpu-helpers.ts";
-import { blit, createBlitPipeline, createGpuWindow } from "./window/mod.ts";
+import { blit, createBlitPipeline, createGpuWindow } from "../window/mod.ts";
 
 // Toggle for Deno notebook usage (non-blocking) vs standalone script.
 const NOTEBOOK_MODE = false;

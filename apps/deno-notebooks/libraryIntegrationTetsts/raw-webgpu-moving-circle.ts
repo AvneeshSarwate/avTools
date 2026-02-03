@@ -4,7 +4,7 @@ import { requestWebGpuDevice } from './raw-webgpu-helpers.ts';
 import { createPower2DScene, selectPower2DFormat, StyledShape } from '@avtools/power2d/raw';
 import { CirclePts } from '@avtools/power2d/core';
 import { FlatColorMaterial } from '@avtools/power2d/generated-raw/shaders/flatColor.material.raw.generated.ts';
-import { createBlitPipeline, createGpuWindow, startRenderLoop, type WindowEvent } from './window/mod.ts';
+import { createBlitPipeline, createGpuWindow, startRenderLoop, type WindowEvent } from '../window/mod.ts';
 
 const device = await requestWebGpuDevice();
 const format = await selectPower2DFormat(device, ['rgba16float', 'rgba32float', 'rgba8unorm']);
