@@ -2,6 +2,33 @@
 
 This repo is a Deno‑workspace monorepo that unifies browser/Vite apps, Deno notebooks, shared TypeScript packages, and native Rust helpers. The goal is to make VSCode work “out of the box” across all environments (Deno LSP + TS/Vite) with minimal friction.
 
+## First‑Time Setup Checklist
+
+Requirements:
+- `bash` (the setup script is a bash script)
+- Internet access (to download toolchains and dependencies)
+
+Run:
+```
+./setup.sh
+```
+
+If missing, `setup.sh` will install:
+- Rust toolchain (via rustup)
+- Deno
+- uv (Python package manager)
+- Node.js (via nvm)
+
+Then it will:
+- Build native Rust/FFI helpers
+- Cache Deno dependencies
+- Create the uv venv and install Jupyter
+- Install the custom **Deno (avtools unstable)** Jupyter kernel
+- Install npm dependencies for `apps/browser-projections`
+
+After that:
+1. Open `avtools.code-workspace` in VS Code
+
 ## High‑Level Layout
 
 ```
@@ -140,20 +167,6 @@ Shared packages in `packages/` are Deno‑first and use `deno.json` for exports 
 
 - Use `@avtools/*` for cross‑workspace imports.
 - For Deno + Vite compatibility, use explicit `.ts` extensions for local relative imports inside packages.
-
-## First‑Time Setup Checklist
-
-Install:
-- Node.js (recommended: 18+)
-- Deno
-- Rust (for MIDI + fastsleep helpers)
-- Python 3.12 + `uv` (for Jupyter)
-
-Then:
-1. `./setup.sh`
-2. `cd apps/browser-projections && npm install`
-
----
 
 ## Package Organization Notes
 
