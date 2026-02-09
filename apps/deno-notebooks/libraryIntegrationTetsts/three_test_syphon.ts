@@ -1,9 +1,22 @@
 /// <reference lib="dom" />
 
-// from directory apps/deno-notebooks
-// run with deno run --unstable-webgpu --allow-all libraryIntegrationTetsts/three_test_debug.ts
+/**
+ * Three.js WebGPU debug window + Syphon output.
+ *
+ * Run with (from repo root):
+ * deno run --unstable-webgpu --unstable-ffi --allow-ffi --allow-read --allow-env --allow-net \
+ *   --config apps/deno-notebooks/deno.json \
+ *   apps/deno-notebooks/libraryIntegrationTetsts/three_test_syphon.ts --sync=none
+ *
+ * Sync modes:
+ * --sync=none (default): publish immediately after render()
+ * --sync=wait: await device.queue.onSubmittedWorkDone() before publish()
+ *
+ * Environment alternative:
+ * SYPHON_SYNC_MODE=wait
+ */
 
-// Shim globals BEFORE any Three.js import
+// Shim globals BEFORE any Three.js import.
 // deno-lint-ignore no-explicit-any
 const g = globalThis as any;
 if (typeof g.requestAnimationFrame === "undefined") {
@@ -22,14 +35,25 @@ if (typeof g.document === "undefined") {
 }
 
 import { requestWebGpuDevice } from "./raw-webgpu-helpers.ts";
-import { createGpuWindow } from "../window/mod.ts";
+import { createSyphonGpuWindow } from "../syphon/mod.ts";
 
 const WIDTH = 512;
 const HEIGHT = 512;
+const SERVER_NAME = "ThreeSyphonDebug";
+type SyncMode = "none" | "wait";
+
+function getSyncMode(): SyncMode {
+  const arg = Deno.args.find((a) => a.startsWith("--sync="));
+  const fromArg = arg ? arg.slice("--sync=".length) : "";
+  const raw = (fromArg || Deno.env.get("SYPHON_SYNC_MODE") || "none").toLowerCase();
+  if (raw === "wait") return "wait";
+  return "none";
+}
+
+const SYNC_MODE = getSyncMode();
 
 const device = await requestWebGpuDevice();
 
-// Replace the default error handler with one that shows the actual error message
 device.addEventListener("uncapturederror", (event: Event) => {
   // deno-lint-ignore no-explicit-any
   const gpuError = (event as any).error;
@@ -38,19 +62,22 @@ device.addEventListener("uncapturederror", (event: Event) => {
   }
 });
 
-const win = await createGpuWindow(device, {
+const win = await createSyphonGpuWindow(device, {
   width: WIDTH,
   height: HEIGHT,
-  title: "Three.js Debug",
+  title: "Three.js Debug + Syphon",
+  syphon: {
+    serverName: SERVER_NAME,
+  },
 });
 
 console.log("Window created, format:", win.format);
+console.log("Syphon server:", win.syphon.name);
+console.log("Syphon sync mode:", SYNC_MODE);
 
-// Import Three.js
 const THREE = await import("npm:three");
 const { WebGPURenderer } = await import("npm:three/webgpu");
 
-// Canvas shim
 class CanvasShim {
   width: number;
   height: number;
@@ -79,7 +106,12 @@ const canvas = new CanvasShim(renderWidth, renderHeight, win.ctx);
 
 console.log("Creating WebGPURenderer (antialias: false, alpha: false)...");
 // deno-lint-ignore no-explicit-any
-const renderer = new WebGPURenderer({ canvas: canvas as any, device, antialias: false, alpha: false });
+const renderer = new WebGPURenderer({
+  canvas: canvas as any,
+  device,
+  antialias: false,
+  alpha: false,
+});
 
 console.log("Calling renderer.init()...");
 await renderer.init();
@@ -89,7 +121,6 @@ renderer.setPixelRatio(1);
 renderer.setSize(renderWidth, renderHeight, false);
 console.log("Renderer size set");
 
-// Scene
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(70, renderWidth / renderHeight, 0.1, 100);
 camera.position.z = 3;
@@ -106,7 +137,6 @@ scene.add(new THREE.AmbientLight(0xffffff, 0.3));
 
 console.log("Scene created, rendering first frame...");
 
-// First frame with error scope
 device.pushErrorScope("validation");
 renderer.render(scene, camera);
 const firstErr = await device.popErrorScope();
@@ -116,6 +146,12 @@ if (firstErr) {
   console.log("First frame rendered without validation errors");
 }
 
+if (SYNC_MODE === "wait") {
+  await device.queue.onSubmittedWorkDone();
+}
+const firstPublished = win.syphon.publishFrame();
+console.log("First Syphon publish frame id:", firstPublished.toString());
+
 try {
   win.present();
   console.log("First frame presented successfully");
@@ -123,10 +159,10 @@ try {
   console.error("Present error:", e);
 }
 
-// More frames
 let running = true;
 let frame = 0;
-const AUTOCLOSE = true
+const AUTOCLOSE = false;
+
 while (running && (!AUTOCLOSE || frame < 300)) {
   const events = win.pollEvents();
   for (const ev of events) {
@@ -149,11 +185,22 @@ while (running && (!AUTOCLOSE || frame < 300)) {
   cube.rotation.y = frame * 0.014;
 
   renderer.render(scene, camera);
+  if (SYNC_MODE === "wait") {
+    await device.queue.onSubmittedWorkDone();
+  }
+  win.syphon.publishFrame();
+
   try {
     win.present();
   } catch (e) {
     console.error("Present error at frame", frame, ":", e);
     break;
+  }
+
+  if (frame % 120 === 0) {
+    console.log(
+      `[syphon] frame=${frame} hasClients=${win.syphon.hasClients} intercepts=${win.syphon.interceptCount.toString()}`,
+    );
   }
 
   frame++;

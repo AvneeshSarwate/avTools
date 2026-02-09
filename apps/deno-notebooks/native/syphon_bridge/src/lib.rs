@@ -641,40 +641,67 @@ mod macos {
         ptr::null_mut()
     }
 
+    fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+        if !paths.iter().any(|existing| existing == &path) {
+            paths.push(path);
+        }
+    }
+
     fn candidate_framework_paths(explicit_hint: Option<&str>) -> Vec<PathBuf> {
         let mut candidates = Vec::<PathBuf>::new();
 
         if let Some(path) = explicit_hint {
             let trimmed = path.trim();
             if !trimmed.is_empty() {
-                candidates.push(PathBuf::from(trimmed));
+                push_unique_path(&mut candidates, PathBuf::from(trimmed));
             }
         }
 
         if let Some(dylib_dir) = dylib_directory() {
-            candidates.push(dylib_dir.join("frameworks/Syphon.framework"));
+            // Prefer a framework bundled next to the dylib for distributed binaries.
+            push_unique_path(
+                &mut candidates,
+                dylib_dir.join("frameworks/Syphon.framework"),
+            );
+            // Handle local dev layout where dylib is in syphon_bridge/target/release.
+            if let Some(target_dir) = dylib_dir.parent() {
+                if let Some(crate_dir) = target_dir.parent() {
+                    push_unique_path(
+                        &mut candidates,
+                        crate_dir.join("frameworks/Syphon.framework"),
+                    );
+                }
+            }
         }
 
         if let Ok(cwd) = std::env::current_dir() {
-            candidates.push(
-                cwd.join("apps/deno-notebooks/native/syphon_bridge/frameworks/Syphon.framework"),
-            );
+            for dir in cwd.ancestors() {
+                // repo root + apps/deno-notebooks subtree
+                push_unique_path(
+                    &mut candidates,
+                    dir.join("apps/deno-notebooks/native/syphon_bridge/frameworks/Syphon.framework"),
+                );
+                // apps/deno-notebooks working directory
+                push_unique_path(
+                    &mut candidates,
+                    dir.join("native/syphon_bridge/frameworks/Syphon.framework"),
+                );
+            }
         }
 
         if let Ok(home) = std::env::var("HOME") {
-            candidates.push(PathBuf::from(home).join("Library/Frameworks/Syphon.framework"));
+            push_unique_path(
+                &mut candidates,
+                PathBuf::from(home).join("Library/Frameworks/Syphon.framework"),
+            );
         }
 
-        candidates.push(PathBuf::from("/Library/Frameworks/Syphon.framework"));
+        push_unique_path(
+            &mut candidates,
+            PathBuf::from("/Library/Frameworks/Syphon.framework"),
+        );
 
-        // preserve order while deduplicating
-        let mut out = Vec::<PathBuf>::new();
-        for path in candidates {
-            if !out.iter().any(|existing| existing == &path) {
-                out.push(path);
-            }
-        }
-        out
+        candidates
     }
 
     fn dylib_directory() -> Option<PathBuf> {
