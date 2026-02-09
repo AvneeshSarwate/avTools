@@ -3,17 +3,25 @@
 /**
  * Three.js WebGPU debug window + Syphon output.
  *
- * Run with (from repo root):
- * deno run --unstable-webgpu --unstable-ffi --allow-ffi --allow-read --allow-env --allow-net \
- *   --config apps/deno-notebooks/deno.json \
- *   apps/deno-notebooks/libraryIntegrationTetsts/three_test_syphon.ts --sync=none
+ * Run with (from apps/deno-notebooks):
+ * deno run --unstable-webgpu --allow-all libraryIntegrationTetsts/three_test_syphon.ts --sync=none
  *
  * Sync modes:
  * --sync=none (default): publish immediately after render()
  * --sync=wait: await device.queue.onSubmittedWorkDone() before publish()
  *
- * Environment alternative:
+ * Render pacing:
+ * The loop is paced by `present()` + event polling (no fixed sleep),
+ * and animation uses elapsed wall time instead of frame count.
+ *
+ * Environment alternatives:
  * SYPHON_SYNC_MODE=wait
+ *
+ * Syphon bridge debug logging:
+ * SYPHON_BRIDGE_DEBUG=1
+ * SYPHON_BRIDGE_DEBUG_INTERVAL_MS=1000
+ * Example:
+ * SYPHON_BRIDGE_DEBUG=1 SYPHON_BRIDGE_DEBUG_INTERVAL_MS=500 deno run --unstable-webgpu --allow-all libraryIntegrationTetsts/three_test_syphon.ts --sync=none
  */
 
 // Shim globals BEFORE any Three.js import.
@@ -53,6 +61,16 @@ function getSyncMode(): SyncMode {
 const SYNC_MODE = getSyncMode();
 
 const device = await requestWebGpuDevice();
+let syncWaitTotalMs = 0;
+let syncWaitSamples = 0;
+
+async function maybeSyncWait() {
+  if (SYNC_MODE !== "wait") return;
+  const t0 = performance.now();
+  await device.queue.onSubmittedWorkDone();
+  syncWaitTotalMs += performance.now() - t0;
+  syncWaitSamples++;
+}
 
 device.addEventListener("uncapturederror", (event: Event) => {
   // deno-lint-ignore no-explicit-any
@@ -146,9 +164,7 @@ if (firstErr) {
   console.log("First frame rendered without validation errors");
 }
 
-if (SYNC_MODE === "wait") {
-  await device.queue.onSubmittedWorkDone();
-}
+await maybeSyncWait();
 const firstPublished = win.syphon.publishFrame();
 console.log("First Syphon publish frame id:", firstPublished.toString());
 
@@ -162,6 +178,8 @@ try {
 let running = true;
 let frame = 0;
 const AUTOCLOSE = false;
+const fpsStartMs = performance.now();
+const animStartMs = fpsStartMs;
 
 while (running && (!AUTOCLOSE || frame < 300)) {
   const events = win.pollEvents();
@@ -181,13 +199,12 @@ while (running && (!AUTOCLOSE || frame < 300)) {
   }
   if (!running || win.closed) break;
 
-  cube.rotation.x = frame * 0.02;
-  cube.rotation.y = frame * 0.014;
+  const t = (performance.now() - animStartMs) / 1000;
+  cube.rotation.x = t * 1.2;
+  cube.rotation.y = t * 0.84;
 
   renderer.render(scene, camera);
-  if (SYNC_MODE === "wait") {
-    await device.queue.onSubmittedWorkDone();
-  }
+  await maybeSyncWait();
   win.syphon.publishFrame();
 
   try {
@@ -204,7 +221,15 @@ while (running && (!AUTOCLOSE || frame < 300)) {
   }
 
   frame++;
-  await new Promise((r) => setTimeout(r, 16));
+  if (frame % 10 === 0) {
+    const elapsedSec = (performance.now() - fpsStartMs) / 1000;
+    const avgFps = elapsedSec > 0 ? frame / elapsedSec : 0;
+    const syncWaitAvgMs = syncWaitSamples > 0 ? syncWaitTotalMs / syncWaitSamples : 0;
+    const syncWaitText = SYNC_MODE === "wait" ? syncWaitAvgMs.toFixed(3) : "n/a";
+    console.log(
+      `[fps] frame=${frame} avg=${avgFps.toFixed(1)} sync=${SYNC_MODE} wait_avg_ms=${syncWaitText}`,
+    );
+  }
 }
 
 console.log(`Rendered ${frame} frames, closing`);

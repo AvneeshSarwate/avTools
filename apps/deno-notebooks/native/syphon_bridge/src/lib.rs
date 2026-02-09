@@ -5,6 +5,10 @@
 mod macos {
     use libc::{c_int, c_void};
     use objc::declare::ClassDecl;
+    use objc::runtime::{
+        class_getInstanceMethod, method_getImplementation, method_setImplementation,
+        object_getClass, Imp,
+    };
     use objc::runtime::{Class, Object, Sel, BOOL, NO, YES};
     use objc::{class, msg_send, sel, sel_impl};
     use once_cell::sync::Lazy;
@@ -13,12 +17,14 @@ mod macos {
     use std::ffi::CStr;
     use std::path::{Path, PathBuf};
     use std::ptr;
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex, OnceLock, Weak};
+    use std::time::Instant;
 
     const INTERCEPTING_LAYER_CLASS_NAME: &str = "AvToolsInterceptingMetalLayer";
     const NS_UTF8_STRING_ENCODING: usize = 4;
     const RING_SIZE: usize = 3;
+    type PresentDrawableFn = unsafe extern "C" fn(*mut Object, Sel, *mut Object);
 
     unsafe extern "C" {
         fn MTLCreateSystemDefaultDevice() -> *mut Object;
@@ -47,6 +53,7 @@ mod macos {
 
     #[derive(Clone, Copy)]
     struct RingEntry {
+        #[allow(dead_code)]
         frame_id: u64,
         drawable: usize,
     }
@@ -109,6 +116,7 @@ mod macos {
             inner.write_idx = (inner.write_idx + 1) % RING_SIZE;
         }
 
+        #[allow(dead_code)]
         fn take_latest(&self) -> Option<(u64, *mut Object)> {
             let mut inner = self.inner.lock().unwrap();
             if inner.intercept_count == 0 {
@@ -146,6 +154,10 @@ mod macos {
 
     static LAYER_RINGS: Lazy<Mutex<HashMap<usize, Weak<DrawableRing>>>> =
         Lazy::new(|| Mutex::new(HashMap::new()));
+    static LAYER_STATES: Lazy<Mutex<HashMap<usize, usize>>> =
+        Lazy::new(|| Mutex::new(HashMap::new()));
+    static ORIGINAL_PRESENT_DRAWABLE_IMP: OnceLock<usize> = OnceLock::new();
+    static PRESENT_DRAWABLE_HOOK_READY: OnceLock<()> = OnceLock::new();
 
     pub struct SyphonState {
         ns_view: *mut Object,
@@ -156,6 +168,14 @@ mod macos {
         loaded_framework_path: Option<String>,
         command_queue: *mut Object,
         syphon_server: *mut Object,
+        publish_enabled: AtomicU32,
+        published_frame_count: AtomicU64,
+        present_hook_count: AtomicU64,
+        debug_enabled: bool,
+        debug_log_interval_ms: u64,
+        debug_last_log_ms: AtomicU64,
+        debug_last_publish_count: AtomicU64,
+        debug_last_hook_count: AtomicU64,
         last_width: AtomicU32,
         last_height: AtomicU32,
     }
@@ -174,7 +194,9 @@ mod macos {
 
     impl Drop for SyphonState {
         fn drop(&mut self) {
+            self.publish_enabled.store(0, Ordering::Relaxed);
             unregister_layer_ring(self.layer);
+            unregister_layer_state(self.layer);
             if !self.syphon_server.is_null() {
                 unsafe {
                     if responds_to_selector(self.syphon_server, sel!(stop)) {
@@ -229,7 +251,9 @@ mod macos {
             }
 
             unregister_layer_ring(self.layer);
+            unregister_layer_state(self.layer);
             register_layer_ring(current_layer, &self.ring);
+            register_layer_state(current_layer, self as *mut SyphonState);
             self.layer = current_layer;
         }
 
@@ -264,6 +288,7 @@ mod macos {
             if device.is_null() {
                 return false;
             }
+            ensure_present_drawable_hook(device);
 
             let queue: *mut Object = msg_send![device, newCommandQueue];
             if queue.is_null() {
@@ -299,19 +324,20 @@ mod macos {
             if !self.ensure_server_ready() {
                 return 0;
             }
+            self.publish_enabled.store(1, Ordering::Relaxed);
+            self.published_frame_count.load(Ordering::Relaxed)
+        }
 
-            let (frame_id, drawable) = match self.ring.take_latest() {
-                Some(v) => v,
-                None => return 0,
-            };
-
-            if drawable.is_null() {
+        unsafe fn publish_on_command_buffer(
+            &mut self,
+            drawable: *mut Object,
+            command_buffer: *mut Object,
+        ) -> u64 {
+            if drawable.is_null() || command_buffer.is_null() || self.syphon_server.is_null() {
                 return 0;
             }
-
             let texture: *mut Object = msg_send![drawable, texture];
             if texture.is_null() {
-                let _: () = msg_send![drawable, release];
                 return 0;
             }
 
@@ -319,12 +345,6 @@ mod macos {
             let height: u64 = msg_send![texture, height];
             self.last_width.store(width as u32, Ordering::Relaxed);
             self.last_height.store(height as u32, Ordering::Relaxed);
-
-            let cmd_buf: *mut Object = msg_send![self.command_queue, commandBuffer];
-            if cmd_buf.is_null() {
-                let _: () = msg_send![drawable, release];
-                return 0;
-            }
 
             let image_region = NSRect {
                 origin: NSPoint { x: 0.0, y: 0.0 },
@@ -337,15 +357,66 @@ mod macos {
             let _: () = msg_send![
                 self.syphon_server,
                 publishFrameTexture: texture
-                onCommandBuffer: cmd_buf
+                onCommandBuffer: command_buffer
                 imageRegion: image_region
                 flipped: NO
             ];
 
-            let _: () = msg_send![cmd_buf, commit];
-            let _: () = msg_send![drawable, release];
+            self.published_frame_count.fetch_add(1, Ordering::Relaxed) + 1
+        }
 
-            frame_id
+        unsafe fn maybe_debug_log(&self) {
+            if !self.debug_enabled {
+                return;
+            }
+            let now = monotonic_millis();
+            let last = self.debug_last_log_ms.load(Ordering::Relaxed);
+            if now.saturating_sub(last) < self.debug_log_interval_ms {
+                return;
+            }
+            if self
+                .debug_last_log_ms
+                .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_err()
+            {
+                return;
+            }
+
+            let published_total = self.published_frame_count.load(Ordering::Relaxed);
+            let hook_total = self.present_hook_count.load(Ordering::Relaxed);
+            let published_prev = self
+                .debug_last_publish_count
+                .swap(published_total, Ordering::Relaxed);
+            let hook_prev = self.debug_last_hook_count.swap(hook_total, Ordering::Relaxed);
+            let published_delta = published_total.saturating_sub(published_prev);
+            let hook_delta = hook_total.saturating_sub(hook_prev);
+            let dt_ms = now.saturating_sub(last).max(1);
+            let publish_fps = (published_delta as f64) * 1000.0 / (dt_ms as f64);
+            let hook_fps = (hook_delta as f64) * 1000.0 / (dt_ms as f64);
+
+            let has_clients = if self.syphon_server.is_null() {
+                false
+            } else {
+                let hc: BOOL = msg_send![self.syphon_server, hasClients];
+                hc == YES
+            };
+            let width = self.last_width.load(Ordering::Relaxed);
+            let height = self.last_height.load(Ordering::Relaxed);
+
+            eprintln!(
+                "[syphon_bridge] server=\"{}\" enabled={} clients={} hooks_total={} hooks_delta={} hook_fps={:.1} published_total={} published_delta={} publish_fps={:.1} size={}x{}",
+                self.server_name,
+                self.publish_enabled.load(Ordering::Relaxed) != 0,
+                has_clients,
+                hook_total,
+                hook_delta,
+                hook_fps,
+                published_total,
+                published_delta,
+                publish_fps,
+                width,
+                height
+            );
         }
 
         unsafe fn has_clients(&mut self) -> bool {
@@ -393,6 +464,117 @@ mod macos {
         }
         let mut map = LAYER_RINGS.lock().unwrap();
         map.remove(&(layer as usize));
+    }
+
+    fn register_layer_state(layer: *mut Object, state: *mut SyphonState) {
+        if layer.is_null() || state.is_null() {
+            return;
+        }
+        let mut map = LAYER_STATES.lock().unwrap();
+        map.insert(layer as usize, state as usize);
+    }
+
+    fn unregister_layer_state(layer: *mut Object) {
+        if layer.is_null() {
+            return;
+        }
+        let mut map = LAYER_STATES.lock().unwrap();
+        map.remove(&(layer as usize));
+    }
+
+    unsafe fn lookup_state_for_drawable(drawable: *mut Object) -> Option<*mut SyphonState> {
+        if drawable.is_null() {
+            return None;
+        }
+        let layer: *mut Object = msg_send![drawable, layer];
+        if layer.is_null() {
+            return None;
+        }
+        let map = LAYER_STATES.lock().unwrap();
+        map.get(&(layer as usize))
+            .copied()
+            .map(|ptr_usize| ptr_usize as *mut SyphonState)
+    }
+
+    fn monotonic_millis() -> u64 {
+        static START: OnceLock<Instant> = OnceLock::new();
+        let elapsed = START.get_or_init(Instant::now).elapsed();
+        let ms = elapsed.as_millis();
+        if ms > u128::from(u64::MAX) {
+            u64::MAX
+        } else {
+            ms as u64
+        }
+    }
+
+    fn env_flag(name: &str) -> bool {
+        match std::env::var(name) {
+            Ok(v) => {
+                let v = v.trim().to_ascii_lowercase();
+                !v.is_empty() && v != "0" && v != "false" && v != "no" && v != "off"
+            }
+            Err(_) => false,
+        }
+    }
+
+    fn env_u64(name: &str, default: u64) -> u64 {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(default)
+    }
+
+    fn ensure_present_drawable_hook(device: *mut Object) {
+        if device.is_null() {
+            return;
+        }
+        let _ = PRESENT_DRAWABLE_HOOK_READY.get_or_init(|| unsafe {
+            let queue: *mut Object = msg_send![device, newCommandQueue];
+            if queue.is_null() {
+                return;
+            }
+
+            let cmd_buf: *mut Object = msg_send![queue, commandBuffer];
+            if cmd_buf.is_null() {
+                let _: () = msg_send![queue, release];
+                return;
+            }
+
+            let cmd_cls = object_getClass(cmd_buf as *const Object);
+            if !cmd_cls.is_null() {
+                let method = class_getInstanceMethod(cmd_cls, sel!(presentDrawable:));
+                if !method.is_null() {
+                    let original = method_getImplementation(method);
+                    let _ = ORIGINAL_PRESENT_DRAWABLE_IMP.set(original as usize);
+                    let new_imp: Imp =
+                        std::mem::transmute(intercept_present_drawable as PresentDrawableFn);
+                    let _ = method_setImplementation(method as *mut _, new_imp);
+                }
+            }
+
+            let _: () = msg_send![cmd_buf, release];
+            let _: () = msg_send![queue, release];
+        });
+    }
+
+    extern "C" fn intercept_present_drawable(this: *mut Object, cmd: Sel, drawable: *mut Object) {
+        unsafe {
+            if let Some(state_ptr) = lookup_state_for_drawable(drawable) {
+                let state = &mut *state_ptr;
+                state.present_hook_count.fetch_add(1, Ordering::Relaxed);
+                if state.publish_enabled.load(Ordering::Relaxed) != 0 && state.ensure_server_ready()
+                {
+                    let _ = state.publish_on_command_buffer(drawable, this);
+                }
+                state.maybe_debug_log();
+            }
+
+            if let Some(imp) = ORIGINAL_PRESENT_DRAWABLE_IMP.get() {
+                let original: PresentDrawableFn = std::mem::transmute(*imp);
+                original(this, cmd, drawable);
+            }
+        }
     }
 
     extern "C" fn intercept_next_drawable(this: &Object, _cmd: Sel) -> *mut Object {
@@ -785,6 +967,8 @@ mod macos {
                 Some(decoded)
             }
         };
+        let debug_enabled = env_flag("SYPHON_BRIDGE_DEBUG");
+        let debug_log_interval_ms = env_u64("SYPHON_BRIDGE_DEBUG_INTERVAL_MS", 1000);
 
         let loaded_framework_path = load_syphon_framework(framework_hint.as_deref());
 
@@ -809,7 +993,7 @@ mod macos {
         let ring = Arc::new(DrawableRing::new());
         register_layer_ring(layer, &ring);
 
-        let state = SyphonState {
+        let mut state = Box::new(SyphonState {
             ns_view,
             layer,
             ring,
@@ -818,11 +1002,29 @@ mod macos {
             loaded_framework_path,
             command_queue: ptr::null_mut(),
             syphon_server: ptr::null_mut(),
+            publish_enabled: AtomicU32::new(0),
+            published_frame_count: AtomicU64::new(0),
+            present_hook_count: AtomicU64::new(0),
+            debug_enabled,
+            debug_log_interval_ms,
+            debug_last_log_ms: AtomicU64::new(monotonic_millis()),
+            debug_last_publish_count: AtomicU64::new(0),
+            debug_last_hook_count: AtomicU64::new(0),
             last_width: AtomicU32::new(0),
             last_height: AtomicU32::new(0),
-        };
+        });
 
-        Box::into_raw(Box::new(state))
+        if debug_enabled {
+            eprintln!(
+                "[syphon_bridge] debug enabled interval_ms={} server=\"{}\"",
+                debug_log_interval_ms, state.server_name
+            );
+        }
+
+        let state_ptr: *mut SyphonState = &mut *state;
+        register_layer_state(layer, state_ptr);
+
+        Box::into_raw(state)
     }
 
     #[no_mangle]
