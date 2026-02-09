@@ -50,6 +50,7 @@ import { createSyphonGpuWindow } from "../syphon/mod.ts";
 const WIDTH = 512;
 const HEIGHT = 512;
 const SERVER_NAME = "ThreeSyphonDebug";
+const TARGET_SURFACE_FORMAT: GPUTextureFormat = "rgba16float";
 type SyncMode = "none" | "wait";
 
 function getSyncMode(): SyncMode {
@@ -106,7 +107,41 @@ const win = await createSyphonGpuWindow(device, {
   },
 });
 
+function configureSurface(
+  window: typeof win,
+): { format: GPUTextureFormat; alphaMode: string } {
+  const alphaCandidates = [
+    { raw: "postmultiplied", typed: "postmultiplied" as unknown as GPUCanvasAlphaMode },
+    { raw: "opaque", typed: "opaque" as GPUCanvasAlphaMode },
+  ];
+  const formatCandidates: GPUTextureFormat[] = TARGET_SURFACE_FORMAT === window.format
+    ? [window.format]
+    : [TARGET_SURFACE_FORMAT, window.format];
+
+  let lastErr: unknown = null;
+  for (const format of formatCandidates) {
+    for (const alpha of alphaCandidates) {
+      try {
+        window.ctx.configure({
+          device,
+          format,
+          usage: GPUTextureUsage.RENDER_ATTACHMENT,
+          alphaMode: alpha.typed,
+        });
+        return { format, alphaMode: alpha.raw };
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+  }
+  throw lastErr ?? new Error("Failed to configure window surface.");
+}
+
+const configuredSurface = configureSurface(win);
+
 console.log("Window created, format:", win.format);
+console.log("Configured surface format:", configuredSurface.format);
+console.log("Configured surface alphaMode:", configuredSurface.alphaMode);
 console.log("Syphon server:", win.syphon.name);
 console.log("Syphon sync mode:", SYNC_MODE);
 console.log("Syphon flipY:", FLIP_Y);
@@ -155,9 +190,11 @@ console.log("Renderer initialized");
 
 renderer.setPixelRatio(1);
 renderer.setSize(renderWidth, renderHeight, false);
+renderer.setClearColor(0x000000, 1);
 console.log("Renderer size set");
 
 const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
 const camera = new THREE.PerspectiveCamera(70, renderWidth / renderHeight, 0.1, 100);
 camera.position.z = 3;
 
