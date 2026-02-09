@@ -9,6 +9,7 @@
  * Sync modes:
  * --sync=none (default): publish immediately after render()
  * --sync=wait: await device.queue.onSubmittedWorkDone() before publish()
+ * --flip-y / --no-flip-y: toggle Syphon vertical orientation metadata
  *
  * Render pacing:
  * The loop is paced by `present()` + event polling (no fixed sleep),
@@ -16,6 +17,7 @@
  *
  * Environment alternatives:
  * SYPHON_SYNC_MODE=wait
+ * SYPHON_FLIP_Y=1
  *
  * Syphon bridge debug logging:
  * SYPHON_BRIDGE_DEBUG=1
@@ -58,7 +60,21 @@ function getSyncMode(): SyncMode {
   return "none";
 }
 
+function getFlipY(): boolean {
+  let fromArgs: boolean | undefined;
+  for (const arg of Deno.args) {
+    if (arg === "--flip-y") fromArgs = true;
+    if (arg === "--no-flip-y") fromArgs = false;
+  }
+  if (fromArgs !== undefined) {
+    return fromArgs;
+  }
+  const raw = (Deno.env.get("SYPHON_FLIP_Y") || "").trim().toLowerCase();
+  return !!raw && raw !== "0" && raw !== "false" && raw !== "no" && raw !== "off";
+}
+
 const SYNC_MODE = getSyncMode();
+const FLIP_Y = getFlipY();
 
 const device = await requestWebGpuDevice();
 let syncWaitTotalMs = 0;
@@ -86,12 +102,14 @@ const win = await createSyphonGpuWindow(device, {
   title: "Three.js Debug + Syphon",
   syphon: {
     serverName: SERVER_NAME,
+    flipY: FLIP_Y,
   },
 });
 
 console.log("Window created, format:", win.format);
 console.log("Syphon server:", win.syphon.name);
 console.log("Syphon sync mode:", SYNC_MODE);
+console.log("Syphon flipY:", FLIP_Y);
 
 const THREE = await import("npm:three");
 const { WebGPURenderer } = await import("npm:three/webgpu");

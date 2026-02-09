@@ -169,6 +169,7 @@ mod macos {
         command_queue: *mut Object,
         syphon_server: *mut Object,
         publish_enabled: AtomicU32,
+        publish_flipped: AtomicU32,
         published_frame_count: AtomicU64,
         present_hook_count: AtomicU64,
         debug_enabled: bool,
@@ -353,13 +354,18 @@ mod macos {
                     height: height as f64,
                 },
             };
+            let flipped = if self.publish_flipped.load(Ordering::Relaxed) != 0 {
+                YES
+            } else {
+                NO
+            };
 
             let _: () = msg_send![
                 self.syphon_server,
                 publishFrameTexture: texture
                 onCommandBuffer: command_buffer
                 imageRegion: image_region
-                flipped: NO
+                flipped: flipped
             ];
 
             self.published_frame_count.fetch_add(1, Ordering::Relaxed) + 1
@@ -404,9 +410,10 @@ mod macos {
             let height = self.last_height.load(Ordering::Relaxed);
 
             eprintln!(
-                "[syphon_bridge] server=\"{}\" enabled={} clients={} hooks_total={} hooks_delta={} hook_fps={:.1} published_total={} published_delta={} publish_fps={:.1} size={}x{}",
+                "[syphon_bridge] server=\"{}\" enabled={} flipped={} clients={} hooks_total={} hooks_delta={} hook_fps={:.1} published_total={} published_delta={} publish_fps={:.1} size={}x{}",
                 self.server_name,
                 self.publish_enabled.load(Ordering::Relaxed) != 0,
+                self.publish_flipped.load(Ordering::Relaxed) != 0,
                 has_clients,
                 hook_total,
                 hook_delta,
@@ -969,6 +976,8 @@ mod macos {
         };
         let debug_enabled = env_flag("SYPHON_BRIDGE_DEBUG");
         let debug_log_interval_ms = env_u64("SYPHON_BRIDGE_DEBUG_INTERVAL_MS", 1000);
+        let publish_flipped =
+            env_flag("SYPHON_BRIDGE_FLIP_Y") || env_flag("SYPHON_BRIDGE_FLIPPED");
 
         let loaded_framework_path = load_syphon_framework(framework_hint.as_deref());
 
@@ -1003,6 +1012,7 @@ mod macos {
             command_queue: ptr::null_mut(),
             syphon_server: ptr::null_mut(),
             publish_enabled: AtomicU32::new(0),
+            publish_flipped: AtomicU32::new(u32::from(publish_flipped)),
             published_frame_count: AtomicU64::new(0),
             present_hook_count: AtomicU64::new(0),
             debug_enabled,
@@ -1016,8 +1026,8 @@ mod macos {
 
         if debug_enabled {
             eprintln!(
-                "[syphon_bridge] debug enabled interval_ms={} server=\"{}\"",
-                debug_log_interval_ms, state.server_name
+                "[syphon_bridge] debug enabled interval_ms={} flipped={} server=\"{}\"",
+                debug_log_interval_ms, publish_flipped, state.server_name
             );
         }
 
@@ -1066,6 +1076,15 @@ mod macos {
         }
         let state = unsafe { &mut *state };
         unsafe { state.set_name(new_name) };
+    }
+
+    #[no_mangle]
+    pub extern "C" fn syphon_set_flipped(state: *mut SyphonState, flipped: u32) {
+        if state.is_null() {
+            return;
+        }
+        let state = unsafe { &*state };
+        state.publish_flipped.store(u32::from(flipped != 0), Ordering::Relaxed);
     }
 
     #[no_mangle]
@@ -1332,6 +1351,9 @@ mod macos {
         _name_len: u32,
     ) {
     }
+
+    #[no_mangle]
+    pub extern "C" fn syphon_set_flipped(_state: *mut SyphonState, _flipped: u32) {}
 
     #[no_mangle]
     pub extern "C" fn syphon_get_intercept_count(_state: *mut SyphonState) -> u64 {

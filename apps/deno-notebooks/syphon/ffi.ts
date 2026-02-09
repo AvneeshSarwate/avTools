@@ -19,6 +19,10 @@ export const FFI_SYMBOLS = {
     parameters: ["pointer", "pointer", "u32"],
     result: "void",
   },
+  syphon_set_flipped: {
+    parameters: ["pointer", "u32"],
+    result: "void",
+  },
   syphon_get_intercept_count: {
     parameters: ["pointer"],
     result: "u64",

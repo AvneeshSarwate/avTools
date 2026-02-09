@@ -15,6 +15,7 @@ import {
 
 export interface SyphonOptions {
   serverName?: string;
+  flipY?: boolean;
   frameworkPath?: string;
   libPath?: string;
 }
@@ -50,6 +51,13 @@ export class SyphonServer {
     if (!this.#state) {
       this.#lib.close();
       throw new Error("Failed to initialize syphon bridge.");
+    }
+
+    if (options.flipY !== undefined) {
+      this.#lib.symbols.syphon_set_flipped(
+        this.#state,
+        options.flipY ? 1 : 0,
+      );
     }
   }
 
