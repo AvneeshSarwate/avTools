@@ -8,6 +8,7 @@ export interface WindowOptions {
   height: number;
   title?: string;
   libPath?: string;
+  beforeSurfaceCreate?: (info: BeforeSurfaceCreateInfo) => void | Promise<void>;
 }
 
 export interface GpuWindow {
@@ -23,19 +24,35 @@ export interface GpuWindow {
   close(): void;
 }
 
+export interface BeforeSurfaceCreateInfo {
+  system: "cocoa" | "x11" | "wayland";
+  rawWindowHandle: bigint;
+  rawDisplayHandle: bigint;
+  surfaceWindowHandle: bigint;
+  surfaceDisplayHandle: bigint;
+}
+
 function systemFromId(id: number): "cocoa" | "x11" | "wayland" {
   if (id === 1) return "x11";
   if (id === 2) return "wayland";
   return "cocoa";
 }
 
-export async function createGpuWindow(device: GPUDevice, options: WindowOptions): Promise<GpuWindow> {
+export async function createGpuWindow(
+  device: GPUDevice,
+  options: WindowOptions,
+): Promise<GpuWindow> {
   const debug = Deno.env.get("DENO_WINDOW_DEBUG") !== undefined;
   const lib = openLibrary(options.libPath);
   const title = options.title ?? "raw-webgpu";
   const { ptr, len } = encodeTitle(title);
 
-  const state = lib.symbols.create_window(options.width, options.height, ptr, len);
+  const state = lib.symbols.create_window(
+    options.width,
+    options.height,
+    ptr,
+    len,
+  );
   if (!state) {
     lib.close();
     throw new Error("Failed to create native window");
@@ -97,6 +114,25 @@ export async function createGpuWindow(device: GPUDevice, options: WindowOptions)
     });
   }
 
+  if (options.beforeSurfaceCreate) {
+    try {
+      await options.beforeSurfaceCreate({
+        system,
+        rawWindowHandle: windowHandle,
+        rawDisplayHandle: displayHandle,
+        surfaceWindowHandle,
+        surfaceDisplayHandle,
+      });
+    } catch (err) {
+      try {
+        lib.symbols.destroy_window(state);
+      } finally {
+        lib.close();
+      }
+      throw err;
+    }
+  }
+
   const surface = new Deno.UnsafeWindowSurface({
     system,
     windowHandle: Deno.UnsafePointer.create(surfaceWindowHandle),
@@ -151,7 +187,11 @@ export async function createGpuWindow(device: GPUDevice, options: WindowOptions)
       return [];
     }
     const buf = new Uint8Array(65536);
-    const written = lib.symbols.poll_events(state, Deno.UnsafePointer.of(buf), buf.length);
+    const written = lib.symbols.poll_events(
+      state,
+      Deno.UnsafePointer.of(buf),
+      buf.length,
+    );
     if (!written) {
       if (pendingCloseEvent) {
         pendingCloseEvent = false;

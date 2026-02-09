@@ -5,11 +5,16 @@ import { blit } from "./blit.ts";
 import type { WindowEvent } from "./events.ts";
 import type { GpuWindow } from "./window.ts";
 
+export interface FramePublisher {
+  publishFrame(): bigint | number;
+}
+
 export interface RenderLoopOptions {
   window: GpuWindow;
   blitPipeline: BlitPipeline;
   onFrame: (frameNumber: number) => GPUTextureView;
   onEvent?: (event: WindowEvent) => void;
+  syphon?: FramePublisher;
 }
 
 export function startRenderLoop(options: RenderLoopOptions): { stop(): void } {
@@ -42,8 +47,15 @@ export function startRenderLoop(options: RenderLoopOptions): { stop(): void } {
       const swapView = swapTexture.createView();
 
       const encoder = options.window.device.createCommandEncoder();
-      blit(options.window.device, encoder, options.blitPipeline, outputView, swapView);
+      blit(
+        options.window.device,
+        encoder,
+        options.blitPipeline,
+        outputView,
+        swapView,
+      );
       options.window.device.queue.submit([encoder.finish()]);
+      options.syphon?.publishFrame();
       options.window.present();
 
       await new Promise((resolve) => setTimeout(resolve, 0));

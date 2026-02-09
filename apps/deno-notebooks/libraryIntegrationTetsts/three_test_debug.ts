@@ -123,7 +123,8 @@ try {
 // More frames
 let running = true;
 let frame = 0;
-while (running && frame < 300) {
+const AUTOCLOSE = true
+while (running && (!AUTOCLOSE || frame < 300)) {
   const events = win.pollEvents();
   for (const ev of events) {
     if (ev.type === "close") running = false;
