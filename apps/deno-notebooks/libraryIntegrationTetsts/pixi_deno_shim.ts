@@ -663,6 +663,17 @@ export async function setupPixiDeno(opts: PixiDenoOptions = {}): Promise<PixiDen
         return;
       }
 
+      // writeTexture expects data in the destination texture's byte order.
+      // Canvas getImageData/getRawPixels returns RGBA, but if the texture
+      // format is bgra8unorm we need to swap R↔B.
+      if (destination.texture.format === "bgra8unorm") {
+        for (let i = 0; i < pixels.length; i += 4) {
+          const r = pixels[i];
+          pixels[i] = pixels[i + 2];     // B
+          pixels[i + 2] = r;              // R
+        }
+      }
+
       this.writeTexture(
         { texture: destination.texture, origin: destination.origin ?? { x: 0, y: 0 } },
         pixels,
@@ -823,8 +834,7 @@ export async function setupPixiDeno(opts: PixiDenoOptions = {}): Promise<PixiDen
     resolution: 1,
     antialias: false,
     backgroundColor: BG,
-    preference: "webgpu",
-  });
+  } satisfies Partial<Parameters<typeof renderer.init>[0]>);
 
   console.log("Renderer initialized!");
   return { renderer, win, canvas, device, adapter, PIXI };
@@ -844,6 +854,7 @@ export async function runPixiRenderLoop(
   } = {},
 ): Promise<void> {
   const { renderer, win, canvas } = ctx;
+  if (!win) throw new Error("runPixiRenderLoop requires a windowed context (headless: false)");
   const autoClose = opts.autoClose ?? true;
   const maxFrames = opts.maxFrames ?? 300;
 

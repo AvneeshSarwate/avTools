@@ -53,7 +53,7 @@ const stroked = new PIXI.Text({
   style: {
     fontSize: 36,
     fill: 0xf9ca24,
-    stroke: { color: 0x2d3436, width: 4 },
+    stroke: { color: 0xffffff, width: 6 },
   },
 });
 stroked.position.set(30, 130);

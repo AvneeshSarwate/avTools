@@ -1,6 +1,7 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@denosaurs/plug@1": "1.0.5",
     "jsr:@denosaurs/plug@1.0.5": "1.0.5",
     "jsr:@gfx/canvas-wasm@*": "0.4.2",
     "jsr:@gfx/canvas@*": "0.5.8",
@@ -130,7 +131,8 @@
     "@gfx/canvas@0.5.8": {
       "integrity": "a61c80292528e7433d428556b494a0ea496dd8e6abd4a338b8b25fc04e46ea3e",
       "dependencies": [
-        "jsr:@denosaurs/plug",
+        "jsr:@denosaurs/plug@1",
+        "jsr:@denosaurs/plug@1.0.5",
         "jsr:@std/encoding@0.217.0",
         "jsr:@std/fs@0.217.0",
         "jsr:@std/path@0.217.0"

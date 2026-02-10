@@ -48,7 +48,7 @@ const stroked = new PIXI.Text({
   style: {
     fontSize: 36,
     fill: 0xf9ca24,
-    stroke: { color: 0x2d3436, width: 4 },
+    stroke: { color: 0xffffff, width: 6 },
   },
 });
 stroked.position.set(30, 130);
@@ -186,7 +186,7 @@ console.log("Text scene built!");
 
 await runPixiRenderLoop(ctx, stage, {
   autoClose: true,
-  maxFrames: 300,
+  maxFrames: 3000,
   onFrame: (frame) => {
     const scale = 1.0 + Math.sin(frame * 0.03) * 0.02;
     title.scale.set(scale, scale);
