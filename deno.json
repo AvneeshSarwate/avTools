@@ -1,4 +1,5 @@
 {
+  "nodeModulesDir": "auto",
   "workspace": [
     "./packages/core-timing",
     "./packages/creative-algs",
