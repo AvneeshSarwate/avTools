@@ -196,6 +196,7 @@ echo "[3/6] Caching Deno dependencies..."
 shopt -s nullglob
 cache_targets=(
   "$NOTEBOOK_DIR/libraryIntegrationTetsts/"*.ts
+  "$NOTEBOOK_DIR/libraryIntegrationTetsts/"*.tsx
   "$NOTEBOOK_DIR/examples/"*.ts
   "$NOTEBOOK_DIR/tools/"*.ts
   "$NOTEBOOK_DIR/window/"*.ts
@@ -215,6 +216,39 @@ else
 fi
 
 echo "Deno dependencies cached."
+
+# ── Patch react-reconciler for Deno compatibility ──────────────────────────
+# @pixi/react imports 'react-reconciler/constants' (no .js extension), but
+# react-reconciler's package.json has no "exports" field, so Deno's strict
+# ESM resolution can't find it. We patch the package.json to add the missing
+# exports map. This is safe and idempotent.
+RECONCILER_PKG="$ROOT_DIR/node_modules/.deno/react-reconciler@0.31.0/node_modules/react-reconciler/package.json"
+if [ -f "$RECONCILER_PKG" ]; then
+  if ! grep -q '"exports"' "$RECONCILER_PKG"; then
+    echo "Patching react-reconciler package.json for Deno compatibility..."
+    python3 -c "
+import json, sys
+pkg_path = sys.argv[1]
+with open(pkg_path) as f:
+    pkg = json.load(f)
+pkg['exports'] = {
+    '.': './index.js',
+    './constants': './constants.js',
+    './constants.js': './constants.js',
+    './reflection': './reflection.js',
+    './reflection.js': './reflection.js'
+}
+with open(pkg_path, 'w') as f:
+    json.dump(pkg, f, indent=2)
+    f.write('\n')
+" "$RECONCILER_PKG"
+    echo "react-reconciler patched."
+  else
+    echo "react-reconciler already patched."
+  fi
+else
+  echo "react-reconciler not found in node_modules (skipping patch)."
+fi
 echo ""
 
 echo "[4/6] Setting up Python venv with uv + Jupyter..."

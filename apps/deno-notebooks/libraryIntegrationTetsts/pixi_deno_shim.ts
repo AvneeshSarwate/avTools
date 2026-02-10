@@ -535,14 +535,13 @@ function bridgeNativeEvent(ev: any, canvas: DenoPixiCanvas): void {
           button, buttons: _mouseButtons,
           bubbles: true,
         });
-        // Pixi listens on globalThis for pointerup
+        // Pixi listens on globalThis for pointerup, but checks
+        // event.target/composedPath to decide "outside" vs normal.
+        // In a native window all pointer-ups happen inside the canvas,
+        // so override composedPath to return [canvas] so pixi sees
+        // target === domElement and generates click/pointertap events.
+        pe.composedPath = () => [canvas];
         g.dispatchEvent(pe);
-        // Also fire pointertap on canvas for click detection
-        const tap = new g.PointerEvent("pointertap", {
-          clientX: ev.x, clientY: ev.y,
-          button, bubbles: true,
-        });
-        canvas.dispatchEvent(tap);
       }
       break;
     }
@@ -604,11 +603,28 @@ export interface PixiDenoContext {
   PIXI: typeof import("npm:pixi.js@^8");
 }
 
-export async function setupPixiDeno(opts: PixiDenoOptions = {}): Promise<PixiDenoContext> {
+export interface PixiDenoReactContext {
+  win: GpuWindow | null;
+  canvas: DenoPixiCanvas;
+  device: GPUDevice;
+  adapter: GPUAdapter;
+  PIXI: typeof import("npm:pixi.js@^8");
+}
+
+// ─── Shared setup (adapter, device, polyfills, text, window, DOMAdapter) ──
+
+interface _CommonResult {
+  adapter: GPUAdapter;
+  device: GPUDevice;
+  win: GpuWindow | null;
+  canvas: DenoPixiCanvas;
+  PIXI: typeof import("npm:pixi.js@^8");
+}
+
+async function _setupCommon(opts: PixiDenoOptions): Promise<_CommonResult> {
   const WIDTH = opts.width ?? 800;
   const HEIGHT = opts.height ?? 600;
   const TITLE = opts.title ?? "Pixi.js Deno";
-  const BG = opts.backgroundColor ?? 0x1a1a2e;
 
   console.log("Requesting WebGPU adapter...");
   const adapter = await navigator.gpu.requestAdapter();
@@ -822,6 +838,18 @@ export async function setupPixiDeno(opts: PixiDenoOptions = {}): Promise<PixiDen
     parseXML: (xml: string) => new g.DOMParser().parseFromString(xml, "text/xml"),
   });
 
+  return { adapter, device, win, canvas, PIXI };
+}
+
+// ─── setupPixiDeno (original API — creates renderer) ─────────────────────
+
+export async function setupPixiDeno(opts: PixiDenoOptions = {}): Promise<PixiDenoContext> {
+  const WIDTH = opts.width ?? 800;
+  const HEIGHT = opts.height ?? 600;
+  const BG = opts.backgroundColor ?? 0x1a1a2e;
+
+  const { adapter, device, win, canvas, PIXI } = await _setupCommon(opts);
+
   console.log("Creating pixi WebGPURenderer...");
   const renderer = new PIXI.WebGPURenderer();
 
@@ -838,6 +866,19 @@ export async function setupPixiDeno(opts: PixiDenoOptions = {}): Promise<PixiDen
 
   console.log("Renderer initialized!");
   return { renderer, win, canvas, device, adapter, PIXI };
+}
+
+// ─── setupPixiDenoForReact (no renderer — pixi-react creates its own) ────
+
+/**
+ * Setup for pixi-react: prepares GPU, window, canvas, polyfills, and
+ * DOMAdapter, but does NOT create a renderer. pixi-react's createRoot()
+ * creates its own Application + renderer via app.init().
+ */
+export async function setupPixiDenoForReact(opts: PixiDenoOptions = {}): Promise<PixiDenoReactContext> {
+  const { adapter, device, win, canvas, PIXI } = await _setupCommon(opts);
+  console.log("Setup for pixi-react complete (no renderer created).");
+  return { win, canvas, device, adapter, PIXI };
 }
 
 /**
@@ -900,6 +941,68 @@ export async function runPixiRenderLoop(
 
 export function cleanupPixiDeno(ctx: PixiDenoContext): void {
   try { ctx.renderer.destroy(); } catch (_) { /* ignore */ }
+  try { ctx.win?.close(); } catch (_) { /* ignore */ }
+  try { ctx.device.destroy(); } catch (_) { /* ignore */ }
+}
+
+/**
+ * Render loop for pixi-react apps. Drives app.ticker.update() which triggers
+ * pixi's internal render cycle and useTick callbacks, then presents the frame.
+ */
+export async function runPixiReactRenderLoop(
+  ctx: PixiDenoReactContext,
+  app: any,
+  opts: {
+    autoClose?: boolean;
+    maxFrames?: number;
+    onEvent?: (ev: any) => void;
+  } = {},
+): Promise<void> {
+  const { win, canvas } = ctx;
+  if (!win) throw new Error("runPixiReactRenderLoop requires a windowed context (headless: false)");
+  const autoClose = opts.autoClose ?? true;
+  const maxFrames = opts.maxFrames ?? 300;
+
+  let running = true;
+  let frame = 0;
+
+  console.log("Starting pixi-react render loop...");
+
+  while (running && (!autoClose || frame < maxFrames)) {
+    const events = win.pollEvents();
+    for (const ev of events) {
+      if (ev.type === "close") running = false;
+      if (ev.type === "resize") {
+        canvas.width = ev.width;
+        canvas.height = ev.height;
+        canvas.style.width = `${ev.width}px`;
+        canvas.style.height = `${ev.height}px`;
+        app.renderer.resize(ev.width, ev.height, 1);
+      }
+      // Bridge to pixi's event system
+      bridgeNativeEvent(ev, canvas);
+      opts.onEvent?.(ev);
+    }
+    if (!running || win.closed) break;
+
+    // Drive pixi's ticker — this triggers useTick hooks and internal render
+    app.ticker.update();
+
+    try {
+      win.present();
+    } catch (e) {
+      console.error("Present error at frame", frame, ":", e);
+      break;
+    }
+
+    frame++;
+    await new Promise((r) => setTimeout(r, 16));
+  }
+
+  console.log(`Rendered ${frame} frames, closing`);
+}
+
+export function cleanupPixiDenoReact(ctx: PixiDenoReactContext): void {
   try { ctx.win?.close(); } catch (_) { /* ignore */ }
   try { ctx.device.destroy(); } catch (_) { /* ignore */ }
 }
