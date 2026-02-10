@@ -39,6 +39,10 @@
     "@avtools/shader-fx/generated-raw/": "../../packages/shader-fx/generated-raw/",
     "@/": "./",
     "react": "npm:react@^19",
-    "@pixi/react": "npm:@pixi/react@8.0.5"
+    "pixi.js": "npm:pixi.js@^8",
+    "@pixi/react": "npm:@pixi/react@8.0.5",
+    "@pixi/layout": "npm:@pixi/layout@^3",
+    "@pixi/layout/components": "npm:@pixi/layout@^3/components",
+    "@pixi/ui": "npm:@pixi/ui@^2"
   }
 }

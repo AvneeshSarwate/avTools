@@ -4844,9 +4844,12 @@
         "dependencies": [
           "jsr:@std/assert@1",
           "jsr:@std/random@~0.1.4",
+          "npm:@pixi/layout@3",
           "npm:@pixi/react@8.0.5",
+          "npm:@pixi/ui@2",
           "npm:node-osc@^9.1.0",
           "npm:node-web-audio-api@*",
+          "npm:pixi.js@8",
           "npm:react@19",
           "npm:tone@*"
         ]

@@ -3,20 +3,7 @@
 // Run from apps/deno-notebooks:
 // deno run --unstable-webgpu --allow-all libraryIntegrationTetsts/pixi_ui_test.ts
 
-// Import layout FIRST (needs to register LayoutSystem before renderer.init)
 import { setupPixiDeno, runPixiRenderLoop, cleanupPixiDeno } from "./pixi_deno_shim.ts";
-
-console.log("Pre-importing @pixi/layout...");
-await import("npm:@pixi/layout@^3");
-const { LayoutContainer } = await import("npm:@pixi/layout@^3/components");
-
-console.log("Pre-importing @pixi/ui...");
-const {
-  FancyButton,
-  CheckBox,
-  Slider,
-  ProgressBar,
-} = await import("npm:@pixi/ui@^2");
 
 const WIDTH = 900;
 const HEIGHT = 700;
@@ -26,9 +13,13 @@ const ctx = await setupPixiDeno({
   height: HEIGHT,
   title: "Pixi.js UI Test",
   backgroundColor: 0x16213e,
+  enableLayout: true,
+  enableUI: true,
 });
 
-const { PIXI } = ctx;
+const { PIXI, layoutComponents, ui } = ctx;
+const { LayoutContainer } = layoutComponents!;
+const { FancyButton, CheckBox, Slider, ProgressBar } = ui!;
 
 // NOTE: We use only Graphics (no PIXI.Text) because Deno's WebGPU doesn't support
 // copyExternalImageToTexture needed for canvas-based text rendering.

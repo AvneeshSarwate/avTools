@@ -8,21 +8,16 @@ import { setupPixiDeno, runPixiRenderLoop, cleanupPixiDeno } from "./pixi_deno_s
 const WIDTH = 800;
 const HEIGHT = 600;
 
-// Import @pixi/layout BEFORE setupPixiDeno so the LayoutSystem extension
-// gets registered before renderer.init() (which is where Yoga WASM loads)
-console.log("Pre-importing @pixi/layout...");
-await import("npm:@pixi/layout@^3");
-const { LayoutContainer } = await import("npm:@pixi/layout@^3/components");
-console.log("Layout library loaded!");
-
 const ctx = await setupPixiDeno({
   width: WIDTH,
   height: HEIGHT,
   title: "Pixi.js Layout Test",
   backgroundColor: 0x1a1a2e,
+  enableLayout: true,
 });
 
-const { PIXI } = ctx;
+const { PIXI, layoutComponents } = ctx;
+const { LayoutContainer } = layoutComponents!;
 
 // ─── Build layout scene ──────────────────────────────────────────────────
 

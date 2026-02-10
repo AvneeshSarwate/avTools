@@ -8,8 +8,6 @@
  *   const { renderer, win, canvas, PIXI } = await setupPixiDeno({ width: 800, height: 600 });
  */
 
-// deno-lint-ignore-file no-explicit-any
-
 import { PixelFontMetrics } from "./pixi_text_metrics.ts";
 
 // ─── EventTarget mixin for DOM shims ─────────────────────────────────────
@@ -590,6 +588,10 @@ export interface PixiDenoOptions {
    * - false/undefined: mock canvas, no text rendering (Graphics-only)
    */
   enableText?: boolean | "native" | "wasm";
+  /** Pre-import @pixi/layout before renderer.init() so LayoutSystem registers. */
+  enableLayout?: boolean;
+  /** Pre-import @pixi/ui before renderer.init(). Implies enableLayout. */
+  enableUI?: boolean;
   /** Render to offscreen texture (no window). Use with snapshotPixiFrame(). */
   headless?: boolean;
 }
@@ -601,6 +603,8 @@ export interface PixiDenoContext {
   device: GPUDevice;
   adapter: GPUAdapter;
   PIXI: typeof import("npm:pixi.js@^8");
+  layoutComponents?: typeof import("npm:@pixi/layout@^3/components");
+  ui?: typeof import("npm:@pixi/ui@^2");
 }
 
 export interface PixiDenoReactContext {
@@ -609,6 +613,8 @@ export interface PixiDenoReactContext {
   device: GPUDevice;
   adapter: GPUAdapter;
   PIXI: typeof import("npm:pixi.js@^8");
+  layoutComponents?: typeof import("npm:@pixi/layout@^3/components");
+  ui?: typeof import("npm:@pixi/ui@^2");
 }
 
 // ─── Shared setup (adapter, device, polyfills, text, window, DOMAdapter) ──
@@ -619,6 +625,8 @@ interface _CommonResult {
   win: GpuWindow | null;
   canvas: DenoPixiCanvas;
   PIXI: typeof import("npm:pixi.js@^8");
+  layoutComponents?: typeof import("npm:@pixi/layout@^3/components");
+  ui?: typeof import("npm:@pixi/ui@^2");
 }
 
 async function _setupCommon(opts: PixiDenoOptions): Promise<_CommonResult> {
@@ -838,7 +846,23 @@ async function _setupCommon(opts: PixiDenoOptions): Promise<_CommonResult> {
     parseXML: (xml: string) => new g.DOMParser().parseFromString(xml, "text/xml"),
   });
 
-  return { adapter, device, win, canvas, PIXI };
+  // Pre-import extension libraries that must register before renderer.init()
+  let layoutComponents: typeof import("npm:@pixi/layout@^3/components") | undefined;
+  let ui: typeof import("npm:@pixi/ui@^2") | undefined;
+
+  if (opts.enableLayout || opts.enableUI) {
+    console.log("Pre-importing @pixi/layout...");
+    await import("@pixi/layout");
+    layoutComponents = await import("@pixi/layout/components");
+    console.log("Layout library loaded!");
+  }
+  if (opts.enableUI) {
+    console.log("Pre-importing @pixi/ui...");
+    ui = await import("@pixi/ui");
+    console.log("UI library loaded!");
+  }
+
+  return { adapter, device, win, canvas, PIXI, layoutComponents, ui };
 }
 
 // ─── setupPixiDeno (original API — creates renderer) ─────────────────────
@@ -848,7 +872,7 @@ export async function setupPixiDeno(opts: PixiDenoOptions = {}): Promise<PixiDen
   const HEIGHT = opts.height ?? 600;
   const BG = opts.backgroundColor ?? 0x1a1a2e;
 
-  const { adapter, device, win, canvas, PIXI } = await _setupCommon(opts);
+  const { adapter, device, win, canvas, PIXI, layoutComponents, ui } = await _setupCommon(opts);
 
   console.log("Creating pixi WebGPURenderer...");
   const renderer = new PIXI.WebGPURenderer();
@@ -865,7 +889,7 @@ export async function setupPixiDeno(opts: PixiDenoOptions = {}): Promise<PixiDen
   } satisfies Partial<Parameters<typeof renderer.init>[0]>);
 
   console.log("Renderer initialized!");
-  return { renderer, win, canvas, device, adapter, PIXI };
+  return { renderer, win, canvas, device, adapter, PIXI, layoutComponents, ui };
 }
 
 // ─── setupPixiDenoForReact (no renderer — pixi-react creates its own) ────
@@ -876,9 +900,9 @@ export async function setupPixiDeno(opts: PixiDenoOptions = {}): Promise<PixiDen
  * creates its own Application + renderer via app.init().
  */
 export async function setupPixiDenoForReact(opts: PixiDenoOptions = {}): Promise<PixiDenoReactContext> {
-  const { adapter, device, win, canvas, PIXI } = await _setupCommon(opts);
+  const { adapter, device, win, canvas, PIXI, layoutComponents, ui } = await _setupCommon(opts);
   console.log("Setup for pixi-react complete (no renderer created).");
-  return { win, canvas, device, adapter, PIXI };
+  return { win, canvas, device, adapter, PIXI, layoutComponents, ui };
 }
 
 /**

@@ -8,7 +8,7 @@
 
 import { setupPixiDenoForReact, runPixiReactRenderLoop, cleanupPixiDenoReact } from "./pixi_deno_shim.ts";
 import React, { useState, useCallback } from "react";
-import { Container, Graphics, Text } from "npm:pixi.js@^8";
+import { Container, Graphics, Text } from "pixi.js";
 import { createRoot, extend, useTick } from "@pixi/react";
 
 // Register pixi classes with the react reconciler
