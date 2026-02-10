@@ -10,6 +10,8 @@
 
 // deno-lint-ignore-file no-explicit-any
 
+import { PixelFontMetrics } from "./pixi_text_metrics.ts";
+
 // ─── EventTarget mixin for DOM shims ─────────────────────────────────────
 
 type Listener = EventListenerOrEventListenerObject;
@@ -256,16 +258,51 @@ class DenoGPUCanvasContextWrapper {
   }
 }
 
+// ─── Headless GPU context for offscreen rendering ────────────────────────
+
+class HeadlessGPUCanvasContext {
+  private _device!: GPUDevice;
+  private _format!: GPUTextureFormat;
+  private _texture!: GPUTexture;
+  private _width: number;
+  private _height: number;
+
+  constructor(width: number, height: number) {
+    this._width = width;
+    this._height = height;
+    this._format = "bgra8unorm";
+  }
+
+  configure(config: any): void {
+    this._device = config.device;
+    this._format = config.format ?? "bgra8unorm";
+    this._texture?.destroy();
+    this._texture = this._device.createTexture({
+      size: { width: this._width, height: this._height },
+      format: this._format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+    });
+  }
+
+  unconfigure(): void {
+    this._texture?.destroy();
+  }
+
+  getCurrentTexture(): GPUTexture {
+    return this._texture;
+  }
+}
+
 // ─── Canvas shim with real event support ─────────────────────────────────
 
 class DenoPixiCanvas extends g.HTMLCanvasElement {
   width: number;
   height: number;
   style: Record<string, string>;
-  private _ctx: DenoGPUCanvasContextWrapper;
+  private _ctx: any; // DenoGPUCanvasContextWrapper or HeadlessGPUCanvasContext
   private _et = new SimpleEventTarget();
 
-  constructor(w: number, h: number, ctx: DenoGPUCanvasContextWrapper) {
+  constructor(w: number, h: number, ctx: any) {
     super();
     this.width = w;
     this.height = h;
@@ -296,15 +333,18 @@ class DenoPixiCanvas extends g.HTMLCanvasElement {
   }
 }
 
-// ─── Canvaskit-backed canvas for real text rendering ──────────────────────
+// ─── Text canvas backed by @gfx/canvas (FFI) or @gfx/canvas-wasm ─────────
 
 let _ckCreateCanvas: ((w: number, h: number) => any) | null = null;
+let _fontMetrics: PixelFontMetrics | null = null;
 
 /**
- * A canvas wrapper backed by @gfx/canvas-wasm (Skia WASM) that produces real
- * pixels for text rendering. Extends HTMLCanvasElement so pixi's CanvasSource
- * instanceof check passes. Uses a Proxy for the 2D context so pixi's
- * CanvasPool can cache the context reference and it survives canvas resizes.
+ * Canvas wrapper that produces real pixels for text rendering. Works with both
+ * @gfx/canvas (FFI/Skia, full text quality) and @gfx/canvas-wasm (pure WASM).
+ * Extends HTMLCanvasElement for pixi's instanceof check. Uses a Proxy for the
+ * 2D context so pixi's CanvasPool can cache the reference across resizes.
+ * The measureText wrapper auto-detects whether the backend provides proper
+ * vertical metrics (FFI does, WASM doesn't) and supplements when needed.
  */
 class CanvaskitTextCanvas extends g.HTMLCanvasElement {
   _ckCanvas: any;
@@ -325,28 +365,43 @@ class CanvaskitTextCanvas extends g.HTMLCanvasElement {
     this._rawCtx = this._ckCanvas.getContext("2d");
 
     // Proxy delegates to the current _rawCtx, surviving recreations on resize.
-    // Also supplements missing vertical metrics from measureText().
+    // Wraps measureText() with pixel-scanned font metrics so pixi can
+    // correctly size the text canvas (canvaskit-wasm only returns width).
     const self = this;
     this._proxyCtx = new Proxy({} as any, {
       get(_target: any, prop: string | symbol) {
         self._ensureCanvas();
         if (prop === "canvas") return self;
-        // Wrap measureText to supplement vertical metrics that canvaskit-wasm
-        // doesn't provide (it only returns width). Without this, pixi creates
-        // canvases that are too short and descenders get clipped.
         if (prop === "measureText") {
           return function (text: string) {
             const result = self._rawCtx.measureText(text);
-            const fontMatch = (self._rawCtx.font || "").match(/(\d+(?:\.\d+)?)\s*px/i);
-            const fontSize = fontMatch ? parseFloat(fontMatch[1]) : 16;
+            // If native context already provides real vertical metrics
+            // (FFI backend), pass through directly — no supplementing needed.
+            if (result.fontBoundingBoxAscent > 0) {
+              return result;
+            }
+            // WASM backend: supplement missing vertical metrics
+            const width = result.width || 0;
+            const font: string = self._rawCtx.font || "16px sans-serif";
+            let ascent: number, descent: number;
+            if (_fontMetrics) {
+              const fm = _fontMetrics.measure(font);
+              ascent = fm.ascent;
+              descent = fm.descent;
+            } else {
+              const fontMatch = font.match(/(\d+(?:\.\d+)?)\s*px/i);
+              const sz = fontMatch ? parseFloat(fontMatch[1]) : 16;
+              ascent = Math.ceil(sz * 0.92);
+              descent = Math.ceil(sz * 0.32);
+            }
             return {
-              width: result.width || 0,
-              actualBoundingBoxAscent: result.actualBoundingBoxAscent || fontSize * 0.85,
-              actualBoundingBoxDescent: result.actualBoundingBoxDescent || fontSize * 0.35,
+              width,
+              actualBoundingBoxAscent: result.actualBoundingBoxAscent || ascent,
+              actualBoundingBoxDescent: result.actualBoundingBoxDescent || descent,
               actualBoundingBoxLeft: result.actualBoundingBoxLeft || 0,
-              actualBoundingBoxRight: result.actualBoundingBoxRight || (result.width || 0),
-              fontBoundingBoxAscent: result.fontBoundingBoxAscent || fontSize * 0.9,
-              fontBoundingBoxDescent: result.fontBoundingBoxDescent || fontSize * 0.4,
+              actualBoundingBoxRight: result.actualBoundingBoxRight || width,
+              fontBoundingBoxAscent: ascent,
+              fontBoundingBoxDescent: descent,
             };
           };
         }
@@ -356,6 +411,17 @@ class CanvaskitTextCanvas extends g.HTMLCanvasElement {
       },
       set(_target: any, prop: string | symbol, value: any) {
         self._ensureCanvas();
+        // Normalize 8-char hex colors (#RRGGBBAA) to rgba() — the native
+        // canvas (FFI/Skia) doesn't support CSS Color Level 4 hex-with-alpha
+        // and silently rejects it, falling back to black.
+        if ((prop === "fillStyle" || prop === "strokeStyle") &&
+            typeof value === "string" && /^#[0-9a-fA-F]{8}$/.test(value)) {
+          const r = parseInt(value.slice(1, 3), 16);
+          const g = parseInt(value.slice(3, 5), 16);
+          const b = parseInt(value.slice(5, 7), 16);
+          const a = parseInt(value.slice(7, 9), 16) / 255;
+          value = `rgba(${r}, ${g}, ${b}, ${a})`;
+        }
         self._rawCtx[prop] = value;
         return true;
       },
@@ -516,13 +582,22 @@ export interface PixiDenoOptions {
   height?: number;
   title?: string;
   backgroundColor?: number;
-  /** Load @gfx/canvas-wasm (pure WASM, cross-platform) for real text rendering */
-  enableText?: boolean;
+  /**
+   * Enable real text rendering via a canvas backend.
+   * - true or "native": use @gfx/canvas (FFI/Skia) — full text quality,
+   *   needs native lib (prebuilt for macOS/Win/Linux x64, cross-compile for Pi)
+   * - "wasm": use @gfx/canvas-wasm (pure WASM) — works everywhere,
+   *   limited measureText/textAlign/textBaseline
+   * - false/undefined: mock canvas, no text rendering (Graphics-only)
+   */
+  enableText?: boolean | "native" | "wasm";
+  /** Render to offscreen texture (no window). Use with snapshotPixiFrame(). */
+  headless?: boolean;
 }
 
 export interface PixiDenoContext {
   renderer: any;
-  win: GpuWindow;
+  win: GpuWindow | null;
   canvas: DenoPixiCanvas;
   device: GPUDevice;
   adapter: GPUAdapter;
@@ -597,26 +672,46 @@ export async function setupPixiDeno(opts: PixiDenoOptions = {}): Promise<PixiDen
     };
   }
 
-  // Load @gfx/canvas-wasm for real text rendering
+  // Load canvas backend for text rendering
   if (opts.enableText && !_ckCreateCanvas) {
-    console.log("Loading canvas WASM for text rendering...");
-    const canvasMod = await import("jsr:@gfx/canvas-wasm");
-    _ckCreateCanvas = canvasMod.createCanvas;
-    console.log("Canvas WASM loaded!");
+    const useWasm = opts.enableText === "wasm";
+    if (useWasm) {
+      console.log("Loading canvas WASM for text rendering...");
+      const canvasMod = await import("jsr:@gfx/canvas-wasm");
+      _ckCreateCanvas = canvasMod.createCanvas;
+      _fontMetrics = new PixelFontMetrics(_ckCreateCanvas);
+      console.log("Canvas WASM loaded!");
+    } else {
+      // "native" or true — use @gfx/canvas (FFI/Skia) for full text quality
+      console.log("Loading native canvas (FFI/Skia) for text rendering...");
+      const canvasMod = await import("jsr:@gfx/canvas");
+      _ckCreateCanvas = canvasMod.createCanvas;
+      // No pixel-scanning needed — FFI version has full measureText metrics
+      console.log("Native canvas loaded!");
+    }
   }
 
-  console.log("Creating window...");
-  const win = await createGpuWindow(device, { width: WIDTH, height: HEIGHT, title: TITLE });
-  console.log("Window created, format:", win.format);
+  let win: GpuWindow | null = null;
+  let canvas: DenoPixiCanvas;
 
-  const wrappedCtx = new DenoGPUCanvasContextWrapper(win.ctx);
-  const canvas = new DenoPixiCanvas(win.width, win.height, wrappedCtx);
+  if (opts.headless) {
+    console.log("Headless mode: rendering to offscreen texture");
+    const headlessCtx = new HeadlessGPUCanvasContext(WIDTH, HEIGHT);
+    canvas = new DenoPixiCanvas(WIDTH, HEIGHT, headlessCtx);
+  } else {
+    console.log("Creating window...");
+    win = await createGpuWindow(device, { width: WIDTH, height: HEIGHT, title: TITLE });
+    console.log("Window created, format:", win.format);
 
-  // Fire initial pointerover so pixi knows the pointer is inside
-  const initOver = new g.PointerEvent("pointerover", {
-    clientX: 0, clientY: 0, bubbles: true,
-  });
-  canvas.dispatchEvent(initOver);
+    const wrappedCtx = new DenoGPUCanvasContextWrapper(win.ctx);
+    canvas = new DenoPixiCanvas(win.width, win.height, wrappedCtx);
+
+    // Fire initial pointerover so pixi knows the pointer is inside
+    const initOver = new g.PointerEvent("pointerover", {
+      clientX: 0, clientY: 0, bubbles: true,
+    });
+    canvas.dispatchEvent(initOver);
+  }
 
   console.log("Importing pixi.js...");
   const PIXI = await import("npm:pixi.js@^8");
@@ -794,6 +889,79 @@ export async function runPixiRenderLoop(
 
 export function cleanupPixiDeno(ctx: PixiDenoContext): void {
   try { ctx.renderer.destroy(); } catch (_) { /* ignore */ }
-  try { ctx.win.close(); } catch (_) { /* ignore */ }
+  try { ctx.win?.close(); } catch (_) { /* ignore */ }
   try { ctx.device.destroy(); } catch (_) { /* ignore */ }
+}
+
+/**
+ * Render one frame and save as PNG. Requires headless mode (the offscreen
+ * texture must have COPY_SRC usage). Handles BGRA→RGBA conversion.
+ */
+export async function snapshotPixiFrame(
+  ctx: PixiDenoContext,
+  stage: any,
+  outPath: string,
+): Promise<void> {
+  // Render one frame
+  ctx.renderer.render({ container: stage });
+
+  // Get the output texture from the canvas context
+  const webgpuCtx = ctx.canvas.getContext("webgpu");
+  const texture = webgpuCtx.getCurrentTexture() as GPUTexture;
+  const width = texture.width;
+  const height = texture.height;
+  const format = texture.format;
+
+  // Read back GPU texture to CPU
+  const bytesPerRow = Math.ceil(width * 4 / 256) * 256;
+  const bufferSize = bytesPerRow * height;
+  const readBuffer = ctx.device.createBuffer({
+    size: bufferSize,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  });
+
+  const encoder = ctx.device.createCommandEncoder();
+  encoder.copyTextureToBuffer(
+    { texture },
+    { buffer: readBuffer, bytesPerRow, rowsPerImage: height },
+    { width, height, depthOrArrayLayers: 1 },
+  );
+  ctx.device.queue.submit([encoder.finish()]);
+
+  await readBuffer.mapAsync(GPUMapMode.READ);
+  const mapped = new Uint8Array(readBuffer.getMappedRange());
+
+  // Copy pixels with row stride handling and BGRA→RGBA conversion
+  const rgba8 = new Uint8Array(width * height * 4);
+  const isBGRA = format === "bgra8unorm";
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const srcIdx = y * bytesPerRow + x * 4;
+      const dstIdx = (y * width + x) * 4;
+      if (isBGRA) {
+        rgba8[dstIdx]     = mapped[srcIdx + 2]; // R ← B
+        rgba8[dstIdx + 1] = mapped[srcIdx + 1]; // G
+        rgba8[dstIdx + 2] = mapped[srcIdx];     // B ← R
+        rgba8[dstIdx + 3] = mapped[srcIdx + 3]; // A
+      } else {
+        rgba8[dstIdx]     = mapped[srcIdx];
+        rgba8[dstIdx + 1] = mapped[srcIdx + 1];
+        rgba8[dstIdx + 2] = mapped[srcIdx + 2];
+        rgba8[dstIdx + 3] = mapped[srcIdx + 3];
+      }
+    }
+  }
+
+  readBuffer.unmap();
+  readBuffer.destroy();
+
+  // Encode and write PNG
+  const { encodePNG } = await import("@img/png");
+  const dir = outPath.substring(0, outPath.lastIndexOf("/"));
+  if (dir) await Deno.mkdir(dir, { recursive: true });
+  const png = await encodePNG(new Uint8Array(rgba8), {
+    width, height, compression: 0, filter: 0, interlace: 0,
+  });
+  await Deno.writeFile(outPath, png);
+  console.log(`Snapshot saved: ${outPath} (${width}x${height})`);
 }
