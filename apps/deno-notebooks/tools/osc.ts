@@ -1,12 +1,23 @@
 import * as osc from "node-osc";
 
+export type OSCArg = string | number | boolean | null;
+export type OSCMessage = unknown;
+type NodeOscClientLike = {
+  send: (...args: unknown[]) => void;
+  close: () => void;
+};
+type NodeOscServerLike = {
+  on: (event: string, callback: (msg: OSCMessage) => void) => void;
+  close: () => void;
+};
+
 export interface OSCClient {
-  send: (address: string, ...args: any[]) => void;
+  send: (address: string, ...args: OSCArg[]) => void;
   close: () => void;
 }
 
 export interface OSCServer {
-  on: (event: string, callback: (msg: any) => void) => void;
+  on: (event: string, callback: (msg: OSCMessage) => void) => void;
   close: () => void;
 }
 
@@ -17,10 +28,10 @@ export interface OSCServer {
  * @returns OSC client instance
  */
 export function createOSCClient(host: string = "127.0.0.1", port: number = 57120): OSCClient {
-  const client = new osc.Client(host, port);
+  const client = new osc.Client(host, port) as unknown as NodeOscClientLike;
 
   return {
-    send: (address: string, ...args: any[]) => {
+    send: (address: string, ...args: OSCArg[]) => {
       client.send(address, ...args);
     },
     close: () => {
@@ -35,10 +46,10 @@ export function createOSCClient(host: string = "127.0.0.1", port: number = 57120
  * @returns OSC server instance
  */
 export function createOSCServer(port: number = 57121): OSCServer {
-  const server = new osc.Server(port, "0.0.0.0");
+  const server = new osc.Server(port, "0.0.0.0") as unknown as NodeOscServerLike;
 
   return {
-    on: (event: string, callback: (msg: any) => void) => {
+    on: (event: string, callback: (msg: OSCMessage) => void) => {
       server.on(event, callback);
     },
     close: () => {
@@ -56,11 +67,11 @@ export function createOSCServer(port: number = 57121): OSCServer {
  */
 export function sendOSC(
   address: string,
-  args: any[] = [],
+  args: OSCArg[] = [],
   host: string = "127.0.0.1",
   port: number = 57120
 ): void {
-  const client = new osc.Client(host, port);
+  const client = new osc.Client(host, port) as unknown as NodeOscClientLike;
   client.send(address, ...args, () => {
     client.close();
   });
@@ -69,7 +80,7 @@ export function sendOSC(
 /**
  * Convenience function for sending OSC to SuperCollider (default port 57120)
  */
-export function sendToSC(address: string, ...args: any[]): void {
+export function sendToSC(address: string, ...args: OSCArg[]): void {
   sendOSC(address, args, "127.0.0.1", 57120);
 }
 

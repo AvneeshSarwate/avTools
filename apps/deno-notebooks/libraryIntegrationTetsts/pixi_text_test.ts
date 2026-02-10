@@ -3,8 +3,6 @@
 // Run from apps/deno-notebooks:
 // deno run --unstable-webgpu --allow-all libraryIntegrationTetsts/pixi_text_test.ts
 
-// deno-lint-ignore-file no-explicit-any
-
 import { setupPixiDeno, runPixiRenderLoop, cleanupPixiDeno } from "./pixi_deno_shim.ts";
 
 const WIDTH = 800;

@@ -1,4 +1,3 @@
-// deno-lint-ignore-file no-explicit-any
 // Type definitions for osc.js
 // Project: Open Sound Control library for JavaScript
 // Definitions by: [Your Name]
@@ -27,7 +26,7 @@ export interface Color {
 
 export interface OSCMessage {
     address: string;
-    args: any[] | any;
+    args: unknown[] | unknown;
 }
 
 export interface OSCBundle {
@@ -50,13 +49,13 @@ export const isNode: boolean;
 export const isElectron: boolean;
 export const isBufferEnv: boolean;
 
-export const Long: any;
+export const Long: unknown;
 export const TextDecoder: TextDecoder | undefined;
 export const TextEncoder: TextEncoder | undefined;
 
-export function isArray(obj: any): boolean;
-export function isTypedArrayView(obj: any): boolean;
-export function isBuffer(obj: any): boolean;
+export function isArray(obj: unknown): boolean;
+export function isTypedArrayView(obj: unknown): boolean;
+export function isBuffer(obj: unknown): boolean;
 
 export function dataView(obj: ArrayLike<number> | ArrayBuffer, offset?: number, length?: number): DataView;
 export function byteArray(obj: ArrayLike<number> | ArrayBuffer): Uint8Array;
@@ -72,7 +71,7 @@ export function writePrimitive(val: number, dv: DataView | undefined, writerName
 export function readInt32(dv: DataView, offsetState: OffsetState): number;
 export function writeInt32(val: number, dv?: DataView, offset?: number): Uint8Array;
 
-export function readInt64(dv: DataView, offsetState: OffsetState): any;
+export function readInt64(dv: DataView, offsetState: OffsetState): unknown;
 export function writeInt64(val: { high: number, low: number }, dv?: DataView, offset?: number): Uint8Array;
 
 export function readFloat32(dv: DataView, offsetState: OffsetState): number;
@@ -105,23 +104,23 @@ export function timeTag(secs: number, now?: number): TimeTag;
 export function ntpToJSTime(secs1900: number, frac: number): number;
 export function jsToNTPTime(jsTime: number): [number, number];
 
-export function readArguments(dv: DataView, options: Partial<OSCDefaults>, offsetState: OffsetState): any[];
-export function writeArguments(args: any[], options: Partial<OSCDefaults>): Uint8Array;
+export function readArguments(dv: DataView, options: Partial<OSCDefaults>, offsetState: OffsetState): unknown[];
+export function writeArguments(args: unknown[], options: Partial<OSCDefaults>): Uint8Array;
 
 export function readMessage(data: ArrayLike<number>, options?: Partial<OSCDefaults>, offsetState?: OffsetState): OSCMessage;
 export function writeMessage(msg: OSCMessage, options?: Partial<OSCDefaults>): Uint8Array;
 
-export function isValidMessage(msg: any): boolean;
+export function isValidMessage(msg: unknown): boolean;
 
 export function readBundle(dv: DataView, options?: Partial<OSCDefaults>, offsetState?: OffsetState): OSCBundle;
 export function writeBundle(bundle: OSCBundle, options?: Partial<OSCDefaults>): Uint8Array;
 
-export function isValidBundle(bundle: any): boolean;
+export function isValidBundle(bundle: unknown): boolean;
 
 export function readPacket(data: ArrayLike<number>, options?: Partial<OSCDefaults>, offsetState?: OffsetState, len?: number): OSCMessage | OSCBundle;
 export function writePacket(packet: OSCMessage | OSCBundle, options?: Partial<OSCDefaults>): Uint8Array;
 
 export const argumentTypes: { [key: string]: { reader: string, writer?: string } };
 
-export function inferTypeForArgument(arg: any): string;
-export function annotateArguments(args: any[]): any[];
+export function inferTypeForArgument(arg: unknown): string;
+export function annotateArguments(args: unknown[]): unknown[];

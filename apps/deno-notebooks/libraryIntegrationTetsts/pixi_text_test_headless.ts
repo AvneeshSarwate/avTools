@@ -7,8 +7,6 @@
  *   deno run --unstable-webgpu --unstable-ffi --allow-all libraryIntegrationTetsts/pixi_text_test_headless.ts
  */
 
-// deno-lint-ignore-file no-explicit-any
-
 import { setupPixiDeno, snapshotPixiFrame, cleanupPixiDeno } from "./pixi_deno_shim.ts";
 
 const WIDTH = 800;

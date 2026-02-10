@@ -67,14 +67,17 @@ export class DenoNotebookBridge<TClient, THandle, TSessionData> {
     this.globalKey = `__denoNotebookBridge_${adapter.name}__`
   }
 
+  private getGlobalBridgeStore(): typeof globalThis & Record<string, BridgeState<TClient, TSessionData> | undefined> {
+    return globalThis as typeof globalThis & Record<string, BridgeState<TClient, TSessionData> | undefined>
+  }
+
   private getBridgeState(): BridgeState<TClient, TSessionData> {
-    // deno-lint-ignore no-explicit-any
-    const global = globalThis as any
-    if (!global[this.globalKey]) {
+    const globalStore = this.getGlobalBridgeStore()
+    if (!globalStore[this.globalKey]) {
       console.log(`[${this.adapter.name}] Auto-initializing server...`)
       this.initializeBridge()
     }
-    return global[this.globalKey]
+    return globalStore[this.globalKey]!
   }
 
   private initializeBridge(): void {
@@ -118,8 +121,8 @@ export class DenoNotebookBridge<TClient, THandle, TSessionData> {
     const addr = server.addr as Deno.NetAddr
     const baseUrl = `http://127.0.0.1:${addr.port}`
 
-    // deno-lint-ignore no-explicit-any
-    ;(globalThis as any)[this.globalKey] = {
+    const globalStore = this.getGlobalBridgeStore()
+    globalStore[this.globalKey] = {
       server,
       baseUrl,
       sessions,
@@ -257,15 +260,14 @@ export class DenoNotebookBridge<TClient, THandle, TSessionData> {
   }
 
   shutdown(): void {
-    // deno-lint-ignore no-explicit-any
-    const global = globalThis as any
-    const state = global[this.globalKey] as BridgeState<TClient, TSessionData> | undefined
+    const globalStore = this.getGlobalBridgeStore()
+    const state = globalStore[this.globalKey]
     if (state) {
       for (const session of state.sessions.values()) {
         this.adapter.onSessionCleanup?.(session)
       }
       state.server.shutdown()
-      delete global[this.globalKey]
+      delete globalStore[this.globalKey]
       console.log(`[${this.adapter.name}] Server shutdown`)
     }
   }

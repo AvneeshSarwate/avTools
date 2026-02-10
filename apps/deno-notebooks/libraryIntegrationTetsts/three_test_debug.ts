@@ -4,8 +4,16 @@
 // run with deno run --unstable-webgpu --allow-all libraryIntegrationTetsts/three_test_debug.ts
 
 // Shim globals BEFORE any Three.js import
-// deno-lint-ignore no-explicit-any
-const g = globalThis as any;
+type ThreeShimGlobal = Record<string, unknown>;
+
+interface GPUUncapturedErrorEvent extends Event {
+  error?: {
+    constructor?: { name?: string };
+    message?: string;
+  };
+}
+
+const g = globalThis as ThreeShimGlobal;
 if (typeof g.requestAnimationFrame === "undefined") {
   g.requestAnimationFrame = (cb: (time: number) => void): number =>
     setTimeout(() => cb(performance.now()), 16) as unknown as number;
@@ -31,8 +39,7 @@ const device = await requestWebGpuDevice();
 
 // Replace the default error handler with one that shows the actual error message
 device.addEventListener("uncapturederror", (event: Event) => {
-  // deno-lint-ignore no-explicit-any
-  const gpuError = (event as any).error;
+  const gpuError = (event as GPUUncapturedErrorEvent).error;
   if (gpuError) {
     console.error("GPU ERROR:", gpuError.constructor?.name, gpuError.message);
   }
@@ -47,8 +54,8 @@ const win = await createGpuWindow(device, {
 console.log("Window created, format:", win.format);
 
 // Import Three.js
-const THREE = await import("npm:three");
-const { WebGPURenderer } = await import("npm:three/webgpu");
+const THREE = await import("three");
+const { WebGPURenderer } = await import("three/webgpu");
 
 // Canvas shim
 class CanvasShim {
@@ -78,8 +85,7 @@ let renderHeight = win.height;
 const canvas = new CanvasShim(renderWidth, renderHeight, win.ctx);
 
 console.log("Creating WebGPURenderer (antialias: false, alpha: false)...");
-// deno-lint-ignore no-explicit-any
-const renderer = new WebGPURenderer({ canvas: canvas as any, device, antialias: false, alpha: false });
+const renderer = new WebGPURenderer({ canvas: canvas as unknown as HTMLCanvasElement, device, antialias: false, alpha: false });
 
 console.log("Calling renderer.init()...");
 await renderer.init();

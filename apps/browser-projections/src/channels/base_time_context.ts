@@ -1,5 +1,5 @@
 
-// deno-lint-ignore-file no-explicit-any no-unused-vars no-this-alias require-await
+// deno-lint-ignore-file no-unused-vars no-this-alias require-await
 
 const LOG_DELAYS = false
 
@@ -37,13 +37,13 @@ export class CancelablePromiseProxy<T> implements Promise<T> {
 
   then<TResult1 = T, TResult2 = never>(
     onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null,
-    onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | undefined | null
   ): Promise<TResult1 | TResult2> {
     return this.promise!.then(onfulfilled, onrejected)
   }
 
   catch<TResult = never>(
-    onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null
+    onrejected?: ((reason: unknown) => TResult | PromiseLike<TResult>) | undefined | null
   ): Promise<T | TResult> {
     return this.promise!.catch(onrejected)
   }
@@ -57,7 +57,7 @@ export class CancelablePromiseProxy<T> implements Promise<T> {
 let contextId = 0
 
 //todo api - is there a way to have this be both generic and type safe?
-type Constructor<T> = new (time: number, ab: AbortController, id: number, cancelPromise: CancelablePromiseProxy<any>) => T;
+type Constructor<T> = new (time: number, ab: AbortController, id: number, cancelPromise: CancelablePromiseProxy<unknown>) => T;
 
 
 export function createAndLaunchContext<T, C extends TimeContext>(block: (ctx: C) => Promise<T>, rootTime: number, ctor: Constructor<C>, updateParent: boolean, parentContext?: C, debugName: string = ""): CancelablePromiseProxy<T> {
@@ -133,10 +133,10 @@ export abstract class TimeContext {
   public set bpm(value: number) {
     this._bpm = value;
   }
-  public cancelPromise: CancelablePromiseProxy<any>
+  public cancelPromise: CancelablePromiseProxy<unknown>
   public childContexts: Set<TimeContext> = new Set()
 
-  constructor(time: number, ab: AbortController, id: number, cancelPromise: CancelablePromiseProxy<any>) {
+  constructor(time: number, ab: AbortController, id: number, cancelPromise: CancelablePromiseProxy<unknown>) {
     this.time = time
     this.startTime = time
     this.abortController = ab
@@ -375,7 +375,7 @@ export class TempoClock {
 
 export class TempoClockTimeContext extends TimeContext {
   public tempoClock: TempoClock
-  constructor(time: number, ab: AbortController, id: number, cancelPromise: CancelablePromiseProxy<any>) {
+  constructor(time: number, ab: AbortController, id: number, cancelPromise: CancelablePromiseProxy<unknown>) {
     super(time, ab, id, cancelPromise)
     this.tempoClock = new TempoClock(60, time)
   }

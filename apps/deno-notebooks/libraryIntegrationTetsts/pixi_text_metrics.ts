@@ -9,8 +9,6 @@
  * unique font configuration.
  */
 
-// deno-lint-ignore-file no-explicit-any
-
 export interface FontMetrics {
   /** Pixels above the alphabetic baseline (positive) */
   ascent: number;
@@ -26,15 +24,28 @@ const ALPHA_THRESHOLD = 8; // ignore anti-aliasing fringes
 // We add extra descender/ascender characters for robustness.
 const TEST_CHARS = "|ÉqÅjgypf̂";
 
+interface PixelScanContext {
+  clearRect(x: number, y: number, w: number, h: number): void;
+  font: string;
+  fillStyle: string;
+  fillText(text: string, x: number, y: number): void;
+  getImageData(x: number, y: number, w: number, h: number): ImageData;
+}
+
+interface PixelScanCanvas {
+  getContext(type: "2d"): PixelScanContext | null;
+  dispose?: () => void;
+}
+
 /**
  * Measures font metrics by rendering test characters and scanning pixels.
  * Accepts the raw canvaskit `createCanvas` function (not the wrapper).
  */
 export class PixelFontMetrics {
   private _cache = new Map<string, FontMetrics>();
-  private _createCanvas: (w: number, h: number) => any;
+  private _createCanvas: (w: number, h: number) => PixelScanCanvas;
 
-  constructor(createCanvas: (w: number, h: number) => any) {
+  constructor(createCanvas: (w: number, h: number) => PixelScanCanvas) {
     this._createCanvas = createCanvas;
   }
 
@@ -61,7 +72,7 @@ export class PixelFontMetrics {
     const canvasH = Math.ceil(fontSize * 4);
     const baselineY = Math.floor(canvasH / 2);
 
-    let canvas: any;
+    let canvas: PixelScanCanvas;
     try {
       canvas = this._createCanvas(canvasW, canvasH);
     } catch {
@@ -166,6 +177,6 @@ function parseFontSize(font: string): number {
   return match ? parseFloat(match[1]) : 16;
 }
 
-function tryDispose(canvas: any): void {
+function tryDispose(canvas: PixelScanCanvas | null | undefined): void {
   try { canvas?.dispose?.(); } catch { /* ignore */ }
 }

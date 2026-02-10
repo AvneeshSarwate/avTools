@@ -10,10 +10,15 @@
     "watch:compute-raw": "deno run --allow-read --allow-write ../../tools/shader-watch/watch_compute_raw.ts ./shaders ../../packages/compute-shader/generated-raw"
   },
   "imports": {
+    "@gfx/canvas": "jsr:@gfx/canvas@^0.5.8",
+    "@gfx/canvas-wasm": "jsr:@gfx/canvas-wasm@^0.4.2",
     "@std/assert": "jsr:@std/assert@1",
     "@std/random": "jsr:@std/random@^0.1.4",
+    "fast-xml-parser": "npm:fast-xml-parser@4.3.5",
     "node-osc": "npm:node-osc@^9.1.0",
     "node-web-audio-api": "npm:node-web-audio-api",
+    "pako": "npm:pako@2.1.0",
+    "three": "npm:three@^0.178.0",
     "tone": "npm:tone",
     "@avtools/core-timing": "../../packages/core-timing/mod.ts",
     "@avtools/creative-algs": "../../packages/creative-algs/mod.ts",

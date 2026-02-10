@@ -4,11 +4,14 @@
     "jsr:@denosaurs/plug@1": "1.0.5",
     "jsr:@denosaurs/plug@1.0.5": "1.0.5",
     "jsr:@gfx/canvas-wasm@*": "0.4.2",
+    "jsr:@gfx/canvas-wasm@~0.4.2": "0.4.2",
     "jsr:@gfx/canvas@*": "0.5.8",
+    "jsr:@gfx/canvas@~0.5.8": "0.5.8",
     "jsr:@img/internal@~0.1.1": "0.1.1",
     "jsr:@img/png@~0.1.6": "0.1.6",
     "jsr:@std/assert@0.214": "0.214.0",
     "jsr:@std/assert@0.217": "0.217.0",
+    "jsr:@std/assert@1": "1.0.18",
     "jsr:@std/encoding@0.214": "0.214.0",
     "jsr:@std/encoding@0.217.0": "0.217.0",
     "jsr:@std/encoding@1.0.5": "1.0.5",
@@ -20,6 +23,7 @@
     "jsr:@std/path@0.217": "0.217.0",
     "jsr:@std/path@0.217.0": "0.217.0",
     "jsr:@std/path@1": "1.1.4",
+    "jsr:@std/random@~0.1.4": "0.1.5",
     "npm:@anthropic-ai/sdk@0.67": "0.67.1_zod@4.3.6",
     "npm:@codemirror/lang-javascript@^6.2.4": "6.2.4",
     "npm:@codemirror/state@^6.5.2": "6.5.4",
@@ -161,6 +165,12 @@
     "@std/assert@0.217.0": {
       "integrity": "c98e279362ca6982d5285c3b89517b757c1e3477ee9f14eb2fdf80a45aaa9642"
     },
+    "@std/assert@1.0.18": {
+      "integrity": "270245e9c2c13b446286de475131dc688ca9abcd94fc5db41d43a219b34d1c78",
+      "dependencies": [
+        "jsr:@std/internal"
+      ]
+    },
     "@std/encoding@0.214.0": {
       "integrity": "30a8713e1db22986c7e780555ffd2fefd1d4f9374d734bb41f5970f6c3352af5"
     },
@@ -207,6 +217,9 @@
       "dependencies": [
         "jsr:@std/internal"
       ]
+    },
+    "@std/random@0.1.5": {
+      "integrity": "d26614c4f6c441afc22397a1c5b8f27d02ab8f5572f1d29e7b0cd57f3d548235"
     }
   },
   "npm": {
@@ -4842,15 +4855,20 @@
       },
       "apps/deno-notebooks": {
         "dependencies": [
+          "jsr:@gfx/canvas-wasm@~0.4.2",
+          "jsr:@gfx/canvas@~0.5.8",
           "jsr:@std/assert@1",
           "jsr:@std/random@~0.1.4",
           "npm:@pixi/layout@3",
           "npm:@pixi/react@8.0.5",
           "npm:@pixi/ui@2",
+          "npm:fast-xml-parser@4.3.5",
           "npm:node-osc@^9.1.0",
           "npm:node-web-audio-api@*",
+          "npm:pako@2.1.0",
           "npm:pixi.js@8",
           "npm:react@19",
+          "npm:three@0.178",
           "npm:tone@*"
         ]
       },

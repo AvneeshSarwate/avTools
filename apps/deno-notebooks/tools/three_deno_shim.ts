@@ -13,14 +13,21 @@
  *   const { renderer, THREE } = await createDenoThreeRenderer(device, width, height, win.ctx);
  */
 
-// deno-lint-ignore-file no-explicit-any
-
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type ThreeNamespace = typeof import("npm:three");
-type WebGPURendererType = import("npm:three/webgpu").WebGPURenderer;
+type ThreeNamespace = typeof import("three");
+type WebGPURendererType = import("three/webgpu").WebGPURenderer;
+type ThreeShimGlobal = Record<string, unknown>;
+
+interface CanvasConfigureOptions {
+  device: GPUDevice;
+  format: GPUTextureFormat;
+  usage?: number;
+  alphaMode?: GPUCanvasAlphaMode | "opaque" | "premultiplied";
+  toneMapping?: { mode: string };
+}
 
 export interface DenoThreeContext {
   renderer: WebGPURendererType;
@@ -36,7 +43,7 @@ export interface DenoThreeContext {
 // Global polyfills -- installed on first import
 // ---------------------------------------------------------------------------
 
-const g = globalThis as any;
+const g = globalThis as ThreeShimGlobal;
 
 if (typeof g.requestAnimationFrame === "undefined") {
   g.requestAnimationFrame = (cb: (time: number) => void): number =>
@@ -129,17 +136,20 @@ class WindowedContextWrapper {
     this._real = real;
   }
 
-  configure(config: Record<string, any>): void {
+  configure(config: CanvasConfigureOptions): void {
     // Strip options Deno's surface doesn't support
-    const cleaned: Record<string, any> = {
+    const alphaMode = config.alphaMode === "premultiplied"
+      ? "opaque"
+      : (config.alphaMode ?? "opaque");
+    const cleaned: GPUCanvasConfiguration = {
       device: config.device,
       format: config.format,
       // Deno surfaces only support RENDER_ATTACHMENT, not COPY_SRC
       usage: GPUTextureUsage.RENDER_ATTACHMENT,
-      alphaMode: config.alphaMode === "premultiplied" ? "opaque" : (config.alphaMode ?? "opaque"),
+      alphaMode,
       // toneMapping is intentionally omitted -- Deno doesn't support it
     };
-    this._real.configure(cleaned as GPUCanvasConfiguration);
+    this._real.configure(cleaned);
   }
 
   unconfigure(): void {
@@ -179,8 +189,8 @@ export class DenoCanvasShim {
   }
 
   setAttribute(_name: string, _value: string): void {}
-  addEventListener(_event: string, _handler: (...args: any[]) => void): void {}
-  removeEventListener(_event: string, _handler: (...args: any[]) => void): void {}
+  addEventListener(_event: string, _handler: (...args: unknown[]) => void): void {}
+  removeEventListener(_event: string, _handler: (...args: unknown[]) => void): void {}
 }
 
 // ---------------------------------------------------------------------------
@@ -207,11 +217,11 @@ export async function createDenoThreeRenderer(
     : new HeadlessGPUContext(width, height);
   const canvas = new DenoCanvasShim(width, height, ctx);
 
-  const THREE = await import("npm:three") as ThreeNamespace;
-  const { WebGPURenderer } = await import("npm:three/webgpu");
+  const THREE = await import("three") as ThreeNamespace;
+  const { WebGPURenderer } = await import("three/webgpu");
 
   const renderer = new WebGPURenderer({
-    canvas: canvas as any,
+    canvas: canvas as unknown as HTMLCanvasElement,
     device: device,
     antialias: false,
     alpha: false,
@@ -225,7 +235,7 @@ export async function createDenoThreeRenderer(
   // We need to present() it before the render loop can start clean.
   // In headless mode this is harmless (getCurrentTexture returns the same
   // backing texture every time).
-  const outputTexture = (ctx as any).getCurrentTexture() as GPUTexture;
+  const outputTexture = ctx.getCurrentTexture();
 
   return { renderer, THREE, canvas, outputTexture };
 }

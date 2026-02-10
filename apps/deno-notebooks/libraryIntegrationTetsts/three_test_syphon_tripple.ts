@@ -27,8 +27,16 @@
  */
 
 // Shim globals BEFORE any Three.js import.
-// deno-lint-ignore no-explicit-any
-const g = globalThis as any;
+type ThreeShimGlobal = Record<string, unknown>;
+
+interface GPUUncapturedErrorEvent extends Event {
+  error?: {
+    constructor?: { name?: string };
+    message?: string;
+  };
+}
+
+const g = globalThis as ThreeShimGlobal;
 if (typeof g.requestAnimationFrame === "undefined") {
   g.requestAnimationFrame = (cb: (time: number) => void): number =>
     setTimeout(() => cb(performance.now()), 16) as unknown as number;
@@ -139,10 +147,10 @@ interface ViewRuntime {
   spec: ViewSpec;
   win: SyphonGpuWindow;
   canvas: CanvasShim;
-  renderer: import("npm:three/webgpu").WebGPURenderer;
-  scene: import("npm:three").Scene;
-  camera: import("npm:three").PerspectiveCamera;
-  cube: import("npm:three").Mesh;
+  renderer: import("three/webgpu").WebGPURenderer;
+  scene: import("three").Scene;
+  camera: import("three").PerspectiveCamera;
+  cube: import("three").Mesh;
   renderWidth: number;
   renderHeight: number;
   running: boolean;
@@ -157,15 +165,14 @@ const FLIP_Y = getFlipY();
 
 const device = await requestWebGpuDevice();
 device.addEventListener("uncapturederror", (event: Event) => {
-  // deno-lint-ignore no-explicit-any
-  const gpuError = (event as any).error;
+  const gpuError = (event as GPUUncapturedErrorEvent).error;
   if (gpuError) {
     console.error("GPU ERROR:", gpuError.constructor?.name, gpuError.message);
   }
 });
 
-const THREE = await import("npm:three");
-const { WebGPURenderer } = await import("npm:three/webgpu");
+const THREE = await import("three");
+const { WebGPURenderer } = await import("three/webgpu");
 
 function configureSurface(
   win: SyphonGpuWindow,
@@ -214,8 +221,12 @@ async function createView(spec: ViewSpec): Promise<ViewRuntime> {
   let renderHeight = win.height;
   const canvas = new CanvasShim(renderWidth, renderHeight, win.ctx);
 
-  // deno-lint-ignore no-explicit-any
-  const renderer = new WebGPURenderer({ canvas: canvas as any, device, antialias: false, alpha: false });
+  const renderer = new WebGPURenderer({
+    canvas: canvas as unknown as HTMLCanvasElement,
+    device,
+    antialias: false,
+    alpha: false,
+  });
   await renderer.init();
   renderer.setPixelRatio(1);
   renderer.setSize(renderWidth, renderHeight, false);

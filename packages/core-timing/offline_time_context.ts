@@ -1,5 +1,5 @@
 /* eslint-disable no-constant-condition */
-// deno-lint-ignore-file no-explicit-any no-unused-vars no-this-alias require-await
+// deno-lint-ignore-file no-unused-vars
 
 
 // chat for implementing/fixing offline mode - https://chatgpt.com/c/69343bfc-5394-832f-a246-c0be525623fd
@@ -342,10 +342,11 @@ function deriveSeed(parentSeed: string, forkIndex: number): string {
 // This is the rigorous way to ensure the JS runtime drains the microtask queue to empty,
 // matching realtime behavior (microtask checkpoint after each timer callback).
 const createYieldToMacrotask = (setTimeoutFn: SetTimeoutFn): (() => Promise<void>) => {
-  const g: any = globalThis as any;
+  const g = globalThis as typeof globalThis & { setImmediate?: (cb: () => void) => void };
 
   if (typeof g.setImmediate === "function") {
-    return () => new Promise<void>((res) => g.setImmediate(res));
+    const setImmediateFn = g.setImmediate;
+    return () => new Promise<void>((res) => setImmediateFn(res));
   }
 
   if (typeof MessageChannel !== "undefined") {
@@ -357,7 +358,7 @@ const createYieldToMacrotask = (setTimeoutFn: SetTimeoutFn): (() => Promise<void
       if (fn) fn();
     };
     // Some runtimes require explicit start() on MessagePort.
-    (mc.port1 as any).start?.();
+    mc.port1.start?.();
 
     return () =>
       new Promise<void>((res) => {
@@ -374,11 +375,12 @@ const createYieldToMacrotask = (setTimeoutFn: SetTimeoutFn): (() => Promise<void
 // This gives the runtime a microtask checkpoint boundary (drains Promise reactions),
 // which is essential for deterministic ordering between logical timeslices.
 const createScheduleMacrotask = (setTimeoutFn: SetTimeoutFn): ((cb: () => void) => void) => {
-  const g: any = globalThis as any;
+  const g = globalThis as typeof globalThis & { setImmediate?: (cb: () => void) => void };
 
   // Node.js / some runtimes
   if (typeof g.setImmediate === "function") {
-    return (cb) => g.setImmediate(cb);
+    const setImmediateFn = g.setImmediate;
+    return (cb) => setImmediateFn(cb);
   }
 
   // Browsers / modern runtimes (fast, not clamped like setTimeout(0) often is)
@@ -389,7 +391,7 @@ const createScheduleMacrotask = (setTimeoutFn: SetTimeoutFn): ((cb: () => void) 
       const fn = q.shift();
       if (fn) fn();
     };
-    (mc.port1 as any).start?.();
+    mc.port1.start?.();
     return (cb) => {
       q.push(cb);
       mc.port2.postMessage(0);
@@ -455,13 +457,13 @@ export class CancelablePromiseProxy<T> implements Promise<T> {
 
   then<TResult1 = T, TResult2 = never>(
     onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null,
-    onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | undefined | null,
   ): Promise<TResult1 | TResult2> {
     return this.promise!.then(onfulfilled, onrejected);
   }
 
   catch<TResult = never>(
-    onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null,
+    onrejected?: ((reason: unknown) => TResult | PromiseLike<TResult>) | undefined | null,
   ): Promise<T | TResult> {
     return this.promise!.catch(onrejected);
   }
@@ -489,7 +491,7 @@ function clampPos(x: number) {
 }
 
 export class TempoMap {
-  public readonly id: string;
+  public id: string;
   public version = 0;
 
   private segs: TempoSegment[];
@@ -511,8 +513,8 @@ export class TempoMap {
   public clone(): TempoMap {
     const t = new TempoMap(60);
     // preserve id uniqueness for the clone
-    (t as any).id = crypto.randomUUID();
-    (t as any).segs = this.segs.map((s) => ({ ...s }));
+    t.id = crypto.randomUUID();
+    t.segs = this.segs.map((s) => ({ ...s }));
     t.version = this.version;
     return t;
   }
@@ -684,7 +686,7 @@ type TimeWaitMeta = {
   ctx: TimeContext;
   targetTime: number;
   resolve: () => void;
-  reject: (e?: any) => void;
+  reject: (e?: unknown) => void;
   abortListener: () => void;
 };
 
@@ -695,7 +697,7 @@ type BeatWaitMeta = {
   tempo: TempoMap;
   targetBeat: number;
   resolve: () => void;
-  reject: (e?: any) => void;
+  reject: (e?: unknown) => void;
   abortListener: () => void;
 };
 
@@ -704,7 +706,7 @@ type FrameWaitMeta = {
   seq: number;
   ctx: TimeContext;
   resolve: () => void;
-  reject: (e?: any) => void;
+  reject: (e?: unknown) => void;
   abortListener: () => void;
 };
 
@@ -904,7 +906,10 @@ export class TimeScheduler {
     }
 
     // realtime (browser only)
-    if (typeof (globalThis as any).requestAnimationFrame !== "function") {
+    const rafGlobal = globalThis as typeof globalThis & {
+      requestAnimationFrame?: (cb: (ts: number) => void) => number;
+    };
+    if (typeof rafGlobal.requestAnimationFrame !== "function") {
       return Promise.reject(new Error("waitFrame requires requestAnimationFrame (use DateTimeContext outside browsers)"));
     }
 
@@ -1254,7 +1259,14 @@ export class TimeScheduler {
     if (this.rafRunning) return;
     this.rafRunning = true;
 
-    const raf = (globalThis as any).requestAnimationFrame as (cb: (ts: number) => void) => number;
+    const rafGlobal = globalThis as typeof globalThis & {
+      requestAnimationFrame?: (cb: (ts: number) => void) => number;
+    };
+    const raf = rafGlobal.requestAnimationFrame;
+    if (!raf) {
+      throw new Error("requestAnimationFrame is required for waitFrame()");
+    }
+    const rafFn = raf.bind(globalThis);
 
     const tick = () => {
       if (!this.rafRunning) return;
@@ -1265,10 +1277,10 @@ export class TimeScheduler {
       // If timers were delayed, frame ticks can help “catch up” quickly.
       this.queuePump();
 
-      this.rafHandle = raf(() => tick());
+      this.rafHandle = rafFn(() => tick());
     };
 
-    this.rafHandle = raf(() => tick());
+    this.rafHandle = rafFn(() => tick());
   }
 
   private resolveAllFrameWaitersAt(t: number) {
@@ -1304,7 +1316,7 @@ export class TimeScheduler {
 type BarrierWaiter = {
   ctx: TimeContext;
   resolve: () => void;
-  reject: (e?: any) => void;
+  reject: (e?: unknown) => void;
   abortListener: () => void;
 };
 
@@ -1446,7 +1458,7 @@ export type BranchOptions = {
   rng?: "forked" | "shared"; // default forked
 };
 
-type Constructor<T> = new (time: number, ab: AbortController, id: number, cancelPromise: CancelablePromiseProxy<any>) => T;
+type Constructor<T> = new (time: number, ab: AbortController, id: number, cancelPromise: CancelablePromiseProxy<unknown>) => T;
 
 export abstract class TimeContext {
   public rootContext: TimeContext | undefined;
@@ -1461,7 +1473,7 @@ export abstract class TimeContext {
 
   public id: number;
 
-  public cancelPromise: CancelablePromiseProxy<any>;
+  public cancelPromise: CancelablePromiseProxy<unknown>;
   public childContexts: Set<TimeContext> = new Set();
 
   // Scheduler + tempo are wired during launch/branch creation
@@ -1471,7 +1483,7 @@ export abstract class TimeContext {
   public rngSeed!: string;
   private rngForkCounter = 0;
 
-  constructor(time: number, ab: AbortController, id: number, cancelPromise: CancelablePromiseProxy<any>) {
+  constructor(time: number, ab: AbortController, id: number, cancelPromise: CancelablePromiseProxy<unknown>) {
     this.time = time;
     this.startTime = time;
     this.abortController = ab;
@@ -1733,9 +1745,9 @@ export function launch<T>(
 
   const t0 = 0;
   return createAndLaunchContext(
-    block as any,
+    block,
     t0,
-    DateTimeContext as any,
+    DateTimeContext,
     false,
     undefined,
     opts?.debugName ?? "",
@@ -1760,9 +1772,9 @@ export function launchBrowser<T>(
 
   const t0 = 0;
   return createAndLaunchContext(
-    block as any,
+    block,
     t0,
-    BrowserTimeContext as any,
+    BrowserTimeContext,
     false,
     undefined,
     opts?.debugName ?? "",
@@ -1797,9 +1809,9 @@ export class OfflineRunner<T> {
 
     const t0 = 0;
     this.promise = createAndLaunchContext(
-      block as any,
+      block,
       t0,
-      OfflineTimeContext as any,
+      OfflineTimeContext,
       false,
       undefined,
       opts?.debugName ?? "",

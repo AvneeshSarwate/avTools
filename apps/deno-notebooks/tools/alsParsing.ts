@@ -1,4 +1,4 @@
-import { XMLParser } from "npm:fast-xml-parser@4.3.5";
+import { XMLParser } from "fast-xml-parser";
 import { AbletonClip, type AbletonNote, createCurveValue, type CurveValue } from "@avtools/music-types";
 
 type ParsedClips = {
@@ -6,9 +6,33 @@ type ParsedClips = {
   byPosition: Map<string, AbletonClip>;
 };
 
+type XmlNode = Record<string, unknown>;
+
 function arrayWrap<T>(maybeArray: T | T[] | undefined | null): T[] {
   if (maybeArray === undefined || maybeArray === null) return [];
   return Array.isArray(maybeArray) ? maybeArray : [maybeArray];
+}
+
+function asXmlNode(value: unknown): XmlNode | undefined {
+  return value !== null && typeof value === "object" ? value as XmlNode : undefined;
+}
+
+function xmlPath(value: unknown, ...keys: string[]): unknown {
+  let current: unknown = value;
+  for (const key of keys) {
+    current = asXmlNode(current)?.[key];
+    if (current === undefined) return undefined;
+  }
+  return current;
+}
+
+function toNumber(value: unknown, fallback = 0): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function toStringOr(value: unknown, fallback = ""): string {
+  return value === undefined || value === null ? fallback : String(value);
 }
 
 async function gunzipToString(bytes: Uint8Array): Promise<string> {
@@ -19,23 +43,23 @@ async function gunzipToString(bytes: Uint8Array): Promise<string> {
     return new TextDecoder().decode(decompressed);
   }
 
-  const { ungzip } = await import("npm:pako@2.1.0");
+  const { ungzip } = await import("pako");
   const result = ungzip(bytes);
   return new TextDecoder().decode(result);
 }
 
-function parseXmlNote(xmlNote: Record<string, string>, pitchStr: string): AbletonNote {
-  const pitch = Number(pitchStr);
-  const duration = Number(xmlNote["@_Duration"] ?? 0);
-  const velocity = Number(xmlNote["@_Velocity"] ?? 0);
-  const offVelocity = Number(xmlNote["@_OffVelocity"] ?? velocity);
-  const probability = Number(xmlNote["@_Probability"] ?? 1);
-  const isEnabled = !(xmlNote["@_IsEnabled"] === "false");
-  const position = Number(xmlNote["@_Time"] ?? 0);
+function parseXmlNote(xmlNote: XmlNode, pitchValue: unknown): AbletonNote {
+  const pitch = toNumber(pitchValue, 0);
+  const duration = toNumber(xmlNote["@_Duration"], 0);
+  const velocity = toNumber(xmlNote["@_Velocity"], 0);
+  const offVelocity = toNumber(xmlNote["@_OffVelocity"], velocity);
+  const probability = toNumber(xmlNote["@_Probability"], 1);
+  const isEnabled = toStringOr(xmlNote["@_IsEnabled"], "true") !== "false";
+  const position = toNumber(xmlNote["@_Time"], 0);
   const velocityDeviation = xmlNote["@_VelocityDeviation"] !== undefined
-    ? Number(xmlNote["@_VelocityDeviation"])
+    ? toNumber(xmlNote["@_VelocityDeviation"], 0)
     : undefined;
-  const noteId = xmlNote["@_NoteId"] !== undefined ? String(xmlNote["@_NoteId"]) : undefined;
+  const noteId = xmlNote["@_NoteId"] !== undefined ? toStringOr(xmlNote["@_NoteId"]) : undefined;
 
   return {
     pitch,
@@ -50,16 +74,16 @@ function parseXmlNote(xmlNote: Record<string, string>, pitchStr: string): Ableto
   };
 }
 
-function parseCurveValues(eventList: any): CurveValue[] {
-  const events = arrayWrap(eventList?.Events?.PerNoteEvent);
+function parseCurveValues(eventList: unknown): CurveValue[] {
+  const events = arrayWrap(xmlPath(eventList, "Events", "PerNoteEvent"));
   return events.map((evt) =>
     createCurveValue(
-      Number(evt?.["@_TimeOffset"] ?? 0),
-      Number(evt?.["@_Value"] ?? 0),
-      Number(evt?.["@_CurveControl1X"] ?? 0.5),
-      Number(evt?.["@_CurveControl1Y"] ?? 0.5),
-      Number(evt?.["@_CurveControl2X"] ?? 0.5),
-      Number(evt?.["@_CurveControl2Y"] ?? 0.5),
+      toNumber(xmlPath(evt, "@_TimeOffset"), 0),
+      toNumber(xmlPath(evt, "@_Value"), 0),
+      toNumber(xmlPath(evt, "@_CurveControl1X"), 0.5),
+      toNumber(xmlPath(evt, "@_CurveControl1Y"), 0.5),
+      toNumber(xmlPath(evt, "@_CurveControl2X"), 0.5),
+      toNumber(xmlPath(evt, "@_CurveControl2Y"), 0.5),
     )
   );
 }
@@ -75,29 +99,29 @@ export async function parseAbletonLiveSetDetailed(alsPath: string): Promise<Pars
   const xml = await gunzipToString(bytes);
 
   const parser = new XMLParser({ ignoreAttributes: false });
-  const parsed = parser.parse(xml);
+  const parsed = parser.parse(xml) as unknown;
 
   const clipMap = new Map<string, AbletonClip>();
   const positionMap = new Map<string, AbletonClip>();
 
-  const tracks = arrayWrap(parsed?.Ableton?.LiveSet?.Tracks?.MidiTrack);
-  tracks.forEach((track: any, trackIndex: number) => {
-    const clipSlotList = arrayWrap(track?.DeviceChain?.MainSequencer?.ClipSlotList?.ClipSlot);
-    clipSlotList.forEach((slot: any, slotIndex: number) => {
-      const midiClip = slot?.ClipSlot?.Value?.MidiClip;
+  const tracks = arrayWrap(xmlPath(parsed, "Ableton", "LiveSet", "Tracks", "MidiTrack"));
+  tracks.forEach((track, trackIndex: number) => {
+    const clipSlotList = arrayWrap(xmlPath(track, "DeviceChain", "MainSequencer", "ClipSlotList", "ClipSlot"));
+    clipSlotList.forEach((slot, slotIndex: number) => {
+      const midiClip = xmlPath(slot, "ClipSlot", "Value", "MidiClip");
       if (!midiClip) return;
       const clip = Array.isArray(midiClip) ? midiClip[0] : midiClip;
 
-      const keyTracks = arrayWrap(clip?.Notes?.KeyTracks?.KeyTrack);
+      const keyTracks = arrayWrap(xmlPath(clip, "Notes", "KeyTracks", "KeyTrack"));
       const notes: AbletonNote[] = [];
       const noteMap = new Map<string, AbletonNote>();
 
-      keyTracks.forEach((keyTrack: any) => {
+      keyTracks.forEach((keyTrack) => {
         if (!keyTrack) return;
-        const pitchStr = keyTrack?.MidiKey?.["@_Value"];
-        const xmlNotes = arrayWrap(keyTrack?.Notes?.MidiNoteEvent);
-        xmlNotes.forEach((note: any) => {
-          const parsedNote = parseXmlNote(note, pitchStr);
+        const pitchValue = xmlPath(keyTrack, "MidiKey", "@_Value");
+        const xmlNotes = arrayWrap(xmlPath(keyTrack, "Notes", "MidiNoteEvent"));
+        xmlNotes.forEach((note) => {
+          const parsedNote = parseXmlNote(asXmlNode(note) ?? {}, pitchValue);
           notes.push(parsedNote);
           if (parsedNote.noteId) {
             noteMap.set(parsedNote.noteId, parsedNote);
@@ -105,10 +129,10 @@ export async function parseAbletonLiveSetDetailed(alsPath: string): Promise<Pars
         });
       });
 
-      const perNoteLists = arrayWrap(clip?.Notes?.PerNoteEventStore?.EventLists?.PerNoteEventList);
-      perNoteLists.forEach((eventList: any) => {
-        const noteId = String(eventList?.["@_NoteId"] ?? "");
-        const cc = String(eventList?.["@_CC"] ?? "");
+      const perNoteLists = arrayWrap(xmlPath(clip, "Notes", "PerNoteEventStore", "EventLists", "PerNoteEventList"));
+      perNoteLists.forEach((eventList) => {
+        const noteId = toStringOr(xmlPath(eventList, "@_NoteId"), "");
+        const cc = toStringOr(xmlPath(eventList, "@_CC"), "");
         if (!noteId || !cc) return;
         const curveVals = parseCurveValues(eventList);
         const note = noteMap.get(noteId);
@@ -118,12 +142,15 @@ export async function parseAbletonLiveSetDetailed(alsPath: string): Promise<Pars
 
       notes.sort((a, b) => a.position - b.position);
 
-      let clipName = clip?.Name?.["@_Value"] ?? "";
+      let clipName = toStringOr(xmlPath(clip, "Name", "@_Value"), "");
       if (clipName === "") {
         clipName = `clip_${trackIndex + 1}_${slotIndex + 1}`;
       }
 
-      const duration = Number(clip?.CurrentEnd?.["@_Value"] ?? clip?.LoopEnd?.["@_Value"] ?? 0);
+      const duration = toNumber(
+        xmlPath(clip, "CurrentEnd", "@_Value") ?? xmlPath(clip, "LoopEnd", "@_Value"),
+        0,
+      );
       const abletonClip = new AbletonClip(clipName, duration, notes);
       clipMap.set(clipName, abletonClip);
       positionMap.set(`${trackIndex + 1}-${slotIndex + 1}`, abletonClip);

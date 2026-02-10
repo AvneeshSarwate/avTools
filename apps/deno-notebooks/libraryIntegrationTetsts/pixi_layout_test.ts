@@ -22,16 +22,20 @@ const { LayoutContainer } = layoutComponents!;
 // ─── Build layout scene ──────────────────────────────────────────────────
 
 const stage = new PIXI.Container();
+type LayoutRecord = Record<string, unknown>;
+type LayoutCarrier = { layout?: LayoutRecord };
+const setLayout = (target: object, layout: LayoutRecord): void => {
+  (target as LayoutCarrier).layout = layout;
+};
 
 // Root layout — fills the screen, column direction
-// deno-lint-ignore no-explicit-any
-(stage as any).layout = {
+setLayout(stage, {
   width: WIDTH,
   height: HEIGHT,
   flexDirection: "column",
   padding: 16,
   gap: 12,
-};
+});
 
 // ── Header bar ───────────────────────────────────────────────────────────
 
@@ -57,8 +61,7 @@ for (const color of headerColors) {
   const dot = new PIXI.Graphics();
   dot.circle(0, 0, 8);
   dot.fill(color);
-  // deno-lint-ignore no-explicit-any
-  (dot as any).layout = { width: 16, height: 16 };
+  setLayout(dot, { width: 16, height: 16 });
   header.addChild(dot);
 }
 
@@ -100,8 +103,7 @@ for (let i = 0; i < sidebarColors.length; i++) {
       height: 36,
       backgroundColor: sidebarColors[i],
       borderRadius: 6,
-      // deno-lint-ignore no-explicit-any
-    } as any,
+    },
   });
   sidebar.addChild(item);
 }
@@ -137,16 +139,14 @@ for (let i = 0; i < cardColors.length; i++) {
       borderColor: 0xffffff,
       justifyContent: "center",
       alignItems: "center",
-      // deno-lint-ignore no-explicit-any
-    } as any,
+    },
   });
 
   // Add a small circle inside each card
   const innerCircle = new PIXI.Graphics();
   innerCircle.circle(0, 0, 15);
   innerCircle.fill({ color: 0xffffff, alpha: 0.3 });
-  // deno-lint-ignore no-explicit-any
-  (innerCircle as any).layout = { width: 30, height: 30 };
+  setLayout(innerCircle, { width: 30, height: 30 });
   card.addChild(innerCircle);
 
   content.addChild(card);
@@ -175,8 +175,7 @@ for (let i = 0; i < 5; i++) {
   const dot = new PIXI.Graphics();
   dot.circle(0, 0, 4);
   dot.fill(0x636e72);
-  // deno-lint-ignore no-explicit-any
-  (dot as any).layout = { width: 8, height: 8 };
+  setLayout(dot, { width: 8, height: 8 });
   footer.addChild(dot);
 }
 stage.addChild(footer);

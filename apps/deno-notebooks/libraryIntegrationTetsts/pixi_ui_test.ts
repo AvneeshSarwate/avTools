@@ -70,15 +70,19 @@ function makeCheckmark(size: number, color: number): InstanceType<typeof PIXI.Gr
 // ─── Build UI scene ──────────────────────────────────────────────────────
 
 const stage = new PIXI.Container();
+type LayoutRecord = Record<string, unknown>;
+type LayoutCarrier = { layout?: LayoutRecord };
+const setLayout = (target: object, layout: LayoutRecord): void => {
+  (target as LayoutCarrier).layout = layout;
+};
 
-// deno-lint-ignore no-explicit-any
-(stage as any).layout = {
+setLayout(stage, {
   width: WIDTH,
   height: HEIGHT,
   flexDirection: "column",
   padding: 20,
   gap: 16,
-};
+});
 
 // ── Title bar ────────────────────────────────────────────────────────────
 
@@ -94,16 +98,14 @@ const titleBar = new LayoutContainer({
     alignItems: "center",
     flexDirection: "row",
     gap: 10,
-    // deno-lint-ignore no-explicit-any
-  } as any,
+  },
 });
 
 // Title dots instead of text
 const titleDots = [0xe94560, 0xfeca57, 0x48dbfb, 0x55efc4, 0xff6b6b];
 for (const c of titleDots) {
   const dot = makeIconCircle(8, c);
-  // deno-lint-ignore no-explicit-any
-  (dot as any).layout = { width: 16, height: 16 };
+  setLayout(dot, { width: 16, height: 16 });
   titleBar.addChild(dot);
 }
 stage.addChild(titleBar);
@@ -116,8 +118,7 @@ const mainRow = new LayoutContainer({
     flex: 1,
     flexDirection: "row",
     gap: 16,
-    // deno-lint-ignore no-explicit-any
-  } as any,
+  },
 });
 stage.addChild(mainRow);
 
@@ -134,14 +135,12 @@ const leftCol = new LayoutContainer({
     flexDirection: "column",
     padding: 16,
     gap: 10,
-    // deno-lint-ignore no-explicit-any
-  } as any,
+  },
 });
 
 // Section indicator
 const btnIndicator = makeRoundedRect(220, 4, 0xe94560, 2);
-// deno-lint-ignore no-explicit-any
-(btnIndicator as any).layout = { width: "100%", height: 4 };
+setLayout(btnIndicator, { width: "100%", height: 4 });
 leftCol.addChild(btnIndicator);
 
 // FancyButtons with different visual states
@@ -182,16 +181,14 @@ for (const cfg of buttonConfigs) {
     console.log(`[Button] "${cfg.name}" out`);
   });
 
-  // deno-lint-ignore no-explicit-any
-  (btn as any).layout = { width: "100%", height: 42 };
+  setLayout(btn, { width: "100%", height: 42 });
   leftCol.addChild(btn);
 }
 
 // ── Checkboxes ───────────────────────────────────────────────────────────
 
 const cbIndicator = makeRoundedRect(220, 4, 0x6c5ce7, 2);
-// deno-lint-ignore no-explicit-any
-(cbIndicator as any).layout = { width: "100%", height: 4, marginTop: 8 };
+setLayout(cbIndicator, { width: "100%", height: 4, marginTop: 8 });
 leftCol.addChild(cbIndicator);
 
 const checkboxColors = [0x6c5ce7, 0x00b894, 0xfd79a8];
@@ -224,8 +221,7 @@ for (let i = 0; i < 3; i++) {
     console.log(`[Checkbox ${i + 1}] = ${isChecked}`);
   });
 
-  // deno-lint-ignore no-explicit-any
-  (cb as any).layout = { width: 28, height: 28 };
+  setLayout(cb, { width: 28, height: 28 });
   leftCol.addChild(cb);
 }
 
@@ -244,14 +240,12 @@ const midCol = new LayoutContainer({
     flexDirection: "column",
     padding: 16,
     gap: 14,
-    // deno-lint-ignore no-explicit-any
-  } as any,
+  },
 });
 
 // Slider indicator
 const sliderIndicator = makeRoundedRect(300, 4, 0x0984e3, 2);
-// deno-lint-ignore no-explicit-any
-(sliderIndicator as any).layout = { width: "100%", height: 4 };
+setLayout(sliderIndicator, { width: "100%", height: 4 });
 midCol.addChild(sliderIndicator);
 
 // Create sliders
@@ -267,8 +261,7 @@ const sliders: InstanceType<typeof Slider>[] = [];
 for (const cfg of sliderConfigs) {
   // Color indicator dot
   const dot = makeIconCircle(6, cfg.color);
-  // deno-lint-ignore no-explicit-any
-  (dot as any).layout = { width: 12, height: 12 };
+  setLayout(dot, { width: 12, height: 12 });
   midCol.addChild(dot);
 
   const sliderBg = makeRoundedRect(300, 14, 0x2d3436, 7);
@@ -295,17 +288,14 @@ for (const cfg of sliderConfigs) {
     console.log(`[Slider] "${cfg.name}" = ${Math.round(value)}`);
   });
 
-  // deno-lint-invoke no-explicit-any
-  // deno-lint-ignore no-explicit-any
-  (slider as any).layout = { width: "100%", height: 26 };
+  setLayout(slider, { width: "100%", height: 26 });
   midCol.addChild(slider);
   sliders.push(slider);
 }
 
 // Progress bars
 const progIndicator = makeRoundedRect(300, 4, 0x00b894, 2);
-// deno-lint-ignore no-explicit-any
-(progIndicator as any).layout = { width: "100%", height: 4, marginTop: 12 };
+setLayout(progIndicator, { width: "100%", height: 4, marginTop: 12 });
 midCol.addChild(progIndicator);
 
 const progressBars: InstanceType<typeof ProgressBar>[] = [];
@@ -321,8 +311,7 @@ for (let i = 0; i < progColors.length; i++) {
     progress: (i + 1) * 15,
   });
 
-  // deno-lint-ignore no-explicit-any
-  (prog as any).layout = { width: "100%", height: 18 };
+  setLayout(prog, { width: "100%", height: 18 });
   midCol.addChild(prog);
   progressBars.push(prog);
 }
@@ -343,8 +332,7 @@ const rightCol = new LayoutContainer({
     padding: 16,
     gap: 12,
     alignItems: "center",
-    // deno-lint-ignore no-explicit-any
-  } as any,
+  },
 });
 
 // Color preview box that reacts to sliders
@@ -352,8 +340,7 @@ const colorPreview = new PIXI.Graphics();
 colorPreview.roundRect(0, 0, 180, 120, 12);
 colorPreview.fill(0x808080);
 colorPreview.stroke({ color: 0xffffff, width: 2 });
-// deno-lint-ignore no-explicit-any
-(colorPreview as any).layout = { width: 180, height: 120 };
+setLayout(colorPreview, { width: 180, height: 120 });
 rightCol.addChild(colorPreview);
 
 // Grid of interactive colored squares
@@ -366,8 +353,7 @@ const gridContainer = new LayoutContainer({
     gap: 8,
     justifyContent: "center",
     alignContent: "flex-start",
-    // deno-lint-ignore no-explicit-any
-  } as any,
+  },
 });
 
 const gridColors = [
@@ -395,8 +381,7 @@ for (let i = 0; i < gridColors.length; i++) {
     square.alpha = 1.0;
   });
 
-  // deno-lint-ignore no-explicit-any
-  (square as any).layout = { width: 50, height: 50 };
+  setLayout(square, { width: 50, height: 50 });
   gridContainer.addChild(square);
 }
 
@@ -418,15 +403,13 @@ const statusBar = new LayoutContainer({
     alignItems: "center",
     paddingLeft: 16,
     paddingRight: 16,
-    // deno-lint-ignore no-explicit-any
-  } as any,
+  },
 });
 
 // Status dots instead of text
 for (let i = 0; i < 8; i++) {
   const dot = makeIconCircle(3, 0x636e72);
-  // deno-lint-ignore no-explicit-any
-  (dot as any).layout = { width: 6, height: 6 };
+  setLayout(dot, { width: 6, height: 6 });
   statusBar.addChild(dot);
 }
 stage.addChild(statusBar);

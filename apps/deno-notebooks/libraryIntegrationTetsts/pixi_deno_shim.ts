@@ -14,6 +14,118 @@ import { PixelFontMetrics } from "./pixi_text_metrics.ts";
 
 type Listener = EventListenerOrEventListenerObject;
 type ListenerEntry = { listener: Listener; options: AddEventListenerOptions };
+type GlobalShim = Record<string, unknown>;
+type ConstructorLike<T = object> = new (...args: never[]) => T;
+
+type PointerEventInitLike = EventInit & Partial<{
+  pointerId: number;
+  width: number;
+  height: number;
+  pressure: number;
+  tangentialPressure: number;
+  tiltX: number;
+  tiltY: number;
+  twist: number;
+  pointerType: string;
+  isPrimary: boolean;
+  clientX: number;
+  clientY: number;
+  screenX: number;
+  screenY: number;
+  pageX: number;
+  pageY: number;
+  offsetX: number;
+  offsetY: number;
+  movementX: number;
+  movementY: number;
+  button: number;
+  buttons: number;
+  detail: number;
+}>;
+
+type WheelEventInitLike = EventInit & Partial<{
+  deltaX: number;
+  deltaY: number;
+  deltaZ: number;
+  deltaMode: number;
+  clientX: number;
+  clientY: number;
+}>;
+
+type CanvasImageDataLike = { data: Uint8ClampedArray; width: number; height: number };
+type CanvasTextMetricsLike = {
+  width: number;
+  actualBoundingBoxAscent?: number;
+  actualBoundingBoxDescent?: number;
+  actualBoundingBoxLeft?: number;
+  actualBoundingBoxRight?: number;
+  fontBoundingBoxAscent?: number;
+  fontBoundingBoxDescent?: number;
+};
+type Canvas2DLike = {
+  font?: unknown;
+  fillStyle?: unknown;
+  strokeStyle?: unknown;
+  clearRect: (x: number, y: number, w: number, h: number) => void;
+  fillText: (text: string, x: number, y: number) => void;
+  measureText: (text: string) => CanvasTextMetricsLike;
+  getImageData: (x: number, y: number, w: number, h: number) => CanvasImageDataLike;
+};
+type ContextRecord = Record<string | symbol, unknown>;
+
+type CanvaskitCanvasLike = {
+  width?: number;
+  height?: number;
+  getContext: (type: "2d") => Canvas2DLike | null;
+  dispose?: () => void;
+  getRawPixels?: () => Uint8Array;
+};
+
+type CreateCanvasFn = (w: number, h: number) => CanvaskitCanvasLike;
+
+type GPUCanvasConfigLike = {
+  device: GPUDevice;
+  format?: GPUTextureFormat;
+};
+
+type GPUUncapturedErrorEvent = Event & {
+  error?: { constructor?: { name?: string }; message?: string };
+};
+
+type CopyExternalImageSource = {
+  source: CanvaskitCanvasLike;
+  origin?: GPUOrigin2D;
+  flipY?: boolean;
+};
+
+type CopyExternalImageDest = {
+  texture: GPUTexture;
+  origin?: GPUOrigin3D;
+  premultipliedAlpha?: boolean;
+};
+
+type CopyExternalImageSize = GPUExtent3D | [number, number] | [number, number, number];
+
+type GPUQueueWithCopyExternal = GPUQueue & {
+  copyExternalImageToTexture?: (
+    this: GPUQueue,
+    source: CopyExternalImageSource,
+    destination: CopyExternalImageDest,
+    copySize: CopyExternalImageSize,
+  ) => void;
+};
+
+type PointerEventCtorLike = new (type: string, init?: PointerEventInitLike) => Event;
+type WheelEventCtorLike = new (type: string, init?: WheelEventInitLike) => Event;
+type DOMParserCtorLike = new () => { parseFromString: (xml: string, type: string) => Document };
+type ImageCtorLike = new () => HTMLImageElement;
+
+type PixiRenderer = import("pixi.js").WebGPURenderer;
+type PixiContainer = import("pixi.js").Container;
+type PixiReactAppLike = {
+  renderer: { resize: (width: number, height: number, resolution?: number) => void };
+  ticker: { update: () => void };
+};
 
 class SimpleEventTarget {
   private _listeners = new Map<string, ListenerEntry[]>();
@@ -56,7 +168,12 @@ class SimpleEventTarget {
 
 // ─── Global shims (run immediately on import) ────────────────────────────
 
-const g = globalThis as any;
+const g = globalThis as GlobalShim;
+const globalEventTarget = globalThis as unknown as {
+  dispatchEvent: (event: Event) => boolean;
+  addEventListener: (...args: unknown[]) => void;
+  removeEventListener: (...args: unknown[]) => void;
+};
 
 if (typeof g.requestAnimationFrame === "undefined") {
   g.requestAnimationFrame = (cb: (time: number) => void): number =>
@@ -124,7 +241,7 @@ if (typeof g.document === "undefined") {
 }
 
 if (typeof g.window === "undefined") {
-  g.window = g;
+  g.window = globalThis;
 }
 
 // PointerEvent shim with proper coordinate support
@@ -153,7 +270,7 @@ if (typeof g.PointerEvent === "undefined") {
     button: number;
     buttons: number;
     detail: number;
-    constructor(type: string, opts: any = {}) {
+    constructor(type: string, opts: PointerEventInitLike = {}) {
       super(type, { bubbles: opts.bubbles ?? true, cancelable: opts.cancelable ?? true });
       this.pointerId = opts.pointerId ?? 1;
       this.width = opts.width ?? 1;
@@ -207,7 +324,7 @@ if (typeof g.WheelEvent === "undefined") {
     deltaMode: number;
     clientX: number;
     clientY: number;
-    constructor(type: string, opts: any = {}) {
+    constructor(type: string, opts: WheelEventInitLike = {}) {
       super(type, { bubbles: opts.bubbles ?? true, cancelable: opts.cancelable ?? true });
       this.deltaX = opts.deltaX ?? 0;
       this.deltaY = opts.deltaY ?? 0;
@@ -229,6 +346,8 @@ if (typeof g.Image === "undefined") {
   };
 }
 
+const CanvasBase = (g.HTMLCanvasElement as ConstructorLike | undefined) ?? class {};
+
 // ─── Context wrapper ─────────────────────────────────────────────────────
 
 class DenoGPUCanvasContextWrapper {
@@ -238,7 +357,7 @@ class DenoGPUCanvasContextWrapper {
     this._real = real;
   }
 
-  configure(config: any): void {
+  configure(config: GPUCanvasConfigLike): void {
     this._real.configure({
       device: config.device,
       format: config.format ?? "bgra8unorm",
@@ -271,7 +390,7 @@ class HeadlessGPUCanvasContext {
     this._format = "bgra8unorm";
   }
 
-  configure(config: any): void {
+  configure(config: GPUCanvasConfigLike): void {
     this._device = config.device;
     this._format = config.format ?? "bgra8unorm";
     this._texture?.destroy();
@@ -293,14 +412,16 @@ class HeadlessGPUCanvasContext {
 
 // ─── Canvas shim with real event support ─────────────────────────────────
 
-class DenoPixiCanvas extends g.HTMLCanvasElement {
+type CanvasContextLike = DenoGPUCanvasContextWrapper | HeadlessGPUCanvasContext;
+
+class DenoPixiCanvas extends CanvasBase {
   width: number;
   height: number;
   style: Record<string, string>;
-  private _ctx: any; // DenoGPUCanvasContextWrapper or HeadlessGPUCanvasContext
+  private _ctx: CanvasContextLike;
   private _et = new SimpleEventTarget();
 
-  constructor(w: number, h: number, ctx: any) {
+  constructor(w: number, h: number, ctx: CanvasContextLike) {
     super();
     this.width = w;
     this.height = h;
@@ -308,7 +429,7 @@ class DenoPixiCanvas extends g.HTMLCanvasElement {
     this.style = { width: `${w}px`, height: `${h}px` };
   }
 
-  getContext(type: string): any {
+  getContext(type: string): CanvasContextLike | null {
     if (type === "webgpu") return this._ctx;
     if (type === "2d") return null;
     throw new Error(`Unsupported context: ${type}`);
@@ -333,7 +454,7 @@ class DenoPixiCanvas extends g.HTMLCanvasElement {
 
 // ─── Text canvas backed by @gfx/canvas (FFI) or @gfx/canvas-wasm ─────────
 
-let _ckCreateCanvas: ((w: number, h: number) => any) | null = null;
+let _ckCreateCanvas: CreateCanvasFn | null = null;
 let _fontMetrics: PixelFontMetrics | null = null;
 
 /**
@@ -344,10 +465,10 @@ let _fontMetrics: PixelFontMetrics | null = null;
  * The measureText wrapper auto-detects whether the backend provides proper
  * vertical metrics (FFI does, WASM doesn't) and supplements when needed.
  */
-class CanvaskitTextCanvas extends g.HTMLCanvasElement {
-  _ckCanvas: any;
-  _rawCtx: any;
-  _proxyCtx: any;
+class CanvaskitTextCanvas extends CanvasBase {
+  _ckCanvas: CanvaskitCanvasLike;
+  _rawCtx: Canvas2DLike;
+  _proxyCtx: Canvas2DLike;
   _width: number;
   _height: number;
   _dirty: boolean;
@@ -360,27 +481,28 @@ class CanvaskitTextCanvas extends g.HTMLCanvasElement {
     this._dirty = false;
     this.style = {};
     this._ckCanvas = _ckCreateCanvas!(this._width, this._height);
-    this._rawCtx = this._ckCanvas.getContext("2d");
+    const ctx = this._ckCanvas.getContext("2d");
+    if (!ctx) throw new Error("CanvaskitTextCanvas failed to create 2d context");
+    this._rawCtx = ctx;
 
     // Proxy delegates to the current _rawCtx, surviving recreations on resize.
     // Wraps measureText() with pixel-scanned font metrics so pixi can
     // correctly size the text canvas (canvaskit-wasm only returns width).
-    const self = this;
-    this._proxyCtx = new Proxy({} as any, {
-      get(_target: any, prop: string | symbol) {
-        self._ensureCanvas();
-        if (prop === "canvas") return self;
+    this._proxyCtx = new Proxy({} as ContextRecord, {
+      get: (_target: ContextRecord, prop: string | symbol) => {
+        this._ensureCanvas();
+        if (prop === "canvas") return this;
         if (prop === "measureText") {
-          return function (text: string) {
-            const result = self._rawCtx.measureText(text);
+          return (text: string) => {
+            const result = this._rawCtx.measureText(text);
             // If native context already provides real vertical metrics
             // (FFI backend), pass through directly — no supplementing needed.
-            if (result.fontBoundingBoxAscent > 0) {
+            if ((result.fontBoundingBoxAscent ?? 0) > 0) {
               return result;
             }
             // WASM backend: supplement missing vertical metrics
             const width = result.width || 0;
-            const font: string = self._rawCtx.font || "16px sans-serif";
+            const font = (this._rawCtx.font ?? "16px sans-serif").toString();
             let ascent: number, descent: number;
             if (_fontMetrics) {
               const fm = _fontMetrics.measure(font);
@@ -403,12 +525,12 @@ class CanvaskitTextCanvas extends g.HTMLCanvasElement {
             };
           };
         }
-        const val = self._rawCtx[prop];
-        if (typeof val === "function") return val.bind(self._rawCtx);
+        const val = (this._rawCtx as ContextRecord)[prop];
+        if (typeof val === "function") return (val as (...args: unknown[]) => unknown).bind(this._rawCtx);
         return val;
       },
-      set(_target: any, prop: string | symbol, value: any) {
-        self._ensureCanvas();
+      set: (_target: ContextRecord, prop: string | symbol, value: unknown) => {
+        this._ensureCanvas();
         // Normalize 8-char hex colors (#RRGGBBAA) to rgba() — the native
         // canvas (FFI/Skia) doesn't support CSS Color Level 4 hex-with-alpha
         // and silently rejects it, falling back to black.
@@ -420,10 +542,10 @@ class CanvaskitTextCanvas extends g.HTMLCanvasElement {
           const a = parseInt(value.slice(7, 9), 16) / 255;
           value = `rgba(${r}, ${g}, ${b}, ${a})`;
         }
-        self._rawCtx[prop] = value;
+        (this._rawCtx as ContextRecord)[prop] = value;
         return true;
       },
-    });
+    }) as Canvas2DLike;
   }
 
   get width() { return this._width; }
@@ -442,12 +564,14 @@ class CanvaskitTextCanvas extends g.HTMLCanvasElement {
     if (this._dirty) {
       if (this._ckCanvas?.dispose) this._ckCanvas.dispose();
       this._ckCanvas = _ckCreateCanvas!(this._width, this._height);
-      this._rawCtx = this._ckCanvas.getContext("2d");
+      const ctx = this._ckCanvas.getContext("2d");
+      if (!ctx) throw new Error("CanvaskitTextCanvas failed to recreate 2d context");
+      this._rawCtx = ctx;
       this._dirty = false;
     }
   }
 
-  getContext(type: string): any {
+  getContext(type: string): Canvas2DLike | null {
     if (type === "2d") {
       this._ensureCanvas();
       return this._proxyCtx;
@@ -463,6 +587,7 @@ class CanvaskitTextCanvas extends g.HTMLCanvasElement {
   getRawPixels(): Uint8Array {
     this._ensureCanvas();
     const ctx = this._ckCanvas.getContext("2d");
+    if (!ctx) throw new Error("CanvaskitTextCanvas 2d context unavailable");
     const imageData = ctx.getImageData(0, 0, this._width, this._height);
     const data = imageData.data;
     const out = new Uint8Array(data.length);
@@ -496,14 +621,16 @@ let _mouseButtons = 0;
  * them to the appropriate targets (canvas, document, globalThis) so that
  * pixi's EventSystem picks them up.
  */
-function bridgeNativeEvent(ev: any, canvas: DenoPixiCanvas): void {
+function bridgeNativeEvent(ev: WindowEvent, canvas: DenoPixiCanvas): void {
+  const PointerEventClass = g.PointerEvent as PointerEventCtorLike;
+  const WheelEventClass = g.WheelEvent as WheelEventCtorLike;
   switch (ev.type) {
     case "mouse_move": {
       const dx = ev.x - _lastMouseX;
       const dy = ev.y - _lastMouseY;
       _lastMouseX = ev.x;
       _lastMouseY = ev.y;
-      const pe = new g.PointerEvent("pointermove", {
+      const pe = new PointerEventClass("pointermove", {
         clientX: ev.x, clientY: ev.y,
         movementX: dx, movementY: dy,
         buttons: _mouseButtons,
@@ -519,7 +646,7 @@ function bridgeNativeEvent(ev: any, canvas: DenoPixiCanvas): void {
       const button = ev.button; // 0=left, 1=middle, 2=right
       if (ev.down) {
         _mouseButtons |= (1 << button);
-        const pe = new g.PointerEvent("pointerdown", {
+        const pe = new PointerEventClass("pointerdown", {
           clientX: ev.x, clientY: ev.y,
           button, buttons: _mouseButtons,
           bubbles: true,
@@ -528,7 +655,7 @@ function bridgeNativeEvent(ev: any, canvas: DenoPixiCanvas): void {
         canvas.dispatchEvent(pe);
       } else {
         _mouseButtons &= ~(1 << button);
-        const pe = new g.PointerEvent("pointerup", {
+        const pe = new PointerEventClass("pointerup", {
           clientX: ev.x, clientY: ev.y,
           button, buttons: _mouseButtons,
           bubbles: true,
@@ -538,14 +665,14 @@ function bridgeNativeEvent(ev: any, canvas: DenoPixiCanvas): void {
         // In a native window all pointer-ups happen inside the canvas,
         // so override composedPath to return [canvas] so pixi sees
         // target === domElement and generates click/pointertap events.
-        pe.composedPath = () => [canvas];
-        g.dispatchEvent(pe);
+        (pe as Event & { composedPath?: () => EventTarget[] }).composedPath = () => [canvas as unknown as EventTarget];
+        globalEventTarget.dispatchEvent(pe);
       }
       break;
     }
     case "scroll": {
       // Pixi listens on canvas for wheel
-      const we = new WheelEvent("wheel", {
+      const we = new WheelEventClass("wheel", {
         deltaX: ev.dx,
         deltaY: ev.dy,
         clientX: _lastMouseX,
@@ -563,7 +690,7 @@ function bridgeNativeEvent(ev: any, canvas: DenoPixiCanvas): void {
         code: ev.key,
         bubbles: true,
       });
-      g.dispatchEvent(ke);
+      globalEventTarget.dispatchEvent(ke);
       break;
     }
   }
@@ -572,7 +699,7 @@ function bridgeNativeEvent(ev: any, canvas: DenoPixiCanvas): void {
 // ─── Setup function ──────────────────────────────────────────────────────
 
 import { createGpuWindow } from "../window/mod.ts";
-import type { GpuWindow } from "../window/mod.ts";
+import type { GpuWindow, WindowEvent } from "../window/mod.ts";
 
 export interface PixiDenoOptions {
   width?: number;
@@ -597,14 +724,14 @@ export interface PixiDenoOptions {
 }
 
 export interface PixiDenoContext {
-  renderer: any;
+  renderer: PixiRenderer;
   win: GpuWindow | null;
   canvas: DenoPixiCanvas;
   device: GPUDevice;
   adapter: GPUAdapter;
-  PIXI: typeof import("npm:pixi.js@^8");
-  layoutComponents?: typeof import("npm:@pixi/layout@^3/components");
-  ui?: typeof import("npm:@pixi/ui@^2");
+  PIXI: typeof import("pixi.js");
+  layoutComponents?: typeof import("@pixi/layout/components");
+  ui?: typeof import("@pixi/ui");
 }
 
 export interface PixiDenoReactContext {
@@ -612,9 +739,9 @@ export interface PixiDenoReactContext {
   canvas: DenoPixiCanvas;
   device: GPUDevice;
   adapter: GPUAdapter;
-  PIXI: typeof import("npm:pixi.js@^8");
-  layoutComponents?: typeof import("npm:@pixi/layout@^3/components");
-  ui?: typeof import("npm:@pixi/ui@^2");
+  PIXI: typeof import("pixi.js");
+  layoutComponents?: typeof import("@pixi/layout/components");
+  ui?: typeof import("@pixi/ui");
 }
 
 // ─── Shared setup (adapter, device, polyfills, text, window, DOMAdapter) ──
@@ -624,9 +751,9 @@ interface _CommonResult {
   device: GPUDevice;
   win: GpuWindow | null;
   canvas: DenoPixiCanvas;
-  PIXI: typeof import("npm:pixi.js@^8");
-  layoutComponents?: typeof import("npm:@pixi/layout@^3/components");
-  ui?: typeof import("npm:@pixi/ui@^2");
+  PIXI: typeof import("pixi.js");
+  layoutComponents?: typeof import("@pixi/layout/components");
+  ui?: typeof import("@pixi/ui");
 }
 
 async function _setupCommon(opts: PixiDenoOptions): Promise<_CommonResult> {
@@ -642,7 +769,7 @@ async function _setupCommon(opts: PixiDenoOptions): Promise<_CommonResult> {
   const device = await adapter.requestDevice();
 
   device.addEventListener("uncapturederror", (event: Event) => {
-    const gpuError = (event as any).error;
+    const gpuError = (event as GPUUncapturedErrorEvent).error;
     if (gpuError) {
       console.error("GPU ERROR:", gpuError.constructor?.name, gpuError.message);
     }
@@ -650,15 +777,21 @@ async function _setupCommon(opts: PixiDenoOptions): Promise<_CommonResult> {
 
   // Polyfill copyExternalImageToTexture (Deno doesn't have it).
   // Uses writeTexture with raw pixel data instead.
-  if (typeof (device.queue as any).copyExternalImageToTexture !== "function") {
-    (device.queue as any).copyExternalImageToTexture = function (
-      source: { source: any; origin?: any; flipY?: boolean },
-      destination: { texture: GPUTexture; origin?: any; premultipliedAlpha?: boolean },
-      copySize: any,
+  const queue = device.queue as GPUQueueWithCopyExternal;
+  if (typeof queue.copyExternalImageToTexture !== "function") {
+    queue.copyExternalImageToTexture = function (
+      this: GPUQueue,
+      source: CopyExternalImageSource,
+      destination: CopyExternalImageDest,
+      copySize: CopyExternalImageSize,
     ) {
       const canvas = source.source;
-      const w = copySize.width ?? copySize[0] ?? canvas.width ?? 1;
-      const h = copySize.height ?? copySize[1] ?? canvas.height ?? 1;
+      const w = Array.isArray(copySize)
+        ? (copySize[0] ?? canvas.width ?? 1)
+        : (copySize.width ?? canvas.width ?? 1);
+      const h = Array.isArray(copySize)
+        ? (copySize[1] ?? canvas.height ?? 1)
+        : (copySize.height ?? canvas.height ?? 1);
 
       let pixels: Uint8Array;
 
@@ -698,9 +831,10 @@ async function _setupCommon(opts: PixiDenoOptions): Promise<_CommonResult> {
         }
       }
 
+      const pixelData = new Uint8Array(pixels);
       this.writeTexture(
         { texture: destination.texture, origin: destination.origin ?? { x: 0, y: 0 } },
-        pixels,
+        pixelData,
         { bytesPerRow: w * 4, rowsPerImage: h },
         { width: w, height: h, depthOrArrayLayers: 1 },
       );
@@ -712,14 +846,24 @@ async function _setupCommon(opts: PixiDenoOptions): Promise<_CommonResult> {
     const useWasm = opts.enableText === "wasm";
     if (useWasm) {
       console.log("Loading canvas WASM for text rendering...");
-      const canvasMod = await import("jsr:@gfx/canvas-wasm");
+      const canvasMod = await import("@gfx/canvas-wasm");
       _ckCreateCanvas = canvasMod.createCanvas;
-      _fontMetrics = new PixelFontMetrics(_ckCreateCanvas);
+      _fontMetrics = new PixelFontMetrics((w, h) =>
+        _ckCreateCanvas!(w, h) as unknown as {
+          getContext(type: "2d"): {
+            clearRect(x: number, y: number, w: number, h: number): void;
+            font: string;
+            fillStyle: string;
+            fillText(text: string, x: number, y: number): void;
+            getImageData(x: number, y: number, w: number, h: number): ImageData;
+          } | null;
+          dispose?: () => void;
+        });
       console.log("Canvas WASM loaded!");
     } else {
       // "native" or true — use @gfx/canvas (FFI/Skia) for full text quality
       console.log("Loading native canvas (FFI/Skia) for text rendering...");
-      const canvasMod = await import("jsr:@gfx/canvas");
+      const canvasMod = await import("@gfx/canvas");
       _ckCreateCanvas = canvasMod.createCanvas;
       // No pixel-scanning needed — FFI version has full measureText metrics
       console.log("Native canvas loaded!");
@@ -742,14 +886,15 @@ async function _setupCommon(opts: PixiDenoOptions): Promise<_CommonResult> {
     canvas = new DenoPixiCanvas(win.width, win.height, wrappedCtx);
 
     // Fire initial pointerover so pixi knows the pointer is inside
-    const initOver = new g.PointerEvent("pointerover", {
+    const PointerEventClass = g.PointerEvent as PointerEventCtorLike;
+    const initOver = new PointerEventClass("pointerover", {
       clientX: 0, clientY: 0, bubbles: true,
     });
     canvas.dispatchEvent(initOver);
   }
 
   console.log("Importing pixi.js...");
-  const PIXI = await import("npm:pixi.js@^8");
+  const PIXI = await import("pixi.js");
 
   PIXI.DOMAdapter.set({
     createCanvas: (width?: number, height?: number) => {
@@ -809,7 +954,7 @@ async function _setupCommon(opts: PixiDenoOptions): Promise<_CommonResult> {
         drawImage() {},
         getImageData() { return { data: new Uint8ClampedArray(4), width: 1, height: 1 }; },
         putImageData() {},
-        canvas: null as any,
+        canvas: null as unknown as Record<string, unknown>,
       };
       const c = {
         width: width ?? 0,
@@ -831,7 +976,10 @@ async function _setupCommon(opts: PixiDenoOptions): Promise<_CommonResult> {
       };
       return c as unknown as HTMLCanvasElement;
     },
-    createImage: () => new g.Image(),
+    createImage: () => {
+      const ImageClass = g.Image as ImageCtorLike;
+      return new ImageClass();
+    },
     getCanvasRenderingContext2D: () => {
       // Pixi checks .prototype for letterSpacing support
       function MockCtx2D() {}
@@ -843,12 +991,15 @@ async function _setupCommon(opts: PixiDenoOptions): Promise<_CommonResult> {
     getBaseUrl: () => "",
     getFontFaceSet: () => null,
     fetch: (url: RequestInfo, options?: RequestInit) => fetch(url, options),
-    parseXML: (xml: string) => new g.DOMParser().parseFromString(xml, "text/xml"),
+    parseXML: (xml: string) => {
+      const DOMParserClass = g.DOMParser as DOMParserCtorLike;
+      return DOMParserClass ? new DOMParserClass().parseFromString(xml, "text/xml") : document.implementation.createDocument("", "", null);
+    },
   });
 
   // Pre-import extension libraries that must register before renderer.init()
-  let layoutComponents: typeof import("npm:@pixi/layout@^3/components") | undefined;
-  let ui: typeof import("npm:@pixi/ui@^2") | undefined;
+  let layoutComponents: typeof import("@pixi/layout/components") | undefined;
+  let ui: typeof import("@pixi/ui") | undefined;
 
   if (opts.enableLayout || opts.enableUI) {
     console.log("Pre-importing @pixi/layout...");
@@ -910,12 +1061,12 @@ export async function setupPixiDenoForReact(opts: PixiDenoOptions = {}): Promise
  */
 export async function runPixiRenderLoop(
   ctx: PixiDenoContext,
-  stage: any,
+  stage: PixiContainer,
   opts: {
     autoClose?: boolean;
     maxFrames?: number;
     onFrame?: (frame: number, dt: number) => void;
-    onEvent?: (ev: any) => void;
+    onEvent?: (ev: WindowEvent) => void;
   } = {},
 ): Promise<void> {
   const { renderer, win, canvas } = ctx;
@@ -975,11 +1126,11 @@ export function cleanupPixiDeno(ctx: PixiDenoContext): void {
  */
 export async function runPixiReactRenderLoop(
   ctx: PixiDenoReactContext,
-  app: any,
+  app: PixiReactAppLike,
   opts: {
     autoClose?: boolean;
     maxFrames?: number;
-    onEvent?: (ev: any) => void;
+    onEvent?: (ev: WindowEvent) => void;
   } = {},
 ): Promise<void> {
   const { win, canvas } = ctx;
@@ -1037,7 +1188,7 @@ export function cleanupPixiDenoReact(ctx: PixiDenoReactContext): void {
  */
 export async function snapshotPixiFrame(
   ctx: PixiDenoContext,
-  stage: any,
+  stage: PixiContainer,
   outPath: string,
 ): Promise<void> {
   // Render one frame
@@ -1045,6 +1196,7 @@ export async function snapshotPixiFrame(
 
   // Get the output texture from the canvas context
   const webgpuCtx = ctx.canvas.getContext("webgpu");
+  if (!webgpuCtx) throw new Error("Canvas has no webgpu context");
   const texture = webgpuCtx.getCurrentTexture() as GPUTexture;
   const width = texture.width;
   const height = texture.height;

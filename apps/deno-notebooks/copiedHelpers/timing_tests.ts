@@ -78,6 +78,11 @@ export type TestResult = {
   realtimeEvents: LoggedEvent[];
 };
 
+type RandomCapableContext = TimeContext & {
+  random?: () => number;
+  rng?: () => number;
+};
+
 /* ------------------------------------------------------------------------------------------------
  * Minimal asserts
  * ------------------------------------------------------------------------------------------------ */
@@ -95,7 +100,7 @@ function almostEq(a: number, b: number, eps: number) {
 }
 
 async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
-  let timeoutId: any = null;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<T>((_, reject) => {
     timeoutId = setTimeout(() => reject(new Error(`Timeout (${ms}ms): ${label}`)), ms);
   });
@@ -137,6 +142,13 @@ function formatEvent(e: LoggedEvent) {
   const v = e.value !== undefined ? ` value=${e.value}` : "";
   const n = e.note ? ` note="${e.note}"` : "";
   return `${e.id}@t=${e.t.toFixed(6)} ctx=${e.ctxId} rootT=${e.rootT.toFixed(6)}${v}${n}`;
+}
+
+function drawRandom(ctx: TimeContext): number {
+  const c = ctx as RandomCapableContext;
+  if (typeof c.random === "function") return c.random();
+  if (typeof c.rng === "function") return c.rng();
+  throw new Error("TimeContext does not expose random() or rng()");
 }
 
 function diffSnippet(a: LoggedEvent[], b: LoggedEvent[], idx: number, radius = 5) {
@@ -599,7 +611,6 @@ export function makeTimingTestCases(): TimingTestCase[] {
         await root.waitSec(-0.10);
         log(root, "after_neg_wait");
 
-        // @ts-ignore
         await root.waitSec(NaN);
         log(root, "after_nan_wait");
 
@@ -621,18 +632,18 @@ export function makeTimingTestCases(): TimingTestCase[] {
 
         const a = root.branchWait(async (c) => {
           await c.waitSec(0.05);
-          log(c, "A_r0", { value: (c as any).random?.() ?? (c as any).rng?.() }); // prefer ctx.random()
+          log(c, "A_r0", { value: drawRandom(c) }); // prefer ctx.random()
           await c.waitSec(0.05);
-          log(c, "A_r1", { value: (c as any).random?.() ?? (c as any).rng?.() });
+          log(c, "A_r1", { value: drawRandom(c) });
           await c.waitSec(0.05);
-          log(c, "A_r2", { value: (c as any).random?.() ?? (c as any).rng?.() });
+          log(c, "A_r2", { value: drawRandom(c) });
         }, "A");
 
         const b = root.branchWait(async (c) => {
           await c.waitSec(0.10);
-          log(c, "B_r0", { value: (c as any).random?.() ?? (c as any).rng?.() });
+          log(c, "B_r0", { value: drawRandom(c) });
           await c.waitSec(0.05);
-          log(c, "B_r1", { value: (c as any).random?.() ?? (c as any).rng?.() });
+          log(c, "B_r1", { value: drawRandom(c) });
         }, "B");
 
         await Promise.all([a, b]);
@@ -653,13 +664,13 @@ export function makeTimingTestCases(): TimingTestCase[] {
         // If your engine supports BranchOptions.rng, this test forces shared RNG.
         const a = root.branchWait(async (c) => {
           await c.waitSec(0.05);
-          log(c, "A_draw", { value: (c as any).random?.() ?? (c as any).rng?.() });
-        }, "A", { rng: "shared" } as any);
+          log(c, "A_draw", { value: drawRandom(c) });
+        }, "A", { rng: "shared" });
 
         const b = root.branchWait(async (c) => {
           await c.waitSec(0.05);
-          log(c, "B_draw", { value: (c as any).random?.() ?? (c as any).rng?.() });
-        }, "B", { rng: "shared" } as any);
+          log(c, "B_draw", { value: drawRandom(c) });
+        }, "B", { rng: "shared" });
 
         await Promise.all([a, b]);
         await root.wait(0);
@@ -705,7 +716,7 @@ export async function runAllTimingTests(
   cases: TimingTestCase[] = makeTimingTestCases(),
 ): Promise<TestResult[]> {
   const results: TestResult[] = [];
-  const failures: { name: string; err: any }[] = [];
+  const failures: { name: string; err: unknown }[] = [];
 
   for (const tc of cases) {
     try {
@@ -721,7 +732,10 @@ export async function runAllTimingTests(
   if (failures.length) {
     const msg =
       `Timing engine tests failed (${failures.length}/${cases.length}):\n` +
-      failures.map((f) => `- ${f.name}: ${String(f.err?.message ?? f.err)}`).join("\n");
+      failures.map((f) => {
+        const message = f.err instanceof Error ? f.err.message : String(f.err);
+        return `- ${f.name}: ${message}`;
+      }).join("\n");
     throw new Error(msg);
   }
 

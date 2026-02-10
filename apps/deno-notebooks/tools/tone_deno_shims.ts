@@ -18,10 +18,12 @@ import { createRequire } from "node:module";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type { Worker as NodeWorker, WorkerOptions } from "node:worker_threads";
 
 const _require = createRequire(import.meta.url);
-// deno-lint-ignore no-explicit-any
-const Module = _require("node:module") as any;
+type ModuleLoadFn = (request: string, parent: unknown, isMain: boolean) => unknown;
+type NodeModuleWithLoad = { _load: ModuleLoadFn };
+const Module = _require("node:module") as NodeModuleWithLoad;
 
 // --- Shim 3 (must be first): Worker wrapper for markAsUntransferable ---
 // node-web-audio-api's AudioWorkletGlobalScope.js does:
@@ -38,7 +40,10 @@ const Module = _require("node:module") as any;
 // module BEFORE requiring the real AudioWorkletGlobalScope.js. Because
 // require() caches modules, the destructured binding picks up the no-op.
 
-const RealWorker = _require("node:worker_threads").Worker;
+const RealWorker = _require("node:worker_threads").Worker as {
+  new (filename: string | URL, opts?: WorkerOptions): NodeWorker;
+  prototype: NodeWorker;
+};
 
 const _shimPath = join(tmpdir(), `deno-waa-worker-shim-${Date.now()}.js`);
 let _shimWritten = false;
@@ -61,8 +66,7 @@ require("${escaped}");
   return _shimPath;
 }
 
-// deno-lint-ignore no-explicit-any
-function PatchedWorker(this: any, filename: string | URL, opts?: any) {
+function PatchedWorker(this: unknown, filename: string | URL, opts?: WorkerOptions) {
   const file = typeof filename === "string" ? filename : filename.toString();
   const shimmed = ensureWorkerShim(file);
   return new RealWorker(shimmed, opts);
@@ -72,12 +76,15 @@ PatchedWorker.prototype = RealWorker.prototype;
 
 // Hook CJS Module._load
 const origLoad = Module._load;
-// deno-lint-ignore no-explicit-any
-Module._load = function (request: string, parent: any, isMain: boolean) {
+Module._load = function (request: string, parent: unknown, isMain: boolean) {
   const result = origLoad.call(Module, request, parent, isMain);
-  if (request === "node:worker_threads" || request === "worker_threads") {
+  if (
+    (request === "node:worker_threads" || request === "worker_threads") &&
+    (typeof result === "object" || typeof result === "function") &&
+    result !== null
+  ) {
     return new Proxy(result, {
-      get(target: Record<string, unknown>, prop: string) {
+      get(target: Record<PropertyKey, unknown>, prop: string | symbol) {
         if (prop === "Worker") return PatchedWorker;
         if (prop === "markAsUntransferable") {
           return function markAsUntransferable() {};
@@ -119,10 +126,9 @@ if (typeof globalAny.isSecureContext === "undefined") {
 // and return the file path so addModule hits the existsSync() branch.
 const _OrigBlob = globalThis.Blob;
 const _blobSourceMap = new WeakMap<Blob, string>();
-// deno-lint-ignore no-explicit-any
-(globalThis as any).Blob = class PatchedBlob extends _OrigBlob {
-  // deno-lint-ignore no-explicit-any
-  constructor(parts?: any[], options?: BlobPropertyBag) {
+const globalWithBlob = globalThis as typeof globalThis & { Blob: typeof Blob };
+globalWithBlob.Blob = class PatchedBlob extends _OrigBlob {
+  constructor(parts?: BlobPart[], options?: BlobPropertyBag) {
     super(parts, options);
     if (parts) {
       const textParts = parts.map((p: unknown) =>

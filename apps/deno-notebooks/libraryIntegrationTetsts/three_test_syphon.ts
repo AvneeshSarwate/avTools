@@ -27,8 +27,16 @@
  */
 
 // Shim globals BEFORE any Three.js import.
-// deno-lint-ignore no-explicit-any
-const g = globalThis as any;
+type ThreeShimGlobal = Record<string, unknown>;
+
+interface GPUUncapturedErrorEvent extends Event {
+  error?: {
+    constructor?: { name?: string };
+    message?: string;
+  };
+}
+
+const g = globalThis as ThreeShimGlobal;
 if (typeof g.requestAnimationFrame === "undefined") {
   g.requestAnimationFrame = (cb: (time: number) => void): number =>
     setTimeout(() => cb(performance.now()), 16) as unknown as number;
@@ -90,8 +98,7 @@ async function maybeSyncWait() {
 }
 
 device.addEventListener("uncapturederror", (event: Event) => {
-  // deno-lint-ignore no-explicit-any
-  const gpuError = (event as any).error;
+  const gpuError = (event as GPUUncapturedErrorEvent).error;
   if (gpuError) {
     console.error("GPU ERROR:", gpuError.constructor?.name, gpuError.message);
   }
@@ -146,8 +153,8 @@ console.log("Syphon server:", win.syphon.name);
 console.log("Syphon sync mode:", SYNC_MODE);
 console.log("Syphon flipY:", FLIP_Y);
 
-const THREE = await import("npm:three");
-const { WebGPURenderer } = await import("npm:three/webgpu");
+const THREE = await import("three");
+const { WebGPURenderer } = await import("three/webgpu");
 
 class CanvasShim {
   width: number;
@@ -176,9 +183,8 @@ let renderHeight = win.height;
 const canvas = new CanvasShim(renderWidth, renderHeight, win.ctx);
 
 console.log("Creating WebGPURenderer (antialias: false, alpha: false)...");
-// deno-lint-ignore no-explicit-any
 const renderer = new WebGPURenderer({
-  canvas: canvas as any,
+  canvas: canvas as unknown as HTMLCanvasElement,
   device,
   antialias: false,
   alpha: false,

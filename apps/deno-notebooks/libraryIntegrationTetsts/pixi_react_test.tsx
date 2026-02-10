@@ -4,11 +4,9 @@
 // Run from apps/deno-notebooks:
 // deno run --unstable-webgpu --unstable-ffi --allow-all libraryIntegrationTetsts/pixi_react_test.tsx
 
-// deno-lint-ignore-file no-explicit-any
-
 import { setupPixiDenoForReact, runPixiReactRenderLoop, cleanupPixiDenoReact } from "./pixi_deno_shim.ts";
 import React, { useState, useCallback } from "react";
-import { Container, Graphics, Text } from "pixi.js";
+import { Container, Graphics, Text, type Ticker } from "pixi.js";
 import { createRoot, extend, useTick } from "@pixi/react";
 
 // Register pixi classes with the react reconciler
@@ -19,11 +17,11 @@ extend({ Container, Graphics, Text });
 function RotatingCircle() {
   const [rotation, setRotation] = useState(0);
 
-  useTick((ticker: any) => {
+  useTick((ticker: Ticker) => {
     setRotation((r) => r + 0.02 * ticker.deltaTime);
   });
 
-  const draw = useCallback((g: any) => {
+  const draw = useCallback((g: Graphics) => {
     g.clear();
     g.circle(0, 0, 50);
     g.fill({ color: 0x4ecdc4, alpha: 0.9 });
@@ -49,7 +47,7 @@ const COLORS = [0xff6b6b, 0xf9ca24, 0x6c5ce7, 0x00b894, 0xe17055];
 function ClickableRect() {
   const [colorIndex, setColorIndex] = useState(0);
 
-  const draw = useCallback((g: any) => {
+  const draw = useCallback((g: Graphics) => {
     g.clear();
     g.roundRect(-60, -30, 120, 60, 10);
     g.fill({ color: COLORS[colorIndex], alpha: 0.95 });
@@ -125,6 +123,7 @@ const { canvas, adapter, device } = ctx;
 
 // Create the pixi-react root and render the React tree
 const root = createRoot(canvas as unknown as HTMLCanvasElement);
+type RootRenderOptions = Exclude<Parameters<typeof root.render>[1], undefined>;
 const app = await root.render(
   <App />,
   {
@@ -134,7 +133,7 @@ const app = await root.render(
     backgroundColor: 0x1a1a2e,
     resolution: 1,
     antialias: false,
-  } as any,
+  } as RootRenderOptions,
 );
 
 // Stop pixi's auto rAF ticker — we drive manually via winit

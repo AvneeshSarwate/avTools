@@ -5,8 +5,24 @@
 
 // ─── Global shims (must be before pixi import) ──────────────────────────
 
-// deno-lint-ignore no-explicit-any
-const g = globalThis as any;
+type PixiShimGlobal = Record<string, unknown>;
+type ConstructorLike<T = object> = new (...args: never[]) => T;
+type DomParserLike = ConstructorLike<{ parseFromString: (_xml: string, _type: string) => Document }>;
+type ImageLike = ConstructorLike<HTMLImageElement>;
+
+interface GPUUncapturedErrorEvent extends Event {
+  error?: {
+    constructor?: { name?: string };
+    message?: string;
+  };
+}
+
+interface GPUCanvasConfigureLike {
+  device: GPUDevice;
+  format?: GPUTextureFormat;
+}
+
+const g = globalThis as PixiShimGlobal;
 
 if (typeof g.requestAnimationFrame === "undefined") {
   g.requestAnimationFrame = (cb: (time: number) => void): number =>
@@ -84,6 +100,7 @@ if (typeof g.PointerEvent === "undefined") {
 if (typeof g.HTMLCanvasElement === "undefined") {
   g.HTMLCanvasElement = class HTMLCanvasElement {};
 }
+const CanvasBase = ((g.HTMLCanvasElement as ConstructorLike | undefined) ?? class {}) as ConstructorLike;
 
 // DOMParser shim for pixi's SVG/XML parsing (in BrowserAdapter)
 if (typeof g.DOMParser === "undefined") {
@@ -122,8 +139,7 @@ console.log("Requesting GPU device...");
 const device = await adapter.requestDevice();
 
 device.addEventListener("uncapturederror", (event: Event) => {
-  // deno-lint-ignore no-explicit-any
-  const gpuError = (event as any).error;
+  const gpuError = (event as GPUUncapturedErrorEvent).error;
   if (gpuError) {
     console.error("GPU ERROR:", gpuError.constructor?.name, gpuError.message);
   }
@@ -149,8 +165,7 @@ class DenoGPUCanvasContextWrapper {
     this._real = real;
   }
 
-  // deno-lint-ignore no-explicit-any
-  configure(config: any): void {
+  configure(config: GPUCanvasConfigureLike): void {
     this._real.configure({
       device: config.device,
       format: config.format ?? "bgra8unorm",
@@ -172,7 +187,7 @@ const wrappedCtx = new DenoGPUCanvasContextWrapper(win.ctx);
 
 // ─── Canvas shim ─────────────────────────────────────────────────────────
 
-class DenoPixiCanvas extends g.HTMLCanvasElement {
+class DenoPixiCanvas extends CanvasBase {
   width: number;
   height: number;
   style: Record<string, string>;
@@ -186,8 +201,7 @@ class DenoPixiCanvas extends g.HTMLCanvasElement {
     this.style = { width: `${w}px`, height: `${h}px` };
   }
 
-  // deno-lint-ignore no-explicit-any
-  getContext(type: string): any {
+  getContext(type: string): DenoGPUCanvasContextWrapper | null {
     if (type === "webgpu") return this._ctx;
     if (type === "2d") return null; // pixi might probe for 2d
     throw new Error(`Unsupported context: ${type}`);
@@ -207,7 +221,9 @@ const canvas = new DenoPixiCanvas(win.width, win.height, wrappedCtx);
 // ─── Import pixi.js and set adapter ──────────────────────────────────────
 
 console.log("Importing pixi.js...");
-const PIXI = await import("npm:pixi.js@^8");
+const PIXI = await import("pixi.js");
+const ImageCtor = g.Image as ImageLike;
+const DOMParserCtor = g.DOMParser as DomParserLike;
 
 // Set DOMAdapter before any pixi init
 PIXI.DOMAdapter.set({
@@ -230,14 +246,14 @@ PIXI.DOMAdapter.set({
     };
     return c as unknown as HTMLCanvasElement;
   },
-  createImage: () => new g.Image(),
+  createImage: () => new ImageCtor() as unknown as HTMLImageElement,
   getCanvasRenderingContext2D: () => (null as unknown as { prototype: CanvasRenderingContext2D }),
   getWebGLRenderingContext: () => (null as unknown as typeof WebGLRenderingContext),
   getNavigator: () => navigator,
   getBaseUrl: () => "",
   getFontFaceSet: () => null,
   fetch: (url: RequestInfo, options?: RequestInit) => fetch(url, options),
-  parseXML: (xml: string) => new g.DOMParser().parseFromString(xml, "text/xml"),
+  parseXML: (xml: string) => new DOMParserCtor().parseFromString(xml, "text/xml") as Document,
 });
 
 // ─── Create WebGPU Renderer ──────────────────────────────────────────────
@@ -255,7 +271,6 @@ await renderer.init({
   resolution: 1,
   antialias: false,
   backgroundColor: 0x1a1a2e,
-  preference: "webgpu",
 });
 
 console.log("Renderer initialized!");

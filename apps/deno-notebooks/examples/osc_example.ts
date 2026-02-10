@@ -33,7 +33,7 @@ client.close();
 
 // const server = createOSCServer(57121);
 
-// server.on("message", (msg: any) => {
+// server.on("message", (msg: unknown) => {
 //   console.log("Received OSC message:", msg);
 // });
 
