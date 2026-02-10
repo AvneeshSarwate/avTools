@@ -1108,7 +1108,7 @@ export async function runPixiRenderLoop(
     }
 
     frame++;
-    await new Promise((r) => setTimeout(r, 16));
+    await new Promise((r) => setTimeout(r, 0));
   }
 
   console.log(`Rendered ${frame} frames, closing`);
@@ -1171,7 +1171,7 @@ export async function runPixiReactRenderLoop(
     }
 
     frame++;
-    await new Promise((r) => setTimeout(r, 16));
+    await new Promise((r) => setTimeout(r, 0));
   }
 
   console.log(`Rendered ${frame} frames, closing`);
