@@ -48,6 +48,7 @@
     "@pixi/react": "npm:@pixi/react@8.0.5",
     "@pixi/layout": "npm:@pixi/layout@^3",
     "@pixi/layout/components": "npm:@pixi/layout@^3/components",
-    "@pixi/ui": "npm:@pixi/ui@^2"
+    "@pixi/ui": "npm:@pixi/ui@^2",
+    "p5": "npm:p5@^1"
   }
 }
