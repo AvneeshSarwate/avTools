@@ -18,8 +18,13 @@ export async function requestWebGpuDevice(): Promise<GPUDevice> {
     new Promise<GPUDevice>((_, reject) => setTimeout(() => reject(new Error('requestDevice timed out')), 5000)),
   ]);
 
-  device.addEventListener('uncapturederror', (event) => {
-    console.error('WebGPU uncaptured error:', event);
+  device.addEventListener('uncapturederror', (event: Event) => {
+    const gpuEvent = event as Event & {
+      error?: { constructor?: { name?: string }; message?: string };
+    };
+    const name = gpuEvent.error?.constructor?.name ?? 'UnknownGPUError';
+    const message = gpuEvent.error?.message ?? '(no message)';
+    console.error(`WebGPU uncaptured error: ${name}: ${message}`);
   });
 
   return device;
