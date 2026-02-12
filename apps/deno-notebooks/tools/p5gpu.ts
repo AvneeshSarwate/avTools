@@ -6,6 +6,7 @@ export interface P5GPUOptions {
   width: number;
   height: number;
   format?: GPUTextureFormat;
+  sampleCount?: number;
 }
 
 type Vec2 = [number, number];
@@ -378,7 +379,7 @@ export class P5GPU {
   private _bindGroupLayout: GPUBindGroupLayout;
   private _bindGroup: GPUBindGroup;
   private _pipelineLayout: GPUPipelineLayout;
-  private _pipelineCache = new Map<number, GPURenderPipeline>();
+  private _pipelineCache = new Map<string, GPURenderPipeline>();
 
   private _vertices: number[] = [];
   private _vertexCount = 0;
@@ -386,6 +387,8 @@ export class P5GPU {
 
   private _vertexBuffer: GPUBuffer | null = null;
   private _vertexBufferCapacityBytes = 0;
+  private _sampleCount = 1;
+  private _msaaColorTexture: GPUTexture | null = null;
 
   private _clearRequested = false;
   private _clearColor: ColorTuple = [0, 0, 0, 0];
@@ -401,6 +404,20 @@ export class P5GPU {
       format: this.format,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
     });
+    this._sampleCount = Math.max(1, Math.floor(opts.sampleCount ?? 4));
+    if (this._sampleCount > 1) {
+      try {
+        this._msaaColorTexture = this.device.createTexture({
+          size: { width: this.width, height: this.height },
+          sampleCount: this._sampleCount,
+          format: this.format,
+          usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        });
+      } catch (_) {
+        this._sampleCount = 1;
+        this._msaaColorTexture = null;
+      }
+    }
 
     this._state = createDefaultState();
     this._state.strokeColor = [0, 0, 0, 1];
@@ -443,18 +460,23 @@ export class P5GPU {
 
   endFrame(): GPUTexture {
     const encoder = this.device.createCommandEncoder();
-    const loadOp: GPULoadOp = (this._clearRequested || !this._hasRenderedFrame) ? "clear" : "load";
+    const useLoadOp = !this._clearRequested && this._hasRenderedFrame;
+    const loadOp: GPULoadOp = useLoadOp ? "load" : "clear";
+    const frameSampleCount = (!useLoadOp && this._msaaColorTexture && this._sampleCount > 1) ? this._sampleCount : 1;
     const clearColor: GPUColor = {
       r: this._clearColor[0],
       g: this._clearColor[1],
       b: this._clearColor[2],
       a: this._clearColor[3],
     };
+    const outputView = this.outputTexture.createView();
+    const msaaView = frameSampleCount > 1 ? this._msaaColorTexture!.createView() : null;
 
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
-          view: this.outputTexture.createView(),
+          view: msaaView ?? outputView,
+          resolveTarget: msaaView ? outputView : undefined,
           loadOp,
           storeOp: "store",
           clearValue: clearColor,
@@ -472,7 +494,7 @@ export class P5GPU {
 
       for (const batch of this._batches) {
         if (batch.vertexCount <= 0) continue;
-        pass.setPipeline(this._getPipeline(batch.blendMode));
+        pass.setPipeline(this._getPipeline(batch.blendMode, frameSampleCount));
         pass.draw(batch.vertexCount, 1, batch.startVertex, 0);
       }
     }
@@ -486,6 +508,7 @@ export class P5GPU {
   dispose(): void {
     try { this._vertexBuffer?.destroy(); } catch (_) { /* ignore */ }
     try { this._uniformBuffer.destroy(); } catch (_) { /* ignore */ }
+    try { this._msaaColorTexture?.destroy(); } catch (_) { /* ignore */ }
     try { this.outputTexture.destroy(); } catch (_) { /* ignore */ }
   }
 
@@ -1686,8 +1709,9 @@ export class P5GPU {
     this._vertexBufferCapacityBytes = newSize;
   }
 
-  private _getPipeline(mode: number): GPURenderPipeline {
-    const existing = this._pipelineCache.get(mode);
+  private _getPipeline(mode: number, sampleCount: number): GPURenderPipeline {
+    const cacheKey = `${mode}:${sampleCount}`;
+    const existing = this._pipelineCache.get(cacheKey);
     if (existing) return existing;
 
     const pipeline = this.device.createRenderPipeline({
@@ -1721,11 +1745,11 @@ export class P5GPU {
         topology: "triangle-list",
       },
       multisample: {
-        count: 1,
+        count: sampleCount,
       },
     });
 
-    this._pipelineCache.set(mode, pipeline);
+    this._pipelineCache.set(cacheKey, pipeline);
     return pipeline;
   }
 }
