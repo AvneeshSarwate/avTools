@@ -807,7 +807,7 @@ export async function setupP5Deno(
 
   // 6. Find the canvas p5 created
   const canvases = _elementsByTag.get("canvas") ?? [];
-  const mainCanvas = canvases.find(c => c instanceof P5CanvasShim) as P5CanvasShim | undefined;
+  const mainCanvas = [...canvases].reverse().find(c => c instanceof P5CanvasShim) as P5CanvasShim | undefined;
 
   if (mainCanvas) {
     console.log(`Found p5 canvas: ${mainCanvas.width}x${mainCanvas.height}`);
@@ -865,9 +865,10 @@ export async function runP5RenderLoop(
     const pixels = canvas.getPixelData();
 
     // 4. Upload RGBA pixels to GPU texture
+    const upload = Uint8Array.from(pixels.data);
     device.queue.writeTexture(
       { texture: gpuTexture },
-      pixels.data,
+      upload,
       { bytesPerRow: pixels.width * 4, rowsPerImage: pixels.height },
       { width: pixels.width, height: pixels.height },
     );
