@@ -436,6 +436,7 @@ class P5CanvasShim extends (CanvasBase as new () => object) {
   _width: number;
   _height: number;
   _dirty = false;
+  _pathHasCurrentPoint = false;
 
   // DOM compat
   _tag = "canvas";
@@ -475,9 +476,56 @@ class P5CanvasShim extends (CanvasBase as new () => object) {
     return new Proxy({} as Record<string | symbol, unknown>, {
       get(_target, prop) {
         self._ensureCanvas();
+        const raw = self._rawCtx as unknown as Record<string | symbol, unknown>;
         // ctx.canvas should return the P5CanvasShim, not the internal @gfx/canvas
         if (prop === "canvas") return self;
-        const val = (self._rawCtx as unknown as Record<string | symbol, unknown>)[prop];
+        // @gfx/canvas starts some path ops from (0,0) when no current point exists.
+        // Canvas2D semantics should start the first segment at the op's start point.
+        if (prop === "beginPath") {
+          return () => {
+            self._pathHasCurrentPoint = false;
+            return (raw.beginPath as () => void)();
+          };
+        }
+        if (prop === "moveTo") {
+          return (x: number, y: number) => {
+            self._pathHasCurrentPoint = true;
+            return (raw.moveTo as (x: number, y: number) => void)(x, y);
+          };
+        }
+        if (prop === "lineTo") {
+          return (x: number, y: number) => {
+            if (!self._pathHasCurrentPoint) {
+              (raw.moveTo as (x: number, y: number) => void)(x, y);
+              self._pathHasCurrentPoint = true;
+              return;
+            }
+            self._pathHasCurrentPoint = true;
+            return (raw.lineTo as (x: number, y: number) => void)(x, y);
+          };
+        }
+        if (prop === "bezierCurveTo") {
+          return (cp1x: number, cp1y: number, cp2x: number, cp2y: number, x: number, y: number) => {
+            if (!self._pathHasCurrentPoint) {
+              (raw.moveTo as (x: number, y: number) => void)(cp1x, cp1y);
+              self._pathHasCurrentPoint = true;
+            }
+            return (raw.bezierCurveTo as (
+              cp1x: number, cp1y: number, cp2x: number, cp2y: number, x: number, y: number
+            ) => void)(cp1x, cp1y, cp2x, cp2y, x, y);
+          };
+        }
+        if (prop === "quadraticCurveTo") {
+          return (cpx: number, cpy: number, x: number, y: number) => {
+            if (!self._pathHasCurrentPoint) {
+              (raw.moveTo as (x: number, y: number) => void)(cpx, cpy);
+              self._pathHasCurrentPoint = true;
+            }
+            return (raw.quadraticCurveTo as (cpx: number, cpy: number, x: number, y: number) => void)(cpx, cpy, x, y);
+          };
+        }
+
+        const val = raw[prop];
         if (typeof val === "function") return (val as (...a: unknown[]) => unknown).bind(self._rawCtx);
         return val;
       },
@@ -527,6 +575,7 @@ class P5CanvasShim extends (CanvasBase as new () => object) {
       this._ckCanvas = _createCanvasFn!(this._width, this._height);
       this._rawCtx = this._ckCanvas.getContext("2d")!;
       if (!this._rawCtx) throw new Error("Failed to recreate 2d context");
+      this._pathHasCurrentPoint = false;
       this._dirty = false;
     }
   }

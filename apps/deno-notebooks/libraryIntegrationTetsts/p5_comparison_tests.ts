@@ -17,6 +17,7 @@ const GPU_DIR = `${OUTPUT_ROOT}/p5gpu`;
 const DIFF_DIR = `${OUTPUT_ROOT}/p5-diff`;
 
 const MAX_PHASE = Number(Deno.env.get("P5GPU_MAX_PHASE") ?? 1);
+const NAME_FILTER = Deno.env.get("P5GPU_NAME_FILTER")?.trim() ?? "";
 const RMSE_THRESHOLD = Number(Deno.env.get("P5GPU_RMSE_THRESHOLD") ?? 8.0);
 const MAX_ERROR_THRESHOLD = Number(Deno.env.get("P5GPU_MAX_ERROR_THRESHOLD") ?? 255);
 const DIFF_RATIO_THRESHOLD = Number(Deno.env.get("P5GPU_DIFF_RATIO_THRESHOLD") ?? 0.05);
@@ -115,13 +116,19 @@ async function main(): Promise<void> {
 
   const device = await requestWebGpuDevice();
   const results: SketchResult[] = [];
-  const sketches = P5_TEST_SKETCHES.filter((sketch) => sketch.phase <= MAX_PHASE);
-
-  if (sketches.length === 0) {
-    throw new Error(`No test sketches selected for phase ${MAX_PHASE}`);
+  let sketches = P5_TEST_SKETCHES.filter((sketch) => sketch.phase <= MAX_PHASE);
+  if (NAME_FILTER) {
+    const re = new RegExp(NAME_FILTER);
+    sketches = sketches.filter((sketch) => re.test(sketch.name));
   }
 
-  console.log(`Running ${sketches.length} sketch(es) for phase <= ${MAX_PHASE}`);
+  if (sketches.length === 0) {
+    throw new Error(`No test sketches selected for phase ${MAX_PHASE}${NAME_FILTER ? ` and filter /${NAME_FILTER}/` : ""}`);
+  }
+
+  console.log(
+    `Running ${sketches.length} sketch(es) for phase <= ${MAX_PHASE}${NAME_FILTER ? ` and filter /${NAME_FILTER}/` : ""}`,
+  );
 
   try {
     for (const sketch of sketches) {

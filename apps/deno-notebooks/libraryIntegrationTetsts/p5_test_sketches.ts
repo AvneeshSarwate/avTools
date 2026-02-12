@@ -21,6 +21,18 @@ export interface DrawingAPI {
   arc(x: number, y: number, w: number, h: number, start: number, stop: number, mode?: number): void;
   line(x1: number, y1: number, x2: number, y2: number): void;
   point(x: number, y: number): void;
+  bezier(x1: number, y1: number, x2: number, y2: number, x3: number, y3: number, x4: number, y4: number): void;
+  curve(x1: number, y1: number, x2: number, y2: number, x3: number, y3: number, x4: number, y4: number): void;
+  curveTightness(amount: number): void;
+
+  beginShape(kind?: number): void;
+  endShape(mode?: number): void;
+  vertex(x: number, y: number): void;
+  curveVertex(x: number, y: number): void;
+  bezierVertex(x2: number, y2: number, x3: number, y3: number, x4: number, y4: number): void;
+  quadraticVertex(cx: number, cy: number, x3: number, y3: number): void;
+  beginContour(): void;
+  endContour(): void;
 
   push(): void;
   pop(): void;
@@ -42,6 +54,7 @@ export interface DrawingAPI {
   readonly OPEN: number;
   readonly CHORD: number;
   readonly PIE: number;
+  readonly CLOSE: number;
 
   readonly PI: number;
   readonly TWO_PI: number;
@@ -214,6 +227,100 @@ export const P5_TEST_SKETCHES: TestSketch[] = [
 
       p.fill(16, 16, 16, 110);
       p.square(350, 172, 84, 14);
+    },
+  },
+  {
+    name: "curves-standalone",
+    phase: 4,
+    width: 480,
+    height: 320,
+    draw(p) {
+      p.background(247);
+      p.noFill();
+
+      p.stroke(36, 92, 180);
+      p.strokeWeight(6);
+      p.curveTightness(0);
+      p.curve(48, 230, 108, 90, 228, 250, 314, 80);
+      p.curve(108, 90, 228, 250, 314, 80, 430, 210);
+
+      p.stroke(206, 69, 71);
+      p.strokeWeight(4);
+      p.bezier(40, 64, 150, 10, 210, 140, 300, 78);
+      p.bezier(300, 78, 348, 48, 412, 180, 452, 132);
+
+      p.stroke(20, 140, 88);
+      p.strokeWeight(5);
+      p.curveTightness(0.8);
+      p.curve(24, 312, 98, 200, 214, 300, 306, 174);
+      p.curve(98, 200, 214, 300, 306, 174, 436, 298);
+
+      p.noStroke();
+      p.fill(36, 92, 180, 60);
+      p.circle(108, 90, 14);
+      p.circle(228, 250, 14);
+      p.circle(314, 80, 14);
+      p.fill(206, 69, 71, 60);
+      p.circle(40, 64, 12);
+      p.circle(300, 78, 12);
+      p.circle(452, 132, 12);
+    },
+  },
+  {
+    name: "curves-vertex-shapes",
+    phase: 4,
+    width: 480,
+    height: 340,
+    draw(p) {
+      p.background(244);
+
+      p.noFill();
+      p.stroke(42, 114, 201);
+      p.strokeWeight(6);
+      p.curveTightness(0);
+      p.beginShape();
+      p.curveVertex(56, 196);
+      p.curveVertex(56, 196);
+      p.curveVertex(136, 100);
+      p.curveVertex(236, 236);
+      p.curveVertex(346, 106);
+      p.curveVertex(428, 210);
+      p.curveVertex(428, 210);
+      p.endShape();
+
+      p.fill(255, 170, 78, 170);
+      p.stroke(67, 47, 23);
+      p.strokeWeight(3);
+      p.beginShape();
+      p.vertex(78, 292);
+      p.bezierVertex(130, 206, 212, 328, 264, 262);
+      p.bezierVertex(320, 224, 372, 300, 410, 288);
+      p.vertex(146, 316);
+      p.endShape(p.CLOSE);
+
+      p.noFill();
+      p.stroke(148, 55, 184);
+      p.strokeWeight(4);
+      p.beginShape();
+      p.vertex(72, 246);
+      p.quadraticVertex(158, 164, 246, 256);
+      p.quadraticVertex(330, 334, 420, 238);
+      p.endShape();
+
+      p.noFill();
+      p.stroke(148, 55, 184);
+      p.strokeWeight(4);
+      p.curveTightness(-0.7);
+      p.beginShape();
+      p.curveVertex(42, 42);
+      p.curveVertex(42, 42);
+      p.curveVertex(104, 58);
+      p.curveVertex(184, 38);
+      p.curveVertex(262, 68);
+      p.curveVertex(336, 44);
+      p.curveVertex(428, 76);
+      p.curveVertex(428, 76);
+      p.endShape();
     },
   },
 ];

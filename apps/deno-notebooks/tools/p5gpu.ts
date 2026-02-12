@@ -888,7 +888,7 @@ export class P5GPU {
     const p1 = points[points.length - 3];
     const p2 = points[points.length - 2];
     const p3 = points[points.length - 1];
-    const sampled = this._sampleCatmullRom(p0, p1, p2, p3, 20, this._state.curveTightness);
+    const sampled = this._sampleCatmullRom(p0, p1, p2, p3, 48, this._state.curveTightness);
     const ring = this._shape.rings[this._shape.activeRing];
     if (ring.length === 0) ring.push(sampled[0]);
     for (let i = 1; i < sampled.length; i++) ring.push(sampled[i]);
@@ -905,7 +905,7 @@ export class P5GPU {
       [toNumber(x2), toNumber(y2)],
       [toNumber(x3), toNumber(y3)],
       [toNumber(x4), toNumber(y4)],
-      20,
+      48,
     );
 
     for (let i = 1; i < sampled.length; i++) ring.push(sampled[i]);
@@ -921,7 +921,7 @@ export class P5GPU {
       last,
       [toNumber(cx), toNumber(cy)],
       [toNumber(x3), toNumber(y3)],
-      20,
+      48,
     );
 
     for (let i = 1; i < sampled.length; i++) ring.push(sampled[i]);
@@ -934,7 +934,7 @@ export class P5GPU {
       [toNumber(x2), toNumber(y2)],
       [toNumber(x3), toNumber(y3)],
       [toNumber(x4), toNumber(y4)],
-      24,
+      72,
     );
     this._emitStrokePathLocal(sampled, false, this._effectiveStrokeColor());
   }
@@ -946,7 +946,7 @@ export class P5GPU {
       [toNumber(x2), toNumber(y2)],
       [toNumber(x3), toNumber(y3)],
       [toNumber(x4), toNumber(y4)],
-      24,
+      72,
       this._state.curveTightness,
     );
     this._emitStrokePathLocal(sampled, false, this._effectiveStrokeColor());
@@ -1554,7 +1554,7 @@ export class P5GPU {
     }
 
     const delta = a1 - a0;
-    const steps = Math.max(3, Math.ceil(Math.abs(delta) / (Math.PI / 12)));
+    const steps = Math.max(6, Math.ceil(Math.abs(delta) / (Math.PI / 24)));
 
     let prev: Vec2 = [center[0] + Math.cos(a0) * radius, center[1] + Math.sin(a0) * radius];
     for (let i = 1; i <= steps; i++) {
