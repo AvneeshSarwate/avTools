@@ -411,7 +411,7 @@ fn vsText(v: VertexIn) -> VertexOut {
 
 @fragment
 fn fsText(v: VertexOut) -> @location(0) vec4f {
-  let alpha = textureSample(uAtlas, uSampler, v.uv).r;
+  let alpha = min(1.0, textureSample(uAtlas, uSampler, v.uv).r * 1.22);
   return vec4f(v.color.rgb, v.color.a * alpha);
 }
 `;
@@ -1068,7 +1068,20 @@ export class P5GPU {
       };
       return fallback.ascent;
     }
-    const layout = this._layoutText(String(text), null, null);
+    const source = String(text);
+    const measured = this._measureTextGlyphVerticalExtents(source);
+    if (measured) {
+      const ascent = Math.max(0, measured.baseline - measured.top);
+      this._textLastLayout = {
+        tightWidth: measured.layout.tightWidth,
+        fontWidth: measured.layout.fontWidth,
+        ascent,
+        descent: Math.max(0, measured.bottom - measured.baseline),
+        totalHeight: measured.layout.totalHeight,
+      };
+      return ascent;
+    }
+    const layout = this._layoutText(source, null, null);
     this._textLastLayout = {
       tightWidth: layout.tightWidth,
       fontWidth: layout.fontWidth,
@@ -1093,7 +1106,21 @@ export class P5GPU {
       };
       return fallback.descent;
     }
-    const layout = this._layoutText(String(text), null, null);
+    const source = String(text);
+    const measured = this._measureTextGlyphVerticalExtents(source);
+    if (measured) {
+      const ascent = Math.max(0, measured.baseline - measured.top);
+      const descent = Math.max(0, measured.bottom - measured.baseline);
+      this._textLastLayout = {
+        tightWidth: measured.layout.tightWidth,
+        fontWidth: measured.layout.fontWidth,
+        ascent,
+        descent,
+        totalHeight: measured.layout.totalHeight,
+      };
+      return descent;
+    }
+    const layout = this._layoutText(source, null, null);
     this._textLastLayout = {
       tightWidth: layout.tightWidth,
       fontWidth: layout.fontWidth,
@@ -1743,27 +1770,33 @@ export class P5GPU {
     boxHeight: number | null,
     layout: Pick<TextLayoutResult, "ascent" | "totalHeight" | "lineCount">,
   ): number {
+    // Skia Canvas2D baseline modes (`top`/`middle`/`bottom`) do not land on the
+    // same y-origin as cosmic-text's line box, so apply small per-mode biases
+    // to match p5/skia image output more closely.
+    const topBaselineBias = Math.round(this._state.textSize * 0.1);
+    const centerBaselineBias = Math.round(this._state.textSize * 0.05);
+    const bottomBaselineBias = Math.round(this._state.textSize * 0.2);
     if (boxHeight !== null) {
       const h = Math.max(0, boxHeight);
       switch (this._state.textAlignV) {
         case "center":
-          return y + (h - layout.totalHeight) * 0.5;
+          return y + (h - layout.totalHeight) * 0.5 + centerBaselineBias;
         case "bottom":
-          return y + (h - layout.totalHeight);
+          return y + (h - layout.totalHeight) + bottomBaselineBias;
         case "alphabetic":
         case "top":
         default:
-          return y;
+          return this._state.textAlignV === "top" ? y - topBaselineBias : y;
       }
     }
 
     switch (this._state.textAlignV) {
       case "top":
-        return y;
+        return y - topBaselineBias;
       case "center":
-        return y - layout.totalHeight * 0.5;
+        return y - layout.totalHeight * 0.5 + centerBaselineBias;
       case "bottom":
-        return y - layout.totalHeight;
+        return y - layout.totalHeight + bottomBaselineBias;
       case "alphabetic":
       default:
         return y - layout.ascent;
@@ -1875,6 +1908,44 @@ export class P5GPU {
 
   private _resolvedStyleCode(): 0 | 1 | 2 {
     return (this._state.textStyle === "italic" || this._state.textStyle === "bold italic") ? 1 : 0;
+  }
+
+  private _measureTextGlyphVerticalExtents(text: string): {
+    top: number;
+    bottom: number;
+    baseline: number;
+    layout: TextLayoutResult;
+  } | null {
+    const subsystem = this._requireTextSubsystem();
+    if (!subsystem) return null;
+
+    const layout = this._layoutText(text, null, null);
+    if (layout.glyphs.length === 0) return null;
+
+    let minTop = Number.POSITIVE_INFINITY;
+    let maxBottom = Number.NEGATIVE_INFINITY;
+
+    for (const glyph of layout.glyphs) {
+      const atlasGlyph = subsystem.atlas.ensureGlyph(glyph.key, subsystem.engine);
+      if (!atlasGlyph) continue;
+      const top = glyph.y - atlasGlyph.top;
+      const bottom = top + atlasGlyph.height;
+      if (top < minTop) minTop = top;
+      if (bottom > maxBottom) maxBottom = bottom;
+    }
+
+    if (!Number.isFinite(minTop) || !Number.isFinite(maxBottom)) return null;
+
+    const baseline = Number.isFinite(layout.firstBaseline) && layout.firstBaseline > 0
+      ? layout.firstBaseline
+      : layout.ascent;
+
+    return {
+      top: minTop,
+      bottom: maxBottom,
+      baseline,
+      layout,
+    };
   }
 
   private _parseVariationSettings(settings: string): Record<string, number> {

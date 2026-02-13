@@ -63,7 +63,11 @@ pub struct TextEngine {
 
 impl TextEngine {
     fn new() -> Self {
-        let mut font_system = FontSystem::new();
+        // Keep this engine deterministic by only using fonts explicitly loaded
+        // through our API (bundled Noto + user-loaded fonts), instead of the
+        // host system font set.
+        let db = fontdb::Database::new();
+        let mut font_system = FontSystem::new_with_locale_and_db(String::from("en-US"), db);
         let metrics = Metrics::new(12.0, 12.0 * 1.275);
         let buffer = Buffer::new(&mut font_system, metrics);
 
@@ -444,7 +448,7 @@ fn swash_to_mask(image: &SwashImage) -> RasterizedMask {
                 let r = image.data.get(base).copied().unwrap_or(0);
                 let g = image.data.get(base + 1).copied().unwrap_or(0);
                 let b = image.data.get(base + 2).copied().unwrap_or(0);
-                data[i] = r.max(g).max(b);
+                data[i] = ((u16::from(r) + u16::from(g) + u16::from(b)) / 3) as u8;
             }
             2
         }
