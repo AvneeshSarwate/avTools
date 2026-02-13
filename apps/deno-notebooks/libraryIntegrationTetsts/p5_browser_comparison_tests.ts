@@ -17,6 +17,7 @@ const OUTPUT_ROOT = ".output";
 const BROWSER_REFERENCE_DIR = `${OUTPUT_ROOT}/browser`;
 const GPU_DIR = `${OUTPUT_ROOT}/p5gpu`;
 const DIFF_DIR = `${OUTPUT_ROOT}/browser_diffs`;
+const ANALYSIS_DIR = `${OUTPUT_ROOT}/browser_analysis`;
 const BROWSER_SERVER_URL = Deno.env.get("P5_BROWSER_SERVER_URL") ??
   "http://localhost:9222";
 
@@ -38,6 +39,17 @@ const TEXT_MAX_ERROR_THRESHOLD = Number(
 const TEXT_DIFF_RATIO_THRESHOLD = Number(
   Deno.env.get("P5GPU_TEXT_DIFF_RATIO_THRESHOLD") ?? 0.25,
 );
+const RUN_TAG = Deno.env.get("P5_BROWSER_RUN_TAG")?.trim() ?? "";
+const WRITE_RUN_LOG = Deno.env.get("P5_BROWSER_WRITE_RUN_LOG") !== "0";
+
+interface TextStats {
+  hits: number;
+  misses: number;
+  uploads: number;
+  bytesUploaded: number;
+  grows: number;
+  clears: number;
+}
 
 interface SketchResult {
   name: string;
@@ -45,6 +57,13 @@ interface SketchResult {
   maxError: number;
   diffPixels: number;
   totalPixels: number;
+  diffRatio: number;
+  thresholds: {
+    rmse: number;
+    maxError: number;
+    diffRatio: number;
+  };
+  textStats: TextStats;
   pass: boolean;
 }
 
@@ -108,16 +127,17 @@ async function ensureBrowserServerRunning(): Promise<void> {
 
   const skillDir = `${homeDir()}/.codex/skills/dev-browser`;
   const nodeBin = await detectNodeBin();
-  const tsxCliPath = `${skillDir}/node_modules/tsx/dist/cli.mjs`;
-  const startServerScript = `${skillDir}/scripts/start-server.ts`;
+  const tsxCliPathRel = "node_modules/tsx/dist/cli.mjs";
+  const tsxCliPathAbs = `${skillDir}/${tsxCliPathRel}`;
+  const startServerScriptRel = "scripts/start-server.ts";
   const npmBinCandidate = nodeBin.endsWith("/node")
     ? `${nodeBin.slice(0, -4)}npm`
     : "npm";
-  const logPath = `${BROWSER_REFERENCE_DIR}/dev-browser-server.log`;
+  const logPath = `${Deno.cwd()}/${BROWSER_REFERENCE_DIR}/dev-browser-server.log`;
   await Deno.mkdir(BROWSER_REFERENCE_DIR, { recursive: true });
 
   try {
-    await Deno.stat(tsxCliPath);
+    await Deno.stat(tsxCliPathAbs);
   } catch {
     console.log(
       `[browser] installing dev-browser dependencies in ${skillDir}...`,
@@ -134,14 +154,17 @@ async function ensureBrowserServerRunning(): Promise<void> {
     }
   }
 
-  const command = `${shellQuote(nodeBin)} ${shellQuote(tsxCliPath)} ${
-    shellQuote(startServerScript)
+  const command = `${shellQuote(nodeBin)} ${shellQuote(tsxCliPathRel)} ${
+    shellQuote(startServerScriptRel)
   } > ${shellQuote(logPath)} 2>&1 &`;
   console.log(
-    `[browser] starting dev-browser server with ${startServerScript}`,
+    `[browser] starting dev-browser server with ${skillDir}/${startServerScriptRel}`,
   );
-  const start = await new Deno.Command("bash", { args: ["-lc", command] })
-    .output();
+  const start = await new Deno.Command("bash", {
+    args: ["-lc", command],
+    cwd: skillDir,
+    env: Deno.env.toObject(),
+  }).output();
   if (start.code !== 0) {
     throw new Error(
       `Failed to launch dev-browser server: ${
@@ -226,16 +249,7 @@ async function renderGpu(
   sketch: TestSketch,
   device: GPUDevice,
   outPath: string,
-): Promise<
-  {
-    hits: number;
-    misses: number;
-    uploads: number;
-    bytesUploaded: number;
-    grows: number;
-    clears: number;
-  }
-> {
+): Promise<TextStats> {
   const p5gpu = new P5GPU(device, {
     width: sketch.width,
     height: sketch.height,
@@ -293,12 +307,15 @@ async function runOne(
     maxError: stats.maxError,
     diffPixels: stats.diffPixels,
     totalPixels: stats.totalPixels,
+    diffRatio,
+    thresholds,
+    textStats,
     pass,
   };
 }
 
 function formatResultLine(result: SketchResult): string {
-  const diffPct = (result.diffPixels / Math.max(1, result.totalPixels)) * 100;
+  const diffPct = result.diffRatio * 100;
   const status = result.pass ? "PASS" : "FAIL";
   return `${result.name.padEnd(24)} RMSE=${
     result.rmse.toFixed(2).padStart(6)
@@ -309,11 +326,74 @@ function formatResultLine(result: SketchResult): string {
   }%  ${status}`;
 }
 
+function fileSafeTag(tag: string): string {
+  return tag.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function timestampForFile(date: Date): string {
+  return date.toISOString().replace(/[:.]/g, "-");
+}
+
+async function writeRunAnalysisLog(
+  sketches: TestSketch[],
+  results: SketchResult[],
+  passCount: number,
+  failCount: number,
+): Promise<void> {
+  if (!WRITE_RUN_LOG) return;
+
+  await Deno.mkdir(ANALYSIS_DIR, { recursive: true });
+  const now = new Date();
+  const tag = RUN_TAG ? `_${fileSafeTag(RUN_TAG)}` : "";
+  const outPath = `${ANALYSIS_DIR}/run_${timestampForFile(now)}${tag}.json`;
+  const payload = {
+    timestamp: now.toISOString(),
+    runTag: RUN_TAG,
+    settings: {
+      maxPhase: MAX_PHASE,
+      nameFilter: NAME_FILTER,
+      thresholds: {
+        default: {
+          rmse: RMSE_THRESHOLD,
+          maxError: MAX_ERROR_THRESHOLD,
+          diffRatio: DIFF_RATIO_THRESHOLD,
+        },
+        text: {
+          rmse: TEXT_RMSE_THRESHOLD,
+          maxError: TEXT_MAX_ERROR_THRESHOLD,
+          diffRatio: TEXT_DIFF_RATIO_THRESHOLD,
+        },
+      },
+      browserReferenceSettings: {
+        extraFontReadyPasses: Deno.env.get("P5_BROWSER_EXTRA_FONT_READY_PASSES") ?? "2",
+        extraStabilizeFrames: Deno.env.get("P5_BROWSER_EXTRA_STABILIZE_FRAMES") ?? "2",
+        postDrawDelayMs: Deno.env.get("P5_BROWSER_POST_DRAW_DELAY_MS") ?? "0",
+        fontWarmupEnabled: Deno.env.get("P5_BROWSER_ENABLE_FONT_WARMUP") ?? "1",
+      },
+    },
+    sketches: sketches.map((sketch) => ({
+      name: sketch.name,
+      phase: sketch.phase,
+      width: sketch.width,
+      height: sketch.height,
+    })),
+    summary: {
+      passCount,
+      failCount,
+      total: results.length,
+    },
+    results,
+  };
+  await Deno.writeTextFile(outPath, `${JSON.stringify(payload, null, 2)}\n`);
+  console.log(`[analysis] wrote run log: ${outPath}`);
+}
+
 async function main(): Promise<void> {
   await Promise.all([
     Deno.mkdir(BROWSER_REFERENCE_DIR, { recursive: true }),
     Deno.mkdir(GPU_DIR, { recursive: true }),
     Deno.mkdir(DIFF_DIR, { recursive: true }),
+    Deno.mkdir(ANALYSIS_DIR, { recursive: true }),
   ]);
 
   let sketches = P5_TEST_SKETCHES.filter((sketch) => sketch.phase <= MAX_PHASE);
@@ -374,6 +454,7 @@ async function main(): Promise<void> {
     }%`,
   );
   console.log(`Summary: ${passCount}/${results.length} passed`);
+  await writeRunAnalysisLog(sketches, results, passCount, failCount);
 
   if (failCount > 0) {
     Deno.exitCode = 1;

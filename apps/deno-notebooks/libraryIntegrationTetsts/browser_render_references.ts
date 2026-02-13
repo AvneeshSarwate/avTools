@@ -136,32 +136,55 @@ function selectSketches(sketches: TestSketch[]): TestSketch[] {
 
 async function buildFontCss(fontsDir: string): Promise<string> {
   const specs: Array<
-    { file: string; family: string; weight: string; style: string }
+    {
+      file: string;
+      family: string;
+      weight: string;
+      style: string;
+      format?: "truetype" | "truetype-variations";
+    }
   > = [
     {
       file: "NotoSans-Regular.ttf",
       family: "Noto Sans",
       weight: "400",
       style: "normal",
+      format: "truetype",
     },
     {
       file: "Inter-Regular.ttf",
       family: "Inter",
       weight: "400",
       style: "normal",
+      format: "truetype",
     },
-    { file: "Inter-Bold.ttf", family: "Inter", weight: "700", style: "normal" },
+    {
+      file: "Inter-Bold.ttf",
+      family: "Inter",
+      weight: "700",
+      style: "normal",
+      format: "truetype",
+    },
     {
       file: "InterVariable.ttf",
       family: "Inter Variable",
       weight: "100 900",
       style: "normal",
+      format: "truetype-variations",
     },
     {
       file: "InterVariable-Italic.ttf",
       family: "Inter Variable",
       weight: "100 900",
       style: "italic",
+      format: "truetype-variations",
+    },
+    {
+      file: "RobotoFlex-Variable.ttf",
+      family: "Roboto Flex",
+      weight: "100 1000",
+      style: "normal",
+      format: "truetype-variations",
     },
   ];
 
@@ -171,9 +194,10 @@ async function buildFontCss(fontsDir: string): Promise<string> {
     try {
       const bytes = await readFile(fullPath);
       const base64 = bytes.toString("base64");
+      const format = spec.format ?? "truetype";
       css += `\n@font-face {\n`;
       css += `  font-family: '${spec.family}';\n`;
-      css += `  src: url(data:font/ttf;base64,${base64}) format('truetype');\n`;
+      css += `  src: url(data:font/ttf;base64,${base64}) format('${format}');\n`;
       css += `  font-weight: ${spec.weight};\n`;
       css += `  font-style: ${spec.style};\n`;
       css += `  font-display: block;\n`;
@@ -206,6 +230,22 @@ async function renderSketchToPng(
   sketch: TestSketch,
   outPath: string,
 ): Promise<void> {
+  const extraFontReadyPasses = Math.max(
+    0,
+    Number(process.env.P5_BROWSER_EXTRA_FONT_READY_PASSES ?? 2),
+  );
+  const extraStabilizeFrames = Math.max(
+    0,
+    Number(process.env.P5_BROWSER_EXTRA_STABILIZE_FRAMES ?? 2),
+  );
+  const postDrawDelayMs = Math.max(
+    0,
+    Number(process.env.P5_BROWSER_POST_DRAW_DELAY_MS ?? 0),
+  );
+  const enableFontWarmup = process.env.P5_BROWSER_ENABLE_FONT_WARMUP !== "0";
+  const patchTextWeightOrder =
+    process.env.P5_BROWSER_PATCH_TEXT_WEIGHT_ORDER !== "0";
+
   await page.setViewportSize({ width: sketch.width, height: sketch.height });
   await page.goto("about:blank");
   await page.setContent(
@@ -233,6 +273,33 @@ async function renderSketchToPng(
         throw new Error("p5 is not available on window after script injection");
       }
 
+      const applyTextWeightPatch = (p) => {
+        if (!${patchTextWeightOrder}) return;
+        const renderer = p && p._renderer;
+        if (!renderer || !renderer.states || typeof renderer._applyTextProperties !== "function") return;
+        const clearCanvasVariationWeight = () => {
+          const canvas = renderer.textCanvas && renderer.textCanvas();
+          if (!canvas || !canvas.style) return;
+          if (canvas.style.fontVariationSettings) {
+            canvas.style.fontVariationSettings = "";
+          }
+        };
+        const patchedWeight = function(weight) {
+          if (typeof weight === "number") {
+            renderer.states.setValue("fontWeight", weight);
+            clearCanvasVariationWeight();
+            renderer._applyTextProperties();
+            // Chrome+p5 v2 can lag one step across family transitions for variable fonts.
+            // A second apply makes the current draw deterministic for this frame.
+            renderer._applyTextProperties();
+            return p;
+          }
+          return renderer.states.fontWeight;
+        };
+        renderer.textWeight = patchedWeight;
+        p.textWeight = patchedWeight;
+      };
+
       if (document.fonts && typeof document.fonts.load === "function") {
         const requiredFonts = [
           "400 16px 'Noto Sans'",
@@ -247,10 +314,53 @@ async function renderSketchToPng(
           "italic 700 16px 'Inter Variable'",
           "italic 850 16px 'Inter Variable'",
           "italic 900 16px 'Inter Variable'",
+          "300 16px 'Roboto Flex'",
+          "450 16px 'Roboto Flex'",
+          "600 16px 'Roboto Flex'",
+          "750 16px 'Roboto Flex'",
+          "850 16px 'Roboto Flex'",
+          "900 16px 'Roboto Flex'",
         ];
+        const waitFrames = (count) => new Promise((resolve) => {
+          const step = (n) => {
+            if (n <= 0) return resolve();
+            requestAnimationFrame(() => step(n - 1));
+          };
+          step(count);
+        });
         await Promise.all(
           requiredFonts.map((desc) => document.fonts.load(desc, "BESbswy")),
         );
+        if (document.fonts && document.fonts.ready) {
+          await document.fonts.ready;
+        }
+        for (let i = 0; i < ${extraFontReadyPasses}; i += 1) {
+          await waitFrames(1);
+          if (document.fonts && document.fonts.ready) {
+            await document.fonts.ready;
+          }
+        }
+
+        const checkDeadline = performance.now() + 4000;
+        while (performance.now() < checkDeadline) {
+          const allReady = requiredFonts.every((desc) => document.fonts.check(desc, "BESbswy"));
+          if (allReady) break;
+          await waitFrames(1);
+        }
+
+        if (${enableFontWarmup}) {
+          const warmupCanvas = document.createElement("canvas");
+          warmupCanvas.width = 32;
+          warmupCanvas.height = 32;
+          const ctx = warmupCanvas.getContext("2d");
+          if (ctx) {
+            for (const desc of requiredFonts) {
+              ctx.font = desc;
+              ctx.measureText("The quick brown fox");
+            }
+          }
+          await waitFrames(${extraStabilizeFrames});
+        }
       }
       if (document.fonts && document.fonts.ready) {
         await document.fonts.ready;
@@ -291,14 +401,29 @@ async function renderSketchToPng(
             p.setup = () => {
               p.pixelDensity(1);
               p.createCanvas(${sketch.width}, ${sketch.height});
+              applyTextWeightPatch(p);
               p.noLoop();
             };
             p.draw = () => {
               try {
                 drawFn(p);
-                requestAnimationFrame(() => {
+                (async () => {
+                  const waitFrames = (count) => new Promise((resolve) => {
+                    const step = (n) => {
+                      if (n <= 0) return resolve();
+                      requestAnimationFrame(() => step(n - 1));
+                    };
+                    step(count);
+                  });
+                  await waitFrames(${extraStabilizeFrames});
+                  if (${postDrawDelayMs} > 0) {
+                    await new Promise((resolve) => setTimeout(resolve, ${postDrawDelayMs}));
+                  }
                   clearTimeout(timeout);
                   finish();
+                })().catch((err) => {
+                  clearTimeout(timeout);
+                  finish(err);
                 });
               } catch (err) {
                 clearTimeout(timeout);
@@ -315,6 +440,71 @@ async function renderSketchToPng(
   `;
 
   await page.evaluate(browserScript);
+
+  if (
+    process.env.P5_BROWSER_DEBUG_TEXT_WEIGHT === "1" &&
+    sketch.name.startsWith("text-weight-api-probe")
+  ) {
+    const probe = await page.evaluate((name) => {
+      const g = globalThis as unknown as {
+        __p5Instance?: {
+          textFont?: (font?: unknown, size?: number) => unknown;
+          textStyle?: (style?: unknown) => unknown;
+          textWeight?: (weight?: number) => unknown;
+          textWidth?: (text: unknown) => number;
+          textSize?: (size?: number) => unknown;
+          NORMAL?: unknown;
+        };
+      };
+      const p = g.__p5Instance;
+      if (
+        !p ||
+        typeof p.textWeight !== "function" ||
+        typeof p.textWidth !== "function" ||
+        typeof p.textFont !== "function" ||
+        typeof p.textStyle !== "function" ||
+        typeof p.textSize !== "function"
+      ) {
+        return { error: "p5 instance not ready for text-weight probe" };
+      }
+
+      const weights = [300, 450, 600, 750, 900];
+      const families = name === "text-weight-api-probe-alt-font"
+        ? ["Inter Variable", "Roboto Flex"]
+        : ["Inter", "Inter Variable"];
+      const samples: Record<string, Array<[number, number, number]>> = {};
+      const rawCanvasSamples: Record<string, Array<[number, number]>> = {};
+      p.textSize(30);
+      for (const family of families) {
+        p.textFont(family);
+        samples[family] = [];
+        for (const weight of weights) {
+          if (typeof p.NORMAL !== "undefined") p.textStyle(p.NORMAL);
+          p.textWeight(weight);
+          const width = Number(p.textWidth("The quick brown fox").toFixed(1));
+          const current = Number(p.textWeight());
+          samples[family].push([weight, width, current]);
+        }
+      }
+      const rawCanvas = document.createElement("canvas").getContext("2d");
+      if (rawCanvas) {
+        for (const family of families) {
+          rawCanvasSamples[family] = [];
+          for (const weight of weights) {
+            rawCanvas.font = `${weight} 30px "${family}"`;
+            const width = Number(
+              rawCanvas.measureText("The quick brown fox").width.toFixed(1),
+            );
+            rawCanvasSamples[family].push([weight, width]);
+          }
+        }
+      }
+      return { p5: samples, rawCanvas: rawCanvasSamples };
+    }, sketch.name);
+    console.log(
+      `[browser] debug text-weight probe (${sketch.name}): ${JSON.stringify(probe)}`,
+    );
+  }
 
   const canvas = page.locator("canvas").first();
   await canvas.waitFor({ state: "visible", timeout: 5000 });
@@ -335,6 +525,18 @@ async function main(): Promise<void> {
   }
 
   await mkdir(outDir, { recursive: true });
+
+  console.log(
+    `[browser] reference settings: extraFontReadyPasses=${
+      process.env.P5_BROWSER_EXTRA_FONT_READY_PASSES ?? "2"
+    } extraStabilizeFrames=${
+      process.env.P5_BROWSER_EXTRA_STABILIZE_FRAMES ?? "2"
+    } postDrawDelayMs=${
+      process.env.P5_BROWSER_POST_DRAW_DELAY_MS ?? "0"
+    } fontWarmup=${process.env.P5_BROWSER_ENABLE_FONT_WARMUP ?? "1"} textWeightPatch=${
+      process.env.P5_BROWSER_PATCH_TEXT_WEIGHT_ORDER ?? "1"
+    }`,
+  );
 
   const { connect, waitForPageLoad } = await loadDevBrowserClient(
     paths.devBrowserClientPath,

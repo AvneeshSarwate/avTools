@@ -1921,10 +1921,6 @@ export class P5GPU {
 
   private _resolvedTextAxes(resolvedWeight: number): Record<string, number> {
     const axes: Record<string, number> = { ...this._state.textAxes };
-    if (!Number.isFinite(axes.opsz)) {
-      // Browsers generally apply optical sizing automatically based on CSS font size.
-      axes.opsz = this._state.textSize;
-    }
     if (this._state.textWeightSet && !Number.isFinite(axes.wght)) {
       // p5 v2 textWeight() updates the active weight axis when available.
       axes.wght = resolvedWeight;

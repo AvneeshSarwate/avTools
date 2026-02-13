@@ -589,4 +589,59 @@ export const P5_TEST_SKETCHES: TestSketch[] = [
       }
     },
   },
+  {
+    name: "text-weight-api-probe-alt-font",
+    phase: 6,
+    width: 1160,
+    height: 350,
+    draw(p) {
+      p.background(20, 24, 34);
+      p.textAlign(p.LEFT, p.TOP);
+      const maybeTextWeight = (p as unknown as { textWeight?: (weight: number) => unknown }).textWeight;
+      const supportsTextWeight = typeof maybeTextWeight === "function";
+      const weights = [300, 450, 600, 750, 900];
+      const families = [
+        { name: "Inter Variable", x: 24, accent: [142, 172, 255] as const },
+        { name: "Roboto Flex", x: 590, accent: [255, 176, 66] as const },
+      ];
+
+      for (const family of families) {
+        p.noFill();
+        p.stroke(54);
+        p.strokeWeight(1.2);
+        p.rect(family.x - 6, 18, 542, 314);
+
+        p.noStroke();
+        p.fill(family.accent[0], family.accent[1], family.accent[2]);
+        p.textSize(24);
+        p.textStyle(p.NORMAL);
+        p.text(family.name, family.x, 26);
+
+        p.fill(232);
+        p.textFont(family.name);
+        p.textSize(30);
+        p.textStyle(p.NORMAL);
+        let y = 60;
+        const widthSamples: string[] = [];
+        for (const weight of weights) {
+          p.textStyle(p.NORMAL);
+          if (supportsTextWeight) {
+            maybeTextWeight.call(p, weight);
+          }
+          const label = `w${weight}  The quick brown fox`;
+          p.text(label, family.x, y);
+          widthSamples.push(`${weight}:${p.textWidth("The quick brown fox").toFixed(1)}`);
+          y += 44;
+        }
+
+        p.textStyle(p.BOLD);
+        p.text("BOLD style control", family.x, 280);
+        p.textStyle(p.NORMAL);
+        p.textSize(16);
+        p.fill(140, 172, 255);
+        p.text(`textWeight() support: ${supportsTextWeight ? "yes" : "no"}`, family.x, 314);
+        p.text(widthSamples.join("  "), family.x, 334);
+      }
+    },
+  },
 ];

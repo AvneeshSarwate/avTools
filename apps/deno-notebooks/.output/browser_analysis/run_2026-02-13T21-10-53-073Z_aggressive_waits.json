@@ -1,0 +1,91 @@
+{
+  "timestamp": "2026-02-13T21:10:53.073Z",
+  "runTag": "aggressive_waits",
+  "settings": {
+    "maxPhase": 6,
+    "nameFilter": "text-weight-api-probe",
+    "thresholds": {
+      "default": {
+        "rmse": 8,
+        "maxError": 255,
+        "diffRatio": 0.05
+      },
+      "text": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      }
+    },
+    "browserReferenceSettings": {
+      "extraFontReadyPasses": "8",
+      "extraStabilizeFrames": "8",
+      "postDrawDelayMs": "120",
+      "fontWarmupEnabled": "1"
+    }
+  },
+  "sketches": [
+    {
+      "name": "text-weight-api-probe",
+      "phase": 6,
+      "width": 1160,
+      "height": 350
+    },
+    {
+      "name": "text-weight-api-probe-alt-font",
+      "phase": 6,
+      "width": 1160,
+      "height": 350
+    }
+  ],
+  "summary": {
+    "passCount": 0,
+    "failCount": 2,
+    "total": 2
+  },
+  "results": [
+    {
+      "name": "text-weight-api-probe",
+      "rmse": 61.652462545554776,
+      "maxError": 221,
+      "diffPixels": 81246,
+      "totalPixels": 406000,
+      "diffRatio": 0.20011330049261083,
+      "thresholds": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      },
+      "textStats": {
+        "hits": 494,
+        "misses": 618,
+        "uploads": 438,
+        "bytesUploaded": 111172,
+        "grows": 0,
+        "clears": 0
+      },
+      "pass": false
+    },
+    {
+      "name": "text-weight-api-probe-alt-font",
+      "rmse": 62.28698410219263,
+      "maxError": 235,
+      "diffPixels": 81907,
+      "totalPixels": 406000,
+      "diffRatio": 0.20174137931034483,
+      "thresholds": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      },
+      "textStats": {
+        "hits": 517,
+        "misses": 607,
+        "uploads": 425,
+        "bytesUploaded": 103362,
+        "grows": 0,
+        "clears": 0
+      },
+      "pass": false
+    }
+  ]
+}
