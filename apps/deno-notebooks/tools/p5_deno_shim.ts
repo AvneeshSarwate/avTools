@@ -64,6 +64,10 @@ type CreateCanvasFn = (w: number, h: number) => {
   dispose?: () => void;
 };
 
+type CanvasFontsLike = {
+  register: (pathOrData: string | Uint8Array, alias?: string) => void;
+};
+
 // ─── SimpleEventTarget ───────────────────────────────────────────────────
 
 class SimpleEventTarget {
@@ -427,6 +431,62 @@ class MockDomElement {
 // document.createElement('canvas'), gets a 2D context, and draws through it.
 
 let _createCanvasFn: CreateCanvasFn | null = null;
+let _bundledNotoBytes: Uint8Array | null = null;
+
+function patchP5TextMetrics(p5Ctor: { prototype?: Record<string, unknown> }): void {
+  const proto = p5Ctor.prototype;
+  if (!proto) return;
+  if ((proto as { __textMetricsPatched?: boolean }).__textMetricsPatched) return;
+
+  const originalTextAscent = typeof proto.textAscent === "function"
+    ? proto.textAscent as (...args: unknown[]) => unknown
+    : null;
+  const originalTextDescent = typeof proto.textDescent === "function"
+    ? proto.textDescent as (...args: unknown[]) => unknown
+    : null;
+
+  const getMetrics = (self: Record<string, unknown>, sample: string): TextMetrics | null => {
+    const direct = self.drawingContext as CanvasRenderingContext2D | undefined;
+    if (direct?.measureText) return direct.measureText(sample);
+    const renderer = self._renderer as { drawingContext?: CanvasRenderingContext2D } | undefined;
+    if (renderer?.drawingContext?.measureText) return renderer.drawingContext.measureText(sample);
+    return null;
+  };
+
+  proto.textAscent = function (this: Record<string, unknown>, text?: unknown): number {
+    const sample = text === undefined ? "Mg" : String(text);
+    const metrics = getMetrics(this, sample);
+    if (metrics) {
+      const asc = Number(metrics.actualBoundingBoxAscent);
+      if (Number.isFinite(asc) && asc > 0) return asc;
+      const fallback = Number(metrics.fontBoundingBoxAscent);
+      if (Number.isFinite(fallback) && fallback > 0) return fallback;
+    }
+    if (originalTextAscent) {
+      const fallback = Number(originalTextAscent.call(this, text));
+      if (Number.isFinite(fallback) && fallback > 0) return fallback;
+    }
+    return 0;
+  };
+
+  proto.textDescent = function (this: Record<string, unknown>, text?: unknown): number {
+    const sample = text === undefined ? "Mg" : String(text);
+    const metrics = getMetrics(this, sample);
+    if (metrics) {
+      const desc = Number(metrics.actualBoundingBoxDescent);
+      if (Number.isFinite(desc) && desc > 0) return desc;
+      const fallback = Number(metrics.fontBoundingBoxDescent);
+      if (Number.isFinite(fallback) && fallback > 0) return fallback;
+    }
+    if (originalTextDescent) {
+      const fallback = Number(originalTextDescent.call(this, text));
+      if (Number.isFinite(fallback) && fallback > 0) return fallback;
+    }
+    return 0;
+  };
+
+  (proto as { __textMetricsPatched?: boolean }).__textMetricsPatched = true;
+}
 
 class P5CanvasShim extends (CanvasBase as new () => object) {
   // @gfx/canvas backing
@@ -809,6 +869,21 @@ export async function setupP5Deno(
   console.log("Loading @gfx/canvas (FFI/Skia)...");
   const canvasMod = await import("@gfx/canvas");
   _createCanvasFn = canvasMod.createCanvas as unknown as CreateCanvasFn;
+  {
+    const maybeFonts = (canvasMod as Record<string, unknown>).Fonts as CanvasFontsLike | undefined;
+    if (maybeFonts?.register) {
+      const bundledNotoPath = new URL("../assets/fonts/NotoSans-Regular.ttf", import.meta.url);
+      try {
+        if (!_bundledNotoBytes) {
+          _bundledNotoBytes = await Deno.readFile(bundledNotoPath);
+        }
+        maybeFonts.register(_bundledNotoBytes, "Noto Sans");
+        console.log("Registered bundled font: Noto Sans");
+      } catch (err) {
+        console.warn(`Failed to register bundled font ${bundledNotoPath}:`, err);
+      }
+    }
+  }
   console.log("@gfx/canvas loaded!");
 
   // 2. Set window dimensions so p5 can read them
@@ -820,6 +895,7 @@ export async function setupP5Deno(
   const p5Module = await import("p5");
   const p5 = p5Module.default;
   (p5 as unknown as Record<string, boolean>).disableFriendlyErrors = true;
+  patchP5TextMetrics(p5 as unknown as { prototype?: Record<string, unknown> });
   console.log("p5.js loaded!");
 
   // 4. GPU setup

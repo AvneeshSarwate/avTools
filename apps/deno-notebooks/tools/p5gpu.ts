@@ -51,6 +51,7 @@ interface DrawState {
   textFontFamily: string;
   textSize: number;
   textLeading: number;
+  textLeadingSet: boolean;
   textAlignH: "left" | "center" | "right";
   textAlignV: "top" | "center" | "bottom" | "alphabetic";
   textStyle: "normal" | "italic" | "bold" | "bold italic";
@@ -168,6 +169,7 @@ function cloneState(state: DrawState): DrawState {
     textFontFamily: state.textFontFamily,
     textSize: state.textSize,
     textLeading: state.textLeading,
+    textLeadingSet: state.textLeadingSet,
     textAlignH: state.textAlignH,
     textAlignV: state.textAlignV,
     textStyle: state.textStyle,
@@ -291,6 +293,7 @@ function createDefaultState(): DrawState {
     textFontFamily: "Noto Sans",
     textSize: 12,
     textLeading: 12 * 1.275,
+    textLeadingSet: false,
     textAlignH: "left",
     textAlignV: "alphabetic",
     textStyle: "normal",
@@ -842,7 +845,7 @@ export class P5GPU {
     if (size === undefined) return this._state.textSize;
     const nextSize = Math.max(1, toNumber(size, this._state.textSize));
     this._state.textSize = nextSize;
-    if (!Number.isFinite(this._state.textLeading) || this._state.textLeading <= 0) {
+    if (!this._state.textLeadingSet) {
       this._state.textLeading = nextSize * 1.275;
     }
   }
@@ -850,6 +853,7 @@ export class P5GPU {
   textLeading(leading?: number): number | void {
     if (leading === undefined) return this._state.textLeading;
     this._state.textLeading = Math.max(1, toNumber(leading, this._state.textLeading));
+    this._state.textLeadingSet = true;
   }
 
   textStyle(style?: unknown): string | void {
@@ -995,21 +999,7 @@ export class P5GPU {
       else if (this._state.textAlignH === "right") tx -= layout.tightWidth;
     }
 
-    let baselineY = ty;
-    switch (this._state.textAlignV) {
-      case "top":
-        baselineY += layout.ascent;
-        break;
-      case "center":
-        baselineY += layout.ascent - layout.totalHeight * 0.5;
-        break;
-      case "bottom":
-        baselineY += layout.ascent - layout.totalHeight;
-        break;
-      case "alphabetic":
-      default:
-        break;
-    }
+    const layoutTopY = this._resolveTextTopY(ty, height, layout);
 
     const blend = this._currentBlendMode();
     const fillColor: ColorTuple = this._state.fillSet ? this._effectiveFillColor() : [0, 0, 0, 1];
@@ -1023,7 +1013,7 @@ export class P5GPU {
       if (!atlasGlyph) continue;
 
       const gx = tx + glyph.x + atlasGlyph.left;
-      const gy = baselineY + glyph.y - atlasGlyph.top;
+      const gy = layoutTopY + glyph.y - atlasGlyph.top;
 
       if (drawStroke) {
         this._emitTextStroke(gx, gy, atlasGlyph, strokeColor, strokeOffset, blend);
@@ -1738,28 +1728,46 @@ export class P5GPU {
       else if (this._state.textAlignH === "right") tx += width - measureW;
     }
 
-    let baselineY = ty;
-    switch (this._state.textAlignV) {
-      case "top":
-        baselineY += layout.ascent;
-        break;
-      case "center":
-        baselineY += layout.ascent - layout.totalHeight * 0.5;
-        break;
-      case "bottom":
-        baselineY += layout.ascent - layout.totalHeight;
-        break;
-      case "alphabetic":
-      default:
-        break;
-    }
+    const layoutTopY = this._resolveTextTopY(ty, height, layout);
 
     return {
       x: tx,
-      y: baselineY - layout.ascent,
+      y: layoutTopY,
       w: measureW,
       h: layout.totalHeight,
     };
+  }
+
+  private _resolveTextTopY(
+    y: number,
+    boxHeight: number | null,
+    layout: Pick<TextLayoutResult, "ascent" | "totalHeight" | "lineCount">,
+  ): number {
+    if (boxHeight !== null) {
+      const h = Math.max(0, boxHeight);
+      switch (this._state.textAlignV) {
+        case "center":
+          return y + (h - layout.totalHeight) * 0.5;
+        case "bottom":
+          return y + (h - layout.totalHeight);
+        case "alphabetic":
+        case "top":
+        default:
+          return y;
+      }
+    }
+
+    switch (this._state.textAlignV) {
+      case "top":
+        return y;
+      case "center":
+        return y - layout.totalHeight * 0.5;
+      case "bottom":
+        return y - layout.totalHeight;
+      case "alphabetic":
+      default:
+        return y - layout.ascent;
+    }
   }
 
   private _emitTextStroke(
