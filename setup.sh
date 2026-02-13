@@ -179,11 +179,13 @@ echo "[2/6] Building native Rust/FFI helpers..."
 #   cargo build --release --manifest-path apps/deno-notebooks/native/fastsleep/Cargo.toml
 #   cargo build --release --manifest-path apps/deno-notebooks/native/deno_window/Cargo.toml
 #   bash apps/deno-notebooks/scripts/build_midi_bridge.sh
+#   bash apps/deno-notebooks/scripts/build_text_engine.sh
 
 if ensure_in_path cargo; then
   cargo build --release --manifest-path "$NOTEBOOK_DIR/native/fastsleep/Cargo.toml"
   cargo build --release --manifest-path "$NOTEBOOK_DIR/native/deno_window/Cargo.toml"
   bash "$NOTEBOOK_DIR/scripts/build_midi_bridge.sh"
+  bash "$NOTEBOOK_DIR/scripts/build_text_engine.sh"
 else
   echo "Cargo not available; skipping native builds."
 fi
@@ -199,6 +201,7 @@ cache_targets=(
   "$NOTEBOOK_DIR/libraryIntegrationTetsts/"*.tsx
   "$NOTEBOOK_DIR/examples/"*.ts
   "$NOTEBOOK_DIR/tools/"*.ts
+  "$NOTEBOOK_DIR/tools/p5gpu_text/"*.ts
   "$NOTEBOOK_DIR/window/"*.ts
   "$NOTEBOOK_DIR/midi/"*.ts
   "$NOTEBOOK_DIR/misc/"*.ts

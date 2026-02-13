@@ -41,11 +41,39 @@ export interface DrawingAPI {
   scale(s: number, sy?: number): void;
   rectMode(mode: number): void;
   ellipseMode(mode: number): void;
+  text(str: unknown, x: number, y: number, maxWidth?: number, maxHeight?: number): void;
+  textFont(font?: unknown, size?: number): unknown;
+  textSize(size?: number): unknown;
+  textLeading(leading?: number): unknown;
+  textStyle(style?: unknown): unknown;
+  textWeight(weight?: number): unknown;
+  textAlign(horiz?: unknown, vert?: unknown): unknown;
+  textWrap(style?: unknown): unknown;
+  textDirection(direction?: unknown): unknown;
+  textWidth(text: unknown): number;
+  fontWidth(text: unknown): number;
+  fontAscent(): number;
+  fontDescent(): number;
+  textAscent(text?: unknown): number;
+  textDescent(text?: unknown): number;
+  textBounds(str: unknown, x: number, y: number, maxWidth?: number, maxHeight?: number): { x: number; y: number; w: number; h: number };
+  fontBounds(str: unknown, x: number, y: number, maxWidth?: number, maxHeight?: number): { x: number; y: number; w: number; h: number };
 
   readonly CORNER: number;
   readonly CORNERS: number;
   readonly CENTER: number;
   readonly RADIUS: number;
+  readonly LEFT: unknown;
+  readonly RIGHT: unknown;
+  readonly TOP: unknown;
+  readonly BOTTOM: unknown;
+  readonly BASELINE: unknown;
+  readonly NORMAL: unknown;
+  readonly ITALIC: unknown;
+  readonly BOLD: unknown;
+  readonly BOLDITALIC: unknown;
+  readonly WORD: unknown;
+  readonly CHAR: unknown;
   readonly ROUND: number;
   readonly SQUARE: number;
   readonly PROJECT: number;
@@ -321,6 +349,136 @@ export const P5_TEST_SKETCHES: TestSketch[] = [
       p.curveVertex(428, 76);
       p.curveVertex(428, 76);
       p.endShape();
+    },
+  },
+  {
+    name: "text-basic",
+    phase: 5,
+    width: 500,
+    height: 300,
+    draw(p) {
+      p.background(245);
+      p.noStroke();
+      p.fill(18);
+      p.textFont("Noto Sans");
+      p.textSize(34);
+      p.textAlign(p.LEFT, p.BASELINE);
+      p.text("Hello, text()", 26, 72);
+
+      p.textSize(18);
+      p.fill(58, 96, 196);
+      p.text("Baseline alignment", 28, 112);
+
+      const label = "tight width";
+      const w = p.textWidth(label);
+      const bx = 30;
+      const by = 172;
+      p.fill(30);
+      p.textSize(28);
+      p.text(label, bx, by);
+
+      p.noFill();
+      p.stroke(220, 64, 64);
+      p.strokeWeight(2);
+      p.rect(bx, by - p.textAscent(label), w, p.textAscent(label) + p.textDescent(label));
+
+      p.noStroke();
+      p.fill(40, 140, 80);
+      p.textSize(15);
+      p.text(`w=${w.toFixed(1)}`, bx + w + 10, by);
+    },
+  },
+  {
+    name: "text-wrap-align",
+    phase: 5,
+    width: 520,
+    height: 320,
+    draw(p) {
+      p.background(252);
+      p.textFont("Noto Sans");
+      p.textSize(18);
+      p.textLeading(23);
+      p.textWrap(p.WORD);
+
+      p.noFill();
+      p.stroke(210);
+      p.strokeWeight(1.5);
+      p.rect(20, 24, 190, 150);
+      p.rect(250, 24, 240, 120);
+      p.rect(250, 172, 240, 120);
+
+      p.noStroke();
+      p.fill(22);
+      p.textAlign(p.LEFT, p.TOP);
+      p.text(
+        "Word wrapping should break at spaces and respect the top-left anchor.",
+        20,
+        24,
+        190,
+        150,
+      );
+
+      p.fill(40, 92, 205);
+      p.textAlign(p.CENTER, p.CENTER);
+      p.text(
+        "Centered block\nwith explicit line break",
+        250,
+        24,
+        240,
+        120,
+      );
+
+      p.fill(194, 76, 55);
+      p.textAlign(p.RIGHT, p.BOTTOM);
+      p.text(
+        "Bottom-right\naligned text",
+        250,
+        172,
+        240,
+        120,
+      );
+    },
+  },
+  {
+    name: "text-style-weight",
+    phase: 5,
+    width: 520,
+    height: 320,
+    draw(p) {
+      p.background(24, 26, 34);
+      p.textFont("Noto Sans");
+      p.textAlign(p.LEFT, p.TOP);
+      p.noStroke();
+      p.textSize(30);
+      const maybeTextWeight = (p as unknown as { textWeight?: (weight: number) => unknown }).textWeight;
+      const maybeFontWidth = (p as unknown as { fontWidth?: (text: unknown) => number }).fontWidth;
+
+      p.fill(235);
+      p.textStyle(p.NORMAL);
+      if (typeof maybeTextWeight === "function") maybeTextWeight.call(p, 300);
+      p.text("Weight 300", 28, 24);
+
+      p.textStyle(p.NORMAL);
+      if (typeof maybeTextWeight === "function") maybeTextWeight.call(p, 600);
+      p.text("Weight 600", 28, 74);
+
+      p.textStyle(p.ITALIC);
+      if (typeof maybeTextWeight === "function") maybeTextWeight.call(p, 700);
+      p.text("Italic 700", 28, 124);
+
+      p.textStyle(p.BOLDITALIC);
+      if (typeof maybeTextWeight === "function") maybeTextWeight.call(p, 850);
+      p.text("Bold Italic 850", 28, 176);
+
+      p.textStyle(p.NORMAL);
+      if (typeof maybeTextWeight === "function") maybeTextWeight.call(p, 450);
+      p.textSize(16);
+      p.fill(142, 172, 255);
+      const sample = "fontWidth vs textWidth";
+      const fw = typeof maybeFontWidth === "function" ? maybeFontWidth.call(p, sample) : p.textWidth(sample);
+      const tw = p.textWidth(sample);
+      p.text(`${sample}`, 28, 248);
+      p.text(`fontWidth=${fw.toFixed(1)} textWidth=${tw.toFixed(1)}`, 28, 274);
     },
   },
 ];

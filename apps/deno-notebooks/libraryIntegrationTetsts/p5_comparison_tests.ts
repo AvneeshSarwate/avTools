@@ -21,6 +21,9 @@ const NAME_FILTER = Deno.env.get("P5GPU_NAME_FILTER")?.trim() ?? "";
 const RMSE_THRESHOLD = Number(Deno.env.get("P5GPU_RMSE_THRESHOLD") ?? 8.0);
 const MAX_ERROR_THRESHOLD = Number(Deno.env.get("P5GPU_MAX_ERROR_THRESHOLD") ?? 255);
 const DIFF_RATIO_THRESHOLD = Number(Deno.env.get("P5GPU_DIFF_RATIO_THRESHOLD") ?? 0.05);
+const TEXT_RMSE_THRESHOLD = Number(Deno.env.get("P5GPU_TEXT_RMSE_THRESHOLD") ?? 50.0);
+const TEXT_MAX_ERROR_THRESHOLD = Number(Deno.env.get("P5GPU_TEXT_MAX_ERROR_THRESHOLD") ?? 255);
+const TEXT_DIFF_RATIO_THRESHOLD = Number(Deno.env.get("P5GPU_TEXT_DIFF_RATIO_THRESHOLD") ?? 0.25);
 
 interface SketchResult {
   name: string;
@@ -29,6 +32,25 @@ interface SketchResult {
   diffPixels: number;
   totalPixels: number;
   pass: boolean;
+}
+
+function thresholdsForSketch(sketch: TestSketch): {
+  rmse: number;
+  maxError: number;
+  diffRatio: number;
+} {
+  if (sketch.name.startsWith("text-")) {
+    return {
+      rmse: TEXT_RMSE_THRESHOLD,
+      maxError: TEXT_MAX_ERROR_THRESHOLD,
+      diffRatio: TEXT_DIFF_RATIO_THRESHOLD,
+    };
+  }
+  return {
+    rmse: RMSE_THRESHOLD,
+    maxError: MAX_ERROR_THRESHOLD,
+    diffRatio: DIFF_RATIO_THRESHOLD,
+  };
 }
 
 async function renderReference(sketch: TestSketch, outPath: string): Promise<void> {
@@ -53,7 +75,11 @@ async function renderReference(sketch: TestSketch, outPath: string): Promise<voi
   }
 }
 
-async function renderGpu(sketch: TestSketch, device: GPUDevice, outPath: string): Promise<void> {
+async function renderGpu(
+  sketch: TestSketch,
+  device: GPUDevice,
+  outPath: string,
+): Promise<{ hits: number; misses: number; uploads: number; bytesUploaded: number; grows: number; clears: number }> {
   const p5gpu = new P5GPU(device, { width: sketch.width, height: sketch.height });
 
   try {
@@ -61,6 +87,7 @@ async function renderGpu(sketch: TestSketch, device: GPUDevice, outPath: string)
     sketch.draw(p5gpu as unknown as DrawingAPI);
     const texture = p5gpu.endFrame();
     await writeTextureToPng(device, texture, sketch.width, sketch.height, p5gpu.format, outPath);
+    return p5gpu.textStats();
   } finally {
     p5gpu.dispose();
   }
@@ -75,7 +102,12 @@ async function runOne(sketch: TestSketch, device: GPUDevice): Promise<SketchResu
   await renderReference(sketch, referencePath);
 
   console.log(`[${sketch.name}] rendering p5gpu...`);
-  await renderGpu(sketch, device, gpuPath);
+  const textStats = await renderGpu(sketch, device, gpuPath);
+  if (textStats.uploads > 0 || textStats.hits > 0 || textStats.misses > 0) {
+    console.log(
+      `[${sketch.name}] text stats: hits=${textStats.hits} misses=${textStats.misses} uploads=${textStats.uploads} bytes=${textStats.bytesUploaded} grows=${textStats.grows} clears=${textStats.clears}`,
+    );
+  }
 
   console.log(`[${sketch.name}] comparing...`);
   const stats = await comparePngFiles(referencePath, gpuPath, diffPath, {
@@ -83,11 +115,12 @@ async function runOne(sketch: TestSketch, device: GPUDevice): Promise<SketchResu
     diffAmplify: 4,
   });
 
+  const thresholds = thresholdsForSketch(sketch);
   const diffRatio = stats.diffPixels / Math.max(1, stats.totalPixels);
   const pass =
-    stats.rmse <= RMSE_THRESHOLD &&
-    stats.maxError <= MAX_ERROR_THRESHOLD &&
-    diffRatio <= DIFF_RATIO_THRESHOLD;
+    stats.rmse <= thresholds.rmse &&
+    stats.maxError <= thresholds.maxError &&
+    diffRatio <= thresholds.diffRatio;
 
   return {
     name: sketch.name,
@@ -147,7 +180,8 @@ async function main(): Promise<void> {
   for (const result of results) {
     console.log(formatResultLine(result));
   }
-  console.log(`\nThresholds: RMSE<=${RMSE_THRESHOLD}, max<=${MAX_ERROR_THRESHOLD}, diffRatio<=${(DIFF_RATIO_THRESHOLD * 100).toFixed(2)}%`);
+  console.log(`\nThresholds (default): RMSE<=${RMSE_THRESHOLD}, max<=${MAX_ERROR_THRESHOLD}, diffRatio<=${(DIFF_RATIO_THRESHOLD * 100).toFixed(2)}%`);
+  console.log(`Thresholds (text-*): RMSE<=${TEXT_RMSE_THRESHOLD}, max<=${TEXT_MAX_ERROR_THRESHOLD}, diffRatio<=${(TEXT_DIFF_RATIO_THRESHOLD * 100).toFixed(2)}%`);
   console.log(`Summary: ${passCount}/${results.length} passed`);
 
   if (failCount > 0) {

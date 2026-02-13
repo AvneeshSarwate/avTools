@@ -1,6 +1,8 @@
 /// <reference lib="dom" />
 
 import earcut from "earcut";
+import { NativeTextEngine, type TextLayoutResult } from "./p5gpu_text/ffi.ts";
+import { GlyphAtlas } from "./p5gpu_text/atlas.ts";
 
 export interface P5GPUOptions {
   width: number;
@@ -16,6 +18,7 @@ type DrawBatch = {
   startVertex: number;
   vertexCount: number;
   blendMode: number;
+  isText: boolean;
 };
 
 type ShapeBuilder = {
@@ -28,8 +31,10 @@ type ShapeBuilder = {
 interface DrawState {
   matrix: Float32Array;
   fillEnabled: boolean;
+  fillSet: boolean;
   fillColor: ColorTuple;
   strokeEnabled: boolean;
+  strokeSet: boolean;
   strokeColor: ColorTuple;
   strokeWeight: number;
   strokeCap: number;
@@ -43,17 +48,43 @@ interface DrawState {
   eraseMode: boolean;
   eraseFillStrength: number;
   eraseStrokeStrength: number;
+  textFontFamily: string;
+  textSize: number;
+  textLeading: number;
+  textAlignH: "left" | "center" | "right";
+  textAlignV: "top" | "center" | "bottom" | "alphabetic";
+  textStyle: "normal" | "italic" | "bold" | "bold italic";
+  textWeight: number;
+  textWeightSet: boolean;
+  textWrap: "WORD" | "CHAR";
+  textDirection: "inherit" | "ltr" | "rtl";
+  textAxes: Record<string, number>;
+  textAxisQuantization: number;
+  textDynamicScratch: boolean;
 }
 
 const EPS = 1e-6;
-const FLOATS_PER_VERTEX = 6;
-const BYTES_PER_VERTEX = FLOATS_PER_VERTEX * 4;
+const GEOM_FLOATS_PER_VERTEX = 6;
+const GEOM_BYTES_PER_VERTEX = GEOM_FLOATS_PER_VERTEX * 4;
+const TEXT_FLOATS_PER_VERTEX = 8;
+const TEXT_BYTES_PER_VERTEX = TEXT_FLOATS_PER_VERTEX * 4;
 
 const P5_CONST = {
   CORNER: 0,
   CORNERS: 1,
   CENTER: 2,
   RADIUS: 3,
+  LEFT: "left",
+  RIGHT: "right",
+  TOP: "top",
+  BOTTOM: "bottom",
+  BASELINE: "alphabetic",
+  NORMAL: "normal",
+  ITALIC: "italic",
+  BOLD: "bold",
+  BOLDITALIC: "bold italic",
+  WORD: "WORD",
+  CHAR: "CHAR",
 
   ROUND: 10,
   SQUARE: 11,
@@ -117,8 +148,10 @@ function cloneState(state: DrawState): DrawState {
   return {
     matrix: new Float32Array(state.matrix),
     fillEnabled: state.fillEnabled,
+    fillSet: state.fillSet,
     fillColor: [...state.fillColor] as ColorTuple,
     strokeEnabled: state.strokeEnabled,
+    strokeSet: state.strokeSet,
     strokeColor: [...state.strokeColor] as ColorTuple,
     strokeWeight: state.strokeWeight,
     strokeCap: state.strokeCap,
@@ -132,6 +165,19 @@ function cloneState(state: DrawState): DrawState {
     eraseMode: state.eraseMode,
     eraseFillStrength: state.eraseFillStrength,
     eraseStrokeStrength: state.eraseStrokeStrength,
+    textFontFamily: state.textFontFamily,
+    textSize: state.textSize,
+    textLeading: state.textLeading,
+    textAlignH: state.textAlignH,
+    textAlignV: state.textAlignV,
+    textStyle: state.textStyle,
+    textWeight: state.textWeight,
+    textWeightSet: state.textWeightSet,
+    textWrap: state.textWrap,
+    textDirection: state.textDirection,
+    textAxes: { ...state.textAxes },
+    textAxisQuantization: state.textAxisQuantization,
+    textDynamicScratch: state.textDynamicScratch,
   };
 }
 
@@ -225,8 +271,10 @@ function createDefaultState(): DrawState {
   return {
     matrix: identityMatrix(),
     fillEnabled: true,
+    fillSet: false,
     fillColor: [1, 1, 1, 1],
     strokeEnabled: true,
+    strokeSet: false,
     strokeColor: [0, 0, 0, 1],
     strokeWeight: 1,
     strokeCap: P5_CONST.ROUND,
@@ -240,6 +288,19 @@ function createDefaultState(): DrawState {
     eraseMode: false,
     eraseFillStrength: 255,
     eraseStrokeStrength: 255,
+    textFontFamily: "Noto Sans",
+    textSize: 12,
+    textLeading: 12 * 1.275,
+    textAlignH: "left",
+    textAlignV: "alphabetic",
+    textStyle: "normal",
+    textWeight: 400,
+    textWeightSet: false,
+    textWrap: "WORD",
+    textDirection: "inherit",
+    textAxes: {},
+    textAxisQuantization: 1,
+    textDynamicScratch: false,
   };
 }
 
@@ -274,7 +335,7 @@ function resolveBlendState(mode: number): GPUBlendState {
   }
 }
 
-const SHADER_SOURCE = /* wgsl */`
+const GEOM_SHADER_SOURCE = /* wgsl */`
 struct CanvasUniform {
   size: vec2f,
 }
@@ -310,11 +371,64 @@ fn fsMain(v: VertexOut) -> @location(0) vec4f {
 }
 `;
 
+const TEXT_SHADER_SOURCE = /* wgsl */`
+struct CanvasUniform {
+  size: vec2f,
+}
+
+@group(0) @binding(0) var<uniform> uCanvas: CanvasUniform;
+@group(1) @binding(0) var uAtlas: texture_2d<f32>;
+@group(1) @binding(1) var uSampler: sampler;
+
+struct VertexIn {
+  @location(0) position: vec2f,
+  @location(1) uv: vec2f,
+  @location(2) color: vec4f,
+}
+
+struct VertexOut {
+  @builtin(position) clipPos: vec4f,
+  @location(0) uv: vec2f,
+  @location(1) color: vec4f,
+}
+
+@vertex
+fn vsText(v: VertexIn) -> VertexOut {
+  let ndc = vec2f(
+    (v.position.x / uCanvas.size.x) * 2.0 - 1.0,
+    -((v.position.y / uCanvas.size.y) * 2.0 - 1.0)
+  );
+
+  var out: VertexOut;
+  out.clipPos = vec4f(ndc, 0.0, 1.0);
+  out.uv = v.uv;
+  out.color = v.color;
+  return out;
+}
+
+@fragment
+fn fsText(v: VertexOut) -> @location(0) vec4f {
+  let alpha = textureSample(uAtlas, uSampler, v.uv).r;
+  return vec4f(v.color.rgb, v.color.a * alpha);
+}
+`;
+
 export class P5GPU {
   public readonly CORNER = P5_CONST.CORNER;
   public readonly CORNERS = P5_CONST.CORNERS;
   public readonly CENTER = P5_CONST.CENTER;
   public readonly RADIUS = P5_CONST.RADIUS;
+  public readonly LEFT = P5_CONST.LEFT;
+  public readonly RIGHT = P5_CONST.RIGHT;
+  public readonly TOP = P5_CONST.TOP;
+  public readonly BOTTOM = P5_CONST.BOTTOM;
+  public readonly BASELINE = P5_CONST.BASELINE;
+  public readonly NORMAL = P5_CONST.NORMAL;
+  public readonly ITALIC = P5_CONST.ITALIC;
+  public readonly BOLD = P5_CONST.BOLD;
+  public readonly BOLDITALIC = P5_CONST.BOLDITALIC;
+  public readonly WORD = P5_CONST.WORD;
+  public readonly CHAR = P5_CONST.CHAR;
 
   public readonly ROUND = P5_CONST.ROUND;
   public readonly SQUARE = P5_CONST.SQUARE;
@@ -374,21 +488,41 @@ export class P5GPU {
   private _stack: DrawState[] = [];
   private _shape: ShapeBuilder | null = null;
 
-  private _shaderModule: GPUShaderModule;
+  private _geomShaderModule: GPUShaderModule;
+  private _textShaderModule: GPUShaderModule;
   private _uniformBuffer: GPUBuffer;
-  private _bindGroupLayout: GPUBindGroupLayout;
-  private _bindGroup: GPUBindGroup;
-  private _pipelineLayout: GPUPipelineLayout;
-  private _pipelineCache = new Map<string, GPURenderPipeline>();
+  private _canvasBindGroupLayout: GPUBindGroupLayout;
+  private _textBindGroupLayout: GPUBindGroupLayout;
+  private _canvasBindGroup: GPUBindGroup;
+  private _geomPipelineLayout: GPUPipelineLayout;
+  private _textPipelineLayout: GPUPipelineLayout;
+  private _geomPipelineCache = new Map<string, GPURenderPipeline>();
+  private _textPipelineCache = new Map<string, GPURenderPipeline>();
 
-  private _vertices: number[] = [];
-  private _vertexCount = 0;
+  private _geomVertices: number[] = [];
+  private _geomVertexCount = 0;
+  private _textVertices: number[] = [];
+  private _textVertexCount = 0;
   private _batches: DrawBatch[] = [];
 
-  private _vertexBuffer: GPUBuffer | null = null;
-  private _vertexBufferCapacityBytes = 0;
+  private _geomVertexBuffer: GPUBuffer | null = null;
+  private _geomVertexBufferCapacityBytes = 0;
+  private _textVertexBuffer: GPUBuffer | null = null;
+  private _textVertexBufferCapacityBytes = 0;
   private _sampleCount = 1;
   private _msaaColorTexture: GPUTexture | null = null;
+
+  private _textEngine: NativeTextEngine | null = null;
+  private _textAtlas: GlyphAtlas | null = null;
+  private _textBindGroup: GPUBindGroup | null = null;
+  private _textBindGroupAtlasVersion = -1;
+  private _textLastLayout: {
+    tightWidth: number;
+    fontWidth: number;
+    ascent: number;
+    descent: number;
+    totalHeight: number;
+  } = { tightWidth: 0, fontWidth: 0, ascent: 0, descent: 0, totalHeight: 0 };
 
   private _clearRequested = false;
   private _clearColor: ColorTuple = [0, 0, 0, 0];
@@ -423,8 +557,9 @@ export class P5GPU {
     this._state.strokeColor = [0, 0, 0, 1];
     this._state.fillColor = [1, 1, 1, 1];
 
-    this._shaderModule = this.device.createShaderModule({ code: SHADER_SOURCE });
-    this._bindGroupLayout = this.device.createBindGroupLayout({
+    this._geomShaderModule = this.device.createShaderModule({ code: GEOM_SHADER_SOURCE });
+    this._textShaderModule = this.device.createShaderModule({ code: TEXT_SHADER_SOURCE });
+    this._canvasBindGroupLayout = this.device.createBindGroupLayout({
       entries: [
         {
           binding: 0,
@@ -433,29 +568,64 @@ export class P5GPU {
         },
       ],
     });
+    this._textBindGroupLayout = this.device.createBindGroupLayout({
+      entries: [
+        {
+          binding: 0,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: "float", viewDimension: "2d", multisampled: false },
+        },
+        {
+          binding: 1,
+          visibility: GPUShaderStage.FRAGMENT,
+          sampler: { type: "filtering" },
+        },
+      ],
+    });
 
-    this._pipelineLayout = this.device.createPipelineLayout({ bindGroupLayouts: [this._bindGroupLayout] });
+    this._geomPipelineLayout = this.device.createPipelineLayout({ bindGroupLayouts: [this._canvasBindGroupLayout] });
+    this._textPipelineLayout = this.device.createPipelineLayout({
+      bindGroupLayouts: [this._canvasBindGroupLayout, this._textBindGroupLayout],
+    });
     this._uniformBuffer = this.device.createBuffer({
       size: 16,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.device.queue.writeBuffer(this._uniformBuffer, 0, new Float32Array([this.width, this.height]));
 
-    this._bindGroup = this.device.createBindGroup({
-      layout: this._bindGroupLayout,
+    this._canvasBindGroup = this.device.createBindGroup({
+      layout: this._canvasBindGroupLayout,
       entries: [{ binding: 0, resource: { buffer: this._uniformBuffer } }],
     });
+
+    try {
+      this._textEngine = new NativeTextEngine();
+      this._textAtlas = new GlyphAtlas(this.device, this.device.queue, {
+        initialSize: 512,
+        maxSize: 4096,
+        maxEntries: 8192,
+      });
+    } catch {
+      this._textEngine = null;
+      this._textAtlas = null;
+    }
 
     this.pixels = new Uint8ClampedArray(this.width * this.height * 4);
   }
 
   beginFrame(): void {
-    this._vertices.length = 0;
-    this._vertexCount = 0;
+    this._geomVertices.length = 0;
+    this._geomVertexCount = 0;
+    this._textVertices.length = 0;
+    this._textVertexCount = 0;
     this._batches.length = 0;
     this._shape = null;
     this._clearRequested = false;
     this._clearColor = [0, 0, 0, 0];
+    this._textAtlas?.beginFrame();
+    if (this._textAtlas) {
+      this._textAtlas.dynamicScratchMode = this._state.textDynamicScratch;
+    }
   }
 
   endFrame(): GPUTexture {
@@ -484,17 +654,38 @@ export class P5GPU {
       ],
     });
 
-    pass.setBindGroup(0, this._bindGroup);
+    pass.setBindGroup(0, this._canvasBindGroup);
 
-    if (this._vertexCount > 0) {
-      const vertexData = new Float32Array(this._vertices);
-      this._ensureVertexBuffer(vertexData.byteLength);
-      this.device.queue.writeBuffer(this._vertexBuffer!, 0, vertexData.buffer, vertexData.byteOffset, vertexData.byteLength);
-      pass.setVertexBuffer(0, this._vertexBuffer!);
+    let hasGeom = false;
+    let hasText = false;
 
+    if (this._geomVertexCount > 0) {
+      const geomData = new Float32Array(this._geomVertices);
+      this._ensureGeomVertexBuffer(geomData.byteLength);
+      this.device.queue.writeBuffer(this._geomVertexBuffer!, 0, geomData.buffer, geomData.byteOffset, geomData.byteLength);
+      hasGeom = true;
+    }
+
+    if (this._textVertexCount > 0) {
+      const textData = new Float32Array(this._textVertices);
+      this._ensureTextVertexBuffer(textData.byteLength);
+      this.device.queue.writeBuffer(this._textVertexBuffer!, 0, textData.buffer, textData.byteOffset, textData.byteLength);
+      hasText = this._syncTextBindGroup();
+    }
+
+    if (hasGeom || hasText) {
       for (const batch of this._batches) {
         if (batch.vertexCount <= 0) continue;
-        pass.setPipeline(this._getPipeline(batch.blendMode, frameSampleCount));
+        if (batch.isText) {
+          if (!hasText || !this._textVertexBuffer || !this._textBindGroup) continue;
+          pass.setPipeline(this._getTextPipeline(batch.blendMode, frameSampleCount));
+          pass.setBindGroup(1, this._textBindGroup);
+          pass.setVertexBuffer(0, this._textVertexBuffer);
+        } else {
+          if (!hasGeom || !this._geomVertexBuffer) continue;
+          pass.setPipeline(this._getGeomPipeline(batch.blendMode, frameSampleCount));
+          pass.setVertexBuffer(0, this._geomVertexBuffer);
+        }
         pass.draw(batch.vertexCount, 1, batch.startVertex, 0);
       }
     }
@@ -506,10 +697,13 @@ export class P5GPU {
   }
 
   dispose(): void {
-    try { this._vertexBuffer?.destroy(); } catch (_) { /* ignore */ }
+    try { this._geomVertexBuffer?.destroy(); } catch (_) { /* ignore */ }
+    try { this._textVertexBuffer?.destroy(); } catch (_) { /* ignore */ }
     try { this._uniformBuffer.destroy(); } catch (_) { /* ignore */ }
     try { this._msaaColorTexture?.destroy(); } catch (_) { /* ignore */ }
     try { this.outputTexture.destroy(); } catch (_) { /* ignore */ }
+    try { this._textAtlas?.dispose(); } catch (_) { /* ignore */ }
+    try { this._textEngine?.dispose(); } catch (_) { /* ignore */ }
   }
 
   push(): void {
@@ -588,20 +782,24 @@ export class P5GPU {
 
   fill(v1: unknown, v2?: unknown, v3?: unknown, a?: unknown): void {
     this._state.fillEnabled = true;
+    this._state.fillSet = true;
     this._state.fillColor = this._parseColor(v1, v2, v3, a);
   }
 
   noFill(): void {
     this._state.fillEnabled = false;
+    this._state.fillSet = true;
   }
 
   stroke(v1: unknown, v2?: unknown, v3?: unknown, a?: unknown): void {
     this._state.strokeEnabled = true;
+    this._state.strokeSet = true;
     this._state.strokeColor = this._parseColor(v1, v2, v3, a);
   }
 
   noStroke(): void {
     this._state.strokeEnabled = false;
+    this._state.strokeSet = true;
   }
 
   strokeWeight(weight: number): void {
@@ -618,6 +816,329 @@ export class P5GPU {
 
   curveTightness(amount: number): void {
     this._state.curveTightness = toNumber(amount);
+  }
+
+  textAlign(horiz?: unknown, vert?: unknown): { horizontal: string; vertical: string } | void {
+    if (horiz === undefined) {
+      return { horizontal: this._state.textAlignH, vertical: this._state.textAlignV };
+    }
+    this._state.textAlignH = this._parseTextAlignH(horiz);
+    if (vert !== undefined) {
+      this._state.textAlignV = this._parseTextAlignV(vert);
+    }
+  }
+
+  textFont(font?: unknown, size?: number): string | void {
+    if (font === undefined) return this._state.textFontFamily;
+    if (typeof font === "string" && font.trim().length > 0) {
+      this._state.textFontFamily = font.trim();
+    }
+    if (size !== undefined) {
+      this.textSize(size);
+    }
+  }
+
+  textSize(size?: number): number | void {
+    if (size === undefined) return this._state.textSize;
+    const nextSize = Math.max(1, toNumber(size, this._state.textSize));
+    this._state.textSize = nextSize;
+    if (!Number.isFinite(this._state.textLeading) || this._state.textLeading <= 0) {
+      this._state.textLeading = nextSize * 1.275;
+    }
+  }
+
+  textLeading(leading?: number): number | void {
+    if (leading === undefined) return this._state.textLeading;
+    this._state.textLeading = Math.max(1, toNumber(leading, this._state.textLeading));
+  }
+
+  textStyle(style?: unknown): string | void {
+    if (style === undefined) return this._state.textStyle;
+    this._state.textStyle = this._parseTextStyle(style);
+  }
+
+  textWeight(weight?: number): number | void {
+    if (weight === undefined) return this._state.textWeight;
+    this._state.textWeight = Math.max(1, Math.min(1000, Math.round(toNumber(weight, this._state.textWeight))));
+    this._state.textWeightSet = true;
+  }
+
+  textWrap(style?: unknown): "WORD" | "CHAR" | void {
+    if (style === undefined) return this._state.textWrap;
+    this._state.textWrap = String(style).toUpperCase() === "CHAR" ? "CHAR" : "WORD";
+  }
+
+  textDirection(direction?: unknown): "inherit" | "ltr" | "rtl" | void {
+    if (direction === undefined) return this._state.textDirection;
+    const normalized = String(direction).toLowerCase();
+    if (normalized === "ltr" || normalized === "rtl") {
+      this._state.textDirection = normalized;
+      return;
+    }
+    this._state.textDirection = "inherit";
+  }
+
+  textAxisQuantization(step?: number): number | void {
+    if (step === undefined) return this._state.textAxisQuantization;
+    const next = toNumber(step, this._state.textAxisQuantization);
+    this._state.textAxisQuantization = Number.isFinite(next) ? Math.max(0, next) : this._state.textAxisQuantization;
+  }
+
+  textDynamicMode(enabled?: boolean): boolean | void {
+    if (enabled === undefined) return this._state.textDynamicScratch;
+    this._state.textDynamicScratch = Boolean(enabled);
+  }
+
+  textVariationAxes(axes?: Record<string, number>): Record<string, number> | void {
+    if (axes === undefined) return { ...this._state.textAxes };
+    const next: Record<string, number> = {};
+    for (const [tag, value] of Object.entries(axes)) {
+      if (tag.length !== 4) continue;
+      const num = toNumber(value);
+      if (!Number.isFinite(num)) continue;
+      next[tag] = num;
+    }
+    this._state.textAxes = next;
+  }
+
+  textProperty(prop: string, value?: unknown): unknown {
+    const key = prop.trim();
+    if (value === undefined) {
+      if (key === "fontVariationSettings") return this._formatVariationSettings(this._state.textAxes);
+      if (key === "direction") return this._state.textDirection;
+      if (key === "textAlign") return this._state.textAlignH;
+      if (key === "textBaseline") return this._state.textAlignV;
+      return undefined;
+    }
+
+    if (key === "fontVariationSettings" && typeof value === "string") {
+      this._state.textAxes = this._parseVariationSettings(value);
+      return this;
+    }
+    if (key === "direction") {
+      this.textDirection(value);
+      return this;
+    }
+    if (key === "textAlign") {
+      this.textAlign(value);
+      return this;
+    }
+    if (key === "textBaseline") {
+      this.textAlign(this._state.textAlignH, value);
+      return this;
+    }
+
+    return this;
+  }
+
+  textProperties(values?: Record<string, unknown>): Record<string, unknown> | void {
+    if (values === undefined) {
+      return {
+        textAlign: this._state.textAlignH,
+        textBaseline: this._state.textAlignV,
+        direction: this._state.textDirection,
+        fontVariationSettings: this._formatVariationSettings(this._state.textAxes),
+      };
+    }
+    for (const [key, value] of Object.entries(values)) {
+      this.textProperty(key, value);
+    }
+  }
+
+  async loadFont(path: string | URL, name?: string): Promise<string> {
+    const text = this._requireTextSubsystem();
+    if (!text) {
+      throw new Error("P5GPU text subsystem is unavailable. Build native text engine first.");
+    }
+    const bytes = await Deno.readFile(path);
+    const ok = text.engine.loadFontBytes(bytes);
+    if (!ok) throw new Error(`Failed to load font bytes from ${String(path)}`);
+    if (name && name.trim().length > 0) {
+      this._state.textFontFamily = name.trim();
+      return name.trim();
+    }
+    return String(path);
+  }
+
+  text(str: unknown, x: number, y: number, maxWidth?: number, maxHeight?: number): void {
+    const text = this._requireTextSubsystem();
+    if (!text) return;
+    text.atlas.dynamicScratchMode = this._state.textDynamicScratch;
+
+    const source = String(str ?? "");
+    let tx = toNumber(x);
+    let ty = toNumber(y);
+    let width: number | null = null;
+    let height: number | null = null;
+
+    if (maxWidth !== undefined) {
+      const rect = this._resolveTextRect(tx, ty, toNumber(maxWidth), maxHeight === undefined ? undefined : toNumber(maxHeight));
+      tx = rect.x;
+      ty = rect.y;
+      width = Math.max(0, rect.width);
+      height = rect.height === undefined ? null : Math.max(0, rect.height);
+    }
+
+    const layout = this._layoutText(source, width, height);
+    this._textLastLayout = {
+      tightWidth: layout.tightWidth,
+      fontWidth: layout.fontWidth,
+      ascent: layout.ascent,
+      descent: layout.descent,
+      totalHeight: layout.totalHeight,
+    };
+
+    if (layout.glyphs.length === 0) return;
+
+    if (width === null) {
+      if (this._state.textAlignH === "center") tx -= layout.tightWidth * 0.5;
+      else if (this._state.textAlignH === "right") tx -= layout.tightWidth;
+    }
+
+    let baselineY = ty;
+    switch (this._state.textAlignV) {
+      case "top":
+        baselineY += layout.ascent;
+        break;
+      case "center":
+        baselineY += layout.ascent - layout.totalHeight * 0.5;
+        break;
+      case "bottom":
+        baselineY += layout.ascent - layout.totalHeight;
+        break;
+      case "alphabetic":
+      default:
+        break;
+    }
+
+    const blend = this._currentBlendMode();
+    const fillColor: ColorTuple = this._state.fillSet ? this._effectiveFillColor() : [0, 0, 0, 1];
+    const strokeColor = this._effectiveStrokeColor();
+    const drawFill = this._state.fillSet ? this._state.fillEnabled : true;
+    const drawStroke = this._state.strokeSet && this._state.strokeEnabled && this._state.strokeWeight > 0;
+    const strokeOffset = Math.max(1, this._state.strokeWeight * 0.5);
+
+    for (const glyph of layout.glyphs) {
+      const atlasGlyph = text.atlas.ensureGlyph(glyph.key, text.engine);
+      if (!atlasGlyph) continue;
+
+      const gx = tx + glyph.x + atlasGlyph.left;
+      const gy = baselineY + glyph.y - atlasGlyph.top;
+
+      if (drawStroke) {
+        this._emitTextStroke(gx, gy, atlasGlyph, strokeColor, strokeOffset, blend);
+      }
+      if (drawFill) {
+        this._emitTextQuad(gx, gy, atlasGlyph, fillColor, blend);
+      }
+    }
+  }
+
+  textWidth(text: unknown): number {
+    if (!this._requireTextSubsystem()) return 0;
+    const trimmed = String(text ?? "")
+      .split(/\r?\n/g)
+      .map((line) => line.replace(/\s+$/g, ""))
+      .join("\n");
+    const layout = this._layoutText(trimmed, null, null);
+    this._textLastLayout = {
+      tightWidth: layout.tightWidth,
+      fontWidth: layout.fontWidth,
+      ascent: layout.ascent,
+      descent: layout.descent,
+      totalHeight: layout.totalHeight,
+    };
+    return layout.tightWidth;
+  }
+
+  fontWidth(text: unknown): number {
+    if (!this._requireTextSubsystem()) return 0;
+    const layout = this._layoutText(String(text ?? ""), null, null);
+    this._textLastLayout = {
+      tightWidth: layout.tightWidth,
+      fontWidth: layout.fontWidth,
+      ascent: layout.ascent,
+      descent: layout.descent,
+      totalHeight: layout.totalHeight,
+    };
+    return layout.fontWidth;
+  }
+
+  textAscent(text?: unknown): number {
+    if (!this._requireTextSubsystem()) return 0;
+    if (text === undefined) {
+      if (this._textLastLayout.ascent > 0) return this._textLastLayout.ascent;
+      const fallback = this._layoutText("Mg", null, null);
+      this._textLastLayout = {
+        tightWidth: fallback.tightWidth,
+        fontWidth: fallback.fontWidth,
+        ascent: fallback.ascent,
+        descent: fallback.descent,
+        totalHeight: fallback.totalHeight,
+      };
+      return fallback.ascent;
+    }
+    const layout = this._layoutText(String(text), null, null);
+    this._textLastLayout = {
+      tightWidth: layout.tightWidth,
+      fontWidth: layout.fontWidth,
+      ascent: layout.ascent,
+      descent: layout.descent,
+      totalHeight: layout.totalHeight,
+    };
+    return layout.ascent;
+  }
+
+  textDescent(text?: unknown): number {
+    if (!this._requireTextSubsystem()) return 0;
+    if (text === undefined) {
+      if (this._textLastLayout.descent > 0) return this._textLastLayout.descent;
+      const fallback = this._layoutText("Mg", null, null);
+      this._textLastLayout = {
+        tightWidth: fallback.tightWidth,
+        fontWidth: fallback.fontWidth,
+        ascent: fallback.ascent,
+        descent: fallback.descent,
+        totalHeight: fallback.totalHeight,
+      };
+      return fallback.descent;
+    }
+    const layout = this._layoutText(String(text), null, null);
+    this._textLastLayout = {
+      tightWidth: layout.tightWidth,
+      fontWidth: layout.fontWidth,
+      ascent: layout.ascent,
+      descent: layout.descent,
+      totalHeight: layout.totalHeight,
+    };
+    return layout.descent;
+  }
+
+  fontAscent(): number {
+    return this.textAscent("Mg");
+  }
+
+  fontDescent(): number {
+    return this.textDescent("Mg");
+  }
+
+  textBounds(str: unknown, x: number, y: number, maxWidth?: number, maxHeight?: number): { x: number; y: number; w: number; h: number } {
+    return this._computeTextBounds(String(str ?? ""), x, y, maxWidth, maxHeight, true);
+  }
+
+  fontBounds(str: unknown, x: number, y: number, maxWidth?: number, maxHeight?: number): { x: number; y: number; w: number; h: number } {
+    return this._computeTextBounds(String(str ?? ""), x, y, maxWidth, maxHeight, false);
+  }
+
+  textStats(): { hits: number; misses: number; uploads: number; bytesUploaded: number; grows: number; clears: number } {
+    return this._textAtlas?.takeFrameStats() ?? {
+      hits: 0,
+      misses: 0,
+      uploads: 0,
+      bytesUploaded: 0,
+      grows: 0,
+      clears: 0,
+    };
   }
 
   background(v1: unknown, v2?: unknown, v3?: unknown, a?: unknown): void {
@@ -1092,6 +1613,298 @@ export class P5GPU {
     throw new Error("P5GPU.image() is not implemented yet");
   }
 
+  private _requireTextSubsystem(): { engine: NativeTextEngine; atlas: GlyphAtlas } | null {
+    if (!this._textEngine || !this._textAtlas) return null;
+    return { engine: this._textEngine, atlas: this._textAtlas };
+  }
+
+  private _resolveTextRect(
+    x: number,
+    y: number,
+    width: number,
+    height?: number,
+  ): { x: number; y: number; width: number; height?: number } {
+    let tx = x;
+    let ty = y;
+    let tw = width;
+    let th = height;
+
+    switch (this._state.rectMode) {
+      case P5_CONST.RADIUS:
+        tw *= 2;
+        tx -= tw * 0.5;
+        if (th !== undefined) {
+          th *= 2;
+          ty -= th * 0.5;
+        }
+        break;
+      case P5_CONST.CENTER:
+        tx -= tw * 0.5;
+        if (th !== undefined) {
+          ty -= th * 0.5;
+        }
+        break;
+      case P5_CONST.CORNERS:
+        tw -= tx;
+        if (th !== undefined) {
+          th -= ty;
+        }
+        break;
+      case P5_CONST.CORNER:
+      default:
+        break;
+    }
+
+    if (tw < 0) {
+      tx += tw;
+      tw = -tw;
+    }
+    if (th !== undefined && th < 0) {
+      ty += th;
+      th = -th;
+    }
+
+    return { x: tx, y: ty, width: tw, height: th };
+  }
+
+  private _layoutText(text: string, width: number | null, height: number | null): TextLayoutResult {
+    const subsystem = this._requireTextSubsystem();
+    if (!subsystem) {
+      return {
+        glyphs: [],
+        tightWidth: 0,
+        fontWidth: 0,
+        ascent: 0,
+        descent: 0,
+        firstBaseline: 0,
+        totalHeight: 0,
+        lineCount: 0,
+      };
+    }
+
+    const wrapMode = width === null ? 2 : this._state.textWrap === "CHAR" ? 1 : 0;
+    const alignH: 0 | 1 | 2 = this._state.textAlignH === "center"
+      ? 1
+      : this._state.textAlignH === "right"
+      ? 2
+      : 0;
+    const styleCode: 0 | 1 | 2 = this._resolvedStyleCode();
+
+    return subsystem.engine.layoutText({
+      text,
+      family: this._state.textFontFamily,
+      fontSize: this._state.textSize,
+      lineHeight: this._state.textLeading,
+      width,
+      height,
+      alignH,
+      wrapMode,
+      weight: this._resolvedTextWeight(),
+      style: styleCode,
+      axisQuantization: this._state.textAxisQuantization,
+      axes: this._state.textAxes,
+    });
+  }
+
+  private _computeTextBounds(
+    source: string,
+    x: number,
+    y: number,
+    maxWidth?: number,
+    maxHeight?: number,
+    tight = true,
+  ): { x: number; y: number; w: number; h: number } {
+    let tx = toNumber(x);
+    let ty = toNumber(y);
+    let width: number | null = null;
+    let height: number | null = null;
+
+    if (maxWidth !== undefined) {
+      const rect = this._resolveTextRect(tx, ty, toNumber(maxWidth), maxHeight === undefined ? undefined : toNumber(maxHeight));
+      tx = rect.x;
+      ty = rect.y;
+      width = Math.max(0, rect.width);
+      height = rect.height === undefined ? null : Math.max(0, rect.height);
+    }
+
+    const layout = this._layoutText(source, width, height);
+    const measureW = tight ? layout.tightWidth : layout.fontWidth;
+
+    if (width === null) {
+      if (this._state.textAlignH === "center") tx -= measureW * 0.5;
+      else if (this._state.textAlignH === "right") tx -= measureW;
+    } else {
+      if (this._state.textAlignH === "center") tx += (width - measureW) * 0.5;
+      else if (this._state.textAlignH === "right") tx += width - measureW;
+    }
+
+    let baselineY = ty;
+    switch (this._state.textAlignV) {
+      case "top":
+        baselineY += layout.ascent;
+        break;
+      case "center":
+        baselineY += layout.ascent - layout.totalHeight * 0.5;
+        break;
+      case "bottom":
+        baselineY += layout.ascent - layout.totalHeight;
+        break;
+      case "alphabetic":
+      default:
+        break;
+    }
+
+    return {
+      x: tx,
+      y: baselineY - layout.ascent,
+      w: measureW,
+      h: layout.totalHeight,
+    };
+  }
+
+  private _emitTextStroke(
+    x: number,
+    y: number,
+    glyph: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      u0: number;
+      v0: number;
+      u1: number;
+      v1: number;
+    },
+    color: ColorTuple,
+    radius: number,
+    blendMode: number,
+  ): void {
+    const offsets: Vec2[] = [
+      [-radius, 0],
+      [radius, 0],
+      [0, -radius],
+      [0, radius],
+      [-radius, -radius],
+      [radius, -radius],
+      [-radius, radius],
+      [radius, radius],
+    ];
+
+    for (const [ox, oy] of offsets) {
+      this._emitTextQuad(
+        x + ox,
+        y + oy,
+        glyph,
+        color,
+        blendMode,
+      );
+    }
+  }
+
+  private _emitTextQuad(
+    x: number,
+    y: number,
+    glyph: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      u0: number;
+      v0: number;
+      u1: number;
+      v1: number;
+    },
+    color: ColorTuple,
+    blendMode: number,
+  ): void {
+    const x0 = x;
+    const y0 = y;
+    const x1 = x + glyph.width;
+    const y1 = y + glyph.height;
+
+    const p0 = transformPoint(this._state.matrix, x0, y0);
+    const p1 = transformPoint(this._state.matrix, x1, y0);
+    const p2 = transformPoint(this._state.matrix, x1, y1);
+    const p3 = transformPoint(this._state.matrix, x0, y1);
+
+    this._ensureBatch(blendMode, true);
+    this._pushTextVertex(p0[0], p0[1], glyph.u0, glyph.v0, color);
+    this._pushTextVertex(p1[0], p1[1], glyph.u1, glyph.v0, color);
+    this._pushTextVertex(p2[0], p2[1], glyph.u1, glyph.v1, color);
+    this._pushTextVertex(p0[0], p0[1], glyph.u0, glyph.v0, color);
+    this._pushTextVertex(p2[0], p2[1], glyph.u1, glyph.v1, color);
+    this._pushTextVertex(p3[0], p3[1], glyph.u0, glyph.v1, color);
+  }
+
+  private _parseTextAlignH(value: unknown): "left" | "center" | "right" {
+    const v = String(value).toLowerCase();
+    if (value === this.CENTER || v === "center" || v === "middle") return "center";
+    if (value === this.RIGHT || v === "right" || v === "end") return "right";
+    return "left";
+  }
+
+  private _parseTextAlignV(value: unknown): "top" | "center" | "bottom" | "alphabetic" {
+    const v = String(value).toLowerCase();
+    if (value === this.CENTER || v === "center" || v === "middle") return "center";
+    if (value === this.TOP || v === "top" || v === "hanging") return "top";
+    if (value === this.BOTTOM || v === "bottom" || v === "ideographic") return "bottom";
+    return "alphabetic";
+  }
+
+  private _parseTextStyle(value: unknown): "normal" | "italic" | "bold" | "bold italic" {
+    const v = String(value).toLowerCase().trim();
+    if (v === "bold italic" || v === "italic bold" || value === this.BOLDITALIC) return "bold italic";
+    if (v === "bold" || value === this.BOLD) return "bold";
+    if (v === "italic" || value === this.ITALIC || v === "oblique") return "italic";
+    return "normal";
+  }
+
+  private _resolvedTextWeight(): number {
+    if (this._state.textWeightSet) return this._state.textWeight;
+    if (this._state.textStyle === "bold" || this._state.textStyle === "bold italic") return 700;
+    return 400;
+  }
+
+  private _resolvedStyleCode(): 0 | 1 | 2 {
+    return (this._state.textStyle === "italic" || this._state.textStyle === "bold italic") ? 1 : 0;
+  }
+
+  private _parseVariationSettings(settings: string): Record<string, number> {
+    const out: Record<string, number> = {};
+    const regex = /[\"']?([A-Za-z0-9]{4})[\"']?\\s*([+-]?\\d*\\.?\\d+)/g;
+    let match: RegExpExecArray | null = regex.exec(settings);
+    while (match) {
+      const tag = match[1];
+      const value = Number(match[2]);
+      if (Number.isFinite(value)) out[tag] = value;
+      match = regex.exec(settings);
+    }
+    return out;
+  }
+
+  private _formatVariationSettings(axes: Record<string, number>): string {
+    return Object.entries(axes)
+      .map(([tag, value]) => `\"${tag}\" ${value}`)
+      .join(", ");
+  }
+
+  private _syncTextBindGroup(): boolean {
+    if (!this._textAtlas) return false;
+    if (this._textBindGroup && this._textBindGroupAtlasVersion === this._textAtlas.version) {
+      return true;
+    }
+
+    this._textBindGroup = this.device.createBindGroup({
+      layout: this._textBindGroupLayout,
+      entries: [
+        { binding: 0, resource: this._textAtlas.textureView() },
+        { binding: 1, resource: this._textAtlas.sampler },
+      ],
+    });
+    this._textBindGroupAtlasVersion = this._textAtlas.version;
+    return true;
+  }
+
   private _parseColor(v1?: unknown, v2?: unknown, v3?: unknown, v4?: unknown): ColorTuple {
     if (typeof v1 === "string") {
       const parsed = this._parseColorString(v1);
@@ -1420,7 +2233,7 @@ export class P5GPU {
 
   private _emitTriangle(a: Vec2, b: Vec2, c: Vec2, color: ColorTuple): void {
     const blend = this._currentBlendMode();
-    this._ensureBatch(blend);
+    this._ensureBatch(blend, false);
     this._pushVertex(a[0], a[1], color);
     this._pushVertex(b[0], b[1], color);
     this._pushVertex(c[0], c[1], color);
@@ -1682,46 +2495,67 @@ export class P5GPU {
     return Math.max(0.0001, (sx + sy) * 0.5);
   }
 
-  private _ensureBatch(blendMode: number): void {
+  private _ensureBatch(blendMode: number, isText: boolean): void {
     const batch = this._batches[this._batches.length - 1];
-    if (!batch || batch.blendMode !== blendMode) {
-      this._batches.push({ startVertex: this._vertexCount, vertexCount: 0, blendMode });
+    if (!batch || batch.blendMode !== blendMode || batch.isText !== isText) {
+      const startVertex = isText ? this._textVertexCount : this._geomVertexCount;
+      this._batches.push({ startVertex, vertexCount: 0, blendMode, isText });
     }
   }
 
   private _pushVertex(x: number, y: number, color: ColorTuple): void {
-    this._vertices.push(x, y, color[0], color[1], color[2], color[3]);
-    this._vertexCount += 1;
+    this._geomVertices.push(x, y, color[0], color[1], color[2], color[3]);
+    this._geomVertexCount += 1;
     const batch = this._batches[this._batches.length - 1];
     if (batch) batch.vertexCount += 1;
   }
 
-  private _ensureVertexBuffer(requiredBytes: number): void {
-    if (this._vertexBuffer && requiredBytes <= this._vertexBufferCapacityBytes) return;
+  private _pushTextVertex(x: number, y: number, u: number, v: number, color: ColorTuple): void {
+    this._textVertices.push(x, y, u, v, color[0], color[1], color[2], color[3]);
+    this._textVertexCount += 1;
+    const batch = this._batches[this._batches.length - 1];
+    if (batch) batch.vertexCount += 1;
+  }
 
-    const newSize = Math.max(requiredBytes, Math.ceil(this._vertexBufferCapacityBytes * 1.5), 64 * 1024);
-    try { this._vertexBuffer?.destroy(); } catch (_) { /* ignore */ }
+  private _ensureGeomVertexBuffer(requiredBytes: number): void {
+    if (this._geomVertexBuffer && requiredBytes <= this._geomVertexBufferCapacityBytes) return;
 
-    this._vertexBuffer = this.device.createBuffer({
+    const newSize = Math.max(requiredBytes, Math.ceil(this._geomVertexBufferCapacityBytes * 1.5), 64 * 1024);
+    try { this._geomVertexBuffer?.destroy(); } catch (_) { /* ignore */ }
+
+    this._geomVertexBuffer = this.device.createBuffer({
       size: newSize,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
-    this._vertexBufferCapacityBytes = newSize;
+    this._geomVertexBufferCapacityBytes = newSize;
   }
 
-  private _getPipeline(mode: number, sampleCount: number): GPURenderPipeline {
+  private _ensureTextVertexBuffer(requiredBytes: number): void {
+    if (this._textVertexBuffer && requiredBytes <= this._textVertexBufferCapacityBytes) return;
+
+    const newSize = Math.max(requiredBytes, Math.ceil(this._textVertexBufferCapacityBytes * 1.5), 64 * 1024);
+    try { this._textVertexBuffer?.destroy(); } catch (_) { /* ignore */ }
+
+    this._textVertexBuffer = this.device.createBuffer({
+      size: newSize,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    this._textVertexBufferCapacityBytes = newSize;
+  }
+
+  private _getGeomPipeline(mode: number, sampleCount: number): GPURenderPipeline {
     const cacheKey = `${mode}:${sampleCount}`;
-    const existing = this._pipelineCache.get(cacheKey);
+    const existing = this._geomPipelineCache.get(cacheKey);
     if (existing) return existing;
 
     const pipeline = this.device.createRenderPipeline({
-      layout: this._pipelineLayout,
+      layout: this._geomPipelineLayout,
       vertex: {
-        module: this._shaderModule,
+        module: this._geomShaderModule,
         entryPoint: "vsMain",
         buffers: [
           {
-            arrayStride: BYTES_PER_VERTEX,
+            arrayStride: GEOM_BYTES_PER_VERTEX,
             stepMode: "vertex",
             attributes: [
               { shaderLocation: 0, offset: 0, format: "float32x2" },
@@ -1731,7 +2565,7 @@ export class P5GPU {
         ],
       },
       fragment: {
-        module: this._shaderModule,
+        module: this._geomShaderModule,
         entryPoint: "fsMain",
         targets: [
           {
@@ -1749,7 +2583,52 @@ export class P5GPU {
       },
     });
 
-    this._pipelineCache.set(cacheKey, pipeline);
+    this._geomPipelineCache.set(cacheKey, pipeline);
+    return pipeline;
+  }
+
+  private _getTextPipeline(mode: number, sampleCount: number): GPURenderPipeline {
+    const cacheKey = `${mode}:${sampleCount}`;
+    const existing = this._textPipelineCache.get(cacheKey);
+    if (existing) return existing;
+
+    const pipeline = this.device.createRenderPipeline({
+      layout: this._textPipelineLayout,
+      vertex: {
+        module: this._textShaderModule,
+        entryPoint: "vsText",
+        buffers: [
+          {
+            arrayStride: TEXT_BYTES_PER_VERTEX,
+            stepMode: "vertex",
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x2" },
+              { shaderLocation: 1, offset: 8, format: "float32x2" },
+              { shaderLocation: 2, offset: 16, format: "float32x4" },
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module: this._textShaderModule,
+        entryPoint: "fsText",
+        targets: [
+          {
+            format: this.format,
+            blend: resolveBlendState(mode),
+            writeMask: GPUColorWrite.ALL,
+          },
+        ],
+      },
+      primitive: {
+        topology: "triangle-list",
+      },
+      multisample: {
+        count: sampleCount,
+      },
+    });
+
+    this._textPipelineCache.set(cacheKey, pipeline);
     return pipeline;
   }
 }

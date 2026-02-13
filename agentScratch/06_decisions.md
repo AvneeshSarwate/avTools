@@ -131,3 +131,51 @@ class GlyphAtlas {
   trim(): void                  // evict LRU entries
 }
 ```
+
+---
+
+## Additional Requirements from Proto Plan
+
+### 5. Variable font axis animation is a primary use case
+   - Axes (wght, wdth, opsz, etc.) are part of cache keys
+   - Accept frequent re-rasterization for animated axes
+   - Quantization option to limit cache explosion
+   - "Dynamic/scratch" mode for bounded memory under animation
+
+### 6. Caching is a separate, isolated module
+   - Clean interface, tunable policies
+   - Start simple (single atlas, basic packer, small LRU)
+   - Include variation axes in cache keys (optionally quantized)
+   - Provide "dynamic/scratch" mode for creative coding patterns
+   - Keep policy decisions in one place
+
+### 7. Rust is CPU-only -- no wgpu command buffers
+   - Rust FFI does font loading, shaping, layout, rasterization
+   - Returns glyph instances + atlas upload payloads + metrics
+   - JS owns GPUDevice, GPUQueue, command encoding, atlas textures
+
+### 8. Cross-platform: macOS, Windows, RPi 5
+   - Build should be `cargo build` friendly
+   - Performance knobs for Pi 5 (atlas size, quantization, dynamic mode)
+
+### 9. Visual regression testing against gfx/canvas baseline
+   - Existing harness extended for text tests
+   - Tolerant diffs (text varies by platform/rasterizer)
+   - Per-feature snapshots: shapes-only, text-only, mixed
+
+---
+
+## Critical Gap: cosmic-text Variable Font Axis Support
+
+**See [07_variable_font_axis_gap.md](07_variable_font_axis_gap.md) for full analysis.**
+
+cosmic-text's CacheKey only includes `font_weight` -- not arbitrary axes.
+The underlying libraries (swash, skrifa, harfrust) all support full axes.
+The limitation is entirely in cosmic-text's cache architecture.
+
+**Decision: Wrap around the limitation**
+- Use cosmic-text for shaping/layout (it handles weight well)
+- Manage our own extended cache keys in the FFI module that include all axis values
+- At rasterization time, intercept and pass all axes to swash directly
+- No forking cosmic-text -- avoid maintenance burden
+- Our cache key: font_id + glyph_id + size + subpixel_bin + hash(all_axis_values) + stroke_weight
