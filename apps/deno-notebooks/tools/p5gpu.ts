@@ -411,7 +411,7 @@ fn vsText(v: VertexIn) -> VertexOut {
 
 @fragment
 fn fsText(v: VertexOut) -> @location(0) vec4f {
-  let alpha = min(1.0, textureSample(uAtlas, uSampler, v.uv).r * 1.22);
+  let alpha = textureSample(uAtlas, uSampler, v.uv).r;
   return vec4f(v.color.rgb, v.color.a * alpha);
 }
 `;
@@ -863,8 +863,13 @@ export class P5GPU {
 
   textWeight(weight?: number): number | void {
     if (weight === undefined) return this._state.textWeight;
-    this._state.textWeight = Math.max(1, Math.min(1000, Math.round(toNumber(weight, this._state.textWeight))));
+    this._state.textWeight = toNumber(weight, this._state.textWeight);
     this._state.textWeightSet = true;
+    // p5 v2 also mirrors textWeight() into font-variation-settings "wght".
+    this._state.textAxes = {
+      ...this._state.textAxes,
+      wght: this._state.textWeight,
+    };
   }
 
   textWrap(style?: unknown): "WORD" | "CHAR" | void {
@@ -916,7 +921,12 @@ export class P5GPU {
     }
 
     if (key === "fontVariationSettings" && typeof value === "string") {
-      this._state.textAxes = this._parseVariationSettings(value);
+      const parsed = this._parseVariationSettings(value);
+      this._state.textAxes = parsed;
+      if (Number.isFinite(parsed.wght)) {
+        this._state.textWeight = toNumber(parsed.wght, this._state.textWeight);
+        this._state.textWeightSet = true;
+      }
       return this;
     }
     if (key === "direction") {
@@ -984,8 +994,11 @@ export class P5GPU {
     }
 
     const layout = this._layoutText(source, width, height);
+    const tightWidth = (width === null && height === null)
+      ? this._measureTextBlockTightWidth(source)
+      : layout.tightWidth;
     this._textLastLayout = {
-      tightWidth: layout.tightWidth,
+      tightWidth,
       fontWidth: layout.fontWidth,
       ascent: layout.ascent,
       descent: layout.descent,
@@ -995,8 +1008,8 @@ export class P5GPU {
     if (layout.glyphs.length === 0) return;
 
     if (width === null) {
-      if (this._state.textAlignH === "center") tx -= layout.tightWidth * 0.5;
-      else if (this._state.textAlignH === "right") tx -= layout.tightWidth;
+      if (this._state.textAlignH === "center") tx -= tightWidth * 0.5;
+      else if (this._state.textAlignH === "right") tx -= tightWidth;
     }
 
     const layoutTopY = this._resolveTextTopY(ty, height, layout);
@@ -1026,19 +1039,17 @@ export class P5GPU {
 
   textWidth(text: unknown): number {
     if (!this._requireTextSubsystem()) return 0;
-    const trimmed = String(text ?? "")
-      .split(/\r?\n/g)
-      .map((line) => line.replace(/\s+$/g, ""))
-      .join("\n");
-    const layout = this._layoutText(trimmed, null, null);
+    const source = String(text ?? "");
+    const layout = this._layoutText(source, null, null);
+    const tightWidth = this._measureTextBlockTightWidth(source);
     this._textLastLayout = {
-      tightWidth: layout.tightWidth,
+      tightWidth,
       fontWidth: layout.fontWidth,
       ascent: layout.ascent,
       descent: layout.descent,
       totalHeight: layout.totalHeight,
     };
-    return layout.tightWidth;
+    return tightWidth;
   }
 
   fontWidth(text: unknown): number {
@@ -1069,11 +1080,11 @@ export class P5GPU {
       return fallback.ascent;
     }
     const source = String(text);
-    const measured = this._measureTextGlyphVerticalExtents(source);
+    const measured = this._measureTextGlyphInkExtents(source);
     if (measured) {
       const ascent = Math.max(0, measured.baseline - measured.top);
       this._textLastLayout = {
-        tightWidth: measured.layout.tightWidth,
+        tightWidth: Math.max(0, measured.maxX - measured.minX),
         fontWidth: measured.layout.fontWidth,
         ascent,
         descent: Math.max(0, measured.bottom - measured.baseline),
@@ -1107,12 +1118,12 @@ export class P5GPU {
       return fallback.descent;
     }
     const source = String(text);
-    const measured = this._measureTextGlyphVerticalExtents(source);
+    const measured = this._measureTextGlyphInkExtents(source);
     if (measured) {
       const ascent = Math.max(0, measured.baseline - measured.top);
       const descent = Math.max(0, measured.bottom - measured.baseline);
       this._textLastLayout = {
-        tightWidth: measured.layout.tightWidth,
+        tightWidth: Math.max(0, measured.maxX - measured.minX),
         fontWidth: measured.layout.fontWidth,
         ascent,
         descent,
@@ -1706,8 +1717,8 @@ export class P5GPU {
       ? 2
       : 0;
     const styleCode: 0 | 1 | 2 = this._resolvedStyleCode();
-
-    return subsystem.engine.layoutText({
+    const resolvedWeight = this._resolvedTextWeight();
+    const layout = subsystem.engine.layoutText({
       text,
       family: this._state.textFontFamily,
       fontSize: this._state.textSize,
@@ -1716,11 +1727,12 @@ export class P5GPU {
       height,
       alignH,
       wrapMode,
-      weight: this._resolvedTextWeight(),
+      weight: resolvedWeight,
       style: styleCode,
       axisQuantization: this._state.textAxisQuantization,
-      axes: this._state.textAxes,
+      axes: this._resolvedTextAxes(resolvedWeight),
     });
+    return layout;
   }
 
   private _computeTextBounds(
@@ -1745,7 +1757,10 @@ export class P5GPU {
     }
 
     const layout = this._layoutText(source, width, height);
-    const measureW = tight ? layout.tightWidth : layout.fontWidth;
+    const measuredTight = (width === null && height === null)
+      ? this._measureTextBlockTightWidth(source)
+      : layout.tightWidth;
+    const measureW = tight ? measuredTight : layout.fontWidth;
 
     if (width === null) {
       if (this._state.textAlignH === "center") tx -= measureW * 0.5;
@@ -1770,33 +1785,27 @@ export class P5GPU {
     boxHeight: number | null,
     layout: Pick<TextLayoutResult, "ascent" | "totalHeight" | "lineCount">,
   ): number {
-    // Skia Canvas2D baseline modes (`top`/`middle`/`bottom`) do not land on the
-    // same y-origin as cosmic-text's line box, so apply small per-mode biases
-    // to match p5/skia image output more closely.
-    const topBaselineBias = Math.round(this._state.textSize * 0.1);
-    const centerBaselineBias = Math.round(this._state.textSize * 0.05);
-    const bottomBaselineBias = Math.round(this._state.textSize * 0.2);
     if (boxHeight !== null) {
       const h = Math.max(0, boxHeight);
       switch (this._state.textAlignV) {
         case "center":
-          return y + (h - layout.totalHeight) * 0.5 + centerBaselineBias;
+          return y + (h - layout.totalHeight) * 0.5;
         case "bottom":
-          return y + (h - layout.totalHeight) + bottomBaselineBias;
+          return y + (h - layout.totalHeight);
         case "alphabetic":
         case "top":
         default:
-          return this._state.textAlignV === "top" ? y - topBaselineBias : y;
+          return y;
       }
     }
 
     switch (this._state.textAlignV) {
       case "top":
-        return y - topBaselineBias;
+        return y;
       case "center":
-        return y - layout.totalHeight * 0.5 + centerBaselineBias;
+        return y - layout.totalHeight * 0.5;
       case "bottom":
-        return y - layout.totalHeight + bottomBaselineBias;
+        return y - layout.totalHeight;
       case "alphabetic":
       default:
         return y - layout.ascent;
@@ -1910,7 +1919,22 @@ export class P5GPU {
     return (this._state.textStyle === "italic" || this._state.textStyle === "bold italic") ? 1 : 0;
   }
 
-  private _measureTextGlyphVerticalExtents(text: string): {
+  private _resolvedTextAxes(resolvedWeight: number): Record<string, number> {
+    const axes: Record<string, number> = { ...this._state.textAxes };
+    if (!Number.isFinite(axes.opsz)) {
+      // Browsers generally apply optical sizing automatically based on CSS font size.
+      axes.opsz = this._state.textSize;
+    }
+    if (this._state.textWeightSet && !Number.isFinite(axes.wght)) {
+      // p5 v2 textWeight() updates the active weight axis when available.
+      axes.wght = resolvedWeight;
+    }
+    return axes;
+  }
+
+  private _measureTextGlyphInkExtents(text: string): {
+    minX: number;
+    maxX: number;
     top: number;
     bottom: number;
     baseline: number;
@@ -1922,30 +1946,54 @@ export class P5GPU {
     const layout = this._layoutText(text, null, null);
     if (layout.glyphs.length === 0) return null;
 
+    let minLeft = Number.POSITIVE_INFINITY;
+    let maxRight = Number.NEGATIVE_INFINITY;
     let minTop = Number.POSITIVE_INFINITY;
     let maxBottom = Number.NEGATIVE_INFINITY;
 
     for (const glyph of layout.glyphs) {
       const atlasGlyph = subsystem.atlas.ensureGlyph(glyph.key, subsystem.engine);
       if (!atlasGlyph) continue;
+      const left = glyph.x + atlasGlyph.left;
+      const right = left + atlasGlyph.width;
       const top = glyph.y - atlasGlyph.top;
       const bottom = top + atlasGlyph.height;
+      if (left < minLeft) minLeft = left;
+      if (right > maxRight) maxRight = right;
       if (top < minTop) minTop = top;
       if (bottom > maxBottom) maxBottom = bottom;
     }
 
-    if (!Number.isFinite(minTop) || !Number.isFinite(maxBottom)) return null;
+    if (
+      !Number.isFinite(minLeft) ||
+      !Number.isFinite(maxRight) ||
+      !Number.isFinite(minTop) ||
+      !Number.isFinite(maxBottom)
+    ) return null;
 
     const baseline = Number.isFinite(layout.firstBaseline) && layout.firstBaseline > 0
       ? layout.firstBaseline
       : layout.ascent;
 
     return {
+      minX: minLeft,
+      maxX: maxRight,
       top: minTop,
       bottom: maxBottom,
       baseline,
       layout,
     };
+  }
+
+  private _measureTextBlockTightWidth(source: string): number {
+    const lines = source.split(/\r?\n/g);
+    let maxWidth = 0;
+    for (const line of lines) {
+      const measured = this._measureTextGlyphInkExtents(line);
+      if (!measured) continue;
+      maxWidth = Math.max(maxWidth, Math.max(0, measured.maxX - measured.minX));
+    }
+    return maxWidth;
   }
 
   private _parseVariationSettings(settings: string): Record<string, number> {

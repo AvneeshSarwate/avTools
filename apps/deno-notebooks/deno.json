@@ -5,6 +5,8 @@
   "tasks": {
     "dev": "deno run --watch main.ts",
     "install": "deno cache --node-modules-dir=auto tools/osc.ts",
+    "test:p5:browser": "deno run --unstable-webgpu --unstable-ffi --allow-ffi --allow-read --allow-env --allow-write --allow-run --allow-net libraryIntegrationTetsts/p5_browser_comparison_tests.ts",
+    "test:p5:browser:text": "P5GPU_MAX_PHASE=6 P5GPU_NAME_FILTER='text-' deno run --unstable-webgpu --unstable-ffi --allow-ffi --allow-read --allow-env --allow-write --allow-run --allow-net libraryIntegrationTetsts/p5_browser_comparison_tests.ts",
     "watch:power2d-raw": "deno run --allow-read --allow-write ../../tools/shader-watch/watch_power2d_raw.ts ./shaders ../../packages/power2d/generated-raw",
     "watch:shaderfx-raw": "deno run --allow-read --allow-write ../../tools/shader-watch/watch_shaderfx_raw.ts ./shaders ../../packages/shader-fx/generated-raw",
     "watch:compute-raw": "deno run --allow-read --allow-write ../../tools/shader-watch/watch_compute_raw.ts ./shaders ../../packages/compute-shader/generated-raw"
