@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
 
 /**
- * DOM shims and rendering pipeline for running p5.js v1 on Deno.
+ * DOM shims and rendering pipeline for running p5.js v2 on Deno.
  * Uses @gfx/canvas (Skia FFI) as the Canvas 2D backend.
  *
  * Windowed: Skia pixels → GPU texture → blit shader → native window surface.
@@ -431,7 +431,51 @@ class MockDomElement {
 // document.createElement('canvas'), gets a 2D context, and draws through it.
 
 let _createCanvasFn: CreateCanvasFn | null = null;
-let _bundledNotoBytes: Uint8Array | null = null;
+const _bundledFontBytes = new Map<string, Uint8Array>();
+const BUNDLED_FONT_ALIASES: Record<string, string> = {
+  "NotoSans-Regular.ttf": "Noto Sans",
+  "Inter-Regular.ttf": "Inter",
+  "Inter-Bold.ttf": "Inter",
+  "InterVariable.ttf": "Inter Variable",
+  "InterVariable-Italic.ttf": "Inter Variable",
+};
+
+function registerBundledFonts(fonts: CanvasFontsLike): void {
+  const fontsDir = new URL("../assets/fonts/", import.meta.url);
+  let registered = 0;
+
+  try {
+    const entries = Array.from(Deno.readDirSync(fontsDir))
+      .filter((entry) => entry.isFile && /\.(ttf|otf|woff2?)$/i.test(entry.name))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const entry of entries) {
+      try {
+        let bytes = _bundledFontBytes.get(entry.name);
+        if (!bytes) {
+          bytes = Deno.readFileSync(new URL(entry.name, fontsDir));
+          _bundledFontBytes.set(entry.name, bytes);
+        }
+        const alias = BUNDLED_FONT_ALIASES[entry.name];
+        if (alias) {
+          fonts.register(bytes, alias);
+        } else {
+          fonts.register(bytes);
+        }
+        registered += 1;
+      } catch (err) {
+        console.warn(`Failed to register bundled font ${entry.name}:`, err);
+      }
+    }
+  } catch (err) {
+    console.warn(`Failed to enumerate bundled fonts in ${fontsDir}:`, err);
+    return;
+  }
+
+  if (registered > 0) {
+    console.log(`Registered bundled fonts: ${registered}`);
+  }
+}
 
 function patchP5TextMetrics(p5Ctor: { prototype?: Record<string, unknown> }): void {
   const proto = p5Ctor.prototype;
@@ -858,6 +902,57 @@ export interface P5DenoContext {
   gpuTexture: GPUTexture | null;
 }
 
+async function importP5Module(): Promise<{ default: unknown }> {
+  const localV2Bundle = new URL("../../../clonedCompanionRepos/p5.js/lib/p5.esm.js", import.meta.url);
+  try {
+    const mod = await import(localV2Bundle.href);
+    console.log(`Loaded p5.js from local v2 bundle: ${localV2Bundle.pathname}`);
+    return mod as { default: unknown };
+  } catch (localErr) {
+    console.warn(`Failed to import local p5.js v2 bundle (${localV2Bundle.pathname}), falling back to import map "p5":`, localErr);
+    const mod = await import("p5");
+    return mod as { default: unknown };
+  }
+}
+
+function listP5Canvases(): P5CanvasShim[] {
+  const canvases = _elementsByTag.get("canvas") ?? [];
+  return canvases.filter((c): c is P5CanvasShim => c instanceof P5CanvasShim);
+}
+
+function findLatestP5Canvas(exclude: Set<P5CanvasShim> = new Set()): P5CanvasShim | null {
+  const candidates = listP5Canvases().filter((canvas) => !exclude.has(canvas));
+  const mainCanvas = candidates.length > 0 ? candidates[candidates.length - 1] : undefined;
+  return mainCanvas ?? null;
+}
+
+async function waitForP5Canvas(
+  exclude: Set<P5CanvasShim>,
+  timeoutMs = 1500,
+): Promise<P5CanvasShim | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const canvas = findLatestP5Canvas(exclude);
+    if (canvas) return canvas;
+
+    // p5 v2 can defer startup work behind queued rAF callbacks.
+    if (_rafCallbacks.length > 0) {
+      const callbacks = _rafCallbacks.splice(0, _rafCallbacks.length);
+      const now = performance.now?.() ?? Date.now();
+      for (const cb of callbacks) {
+        try {
+          cb(now);
+        } catch (err) {
+          console.error("Error in startup rAF callback:", err);
+        }
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  return null;
+}
+
 export async function setupP5Deno(
   sketch: (p: unknown) => void,
   opts: P5DenoOptions = {},
@@ -872,16 +967,7 @@ export async function setupP5Deno(
   {
     const maybeFonts = (canvasMod as Record<string, unknown>).Fonts as CanvasFontsLike | undefined;
     if (maybeFonts?.register) {
-      const bundledNotoPath = new URL("../assets/fonts/NotoSans-Regular.ttf", import.meta.url);
-      try {
-        if (!_bundledNotoBytes) {
-          _bundledNotoBytes = await Deno.readFile(bundledNotoPath);
-        }
-        maybeFonts.register(_bundledNotoBytes, "Noto Sans");
-        console.log("Registered bundled font: Noto Sans");
-      } catch (err) {
-        console.warn(`Failed to register bundled font ${bundledNotoPath}:`, err);
-      }
+      registerBundledFonts(maybeFonts);
     }
   }
   console.log("@gfx/canvas loaded!");
@@ -892,7 +978,7 @@ export async function setupP5Deno(
 
   // 3. Import p5 (global shims already installed at module scope)
   console.log("Importing p5.js...");
-  const p5Module = await import("p5");
+  const p5Module = await importP5Module();
   const p5 = p5Module.default;
   (p5 as unknown as Record<string, boolean>).disableFriendlyErrors = true;
   patchP5TextMetrics(p5 as unknown as { prototype?: Record<string, unknown> });
@@ -923,16 +1009,14 @@ export async function setupP5Deno(
   }
 
   // 5. Create p5 instance (instance mode)
-  // p5 synchronously calls sketch(p), then _start() (since readyState='complete')
-  // which calls setup() → createCanvas() → first draw()
   console.log("Creating p5 instance...");
+  const existingCanvases = new Set(listP5Canvases());
   // deno-lint-ignore no-explicit-any
   const p5Instance = new (p5 as any)(sketch);
   console.log("p5 instance created!");
 
   // 6. Find the canvas p5 created
-  const canvases = _elementsByTag.get("canvas") ?? [];
-  const mainCanvas = [...canvases].reverse().find(c => c instanceof P5CanvasShim) as P5CanvasShim | undefined;
+  const mainCanvas = await waitForP5Canvas(existingCanvases);
 
   if (mainCanvas) {
     console.log(`Found p5 canvas: ${mainCanvas.width}x${mainCanvas.height}`);

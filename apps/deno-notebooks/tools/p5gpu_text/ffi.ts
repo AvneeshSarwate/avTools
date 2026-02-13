@@ -189,7 +189,7 @@ export class NativeTextEngine {
       throw new Error("Failed to create native text engine");
     }
 
-    this.loadBundledDefaultFont();
+    this.loadBundledFonts();
   }
 
   dispose(): void {
@@ -340,13 +340,18 @@ export class NativeTextEngine {
     };
   }
 
-  private loadBundledDefaultFont(): void {
+  private loadBundledFonts(): void {
     try {
-      const fontUrl = new URL("../../assets/fonts/NotoSans-Regular.ttf", import.meta.url);
-      const bytes = Deno.readFileSync(fontUrl);
-      this.loadFontBytes(bytes);
+      const fontsDir = new URL("../../assets/fonts/", import.meta.url);
+      const entries = Array.from(Deno.readDirSync(fontsDir))
+        .filter((entry) => entry.isFile && /\.(ttf|otf|woff2?)$/i.test(entry.name))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      for (const entry of entries) {
+        const bytes = Deno.readFileSync(new URL(entry.name, fontsDir));
+        this.loadFontBytes(bytes);
+      }
     } catch {
-      // If the bundled font is unavailable, fall back to system fonts.
+      // Ignore missing bundled fonts.
     }
   }
 }

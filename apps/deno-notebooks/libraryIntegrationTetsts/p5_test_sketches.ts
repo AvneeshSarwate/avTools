@@ -446,7 +446,7 @@ export const P5_TEST_SKETCHES: TestSketch[] = [
     height: 320,
     draw(p) {
       p.background(24, 26, 34);
-      p.textFont("Noto Sans");
+      p.textFont("Inter");
       p.textAlign(p.LEFT, p.TOP);
       p.noStroke();
       p.textSize(30);
@@ -479,6 +479,114 @@ export const P5_TEST_SKETCHES: TestSketch[] = [
       const tw = p.textWidth(sample);
       p.text(`${sample}`, 28, 248);
       p.text(`fontWidth=${fw.toFixed(1)} textWidth=${tw.toFixed(1)}`, 28, 274);
+    },
+  },
+  {
+    name: "text-style-family-probe",
+    phase: 6,
+    width: 980,
+    height: 360,
+    draw(p) {
+      p.background(247);
+      p.textAlign(p.LEFT, p.TOP);
+      p.noStroke();
+
+      const columns = [
+        { family: "Noto Sans", x: 20, accent: [45, 88, 190] as const },
+        { family: "Inter", x: 340, accent: [12, 124, 88] as const },
+        { family: "Inter Variable", x: 660, accent: [166, 76, 36] as const },
+      ];
+
+      for (const column of columns) {
+        p.noFill();
+        p.stroke(212);
+        p.strokeWeight(1.5);
+        p.rect(column.x, 18, 300, 324);
+
+        p.noStroke();
+        p.fill(column.accent[0], column.accent[1], column.accent[2]);
+        p.textFont(column.family);
+        p.textSize(20);
+        p.textStyle(p.NORMAL);
+        p.text(column.family, column.x + 14, 28);
+
+        p.fill(22);
+        p.textSize(34);
+        p.textStyle(p.NORMAL);
+        p.text("Normal", column.x + 14, 66);
+        p.textStyle(p.BOLD);
+        p.text("Bold", column.x + 14, 116);
+        p.textStyle(p.ITALIC);
+        p.text("Italic", column.x + 14, 166);
+        p.textStyle(p.BOLDITALIC);
+        p.text("Bold Italic", column.x + 14, 216);
+
+        const sample = "Sphinx of black quartz";
+        p.textSize(14);
+        p.textStyle(p.NORMAL);
+        const normalW = p.textWidth(sample);
+        p.textStyle(p.BOLD);
+        const boldW = p.textWidth(sample);
+        p.textStyle(p.ITALIC);
+        const italicW = p.textWidth(sample);
+        p.fill(70, 70, 78);
+        p.text(`N=${normalW.toFixed(1)} B=${boldW.toFixed(1)} I=${italicW.toFixed(1)}`, column.x + 14, 284);
+      }
+    },
+  },
+  {
+    name: "text-weight-api-probe",
+    phase: 6,
+    width: 1160,
+    height: 350,
+    draw(p) {
+      p.background(20, 24, 34);
+      p.textAlign(p.LEFT, p.TOP);
+      const maybeTextWeight = (p as unknown as { textWeight?: (weight: number) => unknown }).textWeight;
+      const supportsTextWeight = typeof maybeTextWeight === "function";
+      const weights = [300, 450, 600, 750, 900];
+      const families = [
+        { name: "Inter", x: 24, accent: [62, 198, 140] as const },
+        { name: "Inter Variable", x: 590, accent: [142, 172, 255] as const },
+      ];
+
+      for (const family of families) {
+        p.noFill();
+        p.stroke(54);
+        p.strokeWeight(1.2);
+        p.rect(family.x - 6, 18, 542, 314);
+
+        p.noStroke();
+        p.fill(family.accent[0], family.accent[1], family.accent[2]);
+        p.textSize(24);
+        p.textStyle(p.NORMAL);
+        p.text(family.name, family.x, 26);
+
+        p.fill(232);
+        p.textFont(family.name);
+        p.textSize(30);
+        p.textStyle(p.NORMAL);
+        let y = 60;
+        const widthSamples: string[] = [];
+        for (const weight of weights) {
+          p.textStyle(p.NORMAL);
+          if (supportsTextWeight) {
+            maybeTextWeight.call(p, weight);
+          }
+          const label = `w${weight}  The quick brown fox`;
+          p.text(label, family.x, y);
+          widthSamples.push(`${weight}:${p.textWidth("The quick brown fox").toFixed(1)}`);
+          y += 44;
+        }
+
+        p.textStyle(p.BOLD);
+        p.text("BOLD style control", family.x, 280);
+        p.textStyle(p.NORMAL);
+        p.textSize(16);
+        p.fill(140, 172, 255);
+        p.text(`textWeight() support: ${supportsTextWeight ? "yes" : "no"}`, family.x, 314);
+        p.text(widthSamples.join("  "), family.x, 334);
+      }
     },
   },
 ];
