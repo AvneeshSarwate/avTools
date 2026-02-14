@@ -3,6 +3,7 @@ use cosmic_text::{
     Align, Attrs, Buffer, CacheKey, CacheKeyFlags, Family, FontSystem, Metrics, Shaping, Style,
     SwashCache, SwashContent, SwashImage, Weight, Wrap,
 };
+use cosmic_text::harfrust;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -152,15 +153,10 @@ impl TextEngine {
             Family::Name(family)
         };
 
-        let mut attrs = Attrs::new()
+        let attrs = Attrs::new()
             .family(family)
             .weight(Weight(weight.clamp(1, 1000)))
             .style(style_from_code(style));
-
-        // Preserve existing fake-italic behavior through cache-key flags for consistency.
-        if matches!(style_from_code(style), Style::Italic | Style::Oblique) {
-            attrs = attrs.cache_key_flags(CacheKeyFlags::FAKE_ITALIC);
-        }
 
         self.buffer
             .set_text(&mut self.font_system, text, &attrs, Shaping::Advanced, align);
@@ -192,16 +188,80 @@ impl TextEngine {
             }
 
             total_height = total_height.max(run.line_top + run.line_height - first_line_top);
-            font_width = font_width.max(run.line_w);
 
             let mut line_min_x = f32::INFINITY;
             let mut line_max_x = f32::NEG_INFINITY;
+            let mut run_start = usize::MAX;
+            let mut run_end = 0usize;
 
             for glyph in run.glyphs {
                 line_min_x = line_min_x.min(glyph.x);
                 line_max_x = line_max_x.max(glyph.x + glyph.w);
+                run_start = run_start.min(glyph.start);
+                run_end = run_end.max(glyph.end);
+            }
 
-                let physical = glyph.physical((0.0, run.line_y), 1.0);
+            let mut run_x_scale = 1.0f32;
+            let run_width = (line_max_x - line_min_x).max(0.0);
+            if run_width > 0.0
+                && run_start < run_end
+                && run_end <= run.text.len()
+                && run
+                    .glyphs
+                    .first()
+                    .map(|first| {
+                        run.glyphs.iter().all(|g| {
+                            g.font_id == first.font_id
+                                && g.font_size.to_bits() == first.font_size.to_bits()
+                                && g.font_weight == first.font_weight
+                        })
+                    })
+                    .unwrap_or(false)
+            {
+                let first = &run.glyphs[0];
+                if self.run_requires_axis_advance_adjustment(first.font_id, &axes_arc) {
+                    let run_text = &run.text[run_start..run_end];
+                    if let Some(measured_width) = self.measure_advance_with_axes(
+                        first.font_id,
+                        run_text,
+                        run.rtl,
+                        first.font_size,
+                        first.font_weight.0,
+                        &axes_arc,
+                    ) {
+                        let ratio = measured_width / run_width;
+                        if ratio.is_finite() && ratio > 0.0 {
+                            run_x_scale = ratio.clamp(0.5, 1.5);
+                        }
+                    }
+                }
+            }
+
+            font_width = font_width.max(run.line_w * run_x_scale);
+            let run_origin_x = line_min_x;
+
+            line_min_x = f32::INFINITY;
+            line_max_x = f32::NEG_INFINITY;
+
+            for glyph in run.glyphs {
+                let scaled_x = if (run_x_scale - 1.0).abs() > 0.001 {
+                    run_origin_x + (glyph.x - run_origin_x) * run_x_scale
+                } else {
+                    glyph.x
+                };
+                let scaled_w = if (run_x_scale - 1.0).abs() > 0.001 {
+                    glyph.w * run_x_scale
+                } else {
+                    glyph.w
+                };
+                line_min_x = line_min_x.min(scaled_x);
+                line_max_x = line_max_x.max(scaled_x + scaled_w);
+
+                let physical = if (run_x_scale - 1.0).abs() > 0.001 {
+                    physical_with_x(glyph, run.line_y, scaled_x)
+                } else {
+                    glyph.physical((0.0, run.line_y), 1.0)
+                };
                 let key = hash_glyph_key(&physical.cache_key, axes_hash);
                 glyphs.push(LayoutGlyphOut {
                     key: format!("{key:016x}"),
@@ -350,6 +410,132 @@ impl TextEngine {
             None
         })
         .render(&mut scaler, cache_key.glyph_id)
+    }
+
+    fn run_requires_axis_advance_adjustment(
+        &self,
+        font_id: fontdb::ID,
+        axes: &[AxisSetting],
+    ) -> bool {
+        if axes.iter().any(|axis| axis.tag != *b"wght") {
+            return true;
+        }
+
+        self.font_has_axis(font_id, *b"opsz")
+    }
+
+    fn font_has_axis(&self, font_id: fontdb::ID, axis_tag: [u8; 4]) -> bool {
+        self.font_system
+            .db()
+            .with_face_data(font_id, |font_data, face_index| {
+                let swash_ref = swash::FontRef::from_index(font_data, face_index as usize)?;
+                let tag = swash::Tag::from_be_bytes(axis_tag);
+                Some(swash_ref.variations().find_by_tag(tag).is_some())
+            })
+            .flatten()
+            .unwrap_or(false)
+    }
+
+    fn measure_advance_with_axes(
+        &self,
+        font_id: fontdb::ID,
+        text: &str,
+        rtl: bool,
+        font_size: f32,
+        weight: u16,
+        axes: &[AxisSetting],
+    ) -> Option<f32> {
+        if text.is_empty() || !font_size.is_finite() || font_size <= 0.0 {
+            return Some(0.0);
+        }
+
+        self.font_system
+            .db()
+            .with_face_data(font_id, |font_data, face_index| {
+                let font_ref = harfrust::FontRef::from_index(font_data, face_index).ok()?;
+                let shaper_data = harfrust::ShaperData::new(&font_ref);
+
+                let mut settings = Vec::<harfrust::Variation>::new();
+                let mut has_wght = false;
+                let mut has_opsz = false;
+
+                for axis in axes {
+                    if axis.tag == *b"wght" {
+                        has_wght = true;
+                    } else if axis.tag == *b"opsz" {
+                        has_opsz = true;
+                    }
+                    settings.push(harfrust::Variation {
+                        tag: harfrust::Tag::new(&axis.tag),
+                        value: axis.value,
+                    });
+                }
+
+                if !has_wght {
+                    settings.push(harfrust::Variation {
+                        tag: harfrust::Tag::new(b"wght"),
+                        value: f32::from(weight),
+                    });
+                }
+
+                if !has_opsz {
+                    if let Some(swash_ref) = swash::FontRef::from_index(font_data, face_index as usize) {
+                        let opsz_tag = swash::Tag::from_be_bytes(*b"opsz");
+                        if let Some(axis) = swash_ref.variations().find_by_tag(opsz_tag) {
+                            settings.push(harfrust::Variation {
+                                tag: harfrust::Tag::new(b"opsz"),
+                                value: font_size.clamp(axis.min_value(), axis.max_value()),
+                            });
+                        }
+                    }
+                }
+
+                let instance = harfrust::ShaperInstance::from_variations(&font_ref, settings);
+                let shaper = shaper_data
+                    .shaper(&font_ref)
+                    .instance(Some(&instance))
+                    .point_size(Some(font_size))
+                    .build();
+
+                let mut buffer = harfrust::UnicodeBuffer::new();
+                buffer.push_str(text);
+                if rtl {
+                    buffer.set_direction(harfrust::Direction::RightToLeft);
+                } else {
+                    buffer.set_direction(harfrust::Direction::LeftToRight);
+                }
+                buffer.guess_segment_properties();
+
+                let glyph_buffer = shaper.shape(buffer, &[]);
+                let advance_units = glyph_buffer
+                    .glyph_positions()
+                    .iter()
+                    .map(|pos| pos.x_advance as f32)
+                    .sum::<f32>();
+                let upem = shaper.units_per_em().max(1) as f32;
+                Some((advance_units / upem) * font_size)
+            })
+            .flatten()
+    }
+}
+
+fn physical_with_x(glyph: &cosmic_text::LayoutGlyph, line_y: f32, x: f32) -> cosmic_text::PhysicalGlyph {
+    let x_offset = glyph.font_size * glyph.x_offset;
+    let y_offset = glyph.font_size * glyph.y_offset;
+
+    let (cache_key, px, py) = CacheKey::new(
+        glyph.font_id,
+        glyph.glyph_id,
+        glyph.font_size,
+        (x + x_offset, (glyph.y - y_offset + line_y).trunc()),
+        glyph.font_weight,
+        glyph.cache_key_flags,
+    );
+
+    cosmic_text::PhysicalGlyph {
+        cache_key,
+        x: px,
+        y: py,
     }
 }
 

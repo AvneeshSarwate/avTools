@@ -286,12 +286,13 @@ async function renderSketchToPng(
         };
         const patchedWeight = function(weight) {
           if (typeof weight === "number") {
-            renderer.states.setValue("fontWeight", weight);
-            clearCanvasVariationWeight();
-            renderer._applyTextProperties();
-            // Chrome+p5 v2 can lag one step across family transitions for variable fonts.
-            // A second apply makes the current draw deterministic for this frame.
-            renderer._applyTextProperties();
+            // Apply twice with an explicit state write each time to avoid
+            // one-step carryover when switching font families.
+            for (let i = 0; i < 2; i += 1) {
+              renderer.states.setValue("fontWeight", weight);
+              clearCanvasVariationWeight();
+              renderer._applyTextProperties();
+            }
             return p;
           }
           return renderer.states.fontWeight;
