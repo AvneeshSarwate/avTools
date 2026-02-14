@@ -507,6 +507,94 @@ async function renderSketchToPng(
     );
   }
 
+  if (
+    process.env.P5_BROWSER_DEBUG_LFO_METRICS === "1" &&
+    sketch.name === "text-lfo-perf-frame0"
+  ) {
+    const probe = await page.evaluate(() => {
+      const g = globalThis as unknown as {
+        __p5Instance?: {
+          textFont?: (font?: unknown, size?: number) => unknown;
+          textStyle?: (style?: unknown) => unknown;
+          textWeight?: (weight?: number) => unknown;
+          textAlign?: (h?: unknown, v?: unknown) => unknown;
+          textSize?: (size?: number) => unknown;
+          textWidth?: (text: unknown) => number;
+          textAscent?: (text?: unknown) => number;
+          textDescent?: (text?: unknown) => number;
+          textLeading?: () => number;
+          LEFT?: unknown;
+          TOP?: unknown;
+          NORMAL?: unknown;
+        };
+      };
+      const p = g.__p5Instance;
+      if (
+        !p ||
+        typeof p.textWidth !== "function" ||
+        typeof p.textAscent !== "function" ||
+        typeof p.textDescent !== "function" ||
+        typeof p.textLeading !== "function" ||
+        typeof p.textSize !== "function" ||
+        typeof p.textFont !== "function" ||
+        typeof p.textAlign !== "function"
+      ) {
+        return { error: "p5 instance not ready for lfo metrics probe" };
+      }
+
+      p.textFont("Inter Variable");
+      if (typeof p.NORMAL !== "undefined" && typeof p.textStyle === "function") {
+        p.textStyle(p.NORMAL);
+      }
+      if (typeof p.textWeight === "function") p.textWeight(400);
+      p.textSize(40);
+      const baselineConst =
+        (globalThis as unknown as { BASELINE?: unknown }).BASELINE ??
+        (p as unknown as { BASELINE?: unknown }).BASELINE ??
+        "alphabetic";
+      const bottomConst =
+        (globalThis as unknown as { BOTTOM?: unknown }).BOTTOM ??
+        (p as unknown as { BOTTOM?: unknown }).BOTTOM ??
+        "bottom";
+
+      p.textAlign(p.LEFT, p.TOP);
+      const top = {
+        textAscentMg: Number(p.textAscent("Mg").toFixed(3)),
+        textDescentG: Number(p.textDescent("g").toFixed(3)),
+        fontAscent: Number(p.textAscent().toFixed(3)),
+        fontDescent: Number(p.textDescent().toFixed(3)),
+      };
+
+      p.textAlign(p.LEFT, baselineConst);
+      const baseline = {
+        textAscentMg: Number(p.textAscent("Mg").toFixed(3)),
+        textDescentG: Number(p.textDescent("g").toFixed(3)),
+        fontAscent: Number(p.textAscent().toFixed(3)),
+        fontDescent: Number(p.textDescent().toFixed(3)),
+      };
+
+      p.textAlign(p.LEFT, bottomConst);
+      const bottom = {
+        textAscentMg: Number(p.textAscent("Mg").toFixed(3)),
+        textDescentG: Number(p.textDescent("g").toFixed(3)),
+        fontAscent: Number(p.textAscent().toFixed(3)),
+        fontDescent: Number(p.textDescent().toFixed(3)),
+      };
+
+      return {
+        textWidthM: Number(p.textWidth("M").toFixed(3)),
+        textWidthSpace: Number(p.textWidth(" ").toFixed(3)),
+        textLeading: Number(p.textLeading().toFixed(3)),
+        top,
+        baseline,
+        bottom,
+      };
+    });
+    console.log(
+      `[browser] debug lfo metrics (${sketch.name}): ${JSON.stringify(probe)}`,
+    );
+  }
+
   const canvas = page.locator("canvas").first();
   await canvas.waitFor({ state: "visible", timeout: 5000 });
   await canvas.screenshot({ path: outPath });

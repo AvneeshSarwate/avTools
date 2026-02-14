@@ -30,6 +30,9 @@ export interface TextLayoutResult {
   fontWidth: number;
   ascent: number;
   descent: number;
+  fontAscent: number;
+  fontDescent: number;
+  fontCapHeight: number;
   firstBaseline: number;
   totalHeight: number;
   lineCount: number;
@@ -148,6 +151,9 @@ function parseLayoutResponse(jsonText: string): TextLayoutResult {
     font_width?: number;
     ascent?: number;
     descent?: number;
+    font_ascent?: number;
+    font_descent?: number;
+    font_cap_height?: number;
     first_baseline?: number;
     total_height?: number;
     line_count?: number;
@@ -172,6 +178,9 @@ function parseLayoutResponse(jsonText: string): TextLayoutResult {
     fontWidth: Number(parsed.font_width ?? 0),
     ascent: Number(parsed.ascent ?? 0),
     descent: Number(parsed.descent ?? 0),
+    fontAscent: Number(parsed.font_ascent ?? 0),
+    fontDescent: Number(parsed.font_descent ?? 0),
+    fontCapHeight: Number(parsed.font_cap_height ?? 0),
     firstBaseline: Number(parsed.first_baseline ?? 0),
     totalHeight: Number(parsed.total_height ?? 0),
     lineCount: Number(parsed.line_count ?? 0),
@@ -219,6 +228,9 @@ export class NativeTextEngine {
         fontWidth: 0,
         ascent: 0,
         descent: 0,
+        fontAscent: 0,
+        fontDescent: 0,
+        fontCapHeight: 0,
         firstBaseline: 0,
         totalHeight: 0,
         lineCount: 0,
@@ -257,6 +269,9 @@ export class NativeTextEngine {
         fontWidth: 0,
         ascent: 0,
         descent: 0,
+        fontAscent: 0,
+        fontDescent: 0,
+        fontCapHeight: 0,
         firstBaseline: 0,
         totalHeight: 0,
         lineCount: 0,

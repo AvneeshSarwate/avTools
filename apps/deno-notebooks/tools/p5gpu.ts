@@ -533,8 +533,20 @@ export class P5GPU {
     fontWidth: number;
     ascent: number;
     descent: number;
+    fontAscent: number;
+    fontDescent: number;
+    fontCapHeight: number;
     totalHeight: number;
-  } = { tightWidth: 0, fontWidth: 0, ascent: 0, descent: 0, totalHeight: 0 };
+  } = {
+    tightWidth: 0,
+    fontWidth: 0,
+    ascent: 0,
+    descent: 0,
+    fontAscent: 0,
+    fontDescent: 0,
+    fontCapHeight: 0,
+    totalHeight: 0,
+  };
   private _textMetricsDebug = false;
   private _textMetricsDebugVerbose = false;
   private _textMetricsDebugBudget = 48;
@@ -620,7 +632,7 @@ export class P5GPU {
       this._textAtlas = new GlyphAtlas(this.device, this.device.queue, {
         initialSize: 512,
         maxSize: 4096,
-        maxEntries: 8192,
+        maxEntries: 65536,
       });
     } catch {
       this._textEngine = null;
@@ -1035,6 +1047,9 @@ export class P5GPU {
       fontWidth: layout.fontWidth,
       ascent: layout.ascent,
       descent: layout.descent,
+      fontAscent: layout.fontAscent,
+      fontDescent: layout.fontDescent,
+      fontCapHeight: layout.fontCapHeight,
       totalHeight: layout.totalHeight,
     };
 
@@ -1092,6 +1107,9 @@ export class P5GPU {
       fontWidth: layout.fontWidth,
       ascent: layout.ascent,
       descent: layout.descent,
+      fontAscent: layout.fontAscent,
+      fontDescent: layout.fontDescent,
+      fontCapHeight: layout.fontCapHeight,
       totalHeight: layout.totalHeight,
     };
     if (this._textMetricsDebug && !Number.isFinite(tightWidth)) {
@@ -1120,6 +1138,9 @@ export class P5GPU {
       fontWidth: layout.fontWidth,
       ascent: layout.ascent,
       descent: layout.descent,
+      fontAscent: layout.fontAscent,
+      fontDescent: layout.fontDescent,
+      fontCapHeight: layout.fontCapHeight,
       totalHeight: layout.totalHeight,
     };
     if (this._textMetricsDebug && !Number.isFinite(layout.fontWidth)) {
@@ -1143,26 +1164,25 @@ export class P5GPU {
   textAscent(text?: unknown): number {
     if (!this._requireTextSubsystem()) return 0;
     if (text === undefined) {
-      if (this._textLastLayout.ascent > 0) return this._textLastLayout.ascent;
-      const fallback = this._layoutText("Mg", null, null);
-      this._textLastLayout = {
-        tightWidth: fallback.tightWidth,
-        fontWidth: fallback.fontWidth,
-        ascent: fallback.ascent,
-        descent: fallback.descent,
-        totalHeight: fallback.totalHeight,
-      };
-      return fallback.ascent;
+      return this.fontAscent();
     }
     const source = String(text);
     const measured = this._measureTextGlyphInkExtents(source);
     if (measured) {
-      const ascent = Math.max(0, measured.baseline - measured.top);
+      const alphaAscent = measured.baseline - measured.top;
+      const alphaDescent = measured.bottom - measured.baseline;
+      const fontMetrics = this._resolvedFontBoxMetrics(measured.layout);
+      const baselineShift = this._textBaselineShift(fontMetrics);
+      const ascent = alphaAscent + baselineShift;
+      const descent = alphaDescent - baselineShift;
       this._textLastLayout = {
         tightWidth: Math.max(0, measured.maxX - measured.minX),
         fontWidth: measured.layout.fontWidth,
         ascent,
-        descent: Math.max(0, measured.bottom - measured.baseline),
+        descent,
+        fontAscent: fontMetrics.ascent,
+        fontDescent: fontMetrics.descent,
+        fontCapHeight: fontMetrics.capHeight,
         totalHeight: measured.layout.totalHeight,
       };
       if (this._textMetricsDebug && !Number.isFinite(ascent)) {
@@ -1180,6 +1200,8 @@ export class P5GPU {
             fontWidth: measured.layout.fontWidth,
             ascent: measured.layout.ascent,
             descent: measured.layout.descent,
+            fontAscent: measured.layout.fontAscent,
+            fontDescent: measured.layout.fontDescent,
             firstBaseline: measured.layout.firstBaseline,
             totalHeight: measured.layout.totalHeight,
             lineCount: measured.layout.lineCount,
@@ -1189,40 +1211,45 @@ export class P5GPU {
       return ascent;
     }
     const layout = this._layoutText(source, null, null);
+    const fontMetrics = this._resolvedFontBoxMetrics(layout);
+    const baselineShift = this._textBaselineShift(fontMetrics);
+    const ascent = layout.ascent + baselineShift;
+    const descent = layout.descent - baselineShift;
     this._textLastLayout = {
       tightWidth: layout.tightWidth,
       fontWidth: layout.fontWidth,
-      ascent: layout.ascent,
-      descent: layout.descent,
+      ascent,
+      descent,
+      fontAscent: fontMetrics.ascent,
+      fontDescent: fontMetrics.descent,
+      fontCapHeight: fontMetrics.capHeight,
       totalHeight: layout.totalHeight,
     };
-    return layout.ascent;
+    return ascent;
   }
 
   textDescent(text?: unknown): number {
     if (!this._requireTextSubsystem()) return 0;
     if (text === undefined) {
-      if (this._textLastLayout.descent > 0) return this._textLastLayout.descent;
-      const fallback = this._layoutText("Mg", null, null);
-      this._textLastLayout = {
-        tightWidth: fallback.tightWidth,
-        fontWidth: fallback.fontWidth,
-        ascent: fallback.ascent,
-        descent: fallback.descent,
-        totalHeight: fallback.totalHeight,
-      };
-      return fallback.descent;
+      return this.fontDescent();
     }
     const source = String(text);
     const measured = this._measureTextGlyphInkExtents(source);
     if (measured) {
-      const ascent = Math.max(0, measured.baseline - measured.top);
-      const descent = Math.max(0, measured.bottom - measured.baseline);
+      const alphaAscent = measured.baseline - measured.top;
+      const alphaDescent = measured.bottom - measured.baseline;
+      const fontMetrics = this._resolvedFontBoxMetrics(measured.layout);
+      const baselineShift = this._textBaselineShift(fontMetrics);
+      const ascent = alphaAscent + baselineShift;
+      const descent = alphaDescent - baselineShift;
       this._textLastLayout = {
         tightWidth: Math.max(0, measured.maxX - measured.minX),
         fontWidth: measured.layout.fontWidth,
         ascent,
         descent,
+        fontAscent: fontMetrics.ascent,
+        fontDescent: fontMetrics.descent,
+        fontCapHeight: fontMetrics.capHeight,
         totalHeight: measured.layout.totalHeight,
       };
       if (this._textMetricsDebug && !Number.isFinite(descent)) {
@@ -1240,6 +1267,8 @@ export class P5GPU {
             fontWidth: measured.layout.fontWidth,
             ascent: measured.layout.ascent,
             descent: measured.layout.descent,
+            fontAscent: measured.layout.fontAscent,
+            fontDescent: measured.layout.fontDescent,
             firstBaseline: measured.layout.firstBaseline,
             totalHeight: measured.layout.totalHeight,
             lineCount: measured.layout.lineCount,
@@ -1249,22 +1278,61 @@ export class P5GPU {
       return descent;
     }
     const layout = this._layoutText(source, null, null);
+    const fontMetrics = this._resolvedFontBoxMetrics(layout);
+    const baselineShift = this._textBaselineShift(fontMetrics);
+    const ascent = layout.ascent + baselineShift;
+    const descent = layout.descent - baselineShift;
     this._textLastLayout = {
       tightWidth: layout.tightWidth,
       fontWidth: layout.fontWidth,
-      ascent: layout.ascent,
-      descent: layout.descent,
+      ascent,
+      descent,
+      fontAscent: fontMetrics.ascent,
+      fontDescent: fontMetrics.descent,
+      fontCapHeight: fontMetrics.capHeight,
       totalHeight: layout.totalHeight,
     };
-    return layout.descent;
+    return descent;
   }
 
   fontAscent(): number {
-    return this.textAscent("Mg");
+    if (!this._requireTextSubsystem()) return 0;
+    const layout = this._layoutText("_", null, null);
+    const fontMetrics = this._resolvedFontBoxMetrics(layout);
+    const baselineShift = this._textBaselineShift(fontMetrics);
+    const ascent = fontMetrics.ascent + baselineShift;
+    const descent = fontMetrics.descent - baselineShift;
+    this._textLastLayout = {
+      tightWidth: layout.tightWidth,
+      fontWidth: layout.fontWidth,
+      ascent,
+      descent,
+      fontAscent: fontMetrics.ascent,
+      fontDescent: fontMetrics.descent,
+      fontCapHeight: fontMetrics.capHeight,
+      totalHeight: layout.totalHeight,
+    };
+    return ascent;
   }
 
   fontDescent(): number {
-    return this.textDescent("Mg");
+    if (!this._requireTextSubsystem()) return 0;
+    const layout = this._layoutText("_", null, null);
+    const fontMetrics = this._resolvedFontBoxMetrics(layout);
+    const baselineShift = this._textBaselineShift(fontMetrics);
+    const ascent = fontMetrics.ascent + baselineShift;
+    const descent = fontMetrics.descent - baselineShift;
+    this._textLastLayout = {
+      tightWidth: layout.tightWidth,
+      fontWidth: layout.fontWidth,
+      ascent,
+      descent,
+      fontAscent: fontMetrics.ascent,
+      fontDescent: fontMetrics.descent,
+      fontCapHeight: fontMetrics.capHeight,
+      totalHeight: layout.totalHeight,
+    };
+    return descent;
   }
 
   textBounds(str: unknown, x: number, y: number, maxWidth?: number, maxHeight?: number): { x: number; y: number; w: number; h: number } {
@@ -1821,6 +1889,9 @@ export class P5GPU {
         fontWidth: 0,
         ascent: 0,
         descent: 0,
+        fontAscent: 0,
+        fontDescent: 0,
+        fontCapHeight: 0,
         firstBaseline: 0,
         totalHeight: 0,
         lineCount: 0,
@@ -1972,8 +2043,11 @@ export class P5GPU {
   private _resolveTextTopY(
     y: number,
     boxHeight: number | null,
-    layout: Pick<TextLayoutResult, "ascent" | "totalHeight" | "lineCount">,
+    layout: Pick<TextLayoutResult, "ascent" | "descent" | "fontAscent" | "fontDescent" | "fontCapHeight" | "totalHeight" | "lineCount">,
   ): number {
+    const fontMetrics = this._resolvedFontBoxMetrics(layout);
+    const baselineShift = this._textBaselineShift(fontMetrics);
+
     if (boxHeight !== null) {
       const h = Math.max(0, boxHeight);
       switch (this._state.textAlignV) {
@@ -1981,24 +2055,18 @@ export class P5GPU {
           return y + (h - layout.totalHeight) * 0.5;
         case "bottom":
           return y + (h - layout.totalHeight);
-        case "alphabetic":
         case "top":
+          return y + fontMetrics.ascent - layout.ascent;
+        case "alphabetic":
+          return y - layout.ascent;
         default:
           return y;
       }
     }
 
-    switch (this._state.textAlignV) {
-      case "top":
-        return y;
-      case "center":
-        return y - layout.totalHeight * 0.5;
-      case "bottom":
-        return y - layout.totalHeight;
-      case "alphabetic":
-      default:
-        return y - layout.ascent;
-    }
+    // In p5 v2, TOP/BOTTOM/CENTER map to canvas textBaseline values, so the
+    // provided y is a baseline anchor, not the glyph ink top.
+    return y - baselineShift - layout.ascent;
   }
 
   private _emitTextStroke(
@@ -2115,6 +2183,40 @@ export class P5GPU {
       axes.wght = resolvedWeight;
     }
     return axes;
+  }
+
+  private _resolvedFontBoxMetrics(
+    layout: Pick<TextLayoutResult, "ascent" | "descent" | "fontAscent" | "fontDescent" | "fontCapHeight">,
+  ): { ascent: number; descent: number; capHeight: number; emAscent: number; emDescent: number } {
+    const ascent = Number.isFinite(layout.fontAscent) && layout.fontAscent > 0
+      ? layout.fontAscent
+      : Math.max(0, layout.ascent);
+    const descent = Number.isFinite(layout.fontDescent) && layout.fontDescent >= 0
+      ? layout.fontDescent
+      : Math.max(0, layout.descent);
+    const capHeight = Number.isFinite(layout.fontCapHeight) && layout.fontCapHeight > 0
+      ? layout.fontCapHeight
+      : ascent;
+    const ratio = ascent > 0 ? clamp(capHeight / ascent, 0.5, 1) : 1;
+    const emAscent = ascent * ratio;
+    const emDescent = descent * ratio;
+    return { ascent, descent, capHeight, emAscent, emDescent };
+  }
+
+  private _textBaselineShift(
+    fontMetrics: { emAscent: number; emDescent: number },
+  ): number {
+    switch (this._state.textAlignV) {
+      case "top":
+        return -fontMetrics.emAscent;
+      case "bottom":
+        return fontMetrics.emDescent;
+      case "center":
+        return (fontMetrics.emDescent - fontMetrics.emAscent) * 0.5;
+      case "alphabetic":
+      default:
+        return 0;
+    }
   }
 
   private _measureTextGlyphInkExtents(text: string): {

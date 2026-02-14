@@ -52,6 +52,7 @@ export class GlyphAtlas {
   private _cursorY = 0;
   private _rowHeight = 0;
   private _frameId = 0;
+  private _clearNextFrame = false;
 
   private _entries = new Map<bigint, GlyphAtlasEntry>();
   private _pendingTextureDestroys: Promise<void>[] = [];
@@ -94,6 +95,11 @@ export class GlyphAtlas {
       grows: 0,
       clears: 0,
     };
+    if (this.dynamicScratchMode || this._clearNextFrame) {
+      this._clearAtlas();
+      this._clearNextFrame = false;
+      this._stats.clears += 1;
+    }
   }
 
   get entries(): ReadonlyMap<bigint, GlyphAtlasEntry> {
@@ -117,6 +123,10 @@ export class GlyphAtlas {
     }
 
     this._stats.misses += 1;
+    if (this._entries.size >= this.maxEntries) {
+      this._clearNextFrame = true;
+      return null;
+    }
     const raster = engine.rasterizeGlyph(key);
     if (!raster || raster.width === 0 || raster.height === 0) {
       return null;
@@ -131,11 +141,9 @@ export class GlyphAtlas {
     while (!slot) {
       attempts += 1;
       if (attempts > 4) return null;
-
-      const shouldScratch = this.dynamicScratchMode || this._entries.size >= this.maxEntries;
-      if (shouldScratch || !this._growTexture()) {
-        this._clearAtlas();
-        this._stats.clears += 1;
+      if (!this._growTexture()) {
+        this._clearNextFrame = true;
+        return null;
       }
 
       slot = this._allocate(raster.width, raster.height);

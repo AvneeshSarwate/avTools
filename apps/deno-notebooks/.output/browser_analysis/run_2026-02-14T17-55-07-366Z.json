@@ -1,0 +1,147 @@
+{
+  "timestamp": "2026-02-14T17:55:07.366Z",
+  "runTag": "",
+  "settings": {
+    "maxPhase": 6,
+    "nameFilter": "^(text-lfo-perf-frame0|text-anchor-weight-probe|text-weight-api-probe|text-weight-api-probe-alt-font)$",
+    "thresholds": {
+      "default": {
+        "rmse": 8,
+        "maxError": 255,
+        "diffRatio": 0.05
+      },
+      "text": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      }
+    },
+    "browserReferenceSettings": {
+      "extraFontReadyPasses": "2",
+      "extraStabilizeFrames": "2",
+      "postDrawDelayMs": "0",
+      "fontWarmupEnabled": "1"
+    }
+  },
+  "sketches": [
+    {
+      "name": "text-weight-api-probe",
+      "phase": 6,
+      "width": 1160,
+      "height": 350
+    },
+    {
+      "name": "text-weight-api-probe-alt-font",
+      "phase": 6,
+      "width": 1160,
+      "height": 350
+    },
+    {
+      "name": "text-lfo-perf-frame0",
+      "phase": 6,
+      "width": 1280,
+      "height": 720
+    },
+    {
+      "name": "text-anchor-weight-probe",
+      "phase": 6,
+      "width": 1200,
+      "height": 760
+    }
+  ],
+  "summary": {
+    "passCount": 1,
+    "failCount": 3,
+    "total": 4
+  },
+  "results": [
+    {
+      "name": "text-weight-api-probe",
+      "rmse": 55.843195806267595,
+      "maxError": 221,
+      "diffPixels": 74800,
+      "totalPixels": 406000,
+      "diffRatio": 0.18423645320197043,
+      "thresholds": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      },
+      "textStats": {
+        "hits": 103,
+        "misses": 548,
+        "uploads": 443,
+        "bytesUploaded": 114760,
+        "grows": 0,
+        "clears": 0
+      },
+      "pass": false
+    },
+    {
+      "name": "text-weight-api-probe-alt-font",
+      "rmse": 51.70696030959592,
+      "maxError": 235,
+      "diffPixels": 70476,
+      "totalPixels": 406000,
+      "diffRatio": 0.17358620689655171,
+      "thresholds": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      },
+      "textStats": {
+        "hits": 106,
+        "misses": 551,
+        "uploads": 445,
+        "bytesUploaded": 111961,
+        "grows": 0,
+        "clears": 0
+      },
+      "pass": false
+    },
+    {
+      "name": "text-lfo-perf-frame0",
+      "rmse": 62.37064784989928,
+      "maxError": 229,
+      "diffPixels": 190923,
+      "totalPixels": 921600,
+      "diffRatio": 0.20716471354166666,
+      "thresholds": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      },
+      "textStats": {
+        "hits": 60,
+        "misses": 907,
+        "uploads": 765,
+        "bytesUploaded": 295793,
+        "grows": 1,
+        "clears": 0
+      },
+      "pass": false
+    },
+    {
+      "name": "text-anchor-weight-probe",
+      "rmse": 29.38753966674437,
+      "maxError": 227,
+      "diffPixels": 76492,
+      "totalPixels": 912000,
+      "diffRatio": 0.08387280701754386,
+      "thresholds": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      },
+      "textStats": {
+        "hits": 373,
+        "misses": 241,
+        "uploads": 208,
+        "bytesUploaded": 82600,
+        "grows": 0,
+        "clears": 0
+      },
+      "pass": true
+    }
+  ]
+}

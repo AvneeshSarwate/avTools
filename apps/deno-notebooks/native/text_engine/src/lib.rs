@@ -48,6 +48,9 @@ struct LayoutResponse {
     font_width: f32,
     ascent: f32,
     descent: f32,
+    font_ascent: f32,
+    font_descent: f32,
+    font_cap_height: f32,
     first_baseline: f32,
     total_height: f32,
     line_count: usize,
@@ -177,6 +180,10 @@ impl TextEngine {
         let mut total_height = 0.0f32;
         let mut font_width = 0.0f32;
         let mut tight_width = 0.0f32;
+        let mut font_ascent = 0.0f32;
+        let mut font_descent = 0.0f32;
+        let mut font_cap_height = 0.0f32;
+        let mut have_font_metrics = false;
 
         for run in self.buffer.layout_runs() {
             line_count += 1;
@@ -185,6 +192,23 @@ impl TextEngine {
                 first_line_top = run.line_top;
                 first_baseline = run.line_y;
                 have_first_line = true;
+            }
+
+            if !have_font_metrics {
+                if let Some(first) = run.glyphs.first() {
+                    if let Some((fa, fd, fcap)) = self.measure_font_box_metrics(
+                        first.font_id,
+                        first.font_size,
+                        first.font_weight.0,
+                        &axes_arc,
+                    )
+                    {
+                        font_ascent = fa;
+                        font_descent = fd;
+                        font_cap_height = fcap;
+                        have_font_metrics = true;
+                    }
+                }
             }
 
             total_height = total_height.max(run.line_top + run.line_height - first_line_top);
@@ -300,12 +324,21 @@ impl TextEngine {
             0.0
         };
 
+        if !have_font_metrics {
+            font_ascent = ascent;
+            font_descent = descent;
+            font_cap_height = ascent;
+        }
+
         let response = LayoutResponse {
             glyphs,
             tight_width,
             font_width,
             ascent,
             descent,
+            font_ascent,
+            font_descent,
+            font_cap_height,
             first_baseline,
             total_height: if total_height > 0.0 { total_height } else { leading },
             line_count,
@@ -514,6 +547,84 @@ impl TextEngine {
                     .sum::<f32>();
                 let upem = shaper.units_per_em().max(1) as f32;
                 Some((advance_units / upem) * font_size)
+            })
+            .flatten()
+    }
+
+    fn measure_font_box_metrics(
+        &self,
+        font_id: fontdb::ID,
+        font_size: f32,
+        weight: u16,
+        axes: &[AxisSetting],
+    ) -> Option<(f32, f32, f32)> {
+        if !font_size.is_finite() || font_size <= 0.0 {
+            return None;
+        }
+
+        self.font_system
+            .db()
+            .with_face_data(font_id, |font_data, face_index| {
+                let font_ref = swash::FontRef::from_index(font_data, face_index as usize)?;
+                let variations = font_ref.variations();
+                let mut settings = Vec::<swash::Setting<f32>>::new();
+                let mut has_wght = false;
+                let mut has_opsz = false;
+
+                for axis in axes {
+                    let tag = swash::Tag::from_be_bytes(axis.tag);
+                    let Some(var_axis) = variations.find_by_tag(tag) else {
+                        continue;
+                    };
+                    let value = axis
+                        .value
+                        .clamp(var_axis.min_value(), var_axis.max_value());
+                    settings.push((tag, value).into());
+                    if axis.tag == *b"wght" {
+                        has_wght = true;
+                    } else if axis.tag == *b"opsz" {
+                        has_opsz = true;
+                    }
+                }
+
+                if !has_wght {
+                    let wght_tag = swash::Tag::from_be_bytes(*b"wght");
+                    if let Some(var_axis) = variations.find_by_tag(wght_tag) {
+                        let value = f32::from(weight)
+                            .clamp(var_axis.min_value(), var_axis.max_value());
+                        settings.push((wght_tag, value).into());
+                    }
+                }
+
+                if !has_opsz {
+                    let opsz_tag = swash::Tag::from_be_bytes(*b"opsz");
+                    if let Some(var_axis) = variations.find_by_tag(opsz_tag) {
+                        let value = font_size.clamp(var_axis.min_value(), var_axis.max_value());
+                        settings.push((opsz_tag, value).into());
+                    }
+                }
+
+                let coords: Vec<swash::NormalizedCoord> =
+                    variations.normalized_coords(settings.iter().copied()).collect();
+                let metrics = font_ref.metrics(&coords);
+
+                let units_per_em = f32::from(metrics.units_per_em.max(1));
+                let ascent = (metrics.ascent / units_per_em) * font_size;
+                // Swash descent sign can vary by API path; normalize to positive-down.
+                let raw_descent = (metrics.descent / units_per_em) * font_size;
+                let descent = if raw_descent.is_sign_negative() {
+                    -raw_descent
+                } else {
+                    raw_descent
+                };
+                let cap_height = (metrics.cap_height / units_per_em) * font_size;
+                let cap_height = if cap_height.is_finite() && cap_height > 0.0 {
+                    cap_height
+                } else {
+                    ascent
+                };
+
+                Some((ascent.max(0.0), descent.max(0.0), cap_height.max(0.0)))
             })
             .flatten()
     }
