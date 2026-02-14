@@ -141,6 +141,15 @@ function toNumber(value: unknown, fallback = 0): number {
   return fallback;
 }
 
+function readEnvFlag(name: string): boolean {
+  try {
+    const maybeDeno = (globalThis as { Deno?: { env?: { get: (key: string) => string | undefined } } }).Deno;
+    return maybeDeno?.env?.get(name) === "1";
+  } catch {
+    return false;
+  }
+}
+
 function identityMatrix(): Float32Array {
   return new Float32Array([1, 0, 0, 1, 0, 0]);
 }
@@ -526,6 +535,11 @@ export class P5GPU {
     descent: number;
     totalHeight: number;
   } = { tightWidth: 0, fontWidth: 0, ascent: 0, descent: 0, totalHeight: 0 };
+  private _textMetricsDebug = false;
+  private _textMetricsDebugVerbose = false;
+  private _textMetricsDebugBudget = 48;
+  private _textAtlasGrowthDebug = false;
+  private _textAtlasGrowthDebugBudget = 32;
 
   private _clearRequested = false;
   private _clearColor: ColorTuple = [0, 0, 0, 0];
@@ -612,6 +626,9 @@ export class P5GPU {
       this._textEngine = null;
       this._textAtlas = null;
     }
+    this._textMetricsDebug = readEnvFlag("P5_TEXT_METRICS_DEBUG");
+    this._textMetricsDebugVerbose = readEnvFlag("P5_TEXT_METRICS_DEBUG_VERBOSE");
+    this._textAtlasGrowthDebug = readEnvFlag("P5_TEXT_ATLAS_GROW_DEBUG");
 
     this.pixels = new Uint8ClampedArray(this.width * this.height * 4);
   }
@@ -626,6 +643,7 @@ export class P5GPU {
     this._clearRequested = false;
     this._clearColor = [0, 0, 0, 0];
     this._textAtlas?.beginFrame();
+    this._textAtlasGrowthDebugBudget = 32;
     if (this._textAtlas) {
       this._textAtlas.dynamicScratchMode = this._state.textDynamicScratch;
     }
@@ -978,6 +996,7 @@ export class P5GPU {
     const text = this._requireTextSubsystem();
     if (!text) return;
     text.atlas.dynamicScratchMode = this._state.textDynamicScratch;
+    const atlasSizeAtTextStart = text.atlas.size;
 
     const source = String(str ?? "");
     let tx = toNumber(x);
@@ -994,9 +1013,23 @@ export class P5GPU {
     }
 
     const layout = this._layoutText(source, width, height);
-    const tightWidth = (width === null && height === null)
+    const needsTightProbe = width === null &&
+      height === null &&
+      this._state.textAlignH !== "left";
+    const tightWidth = needsTightProbe
       ? this._measureTextBlockTightWidth(source)
       : layout.tightWidth;
+    const atlasSizeAfterProbe = text.atlas.size;
+    if (atlasSizeAfterProbe > atlasSizeAtTextStart) {
+      this._rescaleBufferedTextUVs(atlasSizeAtTextStart / atlasSizeAfterProbe);
+      if (this._textAtlasGrowthDebug && this._textAtlasGrowthDebugBudget > 0) {
+        this._textAtlasGrowthDebugBudget -= 1;
+        console.warn(
+          `[p5gpu:text] atlas grew ${atlasSizeAtTextStart}->${atlasSizeAfterProbe} ` +
+            `during pre-draw probe textLen=${source.length} emittedVertices=${this._textVertexCount}`,
+        );
+      }
+    }
     this._textLastLayout = {
       tightWidth,
       fontWidth: layout.fontWidth,
@@ -1022,7 +1055,19 @@ export class P5GPU {
     const strokeOffset = Math.max(1, this._state.strokeWeight * 0.5);
 
     for (const glyph of layout.glyphs) {
+      const atlasSizeBefore = text.atlas.size;
       const atlasGlyph = text.atlas.ensureGlyph(glyph.key, text.engine);
+      const atlasSizeAfter = text.atlas.size;
+      if (atlasSizeAfter > atlasSizeBefore) {
+        this._rescaleBufferedTextUVs(atlasSizeBefore / atlasSizeAfter);
+        if (this._textAtlasGrowthDebug && this._textAtlasGrowthDebugBudget > 0) {
+          this._textAtlasGrowthDebugBudget -= 1;
+          console.warn(
+            `[p5gpu:text] atlas grew ${atlasSizeBefore}->${atlasSizeAfter} ` +
+              `textLen=${source.length} glyphCount=${layout.glyphs.length} emittedVertices=${this._textVertexCount}`,
+          );
+        }
+      }
       if (!atlasGlyph) continue;
 
       const gx = tx + glyph.x + atlasGlyph.left;
@@ -1049,6 +1094,21 @@ export class P5GPU {
       descent: layout.descent,
       totalHeight: layout.totalHeight,
     };
+    if (this._textMetricsDebug && !Number.isFinite(tightWidth)) {
+      this._debugTextMetrics("textWidth-non-finite", {
+        text: source,
+        tightWidth,
+        layout: {
+          tightWidth: layout.tightWidth,
+          fontWidth: layout.fontWidth,
+          ascent: layout.ascent,
+          descent: layout.descent,
+          firstBaseline: layout.firstBaseline,
+          totalHeight: layout.totalHeight,
+          lineCount: layout.lineCount,
+        },
+      });
+    }
     return tightWidth;
   }
 
@@ -1062,6 +1122,21 @@ export class P5GPU {
       descent: layout.descent,
       totalHeight: layout.totalHeight,
     };
+    if (this._textMetricsDebug && !Number.isFinite(layout.fontWidth)) {
+      this._debugTextMetrics("fontWidth-non-finite", {
+        text: String(text ?? ""),
+        fontWidth: layout.fontWidth,
+        layout: {
+          tightWidth: layout.tightWidth,
+          fontWidth: layout.fontWidth,
+          ascent: layout.ascent,
+          descent: layout.descent,
+          firstBaseline: layout.firstBaseline,
+          totalHeight: layout.totalHeight,
+          lineCount: layout.lineCount,
+        },
+      });
+    }
     return layout.fontWidth;
   }
 
@@ -1090,6 +1165,27 @@ export class P5GPU {
         descent: Math.max(0, measured.bottom - measured.baseline),
         totalHeight: measured.layout.totalHeight,
       };
+      if (this._textMetricsDebug && !Number.isFinite(ascent)) {
+        this._debugTextMetrics("textAscent-non-finite", {
+          text: source,
+          measured: {
+            minX: measured.minX,
+            maxX: measured.maxX,
+            top: measured.top,
+            bottom: measured.bottom,
+            baseline: measured.baseline,
+          },
+          layout: {
+            tightWidth: measured.layout.tightWidth,
+            fontWidth: measured.layout.fontWidth,
+            ascent: measured.layout.ascent,
+            descent: measured.layout.descent,
+            firstBaseline: measured.layout.firstBaseline,
+            totalHeight: measured.layout.totalHeight,
+            lineCount: measured.layout.lineCount,
+          },
+        });
+      }
       return ascent;
     }
     const layout = this._layoutText(source, null, null);
@@ -1129,6 +1225,27 @@ export class P5GPU {
         descent,
         totalHeight: measured.layout.totalHeight,
       };
+      if (this._textMetricsDebug && !Number.isFinite(descent)) {
+        this._debugTextMetrics("textDescent-non-finite", {
+          text: source,
+          measured: {
+            minX: measured.minX,
+            maxX: measured.maxX,
+            top: measured.top,
+            bottom: measured.bottom,
+            baseline: measured.baseline,
+          },
+          layout: {
+            tightWidth: measured.layout.tightWidth,
+            fontWidth: measured.layout.fontWidth,
+            ascent: measured.layout.ascent,
+            descent: measured.layout.descent,
+            firstBaseline: measured.layout.firstBaseline,
+            totalHeight: measured.layout.totalHeight,
+            lineCount: measured.layout.lineCount,
+          },
+        });
+      }
       return descent;
     }
     const layout = this._layoutText(source, null, null);
@@ -1732,6 +1849,78 @@ export class P5GPU {
       axisQuantization: this._state.textAxisQuantization,
       axes: this._resolvedTextAxes(resolvedWeight),
     });
+    if (this._textMetricsDebug) {
+      if (this._textMetricsDebugVerbose) {
+        this._debugTextMetrics("layout-call", {
+          req: {
+            family: this._state.textFontFamily,
+            fontSize: this._state.textSize,
+            lineHeight: this._state.textLeading,
+            width,
+            height,
+            textLen: text.length,
+            textSample: text.slice(0, 32),
+            alignH,
+            wrapMode,
+            styleCode,
+            resolvedWeight,
+          },
+          layout: {
+            glyphCount: layout.glyphs.length,
+            tightWidth: layout.tightWidth,
+            fontWidth: layout.fontWidth,
+            ascent: layout.ascent,
+            descent: layout.descent,
+            firstBaseline: layout.firstBaseline,
+            totalHeight: layout.totalHeight,
+            lineCount: layout.lineCount,
+            glyphSample: layout.glyphs.slice(0, 3).map((glyph) => ({ x: glyph.x, y: glyph.y })),
+          },
+        });
+      }
+      const finiteCore = Number.isFinite(layout.tightWidth) &&
+        Number.isFinite(layout.fontWidth) &&
+        Number.isFinite(layout.ascent) &&
+        Number.isFinite(layout.descent) &&
+        Number.isFinite(layout.firstBaseline) &&
+        Number.isFinite(layout.totalHeight) &&
+        Number.isFinite(layout.lineCount);
+      let finiteGlyphs = true;
+      for (let i = 0; i < layout.glyphs.length; i++) {
+        const glyph = layout.glyphs[i];
+        if (!Number.isFinite(glyph.x) || !Number.isFinite(glyph.y)) {
+          finiteGlyphs = false;
+          break;
+        }
+      }
+      if (!finiteCore || !finiteGlyphs) {
+        this._debugTextMetrics("layout-non-finite", {
+          req: {
+            family: this._state.textFontFamily,
+            fontSize: this._state.textSize,
+            lineHeight: this._state.textLeading,
+            width,
+            height,
+            textLen: text.length,
+            alignH,
+            wrapMode,
+            styleCode,
+            resolvedWeight,
+          },
+          layout: {
+            glyphCount: layout.glyphs.length,
+            tightWidth: layout.tightWidth,
+            fontWidth: layout.fontWidth,
+            ascent: layout.ascent,
+            descent: layout.descent,
+            firstBaseline: layout.firstBaseline,
+            totalHeight: layout.totalHeight,
+            lineCount: layout.lineCount,
+            glyphSample: layout.glyphs.slice(0, 6).map((glyph) => ({ x: glyph.x, y: glyph.y })),
+          },
+        });
+      }
+    }
     return layout;
   }
 
@@ -1970,6 +2159,19 @@ export class P5GPU {
     const baseline = Number.isFinite(layout.firstBaseline) && layout.firstBaseline > 0
       ? layout.firstBaseline
       : layout.ascent;
+    if (this._textMetricsDebug && !Number.isFinite(baseline)) {
+      this._debugTextMetrics("baseline-non-finite", {
+        text,
+        layout: {
+          firstBaseline: layout.firstBaseline,
+          ascent: layout.ascent,
+          descent: layout.descent,
+          totalHeight: layout.totalHeight,
+          lineCount: layout.lineCount,
+          glyphCount: layout.glyphs.length,
+        },
+      });
+    }
 
     return {
       minX: minLeft,
@@ -1990,6 +2192,16 @@ export class P5GPU {
       maxWidth = Math.max(maxWidth, Math.max(0, measured.maxX - measured.minX));
     }
     return maxWidth;
+  }
+
+  private _debugTextMetrics(label: string, payload: unknown): void {
+    if (!this._textMetricsDebug || this._textMetricsDebugBudget <= 0) return;
+    this._textMetricsDebugBudget -= 1;
+    try {
+      console.log(`[p5gpu][text-metrics][${label}] ${JSON.stringify(payload)}`);
+    } catch {
+      console.log(`[p5gpu][text-metrics][${label}] (unserializable payload)`);
+    }
   }
 
   private _parseVariationSettings(settings: string): Record<string, number> {
@@ -2638,6 +2850,14 @@ export class P5GPU {
     this._textVertexCount += 1;
     const batch = this._batches[this._batches.length - 1];
     if (batch) batch.vertexCount += 1;
+  }
+
+  private _rescaleBufferedTextUVs(scale: number): void {
+    if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return;
+    for (let i = 2; i < this._textVertices.length; i += 8) {
+      this._textVertices[i] *= scale;
+      this._textVertices[i + 1] *= scale;
+    }
   }
 
   private _ensureGeomVertexBuffer(requiredBytes: number): void {

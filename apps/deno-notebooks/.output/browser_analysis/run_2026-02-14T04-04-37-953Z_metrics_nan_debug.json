@@ -1,0 +1,28 @@
+{
+  "frames": 800,
+  "probes": 800,
+  "nonFiniteCount": 0,
+  "firstBad": null,
+  "finalGood": {
+    "frame": 800,
+    "family": "Roboto Flex",
+    "style": "italic",
+    "size": 36,
+    "weight": 600,
+    "text": "Mg",
+    "p5TextAscent": 6.134765625,
+    "p5TextDescent": 0,
+    "p5TextWidth": 53.915985107421875,
+    "p5FontWidth": 52.95000076293945,
+    "p5TextAscentNoArg": 6.134765625,
+    "p5TextDescentNoArg": 0,
+    "stressBad": 0,
+    "ctxFont": "italic 600 36px \"Roboto Flex\"",
+    "ctxWidth": 52.95000076293945,
+    "ctxAscent": -0.263671875,
+    "ctxDescent": -18.263671875,
+    "ctxFontBBoxAscent": 6.134765625,
+    "ctxFontBBoxDescent": -18.474609375
+  },
+  "stressIters": 128
+}

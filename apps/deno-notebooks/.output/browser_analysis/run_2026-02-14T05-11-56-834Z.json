@@ -1,0 +1,63 @@
+{
+  "timestamp": "2026-02-14T05:11:56.834Z",
+  "runTag": "",
+  "settings": {
+    "maxPhase": 6,
+    "nameFilter": "^text-lfo-perf-frame0$",
+    "thresholds": {
+      "default": {
+        "rmse": 8,
+        "maxError": 255,
+        "diffRatio": 0.05
+      },
+      "text": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      }
+    },
+    "browserReferenceSettings": {
+      "extraFontReadyPasses": "2",
+      "extraStabilizeFrames": "2",
+      "postDrawDelayMs": "0",
+      "fontWarmupEnabled": "1"
+    }
+  },
+  "sketches": [
+    {
+      "name": "text-lfo-perf-frame0",
+      "phase": 6,
+      "width": 1280,
+      "height": 720
+    }
+  ],
+  "summary": {
+    "passCount": 0,
+    "failCount": 1,
+    "total": 1
+  },
+  "results": [
+    {
+      "name": "text-lfo-perf-frame0",
+      "rmse": 73.86059701635516,
+      "maxError": 229,
+      "diffPixels": 255318,
+      "totalPixels": 921600,
+      "diffRatio": 0.27703776041666667,
+      "thresholds": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      },
+      "textStats": {
+        "hits": 58,
+        "misses": 902,
+        "uploads": 761,
+        "bytesUploaded": 308399,
+        "grows": 1,
+        "clears": 0
+      },
+      "pass": false
+    }
+  ]
+}

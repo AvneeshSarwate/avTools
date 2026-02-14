@@ -644,4 +644,171 @@ export const P5_TEST_SKETCHES: TestSketch[] = [
       }
     },
   },
+  {
+    name: "text-lfo-perf-frame0",
+    phase: 6,
+    width: 1280,
+    height: 720,
+    draw(p) {
+      const textSize = 40;
+      const gridCols = 80;
+      const charCount = 900;
+      const base =
+        "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi sed finibus lacus, vel lacinia nisi. ";
+      const source = base.repeat(Math.ceil(charCount / base.length)).slice(0, charCount);
+      const chars = source.split("");
+
+      p.background(15, 18, 26);
+      p.noStroke();
+      p.textAlign(p.LEFT, p.TOP);
+      p.textWrap(p.CHAR);
+      p.textFont("Inter Variable");
+      p.textSize(textSize);
+      p.textStyle(p.NORMAL);
+
+      const maybeTextWeight =
+        (p as unknown as { textWeight?: (weight: number) => unknown }).textWeight;
+      const supportsTextWeight = typeof maybeTextWeight === "function";
+      if (supportsTextWeight) {
+        maybeTextWeight.call(p, 400);
+      }
+
+      const metricProbeWidth = Number(p.textWidth("M"));
+      const metricProbeAscent = Number(p.textAscent("Mg"));
+      const metricProbeDescent = Number(p.textDescent("g"));
+      const metricProbeLeading = Number(p.textLeading());
+      const metricHeight = Number.isFinite(metricProbeLeading) && metricProbeLeading > 0
+        ? metricProbeLeading
+        : metricProbeAscent + metricProbeDescent;
+
+      const cellW = Number.isFinite(metricProbeWidth) && metricProbeWidth > 0
+        ? metricProbeWidth
+        : textSize * 0.75;
+      const cellH = Number.isFinite(metricHeight) && metricHeight > 0
+        ? metricHeight
+        : textSize * 1.3;
+
+      const cols = Math.min(gridCols, chars.length);
+      const rows = Math.ceil(chars.length / cols);
+      const startX = Math.floor((p.width - cols * cellW) * 0.5);
+      const startY = Math.floor((p.height - rows * cellH) * 0.4);
+      const t = 0;
+
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
+          const i = row * cols + col;
+          if (i >= chars.length) break;
+
+          const x = startX + col * cellW;
+          const y = startY + row * cellH;
+          const lfo = 0.5 + 0.5 * Math.sin(t * 2.2 + i * 0.17);
+          const weight = Math.round(300 + lfo * 600);
+          if (supportsTextWeight) {
+            maybeTextWeight.call(p, weight);
+          } else {
+            p.textStyle(weight >= 650 ? p.BOLD : p.NORMAL);
+          }
+
+          const c = Math.round(170 + lfo * 70);
+          p.fill(c, c, c + 5);
+          p.text(chars[i], x, y);
+        }
+      }
+
+      if (supportsTextWeight) {
+        maybeTextWeight.call(p, 400);
+      }
+      p.textStyle(p.NORMAL);
+      p.textSize(18);
+      p.fill(138, 170, 255);
+      p.text("LFO weight modulation, manual character layout (Inter Variable)", 24, 20);
+    },
+  },
+  {
+    name: "text-anchor-weight-probe",
+    phase: 6,
+    width: 1200,
+    height: 760,
+    draw(p) {
+      const maybeTextWeight =
+        (p as unknown as { textWeight?: (weight: number) => unknown }).textWeight;
+      const supportsTextWeight = typeof maybeTextWeight === "function";
+      const token = "lI1gq|A";
+      const samples = [
+        { x: 170, y: 150, h: p.LEFT, v: p.TOP, weight: 300, label: "LEFT/TOP w300" },
+        { x: 600, y: 150, h: p.CENTER, v: p.TOP, weight: 450, label: "CENTER/TOP w450" },
+        { x: 1030, y: 150, h: p.RIGHT, v: p.TOP, weight: 600, label: "RIGHT/TOP w600" },
+        { x: 170, y: 380, h: p.LEFT, v: p.BASELINE, weight: 450, label: "LEFT/BASELINE w450" },
+        { x: 600, y: 380, h: p.CENTER, v: p.BASELINE, weight: 700, label: "CENTER/BASELINE w700" },
+        { x: 1030, y: 380, h: p.RIGHT, v: p.BASELINE, weight: 850, label: "RIGHT/BASELINE w850" },
+        { x: 170, y: 620, h: p.LEFT, v: p.BOTTOM, weight: 600, label: "LEFT/BOTTOM w600" },
+        { x: 600, y: 620, h: p.CENTER, v: p.BOTTOM, weight: 750, label: "CENTER/BOTTOM w750" },
+        { x: 1030, y: 620, h: p.RIGHT, v: p.BOTTOM, weight: 900, label: "RIGHT/BOTTOM w900" },
+      ];
+
+      p.background(14, 18, 28);
+      p.noFill();
+      p.stroke(54, 62, 88);
+      p.strokeWeight(1.2);
+      for (const sx of [20, 420, 820]) p.rect(sx, 60, 360, 660);
+
+      p.textFont("Inter Variable");
+      p.textWrap(p.WORD);
+      p.textStyle(p.NORMAL);
+      p.textSize(16);
+      p.noStroke();
+      p.fill(142, 172, 255);
+      p.text("Anchor/weight probe (Inter Variable) token='lI1gq|A'", 24, 24);
+      p.text(`textWeight() support: ${supportsTextWeight ? "yes" : "no"}`, 24, 44);
+
+      for (const sample of samples) {
+        p.textAlign(sample.h, sample.v);
+        p.textSize(58);
+        p.textStyle(p.NORMAL);
+        if (supportsTextWeight) {
+          maybeTextWeight.call(p, sample.weight);
+        } else {
+          p.textStyle(sample.weight >= 650 ? p.BOLD : p.NORMAL);
+        }
+
+        const w = p.textWidth(token);
+        const asc = p.textAscent("Mg");
+        const desc = p.textDescent("g");
+        const h = asc + desc;
+
+        let x0 = sample.x;
+        if (sample.h === p.CENTER) x0 -= w * 0.5;
+        else if (sample.h === p.RIGHT) x0 -= w;
+
+        let y0 = sample.y;
+        if (sample.v === p.BASELINE) y0 -= asc;
+        else if (sample.v === p.BOTTOM) y0 -= h;
+
+        p.noFill();
+        p.stroke(255, 96, 96, 220);
+        p.strokeWeight(1.2);
+        p.rect(x0, y0, w, h);
+
+        p.stroke(80, 244, 255, 220);
+        p.strokeWeight(1.1);
+        p.line(sample.x - 20, sample.y, sample.x + 20, sample.y);
+        p.line(sample.x, sample.y - 20, sample.x, sample.y + 20);
+
+        p.noStroke();
+        p.fill(235);
+        p.text(token, sample.x, sample.y);
+
+        if (supportsTextWeight) {
+          maybeTextWeight.call(p, 400);
+        }
+        p.textStyle(p.NORMAL);
+        p.textAlign(p.LEFT, p.TOP);
+        p.textSize(14);
+        p.fill(140, 172, 255);
+        p.text(sample.label, sample.x - 56, sample.y - 44);
+        p.fill(106, 122, 170);
+        p.text(`w=${w.toFixed(1)} a=${asc.toFixed(1)} d=${desc.toFixed(1)}`, sample.x - 56, sample.y - 26);
+      }
+    },
+  },
 ];

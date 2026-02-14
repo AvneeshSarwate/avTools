@@ -54,6 +54,7 @@ export class GlyphAtlas {
   private _frameId = 0;
 
   private _entries = new Map<bigint, GlyphAtlasEntry>();
+  private _pendingTextureDestroys: Promise<void>[] = [];
   private _stats: AtlasFrameStats = {
     hits: 0,
     misses: 0,
@@ -172,6 +173,10 @@ export class GlyphAtlas {
     } catch {
       // ignore
     }
+    for (const pending of this._pendingTextureDestroys) {
+      void pending.catch(() => {});
+    }
+    this._pendingTextureDestroys.length = 0;
     this._entries.clear();
   }
 
@@ -179,7 +184,7 @@ export class GlyphAtlas {
     return this.device.createTexture({
       size: { width: size, height: size, depthOrArrayLayers: 1 },
       format: this.format,
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC,
     });
   }
 
@@ -197,22 +202,32 @@ export class GlyphAtlas {
       return false;
     }
 
+    const prevTexture = this.texture;
+    const prevSize = this.size;
     const nextSize = Math.min(this.maxSize, this.size * 2);
-    try {
-      this.texture.destroy();
-    } catch {
-      // ignore
-    }
+
+    const nextTexture = this._createTexture(nextSize);
+    const encoder = this.device.createCommandEncoder();
+    encoder.copyTextureToTexture(
+      { texture: prevTexture },
+      { texture: nextTexture },
+      { width: prevSize, height: prevSize, depthOrArrayLayers: 1 },
+    );
+    this.queue.submit([encoder.finish()]);
+    this._deferTextureDestroy(prevTexture);
 
     this.size = nextSize;
-    this.texture = this._createTexture(this.size);
+    this.texture = nextTexture;
+    const inv = 1 / this.size;
+    for (const entry of this._entries.values()) {
+      entry.u0 = entry.x * inv;
+      entry.v0 = entry.y * inv;
+      entry.u1 = (entry.x + entry.width) * inv;
+      entry.v1 = (entry.y + entry.height) * inv;
+    }
     this.version += 1;
     this._stats.grows += 1;
-
-    this._entries.clear();
-    this._cursorX = 0;
-    this._cursorY = 0;
-    this._rowHeight = 0;
+    // Keep atlas entries and packing cursor intact; prior UVs remain valid.
     return true;
   }
 
@@ -221,6 +236,8 @@ export class GlyphAtlas {
     this._cursorX = 0;
     this._cursorY = 0;
     this._rowHeight = 0;
+    // Clearing invalidates all existing UV references.
+    this.version += 1;
   }
 
   private _allocate(width: number, height: number): { x: number; y: number } | null {
@@ -269,5 +286,28 @@ export class GlyphAtlas {
 
     this._stats.uploads += 1;
     this._stats.bytesUploaded += upload.length;
+  }
+
+  private _deferTextureDestroy(texture: GPUTexture): void {
+    const queue = this.queue as GPUQueue & { onSubmittedWorkDone?: () => Promise<void> };
+    if (typeof queue.onSubmittedWorkDone === "function") {
+      const pending = queue.onSubmittedWorkDone()
+        .catch(() => {})
+        .then(() => {
+          try {
+            texture.destroy();
+          } catch {
+            // ignore
+          }
+        });
+      this._pendingTextureDestroys.push(pending);
+      if (this._pendingTextureDestroys.length > 24) {
+        this._pendingTextureDestroys = this._pendingTextureDestroys.slice(-12);
+      }
+      return;
+    }
+
+    // Fallback for runtimes without queue fences: keep texture alive until dispose.
+    this._pendingTextureDestroys.push(Promise.resolve());
   }
 }

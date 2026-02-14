@@ -1,0 +1,63 @@
+{
+  "timestamp": "2026-02-14T15:42:12.579Z",
+  "runTag": "",
+  "settings": {
+    "maxPhase": 6,
+    "nameFilter": "^text-anchor-weight-probe$",
+    "thresholds": {
+      "default": {
+        "rmse": 8,
+        "maxError": 255,
+        "diffRatio": 0.05
+      },
+      "text": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      }
+    },
+    "browserReferenceSettings": {
+      "extraFontReadyPasses": "2",
+      "extraStabilizeFrames": "2",
+      "postDrawDelayMs": "0",
+      "fontWarmupEnabled": "1"
+    }
+  },
+  "sketches": [
+    {
+      "name": "text-anchor-weight-probe",
+      "phase": 6,
+      "width": 1200,
+      "height": 760
+    }
+  ],
+  "summary": {
+    "passCount": 1,
+    "failCount": 0,
+    "total": 1
+  },
+  "results": [
+    {
+      "name": "text-anchor-weight-probe",
+      "rmse": 30.95536495975563,
+      "maxError": 227,
+      "diffPixels": 76640,
+      "totalPixels": 912000,
+      "diffRatio": 0.08403508771929824,
+      "thresholds": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      },
+      "textStats": {
+        "hits": 378,
+        "misses": 233,
+        "uploads": 200,
+        "bytesUploaded": 82139,
+        "grows": 0,
+        "clears": 0
+      },
+      "pass": true
+    }
+  ]
+}
