@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>p5.js Text LFO Benchmark</title>
+
+<!--
+  Browser-based p5.js text rendering benchmark (Canvas2D).
+  Equivalent to the Deno P5GPU benchmark at p5gpu_text_lfo_perf.ts.
+
+  HOW TO RUN:
+    cd apps/deno-notebooks
+    python3 -m http.server 8080
+    Open: http://localhost:8080/examples/browser_text_lfo_perf.html
+
+  URL PARAMETERS:
+    ?frames=300   - number of frames to run (default 300, 0 = unlimited)
+-->
+
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0e1118;
+    color: #c8d0e0;
+    font-family: system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+  }
+  #controls { margin-bottom: 12px; display: flex; gap: 12px; align-items: center; }
+  #controls label { font-size: 14px; }
+  #controls input { background: #1a1e2a; color: #c8d0e0; border: 1px solid #3a4060; border-radius: 4px; padding: 6px 10px; font-size: 14px; }
+  button { background: #3a6aef; color: #fff; border: none; border-radius: 6px; padding: 10px 28px; font-size: 16px; cursor: pointer; }
+  button:hover { background: #4d7cf7; }
+  button:disabled { background: #2a3050; color: #5a6080; cursor: not-allowed; }
+  #status { margin-bottom: 12px; font-size: 14px; color: #8aa0c0; }
+  #log { margin-top: 12px; width: 1280px; max-width: 100%; max-height: 300px; overflow-y: auto; background: #0a0c12; border: 1px solid #2a3050; border-radius: 4px; padding: 10px; font-family: monospace; font-size: 12px; color: #7aa0c0; white-space: pre; }
+
+  @font-face {
+    font-family: "Inter Variable";
+    src: url("../assets/fonts/InterVariable.ttf") format("truetype");
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
+  }
+</style>
+
+<!-- Google Fonts fallback -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/2.0.1/p5.min.js"></script>
+
+</head>
+<body>
+
+<div id="controls">
+  <label>Frames: <input id="framesInput" type="number" value="300" min="0" step="50" style="width:80px"></label>
+  <button id="startBtn" disabled>Start Benchmark</button>
+</div>
+<div id="status">Loading font...</div>
+<div id="sketch-container"></div>
+<div id="log"></div>
+
+<script>
+var LOG_EVERY = 20;
+var WIDTH = 1280;
+var HEIGHT = 720;
+var CHAR_COUNT = 900;
+var GRID_COLS = 20;
+var TEXT_SIZE = 40;
+
+var LOREM = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi sed finibus lacus, vel lacinia nisi. Duis nisi est, pellentesque sit amet consequat in, maximus eu velit. Duis vitae aliquet urna. Nam finibus laoreet massa. In commodo elit vitae efficitur iaculis. Phasellus ullamcorper, ex eget porta ullamcorper, justo elit sollicitudin dui, vitae porttitor leo urna et ante. Cras venenatis scelerisque diam ac tristique. Proin lobortis facilisis leo eget tristique. Proin congue maximus neque auctor facilisis. Nam non sodales dui. Maecenas a vulputate dui. Donec a tellus vel ante accumsan rutrum. Duis est augue, scelerisque semper sollicitudin vitae, finibus in mauris. Nam ac purus mauris. Donec in venenatis urna, ut euismod velit. Sed blandit luctus convallis. Maecenas volutpat, augue at tempor ullamcorper, sem magna hendrerit turpis, et porttitor magna augue ac lorem. Integer malesuada placerat lorem vel semper. Ut ligula nunc, sollicitudin in euismod sed, pretium ac magna. Aliquam tempor nisl ante, sit amet euismod ex faucibus eget. Quisque ultrices, enim in rhoncus molestie, purus diam malesuada nisl, eget varius justo diam et sapien. Donec eleifend sodales mauris quis rhoncus. Nullam pharetra odio purus, id convallis tellus blandit vel. Duis ac sollicitudin tellus, a rhoncus quam. Integer feugiat felis in urna ornare eleifend. Aenean et mattis purus. Fusce porta enim vitae nisi viverra pellentesque. Ut laoreet, leo at accumsan laoreet, justo nibh ultricies mi, a dapibus urna dui sed libero. Maecenas aliquet at diam sit amet tempor. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia curae; Proin vehicula vestibulum tortor sit amet auctor. Nullam sit amet pellentesque urna. Nullam dolor augue, porttitor luctus tristique a, egestas vel ante. Maecenas quis purus id tortor euismod vulputate. Sed posuere interdum sapien non bibendum. Fusce pulvinar sit amet magna sed sollicitudin. Orci varius natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Morbi feugiat rutrum odio, in vehicula elit scelerisque ac. Suspendisse id varius nunc, non porttitor velit. Mauris a ligula id mi ultrices vehicula. Morbi elit leo, consectetur at mattis ultricies, gravida et leo. ".slice(0, CHAR_COUNT);
+
+var CHARS = LOREM.split("");
+var GRID_ROWS = Math.ceil(CHARS.length / GRID_COLS);
+var cellW = TEXT_SIZE * 0.75;
+var cellH = TEXT_SIZE * 1.3;
+var startX = Math.floor((WIDTH - GRID_COLS * cellW) * 0.5);
+var startY = Math.floor((HEIGHT - GRID_ROWS * cellH) * 0.4);
+
+var statusEl = document.getElementById("status");
+var logEl = document.getElementById("log");
+var startBtn = document.getElementById("startBtn");
+var framesInput = document.getElementById("framesInput");
+
+var params = new URLSearchParams(window.location.search);
+if (params.get("frames") !== null) framesInput.value = params.get("frames");
+
+function logMsg(msg) {
+  console.log(msg);
+  logEl.textContent += msg + "\n";
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// Font loading
+var fontName = "Inter Variable";
+document.fonts.load('400 40px "Inter Variable"').then(function() {
+  if (document.fonts.check('400 40px "Inter Variable"')) {
+    statusEl.textContent = 'Font "Inter Variable" loaded. Ready.';
+  } else if (document.fonts.check('400 40px "Inter"')) {
+    fontName = "Inter";
+    statusEl.textContent = 'Font "Inter" loaded (Google Fonts). Ready.';
+  } else {
+    statusEl.textContent = "Using best available font. Ready.";
+  }
+  startBtn.disabled = false;
+}).catch(function() {
+  fontName = "Inter";
+  statusEl.textContent = "Using fallback font. Ready.";
+  startBtn.disabled = false;
+});
+
+var myp5 = null;
+
+startBtn.addEventListener("click", function() {
+  if (myp5) { myp5.remove(); myp5 = null; }
+
+  var maxFrames = Math.max(0, parseInt(framesInput.value, 10) || 300);
+  startBtn.disabled = true;
+  logEl.textContent = "";
+  statusEl.textContent = "Running benchmark (Canvas 2D, " + maxFrames + " frames)...";
+
+  logMsg("[browser-lfo-perf] mode=2d renderer=canvas2d maxFrames=" + maxFrames);
+  logMsg("[browser-lfo-perf] chars=" + CHARS.length + " font=" + fontName);
+
+  var drawTimes = [];
+  var frameTimes = [];
+  var lastFrameTime = 0;
+
+  function pushSample(arr, v) { arr.push(v); if (arr.length > LOG_EVERY) arr.shift(); }
+  function avg(arr) { if (!arr.length) return 0; var s=0; for(var i=0;i<arr.length;i++) s+=arr[i]; return s/arr.length; }
+
+  myp5 = new p5(function(p) {
+    p.setup = function() {
+      var cnv = p.createCanvas(WIDTH, HEIGHT);
+      cnv.parent("sketch-container");
+      p.pixelDensity(1);
+      p.textFont(fontName);
+      p.textSize(TEXT_SIZE);
+      p.textAlign(p.LEFT, p.TOP);
+      p.noStroke();
+      lastFrameTime = performance.now();
+      logMsg("[browser-lfo-perf] canvas created, setup complete");
+    };
+
+    p.draw = function() {
+      var drawStart = performance.now();
+      var frameMs = drawStart - lastFrameTime;
+      lastFrameTime = drawStart;
+      pushSample(frameTimes, frameMs);
+
+      if (maxFrames > 0 && p.frameCount > maxFrames) {
+        p.noLoop();
+        var fd = avg(drawTimes), ff = avg(frameTimes), fps = ff > 0 ? 1000/ff : 0;
+        logMsg("[browser-lfo-perf] DONE " + maxFrames + " frames | avgDrawMs=" + fd.toFixed(2) + " avgFrameMs=" + ff.toFixed(2) + " fps=" + fps.toFixed(1));
+        statusEl.textContent = "Done. " + maxFrames + " frames, draw: " + fd.toFixed(2) + "ms, ~" + fps.toFixed(1) + " FPS";
+        startBtn.disabled = false;
+        return;
+      }
+
+      p.background(15, 18, 26);
+      p.textFont(fontName);
+      p.textSize(TEXT_SIZE);
+      p.noStroke();
+      p.textAlign(p.LEFT, p.TOP);
+
+      var t = performance.now() * 0.001;
+      for (var i = 0; i < CHARS.length; i++) {
+        var row = Math.floor(i / GRID_COLS);
+        var col = i % GRID_COLS;
+        var x = startX + col * cellW;
+        var y = startY + row * cellH;
+
+        var lfo = 0.5 + 0.5 * Math.sin(t * 2.2 + i * 0.17);
+        var weight = Math.round(300 + lfo * 600);
+        p.textWeight(weight);
+
+        var c = Math.round(170 + lfo * 70);
+        p.fill(c, c, c + 5);
+        p.text(CHARS[i], x, y);
+      }
+
+      // Title
+      p.textWeight(400);
+      p.textSize(18);
+      p.fill(138, 170, 255);
+      p.text("LFO weight modulation (" + fontName + ") [p5.js Canvas2D]", 24, 20);
+
+      // Performance overlay
+      var ad = avg(drawTimes), af = avg(frameTimes), fps = af > 0 ? 1000/af : 0;
+      p.fill(0, 0, 0, 160);
+      p.noStroke();
+      p.rect(WIDTH - 260, 8, 250, 56, 4);
+      p.fill(120, 220, 120);
+      p.textSize(13);
+      p.textWeight(400);
+      p.text("Frame " + p.frameCount + "/" + maxFrames + " | FPS: " + fps.toFixed(1), WIDTH - 250, 14);
+      p.text("Draw: " + ad.toFixed(2) + "ms | Frame: " + af.toFixed(2) + "ms", WIDTH - 250, 34);
+
+      var drawMs = performance.now() - drawStart;
+      pushSample(drawTimes, drawMs);
+
+      if (p.frameCount % LOG_EVERY === 0) {
+        var ld = avg(drawTimes), lf = avg(frameTimes), lfps = lf > 0 ? 1000/lf : 0;
+        logMsg("[browser-lfo-perf] frame=" + String(p.frameCount).padStart(5) + " avgDrawMs(" + LOG_EVERY + ")=" + ld.toFixed(2) + " avgFrameMs(" + LOG_EVERY + ")=" + lf.toFixed(2) + " fps=" + lfps.toFixed(1));
+      }
+    };
+  });
+});
+</script>
+</body>
+</html>
