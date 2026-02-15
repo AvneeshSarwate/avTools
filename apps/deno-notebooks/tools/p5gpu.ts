@@ -1101,7 +1101,7 @@ export class P5GPU {
     if (!this._requireTextSubsystem()) return 0;
     const source = String(text ?? "");
     const layout = this._layoutText(source, null, null);
-    const tightWidth = this._measureTextBlockTightWidth(source);
+    const tightWidth = this._measureTextBlockTightWidth(source, 128);
     this._textLastLayout = {
       tightWidth,
       fontWidth: layout.fontWidth,
@@ -2197,9 +2197,16 @@ export class P5GPU {
     const capHeight = Number.isFinite(layout.fontCapHeight) && layout.fontCapHeight > 0
       ? layout.fontCapHeight
       : ascent;
-    const ratio = ascent > 0 ? clamp(capHeight / ascent, 0.5, 1) : 1;
-    const emAscent = ascent * ratio;
-    const emDescent = descent * ratio;
+    const metricTotal = ascent + descent;
+    const emTarget = Number.isFinite(this._state.textSize) && this._state.textSize > 0
+      ? this._state.textSize
+      : metricTotal;
+    // Canvas top/bottom baseline offsets track em-height, not cap-height.
+    const emScale = metricTotal > 0
+      ? clamp(emTarget / metricTotal, 0.25, 4)
+      : 1;
+    const emAscent = ascent * emScale;
+    const emDescent = descent * emScale;
     return { ascent, descent, capHeight, emAscent, emDescent };
   }
 
@@ -2219,7 +2226,7 @@ export class P5GPU {
     }
   }
 
-  private _measureTextGlyphInkExtents(text: string): {
+  private _measureTextGlyphInkExtents(text: string, alphaThreshold = 0): {
     minX: number;
     maxX: number;
     top: number;
@@ -2241,8 +2248,10 @@ export class P5GPU {
     for (const glyph of layout.glyphs) {
       const atlasGlyph = subsystem.atlas.ensureGlyph(glyph.key, subsystem.engine);
       if (!atlasGlyph) continue;
-      const left = glyph.x + atlasGlyph.left;
-      const right = left + atlasGlyph.width;
+      const inkX0 = alphaThreshold > 0 ? atlasGlyph.inkX0 : 0;
+      const inkX1 = alphaThreshold > 0 ? atlasGlyph.inkX1 : atlasGlyph.width;
+      const left = glyph.x + atlasGlyph.left + inkX0;
+      const right = glyph.x + atlasGlyph.left + inkX1;
       const top = glyph.y - atlasGlyph.top;
       const bottom = top + atlasGlyph.height;
       if (left < minLeft) minLeft = left;
@@ -2285,11 +2294,11 @@ export class P5GPU {
     };
   }
 
-  private _measureTextBlockTightWidth(source: string): number {
+  private _measureTextBlockTightWidth(source: string, alphaThreshold = 0): number {
     const lines = source.split(/\r?\n/g);
     let maxWidth = 0;
     for (const line of lines) {
-      const measured = this._measureTextGlyphInkExtents(line);
+      const measured = this._measureTextGlyphInkExtents(line, alphaThreshold);
       if (!measured) continue;
       maxWidth = Math.max(maxWidth, Math.max(0, measured.maxX - measured.minX));
     }

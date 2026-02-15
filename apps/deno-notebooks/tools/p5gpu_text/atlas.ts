@@ -16,6 +16,8 @@ export interface GlyphAtlasEntry {
   y: number;
   width: number;
   height: number;
+  inkX0: number;
+  inkX1: number;
   left: number;
   top: number;
   u0: number;
@@ -48,6 +50,7 @@ export class GlyphAtlas {
   dynamicScratchMode: boolean;
 
   private _padding: number;
+  private _inkAlphaThreshold = 128;
   private _cursorX = 0;
   private _cursorY = 0;
   private _rowHeight = 0;
@@ -150,6 +153,7 @@ export class GlyphAtlas {
     }
 
     this._upload(slot.x, slot.y, raster);
+    const ink = this._computeInkXRange(raster);
 
     const inv = 1 / this.size;
     const entry: GlyphAtlasEntry = {
@@ -158,6 +162,8 @@ export class GlyphAtlas {
       y: slot.y,
       width: raster.width,
       height: raster.height,
+      inkX0: ink.x0,
+      inkX1: ink.x1,
       left: raster.left,
       top: raster.top,
       u0: slot.x * inv,
@@ -294,6 +300,31 @@ export class GlyphAtlas {
 
     this._stats.uploads += 1;
     this._stats.bytesUploaded += upload.length;
+  }
+
+  private _computeInkXRange(raster: RasterizedGlyph): { x0: number; x1: number } {
+    const { width, height, pixels } = raster;
+    if (width <= 0 || height <= 0 || pixels.length === 0) {
+      return { x0: 0, x1: width };
+    }
+
+    let minX = width;
+    let maxX = -1;
+    const threshold = this._inkAlphaThreshold;
+    for (let y = 0; y < height; y++) {
+      const row = y * width;
+      for (let x = 0; x < width; x++) {
+        if ((pixels[row + x] ?? 0) >= threshold) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+        }
+      }
+    }
+
+    if (maxX < minX) {
+      return { x0: 0, x1: width };
+    }
+    return { x0: minX, x1: maxX + 1 };
   }
 
   private _deferTextureDestroy(texture: GPUTexture): void {

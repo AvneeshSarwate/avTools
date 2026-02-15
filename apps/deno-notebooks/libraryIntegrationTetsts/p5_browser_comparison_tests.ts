@@ -20,6 +20,14 @@ const DIFF_DIR = `${OUTPUT_ROOT}/browser_diffs`;
 const ANALYSIS_DIR = `${OUTPUT_ROOT}/browser_analysis`;
 const BROWSER_SERVER_URL = Deno.env.get("P5_BROWSER_SERVER_URL") ??
   "http://localhost:9222";
+const GPU_FONT_FILES = [
+  "NotoSans-Regular.ttf",
+  "Inter-Regular.ttf",
+  "Inter-Bold.ttf",
+  "InterVariable.ttf",
+  "InterVariable-Italic.ttf",
+  "RobotoFlex-Variable.ttf",
+] as const;
 
 const MAX_PHASE = Number(Deno.env.get("P5GPU_MAX_PHASE") ?? 1);
 const NAME_FILTER = Deno.env.get("P5GPU_NAME_FILTER")?.trim() ?? "";
@@ -256,6 +264,14 @@ async function renderGpu(
   });
 
   try {
+    for (const fontFile of GPU_FONT_FILES) {
+      const fontPath = `${Deno.cwd()}/assets/fonts/${fontFile}`;
+      try {
+        await p5gpu.loadFont(fontPath);
+      } catch (err) {
+        console.warn(`[p5gpu] skipping font ${fontFile}: ${String(err)}`);
+      }
+    }
     p5gpu.beginFrame();
     sketch.draw(p5gpu as never);
     const texture = p5gpu.endFrame();

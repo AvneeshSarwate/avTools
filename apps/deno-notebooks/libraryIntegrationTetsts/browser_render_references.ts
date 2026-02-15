@@ -581,13 +581,63 @@ async function renderSketchToPng(
         fontDescent: Number(p.textDescent().toFixed(3)),
       };
 
+      const rawCanvas = document.createElement("canvas");
+      const rawCtx = rawCanvas.getContext("2d");
+      let rawM: Record<string, number> = {};
+      let rawMg: Record<string, number> = {};
+      let rawUnderscore: Record<string, number> = {};
+      if (rawCtx) {
+        rawCtx.font = "400 40px 'Inter Variable'";
+        rawCtx.textBaseline = "alphabetic";
+        const m = rawCtx.measureText("M");
+        const mg = rawCtx.measureText("Mg");
+        const us = rawCtx.measureText("_");
+        rawM = {
+          width: Number(m.width.toFixed(3)),
+          abl: Number((m.actualBoundingBoxLeft ?? 0).toFixed(3)),
+          abr: Number((m.actualBoundingBoxRight ?? 0).toFixed(3)),
+          emA: Number((m.emHeightAscent ?? 0).toFixed(3)),
+          emD: Number((m.emHeightDescent ?? 0).toFixed(3)),
+          fbA: Number((m.fontBoundingBoxAscent ?? 0).toFixed(3)),
+          fbD: Number((m.fontBoundingBoxDescent ?? 0).toFixed(3)),
+        };
+        rawMg = {
+          width: Number(mg.width.toFixed(3)),
+          abl: Number((mg.actualBoundingBoxLeft ?? 0).toFixed(3)),
+          abr: Number((mg.actualBoundingBoxRight ?? 0).toFixed(3)),
+          aA: Number((mg.actualBoundingBoxAscent ?? 0).toFixed(3)),
+          aD: Number((mg.actualBoundingBoxDescent ?? 0).toFixed(3)),
+          emA: Number((mg.emHeightAscent ?? 0).toFixed(3)),
+          emD: Number((mg.emHeightDescent ?? 0).toFixed(3)),
+          fbA: Number((mg.fontBoundingBoxAscent ?? 0).toFixed(3)),
+          fbD: Number((mg.fontBoundingBoxDescent ?? 0).toFixed(3)),
+        };
+        rawUnderscore = {
+          width: Number(us.width.toFixed(3)),
+          abl: Number((us.actualBoundingBoxLeft ?? 0).toFixed(3)),
+          abr: Number((us.actualBoundingBoxRight ?? 0).toFixed(3)),
+          aA: Number((us.actualBoundingBoxAscent ?? 0).toFixed(3)),
+          aD: Number((us.actualBoundingBoxDescent ?? 0).toFixed(3)),
+          emA: Number((us.emHeightAscent ?? 0).toFixed(3)),
+          emD: Number((us.emHeightDescent ?? 0).toFixed(3)),
+          fbA: Number((us.fontBoundingBoxAscent ?? 0).toFixed(3)),
+          fbD: Number((us.fontBoundingBoxDescent ?? 0).toFixed(3)),
+        };
+      }
+
       return {
         textWidthM: Number(p.textWidth("M").toFixed(3)),
+        fontWidthM: typeof (p as unknown as { fontWidth?: (s: string) => number }).fontWidth === "function"
+          ? Number((p as unknown as { fontWidth: (s: string) => number }).fontWidth("M").toFixed(3))
+          : null,
         textWidthSpace: Number(p.textWidth(" ").toFixed(3)),
         textLeading: Number(p.textLeading().toFixed(3)),
         top,
         baseline,
         bottom,
+        rawM,
+        rawMg,
+        rawUnderscore,
       };
     });
     console.log(
