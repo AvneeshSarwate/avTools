@@ -49,6 +49,7 @@ const TEXT_DIFF_RATIO_THRESHOLD = Number(
 );
 const RUN_TAG = Deno.env.get("P5_BROWSER_RUN_TAG")?.trim() ?? "";
 const WRITE_RUN_LOG = Deno.env.get("P5_BROWSER_WRITE_RUN_LOG") !== "0";
+const SKIP_BROWSER_RENDER = Deno.env.get("P5_BROWSER_SKIP_RENDER") === "1";
 
 interface TextStats {
   hits: number;
@@ -133,19 +134,27 @@ async function ensureBrowserServerRunning(): Promise<void> {
     return;
   }
 
-  const skillDir = `${homeDir()}/.codex/skills/dev-browser`;
+  const realHome = homeDir();
+  const skillDir = `${realHome}/.codex/skills/dev-browser`;
   const nodeBin = await detectNodeBin();
-  const tsxCliPathRel = "node_modules/tsx/dist/cli.mjs";
-  const tsxCliPathAbs = `${skillDir}/${tsxCliPathRel}`;
+  const tsxPkgPathAbs = `${skillDir}/node_modules/tsx`;
   const startServerScriptRel = "scripts/start-server.ts";
   const npmBinCandidate = nodeBin.endsWith("/node")
     ? `${nodeBin.slice(0, -4)}npm`
     : "npm";
   const logPath = `${Deno.cwd()}/${BROWSER_REFERENCE_DIR}/dev-browser-server.log`;
+  const runtimeHome = `${Deno.cwd()}/${BROWSER_REFERENCE_DIR}/runtime-home`;
   await Deno.mkdir(BROWSER_REFERENCE_DIR, { recursive: true });
+  await Deno.mkdir(runtimeHome, { recursive: true });
+  const browserEnv = {
+    ...Deno.env.toObject(),
+    HOME: runtimeHome,
+    USERPROFILE: runtimeHome,
+    PLAYWRIGHT_BROWSERS_PATH: `${realHome}/Library/Caches/ms-playwright`,
+  };
 
   try {
-    await Deno.stat(tsxCliPathAbs);
+    await Deno.stat(tsxPkgPathAbs);
   } catch {
     console.log(
       `[browser] installing dev-browser dependencies in ${skillDir}...`,
@@ -162,7 +171,7 @@ async function ensureBrowserServerRunning(): Promise<void> {
     }
   }
 
-  const command = `${shellQuote(nodeBin)} ${shellQuote(tsxCliPathRel)} ${
+  const command = `${shellQuote(nodeBin)} --import tsx ${
     shellQuote(startServerScriptRel)
   } > ${shellQuote(logPath)} 2>&1 &`;
   console.log(
@@ -171,7 +180,7 @@ async function ensureBrowserServerRunning(): Promise<void> {
   const start = await new Deno.Command("bash", {
     args: ["-lc", command],
     cwd: skillDir,
-    env: Deno.env.toObject(),
+    env: browserEnv,
   }).output();
   if (start.code !== 0) {
     throw new Error(
@@ -204,7 +213,6 @@ async function renderBrowserReferences(sketches: TestSketch[]): Promise<void> {
   const rendererPath = decodeURIComponent(
     new URL("./browser_render_references.ts", import.meta.url).pathname,
   );
-  const tsxCliPath = `${skillDir}/node_modules/tsx/dist/cli.mjs`;
   const nodeBin = await detectNodeBin();
   const env = {
     ...Deno.env.toObject(),
@@ -217,9 +225,9 @@ async function renderBrowserReferences(sketches: TestSketch[]): Promise<void> {
     `[browser] rendering ${sketches.length} reference sketch(es) in Chrome via ${nodeBin}...`,
   );
   const proc = await new Deno.Command(nodeBin, {
-    args: [tsxCliPath, rendererPath],
+    args: ["--import", "tsx", rendererPath],
     env,
-    cwd: Deno.cwd(),
+    cwd: skillDir,
   }).output();
 
   const stdout = new TextDecoder().decode(proc.stdout).trim();
@@ -432,8 +440,23 @@ async function main(): Promise<void> {
     }`,
   );
 
-  await ensureBrowserServerRunning();
-  await renderBrowserReferences(sketches);
+  if (SKIP_BROWSER_RENDER) {
+    console.log("[browser] skipping browser render and reusing existing reference PNGs");
+    for (const sketch of sketches) {
+      const refPath = `${BROWSER_REFERENCE_DIR}/${sketch.name}.png`;
+      try {
+        await Deno.stat(refPath);
+      } catch {
+        throw new Error(
+          `Missing browser reference for ${sketch.name}: ${refPath}. ` +
+            "Run once without P5_BROWSER_SKIP_RENDER=1 to generate it.",
+        );
+      }
+    }
+  } else {
+    await ensureBrowserServerRunning();
+    await renderBrowserReferences(sketches);
+  }
 
   const device = await requestWebGpuDevice();
   const results: SketchResult[] = [];

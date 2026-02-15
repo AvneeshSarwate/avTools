@@ -1,0 +1,259 @@
+{
+  "timestamp": "2026-02-15T15:39:30.839Z",
+  "runTag": "",
+  "settings": {
+    "maxPhase": 6,
+    "nameFilter": "text-",
+    "thresholds": {
+      "default": {
+        "rmse": 8,
+        "maxError": 255,
+        "diffRatio": 0.05
+      },
+      "text": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      }
+    },
+    "browserReferenceSettings": {
+      "extraFontReadyPasses": "2",
+      "extraStabilizeFrames": "2",
+      "postDrawDelayMs": "0",
+      "fontWarmupEnabled": "1"
+    }
+  },
+  "sketches": [
+    {
+      "name": "text-basic",
+      "phase": 5,
+      "width": 500,
+      "height": 300
+    },
+    {
+      "name": "text-wrap-align",
+      "phase": 5,
+      "width": 520,
+      "height": 320
+    },
+    {
+      "name": "text-style-weight",
+      "phase": 5,
+      "width": 520,
+      "height": 320
+    },
+    {
+      "name": "text-style-family-probe",
+      "phase": 6,
+      "width": 980,
+      "height": 360
+    },
+    {
+      "name": "text-weight-api-probe",
+      "phase": 6,
+      "width": 1160,
+      "height": 350
+    },
+    {
+      "name": "text-weight-api-probe-alt-font",
+      "phase": 6,
+      "width": 1160,
+      "height": 350
+    },
+    {
+      "name": "text-lfo-perf-frame0",
+      "phase": 6,
+      "width": 1280,
+      "height": 720
+    },
+    {
+      "name": "text-anchor-weight-probe",
+      "phase": 6,
+      "width": 1200,
+      "height": 760
+    }
+  ],
+  "summary": {
+    "passCount": 8,
+    "failCount": 0,
+    "total": 8
+  },
+  "results": [
+    {
+      "name": "text-basic",
+      "rmse": 9.532821460616999,
+      "maxError": 221,
+      "diffPixels": 4387,
+      "totalPixels": 150000,
+      "diffRatio": 0.029246666666666667,
+      "thresholds": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      },
+      "textStats": {
+        "hits": 33,
+        "misses": 48,
+        "uploads": 42,
+        "bytesUploaded": 7179,
+        "grows": 0,
+        "clears": 0
+      },
+      "pass": true
+    },
+    {
+      "name": "text-wrap-align",
+      "rmse": 23.16344929221425,
+      "maxError": 230,
+      "diffPixels": 9213,
+      "totalPixels": 166400,
+      "diffRatio": 0.05536658653846154,
+      "thresholds": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      },
+      "textStats": {
+        "hits": 54,
+        "misses": 74,
+        "uploads": 62,
+        "bytesUploaded": 6227,
+        "grows": 0,
+        "clears": 0
+      },
+      "pass": true
+    },
+    {
+      "name": "text-style-weight",
+      "rmse": 10.06633549393434,
+      "maxError": 162,
+      "diffPixels": 7275,
+      "totalPixels": 166400,
+      "diffRatio": 0.04371995192307692,
+      "thresholds": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      },
+      "textStats": {
+        "hits": 14,
+        "misses": 84,
+        "uploads": 76,
+        "bytesUploaded": 17165,
+        "grows": 0,
+        "clears": 0
+      },
+      "pass": true
+    },
+    {
+      "name": "text-style-family-probe",
+      "rmse": 13.372801782823064,
+      "maxError": 225,
+      "diffPixels": 16862,
+      "totalPixels": 352800,
+      "diffRatio": 0.047794784580498864,
+      "thresholds": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      },
+      "textStats": {
+        "hits": 15,
+        "misses": 163,
+        "uploads": 152,
+        "bytesUploaded": 33064,
+        "grows": 0,
+        "clears": 0
+      },
+      "pass": true
+    },
+    {
+      "name": "text-weight-api-probe",
+      "rmse": 22.281561055145737,
+      "maxError": 221,
+      "diffPixels": 39984,
+      "totalPixels": 406000,
+      "diffRatio": 0.09848275862068966,
+      "thresholds": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      },
+      "textStats": {
+        "hits": 59,
+        "misses": 402,
+        "uploads": 327,
+        "bytesUploaded": 80595,
+        "grows": 0,
+        "clears": 0
+      },
+      "pass": true
+    },
+    {
+      "name": "text-weight-api-probe-alt-font",
+      "rmse": 27.781264795637366,
+      "maxError": 221,
+      "diffPixels": 44533,
+      "totalPixels": 406000,
+      "diffRatio": 0.1096871921182266,
+      "thresholds": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      },
+      "textStats": {
+        "hits": 55,
+        "misses": 412,
+        "uploads": 336,
+        "bytesUploaded": 79900,
+        "grows": 0,
+        "clears": 0
+      },
+      "pass": true
+    },
+    {
+      "name": "text-lfo-perf-frame0",
+      "rmse": 21.853490385895817,
+      "maxError": 225,
+      "diffPixels": 82239,
+      "totalPixels": 921600,
+      "diffRatio": 0.08923502604166667,
+      "thresholds": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      },
+      "textStats": {
+        "hits": 59,
+        "misses": 907,
+        "uploads": 765,
+        "bytesUploaded": 295793,
+        "grows": 1,
+        "clears": 0
+      },
+      "pass": true
+    },
+    {
+      "name": "text-anchor-weight-probe",
+      "rmse": 27.360669875401474,
+      "maxError": 221,
+      "diffPixels": 71841,
+      "totalPixels": 912000,
+      "diffRatio": 0.07877302631578947,
+      "thresholds": {
+        "rmse": 50,
+        "maxError": 255,
+        "diffRatio": 0.25
+      },
+      "textStats": {
+        "hits": 260,
+        "misses": 243,
+        "uploads": 210,
+        "bytesUploaded": 82924,
+        "grows": 0,
+        "clears": 0
+      },
+      "pass": true
+    }
+  ]
+}

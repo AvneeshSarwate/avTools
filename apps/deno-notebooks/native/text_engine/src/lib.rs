@@ -241,8 +241,14 @@ impl TextEngine {
             }
 
             let mut run_x_scale = 1.0f32;
-            let run_width = (line_max_x - line_min_x).max(0.0);
-            if run_width > 0.0
+            let run_ink_width = (line_max_x - line_min_x).max(0.0);
+            let run_advance_width = run.line_w.max(0.0);
+            let run_scale_denom = if run_advance_width > 0.0 {
+                run_advance_width
+            } else {
+                run_ink_width
+            };
+            if run_scale_denom > 0.0
                 && run_start < run_end
                 && run_end <= run.text.len()
                 && run
@@ -268,7 +274,7 @@ impl TextEngine {
                         first.font_weight.0,
                         &axes_arc,
                     ) {
-                        let ratio = measured_width / run_width;
+                        let ratio = measured_width / run_scale_denom;
                         if ratio.is_finite() && ratio > 0.0 {
                             run_x_scale = ratio.clamp(0.5, 1.5);
                         }
@@ -744,25 +750,135 @@ impl TextEngine {
                 let mut point_i = 0usize;
                 let mut min_x = f32::INFINITY;
                 let mut max_x = f32::NEG_INFINITY;
+                let mut current = None::<swash::zeno::Point>;
+                let mut contour_start = None::<swash::zeno::Point>;
+                let mut include_x = |x: f32| {
+                    min_x = min_x.min(x);
+                    max_x = max_x.max(x);
+                };
+
+                let quad_x = |p0: f32, p1: f32, p2: f32, t: f32| {
+                    let omt = 1.0 - t;
+                    omt * omt * p0 + 2.0 * omt * t * p1 + t * t * p2
+                };
+                let cubic_x = |p0: f32, p1: f32, p2: f32, p3: f32, t: f32| {
+                    let omt = 1.0 - t;
+                    omt * omt * omt * p0
+                        + 3.0 * omt * omt * t * p1
+                        + 3.0 * omt * t * t * p2
+                        + t * t * t * p3
+                };
                 for verb in outline.verbs() {
-                    let consumed = match verb {
-                        Verb::MoveTo | Verb::LineTo => 1usize,
-                        Verb::QuadTo => 2usize,
-                        Verb::CurveTo => 3usize,
-                        Verb::Close => 0usize,
-                    };
-                    if consumed == 0 {
-                        continue;
+                    match verb {
+                        Verb::MoveTo => {
+                            let Some(point) = points.get(point_i).copied() else {
+                                break;
+                            };
+                            point_i += 1;
+                            include_x(point.x);
+                            current = Some(point);
+                            contour_start = Some(point);
+                        }
+                        Verb::LineTo => {
+                            let Some(end) = points.get(point_i).copied() else {
+                                break;
+                            };
+                            point_i += 1;
+                            if let Some(start) = current {
+                                include_x(start.x);
+                            }
+                            include_x(end.x);
+                            current = Some(end);
+                        }
+                        Verb::QuadTo => {
+                            let Some(ctrl) = points.get(point_i).copied() else {
+                                break;
+                            };
+                            let Some(end) = points.get(point_i + 1).copied() else {
+                                break;
+                            };
+                            point_i += 2;
+                            if let Some(start) = current {
+                                include_x(start.x);
+                                include_x(end.x);
+                                let denom = start.x - 2.0 * ctrl.x + end.x;
+                                if denom.abs() > 1e-6 {
+                                    let t = (start.x - ctrl.x) / denom;
+                                    if t.is_finite() && t > 0.0 && t < 1.0 {
+                                        include_x(quad_x(start.x, ctrl.x, end.x, t));
+                                    }
+                                }
+                            } else {
+                                include_x(ctrl.x);
+                                include_x(end.x);
+                            }
+                            current = Some(end);
+                        }
+                        Verb::CurveTo => {
+                            let Some(ctrl1) = points.get(point_i).copied() else {
+                                break;
+                            };
+                            let Some(ctrl2) = points.get(point_i + 1).copied() else {
+                                break;
+                            };
+                            let Some(end) = points.get(point_i + 2).copied() else {
+                                break;
+                            };
+                            point_i += 3;
+                            if let Some(start) = current {
+                                include_x(start.x);
+                                include_x(end.x);
+
+                                // x'(t) for cubic Bezier is quadratic: qa*t^2 + qb*t + qc = 0
+                                let a = -start.x + 3.0 * ctrl1.x - 3.0 * ctrl2.x + end.x;
+                                let b = 3.0 * start.x - 6.0 * ctrl1.x + 3.0 * ctrl2.x;
+                                let c = -3.0 * start.x + 3.0 * ctrl1.x;
+                                let qa = 3.0 * a;
+                                let qb = 2.0 * b;
+                                let qc = c;
+                                if qa.abs() <= 1e-6 {
+                                    if qb.abs() > 1e-6 {
+                                        let t = -qc / qb;
+                                        if t.is_finite() && t > 0.0 && t < 1.0 {
+                                            include_x(cubic_x(
+                                                start.x, ctrl1.x, ctrl2.x, end.x, t,
+                                            ));
+                                        }
+                                    }
+                                } else {
+                                    let disc = qb * qb - 4.0 * qa * qc;
+                                    if disc >= 0.0 {
+                                        let sqrt_disc = disc.sqrt();
+                                        let denom = 2.0 * qa;
+                                        let t0 = (-qb - sqrt_disc) / denom;
+                                        if t0.is_finite() && t0 > 0.0 && t0 < 1.0 {
+                                            include_x(cubic_x(
+                                                start.x, ctrl1.x, ctrl2.x, end.x, t0,
+                                            ));
+                                        }
+                                        let t1 = (-qb + sqrt_disc) / denom;
+                                        if t1.is_finite() && t1 > 0.0 && t1 < 1.0 {
+                                            include_x(cubic_x(
+                                                start.x, ctrl1.x, ctrl2.x, end.x, t1,
+                                            ));
+                                        }
+                                    }
+                                }
+                            } else {
+                                include_x(ctrl1.x);
+                                include_x(ctrl2.x);
+                                include_x(end.x);
+                            }
+                            current = Some(end);
+                        }
+                        Verb::Close => {
+                            if let (Some(start), Some(end)) = (current, contour_start) {
+                                include_x(start.x);
+                                include_x(end.x);
+                            }
+                            current = contour_start;
+                        }
                     }
-                    let end = point_i + consumed;
-                    let Some(slice) = points.get(point_i..end) else {
-                        break;
-                    };
-                    for point in slice {
-                        min_x = min_x.min(point.x);
-                        max_x = max_x.max(point.x);
-                    }
-                    point_i = end;
                 }
                 if !min_x.is_finite() || !max_x.is_finite() || max_x <= min_x {
                     return None;
