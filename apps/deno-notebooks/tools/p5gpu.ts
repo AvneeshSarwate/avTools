@@ -656,9 +656,6 @@ export class P5GPU {
     this._clearColor = [0, 0, 0, 0];
     this._textAtlas?.beginFrame();
     this._textAtlasGrowthDebugBudget = 32;
-    if (this._textAtlas) {
-      this._textAtlas.dynamicScratchMode = this._state.textDynamicScratch;
-    }
   }
 
   endFrame(): GPUTexture {
@@ -1007,8 +1004,6 @@ export class P5GPU {
   text(str: unknown, x: number, y: number, maxWidth?: number, maxHeight?: number): void {
     const text = this._requireTextSubsystem();
     if (!text) return;
-    text.atlas.dynamicScratchMode = this._state.textDynamicScratch;
-    const atlasSizeAtTextStart = text.atlas.size;
 
     const source = String(str ?? "");
     let tx = toNumber(x);
@@ -1026,17 +1021,6 @@ export class P5GPU {
 
     const layout = this._layoutText(source, width, height);
     const tightWidth = layout.tightWidth;
-    const atlasSizeAfterProbe = text.atlas.size;
-    if (atlasSizeAfterProbe > atlasSizeAtTextStart) {
-      this._rescaleBufferedTextUVs(atlasSizeAtTextStart / atlasSizeAfterProbe);
-      if (this._textAtlasGrowthDebug && this._textAtlasGrowthDebugBudget > 0) {
-        this._textAtlasGrowthDebugBudget -= 1;
-        console.warn(
-          `[p5gpu:text] atlas grew ${atlasSizeAtTextStart}->${atlasSizeAfterProbe} ` +
-            `during pre-draw probe textLen=${source.length} emittedVertices=${this._textVertexCount}`,
-        );
-      }
-    }
     this._textLastLayout = {
       tightWidth,
       fontWidth: layout.fontWidth,
@@ -1065,19 +1049,9 @@ export class P5GPU {
     const strokeOffset = Math.max(1, this._state.strokeWeight * 0.5);
 
     for (const glyph of layout.glyphs) {
-      const atlasSizeBefore = text.atlas.size;
+      // Atlas no longer grows mid-frame; ensureGlyph returns null if
+      // space is exhausted, deferring growth to the next beginFrame().
       const atlasGlyph = text.atlas.ensureGlyph(glyph.key, text.engine);
-      const atlasSizeAfter = text.atlas.size;
-      if (atlasSizeAfter > atlasSizeBefore) {
-        this._rescaleBufferedTextUVs(atlasSizeBefore / atlasSizeAfter);
-        if (this._textAtlasGrowthDebug && this._textAtlasGrowthDebugBudget > 0) {
-          this._textAtlasGrowthDebugBudget -= 1;
-          console.warn(
-            `[p5gpu:text] atlas grew ${atlasSizeBefore}->${atlasSizeAfter} ` +
-              `textLen=${source.length} glyphCount=${layout.glyphs.length} emittedVertices=${this._textVertexCount}`,
-          );
-        }
-      }
       if (!atlasGlyph) continue;
 
       const gx = tx + glyph.x + atlasGlyph.left;
@@ -1338,7 +1312,7 @@ export class P5GPU {
     return this._computeTextBounds(String(str ?? ""), x, y, maxWidth, maxHeight, false);
   }
 
-  textStats(): { hits: number; misses: number; uploads: number; bytesUploaded: number; grows: number; clears: number } {
+  textStats(): { hits: number; misses: number; uploads: number; bytesUploaded: number; grows: number; clears: number; evictions: number } {
     return this._textAtlas?.takeFrameStats() ?? {
       hits: 0,
       misses: 0,
@@ -1346,6 +1320,7 @@ export class P5GPU {
       bytesUploaded: 0,
       grows: 0,
       clears: 0,
+      evictions: 0,
     };
   }
 

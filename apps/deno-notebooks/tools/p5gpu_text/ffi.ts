@@ -1,7 +1,6 @@
 /// <reference lib="dom" />
 
 const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
 
 export interface TextLayoutRequest {
   text: string;
@@ -143,47 +142,63 @@ function encodeString(input: string): { bytes: Uint8Array; ptr: Deno.PointerValu
   };
 }
 
-function parseLayoutResponse(jsonText: string): TextLayoutResult {
-  type RawGlyph = { key: string; x: number; y: number };
-  type RawLayout = {
-    glyphs?: RawGlyph[];
-    tight_width?: number;
-    font_width?: number;
-    ascent?: number;
-    descent?: number;
-    font_ascent?: number;
-    font_descent?: number;
-    font_cap_height?: number;
-    first_baseline?: number;
-    total_height?: number;
-    line_count?: number;
+function parseBinaryLayout(buffer: Uint8Array, byteLength: number): TextLayoutResult {
+  const emptyResult: TextLayoutResult = {
+    glyphs: [],
+    tightWidth: 0,
+    fontWidth: 0,
+    ascent: 0,
+    descent: 0,
+    fontAscent: 0,
+    fontDescent: 0,
+    fontCapHeight: 0,
+    firstBaseline: 0,
+    totalHeight: 0,
+    lineCount: 0,
   };
 
-  let parsed: RawLayout = {};
-  try {
-    parsed = JSON.parse(jsonText) as RawLayout;
-  } catch {
-    // fall through with empty layout
-  }
+  // Header is 44 bytes minimum
+  if (byteLength < 44) return emptyResult;
 
-  const glyphs = (parsed.glyphs ?? []).map((glyph) => ({
-    key: BigInt(`0x${glyph.key}`),
-    x: Number(glyph.x ?? 0),
-    y: Number(glyph.y ?? 0),
-  }));
+  const dv = new DataView(buffer.buffer, buffer.byteOffset, byteLength);
+
+  const tightWidth = dv.getFloat32(0, true);
+  const fontWidth = dv.getFloat32(4, true);
+  const ascent = dv.getFloat32(8, true);
+  const descent = dv.getFloat32(12, true);
+  const fontAscent = dv.getFloat32(16, true);
+  const fontDescent = dv.getFloat32(20, true);
+  const fontCapHeight = dv.getFloat32(24, true);
+  const firstBaseline = dv.getFloat32(28, true);
+  const totalHeight = dv.getFloat32(32, true);
+  const lineCount = dv.getFloat32(36, true);
+  const glyphCount = dv.getUint32(40, true);
+
+  const expectedSize = 44 + glyphCount * 16;
+  if (byteLength < expectedSize) return emptyResult;
+
+  const glyphs: TextLayoutGlyph[] = new Array(glyphCount);
+  let offset = 44;
+  for (let i = 0; i < glyphCount; i++) {
+    const key = dv.getBigUint64(offset, true);
+    const x = dv.getInt32(offset + 8, true);
+    const y = dv.getInt32(offset + 12, true);
+    glyphs[i] = { key, x, y };
+    offset += 16;
+  }
 
   return {
     glyphs,
-    tightWidth: Number(parsed.tight_width ?? 0),
-    fontWidth: Number(parsed.font_width ?? 0),
-    ascent: Number(parsed.ascent ?? 0),
-    descent: Number(parsed.descent ?? 0),
-    fontAscent: Number(parsed.font_ascent ?? 0),
-    fontDescent: Number(parsed.font_descent ?? 0),
-    fontCapHeight: Number(parsed.font_cap_height ?? 0),
-    firstBaseline: Number(parsed.first_baseline ?? 0),
-    totalHeight: Number(parsed.total_height ?? 0),
-    lineCount: Number(parsed.line_count ?? 0),
+    tightWidth,
+    fontWidth,
+    ascent,
+    descent,
+    fontAscent,
+    fontDescent,
+    fontCapHeight,
+    firstBaseline,
+    totalHeight,
+    lineCount,
   };
 }
 
@@ -271,8 +286,7 @@ export class NativeTextEngine {
 
     // Common case: output fit in the pre-allocated buffer (single FFI call).
     if (needed <= this._layoutBuffer.length) {
-      const jsonText = textDecoder.decode(this._layoutBuffer.subarray(0, needed));
-      return parseLayoutResponse(jsonText);
+      return parseBinaryLayout(this._layoutBuffer, needed);
     }
 
     // Overflow: grow the buffer and make one more call.
@@ -299,8 +313,7 @@ export class NativeTextEngine {
       this._layoutBuffer.length,
     );
 
-    const jsonText = textDecoder.decode(this._layoutBuffer.subarray(0, written));
-    return parseLayoutResponse(jsonText);
+    return parseBinaryLayout(this._layoutBuffer, written);
   }
 
   rasterizeGlyph(key: bigint): RasterizedGlyph | null {

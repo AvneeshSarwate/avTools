@@ -4,7 +4,6 @@ use cosmic_text::{
     Align, Attrs, Buffer, CacheKey, CacheKeyFlags, Family, FontSystem, Metrics, Shaping, Style,
     SwashCache, SwashContent, SwashImage, Weight, Wrap,
 };
-use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -43,26 +42,10 @@ struct GlyphOutlineBoundsKey {
     axes_hash: u64,
 }
 
-#[derive(Serialize)]
 struct LayoutGlyphOut {
-    key: String,
+    key: u64,
     x: i32,
     y: i32,
-}
-
-#[derive(Serialize)]
-struct LayoutResponse {
-    glyphs: Vec<LayoutGlyphOut>,
-    tight_width: f32,
-    font_width: f32,
-    ascent: f32,
-    descent: f32,
-    font_ascent: f32,
-    font_descent: f32,
-    font_cap_height: f32,
-    first_baseline: f32,
-    total_height: f32,
-    line_count: usize,
 }
 
 pub struct TextEngine {
@@ -111,7 +94,7 @@ impl TextEngine {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn layout_to_json(
+    fn layout_to_binary(
         &mut self,
         text: &str,
         family: &str,
@@ -125,7 +108,7 @@ impl TextEngine {
         style: u32,
         axis_quantization: f32,
         axes_json: &str,
-    ) -> String {
+    ) -> Vec<u8> {
         let size = if font_size.is_finite() {
             font_size.max(1.0)
         } else {
@@ -347,7 +330,7 @@ impl TextEngine {
                 };
                 let key = hash_glyph_key(&physical.cache_key, axes_hash);
                 glyphs.push(LayoutGlyphOut {
-                    key: format!("{key:016x}"),
+                    key,
                     x: physical.x,
                     y: physical.y,
                 });
@@ -395,27 +378,38 @@ impl TextEngine {
             font_cap_height = ascent;
         }
 
-        let response = LayoutResponse {
-            glyphs,
-            tight_width,
-            font_width,
-            ascent,
-            descent,
-            font_ascent,
-            font_descent,
-            font_cap_height,
-            first_baseline,
-            total_height: if total_height > 0.0 {
-                total_height
-            } else {
-                leading
-            },
-            line_count,
+        let actual_total_height = if total_height > 0.0 {
+            total_height
+        } else {
+            leading
         };
 
-        serde_json::to_string(&response).unwrap_or_else(|_| {
-            "{\"glyphs\":[],\"tight_width\":0,\"font_width\":0,\"ascent\":0,\"descent\":0,\"first_baseline\":0,\"total_height\":0,\"line_count\":0}".to_string()
-        })
+        // Binary protocol: 44-byte header + 16 bytes per glyph
+        let glyph_count = glyphs.len() as u32;
+        let total_size = 44 + (glyph_count as usize) * 16;
+        let mut buf = Vec::with_capacity(total_size);
+
+        // Header: 10 x f32 + 1 x u32 = 44 bytes
+        buf.extend_from_slice(&tight_width.to_le_bytes());       // offset 0
+        buf.extend_from_slice(&font_width.to_le_bytes());        // offset 4
+        buf.extend_from_slice(&ascent.to_le_bytes());            // offset 8
+        buf.extend_from_slice(&descent.to_le_bytes());           // offset 12
+        buf.extend_from_slice(&font_ascent.to_le_bytes());       // offset 16
+        buf.extend_from_slice(&font_descent.to_le_bytes());      // offset 20
+        buf.extend_from_slice(&font_cap_height.to_le_bytes());   // offset 24
+        buf.extend_from_slice(&first_baseline.to_le_bytes());    // offset 28
+        buf.extend_from_slice(&actual_total_height.to_le_bytes()); // offset 32
+        buf.extend_from_slice(&(line_count as f32).to_le_bytes()); // offset 36
+        buf.extend_from_slice(&glyph_count.to_le_bytes());       // offset 40
+
+        // Per-glyph records: 16 bytes each (u64 key + i32 x + i32 y)
+        for glyph in &glyphs {
+            buf.extend_from_slice(&glyph.key.to_le_bytes());  // offset +0: u64
+            buf.extend_from_slice(&glyph.x.to_le_bytes());    // offset +8: i32
+            buf.extend_from_slice(&glyph.y.to_le_bytes());    // offset +12: i32
+        }
+
+        buf
     }
 
     fn rasterize_mask_for_key(&mut self, key: u64) -> Option<RasterizedMask> {
@@ -1165,7 +1159,7 @@ pub unsafe extern "C" fn text_engine_layout_json(
         return 0;
     };
 
-    let json = engine.layout_to_json(
+    let binary = engine.layout_to_binary(
         &text,
         &family,
         font_size,
@@ -1180,7 +1174,7 @@ pub unsafe extern "C" fn text_engine_layout_json(
         &axes_json,
     );
 
-    write_bytes(json.as_bytes(), out_ptr, out_cap)
+    write_bytes(&binary, out_ptr, out_cap)
 }
 
 #[no_mangle]

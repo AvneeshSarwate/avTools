@@ -6,8 +6,14 @@ export interface GlyphAtlasOptions {
   initialSize?: number;
   maxSize?: number;
   maxEntries?: number;
+  /**
+   * @deprecated No longer used. LRU eviction is always active.
+   * Kept for API compatibility; setting this has no effect.
+   */
   dynamicScratchMode?: boolean;
   padding?: number;
+  /** Number of frames a glyph can go unused before eviction (default 3). */
+  evictionThreshold?: number;
 }
 
 export interface GlyphAtlasEntry {
@@ -34,6 +40,7 @@ export interface AtlasFrameStats {
   bytesUploaded: number;
   grows: number;
   clears: number;
+  evictions: number;
 }
 
 export class GlyphAtlas {
@@ -47,6 +54,11 @@ export class GlyphAtlas {
   size: number;
   maxSize: number;
   maxEntries: number;
+
+  /**
+   * @deprecated No longer used. LRU eviction is always active.
+   * Kept for API compatibility; reads/writes are ignored internally.
+   */
   dynamicScratchMode: boolean;
 
   private _padding: number;
@@ -56,6 +68,8 @@ export class GlyphAtlas {
   private _rowHeight = 0;
   private _frameId = 0;
   private _clearNextFrame = false;
+  private _needsGrowNextFrame = false;
+  private _evictionThreshold: number;
 
   private _entries = new Map<bigint, GlyphAtlasEntry>();
   private _pendingTextureDestroys: Promise<void>[] = [];
@@ -66,6 +80,7 @@ export class GlyphAtlas {
     bytesUploaded: 0,
     grows: 0,
     clears: 0,
+    evictions: 0,
   };
 
   constructor(device: GPUDevice, queue: GPUQueue, options: GlyphAtlasOptions = {}) {
@@ -77,6 +92,7 @@ export class GlyphAtlas {
     this.maxEntries = Math.max(64, options.maxEntries ?? 8192);
     this.dynamicScratchMode = options.dynamicScratchMode ?? false;
     this._padding = Math.max(0, options.padding ?? 1);
+    this._evictionThreshold = Math.max(1, options.evictionThreshold ?? 3);
 
     this.texture = this._createTexture(this.size);
     this.sampler = this.device.createSampler({
@@ -97,10 +113,44 @@ export class GlyphAtlas {
       bytesUploaded: 0,
       grows: 0,
       clears: 0,
+      evictions: 0,
     };
-    if (this.dynamicScratchMode || this._clearNextFrame) {
+
+    // Phase 1: Grow texture if deferred from last frame.
+    // Safe here because no vertices have been buffered yet.
+    if (this._needsGrowNextFrame) {
+      if (this._growTexture()) {
+        // Growth succeeded; entries and UVs updated.
+      }
+      this._needsGrowNextFrame = false;
+    }
+
+    // Phase 2: Explicit clear request (e.g. from maxEntries overflow last frame).
+    if (this._clearNextFrame) {
       this._clearAtlas();
       this._clearNextFrame = false;
+      this._stats.clears += 1;
+      return; // Already cleared everything; no need for LRU eviction.
+    }
+
+    // Phase 3: LRU eviction -- remove entries unused for N frames.
+    const staleThreshold = this._frameId - this._evictionThreshold;
+    let evicted = 0;
+    for (const [key, entry] of this._entries) {
+      if (entry.lastUsedFrame < staleThreshold) {
+        this._entries.delete(key);
+        evicted++;
+      }
+    }
+    this._stats.evictions = evicted;
+
+    // If we evicted anything, the packing cursor references slots that are
+    // now logically free but physically scattered.  The simplest correct
+    // approach: reset the atlas so the freed space can be reclaimed.
+    // Surviving glyphs will be re-rasterized on demand this frame (cache miss).
+    // In steady state (no evictions), this branch is never taken -- zero cost.
+    if (evicted > 0) {
+      this._clearAtlas();
       this._stats.clears += 1;
     }
   }
@@ -135,21 +185,20 @@ export class GlyphAtlas {
       return null;
     }
 
-    if (!this._ensureGlyphFits(raster)) {
+    // Check if the glyph is too large for the current texture.
+    // Instead of growing mid-frame (which would invalidate already-buffered
+    // vertex UVs), defer the growth to next beginFrame() and skip this glyph.
+    if (!this._glyphFitsInCurrentSize(raster)) {
+      this._needsGrowNextFrame = true;
       return null;
     }
 
-    let slot = this._allocate(raster.width, raster.height);
-    let attempts = 0;
-    while (!slot) {
-      attempts += 1;
-      if (attempts > 4) return null;
-      if (!this._growTexture()) {
-        this._clearNextFrame = true;
-        return null;
-      }
-
-      slot = this._allocate(raster.width, raster.height);
+    // Try to allocate a slot in the current texture.
+    const slot = this._allocate(raster.width, raster.height);
+    if (!slot) {
+      // No space left in the current texture.  Defer growth to next frame.
+      this._needsGrowNextFrame = true;
+      return null;
     }
 
     this._upload(slot.x, slot.y, raster);
@@ -202,13 +251,15 @@ export class GlyphAtlas {
     });
   }
 
-  private _ensureGlyphFits(raster: RasterizedGlyph): boolean {
-    while (raster.width + this._padding > this.size || raster.height + this._padding > this.size) {
-      if (!this._growTexture()) {
-        return false;
-      }
-    }
-    return true;
+  /**
+   * Check whether the raster fits within the current texture dimensions.
+   * Does NOT attempt to grow -- caller must handle the failure.
+   */
+  private _glyphFitsInCurrentSize(raster: RasterizedGlyph): boolean {
+    return (
+      raster.width + this._padding <= this.size &&
+      raster.height + this._padding <= this.size
+    );
   }
 
   private _growTexture(): boolean {
