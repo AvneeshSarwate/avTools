@@ -472,19 +472,21 @@ impl TextEngine {
             CacheKeyFlags::empty()
         };
 
-        // Get font metrics (ascent, descent, cap_height)
-        let (font_ascent, font_descent, font_cap_height) =
-            self.measure_font_box_metrics(font_id, size, weight, &axes_arc, axes_hash)
+        // Stable baseline: use default-weight metrics so that line_y does not
+        // shift when the caller animates weight (avoids 1px vertical jitter).
+        let (baseline_ascent, baseline_descent, _) =
+            self.measure_font_box_metrics(font_id, size, 400, &[], 0)
                 .unwrap_or((0.0, 0.0, 0.0));
-
-        // The baseline position within each line: place baseline so that
-        // ascent sits at the top. cosmic-text uses: line_top + (leading - size) / 2 + ascent_from_metrics
-        // We replicate: ascent portion of the line_height
-        let ascent_ratio = if (font_ascent + font_descent) > 0.0 {
-            font_ascent / (font_ascent + font_descent)
+        let ascent_ratio = if (baseline_ascent + baseline_descent) > 0.0 {
+            baseline_ascent / (baseline_ascent + baseline_descent)
         } else {
             0.8
         };
+
+        // Get font metrics at the ACTUAL weight for output header values
+        let (font_ascent, font_descent, font_cap_height) =
+            self.measure_font_box_metrics(font_id, size, weight, &axes_arc, axes_hash)
+                .unwrap_or((0.0, 0.0, 0.0));
 
         // Wrap mode: 0=word, 1=glyph, 2=none
         let do_wrap = wrap_mode != 2;

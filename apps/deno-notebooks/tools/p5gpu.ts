@@ -1055,7 +1055,7 @@ export class P5GPU {
       if (!atlasGlyph) continue;
 
       const gx = tx + glyph.x + atlasGlyph.left;
-      const gy = layoutTopY + glyph.y - atlasGlyph.top;
+      const gy = Math.round(layoutTopY + glyph.y - atlasGlyph.top);
 
       if (drawStroke) {
         this._emitTextStroke(gx, gy, atlasGlyph, strokeColor, strokeOffset, blend);
