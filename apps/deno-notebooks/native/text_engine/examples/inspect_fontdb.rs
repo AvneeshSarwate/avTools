@@ -55,13 +55,7 @@ fn main() {
 
         println!(
             "id={:?} index={} family='{}' ps='{}' style={:?} weight={} var_axes={:?}",
-            face.id,
-            face.index,
-            family,
-            face.post_script_name,
-            face.style,
-            face.weight.0,
-            var_axes,
+            face.id, face.index, family, face.post_script_name, face.style, face.weight.0, var_axes,
         );
     }
 
@@ -76,7 +70,12 @@ fn main() {
             let picked = db.query(&q);
             let picked_s = picked
                 .and_then(|id| db.face(id))
-                .map(|f| format!("id={:?} idx={} ps={} w={}", f.id, f.index, f.post_script_name, f.weight.0))
+                .map(|f| {
+                    format!(
+                        "id={:?} idx={} ps={} w={}",
+                        f.id, f.index, f.post_script_name, f.weight.0
+                    )
+                })
                 .unwrap_or_else(|| "none".to_string());
             println!("query family='{fam}' weight={w} -> {picked_s}");
         }

@@ -1025,12 +1025,7 @@ export class P5GPU {
     }
 
     const layout = this._layoutText(source, width, height);
-    const needsTightProbe = width === null &&
-      height === null &&
-      this._state.textAlignH !== "left";
-    const tightWidth = needsTightProbe
-      ? this._measureTextBlockTightWidth(source)
-      : layout.tightWidth;
+    const tightWidth = layout.tightWidth;
     const atlasSizeAfterProbe = text.atlas.size;
     if (atlasSizeAfterProbe > atlasSizeAtTextStart) {
       this._rescaleBufferedTextUVs(atlasSizeAtTextStart / atlasSizeAfterProbe);
@@ -1101,7 +1096,7 @@ export class P5GPU {
     if (!this._requireTextSubsystem()) return 0;
     const source = String(text ?? "");
     const layout = this._layoutText(source, null, null);
-    const tightWidth = this._measureTextBlockTightWidth(source, 128);
+    const tightWidth = layout.tightWidth;
     this._textLastLayout = {
       tightWidth,
       fontWidth: layout.fontWidth,
@@ -2017,9 +2012,7 @@ export class P5GPU {
     }
 
     const layout = this._layoutText(source, width, height);
-    const measuredTight = (width === null && height === null)
-      ? this._measureTextBlockTightWidth(source)
-      : layout.tightWidth;
+    const measuredTight = layout.tightWidth;
     const measureW = tight ? measuredTight : layout.fontWidth;
 
     if (width === null) {

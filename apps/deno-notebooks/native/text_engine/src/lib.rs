@@ -1,16 +1,16 @@
 use cosmic_text::fontdb;
+use cosmic_text::harfrust;
 use cosmic_text::{
     Align, Attrs, Buffer, CacheKey, CacheKeyFlags, Family, FontSystem, Metrics, Shaping, Style,
     SwashCache, SwashContent, SwashImage, Weight, Wrap,
 };
-use cosmic_text::harfrust;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use swash::scale::{Render, Source, StrikeWith};
-use swash::zeno::{Angle, Format, Transform, Vector};
+use swash::zeno::{Angle, Format, Transform, Vector, Verb};
 
 #[derive(Clone, Debug)]
 struct AxisSetting {
@@ -32,6 +32,15 @@ struct RasterizedMask {
     top: i32,
     content_type: u32,
     data: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+struct GlyphOutlineBoundsKey {
+    font_id: fontdb::ID,
+    glyph_id: u16,
+    font_size_bits: u32,
+    font_weight: u16,
+    axes_hash: u64,
 }
 
 #[derive(Serialize)]
@@ -161,8 +170,13 @@ impl TextEngine {
             .weight(Weight(weight.clamp(1, 1000)))
             .style(style_from_code(style));
 
-        self.buffer
-            .set_text(&mut self.font_system, text, &attrs, Shaping::Advanced, align);
+        self.buffer.set_text(
+            &mut self.font_system,
+            text,
+            &attrs,
+            Shaping::Advanced,
+            align,
+        );
         self.buffer.shape_until_scroll(&mut self.font_system, true);
 
         let axes = parse_axes(axes_json, axis_quantization);
@@ -184,6 +198,8 @@ impl TextEngine {
         let mut font_descent = 0.0f32;
         let mut font_cap_height = 0.0f32;
         let mut have_font_metrics = false;
+        let mut outline_scale_context = swash::scale::ScaleContext::new();
+        let mut outline_bounds_cache = HashMap::<GlyphOutlineBoundsKey, Option<(f32, f32)>>::new();
 
         for run in self.buffer.layout_runs() {
             line_count += 1;
@@ -201,8 +217,7 @@ impl TextEngine {
                         first.font_size,
                         first.font_weight.0,
                         &axes_arc,
-                    )
-                    {
+                    ) {
                         font_ascent = fa;
                         font_descent = fd;
                         font_cap_height = fcap;
@@ -266,6 +281,8 @@ impl TextEngine {
 
             line_min_x = f32::INFINITY;
             line_max_x = f32::NEG_INFINITY;
+            let mut line_ink_min_x = f32::INFINITY;
+            let mut line_ink_max_x = f32::NEG_INFINITY;
 
             for glyph in run.glyphs {
                 let scaled_x = if (run_x_scale - 1.0).abs() > 0.001 {
@@ -280,6 +297,33 @@ impl TextEngine {
                 };
                 line_min_x = line_min_x.min(scaled_x);
                 line_max_x = line_max_x.max(scaled_x + scaled_w);
+
+                let outline_key = GlyphOutlineBoundsKey {
+                    font_id: glyph.font_id,
+                    glyph_id: glyph.glyph_id,
+                    font_size_bits: glyph.font_size.to_bits(),
+                    font_weight: glyph.font_weight.0,
+                    axes_hash,
+                };
+                let outline_bounds = if let Some(cached) = outline_bounds_cache.get(&outline_key) {
+                    *cached
+                } else {
+                    let measured = self.measure_glyph_outline_x_bounds(
+                        &mut outline_scale_context,
+                        glyph.font_id,
+                        glyph.glyph_id,
+                        glyph.font_size,
+                        glyph.font_weight.0,
+                        axes_arc.as_slice(),
+                    );
+                    outline_bounds_cache.insert(outline_key, measured);
+                    measured
+                };
+                if let Some((outline_min_x, outline_max_x)) = outline_bounds {
+                    let x_offset = glyph.font_size * glyph.x_offset;
+                    line_ink_min_x = line_ink_min_x.min(scaled_x + x_offset + outline_min_x);
+                    line_ink_max_x = line_ink_max_x.max(scaled_x + x_offset + outline_max_x);
+                }
 
                 let physical = if (run_x_scale - 1.0).abs() > 0.001 {
                     physical_with_x(glyph, run.line_y, scaled_x)
@@ -301,7 +345,9 @@ impl TextEngine {
                 ));
             }
 
-            if line_min_x.is_finite() && line_max_x.is_finite() {
+            if line_ink_min_x.is_finite() && line_ink_max_x.is_finite() {
+                tight_width = tight_width.max((line_ink_max_x - line_ink_min_x).max(0.0));
+            } else if line_min_x.is_finite() && line_max_x.is_finite() {
                 tight_width = tight_width.max((line_max_x - line_min_x).max(0.0));
             }
         }
@@ -340,7 +386,11 @@ impl TextEngine {
             font_descent,
             font_cap_height,
             first_baseline,
-            total_height: if total_height > 0.0 { total_height } else { leading },
+            total_height: if total_height > 0.0 {
+                total_height
+            } else {
+                leading
+            },
             line_count,
         };
 
@@ -512,7 +562,9 @@ impl TextEngine {
                 }
 
                 if !has_opsz {
-                    if let Some(swash_ref) = swash::FontRef::from_index(font_data, face_index as usize) {
+                    if let Some(swash_ref) =
+                        swash::FontRef::from_index(font_data, face_index as usize)
+                    {
                         let opsz_tag = swash::Tag::from_be_bytes(*b"opsz");
                         if let Some(axis) = swash_ref.variations().find_by_tag(opsz_tag) {
                             settings.push(harfrust::Variation {
@@ -576,9 +628,7 @@ impl TextEngine {
                     let Some(var_axis) = variations.find_by_tag(tag) else {
                         continue;
                     };
-                    let value = axis
-                        .value
-                        .clamp(var_axis.min_value(), var_axis.max_value());
+                    let value = axis.value.clamp(var_axis.min_value(), var_axis.max_value());
                     settings.push((tag, value).into());
                     if axis.tag == *b"wght" {
                         has_wght = true;
@@ -590,8 +640,8 @@ impl TextEngine {
                 if !has_wght {
                     let wght_tag = swash::Tag::from_be_bytes(*b"wght");
                     if let Some(var_axis) = variations.find_by_tag(wght_tag) {
-                        let value = f32::from(weight)
-                            .clamp(var_axis.min_value(), var_axis.max_value());
+                        let value =
+                            f32::from(weight).clamp(var_axis.min_value(), var_axis.max_value());
                         settings.push((wght_tag, value).into());
                     }
                 }
@@ -604,8 +654,9 @@ impl TextEngine {
                     }
                 }
 
-                let coords: Vec<swash::NormalizedCoord> =
-                    variations.normalized_coords(settings.iter().copied()).collect();
+                let coords: Vec<swash::NormalizedCoord> = variations
+                    .normalized_coords(settings.iter().copied())
+                    .collect();
                 let metrics = font_ref.metrics(&coords);
 
                 let units_per_em = f32::from(metrics.units_per_em.max(1));
@@ -628,9 +679,105 @@ impl TextEngine {
             })
             .flatten()
     }
+
+    fn measure_glyph_outline_x_bounds(
+        &self,
+        scale_context: &mut swash::scale::ScaleContext,
+        font_id: fontdb::ID,
+        glyph_id: u16,
+        font_size: f32,
+        weight: u16,
+        axes: &[AxisSetting],
+    ) -> Option<(f32, f32)> {
+        if !font_size.is_finite() || font_size <= 0.0 {
+            return None;
+        }
+
+        self.font_system
+            .db()
+            .with_face_data(font_id, |font_data, face_index| {
+                let font_ref = swash::FontRef::from_index(font_data, face_index as usize)?;
+                let variations = font_ref.variations();
+                let mut settings = Vec::<swash::Setting<f32>>::new();
+                let mut has_wght = false;
+                let mut has_opsz = false;
+
+                for axis in axes {
+                    let tag = swash::Tag::from_be_bytes(axis.tag);
+                    let Some(var_axis) = variations.find_by_tag(tag) else {
+                        continue;
+                    };
+                    let value = axis.value.clamp(var_axis.min_value(), var_axis.max_value());
+                    settings.push((tag, value).into());
+                    if axis.tag == *b"wght" {
+                        has_wght = true;
+                    } else if axis.tag == *b"opsz" {
+                        has_opsz = true;
+                    }
+                }
+
+                if !has_wght {
+                    let wght_tag = swash::Tag::from_be_bytes(*b"wght");
+                    if let Some(var_axis) = variations.find_by_tag(wght_tag) {
+                        let value =
+                            f32::from(weight).clamp(var_axis.min_value(), var_axis.max_value());
+                        settings.push((wght_tag, value).into());
+                    }
+                }
+
+                if !has_opsz {
+                    let opsz_tag = swash::Tag::from_be_bytes(*b"opsz");
+                    if let Some(var_axis) = variations.find_by_tag(opsz_tag) {
+                        let value = font_size.clamp(var_axis.min_value(), var_axis.max_value());
+                        settings.push((opsz_tag, value).into());
+                    }
+                }
+
+                let mut scaler = scale_context.builder(font_ref).size(font_size).hint(false);
+                if !settings.is_empty() {
+                    scaler = scaler.variations(settings.into_iter());
+                }
+                let mut scaler = scaler.build();
+
+                let outline = scaler.scale_outline(glyph_id)?;
+                let points = outline.points();
+                let mut point_i = 0usize;
+                let mut min_x = f32::INFINITY;
+                let mut max_x = f32::NEG_INFINITY;
+                for verb in outline.verbs() {
+                    let consumed = match verb {
+                        Verb::MoveTo | Verb::LineTo => 1usize,
+                        Verb::QuadTo => 2usize,
+                        Verb::CurveTo => 3usize,
+                        Verb::Close => 0usize,
+                    };
+                    if consumed == 0 {
+                        continue;
+                    }
+                    let end = point_i + consumed;
+                    let Some(slice) = points.get(point_i..end) else {
+                        break;
+                    };
+                    for point in slice {
+                        min_x = min_x.min(point.x);
+                        max_x = max_x.max(point.x);
+                    }
+                    point_i = end;
+                }
+                if !min_x.is_finite() || !max_x.is_finite() || max_x <= min_x {
+                    return None;
+                }
+                Some((min_x, max_x))
+            })
+            .flatten()
+    }
 }
 
-fn physical_with_x(glyph: &cosmic_text::LayoutGlyph, line_y: f32, x: f32) -> cosmic_text::PhysicalGlyph {
+fn physical_with_x(
+    glyph: &cosmic_text::LayoutGlyph,
+    line_y: f32,
+    x: f32,
+) -> cosmic_text::PhysicalGlyph {
     let x_offset = glyph.font_size * glyph.x_offset;
     let y_offset = glyph.font_size * glyph.y_offset;
 
@@ -827,7 +974,11 @@ pub unsafe extern "C" fn text_engine_load_font_file(
         return 0;
     };
 
-    if engine.load_font_file(&path) { 1 } else { 0 }
+    if engine.load_font_file(&path) {
+        1
+    } else {
+        0
+    }
 }
 
 #[no_mangle]
