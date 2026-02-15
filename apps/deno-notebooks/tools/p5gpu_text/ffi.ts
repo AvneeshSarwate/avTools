@@ -190,6 +190,7 @@ function parseLayoutResponse(jsonText: string): TextLayoutResult {
 export class NativeTextEngine {
   private readonly _lib: TextEngineLibrary;
   private _enginePtr: Deno.PointerValue;
+  private _layoutBuffer: Uint8Array = new Uint8Array(65536);
 
   constructor() {
     this._lib = getLibrary();
@@ -221,26 +222,30 @@ export class NativeTextEngine {
   }
 
   layoutText(req: TextLayoutRequest): TextLayoutResult {
-    if (!this._enginePtr) {
-      return {
-        glyphs: [],
-        tightWidth: 0,
-        fontWidth: 0,
-        ascent: 0,
-        descent: 0,
-        fontAscent: 0,
-        fontDescent: 0,
-        fontCapHeight: 0,
-        firstBaseline: 0,
-        totalHeight: 0,
-        lineCount: 0,
-      };
-    }
+    const emptyResult: TextLayoutResult = {
+      glyphs: [],
+      tightWidth: 0,
+      fontWidth: 0,
+      ascent: 0,
+      descent: 0,
+      fontAscent: 0,
+      fontDescent: 0,
+      fontCapHeight: 0,
+      firstBaseline: 0,
+      totalHeight: 0,
+      lineCount: 0,
+    };
+    if (!this._enginePtr) return emptyResult;
 
     const text = encodeString(req.text);
     const family = encodeString(req.family);
     const axesJson = encodeString(JSON.stringify(req.axes));
+    const weight = Math.max(1, Math.min(1000, Math.round(req.weight)));
+    const width = req.width ?? -1;
+    const height = req.height ?? -1;
 
+    // First call: pass the pre-allocated buffer directly.
+    const outPtr = Deno.UnsafePointer.of(this._layoutBuffer);
     const needed = this._lib.symbols.text_engine_layout_json(
       this._enginePtr,
       text.ptr,
@@ -249,37 +254,30 @@ export class NativeTextEngine {
       family.len,
       req.fontSize,
       req.lineHeight,
-      req.width ?? -1,
-      req.height ?? -1,
+      width,
+      height,
       req.alignH,
       req.wrapMode,
-      Math.max(1, Math.min(1000, Math.round(req.weight))),
+      weight,
       req.style,
       req.axisQuantization,
       axesJson.ptr,
       axesJson.len,
-      null,
-      0,
+      outPtr,
+      this._layoutBuffer.length,
     );
 
-    if (needed === 0) {
-      return {
-        glyphs: [],
-        tightWidth: 0,
-        fontWidth: 0,
-        ascent: 0,
-        descent: 0,
-        fontAscent: 0,
-        fontDescent: 0,
-        fontCapHeight: 0,
-        firstBaseline: 0,
-        totalHeight: 0,
-        lineCount: 0,
-      };
+    if (needed === 0) return emptyResult;
+
+    // Common case: output fit in the pre-allocated buffer (single FFI call).
+    if (needed <= this._layoutBuffer.length) {
+      const jsonText = textDecoder.decode(this._layoutBuffer.subarray(0, needed));
+      return parseLayoutResponse(jsonText);
     }
 
-    const out = new Uint8Array(needed);
-    const outPtr = Deno.UnsafePointer.of(out);
+    // Overflow: grow the buffer and make one more call.
+    this._layoutBuffer = new Uint8Array(needed);
+    const grownPtr = Deno.UnsafePointer.of(this._layoutBuffer);
     const written = this._lib.symbols.text_engine_layout_json(
       this._enginePtr,
       text.ptr,
@@ -288,20 +286,20 @@ export class NativeTextEngine {
       family.len,
       req.fontSize,
       req.lineHeight,
-      req.width ?? -1,
-      req.height ?? -1,
+      width,
+      height,
       req.alignH,
       req.wrapMode,
-      Math.max(1, Math.min(1000, Math.round(req.weight))),
+      weight,
       req.style,
       req.axisQuantization,
       axesJson.ptr,
       axesJson.len,
-      outPtr,
-      out.length,
+      grownPtr,
+      this._layoutBuffer.length,
     );
 
-    const jsonText = textDecoder.decode(out.subarray(0, written));
+    const jsonText = textDecoder.decode(this._layoutBuffer.subarray(0, written));
     return parseLayoutResponse(jsonText);
   }
 

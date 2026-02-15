@@ -70,6 +70,8 @@ pub struct TextEngine {
     buffer: Buffer,
     swash_cache: SwashCache,
     scale_context: swash::scale::ScaleContext,
+    outline_scale_context: swash::scale::ScaleContext,
+    outline_bounds_cache: HashMap<GlyphOutlineBoundsKey, Option<(f32, f32)>>,
     glyph_records: HashMap<u64, GlyphRasterRecord>,
     axis_image_cache: HashMap<u64, RasterizedMask>,
 }
@@ -89,6 +91,8 @@ impl TextEngine {
             buffer,
             swash_cache: SwashCache::new(),
             scale_context: swash::scale::ScaleContext::new(),
+            outline_scale_context: swash::scale::ScaleContext::new(),
+            outline_bounds_cache: HashMap::new(),
             glyph_records: HashMap::new(),
             axis_image_cache: HashMap::new(),
         }
@@ -198,8 +202,13 @@ impl TextEngine {
         let mut font_descent = 0.0f32;
         let mut font_cap_height = 0.0f32;
         let mut have_font_metrics = false;
-        let mut outline_scale_context = swash::scale::ScaleContext::new();
-        let mut outline_bounds_cache = HashMap::<GlyphOutlineBoundsKey, Option<(f32, f32)>>::new();
+        // Take the outline scale context and bounds cache out of self to avoid
+        // borrow conflicts with self.measure_glyph_outline_x_bounds().
+        let mut outline_scale_context = std::mem::replace(
+            &mut self.outline_scale_context,
+            swash::scale::ScaleContext::new(),
+        );
+        let mut outline_bounds_cache = std::mem::take(&mut self.outline_bounds_cache);
 
         for run in self.buffer.layout_runs() {
             line_count += 1;
@@ -357,6 +366,10 @@ impl TextEngine {
                 tight_width = tight_width.max((line_max_x - line_min_x).max(0.0));
             }
         }
+
+        // Put the outline scale context and bounds cache back into self.
+        self.outline_scale_context = outline_scale_context;
+        self.outline_bounds_cache = outline_bounds_cache;
 
         self.glyph_records.clear();
         for (key, record) in pending_records {
