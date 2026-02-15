@@ -7,7 +7,9 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-cosmic-text = { version = "0.17.1", features = ["swash", "std", "fontconfig"] }
+bitflags = "2"
+fontdb = { version = "0.23", default-features = false, features = ["memmap", "std"] }
+harfrust = { version = "0.5.0", default-features = false, features = ["std"] }
 serde_json = "1"
 swash = { version = "0.2.6", features = ["render", "scale", "std"] }
 

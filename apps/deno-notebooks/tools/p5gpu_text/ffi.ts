@@ -206,6 +206,8 @@ export class NativeTextEngine {
   private readonly _lib: TextEngineLibrary;
   private _enginePtr: Deno.PointerValue;
   private _layoutBuffer: Uint8Array = new Uint8Array(65536);
+  private _layoutCache = new Map<string, TextLayoutResult>();
+  private static readonly _LAYOUT_CACHE_MAX = 16384;
 
   constructor() {
     this._lib = getLibrary();
@@ -252,12 +254,19 @@ export class NativeTextEngine {
     };
     if (!this._enginePtr) return emptyResult;
 
-    const text = encodeString(req.text);
-    const family = encodeString(req.family);
-    const axesJson = encodeString(JSON.stringify(req.axes));
+    // Build cache key from all params that affect layout output
     const weight = Math.max(1, Math.min(1000, Math.round(req.weight)));
     const width = req.width ?? -1;
     const height = req.height ?? -1;
+    const axesKey = Object.keys(req.axes).length === 0 ? "" : JSON.stringify(req.axes);
+    const cacheKey = `${req.text}\0${req.family}\0${req.fontSize}\0${req.lineHeight}\0${width}\0${height}\0${req.alignH}\0${req.wrapMode}\0${weight}\0${req.style}\0${req.axisQuantization}\0${axesKey}`;
+
+    const cached = this._layoutCache.get(cacheKey);
+    if (cached) return cached;
+
+    const text = encodeString(req.text);
+    const family = encodeString(req.family);
+    const axesJson = encodeString(JSON.stringify(req.axes));
 
     // First call: pass the pre-allocated buffer directly.
     const outPtr = Deno.UnsafePointer.of(this._layoutBuffer);
@@ -284,36 +293,48 @@ export class NativeTextEngine {
 
     if (needed === 0) return emptyResult;
 
+    let result: TextLayoutResult;
+
     // Common case: output fit in the pre-allocated buffer (single FFI call).
     if (needed <= this._layoutBuffer.length) {
-      return parseBinaryLayout(this._layoutBuffer, needed);
+      result = parseBinaryLayout(this._layoutBuffer, needed);
+    } else {
+      // Overflow: grow the buffer and make one more call.
+      this._layoutBuffer = new Uint8Array(needed);
+      const grownPtr = Deno.UnsafePointer.of(this._layoutBuffer);
+      const written = this._lib.symbols.text_engine_layout_json(
+        this._enginePtr,
+        text.ptr,
+        text.len,
+        family.ptr,
+        family.len,
+        req.fontSize,
+        req.lineHeight,
+        width,
+        height,
+        req.alignH,
+        req.wrapMode,
+        weight,
+        req.style,
+        req.axisQuantization,
+        axesJson.ptr,
+        axesJson.len,
+        grownPtr,
+        this._layoutBuffer.length,
+      );
+
+      result = parseBinaryLayout(this._layoutBuffer, written);
     }
 
-    // Overflow: grow the buffer and make one more call.
-    this._layoutBuffer = new Uint8Array(needed);
-    const grownPtr = Deno.UnsafePointer.of(this._layoutBuffer);
-    const written = this._lib.symbols.text_engine_layout_json(
-      this._enginePtr,
-      text.ptr,
-      text.len,
-      family.ptr,
-      family.len,
-      req.fontSize,
-      req.lineHeight,
-      width,
-      height,
-      req.alignH,
-      req.wrapMode,
-      weight,
-      req.style,
-      req.axisQuantization,
-      axesJson.ptr,
-      axesJson.len,
-      grownPtr,
-      this._layoutBuffer.length,
-    );
+    // Cache the result (don't cache empty/error results)
+    if (result.glyphs.length > 0 || result.lineCount > 0) {
+      if (this._layoutCache.size >= NativeTextEngine._LAYOUT_CACHE_MAX) {
+        this._layoutCache.clear();
+      }
+      this._layoutCache.set(cacheKey, result);
+    }
 
-    return parseBinaryLayout(this._layoutBuffer, written);
+    return result;
   }
 
   rasterizeGlyph(key: bigint): RasterizedGlyph | null {
