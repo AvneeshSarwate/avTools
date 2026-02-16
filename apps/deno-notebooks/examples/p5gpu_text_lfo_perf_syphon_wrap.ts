@@ -22,9 +22,6 @@ const TEXT_SIZE = 40;
 const FONT_FAMILY = "Inter Variable";
 const MAX_FRAMES = Number(Deno.env.get("P5_LFO_MAX_FRAMES") ?? 60000);
 const SERVER_NAME = "P5GPU_LFO_Perf";
-const WEIGHT_STEPS = 32;
-const WEIGHT_MIN = 300;
-const WEIGHT_MAX = 900;
 
 // ─── Character grid (same LOREM as p5_text_lfo_perf.ts) ─────────────────
 
@@ -32,17 +29,6 @@ const LOREM = `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi se
 
 const CHARS = LOREM.split("");
 const GRID_ROWS = Math.ceil(CHARS.length / GRID_COLS);
-
-// ─── Weight quantization ─────────────────────────────────────────────────
-// Fewer unique weights → better glyph atlas cache hits.
-// Mild power curve (exp > 1) gives more resolution at lighter weights
-// where perceptual differences are more noticeable.
-
-function quantizeWeight(lfo: number): number {
-  const curved = Math.pow(lfo, 1.3);
-  const step = Math.round(curved * (WEIGHT_STEPS - 1));
-  return WEIGHT_MIN + (step / (WEIGHT_STEPS - 1)) * (WEIGHT_MAX - WEIGHT_MIN);
-}
 
 // Cell sizing: use the same heuristics as the Canvas2D benchmark
 const cellW = TEXT_SIZE * 0.75;
@@ -130,7 +116,7 @@ for (let frame = 0; frame < MAX_FRAMES && running; frame++) {
     const y = startY + row * cellH;
 
     const lfo = 0.5 + 0.5 * Math.sin(t * -3.2 + i * 0.17);
-    const weight = quantizeWeight(lfo);
+    const weight = Math.round(300 + lfo * 600);
     p5.textWeight(weight);
 
     const c = Math.round(170 + lfo * 70);
