@@ -131,7 +131,7 @@ function mod2(n: number, m: number) {
 
 // ─── Curve stress test config ────────────────────────────────────────────
 const CURVE_COUNT = 100;
-const CURVE_POINTS = 12; // points per curve (tune this to benchmark)
+const CURVE_POINTS = 48; // points per curve (tune this to benchmark)
 
 function drawAnimatedScene(api: P5GPU, tSec: number) {
   const w = api.width;

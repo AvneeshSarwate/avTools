@@ -148,3 +148,60 @@ This allows all curve types to share the same Wang's formula and cubic bezier sa
 - `_sampleCubicBezier` and `_sampleQuadraticBezier` are reused unchanged
 - Draw order, alpha blending, and p5.js API semantics are fully preserved
 - The `detail` multiplier defaults to 1.0, so no behavior change unless explicitly set by user
+
+---
+
+## Session 3 — RPi-Targeted Optimizations & Staging Buffer
+
+**Problem**: P5GPU needs to run on Raspberry Pi and other constrained ARM GPUs where tessellation overhead and per-frame allocations are the primary bottleneck. The existing code allocates a new `Float32Array` from a `number[]` array every frame, over-tessellates geometry for small screens, and issues redundant WebGPU state calls in the batch loop.
+
+### Optimization 7: `optimizedMode` flag for reduced tessellation
+**File**: `tools/p5gpu.ts`
+**What**: Added `optimizedMode: boolean` as a public property on P5GPU (not part of DrawState push/pop), configurable via `P5GPUOptions`. When `true`, four tessellation paths use coarser subdivision:
+
+| Method | Normal | Optimized |
+|---|---|---|
+| `_buildEllipsePoints` (circle/ellipse segments) | `max(12, ceil(len/4))` | `max(8, ceil(len/8))` |
+| `_emitRoundCap` (stroke cap fan) | `max(8, ceil(pi*r/3))` | `max(4, ceil(pi*r/6))` |
+| `_buildRoundedRectPoints` corner `segFor` | `max(3, ceil(pi*0.5*r/4))` | `max(2, ceil(pi*0.5*r/8))` |
+| `_emitRoundJoin` | Already at `max(2, ...)` from Session 1 | No change needed |
+
+**Why**: On RPi at 960x640, circles are typically small enough that 8 segments are visually sufficient. Halving the divisor and lowering minimums cuts vertex count per shape by roughly 30-50% with no perceptible quality loss at target resolution.
+
+### Optimization 8: Pre-allocated Float32Array staging buffer
+**File**: `tools/p5gpu.ts`
+**What**: Replaced `private _geomVertices: number[] = []` with a pre-allocated `Float32Array` staging buffer (`_geomStagingBuffer`) and a cursor (`_geomStagingCursor`):
+- Initial size: 4096 floats (~24KB, enough for ~680 vertices)
+- `_ensureGeomStagingCapacity(floatsNeeded)` doubles the buffer when needed
+- `_pushVertex` and `_pushTriangleVertices` write directly into the typed array at the cursor position using indexed writes
+- `beginFrame()` resets the cursor to 0 (no allocation)
+- `endFrame()` passes a view of the staging buffer directly to `writeBuffer()` (no `new Float32Array(array)` copy)
+
+**Why**: The old pattern allocated a fresh `Float32Array` from the `number[]` array every frame via `new Float32Array(this._geomVertices)`. This is an O(n) copy that also triggers GC pressure from the temporary. The staging buffer is reused across frames with zero allocation in the steady state. Additionally, `Array.push()` for typed data forces boxing/unboxing of each float; direct indexed writes to `Float32Array` avoid this overhead entirely.
+
+### Optimization 9: Skip redundant pipeline/vertex-buffer binding in endFrame
+**File**: `tools/p5gpu.ts`, `endFrame()` batch loop
+**What**: Added tracking variables (`lastPipeline`, `lastVB`, `lastTextBG`) to skip redundant `setPipeline()`, `setVertexBuffer()`, and `setBindGroup()` calls when consecutive batches use the same pipeline and buffers.
+**Why**: In scenes with many same-type draw calls (common: all geometry batches with the same blend mode), the pipeline and vertex buffer are identical across batches. WebGPU drivers must validate these calls even when redundant. Skipping them reduces driver overhead, especially on mobile/embedded GPUs with thinner driver stacks.
+
+### RPi test script: `p5_webgpu_pi_optimized.ts`
+**File**: `libraryIntegrationTetsts/p5_webgpu_pi_optimized.ts`
+**What**: Transformed from syphon-based test to plain windowed version:
+- Replaced `createSyphonGpuWindow` with `createGpuWindow` + `createBlitPipeline` + `blit`
+- Removed all Syphon imports, `getSyncMode`, `getFlipY`, `configureSurface`, `SERVER_NAME`, `maybeSyncWait`, `syphon.publishFrame()`
+- Set `sampleCount: 1` (disable MSAA)
+- Set `optimizedMode: true`
+- Kept the curve + circle stress test scene, timing, and FPS logging
+- Render loop: pollEvents, draw scene, blit to window surface, present
+
+### Expected Impact
+- **Staging buffer**: Zero per-frame allocation for geometry vertex data. Eliminates the `new Float32Array(N)` copy each frame, which for a 120-circle + 100-curve scene is typically 50-100KB.
+- **Optimized tessellation**: ~30-50% fewer vertices for circles and rounded shapes, directly reducing both CPU vertex generation time and GPU vertex processing.
+- **Redundant binding skip**: Reduces WebGPU command encoder overhead, most impactful when many consecutive batches share the same pipeline (common in geometry-only scenes).
+- **No Syphon overhead**: Eliminates Syphon server creation, frame publishing, and sync wait latency.
+
+### Semantic Preservation
+- `optimizedMode` defaults to `false` -- existing behavior is completely unchanged unless explicitly opted in
+- The staging buffer produces identical vertex data to the old `number[]` path
+- Batch loop binding optimization is purely a state-tracking skip; draw calls and their arguments are unchanged
+- All p5.js API semantics, draw order, and alpha blending are preserved

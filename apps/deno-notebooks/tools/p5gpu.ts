@@ -9,6 +9,7 @@ export interface P5GPUOptions {
   height: number;
   format?: GPUTextureFormat;
   sampleCount?: number;
+  optimizedMode?: boolean;
 }
 
 type Vec2 = [number, number];
@@ -502,6 +503,7 @@ export class P5GPU {
   readonly height: number;
   readonly format: GPUTextureFormat;
   readonly outputTexture: GPUTexture;
+  optimizedMode: boolean;
 
   pixels: Uint8ClampedArray;
 
@@ -520,7 +522,8 @@ export class P5GPU {
   private _geomPipelineCache = new Map<string, GPURenderPipeline>();
   private _textPipelineCache = new Map<string, GPURenderPipeline>();
 
-  private _geomVertices: number[] = [];
+  private _geomStagingBuffer: Float32Array;
+  private _geomStagingCursor = 0;
   private _geomVertexCount = 0;
   private _textVertices: number[] = [];
   private _textVertexCount = 0;
@@ -571,6 +574,7 @@ export class P5GPU {
     this.width = Math.max(1, Math.floor(opts.width));
     this.height = Math.max(1, Math.floor(opts.height));
     this.format = opts.format ?? "rgba8unorm";
+    this.optimizedMode = opts.optimizedMode ?? false;
     this.outputTexture = this.device.createTexture({
       size: { width: this.width, height: this.height },
       format: this.format,
@@ -652,10 +656,11 @@ export class P5GPU {
     this._textAtlasGrowthDebug = readEnvFlag("P5_TEXT_ATLAS_GROW_DEBUG");
 
     this.pixels = new Uint8ClampedArray(this.width * this.height * 4);
+    this._geomStagingBuffer = new Float32Array(4096);
   }
 
   beginFrame(): void {
-    this._geomVertices.length = 0;
+    this._geomStagingCursor = 0;
     this._geomVertexCount = 0;
     this._textVertices.length = 0;
     this._textVertexCount = 0;
@@ -699,9 +704,9 @@ export class P5GPU {
     let hasText = false;
 
     if (this._geomVertexCount > 0) {
-      const geomData = new Float32Array(this._geomVertices);
-      this._ensureGeomVertexBuffer(geomData.byteLength);
-      this.device.queue.writeBuffer(this._geomVertexBuffer!, 0, geomData.buffer, geomData.byteOffset, geomData.byteLength);
+      const byteLength = this._geomStagingCursor * 4;
+      this._ensureGeomVertexBuffer(byteLength);
+      this.device.queue.writeBuffer(this._geomVertexBuffer!, 0, this._geomStagingBuffer.buffer as ArrayBuffer, 0, byteLength);
       hasGeom = true;
     }
 
@@ -713,17 +718,23 @@ export class P5GPU {
     }
 
     if (hasGeom || hasText) {
+      let lastPipeline: GPURenderPipeline | null = null;
+      let lastVB: GPUBuffer | null = null;
+      let lastTextBG = false;
       for (const batch of this._batches) {
         if (batch.vertexCount <= 0) continue;
         if (batch.isText) {
           if (!hasText || !this._textVertexBuffer || !this._textBindGroup) continue;
-          pass.setPipeline(this._getTextPipeline(batch.blendMode, frameSampleCount));
-          pass.setBindGroup(1, this._textBindGroup);
-          pass.setVertexBuffer(0, this._textVertexBuffer);
+          const pipeline = this._getTextPipeline(batch.blendMode, frameSampleCount);
+          if (pipeline !== lastPipeline) { pass.setPipeline(pipeline); lastPipeline = pipeline; }
+          if (!lastTextBG) { pass.setBindGroup(1, this._textBindGroup); lastTextBG = true; }
+          if (this._textVertexBuffer !== lastVB) { pass.setVertexBuffer(0, this._textVertexBuffer); lastVB = this._textVertexBuffer; }
         } else {
           if (!hasGeom || !this._geomVertexBuffer) continue;
-          pass.setPipeline(this._getGeomPipeline(batch.blendMode, frameSampleCount));
-          pass.setVertexBuffer(0, this._geomVertexBuffer);
+          const pipeline = this._getGeomPipeline(batch.blendMode, frameSampleCount);
+          if (pipeline !== lastPipeline) { pass.setPipeline(pipeline); lastPipeline = pipeline; }
+          if (this._geomVertexBuffer !== lastVB) { pass.setVertexBuffer(0, this._geomVertexBuffer); lastVB = this._geomVertexBuffer; }
+          lastTextBG = false;
         }
         pass.draw(batch.vertexCount, 1, batch.startVertex, 0);
       }
@@ -2592,7 +2603,9 @@ export class P5GPU {
     const arcLength = Math.max(EPS, Math.abs(stop - start));
     const circumference = Math.PI * 2 * Math.sqrt((rx * rx + ry * ry) * 0.5);
     const scaledLength = circumference * (arcLength / (Math.PI * 2));
-    const segments = Math.max(12, Math.ceil(scaledLength / 4));
+    const segments = this.optimizedMode
+      ? Math.max(8, Math.ceil(scaledLength / 8))
+      : Math.max(12, Math.ceil(scaledLength / 4));
 
     const points: Vec2[] = [];
     const step = (stop - start) / segments;
@@ -2630,7 +2643,9 @@ export class P5GPU {
       br *= scale;
     }
 
-    const segFor = (r: number) => Math.max(3, Math.ceil((Math.PI * 0.5 * r) / 4));
+    const segFor = (r: number) => this.optimizedMode
+      ? Math.max(2, Math.ceil((Math.PI * 0.5 * r) / 8))
+      : Math.max(3, Math.ceil((Math.PI * 0.5 * r) / 4));
     const points: Vec2[] = [];
 
     const addArc = (cx: number, cy: number, r: number, start: number, end: number) => {
@@ -2862,7 +2877,9 @@ export class P5GPU {
     const base = Math.atan2(dir[1], dir[0]);
     const start = base - Math.PI * 0.5;
     const end = base + Math.PI * 0.5;
-    const steps = Math.max(8, Math.ceil((Math.PI * radius) / 3));
+    const steps = this.optimizedMode
+      ? Math.max(4, Math.ceil((Math.PI * radius) / 6))
+      : Math.max(8, Math.ceil((Math.PI * radius) / 3));
     const cx = center[0], cy = center[1];
 
     let prevX = cx + Math.cos(start) * radius;
@@ -3007,8 +3024,26 @@ export class P5GPU {
     }
   }
 
+  private _ensureGeomStagingCapacity(floatsNeeded: number): void {
+    const required = this._geomStagingCursor + floatsNeeded;
+    if (required <= this._geomStagingBuffer.length) return;
+    let newSize = this._geomStagingBuffer.length;
+    while (newSize < required) newSize *= 2;
+    const newBuf = new Float32Array(newSize);
+    newBuf.set(this._geomStagingBuffer);
+    this._geomStagingBuffer = newBuf;
+  }
+
   private _pushVertex(x: number, y: number, color: ColorTuple): void {
-    this._geomVertices.push(x, y, color[0], color[1], color[2], color[3]);
+    this._ensureGeomStagingCapacity(GEOM_FLOATS_PER_VERTEX);
+    const c = this._geomStagingCursor;
+    this._geomStagingBuffer[c] = x;
+    this._geomStagingBuffer[c + 1] = y;
+    this._geomStagingBuffer[c + 2] = color[0];
+    this._geomStagingBuffer[c + 3] = color[1];
+    this._geomStagingBuffer[c + 4] = color[2];
+    this._geomStagingBuffer[c + 5] = color[3];
+    this._geomStagingCursor = c + GEOM_FLOATS_PER_VERTEX;
     this._geomVertexCount += 1;
     const batch = this._batches[this._batches.length - 1];
     if (batch) batch.vertexCount += 1;
@@ -3021,12 +3056,16 @@ export class P5GPU {
     cx: number, cy: number,
     color: ColorTuple,
   ): void {
+    this._ensureGeomStagingCapacity(GEOM_FLOATS_PER_VERTEX * 3);
+    const buf = this._geomStagingBuffer;
     const r = color[0], g = color[1], b = color[2], a = color[3];
-    this._geomVertices.push(
-      ax, ay, r, g, b, a,
-      bx, by, r, g, b, a,
-      cx, cy, r, g, b, a,
-    );
+    let c = this._geomStagingCursor;
+    buf[c] = ax; buf[c+1] = ay; buf[c+2] = r; buf[c+3] = g; buf[c+4] = b; buf[c+5] = a;
+    c += 6;
+    buf[c] = bx; buf[c+1] = by; buf[c+2] = r; buf[c+3] = g; buf[c+4] = b; buf[c+5] = a;
+    c += 6;
+    buf[c] = cx; buf[c+1] = cy; buf[c+2] = r; buf[c+3] = g; buf[c+4] = b; buf[c+5] = a;
+    this._geomStagingCursor = c + 6;
     this._geomVertexCount += 3;
     this._batches[this._batches.length - 1].vertexCount += 3;
   }
