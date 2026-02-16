@@ -1412,12 +1412,22 @@ export class P5GPU {
     const points = this._buildEllipsePoints(e.cx, e.cy, e.rx, e.ry, 0, Math.PI * 2);
 
     if (this._state.fillEnabled) {
-      const center = transformPoint(this._state.matrix, e.cx, e.cy);
       const fillColor = this._effectiveFillColor();
+      const blend = this._currentBlendMode();
+      this._ensureBatch(blend, false);
+      const m = this._state.matrix;
+      const ccx = m[0] * e.cx + m[2] * e.cy + m[4];
+      const ccy = m[1] * e.cx + m[3] * e.cy + m[5];
+      const p0 = points[0];
+      let prevX = m[0] * p0[0] + m[2] * p0[1] + m[4];
+      let prevY = m[1] * p0[0] + m[3] * p0[1] + m[5];
       for (let i = 0; i < points.length; i++) {
-        const p0 = transformPoint(this._state.matrix, points[i][0], points[i][1]);
-        const p1 = transformPoint(this._state.matrix, points[(i + 1) % points.length][0], points[(i + 1) % points.length][1]);
-        this._emitTriangle(center, p0, p1, fillColor);
+        const np = points[(i + 1) % points.length];
+        const nextX = m[0] * np[0] + m[2] * np[1] + m[4];
+        const nextY = m[1] * np[0] + m[3] * np[1] + m[5];
+        this._pushTriangleVertices(ccx, ccy, prevX, prevY, nextX, nextY, fillColor);
+        prevX = nextX;
+        prevY = nextY;
       }
     }
 
@@ -2697,9 +2707,14 @@ export class P5GPU {
     const weight = Math.max(0.0001, this._state.strokeWeight * scale);
     const half = weight * 0.5;
 
-    const path = points.map((p) => [p[0], p[1]] as Vec2);
+    const blend = this._currentBlendMode();
+    this._ensureBatch(blend, false);
 
-    if (!closed && (this._state.strokeCap === this.SQUARE || this._state.strokeCap === this.PROJECT) && path.length >= 2) {
+    // Only clone when we need to mutate endpoints (open + SQUARE/PROJECT caps)
+    const needsClone = !closed && (this._state.strokeCap === this.SQUARE || this._state.strokeCap === this.PROJECT);
+    const path = needsClone ? points.map((p) => [p[0], p[1]] as Vec2) : points;
+
+    if (needsClone && path.length >= 2) {
       const first = path[0];
       const second = path[1];
       const last = path[path.length - 1];
@@ -2741,19 +2756,21 @@ export class P5GPU {
   }
 
   private _emitStrokeSegmentQuad(a: Vec2, b: Vec2, half: number, color: ColorTuple): void {
-    const dir = normalize(b[0] - a[0], b[1] - a[1]);
-    if (Math.hypot(dir[0], dir[1]) <= EPS) return;
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const len = Math.hypot(dx, dy);
+    if (len <= EPS) return;
 
-    const nx = -dir[1] * half;
-    const ny = dir[0] * half;
+    const nx = -dy / len * half;
+    const ny = dx / len * half;
 
-    const v0: Vec2 = [a[0] + nx, a[1] + ny];
-    const v1: Vec2 = [a[0] - nx, a[1] - ny];
-    const v2: Vec2 = [b[0] - nx, b[1] - ny];
-    const v3: Vec2 = [b[0] + nx, b[1] + ny];
+    // Inline quad vertices — avoid 4 Vec2 tuple allocations
+    const ax0 = a[0] + nx, ay0 = a[1] + ny;
+    const ax1 = a[0] - nx, ay1 = a[1] - ny;
+    const bx1 = b[0] - nx, by1 = b[1] - ny;
+    const bx0 = b[0] + nx, by0 = b[1] + ny;
 
-    this._emitTriangle(v0, v1, v2, color);
-    this._emitTriangle(v0, v2, v3, color);
+    this._pushTriangleVertices(ax0, ay0, ax1, ay1, bx1, by1, color);
+    this._pushTriangleVertices(ax0, ay0, bx1, by1, bx0, by0, color);
   }
 
   private _emitStrokeJoin(prev: Vec2, curr: Vec2, next: Vec2, half: number, color: ColorTuple): void {
@@ -2767,35 +2784,37 @@ export class P5GPU {
 
     const sign = cross > 0 ? 1 : -1;
 
-    const nA: Vec2 = [-dirA[1] * half * sign, dirA[0] * half * sign];
-    const nB: Vec2 = [-dirB[1] * half * sign, dirB[0] * half * sign];
+    const nAx = -dirA[1] * half * sign, nAy = dirA[0] * half * sign;
+    const nBx = -dirB[1] * half * sign, nBy = dirB[0] * half * sign;
 
-    const outerA: Vec2 = [curr[0] + nA[0], curr[1] + nA[1]];
-    const outerB: Vec2 = [curr[0] + nB[0], curr[1] + nB[1]];
+    const outerAx = curr[0] + nAx, outerAy = curr[1] + nAy;
+    const outerBx = curr[0] + nBx, outerBy = curr[1] + nBy;
 
     if (this._state.strokeJoin === this.ROUND) {
-      this._emitRoundJoin(curr, nA, nB, half, sign, color);
+      this._emitRoundJoin(curr, nAx, nAy, nBx, nBy, half, sign, color);
       return;
     }
 
     if (this._state.strokeJoin === this.MITER) {
-      const miterPoint = lineIntersectionPoint(outerA, dirA, outerB, dirB);
+      const miterPoint = lineIntersectionPoint(
+        [outerAx, outerAy], dirA, [outerBx, outerBy], dirB,
+      );
       const miterLimit = this._state.strokeWeight * this._estimatedStrokeScale() * 2;
       if (miterPoint) {
         const d = Math.hypot(miterPoint[0] - curr[0], miterPoint[1] - curr[1]);
         if (d <= miterLimit) {
-          this._emitTriangle(outerA, miterPoint, outerB, color);
+          this._pushTriangleVertices(outerAx, outerAy, miterPoint[0], miterPoint[1], outerBx, outerBy, color);
           return;
         }
       }
     }
 
-    this._emitTriangle(curr, outerA, outerB, color);
+    this._pushTriangleVertices(curr[0], curr[1], outerAx, outerAy, outerBx, outerBy, color);
   }
 
-  private _emitRoundJoin(center: Vec2, fromOffset: Vec2, toOffset: Vec2, radius: number, sign: number, color: ColorTuple): void {
-    let a0 = Math.atan2(fromOffset[1], fromOffset[0]);
-    let a1 = Math.atan2(toOffset[1], toOffset[0]);
+  private _emitRoundJoin(center: Vec2, fromX: number, fromY: number, toX: number, toY: number, radius: number, sign: number, color: ColorTuple): void {
+    let a0 = Math.atan2(fromY, fromX);
+    let a1 = Math.atan2(toY, toX);
 
     if (sign > 0) {
       while (a1 < a0) a1 += Math.PI * 2;
@@ -2804,14 +2823,18 @@ export class P5GPU {
     }
 
     const delta = a1 - a0;
-    const steps = Math.max(6, Math.ceil(Math.abs(delta) / (Math.PI / 24)));
+    const steps = Math.max(2, Math.ceil(Math.abs(delta) / (Math.PI / 24)));
+    const cx = center[0], cy = center[1];
 
-    let prev: Vec2 = [center[0] + Math.cos(a0) * radius, center[1] + Math.sin(a0) * radius];
+    let prevX = cx + Math.cos(a0) * radius;
+    let prevY = cy + Math.sin(a0) * radius;
     for (let i = 1; i <= steps; i++) {
       const angle = a0 + (delta * i) / steps;
-      const next: Vec2 = [center[0] + Math.cos(angle) * radius, center[1] + Math.sin(angle) * radius];
-      this._emitTriangle(center, prev, next, color);
-      prev = next;
+      const nextX = cx + Math.cos(angle) * radius;
+      const nextY = cy + Math.sin(angle) * radius;
+      this._pushTriangleVertices(cx, cy, prevX, prevY, nextX, nextY, color);
+      prevX = nextX;
+      prevY = nextY;
     }
   }
 
@@ -2820,13 +2843,17 @@ export class P5GPU {
     const start = base - Math.PI * 0.5;
     const end = base + Math.PI * 0.5;
     const steps = Math.max(8, Math.ceil((Math.PI * radius) / 3));
+    const cx = center[0], cy = center[1];
 
-    let prev: Vec2 = [center[0] + Math.cos(start) * radius, center[1] + Math.sin(start) * radius];
+    let prevX = cx + Math.cos(start) * radius;
+    let prevY = cy + Math.sin(start) * radius;
     for (let i = 1; i <= steps; i++) {
       const angle = start + ((end - start) * i) / steps;
-      const next: Vec2 = [center[0] + Math.cos(angle) * radius, center[1] + Math.sin(angle) * radius];
-      this._emitTriangle(center, prev, next, color);
-      prev = next;
+      const nextX = cx + Math.cos(angle) * radius;
+      const nextY = cy + Math.sin(angle) * radius;
+      this._pushTriangleVertices(cx, cy, prevX, prevY, nextX, nextY, color);
+      prevX = nextX;
+      prevY = nextY;
     }
   }
 
@@ -2922,6 +2949,23 @@ export class P5GPU {
     this._geomVertexCount += 1;
     const batch = this._batches[this._batches.length - 1];
     if (batch) batch.vertexCount += 1;
+  }
+
+  /** Push a full triangle (3 vertices) in one call — avoids per-vertex overhead. */
+  private _pushTriangleVertices(
+    ax: number, ay: number,
+    bx: number, by: number,
+    cx: number, cy: number,
+    color: ColorTuple,
+  ): void {
+    const r = color[0], g = color[1], b = color[2], a = color[3];
+    this._geomVertices.push(
+      ax, ay, r, g, b, a,
+      bx, by, r, g, b, a,
+      cx, cy, r, g, b, a,
+    );
+    this._geomVertexCount += 3;
+    this._batches[this._batches.length - 1].vertexCount += 3;
   }
 
   private _pushTextVertex(x: number, y: number, u: number, v: number, color: ColorTuple): void {

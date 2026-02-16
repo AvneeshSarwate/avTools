@@ -124,6 +124,11 @@ async function maybeSyncWait() {
   syncWaitSamples += 1;
 }
 
+function mod2(n: number, m: number) {
+  return ((n % m) + m) % m;
+}
+
+
 function drawAnimatedScene(api: P5GPU, tSec: number) {
   const w = api.width;
   const h = api.height;
@@ -188,23 +193,44 @@ function drawAnimatedScene(api: P5GPU, tSec: number) {
   api.curveVertex(w * 0.90, h * 0.14 + Math.sin(tSec * 1.1) * 20);
   api.endShape();
 
-  api.noStroke();
-  for (let i = 0; i < 12; i++) {
-    const a = (i / 12) * Math.PI * 2 + tSec * 0.7;
-    const r = 90 + Math.sin(tSec * 1.2 + i * 0.8) * 36;
+  // api.noStroke();
+  api.strokeWeight(1)
+  api.stroke(255)
+  const circT = tSec * 0.2
+  for (let i = 0; i < 120; i++) {
+    const a = (i / 12) * Math.PI * 2 + circT * 0.7;
+    const r = (90 + Math.sin(circT * 1.2 + i * 0.8) * 36) * 3;
     const x = cx + Math.cos(a) * r;
-    const y = cy + Math.sin(a * 1.3 + tSec * 0.6) * r * 0.55;
-    const d = 14 + Math.sin(tSec * 2.0 + i) * 6;
-    api.fill(80 + i * 12, 180 - i * 8, 255 - i * 10, 170);
+    const y = cy + Math.sin(a * 1.3 + circT * 0.6) * r * 0.55;
+    const d = 14 + Math.sin(circT * 2.0 + i) * 6 * 5;
+    const red = mod2(80 + i * 12, 255)
+    const green = mod2(180 - i * 8, 255)
+    const blue = mod2( 55 - i * 10, 255)
+    api.fill(red, green, blue, 170);
     api.circle(x, y, d);
   }
 
-  api.fill(255, 255, 255, 180);
-  api.circle(
-    cx + Math.cos(tSec * 1.8) * 140,
-    cy + Math.sin(tSec * 1.3) * 90,
-    22,
-  );
+  // api.fill(255, 255, 255, 180);
+  // api.circle(
+  //   cx + Math.cos(tSec * 1.8) * 140,
+  //   cy + Math.sin(tSec * 1.3) * 90,
+  //   22,
+  // );
+}
+
+const LOG_EVERY = 60;
+const drawTimes: number[] = [];
+
+function pushSample(arr: number[], v: number, maxSamples = LOG_EVERY): void {
+  arr.push(v);
+  if (arr.length > maxSamples) arr.shift();
+}
+
+function avg(arr: number[]): number {
+  if (arr.length === 0) return 0;
+  let sum = 0;
+  for (const v of arr) sum += v;
+  return sum / arr.length;
 }
 
 let running = true;
@@ -221,9 +247,11 @@ while (running) {
   if (!running || syphonWin.closed) break;
 
   const tSec = (performance.now() - startMs) / 1000;
+  const drawStart = performance.now();
   p5.beginFrame();
   drawAnimatedScene(p5, tSec);
   const frameTexture = p5.endFrame();
+  pushSample(drawTimes, performance.now() - drawStart);
   const srcView = frameTexture.createView();
 
   const encoder = device.createCommandEncoder();
@@ -240,7 +268,7 @@ while (running) {
     break;
   }
 
-  if (frame % 120 === 0) {
+  if (frame % 120 === 0 && false) {
     console.log(
       `[syphon] frame=${frame} hasClients=${syphonWin.syphon.hasClients} intercepts=${syphonWin.syphon.interceptCount.toString()}`,
     );
@@ -251,7 +279,7 @@ while (running) {
     const avgFps = elapsedSec > 0 ? frame / elapsedSec : 0;
     const syncWaitAvgMs = syncWaitSamples > 0 ? syncWaitTotalMs / syncWaitSamples : 0;
     const syncWaitText = SYNC_MODE === "wait" ? syncWaitAvgMs.toFixed(3) : "n/a";
-    console.log(`[fps] frame=${frame} avg=${avgFps.toFixed(1)} sync=${SYNC_MODE} wait_avg_ms=${syncWaitText}`);
+    console.log(`[fps] frame=${frame} avg=${avgFps.toFixed(1)} avgDrawMs(${LOG_EVERY})=${avg(drawTimes).toFixed(2)} sync=${SYNC_MODE} wait_avg_ms=${syncWaitText}`);
   }
 
   frame += 1;
