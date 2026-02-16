@@ -129,6 +129,10 @@ function mod2(n: number, m: number) {
 }
 
 
+// ─── Curve stress test config ────────────────────────────────────────────
+const CURVE_COUNT = 100;
+const CURVE_POINTS = 12; // points per curve (tune this to benchmark)
+
 function drawAnimatedScene(api: P5GPU, tSec: number) {
   const w = api.width;
   const h = api.height;
@@ -137,75 +141,47 @@ function drawAnimatedScene(api: P5GPU, tSec: number) {
 
   api.clear();
 
-  api.noStroke();
-  api.fill(18, 24, 36, 180);
-  api.circle(cx, cy, Math.min(w, h) * 0.9);
-
+  // ── Curves first (behind circles) ──────────────────────────────────────
   api.noFill();
-  api.strokeWeight(8);
-  api.stroke(72, 132, 255, 230);
   api.curveTightness(0.0);
-  api.curve(
-    40,
-    cy + Math.sin(tSec * 1.1) * 120,
-    w * 0.15,
-    h * 0.25 + Math.sin(tSec * 0.8) * 70,
-    w * 0.42,
-    h * 0.75 + Math.cos(tSec * 1.3) * 80,
-    w * 0.82,
-    h * 0.2 + Math.sin(tSec * 1.7) * 65,
-  );
-  api.curve(
-    w * 0.15,
-    h * 0.25 + Math.sin(tSec * 0.8) * 70,
-    w * 0.42,
-    h * 0.75 + Math.cos(tSec * 1.3) * 80,
-    w * 0.82,
-    h * 0.2 + Math.sin(tSec * 1.7) * 65,
-    w - 40,
-    h * 0.55 + Math.cos(tSec * 1.2) * 90,
-  );
 
-  api.strokeWeight(6);
-  api.stroke(255, 100, 130, 220);
-  api.bezier(
-    60,
-    h * 0.78,
-    w * 0.20,
-    h * 0.18 + Math.cos(tSec * 0.7) * 40,
-    w * 0.72,
-    h * 0.86 + Math.sin(tSec * 0.9) * 40,
-    w - 60,
-    h * 0.24,
-  );
+  for (let c = 0; c < CURVE_COUNT; c++) {
+    const t = c / CURVE_COUNT;
+    const baseY = t * h;
+    const freq = 1.5 + c * 0.07;
+    const phase = c * 0.4 + tSec * (0.5 + t * 1.5);
+    const amp = 20 + Math.sin(c * 0.3) * 15;
 
-  api.stroke(164, 96, 245, 210);
-  api.strokeWeight(5);
-  api.curveTightness(-0.5);
-  api.beginShape();
-  api.curveVertex(40, h * 0.16);
-  api.curveVertex(40, h * 0.16);
-  api.curveVertex(w * 0.18, h * 0.14 + Math.sin(tSec * 0.9) * 25);
-  api.curveVertex(w * 0.34, h * 0.20 + Math.cos(tSec * 1.2) * 20);
-  api.curveVertex(w * 0.52, h * 0.12 + Math.sin(tSec * 1.5) * 24);
-  api.curveVertex(w * 0.72, h * 0.18 + Math.cos(tSec * 0.8) * 26);
-  api.curveVertex(w * 0.90, h * 0.14 + Math.sin(tSec * 1.1) * 20);
-  api.curveVertex(w * 0.90, h * 0.14 + Math.sin(tSec * 1.1) * 20);
-  api.endShape();
+    const r = mod2(60 + c * 7, 255);
+    const g = mod2(140 + c * 3, 255);
+    const b = mod2(220 - c * 5, 255);
+    api.stroke(r, g, b, 180);
+    api.strokeWeight(1.5 + Math.sin(c * 0.5) * 1);
 
-  // api.noStroke();
-  api.strokeWeight(1)
-  api.stroke(255)
-  const circT = tSec * 0.2
+    api.beginShape();
+    for (let p = 0; p < CURVE_POINTS; p++) {
+      const px = (p / (CURVE_POINTS - 1)) * w;
+      const py = baseY + Math.sin(px * freq / w * Math.PI * 2 + phase) * amp;
+      api.curveVertex(px, py);
+      // duplicate first and last for Catmull-Rom end conditions
+      if (p === 0 || p === CURVE_POINTS - 1) api.curveVertex(px, py);
+    }
+    api.endShape();
+  }
+
+  // ── Circles on top ─────────────────────────────────────────────────────
+  api.strokeWeight(1);
+  api.stroke(255);
+  const circT = tSec * 0.2;
   for (let i = 0; i < 120; i++) {
     const a = (i / 12) * Math.PI * 2 + circT * 0.7;
     const r = (90 + Math.sin(circT * 1.2 + i * 0.8) * 36) * 3;
     const x = cx + Math.cos(a) * r;
     const y = cy + Math.sin(a * 1.3 + circT * 0.6) * r * 0.55;
     const d = 14 + Math.sin(circT * 2.0 + i) * 6 * 5;
-    const red = mod2(80 + i * 12, 255)
-    const green = mod2(180 - i * 8, 255)
-    const blue = mod2( 55 - i * 10, 255)
+    const red = mod2(80 + i * 12, 255);
+    const green = mod2(180 - i * 8, 255);
+    const blue = mod2(55 - i * 10, 255);
     api.fill(red, green, blue, 170);
     api.circle(x, y, d);
   }

@@ -45,6 +45,8 @@ interface DrawState {
   colorMaxes: [number, number, number, number];
   blendMode: number;
   curveTightness: number;
+  curveDetail: number;
+  bezierDetail: number;
   eraseMode: boolean;
   eraseFillStrength: number;
   eraseStrokeStrength: number;
@@ -65,6 +67,9 @@ interface DrawState {
 }
 
 const EPS = 1e-6;
+const CURVE_TOLERANCE = 0.5;
+const CURVE_MIN_SEGMENTS = 2;
+const CURVE_MAX_SEGMENTS = 64;
 const GEOM_FLOATS_PER_VERTEX = 6;
 const GEOM_BYTES_PER_VERTEX = GEOM_FLOATS_PER_VERTEX * 4;
 const TEXT_FLOATS_PER_VERTEX = 8;
@@ -172,6 +177,8 @@ function cloneState(state: DrawState): DrawState {
     colorMaxes: [...state.colorMaxes] as [number, number, number, number],
     blendMode: state.blendMode,
     curveTightness: state.curveTightness,
+    curveDetail: state.curveDetail,
+    bezierDetail: state.bezierDetail,
     eraseMode: state.eraseMode,
     eraseFillStrength: state.eraseFillStrength,
     eraseStrokeStrength: state.eraseStrokeStrength,
@@ -296,6 +303,8 @@ function createDefaultState(): DrawState {
     colorMaxes: [255, 255, 255, 255],
     blendMode: P5_CONST.BLEND,
     curveTightness: 0,
+    curveDetail: 1.0,
+    bezierDetail: 1.0,
     eraseMode: false,
     eraseFillStrength: 255,
     eraseStrokeStrength: 255,
@@ -846,6 +855,16 @@ export class P5GPU {
 
   curveTightness(amount: number): void {
     this._state.curveTightness = toNumber(amount);
+  }
+
+  curveDetail(d?: number): number | void {
+    if (d === undefined) return this._state.curveDetail;
+    this._state.curveDetail = Math.max(0, toNumber(d));
+  }
+
+  bezierDetail(d?: number): number | void {
+    if (d === undefined) return this._state.bezierDetail;
+    this._state.bezierDetail = Math.max(0, toNumber(d));
   }
 
   textAlign(horiz?: unknown, vert?: unknown): { horizontal: string; vertical: string } | void {
@@ -1625,7 +1644,10 @@ export class P5GPU {
     const p1 = points[points.length - 3];
     const p2 = points[points.length - 2];
     const p3 = points[points.length - 1];
-    const sampled = this._sampleCatmullRom(p0, p1, p2, p3, 48, this._state.curveTightness);
+    const [b0, b1, b2, b3] = this._catmullRomToBezier(p0, p1, p2, p3, this._state.curveTightness);
+    const wangN = this._wangCubicSegments(b0, b1, b2, b3);
+    const n = Math.max(CURVE_MIN_SEGMENTS, Math.ceil(wangN * this._state.curveDetail));
+    const sampled = this._sampleCubicBezier(b0, b1, b2, b3, n);
     const ring = this._shape.rings[this._shape.activeRing];
     if (ring.length === 0) ring.push(sampled[0]);
     for (let i = 1; i < sampled.length; i++) ring.push(sampled[i]);
@@ -1637,13 +1659,12 @@ export class P5GPU {
     const last = ring[ring.length - 1];
     if (!last) return;
 
-    const sampled = this._sampleCubicBezier(
-      last,
-      [toNumber(x2), toNumber(y2)],
-      [toNumber(x3), toNumber(y3)],
-      [toNumber(x4), toNumber(y4)],
-      48,
-    );
+    const cp1: Vec2 = [toNumber(x2), toNumber(y2)];
+    const cp2: Vec2 = [toNumber(x3), toNumber(y3)];
+    const end: Vec2 = [toNumber(x4), toNumber(y4)];
+    const wangN = this._wangCubicSegments(last, cp1, cp2, end);
+    const n = Math.max(CURVE_MIN_SEGMENTS, Math.ceil(wangN * this._state.bezierDetail));
+    const sampled = this._sampleCubicBezier(last, cp1, cp2, end, n);
 
     for (let i = 1; i < sampled.length; i++) ring.push(sampled[i]);
   }
@@ -1654,38 +1675,37 @@ export class P5GPU {
     const last = ring[ring.length - 1];
     if (!last) return;
 
-    const sampled = this._sampleQuadraticBezier(
-      last,
-      [toNumber(cx), toNumber(cy)],
-      [toNumber(x3), toNumber(y3)],
-      48,
-    );
+    const cp: Vec2 = [toNumber(cx), toNumber(cy)];
+    const end: Vec2 = [toNumber(x3), toNumber(y3)];
+    const wangN = this._wangQuadraticSegments(last, cp, end);
+    const n = Math.max(CURVE_MIN_SEGMENTS, Math.ceil(wangN * this._state.bezierDetail));
+    const sampled = this._sampleQuadraticBezier(last, cp, end, n);
 
     for (let i = 1; i < sampled.length; i++) ring.push(sampled[i]);
   }
 
   bezier(x1: number, y1: number, x2: number, y2: number, x3: number, y3: number, x4: number, y4: number): void {
     if (!this._state.strokeEnabled || this._state.strokeWeight <= 0) return;
-    const sampled = this._sampleCubicBezier(
-      [toNumber(x1), toNumber(y1)],
-      [toNumber(x2), toNumber(y2)],
-      [toNumber(x3), toNumber(y3)],
-      [toNumber(x4), toNumber(y4)],
-      72,
-    );
+    const b0: Vec2 = [toNumber(x1), toNumber(y1)];
+    const b1: Vec2 = [toNumber(x2), toNumber(y2)];
+    const b2: Vec2 = [toNumber(x3), toNumber(y3)];
+    const b3: Vec2 = [toNumber(x4), toNumber(y4)];
+    const wangN = this._wangCubicSegments(b0, b1, b2, b3);
+    const n = Math.max(CURVE_MIN_SEGMENTS, Math.ceil(wangN * this._state.bezierDetail));
+    const sampled = this._sampleCubicBezier(b0, b1, b2, b3, n);
     this._emitStrokePathLocal(sampled, false, this._effectiveStrokeColor());
   }
 
   curve(x1: number, y1: number, x2: number, y2: number, x3: number, y3: number, x4: number, y4: number): void {
     if (!this._state.strokeEnabled || this._state.strokeWeight <= 0) return;
-    const sampled = this._sampleCatmullRom(
-      [toNumber(x1), toNumber(y1)],
-      [toNumber(x2), toNumber(y2)],
-      [toNumber(x3), toNumber(y3)],
-      [toNumber(x4), toNumber(y4)],
-      72,
-      this._state.curveTightness,
-    );
+    const cr0: Vec2 = [toNumber(x1), toNumber(y1)];
+    const cr1: Vec2 = [toNumber(x2), toNumber(y2)];
+    const cr2: Vec2 = [toNumber(x3), toNumber(y3)];
+    const cr3: Vec2 = [toNumber(x4), toNumber(y4)];
+    const [b0, b1, b2, b3] = this._catmullRomToBezier(cr0, cr1, cr2, cr3, this._state.curveTightness);
+    const wangN = this._wangCubicSegments(b0, b1, b2, b3);
+    const n = Math.max(CURVE_MIN_SEGMENTS, Math.ceil(wangN * this._state.curveDetail));
+    const sampled = this._sampleCubicBezier(b0, b1, b2, b3, n);
     this._emitStrokePathLocal(sampled, false, this._effectiveStrokeColor());
   }
 
@@ -2855,6 +2875,49 @@ export class P5GPU {
       prevX = nextX;
       prevY = nextY;
     }
+  }
+
+  /**
+   * Wang's formula for cubic bezier subdivision count.
+   * Returns the number of line segments needed to approximate the cubic bezier
+   * within CURVE_TOLERANCE pixels of the true curve.
+   */
+  private _wangCubicSegments(b0: Vec2, b1: Vec2, b2: Vec2, b3: Vec2): number {
+    const dx1 = b2[0] - 2 * b1[0] + b0[0];
+    const dy1 = b2[1] - 2 * b1[1] + b0[1];
+    const dx2 = b3[0] - 2 * b2[0] + b1[0];
+    const dy2 = b3[1] - 2 * b2[1] + b1[1];
+    const maxDeviation = Math.max(Math.hypot(dx1, dy1), Math.hypot(dx2, dy2));
+    if (maxDeviation <= EPS) return CURVE_MIN_SEGMENTS;
+    const n = Math.ceil(Math.sqrt(Math.sqrt(3.0 / 8.0) * maxDeviation / CURVE_TOLERANCE));
+    return Math.max(CURVE_MIN_SEGMENTS, Math.min(n, CURVE_MAX_SEGMENTS));
+  }
+
+  /**
+   * Wang's formula for quadratic bezier subdivision count.
+   */
+  private _wangQuadraticSegments(p0: Vec2, p1: Vec2, p2: Vec2): number {
+    const dx = p2[0] - 2 * p1[0] + p0[0];
+    const dy = p2[1] - 2 * p1[1] + p0[1];
+    const maxDeviation = Math.hypot(dx, dy);
+    if (maxDeviation <= EPS) return CURVE_MIN_SEGMENTS;
+    const n = Math.ceil(Math.sqrt(Math.sqrt(1.0 / 8.0) * maxDeviation / CURVE_TOLERANCE));
+    return Math.max(CURVE_MIN_SEGMENTS, Math.min(n, CURVE_MAX_SEGMENTS));
+  }
+
+  /**
+   * Converts 4 Catmull-Rom control points to 4 cubic bezier control points.
+   * Uses the standard p5.js v2 catmullRomToBezier conversion.
+   */
+  private _catmullRomToBezier(
+    p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, tightness: number
+  ): [Vec2, Vec2, Vec2, Vec2] {
+    const s = (1 - tightness) / 6;
+    const b0: Vec2 = [p1[0], p1[1]];
+    const b1: Vec2 = [p1[0] + (p2[0] - p0[0]) * s, p1[1] + (p2[1] - p0[1]) * s];
+    const b2: Vec2 = [p2[0] + (p1[0] - p3[0]) * s, p2[1] + (p1[1] - p3[1]) * s];
+    const b3: Vec2 = [p2[0], p2[1]];
+    return [b0, b1, b2, b3];
   }
 
   private _sampleCubicBezier(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, segments: number): Vec2[] {

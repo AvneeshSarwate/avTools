@@ -68,3 +68,83 @@ Key bottlenecks identified:
 - Draw order, alpha blending, and p5.js API semantics are fully preserved
 - No changes to shader code, render pass structure, or batch ordering
 - `_emitTriangle` left unchanged for non-hot-path callers (rect, triangle, quad, arc, etc.)
+
+---
+
+## Session 2 — Adaptive Curve Subdivision via Wang's Formula
+
+**Problem**: All curve methods (`curveVertex`, `bezierVertex`, `quadraticVertex`, `curve`, `bezier`) used hardcoded subdivision counts (48 or 72 segments per span). This wastes vertices on nearly-straight curves and under-tessellates tight/large curves. Canvas2D/Skia use adaptive subdivision to match visual quality to actual curvature.
+
+**Solution**: Replaced fixed segment counts with Wang's formula, which computes the mathematically optimal number of line segments needed to approximate a bezier curve within a given pixel tolerance.
+
+### Wang's Formula
+
+For a cubic bezier with control points B0, B1, B2, B3:
+```
+dx1 = B2.x - 2*B1.x + B0.x
+dy1 = B2.y - 2*B1.y + B0.y
+dx2 = B3.x - 2*B2.x + B1.x
+dy2 = B3.y - 2*B2.y + B1.y
+maxDeviation = max(hypot(dx1,dy1), hypot(dx2,dy2))
+n = ceil(sqrt(sqrt(3/8) * maxDeviation / tolerance))
+```
+
+For a quadratic bezier with control points P0, P1, P2:
+```
+dx = P2.x - 2*P1.x + P0.x
+dy = P2.y - 2*P1.y + P0.y
+maxDeviation = hypot(dx, dy)
+n = ceil(sqrt(sqrt(1/8) * maxDeviation / tolerance))
+```
+
+Tolerance is set to 0.5 pixels (half-pixel accuracy). Segments are clamped to [2, 64].
+
+### Catmull-Rom to Cubic Bezier Conversion
+
+Catmull-Rom splines (used by `curveVertex` and `curve`) are first converted to equivalent cubic bezier control points using the standard p5.js v2 formula:
+```
+s = (1 - tightness) / 6
+B0 = P1
+B1 = P1 + (P2 - P0) * s
+B2 = P2 + (P1 - P3) * s
+B3 = P2
+```
+
+This allows all curve types to share the same Wang's formula and cubic bezier sampling path.
+
+### Changes Made
+
+**New module-level constants**:
+- `CURVE_TOLERANCE = 0.5` — half-pixel tolerance for adaptive subdivision
+- `CURVE_MIN_SEGMENTS = 2` — minimum segments for any curve span
+- `CURVE_MAX_SEGMENTS = 64` — maximum segments for any curve span
+
+**New DrawState fields**: `curveDetail` (default 1.0), `bezierDetail` (default 1.0)
+
+**New public API methods**: `curveDetail(d?)`, `bezierDetail(d?)` — getter/setter pattern, acts as a multiplier on Wang's formula result for user control
+
+**New private helper methods**:
+- `_wangCubicSegments(b0, b1, b2, b3)` — Wang's formula for cubic beziers
+- `_wangQuadraticSegments(p0, p1, p2)` — Wang's formula for quadratic beziers
+- `_catmullRomToBezier(p0, p1, p2, p3, tightness)` — converts 4 CR points to 4 cubic bezier control points
+
+**Modified methods**:
+- `curveVertex()`: converts CR to bezier, uses `_wangCubicSegments` + `_sampleCubicBezier` (was: `_sampleCatmullRom` with 48 segments)
+- `bezierVertex()`: uses `_wangCubicSegments` (was: hardcoded 48)
+- `quadraticVertex()`: uses `_wangQuadraticSegments` (was: hardcoded 48)
+- `bezier()`: uses `_wangCubicSegments` (was: hardcoded 72)
+- `curve()`: converts CR to bezier, uses `_wangCubicSegments` + `_sampleCubicBezier` (was: `_sampleCatmullRom` with 72 segments)
+
+### Expected Impact
+
+- **Nearly-straight curves**: 2-4 segments instead of 48-72 (massive vertex reduction)
+- **Moderate curves**: 8-16 segments (typical), still far fewer than 48
+- **Very tight curves**: Up to 64 segments (more than before for extreme cases)
+- **Visual quality**: Matches Canvas2D/Skia behavior — no visible difference from the fixed approach at normal zoom, better quality for extreme curvature
+- **Performance**: Significant reduction in vertex count for typical curve-heavy scenes
+
+### Semantic Preservation
+- `_sampleCatmullRom` is preserved but no longer called by `curveVertex`/`curve` (available as fallback)
+- `_sampleCubicBezier` and `_sampleQuadraticBezier` are reused unchanged
+- Draw order, alpha blending, and p5.js API semantics are fully preserved
+- The `detail` multiplier defaults to 1.0, so no behavior change unless explicitly set by user
