@@ -9,12 +9,12 @@ const baseRectangleConfig = [
   { yPos: -0.25, height: 0.25 },
 ]
 
-client.send('yPos0', baseRectangleConfig[0].yPos)
-client.send('height0', baseRectangleConfig[0].height)
-client.send('yPos1', baseRectangleConfig[1].yPos)
-client.send('height1', baseRectangleConfig[1].height)
-client.send('yPos2', baseRectangleConfig[2].yPos)
-client.send('height2', baseRectangleConfig[2].height)
+client.send('/yPos0', baseRectangleConfig[0].yPos)
+client.send('/height0', baseRectangleConfig[0].height)
+client.send('/yPos1', baseRectangleConfig[1].yPos)
+client.send('/height1', baseRectangleConfig[1].height)
+client.send('/yPos2', baseRectangleConfig[2].yPos)
+client.send('/height2', baseRectangleConfig[2].height)
 
 const liveRectVals = baseRectangleConfig.map(o => ({...o}))
 
@@ -37,6 +37,7 @@ const BETWEEN_SWAP_TIME = 10
 const lerp = (a: number, b: number, p: number) => b*p + a*(1-p)
 
 launch(async (ctx: DateTimeContext) => {
+  await ctx.wait(5)
   while (true) {
 
     const [iA, iB] = choose2NoReplacement(liveRectVals.length)
@@ -53,23 +54,35 @@ launch(async (ctx: DateTimeContext) => {
 
       while (ctx.beats < lerpStartTime + SWAP_TIME) {
         const normProg = (ctx.beats - lerpStartTime) / SWAP_TIME
-        
+
         yPosA = lerp(lrv[iA].yPos, lrv[iB].yPos, normProg)
         yPosB = lerp(lrv[iB].yPos, lrv[iA].yPos, normProg)
         heightA = lerp(lrv[iA].height, lrv[iB].height, normProg)
         heightB = lerp(lrv[iB].height, lrv[iA].height, normProg)
 
         client.send(`/yPos${iA}`, yPosA)
-        client.send(`/height${iA}`, yPosB)
-        client.send(`/yPos${iB}`, heightA)
+        client.send(`/height${iA}`, heightA)
+        client.send(`/yPos${iB}`, yPosB)
         client.send(`/height${iB}`, heightB)
         console.log(yPosA, yPosB, heightA, heightB)
         await ctx.wait(0.016)
       }
+
+      // Send exact final values at normProg=1
+      yPosA = lrv[iB].yPos
+      yPosB = lrv[iA].yPos
+      heightA = lrv[iB].height
+      heightB = lrv[iA].height
+
+      client.send(`/yPos${iA}`, yPosA)
+      client.send(`/height${iA}`, heightA)
+      client.send(`/yPos${iB}`, yPosB)
+      client.send(`/height${iB}`, heightB)
+
       liveRectVals[iA].yPos = yPosA
       liveRectVals[iB].yPos = yPosB
       liveRectVals[iA].height = heightA
-      liveRectVals[iA].height = heightB
+      liveRectVals[iB].height = heightB
     })
 
 
