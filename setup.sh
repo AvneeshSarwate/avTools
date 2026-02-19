@@ -57,7 +57,7 @@ warn_toolchain_missing() {
   echo ""
   echo "Impact (fill in as needed):"
   if printf '%s\n' "${missing[@]}" | grep -q "Rust"; then
-    echo "  - Rust: Prevents use of MIDI features in notebooks, and the ability to spawn windows for graphics tasks"
+    echo "  - Rust: Prevents use of MIDI features, Syphon features, and the ability to spawn windows for graphics tasks"
   fi
   if printf '%s\n' "${missing[@]}" | grep -q "Deno"; then
     echo "  - Deno: Prevents use of any non-browser scripts or interactive notebooks"
@@ -113,6 +113,55 @@ install_node() {
   nvm alias default 24
   echo "Node $(node --version) installed."
   echo "npm $(npm --version) installed."
+}
+
+# Syphon.framework in this repo follows Apple's canonical framework layout, where:
+#   Syphon.framework/Syphon            -> Versions/Current/Syphon
+#   Syphon.framework/Resources         -> Versions/Current/Resources
+#   Syphon.framework/Versions/Current  -> A
+# Some archive/download flows can materialize these links as plain files/dirs,
+# which can break framework discovery/loading behavior. We normalize the layout
+# during setup so the bundled framework is always in a known-good state.
+ensure_syphon_framework_links() {
+  local framework_root="$NOTEBOOK_DIR/native/syphon_bridge/frameworks/Syphon.framework"
+
+  if [ ! -d "$framework_root" ]; then
+    echo "Syphon.framework bundle not found at $framework_root (skipping framework link repair)."
+    return 0
+  fi
+
+  if [ ! -d "$framework_root/Versions/A" ]; then
+    echo "Syphon.framework is missing Versions/A (skipping framework link repair)."
+    return 0
+  fi
+
+  repair_link() {
+    local link_path="$1"
+    local link_target="$2"
+    local current_target=""
+
+    if [ -L "$link_path" ]; then
+      current_target="$(readlink "$link_path")"
+      if [ "$current_target" = "$link_target" ]; then
+        return 0
+      fi
+      rm -f "$link_path"
+    elif [ -e "$link_path" ]; then
+      if [ -d "$link_path" ]; then
+        rm -rf "$link_path"
+      else
+        rm -f "$link_path"
+      fi
+    fi
+
+    ln -s "$link_target" "$link_path"
+  }
+
+  repair_link "$framework_root/Syphon" "Versions/Current/Syphon"
+  repair_link "$framework_root/Resources" "Versions/Current/Resources"
+  repair_link "$framework_root/Versions/Current" "A"
+
+  echo "Syphon.framework links verified/repaired."
 }
 
 echo "[1/6] Ensuring toolchains are installed..."
@@ -178,12 +227,15 @@ echo "[2/6] Building native Rust/FFI helpers..."
 # One-liners for rebuilding specific FFI pieces (run from repo root):
 #   cargo build --release --manifest-path apps/deno-notebooks/native/fastsleep/Cargo.toml
 #   cargo build --release --manifest-path apps/deno-notebooks/native/deno_window/Cargo.toml
+#   bash apps/deno-notebooks/scripts/build_syphon_bridge.sh
 #   bash apps/deno-notebooks/scripts/build_midi_bridge.sh
 #   bash apps/deno-notebooks/scripts/build_text_engine.sh
 
 if ensure_in_path cargo; then
+  ensure_syphon_framework_links
   cargo build --release --manifest-path "$NOTEBOOK_DIR/native/fastsleep/Cargo.toml"
   cargo build --release --manifest-path "$NOTEBOOK_DIR/native/deno_window/Cargo.toml"
+  bash "$NOTEBOOK_DIR/scripts/build_syphon_bridge.sh"
   bash "$NOTEBOOK_DIR/scripts/build_midi_bridge.sh"
   bash "$NOTEBOOK_DIR/scripts/build_text_engine.sh"
 else
