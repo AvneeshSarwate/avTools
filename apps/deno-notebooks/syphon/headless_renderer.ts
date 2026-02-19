@@ -41,6 +41,7 @@ export function createHeadlessSyphonRenderer(
     size: { width, height },
     format: "bgra8unorm",
     usage: GPUTextureUsage.RENDER_ATTACHMENT |
+      GPUTextureUsage.COPY_DST |
       GPUTextureUsage.COPY_SRC |
       GPUTextureUsage.TEXTURE_BINDING,
   });

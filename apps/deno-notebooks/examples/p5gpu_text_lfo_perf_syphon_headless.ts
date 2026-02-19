@@ -7,13 +7,12 @@
 //     examples/p5gpu_text_lfo_perf_syphon_headless.ts
 
 import { P5GPU } from "../tools/p5gpu.ts";
-import { blit, createBlitPipeline } from "../window/blit.ts";
 import { createHeadlessSyphonRenderer } from "../syphon/mod.ts";
 
 const WIDTH = Number(Deno.env.get("P5_HEADLESS_WIDTH") ?? 1280);
 const HEIGHT = Number(Deno.env.get("P5_HEADLESS_HEIGHT") ?? 720);
 const FPS = Number(Deno.env.get("P5_HEADLESS_FPS") ?? 60);
-const MAX_FRAMES = Number(Deno.env.get("P5_HEADLESS_MAX_FRAMES") ?? 240);
+const MAX_FRAMES = Number(Deno.env.get("P5_HEADLESS_MAX_FRAMES") ?? 2400);
 const LOG_EVERY = 20;
 const SERVER_NAME = "P5GPU_LFO_Headless";
 const CHAR_COUNT = 720;
@@ -70,8 +69,6 @@ const renderer = createHeadlessSyphonRenderer(device, {
     flipY: true,
   },
 });
-const blitPipeline = createBlitPipeline(device, "bgra8unorm");
-
 console.log(
   `[p5gpu-headless] start frames=${MAX_FRAMES} fps=${FPS} chars=${CHARS.length} server="${SERVER_NAME}"`,
 );
@@ -124,12 +121,14 @@ try {
     pushSample(performance.now() - drawStart);
 
     const encoder = device.createCommandEncoder();
-    blit(
-      device,
-      encoder,
-      blitPipeline,
-      sourceTexture.createView(),
-      renderTexture.createView(),
+    encoder.copyTextureToTexture(
+      { texture: sourceTexture },
+      { texture: renderTexture },
+      {
+        width: WIDTH,
+        height: HEIGHT,
+        depthOrArrayLayers: 1,
+      },
     );
 
     if ((frameNumber + 1) % LOG_EVERY === 0 || frameNumber === 0) {

@@ -83,7 +83,11 @@ export class GlyphAtlas {
     evictions: 0,
   };
 
-  constructor(device: GPUDevice, queue: GPUQueue, options: GlyphAtlasOptions = {}) {
+  constructor(
+    device: GPUDevice,
+    queue: GPUQueue,
+    options: GlyphAtlasOptions = {},
+  ) {
     this.device = device;
     this.queue = queue;
 
@@ -244,11 +248,14 @@ export class GlyphAtlas {
   }
 
   private _createTexture(size: number): GPUTexture {
-    return this.device.createTexture({
+    const texture = this.device.createTexture({
       size: { width: size, height: size, depthOrArrayLayers: 1 },
       format: this.format,
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.COPY_SRC,
     });
+    this._zeroTexture(texture, size);
+    return texture;
   }
 
   /**
@@ -301,11 +308,34 @@ export class GlyphAtlas {
     this._cursorX = 0;
     this._cursorY = 0;
     this._rowHeight = 0;
+    this._zeroTexture(this.texture, this.size);
     // Clearing invalidates all existing UV references.
     this.version += 1;
   }
 
-  private _allocate(width: number, height: number): { x: number; y: number } | null {
+  private _zeroTexture(texture: GPUTexture, size: number): void {
+    // r8 atlas textures use one byte per pixel.
+    const zeros = new Uint8Array(size * size);
+    this.queue.writeTexture(
+      { texture, origin: { x: 0, y: 0, z: 0 } },
+      zeros,
+      {
+        offset: 0,
+        bytesPerRow: size,
+        rowsPerImage: size,
+      },
+      {
+        width: size,
+        height: size,
+        depthOrArrayLayers: 1,
+      },
+    );
+  }
+
+  private _allocate(
+    width: number,
+    height: number,
+  ): { x: number; y: number } | null {
     const paddedW = width + this._padding;
     const paddedH = height + this._padding;
 
@@ -353,7 +383,9 @@ export class GlyphAtlas {
     this._stats.bytesUploaded += upload.length;
   }
 
-  private _computeInkXRange(raster: RasterizedGlyph): { x0: number; x1: number } {
+  private _computeInkXRange(
+    raster: RasterizedGlyph,
+  ): { x0: number; x1: number } {
     const { width, height, pixels } = raster;
     if (width <= 0 || height <= 0 || pixels.length === 0) {
       return { x0: 0, x1: width };
@@ -379,7 +411,9 @@ export class GlyphAtlas {
   }
 
   private _deferTextureDestroy(texture: GPUTexture): void {
-    const queue = this.queue as GPUQueue & { onSubmittedWorkDone?: () => Promise<void> };
+    const queue = this.queue as GPUQueue & {
+      onSubmittedWorkDone?: () => Promise<void>;
+    };
     if (typeof queue.onSubmittedWorkDone === "function") {
       const pending = queue.onSubmittedWorkDone()
         .catch(() => {})
