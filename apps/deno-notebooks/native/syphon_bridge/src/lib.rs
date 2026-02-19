@@ -51,6 +51,29 @@ mod macos {
         size: NSSize,
     }
 
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct MTLOrigin {
+        x: u64,
+        y: u64,
+        z: u64,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct MTLSize {
+        width: u64,
+        height: u64,
+        depth: u64,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct MTLRegion {
+        origin: MTLOrigin,
+        size: MTLSize,
+    }
+
     #[derive(Clone, Copy)]
     struct RingEntry {
         #[allow(dead_code)]
@@ -181,6 +204,24 @@ mod macos {
         last_height: AtomicU32,
     }
 
+    pub struct HeadlessSyphonState {
+        device: *mut Object,
+        command_queue: *mut Object,
+        syphon_server: *mut Object,
+        server_name: String,
+        _framework_hint: Option<String>,
+        textures: [*mut Object; 2],
+        tex_width: u32,
+        tex_height: u32,
+        write_idx: usize,
+        publish_flipped: AtomicU32,
+        published_frame_count: AtomicU64,
+        debug_enabled: bool,
+        debug_log_interval_ms: u64,
+        debug_last_log_ms: AtomicU64,
+        debug_last_publish_count: AtomicU64,
+    }
+
     pub struct SyphonClientState {
         client: *mut Object,
     }
@@ -235,6 +276,41 @@ mod macos {
                 let _: () = msg_send![self.client, release];
             }
             self.client = ptr::null_mut();
+        }
+    }
+
+    impl Drop for HeadlessSyphonState {
+        fn drop(&mut self) {
+            if !self.syphon_server.is_null() {
+                unsafe {
+                    if responds_to_selector(self.syphon_server, sel!(stop)) {
+                        let _: () = msg_send![self.syphon_server, stop];
+                    }
+                    let _: () = msg_send![self.syphon_server, release];
+                }
+                self.syphon_server = ptr::null_mut();
+            }
+
+            for texture in &mut self.textures {
+                if !texture.is_null() {
+                    unsafe {
+                        let _: () = msg_send![*texture, release];
+                    }
+                    *texture = ptr::null_mut();
+                }
+            }
+
+            if !self.command_queue.is_null() {
+                unsafe {
+                    let _: () = msg_send![self.command_queue, release];
+                }
+                self.command_queue = ptr::null_mut();
+            }
+
+            // Intentionally do not release self.device.
+            // MTLCreateSystemDefaultDevice() returns an autoreleased singleton on
+            // current macOS versions and releasing it can crash.
+            self.device = ptr::null_mut();
         }
     }
 
@@ -393,7 +469,9 @@ mod macos {
             let published_prev = self
                 .debug_last_publish_count
                 .swap(published_total, Ordering::Relaxed);
-            let hook_prev = self.debug_last_hook_count.swap(hook_total, Ordering::Relaxed);
+            let hook_prev = self
+                .debug_last_hook_count
+                .swap(hook_total, Ordering::Relaxed);
             let published_delta = published_total.saturating_sub(published_prev);
             let hook_delta = hook_total.saturating_sub(hook_prev);
             let dt_ms = now.saturating_sub(last).max(1);
@@ -452,6 +530,121 @@ mod macos {
                 return;
             }
 
+            let _: () = msg_send![self.syphon_server, setName: ns_name];
+            let _: () = msg_send![ns_name, release];
+        }
+    }
+
+    impl HeadlessSyphonState {
+        unsafe fn recreate_textures(&mut self, width: u32, height: u32) -> bool {
+            for texture in &mut self.textures {
+                if !texture.is_null() {
+                    let _: () = msg_send![*texture, release];
+                    *texture = ptr::null_mut();
+                }
+            }
+
+            let desc_cls = match Class::get("MTLTextureDescriptor") {
+                Some(cls) => cls,
+                None => return false,
+            };
+            let desc: *mut Object = msg_send![
+                desc_cls,
+                texture2DDescriptorWithPixelFormat: 80u64
+                width: width as u64
+                height: height as u64
+                mipmapped: NO
+            ];
+            if desc.is_null() {
+                return false;
+            }
+
+            // MTLTextureUsageShaderRead
+            let _: () = msg_send![desc, setUsage: 1u64];
+
+            for i in 0..self.textures.len() {
+                let texture: *mut Object = msg_send![self.device, newTextureWithDescriptor: desc];
+                if texture.is_null() {
+                    for created in &mut self.textures {
+                        if !created.is_null() {
+                            let _: () = msg_send![*created, release];
+                            *created = ptr::null_mut();
+                        }
+                    }
+                    self.tex_width = 0;
+                    self.tex_height = 0;
+                    self.write_idx = 0;
+                    return false;
+                }
+                self.textures[i] = texture;
+            }
+
+            self.tex_width = width;
+            self.tex_height = height;
+            self.write_idx = 0;
+            true
+        }
+
+        unsafe fn maybe_debug_log(&self, width: u32, height: u32) {
+            if !self.debug_enabled {
+                return;
+            }
+            let now = monotonic_millis();
+            let last = self.debug_last_log_ms.load(Ordering::Relaxed);
+            if now.saturating_sub(last) < self.debug_log_interval_ms {
+                return;
+            }
+            if self
+                .debug_last_log_ms
+                .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_err()
+            {
+                return;
+            }
+
+            let published_total = self.published_frame_count.load(Ordering::Relaxed);
+            let published_prev = self
+                .debug_last_publish_count
+                .swap(published_total, Ordering::Relaxed);
+            let published_delta = published_total.saturating_sub(published_prev);
+            let dt_ms = now.saturating_sub(last).max(1);
+            let publish_fps = (published_delta as f64) * 1000.0 / (dt_ms as f64);
+
+            let has_clients = if self.syphon_server.is_null() {
+                false
+            } else {
+                let hc: BOOL = msg_send![self.syphon_server, hasClients];
+                hc == YES
+            };
+
+            eprintln!(
+                "[syphon_bridge][headless] server=\"{}\" flipped={} clients={} published_total={} published_delta={} publish_fps={:.1} size={}x{}",
+                self.server_name,
+                self.publish_flipped.load(Ordering::Relaxed) != 0,
+                has_clients,
+                published_total,
+                published_delta,
+                publish_fps,
+                width,
+                height
+            );
+        }
+
+        unsafe fn set_name(&mut self, name: String) {
+            if name.is_empty() {
+                return;
+            }
+            self.server_name = name;
+            if self.syphon_server.is_null() {
+                return;
+            }
+            if !responds_to_selector(self.syphon_server, sel!(setName:)) {
+                return;
+            }
+            let ns_name = nsstring_from_str(&self.server_name);
+            if ns_name.is_null() {
+                return;
+            }
             let _: () = msg_send![self.syphon_server, setName: ns_name];
             let _: () = msg_send![ns_name, release];
         }
@@ -868,7 +1061,9 @@ mod macos {
                 // repo root + apps/deno-notebooks subtree
                 push_unique_path(
                     &mut candidates,
-                    dir.join("apps/deno-notebooks/native/syphon_bridge/frameworks/Syphon.framework"),
+                    dir.join(
+                        "apps/deno-notebooks/native/syphon_bridge/frameworks/Syphon.framework",
+                    ),
                 );
                 // apps/deno-notebooks working directory
                 push_unique_path(
@@ -976,8 +1171,7 @@ mod macos {
         };
         let debug_enabled = env_flag("SYPHON_BRIDGE_DEBUG");
         let debug_log_interval_ms = env_u64("SYPHON_BRIDGE_DEBUG_INTERVAL_MS", 1000);
-        let publish_flipped =
-            env_flag("SYPHON_BRIDGE_FLIP_Y") || env_flag("SYPHON_BRIDGE_FLIPPED");
+        let publish_flipped = env_flag("SYPHON_BRIDGE_FLIP_Y") || env_flag("SYPHON_BRIDGE_FLIPPED");
 
         let loaded_framework_path = load_syphon_framework(framework_hint.as_deref());
 
@@ -1084,7 +1278,259 @@ mod macos {
             return;
         }
         let state = unsafe { &*state };
-        state.publish_flipped.store(u32::from(flipped != 0), Ordering::Relaxed);
+        state
+            .publish_flipped
+            .store(u32::from(flipped != 0), Ordering::Relaxed);
+    }
+
+    #[no_mangle]
+    pub extern "C" fn syphon_headless_init(
+        name_ptr: *const u8,
+        name_len: u32,
+        framework_path_ptr: *const u8,
+        framework_path_len: u32,
+    ) -> *mut HeadlessSyphonState {
+        let server_name = unsafe {
+            let decoded = bytes_to_string(name_ptr, name_len);
+            if decoded.is_empty() {
+                "Deno Syphon Headless".to_string()
+            } else {
+                decoded
+            }
+        };
+
+        let framework_hint = unsafe {
+            let decoded = bytes_to_string(framework_path_ptr, framework_path_len);
+            if decoded.is_empty() {
+                None
+            } else {
+                Some(decoded)
+            }
+        };
+
+        let _ = load_syphon_framework(framework_hint.as_deref());
+        let server_class = match Class::get("SyphonMetalServer") {
+            Some(cls) => cls,
+            None => return ptr::null_mut(),
+        };
+
+        let device = unsafe { MTLCreateSystemDefaultDevice() };
+        if device.is_null() {
+            return ptr::null_mut();
+        }
+
+        let queue: *mut Object = unsafe { msg_send![device, newCommandQueue] };
+        if queue.is_null() {
+            return ptr::null_mut();
+        }
+
+        let name = unsafe { nsstring_from_str(&server_name) };
+        if name.is_null() {
+            unsafe {
+                let _: () = msg_send![queue, release];
+            }
+            return ptr::null_mut();
+        }
+
+        let server_alloc: *mut Object = unsafe { msg_send![server_class, alloc] };
+        let server: *mut Object = unsafe {
+            msg_send![
+                server_alloc,
+                initWithName: name
+                device: device
+                options: ptr::null::<Object>()
+            ]
+        };
+        unsafe {
+            let _: () = msg_send![name, release];
+        }
+
+        if server.is_null() {
+            unsafe {
+                let _: () = msg_send![queue, release];
+            }
+            return ptr::null_mut();
+        }
+
+        let debug_enabled = env_flag("SYPHON_BRIDGE_DEBUG");
+        let debug_log_interval_ms = env_u64("SYPHON_BRIDGE_DEBUG_INTERVAL_MS", 1000);
+        let publish_flipped = env_flag("SYPHON_BRIDGE_FLIP_Y") || env_flag("SYPHON_BRIDGE_FLIPPED");
+
+        if debug_enabled {
+            eprintln!(
+                "[syphon_bridge][headless] debug enabled interval_ms={} flipped={} server=\"{}\"",
+                debug_log_interval_ms, publish_flipped, server_name
+            );
+        }
+
+        let state = Box::new(HeadlessSyphonState {
+            device,
+            command_queue: queue,
+            syphon_server: server,
+            server_name,
+            _framework_hint: framework_hint,
+            textures: [ptr::null_mut(), ptr::null_mut()],
+            tex_width: 0,
+            tex_height: 0,
+            write_idx: 0,
+            publish_flipped: AtomicU32::new(u32::from(publish_flipped)),
+            published_frame_count: AtomicU64::new(0),
+            debug_enabled,
+            debug_log_interval_ms,
+            debug_last_log_ms: AtomicU64::new(monotonic_millis()),
+            debug_last_publish_count: AtomicU64::new(0),
+        });
+
+        Box::into_raw(state)
+    }
+
+    #[no_mangle]
+    pub extern "C" fn syphon_headless_destroy(state: *mut HeadlessSyphonState) {
+        if state.is_null() {
+            return;
+        }
+        unsafe {
+            drop(Box::from_raw(state));
+        }
+    }
+
+    #[no_mangle]
+    pub extern "C" fn syphon_headless_publish_frame(
+        state: *mut HeadlessSyphonState,
+        pixel_data: *const u8,
+        width: u32,
+        height: u32,
+        bytes_per_row: u32,
+        _pixel_format: u32,
+    ) -> u64 {
+        if state.is_null() || pixel_data.is_null() || width == 0 || height == 0 {
+            return 0;
+        }
+        let min_bpr = width.saturating_mul(4);
+        if bytes_per_row < min_bpr {
+            return 0;
+        }
+
+        let state = unsafe { &mut *state };
+        if state.syphon_server.is_null() || state.command_queue.is_null() {
+            return 0;
+        }
+
+        if (state.tex_width != width || state.tex_height != height)
+            && !unsafe { state.recreate_textures(width, height) }
+        {
+            return 0;
+        }
+
+        let texture = state.textures[state.write_idx];
+        if texture.is_null() {
+            return 0;
+        }
+
+        unsafe {
+            let region = MTLRegion {
+                origin: MTLOrigin { x: 0, y: 0, z: 0 },
+                size: MTLSize {
+                    width: width as u64,
+                    height: height as u64,
+                    depth: 1,
+                },
+            };
+
+            let _: () = msg_send![
+                texture,
+                replaceRegion: region
+                mipmapLevel: 0u64
+                withBytes: pixel_data as *const c_void
+                bytesPerRow: bytes_per_row as u64
+            ];
+
+            let cmd_buf: *mut Object = msg_send![state.command_queue, commandBuffer];
+            if cmd_buf.is_null() {
+                return 0;
+            }
+
+            let image_region = NSRect {
+                origin: NSPoint { x: 0.0, y: 0.0 },
+                size: NSSize {
+                    width: width as f64,
+                    height: height as f64,
+                },
+            };
+            let flipped = if state.publish_flipped.load(Ordering::Relaxed) != 0 {
+                YES
+            } else {
+                NO
+            };
+
+            let _: () = msg_send![
+                state.syphon_server,
+                publishFrameTexture: texture
+                onCommandBuffer: cmd_buf
+                imageRegion: image_region
+                flipped: flipped
+            ];
+            let _: () = msg_send![cmd_buf, commit];
+        }
+
+        state.write_idx = (state.write_idx + 1) % state.textures.len();
+        let published = state.published_frame_count.fetch_add(1, Ordering::Relaxed) + 1;
+        unsafe {
+            state.maybe_debug_log(width, height);
+        }
+        published
+    }
+
+    #[no_mangle]
+    pub extern "C" fn syphon_headless_has_clients(state: *mut HeadlessSyphonState) -> u32 {
+        if state.is_null() {
+            return 0;
+        }
+        let state = unsafe { &*state };
+        if state.syphon_server.is_null() {
+            return 0;
+        }
+        let has_clients: BOOL = unsafe { msg_send![state.syphon_server, hasClients] };
+        u32::from(has_clients == YES)
+    }
+
+    #[no_mangle]
+    pub extern "C" fn syphon_headless_set_name(
+        state: *mut HeadlessSyphonState,
+        name_ptr: *const u8,
+        name_len: u32,
+    ) {
+        if state.is_null() {
+            return;
+        }
+        let new_name = unsafe { bytes_to_string(name_ptr, name_len) };
+        if new_name.is_empty() {
+            return;
+        }
+        let state = unsafe { &mut *state };
+        unsafe {
+            state.set_name(new_name);
+        }
+    }
+
+    #[no_mangle]
+    pub extern "C" fn syphon_headless_set_flipped(state: *mut HeadlessSyphonState, flipped: u32) {
+        if state.is_null() {
+            return;
+        }
+        let state = unsafe { &*state };
+        state
+            .publish_flipped
+            .store(u32::from(flipped != 0), Ordering::Relaxed);
+    }
+
+    #[no_mangle]
+    pub extern "C" fn syphon_headless_get_published_count(state: *mut HeadlessSyphonState) -> u64 {
+        if state.is_null() {
+            return 0;
+        }
+        let state = unsafe { &*state };
+        state.published_frame_count.load(Ordering::Relaxed)
     }
 
     #[no_mangle]
@@ -1319,6 +1765,7 @@ mod macos {
 
     pub enum SyphonState {}
     pub enum SyphonClientState {}
+    pub enum HeadlessSyphonState {}
 
     #[no_mangle]
     pub extern "C" fn syphon_init(
@@ -1354,6 +1801,53 @@ mod macos {
 
     #[no_mangle]
     pub extern "C" fn syphon_set_flipped(_state: *mut SyphonState, _flipped: u32) {}
+
+    #[no_mangle]
+    pub extern "C" fn syphon_headless_init(
+        _name_ptr: *const u8,
+        _name_len: u32,
+        _framework_path_ptr: *const u8,
+        _framework_path_len: u32,
+    ) -> *mut HeadlessSyphonState {
+        ptr::null_mut()
+    }
+
+    #[no_mangle]
+    pub extern "C" fn syphon_headless_destroy(_state: *mut HeadlessSyphonState) {}
+
+    #[no_mangle]
+    pub extern "C" fn syphon_headless_publish_frame(
+        _state: *mut HeadlessSyphonState,
+        _pixel_data: *const u8,
+        _width: u32,
+        _height: u32,
+        _bytes_per_row: u32,
+        _pixel_format: u32,
+    ) -> u64 {
+        0
+    }
+
+    #[no_mangle]
+    pub extern "C" fn syphon_headless_has_clients(_state: *mut HeadlessSyphonState) -> u32 {
+        0
+    }
+
+    #[no_mangle]
+    pub extern "C" fn syphon_headless_set_name(
+        _state: *mut HeadlessSyphonState,
+        _name_ptr: *const u8,
+        _name_len: u32,
+    ) {
+    }
+
+    #[no_mangle]
+    pub extern "C" fn syphon_headless_set_flipped(_state: *mut HeadlessSyphonState, _flipped: u32) {
+    }
+
+    #[no_mangle]
+    pub extern "C" fn syphon_headless_get_published_count(_state: *mut HeadlessSyphonState) -> u64 {
+        0
+    }
 
     #[no_mangle]
     pub extern "C" fn syphon_get_intercept_count(_state: *mut SyphonState) -> u64 {

@@ -23,6 +23,34 @@ export const FFI_SYMBOLS = {
     parameters: ["pointer", "u32"],
     result: "void",
   },
+  syphon_headless_init: {
+    parameters: ["pointer", "u32", "pointer", "u32"],
+    result: "pointer",
+  },
+  syphon_headless_destroy: {
+    parameters: ["pointer"],
+    result: "void",
+  },
+  syphon_headless_publish_frame: {
+    parameters: ["pointer", "pointer", "u32", "u32", "u32", "u32"],
+    result: "u64",
+  },
+  syphon_headless_has_clients: {
+    parameters: ["pointer"],
+    result: "u32",
+  },
+  syphon_headless_set_name: {
+    parameters: ["pointer", "pointer", "u32"],
+    result: "void",
+  },
+  syphon_headless_set_flipped: {
+    parameters: ["pointer", "u32"],
+    result: "void",
+  },
+  syphon_headless_get_published_count: {
+    parameters: ["pointer"],
+    result: "u64",
+  },
   syphon_get_intercept_count: {
     parameters: ["pointer"],
     result: "u64",
