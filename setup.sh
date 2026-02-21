@@ -13,7 +13,12 @@
 #   4) Creates a uv-managed Python venv and installs Jupyter
 #   5) Installs the custom Deno Jupyter kernelspec
 #
-# Run: ./setup.sh
+# Run (macOS/Linux): ./setup.sh
+# Run (Windows/MSYS2/Git Bash):
+#   If Rust/Deno/uv are already installed but not in the current shell's PATH,
+#   prepend their bin dirs so the script can find them:
+#     export PATH="$HOME/.cargo/bin:$HOME/.deno/bin:$HOME/.local/bin:$PATH"
+#     bash setup.sh
 # =============================================================================
 
 set -euo pipefail
@@ -22,10 +27,19 @@ IFS=$'\n\t'
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NOTEBOOK_DIR="$ROOT_DIR/apps/deno-notebooks"
 
+# Platform detection
+case "$(uname -s)" in
+  Darwin)       PLATFORM="macos" ;;
+  MINGW*|MSYS*) PLATFORM="windows" ;;
+  Linux)        PLATFORM="linux" ;;
+  *)            PLATFORM="unknown" ;;
+esac
+
 echo "================================================"
 echo "avTools Setup"
 echo "================================================"
 echo "Repo root: $ROOT_DIR"
+echo "Platform:  $PLATFORM"
 echo ""
 
 ensure_in_path() {
@@ -74,8 +88,14 @@ warn_toolchain_missing() {
 install_rust() {
   echo "[toolchain] Installing Rust via rustup..."
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-  # shellcheck disable=SC1091
-  source "$HOME/.cargo/env"
+  # On macOS/Linux, source the env file; on Windows, rustup updates PATH via
+  # the registry so we just add the bin dir directly for this session.
+  if [ -f "$HOME/.cargo/env" ]; then
+    # shellcheck disable=SC1091
+    source "$HOME/.cargo/env"
+  else
+    export PATH="$HOME/.cargo/bin:$PATH"
+  fi
   echo "Rust $(rustc --version) installed."
 }
 
@@ -181,7 +201,11 @@ if ! ensure_in_path rustc || ! ensure_in_path cargo; then
   fi
 else
   # shellcheck disable=SC1091
-  source "$HOME/.cargo/env" || true
+  if [ -f "$HOME/.cargo/env" ]; then
+    source "$HOME/.cargo/env"
+  else
+    export PATH="$HOME/.cargo/bin:$PATH"
+  fi
   echo "Rust already installed: $(rustc --version)"
 fi
 
@@ -232,12 +256,23 @@ echo "[2/6] Building native Rust/FFI helpers..."
 #   bash apps/deno-notebooks/scripts/build_text_engine.sh
 
 if ensure_in_path cargo; then
-  ensure_syphon_framework_links
+  # Cross-platform crates
   cargo build --release --manifest-path "$NOTEBOOK_DIR/native/fastsleep/Cargo.toml"
   cargo build --release --manifest-path "$NOTEBOOK_DIR/native/deno_window/Cargo.toml"
-  bash "$NOTEBOOK_DIR/scripts/build_syphon_bridge.sh"
-  bash "$NOTEBOOK_DIR/scripts/build_midi_bridge.sh"
   bash "$NOTEBOOK_DIR/scripts/build_text_engine.sh"
+
+  # Platform-specific crates
+  if [ "$PLATFORM" = "macos" ]; then
+    ensure_syphon_framework_links
+    bash "$NOTEBOOK_DIR/scripts/build_syphon_bridge.sh"
+    bash "$NOTEBOOK_DIR/scripts/build_midi_bridge.sh"
+  elif [ "$PLATFORM" = "windows" ]; then
+    echo "Skipping syphon_bridge (macOS-only)."
+    bash "$NOTEBOOK_DIR/scripts/build_midi_bridge.sh"
+    # TODO: bash "$NOTEBOOK_DIR/scripts/build_spout_bridge.sh"
+  else
+    bash "$NOTEBOOK_DIR/scripts/build_midi_bridge.sh"
+  fi
 else
   echo "Cargo not available; skipping native builds."
 fi
@@ -281,7 +316,11 @@ RECONCILER_PKG="$ROOT_DIR/node_modules/.deno/react-reconciler@0.31.0/node_module
 if [ -f "$RECONCILER_PKG" ]; then
   if ! grep -q '"exports"' "$RECONCILER_PKG"; then
     echo "Patching react-reconciler package.json for Deno compatibility..."
-    python3 -c "
+    PYTHON_CMD="python3"
+    if [ "$PLATFORM" = "windows" ]; then
+      PYTHON_CMD="python"
+    fi
+    $PYTHON_CMD -c "
 import json, sys
 pkg_path = sys.argv[1]
 with open(pkg_path) as f:
@@ -328,7 +367,11 @@ echo ""
 echo "[5/6] Installing avtools Deno Jupyter kernel..."
 
 if ensure_in_path deno; then
-  export PATH="$NOTEBOOK_DIR/.venv/bin:$PATH"
+  if [ "$PLATFORM" = "windows" ]; then
+    export PATH="$NOTEBOOK_DIR/.venv/Scripts:$PATH"
+  else
+    export PATH="$NOTEBOOK_DIR/.venv/bin:$PATH"
+  fi
   bash "$NOTEBOOK_DIR/scripts/install_avtools_kernel.sh"
 else
   echo "Deno not available; skipping kernel install."
@@ -356,5 +399,9 @@ echo "2) Open any .ipynb under apps/deno-notebooks."
 echo "3) If prompted, pick the kernel: \"Deno (avtools unstable)\"."
 echo ""
 echo "VS Code should already point to the uv venv at:"
-echo "  apps/deno-notebooks/.venv/bin/python"
+if [ "$PLATFORM" = "windows" ]; then
+  echo "  apps/deno-notebooks/.venv/Scripts/python.exe"
+else
+  echo "  apps/deno-notebooks/.venv/bin/python"
+fi
 echo ""

@@ -17,9 +17,12 @@ if [ ! -f "$TEMPLATE_PATH" ]; then
 fi
 
 DENO_PATH="$(command -v deno)"
-VENV_JUPYTER="$REPO_ROOT/apps/deno-notebooks/.venv/bin/jupyter"
-if [ -x "$VENV_JUPYTER" ]; then
-  JUPYTER_BIN="$VENV_JUPYTER"
+VENV_JUPYTER_UNIX="$REPO_ROOT/apps/deno-notebooks/.venv/bin/jupyter"
+VENV_JUPYTER_WIN="$REPO_ROOT/apps/deno-notebooks/.venv/Scripts/jupyter"
+if [ -x "$VENV_JUPYTER_UNIX" ]; then
+  JUPYTER_BIN="$VENV_JUPYTER_UNIX"
+elif [ -x "$VENV_JUPYTER_WIN" ] || [ -x "${VENV_JUPYTER_WIN}.exe" ]; then
+  JUPYTER_BIN="$VENV_JUPYTER_WIN"
 else
   JUPYTER_BIN="$(command -v jupyter || true)"
 fi
@@ -41,12 +44,13 @@ KERNEL_DIR="$JUPYTER_DATA_DIR/kernels/avtools-deno-unstable"
 
 mkdir -p "$KERNEL_DIR"
 
-python - <<PY
-import pathlib
-template = pathlib.Path("$TEMPLATE_PATH").read_text()
-template = template.replace("__DENO_PATH__", "$DENO_PATH")
-template = template.replace("__REPO_ROOT__", "$REPO_ROOT")
-path = pathlib.Path("$KERNEL_DIR") / "kernel.json"
+python - "$TEMPLATE_PATH" "$DENO_PATH" "$REPO_ROOT" "$KERNEL_DIR" <<'PY'
+import pathlib, sys
+template_path, deno_path, repo_root, kernel_dir = sys.argv[1:5]
+template = pathlib.Path(template_path).read_text()
+template = template.replace("__DENO_PATH__", deno_path)
+template = template.replace("__REPO_ROOT__", repo_root)
+path = pathlib.Path(kernel_dir) / "kernel.json"
 path.write_text(template)
 print(f"Installed kernel to {path}")
 PY

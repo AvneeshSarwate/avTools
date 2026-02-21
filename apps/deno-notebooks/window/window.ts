@@ -25,16 +25,17 @@ export interface GpuWindow {
 }
 
 export interface BeforeSurfaceCreateInfo {
-  system: "cocoa" | "x11" | "wayland";
+  system: "cocoa" | "x11" | "wayland" | "win32";
   rawWindowHandle: bigint;
   rawDisplayHandle: bigint;
   surfaceWindowHandle: bigint;
   surfaceDisplayHandle: bigint;
 }
 
-function systemFromId(id: number): "cocoa" | "x11" | "wayland" {
+function systemFromId(id: number): "cocoa" | "x11" | "wayland" | "win32" {
   if (id === 1) return "x11";
   if (id === 2) return "wayland";
+  if (id === 3) return "win32";
   return "cocoa";
 }
 
@@ -105,6 +106,11 @@ export async function createGpuWindow(
     surfaceDisplayHandle = nsView;
     // Keep a non-null external for windowHandle to satisfy parameter validation.
     surfaceWindowHandle = nsView;
+  } else if (system === "win32") {
+    // Deno expects the HWND as windowHandle; displayHandle can be the same
+    // (HINSTANCE is not required by wgpu's Win32 surface descriptor).
+    surfaceWindowHandle = windowHandle;
+    surfaceDisplayHandle = windowHandle;
   }
   if (debug) {
     console.log("deno_window surface handles", {

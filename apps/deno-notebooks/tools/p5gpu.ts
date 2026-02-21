@@ -706,7 +706,12 @@ export class P5GPU {
     if (this._geomVertexCount > 0) {
       const byteLength = this._geomStagingCursor * 4;
       this._ensureGeomVertexBuffer(byteLength);
-      this.device.queue.writeBuffer(this._geomVertexBuffer!, 0, this._geomStagingBuffer.buffer as ArrayBuffer, 0, byteLength);
+      // Was: writeBuffer(..., this._geomStagingBuffer.buffer as ArrayBuffer, 0, byteLength)
+      // In Deno 2.x / newer V8, Float32Array.buffer returns ArrayBufferLike (which
+      // may be a resizable ArrayBuffer) rather than a plain ArrayBuffer. GPUQueue's
+      // writeBuffer rejects anything that isn't ArrayBuffer | ArrayBufferView, so
+      // we wrap it in a Uint8Array view to satisfy the type check.
+      this.device.queue.writeBuffer(this._geomVertexBuffer!, 0, new Uint8Array(this._geomStagingBuffer.buffer, 0, byteLength));
       hasGeom = true;
     }
 

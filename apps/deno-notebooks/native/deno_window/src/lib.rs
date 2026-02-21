@@ -338,6 +338,7 @@ fn window_system_id(handle: RawWindowHandle, display: RawDisplayHandle) -> u32 {
         | (_, RawDisplayHandle::Xlib(_))
         | (RawWindowHandle::Xcb(_), _)
         | (RawWindowHandle::Xlib(_), _) => 1,
+        (RawWindowHandle::Win32(_), _) | (RawWindowHandle::WinRt(_), _) => 3,
         _ => 0,
     }
 }
