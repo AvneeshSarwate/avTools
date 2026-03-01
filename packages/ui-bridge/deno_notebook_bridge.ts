@@ -15,6 +15,7 @@ export interface IframeConfig {
   width?: number
   height?: number
   style?: string
+  autoResize?: boolean
 }
 
 export interface Session<TClient, TSessionData> {
@@ -233,19 +234,41 @@ export class DenoNotebookBridge<TClient, THandle, TSessionData> {
   displayIframe(sessionId: string, config?: IframeConfig): void {
     const state = this.getBridgeState()
     const url = `${state.baseUrl}/editor?id=${sessionId}`
-    const width = config?.width ?? this.adapter.defaultIframeConfig?.width ?? 680
-    const height = config?.height ?? this.adapter.defaultIframeConfig?.height ?? 460
-    const style = config?.style ?? this.adapter.defaultIframeConfig?.style ??
+    const defaults = this.adapter.defaultIframeConfig
+    const width = config?.width ?? defaults?.width ?? 680
+    const height = config?.height ?? defaults?.height ?? 460
+    const style = config?.style ?? defaults?.style ??
       "border: 1px solid #ccc; border-radius: 8px; background: white;"
+    const autoResize = config?.autoResize ?? defaults?.autoResize ?? false
 
-    // @ts-ignore - Deno.jupyter is only available in notebook context
-    const view = Deno.jupyter.html`<iframe
-      src="${url}"
-      width="${width}"
-      height="${height}"
-      style="${style}"
-    ></iframe>`
-    Deno.jupyter.display(view)
+    if (autoResize) {
+      const iframeId = `iframe-${sessionId}`
+      // @ts-ignore - Deno.jupyter is only available in notebook context
+      const view = Deno.jupyter.html`<div><iframe
+        id="${iframeId}"
+        src="${url}"
+        width="${width}"
+        height="${height}"
+        style="${style}"
+      ></iframe><script>
+        window.addEventListener('message', function(e) {
+          if (e.data && e.data.type === 'resize' && e.data.sessionId === '${sessionId}') {
+            var f = document.getElementById('${iframeId}');
+            if (f) f.style.height = e.data.height + 'px';
+          }
+        });
+      </script></div>`
+      Deno.jupyter.display(view)
+    } else {
+      // @ts-ignore - Deno.jupyter is only available in notebook context
+      const view = Deno.jupyter.html`<iframe
+        src="${url}"
+        width="${width}"
+        height="${height}"
+        style="${style}"
+      ></iframe>`
+      Deno.jupyter.display(view)
+    }
   }
 
   show(data: TSessionData, config?: IframeConfig): THandle {

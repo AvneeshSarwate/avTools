@@ -110,8 +110,9 @@ function createTweakpaneAdapter(): ComponentAdapter<
     bundleUrl: new URL("../../../webcomponents/tweakpane/dist/tweakpane-client.js", import.meta.url),
     defaultIframeConfig: {
       width: 360,
-      height: 500,
+      height: 50,
       style: "border: none; border-radius: 8px; background: #2b2b2b;",
+      autoResize: true,
     },
 
     renderHTML(wsUrl: string, sessionId: string, _sessionData: TweakpaneSessionData): string {
@@ -122,20 +123,22 @@ function createTweakpaneAdapter(): ComponentAdapter<
   <title>Tweakpane</title>
   <style>
     * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      padding: 4px;
-      background: #2b2b2b;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    }
+    html, body { margin: 0; padding: 0; background: #2b2b2b; overflow: hidden; }
+    #root { display: inline-block; }
   </style>
 </head>
 <body>
   <div id="root"></div>
   <script type="module">
     import { TweakpaneClient } from '/static/tweakpane.js'
-    const client = new TweakpaneClient('${wsUrl}', document.getElementById('root'))
-    console.log('[Tweakpane] Client mounted', { sessionId: '${sessionId}' })
+    const root = document.getElementById('root')
+    const client = new TweakpaneClient('${wsUrl}', root)
+
+    // Auto-resize: post content height to parent so it can resize the iframe
+    const ro = new ResizeObserver(() => {
+      parent.postMessage({ type: 'resize', sessionId: '${sessionId}', height: root.scrollHeight }, '*')
+    })
+    ro.observe(root)
   </script>
 </body>
 </html>`
