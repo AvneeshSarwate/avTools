@@ -8,6 +8,7 @@
     "build-type-check": "run-p type-check build-only",
     "buildCanvas": "vite build --config vite.canvas.config.ts",
     "buildPianoRoll": "vite build --config vite.piano-roll.config.ts",
+    "buildTweakpane": "vite build --config vite.tweakpane.config.ts",
     "preview": "vite preview",
     "build": "vite build",
     "build-only": "vite build",
