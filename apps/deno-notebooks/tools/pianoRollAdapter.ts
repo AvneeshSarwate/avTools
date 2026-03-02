@@ -26,7 +26,9 @@
 import {
   DenoNotebookBridge,
   type ComponentAdapter,
-  type Session
+  type Session,
+  getInspectorRegistry,
+  getInspectorServer,
 } from "@avtools/ui-bridge"
 import {
   PianoRollWebSocketClient,
@@ -405,6 +407,8 @@ export interface PianoRollBridgeAPI {
   readonly clips: ClipMap
   show(clip: AbletonClip): void
   showBound(name: string): PianoRollHandle
+  /** Register a clip with the scene inspector without displaying an iframe. */
+  register(name: string): void
   shutdown(): void
 }
 
@@ -414,11 +418,49 @@ export function createPianoRollBridge(): PianoRollBridgeAPI {
   const clips = new ClipMap()
   clips._setBridge(bridge)
 
+  // Helper to register with inspector (idempotent — safe to call multiple times)
+  const registerInspectorEntry = (name: string) => {
+    const registry = getInspectorRegistry()
+    const server = getInspectorServer()
+    const baseUrl = bridge.getBaseUrl()
+
+    registry.register({
+      name,
+      componentType: 'piano-roll',
+      bridgeBaseUrl: baseUrl,
+      registeredAt: Date.now(),
+    })
+
+    server.registerSessionFactory(name, {
+      createSession: () => {
+        const sessionId = bridge.generateSessionId()
+        const sessionData: PianoRollSessionData = {
+          type: 'bound',
+          clipMap: clips,
+          clipName: name,
+        }
+        bridge.registerSession(sessionId, sessionData)
+        clips.bind(name, sessionId)
+        const addr = new URL(baseUrl)
+        const wsUrl = `ws://127.0.0.1:${addr.port}/ws?id=${sessionId}`
+        return { sessionId, wsUrl }
+      },
+      destroySession: (sessionId: string) => {
+        clips.unbind(name, sessionId)
+        bridge.removeSession(sessionId)
+      },
+    })
+  }
+
   return {
     clips,
 
     show(clip: AbletonClip): void {
       bridge.show({ type: 'readonly', clip })
+    },
+
+    register(name: string): void {
+      registerInspectorEntry(name)
     },
 
     showBound(name: string): PianoRollHandle {
@@ -433,11 +475,21 @@ export function createPianoRollBridge(): PianoRollBridgeAPI {
       clips.bind(name, sessionId)
       bridge.displayIframe(sessionId)
 
+      // Register with inspector
+      registerInspectorEntry(name)
+
       const session = bridge.getSession(sessionId)!
       return adapter.createHandle(session, bridge)
     },
 
     shutdown(): void {
+      // Unregister all entries from inspector
+      const registry = getInspectorRegistry()
+      const server = getInspectorServer()
+      for (const name of clips.keys()) {
+        registry.unregister(name)
+        server.unregisterSessionFactory(name)
+      }
       bridge.shutdown()
     }
   }

@@ -57,6 +57,11 @@ import type {
   IframeConfig,
 } from "@avtools/ui-bridge"
 
+import {
+  getInspectorRegistry,
+  getInspectorServer,
+} from "@avtools/ui-bridge"
+
 // ============================================================================
 // Forward declarations for adapter (set lazily)
 // ============================================================================
@@ -991,12 +996,24 @@ export class TweakpaneServer implements IContainerProxy {
   private _expanded: boolean
   private _disabled = false
   private _hidden = false
+  private _inspectorName: string | undefined
+  private _inspectorRegistered = false
 
-  constructor(config?: { title?: string; expanded?: boolean }) {
+  constructor(config?: { title?: string; expanded?: boolean; name?: string }) {
     this._title = config?.title
     this._expanded = config?.expanded ?? true
+    this._inspectorName = config?.name
     this._paneConfig = { title: config?.title, expanded: config?.expanded }
     addContainerMethods(this)
+  }
+
+  /** The name used for the inspector registry. Defaults to title, then 'Tweakpane'. */
+  get inspectorName(): string {
+    return this._inspectorName ?? this._title ?? 'Tweakpane'
+  }
+
+  set inspectorName(name: string) {
+    this._inspectorName = name
   }
 
   // --- Properties ---
@@ -1087,20 +1104,69 @@ export class TweakpaneServer implements IContainerProxy {
     this._broadcastToIframes({ type: 'refresh', values })
   }
 
+  /** Register this pane with the scene inspector without displaying an iframe. */
+  register(): void {
+    this._ensureBridge()
+    this._registerWithInspector()
+  }
+
   show(config?: IframeConfig): void {
+    this._ensureBridge()
+
+    const sessionId = this._bridge!.generateSessionId()
+    this._bridge!.registerSession(sessionId, { server: this })
+    this._sessions.add(sessionId)
+    this._bridge!.displayIframe(sessionId, config)
+
+    // Register with inspector (idempotent)
+    this._registerWithInspector()
+  }
+
+  private _ensureBridge(): void {
     if (!this._bridge) {
       if (!_createAdapterAndBridge) {
         throw new Error(
-          'TweakpaneServer: adapter not registered. Import tweakpaneAdapter.ts before calling show().'
+          'TweakpaneServer: adapter not registered. Import tweakpaneAdapter.ts before calling show() or register().'
         )
       }
       this._bridge = _createAdapterAndBridge(this)
     }
+  }
 
-    const sessionId = this._bridge.generateSessionId()
-    this._bridge.registerSession(sessionId, { server: this })
-    this._sessions.add(sessionId)
-    this._bridge.displayIframe(sessionId, config)
+  /** @internal Register this pane with the scene inspector */
+  _registerWithInspector(): void {
+    if (!this._bridge || this._inspectorRegistered) return
+
+    const registry = getInspectorRegistry()
+    const server = getInspectorServer()
+    const baseUrl = this._bridge.getBaseUrl()
+    const name = this.inspectorName
+
+    registry.register({
+      name,
+      componentType: 'tweakpane',
+      bridgeBaseUrl: baseUrl,
+      registeredAt: Date.now(),
+    })
+
+    const bridge = this._bridge
+    const self = this
+    server.registerSessionFactory(name, {
+      createSession: () => {
+        const sessionId = bridge.generateSessionId()
+        bridge.registerSession(sessionId, { server: self })
+        self._sessions.add(sessionId)
+        const addr = new URL(baseUrl)
+        const wsUrl = `ws://127.0.0.1:${addr.port}/ws?id=${sessionId}`
+        return { sessionId, wsUrl }
+      },
+      destroySession: (sessionId: string) => {
+        self._removeSession(sessionId)
+        bridge.removeSession(sessionId)
+      },
+    })
+
+    this._inspectorRegistered = true
   }
 
   // --- Lifecycle ---
@@ -1114,6 +1180,16 @@ export class TweakpaneServer implements IContainerProxy {
   }
 
   shutdown(): void {
+    // Unregister from inspector
+    if (this._inspectorRegistered) {
+      const registry = getInspectorRegistry()
+      const server = getInspectorServer()
+      const name = this.inspectorName
+      registry.unregister(name)
+      server.unregisterSessionFactory(name)
+      this._inspectorRegistered = false
+    }
+
     this.dispose()
     if (this._bridge) {
       this._bridge.shutdown()

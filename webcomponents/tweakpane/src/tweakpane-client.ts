@@ -434,4 +434,17 @@ export class TweakpaneClient {
     this.idMap.delete(op.id)
     this.localObjects.delete(op.id)
   }
+
+  /** Clean up all resources — call when the containing element is being removed */
+  dispose(): void {
+    if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+      this.ws.close()
+    }
+    if (this.pane) {
+      this.pane.dispose()
+      this.pane = null
+    }
+    this.idMap.clear()
+    this.localObjects.clear()
+  }
 }

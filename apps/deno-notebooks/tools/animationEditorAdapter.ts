@@ -25,7 +25,9 @@
 import {
   DenoNotebookBridge,
   type ComponentAdapter,
-  type Session
+  type Session,
+  getInspectorRegistry,
+  getInspectorServer,
 } from "@avtools/ui-bridge"
 import {
   AnimationEditorWebSocketClient,
@@ -413,6 +415,40 @@ export function createAnimationEditorBridge(): AnimationEditorBridgeAPI {
   const tracks = new TrackMap()
   tracks._setBridge(bridge)
 
+  // Helper to register with inspector (idempotent)
+  const registerInspectorEntry = (name: string) => {
+    const registry = getInspectorRegistry()
+    const server = getInspectorServer()
+    const baseUrl = bridge.getBaseUrl()
+
+    registry.register({
+      name,
+      componentType: 'animation-editor',
+      bridgeBaseUrl: baseUrl,
+      registeredAt: Date.now(),
+    })
+
+    server.registerSessionFactory(name, {
+      createSession: () => {
+        const sessionId = bridge.generateSessionId()
+        const sessionData: AnimationSessionData = {
+          type: 'bound',
+          trackMap: tracks,
+          animationName: name,
+        }
+        bridge.registerSession(sessionId, sessionData)
+        tracks.bind(name, sessionId)
+        const addr = new URL(baseUrl)
+        const wsUrl = `ws://127.0.0.1:${addr.port}/ws?id=${sessionId}`
+        return { sessionId, wsUrl }
+      },
+      destroySession: (sessionId: string) => {
+        tracks.unbind(name, sessionId)
+        bridge.removeSession(sessionId)
+      },
+    })
+  }
+
   return {
     tracks,
 
@@ -438,11 +474,21 @@ export function createAnimationEditorBridge(): AnimationEditorBridgeAPI {
       tracks.bind(name, sessionId)
       bridge.displayIframe(sessionId)
 
+      // Register with inspector
+      registerInspectorEntry(name)
+
       const session = bridge.getSession(sessionId)!
       return adapter.createHandle(session, bridge)
     },
 
     shutdown(): void {
+      // Unregister all entries from inspector
+      const registry = getInspectorRegistry()
+      const server = getInspectorServer()
+      for (const name of tracks.keys()) {
+        registry.unregister(name)
+        server.unregisterSessionFactory(name)
+      }
       bridge.shutdown()
     }
   }
