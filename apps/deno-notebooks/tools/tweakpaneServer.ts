@@ -1005,6 +1005,10 @@ export class TweakpaneServer implements IContainerProxy {
     this._inspectorName = config?.name
     this._paneConfig = { title: config?.title, expanded: config?.expanded }
     addContainerMethods(this)
+
+    // Auto-initialize bridge and register with inspector
+    this._ensureBridge()
+    this._registerWithInspector()
   }
 
   /** The name used for the inspector registry. Defaults to title, then 'Tweakpane'. */
@@ -1104,22 +1108,11 @@ export class TweakpaneServer implements IContainerProxy {
     this._broadcastToIframes({ type: 'refresh', values })
   }
 
-  /** Register this pane with the scene inspector without displaying an iframe. */
-  register(): void {
-    this._ensureBridge()
-    this._registerWithInspector()
-  }
-
   show(config?: IframeConfig): void {
-    this._ensureBridge()
-
     const sessionId = this._bridge!.generateSessionId()
     this._bridge!.registerSession(sessionId, { server: this })
     this._sessions.add(sessionId)
     this._bridge!.displayIframe(sessionId, config)
-
-    // Register with inspector (idempotent)
-    this._registerWithInspector()
   }
 
   private _ensureBridge(): void {

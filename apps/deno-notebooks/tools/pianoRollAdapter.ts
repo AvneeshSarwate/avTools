@@ -139,6 +139,9 @@ export class ClipMap {
   private bindings = new Map<string, Set<string>>()
   private bridge?: PianoRollBridge
 
+  /** @internal Called when a new clip name is first added */
+  _onNewClip?: (name: string) => void
+
   /** @internal Set by createPianoRollBridge */
   _setBridge(bridge: PianoRollBridge): void {
     this.bridge = bridge
@@ -153,7 +156,12 @@ export class ClipMap {
   }
 
   set(name: string, clip: AbletonClip, options?: { excludeSession?: string }): this {
+    const isNew = !this.clips.has(name)
     this.clips.set(name, clip)
+
+    if (isNew && this._onNewClip) {
+      this._onNewClip(name)
+    }
 
     const sessions = this.bindings.get(name)
     if (sessions && this.bridge) {
@@ -407,8 +415,6 @@ export interface PianoRollBridgeAPI {
   readonly clips: ClipMap
   show(clip: AbletonClip): void
   showBound(name: string): PianoRollHandle
-  /** Register a clip with the scene inspector without displaying an iframe. */
-  register(name: string): void
   shutdown(): void
 }
 
@@ -417,6 +423,9 @@ export function createPianoRollBridge(): PianoRollBridgeAPI {
   const bridge = new DenoNotebookBridge(adapter)
   const clips = new ClipMap()
   clips._setBridge(bridge)
+
+  // Auto-register new clips with the inspector
+  clips._onNewClip = (name: string) => registerInspectorEntry(name)
 
   // Helper to register with inspector (idempotent — safe to call multiple times)
   const registerInspectorEntry = (name: string) => {
@@ -459,10 +468,6 @@ export function createPianoRollBridge(): PianoRollBridgeAPI {
       bridge.show({ type: 'readonly', clip })
     },
 
-    register(name: string): void {
-      registerInspectorEntry(name)
-    },
-
     showBound(name: string): PianoRollHandle {
       const sessionId = bridge.generateSessionId()
       const sessionData: PianoRollSessionData = {
@@ -474,9 +479,6 @@ export function createPianoRollBridge(): PianoRollBridgeAPI {
       bridge.registerSession(sessionId, sessionData)
       clips.bind(name, sessionId)
       bridge.displayIframe(sessionId)
-
-      // Register with inspector
-      registerInspectorEntry(name)
 
       const session = bridge.getSession(sessionId)!
       return adapter.createHandle(session, bridge)

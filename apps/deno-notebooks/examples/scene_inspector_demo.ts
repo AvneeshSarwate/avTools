@@ -52,13 +52,8 @@ const melodyB = new AbletonClip("Melody B", 8, melodyBNotes)
 
 const piano = createPianoRollBridge()
 
-piano.clips.set("Melody A", melodyA)
+piano.clips.set("Melody A", melodyA)  // auto-registers with inspector
 piano.clips.set("Melody B", melodyB)
-
-// piano.showBound("Melody A")  // only works in Jupyter notebooks
-// piano.showBound("Melody B")
-piano.register("Melody A")
-piano.register("Melody B")
 
 // ============================================================================
 // Playback Engine
@@ -146,9 +141,6 @@ paneA.addBinding(paramsA, "speed", { min: 0.25, max: 4, step: 0.25, label: "Play
 paneA.addButton({ title: "Play Melody A" }).on("click", () => {
   playMelody("Melody A", paramsA)
 })
-// paneA.show()  // only works in Jupyter notebooks
-paneA.register()
-
 const paramsB = { transpose: 0, speed: 1 }
 const paneB = createTweakpane({ title: "Melody B Controls" })
 paneB.addBinding(paramsB, "transpose", { min: -7, max: 7, step: 1, label: "Scale Transpose" })
@@ -156,8 +148,6 @@ paneB.addBinding(paramsB, "speed", { min: 0.25, max: 4, step: 0.25, label: "Play
 paneB.addButton({ title: "Play Melody B" }).on("click", () => {
   playMelody("Melody B", paramsB)
 })
-// paneB.show()
-paneB.register()
 
 // ============================================================================
 // Open Scene Inspector
