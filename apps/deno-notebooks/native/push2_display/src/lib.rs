@@ -104,19 +104,33 @@ fn open_device() -> Result<Push2DisplayState, String> {
 fn send_frame(state: &mut Push2DisplayState, rgba: &[u8]) -> Result<(), String> {
     let mut frame_buf = vec![0u8; FRAME_TOTAL_BYTES];
 
-    for line in 0..DISPLAY_HEIGHT {
-        for px in 0..DISPLAY_WIDTH {
-            let src = (line * DISPLAY_WIDTH + px) * 4;
-            let r = (rgba[src] >> 3) as u16;
-            let g = (rgba[src + 1] >> 2) as u16;
-            let b = (rgba[src + 2] >> 3) as u16;
-            let bgr565 = (b << 11) | (g << 5) | r;
-            let xor_val = if px % 2 == 0 { XOR_EVEN } else { XOR_ODD };
-            let pixel = bgr565 ^ xor_val;
+    // The Push 2 display protocol expects big-endian BGR565 pixels XOR'd with a
+    // signal shaping pattern. The XOR pattern repeats [0xE7F3, 0xE7FF] across
+    // the entire line including the 64-word (128-byte) filler region.
 
-            let dst = line * BYTES_PER_LINE + px * 2;
-            frame_buf[dst] = (pixel & 0xFF) as u8;
-            frame_buf[dst + 1] = (pixel >> 8) as u8;
+    let words_per_line = BYTES_PER_LINE / 2; // 1024 (960 pixels + 64 filler words)
+
+    for line in 0..DISPLAY_HEIGHT {
+        for word in 0..words_per_line {
+            let xor_val = if word % 2 == 0 { XOR_EVEN } else { XOR_ODD };
+
+            let pixel = if word < DISPLAY_WIDTH {
+                // Pixel data: convert RGBA to BGR565
+                let src = (line * DISPLAY_WIDTH + word) * 4;
+                let r = (rgba[src] >> 3) as u16;
+                let g = (rgba[src + 1] >> 2) as u16;
+                let b = (rgba[src + 2] >> 3) as u16;
+                let bgr565 = (b << 11) | (g << 5) | r;
+                bgr565 ^ xor_val
+            } else {
+                // Filler region: XOR pattern applied to zeros
+                xor_val
+            };
+
+            // Write as big-endian (MSB first) per Push 2 protocol
+            let dst = line * BYTES_PER_LINE + word * 2;
+            frame_buf[dst] = (pixel >> 8) as u8;
+            frame_buf[dst + 1] = (pixel & 0xFF) as u8;
         }
     }
 
