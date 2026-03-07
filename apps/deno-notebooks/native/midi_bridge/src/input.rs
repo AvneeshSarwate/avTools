@@ -13,6 +13,9 @@ use crate::Callback;
 
 const RAW_QUEUE_CAP: usize = 4096;
 const NOTE_QUEUE_CAP: usize = 4096;
+const RAW_CC_QUEUE_CAP: usize = 4096;
+
+const FLAG_RAW_CC: u32 = 1;
 
 pub struct InputHandle {
     stop: Arc<AtomicBool>,
@@ -48,9 +51,17 @@ struct NoteEdge {
     on: bool,
 }
 
+struct RawCCRecord {
+    ts_us: u64,
+    channel: u8,
+    cc: u8,
+    value: u8,
+}
+
 struct SharedState {
     state: Mutex<State>,
     notes: Mutex<VecDeque<NoteEdge>>,
+    raw_ccs: Mutex<VecDeque<RawCCRecord>>,
     dropped_raw: AtomicU32,
     dropped_note: AtomicU32,
 }
@@ -60,6 +71,7 @@ impl SharedState {
         Self {
             state: Mutex::new(State::default()),
             notes: Mutex::new(VecDeque::with_capacity(NOTE_QUEUE_CAP)),
+            raw_ccs: Mutex::new(VecDeque::with_capacity(RAW_CC_QUEUE_CAP)),
             dropped_raw: AtomicU32::new(0),
             dropped_note: AtomicU32::new(0),
         }
@@ -110,9 +122,10 @@ impl Default for State {
 pub fn open_input(
     port_id: &str,
     rate_hz: u32,
-    _flags: u32,
+    flags: u32,
     cb: Callback,
 ) -> Result<InputHandle, String> {
+    let raw_cc = (flags & FLAG_RAW_CC) != 0;
     let mut midi_in = MidiInput::new("midi-bridge-in")
         .map_err(|e| format!("midi input init failed: {e:?}"))?;
     midi_in.ignore(Ignore::None);
@@ -163,7 +176,7 @@ pub fn open_input(
 
     let coalescer_shared = shared.clone();
     let coalescer_stop = stop.clone();
-    let coalescer_join = thread::spawn(move || coalescer_loop(raw_rx, coalescer_shared, coalescer_stop));
+    let coalescer_join = thread::spawn(move || coalescer_loop(raw_rx, coalescer_shared, coalescer_stop, raw_cc));
 
     let dispatch_shared = shared.clone();
     let dispatch_stop = stop.clone();
@@ -190,13 +203,13 @@ pub fn open_input(
     })
 }
 
-fn coalescer_loop(raw_rx: Receiver<RawMsg>, shared: Arc<SharedState>, stop: Arc<AtomicBool>) {
+fn coalescer_loop(raw_rx: Receiver<RawMsg>, shared: Arc<SharedState>, stop: Arc<AtomicBool>, raw_cc: bool) {
     while !stop.load(Ordering::Relaxed) {
         match raw_rx.recv_timeout(Duration::from_millis(5)) {
             Ok(raw) => {
-                handle_raw(raw, &shared);
+                handle_raw(raw, &shared, raw_cc);
                 for raw in raw_rx.try_iter() {
-                    handle_raw(raw, &shared);
+                    handle_raw(raw, &shared, raw_cc);
                 }
             }
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
@@ -205,7 +218,7 @@ fn coalescer_loop(raw_rx: Receiver<RawMsg>, shared: Arc<SharedState>, stop: Arc<
     }
 }
 
-fn handle_raw(raw: RawMsg, shared: &SharedState) {
+fn handle_raw(raw: RawMsg, shared: &SharedState, raw_cc: bool) {
     let status = raw.status & 0xF0;
     let channel = raw.status & 0x0F;
     match status {
@@ -228,8 +241,12 @@ fn handle_raw(raw: RawMsg, shared: &SharedState) {
         }
         0xB0 => {
             if raw.len >= 3 {
-                let mut state = shared.state.lock().unwrap();
-                update_cc(&mut state, channel, raw.data1, raw.data2, raw.ts_us);
+                if raw_cc {
+                    push_raw_cc(shared, raw.ts_us, channel, raw.data1, raw.data2);
+                } else {
+                    let mut state = shared.state.lock().unwrap();
+                    update_cc(&mut state, channel, raw.data1, raw.data2, raw.ts_us);
+                }
             }
         }
         0xC0 => {
@@ -268,6 +285,16 @@ fn push_note(shared: &SharedState, ts_us: u64, channel: u8, note: u8, velocity: 
         shared.dropped_note.fetch_add(1, Ordering::Relaxed);
     }
     notes.push_back(edge);
+}
+
+fn push_raw_cc(shared: &SharedState, ts_us: u64, channel: u8, cc: u8, value: u8) {
+    let record = RawCCRecord { ts_us, channel, cc, value };
+    let mut raw_ccs = shared.raw_ccs.lock().unwrap();
+    if raw_ccs.len() >= RAW_CC_QUEUE_CAP {
+        raw_ccs.pop_front();
+        shared.dropped_raw.fetch_add(1, Ordering::Relaxed);
+    }
+    raw_ccs.push_back(record);
 }
 
 fn update_cc(state: &mut State, channel: u8, ctrl: u8, val: u8, ts_us: u64) {
@@ -379,6 +406,21 @@ fn dispatch_loop(
                     b: edge.velocity,
                     v16: 0,
                     extra: if edge.on { 1 } else { 0 },
+                });
+            }
+        }
+
+        {
+            let mut raw_ccs = shared.raw_ccs.lock().unwrap();
+            while let Some(rc) = raw_ccs.pop_front() {
+                records.push(Record {
+                    ts_us: rc.ts_us,
+                    kind: KIND_CC,
+                    channel: rc.channel,
+                    a: rc.cc,
+                    b: rc.value,
+                    v16: 0,
+                    extra: 0,
                 });
             }
         }

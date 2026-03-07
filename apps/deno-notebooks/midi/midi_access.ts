@@ -1,7 +1,7 @@
 import { CALLBACK_DEF, openLibrary, readPortList, withPortId } from "./ffi.ts";
 import type { MidiBridgeLibrary, MidiCallback } from "./ffi.ts";
 import type { PortInfo } from "./types.ts";
-import type { MidiInputOptions } from "./midi_input.ts";
+import { FLAG_RAW_CC, type MidiInputOptions } from "./midi_input.ts";
 import { MidiInput } from "./midi_input.ts";
 import { MidiOutput } from "./midi_output.ts";
 
@@ -49,12 +49,15 @@ export class MidiAccess {
       callback.unref();
     }
 
+    let flags = options.flags ?? 0;
+    if (options.rawCC) flags |= FLAG_RAW_CC;
+
     const handle = withPortId(portId, (ptr, len) =>
       this.#lib.symbols.midi_open_input(
         ptr,
         len,
         options.rateHz ?? 250,
-        options.flags ?? 0,
+        flags,
         callback.pointer,
       )
     );
