@@ -1,6 +1,8 @@
 import { Push2 } from "../push2/push2.ts";
 import { COLOR } from "../push2/constants.ts";
 
+// run with deno run --unstable-webgpu --unstable-ffi --allow-all examples/push2_demo.ts from deno-notebooks dir
+
 const push = Push2.create();
 
 // ---------------------------------------------------------------------------
@@ -28,7 +30,7 @@ let lastPadText = "Hello Push 2";
 
 push.onButtonPressed("Play", () => {
   console.log("Play pressed!");
-  push.setButtonColor("Play", COLOR.GREEN);
+  push.setButtonColor("Play", COLOR.RED);
 });
 
 push.onButtonReleased("Play", () => {

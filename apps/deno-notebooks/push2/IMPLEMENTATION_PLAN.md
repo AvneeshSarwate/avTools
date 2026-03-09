@@ -859,3 +859,6 @@ dispatch window). The sum of all deltas should match the total physical rotation
 4. **BGR565 byte order**: The Python code does byte-swap operations. Need to verify the exact endianness expected by the Push 2 and ensure our Rust conversion matches. The official Ableton docs say little-endian, which is what x86/ARM native u16 layout gives us — so no explicit swap should be needed.
 
 5. **Sustain pedal**: The Python library has `on_sustain_pedal` (CC 64). Worth including? It's just another CC mapping — trivial to add.
+
+
+cd /Users/avneeshsarwate/agentCombine/avTools/apps/deno-notebooks && deno run --unstable-webgpu --unstable-ffi --allow-all examples/push2_demo.ts
