@@ -1,5 +1,4 @@
 import type { Push2 } from "../push2.ts";
-import type { MidiOutput } from "../../midi/midi_output.ts";
 import type { GridLayout } from "../grid_layout.ts";
 import { padIJToN, COLOR } from "../constants.ts";
 
@@ -19,12 +18,16 @@ const DEFAULT_COLORS: KeyboardColors = {
   active: COLOR.GREEN,
 };
 
+export interface KeyboardCallbacks {
+  noteOn: (note: number, velocity: number) => void;
+  noteOff: (note: number) => void;
+}
+
 export class KeyboardModule {
   private push: Push2;
-  private midiOut: MidiOutput;
   private layout: GridLayout;
+  private callbacks: KeyboardCallbacks;
   private colors: KeyboardColors;
-  private midiChannel: number;
   private visible = false;
   private unsubs: (() => void)[] = [];
 
@@ -32,18 +35,19 @@ export class KeyboardModule {
   private heldNotes = new Map<number, number>();
   // padN -> MIDI note it was mapped to when pressed
   private padToNote = new Map<number, number>();
+  // External highlights: MIDI note -> color index (overrides scale colors)
+  private highlights = new Map<number, number>();
 
   constructor(
     push: Push2,
-    midiOut: MidiOutput,
     layout: GridLayout,
-    options?: { colors?: Partial<KeyboardColors>; midiChannel?: number },
+    callbacks: KeyboardCallbacks,
+    options?: { colors?: Partial<KeyboardColors> },
   ) {
     this.push = push;
-    this.midiOut = midiOut;
     this.layout = layout;
+    this.callbacks = callbacks;
     this.colors = { ...DEFAULT_COLORS, ...options?.colors };
-    this.midiChannel = options?.midiChannel ?? 0;
   }
 
   activate(): void {
@@ -59,7 +63,7 @@ export class KeyboardModule {
         this.heldNotes.set(note, prev + 1);
 
         if (prev === 0) {
-          this.midiOut.noteOn(this.midiChannel, note, velocity);
+          this.callbacks.noteOn(note, velocity);
         }
 
         this.updateLightsForNote(note);
@@ -74,7 +78,7 @@ export class KeyboardModule {
         const count = this.heldNotes.get(note) ?? 0;
         if (count <= 1) {
           this.heldNotes.delete(note);
-          this.midiOut.noteOff(this.midiChannel, note, 0);
+          this.callbacks.noteOff(note);
         } else {
           this.heldNotes.set(note, count - 1);
         }
@@ -82,28 +86,20 @@ export class KeyboardModule {
         this.updateLightsForNote(note);
       }),
 
-      this.push.onButtonPressed("Left", () => {
-        this.layout.shift(-1);
-        this.updateLights();
-      }),
-      this.push.onButtonPressed("Right", () => {
+      this.push.onButtonPressed("PageLeft", () => {
         this.layout.shift(1);
         this.updateLights();
       }),
-      this.push.onButtonPressed("Up", () => {
-        this.layout.shift(this.layout.rowInterval);
-        this.updateLights();
-      }),
-      this.push.onButtonPressed("Down", () => {
-        this.layout.shift(-this.layout.rowInterval);
+      this.push.onButtonPressed("PageRight", () => {
+        this.layout.shift(-1);
         this.updateLights();
       }),
       this.push.onButtonPressed("OctaveUp", () => {
-        this.layout.shift(12);
+        this.layout.shift(-this.layout.rowInterval);
         this.updateLights();
       }),
       this.push.onButtonPressed("OctaveDown", () => {
-        this.layout.shift(-12);
+        this.layout.shift(this.layout.rowInterval);
         this.updateLights();
       }),
     ];
@@ -113,7 +109,7 @@ export class KeyboardModule {
   deactivate(): void {
     // Release all held notes
     for (const [note] of this.heldNotes) {
-      this.midiOut.noteOff(this.midiChannel, note, 0);
+      this.callbacks.noteOff(note);
     }
     this.heldNotes.clear();
     this.padToNote.clear();
@@ -134,6 +130,18 @@ export class KeyboardModule {
     }
   }
 
+  /** Set highlight colors for specific MIDI notes. Replaces previous highlights. */
+  setHighlights(highlights: Map<number, number>): void {
+    this.highlights = new Map(highlights);
+    this.updateLights();
+  }
+
+  /** Remove all highlights, return to normal keyboard colors. */
+  clearHighlights(): void {
+    this.highlights.clear();
+    this.updateLights();
+  }
+
   private updateLightsForNote(note: number): void {
     if (!this.visible) return;
     const pads = this.layout.padsForNote(note);
@@ -145,6 +153,8 @@ export class KeyboardModule {
 
   private colorForNote(note: number): number {
     if (note < 0 || note > 127) return COLOR.BLACK;
+    const hl = this.highlights.get(note);
+    if (hl !== undefined) return hl;
     if (this.heldNotes.has(note)) return this.colors.active;
     const pc = note % 12;
     if (pc === 0) return this.colors.c;

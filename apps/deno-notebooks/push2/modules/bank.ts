@@ -22,8 +22,10 @@ export class BankModule<T> {
 
   private saveFn: (index: number) => T | null;
   private loadFn: (item: T) => void;
+  private offFn: ((item: T) => void) | null;
   private slots: (T | null)[];
   private convertHeld = false;
+  private doubleLoopHeld = false;
 
   constructor(
     push: Push2,
@@ -32,11 +34,13 @@ export class BankModule<T> {
     options?: {
       rows?: [number, number];
       colors?: Partial<BankColors>;
+      offFn?: (item: T) => void;
     },
   ) {
     this.push = push;
     this.saveFn = saveFn;
     this.loadFn = loadFn;
+    this.offFn = options?.offFn ?? null;
     this.rows = options?.rows ?? [0, 0];
     this.colors = { ...DEFAULT_COLORS, ...options?.colors };
 
@@ -53,6 +57,12 @@ export class BankModule<T> {
       this.push.onButtonReleased("Convert", () => {
         this.convertHeld = false;
       }),
+      this.push.onButtonPressed("DoubleLoop", () => {
+        this.doubleLoopHeld = true;
+      }),
+      this.push.onButtonReleased("DoubleLoop", () => {
+        this.doubleLoopHeld = false;
+      }),
 
       this.push.onPadPressed((_padN, [i, j]) => {
         if (i < this.rows[0] || i > this.rows[1]) return;
@@ -64,6 +74,11 @@ export class BankModule<T> {
           if (item !== null) {
             this.slots[slotIdx] = item;
             this.updateLightForSlot(slotIdx, i, j);
+          }
+        } else if (this.doubleLoopHeld) {
+          const item = this.slots[slotIdx];
+          if (item !== null && this.offFn) {
+            this.offFn(item);
           }
         } else {
           const item = this.slots[slotIdx];

@@ -1,5 +1,4 @@
 import type { Push2 } from "../push2.ts";
-import type { MidiOutput } from "../../midi/midi_output.ts";
 import type { GridLayout } from "../grid_layout.ts";
 import { padIJToN, COLOR } from "../constants.ts";
 
@@ -13,35 +12,39 @@ export interface NoteToggleColors {
 }
 
 const DEFAULT_COLORS: NoteToggleColors = {
-  c: COLOR.BLUE,
-  natural: COLOR.LIGHT_GRAY,
+  c: COLOR.PURPLE,
+  natural: COLOR.DARK_GRAY,
   sharp: COLOR.BLACK,
-  on: COLOR.GREEN,
+  on: COLOR.ORANGE,
 };
+
+export interface NoteToggleCallbacks {
+  noteOn: (note: number, velocity: number) => void;
+  noteOff: (note: number) => void;
+}
 
 export class NoteToggleModule {
   private push: Push2;
-  private midiOut: MidiOutput;
   private layout: GridLayout;
+  private callbacks: NoteToggleCallbacks;
   private colors: NoteToggleColors;
-  private midiChannel: number;
   private visible = false;
   private unsubs: (() => void)[] = [];
+  private changeListeners: ((notes: Map<number, number>) => void)[] = [];
 
   private onNotes = new Map<number, number>(); // MIDI note -> velocity
-  private playingNotes = new Map<number, number>(); // currently sounding via MIDI
+  private playingNotes = new Set<number>(); // currently sounding
 
   constructor(
     push: Push2,
-    midiOut: MidiOutput,
     layout: GridLayout,
-    options?: { colors?: Partial<NoteToggleColors>; midiChannel?: number },
+    callbacks: NoteToggleCallbacks,
+    options?: { colors?: Partial<NoteToggleColors> },
   ) {
     this.push = push;
-    this.midiOut = midiOut;
     this.layout = layout;
+    this.callbacks = callbacks;
     this.colors = { ...DEFAULT_COLORS, ...options?.colors };
-    this.midiChannel = options?.midiChannel ?? 0;
   }
 
   activate(): void {
@@ -56,38 +59,31 @@ export class NoteToggleModule {
         if (this.onNotes.has(note)) {
           this.onNotes.delete(note);
           this.playingNotes.delete(note);
-          this.midiOut.noteOff(this.midiChannel, note, 0);
+          this.callbacks.noteOff(note);
         } else {
           this.onNotes.set(note, velocity);
-          this.playingNotes.set(note, velocity);
-          this.midiOut.noteOn(this.midiChannel, note, velocity);
+          this.playingNotes.add(note);
+          this.callbacks.noteOn(note, velocity);
         }
 
         this.updateLightsForNote(note);
+        this.emitChange();
       }),
 
-      this.push.onButtonPressed("Left", () => {
-        this.layout.shift(-1);
-        this.updateLights();
-      }),
-      this.push.onButtonPressed("Right", () => {
+      this.push.onButtonPressed("PageLeft", () => {
         this.layout.shift(1);
         this.updateLights();
       }),
-      this.push.onButtonPressed("Up", () => {
-        this.layout.shift(this.layout.rowInterval);
-        this.updateLights();
-      }),
-      this.push.onButtonPressed("Down", () => {
-        this.layout.shift(-this.layout.rowInterval);
+      this.push.onButtonPressed("PageRight", () => {
+        this.layout.shift(-1);
         this.updateLights();
       }),
       this.push.onButtonPressed("OctaveUp", () => {
-        this.layout.shift(12);
+        this.layout.shift(-this.layout.rowInterval);
         this.updateLights();
       }),
       this.push.onButtonPressed("OctaveDown", () => {
-        this.layout.shift(-12);
+        this.layout.shift(this.layout.rowInterval);
         this.updateLights();
       }),
     ];
@@ -113,6 +109,15 @@ export class NoteToggleModule {
 
   // --- Public API ---
 
+  /** Register a listener for any change to onNotes. Returns unsubscribe fn. */
+  onChange(fn: (notes: Map<number, number>) => void): () => void {
+    this.changeListeners.push(fn);
+    return () => {
+      const idx = this.changeListeners.indexOf(fn);
+      if (idx >= 0) this.changeListeners.splice(idx, 1);
+    };
+  }
+
   /** Returns a copy of on-notes as Map<midiNote, velocity>. */
   getOnNotes(): Map<number, number> {
     return new Map(this.onNotes);
@@ -122,39 +127,45 @@ export class NoteToggleModule {
   setNotes(notes: Map<number, number>): void {
     this.onNotes = new Map(notes);
     if (this.visible) this.updateLights();
+    this.emitChange();
   }
 
   /** Clear all on-notes and send note-off for all currently playing notes. */
   allNotesOff(): void {
-    for (const note of this.playingNotes.keys()) {
-      this.midiOut.noteOff(this.midiChannel, note, 0);
+    for (const note of this.playingNotes) {
+      this.callbacks.noteOff(note);
     }
     this.playingNotes.clear();
     this.onNotes.clear();
     if (this.visible) this.updateLights();
+    this.emitChange();
   }
 
   /**
    * Send MIDI to match onNotes using stored velocities.
-   * - Notes in playingNotes but not onNotes get note-off
-   * - Notes in onNotes but not playingNotes get note-on
-   * Common tones are left untouched (smooth chord transitions for drones).
+   * When retrigger is false (default), common tones are left untouched.
+   * When retrigger is true, all playing notes are silenced and re-triggered.
    */
-  playAllOnNotes(): void {
-    for (const note of this.playingNotes.keys()) {
-      if (!this.onNotes.has(note)) {
-        this.midiOut.noteOff(this.midiChannel, note, 0);
+  playAllOnNotes(retrigger = false): void {
+    for (const note of this.playingNotes) {
+      if (retrigger || !this.onNotes.has(note)) {
+        this.callbacks.noteOff(note);
       }
     }
     for (const [note, velocity] of this.onNotes) {
-      if (!this.playingNotes.has(note)) {
-        this.midiOut.noteOn(this.midiChannel, note, velocity);
+      if (retrigger || !this.playingNotes.has(note)) {
+        this.callbacks.noteOn(note, velocity);
       }
     }
-    this.playingNotes = new Map(this.onNotes);
+    this.playingNotes = new Set(this.onNotes.keys());
   }
 
   // --- Private ---
+
+  private emitChange(): void {
+    const snapshot = new Map(this.onNotes);
+    for (const fn of this.changeListeners) fn(snapshot);
+  }
 
   private updateLightsForNote(note: number): void {
     if (!this.visible) return;
