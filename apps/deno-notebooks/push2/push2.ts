@@ -25,6 +25,10 @@ export class Push2 {
   private display: Push2Display | null = null;
   private listeners = new Map<string, Set<Function>>();
 
+  // LED state tracking for refreshLEDs()
+  private padState = new Map<number, { colorIndex: number; animation: number }>();
+  private buttonState = new Map<string, { colorIndex: number; animation: number }>();
+
   private constructor(
     midiAccess: MidiAccess,
     midiInput: MidiInput,
@@ -38,7 +42,7 @@ export class Push2 {
 
   static create(options: Push2Options = {}): Push2 {
     const midiAccess = MidiAccess.open({ libPath: options.midiLibPath });
-    const portName = options.midiPortName ?? "Ableton Push 2";
+    const portName = options.midiPortName ?? "Ableton Push 2 User Port";
 
     // Find matching input and output ports
     const inputs = midiAccess.listInputs();
@@ -245,13 +249,26 @@ export class Push2 {
   // --- LEDs ---
 
   setPadColor(padN: number, colorIndex: number, animation: number = 0) {
+    this.padState.set(padN, { colorIndex, animation });
     this.midiOutput.noteOn(animation, padN, colorIndex);
   }
 
   setButtonColor(name: string, colorIndex: number, animation: number = 0) {
     const cc = BUTTONS[name];
     if (cc === undefined) throw new Error(`Unknown button: ${name}`);
+    this.buttonState.set(name, { colorIndex, animation });
     this.midiOutput.cc(animation, cc, colorIndex);
+  }
+
+  /** Re-send all tracked pad and button LED colors to the Push. */
+  refreshLEDs() {
+    for (const [padN, { colorIndex, animation }] of this.padState) {
+      this.midiOutput.noteOn(animation, padN, colorIndex);
+    }
+    for (const [name, { colorIndex, animation }] of this.buttonState) {
+      const cc = BUTTONS[name];
+      if (cc !== undefined) this.midiOutput.cc(animation, cc, colorIndex);
+    }
   }
 
   // --- Display ---
