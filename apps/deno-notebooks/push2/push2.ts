@@ -1,3 +1,29 @@
+// --- Ableton Live coexistence notes ---
+//
+// Ableton's Live binary has libusb compiled in and scans for Push 2 by USB
+// vendor/product ID (0x2982/0x1967) at the C++ level. The Python MIDI Remote
+// Scripts alone don't control detection — the C++ core does.
+//
+// To prevent Ableton from claiming the Push 2 at all, rename:
+//   <Ableton .app>/Contents/Helpers/Push3.app
+// (e.g. prefix with "zz"). This contains a full copy of the Push 2 control
+// surface scripts that Ableton actually loads. Renaming the MIDI Remote
+// Scripts/Push2 folder alone is NOT sufficient — Push3.app is what matters.
+// The Push 1 folder (MIDI Remote Scripts/Push) can also be renamed but is
+// less critical.
+//
+// Without Ableton Live running, the Push 2 defaults to using the Live Port
+// (Port 1, "Ableton Push 2 Live Port") for MIDI. The User button does NOT
+// switch it to the User Port — that mode switching is driven by the host
+// sending SysEx (F0 00 21 1D 01 01 0A 01 F7). The default midiPortName
+// "Ableton Push 2" works because port lookup uses .includes(), matching
+// both "Ableton Push 2 Live Port" and "Ableton Push 2 User Port".
+//
+// The refreshLEDs() method re-sends all tracked pad/button colors. If running
+// alongside Ableton (without the Push3.app rename), use User mode + User Port
+// and wire push.onButtonReleased("User", () => push.refreshLEDs()) to restore
+// LED state when switching back from Live mode.
+
 import { MidiAccess } from "../midi/midi_access.ts";
 import type { MidiInput } from "../midi/midi_input.ts";
 import type { MidiOutput } from "../midi/midi_output.ts";
@@ -42,7 +68,7 @@ export class Push2 {
 
   static create(options: Push2Options = {}): Push2 {
     const midiAccess = MidiAccess.open({ libPath: options.midiLibPath });
-    const portName = options.midiPortName ?? "Ableton Push 2 User Port";
+    const portName = options.midiPortName ?? "Ableton Push 2";
 
     // Find matching input and output ports
     const inputs = midiAccess.listInputs();
