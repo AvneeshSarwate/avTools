@@ -22,6 +22,10 @@ export interface GpuWindow {
   pollEvents(): WindowEvent[];
   present(): void;
   close(): void;
+  /** @internal FFI library handle — used by WindowPanel */
+  readonly _lib: import("./ffi.ts").WindowLibrary;
+  /** @internal FFI WindowState pointer — used by WindowPanel */
+  readonly _state: Deno.PointerValue;
 }
 
 export interface BeforeSurfaceCreateInfo {
@@ -257,5 +261,7 @@ export async function createGpuWindow(
     pollEvents,
     present,
     close,
+    _lib: lib,
+    _state: state,
   };
 }

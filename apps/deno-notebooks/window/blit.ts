@@ -81,3 +81,43 @@ export function blit(
   pass.draw(3);
   pass.end();
 }
+
+export interface BlitViewport {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export function blitToViewport(
+  device: GPUDevice,
+  encoder: GPUCommandEncoder,
+  pipeline: BlitPipeline,
+  src: GPUTextureView,
+  dst: GPUTextureView,
+  viewport: BlitViewport,
+): void {
+  const bindGroup = device.createBindGroup({
+    layout: pipeline.bindGroupLayout,
+    entries: [
+      { binding: 0, resource: src },
+      { binding: 1, resource: pipeline.sampler },
+    ],
+  });
+
+  const pass = encoder.beginRenderPass({
+    colorAttachments: [
+      {
+        view: dst,
+        loadOp: "clear",
+        storeOp: "store",
+        clearValue: { r: 0, g: 0, b: 0, a: 1 },
+      },
+    ],
+  });
+  pass.setViewport(viewport.x, viewport.y, viewport.width, viewport.height, 0, 1);
+  pass.setPipeline(pipeline.pipeline);
+  pass.setBindGroup(0, bindGroup);
+  pass.draw(3);
+  pass.end();
+}

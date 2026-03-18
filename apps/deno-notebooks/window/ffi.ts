@@ -7,6 +7,13 @@ export const FFI_SYMBOLS = {
   resize_window: { parameters: ["pointer", "u32", "u32"], result: "void" },
   get_window_size: { parameters: ["pointer", "pointer", "pointer"], result: "void" },
   destroy_window: { parameters: ["pointer"], result: "void" },
+  // Webview (wry) — separate window, returns WebviewState pointer
+  create_webview: { parameters: ["pointer", "pointer", "u32", "u32", "u32", "pointer", "u32"], result: "pointer" },
+  webview_evaluate_script: { parameters: ["pointer", "pointer", "u32"], result: "u32" },
+  webview_poll_ipc: { parameters: ["pointer", "pointer", "u32"], result: "u32" },
+  webview_set_visible: { parameters: ["pointer", "u32"], result: "void" },
+  webview_destroy: { parameters: ["pointer"], result: "void" },
+  webview_pump: { parameters: [], result: "void" },
 } as const;
 
 export type WindowSymbols = typeof FFI_SYMBOLS;

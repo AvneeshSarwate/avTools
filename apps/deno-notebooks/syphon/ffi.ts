@@ -23,6 +23,10 @@ export const FFI_SYMBOLS = {
     parameters: ["pointer", "u32"],
     result: "void",
   },
+  syphon_set_publish_region: {
+    parameters: ["pointer", "u32", "u32"],
+    result: "void",
+  },
   syphon_headless_init: {
     parameters: ["pointer", "u32", "pointer", "u32"],
     result: "pointer",

@@ -11,6 +11,13 @@ winit = { version = "0.30", features = ["rwh_05"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+wry = { version = "0.54", default-features = false, features = ["transparent"] }
+cocoa = "0.26"
+objc = "0.2"
+raw-window-handle = { version = "0.6", features = ["std"] }
+core-foundation = "0.10"
+
 [profile.release]
 panic = "abort"
 lto = true
