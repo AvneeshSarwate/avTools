@@ -7,17 +7,15 @@
 //     examples/p5gpu_tweakpane_panel.ts
 
 import {
-  runP5GpuSketch,
-  type P5GpuSketchContext,
-  type P5GpuSketchDrawContext,
-  type P5GpuSketchFrameSource,
-  type P5GpuSketchRenderContext,
+  createWindowRenderManager,
+  requestWebGpuDevice,
   type WindowTweakpane,
 } from "../window/mod.ts";
 import { FeedbackNode, PassthruEffect, selectShaderFxFormat } from "@avtools/shader-fx/raw";
 import { AlphaTimeTagEffect } from "@avtools/shader-fx/generated-raw/shaders/alphaTimeTag.frag.raw.generated.ts";
 import { FloodFillDisplayEffect } from "@avtools/shader-fx/generated-raw/shaders/floodFillDisplay.frag.raw.generated.ts";
 import { FloodFillStepEffect } from "@avtools/shader-fx/generated-raw/shaders/floodFillStep.frag.raw.generated.ts";
+import { P5GPU } from "../tools/p5gpu.ts";
 
 const WIDTH = 1280;
 const HEIGHT = 720;
@@ -30,7 +28,9 @@ const params = {
   hue: 180,
 };
 
-await runP5GpuSketch<FloodFillSketchState>({
+const device = await requestWebGpuDevice();
+const renderWindow = await createWindowRenderManager({
+  device,
   width: WIDTH,
   height: HEIGHT,
   title: "P5GPU + Tweakpane",
@@ -44,23 +44,30 @@ await runP5GpuSketch<FloodFillSketchState>({
     panelHeight: 300,
     setup: setupPane,
   },
-  setup: setupSketch,
-  draw: drawSketch,
-  render: renderSketch,
 });
+const p5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
+const floodFill = await createFloodFillChain(device, WIDTH, HEIGHT);
 
-// ─── Util ────────────────────────────────────────────────────────────────
+await renderWindow.run(renderFrame, { cleanup: cleanup });
 
-interface FloodFillSketchState {
-  format: GPUTextureFormat;
-  placeholder: GPUTexture;
-  timeStamper: AlphaTimeTagEffect;
-  floodFillSeed: FloodFillStepEffect;
-  feedbackSeed: PassthruEffect;
-  feedback: FeedbackNode;
-  floodFill: FloodFillStepEffect;
-  display: FloodFillDisplayEffect;
-  dispose(): void;
+function renderFrame() {
+  const time = performance.now() * 0.001;
+
+  p5.beginFrame();
+  drawCircles(time);
+  const sourceTexture = p5.endFrame();
+
+  floodFill.timeStamper.setSrcs({ src: sourceTexture });
+  floodFill.timeStamper.setUniforms({ drawTime: time });
+  floodFill.display.renderAll();
+
+  return floodFill.display;
+}
+
+function cleanup(): void {
+  floodFill.display.disposeAll();
+  floodFill.placeholder.destroy();
+  p5.dispose();
 }
 
 function setupPane(pane: WindowTweakpane): void {
@@ -78,84 +85,7 @@ function setupPane(pane: WindowTweakpane): void {
   });
 }
 
-async function setupSketch({ device, p5 }: P5GpuSketchContext): Promise<FloodFillSketchState> {
-  const format = await selectShaderFxFormat(device, ["rgba16float", "rgba8unorm"]);
-  const placeholder = device.createTexture({
-    size: { width: 1, height: 1 },
-    format: "rgba8unorm",
-    usage: GPUTextureUsage.TEXTURE_BINDING,
-  });
-
-  const timeStamper = new AlphaTimeTagEffect(
-    device,
-    { src: placeholder },
-    p5.width,
-    p5.height,
-    format,
-    CLEAR_COLOR,
-  );
-  const floodFillSeed = new FloodFillStepEffect(
-    device,
-    { seed: timeStamper, feedback: timeStamper },
-    p5.width,
-    p5.height,
-    format,
-    CLEAR_COLOR,
-  );
-  const feedbackSeed = new PassthruEffect(
-    device,
-    { src: floodFillSeed },
-    p5.width,
-    p5.height,
-    format,
-    CLEAR_COLOR,
-    "linear",
-  );
-  const feedback = new FeedbackNode(
-    device,
-    feedbackSeed,
-    p5.width,
-    p5.height,
-    format,
-    CLEAR_COLOR,
-    "linear",
-  );
-  const floodFill = new FloodFillStepEffect(
-    device,
-    { seed: timeStamper, feedback },
-    p5.width,
-    p5.height,
-    format,
-    CLEAR_COLOR,
-  );
-  const display = new FloodFillDisplayEffect(
-    device,
-    { src: floodFill },
-    p5.width,
-    p5.height,
-    format,
-    CLEAR_COLOR,
-  );
-
-  feedback.setFeedbackSrc(floodFill);
-
-  return {
-    format,
-    placeholder,
-    timeStamper,
-    floodFillSeed,
-    feedbackSeed,
-    feedback,
-    floodFill,
-    display,
-    dispose(): void {
-      display.disposeAll();
-      placeholder.destroy();
-    },
-  };
-}
-
-function drawSketch({ p5, time }: P5GpuSketchDrawContext<FloodFillSketchState>): void {
+function drawCircles(time: number): void {
   p5.clear();
   p5.noStroke();
 
@@ -171,11 +101,72 @@ function drawSketch({ p5, time }: P5GpuSketchDrawContext<FloodFillSketchState>):
   }
 }
 
-function renderSketch({ state, sourceTexture, time }: P5GpuSketchRenderContext<FloodFillSketchState>): P5GpuSketchFrameSource {
-  state.timeStamper.setSrcs({ src: sourceTexture });
-  state.timeStamper.setUniforms({ drawTime: time });
-  state.display.renderAll();
-  return state.display;
+async function createFloodFillChain(device: GPUDevice, width: number, height: number) {
+  const format = await selectShaderFxFormat(device, ["rgba16float", "rgba8unorm"]);
+  const placeholder = device.createTexture({
+    size: { width: 1, height: 1 },
+    format: "rgba8unorm",
+    usage: GPUTextureUsage.TEXTURE_BINDING,
+  });
+
+  const timeStamper = new AlphaTimeTagEffect(
+    device,
+    { src: placeholder },
+    width,
+    height,
+    format,
+    CLEAR_COLOR,
+  );
+  const floodFillSeed = new FloodFillStepEffect(
+    device,
+    { seed: timeStamper, feedback: timeStamper },
+    width,
+    height,
+    format,
+    CLEAR_COLOR,
+  );
+  const feedbackSeed = new PassthruEffect(
+    device,
+    { src: floodFillSeed },
+    width,
+    height,
+    format,
+    CLEAR_COLOR,
+    "linear",
+  );
+  const feedback = new FeedbackNode(
+    device,
+    feedbackSeed,
+    width,
+    height,
+    format,
+    CLEAR_COLOR,
+    "linear",
+  );
+  const floodFill = new FloodFillStepEffect(
+    device,
+    { seed: timeStamper, feedback },
+    width,
+    height,
+    format,
+    CLEAR_COLOR,
+  );
+  const display = new FloodFillDisplayEffect(
+    device,
+    { src: floodFill },
+    width,
+    height,
+    format,
+    CLEAR_COLOR,
+  );
+
+  feedback.setFeedbackSrc(floodFill);
+
+  return {
+    placeholder,
+    timeStamper,
+    display,
+  };
 }
 
 function hslToRgb(h: number, s: number, l: number): [number, number, number] {
