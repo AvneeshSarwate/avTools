@@ -16,6 +16,9 @@ const MAX_FRAMES = Number(Deno.env.get("P5_MAX_FRAMES") ?? 60000);
 const AUTOCHECK = Deno.env.get("P5_TWEAKPANE_AUTOCHECK") === "1";
 const READY_TIMEOUT_MS = Number(Deno.env.get("P5_TWEAKPANE_TIMEOUT_MS") ?? 8000);
 const EXPECTED_BINDINGS = 5;
+const EXPECTED_MIN_SLIDER_WIDTH = 120;
+const AUTOCHECK_SPEED_VALUE = 6.4;
+const EXPECTED_MIN_VIEWPORT_WIDTH = 430;
 
 type ExampleWindow =
   | Awaited<ReturnType<typeof createGpuWindow>>
@@ -62,7 +65,11 @@ try {
     bgAlpha: 20,
   };
 
-  ({ pane, panel } = createWindowTweakpane(win, { title: "Circle Demo" }));
+  ({ pane, panel } = createWindowTweakpane(win, {
+    title: "Circle Demo",
+    panelWidth: 420,
+    panelHeight: 680,
+  }));
 
   pane.addBinding(params, "speed", { min: 0.1, max: 10, step: 0.1 });
   pane.addBinding(params, "radius", { min: 50, max: 400, step: 1 });
@@ -86,6 +93,11 @@ try {
 
   let running = true;
   const readyDeadline = performance.now() + READY_TIMEOUT_MS;
+  let autocheckInjected = false;
+  let autocheckReadyLogged = false;
+  let autocheckSpeedVerified = false;
+  let autocheckResizeVerified = false;
+  let initialSliderTrackWidth = 0;
 
   for (let frame = 0; frame < MAX_FRAMES && running; frame++) {
     const events = win.pollEvents();
@@ -112,10 +124,59 @@ try {
       if (ready.title !== "Circle Demo") {
         throw new Error(`Unexpected tweakpane title: ${String(ready.title)}`);
       }
-      console.log(
-        `[p5gpu_tweakpane_panel] ready title=${ready.title} bindings=${ready.bindingCount} operations=${ready.operationCount}`,
-      );
-      break;
+      if ((ready.sliderTrackWidth ?? 0) < EXPECTED_MIN_SLIDER_WIDTH) {
+        throw new Error(
+          `Slider track is too narrow: expected at least ${EXPECTED_MIN_SLIDER_WIDTH}px, got ${ready.sliderTrackWidth ?? 0}px`,
+        );
+      }
+      if (!initialSliderTrackWidth) {
+        initialSliderTrackWidth = ready.sliderTrackWidth ?? 0;
+      }
+      if (!autocheckInjected) {
+        panel.setSize(480, 720);
+        panel.evalJs(`
+(() => {
+  const input = document.querySelector('.tp-sldtxtv .tp-txtv_i');
+  if (!(input instanceof HTMLInputElement)) {
+    window.ipc.postMessage(JSON.stringify({
+      type: 'panelError',
+      stage: 'autocheck.inputProbe',
+      message: 'Could not find numeric tweakpane input',
+    }));
+    return;
+  }
+  input.focus();
+  input.value = '${AUTOCHECK_SPEED_VALUE.toFixed(1)}';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  input.blur();
+  window.ipc.postMessage(JSON.stringify({
+    type: 'panelMetrics',
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+    sliderTrackWidth: document.querySelector('.tp-sldv_t')?.getBoundingClientRect().width ?? 0,
+    sliderKnobWidth: document.querySelector('.tp-sldv_k')?.getBoundingClientRect().width ?? 0,
+  }));
+})();
+        `);
+        autocheckInjected = true;
+      }
+      if (!autocheckReadyLogged) {
+        console.log(
+          `[p5gpu_tweakpane_panel] ready title=${ready.title} bindings=${ready.bindingCount} operations=${ready.operationCount} sliders=${ready.sliderCount ?? 0} textInputs=${ready.textInputCount ?? 0} buttons=${ready.buttonCount ?? 0} sliderTrackWidth=${ready.sliderTrackWidth ?? 0} sliderKnobWidth=${ready.sliderKnobWidth ?? 0}`,
+        );
+        autocheckReadyLogged = true;
+      }
+    }
+
+    if (
+      AUTOCHECK &&
+      pane.panelMetrics &&
+      pane.panelMetrics.viewportWidth >= EXPECTED_MIN_VIEWPORT_WIDTH &&
+      pane.panelMetrics.sliderTrackWidth > initialSliderTrackWidth
+    ) {
+      autocheckResizeVerified = true;
     }
 
     if (AUTOCHECK && performance.now() > readyDeadline) {
@@ -154,7 +215,17 @@ try {
       break;
     }
 
-    if (AUTOCHECK && pane.ready) {
+    if (AUTOCHECK && autocheckInjected && Math.abs(params.speed - AUTOCHECK_SPEED_VALUE) < 0.001) {
+      autocheckSpeedVerified = true;
+      console.log(`[p5gpu_tweakpane_panel] input roundtrip success speed=${params.speed.toFixed(1)}`);
+    }
+
+    if (AUTOCHECK && autocheckSpeedVerified && autocheckResizeVerified) {
+      if (pane.panelMetrics) {
+        console.log(
+          `[p5gpu_tweakpane_panel] resize sync success viewport=${pane.panelMetrics.viewportWidth}x${pane.panelMetrics.viewportHeight} sliderTrackWidth=${pane.panelMetrics.sliderTrackWidth}`,
+        );
+      }
       break;
     }
 
@@ -164,6 +235,12 @@ try {
   if (AUTOCHECK) {
     if (!pane.readyInfo) {
       throw new Error("Automation mode ended before tweakpane reported readiness");
+    }
+    if (!autocheckSpeedVerified) {
+      throw new Error("Automation mode ended before numeric control roundtrip completed");
+    }
+    if (!autocheckResizeVerified) {
+      throw new Error("Automation mode ended before resized panel viewport metrics were observed");
     }
     console.log("[p5gpu_tweakpane_panel] automation success");
   }

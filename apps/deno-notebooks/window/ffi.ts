@@ -14,6 +14,8 @@ export const FFI_SYMBOLS = {
   webview_set_visible: { parameters: ["pointer", "u32"], result: "void" },
   webview_destroy: { parameters: ["pointer"], result: "void" },
   webview_pump: { parameters: [], result: "void" },
+  webview_sync_bounds: { parameters: ["pointer"], result: "void" },
+  webview_set_size: { parameters: ["pointer", "u32", "u32"], result: "void" },
 } as const;
 
 export type WindowSymbols = typeof FFI_SYMBOLS;

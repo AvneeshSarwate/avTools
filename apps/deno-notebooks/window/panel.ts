@@ -90,6 +90,7 @@ export class WindowPanel {
 
   pollMessages(): unknown[] {
     if (!this.#initialized || !this.#webviewState) return [];
+    this.#lib.symbols.webview_sync_bounds(this.#webviewState);
     // Pump the CFRunLoop so WKWebView can process its multi-process IPC
     this.#lib.symbols.webview_pump();
     const written = this.#lib.symbols.webview_poll_ipc(
@@ -107,6 +108,14 @@ export class WindowPanel {
       } catch { /* skip */ }
     }
     return msgs;
+  }
+
+  setSize(width: number, height: number): void {
+    if (!this.#initialized || !this.#webviewState) return;
+    if (!Number.isFinite(width) || !Number.isFinite(height)) return;
+    const nextWidth = Math.max(1, Math.round(width));
+    const nextHeight = Math.max(1, Math.round(height));
+    this.#lib.symbols.webview_set_size(this.#webviewState, nextWidth, nextHeight);
   }
 
   show(): void {

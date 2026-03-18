@@ -38,6 +38,18 @@ export interface WindowTweakpaneReadyInfo {
   title: string | null;
   bindingCount: number;
   operationCount: number;
+  sliderCount?: number;
+  textInputCount?: number;
+  buttonCount?: number;
+  sliderTrackWidth?: number;
+  sliderKnobWidth?: number;
+}
+
+export interface WindowTweakpanePanelMetrics {
+  viewportWidth: number;
+  viewportHeight: number;
+  sliderTrackWidth: number;
+  sliderKnobWidth: number;
 }
 
 export interface WindowTweakpaneErrorInfo {
@@ -145,6 +157,7 @@ export class WindowTweakpane {
   #connected = false;
   #ready = false;
   #readyInfo: WindowTweakpaneReadyInfo | null = null;
+  #panelMetrics: WindowTweakpanePanelMetrics | null = null;
   #lastError: WindowTweakpaneErrorInfo | null = null;
   #panel: WindowPanel | null = null;
 
@@ -180,6 +193,10 @@ export class WindowTweakpane {
 
   get readyInfo(): WindowTweakpaneReadyInfo | null {
     return this.#readyInfo;
+  }
+
+  get panelMetrics(): WindowTweakpanePanelMetrics | null {
+    return this.#panelMetrics;
   }
 
   get lastError(): WindowTweakpaneErrorInfo | null {
@@ -279,6 +296,19 @@ export class WindowTweakpane {
             title: typeof msg.title === "string" ? msg.title : null,
             bindingCount: Number(msg.bindingCount ?? 0),
             operationCount: Number(msg.operationCount ?? 0),
+            sliderCount: Number(msg.sliderCount ?? 0),
+            textInputCount: Number(msg.textInputCount ?? 0),
+            buttonCount: Number(msg.buttonCount ?? 0),
+            sliderTrackWidth: Number(msg.sliderTrackWidth ?? 0),
+            sliderKnobWidth: Number(msg.sliderKnobWidth ?? 0),
+          };
+          break;
+        case "panelMetrics":
+          this.#panelMetrics = {
+            viewportWidth: Number(msg.viewportWidth ?? 0),
+            viewportHeight: Number(msg.viewportHeight ?? 0),
+            sliderTrackWidth: Number(msg.sliderTrackWidth ?? 0),
+            sliderKnobWidth: Number(msg.sliderKnobWidth ?? 0),
           };
           break;
         case "panelError":
@@ -340,8 +370,8 @@ export function createWindowTweakpane(
     lib: gpuWindow._lib,
     parentState: gpuWindow._state,
     options: {
-      panelWidth: options?.panelWidth,
-      panelHeight: options?.panelHeight,
+      panelWidth: options?.panelWidth ?? 420,
+      panelHeight: options?.panelHeight ?? 680,
       toggleKey: options?.toggleKey,
       title: options?.title ?? "Controls",
     },

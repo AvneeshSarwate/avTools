@@ -216,6 +216,11 @@ const CLIENT_JS = `
           title: msg.paneConfig?.title ?? null,
           bindingCount: bindingData.size,
           operationCount: (msg.operations || []).length,
+          sliderCount: document.querySelectorAll('.tp-sldv, .tp-sldtxtv').length,
+          textInputCount: document.querySelectorAll('input').length,
+          buttonCount: document.querySelectorAll('button').length,
+          sliderTrackWidth: document.querySelector('.tp-sldv_t')?.getBoundingClientRect().width ?? 0,
+          sliderKnobWidth: document.querySelector('.tp-sldv_k')?.getBoundingClientRect().width ?? 0,
         });
       } else {
         handleOp(msg);
@@ -263,16 +268,98 @@ export function generatePanelHtml(): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    color-scheme: dark;
+    --panel-fg: #e8eef8;
+    --tp-base-background-color: #16202c;
+    --tp-base-border-radius: 10px;
+    --tp-base-font-family: SFMono-Regular, ui-monospace, Menlo, Monaco, monospace;
+    --tp-base-shadow-color: rgba(0, 0, 0, 0.28);
+    --tp-blade-border-radius: 3px;
+    --tp-blade-value-width: clamp(224px, 60vw, 320px);
+    --tp-button-background-color: #dce4ef;
+    --tp-button-background-color-active: #c1cbda;
+    --tp-button-background-color-focus: #d0d9e6;
+    --tp-button-background-color-hover: #edf3fb;
+    --tp-button-foreground-color: #101722;
+    --tp-container-background-color: rgba(148, 170, 196, 0.18);
+    --tp-container-background-color-active: rgba(148, 170, 196, 0.32);
+    --tp-container-background-color-focus: rgba(148, 170, 196, 0.28);
+    --tp-container-background-color-hover: rgba(148, 170, 196, 0.24);
+    --tp-container-foreground-color: #e2ebf6;
+    --tp-container-unit-size: 24px;
+    --tp-input-background-color: rgba(10, 16, 24, 0.78);
+    --tp-input-background-color-active: rgba(26, 36, 50, 0.96);
+    --tp-input-background-color-focus: rgba(22, 32, 45, 0.92);
+    --tp-input-background-color-hover: rgba(16, 24, 35, 0.88);
+    --tp-input-foreground-color: #eff6ff;
+    --tp-label-foreground-color: rgba(226, 235, 246, 0.82);
+    --tp-groove-foreground-color: rgba(125, 181, 255, 0.24);
+  }
+  * { box-sizing: border-box; }
   html, body {
     height: 100%;
-    background: #1a1a2e;
-    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-    overflow-y: auto;
-    overflow-x: hidden;
+    margin: 0;
+    color: var(--panel-fg);
+    background:
+      radial-gradient(circle at top, rgba(103, 148, 208, 0.2), transparent 36%),
+      linear-gradient(180deg, #0f1621 0%, #091018 100%);
+    font-family: SFMono-Regular, ui-monospace, Menlo, Monaco, monospace;
+    overflow: auto;
   }
-  #tp-container { padding: 4px; }
-  .tp-dfwv { width: 100% !important; }
+  body { padding: 12px; }
+  #tp-container {
+    min-height: 100%;
+    width: 100%;
+  }
+  .tp-dfwv {
+    position: static !important;
+    top: auto !important;
+    right: auto !important;
+    width: 100% !important;
+    max-width: none !important;
+  }
+  .tp-rotv {
+    width: 100%;
+  }
+  .tp-lblv {
+    align-items: flex-start;
+  }
+  .tp-lblv_l {
+    padding-top: 6px;
+  }
+  .tp-sldtxtv {
+    align-items: center;
+    gap: 6px;
+  }
+  .tp-sldtxtv_s {
+    flex: 3;
+  }
+  .tp-sldtxtv_t {
+    flex: 0 0 88px;
+    margin-left: 0;
+  }
+  .tp-sldv_t {
+    margin: 0 8px;
+  }
+  .tp-sldv_t::before,
+  .tp-sldv_k::before {
+    border-radius: 999px;
+    height: 4px;
+  }
+  .tp-sldv_t::before {
+    background: rgba(125, 181, 255, 0.24);
+  }
+  .tp-sldv_k::before {
+    background: linear-gradient(90deg, #78b7ff 0%, #d9ebff 100%);
+  }
+  .tp-sldv_k::after {
+    border-radius: 999px;
+    box-shadow: 0 0 0 2px rgba(9, 15, 24, 0.35);
+    height: 14px;
+    right: -7px;
+    width: 14px;
+  }
 </style>
 </head>
 <body>

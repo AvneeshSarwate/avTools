@@ -646,6 +646,15 @@ mod webview_impl {
         }
     }
 
+    fn logical_size_for_window(window: &Window, fallback_width: u32, fallback_height: u32) -> (u32, u32) {
+        let size = window.inner_size();
+        if size.width == 0 || size.height == 0 {
+            return (fallback_width, fallback_height);
+        }
+        let logical = size.to_logical::<u32>(window.scale_factor());
+        (logical.width, logical.height)
+    }
+
     pub fn create(
         runtime: &mut GlobalRuntime,
         html: &str,
@@ -680,12 +689,8 @@ mod webview_impl {
                 return None;
             };
 
-            window.set_resizable(false);
-            let size = window.inner_size();
-            let bounds = bounds_for_size(
-                if size.width > 0 { size.width } else { width },
-                if size.height > 0 { size.height } else { height },
-            );
+            let (logical_width, logical_height) = logical_size_for_window(window, width, height);
+            let bounds = bounds_for_size(logical_width, logical_height);
 
             let mut builder =
                 WebViewBuilder::new()
@@ -725,6 +730,37 @@ mod webview_impl {
                 None
             }
         }
+    }
+
+    pub fn sync_bounds(runtime: &mut GlobalRuntime, state: &WebviewState) {
+        let Some(webview) = state.webview.as_ref() else {
+            return;
+        };
+        let Some(slot) = runtime.app.windows.get_mut(&state.token) else {
+            return;
+        };
+        let Some(window) = slot.window.as_ref() else {
+            return;
+        };
+
+        let (logical_width, logical_height) = logical_size_for_window(window, slot.width, slot.height);
+        slot.width = logical_width;
+        slot.height = logical_height;
+
+        let _ = webview.set_bounds(bounds_for_size(logical_width, logical_height));
+    }
+
+    pub fn set_window_size(runtime: &mut GlobalRuntime, state: &WebviewState, width: u32, height: u32) {
+        let Some(slot) = runtime.app.windows.get_mut(&state.token) else {
+            return;
+        };
+        let Some(window) = slot.window.as_ref() else {
+            return;
+        };
+
+        slot.width = width;
+        slot.height = height;
+        let _ = window.request_inner_size(LogicalSize::new(width as f64, height as f64));
     }
 
     pub fn set_window_visible(runtime: &mut GlobalRuntime, token: u64, visible: bool) {
@@ -934,6 +970,48 @@ pub extern "C" fn webview_pump() {
 #[cfg(not(target_os = "macos"))]
 #[no_mangle]
 pub extern "C" fn webview_pump() {}
+
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub extern "C" fn webview_sync_bounds(state: *mut WebviewState) {
+    if state.is_null() {
+        return;
+    }
+    let wv_state = unsafe { &*state };
+    GLOBAL_RUNTIME.with(|cell| {
+        let mut runtime_opt = cell.borrow_mut();
+        let Some(runtime) = runtime_opt.as_mut() else {
+            return;
+        };
+        webview_impl::sync_bounds(runtime, wv_state);
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+#[no_mangle]
+pub extern "C" fn webview_sync_bounds(_state: *mut WebviewState) {}
+
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub extern "C" fn webview_set_size(state: *mut WebviewState, width: u32, height: u32) {
+    if state.is_null() || width == 0 || height == 0 {
+        return;
+    }
+    let wv_state = unsafe { &*state };
+    GLOBAL_RUNTIME.with(|cell| {
+        let mut runtime_opt = cell.borrow_mut();
+        let Some(runtime) = runtime_opt.as_mut() else {
+            return;
+        };
+        webview_impl::set_window_size(runtime, wv_state, width, height);
+        pump_for_webview(runtime);
+        webview_impl::sync_bounds(runtime, wv_state);
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+#[no_mangle]
+pub extern "C" fn webview_set_size(_state: *mut WebviewState, _width: u32, _height: u32) {}
 
 #[cfg(target_os = "macos")]
 #[no_mangle]
