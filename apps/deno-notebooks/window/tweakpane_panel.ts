@@ -4,12 +4,9 @@
  * WindowTweakpane — high-level API for a tweakpane panel inside a native window.
  *
  * Usage:
- *   const { pane, panel } = createWindowTweakpaneFromRaw({ lib, state, ... });
+ *   const pane = createWindowTweakpane(window, { title: "Controls" });
  *   pane.addBinding(params, 'speed', { min: 0, max: 100 });
- *   panel.show();
- *
- *   // In render loop:
- *   pane.processMessages(panel);
+ *   // The helper auto-hooks the native window poll/close methods.
  */
 
 import { WindowPanel } from "./panel.ts";
@@ -160,6 +157,10 @@ export class WindowTweakpane {
   #panelMetrics: WindowTweakpanePanelMetrics | null = null;
   #lastError: WindowTweakpaneErrorInfo | null = null;
   #panel: WindowPanel | null = null;
+  #window: GpuWindow | null = null;
+  #originalPollEvents: GpuWindow["pollEvents"] | null = null;
+  #originalClose: GpuWindow["close"] | null = null;
+  #destroyed = false;
 
   constructor(title?: string) {
     this.#title = title ?? "Controls";
@@ -201,6 +202,42 @@ export class WindowTweakpane {
 
   get lastError(): WindowTweakpaneErrorInfo | null {
     return this.#lastError;
+  }
+
+  get visible(): boolean {
+    return this.#panel?.visible ?? false;
+  }
+
+  /** @internal */
+  _attachPanel(panel: WindowPanel, gpuWindow?: GpuWindow): void {
+    this.#panel = panel;
+
+    if (!gpuWindow || this.#window === gpuWindow) {
+      return;
+    }
+
+    this.#window = gpuWindow;
+    const originalPollEvents = gpuWindow.pollEvents.bind(gpuWindow);
+    const originalClose = gpuWindow.close.bind(gpuWindow);
+    this.#originalPollEvents = originalPollEvents;
+    this.#originalClose = originalClose;
+
+    gpuWindow.pollEvents = () => {
+      const events = originalPollEvents();
+      for (const event of events) {
+        panel.handleEvent(event);
+      }
+      this.processMessages();
+      if (this.#lastError) {
+        throw new Error(`Tweakpane panel error [${this.#lastError.stage}]: ${this.#lastError.message}`);
+      }
+      return events;
+    };
+
+    gpuWindow.close = () => {
+      this.destroy();
+      originalClose();
+    };
   }
 
   /** @internal — called by PaneFolder instances */
@@ -272,11 +309,17 @@ export class WindowTweakpane {
 
   /**
    * Process IPC messages from the panel webview.
-   * Call this once per frame in your render loop.
+   * Call this manually only if you are not using the auto-attached helper path.
    */
-  processMessages(panel: WindowPanel): void {
-    this.#panel = panel;
-    const msgs = panel.pollMessages();
+  processMessages(panel?: WindowPanel): void {
+    if (panel) {
+      this.#panel = panel;
+    }
+    const activePanel = this.#panel;
+    if (!activePanel) {
+      return;
+    }
+    const msgs = activePanel.pollMessages();
     for (const raw of msgs) {
       const msg = raw as Record<string, unknown>;
       switch (msg.type) {
@@ -284,7 +327,7 @@ export class WindowTweakpane {
           this.#connected = true;
           this.#ready = false;
           this.#readyInfo = null;
-          panel.sendMessage({
+          activePanel.sendMessage({
             type: "replay",
             paneConfig: { title: this.#title },
             operations: this.#ops,
@@ -335,6 +378,52 @@ export class WindowTweakpane {
       }
     }
   }
+
+  update(): void {
+    this.processMessages();
+  }
+
+  show(): void {
+    this.#panel?.show();
+  }
+
+  hide(): void {
+    this.#panel?.hide();
+  }
+
+  toggle(): void {
+    this.#panel?.toggle();
+  }
+
+  setPanelSize(width: number, height: number): void {
+    this.#panel?.setSize(width, height);
+  }
+
+  evalPanelJs(js: string): void {
+    this.#panel?.evalJs(js);
+  }
+
+  destroy(): void {
+    if (this.#destroyed) {
+      return;
+    }
+    this.#destroyed = true;
+
+    if (this.#window) {
+      if (this.#originalPollEvents) {
+        this.#window.pollEvents = this.#originalPollEvents;
+      }
+      if (this.#originalClose) {
+        this.#window.close = this.#originalClose;
+      }
+    }
+
+    this.#panel?.destroy();
+    this.#panel = null;
+    this.#window = null;
+    this.#originalPollEvents = null;
+    this.#originalClose = null;
+  }
 }
 
 // ─── Factory ───────────────────────────────────────────────────────────
@@ -342,12 +431,10 @@ export class WindowTweakpane {
 /**
  * Create a tweakpane panel attached to a native window.
  *
- * Returns { pane, panel } where:
- *   pane — call addBinding/addFolder/addButton etc.
- *   panel — call show()/hide()/toggle(), and pass to pane.processMessages(panel)
- *
- * If syphon is provided, automatically sets the publish region
- * to the sketch dimensions so syphon captures only the sketch, not the panel.
+ * Returns a pane API object and auto-hooks the native window so:
+ *   - toggle-key handling is automatic
+ *   - incoming panel IPC is pumped during `gpuWindow.pollEvents()`
+ *   - panel cleanup happens during `gpuWindow.close()`
  */
 /**
  * Create a tweakpane panel in its own window, linked to a GpuWindow.
@@ -365,7 +452,7 @@ export function createWindowTweakpane(
     toggleKey?: string;
     syphon?: SyphonServer;
   },
-): { pane: WindowTweakpane; panel: WindowPanel } {
+): WindowTweakpane {
   const panel = new WindowPanel({
     lib: gpuWindow._lib,
     parentState: gpuWindow._state,
@@ -381,6 +468,7 @@ export function createWindowTweakpane(
   panel.init(html);
 
   const pane = new WindowTweakpane(options?.title);
+  pane._attachPanel(panel, gpuWindow);
 
-  return { pane, panel };
+  return pane;
 }

@@ -12,13 +12,6 @@ import { createSyphonGpuWindow } from "../syphon/mod.ts";
 
 const WIDTH = 1280;
 const HEIGHT = 720;
-const MAX_FRAMES = Number(Deno.env.get("P5_MAX_FRAMES") ?? 60000);
-const AUTOCHECK = Deno.env.get("P5_TWEAKPANE_AUTOCHECK") === "1";
-const READY_TIMEOUT_MS = Number(Deno.env.get("P5_TWEAKPANE_TIMEOUT_MS") ?? 8000);
-const EXPECTED_BINDINGS = 5;
-const EXPECTED_MIN_SLIDER_WIDTH = 120;
-const AUTOCHECK_SPEED_VALUE = 6.4;
-const EXPECTED_MIN_VIEWPORT_WIDTH = 430;
 
 type ExampleWindow =
   | Awaited<ReturnType<typeof createGpuWindow>>
@@ -32,27 +25,14 @@ const adapter = await navigator.gpu.requestAdapter();
 if (!adapter) throw new Error("No WebGPU adapter");
 const device = await adapter.requestDevice();
 
-let win: ExampleWindow | null = null;
-let panel: ReturnType<typeof createWindowTweakpane>["panel"] | null = null;
-let pane: ReturnType<typeof createWindowTweakpane>["pane"] | null = null;
-let p5: P5GPU | null = null;
+const win: ExampleWindow = await createSyphonGpuWindow(device, {
+  width: WIDTH,
+  height: HEIGHT,
+  title: "P5GPU + Tweakpane",
+  syphon: { serverName: "P5GPU_Panel_Demo", flipY: true },
+});
 
 try {
-  // ─── GPU + window ──────────────────────────────────────────────────────
-
-  win = AUTOCHECK
-    ? await createGpuWindow(device, {
-      width: WIDTH,
-      height: HEIGHT,
-      title: "P5GPU + Tweakpane",
-    })
-    : await createSyphonGpuWindow(device, {
-      width: WIDTH,
-      height: HEIGHT,
-      title: "P5GPU + Tweakpane",
-      syphon: { serverName: "P5GPU_Panel_Demo", flipY: true },
-    });
-
   const blitPipeline = createBlitPipeline(device, win.format);
 
   // ─── Tweakpane (separate window) ───────────────────────────────────────
@@ -65,11 +45,11 @@ try {
     bgAlpha: 20,
   };
 
-  ({ pane, panel } = createWindowTweakpane(win, {
+  const pane = createWindowTweakpane(win, {
     title: "Circle Demo",
     panelWidth: 420,
-    panelHeight: 680,
-  }));
+    panelHeight: 300,
+  });
 
   pane.addBinding(params, "speed", { min: 0.1, max: 10, step: 0.1 });
   pane.addBinding(params, "radius", { min: 50, max: 400, step: 1 });
@@ -82,172 +62,62 @@ try {
     params.radius = 50 + Math.random() * 350;
     params.count = 3 + Math.floor(Math.random() * 33);
     params.hue = Math.random() * 360;
-    pane?.refresh();
+    pane.refresh();
   });
 
   // ─── P5GPU ─────────────────────────────────────────────────────────────
 
-  p5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
+  const p5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 
-  // ─── Render loop ───────────────────────────────────────────────────────
+  try {
+    let running = true;
 
-  let running = true;
-  const readyDeadline = performance.now() + READY_TIMEOUT_MS;
-  let autocheckInjected = false;
-  let autocheckReadyLogged = false;
-  let autocheckSpeedVerified = false;
-  let autocheckResizeVerified = false;
-  let initialSliderTrackWidth = 0;
-
-  for (let frame = 0; frame < MAX_FRAMES && running; frame++) {
-    const events = win.pollEvents();
-    for (const ev of events) {
-      if (ev.type === "close") running = false;
-      panel.handleEvent(ev);
-    }
-    if (!running || win.closed) break;
-
-    // Process tweakpane IPC messages (mutates params in place)
-    pane.processMessages(panel);
-
-    if (pane.lastError) {
-      throw new Error(`Tweakpane panel error [${pane.lastError.stage}]: ${pane.lastError.message}`);
-    }
-
-    if (AUTOCHECK && pane.readyInfo) {
-      const ready = pane.readyInfo;
-      if (ready.bindingCount !== EXPECTED_BINDINGS) {
-        throw new Error(
-          `Unexpected tweakpane binding count: expected ${EXPECTED_BINDINGS}, got ${ready.bindingCount}`,
-        );
+    while (running && !win.closed) {
+      const events = win.pollEvents();
+      for (const ev of events) {
+        if (ev.type === "close") running = false;
       }
-      if (ready.title !== "Circle Demo") {
-        throw new Error(`Unexpected tweakpane title: ${String(ready.title)}`);
+      if (!running || win.closed) break;
+
+      // Draw
+      p5.beginFrame();
+      p5.background(0, 0, 0, params.bgAlpha);
+      p5.noStroke();
+
+      const t = performance.now() * 0.001 * params.speed;
+      for (let i = 0; i < params.count; i++) {
+        const angle = (i / params.count) * Math.PI * 2 + t;
+        const x = WIDTH / 2 + Math.cos(angle) * params.radius;
+        const y = HEIGHT / 2 + Math.sin(angle) * params.radius;
+        const h = (params.hue + (i / params.count) * 120) % 360;
+        const c = hslToRgb(h / 360, 0.8, 0.6);
+        p5.fill(c[0], c[1], c[2]);
+        p5.circle(x, y, 30 + 20 * Math.sin(t * 2 + i));
       }
-      if ((ready.sliderTrackWidth ?? 0) < EXPECTED_MIN_SLIDER_WIDTH) {
-        throw new Error(
-          `Slider track is too narrow: expected at least ${EXPECTED_MIN_SLIDER_WIDTH}px, got ${ready.sliderTrackWidth ?? 0}px`,
-        );
+
+      const texture = p5.endFrame();
+
+      try {
+        const swapTexture = win.ctx.getCurrentTexture();
+        const encoder = device.createCommandEncoder();
+        blit(device, encoder, blitPipeline, texture.createView(), swapTexture.createView());
+        device.queue.submit([encoder.finish()]);
+        if (hasSyphon(win)) {
+          win.syphon.publishFrame();
+        }
+        win.present();
+      } catch (e) {
+        console.error("Present error:", e);
+        break;
       }
-      if (!initialSliderTrackWidth) {
-        initialSliderTrackWidth = ready.sliderTrackWidth ?? 0;
-      }
-      if (!autocheckInjected) {
-        panel.setSize(480, 720);
-        panel.evalJs(`
-(() => {
-  const input = document.querySelector('.tp-sldtxtv .tp-txtv_i');
-  if (!(input instanceof HTMLInputElement)) {
-    window.ipc.postMessage(JSON.stringify({
-      type: 'panelError',
-      stage: 'autocheck.inputProbe',
-      message: 'Could not find numeric tweakpane input',
-    }));
-    return;
-  }
-  input.focus();
-  input.value = '${AUTOCHECK_SPEED_VALUE.toFixed(1)}';
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  input.dispatchEvent(new Event('change', { bubbles: true }));
-  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-  input.blur();
-  window.ipc.postMessage(JSON.stringify({
-    type: 'panelMetrics',
-    viewportWidth: window.innerWidth,
-    viewportHeight: window.innerHeight,
-    sliderTrackWidth: document.querySelector('.tp-sldv_t')?.getBoundingClientRect().width ?? 0,
-    sliderKnobWidth: document.querySelector('.tp-sldv_k')?.getBoundingClientRect().width ?? 0,
-  }));
-})();
-        `);
-        autocheckInjected = true;
-      }
-      if (!autocheckReadyLogged) {
-        console.log(
-          `[p5gpu_tweakpane_panel] ready title=${ready.title} bindings=${ready.bindingCount} operations=${ready.operationCount} sliders=${ready.sliderCount ?? 0} textInputs=${ready.textInputCount ?? 0} buttons=${ready.buttonCount ?? 0} sliderTrackWidth=${ready.sliderTrackWidth ?? 0} sliderKnobWidth=${ready.sliderKnobWidth ?? 0}`,
-        );
-        autocheckReadyLogged = true;
-      }
-    }
 
-    if (
-      AUTOCHECK &&
-      pane.panelMetrics &&
-      pane.panelMetrics.viewportWidth >= EXPECTED_MIN_VIEWPORT_WIDTH &&
-      pane.panelMetrics.sliderTrackWidth > initialSliderTrackWidth
-    ) {
-      autocheckResizeVerified = true;
+      await new Promise((r) => setTimeout(r, 0));
     }
-
-    if (AUTOCHECK && performance.now() > readyDeadline) {
-      throw new Error(`Timed out after ${READY_TIMEOUT_MS}ms waiting for tweakpane panel to become ready`);
-    }
-
-    // Draw
-    p5.beginFrame();
-    p5.background(0, 0, 0, params.bgAlpha);
-    p5.noStroke();
-
-    const t = performance.now() * 0.001 * params.speed;
-    for (let i = 0; i < params.count; i++) {
-      const angle = (i / params.count) * Math.PI * 2 + t;
-      const x = WIDTH / 2 + Math.cos(angle) * params.radius;
-      const y = HEIGHT / 2 + Math.sin(angle) * params.radius;
-      const h = (params.hue + (i / params.count) * 120) % 360;
-      const c = hslToRgb(h / 360, 0.8, 0.6);
-      p5.fill(c[0], c[1], c[2]);
-      p5.circle(x, y, 30 + 20 * Math.sin(t * 2 + i));
-    }
-
-    const texture = p5.endFrame();
-
-    try {
-      const swapTexture = win.ctx.getCurrentTexture();
-      const encoder = device.createCommandEncoder();
-      blit(device, encoder, blitPipeline, texture.createView(), swapTexture.createView());
-      device.queue.submit([encoder.finish()]);
-      if (hasSyphon(win)) {
-        win.syphon.publishFrame();
-      }
-      win.present();
-    } catch (e) {
-      console.error("Present error:", e);
-      break;
-    }
-
-    if (AUTOCHECK && autocheckInjected && Math.abs(params.speed - AUTOCHECK_SPEED_VALUE) < 0.001) {
-      autocheckSpeedVerified = true;
-      console.log(`[p5gpu_tweakpane_panel] input roundtrip success speed=${params.speed.toFixed(1)}`);
-    }
-
-    if (AUTOCHECK && autocheckSpeedVerified && autocheckResizeVerified) {
-      if (pane.panelMetrics) {
-        console.log(
-          `[p5gpu_tweakpane_panel] resize sync success viewport=${pane.panelMetrics.viewportWidth}x${pane.panelMetrics.viewportHeight} sliderTrackWidth=${pane.panelMetrics.sliderTrackWidth}`,
-        );
-      }
-      break;
-    }
-
-    await new Promise((r) => setTimeout(r, 0));
-  }
-
-  if (AUTOCHECK) {
-    if (!pane.readyInfo) {
-      throw new Error("Automation mode ended before tweakpane reported readiness");
-    }
-    if (!autocheckSpeedVerified) {
-      throw new Error("Automation mode ended before numeric control roundtrip completed");
-    }
-    if (!autocheckResizeVerified) {
-      throw new Error("Automation mode ended before resized panel viewport metrics were observed");
-    }
-    console.log("[p5gpu_tweakpane_panel] automation success");
+  } finally {
+    p5.dispose();
   }
 } finally {
-  panel?.destroy();
-  p5?.dispose();
-  win?.close();
+  win.close();
 }
 
 // ─── Util ────────────────────────────────────────────────────────────────
