@@ -1,5 +1,6 @@
 /// <reference lib="dom" />
 
+import { ShaderEffect, type ShaderSource } from "@avtools/shader-fx/raw";
 import { createBlitPipeline, blit } from "./blit.ts";
 import type { WindowEvent } from "./events.ts";
 import { createWindowTweakpane, type WindowTweakpane } from "./tweakpane_panel.ts";
@@ -26,23 +27,39 @@ export interface P5GpuSketchContext {
   pane: WindowTweakpane | null;
 }
 
-export interface P5GpuSketchDrawContext extends P5GpuSketchContext {
+export interface P5GpuSketchRuntimeContext<TState = void> extends P5GpuSketchContext {
+  state: TState;
+}
+
+export interface P5GpuSketchDrawContext<TState = void> extends P5GpuSketchRuntimeContext<TState> {
   frame: number;
   time: number;
 }
 
-export interface P5GpuSketchOptions {
+export type P5GpuSketchFrameSource = ShaderSource;
+
+export interface P5GpuSketchRenderContext<TState = void> extends P5GpuSketchDrawContext<TState> {
+  sourceTexture: GPUTexture;
+  sourceView: GPUTextureView;
+}
+
+export interface P5GpuSketchOptions<TState = void> {
   width: number;
   height: number;
   title?: string;
   syphon?: SyphonOptions;
   pane?: P5GpuSketchPaneOptions;
-  draw: (context: P5GpuSketchDrawContext) => void;
-  onEvent?: (event: WindowEvent, context: P5GpuSketchContext) => void;
+  setup?: (context: P5GpuSketchContext) => Promise<TState> | TState;
+  draw: (context: P5GpuSketchDrawContext<TState>) => void;
+  render?: (context: P5GpuSketchRenderContext<TState>) => P5GpuSketchFrameSource;
+  cleanup?: (context: P5GpuSketchRuntimeContext<TState>) => void;
+  onEvent?: (event: WindowEvent, context: P5GpuSketchRuntimeContext<TState>) => void;
   yieldMs?: number;
 }
 
-export async function runP5GpuSketch(options: P5GpuSketchOptions): Promise<void> {
+export async function runP5GpuSketch<TState = void>(
+  options: P5GpuSketchOptions<TState>,
+): Promise<void> {
   const device = await requestWebGpuDevice();
   const window = await createSketchWindow(device, options);
   const p5 = new P5GPU(device, { width: options.width, height: options.height });
@@ -59,6 +76,10 @@ export async function runP5GpuSketch(options: P5GpuSketchOptions): Promise<void>
   pane && options.pane?.setup?.(pane);
 
   const context: P5GpuSketchContext = { device, window, p5, pane };
+  const state = options.setup
+    ? await options.setup(context)
+    : undefined as TState;
+  const runtimeContext: P5GpuSketchRuntimeContext<TState> = { ...context, state };
   const yieldMs = options.yieldMs ?? 0;
   let running = true;
   let frame = 0;
@@ -67,7 +88,7 @@ export async function runP5GpuSketch(options: P5GpuSketchOptions): Promise<void>
     while (running && !window.closed) {
       const events = window.pollEvents();
       for (const event of events) {
-        options.onEvent?.(event, context);
+        options.onEvent?.(event, runtimeContext);
         if (event.type === "close") {
           running = false;
         }
@@ -76,20 +97,35 @@ export async function runP5GpuSketch(options: P5GpuSketchOptions): Promise<void>
         break;
       }
 
+      const time = performance.now() * 0.001;
       p5.beginFrame();
       options.draw({
-        ...context,
+        ...runtimeContext,
         frame,
-        time: performance.now() * 0.001,
+        time,
       });
+      const sourceTexture = p5.endFrame();
+      const finalSource = options.render
+        ? options.render({
+          ...runtimeContext,
+          frame,
+          time,
+          sourceTexture,
+          sourceView: sourceTexture.createView(),
+        })
+        : sourceTexture;
       frame += 1;
 
-      const texture = p5.endFrame();
-      presentP5Frame(device, window, blitPipeline, texture);
+      presentP5Frame(device, window, blitPipeline, resolveFrameSourceView(finalSource));
 
       await new Promise((resolve) => setTimeout(resolve, yieldMs));
     }
   } finally {
+    if (options.cleanup) {
+      options.cleanup(runtimeContext);
+    } else if (hasDispose(state)) {
+      state.dispose();
+    }
     p5.dispose();
     window.close();
   }
@@ -105,7 +141,7 @@ async function requestWebGpuDevice(): Promise<GPUDevice> {
 
 async function createSketchWindow(
   device: GPUDevice,
-  options: P5GpuSketchOptions,
+  options: { width: number; height: number; title?: string; syphon?: SyphonOptions },
 ): Promise<P5GpuSketchWindow> {
   if (options.syphon) {
     return await createSyphonGpuWindow(device, {
@@ -123,16 +159,26 @@ async function createSketchWindow(
   });
 }
 
+function resolveFrameSourceView(source: P5GpuSketchFrameSource): GPUTextureView {
+  if (source instanceof ShaderEffect) {
+    return source.output;
+  }
+  if ("createView" in source) {
+    return source.createView();
+  }
+  return source;
+}
+
 function presentP5Frame(
   device: GPUDevice,
   window: P5GpuSketchWindow,
   blitPipeline: ReturnType<typeof createBlitPipeline>,
-  texture: GPUTexture,
+  sourceView: GPUTextureView,
 ): void {
   try {
     const swapTexture = window.ctx.getCurrentTexture();
     const encoder = device.createCommandEncoder();
-    blit(device, encoder, blitPipeline, texture.createView(), swapTexture.createView());
+    blit(device, encoder, blitPipeline, sourceView, swapTexture.createView());
     device.queue.submit([encoder.finish()]);
     if (hasSyphon(window)) {
       window.syphon.publishFrame();
@@ -146,4 +192,8 @@ function presentP5Frame(
 
 function hasSyphon(window: P5GpuSketchWindow): window is GpuWindow & { syphon: SyphonServer } {
   return "syphon" in window;
+}
+
+function hasDispose(value: unknown): value is { dispose: () => void } {
+  return typeof value === "object" && value !== null && "dispose" in value && typeof value.dispose === "function";
 }

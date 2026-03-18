@@ -8,22 +8,29 @@
 
 import {
   runP5GpuSketch,
+  type P5GpuSketchContext,
   type P5GpuSketchDrawContext,
+  type P5GpuSketchFrameSource,
+  type P5GpuSketchRenderContext,
   type WindowTweakpane,
 } from "../window/mod.ts";
+import { FeedbackNode, PassthruEffect, selectShaderFxFormat } from "@avtools/shader-fx/raw";
+import { AlphaTimeTagEffect } from "@avtools/shader-fx/generated-raw/shaders/alphaTimeTag.frag.raw.generated.ts";
+import { FloodFillDisplayEffect } from "@avtools/shader-fx/generated-raw/shaders/floodFillDisplay.frag.raw.generated.ts";
+import { FloodFillStepEffect } from "@avtools/shader-fx/generated-raw/shaders/floodFillStep.frag.raw.generated.ts";
 
 const WIDTH = 1280;
 const HEIGHT = 720;
+const CLEAR_COLOR: GPUColor = { r: 0, g: 0, b: 0, a: 0 };
 
 const params = {
   speed: 2.0,
   radius: 200,
   count: 12,
   hue: 180,
-  bgAlpha: 20,
 };
 
-await runP5GpuSketch({
+await runP5GpuSketch<FloodFillSketchState>({
   width: WIDTH,
   height: HEIGHT,
   title: "P5GPU + Tweakpane",
@@ -37,17 +44,30 @@ await runP5GpuSketch({
     panelHeight: 300,
     setup: setupPane,
   },
+  setup: setupSketch,
   draw: drawSketch,
+  render: renderSketch,
 });
 
 // ─── Util ────────────────────────────────────────────────────────────────
+
+interface FloodFillSketchState {
+  format: GPUTextureFormat;
+  placeholder: GPUTexture;
+  timeStamper: AlphaTimeTagEffect;
+  floodFillSeed: FloodFillStepEffect;
+  feedbackSeed: PassthruEffect;
+  feedback: FeedbackNode;
+  floodFill: FloodFillStepEffect;
+  display: FloodFillDisplayEffect;
+  dispose(): void;
+}
 
 function setupPane(pane: WindowTweakpane): void {
   pane.addBinding(params, "speed", { min: 0.1, max: 10, step: 0.1 });
   pane.addBinding(params, "radius", { min: 50, max: 400, step: 1 });
   pane.addBinding(params, "count", { min: 3, max: 36, step: 1 });
   pane.addBinding(params, "hue", { min: 0, max: 360, step: 1 });
-  pane.addBinding(params, "bgAlpha", { min: 0, max: 255, step: 1 });
 
   pane.addButton({ title: "Randomize" }).on("click", () => {
     params.speed = 0.1 + Math.random() * 9.9;
@@ -58,8 +78,85 @@ function setupPane(pane: WindowTweakpane): void {
   });
 }
 
-function drawSketch({ p5, time }: P5GpuSketchDrawContext): void {
-  p5.background(0, 0, 0, params.bgAlpha);
+async function setupSketch({ device, p5 }: P5GpuSketchContext): Promise<FloodFillSketchState> {
+  const format = await selectShaderFxFormat(device, ["rgba16float", "rgba8unorm"]);
+  const placeholder = device.createTexture({
+    size: { width: 1, height: 1 },
+    format: "rgba8unorm",
+    usage: GPUTextureUsage.TEXTURE_BINDING,
+  });
+
+  const timeStamper = new AlphaTimeTagEffect(
+    device,
+    { src: placeholder },
+    p5.width,
+    p5.height,
+    format,
+    CLEAR_COLOR,
+  );
+  const floodFillSeed = new FloodFillStepEffect(
+    device,
+    { seed: timeStamper, feedback: timeStamper },
+    p5.width,
+    p5.height,
+    format,
+    CLEAR_COLOR,
+  );
+  const feedbackSeed = new PassthruEffect(
+    device,
+    { src: floodFillSeed },
+    p5.width,
+    p5.height,
+    format,
+    CLEAR_COLOR,
+    "linear",
+  );
+  const feedback = new FeedbackNode(
+    device,
+    feedbackSeed,
+    p5.width,
+    p5.height,
+    format,
+    CLEAR_COLOR,
+    "linear",
+  );
+  const floodFill = new FloodFillStepEffect(
+    device,
+    { seed: timeStamper, feedback },
+    p5.width,
+    p5.height,
+    format,
+    CLEAR_COLOR,
+  );
+  const display = new FloodFillDisplayEffect(
+    device,
+    { src: floodFill },
+    p5.width,
+    p5.height,
+    format,
+    CLEAR_COLOR,
+  );
+
+  feedback.setFeedbackSrc(floodFill);
+
+  return {
+    format,
+    placeholder,
+    timeStamper,
+    floodFillSeed,
+    feedbackSeed,
+    feedback,
+    floodFill,
+    display,
+    dispose(): void {
+      display.disposeAll();
+      placeholder.destroy();
+    },
+  };
+}
+
+function drawSketch({ p5, time }: P5GpuSketchDrawContext<FloodFillSketchState>): void {
+  p5.clear();
   p5.noStroke();
 
   const t = time * params.speed;
@@ -72,6 +169,13 @@ function drawSketch({ p5, time }: P5GpuSketchDrawContext): void {
     p5.fill(c[0], c[1], c[2]);
     p5.circle(x, y, 30 + 20 * Math.sin(t * 2 + i));
   }
+}
+
+function renderSketch({ state, sourceTexture, time }: P5GpuSketchRenderContext<FloodFillSketchState>): P5GpuSketchFrameSource {
+  state.timeStamper.setSrcs({ src: sourceTexture });
+  state.timeStamper.setUniforms({ drawTime: time });
+  state.display.renderAll();
+  return state.display;
 }
 
 function hslToRgb(h: number, s: number, l: number): [number, number, number] {
