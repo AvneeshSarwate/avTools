@@ -6,6 +6,14 @@ export {
 } from "./window.ts";
 export { createBlitPipeline, blit, blitToViewport, type BlitPipeline, type BlitViewport } from "./blit.ts";
 export { startRenderLoop, type RenderLoopOptions } from "./render_loop.ts";
+export {
+  runP5GpuSketch,
+  type P5GpuSketchContext,
+  type P5GpuSketchDrawContext,
+  type P5GpuSketchOptions,
+  type P5GpuSketchPaneOptions,
+  type P5GpuSketchWindow,
+} from "./p5gpu_sketch.ts";
 export type { WindowEvent } from "./events.ts";
 export { WindowPanel, type PanelOptions } from "./panel.ts";
 export {

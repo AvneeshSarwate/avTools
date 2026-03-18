@@ -6,51 +6,43 @@
 //   deno run --unstable-webgpu --unstable-ffi --allow-all \
 //     examples/p5gpu_tweakpane_panel.ts
 
-import { P5GPU } from "../tools/p5gpu.ts";
-import { createBlitPipeline, blit, createGpuWindow, createWindowTweakpane } from "../window/mod.ts";
-import { createSyphonGpuWindow } from "../syphon/mod.ts";
+import {
+  runP5GpuSketch,
+  type P5GpuSketchDrawContext,
+  type WindowTweakpane,
+} from "../window/mod.ts";
 
 const WIDTH = 1280;
 const HEIGHT = 720;
 
-type ExampleWindow =
-  | Awaited<ReturnType<typeof createGpuWindow>>
-  | Awaited<ReturnType<typeof createSyphonGpuWindow>>;
+const params = {
+  speed: 2.0,
+  radius: 200,
+  count: 12,
+  hue: 180,
+  bgAlpha: 20,
+};
 
-function hasSyphon(window: ExampleWindow): window is Awaited<ReturnType<typeof createSyphonGpuWindow>> {
-  return "syphon" in window;
-}
-
-const adapter = await navigator.gpu.requestAdapter();
-if (!adapter) throw new Error("No WebGPU adapter");
-const device = await adapter.requestDevice();
-
-const win: ExampleWindow = await createSyphonGpuWindow(device, {
+await runP5GpuSketch({
   width: WIDTH,
   height: HEIGHT,
   title: "P5GPU + Tweakpane",
-  syphon: { serverName: "P5GPU_Panel_Demo", flipY: true },
-});
-
-try {
-  const blitPipeline = createBlitPipeline(device, win.format);
-
-  // ─── Tweakpane (separate window) ───────────────────────────────────────
-
-  const params = {
-    speed: 2.0,
-    radius: 200,
-    count: 12,
-    hue: 180,
-    bgAlpha: 20,
-  };
-
-  const pane = createWindowTweakpane(win, {
+  syphon: {
+    serverName: "P5GPU_Panel_Demo",
+    flipY: true,
+  },
+  pane: {
     title: "Circle Demo",
     panelWidth: 420,
     panelHeight: 300,
-  });
+    setup: setupPane,
+  },
+  draw: drawSketch,
+});
 
+// ─── Util ────────────────────────────────────────────────────────────────
+
+function setupPane(pane: WindowTweakpane): void {
   pane.addBinding(params, "speed", { min: 0.1, max: 10, step: 0.1 });
   pane.addBinding(params, "radius", { min: 50, max: 400, step: 1 });
   pane.addBinding(params, "count", { min: 3, max: 36, step: 1 });
@@ -64,63 +56,23 @@ try {
     params.hue = Math.random() * 360;
     pane.refresh();
   });
-
-  // ─── P5GPU ─────────────────────────────────────────────────────────────
-
-  const p5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
-
-  try {
-    let running = true;
-
-    while (running && !win.closed) {
-      const events = win.pollEvents();
-      for (const ev of events) {
-        if (ev.type === "close") running = false;
-      }
-      if (!running || win.closed) break;
-
-      // Draw
-      p5.beginFrame();
-      p5.background(0, 0, 0, params.bgAlpha);
-      p5.noStroke();
-
-      const t = performance.now() * 0.001 * params.speed;
-      for (let i = 0; i < params.count; i++) {
-        const angle = (i / params.count) * Math.PI * 2 + t;
-        const x = WIDTH / 2 + Math.cos(angle) * params.radius;
-        const y = HEIGHT / 2 + Math.sin(angle) * params.radius;
-        const h = (params.hue + (i / params.count) * 120) % 360;
-        const c = hslToRgb(h / 360, 0.8, 0.6);
-        p5.fill(c[0], c[1], c[2]);
-        p5.circle(x, y, 30 + 20 * Math.sin(t * 2 + i));
-      }
-
-      const texture = p5.endFrame();
-
-      try {
-        const swapTexture = win.ctx.getCurrentTexture();
-        const encoder = device.createCommandEncoder();
-        blit(device, encoder, blitPipeline, texture.createView(), swapTexture.createView());
-        device.queue.submit([encoder.finish()]);
-        if (hasSyphon(win)) {
-          win.syphon.publishFrame();
-        }
-        win.present();
-      } catch (e) {
-        console.error("Present error:", e);
-        break;
-      }
-
-      await new Promise((r) => setTimeout(r, 0));
-    }
-  } finally {
-    p5.dispose();
-  }
-} finally {
-  win.close();
 }
 
-// ─── Util ────────────────────────────────────────────────────────────────
+function drawSketch({ p5, time }: P5GpuSketchDrawContext): void {
+  p5.background(0, 0, 0, params.bgAlpha);
+  p5.noStroke();
+
+  const t = time * params.speed;
+  for (let i = 0; i < params.count; i++) {
+    const angle = (i / params.count) * Math.PI * 2 + t;
+    const x = WIDTH / 2 + Math.cos(angle) * params.radius;
+    const y = HEIGHT / 2 + Math.sin(angle) * params.radius;
+    const h = (params.hue + (i / params.count) * 120) % 360;
+    const c = hslToRgb(h / 360, 0.8, 0.6);
+    p5.fill(c[0], c[1], c[2]);
+    p5.circle(x, y, 30 + 20 * Math.sin(t * 2 + i));
+  }
+}
 
 function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   if (s === 0) return [Math.round(l * 255), Math.round(l * 255), Math.round(l * 255)];
