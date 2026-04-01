@@ -32,6 +32,23 @@ export interface TextOnPathOptions {
    * Auto-detected if omitted (first ≈ last point within 1px).
    */
   closed?: boolean;
+  /**
+   * Repeat text to fill the entire path length.
+   *
+   * - `"clip"`: Repeat to fill the path, truncate at path length. Scroll
+   *   offset wraps modulo path length (phase looping). The truncation point
+   *   rotates with the scroll.
+   *
+   * - `"wrap"`: Infinite seamless scroll. Offset wraps modulo one-copy width
+   *   so the text pattern repeats without gaps. On a closed path there is
+   *   still a seam where the path joins — it's up to the caller to construct
+   *   text that tiles perfectly if that matters.
+   *
+   * - `false` (default): no repetition.
+   */
+  fill?: "clip" | "wrap" | false;
+  /** Separator inserted between repetitions when fill is active (default: "   ") */
+  fillSeparator?: string;
 }
 
 /**
@@ -164,15 +181,17 @@ export function textOnPath(
 ): void {
   if (str.length === 0 || path.length < 2) return;
 
-  const { offset = 0, align = "left", letterSpacing = 0 } = opts;
+  const {
+    offset = 0,
+    align = "left",
+    letterSpacing = 0,
+    fill = false,
+    fillSeparator = "   ",
+  } = opts;
   const widthFn = getWidthFn(p5);
 
   const cumDists = polylineCumDists(path);
   const totalPathLen = cumDists[cumDists.length - 1];
-  const advances = measureCharAdvances(widthFn, str);
-  const totalTextLen =
-    advances.reduce((s, a) => s + a, 0) +
-    letterSpacing * Math.max(0, str.length - 1);
 
   // Auto-detect closed path (first ≈ last point within 1px)
   const closed =
@@ -180,32 +199,103 @@ export function textOnPath(
     (Math.abs(path[0].x - path[path.length - 1].x) < 1 &&
       Math.abs(path[0].y - path[path.length - 1].y) < 1);
 
-  // Starting offset based on alignment
-  let startOffset = offset;
-  if (align === "center") startOffset += (totalPathLen - totalTextLen) / 2;
-  else if (align === "right") startOffset += totalPathLen - totalTextLen;
+  // ── Helpers ────────────────────────────────────────────────────
 
-  // Place each character at the centre of its advance, rotated to the tangent
-  let cursor = startOffset;
-  for (let i = 0; i < str.length; i++) {
-    const adv = advances[i];
-    let centerDist = cursor + adv / 2;
-
-    // Wrap around for closed paths so text scrolls past the seam cleanly
-    if (closed) {
-      centerDist = ((centerDist % totalPathLen) + totalPathLen) % totalPathLen;
-    }
-
-    const sample = samplePolyline(path, cumDists, centerDist);
-
+  /** Place a character at an exact path distance (no wrapping). */
+  function emitChar(ch: string, d: number): void {
+    if (d < 0 || d > totalPathLen) return;
+    const sample = samplePolyline(path, cumDists, d);
     p5.push();
     p5.translate(sample.x, sample.y);
     p5.rotate(sample.angle);
     p5.textAlign("center", "alphabetic");
-    p5.text(str[i], 0, 0);
+    p5.text(ch, 0, 0);
     p5.pop();
+  }
 
-    cursor += adv + letterSpacing;
+  /** Positive-modulo helper. */
+  const mod = (a: number, m: number) => ((a % m) + m) % m;
+
+  if (fill === "wrap") {
+    // ── Wrap: infinite seamless scroll ──────────────────────────
+    // One repeating unit = text + separator.
+    // Offset wraps modulo unitWidth so the pattern tiles seamlessly.
+    // We fill exactly one path-length of characters — no overlap.
+    const unit = str + fillSeparator;
+    const unitAdvances = measureCharAdvances(widthFn, unit);
+    const unitWidth =
+      unitAdvances.reduce((s, a) => s + a, 0) +
+      letterSpacing * unit.length;
+
+    const wrappedOff = mod(offset, unitWidth);
+
+    // cursor = position on the path (left edge of current char).
+    // Starts negative so the first partially-visible char is included.
+    let cursor = -wrappedOff;
+    let charIdx = 0;
+    const maxChars = unit.length * (Math.ceil(totalPathLen / unitWidth) + 2);
+    while (cursor < totalPathLen && charIdx < maxChars) {
+      const i = charIdx % unit.length;
+      const adv = unitAdvances[i];
+      const center = cursor + adv / 2;
+      // Only emit if the center falls within [0, pathLen)
+      if (center >= 0 && center < totalPathLen) {
+        emitChar(unit[i], center);
+      }
+      cursor += adv + letterSpacing;
+      charIdx++;
+    }
+  } else if (fill === "clip") {
+    // ── Clip: repeat to fill, scroll wraps mod pathLength ───────
+    // Characters fill exactly one path-length. On closed paths the
+    // scroll offset rotates the filled text (phase looping).
+    const unit = str + fillSeparator;
+    const unitAdvances = measureCharAdvances(widthFn, unit);
+    const unitWidth =
+      unitAdvances.reduce((s, a) => s + a, 0) +
+      letterSpacing * unit.length;
+
+    const scrollOff = closed ? mod(offset, totalPathLen) : offset;
+
+    // Walk through the repeating pattern, placing one path-length
+    let cursor = 0; // distance placed so far
+    let charIdx = 0;
+    const maxChars = unit.length * (Math.ceil(totalPathLen / unitWidth) + 1);
+    while (cursor < totalPathLen && charIdx < maxChars) {
+      const i = charIdx % unit.length;
+      const adv = unitAdvances[i];
+      const rawCenter = scrollOff + cursor + adv / 2;
+      // On closed paths, wrap the raw distance back onto the path
+      const center = closed ? mod(rawCenter, totalPathLen) : rawCenter;
+      if (center >= 0 && center <= totalPathLen) {
+        emitChar(unit[i], center);
+      }
+      cursor += adv + letterSpacing;
+      charIdx++;
+    }
+  } else {
+    // ── Single (no fill) ────────────────────────────────────────
+    const advances = measureCharAdvances(widthFn, str);
+    const totalTextLen =
+      advances.reduce((s, a) => s + a, 0) +
+      letterSpacing * Math.max(0, str.length - 1);
+
+    let startOffset = offset;
+    if (align === "center") startOffset += (totalPathLen - totalTextLen) / 2;
+    else if (align === "right") startOffset += totalPathLen - totalTextLen;
+
+    let cursor = startOffset;
+    for (let i = 0; i < str.length; i++) {
+      const adv = advances[i];
+      let center = cursor + adv / 2;
+      if (closed) center = mod(center, totalPathLen);
+      else if (center < 0 || center > totalPathLen) {
+        cursor += adv + letterSpacing;
+        continue;
+      }
+      emitChar(str[i], center);
+      cursor += adv + letterSpacing;
+    }
   }
 }
 
