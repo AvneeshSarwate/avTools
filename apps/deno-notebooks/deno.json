@@ -54,6 +54,7 @@
     "@pixi/layout/components": "npm:@pixi/layout@^3/components",
     "@pixi/ui": "npm:@pixi/ui@^2",
     "p5": "npm:p5@^2",
-    "tweakpane": "npm:tweakpane@^4"
+    "tweakpane": "npm:tweakpane@^4",
+    "1eurofilter": "npm:1eurofilter@^1.3.0"
   }
 }
