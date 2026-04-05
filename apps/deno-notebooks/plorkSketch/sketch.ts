@@ -24,11 +24,13 @@ const CLEAR_COLOR: GPUColor = { r: 0, g: 0, b: 0, a: 0 };
 const params = {
   duration: 2.0,
   hue: 180,
+  radius: 20,
 };
 
 interface CircleState {
   x: number;
   hue: number;
+  radius: number;
   handle: { cancel: () => void; handleCancel: (f: () => void) => () => void };
 }
 
@@ -45,7 +47,7 @@ let rootCtx: DateTimeContext | undefined = undefined;
  */
 const rootAnim = launch(async (ctx) => {
   rootCtx = ctx;
-  while (true) await ctx.waitSec(1);
+  while (true) await ctx.waitSec(1 / 60);
 });
 rootAnim.catch((err: unknown) => {
   if ((err as Error)?.message !== "aborted") console.error("Root context error:", err);
@@ -55,11 +57,12 @@ function launchCircle() {
   if (!rootCtx) return;
   const hue = params.hue;
   const duration = params.duration;
-  const state: CircleState = { x: 0, hue, handle: null! };
+  const radius = params.radius;
+  const state: CircleState = { x: -radius, hue, radius, handle: null! };
 
   const handle = rootCtx.branch(async (ctx) => {
     while (!ctx.isCanceled && ctx.progTime < duration) {
-      state.x = (ctx.progTime / duration) * WIDTH;
+      state.x = -radius + (ctx.progTime / duration) * (WIDTH + 2 * radius);
       await ctx.waitSec(1 / 60);
     }
     activeCircles.delete(state);
@@ -115,6 +118,7 @@ function cleanup(): void {
 
 function setupPane(pane: WindowTweakpane): void {
   pane.addBinding(params, "duration", { min: 0.1, max: 10, step: 0.1 });
+  pane.addBinding(params, "radius", { min: 1, max: 200, step: 1 });
   pane.addBinding(params, "hue", { min: 0, max: 360, step: 1 });
 
   pane.addButton({ title: "Launch" }).on("click", launchCircle);
@@ -126,7 +130,7 @@ function drawCircle(): void {
   for (const state of activeCircles) {
     const c = hslToRgb(state.hue / 360, 0.8, 0.6);
     p5.fill(c[0], c[1], c[2]);
-    p5.circle(state.x, HEIGHT / 2, 40);
+    p5.circle(state.x, HEIGHT / 2, state.radius * 2);
   }
 }
 

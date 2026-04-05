@@ -311,6 +311,22 @@
  * - Performance:
  *   - Beat waiters retime efficiently (head-only). Many tempo changes per second are possible,
  *     but extremely high-rate tempo modulation may still be heavy; use user guidance or coarser updates.
+ *
+ * - Root context tick rate determines branch launch latency:
+ *   - A branch()'s child starts at root.mostRecentDescendentTime — the logical time of the last
+ *     resolved wait in the tree. The branch block does not execute until the scheduler's next
+ *     timeslice, which is the next scheduled wait in the tree.
+ *   - If the root context ticks infrequently (e.g. waitSec(1) in a while(true) loop), a branch
+ *     created mid-interval won't run until the root's next tick. By then ctx.progTime is already
+ *     non-zero when the branch's first line executes.
+ *   - Concrete failure: root ticks every 1s, animation branch duration = 2s. User triggers branch
+ *     0.5s after the last root tick. The branch first runs at the next root tick (0.5s later), at
+ *     which point ctx.progTime ≈ 0.5 — the animation appears to start halfway through its range.
+ *   - Fix: match the root tick rate to the desired branch launch precision. For frame-rate
+ *     animations, use waitSec(1/60) in the root loop so branches start within one frame.
+ *   - Also initialize any external render state to the intended start value before adding it to a
+ *     live collection, so the render loop shows the correct position during the one-frame gap
+ *     before the branch's first iteration runs.
  */
 
 

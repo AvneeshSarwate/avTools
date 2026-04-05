@@ -635,6 +635,28 @@ Events at the same logical deadline are resolved in scheduler sequence order (th
 
 `advanceTo()` has a safety limit of 200,000 timeslices per call. If user code creates an infinite scheduling loop (e.g., `wait(0)` in a tight loop), `advanceTo()` will throw. Design offline programs to have bounded scheduling per time step.
 
+### 10. Root Context Tick Rate Determines Branch Launch Latency
+
+A `branch()` child's initial `ctx.time` is set to `root.mostRecentDescendentTime` — the logical time of the last resolved wait in the entire tree. If the root context ticks infrequently (e.g., `waitSec(1)` in a `while(true)` loop), up to one full tick interval of logical time can elapse between when a branch is **created** and when its block **first executes**. During that interval, `ctx.progTime` is already non-zero when the branch's first line runs.
+
+**Concrete failure example**: a root context ticking every 1 second, an animation branch with `duration = 2s`. If the user triggers the branch 0.5s after the root's last tick, the scheduler won't run the branch until the root's next tick (0.5s later). By then `ctx.progTime ≈ 0.5`, and the branch's first computed position is already 25% along its trajectory — appearing to "launch from the middle."
+
+```typescript
+// BAD: root ticks every 1s — branch may start with up to 1s of accumulated progTime
+const rootAnim = launch(async (ctx) => {
+  rootCtx = ctx;
+  while (true) await ctx.waitSec(1); // too infrequent
+});
+
+// GOOD: root ticks every frame — branch starts within one frame of being created
+const rootAnim = launch(async (ctx) => {
+  rootCtx = ctx;
+  while (true) await ctx.waitSec(1 / 60);
+});
+```
+
+Also initialize any render state (e.g., `x`, `y`) to its intended start value before calling `activeSet.add(state)`, so the render loop shows the correct position during the one-frame gap before the branch's first iteration runs.
+
 ---
 
 ## Relationship to Other Packages
