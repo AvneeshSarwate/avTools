@@ -3,8 +3,7 @@
 // P5GPU sketch with a tweakpane control panel in a separate window.
 //
 // Run from apps/deno-notebooks:
-//   deno run --unstable-webgpu --unstable-ffi --allow-all \
-//     examples/p5gpu_tweakpane_panel.ts
+//   deno run --unstable-webgpu --unstable-ffi --allow-all plorkSketch/sketch.ts
 
 import {
   createWindowRenderManager,
@@ -16,17 +15,60 @@ import { AlphaTimeTagEffect } from "@avtools/shader-fx/generated-raw/shaders/alp
 import { FloodFillDisplayEffect } from "@avtools/shader-fx/generated-raw/shaders/floodFillDisplay.frag.raw.generated.ts";
 import { FloodFillStepEffect } from "@avtools/shader-fx/generated-raw/shaders/floodFillStep.frag.raw.generated.ts";
 import { P5GPU } from "../tools/p5gpu.ts";
+import { launch, type DateTimeContext } from "@avtools/core-timing";
 
 const WIDTH = 1280;
 const HEIGHT = 720;
 const CLEAR_COLOR: GPUColor = { r: 0, g: 0, b: 0, a: 0 };
 
 const params = {
-  speed: 2.0,
-  radius: 200,
-  count: 12,
+  duration: 2.0,
   hue: 180,
 };
+
+interface CircleState {
+  x: number;
+  hue: number;
+  handle: { cancel: () => void; handleCancel: (f: () => void) => () => void };
+}
+
+const activeCircles: Set<CircleState> = new Set();
+
+let rootCtx: DateTimeContext | undefined = undefined;
+
+/**
+ * let rootCtx = undefined
+ * launch(async (ctx) => {
+ *   rootCtx = ctx
+ *   while(true){await ctx.waitSec(1)}
+ * })
+ */
+const rootAnim = launch(async (ctx) => {
+  rootCtx = ctx;
+  while (true) await ctx.waitSec(1);
+});
+rootAnim.catch((err: unknown) => {
+  if ((err as Error)?.message !== "aborted") console.error("Root context error:", err);
+});
+
+function launchCircle() {
+  if (!rootCtx) return;
+  const hue = params.hue;
+  const duration = params.duration;
+  const state: CircleState = { x: 0, hue, handle: null! };
+
+  const handle = rootCtx.branch(async (ctx) => {
+    while (!ctx.isCanceled && ctx.progTime < duration) {
+      state.x = (ctx.progTime / duration) * WIDTH;
+      await ctx.waitSec(1 / 60);
+    }
+    activeCircles.delete(state);
+  });
+
+  handle.handleCancel(() => activeCircles.delete(state));
+  state.handle = handle;
+  activeCircles.add(state);
+}
 
 const device = await requestWebGpuDevice();
 const renderWindow = await createWindowRenderManager({
@@ -54,7 +96,7 @@ function renderFrame() {
   const time = performance.now() * 0.001;
 
   p5.beginFrame();
-  drawCircles(time);
+  drawCircle();
   const sourceTexture = p5.endFrame();
 
   floodFill.timeStamper.setSrcs({ src: sourceTexture });
@@ -65,39 +107,26 @@ function renderFrame() {
 }
 
 function cleanup(): void {
+  rootAnim.cancel();
   floodFill.display.disposeAll();
   floodFill.placeholder.destroy();
   p5.dispose();
 }
 
 function setupPane(pane: WindowTweakpane): void {
-  pane.addBinding(params, "speed", { min: 0.1, max: 10, step: 0.1 });
-  pane.addBinding(params, "radius", { min: 50, max: 400, step: 1 });
-  pane.addBinding(params, "count", { min: 3, max: 36, step: 1 });
+  pane.addBinding(params, "duration", { min: 0.1, max: 10, step: 0.1 });
   pane.addBinding(params, "hue", { min: 0, max: 360, step: 1 });
 
-  pane.addButton({ title: "Randomize" }).on("click", () => {
-    params.speed = 0.1 + Math.random() * 9.9;
-    params.radius = 50 + Math.random() * 350;
-    params.count = 3 + Math.floor(Math.random() * 33);
-    params.hue = Math.random() * 360;
-    pane.refresh();
-  });
+  pane.addButton({ title: "Launch" }).on("click", launchCircle);
 }
 
-function drawCircles(time: number): void {
+function drawCircle(): void {
   p5.clear();
   p5.noStroke();
-
-  const t = time * params.speed;
-  for (let i = 0; i < params.count; i++) {
-    const angle = (i / params.count) * Math.PI * 2 + t;
-    const x = WIDTH / 2 + Math.cos(angle) * params.radius;
-    const y = HEIGHT / 2 + Math.sin(angle) * params.radius;
-    const h = (params.hue + (i / params.count) * 120) % 360;
-    const c = hslToRgb(h / 360, 0.8, 0.6);
+  for (const state of activeCircles) {
+    const c = hslToRgb(state.hue / 360, 0.8, 0.6);
     p5.fill(c[0], c[1], c[2]);
-    p5.circle(x, y, 30 + 20 * Math.sin(t * 2 + i));
+    p5.circle(state.x, HEIGHT / 2, 40);
   }
 }
 
@@ -112,52 +141,32 @@ async function createFloodFillChain(device: GPUDevice, width: number, height: nu
   const timeStamper = new AlphaTimeTagEffect(
     device,
     { src: placeholder },
-    width,
-    height,
-    format,
-    CLEAR_COLOR,
+    width, height, format, CLEAR_COLOR,
   );
   const floodFillSeed = new FloodFillStepEffect(
     device,
     { seed: timeStamper, feedback: timeStamper },
-    width,
-    height,
-    format,
-    CLEAR_COLOR,
+    width, height, format, CLEAR_COLOR,
   );
   const feedbackSeed = new PassthruEffect(
     device,
     { src: floodFillSeed },
-    width,
-    height,
-    format,
-    CLEAR_COLOR,
-    "linear",
+    width, height, format, CLEAR_COLOR, "linear",
   );
   const feedback = new FeedbackNode(
     device,
     feedbackSeed,
-    width,
-    height,
-    format,
-    CLEAR_COLOR,
-    "linear",
+    width, height, format, CLEAR_COLOR, "linear",
   );
   const floodFill = new FloodFillStepEffect(
     device,
     { seed: timeStamper, feedback },
-    width,
-    height,
-    format,
-    CLEAR_COLOR,
+    width, height, format, CLEAR_COLOR,
   );
   const display = new FloodFillDisplayEffect(
     device,
     { src: floodFill },
-    width,
-    height,
-    format,
-    CLEAR_COLOR,
+    width, height, format, CLEAR_COLOR,
   );
 
   feedback.setFeedbackSrc(floodFill);
