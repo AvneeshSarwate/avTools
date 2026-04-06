@@ -25,6 +25,7 @@ const params = {
   duration: 2.0,
   hue: 180,
   radius: 20,
+  alphaThreshold: 0.99,
 };
 
 interface CircleState {
@@ -60,9 +61,10 @@ function launchCircle() {
   const radius = params.radius;
   const state: CircleState = { x: -radius, hue, radius, handle: null! };
 
+  const rad = radius + 2
   const handle = rootCtx.branch(async (ctx) => {
     while (!ctx.isCanceled && ctx.progTime < duration) {
-      state.x = -radius + (ctx.progTime / duration) * (WIDTH + 2 * radius);
+      state.x = -rad + (ctx.progTime / duration) * (WIDTH + 2 * rad);
       await ctx.waitSec(1 / 60);
     }
     activeCircles.delete(state);
@@ -103,7 +105,7 @@ function renderFrame() {
   const sourceTexture = p5.endFrame();
 
   floodFill.timeStamper.setSrcs({ src: sourceTexture });
-  floodFill.timeStamper.setUniforms({ drawTime: time });
+  floodFill.timeStamper.setUniforms({ drawTime: time, alphaThreshold: params.alphaThreshold });
   floodFill.display.renderAll();
 
   return floodFill.display;
@@ -121,6 +123,7 @@ function setupPane(pane: WindowTweakpane): void {
   pane.addBinding(params, "radius", { min: 1, max: 200, step: 1 });
   pane.addBinding(params, "hue", { min: 0, max: 360, step: 1 });
 
+  pane.addBinding(params, "alphaThreshold", { min: 0, max: 1, step: 0.01 });
   pane.addButton({ title: "Launch" }).on("click", launchCircle);
 }
 
@@ -135,10 +138,10 @@ function drawCircle(): void {
 }
 
 async function createFloodFillChain(device: GPUDevice, width: number, height: number) {
-  const format = await selectShaderFxFormat(device, ["rgba16float", "rgba8unorm"]);
+  const format = await selectShaderFxFormat(device, ["rgba16float"]);
   const placeholder = device.createTexture({
     size: { width: 1, height: 1 },
-    format: "rgba8unorm",
+    format: "rgba16float",
     usage: GPUTextureUsage.TEXTURE_BINDING,
   });
 
@@ -150,22 +153,22 @@ async function createFloodFillChain(device: GPUDevice, width: number, height: nu
   const floodFillSeed = new FloodFillStepEffect(
     device,
     { seed: timeStamper, feedback: timeStamper },
-    width, height, format, CLEAR_COLOR,
+    width, height, format, CLEAR_COLOR, "nearest",
   );
   const feedbackSeed = new PassthruEffect(
     device,
     { src: floodFillSeed },
-    width, height, format, CLEAR_COLOR, "linear",
+    width, height, format, CLEAR_COLOR, "nearest",
   );
   const feedback = new FeedbackNode(
     device,
     feedbackSeed,
-    width, height, format, CLEAR_COLOR, "linear",
+    width, height, format, CLEAR_COLOR, "nearest",
   );
   const floodFill = new FloodFillStepEffect(
     device,
     { seed: timeStamper, feedback },
-    width, height, format, CLEAR_COLOR,
+    width, height, format, CLEAR_COLOR, "nearest",
   );
   const display = new FloodFillDisplayEffect(
     device,

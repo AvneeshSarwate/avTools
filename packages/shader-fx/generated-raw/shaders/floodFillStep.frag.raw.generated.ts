@@ -105,6 +105,7 @@ export type FloodFillStepMaterialHandles = MaterialHandles<FloodFillStepUniforms
 export interface FloodFillStepMaterialOptions {
   name?: string;
   passIndex?: number;
+  sampleMode?: 'nearest' | 'linear';
 }
 
 export function createFloodFillStepMaterial(device: GPUDevice, format: GPUTextureFormat, options: FloodFillStepMaterialOptions = {}): FloodFillStepMaterialHandles {
@@ -133,7 +134,8 @@ export function createFloodFillStepMaterial(device: GPUDevice, format: GPUTextur
   const samplers: Record<string, GPUSampler> = {};
   const textureViews: Record<string, GPUTextureView> = {};
   for (const name of FloodFillStepTextureNames) {
-    samplers[name] = device.createSampler({ magFilter: "linear", minFilter: "linear" });
+    const filter = options.sampleMode ?? "linear";
+    samplers[name] = device.createSampler({ magFilter: filter, minFilter: filter });
     const placeholder = device.createTexture({ size: { width: 1, height: 1 }, format, usage: GPUTextureUsage.TEXTURE_BINDING });
     textureViews[name] = placeholder.createView();
   }
@@ -176,9 +178,9 @@ export function createFloodFillStepMaterial(device: GPUDevice, format: GPUTextur
 export class FloodFillStepEffect extends CustomShaderEffect<FloodFillStepUniforms, FloodFillStepInputs> {
   override effectName = 'FloodFillStep';
 
-  constructor(device: GPUDevice, inputs: FloodFillStepInputs, width = 1280, height = 720, format: GPUTextureFormat = 'rgba16float', clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 }) {
+  constructor(device: GPUDevice, inputs: FloodFillStepInputs, width = 1280, height = 720, format: GPUTextureFormat = 'rgba16float', clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 }, sampleMode: 'nearest' | 'linear' = 'linear') {
     super(device, inputs, {
-      factory: (deviceRef, formatRef, options) => createFloodFillStepMaterial(deviceRef, formatRef, options),
+      factory: (deviceRef, formatRef, options) => createFloodFillStepMaterial(deviceRef, formatRef, { ...options, sampleMode }),
       textureInputKeys: ['seed', 'feedback'],
       textureBindingKeys: FloodFillStepTextureNames,
       passTextureSources: FloodFillStepPassTextureSources,

@@ -1152,6 +1152,7 @@ export function generateFragmentShaderArtifactsSource(
   tsLines.push(`export interface ${materialOptionsName} {`);
   tsLines.push('  name?: string;');
   tsLines.push('  passIndex?: number;');
+  tsLines.push("  sampleMode?: 'nearest' | 'linear';");
   tsLines.push('}');
   tsLines.push('');
 
@@ -1197,7 +1198,8 @@ export function generateFragmentShaderArtifactsSource(
   tsLines.push('  const textureViews: Record<string, GPUTextureView> = {};');
   if (textureBindingEntries.length > 0) {
     tsLines.push(`  for (const name of ${shaderPrefix}TextureNames) {`);
-    tsLines.push('    samplers[name] = device.createSampler({ magFilter: "linear", minFilter: "linear" });');
+    tsLines.push('    const filter = options.sampleMode ?? "linear";');
+    tsLines.push('    samplers[name] = device.createSampler({ magFilter: filter, minFilter: filter });');
     tsLines.push('    const placeholder = device.createTexture({ size: { width: 1, height: 1 }, format, usage: GPUTextureUsage.TEXTURE_BINDING });');
     tsLines.push('    textureViews[name] = placeholder.createView();');
     tsLines.push('  }');
@@ -1260,9 +1262,9 @@ export function generateFragmentShaderArtifactsSource(
   effectLines.push(`export class ${effectClassName} extends CustomShaderEffect<${uniformInterfaceName}, ${inputsTypeName}> {`);
   effectLines.push(`  override effectName = '${shaderPrefix}';`);
   effectLines.push('');
-  effectLines.push(`  constructor(device: GPUDevice, inputs: ${inputsTypeName}, width = 1280, height = 720, format: GPUTextureFormat = 'rgba16float', clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 }) {`);
+  effectLines.push(`  constructor(device: GPUDevice, inputs: ${inputsTypeName}, width = 1280, height = 720, format: GPUTextureFormat = 'rgba16float', clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 }, sampleMode: 'nearest' | 'linear' = 'linear') {`);
   effectLines.push('    super(device, inputs, {');
-  effectLines.push(`      factory: (deviceRef, formatRef, options) => create${shaderPrefix}Material(deviceRef, formatRef, options),`);
+  effectLines.push(`      factory: (deviceRef, formatRef, options) => create${shaderPrefix}Material(deviceRef, formatRef, { ...options, sampleMode }),`);
   effectLines.push(`      textureInputKeys: ${inputTextureNamesArrayLiteral},`);
   effectLines.push(`      textureBindingKeys: ${shaderPrefix}TextureNames,`);
   effectLines.push(`      passTextureSources: ${shaderPrefix}PassTextureSources,`);

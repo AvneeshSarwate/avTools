@@ -76,6 +76,7 @@ export type FloodFillDisplayMaterialHandles = MaterialHandles<FloodFillDisplayUn
 export interface FloodFillDisplayMaterialOptions {
   name?: string;
   passIndex?: number;
+  sampleMode?: 'nearest' | 'linear';
 }
 
 export function createFloodFillDisplayMaterial(device: GPUDevice, format: GPUTextureFormat, options: FloodFillDisplayMaterialOptions = {}): FloodFillDisplayMaterialHandles {
@@ -102,7 +103,8 @@ export function createFloodFillDisplayMaterial(device: GPUDevice, format: GPUTex
   const samplers: Record<string, GPUSampler> = {};
   const textureViews: Record<string, GPUTextureView> = {};
   for (const name of FloodFillDisplayTextureNames) {
-    samplers[name] = device.createSampler({ magFilter: "linear", minFilter: "linear" });
+    const filter = options.sampleMode ?? "linear";
+    samplers[name] = device.createSampler({ magFilter: filter, minFilter: filter });
     const placeholder = device.createTexture({ size: { width: 1, height: 1 }, format, usage: GPUTextureUsage.TEXTURE_BINDING });
     textureViews[name] = placeholder.createView();
   }
@@ -141,9 +143,9 @@ export function createFloodFillDisplayMaterial(device: GPUDevice, format: GPUTex
 export class FloodFillDisplayEffect extends CustomShaderEffect<FloodFillDisplayUniforms, FloodFillDisplayInputs> {
   override effectName = 'FloodFillDisplay';
 
-  constructor(device: GPUDevice, inputs: FloodFillDisplayInputs, width = 1280, height = 720, format: GPUTextureFormat = 'rgba16float', clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 }) {
+  constructor(device: GPUDevice, inputs: FloodFillDisplayInputs, width = 1280, height = 720, format: GPUTextureFormat = 'rgba16float', clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 }, sampleMode: 'nearest' | 'linear' = 'linear') {
     super(device, inputs, {
-      factory: (deviceRef, formatRef, options) => createFloodFillDisplayMaterial(deviceRef, formatRef, options),
+      factory: (deviceRef, formatRef, options) => createFloodFillDisplayMaterial(deviceRef, formatRef, { ...options, sampleMode }),
       textureInputKeys: ['src'],
       textureBindingKeys: FloodFillDisplayTextureNames,
       passTextureSources: FloodFillDisplayPassTextureSources,
