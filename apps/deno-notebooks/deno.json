@@ -22,6 +22,7 @@
     "node-web-audio-api": "npm:node-web-audio-api",
     "pako": "npm:pako@2.1.0",
     "three": "npm:three@^0.178.0",
+    "@babylonjs/core": "npm:@babylonjs/core@^8.20.0",
     "tone": "npm:tone",
     "gifenc": "npm:gifenc@1.0.3/dist/gifenc.esm.js",
     "@avtools/core-timing": "../../packages/core-timing/mod.ts",
