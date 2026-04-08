@@ -7,6 +7,8 @@
  * Component-specific logic lives in separate adapter modules.
  */
 
+import { getPreferredLanAddress } from "./network_utils.ts"
+
 // ============================================================================
 // Type Definitions
 // ============================================================================
@@ -52,10 +54,12 @@ export interface ComponentAdapter<TClient, THandle, TSessionData> {
 
 interface BridgeState<TClient, TSessionData> {
   server: Deno.HttpServer
-  baseUrl: string
+  loopbackBaseUrl: string
   sessions: Map<string, Session<TClient, TSessionData>>
   bundleUrl: URL
 }
+
+export type BridgeAccessHost = "loopback" | "lan" | string
 
 // ============================================================================
 // DenoNotebookBridge Class
@@ -120,12 +124,12 @@ export class DenoNotebookBridge<TClient, THandle, TSessionData> {
     )
 
     const addr = server.addr as Deno.NetAddr
-    const baseUrl = `http://127.0.0.1:${addr.port}`
+    const loopbackBaseUrl = `http://127.0.0.1:${addr.port}`
 
     const globalStore = this.getGlobalBridgeStore()
     globalStore[this.globalKey] = {
       server,
-      baseUrl,
+      loopbackBaseUrl,
       sessions,
       bundleUrl
     }
@@ -146,7 +150,8 @@ export class DenoNotebookBridge<TClient, THandle, TSessionData> {
     }
 
     const state = this.getBridgeState()
-    const wsUrl = `ws://127.0.0.1:${(state.server.addr as Deno.NetAddr).port}/ws?id=${sessionId}`
+    const wsProtocol = url.protocol === "https:" ? "wss:" : "ws:"
+    const wsUrl = `${wsProtocol}//${url.host}/ws?id=${encodeURIComponent(sessionId)}`
     const html = this.adapter.renderHTML(wsUrl, sessionId, session.data)
 
     return new Response(html, {
@@ -232,8 +237,10 @@ export class DenoNotebookBridge<TClient, THandle, TSessionData> {
   }
 
   displayIframe(sessionId: string, config?: IframeConfig): void {
-    const state = this.getBridgeState()
-    const url = `${state.baseUrl}/editor?id=${sessionId}`
+    const url = this.buildEditorUrl(sessionId, "loopback")
+    if (!url) {
+      throw new Error(`Could not build iframe URL for session ${sessionId}`)
+    }
     const defaults = this.adapter.defaultIframeConfig
     const width = config?.width ?? defaults?.width ?? 680
     const height = config?.height ?? defaults?.height ?? 460
@@ -279,7 +286,41 @@ export class DenoNotebookBridge<TClient, THandle, TSessionData> {
   }
 
   getBaseUrl(): string {
-    return this.getBridgeState().baseUrl
+    return this.getBridgeState().loopbackBaseUrl
+  }
+
+  getLanBaseUrl(): string | null {
+    return this.buildBaseUrl("lan")
+  }
+
+  buildBaseUrl(accessHost: BridgeAccessHost = "loopback"): string | null {
+    const state = this.getBridgeState()
+    const addr = state.server.addr as Deno.NetAddr
+    const host = resolveBridgeHost(accessHost)
+    if (!host) {
+      return null
+    }
+    return `http://${host}:${addr.port}`
+  }
+
+  buildEditorUrl(sessionId: string, accessHost: BridgeAccessHost = "loopback"): string | null {
+    const baseUrl = this.buildBaseUrl(accessHost)
+    if (!baseUrl) {
+      return null
+    }
+    return `${baseUrl}/editor?id=${encodeURIComponent(sessionId)}`
+  }
+
+  buildWebSocketUrl(sessionId: string, accessHost: BridgeAccessHost = "loopback"): string | null {
+    const baseUrl = this.buildBaseUrl(accessHost)
+    if (!baseUrl) {
+      return null
+    }
+    const url = new URL(baseUrl)
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
+    url.pathname = "/ws"
+    url.search = `?id=${encodeURIComponent(sessionId)}`
+    return url.toString()
   }
 
   shutdown(): void {
@@ -294,4 +335,14 @@ export class DenoNotebookBridge<TClient, THandle, TSessionData> {
       console.log(`[${this.adapter.name}] Server shutdown`)
     }
   }
+}
+
+function resolveBridgeHost(accessHost: BridgeAccessHost): string | null {
+  if (accessHost === "loopback") {
+    return "127.0.0.1"
+  }
+  if (accessHost === "lan") {
+    return getPreferredLanAddress()
+  }
+  return accessHost
 }

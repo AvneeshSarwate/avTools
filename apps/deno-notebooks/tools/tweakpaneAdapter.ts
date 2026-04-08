@@ -28,6 +28,8 @@ import {
   type TweakpaneSessionData,
 } from "./tweakpaneServer.ts"
 
+import { renderTweakpaneShellHtml } from "./tweakpane_shell_html.ts"
+
 // ============================================================================
 // WebSocket Client (kernel-side, one per iframe connection)
 // ============================================================================
@@ -116,32 +118,16 @@ function createTweakpaneAdapter(): ComponentAdapter<
     },
 
     renderHTML(wsUrl: string, sessionId: string, _sessionData: TweakpaneSessionData): string {
-      return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>Tweakpane</title>
-  <style>
-    * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; background: #2b2b2b; overflow: hidden; }
-    #root { display: inline-block; }
-  </style>
-</head>
-<body>
-  <div id="root"></div>
-  <script type="module">
-    import { TweakpaneClient } from '/static/tweakpane.js'
-    const root = document.getElementById('root')
-    const client = new TweakpaneClient('${wsUrl}', root)
-
-    // Auto-resize: post content height to parent so it can resize the iframe
-    const ro = new ResizeObserver(() => {
-      parent.postMessage({ type: 'resize', sessionId: '${sessionId}', height: root.scrollHeight }, '*')
-    })
-    ro.observe(root)
-  </script>
-</body>
-</html>`
+      const shareInfo = _sessionData.server.getMobileShareInfo()
+      return renderTweakpaneShellHtml({
+        title: "Tweakpane",
+        wsUrl,
+        sessionId,
+        bundleImportSpecifier: "/static/tweakpane.js",
+        mobileUrl: shareInfo?.lanUrl ?? null,
+        qrSvg: shareInfo?.qrSvg ?? null,
+        autoResizeToParent: true,
+      })
     },
 
     getConfig(_session: TweakpaneSession): Record<string, unknown> {
@@ -155,6 +141,7 @@ function createTweakpaneAdapter(): ComponentAdapter<
     ): TweakpaneWebSocketClient {
       const client = new TweakpaneWebSocketClient(socket, session.id)
       const server = session.data.server
+      server.sessions.add(session.id)
 
       client.onConnectionReady = () => {
         // Send full operation replay to build the pane

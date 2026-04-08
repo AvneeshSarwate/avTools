@@ -75,10 +75,29 @@ function deserializeOptions(opts: SerializedOptions): Record<string, unknown> {
 // deno-lint-ignore no-explicit-any
 type AnyApi = any
 
+export interface TweakpaneClientReadyInfo {
+  title: string | null
+  bindingCount: number
+  operationCount: number
+  sliderCount: number
+  textInputCount: number
+  buttonCount: number
+  sliderTrackWidth: number
+  sliderKnobWidth: number
+}
+
+export interface TweakpaneClientOptions {
+  onOpen?: () => void
+  onClose?: () => void
+  onReady?: (info: TweakpaneClientReadyInfo) => void
+  onError?: (stage: string, error: unknown) => void
+}
+
 export class TweakpaneClient {
   private pane: Pane | null = null
   private ws: WebSocket
   private container: HTMLElement
+  private readonly options: TweakpaneClientOptions
 
   // Maps proxy IDs to real tweakpane API objects
   private idMap = new Map<string, AnyApi>()
@@ -89,12 +108,14 @@ export class TweakpaneClient {
   // Suppress sync flag to prevent echo loops during remote updates
   private suppressSync = false
 
-  constructor(wsUrl: string, container: HTMLElement) {
+  constructor(wsUrl: string, container: HTMLElement, options: TweakpaneClientOptions = {}) {
     this.container = container
+    this.options = options
     this.ws = new WebSocket(wsUrl)
 
     this.ws.onopen = () => {
       this.ws.send(JSON.stringify({ type: 'connectionReady' } satisfies ClientMessage))
+      this.options.onOpen?.()
     }
 
     this.ws.onmessage = (event: MessageEvent) => {
@@ -103,15 +124,18 @@ export class TweakpaneClient {
         this.handleMessage(msg)
       } catch (e) {
         console.warn('[TweakpaneClient] Error handling message:', e)
+        this.options.onError?.('message', e)
       }
     }
 
     this.ws.onclose = () => {
       console.log('[TweakpaneClient] WebSocket closed')
+      this.options.onClose?.()
     }
 
     this.ws.onerror = () => {
       console.error('[TweakpaneClient] WebSocket error')
+      this.options.onError?.('websocket', new Error('WebSocket error'))
     }
   }
 
@@ -165,6 +189,8 @@ export class TweakpaneClient {
     for (const op of msg.operations) {
       this.applyOperation(op)
     }
+
+    this.options.onReady?.(this.collectReadyInfo(msg))
   }
 
   private handleRefresh(values: Record<string, unknown>): void {
@@ -446,5 +472,18 @@ export class TweakpaneClient {
     }
     this.idMap.clear()
     this.localObjects.clear()
+  }
+
+  private collectReadyInfo(msg: { paneConfig: SerializedPaneConfig; operations: OpMessage[] }): TweakpaneClientReadyInfo {
+    return {
+      title: msg.paneConfig.title ?? null,
+      bindingCount: this.localObjects.size,
+      operationCount: msg.operations.length,
+      sliderCount: this.container.querySelectorAll('.tp-sldv, .tp-sldtxtv').length,
+      textInputCount: this.container.querySelectorAll('input').length,
+      buttonCount: this.container.querySelectorAll('button').length,
+      sliderTrackWidth: this.container.querySelector('.tp-sldv_t')?.getBoundingClientRect().width ?? 0,
+      sliderKnobWidth: this.container.querySelector('.tp-sldv_k')?.getBoundingClientRect().width ?? 0,
+    }
   }
 }

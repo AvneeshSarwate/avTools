@@ -55,12 +55,18 @@ import {
 import type {
   DenoNotebookBridge,
   IframeConfig,
+  BridgeAccessHost,
 } from "@avtools/ui-bridge"
 
 import {
   getInspectorRegistry,
   getInspectorServer,
 } from "@avtools/ui-bridge"
+
+import {
+  buildShareInfo,
+  type TweakpaneShareInfo,
+} from "./tweakpane_share.ts"
 
 // ============================================================================
 // Forward declarations for adapter (set lazily)
@@ -989,6 +995,7 @@ export class TweakpaneServer implements IContainerProxy {
 
   // Active sessions
   private _sessions = new Set<string>()
+  private _namedSessions = new Map<string, string>()
   private _bridge: DenoNotebookBridge<TweakpaneWsClient, TweakpaneHandle, TweakpaneSessionData> | null = null
 
   // Properties
@@ -1109,10 +1116,63 @@ export class TweakpaneServer implements IContainerProxy {
   }
 
   show(config?: IframeConfig): void {
+    const sessionId = this.ensureClientSession()
+    this._bridge!.displayIframe(sessionId, config)
+  }
+
+  ensureClientSession(name?: string): string {
+    this._ensureBridge()
+
+    if (name) {
+      const existingSessionId = this._namedSessions.get(name)
+      if (existingSessionId) {
+        if (!this._bridge!.getSession(existingSessionId)) {
+          this._bridge!.registerSession(existingSessionId, { server: this })
+        }
+        this._sessions.add(existingSessionId)
+        return existingSessionId
+      }
+    }
+
     const sessionId = this._bridge!.generateSessionId()
     this._bridge!.registerSession(sessionId, { server: this })
     this._sessions.add(sessionId)
-    this._bridge!.displayIframe(sessionId, config)
+
+    if (name) {
+      this._namedSessions.set(name, sessionId)
+    }
+
+    return sessionId
+  }
+
+  removeClientSession(sessionIdOrName: string): void {
+    const sessionId = this._namedSessions.get(sessionIdOrName) ?? sessionIdOrName
+    this._removeSession(sessionId)
+    this._bridge?.removeSession(sessionId)
+
+    for (const [name, id] of this._namedSessions.entries()) {
+      if (id === sessionId) {
+        this._namedSessions.delete(name)
+      }
+    }
+  }
+
+  getSessionEditorUrl(sessionId: string, accessHost: BridgeAccessHost = 'loopback'): string | null {
+    return this._bridge?.buildEditorUrl(sessionId, accessHost) ?? null
+  }
+
+  getSessionWebSocketUrl(sessionId: string, accessHost: BridgeAccessHost = 'loopback'): string | null {
+    return this._bridge?.buildWebSocketUrl(sessionId, accessHost) ?? null
+  }
+
+  getMobileShareInfo(): TweakpaneShareInfo | null {
+    const sessionId = this.ensureClientSession('mobile')
+    const loopbackUrl = this.getSessionEditorUrl(sessionId, 'loopback')
+    if (!loopbackUrl) {
+      return null
+    }
+    const lanUrl = this.getSessionEditorUrl(sessionId, 'lan')
+    return buildShareInfo(sessionId, loopbackUrl, lanUrl)
   }
 
   private _ensureBridge(): void {
@@ -1146,16 +1206,15 @@ export class TweakpaneServer implements IContainerProxy {
     const self = this
     server.registerSessionFactory(name, {
       createSession: () => {
-        const sessionId = bridge.generateSessionId()
-        bridge.registerSession(sessionId, { server: self })
-        self._sessions.add(sessionId)
-        const addr = new URL(baseUrl)
-        const wsUrl = `ws://127.0.0.1:${addr.port}/ws?id=${sessionId}`
+        const sessionId = self.ensureClientSession()
+        const wsUrl = bridge.buildWebSocketUrl(sessionId, 'loopback')
+        if (!wsUrl) {
+          throw new Error(`Could not build WebSocket URL for tweakpane inspector session ${sessionId}`)
+        }
         return { sessionId, wsUrl }
       },
       destroySession: (sessionId: string) => {
-        self._removeSession(sessionId)
-        bridge.removeSession(sessionId)
+        self.removeClientSession(sessionId)
       },
     })
 
@@ -1183,9 +1242,23 @@ export class TweakpaneServer implements IContainerProxy {
       this._inspectorRegistered = false
     }
 
+    if (this._bridge) {
+      const sessionIds = new Set<string>([
+        ...this._sessions,
+        ...this._namedSessions.values(),
+      ])
+      for (const sessionId of sessionIds) {
+        this._bridge.removeSession(sessionId)
+      }
+      this._sessions.clear()
+      this._namedSessions.clear()
+    }
+
     this.dispose()
     if (this._bridge) {
-      this._bridge.shutdown()
+      if (this._bridge.getSessions().size === 0) {
+        this._bridge.shutdown()
+      }
       this._bridge = null
     }
   }
