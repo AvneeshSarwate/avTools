@@ -26,6 +26,9 @@ const params = {
   hue: 180,
   radius: 20,
   alphaThreshold: 0.99,
+  orbitRadius: 150,
+  orbitPeriod: 4.0,
+  orbitCircleRadius: 15,
 };
 
 interface CircleState {
@@ -124,12 +127,36 @@ function setupPane(pane: WindowTweakpane): void {
   pane.addBinding(params, "hue", { min: 0, max: 360, step: 1 });
 
   pane.addBinding(params, "alphaThreshold", { min: 0, max: 1, step: 0.01 });
+  pane.addBinding(params, "orbitRadius", { min: 0, max: 400, step: 1 });
+  pane.addBinding(params, "orbitPeriod", { min: 0.1, max: 20, step: 0.1 });
+  pane.addBinding(params, "orbitCircleRadius", { min: 1, max: 100, step: 1 });
   pane.addButton({ title: "Launch" }).on("click", launchCircle);
 }
 
 function drawCircle(): void {
   p5.clear();
   p5.noStroke();
+
+  // Orbiting black and white circles around the center.
+  const cx = WIDTH / 2;
+  const cy = HEIGHT / 2;
+  const t = performance.now() * 0.001;
+  const phase = (t / params.orbitPeriod) * Math.PI * 2;
+  const orbitDiameter = params.orbitCircleRadius * 2;
+
+  p5.fill(255, 255, 255);
+  p5.circle(
+    cx + Math.cos(phase) * params.orbitRadius,
+    cy + Math.sin(phase) * params.orbitRadius,
+    orbitDiameter,
+  );
+  p5.fill(0, 0, 0);
+  p5.circle(
+    cx + Math.cos(phase + Math.PI) * params.orbitRadius,
+    cy + Math.sin(phase + Math.PI) * params.orbitRadius,
+    orbitDiameter,
+  );
+
   for (const state of activeCircles) {
     const c = hslToRgb(state.hue / 360, 0.8, 0.6);
     p5.fill(c[0], c[1], c[2]);
