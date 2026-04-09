@@ -29,6 +29,8 @@ const params = {
   orbitRadius: 150,
   orbitPeriod: 4.0,
   orbitCircleRadius: 15,
+  useDisk: true,
+  diskRadius: 4,
 };
 
 interface CircleState {
@@ -40,42 +42,41 @@ interface CircleState {
 
 const activeCircles: Set<CircleState> = new Set();
 
-let rootCtx: DateTimeContext | undefined = undefined;
+const actionQueue: Array<(ctx: DateTimeContext) => void> = [];
 
-/**
- * let rootCtx = undefined
- * launch(async (ctx) => {
- *   rootCtx = ctx
- *   while(true){await ctx.waitSec(1)}
- * })
- */
 const rootAnim = launch(async (ctx) => {
-  rootCtx = ctx;
-  while (true) await ctx.waitSec(1 / 60);
+  while (true) {
+    while (actionQueue.length > 0) {
+      const action = actionQueue.shift()!;
+      action(ctx);
+    }
+    await ctx.waitSec(1 / 60);
+  }
 });
 rootAnim.catch((err: unknown) => {
   if ((err as Error)?.message !== "aborted") console.error("Root context error:", err);
 });
 
 function launchCircle() {
-  if (!rootCtx) return;
-  const hue = params.hue;
-  const duration = params.duration;
-  const radius = params.radius;
-  const state: CircleState = { x: -radius, hue, radius, handle: null! };
+  actionQueue.push((ctx) => {
+    const hue = params.hue;
+    const duration = params.duration;
+    const radius = params.radius;
+    const state: CircleState = { x: -radius, hue, radius, handle: null! };
 
-  const rad = radius + 2
-  const handle = rootCtx.branch(async (ctx) => {
-    while (!ctx.isCanceled && ctx.progTime < duration) {
-      state.x = -rad + (ctx.progTime / duration) * (WIDTH + 2 * rad);
-      await ctx.waitSec(1 / 60);
-    }
-    activeCircles.delete(state);
+    const rad = radius + 2;
+    const handle = ctx.branch(async (branchCtx) => {
+      while (!branchCtx.isCanceled && branchCtx.progTime < duration) {
+        state.x = -rad + (branchCtx.progTime / duration) * (WIDTH + 2 * rad);
+        await branchCtx.waitSec(1 / 60);
+      }
+      activeCircles.delete(state);
+    });
+
+    handle.handleCancel(() => activeCircles.delete(state));
+    state.handle = handle;
+    activeCircles.add(state);
   });
-
-  handle.handleCancel(() => activeCircles.delete(state));
-  state.handle = handle;
-  activeCircles.add(state);
 }
 
 const device = await requestWebGpuDevice();
@@ -109,6 +110,12 @@ function renderFrame() {
 
   floodFill.timeStamper.setSrcs({ src: sourceTexture });
   floodFill.timeStamper.setUniforms({ drawTime: time, alphaThreshold: params.alphaThreshold });
+  const stepUniforms = {
+    diskRadius: params.diskRadius,
+    useDisk: params.useDisk ? 1 : 0,
+  };
+  floodFill.floodFillSeed.setUniforms(stepUniforms);
+  floodFill.floodFill.setUniforms(stepUniforms);
   floodFill.display.renderAll();
 
   return floodFill.display;
@@ -130,6 +137,8 @@ function setupPane(pane: WindowTweakpane): void {
   pane.addBinding(params, "orbitRadius", { min: 0, max: 400, step: 1 });
   pane.addBinding(params, "orbitPeriod", { min: 0.1, max: 20, step: 0.1 });
   pane.addBinding(params, "orbitCircleRadius", { min: 1, max: 100, step: 1 });
+  pane.addBinding(params, "useDisk");
+  pane.addBinding(params, "diskRadius", { min: 1, max: 10, step: 1 });
   pane.addButton({ title: "Launch" }).on("click", launchCircle);
 }
 
@@ -208,6 +217,8 @@ async function createFloodFillChain(device: GPUDevice, width: number, height: nu
   return {
     placeholder,
     timeStamper,
+    floodFillSeed,
+    floodFill,
     display,
   };
 }
