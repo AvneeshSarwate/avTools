@@ -31,10 +31,19 @@ const params = {
   orbitCircleRadius: 15,
   useDisk: true,
   diskRadius: 4,
+  waveAmp: 80,
+  waveFreq: 2.0,
+  randomColor: false,
+  centerOn: true,
+  centerRadius: 30,
+  centerHue: 0,
 };
+
+type Direction = "left" | "right" | "up" | "down";
 
 interface CircleState {
   x: number;
+  y: number;
   hue: number;
   radius: number;
   handle: { cancel: () => void; handleCancel: (f: () => void) => () => void };
@@ -57,17 +66,39 @@ rootAnim.catch((err: unknown) => {
   if ((err as Error)?.message !== "aborted") console.error("Root context error:", err);
 });
 
-function launchCircle() {
+function launchCircle(dir: Direction) {
   actionQueue.push((ctx) => {
-    const hue = params.hue;
+    const hue = params.randomColor ? Math.random() * 360 : params.hue;
     const duration = params.duration;
     const radius = params.radius;
-    const state: CircleState = { x: -radius, hue, radius, handle: null! };
+    const waveAmp = params.waveAmp;
+    const waveFreq = params.waveFreq;
+    const state: CircleState = { x: 0, y: 0, hue, radius, handle: null! };
 
     const rad = radius + 2;
     const handle = ctx.branch(async (branchCtx) => {
       while (!branchCtx.isCanceled && branchCtx.progTime < duration) {
-        state.x = -rad + (branchCtx.progTime / duration) * (WIDTH + 2 * rad);
+        const t = branchCtx.progTime / duration;
+        const wave = Math.sin(branchCtx.progTime * waveFreq * Math.PI * 2) * waveAmp;
+
+        switch (dir) {
+          case "right":
+            state.x = -rad + t * (WIDTH + 2 * rad);
+            state.y = HEIGHT / 2 + wave;
+            break;
+          case "left":
+            state.x = WIDTH + rad - t * (WIDTH + 2 * rad);
+            state.y = HEIGHT / 2 + wave;
+            break;
+          case "down":
+            state.x = WIDTH / 2 + wave;
+            state.y = -rad + t * (HEIGHT + 2 * rad);
+            break;
+          case "up":
+            state.x = WIDTH / 2 + wave;
+            state.y = HEIGHT + rad - t * (HEIGHT + 2 * rad);
+            break;
+        }
         await branchCtx.waitSec(1 / 60);
       }
       activeCircles.delete(state);
@@ -129,17 +160,32 @@ function cleanup(): void {
 }
 
 function setupPane(pane: WindowTweakpane): void {
-  pane.addBinding(params, "duration", { min: 0.1, max: 10, step: 0.1 });
-  pane.addBinding(params, "radius", { min: 1, max: 200, step: 1 });
-  pane.addBinding(params, "hue", { min: 0, max: 360, step: 1 });
+  const launch = pane.addFolder({ title: "Launch" });
+  launch.addBinding(params, "duration", { min: 0.1, max: 10, step: 0.1 });
+  launch.addBinding(params, "radius", { min: 1, max: 200, step: 1 });
+  launch.addBinding(params, "hue", { min: 0, max: 360, step: 1 });
+  launch.addBinding(params, "randomColor");
+  launch.addBinding(params, "waveAmp", { min: 0, max: 300, step: 1 });
+  launch.addBinding(params, "waveFreq", { min: 0, max: 10, step: 0.1 });
+  launch.addButton({ title: "Right" }).on("click", () => launchCircle("right"));
+  launch.addButton({ title: "Left" }).on("click", () => launchCircle("left"));
+  launch.addButton({ title: "Down" }).on("click", () => launchCircle("down"));
+  launch.addButton({ title: "Up" }).on("click", () => launchCircle("up"));
 
-  pane.addBinding(params, "alphaThreshold", { min: 0, max: 1, step: 0.01 });
-  pane.addBinding(params, "orbitRadius", { min: 0, max: 400, step: 1 });
-  pane.addBinding(params, "orbitPeriod", { min: 0.1, max: 20, step: 0.1 });
-  pane.addBinding(params, "orbitCircleRadius", { min: 1, max: 100, step: 1 });
-  pane.addBinding(params, "useDisk");
-  pane.addBinding(params, "diskRadius", { min: 1, max: 10, step: 1 });
-  pane.addButton({ title: "Launch" }).on("click", launchCircle);
+  const orbit = pane.addFolder({ title: "Orbit" });
+  orbit.addBinding(params, "orbitRadius", { min: 0, max: 400, step: 1 });
+  orbit.addBinding(params, "orbitPeriod", { min: 0.1, max: 20, step: 0.1 });
+  orbit.addBinding(params, "orbitCircleRadius", { min: 1, max: 100, step: 1 });
+
+  const center = pane.addFolder({ title: "Center Circle" });
+  center.addBinding(params, "centerOn");
+  center.addBinding(params, "centerRadius", { min: 1, max: 200, step: 1 });
+  center.addBinding(params, "centerHue", { min: 0, max: 360, step: 1 });
+
+  const fx = pane.addFolder({ title: "Flood Fill" });
+  fx.addBinding(params, "alphaThreshold", { min: 0, max: 1, step: 0.01 });
+  fx.addBinding(params, "useDisk");
+  fx.addBinding(params, "diskRadius", { min: 1, max: 10, step: 1 });
 }
 
 function drawCircle(): void {
@@ -166,10 +212,16 @@ function drawCircle(): void {
     orbitDiameter,
   );
 
+  if (params.centerOn) {
+    const cc = hslToRgb(params.centerHue / 360, 0.8, 0.6);
+    p5.fill(cc[0], cc[1], cc[2]);
+    p5.circle(cx, cy, params.centerRadius * 2);
+  }
+
   for (const state of activeCircles) {
     const c = hslToRgb(state.hue / 360, 0.8, 0.6);
     p5.fill(c[0], c[1], c[2]);
-    p5.circle(state.x, HEIGHT / 2, state.radius * 2);
+    p5.circle(state.x, state.y, state.radius * 2);
   }
 }
 
