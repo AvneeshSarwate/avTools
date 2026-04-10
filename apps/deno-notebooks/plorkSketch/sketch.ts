@@ -26,9 +26,15 @@ const params = {
   hue: 180,
   radius: 20,
   alphaThreshold: 0.99,
+  bwMode: "orbit" as "orbit" | "walk",
   orbitRadius: 150,
-  orbitPeriod: 4.0,
+  orbitSpeed: 1.0,
+  orbitPhase: 0,
   orbitCircleRadius: 15,
+  walkSquareSize: 200,
+  walkMinDur: 0.3,
+  walkMaxDur: 1.5,
+  walkCircleRadius: 15,
   useDisk: true,
   diskRadius: 4,
   waveAmp: 80,
@@ -51,6 +57,105 @@ interface CircleState {
 
 const activeCircles: Set<CircleState> = new Set();
 
+let orbitAccum = 0;
+let lastOrbitTime = performance.now() * 0.001;
+
+// Square walk state: 4 vertices indexed 0=TL, 1=TR, 2=BR, 3=BL
+const SQUARE_VERTS: Array<[number, number]> = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+
+function squareVertexPos(index: number): { x: number; y: number } {
+  const [sx, sy] = SQUARE_VERTS[index];
+  const half = params.walkSquareSize / 2;
+  return { x: WIDTH / 2 + sx * half, y: HEIGHT / 2 + sy * half };
+}
+
+function randomAdjacentVertex(current: number): number {
+  const dir = Math.random() < 0.5 ? -1 : 1;
+  return (current + dir + 4) % 4;
+}
+
+function randomWalkDuration(): number {
+  return params.walkMinDur + Math.random() * (params.walkMaxDur - params.walkMinDur);
+}
+
+interface WalkCircle {
+  x: number;
+  y: number;
+  vertexIndex: number;
+  startX: number;
+  startY: number;
+}
+
+const walkBlack: WalkCircle = { x: 0, y: 0, vertexIndex: 0, startX: 0, startY: 0 };
+const walkWhite: WalkCircle = { x: 0, y: 0, vertexIndex: 2, startX: 0, startY: 0 };
+
+// Initialize start positions
+{
+  const bp = squareVertexPos(walkBlack.vertexIndex);
+  walkBlack.x = bp.x; walkBlack.y = bp.y;
+  walkBlack.startX = bp.x; walkBlack.startY = bp.y;
+  const wp = squareVertexPos(walkWhite.vertexIndex);
+  walkWhite.x = wp.x; walkWhite.y = wp.y;
+  walkWhite.startX = wp.x; walkWhite.startY = wp.y;
+}
+
+let walkAnimRunning = false;
+
+function startWalkAnim() {
+  if (walkAnimRunning) return;
+  walkAnimRunning = true;
+  actionQueue.push((ctx) => {
+    ctx.branch(async (branchCtx) => {
+      while (!branchCtx.isCanceled) {
+        if (params.bwMode !== "walk") {
+          await branchCtx.waitSec(1 / 30);
+          continue;
+        }
+        // Black's turn
+        const blackTarget = randomAdjacentVertex(walkBlack.vertexIndex);
+        walkBlack.vertexIndex = blackTarget;
+        walkBlack.startX = walkBlack.x;
+        walkBlack.startY = walkBlack.y;
+        const blackDur = randomWalkDuration();
+        {
+          const start = branchCtx.progTime;
+          while (!branchCtx.isCanceled && branchCtx.progTime - start < blackDur) {
+            const t = Math.min(1, (branchCtx.progTime - start) / blackDur);
+            const target = squareVertexPos(walkBlack.vertexIndex);
+            walkBlack.x = walkBlack.startX + (target.x - walkBlack.startX) * t;
+            walkBlack.y = walkBlack.startY + (target.y - walkBlack.startY) * t;
+            await branchCtx.waitSec(1 / 60);
+          }
+        }
+        // Snap to final position
+        const blackFinal = squareVertexPos(walkBlack.vertexIndex);
+        walkBlack.x = blackFinal.x; walkBlack.y = blackFinal.y;
+        walkBlack.startX = blackFinal.x; walkBlack.startY = blackFinal.y;
+
+        // White's turn
+        const whiteTarget = randomAdjacentVertex(walkWhite.vertexIndex);
+        walkWhite.vertexIndex = whiteTarget;
+        walkWhite.startX = walkWhite.x;
+        walkWhite.startY = walkWhite.y;
+        const whiteDur = randomWalkDuration();
+        {
+          const start = branchCtx.progTime;
+          while (!branchCtx.isCanceled && branchCtx.progTime - start < whiteDur) {
+            const t = Math.min(1, (branchCtx.progTime - start) / whiteDur);
+            const target = squareVertexPos(walkWhite.vertexIndex);
+            walkWhite.x = walkWhite.startX + (target.x - walkWhite.startX) * t;
+            walkWhite.y = walkWhite.startY + (target.y - walkWhite.startY) * t;
+            await branchCtx.waitSec(1 / 60);
+          }
+        }
+        const whiteFinal = squareVertexPos(walkWhite.vertexIndex);
+        walkWhite.x = whiteFinal.x; walkWhite.y = whiteFinal.y;
+        walkWhite.startX = whiteFinal.x; walkWhite.startY = whiteFinal.y;
+      }
+    });
+  });
+}
+
 const actionQueue: Array<(ctx: DateTimeContext) => void> = [];
 
 const rootAnim = launch(async (ctx) => {
@@ -65,6 +170,8 @@ const rootAnim = launch(async (ctx) => {
 rootAnim.catch((err: unknown) => {
   if ((err as Error)?.message !== "aborted") console.error("Root context error:", err);
 });
+
+startWalkAnim();
 
 function launchCircle(dir: Direction) {
   actionQueue.push((ctx) => {
@@ -172,10 +279,20 @@ function setupPane(pane: WindowTweakpane): void {
   launch.addButton({ title: "Down" }).on("click", () => launchCircle("down"));
   launch.addButton({ title: "Up" }).on("click", () => launchCircle("up"));
 
-  const orbit = pane.addFolder({ title: "Orbit" });
+  const anim = pane.addFolder({ title: "Animations" });
+  anim.addBinding(params, "bwMode", { options: { Orbit: "orbit", Walk: "walk" } });
+
+  const orbit = anim.addFolder({ title: "Orbit" });
   orbit.addBinding(params, "orbitRadius", { min: 0, max: 400, step: 1 });
-  orbit.addBinding(params, "orbitPeriod", { min: 0.1, max: 20, step: 0.1 });
+  orbit.addBinding(params, "orbitSpeed", { min: -5, max: 5, step: 0.05 });
+  orbit.addBinding(params, "orbitPhase", { min: 0, max: 1, step: 0.01 });
   orbit.addBinding(params, "orbitCircleRadius", { min: 1, max: 100, step: 1 });
+
+  const walk = anim.addFolder({ title: "Walk" });
+  walk.addBinding(params, "walkSquareSize", { min: 10, max: 600, step: 1 });
+  walk.addBinding(params, "walkMinDur", { min: 0.05, max: 5, step: 0.05 });
+  walk.addBinding(params, "walkMaxDur", { min: 0.05, max: 5, step: 0.05 });
+  walk.addBinding(params, "walkCircleRadius", { min: 1, max: 100, step: 1 });
 
   const center = pane.addFolder({ title: "Center Circle" });
   center.addBinding(params, "centerOn");
@@ -192,25 +309,36 @@ function drawCircle(): void {
   p5.clear();
   p5.noStroke();
 
-  // Orbiting black and white circles around the center.
   const cx = WIDTH / 2;
   const cy = HEIGHT / 2;
-  const t = performance.now() * 0.001;
-  const phase = (t / params.orbitPeriod) * Math.PI * 2;
-  const orbitDiameter = params.orbitCircleRadius * 2;
+  const now = performance.now() * 0.001;
+  const dt = now - lastOrbitTime;
+  lastOrbitTime = now;
 
-  p5.fill(255, 255, 255);
-  p5.circle(
-    cx + Math.cos(phase) * params.orbitRadius,
-    cy + Math.sin(phase) * params.orbitRadius,
-    orbitDiameter,
-  );
-  p5.fill(0, 0, 0);
-  p5.circle(
-    cx + Math.cos(phase + Math.PI) * params.orbitRadius,
-    cy + Math.sin(phase + Math.PI) * params.orbitRadius,
-    orbitDiameter,
-  );
+  if (params.bwMode === "orbit") {
+    orbitAccum += dt * params.orbitSpeed;
+    const phase = (orbitAccum + params.orbitPhase) * Math.PI * 2;
+    const orbitDiameter = params.orbitCircleRadius * 2;
+
+    p5.fill(255, 255, 255);
+    p5.circle(
+      cx + Math.cos(phase) * params.orbitRadius,
+      cy + Math.sin(phase) * params.orbitRadius,
+      orbitDiameter,
+    );
+    p5.fill(0, 0, 0);
+    p5.circle(
+      cx + Math.cos(phase + Math.PI) * params.orbitRadius,
+      cy + Math.sin(phase + Math.PI) * params.orbitRadius,
+      orbitDiameter,
+    );
+  } else {
+    const walkDiameter = params.walkCircleRadius * 2;
+    p5.fill(0, 0, 0);
+    p5.circle(walkBlack.x, walkBlack.y, walkDiameter);
+    p5.fill(255, 255, 255);
+    p5.circle(walkWhite.x, walkWhite.y, walkDiameter);
+  }
 
   if (params.centerOn) {
     const cc = hslToRgb(params.centerHue / 360, 0.8, 0.6);
