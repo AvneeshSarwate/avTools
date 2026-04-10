@@ -9,6 +9,7 @@
     "buildCanvas": "vite build --config vite.canvas.config.ts",
     "buildPianoRoll": "vite build --config vite.piano-roll.config.ts",
     "buildTweakpane": "vite build --config vite.tweakpane.config.ts",
+    "buildAnimationEditor": "vite build --config vite.animation-editor.config.ts",
     "preview": "vite preview",
     "build": "vite build",
     "build-only": "vite build",

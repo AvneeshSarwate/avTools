@@ -35,8 +35,14 @@ const wsController = shallowRef<AnimationEditorWebSocketController | null>(null)
 const core = new Core(props.duration)
 const scheduler = new RenderScheduler()
 
+// Bumped on every core mutation so Vue recomputes derived state (e.g. hideEmptyTracks filter)
+const trackDataVersion = ref(0)
+
 // Wire up invalidation
-core.setInvalidateCallback(() => scheduler.invalidate())
+core.setInvalidateCallback(() => {
+  trackDataVersion.value++
+  scheduler.invalidate()
+})
 
 // Editor mode
 const mode = ref<EditorMode>('view')
@@ -57,6 +63,9 @@ const livePlayhead = ref(0)
 
 // Search filter
 const searchFilter = ref('')
+
+// Toggle: only show tracks that have keyframes
+const hideEmptyTracks = ref(false)
 
 // ResizeObserver reference for cleanup
 let resizeObserver: ResizeObserver | null = null
@@ -87,11 +96,22 @@ function toggleTrackSelection(trackId: string) {
 provide('toggleTrackSelection', toggleTrackSelection)
 
 // Computed: filtered track IDs (uses reactive trackIds)
+// trackDataVersion dependency ensures recomputation when core data mutates
 const filteredTrackIds = computed(() => {
-  const filter = searchFilter.value.toLowerCase().trim()
-  if (!filter) return trackIds.value
+  void trackDataVersion.value
+  let ids = trackIds.value
 
-  return trackIds.value.filter(id => {
+  if (hideEmptyTracks.value) {
+    ids = ids.filter(id => {
+      const track = core.getTrackById(id)
+      return track && track.elementData.length > 0
+    })
+  }
+
+  const filter = searchFilter.value.toLowerCase().trim()
+  if (!filter) return ids
+
+  return ids.filter(id => {
     const track = core.getTrackById(id)
     return track && track.def.name.toLowerCase().includes(filter)
   })
@@ -314,6 +334,10 @@ defineExpose({
               placeholder="Search tracks..."
               class="search-input"
             />
+            <label class="hide-empty-toggle">
+              <input type="checkbox" v-model="hideEmptyTracks" />
+              <span>Hide empty</span>
+            </label>
           </div>
         </div>
         <TrackList :track-ids="filteredTrackIds" />
@@ -421,6 +445,26 @@ defineExpose({
 
 .search-input::placeholder {
   color: #555;
+}
+
+.hide-empty-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #888;
+  cursor: pointer;
+  user-select: none;
+}
+
+.hide-empty-toggle input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.hide-empty-toggle:hover {
+  color: #aaa;
 }
 
 .track-list-container {
