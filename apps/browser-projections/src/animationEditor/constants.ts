@@ -10,7 +10,7 @@ export const TIME_RIBBON_HEIGHT = 32
 export const TIME_TICKS_HEIGHT = 24
 
 // Timeline defaults
-export const DEFAULT_TIMELINE_DURATION = 100
+export const DEFAULT_TIMELINE_DURATION = 1
 export const DEFAULT_NUMBER_LOW = 0
 export const DEFAULT_NUMBER_HIGH = 1
 

@@ -9,6 +9,7 @@ import {
   createWindowRenderManager,
   requestWebGpuDevice,
   type WindowTweakpane,
+  type PaneBinding,
 } from "../window/mod.ts";
 import { FeedbackNode, PassthruEffect, selectShaderFxFormat } from "@avtools/shader-fx/raw";
 import { AlphaTimeTagEffect } from "@avtools/shader-fx/generated-raw/shaders/alphaTimeTag.frag.raw.generated.ts";
@@ -16,33 +17,97 @@ import { FloodFillDisplayEffect } from "@avtools/shader-fx/generated-raw/shaders
 import { FloodFillStepEffect } from "@avtools/shader-fx/generated-raw/shaders/floodFillStep.frag.raw.generated.ts";
 import { P5GPU } from "../tools/p5gpu.ts";
 import { launch, type DateTimeContext } from "@avtools/core-timing";
+import { createAnimationEditorBridge, type AnimationPlaybackState } from "../tools/animationEditorAdapter.ts";
+import {
+  buildParamSystem,
+  createAnimationCallbacks,
+  snapshotToAnimation,
+} from "../tools/paramSystem.ts";
 
 const WIDTH = 1280;
 const HEIGHT = 720;
 const CLEAR_COLOR: GPUColor = { r: 0, g: 0, b: 0, a: 0 };
 
-const params = {
-  duration: 2.0,
-  hue: 180,
-  radius: 20,
-  alphaThreshold: 0.99,
-  bwMode: "orbit" as "orbit" | "walk",
-  orbitRadius: 150,
-  orbitSpeed: 1.0,
-  orbitPhase: 0,
-  orbitCircleRadius: 15,
-  walkSquareSize: 200,
-  walkMinDur: 0.3,
-  walkMaxDur: 1.5,
-  walkCircleRadius: 15,
-  useDisk: true,
-  diskRadius: 4,
-  waveAmp: 80,
-  waveFreq: 2.0,
-  randomColor: false,
-  centerOn: true,
-  centerRadius: 30,
-  centerHue: 0,
+const paramDefs = {
+  launch: {
+    _folder: "Launch",
+    duration: { value: 2.0, min: 0.1, max: 10, step: 0.1 },
+    radius: { value: 20, min: 1, max: 200, step: 1 },
+    hue: { value: 180, min: 0, max: 360, step: 1 },
+    randomColor: { value: false },
+    waveAmp: { value: 80, min: 0, max: 300, step: 1 },
+    waveFreq: { value: 2.0, min: 0, max: 10, step: 0.1 },
+    _actions: {
+      launchRight: { action: () => launchCircle("right"), label: "Right" },
+      launchLeft: { action: () => launchCircle("left"), label: "Left" },
+      launchDown: { action: () => launchCircle("down"), label: "Down" },
+      launchUp: { action: () => launchCircle("up"), label: "Up" },
+    },
+  },
+  animations: {
+    _folder: "Animations",
+    bwMode: { value: "orbit", options: { Orbit: "orbit", Walk: "walk" } },
+    orbit: {
+      _folder: "Orbit",
+      orbitRadius: { value: 150, min: 0, max: 400, step: 1 },
+      orbitSpeed: { value: 1.0, min: -5, max: 5, step: 0.05 },
+      orbitPhase: { value: 0, min: 0, max: 1, step: 0.01 },
+      orbitCircleRadius: { value: 15, min: 1, max: 100, step: 1 },
+    },
+    walk: {
+      _folder: "Walk",
+      walkSquareSize: { value: 200, min: 10, max: 600, step: 1 },
+      walkMinDur: { value: 0.3, min: 0.05, max: 5, step: 0.05 },
+      walkMaxDur: { value: 1.5, min: 0.05, max: 5, step: 0.05 },
+      walkCircleRadius: { value: 15, min: 1, max: 100, step: 1 },
+    },
+  },
+  center: {
+    _folder: "Center Circle",
+    centerOn: { value: true },
+    centerRadius: { value: 30, min: 1, max: 200, step: 1 },
+    centerHue: { value: 0, min: 0, max: 360, step: 1 },
+  },
+  floodFill: {
+    _folder: "Flood Fill",
+    alphaThreshold: { value: 0.99, min: 0, max: 1, step: 0.01 },
+    useDisk: { value: true },
+    diskRadius: { value: 4, min: 1, max: 10, step: 1 },
+  },
+} as const;
+
+type SketchParams = {
+  duration: number;
+  radius: number;
+  hue: number;
+  randomColor: boolean;
+  waveAmp: number;
+  waveFreq: number;
+  bwMode: "orbit" | "walk";
+  orbitRadius: number;
+  orbitSpeed: number;
+  orbitPhase: number;
+  orbitCircleRadius: number;
+  walkSquareSize: number;
+  walkMinDur: number;
+  walkMaxDur: number;
+  walkCircleRadius: number;
+  centerOn: boolean;
+  centerRadius: number;
+  centerHue: number;
+  alphaThreshold: number;
+  useDisk: boolean;
+  diskRadius: number;
+};
+
+const paramSystem = buildParamSystem(paramDefs);
+const params = paramSystem.params as SketchParams;
+const paneBindings = new Map<string, PaneBinding>();
+const syncRef = { enabled: true };
+const animationPlayback: AnimationPlaybackState = {
+  playing: false,
+  currentTime: 0,
+  duration: 1,
 };
 
 type Direction = "left" | "right" | "up" | "down";
@@ -158,21 +223,6 @@ function startWalkAnim() {
 
 const actionQueue: Array<(ctx: DateTimeContext) => void> = [];
 
-const rootAnim = launch(async (ctx) => {
-  while (true) {
-    while (actionQueue.length > 0) {
-      const action = actionQueue.shift()!;
-      action(ctx);
-    }
-    await ctx.waitSec(1 / 60);
-  }
-});
-rootAnim.catch((err: unknown) => {
-  if ((err as Error)?.message !== "aborted") console.error("Root context error:", err);
-});
-
-startWalkAnim();
-
 function launchCircle(dir: Direction) {
   actionQueue.push((ctx) => {
     const hue = params.randomColor ? Math.random() * 360 : params.hue;
@@ -217,6 +267,39 @@ function launchCircle(dir: Direction) {
   });
 }
 
+function setupPane(pane: WindowTweakpane): void {
+  const nextBindings = paramSystem.setupPane(pane);
+  paneBindings.clear();
+  for (const [key, binding] of nextBindings) {
+    paneBindings.set(key, binding);
+  }
+}
+
+function clampPlaybackTime(time: number): number {
+  return Math.min(Math.max(time, 0), animationPlayback.duration);
+}
+
+let animationBridge = createAnimationEditorBridge({
+  management: {
+    trackInputs: paramSystem.trackInputs,
+    syncRef,
+    playbackRef: animationPlayback,
+    snapshotCurrentState: (animationName, time) => {
+      snapshotToAnimation(params, paramSystem.paramMeta, animationBridge.tracks, animationName, time);
+    },
+  },
+});
+
+const animationCallbacks = createAnimationCallbacks(
+  params,
+  paneBindings,
+  paramSystem.paramMeta,
+  paramSystem.actionMap,
+  syncRef,
+);
+
+animationBridge.tracks.setFromInputs("default", paramSystem.trackInputs);
+
 const device = await requestWebGpuDevice();
 const renderWindow = await createWindowRenderManager({
   device,
@@ -236,6 +319,55 @@ const renderWindow = await createWindowRenderManager({
 });
 const p5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const floodFill = await createFloodFillChain(device, WIDTH, HEIGHT);
+
+const animationHandle = animationBridge.showBoundInWindow(renderWindow.window, "default", {
+  title: "Animation Editor",
+  panelWidth: 1100,
+  panelHeight: 760,
+});
+animationHandle.setCallbacks(animationCallbacks);
+
+const rootAnim = launch(async (ctx) => {
+  let lastTickTime = ctx.progTime;
+  let lastAppliedTime: number | null = null;
+
+  while (true) {
+    while (actionQueue.length > 0) {
+      const action = actionQueue.shift()!;
+      action(ctx);
+    }
+
+    const now = ctx.progTime;
+    const deltaTime = Math.max(0, now - lastTickTime);
+    lastTickTime = now;
+
+    if (animationPlayback.playing) {
+      const nextTime = animationPlayback.currentTime + deltaTime;
+      if (nextTime >= animationPlayback.duration) {
+        animationPlayback.currentTime = animationPlayback.duration;
+        animationPlayback.playing = false;
+      } else {
+        animationPlayback.currentTime = nextTime;
+      }
+    }
+
+    const playbackTime = clampPlaybackTime(animationPlayback.currentTime);
+    animationPlayback.currentTime = playbackTime;
+
+    if (lastAppliedTime === null || Math.abs(playbackTime - lastAppliedTime) > 1e-6) {
+      animationHandle.scrubAndEvaluate(playbackTime);
+      lastAppliedTime = playbackTime;
+    }
+
+    animationHandle.setLivePlayhead(playbackTime);
+    await ctx.waitSec(1 / 60);
+  }
+});
+rootAnim.catch((err: unknown) => {
+  if ((err as Error)?.message !== "aborted") console.error("Root context error:", err);
+});
+
+startWalkAnim();
 
 await renderWindow.run(renderFrame, { cleanup: cleanup });
 
@@ -261,48 +393,11 @@ function renderFrame() {
 
 function cleanup(): void {
   rootAnim.cancel();
+  animationHandle.disconnect();
+  animationBridge.shutdown();
   floodFill.display.disposeAll();
   floodFill.placeholder.destroy();
   p5.dispose();
-}
-
-function setupPane(pane: WindowTweakpane): void {
-  const launch = pane.addFolder({ title: "Launch" });
-  launch.addBinding(params, "duration", { min: 0.1, max: 10, step: 0.1 });
-  launch.addBinding(params, "radius", { min: 1, max: 200, step: 1 });
-  launch.addBinding(params, "hue", { min: 0, max: 360, step: 1 });
-  launch.addBinding(params, "randomColor");
-  launch.addBinding(params, "waveAmp", { min: 0, max: 300, step: 1 });
-  launch.addBinding(params, "waveFreq", { min: 0, max: 10, step: 0.1 });
-  launch.addButton({ title: "Right" }).on("click", () => launchCircle("right"));
-  launch.addButton({ title: "Left" }).on("click", () => launchCircle("left"));
-  launch.addButton({ title: "Down" }).on("click", () => launchCircle("down"));
-  launch.addButton({ title: "Up" }).on("click", () => launchCircle("up"));
-
-  const anim = pane.addFolder({ title: "Animations" });
-  anim.addBinding(params, "bwMode", { options: { Orbit: "orbit", Walk: "walk" } });
-
-  const orbit = anim.addFolder({ title: "Orbit" });
-  orbit.addBinding(params, "orbitRadius", { min: 0, max: 400, step: 1 });
-  orbit.addBinding(params, "orbitSpeed", { min: -5, max: 5, step: 0.05 });
-  orbit.addBinding(params, "orbitPhase", { min: 0, max: 1, step: 0.01 });
-  orbit.addBinding(params, "orbitCircleRadius", { min: 1, max: 100, step: 1 });
-
-  const walk = anim.addFolder({ title: "Walk" });
-  walk.addBinding(params, "walkSquareSize", { min: 10, max: 600, step: 1 });
-  walk.addBinding(params, "walkMinDur", { min: 0.05, max: 5, step: 0.05 });
-  walk.addBinding(params, "walkMaxDur", { min: 0.05, max: 5, step: 0.05 });
-  walk.addBinding(params, "walkCircleRadius", { min: 1, max: 100, step: 1 });
-
-  const center = pane.addFolder({ title: "Center Circle" });
-  center.addBinding(params, "centerOn");
-  center.addBinding(params, "centerRadius", { min: 1, max: 200, step: 1 });
-  center.addBinding(params, "centerHue", { min: 0, max: 360, step: 1 });
-
-  const fx = pane.addFolder({ title: "Flood Fill" });
-  fx.addBinding(params, "alphaThreshold", { min: 0, max: 1, step: 0.01 });
-  fx.addBinding(params, "useDisk");
-  fx.addBinding(params, "diskRadius", { min: 1, max: 10, step: 1 });
 }
 
 function drawCircle(): void {

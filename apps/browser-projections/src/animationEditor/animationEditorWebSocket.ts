@@ -35,7 +35,8 @@ const TrackDataSchema = z.object({
   fieldType: z.enum(['number', 'enum', 'func']),
   elementData: z.array(z.union([NumberElementSchema, EnumElementSchema, FuncElementDataSchema])),
   low: z.number(),
-  high: z.number()
+  high: z.number(),
+  enumOptions: z.array(z.string()).optional()
 })
 
 export type TrackData = z.infer<typeof TrackDataSchema>
@@ -326,7 +327,7 @@ export class AnimationEditorWebSocketController {
 // ============================================================================
 
 export function coreToTrackData(
-  tracksById: Map<string, { id: string; def: { name: string; fieldType: TrackType }; elementData: TrackElement[]; low: number; high: number }>,
+  tracksById: Map<string, { id: string; def: { name: string; fieldType: TrackType; enumOptions?: string[] }; elementData: TrackElement[]; low: number; high: number }>,
   orderedTrackIds: string[]
 ): { tracks: TrackData[]; trackOrder: string[] } {
   const tracks: TrackData[] = []
@@ -352,7 +353,8 @@ export function coreToTrackData(
         }
       }),
       low: track.low,
-      high: track.high
+      high: track.high,
+      enumOptions: track.def.enumOptions
     })
   }
 

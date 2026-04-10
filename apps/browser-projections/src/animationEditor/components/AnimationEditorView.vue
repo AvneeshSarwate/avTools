@@ -30,6 +30,8 @@ const effectiveInteractive = computed(() => wsConfig.interactive ?? props.intera
 
 // WebSocket controller
 const wsController = shallowRef<AnimationEditorWebSocketController | null>(null)
+let lastTrackSignature = ''
+let lastStateSignature = ''
 
 // Core state
 const core = new Core(props.duration)
@@ -153,7 +155,8 @@ function trackDataToCoreTracks(tracks: TrackData[], trackOrder: string[]) {
         }
       }),
       low: trackData.low,
-      high: trackData.high
+      high: trackData.high,
+      enumOptions: trackData.enumOptions ? [...trackData.enumOptions] : undefined
     }
 
     core.addTrack(def)
@@ -161,16 +164,78 @@ function trackDataToCoreTracks(tracks: TrackData[], trackOrder: string[]) {
 
   // Update reactive state
   trackIds.value = [...core.orderedTrackIds]
-  windowEnd.value = core.duration
+  applyConfiguredDuration(wsConfig.duration, { suppressWsState: true })
+  markTrackSignature()
+  markStateSignature()
   scheduler.invalidate()
 }
 
+function getTrackExtent(): number {
+  let maxTime = 0
+  for (const track of core.getOrderedTracks()) {
+    const lastTime = track.times[track.times.length - 1]
+    if (lastTime !== undefined && lastTime > maxTime) {
+      maxTime = lastTime
+    }
+  }
+  return maxTime
+}
+
+function applyConfiguredDuration(
+  requestedDuration: number | undefined,
+  options?: { suppressWsState?: boolean }
+) {
+  const baseDuration = requestedDuration ?? props.duration ?? core.duration
+  const normalizedDuration = Number.isFinite(baseDuration) ? Math.max(0, baseDuration) : core.duration
+  const nextDuration = Math.max(normalizedDuration, getTrackExtent())
+
+  core.duration = nextDuration
+  currentTime.value = Math.min(currentTime.value, nextDuration)
+  livePlayhead.value = Math.min(livePlayhead.value, nextDuration)
+  windowStart.value = Math.min(windowStart.value, nextDuration)
+  windowEnd.value = nextDuration
+
+  if (options?.suppressWsState) {
+    markStateSignature()
+  }
+}
+
+function getTrackPayload() {
+  return coreToTrackData(core.tracksById, core.orderedTrackIds)
+}
+
+function getTrackSignature(payload = getTrackPayload()) {
+  return JSON.stringify({
+    trackOrder: payload.trackOrder,
+    tracks: payload.tracks,
+  })
+}
+
+function getStateSignature() {
+  return JSON.stringify({
+    currentTime: currentTime.value,
+    duration: core.duration,
+    windowStart: windowStart.value,
+    windowEnd: windowEnd.value,
+  })
+}
+
+function markTrackSignature(payload = getTrackPayload()) {
+  lastTrackSignature = getTrackSignature(payload)
+}
+
+function markStateSignature() {
+  lastStateSignature = getStateSignature()
+}
+
 // Helper: Send tracks update via WebSocket
-function sendTracksUpdate(source?: 'tracks' | 'time' | 'window' | 'other') {
+function sendTracksUpdate(
+  source?: 'tracks' | 'time' | 'window' | 'other',
+  payload = getTrackPayload()
+) {
   if (!wsController.value?.isConnected) return
 
-  const { tracks, trackOrder } = coreToTrackData(core.tracksById, core.orderedTrackIds)
-  wsController.value.sendTracksUpdate(tracks, trackOrder, source)
+  wsController.value.sendTracksUpdate(payload.tracks, payload.trackOrder, source)
 }
 
 // Helper: Send state update via WebSocket
@@ -213,7 +278,7 @@ onMounted(() => {
         // Don't echo back to sender
       },
       onScrubToTime: (time) => {
-        scrubToTime(time)
+        scrubToTime(time, { suppressWsState: true })
       },
       onSetLivePlayhead: (position) => {
         livePlayhead.value = position
@@ -221,7 +286,11 @@ onMounted(() => {
       },
       onSetConfig: (config) => {
         if (config.interactive !== undefined) wsConfig.interactive = config.interactive
-        if (config.duration !== undefined) wsConfig.duration = config.duration
+        if (config.duration !== undefined) {
+          wsConfig.duration = config.duration
+          applyConfiguredDuration(config.duration, { suppressWsState: true })
+          scheduler.invalidate()
+        }
       },
       onGetState: (requestId) => {
         const { tracks, trackOrder } = coreToTrackData(core.tracksById, core.orderedTrackIds)
@@ -239,6 +308,27 @@ onMounted(() => {
     wsController.value.connect()
   }
 })
+
+watch(trackDataVersion, () => {
+  const payload = getTrackPayload()
+  const signature = getTrackSignature(payload)
+  if (signature === lastTrackSignature) return
+
+  lastTrackSignature = signature
+  sendTracksUpdate('tracks', payload)
+}, { flush: 'post' })
+
+watch(
+  () => [currentTime.value, windowStart.value, windowEnd.value, trackDataVersion.value],
+  () => {
+    const signature = getStateSignature()
+    if (signature === lastStateSignature) return
+
+    lastStateSignature = signature
+    sendStateUpdate('other')
+  },
+  { flush: 'post' }
+)
 
 onUnmounted(() => {
   wsController.value?.disconnect()
@@ -267,22 +357,28 @@ function addTrack(def: TrackDef, options?: { suppressWsUpdate?: boolean }): bool
     trackIds.value = [...core.orderedTrackIds]
     // Update window end if duration changed
     windowEnd.value = core.duration
-    // Send WebSocket update unless suppressed
-    if (!options?.suppressWsUpdate) {
-      sendTracksUpdate('tracks')
+    if (options?.suppressWsUpdate) {
+      markTrackSignature()
+      markStateSignature()
     }
   }
   return result
 }
 
-function scrubToTime(t: number): void {
+function scrubToTime(t: number, options?: { suppressWsState?: boolean }): void {
   core.scrubToTime(t)
   currentTime.value = t
+  if (options?.suppressWsState) {
+    markStateSignature()
+  }
 }
 
-function jumpToTime(t: number): void {
+function jumpToTime(t: number, options?: { suppressWsState?: boolean }): void {
   core.jumpToTime(t)
   currentTime.value = t
+  if (options?.suppressWsState) {
+    markStateSignature()
+  }
 }
 
 function setWindowRange(start: number, end: number): void {

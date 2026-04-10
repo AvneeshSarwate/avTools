@@ -29,6 +29,7 @@ export type TrackDef = {
   name: string
   fieldType: TrackType
   data: TrackDatum[]
+  enumOptions?: string[]
 
   // Callbacks - only one should be defined based on fieldType
   updateNumber?: (v: number) => void

@@ -59,6 +59,7 @@ export interface TrackData {
   readonly elementData: readonly TrackElement[]
   readonly low: number
   readonly high: number
+  readonly enumOptions?: readonly string[]
 }
 
 export interface AnimationEditorState {
@@ -103,6 +104,7 @@ export interface TrackInput {
   readonly data: readonly (NumberDatumInput | EnumDatumInput | FuncDatumInput)[]
   readonly low?: number
   readonly high?: number
+  readonly enumOptions?: readonly string[]
 }
 
 // ============================================================================
@@ -140,11 +142,55 @@ interface ConnectionReadyMessage {
   type: 'connectionReady'
 }
 
+export interface CreateAnimationMessage {
+  type: 'createAnimation'
+  name: string
+}
+
+export interface SwitchAnimationMessage {
+  type: 'switchAnimation'
+  name: string
+}
+
+export interface DeleteAnimationMessage {
+  type: 'deleteAnimation'
+  name: string
+}
+
+export interface SnapshotMessage {
+  type: 'snapshot'
+}
+
+export interface ToggleSyncMessage {
+  type: 'toggleSync'
+  enabled: boolean
+}
+
+export interface SetPlayingMessage {
+  type: 'setPlaying'
+  playing: boolean
+}
+
+export interface SetCurrentTimeMessage {
+  type: 'setCurrentTime'
+  time: number
+}
+
+export type ManagementIncomingMessage =
+  | CreateAnimationMessage
+  | SwitchAnimationMessage
+  | DeleteAnimationMessage
+  | SnapshotMessage
+  | ToggleSyncMessage
+  | SetPlayingMessage
+  | SetCurrentTimeMessage
+
 type IncomingMessage =
   | TracksUpdateMessage
   | StateUpdateMessage
   | StateResponseMessage
   | ConnectionReadyMessage
+  | ManagementIncomingMessage
 
 interface SetTracksMessage {
   type: 'setTracks'
@@ -175,12 +221,33 @@ interface GetStateMessage {
   requestId?: string
 }
 
+export interface AnimationListMessage {
+  type: 'animationList'
+  names: string[]
+  current: string
+}
+
+export interface SyncStateMessage {
+  type: 'syncState'
+  enabled: boolean
+}
+
+export interface PlaybackStateMessage {
+  type: 'playbackState'
+  playing: boolean
+  currentTime: number
+  duration: number
+}
+
+export type ManagementOutgoingMessage = AnimationListMessage | SyncStateMessage | PlaybackStateMessage
+
 type OutgoingMessage =
   | SetTracksMessage
   | ScrubToTimeMessage
   | SetLivePlayheadMessage
   | SetConfigMessage
   | GetStateMessage
+  | ManagementOutgoingMessage
 
 // ============================================================================
 // Callback Registration Types
@@ -212,6 +279,7 @@ export class AnimationEditorWebSocketClient extends WebSocketClientBase<Incoming
   private _state: AnimationEditorState | null = null
   private _config: AnimationEditorConfig = {}
   private _livePlayhead = 0
+  private _lastEvaluatedTime: number | null = null
 
   // Track callbacks for evaluation
   private _trackCallbacks: TrackCallbacks = {}
@@ -225,6 +293,9 @@ export class AnimationEditorWebSocketClient extends WebSocketClientBase<Incoming
 
   /** Called when the component sends a state update */
   onStateUpdate?: (state: Readonly<AnimationEditorState>, source?: UpdateSource) => void
+
+  /** Called when the wrapper sends a management message */
+  onManagementMessage?: (message: ManagementIncomingMessage) => void
 
   // ============================================================================
   // Readonly State Accessors
@@ -280,8 +351,8 @@ export class AnimationEditorWebSocketClient extends WebSocketClientBase<Incoming
           this._tracks = message.tracks
           this._trackOrder = message.trackOrder
           this.onTracksUpdate?.(this._tracks, this._trackOrder, message.source)
-          // Fire registered callbacks when tracks update
-          this.fireCallbacksFromTracks()
+          // Re-evaluate current param values without replaying func hits on edit sync.
+          this.fireCallbacksFromTracks({ fireFuncs: false })
           break
 
         case 'stateUpdate':
@@ -291,6 +362,7 @@ export class AnimationEditorWebSocketClient extends WebSocketClientBase<Incoming
             windowStart: message.windowStart,
             windowEnd: message.windowEnd
           }
+          this._lastEvaluatedTime = message.currentTime
           this.onStateUpdate?.(this._state, message.source)
           break
 
@@ -315,6 +387,16 @@ export class AnimationEditorWebSocketClient extends WebSocketClientBase<Incoming
           this._connected = true
           this.onConnectionReady?.()
           break
+
+        case 'createAnimation':
+        case 'switchAnimation':
+        case 'deleteAnimation':
+        case 'snapshot':
+        case 'toggleSync':
+        case 'setPlaying':
+        case 'setCurrentTime':
+          this.onManagementMessage?.(message)
+          break
       }
     } catch (error) {
       console.warn(`[${this.logPrefix}] Error handling message:`, error)
@@ -337,19 +419,27 @@ export class AnimationEditorWebSocketClient extends WebSocketClientBase<Incoming
    * Fire callbacks for all tracks based on current state time.
    * Called internally when tracks update, or can be called manually.
    */
-  fireCallbacksFromTracks(): void {
+  fireCallbacksFromTracks(options: { fireFuncs?: boolean; fromTime?: number } = {}): void {
     if (!this._state) return
     const t = this._state.currentTime
+    const fireFuncs = options.fireFuncs ?? true
+    const fromTime = options.fromTime ?? this._lastEvaluatedTime ?? t
 
     for (const track of this._tracks) {
-      this.evaluateTrackAt(track, t)
+      this.evaluateTrackAt(track, t, { fireFuncs, fromTime })
     }
+
+    this._lastEvaluatedTime = t
   }
 
   /**
    * Evaluate a track at a specific time and fire the appropriate callback.
    */
-  private evaluateTrackAt(track: TrackData, t: number): void {
+  private evaluateTrackAt(
+    track: TrackData,
+    t: number,
+    options: { fireFuncs: boolean; fromTime: number },
+  ): void {
     const elements = track.elementData
     if (elements.length === 0) return
 
@@ -369,13 +459,8 @@ export class AnimationEditorWebSocketClient extends WebSocketClientBase<Incoming
         break
       }
       case 'func': {
-        // Func tracks are evaluated differently - fire all funcs in range
-        // For now, just get the current step value
-        if (!this._trackCallbacks.updateFunc) return
-        const elem = this.stepFuncValue(elements as FuncElementData[], t)
-        if (elem) {
-          this._trackCallbacks.updateFunc(track.name, elem.funcName, ...elem.args)
-        }
+        if (!this._trackCallbacks.updateFunc || !options.fireFuncs) return
+        this.fireFuncHits(track.name, elements as FuncElementData[], options.fromTime, t)
         break
       }
     }
@@ -416,14 +501,33 @@ export class AnimationEditorWebSocketClient extends WebSocketClientBase<Incoming
     return sorted[0].value
   }
 
-  private stepFuncValue(elements: readonly FuncElementData[], t: number): FuncElement | undefined {
-    const sorted = [...elements].sort((a, b) => a.time - b.time)
-    if (sorted.length === 0) return undefined
+  private fireFuncHits(
+    trackName: string,
+    elements: readonly FuncElementData[],
+    fromTime: number,
+    toTime: number,
+  ): void {
+    if (toTime <= fromTime || !this._trackCallbacks.updateFunc) return
 
-    for (let i = sorted.length - 1; i >= 0; i--) {
-      if (sorted[i].time <= t) return sorted[i].value
+    const sorted = [...elements].sort((a, b) => a.time - b.time)
+    for (const elem of sorted) {
+      if (elem.time > fromTime && elem.time <= toTime) {
+        this._trackCallbacks.updateFunc(trackName, elem.value.funcName, ...elem.value.args)
+      }
     }
-    return sorted[0].value
+  }
+
+  private updateStateTime(time: number): void {
+    const duration = Math.max(this._state?.duration ?? 0, this._config.duration ?? 0, time)
+    const windowStart = this._state?.windowStart ?? 0
+    const windowEnd = this._state?.windowEnd ?? duration
+
+    this._state = {
+      currentTime: time,
+      duration,
+      windowStart,
+      windowEnd,
+    }
   }
 
   // ============================================================================
@@ -435,6 +539,8 @@ export class AnimationEditorWebSocketClient extends WebSocketClientBase<Incoming
    */
   setTracks(tracks: TrackData[], trackOrder?: string[]): void {
     const order = trackOrder ?? tracks.map(t => t.id)
+    this._tracks = tracks
+    this._trackOrder = order
     this.send({ type: 'setTracks', tracks, trackOrder: order })
   }
 
@@ -468,7 +574,8 @@ export class AnimationEditorWebSocketClient extends WebSocketClientBase<Incoming
         fieldType: input.fieldType,
         elementData,
         low: input.low ?? 0,
-        high: input.high ?? 1
+        high: input.high ?? 1,
+        enumOptions: input.enumOptions,
       }
     })
 
@@ -479,7 +586,19 @@ export class AnimationEditorWebSocketClient extends WebSocketClientBase<Incoming
    * Scrub to a specific time (triggers callbacks in component).
    */
   scrubToTime(time: number): void {
+    this.updateStateTime(time)
+    this._lastEvaluatedTime = time
     this.send({ type: 'scrubToTime', time })
+  }
+
+  /**
+   * Scrub visually and evaluate cached track data on the server side.
+   */
+  scrubAndEvaluate(time: number): void {
+    const previousTime = this._lastEvaluatedTime ?? time
+    this.updateStateTime(time)
+    this.send({ type: 'scrubToTime', time })
+    this.fireCallbacksFromTracks({ fromTime: previousTime, fireFuncs: true })
   }
 
   /**
@@ -496,6 +615,13 @@ export class AnimationEditorWebSocketClient extends WebSocketClientBase<Incoming
   setConfig(config: AnimationEditorConfig): void {
     this._config = { ...this._config, ...config }
     this.send({ type: 'setConfig', ...config })
+  }
+
+  /**
+   * Send a management message to the wrapper UI sharing this socket.
+   */
+  sendManagementMessage(message: ManagementOutgoingMessage): void {
+    this.send(message)
   }
 
   // ============================================================================

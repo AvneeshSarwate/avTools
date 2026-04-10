@@ -33,8 +33,10 @@ import {
   AnimationEditorWebSocketClient,
   type TrackData,
   type TrackInput,
-  type TrackCallbacks
+  type TrackCallbacks,
+  type ManagementIncomingMessage,
 } from "./animationEditorWebSocketClient.ts"
+import { WindowPanel, type GpuWindow } from "../window/mod.ts"
 
 // ============================================================================
 // Type Definitions
@@ -46,7 +48,27 @@ export interface AnimationEditorHandle {
   disconnect(): void
   setLivePlayhead(position: number): void
   scrubToTime(time: number): void
+  scrubAndEvaluate(time: number): void
   setCallbacks(callbacks: TrackCallbacks): void
+}
+
+export interface AnimationPlaybackState {
+  playing: boolean
+  currentTime: number
+  duration: number
+}
+
+export interface AnimationEditorManagementOptions {
+  readonly trackInputs: TrackInput[]
+  readonly syncRef: { enabled: boolean }
+  readonly playbackRef?: AnimationPlaybackState
+  readonly snapshotCurrentState?: (animationName: string, time: number) => void
+}
+
+export interface AnimationEditorWindowOptions {
+  readonly title?: string
+  readonly panelWidth?: number
+  readonly panelHeight?: number
 }
 
 interface AnimationSessionData {
@@ -55,10 +77,80 @@ interface AnimationSessionData {
   trackOrder?: string[]
   trackMap?: TrackMap
   animationName?: string
+  management?: AnimationEditorManagementOptions
+  trackCallbacks?: TrackCallbacks
+  nativeWindow?: { destroy: () => void }
 }
 
 type AnimationSession = Session<AnimationEditorWebSocketClient, AnimationSessionData>
 type AnimationBridge = DenoNotebookBridge<AnimationEditorWebSocketClient, AnimationEditorHandle, AnimationSessionData>
+
+function renderNativeWindowHtml(editorUrl: string): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Animation Editor</title>
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      background: #091018;
+      color: #e8eef8;
+      font-family: SFMono-Regular, ui-monospace, Menlo, Monaco, monospace;
+    }
+    body {
+      display: grid;
+      place-items: center;
+    }
+    .launching {
+      opacity: 0.8;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+  </style>
+</head>
+<body>
+  <div class="launching">Launching Animation Editor…</div>
+  <script>
+    window.location.replace(${JSON.stringify(editorUrl)})
+  </script>
+</body>
+</html>`
+}
+
+function attachNativePanelToWindow(
+  panel: WindowPanel,
+  gpuWindow: GpuWindow,
+): () => void {
+  const previousPollEvents = gpuWindow.pollEvents.bind(gpuWindow)
+  const previousClose = gpuWindow.close.bind(gpuWindow)
+  let detached = false
+
+  const detach = () => {
+    if (detached) return
+    detached = true
+    gpuWindow.pollEvents = previousPollEvents
+    gpuWindow.close = previousClose
+    panel.destroy()
+  }
+
+  gpuWindow.pollEvents = () => {
+    const events = previousPollEvents()
+    panel.pollMessages()
+    return events
+  }
+
+  gpuWindow.close = () => {
+    detach()
+    previousClose()
+  }
+
+  return detach
+}
 
 // ============================================================================
 // Track ID Generation
@@ -103,7 +195,8 @@ export function trackInputsToData(inputs: TrackInput[]): { tracks: TrackData[]; 
       fieldType: input.fieldType,
       elementData,
       low: input.low ?? 0,
-      high: input.high ?? 1
+      high: input.high ?? 1,
+      enumOptions: input.enumOptions,
     })
   }
 
@@ -164,16 +257,17 @@ export class TrackMap {
     return this
   }
 
-  delete(name: string): boolean {
+  delete(name: string, options?: { disconnectBoundSessions?: boolean }): boolean {
+    const disconnectBoundSessions = options?.disconnectBoundSessions ?? true
     const sessions = this.bindings.get(name)
-    if (sessions && this.bridge) {
+    if (disconnectBoundSessions && sessions && this.bridge) {
       for (const sessionId of sessions) {
         const session = this.bridge.getSession(sessionId)
         session?.client?.disconnect()
         this.bridge.removeSession(sessionId)
       }
-      this.bindings.delete(name)
     }
+    this.bindings.delete(name)
     return this.animations.delete(name)
   }
 
@@ -242,6 +336,222 @@ function createAnimationEditorAdapter(): ComponentAdapter<
   AnimationEditorHandle,
   AnimationSessionData
 > {
+  const getAnimationNames = (trackMap: TrackMap): string[] => Array.from(trackMap.keys())
+  const DEFAULT_PLAYBACK_DURATION = 1
+  const SCRUB_STEPS = 1200
+
+  const clampPlaybackTime = (playback: AnimationPlaybackState): number => {
+    const duration = Number.isFinite(playback.duration) ? Math.max(0, playback.duration) : 0
+    const currentTime = Number.isFinite(playback.currentTime) ? playback.currentTime : 0
+    const clampedTime = Math.min(Math.max(currentTime, 0), duration)
+    playback.duration = duration
+    playback.currentTime = clampedTime
+    return clampedTime
+  }
+
+  const makeUniqueAnimationName = (trackMap: TrackMap, requestedName: string): string | null => {
+    const baseName = requestedName.trim()
+    if (!baseName) return null
+    if (!trackMap.has(baseName)) return baseName
+
+    let suffix = 2
+    while (trackMap.has(`${baseName}-${suffix}`)) {
+      suffix++
+    }
+    return `${baseName}-${suffix}`
+  }
+
+  const bindSessionToAnimation = (session: AnimationSession, animationName: string): void => {
+    if (session.data.type !== 'bound') return
+
+    const trackMap = session.data.trackMap!
+    const previousName = session.data.animationName
+    if (previousName && previousName !== animationName) {
+      trackMap.unbind(previousName, session.id)
+    }
+
+    session.data.animationName = animationName
+    trackMap.bind(animationName, session.id)
+
+    const currentData = trackMap.getFull(animationName)
+    if (currentData && session.client?.connected) {
+      session.client.setTracks(currentData.tracks, currentData.trackOrder)
+    }
+  }
+
+  const sendManagementState = (session: AnimationSession): void => {
+    if (session.data.type !== 'bound' || !session.client?.connected) return
+
+    const names = getAnimationNames(session.data.trackMap!)
+    const current = session.data.animationName ?? names[0] ?? ''
+    session.client.sendManagementMessage({ type: 'animationList', names, current })
+
+    if (!session.data.management) return
+
+    session.client.sendManagementMessage({
+      type: 'syncState',
+      enabled: session.data.management.syncRef.enabled,
+    })
+    sendPlaybackState(session)
+  }
+
+  const sendPlaybackState = (session: AnimationSession): void => {
+    if (session.data.type !== 'bound' || !session.client?.connected) return
+
+    const playback = session.data.management?.playbackRef
+    if (!playback) return
+
+    const currentTime = clampPlaybackTime(playback)
+    session.client.sendManagementMessage({
+      type: 'playbackState',
+      playing: playback.playing,
+      currentTime,
+      duration: playback.duration,
+    })
+  }
+
+  const broadcastManagementState = (
+    trackMap: TrackMap,
+    bridge: AnimationBridge,
+  ): void => {
+    for (const session of bridge.getSessions().values()) {
+      if (session.data.type !== 'bound' || session.data.trackMap !== trackMap) continue
+      sendManagementState(session)
+    }
+  }
+
+  const broadcastPlaybackState = (
+    trackMap: TrackMap,
+    bridge: AnimationBridge,
+  ): void => {
+    for (const session of bridge.getSessions().values()) {
+      if (session.data.type !== 'bound' || session.data.trackMap !== trackMap) continue
+      sendPlaybackState(session)
+    }
+  }
+
+  const rebindSessionsAfterDelete = (
+    deletedName: string,
+    fallbackName: string,
+    trackMap: TrackMap,
+    bridge: AnimationBridge,
+  ): void => {
+    for (const session of bridge.getSessions().values()) {
+      if (
+        session.data.type !== 'bound' ||
+        session.data.trackMap !== trackMap ||
+        session.data.animationName !== deletedName
+      ) {
+        continue
+      }
+
+      bindSessionToAnimation(session, fallbackName)
+    }
+  }
+
+  const handleManagementMessage = (
+    message: ManagementIncomingMessage,
+    session: AnimationSession,
+    bridge: AnimationBridge,
+  ): void => {
+    if (session.data.type !== 'bound') return
+
+    const trackMap = session.data.trackMap!
+    const management = session.data.management
+    if (!management) return
+
+    switch (message.type) {
+      case 'createAnimation': {
+        const nextName = makeUniqueAnimationName(trackMap, message.name)
+        if (!nextName) {
+          sendManagementState(session)
+          return
+        }
+
+        if (!trackMap.has(nextName)) {
+          trackMap.setFromInputs(nextName, management.trackInputs)
+        }
+
+        bindSessionToAnimation(session, nextName)
+        broadcastManagementState(trackMap, bridge)
+        return
+      }
+
+      case 'switchAnimation': {
+        if (!trackMap.has(message.name)) {
+          sendManagementState(session)
+          return
+        }
+
+        bindSessionToAnimation(session, message.name)
+        sendManagementState(session)
+        return
+      }
+
+      case 'deleteAnimation': {
+        const targetName = message.name.trim() || session.data.animationName
+        if (!targetName || !trackMap.has(targetName)) {
+          sendManagementState(session)
+          return
+        }
+
+        const remainingNames = getAnimationNames(trackMap).filter((name) => name !== targetName)
+        if (remainingNames.length === 0) {
+          sendManagementState(session)
+          return
+        }
+
+        const fallbackName = remainingNames[0]
+        rebindSessionsAfterDelete(targetName, fallbackName, trackMap, bridge)
+        trackMap.delete(targetName, { disconnectBoundSessions: false })
+        broadcastManagementState(trackMap, bridge)
+        return
+      }
+
+      case 'snapshot': {
+        const animationName = session.data.animationName
+        if (!animationName || !management.snapshotCurrentState) return
+
+        const snapshotTime = session.client?.state?.currentTime ?? 0
+        management.snapshotCurrentState(animationName, snapshotTime)
+        return
+      }
+
+      case 'toggleSync':
+        management.syncRef.enabled = message.enabled
+        broadcastManagementState(trackMap, bridge)
+        return
+
+      case 'setPlaying': {
+        const playback = management.playbackRef
+        if (!playback) {
+          sendManagementState(session)
+          return
+        }
+
+        if (message.playing && clampPlaybackTime(playback) >= playback.duration) {
+          playback.currentTime = 0
+        }
+        playback.playing = message.playing
+        broadcastPlaybackState(trackMap, bridge)
+        return
+      }
+
+      case 'setCurrentTime': {
+        const playback = management.playbackRef
+        if (!playback) {
+          sendManagementState(session)
+          return
+        }
+
+        playback.currentTime = message.time
+        clampPlaybackTime(playback)
+        broadcastPlaybackState(trackMap, bridge)
+        return
+      }
+    }
+  }
+
   return {
     name: "animation-editor",
     bundleUrl: new URL("../../../webcomponents/animation-editor/dist/animation-editor.js", import.meta.url),
@@ -254,6 +564,11 @@ function createAnimationEditorAdapter(): ComponentAdapter<
     renderHTML(wsUrl: string, sessionId: string, sessionData: AnimationSessionData): string {
       const interactive = sessionData.type === 'bound'
       const name = sessionData.type === 'bound' ? sessionData.animationName : undefined
+      const showManagement = sessionData.type === 'bound' && !!sessionData.management
+      const wsUrlLiteral = JSON.stringify(wsUrl)
+      const sessionIdLiteral = JSON.stringify(sessionId)
+      const initialAnimationName = JSON.stringify(name ?? '')
+      const managementVisibleLiteral = showManagement ? 'true' : 'false'
 
       return `<!DOCTYPE html>
 <html>
@@ -261,42 +576,511 @@ function createAnimationEditorAdapter(): ComponentAdapter<
   <meta charset="UTF-8">
   <title>Animation Editor</title>
   <style>
+    :root {
+      color-scheme: dark;
+      --panel-fg: #e8eef8;
+      --panel-border: rgba(148, 170, 196, 0.24);
+      --panel-surface: rgba(14, 20, 29, 0.82);
+      --panel-surface-strong: rgba(9, 14, 22, 0.95);
+      --panel-accent: #8fc3ff;
+      --panel-accent-strong: #dcedff;
+      --panel-muted: rgba(226, 235, 246, 0.72);
+      --tp-input-background-color: rgba(10, 16, 24, 0.78);
+      --tp-input-background-color-active: rgba(26, 36, 50, 0.96);
+      --tp-input-background-color-hover: rgba(16, 24, 35, 0.88);
+      --tp-input-foreground-color: #eff6ff;
+      --tp-button-background-color: #dce4ef;
+      --tp-button-background-color-active: #c1cbda;
+      --tp-button-background-color-hover: #edf3fb;
+      --tp-button-foreground-color: #101722;
+      --tp-container-background-color: rgba(148, 170, 196, 0.18);
+      --tp-container-background-color-hover: rgba(148, 170, 196, 0.24);
+      --tp-container-foreground-color: #e2ebf6;
+    }
+    * { box-sizing: border-box; }
     body {
       margin: 0;
+      min-height: 100vh;
       padding: 8px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #121416;
+      color: var(--panel-fg);
+      background:
+        radial-gradient(circle at top, rgba(103, 148, 208, 0.2), transparent 36%),
+        linear-gradient(180deg, #0f1621 0%, #091018 100%);
+      font-family: SFMono-Regular, ui-monospace, Menlo, Monaco, monospace;
     }
-    #name-label {
-      font-size: 14px;
+    .shell {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: calc(100vh - 16px);
+    }
+    .toolbar {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      border: 1px solid var(--panel-border);
+      border-radius: 14px;
+      background: linear-gradient(180deg, var(--panel-surface), var(--panel-surface-strong));
+      padding: 12px;
+    }
+    .toolbar[hidden] {
+      display: none;
+    }
+    .toolbar-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .toolbar-field {
+      min-width: 0;
+      flex: 1 1 240px;
+    }
+    .toolbar-label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--panel-accent-strong);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .toolbar-input,
+    .toolbar-button,
+    .toolbar-range,
+    .toolbar-toggle {
+      font: inherit;
+      font-size: 12px;
+    }
+    .toolbar-input {
+      width: 100%;
+      appearance: none;
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      background: var(--tp-input-background-color);
+      color: var(--tp-input-foreground-color);
+      outline: none;
+      padding: 9px 10px;
+    }
+    .toolbar-input:focus {
+      border-color: rgba(143, 195, 255, 0.6);
+      background: var(--tp-input-background-color-active);
+    }
+    .toolbar-scrub {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+    }
+    .toolbar-range {
+      flex: 1 1 auto;
+      margin: 0;
+      accent-color: var(--panel-accent);
+    }
+    .toolbar-time {
+      min-width: 108px;
+      color: var(--panel-accent-strong);
+      font-size: 11px;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .toolbar-button {
+      appearance: none;
+      border: 1px solid rgba(9, 15, 24, 0.12);
+      border-radius: 999px;
+      background: linear-gradient(180deg, var(--tp-button-background-color), #c9d4e1);
+      color: var(--tp-button-foreground-color);
+      cursor: pointer;
       font-weight: 600;
-      margin-bottom: 8px;
-      color: #e0e0e0;
-      padding: 4px 8px;
-      background: #1e2124;
-      border-radius: 4px;
-      display: inline-block;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      padding: 9px 14px;
+      white-space: nowrap;
     }
-    #name-label:empty { display: none; }
-    #root { display: flex; justify-content: center; }
+    .toolbar-button:hover {
+      background: linear-gradient(180deg, var(--tp-button-background-color-hover), #d8e1ec);
+    }
+    .toolbar-button:active {
+      background: linear-gradient(180deg, var(--tp-button-background-color-active), #b6c2d1);
+    }
+    .toolbar-button[disabled] {
+      cursor: default;
+      opacity: 0.55;
+    }
+    .toolbar-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 12px;
+      border: 1px solid var(--panel-border);
+      border-radius: 999px;
+      background: var(--tp-container-background-color);
+      color: var(--tp-container-foreground-color);
+      cursor: pointer;
+      user-select: none;
+    }
+    .toolbar-toggle:hover {
+      background: var(--tp-container-background-color-hover);
+    }
+    .toolbar-toggle input {
+      margin: 0;
+    }
+    .custom-select {
+      position: relative;
+      width: 100%;
+    }
+    .custom-select-trigger {
+      position: relative;
+      width: 100%;
+      appearance: none;
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      background: var(--tp-input-background-color);
+      color: var(--tp-input-foreground-color);
+      cursor: pointer;
+      padding: 9px 34px 9px 10px;
+      text-align: left;
+    }
+    .custom-select-trigger::after {
+      content: '\\25BE';
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--panel-muted);
+      font-size: 10px;
+    }
+    .custom-select-menu {
+      position: absolute;
+      z-index: 20;
+      top: calc(100% + 6px);
+      left: 0;
+      right: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 6px;
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      background: var(--panel-surface-strong);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.32);
+    }
+    .custom-select-menu[hidden] {
+      display: none;
+    }
+    .custom-select-option {
+      appearance: none;
+      width: 100%;
+      border: none;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--panel-fg);
+      cursor: pointer;
+      font: inherit;
+      font-size: 12px;
+      padding: 8px 10px;
+      text-align: left;
+    }
+    .custom-select-option:hover,
+    .custom-select-option[data-selected='true'] {
+      background: rgba(143, 195, 255, 0.16);
+      color: var(--panel-accent-strong);
+    }
+    #root {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      justify-content: center;
+    }
+    animation-editor-component {
+      display: block;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    @media (max-width: 640px) {
+      body {
+        padding: 6px;
+      }
+      .toolbar {
+        padding: 10px;
+      }
+      .toolbar-row {
+        align-items: stretch;
+      }
+      .toolbar-field {
+        flex-basis: 100%;
+      }
+      .toolbar-button {
+        flex: 1 1 auto;
+        justify-content: center;
+      }
+    }
   </style>
 </head>
 <body>
-  <div id="name-label">${name ?? ''}</div>
-  <div id="root"></div>
+  <div class="shell">
+    <div class="toolbar" id="toolbar" ${showManagement ? '' : 'hidden'}>
+      <div class="toolbar-row">
+        <div class="toolbar-field">
+          <label class="toolbar-label">Animation</label>
+          <div class="custom-select" id="animation-select">
+            <button type="button" class="custom-select-trigger" id="animation-trigger">${name ?? ''}</button>
+            <div class="custom-select-menu" id="animation-menu" hidden></div>
+          </div>
+        </div>
+        <label class="toolbar-toggle">
+          <input type="checkbox" id="sync-toggle" />
+          <span>Sync to Tweakpane</span>
+        </label>
+      </div>
+      <div class="toolbar-row">
+        <div class="toolbar-field">
+          <label class="toolbar-label" for="new-animation-name">New Animation</label>
+          <input class="toolbar-input" id="new-animation-name" type="text" placeholder="intro" />
+        </div>
+        <button type="button" class="toolbar-button" id="new-animation-btn">New</button>
+        <button type="button" class="toolbar-button" id="snapshot-btn">Snapshot</button>
+        <button type="button" class="toolbar-button" id="delete-btn">Delete</button>
+      </div>
+      <div class="toolbar-row">
+        <button type="button" class="toolbar-button" id="play-toggle-btn">Play</button>
+        <div class="toolbar-field">
+          <label class="toolbar-label" for="scrub-slider">Playhead</label>
+          <div class="toolbar-scrub">
+            <input
+              class="toolbar-range"
+              id="scrub-slider"
+              type="range"
+              min="0"
+              max="1"
+              step="${String(1 / SCRUB_STEPS)}"
+              value="0"
+            />
+            <div class="toolbar-time" id="scrub-readout">0.000 / 1.000</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="root"></div>
+  </div>
   <script type="module">
+    const wsUrl = ${wsUrlLiteral}
+    const sessionId = ${sessionIdLiteral}
+    const initialAnimationName = ${initialAnimationName}
+    const showManagement = ${managementVisibleLiteral}
+    const originalWebSocket = window.WebSocket
+    const managementSocketRef = { current: null }
+    const managementState = {
+      names: initialAnimationName ? [initialAnimationName] : [],
+      current: initialAnimationName,
+      syncEnabled: true,
+      playback: {
+        playing: false,
+        currentTime: 0,
+        duration: ${String(DEFAULT_PLAYBACK_DURATION)},
+      },
+    }
+
+    const parseManagementMessage = (data) => {
+      try {
+        const message = JSON.parse(data)
+        if (
+          message?.type === 'animationList' ||
+          message?.type === 'syncState' ||
+          message?.type === 'playbackState'
+        ) {
+          return message
+        }
+      } catch {
+        return null
+      }
+      return null
+    }
+
+    const updateUiFromManagementState = () => {
+      if (!showManagement) return
+
+      if (
+        !animationTrigger ||
+        !animationMenu ||
+        !syncToggle ||
+        !deleteButton ||
+        !playToggleButton ||
+        !scrubSlider ||
+        !scrubReadout
+      ) {
+        return
+      }
+
+      animationTrigger.textContent = managementState.current || '(select animation)'
+      animationMenu.replaceChildren(
+        ...managementState.names.map((name) => {
+          const option = document.createElement('button')
+          option.type = 'button'
+          option.className = 'custom-select-option'
+          option.dataset.selected = String(name === managementState.current)
+          option.textContent = name
+          option.addEventListener('click', () => {
+            animationMenu.hidden = true
+            sendManagementMessage({ type: 'switchAnimation', name })
+          })
+          return option
+        }),
+      )
+
+      syncToggle.checked = managementState.syncEnabled
+      deleteButton.disabled = managementState.names.length <= 1
+
+      const duration = Math.max(0, Number.isFinite(managementState.playback.duration) ? managementState.playback.duration : 0)
+      const currentTime = Math.min(
+        Math.max(0, Number.isFinite(managementState.playback.currentTime) ? managementState.playback.currentTime : 0),
+        duration,
+      )
+      const sliderMax = Math.max(duration, ${String(DEFAULT_PLAYBACK_DURATION)})
+      const sliderStep = Math.max(sliderMax / ${String(SCRUB_STEPS)}, Number.EPSILON)
+      scrubSlider.max = String(sliderMax)
+      scrubSlider.step = String(sliderStep)
+      scrubSlider.value = String(currentTime)
+      playToggleButton.textContent = managementState.playback.playing ? 'Pause' : 'Play'
+      scrubReadout.textContent = currentTime.toFixed(3) + ' / ' + duration.toFixed(3)
+    }
+
+    const handleManagementMessage = (message) => {
+      if (message.type === 'animationList') {
+        managementState.names = message.names
+        managementState.current = message.current
+      } else if (message.type === 'syncState') {
+        managementState.syncEnabled = !!message.enabled
+      } else if (message.type === 'playbackState') {
+        managementState.playback.playing = !!message.playing
+        managementState.playback.currentTime = Number(message.currentTime) || 0
+        managementState.playback.duration = Number(message.duration) || 0
+      }
+
+      updateUiFromManagementState()
+    }
+
+    class ManagedAnimationEditorSocket extends originalWebSocket {
+      #onmessageHandler = null
+      #interceptsManagement = false
+
+      constructor(url, protocols) {
+        super(url, protocols)
+        this.#interceptsManagement = String(url) === wsUrl
+
+        if (this.#interceptsManagement) {
+          managementSocketRef.current = this
+          super.addEventListener('close', () => {
+            if (managementSocketRef.current === this) {
+              managementSocketRef.current = null
+            }
+          })
+        }
+
+        super.addEventListener('message', (event) => {
+          if (this.#interceptsManagement) {
+            const managementMessage = parseManagementMessage(event.data)
+            if (managementMessage) {
+              handleManagementMessage(managementMessage)
+              return
+            }
+          }
+
+          this.#onmessageHandler?.call(this, event)
+        })
+      }
+
+      set onmessage(handler) {
+        this.#onmessageHandler = handler
+      }
+
+      get onmessage() {
+        return this.#onmessageHandler
+      }
+    }
+
+    window.WebSocket = ManagedAnimationEditorSocket
+
+    const sendManagementMessage = (message) => {
+      const socket = managementSocketRef.current
+      if (!socket || socket.readyState !== originalWebSocket.OPEN) return false
+      socket.send(JSON.stringify(message))
+      return true
+    }
+
     await import('/static/animation-editor.js')
     await customElements.whenDefined('animation-editor-component')
 
     const rootEl = document.getElementById('root')
+    const animationTrigger = document.getElementById('animation-trigger')
+    const animationMenu = document.getElementById('animation-menu')
+    const newAnimationInput = document.getElementById('new-animation-name')
+    const newAnimationButton = document.getElementById('new-animation-btn')
+    const snapshotButton = document.getElementById('snapshot-btn')
+    const deleteButton = document.getElementById('delete-btn')
+    const syncToggle = document.getElementById('sync-toggle')
+    const playToggleButton = document.getElementById('play-toggle-btn')
+    const scrubSlider = document.getElementById('scrub-slider')
+    const scrubReadout = document.getElementById('scrub-readout')
     const editor = document.createElement('animation-editor-component')
 
-    editor.setAttribute('ws-address', '${wsUrl}')
+    editor.setAttribute('ws-address', wsUrl)
     editor.setAttribute('interactive', '${interactive}')
 
     rootEl.appendChild(editor)
-    console.log('[Animation Editor] Mounted', { sessionId: '${sessionId}', wsUrl: '${wsUrl}' })
+    updateUiFromManagementState()
+
+    if (showManagement) {
+      animationTrigger?.addEventListener('click', () => {
+        if (!animationMenu) return
+        animationMenu.hidden = !animationMenu.hidden
+      })
+
+      document.addEventListener('click', (event) => {
+        if (animationMenu && !animationMenu.hidden && !document.getElementById('animation-select')?.contains(event.target)) {
+          animationMenu.hidden = true
+        }
+      })
+
+      const createAnimation = () => {
+        const name = newAnimationInput.value.trim()
+        if (!name) return
+        if (sendManagementMessage({ type: 'createAnimation', name })) {
+          newAnimationInput.value = ''
+        }
+      }
+
+      newAnimationButton?.addEventListener('click', createAnimation)
+      newAnimationInput?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          createAnimation()
+        }
+      })
+
+      snapshotButton?.addEventListener('click', () => {
+        sendManagementMessage({ type: 'snapshot' })
+      })
+
+      deleteButton?.addEventListener('click', () => {
+        if (managementState.current) {
+          sendManagementMessage({ type: 'deleteAnimation', name: managementState.current })
+        }
+      })
+
+      syncToggle?.addEventListener('change', () => {
+        sendManagementMessage({ type: 'toggleSync', enabled: syncToggle.checked })
+      })
+
+      playToggleButton?.addEventListener('click', () => {
+        sendManagementMessage({ type: 'setPlaying', playing: !managementState.playback.playing })
+      })
+
+      scrubSlider?.addEventListener('input', () => {
+        const time = Number(scrubSlider.value)
+        sendManagementMessage({ type: 'setCurrentTime', time })
+      })
+    }
+
+    console.log('[Animation Editor] Mounted', { sessionId, wsUrl })
   </script>
 </body>
 </html>`
@@ -306,7 +1090,7 @@ function createAnimationEditorAdapter(): ComponentAdapter<
       return {
         interactive: session.data.type === 'bound',
         name: session.data.type === 'bound' ? session.data.animationName : undefined,
-        duration: 16
+        duration: session.data.management?.playbackRef?.duration ?? DEFAULT_PLAYBACK_DURATION,
       }
     },
 
@@ -316,6 +1100,9 @@ function createAnimationEditorAdapter(): ComponentAdapter<
       _bridge: AnimationBridge
     ): AnimationEditorWebSocketClient {
       const client = new AnimationEditorWebSocketClient(socket)
+      if (session.data.trackCallbacks) {
+        client.setTrackCallbacks(session.data.trackCallbacks)
+      }
 
       client.onConnectionReady = () => {
         let tracks: TrackData[] | undefined
@@ -334,7 +1121,17 @@ function createAnimationEditorAdapter(): ComponentAdapter<
           client.setTracks(tracks, trackOrder)
         }
 
-        client.setConfig({ interactive: session.data.type === 'bound' })
+        const playback = session.data.management?.playbackRef
+        client.setConfig({
+          interactive: session.data.type === 'bound',
+          duration: playback?.duration,
+        })
+        if (playback) {
+          const currentTime = clampPlaybackTime(playback)
+          client.scrubToTime(currentTime)
+          client.setLivePlayhead(currentTime)
+        }
+        sendManagementState(session)
       }
 
       client.onTracksUpdate = (tracks, trackOrder, source) => {
@@ -351,6 +1148,10 @@ function createAnimationEditorAdapter(): ComponentAdapter<
         if (session.data.type === 'bound') {
           session.data.trackMap!.unbind(session.data.animationName!, session.id)
         }
+      }
+
+      client.onManagementMessage = (message) => {
+        handleManagementMessage(message, session, _bridge)
       }
 
       return client
@@ -370,6 +1171,8 @@ function createAnimationEditorAdapter(): ComponentAdapter<
         },
 
         disconnect(): void {
+          session.data.nativeWindow?.destroy()
+          session.data.nativeWindow = undefined
           if (session.data.type === 'bound') {
             session.data.trackMap!.unbind(session.data.animationName!, session.id)
           }
@@ -382,16 +1185,35 @@ function createAnimationEditorAdapter(): ComponentAdapter<
         },
 
         scrubToTime(time: number): void {
+          const playback = session.data.management?.playbackRef
+          if (playback) {
+            playback.currentTime = time
+            clampPlaybackTime(playback)
+            sendPlaybackState(session)
+          }
           session.client?.scrubToTime(time)
         },
 
+        scrubAndEvaluate(time: number): void {
+          const playback = session.data.management?.playbackRef
+          if (playback) {
+            playback.currentTime = time
+            clampPlaybackTime(playback)
+            sendPlaybackState(session)
+          }
+          session.client?.scrubAndEvaluate(time)
+        },
+
         setCallbacks(callbacks: TrackCallbacks): void {
+          session.data.trackCallbacks = callbacks
           session.client?.setTrackCallbacks(callbacks)
         }
       }
     },
 
     onSessionCleanup(session: AnimationSession): void {
+      session.data.nativeWindow?.destroy()
+      session.data.nativeWindow = undefined
       session.client?.disconnect()
     }
   }
@@ -406,10 +1228,15 @@ export interface AnimationEditorBridgeAPI {
   show(tracks: TrackData[], trackOrder?: string[]): void
   showFromInputs(inputs: TrackInput[]): void
   showBound(name: string): AnimationEditorHandle
+  showBoundInWindow(gpuWindow: GpuWindow, name: string, options?: AnimationEditorWindowOptions): AnimationEditorHandle
   shutdown(): void
 }
 
-export function createAnimationEditorBridge(): AnimationEditorBridgeAPI {
+export interface AnimationEditorBridgeOptions {
+  readonly management?: AnimationEditorManagementOptions
+}
+
+export function createAnimationEditorBridge(options?: AnimationEditorBridgeOptions): AnimationEditorBridgeAPI {
   const adapter = createAnimationEditorAdapter()
   const bridge = new DenoNotebookBridge(adapter)
   const tracks = new TrackMap()
@@ -435,6 +1262,7 @@ export function createAnimationEditorBridge(): AnimationEditorBridgeAPI {
           type: 'bound',
           trackMap: tracks,
           animationName: name,
+          management: options?.management,
         }
         bridge.registerSession(sessionId, sessionData)
         tracks.bind(name, sessionId)
@@ -467,7 +1295,8 @@ export function createAnimationEditorBridge(): AnimationEditorBridgeAPI {
       const sessionData: AnimationSessionData = {
         type: 'bound',
         trackMap: tracks,
-        animationName: name
+        animationName: name,
+        management: options?.management,
       }
 
       bridge.registerSession(sessionId, sessionData)
@@ -478,6 +1307,45 @@ export function createAnimationEditorBridge(): AnimationEditorBridgeAPI {
       registerInspectorEntry(name)
 
       const session = bridge.getSession(sessionId)!
+      return adapter.createHandle(session, bridge)
+    },
+
+    showBoundInWindow(gpuWindow: GpuWindow, name: string, windowOptions?: AnimationEditorWindowOptions): AnimationEditorHandle {
+      const sessionId = bridge.generateSessionId()
+      const sessionData: AnimationSessionData = {
+        type: 'bound',
+        trackMap: tracks,
+        animationName: name,
+        management: options?.management,
+      }
+
+      bridge.registerSession(sessionId, sessionData)
+      tracks.bind(name, sessionId)
+
+      const editorUrl = bridge.buildEditorUrl(sessionId, 'loopback')
+      if (!editorUrl) {
+        throw new Error(`Could not build animation editor URL for session ${sessionId}`)
+      }
+
+      const panel = new WindowPanel({
+        lib: gpuWindow._lib,
+        parentState: gpuWindow._state,
+        options: {
+          panelWidth: windowOptions?.panelWidth ?? 1100,
+          panelHeight: windowOptions?.panelHeight ?? 760,
+          title: windowOptions?.title ?? 'Animation Editor',
+          toggleKey: '__animation_editor_unused_toggle__',
+        },
+      })
+      panel.init(renderNativeWindowHtml(editorUrl))
+
+      const session = bridge.getSession(sessionId)!
+      session.data.nativeWindow = {
+        destroy: attachNativePanelToWindow(panel, gpuWindow),
+      }
+
+      registerInspectorEntry(name)
+
       return adapter.createHandle(session, bridge)
     },
 

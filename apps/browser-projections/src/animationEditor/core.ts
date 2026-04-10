@@ -116,11 +116,11 @@ export class Core {
     this.tracksById.set(id, runtime)
     this.orderedTrackIds.push(id)
 
-    // Update duration if needed
+    // Expand the timeline only to the furthest keyframe time.
     if (times.length > 0) {
       const maxTime = times[times.length - 1]
-      if (maxTime + 1 > this.duration) {
-        this.duration = maxTime + 1
+      if (maxTime > this.duration) {
+        this.duration = maxTime
       }
     }
 
@@ -251,7 +251,7 @@ export class Core {
     const elem: FuncElementData = {
       id,
       time: resolvedTime,
-      value: { funcName: 'func', args: [] },
+      value: { funcName: track.def.name, args: [] },
     }
     track.elementData.push(elem)
     this.rebuildArrays(track)
@@ -394,7 +394,7 @@ export class Core {
     const track = this.tracksById.get(trackId)
     if (!track || track.def.fieldType !== 'enum') return []
 
-    const values = new Set<string>()
+    const values = new Set<string>(track.def.enumOptions ?? [])
     for (const elem of track.elementData as EnumElement[]) {
       values.add(elem.value)
     }

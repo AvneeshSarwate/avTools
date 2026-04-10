@@ -205,7 +205,7 @@ function parseBinaryLayout(buffer: Uint8Array, byteLength: number): TextLayoutRe
 export class NativeTextEngine {
   private readonly _lib: TextEngineLibrary;
   private _enginePtr: Deno.PointerValue;
-  private _layoutBuffer: Uint8Array = new Uint8Array(65536);
+  private _layoutBuffer: Uint8Array<ArrayBuffer> = new Uint8Array(new ArrayBuffer(65536));
   private _layoutCache = new Map<string, TextLayoutResult>();
   private static readonly _LAYOUT_CACHE_MAX = 16384;
 
@@ -300,7 +300,7 @@ export class NativeTextEngine {
       result = parseBinaryLayout(this._layoutBuffer, needed);
     } else {
       // Overflow: grow the buffer and make one more call.
-      this._layoutBuffer = new Uint8Array(needed);
+      this._layoutBuffer = new Uint8Array(new ArrayBuffer(needed));
       const grownPtr = Deno.UnsafePointer.of(this._layoutBuffer);
       const written = this._lib.symbols.text_engine_layout_json(
         this._enginePtr,
