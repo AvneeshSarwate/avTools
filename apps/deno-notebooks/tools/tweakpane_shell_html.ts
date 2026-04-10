@@ -219,6 +219,78 @@ export function renderTweakpaneShellHtml(options: TweakpaneShellHtmlOptions): st
         justify-self: center;
       }
     }
+
+    /* Custom dropdown replacement for native <select> */
+    .tp-custom-select {
+      position: relative;
+      display: inline-block;
+      width: 100%;
+    }
+    .tp-custom-select-trigger {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--tp-input-background-color);
+      border: none;
+      border-radius: var(--tp-blade-border-radius);
+      color: var(--tp-input-foreground-color);
+      cursor: pointer;
+      font: inherit;
+      font-size: 11px;
+      padding: 0 20px 0 4px;
+      width: 100%;
+      height: 100%;
+      text-align: left;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tp-custom-select-trigger::after {
+      content: '\\25BE';
+      position: absolute;
+      right: 6px;
+      top: 50%;
+      transform: translateY(-50%);
+      pointer-events: none;
+      font-size: 10px;
+      color: var(--tp-label-foreground-color);
+    }
+    .tp-custom-select-trigger:hover {
+      background: var(--tp-input-background-color-hover);
+    }
+    .tp-custom-select-menu {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      z-index: 9999;
+      background: var(--tp-input-background-color-active);
+      border: 1px solid var(--panel-border);
+      border-radius: var(--tp-blade-border-radius);
+      margin-top: 2px;
+      max-height: 200px;
+      overflow-y: auto;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    }
+    .tp-custom-select-menu[hidden] {
+      display: none;
+    }
+    .tp-custom-select-option {
+      color: var(--tp-input-foreground-color);
+      cursor: pointer;
+      font: inherit;
+      font-size: 11px;
+      padding: 4px 6px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .tp-custom-select-option:hover {
+      background: var(--tp-container-background-color-hover);
+    }
+    .tp-custom-select-option[data-selected] {
+      background: var(--tp-container-background-color-active);
+      color: var(--panel-accent-strong);
+    }
   </style>
 </head>
 <body>
@@ -350,6 +422,99 @@ export function renderTweakpaneShellHtml(options: TweakpaneShellHtmlOptions): st
     window.addEventListener('unhandledrejection', (event) => {
       reportError('window.unhandledrejection', event.reason ?? 'Unhandled rejection');
     });
+
+    // Replace native <select> elements with custom web-based dropdowns.
+    // WKWebView on macOS renders <select> popups as native Cocoa menus,
+    // which enter a modal tracking loop and freeze the main thread.
+    function replaceSelect(select) {
+      if (select.dataset.customized) return;
+      select.dataset.customized = '1';
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'tp-custom-select';
+
+      const trigger = document.createElement('div');
+      trigger.className = 'tp-custom-select-trigger';
+
+      const menu = document.createElement('div');
+      menu.className = 'tp-custom-select-menu';
+      menu.hidden = true;
+
+      function buildOptions() {
+        menu.innerHTML = '';
+        for (const opt of select.options) {
+          const div = document.createElement('div');
+          div.className = 'tp-custom-select-option';
+          div.textContent = opt.textContent;
+          div.dataset.value = opt.value;
+          if (opt.selected) div.dataset.selected = '';
+          div.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            select.value = opt.value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            menu.hidden = true;
+            syncLabel();
+          });
+          menu.appendChild(div);
+        }
+      }
+
+      function syncLabel() {
+        const selected = select.options[select.selectedIndex];
+        trigger.textContent = selected ? selected.textContent : '';
+        for (const el of menu.children) {
+          if (el.dataset.value === select.value) el.dataset.selected = '';
+          else delete el.dataset.selected;
+        }
+      }
+
+      buildOptions();
+      syncLabel();
+
+      trigger.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!menu.hidden) {
+          menu.hidden = true;
+          return;
+        }
+        buildOptions();
+        syncLabel();
+        menu.hidden = false;
+      });
+
+      document.addEventListener('mousedown', (e) => {
+        if (!wrapper.contains(e.target)) {
+          menu.hidden = true;
+        }
+      });
+
+      // Watch for programmatic changes to the <select>
+      const observer = new MutationObserver(() => {
+        buildOptions();
+        syncLabel();
+      });
+      observer.observe(select, { childList: true, subtree: true, attributes: true });
+
+      // Sync when select value changes programmatically
+      select.addEventListener('change', syncLabel);
+
+      select.style.display = 'none';
+      select.parentNode.insertBefore(wrapper, select);
+      wrapper.appendChild(trigger);
+      wrapper.appendChild(menu);
+      wrapper.appendChild(select);
+    }
+
+    function replaceAllSelects() {
+      document.querySelectorAll('select:not([data-customized])').forEach(replaceSelect);
+    }
+
+    // Observe the DOM for new <select> elements (tweakpane creates them dynamically)
+    const selectObserver = new MutationObserver(() => replaceAllSelects());
+    selectObserver.observe(document.body, { childList: true, subtree: true });
+    replaceAllSelects();
 
     import(bundleImportSpecifier)
       .then((mod) => {
