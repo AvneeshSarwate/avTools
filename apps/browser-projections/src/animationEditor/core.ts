@@ -84,16 +84,16 @@ export class Core {
     const elements: (number | string | FuncElement)[] = []
 
     for (const datum of sortedData) {
-      const id = generateElementId()
+      const datumId = 'id' in datum && typeof datum.id === 'string' ? datum.id : generateElementId()
       times.push(datum.time)
       elements.push(datum.element)
 
       if (def.fieldType === 'number') {
-        elementData.push({ id, time: datum.time, value: datum.element as number })
+        elementData.push({ id: datumId, time: datum.time, value: datum.element as number })
       } else if (def.fieldType === 'enum') {
-        elementData.push({ id, time: datum.time, value: datum.element as string })
+        elementData.push({ id: datumId, time: datum.time, value: datum.element as string })
       } else {
-        elementData.push({ id, time: datum.time, value: datum.element as FuncElement })
+        elementData.push({ id: datumId, time: datum.time, value: datum.element as FuncElement })
       }
     }
 
@@ -101,7 +101,7 @@ export class Core {
     const low = def.low ?? DEFAULT_NUMBER_LOW
     const high = def.high ?? DEFAULT_NUMBER_HIGH
 
-    const id = generateTrackId()
+    const id = typeof def.id === 'string' ? def.id : generateTrackId()
     const runtime: TrackRuntime = {
       id,
       def,

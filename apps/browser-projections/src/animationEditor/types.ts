@@ -13,10 +13,10 @@ export type FuncElement = {
   args: unknown[]
 }
 
-// Input types (from user, no IDs required)
-export type NumberDatum = { time: number; element: number }
-export type EnumDatum = { time: number; element: string }
-export type FuncDatum = { time: number; element: FuncElement }
+// Input types. IDs are optional so imported remote state can preserve identity.
+export type NumberDatum = { id?: string; time: number; element: number }
+export type EnumDatum = { id?: string; time: number; element: string }
+export type FuncDatum = { id?: string; time: number; element: FuncElement }
 export type TrackDatum = NumberDatum | EnumDatum | FuncDatum
 
 // Runtime types (with IDs for editing)
@@ -26,6 +26,7 @@ export type FuncElementData = { id: string; time: number; value: FuncElement }
 export type TrackElement = NumberElement | EnumElement | FuncElementData
 
 export type TrackDef = {
+  id?: string
   name: string
   fieldType: TrackType
   data: TrackDatum[]

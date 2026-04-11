@@ -140,18 +140,19 @@ function trackDataToCoreTracks(tracks: TrackData[], trackOrder: string[]) {
 
     // Create track definition (without callbacks - those are on Deno side)
     const def: TrackDef = {
+      id: trackData.id,
       name: trackData.name,
       fieldType: trackData.fieldType,
       data: trackData.elementData.map(elem => {
         if (trackData.fieldType === 'number') {
           const e = elem as { time: number; value: number }
-          return { time: e.time, element: e.value }
+          return { id: e.id, time: e.time, element: e.value }
         } else if (trackData.fieldType === 'enum') {
           const e = elem as { time: number; value: string }
-          return { time: e.time, element: e.value }
+          return { id: e.id, time: e.time, element: e.value }
         } else {
           const e = elem as { time: number; value: { funcName: string; args: unknown[] } }
-          return { time: e.time, element: e.value }
+          return { id: e.id, time: e.time, element: e.value }
         }
       }),
       low: trackData.low,
@@ -454,6 +455,7 @@ defineExpose({
       :window-start="windowStart"
       :window-end="windowEnd"
       :current-time="currentTime"
+      :data-version="trackDataVersion"
       :initial-enabled-track-ids="selectedTrackIdsForEdit"
     />
 

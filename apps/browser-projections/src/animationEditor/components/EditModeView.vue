@@ -26,6 +26,7 @@ const props = defineProps<{
   windowStart: number
   windowEnd: number
   currentTime: number
+  dataVersion: number
   initialEnabledTrackIds?: Set<string>
 }>()
 
@@ -57,7 +58,10 @@ const lanesWidth = ref(0)
 const precisionBtnPosition = ref<{ x: number; y: number; type: TrackType } | null>(null)
 
 // Computed tracks by type
-const allTracks = computed(() => props.core.getOrderedTracks())
+const allTracks = computed(() => {
+  void props.dataVersion
+  return props.core.getOrderedTracks()
+})
 
 const numberTracks = computed(() => {
   const ids = editEnabledTrackIds.value
@@ -129,6 +133,12 @@ watch(lanesContainerRef, (el) => {
 // Watch for window changes to trigger lane rebuilds
 watch(
   () => [props.windowStart, props.windowEnd],
+  () => incrementRenderVersion()
+)
+
+// Rebind edit-mode views when the parent replaces core track/runtime objects.
+watch(
+  () => props.dataVersion,
   () => incrementRenderVersion()
 )
 
