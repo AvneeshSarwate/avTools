@@ -52,7 +52,7 @@ Every `.vue` file in `components/` carries `data-component="ComponentName"` on i
 | `NumberLane`          | Edit-mode Konva lane for number tracks                     |
 | `EnumLane`            | Edit-mode Konva lane for enum tracks                       |
 | `FuncLane`            | Edit-mode Konva lane for func tracks                       |
-| `PrecisionEditor`     | Precision edit modal (teleported to `<body>`)              |
+| `PrecisionEditor`     | Precision edit modal (teleported into `AnimationEditorView`'s local overlay root) |
 | `ToastContainer`      | Bottom-right toast stack                                   |
 
 Reading the ancestry chain: in dev tools, right-click an element → Inspect → walk up the Elements panel tree collecting `data-component` values. That's the file list to open.
@@ -68,6 +68,7 @@ Grouped by component.
 | `view-controls`         | The right-aligned group inside `control-header`, visible only when `data-mode="view"`     |
 | `edit-controls`         | The right-aligned group inside `control-header`, visible only when `data-mode="edit"`     |
 | `editor-body`           | Wrapper below the control header containing `TimeRibbon`, mode content, and the resize handle |
+| `overlay-root`          | Empty local mount target for teleported overlays such as `PrecisionEditor`                |
 | `track-list-container`  | View-mode scroll container                                                                |
 
 ### `TimeRibbon`
@@ -119,6 +120,8 @@ Note: undo/redo used to live here as a `.sidebar-header` strip. They moved to `c
 | `precision-field-enum-value`    | Enum value select row (enum tracks only)                         |
 | `precision-field-func-name`     | Function name input row (func tracks only)                       |
 | `precision-func-args`           | Arguments subsection (func tracks only)                          |
+
+Note: `PrecisionEditor` is teleported into `AnimationEditorView [data-region="overlay-root"]`, not to `document.body`. That keeps its scoped styles working both in the normal browser app and in the custom-element/shadow-root standalone window.
 
 ### `ToastContainer`
 | Region            | Description                          |
@@ -217,7 +220,7 @@ A single `sidebarWidth` ref in `AnimationEditorView` drives the name-column widt
 Components that need the current width read `var(--sidebar-width)` in their scoped CSS (see `TrackRow.vue` `.name-cell` and `EditModeView.vue` `.sidebar-column`). `TimeRibbon` receives it explicitly via the `spacer-width` prop since it's the piece that's otherwise reusable outside this hierarchy.
 
 - **Drag**: `data-testid="sidebar-resize-handle"` — a 5px wide `col-resize` overlay inside `.editor-body`, positioned at `left: (sidebarWidth - 2)px`. Pointer-down starts the drag, global mousemove updates the ref, mouseup persists.
-- **Clamp**: `[120, 500]` px.
+- **Clamp**: `[120, 500]` px, additionally capped by the current editor width so at least 180px of timeline remains visible.
 - **Persistence**: `localStorage` key `animationEditor.sidebarWidth`. Load at module init, save on `mouseup`.
 - **Initial value**: falls back to `NAME_COLUMN_WIDTH` (180) if nothing is stored.
 

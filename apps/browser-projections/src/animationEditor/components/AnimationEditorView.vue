@@ -13,10 +13,14 @@ import { AnimationEditorWebSocketController, coreToTrackData, type TrackData } f
 
 const MIN_SIDEBAR_WIDTH = 120
 const MAX_SIDEBAR_WIDTH = 500
+const MIN_TIMELINE_WIDTH = 180
 const SIDEBAR_WIDTH_STORAGE_KEY = 'animationEditor.sidebarWidth'
 
-function clampSidebarWidth(w: number): number {
-  return Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, w))
+function clampSidebarWidth(w: number, availableWidth?: number): number {
+  const widthLimit = Number.isFinite(availableWidth)
+    ? Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, (availableWidth as number) - MIN_TIMELINE_WIDTH))
+    : MAX_SIDEBAR_WIDTH
+  return Math.max(MIN_SIDEBAR_WIDTH, Math.min(widthLimit, w))
 }
 
 function loadStoredSidebarWidth(): number {
@@ -92,6 +96,9 @@ const hideEmptyTracks = ref(false)
 
 // Draggable sidebar / name-column width (shared across view and edit modes)
 const sidebarWidth = ref(loadStoredSidebarWidth())
+const editorBodyRef = ref<HTMLElement | null>(null)
+const editorBodyWidth = ref<number | undefined>(undefined)
+const overlayRootRef = ref<HTMLElement | null>(null)
 
 // ResizeObserver reference for cleanup
 let resizeObserver: ResizeObserver | null = null
@@ -110,6 +117,7 @@ provide('windowStart', windowStart)
 provide('windowEnd', windowEnd)
 provide('searchFilter', searchFilter)
 provide('selectedTrackIdsForEdit', selectedTrackIdsForEdit)
+provide('animationEditorOverlayRoot', overlayRootRef)
 
 // Toggle track selection for edit mode
 function toggleTrackSelection(trackId: string) {
@@ -277,15 +285,25 @@ function sendStateUpdate(source?: 'tracks' | 'time' | 'window' | 'other') {
 
 // Update track-list container width on resize
 onMounted(() => {
-  const updateWidth = () => {
+  const updateLayoutMetrics = () => {
+    if (editorBodyRef.value) {
+      editorBodyWidth.value = editorBodyRef.value.clientWidth
+      const clampedWidth = clampSidebarWidth(sidebarWidth.value, editorBodyWidth.value)
+      if (clampedWidth !== sidebarWidth.value) {
+        sidebarWidth.value = clampedWidth
+      }
+    }
     if (trackListRef.value) {
       trackListContainerWidth.value = trackListRef.value.clientWidth
     }
   }
 
-  updateWidth()
+  updateLayoutMetrics()
 
-  resizeObserver = new ResizeObserver(updateWidth)
+  resizeObserver = new ResizeObserver(updateLayoutMetrics)
+  if (editorBodyRef.value) {
+    resizeObserver.observe(editorBodyRef.value)
+  }
   if (trackListRef.value) {
     resizeObserver.observe(trackListRef.value)
   }
@@ -435,7 +453,7 @@ function onResizeStart(e: MouseEvent) {
 
 function onResizeMove(e: MouseEvent) {
   const delta = e.clientX - resizeStartX
-  sidebarWidth.value = clampSidebarWidth(resizeStartWidth + delta)
+  sidebarWidth.value = clampSidebarWidth(resizeStartWidth + delta, editorBodyWidth.value)
 }
 
 function onResizeEnd() {
@@ -503,7 +521,7 @@ defineExpose({
     </div>
 
     <!-- Body: ribbon + content + resize handle (handle is scoped here so it spans from ribbon to bottom, not over the control header) -->
-    <div class="editor-body" data-region="editor-body">
+    <div class="editor-body" data-region="editor-body" ref="editorBodyRef">
       <!-- Time ribbon (always visible, controls zoom/pan) -->
       <TimeRibbon
         :duration="core.duration"
@@ -548,6 +566,9 @@ defineExpose({
       ></div>
     </div>
 
+    <!-- Local overlay target for teleported UI so it stays inside the editor shadow root -->
+    <div ref="overlayRootRef" class="overlay-root" data-region="overlay-root"></div>
+
     <!-- Toast notifications -->
     <ToastContainer />
   </div>
@@ -562,6 +583,9 @@ defineExpose({
   color: #c8c8c8;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   height: 100%;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -671,12 +695,20 @@ defineExpose({
   display: flex;
   flex-direction: column;
   position: relative;
+  width: 100%;
+  min-width: 0;
   overflow: hidden;
+}
+
+.overlay-root {
+  position: relative;
+  z-index: 200;
 }
 
 .track-list-container {
   flex: 1;
   position: relative;
+  min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
 }

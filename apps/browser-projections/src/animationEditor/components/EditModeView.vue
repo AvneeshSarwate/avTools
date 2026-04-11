@@ -613,12 +613,18 @@ const precisionBtnStyle = computed(() => {
   flex: 1;
   background: #121416;
   align-items: flex-start;
+  width: 100%;
+  max-width: 100%;
   min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
 .sidebar-column {
+  flex: 0 0 var(--sidebar-width);
   width: var(--sidebar-width);
+  max-width: var(--sidebar-width);
   min-width: var(--sidebar-width);
   display: flex;
   flex-direction: column;
@@ -627,14 +633,17 @@ const precisionBtnStyle = computed(() => {
 }
 
 .lanes-area {
-  flex: 1;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  overflow: hidden;
 }
 
 .lanes-container {
   position: relative;
+  width: 100%;
+  min-width: 0;
 }
 
 .empty-lanes {

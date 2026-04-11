@@ -207,17 +207,23 @@ function onMouseUp() {
   display: flex;
   flex-direction: column;
   background: v-bind('RIBBON_BG_COLOR');
+  width: 100%;
+  min-width: 0;
 }
 
 .time-ribbon-container {
   display: flex;
   height: v-bind('TIME_RIBBON_HEIGHT + "px"');
+  width: 100%;
+  min-width: 0;
 }
 
 .time-ticks-container {
   display: flex;
   height: v-bind('TIME_TICKS_HEIGHT + "px"');
   border-bottom: 1px solid #2a2d30;
+  width: 100%;
+  min-width: 0;
 }
 
 .name-spacer {
@@ -235,12 +241,14 @@ function onMouseUp() {
   position: relative;
   background: v-bind('RIBBON_BG_COLOR');
   border-bottom: 1px solid #2a2d30;
+  min-width: 0;
 }
 
 .ticks-area {
   flex: 1;
   position: relative;
   background: #141618;
+  min-width: 0;
 }
 
 .viewport {

@@ -277,10 +277,14 @@ defineExpose({
   background: v-bind('EDIT_LANE_BG_COLOR');
   border-bottom: 1px solid #2a2d30;
   display: flex;
+  width: 100%;
+  min-width: 0;
 }
 
 .lane-canvas {
   flex: 1;
   position: relative;
+  width: 100%;
+  min-width: 0;
 }
 </style>

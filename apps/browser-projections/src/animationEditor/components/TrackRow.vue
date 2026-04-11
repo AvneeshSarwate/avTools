@@ -62,6 +62,8 @@ function onCheckboxChange() {
 .track-row {
   display: flex;
   height: v-bind('TRACK_ROW_HEIGHT + "px"');
+  width: 100%;
+  min-width: 0;
   border-bottom: 1px solid #2a2d30;
 }
 
@@ -94,6 +96,7 @@ function onCheckboxChange() {
 
 .canvas-cell {
   flex: 1;
+  min-width: 0;
   position: relative;
   overflow: hidden;
 }

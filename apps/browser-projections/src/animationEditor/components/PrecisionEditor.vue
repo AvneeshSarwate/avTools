@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, inject } from 'vue'
+import type { Ref } from 'vue'
 import type { TrackType, PrecisionDraft, FuncArg, EditorAction } from '../types'
 import { PRECISION_MODAL_WIDTH } from '../constants'
 
@@ -16,6 +17,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   action: [action: EditorAction]
 }>()
+
+const overlayRoot = inject<Ref<HTMLElement | null> | null>('animationEditorOverlayRoot', null)
+const teleportTarget = computed(() => overlayRoot?.value ?? 'body')
 
 // Local draft for immediate UI updates
 const localDraft = ref<PrecisionDraft>({ ...props.draft })
@@ -98,7 +102,7 @@ function handleBackdropClick(e: MouseEvent) {
 </script>
 
 <template>
-  <Teleport to="body">
+  <Teleport :to="teleportTarget">
     <div
       v-if="open"
       class="modal-backdrop"

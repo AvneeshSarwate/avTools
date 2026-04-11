@@ -745,7 +745,10 @@ function createAnimationEditorAdapter(): ComponentAdapter<
       display: flex;
       flex-direction: column;
       gap: 10px;
+      width: 100%;
       min-height: calc(100vh - 16px);
+      min-width: 0;
+      overflow: hidden;
     }
     .toolbar {
       display: flex;
@@ -934,14 +937,22 @@ function createAnimationEditorAdapter(): ComponentAdapter<
     }
     #root {
       flex: 1 1 auto;
+      width: 100%;
       min-height: 0;
+      min-width: 0;
       display: flex;
-      justify-content: center;
+      align-items: stretch;
+      justify-content: flex-start;
+      overflow: hidden;
     }
     animation-editor-component {
       display: block;
       flex: 1 1 auto;
+      width: 100%;
+      max-width: 100%;
       min-height: 0;
+      min-width: 0;
+      overflow: hidden;
     }
     @media (max-width: 640px) {
       body {
