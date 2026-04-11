@@ -37,6 +37,7 @@ import {
   type ManagementIncomingMessage,
 } from "./animationEditorWebSocketClient.ts"
 import { WindowPanel, type GpuWindow } from "../window/mod.ts"
+import { join } from "node:path"
 
 // ============================================================================
 // Type Definitions
@@ -71,6 +72,18 @@ export interface AnimationEditorWindowOptions {
   readonly title?: string
   readonly panelWidth?: number
   readonly panelHeight?: number
+}
+
+interface AnimationExportPayload {
+  readonly format: 'avtools-animation-timelines'
+  readonly version: 1
+  readonly exportedAt: string
+  readonly currentAnimation: string
+  readonly animations: ReadonlyArray<{
+    readonly name: string
+    readonly trackOrder: readonly string[]
+    readonly tracks: readonly TrackData[]
+  }>
 }
 
 interface AnimationSessionData {
@@ -203,6 +216,39 @@ export function trackInputsToData(inputs: TrackInput[]): { tracks: TrackData[]; 
   }
 
   return { tracks, trackOrder }
+}
+
+function createAnimationExportPayload(
+  trackMap: TrackMap,
+  currentAnimation: string | undefined,
+): AnimationExportPayload {
+  return {
+    format: 'avtools-animation-timelines',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    currentAnimation: currentAnimation ?? '',
+    animations: Array.from(trackMap.keys()).map((name) => {
+      const animation = trackMap.getFull(name)
+      return {
+        name,
+        trackOrder: [...(animation?.trackOrder ?? [])],
+        tracks: JSON.parse(JSON.stringify(animation?.tracks ?? [])) as TrackData[],
+      }
+    }),
+  }
+}
+
+async function exportTrackMapToTimestampedFile(
+  trackMap: TrackMap,
+  currentAnimation: string | undefined,
+): Promise<string> {
+  const payload = createAnimationExportPayload(trackMap, currentAnimation)
+  const timestamp = payload.exportedAt.replace(/[:.]/g, '-')
+  const exportDir = join(Deno.cwd(), 'animation-editor-exports')
+  const exportPath = join(exportDir, `animation-timelines-${timestamp}.json`)
+  await Deno.mkdir(exportDir, { recursive: true })
+  await Deno.writeTextFile(exportPath, `${JSON.stringify(payload, null, 2)}\n`)
+  return exportPath
 }
 
 // ============================================================================
@@ -534,6 +580,27 @@ function createAnimationEditorAdapter(): ComponentAdapter<
         return
       }
 
+      case 'exportAnimations':
+        void exportTrackMapToTimestampedFile(trackMap, session.data.animationName)
+          .then((path) => {
+            console.info(`[animation-editor] Exported timelines to ${path}`)
+            session.client?.sendManagementMessage({
+              type: 'exportStatus',
+              ok: true,
+              path,
+            })
+          })
+          .catch((error) => {
+            const errorMessage = error instanceof Error ? error.message : String(error)
+            console.error('[animation-editor] Failed to export timelines:', error)
+            session.client?.sendManagementMessage({
+              type: 'exportStatus',
+              ok: false,
+              error: errorMessage,
+            })
+          })
+        return
+
       case 'toggleSync':
         management.syncRef.enabled = message.enabled
         broadcastManagementState(trackMap, bridge)
@@ -764,6 +831,10 @@ function createAnimationEditorAdapter(): ComponentAdapter<
       padding: 9px 14px;
       white-space: nowrap;
     }
+    .toolbar-row-playback .toolbar-button {
+      align-self: flex-end;
+      padding: 6px 10px;
+    }
     .toolbar-button:hover {
       background: linear-gradient(180deg, var(--tp-button-background-color-hover), #d8e1ec);
     }
@@ -785,6 +856,11 @@ function createAnimationEditorAdapter(): ComponentAdapter<
       color: var(--tp-container-foreground-color);
       cursor: pointer;
       user-select: none;
+    }
+    .toolbar-row-playback .toolbar-toggle {
+      align-self: flex-end;
+      gap: 6px;
+      padding: 6px 10px;
     }
     .toolbar-toggle:hover {
       background: var(--tp-container-background-color-hover);
@@ -853,6 +929,9 @@ function createAnimationEditorAdapter(): ComponentAdapter<
       background: rgba(143, 195, 255, 0.16);
       color: var(--panel-accent-strong);
     }
+    .toolbar-row-playback .toolbar-input {
+      padding: 7px 8px;
+    }
     #root {
       flex: 1 1 auto;
       min-height: 0;
@@ -907,9 +986,10 @@ function createAnimationEditorAdapter(): ComponentAdapter<
         </div>
         <button type="button" class="toolbar-button" id="new-animation-btn">New</button>
         <button type="button" class="toolbar-button" id="snapshot-btn">Snapshot</button>
+        <button type="button" class="toolbar-button" id="export-btn">Export</button>
         <button type="button" class="toolbar-button" id="delete-btn">Delete</button>
       </div>
-      <div class="toolbar-row">
+      <div class="toolbar-row toolbar-row-playback">
         <button type="button" class="toolbar-button" id="play-toggle-btn">Play</button>
         <div class="toolbar-field">
           <label class="toolbar-label" for="scrub-slider">Playhead</label>
@@ -967,6 +1047,12 @@ function createAnimationEditorAdapter(): ComponentAdapter<
       names: initialAnimationName ? [initialAnimationName] : [],
       current: initialAnimationName,
       syncEnabled: true,
+      export: {
+        pending: false,
+        lastOk: null,
+        lastPath: '',
+        lastError: '',
+      },
       playback: {
         playing: false,
         currentTime: 0,
@@ -975,6 +1061,7 @@ function createAnimationEditorAdapter(): ComponentAdapter<
         speed: 1,
       },
     }
+    let exportStatusResetTimer = null
 
     const parseManagementMessage = (data) => {
       try {
@@ -982,7 +1069,8 @@ function createAnimationEditorAdapter(): ComponentAdapter<
         if (
           message?.type === 'animationList' ||
           message?.type === 'syncState' ||
-          message?.type === 'playbackState'
+          message?.type === 'playbackState' ||
+          message?.type === 'exportStatus'
         ) {
           return message
         }
@@ -998,6 +1086,7 @@ function createAnimationEditorAdapter(): ComponentAdapter<
       if (
         !animationTrigger ||
         !animationMenu ||
+        !exportButton ||
         !syncToggle ||
         !deleteButton ||
         !playToggleButton ||
@@ -1028,6 +1117,19 @@ function createAnimationEditorAdapter(): ComponentAdapter<
 
       syncToggle.checked = managementState.syncEnabled
       deleteButton.disabled = managementState.names.length <= 1
+      exportButton.disabled = !!managementState.export.pending
+      exportButton.textContent = managementState.export.pending
+        ? 'Exporting...'
+        : managementState.export.lastOk === true
+          ? 'Exported'
+          : managementState.export.lastOk === false
+            ? 'Export Failed'
+            : 'Export'
+      exportButton.title = managementState.export.lastOk === true
+        ? managementState.export.lastPath
+        : managementState.export.lastOk === false
+          ? managementState.export.lastError
+          : 'Write all saved timelines to a timestamped JSON file on the Deno side'
 
       const duration = Math.max(0, Number.isFinite(managementState.playback.duration) ? managementState.playback.duration : 0)
       const currentTime = Math.min(
@@ -1052,6 +1154,26 @@ function createAnimationEditorAdapter(): ComponentAdapter<
         managementState.current = message.current
       } else if (message.type === 'syncState') {
         managementState.syncEnabled = !!message.enabled
+      } else if (message.type === 'exportStatus') {
+        managementState.export.pending = false
+        managementState.export.lastOk = !!message.ok
+        managementState.export.lastPath = typeof message.path === 'string' ? message.path : ''
+        managementState.export.lastError = typeof message.error === 'string' ? message.error : ''
+        if (exportStatusResetTimer) {
+          clearTimeout(exportStatusResetTimer)
+        }
+        exportStatusResetTimer = setTimeout(() => {
+          managementState.export.lastOk = null
+          managementState.export.lastPath = ''
+          managementState.export.lastError = ''
+          exportStatusResetTimer = null
+          updateUiFromManagementState()
+        }, 2500)
+        if (message.ok && message.path) {
+          console.info('[Animation Editor] Exported timelines to', message.path)
+        } else if (!message.ok) {
+          console.error('[Animation Editor] Export failed:', message.error || 'Unknown error')
+        }
       } else if (message.type === 'playbackState') {
         managementState.playback.playing = !!message.playing
         managementState.playback.currentTime = Number(message.currentTime) || 0
@@ -1120,6 +1242,7 @@ function createAnimationEditorAdapter(): ComponentAdapter<
     const newAnimationInput = document.getElementById('new-animation-name')
     const newAnimationButton = document.getElementById('new-animation-btn')
     const snapshotButton = document.getElementById('snapshot-btn')
+    const exportButton = document.getElementById('export-btn')
     const deleteButton = document.getElementById('delete-btn')
     const syncToggle = document.getElementById('sync-toggle')
     const playToggleButton = document.getElementById('play-toggle-btn')
@@ -1166,6 +1289,16 @@ function createAnimationEditorAdapter(): ComponentAdapter<
 
       snapshotButton?.addEventListener('click', () => {
         sendManagementMessage({ type: 'snapshot' })
+      })
+
+      exportButton?.addEventListener('click', () => {
+        if (sendManagementMessage({ type: 'exportAnimations' })) {
+          managementState.export.pending = true
+          managementState.export.lastOk = null
+          managementState.export.lastPath = ''
+          managementState.export.lastError = ''
+          updateUiFromManagementState()
+        }
       })
 
       deleteButton?.addEventListener('click', () => {

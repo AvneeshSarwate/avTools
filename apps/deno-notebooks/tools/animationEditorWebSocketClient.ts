@@ -161,6 +161,10 @@ export interface SnapshotMessage {
   type: 'snapshot'
 }
 
+export interface ExportAnimationsMessage {
+  type: 'exportAnimations'
+}
+
 export interface ToggleSyncMessage {
   type: 'toggleSync'
   enabled: boolean
@@ -196,6 +200,7 @@ export type ManagementIncomingMessage =
   | SwitchAnimationMessage
   | DeleteAnimationMessage
   | SnapshotMessage
+  | ExportAnimationsMessage
   | ToggleSyncMessage
   | SetPlayingMessage
   | SetCurrentTimeMessage
@@ -259,7 +264,18 @@ export interface PlaybackStateMessage {
   speed: number
 }
 
-export type ManagementOutgoingMessage = AnimationListMessage | SyncStateMessage | PlaybackStateMessage
+export interface ExportStatusMessage {
+  type: 'exportStatus'
+  ok: boolean
+  path?: string
+  error?: string
+}
+
+export type ManagementOutgoingMessage =
+  | AnimationListMessage
+  | SyncStateMessage
+  | PlaybackStateMessage
+  | ExportStatusMessage
 
 type OutgoingMessage =
   | SetTracksMessage
@@ -412,6 +428,7 @@ export class AnimationEditorWebSocketClient extends WebSocketClientBase<Incoming
         case 'switchAnimation':
         case 'deleteAnimation':
         case 'snapshot':
+        case 'exportAnimations':
         case 'toggleSync':
         case 'setPlaying':
         case 'setCurrentTime':
