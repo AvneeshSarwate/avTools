@@ -56,6 +56,8 @@ export interface AnimationPlaybackState {
   playing: boolean
   currentTime: number
   duration: number
+  loop: boolean
+  speed: number
 }
 
 export interface AnimationEditorManagementOptions {
@@ -407,6 +409,8 @@ function createAnimationEditorAdapter(): ComponentAdapter<
       playing: playback.playing,
       currentTime,
       duration: playback.duration,
+      loop: playback.loop,
+      speed: playback.speed,
     })
   }
 
@@ -427,6 +431,19 @@ function createAnimationEditorAdapter(): ComponentAdapter<
     for (const session of bridge.getSessions().values()) {
       if (session.data.type !== 'bound' || session.data.trackMap !== trackMap) continue
       sendPlaybackState(session)
+    }
+  }
+
+  const broadcastPlaybackConfig = (
+    trackMap: TrackMap,
+    bridge: AnimationBridge,
+  ): void => {
+    for (const session of bridge.getSessions().values()) {
+      if (session.data.type !== 'bound' || session.data.trackMap !== trackMap) continue
+
+      const playback = session.data.management?.playbackRef
+      if (!playback || !session.client?.connected) continue
+      session.client.setConfig({ duration: playback.duration })
     }
   }
 
@@ -529,8 +546,16 @@ function createAnimationEditorAdapter(): ComponentAdapter<
           return
         }
 
-        if (message.playing && clampPlaybackTime(playback) >= playback.duration) {
+        if (message.playing) {
+          if (clampPlaybackTime(playback) >= playback.duration) {
+            playback.currentTime = 0
+          }
+        } else {
+          playback.playing = false
           playback.currentTime = 0
+          clampPlaybackTime(playback)
+          broadcastPlaybackState(trackMap, bridge)
+          return
         }
         playback.playing = message.playing
         broadcastPlaybackState(trackMap, bridge)
@@ -546,6 +571,47 @@ function createAnimationEditorAdapter(): ComponentAdapter<
 
         playback.currentTime = message.time
         clampPlaybackTime(playback)
+        broadcastPlaybackState(trackMap, bridge)
+        return
+      }
+
+      case 'setDuration': {
+        const playback = management.playbackRef
+        if (!playback) {
+          sendManagementState(session)
+          return
+        }
+
+        playback.duration = message.duration
+        clampPlaybackTime(playback)
+        if (playback.currentTime >= playback.duration) {
+          playback.playing = false
+        }
+        broadcastPlaybackConfig(trackMap, bridge)
+        broadcastPlaybackState(trackMap, bridge)
+        return
+      }
+
+      case 'setLoop': {
+        const playback = management.playbackRef
+        if (!playback) {
+          sendManagementState(session)
+          return
+        }
+
+        playback.loop = message.loop
+        broadcastPlaybackState(trackMap, bridge)
+        return
+      }
+
+      case 'setSpeed': {
+        const playback = management.playbackRef
+        if (!playback) {
+          sendManagementState(session)
+          return
+        }
+
+        playback.speed = Number.isFinite(message.speed) ? Math.max(0, message.speed) : 1
         broadcastPlaybackState(trackMap, bridge)
         return
       }
@@ -635,6 +701,9 @@ function createAnimationEditorAdapter(): ComponentAdapter<
     .toolbar-field {
       min-width: 0;
       flex: 1 1 240px;
+    }
+    .toolbar-field-compact {
+      flex: 0 0 140px;
     }
     .toolbar-label {
       display: block;
@@ -857,6 +926,32 @@ function createAnimationEditorAdapter(): ComponentAdapter<
             <div class="toolbar-time" id="scrub-readout">0.000 / 1.000</div>
           </div>
         </div>
+        <div class="toolbar-field toolbar-field-compact">
+          <label class="toolbar-label" for="duration-input">Duration</label>
+          <input
+            class="toolbar-input"
+            id="duration-input"
+            type="number"
+            min="0.001"
+            step="0.001"
+            value="${String(DEFAULT_PLAYBACK_DURATION)}"
+          />
+        </div>
+        <div class="toolbar-field toolbar-field-compact">
+          <label class="toolbar-label" for="speed-input">Speed</label>
+          <input
+            class="toolbar-input"
+            id="speed-input"
+            type="number"
+            min="0"
+            step="0.01"
+            value="1"
+          />
+        </div>
+        <label class="toolbar-toggle">
+          <input type="checkbox" id="loop-toggle" />
+          <span>Loop</span>
+        </label>
       </div>
     </div>
     <div id="root"></div>
@@ -876,6 +971,8 @@ function createAnimationEditorAdapter(): ComponentAdapter<
         playing: false,
         currentTime: 0,
         duration: ${String(DEFAULT_PLAYBACK_DURATION)},
+        loop: false,
+        speed: 1,
       },
     }
 
@@ -905,7 +1002,10 @@ function createAnimationEditorAdapter(): ComponentAdapter<
         !deleteButton ||
         !playToggleButton ||
         !scrubSlider ||
-        !scrubReadout
+        !scrubReadout ||
+        !durationInput ||
+        !speedInput ||
+        !loopToggle
       ) {
         return
       }
@@ -939,7 +1039,10 @@ function createAnimationEditorAdapter(): ComponentAdapter<
       scrubSlider.max = String(sliderMax)
       scrubSlider.step = String(sliderStep)
       scrubSlider.value = String(currentTime)
-      playToggleButton.textContent = managementState.playback.playing ? 'Pause' : 'Play'
+      durationInput.value = String(duration)
+      speedInput.value = String(Number.isFinite(managementState.playback.speed) ? managementState.playback.speed : 1)
+      loopToggle.checked = !!managementState.playback.loop
+      playToggleButton.textContent = managementState.playback.playing ? 'Stop' : 'Play'
       scrubReadout.textContent = currentTime.toFixed(3) + ' / ' + duration.toFixed(3)
     }
 
@@ -953,6 +1056,8 @@ function createAnimationEditorAdapter(): ComponentAdapter<
         managementState.playback.playing = !!message.playing
         managementState.playback.currentTime = Number(message.currentTime) || 0
         managementState.playback.duration = Number(message.duration) || 0
+        managementState.playback.loop = !!message.loop
+        managementState.playback.speed = Number.isFinite(message.speed) ? message.speed : 1
       }
 
       updateUiFromManagementState()
@@ -1020,6 +1125,9 @@ function createAnimationEditorAdapter(): ComponentAdapter<
     const playToggleButton = document.getElementById('play-toggle-btn')
     const scrubSlider = document.getElementById('scrub-slider')
     const scrubReadout = document.getElementById('scrub-readout')
+    const durationInput = document.getElementById('duration-input')
+    const speedInput = document.getElementById('speed-input')
+    const loopToggle = document.getElementById('loop-toggle')
     const editor = document.createElement('animation-editor-component')
 
     editor.setAttribute('ws-address', wsUrl)
@@ -1077,6 +1185,28 @@ function createAnimationEditorAdapter(): ComponentAdapter<
       scrubSlider?.addEventListener('input', () => {
         const time = Number(scrubSlider.value)
         sendManagementMessage({ type: 'setCurrentTime', time })
+      })
+
+      durationInput?.addEventListener('change', () => {
+        const duration = Number(durationInput.value)
+        if (!Number.isFinite(duration) || duration <= 0) {
+          durationInput.value = String(managementState.playback.duration)
+          return
+        }
+        sendManagementMessage({ type: 'setDuration', duration })
+      })
+
+      speedInput?.addEventListener('change', () => {
+        const speed = Number(speedInput.value)
+        if (!Number.isFinite(speed) || speed < 0) {
+          speedInput.value = String(managementState.playback.speed)
+          return
+        }
+        sendManagementMessage({ type: 'setSpeed', speed })
+      })
+
+      loopToggle?.addEventListener('change', () => {
+        sendManagementMessage({ type: 'setLoop', loop: loopToggle.checked })
       })
     }
 

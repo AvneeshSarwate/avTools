@@ -176,6 +176,21 @@ export interface SetCurrentTimeMessage {
   time: number
 }
 
+export interface SetDurationMessage {
+  type: 'setDuration'
+  duration: number
+}
+
+export interface SetLoopMessage {
+  type: 'setLoop'
+  loop: boolean
+}
+
+export interface SetSpeedMessage {
+  type: 'setSpeed'
+  speed: number
+}
+
 export type ManagementIncomingMessage =
   | CreateAnimationMessage
   | SwitchAnimationMessage
@@ -184,6 +199,9 @@ export type ManagementIncomingMessage =
   | ToggleSyncMessage
   | SetPlayingMessage
   | SetCurrentTimeMessage
+  | SetDurationMessage
+  | SetLoopMessage
+  | SetSpeedMessage
 
 type IncomingMessage =
   | TracksUpdateMessage
@@ -237,6 +255,8 @@ export interface PlaybackStateMessage {
   playing: boolean
   currentTime: number
   duration: number
+  loop: boolean
+  speed: number
 }
 
 export type ManagementOutgoingMessage = AnimationListMessage | SyncStateMessage | PlaybackStateMessage
@@ -395,6 +415,9 @@ export class AnimationEditorWebSocketClient extends WebSocketClientBase<Incoming
         case 'toggleSync':
         case 'setPlaying':
         case 'setCurrentTime':
+        case 'setDuration':
+        case 'setLoop':
+        case 'setSpeed':
           this.onManagementMessage?.(message)
           break
       }

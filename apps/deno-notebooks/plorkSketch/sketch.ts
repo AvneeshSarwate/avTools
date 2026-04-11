@@ -108,6 +108,8 @@ const animationPlayback: AnimationPlaybackState = {
   playing: false,
   currentTime: 0,
   duration: 1,
+  loop: false,
+  speed: 1,
 };
 
 type Direction = "left" | "right" | "up" | "down";
@@ -330,6 +332,7 @@ animationHandle.setCallbacks(animationCallbacks);
 const rootAnim = launch(async (ctx) => {
   let lastTickTime = ctx.progTime;
   let lastAppliedTime: number | null = null;
+  let lastPlaybackSignature = "";
 
   while (true) {
     while (actionQueue.length > 0) {
@@ -341,11 +344,23 @@ const rootAnim = launch(async (ctx) => {
     const deltaTime = Math.max(0, now - lastTickTime);
     lastTickTime = now;
 
+    const duration = Math.max(animationPlayback.duration, 0);
+    const speed = Number.isFinite(animationPlayback.speed) ? Math.max(0, animationPlayback.speed) : 1;
     if (animationPlayback.playing) {
-      const nextTime = animationPlayback.currentTime + deltaTime;
-      if (nextTime >= animationPlayback.duration) {
-        animationPlayback.currentTime = animationPlayback.duration;
+      const nextTime = animationPlayback.currentTime + deltaTime * speed;
+      if (duration <= 0) {
+        animationPlayback.currentTime = 0;
         animationPlayback.playing = false;
+      } else if (nextTime >= duration) {
+        if (animationPlayback.loop) {
+          animationHandle.scrubAndEvaluate(duration);
+          animationHandle.scrubToTime(0);
+          lastAppliedTime = null;
+          animationPlayback.currentTime = nextTime % duration;
+        } else {
+          animationPlayback.currentTime = duration;
+          animationPlayback.playing = false;
+        }
       } else {
         animationPlayback.currentTime = nextTime;
       }
@@ -353,10 +368,21 @@ const rootAnim = launch(async (ctx) => {
 
     const playbackTime = clampPlaybackTime(animationPlayback.currentTime);
     animationPlayback.currentTime = playbackTime;
+    const playbackSignature = JSON.stringify({
+      playing: animationPlayback.playing,
+      currentTime: playbackTime,
+      duration: animationPlayback.duration,
+      loop: animationPlayback.loop,
+      speed: animationPlayback.speed,
+    });
 
     if (lastAppliedTime === null || Math.abs(playbackTime - lastAppliedTime) > 1e-6) {
       animationHandle.scrubAndEvaluate(playbackTime);
       lastAppliedTime = playbackTime;
+      lastPlaybackSignature = playbackSignature;
+    } else if (playbackSignature !== lastPlaybackSignature) {
+      animationHandle.scrubToTime(playbackTime);
+      lastPlaybackSignature = playbackSignature;
     }
 
     animationHandle.setLivePlayhead(playbackTime);

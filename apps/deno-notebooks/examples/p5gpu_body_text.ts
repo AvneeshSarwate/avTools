@@ -19,6 +19,10 @@ import {
   createContourSmoother,
   defaultSmootherParams,
 } from "../tools/contour_smoother.ts";
+import {
+  createSpringTextRenderer,
+  defaultSpringParams,
+} from "../tools/contour_spring.ts";
 
 const WIDTH = 1280;
 const HEIGHT = 720;
@@ -26,6 +30,7 @@ const HEIGHT = 720;
 // ── Tweakpane params ─────────────────────────────────────────────
 
 const smoothParams = { ...defaultSmootherParams };
+const springParams = { ...defaultSpringParams };
 
 const renderParams = {
   enableSmoothing: true,
@@ -75,6 +80,15 @@ function setupPane(pane: WindowTweakpane) {
     min: 0.01, max: 0.2, step: 0.005, label: "Shape Reset",
   });
 
+  const spring = pane.addFolder({ title: "Spring Physics" });
+  spring.addBinding(springParams, "enabled", { label: "Enabled" });
+  spring.addBinding(springParams, "stiffness", {
+    min: 10, max: 500, step: 5, label: "Stiffness",
+  });
+  spring.addBinding(springParams, "damping", {
+    min: 0.05, max: 2.0, step: 0.05, label: "Damping",
+  });
+
   const render = pane.addFolder({ title: "Render" });
   render.addBinding(renderParams, "enableSmoothing", { label: "Smoothing" });
   render.addBinding(renderParams, "enableMinRadius", { label: "Min Radius Filter" });
@@ -104,13 +118,14 @@ const renderWindow = await createWindowRenderManager({
   pane: {
     title: "Body Text",
     panelWidth: 520,
-    panelHeight: 420,
+    panelHeight: 520,
     setup: setupPane,
   },
 });
 const p5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const receiver = createContourReceiver();
 const smoother = createContourSmoother(smoothParams);
+const springText = createSpringTextRenderer(springParams);
 
 // ── FPS tracking ─────────────────────────────────────────────────
 
@@ -160,8 +175,9 @@ function renderFrame() {
     lastProcessedFrame = rawFrame.frameNumber;
   }
 
-  // Build a unified list of contours to render (smoothed or raw)
+  // Build contour list (smoothed or raw)
   const contoursToRender: Array<{
+    id: number;
     points: Point[];
     parentIndex: number;
     opacity: number;
@@ -170,6 +186,7 @@ function renderFrame() {
   if (renderParams.enableSmoothing && smoothedFrame) {
     for (const c of smoothedFrame.contours) {
       contoursToRender.push({
+        id: c.id,
         points: c.points,
         parentIndex: c.parentIndex,
         opacity: c.opacity,
@@ -178,6 +195,7 @@ function renderFrame() {
   } else if (lastRawFrame) {
     for (const c of lastRawFrame.contours) {
       contoursToRender.push({
+        id: -1, // no stable ID for raw contours
         points: c.points,
         parentIndex: c.parentIndex,
         opacity: 1.0,
@@ -185,9 +203,13 @@ function renderFrame() {
     }
   }
 
+  // Track active contour IDs for spring cleanup
+  const activeIds = new Set<number>();
+
   if (contoursToRender.length > 0) {
     for (const contour of contoursToRender) {
       if (contour.points.length < renderParams.minPoints) continue;
+      if (contour.id >= 0) activeIds.add(contour.id);
 
       const scaled: Point[] = contour.points.map((p) => ({
         x: p.x * WIDTH,
@@ -229,13 +251,24 @@ function renderFrame() {
         p5.fill(200, 140, 255, alpha);
       }
 
-      textOnPath(
-        p5,
-        isOuter ? renderParams.outerText : renderParams.innerText,
-        scaled,
-        { fill: "wrap", offset: scrollOffset, letterSpacing: 1 },
-      );
+      const txt = isOuter ? renderParams.outerText : renderParams.innerText;
+
+      if (contour.id >= 0 && springParams.enabled) {
+        springText.renderTextOnPath(p5, contour.id, txt, scaled, {
+          offset: scrollOffset,
+          letterSpacing: 1,
+        });
+      } else {
+        textOnPath(p5, txt, scaled, {
+          fill: "wrap",
+          offset: scrollOffset,
+          letterSpacing: 1,
+        });
+      }
     }
+
+    springText.tick();
+    springText.cleanup(activeIds);
   } else {
     p5.fill(100, 100, 120);
     p5.textSize(20);
