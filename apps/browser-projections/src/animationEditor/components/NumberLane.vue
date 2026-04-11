@@ -462,8 +462,13 @@ defineExpose({
 </script>
 
 <template>
-  <div class="number-lane">
-    <div ref="containerRef" class="lane-canvas"></div>
+  <div
+    class="number-lane"
+    data-component="NumberLane"
+    data-lane-type="number"
+    :data-front-track-id="frontTrackId"
+  >
+    <div ref="containerRef" class="lane-canvas" data-region="lane-canvas"></div>
   </div>
 </template>
 

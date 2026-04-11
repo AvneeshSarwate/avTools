@@ -29,6 +29,7 @@ const xPosition = computed(() => {
   <div
     v-if="isVisible"
     class="playhead"
+    data-component="Playhead"
     :style="{ left: xPosition + 'px' }"
   ></div>
 </template>

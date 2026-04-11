@@ -56,7 +56,7 @@ const ticks = computed(() => {
 </script>
 
 <template>
-  <div class="time-ticks-header" ref="containerRef">
+  <div class="time-ticks-header" data-component="TimeTicksHeader" ref="containerRef">
     <div
       v-for="tick in ticks"
       :key="tick.time"

@@ -261,8 +261,13 @@ defineExpose({
 </script>
 
 <template>
-  <div class="enum-lane">
-    <div ref="containerRef" class="lane-canvas"></div>
+  <div
+    class="enum-lane"
+    data-component="EnumLane"
+    data-lane-type="enum"
+    :data-front-track-id="frontTrackId"
+  >
+    <div ref="containerRef" class="lane-canvas" data-region="lane-canvas"></div>
   </div>
 </template>
 

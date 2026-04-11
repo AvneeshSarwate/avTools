@@ -4,7 +4,6 @@ import type { Ref } from 'vue'
 import type { Core } from '../core'
 import {
   TRACK_ROW_HEIGHT,
-  NAME_COLUMN_WIDTH,
   NAME_BG_COLOR,
   NAME_TEXT_COLOR,
   NAME_FONT_SIZE,
@@ -30,18 +29,26 @@ function onCheckboxChange() {
 </script>
 
 <template>
-  <div class="track-row" v-if="track">
-    <div class="name-cell">
+  <div
+    class="track-row"
+    data-component="TrackRow"
+    :data-track-id="track?.id"
+    :data-track-type="track?.def.fieldType"
+    :data-selected="isSelected || undefined"
+    v-if="track"
+  >
+    <div class="name-cell" data-region="track-name-cell">
       <input
         type="checkbox"
         :checked="isSelected"
         @change="onCheckboxChange"
         class="track-checkbox"
+        data-testid="track-checkbox"
         title="Select for editing"
       />
       <span class="track-name">{{ track.def.name }}</span>
     </div>
-    <div class="canvas-cell">
+    <div class="canvas-cell" data-region="track-canvas-cell">
       <TrackCanvas
         :track="track"
         :window-start="windowStart"
@@ -59,8 +66,8 @@ function onCheckboxChange() {
 }
 
 .name-cell {
-  width: v-bind('NAME_COLUMN_WIDTH + "px"');
-  min-width: v-bind('NAME_COLUMN_WIDTH + "px"');
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
   background: v-bind('NAME_BG_COLOR');
   padding: 0 8px;
   display: flex;

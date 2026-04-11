@@ -6,7 +6,9 @@ import {
   EDIT_SIDEBAR_TRACK_BG,
   EDIT_SIDEBAR_TRACK_BG_HOVER,
   EDIT_SIDEBAR_TRACK_BG_ENABLED,
-  EDIT_SIDEBAR_SECTION_MAX_HEIGHT,
+  NUMBER_LANE_HEIGHT,
+  ENUM_LANE_HEIGHT,
+  FUNC_LANE_HEIGHT,
 } from '../constants'
 
 const props = defineProps<{
@@ -68,23 +70,36 @@ const noTracksEnabled = computed(() =>
 </script>
 
 <template>
-  <div class="edit-sidebar">
+  <div class="edit-sidebar" data-component="EditSidebar">
     <!-- Number tracks section -->
-    <div class="track-section" v-if="enabledNumberTracks.length > 0">
+    <div
+      class="track-section"
+      data-region="sidebar-number-section"
+      data-track-type="number"
+      v-if="enabledNumberTracks.length > 0"
+    >
       <div class="section-header">Number Tracks</div>
-      <div class="track-list">
+      <div class="sidebar-track-list">
         <div
           v-for="track in enabledNumberTracks"
           :key="track.id"
           class="track-item"
           :class="{ 'track-front': isFront(track) }"
+          :data-track-id="track.id"
+          data-track-type="number"
+          :data-front="isFront(track) || undefined"
           @click="setFront(track)"
         >
-          <div class="track-row">
-            <span class="track-name">{{ track.def.name }}</span>
-            <button class="delete-btn" @click.stop="deleteTrack(track.id)" title="Delete track">×</button>
+          <div class="sidebar-track-row">
+            <span class="sidebar-track-name">{{ track.def.name }}</span>
+            <button
+              class="delete-btn"
+              data-testid="track-delete"
+              @click.stop="deleteTrack(track.id)"
+              title="Delete track"
+            >×</button>
           </div>
-          <div class="bounds-row" v-if="isFront(track)">
+          <div class="bounds-row" data-region="sidebar-bounds-row" v-if="isFront(track)">
             <label>
               <span class="bounds-label">Low</span>
               <input
@@ -93,6 +108,7 @@ const noTracksEnabled = computed(() =>
                 step="0.1"
                 @change="onLowChange(track, $event)"
                 class="bounds-input"
+                data-testid="bounds-low"
               />
             </label>
             <label>
@@ -103,6 +119,7 @@ const noTracksEnabled = computed(() =>
                 step="0.1"
                 @change="onHighChange(track, $event)"
                 class="bounds-input"
+                data-testid="bounds-high"
               />
             </label>
           </div>
@@ -111,44 +128,70 @@ const noTracksEnabled = computed(() =>
     </div>
 
     <!-- Enum tracks section -->
-    <div class="track-section" v-if="enabledEnumTracks.length > 0">
+    <div
+      class="track-section"
+      data-region="sidebar-enum-section"
+      data-track-type="enum"
+      v-if="enabledEnumTracks.length > 0"
+    >
       <div class="section-header">Enum Tracks</div>
-      <div class="track-list">
+      <div class="sidebar-track-list">
         <div
           v-for="track in enabledEnumTracks"
           :key="track.id"
           class="track-item"
           :class="{ 'track-front': isFront(track) }"
+          :data-track-id="track.id"
+          data-track-type="enum"
+          :data-front="isFront(track) || undefined"
           @click="setFront(track)"
         >
-          <div class="track-row">
-            <span class="track-name">{{ track.def.name }}</span>
-            <button class="delete-btn" @click.stop="deleteTrack(track.id)" title="Delete track">×</button>
+          <div class="sidebar-track-row">
+            <span class="sidebar-track-name">{{ track.def.name }}</span>
+            <button
+              class="delete-btn"
+              data-testid="track-delete"
+              @click.stop="deleteTrack(track.id)"
+              title="Delete track"
+            >×</button>
           </div>
         </div>
       </div>
     </div>
 
     <!-- Func tracks section -->
-    <div class="track-section" v-if="enabledFuncTracks.length > 0">
+    <div
+      class="track-section"
+      data-region="sidebar-func-section"
+      data-track-type="func"
+      v-if="enabledFuncTracks.length > 0"
+    >
       <div class="section-header">Func Tracks</div>
-      <div class="track-list">
+      <div class="sidebar-track-list">
         <div
           v-for="track in enabledFuncTracks"
           :key="track.id"
           class="track-item"
           :class="{ 'track-front': isFront(track) }"
+          :data-track-id="track.id"
+          data-track-type="func"
+          :data-front="isFront(track) || undefined"
           @click="setFront(track)"
         >
-          <div class="track-row">
-            <span class="track-name">{{ track.def.name }}</span>
-            <button class="delete-btn" @click.stop="deleteTrack(track.id)" title="Delete track">×</button>
+          <div class="sidebar-track-row">
+            <span class="sidebar-track-name">{{ track.def.name }}</span>
+            <button
+              class="delete-btn"
+              data-testid="track-delete"
+              @click.stop="deleteTrack(track.id)"
+              title="Delete track"
+            >×</button>
           </div>
         </div>
       </div>
     </div>
 
-    <div v-if="noTracksEnabled" class="empty-message">
+    <div v-if="noTracksEnabled" class="empty-message" data-region="sidebar-empty-state">
       Select tracks in view mode
     </div>
   </div>
@@ -160,14 +203,28 @@ const noTracksEnabled = computed(() =>
   background: v-bind('EDIT_SIDEBAR_BG_COLOR');
   display: flex;
   flex-direction: column;
-  overflow: hidden;
 }
 
 .track-section {
   border-bottom: 1px solid #2a2d30;
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+/* Each section is pinned to the height of its corresponding lane so sidebar rows
+   line up with lane rows. Overflow scrolls inside .sidebar-track-list. */
+.track-section[data-track-type="number"] {
+  height: v-bind('NUMBER_LANE_HEIGHT + "px"');
+}
+
+.track-section[data-track-type="enum"] {
+  height: v-bind('ENUM_LANE_HEIGHT + "px"');
+}
+
+.track-section[data-track-type="func"] {
+  height: v-bind('FUNC_LANE_HEIGHT + "px"');
 }
 
 .section-header {
@@ -180,8 +237,9 @@ const noTracksEnabled = computed(() =>
   flex-shrink: 0;
 }
 
-.track-list {
-  max-height: v-bind('EDIT_SIDEBAR_SECTION_MAX_HEIGHT + "px"');
+.sidebar-track-list {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -203,13 +261,13 @@ const noTracksEnabled = computed(() =>
   border-left-color: #3a7ca5;
 }
 
-.track-row {
+.sidebar-track-row {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.track-name {
+.sidebar-track-name {
   flex: 1;
   font-size: 12px;
   color: #c0c0c0;
@@ -218,7 +276,7 @@ const noTracksEnabled = computed(() =>
   white-space: nowrap;
 }
 
-.track-front .track-name {
+.track-front .sidebar-track-name {
   color: #e0e0e0;
 }
 

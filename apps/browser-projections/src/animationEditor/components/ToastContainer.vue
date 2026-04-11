@@ -9,12 +9,13 @@ function getToastClass(type: string): string {
 </script>
 
 <template>
-  <div class="toast-container">
+  <div class="toast-container" data-component="ToastContainer" data-region="toast-container">
     <TransitionGroup name="toast">
       <div
         v-for="toast in toasts"
         :key="toast.id"
         :class="getToastClass(toast.type)"
+        :data-toast-type="toast.type"
         @click="removeToast(toast.id)"
       >
         {{ toast.message }}

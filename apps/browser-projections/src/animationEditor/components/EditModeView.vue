@@ -19,7 +19,7 @@ import EnumLane from './EnumLane.vue'
 import FuncLane from './FuncLane.vue'
 import PrecisionEditor from './PrecisionEditor.vue'
 import Playhead from './Playhead.vue'
-import { NUMBER_LANE_HEIGHT, ENUM_LANE_HEIGHT, EDIT_SIDEBAR_WIDTH } from '../constants'
+import { NUMBER_LANE_HEIGHT, ENUM_LANE_HEIGHT } from '../constants'
 
 const props = defineProps<{
   core: Core
@@ -504,21 +504,8 @@ const precisionBtnStyle = computed(() => {
 </script>
 
 <template>
-  <div class="edit-mode-view">
-    <div class="sidebar-column">
-      <!-- Header cell matching view mode search area -->
-      <div class="sidebar-header">
-        <button class="header-btn" @click="onAction({ type: 'EDIT/UNDO' })" title="Undo">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
-          </svg>
-        </button>
-        <button class="header-btn" @click="onAction({ type: 'EDIT/REDO' })" title="Redo">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/>
-          </svg>
-        </button>
-      </div>
+  <div class="edit-mode-view" data-component="EditModeView">
+    <div class="sidebar-column" data-region="sidebar-column">
       <!-- Track list sidebar -->
       <EditSidebar
         :tracks="allTracks"
@@ -528,9 +515,9 @@ const precisionBtnStyle = computed(() => {
       />
     </div>
 
-    <div class="lanes-area">
+    <div class="lanes-area" data-region="lanes-area">
       <!-- Lanes container -->
-      <div class="lanes-container" ref="lanesContainerRef">
+      <div class="lanes-container" data-region="lanes-container" ref="lanesContainerRef">
         <NumberLane
           v-if="numberTracks.length > 0"
           ref="numberLaneRef"
@@ -570,7 +557,11 @@ const precisionBtnStyle = computed(() => {
           @action="onAction"
         />
 
-        <div v-if="numberTracks.length === 0 && enumTracks.length === 0 && funcTracks.length === 0" class="empty-lanes">
+        <div
+          v-if="numberTracks.length === 0 && enumTracks.length === 0 && funcTracks.length === 0"
+          class="empty-lanes"
+          data-region="lanes-empty-state"
+        >
           Select tracks in view mode to edit
         </div>
 
@@ -587,6 +578,8 @@ const precisionBtnStyle = computed(() => {
         <button
           v-if="precisionBtnPosition"
           class="precision-btn"
+          data-testid="precision-open"
+          :data-selected-type="precisionBtnPosition.type"
           :style="precisionBtnStyle"
           @click="openPrecisionForSelected"
           title="Edit element"
@@ -619,61 +612,29 @@ const precisionBtnStyle = computed(() => {
   display: flex;
   flex: 1;
   background: #121416;
-  overflow: hidden;
+  align-items: flex-start;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .sidebar-column {
-  width: v-bind('EDIT_SIDEBAR_WIDTH + "px"');
-  min-width: v-bind('EDIT_SIDEBAR_WIDTH + "px"');
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
   display: flex;
   flex-direction: column;
   background: #141618;
   border-right: 1px solid #2a2d30;
 }
 
-.sidebar-header {
-  height: 24px;
-  min-height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 0 8px;
-  border-bottom: 1px solid #2a2d30;
-  background: #141618;
-}
-
-.header-btn {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #1e2024;
-  border: 1px solid #2a2d30;
-  border-radius: 4px;
-  color: #888;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.header-btn:hover {
-  background: #282c32;
-  color: #c8c8c8;
-}
-
 .lanes-area {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  min-width: 0;
 }
 
 .lanes-container {
-  flex: 1;
   position: relative;
-  overflow-y: auto;
 }
 
 .empty-lanes {

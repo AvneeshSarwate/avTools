@@ -99,23 +99,31 @@ function handleBackdropClick(e: MouseEvent) {
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="modal-backdrop" @click="handleBackdropClick">
+    <div
+      v-if="open"
+      class="modal-backdrop"
+      data-component="PrecisionEditor"
+      data-region="precision-modal"
+      :data-field-type="fieldType"
+      :data-dirty="dirty || undefined"
+      @click="handleBackdropClick"
+    >
       <div class="modal">
-        <div class="modal-header">
+        <div class="modal-header" data-region="precision-modal-header">
           <div class="header-content">
             <span class="header-title">Edit Element</span>
             <span class="track-badge">{{ trackName }}</span>
           </div>
-          <button class="close-btn" @click="close">
+          <button class="close-btn" data-testid="precision-close" @click="close">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M18 6L6 18M6 6l12 12"/>
             </svg>
           </button>
         </div>
 
-        <div class="modal-body">
+        <div class="modal-body" data-region="precision-modal-body">
           <!-- Time (all types) -->
-          <div class="field-row">
+          <div class="field-row" data-region="precision-field-time">
             <label>Time</label>
             <input
               type="number"
@@ -124,12 +132,13 @@ function handleBackdropClick(e: MouseEvent) {
               min="0"
               @change="onTimeChange"
               class="input"
+              data-testid="precision-time"
             />
           </div>
 
           <!-- Number value -->
           <template v-if="fieldType === 'number'">
-            <div class="field-row">
+            <div class="field-row" data-region="precision-field-number-value">
               <label>Value</label>
               <input
                 type="number"
@@ -137,18 +146,20 @@ function handleBackdropClick(e: MouseEvent) {
                 step="0.01"
                 @change="onValueChange"
                 class="input"
+                data-testid="precision-number-value"
               />
             </div>
           </template>
 
           <!-- Enum value -->
           <template v-if="fieldType === 'enum'">
-            <div class="field-row">
+            <div class="field-row" data-region="precision-field-enum-value">
               <label>Value</label>
               <select
                 :value="localDraft.enumValue"
                 @change="onEnumChange"
                 class="input select"
+                data-testid="precision-enum-value"
               >
                 <option v-for="opt in enumOptions" :key="opt" :value="opt">
                   {{ opt }}
@@ -159,30 +170,42 @@ function handleBackdropClick(e: MouseEvent) {
 
           <!-- Func name and args -->
           <template v-if="fieldType === 'func'">
-            <div class="field-row">
+            <div class="field-row" data-region="precision-field-func-name">
               <label>Function</label>
               <input
                 type="text"
                 :value="localDraft.funcName"
                 @input="onFuncNameChange"
                 class="input"
+                data-testid="precision-func-name"
                 placeholder="functionName"
               />
             </div>
 
-            <div class="args-section">
+            <div class="args-section" data-region="precision-func-args">
               <div class="args-header">
                 <span class="args-label">Arguments</span>
-                <button v-if="funcArgs.length < 5" class="add-arg-btn" @click="addArg">
+                <button
+                  v-if="funcArgs.length < 5"
+                  class="add-arg-btn"
+                  data-testid="precision-arg-add"
+                  @click="addArg"
+                >
                   + Add
                 </button>
               </div>
               <div class="args-list" v-if="funcArgs.length > 0">
-                <div v-for="(arg, index) in funcArgs" :key="index" class="arg-row">
+                <div
+                  v-for="(arg, index) in funcArgs"
+                  :key="index"
+                  class="arg-row"
+                  :data-arg-index="index"
+                >
                   <select
                     :value="arg.type"
                     @change="(e) => updateArgType(index, (e.target as HTMLSelectElement).value as 'text' | 'number')"
                     class="arg-type"
+                    data-testid="precision-arg-type"
                   >
                     <option value="text">Text</option>
                     <option value="number">Num</option>
@@ -192,9 +215,14 @@ function handleBackdropClick(e: MouseEvent) {
                     :value="arg.value"
                     @input="(e) => updateArgValue(index, (e.target as HTMLInputElement).value)"
                     class="arg-value"
+                    data-testid="precision-arg-value"
                     :placeholder="arg.type === 'number' ? '0' : 'value'"
                   />
-                  <button class="remove-arg-btn" @click="removeArg(index)">×</button>
+                  <button
+                    class="remove-arg-btn"
+                    data-testid="precision-arg-remove"
+                    @click="removeArg(index)"
+                  >×</button>
                 </div>
               </div>
               <div v-else class="no-args">No arguments</div>
@@ -202,11 +230,20 @@ function handleBackdropClick(e: MouseEvent) {
           </template>
         </div>
 
-        <div class="modal-footer">
-          <button class="btn btn-secondary" @click="revert" :disabled="!dirty">
+        <div class="modal-footer" data-region="precision-modal-footer">
+          <button
+            class="btn btn-secondary"
+            data-testid="precision-revert"
+            @click="revert"
+            :disabled="!dirty"
+          >
             Revert
           </button>
-          <button class="btn btn-primary" @click="save">
+          <button
+            class="btn btn-primary"
+            data-testid="precision-save"
+            @click="save"
+          >
             Save
           </button>
         </div>

@@ -153,14 +153,15 @@ function onMouseUp() {
 </script>
 
 <template>
-  <div class="time-ribbon-wrapper">
+  <div class="time-ribbon-wrapper" data-component="TimeRibbon">
     <!-- Viewport selector row -->
-    <div class="time-ribbon-container">
+    <div class="time-ribbon-container" data-region="ribbon-viewport-row">
       <div class="name-spacer"></div>
-      <div class="ribbon" ref="ribbonRef">
+      <div class="ribbon" data-region="ribbon-track" ref="ribbonRef">
         <!-- Viewport selector -->
         <div
           class="viewport"
+          data-testid="ribbon-viewport"
           :style="{
             left: viewportLeftPercent + '%',
             width: viewportWidthPercent + '%',
@@ -170,11 +171,13 @@ function onMouseUp() {
           <!-- Start handle -->
           <div
             class="handle handle-start"
+            data-testid="ribbon-handle-start"
             @mousedown.stop="onMouseDown($event, 'start')"
           ></div>
           <!-- End handle -->
           <div
             class="handle handle-end"
+            data-testid="ribbon-handle-end"
             @mousedown.stop="onMouseDown($event, 'end')"
           ></div>
         </div>
@@ -182,7 +185,7 @@ function onMouseUp() {
     </div>
 
     <!-- Time ticks row -->
-    <div class="time-ticks-container">
+    <div class="time-ticks-container" data-region="ribbon-ticks-row">
       <div class="name-spacer ticks-spacer"></div>
       <div class="ticks-area" ref="ticksRef">
         <div

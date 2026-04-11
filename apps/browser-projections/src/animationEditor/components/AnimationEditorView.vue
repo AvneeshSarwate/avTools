@@ -3,13 +3,34 @@ import { ref, provide, onMounted, onUnmounted, computed, shallowRef, reactive, w
 import type { TrackDef, EditorMode, TrackElement, NumberElement, EnumElement, FuncElementData } from '../types'
 import { Core } from '../core'
 import { RenderScheduler } from '../renderScheduler'
-import { NAME_COLUMN_WIDTH, EDIT_SIDEBAR_WIDTH } from '../constants'
+import { NAME_COLUMN_WIDTH } from '../constants'
 import TimeRibbon from './TimeRibbon.vue'
 import TrackList from './TrackList.vue'
 import Playhead from './Playhead.vue'
 import EditModeView from './EditModeView.vue'
 import ToastContainer from './ToastContainer.vue'
 import { AnimationEditorWebSocketController, coreToTrackData, type TrackData } from '../animationEditorWebSocket'
+
+const MIN_SIDEBAR_WIDTH = 120
+const MAX_SIDEBAR_WIDTH = 500
+const SIDEBAR_WIDTH_STORAGE_KEY = 'animationEditor.sidebarWidth'
+
+function clampSidebarWidth(w: number): number {
+  return Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, w))
+}
+
+function loadStoredSidebarWidth(): number {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)
+    if (raw !== null) {
+      const n = parseInt(raw, 10)
+      if (Number.isFinite(n)) return clampSidebarWidth(n)
+    }
+  } catch {
+    // localStorage unavailable (SSR, private mode) — fall through
+  }
+  return NAME_COLUMN_WIDTH
+}
 
 const props = withDefaults(defineProps<{
   duration?: number
@@ -69,12 +90,18 @@ const searchFilter = ref('')
 // Toggle: only show tracks that have keyframes
 const hideEmptyTracks = ref(false)
 
+// Draggable sidebar / name-column width (shared across view and edit modes)
+const sidebarWidth = ref(loadStoredSidebarWidth())
+
 // ResizeObserver reference for cleanup
 let resizeObserver: ResizeObserver | null = null
 
 // Track list container ref for playhead positioning
 const trackListRef = ref<HTMLElement | null>(null)
-const canvasAreaWidth = ref(0)
+const trackListContainerWidth = ref(0)
+const canvasAreaWidth = computed(() =>
+  Math.max(0, trackListContainerWidth.value - sidebarWidth.value)
+)
 
 // Provide to children
 provide('core', core)
@@ -119,12 +146,8 @@ const filteredTrackIds = computed(() => {
   })
 })
 
-// Computed: TimeRibbon spacer width based on mode
-const ribbonSpacerWidth = computed(() => {
-  return mode.value === 'view'
-    ? NAME_COLUMN_WIDTH
-    : EDIT_SIDEBAR_WIDTH
-})
+// TimeRibbon spacer width follows the draggable sidebar in both modes
+const ribbonSpacerWidth = computed(() => sidebarWidth.value)
 
 // Helper: Convert TrackData from WebSocket to TrackDef for Core
 function trackDataToCoreTracks(tracks: TrackData[], trackOrder: string[]) {
@@ -252,11 +275,11 @@ function sendStateUpdate(source?: 'tracks' | 'time' | 'window' | 'other') {
   )
 }
 
-// Update canvas area width on resize
+// Update track-list container width on resize
 onMounted(() => {
   const updateWidth = () => {
     if (trackListRef.value) {
-      canvasAreaWidth.value = trackListRef.value.clientWidth - NAME_COLUMN_WIDTH
+      trackListContainerWidth.value = trackListRef.value.clientWidth
     }
   }
 
@@ -388,6 +411,43 @@ function setWindowRange(start: number, end: number): void {
   scheduler.invalidate()
 }
 
+// Undo / redo — core's invalidate callback cascades through trackDataVersion,
+// so EditModeView's dataVersion watch rebuilds the lanes automatically.
+function handleUndo() {
+  core.undo()
+}
+
+function handleRedo() {
+  core.redo()
+}
+
+// Sidebar width drag-to-resize
+let resizeStartX = 0
+let resizeStartWidth = 0
+
+function onResizeStart(e: MouseEvent) {
+  e.preventDefault()
+  resizeStartX = e.clientX
+  resizeStartWidth = sidebarWidth.value
+  window.addEventListener('mousemove', onResizeMove)
+  window.addEventListener('mouseup', onResizeEnd)
+}
+
+function onResizeMove(e: MouseEvent) {
+  const delta = e.clientX - resizeStartX
+  sidebarWidth.value = clampSidebarWidth(resizeStartWidth + delta)
+}
+
+function onResizeEnd() {
+  window.removeEventListener('mousemove', onResizeMove)
+  window.removeEventListener('mouseup', onResizeEnd)
+  try {
+    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth.value))
+  } catch {
+    // localStorage unavailable — width is still applied for this session
+  }
+}
+
 defineExpose({
   addTrack,
   scrubToTime,
@@ -399,65 +459,94 @@ defineExpose({
 </script>
 
 <template>
-  <div class="animation-editor">
-    <!-- Mode toggle header -->
-    <div class="mode-header">
-      <button class="mode-toggle" @click="toggleMode">
+  <div
+    class="animation-editor"
+    data-component="AnimationEditorView"
+    :data-mode="mode"
+    :style="{ '--sidebar-width': sidebarWidth + 'px' }"
+  >
+    <!-- Control header: mode toggle + mode-specific controls -->
+    <div class="control-header" data-region="control-header">
+      <button class="mode-toggle" data-testid="mode-toggle" @click="toggleMode">
         {{ mode === 'view' ? 'Switch to Edit Mode' : 'Switch to View Mode' }}
       </button>
       <span class="mode-label">{{ mode === 'view' ? 'View Mode' : 'Edit Mode' }}</span>
+
+      <!-- View-mode controls -->
+      <div class="view-controls" data-region="view-controls" v-if="mode === 'view'">
+        <input
+          v-model="searchFilter"
+          type="text"
+          placeholder="Search tracks..."
+          class="search-input"
+          data-testid="search-input"
+        />
+        <label class="hide-empty-toggle">
+          <input type="checkbox" v-model="hideEmptyTracks" data-testid="hide-empty-toggle" />
+          <span>Hide empty</span>
+        </label>
+      </div>
+
+      <!-- Edit-mode controls -->
+      <div class="edit-controls" data-region="edit-controls" v-else>
+        <button class="header-btn" data-testid="undo" @click="handleUndo" title="Undo">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
+          </svg>
+        </button>
+        <button class="header-btn" data-testid="redo" @click="handleRedo" title="Redo">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/>
+          </svg>
+        </button>
+      </div>
     </div>
 
-    <!-- Time ribbon (always visible, controls zoom/pan) -->
-    <TimeRibbon
-      :duration="core.duration"
-      v-model:window-start="windowStart"
-      v-model:window-end="windowEnd"
-      :spacer-width="ribbonSpacerWidth"
-      @update:window-start="onWindowChange"
-      @update:window-end="onWindowChange"
-    />
+    <!-- Body: ribbon + content + resize handle (handle is scoped here so it spans from ribbon to bottom, not over the control header) -->
+    <div class="editor-body" data-region="editor-body">
+      <!-- Time ribbon (always visible, controls zoom/pan) -->
+      <TimeRibbon
+        :duration="core.duration"
+        v-model:window-start="windowStart"
+        v-model:window-end="windowEnd"
+        :spacer-width="ribbonSpacerWidth"
+        @update:window-start="onWindowChange"
+        @update:window-end="onWindowChange"
+      />
 
-    <!-- View Mode -->
-    <template v-if="mode === 'view'">
-      <!-- Track list with playhead overlay -->
-      <div class="track-list-container" ref="trackListRef">
-        <!-- Search row aligned with track names -->
-        <div class="search-row">
-          <div class="name-column-header">
-            <input
-              v-model="searchFilter"
-              type="text"
-              placeholder="Search tracks..."
-              class="search-input"
-            />
-            <label class="hide-empty-toggle">
-              <input type="checkbox" v-model="hideEmptyTracks" />
-              <span>Hide empty</span>
-            </label>
-          </div>
+      <!-- View Mode -->
+      <template v-if="mode === 'view'">
+        <div class="track-list-container" data-region="track-list-container" ref="trackListRef">
+          <TrackList :track-ids="filteredTrackIds" />
+          <Playhead
+            :current-time="currentTime"
+            :window-start="windowStart"
+            :window-end="windowEnd"
+            :canvas-width="canvasAreaWidth"
+            :left-offset="sidebarWidth"
+          />
         </div>
-        <TrackList :track-ids="filteredTrackIds" />
-        <Playhead
-          :current-time="currentTime"
-          :window-start="windowStart"
-          :window-end="windowEnd"
-          :canvas-width="canvasAreaWidth"
-          :left-offset="NAME_COLUMN_WIDTH"
-        />
-      </div>
-    </template>
+      </template>
 
-    <!-- Edit Mode -->
-    <EditModeView
-      v-else
-      :core="core"
-      :window-start="windowStart"
-      :window-end="windowEnd"
-      :current-time="currentTime"
-      :data-version="trackDataVersion"
-      :initial-enabled-track-ids="selectedTrackIdsForEdit"
-    />
+      <!-- Edit Mode -->
+      <EditModeView
+        v-else
+        :core="core"
+        :window-start="windowStart"
+        :window-end="windowEnd"
+        :current-time="currentTime"
+        :data-version="trackDataVersion"
+        :initial-enabled-track-ids="selectedTrackIdsForEdit"
+      />
+
+      <!-- Column resize handle (both modes) -->
+      <div
+        class="sidebar-resize-handle"
+        data-testid="sidebar-resize-handle"
+        :style="{ left: (sidebarWidth - 2) + 'px' }"
+        @mousedown="onResizeStart"
+      ></div>
+    </div>
 
     <!-- Toast notifications -->
     <ToastContainer />
@@ -468,6 +557,7 @@ defineExpose({
 .animation-editor {
   display: flex;
   flex-direction: column;
+  position: relative;
   background: #121416;
   color: #c8c8c8;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
@@ -475,13 +565,14 @@ defineExpose({
   overflow: hidden;
 }
 
-.mode-header {
+.control-header {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   padding: 8px 16px;
   background: #0e1012;
   border-bottom: 1px solid #2a2d30;
+  flex-shrink: 0;
 }
 
 .mode-toggle {
@@ -508,25 +599,16 @@ defineExpose({
   font-weight: 500;
 }
 
-.search-row {
+.view-controls,
+.edit-controls {
   display: flex;
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  background: #141618;
-}
-
-.name-column-header {
-  width: v-bind('NAME_COLUMN_WIDTH + "px"');
-  min-width: v-bind('NAME_COLUMN_WIDTH + "px"');
-  padding: 6px 8px;
-  box-sizing: border-box;
-  background: #141618;
-  border-bottom: 1px solid #2a2d30;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .search-input {
-  width: 100%;
+  width: 200px;
   padding: 6px 10px;
   background: #1a1c20;
   border: 1px solid #2a2d30;
@@ -549,7 +631,6 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-top: 4px;
   font-size: 11px;
   color: #888;
   cursor: pointer;
@@ -565,10 +646,54 @@ defineExpose({
   color: #aaa;
 }
 
+.header-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1e2024;
+  border: 1px solid #2a2d30;
+  border-radius: 4px;
+  color: #888;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.header-btn:hover {
+  background: #282c32;
+  color: #c8c8c8;
+}
+
+.editor-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+
 .track-list-container {
   flex: 1;
   position: relative;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  z-index: 50;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle:active {
+  background: rgba(58, 124, 165, 0.5);
 }
 </style>

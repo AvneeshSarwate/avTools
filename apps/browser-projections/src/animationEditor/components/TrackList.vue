@@ -7,7 +7,7 @@ defineProps<{
 </script>
 
 <template>
-  <div class="track-list">
+  <div class="track-list" data-component="TrackList">
     <TrackRow
       v-for="trackId in trackIds"
       :key="trackId"
