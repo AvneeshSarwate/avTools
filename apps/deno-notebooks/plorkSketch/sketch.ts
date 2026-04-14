@@ -4,6 +4,28 @@
 //
 // Run from apps/deno-notebooks:
 //   deno run --unstable-webgpu --unstable-ffi --allow-all plorkSketch/sketch.ts
+//
+// CODE MAP
+// ────────
+//   1. IMPORTS
+//   2. CONSTANTS
+//   3. PARAM DEFINITIONS             — paramDefs, SketchParams type
+//   4. PARAM SYSTEM & PLAYBACK STATE — buildParamSystem, paneBindings, animationPlayback
+//   5. SKETCH STATE                  — orbit accumulator, square-walk state, active circles
+//   6. BRANCH LAUNCHERS              — startWalkAnim, launchCircle, actionQueue
+//   7. BRIDGE & HELPERS              — setupPane, clampPlaybackTime, animationBridge, callbacks
+//   8. BOOT                          — device, renderWindow, p5, shader chain, animationHandle
+//   9. ROOT LOOP                     — drain actionQueue, advance playback, scrub editor
+//  10. FRAME FUNCTIONS               — renderFrame, cleanup
+//  11. SCENE COMPOSITION             — drawCircle
+//  12. SHADER CHAIN SETUP            — createFloodFillChain
+//  13. COLOR HELPERS                 — hslToRgb, hue2rgb
+//
+// See plorkSketch/sketch_tools.md for a library-by-library overview.
+
+// ============================================================================
+// 1. IMPORTS
+// ============================================================================
 
 import {
   createWindowRenderManager,
@@ -24,9 +46,18 @@ import {
   snapshotToAnimation,
 } from "../tools/paramSystem.ts";
 
+// ============================================================================
+// 2. CONSTANTS
+// ============================================================================
+
 const WIDTH = 1280;
 const HEIGHT = 720;
 const CLEAR_COLOR: GPUColor = { r: 0, g: 0, b: 0, a: 0 };
+
+// ============================================================================
+// 3. PARAM DEFINITIONS — edit paramDefs to add/remove controls; mirror the leaf
+//    keys into SketchParams. All leaf keys must be globally unique (params is flat).
+// ============================================================================
 
 const paramDefs = {
   launch: {
@@ -100,6 +131,13 @@ type SketchParams = {
   diskRadius: number;
 };
 
+// ============================================================================
+// 4. PARAM SYSTEM & PLAYBACK STATE
+//    params: mutable flat value map read throughout the sketch.
+//    paneBindings: captured inside pane.setup; used by callbacks to .refresh() sliders.
+//    animationPlayback: shared with the animation editor; root loop advances currentTime.
+// ============================================================================
+
 const paramSystem = buildParamSystem(paramDefs);
 const params = paramSystem.params as SketchParams;
 const paneBindings = new Map<string, PaneBinding>();
@@ -111,6 +149,13 @@ const animationPlayback: AnimationPlaybackState = {
   loop: false,
   speed: 1,
 };
+
+// ============================================================================
+// 5. SKETCH STATE
+//    Plain module-level state read by drawCircle and mutated by branches.
+//    Orbit: continuous phase integrator. Walk: discrete tween between square vertices.
+//    Active circles: Set populated by launchCircle branches.
+// ============================================================================
 
 type Direction = "left" | "right" | "up" | "down";
 
@@ -165,6 +210,14 @@ const walkWhite: WalkCircle = { x: 0, y: 0, vertexIndex: 2, startX: 0, startY: 0
   walkWhite.x = wp.x; walkWhite.y = wp.y;
   walkWhite.startX = wp.x; walkWhite.startY = wp.y;
 }
+
+// ============================================================================
+// 6. BRANCH LAUNCHERS
+//    UI callbacks and one-shot events push closures into actionQueue; the root
+//    loop drains it and each closure spawns a ctx.branch under live root time.
+//    startWalkAnim is a long-running branch that gates on params.bwMode === "walk".
+//    launchCircle creates a short-lived branch per direction.
+// ============================================================================
 
 let walkAnimRunning = false;
 
@@ -269,6 +322,15 @@ function launchCircle(dir: Direction) {
   });
 }
 
+// ============================================================================
+// 7. BRIDGE & HELPERS
+//    setupPane: the pane.setup callback — installs paramSystem bindings, captures
+//      them for later .refresh() calls from playback.
+//    animationBridge: spawns the editor webview, snapshots current params on demand.
+//    animationCallbacks: applied via animationHandle.setCallbacks to let the editor
+//      write into `params` (and trigger actions on func-track keyframes).
+// ============================================================================
+
 function setupPane(pane: WindowTweakpane): void {
   const nextBindings = paramSystem.setupPane(pane);
   paneBindings.clear();
@@ -302,6 +364,13 @@ const animationCallbacks = createAnimationCallbacks(
 
 animationBridge.tracks.setFromInputs("default", paramSystem.trackInputs);
 
+// ============================================================================
+// 8. BOOT
+//    Top-level await for WebGPU device, native window (+ Syphon + tweakpane),
+//    P5GPU instance, shader-fx/raw chain, and the animation-editor webview.
+//    Order matters: renderWindow is created before p5 so pane.setup can run.
+// ============================================================================
+
 const device = await requestWebGpuDevice();
 const renderWindow = await createWindowRenderManager({
   device,
@@ -328,6 +397,15 @@ const animationHandle = animationBridge.showBoundInWindow(renderWindow.window, "
   panelHeight: 760,
 });
 animationHandle.setCallbacks(animationCallbacks);
+
+// ============================================================================
+// 9. ROOT LOOP
+//    Exactly one core-timing root. Ticks at 1/60s (branches launched via
+//    actionQueue inherit this tick rate as their base time).
+//    Per tick: (a) drain actionQueue, (b) advance animationPlayback.currentTime
+//    if playing, (c) push the playhead to the editor via scrubAndEvaluate
+//    (applies keyframes to params) / scrubToTime (playback metadata changed only).
+// ============================================================================
 
 const rootAnim = launch(async (ctx) => {
   let lastTickTime = ctx.progTime;
@@ -397,6 +475,14 @@ startWalkAnim();
 
 await renderWindow.run(renderFrame, { cleanup: cleanup });
 
+// ============================================================================
+// 10. FRAME FUNCTIONS
+//     renderFrame must be synchronous and return a WindowRenderSource
+//     (ShaderEffect | GPUTexture | GPUTextureView). The manager blits that
+//     to the window swap chain and publishes via Syphon if configured.
+//     cleanup runs before the window disposes.
+// ============================================================================
+
 function renderFrame() {
   const time = performance.now() * 0.001;
 
@@ -425,6 +511,12 @@ function cleanup(): void {
   floodFill.placeholder.destroy();
   p5.dispose();
 }
+
+// ============================================================================
+// 11. SCENE COMPOSITION
+//     Immediate-mode p5gpu draw calls. Reads params + module state; must be
+//     sandwiched between p5.beginFrame() / p5.endFrame() (done by renderFrame).
+// ============================================================================
 
 function drawCircle(): void {
   p5.clear();
@@ -473,6 +565,14 @@ function drawCircle(): void {
     p5.circle(state.x, state.y, state.radius * 2);
   }
 }
+
+// ============================================================================
+// 12. SHADER CHAIN SETUP
+//     Builds a flood-fill-with-time-decay DAG: source → AlphaTimeTag (stamp
+//     draw time into alpha) → FloodFillStep(seed) → Passthru → FeedbackNode
+//     → FloodFillStep(feedback) → FloodFillDisplay (terminal). Uses rgba16float
+//     for feedback precision. Terminal is returned from renderFrame.
+// ============================================================================
 
 async function createFloodFillChain(device: GPUDevice, width: number, height: number) {
   const format = await selectShaderFxFormat(device, ["rgba16float"]);
@@ -523,6 +623,10 @@ async function createFloodFillChain(device: GPUDevice, width: number, height: nu
     display,
   };
 }
+
+// ============================================================================
+// 13. COLOR HELPERS
+// ============================================================================
 
 function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   if (s === 0) return [Math.round(l * 255), Math.round(l * 255), Math.round(l * 255)];
