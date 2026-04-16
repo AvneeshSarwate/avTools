@@ -285,13 +285,69 @@ function startWalkAnim() {
 
 const actionQueue: Array<(ctx: DateTimeContext) => void> = [];
 
-function launchCircle(dir: Direction) {
+type LaunchParams = {
+  hue: number;
+  randomColor: number; //not great but this is a bool which we use a falsy number for
+  duration: number;
+  radius: number;
+  waveAmp: number;
+  waveFreq: number;
+}
+
+const launchParamKeys = ["hue", "randomColor", "duration", "radius", "waveAmp", "waveFreq"]
+const launchTypes = ["up", "down", "left", "right", "cw", "ccw"]
+
+function parseLaunchStringToLaunchConfig(launchString: string) {
+  const lines = launchString.split('\n').filter(s => s.length > 0)
+  const launchHits = lines.map(l => {
+    const tokens = l.split(" ").filter(t => t.length > 0)
+    if(tokens.length == 0) return
+
+    const delay = parseFloat(tokens.shift()!)
+    if(isNaN(delay)) return
+
+    const launchType = tokens.shift()!
+    if (!launchTypes.includes(launchType)) return
+    
+    if (tokens.length % 2 != 0) return
+    const secondAreNumbers = tokens.map((t, i) => {
+      if (i % 2 == 0) return true
+      else return !isNaN(parseFloat(t))
+    }).reduce((a, b) => a && b, true)
+    
+    if (!secondAreNumbers) return 
+    
+    const params: Record<string,  number> = {}
+    for (let i = 0; i < tokens.length; i += 2) {
+      params[tokens[i]] = parseFloat(tokens[i+1])
+    }
+
+    return {delay, launchType, params}
+  }).filter(e => e != undefined)
+
+  return launchHits
+}
+
+function launchBatch(ctx: DateTimeContext, launchString: string) {
+  const configs = parseLaunchStringToLaunchConfig(launchString)
+  configs.forEach(cf => {
+    ctx.branch(async ctx => {
+      await ctx.wait(cf.delay)
+      //@ts-ignore - this is validated in parser
+      launchCircle(cf.launchType, cf.params)
+    })
+  })
+}
+
+function launchCircle(dir: Direction, launchParams?: Partial<LaunchParams>) {
   actionQueue.push((ctx) => {
-    const hue = params.randomColor ? Math.random() * 360 : params.hue;
-    const duration = params.duration;
-    const radius = params.radius;
-    const waveAmp = params.waveAmp;
-    const waveFreq = params.waveFreq;
+    const lp = launchParams ?? {}
+    const randCol = lp.randomColor ?? params.randomColor
+    const hue = randCol ? Math.random() * 360 : (lp.hue ?? params.hue);
+    const duration = lp.duration ?? params.duration;
+    const radius = lp.radius ?? params.radius;
+    const waveAmp = lp.waveAmp ?? params.waveAmp;
+    const waveFreq = lp.waveFreq ?? params.waveFreq;
     const state: CircleState = { x: 0, y: 0, hue, radius, handle: null! };
 
     const rad = radius + 2;
@@ -512,8 +568,10 @@ async function startSocket() {
         
         socket.onmessage = (event) => {
           console.log(`Received message: ${event.data}`);
-          // Echo the message back to the client
-          socket.send(`Echo: ${event.data}`);
+          const dataJson = JSON.parse(event.data)
+          if (dataJson.type === 'launchString') {
+            actionQueue.push((ctx) => launchBatch(ctx, dataJson.launchString))
+          }
         };
         
         socket.onclose = () => {
