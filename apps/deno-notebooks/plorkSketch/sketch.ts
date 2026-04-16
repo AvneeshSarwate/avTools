@@ -490,6 +490,59 @@ rootAnim.catch((err: unknown) => {
 
 startWalkAnim();
 
+async function startSocket() {
+  // Create a simple HTTP server that handles WebSocket upgrades
+  const server = Deno.serve(
+    {
+      port: 8080,
+      onListen: ({ port }) => {
+        console.log(`WebSocket server listening on ws://localhost:${port}`);
+      }
+    },
+    async (req) => {
+      // Handle WebSocket upgrade
+      if (req.headers.get("upgrade") === "websocket") {
+        const { socket, response } = Deno.upgradeWebSocket(req);
+        
+        // Set up WebSocket event handlers
+        socket.onopen = () => {
+          console.log("WebSocket connection opened");
+          socket.send("Welcome to the WebSocket server!");
+        };
+        
+        socket.onmessage = (event) => {
+          console.log(`Received message: ${event.data}`);
+          // Echo the message back to the client
+          socket.send(`Echo: ${event.data}`);
+        };
+        
+        socket.onclose = () => {
+          console.log("WebSocket connection closed");
+        };
+        
+        socket.onerror = (error) => {
+          console.error("WebSocket error:", error);
+        };
+        
+        // Return the WebSocket response
+        return response;
+      }
+      
+      // Handle regular HTTP requests (optional)
+      const body = new TextEncoder().encode("Hello WebSocket!");
+      return new Response(body, {
+        headers: { "Content-Type": "text/plain" }
+      });
+    }
+  );
+  
+  // Keep the server running
+  await server.finished;
+}
+
+// Start the server
+startSocket().catch(console.error);
+
 await renderWindow.run(renderFrame, { cleanup: cleanup });
 
 // ============================================================================
