@@ -26,6 +26,7 @@
 // ============================================================================
 // 1. IMPORTS
 // ============================================================================
+// deno-lint-ignore-file no-case-declarations
 
 import {
   createWindowRenderManager,
@@ -68,11 +69,15 @@ const paramDefs = {
     randomColor: { value: false },
     waveAmp: { value: 80, min: 0, max: 300, step: 1 },
     waveFreq: { value: 2.0, min: 0, max: 10, step: 0.1 },
+    orbitRad: { value: 100, min: 1, max: 400, step: 1 },
+    startAngle: { value: 0, min: 0, max: 360, step: 1 },
     _actions: {
       launchRight: { action: () => launchCircle("right"), label: "Right" },
       launchLeft: { action: () => launchCircle("left"), label: "Left" },
       launchDown: { action: () => launchCircle("down"), label: "Down" },
       launchUp: { action: () => launchCircle("up"), label: "Up" },
+      circleCW: { action: () => launchCircle("cw"), label: "Clockwise Orbit" },
+      circleCCW: { action: () => launchCircle("ccw"), label: "Counter-Clockwise Orbit" },
     },
   },
   animations: {
@@ -129,6 +134,8 @@ type SketchParams = {
   alphaThreshold: number;
   useDisk: boolean;
   diskRadius: number;
+  startAngle: number;
+  orbitRad: number;
 };
 
 // ============================================================================
@@ -157,7 +164,7 @@ const animationPlayback: AnimationPlaybackState = {
 //    Active circles: Set populated by launchCircle branches.
 // ============================================================================
 
-type Direction = "left" | "right" | "up" | "down";
+type Direction = "left" | "right" | "up" | "down" | "cw" | "ccw";
 
 interface CircleState {
   x: number;
@@ -309,6 +316,16 @@ function launchCircle(dir: Direction) {
           case "up":
             state.x = WIDTH / 2 + wave;
             state.y = HEIGHT + rad - t * (HEIGHT + 2 * rad);
+            break;
+          case "cw":
+            const angle = (params.startAngle * Math.PI / 180) + (t * 2 * Math.PI);
+            state.x = WIDTH / 2 + Math.cos(angle) * params.orbitRad;
+            state.y = HEIGHT / 2 + Math.sin(angle) * params.orbitRad;
+            break;
+          case "ccw":
+            const angle2 = (params.startAngle * Math.PI / 180) - (t * 2 * Math.PI);
+            state.x = WIDTH / 2 + Math.cos(angle2) * params.orbitRad;
+            state.y = HEIGHT / 2 + Math.sin(angle2) * params.orbitRad;
             break;
         }
         await branchCtx.waitSec(1 / 60);
