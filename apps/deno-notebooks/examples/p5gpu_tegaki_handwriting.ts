@@ -103,6 +103,10 @@ const layout = engine.layoutText({
   style: 0,
   axisQuantization: 0,
   axes: {},
+  // Tegaki's bundle is keyed by codepoint — we can't render a ligature
+  // glyph's stroke data from per-codepoint entries. Disable liga/clig/
+  // dlig/calt so every source codepoint emits its own glyph.
+  disableLigatures: true,
 });
 console.log(
   `Layout: ${layout.glyphs.length} glyphs, ${layout.lineCount} lines, ` +

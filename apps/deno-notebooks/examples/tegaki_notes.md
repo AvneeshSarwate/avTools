@@ -112,3 +112,138 @@ Without cluster info there's no reliable way to map a positioned glyph back to i
 - Thai has no inter-word spaces in natural prose; we insert spaces between phrases so the word-wrap segmenter has break opportunities. Proper Thai line breaking is dictionary-based and is not implemented here.
 - A few characters (~1 per ~100 in the current demo text) get collapsed/elided by the shaper and don't produce any glyph at all — they'll render as gaps. Acceptable for a POC.
 - Combining marks (U+0E31, U+0E34–U+0E3A, U+0E47–U+0E4E) have `w: 0` (zero advance) in the tegaki bundle, as expected. Their visual placement above/below the base comes from the shaper's `y_offset` (baked into `glyph.y`), not from tegaki's stroke data.
+
+## Ligatures
+
+### What a ligature is
+
+A ligature is **one glyph that stands in for two or more characters.** The text on disk still contains two codepoints, but the font substitutes a single combined image when rendering them adjacent.
+
+Two reasons fonts define ligatures:
+
+1. **Typographic quality** — certain letter pairs collide awkwardly with default spacing. Classic case: `fi` — the dot of the `i` crashes into the hook of the `f`, so fonts ship an `fi` glyph where the `f`-hook merges with the `i`-stem and the dot is gone. Also `fl`, `ffi`, `ffl`. These are **standard ligatures**.
+2. **Script fidelity** — handwriting / script fonts mimic calligraphy, which joins letters. Charmonman is Zapfino-inspired and has `ll`, `th`, `st`, etc. ligatures so output looks hand-drawn, not letter-stamped. These are **discretionary ligatures**.
+
+### Where in the pipeline
+
+```
+"Hello" (5 codepoints, UTF-8 bytes)
+   │
+   ▼  SHAPING  ← HarfBuzz (harfrust in our Rust engine)
+   │           reads OpenType GSUB/GPOS tables,
+   │           applies features: liga, clig, kern, mark, ...
+   ▼
+[glyph_H, glyph_e, glyph_ll, glyph_o]   ← 4 glyphs, not 5
+   │
+   ▼  RASTERIZATION  ← swash / freetype / browser
+   ▼
+pixels
+```
+
+OpenType feature tags (4 letters each) control which substitutions run:
+
+| tag    | name                     | default                  |
+|--------|--------------------------|--------------------------|
+| `liga` | standard ligatures       | ON                       |
+| `clig` | contextual ligatures     | ON                       |
+| `dlig` | discretionary ligatures  | OFF                      |
+| `calt` | contextual alternates    | ON                       |
+| `rlig` | required ligatures       | always ON (Arabic needs it) |
+
+Passing a feature with value `0` tells HarfBuzz "skip this substitution."
+
+### How this manifested here
+
+Probe output for Charmonman with default features:
+
+```
+"Hello World"   chars=11  glyphs=10  clusters=[0,1,2,4,5,6,7,8,9,10]
+"ll"            chars=2   glyphs=1   clusters=[0]
+"lll"           chars=3   glyphs=2   clusters=[0,2]
+```
+
+`"ll"` produces one glyph with cluster 0 — Charmonman has an `ll` → one glyph rule. `"Hello World"` is missing cluster 3 (the second `l`): that byte is consumed by the `ll` ligature centered at cluster 2.
+
+The sketch's cluster-run grouping looks for consecutive glyphs with the same cluster, so `ll`'s single glyph produces a run of length 1, and only `chars[2]` gets a `GlyphState`. `chars[3]` silently drops off — the second `l` vanishes.
+
+### Option 1: disable ligatures at shape time (✅ implemented)
+
+`TextLayoutRequest` has a `disableLigatures?: boolean` field (default `false`). When `true`, the Rust shaper passes:
+
+```rust
+[b"liga", b"clig", b"dlig", b"calt"]
+    .iter()
+    .map(|tag| harfrust::Feature::new(harfrust::Tag::new(*tag), 0, ..))
+    .collect::<Vec<_>>()
+```
+
+as the features argument to `shape`. The flag is threaded through the FFI (`text_engine_layout_json` gained a `disable_ligatures: u32` parameter before `out_ptr`) and is part of `ShapeCacheKey` so the same text can be shaped both ways without cache collision.
+
+In the sketch:
+```ts
+const layout = engine.layoutText({
+  text, family: "Charmonman", fontSize, lineHeight, width: MAX_WIDTH,
+  ...
+  disableLigatures: true,
+});
+```
+
+Verification probe output (with the flag):
+```
+"Hello World"   chars=11 glyphs=11 clusters=[0,1,2,3,4,5,6,7,8,9,10]
+"ll"            chars=2  glyphs=2  clusters=[0,1]
+"lll"           chars=3  glyphs=3  clusters=[0,1,2]
+```
+
+Trade-off: rendered text loses the joined-cursive aesthetic. For our per-codepoint phase animation this is fine (arguably correct — see below). The reference HTML (`p5gpu_tegaki_handwriting_reference.html`) also sets `font-feature-settings: "liga" 0, "clig" 0, "dlig" 0, "calt" 0` so visual comparison stays apples-to-apples.
+
+### Option 2: render the font's actual ligatures
+
+Keep ligatures on at shape time, give tegaki stroke data for the ligature glyphs, and look up by **glyph ID** rather than codepoint.
+
+#### Why you'd want this
+
+When playing the animation as a smooth "person writing this paragraph" reveal, fidelity to the font's intended cursive joins matters. `ll` as one joined stroke run looks handwritten; two independent `l`s with a gap looks stamped.
+
+#### Why it doesn't fit our *current* sketch
+
+The premise is per-codepoint phase retriggering — "flash the second `l` independently of the first." A ligature is, by definition, one joined glyph where the two `l`s share ink (a connecting stroke, shared tail). Tegaki skeletonizes that joined shape into **one** polyline run. So even with ligature stroke data, "retrigger the second l" is a meaningless operation — there's no independently retriggerable second `l`.
+
+Option 2 is the right answer for **full-text playback animations**, not per-char effects.
+
+#### What implementing it requires
+
+Four ripples, roughly ordered by cost:
+
+**1. Expose HarfBuzz glyph IDs through the FFI.** `layout.glyphs[i].key` is currently a cache-packed hash (font_id + glyph_id + font_size + axes), not the raw glyph ID. Add a `glyphId: u16` field to the wire format — same mechanical pattern as the cluster work, ~2-byte bump per record (so 20 → 22 bytes, or round up to 24 for alignment). Rust `ShapedGlyph` already has `glyph_id`, so just thread it through. **Low effort.**
+
+**2. Regenerate the tegaki bundle with glyph-id-keyed stroke data.** Tegaki's generator has a `--ligatures` boolean (see `pipelineOptionsSchema.ligatures` in `packages/generator/src/commands/generate.ts`) but it's primarily about whether the CSS `font-feature-settings` in the bundle enables ligatures — it doesn't by itself emit extra glyph entries for ligature glyphs. Two paths:
+
+- **Clean path — extend the generator.** Teach `extractTegakiBundle` / the CLI to also iterate the font's non-codepoint ligature glyphs (opentype.js exposes them via `font.glyphs` + `font.substitution` / by scanning GSUB). Run each through the existing `processGlyph` pipeline and emit a second map: `glyphDataByGid: Record<number, TegakiGlyphData>`. Keep the codepoint map for simple cases. This is the right long-term move — probably worth upstreaming.
+- **Hack path — side-car script.** Don't touch tegaki. Write a script that imports tegaki's exported `processGlyph` / `parseFont` (pure functions, no file I/O), loads `charmonman.ttf`, enumerates ligature glyphs via opentype.js, runs each through the pipeline, and emits `glyphDataByGid.json` next to the existing `glyphData.json`. Duplicates some pipeline knowledge but isolates the change.
+
+**Medium effort.** Mostly glue.
+
+**3. Change the sketch's lookup.** `glyphStates.push({ glyph: glyphData[ch], ... })` becomes:
+
+```ts
+const td = glyphDataByGid[g.glyphId] ?? glyphData[ch] ?? null;
+// ^ prefer glyph-id data for ligatures, fall back to per-codepoint.
+```
+
+Keep `state.ch` for debugging (now a "primary char" hint rather than the key). **Low effort.**
+
+**4. Rethink animation semantics.** With ligatures, your ECS unit is "one laid-out glyph" which may span multiple source codepoints. Random retriggering affects whichever chars a ligature covers. Some UX that lives in codepoint space becomes awkward (e.g., "flash word boundaries" — word boundaries are in codepoint space, but glyph space is where you're animating). Usually solvable by keeping both indices on each `GlyphState` and deciding at trigger time.
+
+**Low-to-medium effort.** More design than code.
+
+#### Summary table
+
+| | Option 1 (disable ligatures) | Option 2 (ligatures + glyph-id lookup) |
+|---|---|---|
+| Code change | ~10 lines Rust + sketch | ~100 lines: FFI + generator/side-car + bundle + sketch |
+| Font fidelity | lower (no joined cursive) | higher (honors the font's shaping) |
+| Per-codepoint animation control | clean | lost — the glyph becomes the unit |
+| Good fit for | random retrigger, per-char effects | playback-reveal "someone is writing this" |
+
+If you ever want "type out this paragraph like a person is writing it, one stroke at a time, with proper Zapfino-esque joins" — that's Option 2 territory.

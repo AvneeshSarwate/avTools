@@ -82,7 +82,14 @@
       white-space: normal;          /* word-wrap at whitespace */
       overflow-wrap: break-word;
       word-break: normal;
-      /* Match the native engine: left-aligned, word-wrap, LTR. */
+      /* Match the sketch: it passes `disableLigatures: true` to the native
+         text engine so each codepoint emits its own glyph (tegaki's stroke
+         bundle is keyed by codepoint, not by ligature glyph). Turn off
+         ligatures here too so the two renderings are directly comparable
+         — otherwise Charmonman's `ll`, `th`, etc. would only join in this
+         reference and visually diverge from the sketch. */
+      font-feature-settings: "liga" 0, "clig" 0, "dlig" 0, "calt" 0;
+      font-variant-ligatures: none;
     }
 
     .hud {

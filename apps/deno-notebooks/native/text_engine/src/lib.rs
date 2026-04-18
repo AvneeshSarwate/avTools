@@ -192,6 +192,10 @@ struct ShapeCacheKey {
     weight: u16,
     style: u32,
     axes_hash: u64,
+    /// Whether HarfBuzz ligature features were disabled during shaping.
+    /// Different from the same text with ligatures on, so it's part of the
+    /// cache key.
+    disable_ligatures: bool,
 }
 
 const SHAPE_CACHE_MAX_ENTRIES: usize = 16384;
@@ -307,6 +311,7 @@ impl TextEngine {
         style: u32,
         axes: &[AxisSetting],
         axes_hash: u64,
+        disable_ligatures: bool,
     ) -> Vec<ShapedGlyph> {
         if text.is_empty() || !font_size.is_finite() || font_size <= 0.0 {
             return Vec::new();
@@ -320,6 +325,7 @@ impl TextEngine {
             weight,
             style,
             axes_hash,
+            disable_ligatures,
         };
         if let Some(cached) = self.shape_cache.get(&cache_key) {
             return cached.clone();
@@ -386,7 +392,23 @@ impl TextEngine {
                 buffer.set_direction(harfrust::Direction::LeftToRight);
                 buffer.guess_segment_properties();
 
-                let glyph_buffer = shaper.shape(buffer, &[]);
+                // When the caller asks for ligatures off, switch off the
+                // standard / contextual / discretionary ligature features and
+                // contextual alternates. Required ligatures (`rlig`) cannot be
+                // disabled — scripts like Arabic depend on them.
+                let features: Vec<harfrust::Feature> = if disable_ligatures {
+                    [b"liga", b"clig", b"dlig", b"calt"]
+                        .iter()
+                        .map(|tag| {
+                            // `range` is over buffer-cluster indices in
+                            // usize; `..` is the full range.
+                            harfrust::Feature::new(harfrust::Tag::new(*tag), 0, ..)
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let glyph_buffer = shaper.shape(buffer, &features);
                 let upem = shaper.units_per_em().max(1) as f32;
                 let scale = font_size / upem;
 
@@ -438,6 +460,7 @@ impl TextEngine {
         style: u32,
         axis_quantization: f32,
         axes_json: &str,
+        disable_ligatures: bool,
     ) -> Vec<u8> {
         let size = if font_size.is_finite() {
             font_size.max(1.0)
@@ -548,6 +571,7 @@ impl TextEngine {
                         max_w,
                         align_h,
                         ascent_ratio,
+                        disable_ligatures,
                         &mut current_y,
                         &mut line_count,
                         &mut font_width,
@@ -577,6 +601,7 @@ impl TextEngine {
                         max_w,
                         align_h,
                         ascent_ratio,
+                        disable_ligatures,
                         &mut current_y,
                         &mut line_count,
                         &mut font_width,
@@ -593,7 +618,10 @@ impl TextEngine {
                 }
             } else {
                 // No wrapping (or no width set)
-                let mut shaped = self.shape_text(font_id, hard_line, size, weight, style, &axes_arc, axes_hash);
+                let mut shaped = self.shape_text(
+                    font_id, hard_line, size, weight, style,
+                    &axes_arc, axes_hash, disable_ligatures,
+                );
                 // Shift per-line-relative clusters to absolute text byte offsets
                 for g in &mut shaped {
                     g.cluster = g.cluster.saturating_add(hard_line_byte_offset);
@@ -728,6 +756,7 @@ impl TextEngine {
         max_width: f32,
         align_h: u32,
         ascent_ratio: f32,
+        disable_ligatures: bool,
         current_y: &mut f32,
         line_count: &mut usize,
         font_width: &mut f32,
@@ -764,7 +793,10 @@ impl TextEngine {
         // segment's byte offset within `text`) to recover absolute offsets.
         let mut shaped_segments: Vec<(Vec<ShapedGlyph>, f32, bool)> = Vec::new(); // (glyphs, total_advance, is_whitespace)
         for (seg_text, is_ws, seg_byte_offset) in &segments {
-            let mut shaped = self.shape_text(font_id, seg_text, font_size, weight, style, axes, axes_hash);
+            let mut shaped = self.shape_text(
+                font_id, seg_text, font_size, weight, style,
+                axes, axes_hash, disable_ligatures,
+            );
             let abs_offset = base_byte_offset.saturating_add(*seg_byte_offset);
             for g in &mut shaped {
                 g.cluster = g.cluster.saturating_add(abs_offset);
@@ -876,6 +908,7 @@ impl TextEngine {
         max_width: f32,
         align_h: u32,
         ascent_ratio: f32,
+        disable_ligatures: bool,
         current_y: &mut f32,
         line_count: &mut usize,
         font_width: &mut f32,
@@ -889,7 +922,10 @@ impl TextEngine {
         outline_scale_context: &mut swash::scale::ScaleContext,
         outline_bounds_cache: &mut HashMap<GlyphOutlineBoundsKey, Option<(f32, f32)>>,
     ) {
-        let mut shaped = self.shape_text(font_id, text, font_size, weight, style, axes, axes_hash);
+        let mut shaped = self.shape_text(
+            font_id, text, font_size, weight, style,
+            axes, axes_hash, disable_ligatures,
+        );
         // Shift per-segment-relative clusters to absolute text byte offsets
         for g in &mut shaped {
             g.cluster = g.cluster.saturating_add(base_byte_offset);
@@ -1817,6 +1853,7 @@ pub unsafe extern "C" fn text_engine_layout_json(
     axis_quantization: f32,
     axes_json_ptr: *const u8,
     axes_json_len: u32,
+    disable_ligatures: u32,
     out_ptr: *mut u8,
     out_cap: u32,
 ) -> u32 {
@@ -1847,6 +1884,7 @@ pub unsafe extern "C" fn text_engine_layout_json(
         style,
         axis_quantization,
         &axes_json,
+        disable_ligatures != 0,
     );
 
     write_bytes(&binary, out_ptr, out_cap)

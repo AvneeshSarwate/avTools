@@ -15,6 +15,13 @@ export interface TextLayoutRequest {
   style: 0 | 1 | 2;
   axisQuantization: number;
   axes: Record<string, number>;
+  /** When true, turns off standard / contextual / discretionary ligatures
+   *  (`liga`, `clig`, `dlig`) and contextual alternates (`calt`) during
+   *  HarfBuzz shaping. Use when downstream consumers index by codepoint
+   *  (e.g. tegaki stroke-data lookup) and can't handle multi-codepoint
+   *  glyphs. Default: false (ligatures on). Required ligatures like
+   *  Arabic's `rlig` are never disabled. */
+  disableLigatures?: boolean;
 }
 
 export interface TextLayoutGlyph {
@@ -80,6 +87,7 @@ export const FFI_SYMBOLS = {
       "f32", // axis_quantization
       "pointer", // axes_json_ptr
       "u32", // axes_json_len
+      "u32", // disable_ligatures (0 / 1)
       "pointer", // out_ptr
       "u32", // out_cap
     ],
@@ -266,7 +274,8 @@ export class NativeTextEngine {
     const width = req.width ?? -1;
     const height = req.height ?? -1;
     const axesKey = Object.keys(req.axes).length === 0 ? "" : JSON.stringify(req.axes);
-    const cacheKey = `${req.text}\0${req.family}\0${req.fontSize}\0${req.lineHeight}\0${width}\0${height}\0${req.alignH}\0${req.wrapMode}\0${weight}\0${req.style}\0${req.axisQuantization}\0${axesKey}`;
+    const disableLigaturesFlag = req.disableLigatures ? 1 : 0;
+    const cacheKey = `${req.text}\0${req.family}\0${req.fontSize}\0${req.lineHeight}\0${width}\0${height}\0${req.alignH}\0${req.wrapMode}\0${weight}\0${req.style}\0${req.axisQuantization}\0${axesKey}\0${disableLigaturesFlag}`;
 
     const cached = this._layoutCache.get(cacheKey);
     if (cached) return cached;
@@ -294,6 +303,7 @@ export class NativeTextEngine {
       req.axisQuantization,
       axesJson.ptr,
       axesJson.len,
+      disableLigaturesFlag,
       outPtr,
       this._layoutBuffer.length,
     );
@@ -326,6 +336,7 @@ export class NativeTextEngine {
         req.axisQuantization,
         axesJson.ptr,
         axesJson.len,
+        disableLigaturesFlag,
         grownPtr,
         this._layoutBuffer.length,
       );
