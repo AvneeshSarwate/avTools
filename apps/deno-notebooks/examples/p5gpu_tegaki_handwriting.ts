@@ -1,11 +1,14 @@
 /// <reference lib="dom" />
 
-// Handwriting animation POC using tegaki-generated glyph data rendered with p5gpu.
+// Tegaki × p5gpu — random-retrigger ECS demo.
 //
-// Loads the pre-generated Caveat bundle from the tegaki repo at
-// clonedCompanionRepos/tegaki/packages/renderer/fonts/caveat/glyphData.json,
-// walks each glyph's stroke polylines, and reveals them progressively over
-// time as p5gpu lines. No native canvas, no SVG — just the raw stroke data.
+// - Loads Caveat's tegaki glyph data + TTF from the vendored tegaki repo.
+// - Lays out a long paragraph (multi-line word-wrap) via NativeTextEngine.
+// - Stores per-character phase in a flat ECS-style array (`charStates[]`).
+// - Renderer is a dumb loop: for each char, draw its tegaki strokes up to `phase`.
+// - Animation is core-timing branches writing to `state.phase`. A trigger loop
+//   picks random characters and spawns short-lived ramp branches that drive
+//   phase 0→1 over a random duration.
 //
 // Run from apps/deno-notebooks:
 //   deno run --unstable-webgpu --unstable-ffi --allow-all \
@@ -17,8 +20,10 @@ import {
   requestWebGpuDevice,
   type WindowTweakpane,
 } from "../window/mod.ts";
+import { NativeTextEngine } from "../tools/p5gpu_text/ffi.ts";
+import { launch } from "@avtools/core-timing";
 
-// ── Types (a subset of tegaki/src/types.ts — keeps this POC standalone) ──
+// ── Tegaki data types (subset of packages/renderer/src/types.ts) ─────
 
 interface TegakiStroke {
   p: number[][]; // [x, y, width] tuples in font units
@@ -26,119 +31,138 @@ interface TegakiStroke {
   a: number;     // stroke animation duration (seconds)
 }
 interface TegakiGlyph {
-  w: number;           // advance width (font units)
-  t: number;           // total animation duration (seconds)
+  w: number; // advance width (font units)
+  t: number; // total animation duration (seconds)
   s: TegakiStroke[];
 }
 type TegakiGlyphData = Record<string, TegakiGlyph>;
 
-// Caveat bundle metadata (from bundle.ts — hard-coded here to avoid TS-import-attrs dance)
-const FONT_META = {
-  unitsPerEm: 1000,
-  ascender: 960,
-  descender: -300,
-};
+// Caveat bundle metadata (from its bundle.ts)
+const FONT_META = { unitsPerEm: 1000, ascender: 960, descender: -300 };
+const FONT_FAMILY = "Caveat";
 
-// ── Config ───────────────────────────────────────────────────────
+// ── Config ───────────────────────────────────────────────────────────
 
 const WIDTH = 1280;
-const HEIGHT = 720;
+const HEIGHT = 800;
+const FONT_SIZE = 54;
+const LINE_HEIGHT = 70;
+const MARGIN_X = 80;
+const MARGIN_Y = 80;
+const MAX_WIDTH = WIDTH - MARGIN_X * 2;
 
-const TEXT = "Hello World";
-const FONT_SIZE = 180;
-const ORIGIN_X = 80;
-const ORIGIN_Y = 240; // top of em square in screen px
-const LOOP_HOLD_SECONDS = 1.2;
-
-// Timeline gaps (match tegaki defaults)
-const GLYPH_GAP = 0.1;
-const WORD_GAP = 0.15;
+const LOREM =
+  "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod " +
+  "tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim " +
+  "veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea " +
+  "commodo consequat. Duis aute irure dolor in reprehenderit in voluptate " +
+  "velit esse cillum dolore eu fugiat nulla pariatur.";
 
 const params = {
-  speed: 1.0,
-  strokeColor: "#ffe9a8",
-  bgColor: "#10131a",
+  triggerRate: 18,     // trigger attempts per second
+  minDuration: 0.35,
+  maxDuration: 1.40,
   widthScale: 1.0,
-  showGhost: true,
+  bgColor: "#0d1017",
+  inkColor: "#ffe9a8",
+  idlePhase: 1.0,      // 0 = invisible when not animating, 1 = fully drawn
+  paused: false,
 };
 
-// ── Load glyph data from the tegaki repo ─────────────────────────
+// ── Load tegaki bundle ───────────────────────────────────────────────
 
-const GLYPH_DATA_PATH = new URL(
-  "../../../clonedCompanionRepos/tegaki/packages/renderer/fonts/caveat/glyphData.json",
+const TEGAKI_ROOT = new URL(
+  "../../../clonedCompanionRepos/tegaki/packages/renderer/fonts/caveat/",
   import.meta.url,
 );
 const glyphData: TegakiGlyphData = JSON.parse(
-  await Deno.readTextFile(GLYPH_DATA_PATH),
+  await Deno.readTextFile(new URL("glyphData.json", TEGAKI_ROOT)),
 );
-console.log(`Loaded ${Object.keys(glyphData).length} glyphs from Caveat bundle`);
+const fontBytes = await Deno.readFile(new URL("caveat.ttf", TEGAKI_ROOT));
+console.log(`Loaded ${Object.keys(glyphData).length} tegaki glyphs`);
 
-// ── Timeline: schedule each character along a shared time axis ──
+// ── Native layout: shape + wrap + per-line positions ─────────────────
 
-interface TimelineEntry {
-  char: string;
-  offset: number;   // seconds from start of animation
-  duration: number;
-  glyph: TegakiGlyph | null;
+const engine = new NativeTextEngine();
+if (!engine.loadFontBytes(fontBytes)) {
+  throw new Error("Failed to load Caveat font into native text engine");
 }
-
-function buildTimeline(text: string): { entries: TimelineEntry[]; total: number } {
-  const entries: TimelineEntry[] = [];
-  let offset = 0;
-  for (const ch of [...text]) {
-    const glyph = glyphData[ch] ?? null;
-    const isSpace = /\s/.test(ch);
-    const dur = isSpace ? 0 : (glyph?.t ?? 0.2);
-    entries.push({ char: ch, offset, duration: dur, glyph });
-    offset += dur;
-    offset += isSpace ? WORD_GAP : GLYPH_GAP;
-  }
-  return { entries, total: Math.max(0, offset - GLYPH_GAP) };
-}
-
-const timeline = buildTimeline(TEXT);
+const layout = engine.layoutText({
+  text: LOREM,
+  family: FONT_FAMILY,
+  fontSize: FONT_SIZE,
+  lineHeight: LINE_HEIGHT,
+  width: MAX_WIDTH,
+  height: null,
+  alignH: 0,         // left
+  wrapMode: 0,       // word wrap
+  weight: 400,
+  style: 0,
+  axisQuantization: 0,
+  axes: {},
+});
 console.log(
-  `Timeline: ${timeline.entries.length} entries, total ${timeline.total.toFixed(2)}s`,
+  `Layout: ${layout.glyphs.length} glyphs, ${layout.lineCount} lines, ` +
+  `firstBaseline=${layout.firstBaseline.toFixed(1)}px`,
 );
 
-// ── Advance-width layout: x offset per glyph in pixels ────────────
+// ── ECS-style per-character store ────────────────────────────────────
+//
+// One entry per laid-out glyph. `phase ∈ [0,1]` is the shared state the
+// animation branches write and the render loop reads. We assume 1:1
+// glyph↔char (holds for Caveat + ASCII — script font, no ligatures).
 
-const glyphX: number[] = [];
-{
-  const scale = FONT_SIZE / FONT_META.unitsPerEm;
-  let cursor = 0;
-  for (const e of timeline.entries) {
-    glyphX.push(cursor);
-    const advance = e.glyph?.w ?? (e.char === " " ? 300 : 500); // fallback advance
-    cursor += advance * scale;
-  }
+interface CharState {
+  ch: string;
+  glyph: TegakiGlyph | null;
+  baselineX: number;
+  baselineY: number;
+  phase: number;  // 0..1
+  epoch: number;  // incremented when a new ramp preempts the old one
 }
 
-// ── Helpers ──────────────────────────────────────────────────────
-
-function hexToRgb(hex: string): [number, number, number] {
-  const h = hex.replace("#", "");
-  return [
-    parseInt(h.slice(0, 2), 16),
-    parseInt(h.slice(2, 4), 16),
-    parseInt(h.slice(4, 6), 16),
-  ];
+const chars = [...LOREM];
+if (layout.glyphs.length !== chars.length) {
+  console.warn(
+    `glyph/char count mismatch (${layout.glyphs.length} vs ${chars.length}) — ` +
+    `Caveat isn't expected to produce ligatures; animation mapping may drift.`,
+  );
 }
 
-/** Ease-out quad (same as tegaki's default stroke easing). */
+const charStates: CharState[] = [];
+const pairCount = Math.min(chars.length, layout.glyphs.length);
+for (let i = 0; i < pairCount; i++) {
+  const ch = chars[i]!;
+  const g = layout.glyphs[i]!;
+  charStates.push({
+    ch,
+    glyph: glyphData[ch] ?? null,
+    baselineX: MARGIN_X + g.x,
+    baselineY: MARGIN_Y + g.y,
+    phase: params.idlePhase,
+    epoch: 0,
+  });
+}
+const drawableIndices = charStates
+  .map((s, i) => (s.glyph ? i : -1))
+  .filter((i) => i >= 0);
+console.log(`Drawable chars: ${drawableIndices.length} / ${charStates.length}`);
+
+// ── Tegaki stroke rendering ──────────────────────────────────────────
+//
+// Baseline-relative: px = baselineX + x * scale, py = baselineY + y * scale.
+// (Tegaki stores y with 0 at baseline and negative values above — so this
+//  is equivalent to `oy + (y + ascender) * scale` using baseline = oy + asc*s.)
+
 function easeOutQuad(t: number): number {
   return 1 - (1 - t) * (1 - t);
 }
 
-/**
- * Draw a stroke at the given progress (0..1) by emitting line segments
- * whose cumulative length covers `totalLen * progress`.
- */
-function drawStroke(
+function drawStrokeUpTo(
   p5: P5GPU,
   stroke: TegakiStroke,
-  ox: number,
-  oy: number,
+  baselineX: number,
+  baselineY: number,
   scale: number,
   progress: number,
   widthScale: number,
@@ -146,21 +170,16 @@ function drawStroke(
   const pts = stroke.p;
   if (pts.length === 0 || progress <= 0) return;
 
-  // Screen-space mapping (matches tegaki/drawGlyph: y is negative above baseline,
-  // shifted by ascender so the em-square top lands at oy).
-  const px = (x: number) => ox + x * scale;
-  const py = (y: number) => oy + (y + FONT_META.ascender) * scale;
+  const px = (x: number) => baselineX + x * scale;
+  const py = (y: number) => baselineY + y * scale;
 
-  // Single-point dot
   if (pts.length === 1) {
     const p0 = pts[0]!;
-    const w = Math.max(p0[2]!, 0.5) * scale * widthScale;
-    p5.strokeWeight(w);
+    p5.strokeWeight(Math.max(p0[2]!, 0.5) * scale * widthScale);
     p5.point(px(p0[0]!), py(p0[1]!));
     return;
   }
 
-  // Compute total polyline length and average width for this stroke
   let totalLen = 0;
   let widthSum = 0;
   for (let i = 0; i < pts.length; i++) {
@@ -171,14 +190,11 @@ function drawStroke(
       totalLen += Math.sqrt(dx * dx + dy * dy);
     }
   }
-  const avgWidth = widthSum / pts.length;
-  const lineWidth = Math.max(avgWidth, 0.5) * scale * widthScale;
-  p5.strokeWeight(lineWidth);
+  p5.strokeWeight(Math.max(widthSum / pts.length, 0.5) * scale * widthScale);
 
   const drawLen = totalLen * progress;
   if (drawLen <= 0) return;
 
-  // Emit fully-covered segments, then a partial tail.
   let accum = 0;
   let prevX = px(pts[0]![0]!);
   let prevY = py(pts[0]![1]!);
@@ -188,139 +204,185 @@ function drawStroke(
     const dx = b[0]! - a[0]!;
     const dy = b[1]! - a[1]!;
     const segLen = Math.sqrt(dx * dx + dy * dy);
-
     if (accum + segLen <= drawLen) {
       const bx = px(b[0]!);
       const by = py(b[1]!);
       p5.line(prevX, prevY, bx, by);
-      prevX = bx;
-      prevY = by;
+      prevX = bx; prevY = by;
       accum += segLen;
     } else {
       const remain = drawLen - accum;
       if (remain > 0 && segLen > 0) {
         const t = remain / segLen;
-        const tx = px(a[0]! + dx * t);
-        const ty = py(a[1]! + dy * t);
-        p5.line(prevX, prevY, tx, ty);
+        p5.line(prevX, prevY, px(a[0]! + dx * t), py(a[1]! + dy * t));
       }
       return;
     }
   }
 }
 
-/** Draw a single glyph at (ox, oy) animated to localTime seconds. */
-function drawGlyph(
+function drawGlyphAtPhase(
   p5: P5GPU,
-  glyph: TegakiGlyph,
-  ox: number,
-  oy: number,
-  localTime: number,
+  state: CharState,
+  scale: number,
   widthScale: number,
 ) {
-  const scale = FONT_SIZE / FONT_META.unitsPerEm;
+  const glyph = state.glyph;
+  if (!glyph || state.phase <= 0) return;
+  const localTime = state.phase * glyph.t;
   for (const stroke of glyph.s) {
     if (localTime < stroke.d) continue;
     const elapsed = localTime - stroke.d;
-    const linear = Math.min(elapsed / Math.max(stroke.a, 1e-6), 1);
-    drawStroke(p5, stroke, ox, oy, scale, easeOutQuad(linear), widthScale);
+    const lin = Math.min(elapsed / Math.max(stroke.a, 1e-6), 1);
+    drawStrokeUpTo(
+      p5, stroke, state.baselineX, state.baselineY, scale,
+      easeOutQuad(lin), widthScale,
+    );
   }
 }
 
-/** Ghost outline: all strokes at progress=1, semi-transparent. */
-function drawGhost(p5: P5GPU, glyph: TegakiGlyph, ox: number, oy: number, widthScale: number) {
-  const scale = FONT_SIZE / FONT_META.unitsPerEm;
-  for (const stroke of glyph.s) {
-    drawStroke(p5, stroke, ox, oy, scale, 1.0, widthScale);
-  }
-}
+// ── Core-timing animation system ─────────────────────────────────────
+//
+// Root ticks at 60 Hz (required so branches spawned via the trigger loop
+// start with fresh ctx.time). Trigger loop runs at `triggerRate` Hz,
+// picking a random drawable char on each tick and spawning a one-shot
+// ramp branch that writes `state.phase` over a random duration.
+//
+// `epoch` guards against stale branches: if a char gets retriggered
+// before its current ramp finishes, the new ramp bumps epoch and the
+// old branch bails out on its next iteration.
 
-// ── Tweakpane ─────────────────────────────────────────────────────
+const rootAnim = launch(async (ctx) => {
+  ctx.branch(async (triggerCtx) => {
+    while (!triggerCtx.isCanceled) {
+      const rate = Math.max(0.1, params.triggerRate);
+      await triggerCtx.waitSec(1 / rate);
+      if (params.paused || drawableIndices.length === 0) continue;
+
+      const pick = drawableIndices[
+        Math.floor(triggerCtx.random() * drawableIndices.length)
+      ]!;
+      const state = charStates[pick]!;
+      const minD = Math.max(0.05, params.minDuration);
+      const maxD = Math.max(minD, params.maxDuration);
+      const duration = minD + triggerCtx.random() * (maxD - minD);
+
+      state.epoch += 1;
+      const myEpoch = state.epoch;
+
+      triggerCtx.branch(async (rampCtx) => {
+        state.phase = 0;
+        while (!rampCtx.isCanceled && rampCtx.progTime < duration) {
+          if (state.epoch !== myEpoch) return; // preempted by a newer ramp
+          state.phase = Math.min(1, rampCtx.progTime / duration);
+          await rampCtx.waitSec(1 / 60);
+        }
+        if (state.epoch === myEpoch) state.phase = params.idlePhase;
+      });
+    }
+  });
+
+  // Root tick — keep descendant-time fresh for the trigger loop.
+  while (!ctx.isCanceled) await ctx.waitSec(1 / 60);
+});
+rootAnim.catch((err: unknown) => {
+  if ((err as Error)?.message !== "aborted") console.error("root:", err);
+});
+
+// ── Tweakpane ────────────────────────────────────────────────────────
 
 function setupPane(pane: WindowTweakpane) {
-  pane.addBinding(params, "speed", { min: 0.1, max: 3.0, step: 0.05, label: "Speed" });
-  pane.addBinding(params, "widthScale", { min: 0.2, max: 2.5, step: 0.05, label: "Width x" });
-  pane.addBinding(params, "showGhost", { label: "Show ghost" });
-  pane.addBinding(params, "strokeColor", { label: "Ink" });
+  pane.addBinding(params, "triggerRate", {
+    min: 0.5, max: 80, step: 0.5, label: "Trigger Hz",
+  });
+  pane.addBinding(params, "minDuration", {
+    min: 0.05, max: 3, step: 0.05, label: "Min dur (s)",
+  });
+  pane.addBinding(params, "maxDuration", {
+    min: 0.05, max: 5, step: 0.05, label: "Max dur (s)",
+  });
+  pane.addBinding(params, "widthScale", {
+    min: 0.2, max: 2.5, step: 0.05, label: "Width x",
+  });
+  pane.addBinding(params, "idlePhase", {
+    min: 0, max: 1, step: 0.01, label: "Idle phase",
+  });
+  pane.addBinding(params, "paused", { label: "Pause triggers" });
+  pane.addBinding(params, "inkColor", { label: "Ink" });
   pane.addBinding(params, "bgColor", { label: "BG" });
+  pane.addButton({ title: "Reset all → idle" }).on("click", () => {
+    for (const s of charStates) { s.phase = params.idlePhase; s.epoch += 1; }
+  });
+  pane.addButton({ title: "Reset all → 0" }).on("click", () => {
+    for (const s of charStates) { s.phase = 0; s.epoch += 1; }
+  });
 }
 
-// ── Setup ────────────────────────────────────────────────────────
+// ── Setup + render loop ──────────────────────────────────────────────
 
 const device = await requestWebGpuDevice();
 const renderWindow = await createWindowRenderManager({
   device,
   width: WIDTH,
   height: HEIGHT,
-  title: "Tegaki × p5gpu",
-  pane: { title: "Tegaki", panelWidth: 360, panelHeight: 280, setup: setupPane },
+  title: "Tegaki × p5gpu — random retrigger",
+  pane: { title: "Tegaki", panelWidth: 380, panelHeight: 360, setup: setupPane },
 });
 const p5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 
-const startTime = performance.now();
 let fpsSmooth = 60;
-let lastFrameTime = startTime;
+let lastFrameTime = performance.now();
 
-await renderWindow.run(renderFrame, { cleanup: () => p5.dispose() });
+await renderWindow.run(renderFrame, {
+  cleanup: () => {
+    rootAnim.cancel();
+    engine.dispose();
+    p5.dispose();
+  },
+});
+
+function hexToRgb(hex: string): [number, number, number] {
+  const h = hex.replace("#", "");
+  return [
+    parseInt(h.slice(0, 2), 16),
+    parseInt(h.slice(2, 4), 16),
+    parseInt(h.slice(4, 6), 16),
+  ];
+}
 
 function renderFrame() {
   const now = performance.now();
-  const fps = 1000 / Math.max(1, now - lastFrameTime);
-  fpsSmooth += (fps - fpsSmooth) * 0.1;
+  fpsSmooth += (1000 / Math.max(1, now - lastFrameTime) - fpsSmooth) * 0.1;
   lastFrameTime = now;
 
-  const elapsed = ((now - startTime) / 1000) * params.speed;
-  const loopLen = timeline.total + LOOP_HOLD_SECONDS;
-  const tLoop = elapsed % loopLen;
-
   const [br, bg, bb] = hexToRgb(params.bgColor);
-  const [ir, ig, ib] = hexToRgb(params.strokeColor);
+  const [ir, ig, ib] = hexToRgb(params.inkColor);
+  const scale = FONT_SIZE / FONT_META.unitsPerEm;
 
   p5.beginFrame();
   p5.background(br, bg, bb);
   p5.noFill();
   p5.strokeCap(p5.ROUND);
-
-  // Ghost pass (entire word pre-drawn faintly)
-  if (params.showGhost) {
-    p5.stroke(ir, ig, ib, 28);
-    for (let i = 0; i < timeline.entries.length; i++) {
-      const e = timeline.entries[i]!;
-      if (!e.glyph) continue;
-      drawGhost(p5, e.glyph, ORIGIN_X + glyphX[i]!, ORIGIN_Y, params.widthScale);
-    }
-  }
-
-  // Live pass
   p5.stroke(ir, ig, ib, 255);
-  for (let i = 0; i < timeline.entries.length; i++) {
-    const e = timeline.entries[i]!;
-    if (!e.glyph) continue;
-    const local = tLoop - e.offset;
-    if (local <= 0) continue;
-    drawGlyph(
-      p5,
-      e.glyph,
-      ORIGIN_X + glyphX[i]!,
-      ORIGIN_Y,
-      Math.min(local, e.duration),
-      params.widthScale,
-    );
+
+  // The entire animation is just: read phase, draw.
+  for (const state of charStates) {
+    drawGlyphAtPhase(p5, state, scale, params.widthScale);
   }
 
   // HUD
   p5.noStroke();
-  p5.fill(160, 160, 180);
+  p5.fill(150, 150, 170);
   p5.textFont("Inter Variable");
-  p5.textSize(14);
+  p5.textSize(13);
   p5.textAlign("left", "bottom");
   p5.text(
-    `${Math.round(fpsSmooth)} fps  ·  t=${tLoop.toFixed(2)}s / ${timeline.total.toFixed(2)}s`,
-    20,
-    HEIGHT - 12,
+    `${Math.round(fpsSmooth)} fps · ${drawableIndices.length} glyphs · ` +
+    `${layout.lineCount} lines · trigger ${params.triggerRate.toFixed(1)} Hz`,
+    20, HEIGHT - 12,
   );
   p5.textAlign("right", "bottom");
-  p5.text(`tegaki × p5gpu · "${TEXT}"`, WIDTH - 20, HEIGHT - 12);
+  p5.text("tegaki × p5gpu × core-timing", WIDTH - 20, HEIGHT - 12);
 
   return p5.endFrame();
 }
