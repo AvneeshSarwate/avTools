@@ -155,6 +155,7 @@ export type TransformMaterialHandles = MaterialHandles<TransformUniforms, Transf
 export interface TransformMaterialOptions {
   name?: string;
   passIndex?: number;
+  sampleMode?: 'nearest' | 'linear';
 }
 
 export function createTransformMaterial(device: GPUDevice, format: GPUTextureFormat, options: TransformMaterialOptions = {}): TransformMaterialHandles {
@@ -191,7 +192,8 @@ export function createTransformMaterial(device: GPUDevice, format: GPUTextureFor
   const samplers: Record<string, GPUSampler> = {};
   const textureViews: Record<string, GPUTextureView> = {};
   for (const name of TransformTextureNames) {
-    samplers[name] = device.createSampler({ magFilter: "linear", minFilter: "linear" });
+    const filter = options.sampleMode ?? "linear";
+    samplers[name] = device.createSampler({ magFilter: filter, minFilter: filter });
     const placeholder = device.createTexture({ size: { width: 1, height: 1 }, format, usage: GPUTextureUsage.TEXTURE_BINDING });
     textureViews[name] = placeholder.createView();
   }
@@ -236,9 +238,9 @@ export function createTransformMaterial(device: GPUDevice, format: GPUTextureFor
 export class TransformEffect extends CustomShaderEffect<TransformUniforms, TransformInputs> {
   override effectName = 'Transform';
 
-  constructor(device: GPUDevice, inputs: TransformInputs, width = 1280, height = 720, format: GPUTextureFormat = 'rgba16float', clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 }) {
+  constructor(device: GPUDevice, inputs: TransformInputs, width = 1280, height = 720, format: GPUTextureFormat = 'rgba16float', clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 }, sampleMode: 'nearest' | 'linear' = 'linear') {
     super(device, inputs, {
-      factory: (deviceRef, formatRef, options) => createTransformMaterial(deviceRef, formatRef, options),
+      factory: (deviceRef, formatRef, options) => createTransformMaterial(deviceRef, formatRef, { ...options, sampleMode }),
       textureInputKeys: ['src'],
       textureBindingKeys: TransformTextureNames,
       passTextureSources: TransformPassTextureSources,

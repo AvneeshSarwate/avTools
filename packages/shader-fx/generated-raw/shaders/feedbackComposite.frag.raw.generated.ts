@@ -129,6 +129,7 @@ export type FeedbackCompositeMaterialHandles = MaterialHandles<FeedbackComposite
 export interface FeedbackCompositeMaterialOptions {
   name?: string;
   passIndex?: number;
+  sampleMode?: 'nearest' | 'linear';
 }
 
 export function createFeedbackCompositeMaterial(device: GPUDevice, format: GPUTextureFormat, options: FeedbackCompositeMaterialOptions = {}): FeedbackCompositeMaterialHandles {
@@ -167,7 +168,8 @@ export function createFeedbackCompositeMaterial(device: GPUDevice, format: GPUTe
   const samplers: Record<string, GPUSampler> = {};
   const textureViews: Record<string, GPUTextureView> = {};
   for (const name of FeedbackCompositeTextureNames) {
-    samplers[name] = device.createSampler({ magFilter: "linear", minFilter: "linear" });
+    const filter = options.sampleMode ?? "linear";
+    samplers[name] = device.createSampler({ magFilter: filter, minFilter: filter });
     const placeholder = device.createTexture({ size: { width: 1, height: 1 }, format, usage: GPUTextureUsage.TEXTURE_BINDING });
     textureViews[name] = placeholder.createView();
   }
@@ -216,9 +218,9 @@ export function createFeedbackCompositeMaterial(device: GPUDevice, format: GPUTe
 export class FeedbackCompositeEffect extends CustomShaderEffect<FeedbackCompositeFeedbackUniforms, FeedbackCompositeInputs> {
   override effectName = 'FeedbackComposite';
 
-  constructor(device: GPUDevice, inputs: FeedbackCompositeInputs, width = 1280, height = 720, format: GPUTextureFormat = 'rgba16float', clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 }) {
+  constructor(device: GPUDevice, inputs: FeedbackCompositeInputs, width = 1280, height = 720, format: GPUTextureFormat = 'rgba16float', clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 }, sampleMode: 'nearest' | 'linear' = 'linear') {
     super(device, inputs, {
-      factory: (deviceRef, formatRef, options) => createFeedbackCompositeMaterial(deviceRef, formatRef, options),
+      factory: (deviceRef, formatRef, options) => createFeedbackCompositeMaterial(deviceRef, formatRef, { ...options, sampleMode }),
       textureInputKeys: ['src', 'feedback'],
       textureBindingKeys: FeedbackCompositeTextureNames,
       passTextureSources: FeedbackCompositePassTextureSources,

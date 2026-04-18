@@ -131,6 +131,7 @@ export type VerticalBlurMaterialHandles = MaterialHandles<VerticalBlurUniforms, 
 export interface VerticalBlurMaterialOptions {
   name?: string;
   passIndex?: number;
+  sampleMode?: 'nearest' | 'linear';
 }
 
 export function createVerticalBlurMaterial(device: GPUDevice, format: GPUTextureFormat, options: VerticalBlurMaterialOptions = {}): VerticalBlurMaterialHandles {
@@ -167,7 +168,8 @@ export function createVerticalBlurMaterial(device: GPUDevice, format: GPUTexture
   const samplers: Record<string, GPUSampler> = {};
   const textureViews: Record<string, GPUTextureView> = {};
   for (const name of VerticalBlurTextureNames) {
-    samplers[name] = device.createSampler({ magFilter: "linear", minFilter: "linear" });
+    const filter = options.sampleMode ?? "linear";
+    samplers[name] = device.createSampler({ magFilter: filter, minFilter: filter });
     const placeholder = device.createTexture({ size: { width: 1, height: 1 }, format, usage: GPUTextureUsage.TEXTURE_BINDING });
     textureViews[name] = placeholder.createView();
   }
@@ -212,9 +214,9 @@ export function createVerticalBlurMaterial(device: GPUDevice, format: GPUTexture
 export class VerticalBlurEffect extends CustomShaderEffect<VerticalBlurUniforms, VerticalBlurInputs> {
   override effectName = 'VerticalBlur';
 
-  constructor(device: GPUDevice, inputs: VerticalBlurInputs, width = 1280, height = 720, format: GPUTextureFormat = 'rgba16float', clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 }) {
+  constructor(device: GPUDevice, inputs: VerticalBlurInputs, width = 1280, height = 720, format: GPUTextureFormat = 'rgba16float', clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 }, sampleMode: 'nearest' | 'linear' = 'linear') {
     super(device, inputs, {
-      factory: (deviceRef, formatRef, options) => createVerticalBlurMaterial(deviceRef, formatRef, options),
+      factory: (deviceRef, formatRef, options) => createVerticalBlurMaterial(deviceRef, formatRef, { ...options, sampleMode }),
       textureInputKeys: ['src'],
       textureBindingKeys: VerticalBlurTextureNames,
       passTextureSources: VerticalBlurPassTextureSources,

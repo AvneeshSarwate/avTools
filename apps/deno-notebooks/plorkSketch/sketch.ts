@@ -34,10 +34,15 @@ import {
   type WindowTweakpane,
   type PaneBinding,
 } from "../window/mod.ts";
-import { FeedbackNode, PassthruEffect, selectShaderFxFormat } from "@avtools/shader-fx/raw";
+import { FeedbackNode, PassthruEffect, selectShaderFxFormat, type ShaderEffect } from "@avtools/shader-fx/raw";
 import { AlphaTimeTagEffect } from "@avtools/shader-fx/generated-raw/shaders/alphaTimeTag.frag.raw.generated.ts";
+import { BloomPreprocessEffect } from "@avtools/shader-fx/generated-raw/shaders/bloomPreprocess.frag.raw.generated.ts";
+import { ColorRemoveEffect } from "@avtools/shader-fx/generated-raw/shaders/colorRemove.frag.raw.generated.ts";
+import { CompositeEffect } from "@avtools/shader-fx/generated-raw/shaders/composite.frag.raw.generated.ts";
 import { FloodFillDisplayEffect } from "@avtools/shader-fx/generated-raw/shaders/floodFillDisplay.frag.raw.generated.ts";
 import { FloodFillStepEffect } from "@avtools/shader-fx/generated-raw/shaders/floodFillStep.frag.raw.generated.ts";
+import { HorizontalBlurEffect } from "@avtools/shader-fx/generated-raw/shaders/horizontalBlur.frag.raw.generated.ts";
+import { VerticalBlurEffect } from "@avtools/shader-fx/generated-raw/shaders/verticalBlur.frag.raw.generated.ts";
 import { P5GPU } from "../tools/p5gpu.ts";
 import { launch, type DateTimeContext } from "@avtools/core-timing";
 import { createAnimationEditorBridge, type AnimationPlaybackState } from "../tools/animationEditorAdapter.ts";
@@ -110,6 +115,20 @@ const paramDefs = {
     useDisk: { value: true },
     diskRadius: { value: 4, min: 1, max: 10, step: 1 },
   },
+  bloom: {
+    _folder: "Bloom",
+    bloomOn: { value: true },
+    preBlackLevel: { value: 0.05, min: 0, max: 1, step: 0.01 },
+    preBrightness: { value: 2.0, min: 0, max: 10, step: 0.1 },
+    bloomThreshold: { value: 0.12, min: 0, max: 1, step: 0.01 },
+    bloomKnee: { value: 0.5, min: 0, max: 1, step: 0.01 },
+    bloomBlurSize: { value: 5, min: 1, max: 16, step: 1 },
+    bloomIntensity: { value: 1.0, min: 0, max: 5, step: 0.05 },
+    bloomBlendMode: { value: "screen", options: { Add: "add", Screen: "screen" } },
+    removeThreshold: { value: 0.3, min: 0, max: 1, step: 0.01 },
+    removeFeather: { value: 0.1, min: 0, max: 0.5, step: 0.01 },
+    bloomDebug: { value: "off", options: { Off: "off", Display: "display", "Color Removed": "colorRemove", Preprocess: "preprocess", "Bloom Only": "bloom" } },
+  },
 } as const;
 
 type SketchParams = {
@@ -136,6 +155,17 @@ type SketchParams = {
   diskRadius: number;
   startAngle: number;
   orbitRad: number;
+  bloomOn: boolean;
+  preBlackLevel: number;
+  preBrightness: number;
+  bloomThreshold: number;
+  bloomKnee: number;
+  bloomBlurSize: number;
+  bloomIntensity: number;
+  bloomBlendMode: "add" | "screen";
+  removeThreshold: number;
+  removeFeather: number;
+  bloomDebug: "off" | "display" | "colorRemove" | "preprocess" | "bloom";
 };
 
 // ============================================================================
@@ -626,16 +656,64 @@ function renderFrame() {
   };
   floodFill.floodFillSeed.setUniforms(stepUniforms);
   floodFill.floodFill.setUniforms(stepUniforms);
-  floodFill.display.renderAll();
 
-  return floodFill.display;
+  if (params.bloomOn) {
+    floodFill.colorRemove.setUniforms({
+      targetR: 1, targetG: 1, targetB: 1,
+      threshold: params.removeThreshold,
+      feather: params.removeFeather,
+    });
+    floodFill.bloomPreprocess.setUniforms({
+      blackLevel: params.preBlackLevel,
+      brightness: params.preBrightness,
+      threshold: params.bloomThreshold,
+      knee: params.bloomKnee,
+    });
+
+    // Set blur uniforms per mip level
+    for (let i = 0; i < floodFill.hBlurs.length; i++) {
+      floodFill.hBlurs[i].setUniforms({ pixels: params.bloomBlurSize, resolution: floodFill.mipWidths[i] });
+      floodFill.vBlurs[i].setUniforms({ pixels: params.bloomBlurSize, resolution: floodFill.mipHeights[i] });
+    }
+
+    // Set upsample composite opacities
+    for (const up of floodFill.upComposites) {
+      up.setUniforms({ mode: 0, opacity: params.bloomIntensity });
+    }
+    floodFill.bloomToFullRes.setUniforms({ mode: 0, opacity: params.bloomIntensity });
+
+    // Final composite blend mode
+    const blendMode = params.bloomBlendMode === "add" ? 0 : 1;
+    floodFill.bloomComposite.setUniforms({ mode: blendMode, opacity: params.bloomIntensity });
+
+    // Debug views
+    if (params.bloomDebug === "display") {
+      floodFill.display.renderAll();
+      return floodFill.display;
+    } else if (params.bloomDebug === "colorRemove") {
+      floodFill.colorRemove.renderAll();
+      return floodFill.colorRemove;
+    } else if (params.bloomDebug === "preprocess") {
+      floodFill.bloomPreprocess.renderAll();
+      return floodFill.bloomPreprocess;
+    } else if (params.bloomDebug === "bloom") {
+      floodFill.bloomToFullRes.renderAll();
+      return floodFill.bloomToFullRes;
+    }
+
+    floodFill.bloomComposite.renderAll();
+    return floodFill.bloomComposite;
+  } else {
+    floodFill.display.renderAll();
+    return floodFill.display;
+  }
 }
 
 function cleanup(): void {
   rootAnim.cancel();
   animationHandle.disconnect();
   animationBridge.shutdown();
-  floodFill.display.disposeAll();
+  floodFill.bloomComposite.disposeAll();
   floodFill.placeholder.destroy();
   p5.dispose();
 }
@@ -741,6 +819,80 @@ async function createFloodFillChain(device: GPUDevice, width: number, height: nu
     width, height, format, CLEAR_COLOR,
   );
 
+  // --- Mip-chain bloom ---
+  // colorRemove → bloomPreprocess → downsample cascade → blur → upsample accumulate → composite
+  const colorRemove = new ColorRemoveEffect(
+    device,
+    { src: display },
+    width, height, format, CLEAR_COLOR,
+  );
+  const bloomPreprocess = new BloomPreprocessEffect(
+    device,
+    { src: colorRemove },
+    width, height, format, CLEAR_COLOR,
+  );
+
+  const MIP_LEVELS = 4;
+  const mipWidths: number[] = [];
+  const mipHeights: number[] = [];
+  for (let i = 0; i < MIP_LEVELS; i++) {
+    mipWidths.push(Math.ceil(width / Math.pow(2, i + 1)));
+    mipHeights.push(Math.ceil(height / Math.pow(2, i + 1)));
+  }
+
+  // Downsample + separable blur at each mip level
+  const downs: PassthruEffect[] = [];
+  const hBlurs: HorizontalBlurEffect[] = [];
+  const vBlurs: VerticalBlurEffect[] = [];
+
+  for (let i = 0; i < MIP_LEVELS; i++) {
+    const w = mipWidths[i];
+    const h = mipHeights[i];
+    const downSrc = i === 0 ? bloomPreprocess : downs[i - 1];
+
+    const down = new PassthruEffect(device, { src: downSrc }, w, h, format, CLEAR_COLOR);
+    const hBlur = new HorizontalBlurEffect(device, { src: down }, w, h, format, CLEAR_COLOR);
+    const vBlur = new VerticalBlurEffect(device, { src: hBlur }, w, h, format, CLEAR_COLOR);
+
+    downs.push(down);
+    hBlurs.push(hBlur);
+    vBlurs.push(vBlur);
+  }
+
+  // Upsample + accumulate (bottom-up: smallest mip upward)
+  const upComposites: CompositeEffect[] = [];
+  // deno-lint-ignore no-explicit-any
+  let accumulated: ShaderEffect<any> = vBlurs[MIP_LEVELS - 1];
+
+  for (let i = MIP_LEVELS - 2; i >= 0; i--) {
+    const w = mipWidths[i];
+    const h = mipHeights[i];
+    const up = new CompositeEffect(
+      device,
+      { src1: vBlurs[i], src2: accumulated },
+      w, h, format, CLEAR_COLOR,
+    );
+    up.setUniforms({ mode: 0, opacity: 1.0 }); // additive
+    upComposites.push(up);
+    accumulated = up;
+  }
+
+  // Upsample bloom to full resolution + add preprocess detail
+  const bloomToFullRes = new CompositeEffect(
+    device,
+    { src1: bloomPreprocess, src2: accumulated },
+    width, height, format, CLEAR_COLOR,
+  );
+  bloomToFullRes.setUniforms({ mode: 0, opacity: 1.0 });
+
+  // Final composite: original display + bloom glow
+  const bloomComposite = new CompositeEffect(
+    device,
+    { src1: display, src2: bloomToFullRes },
+    width, height, format, CLEAR_COLOR,
+  );
+  bloomComposite.setUniforms({ mode: 1, opacity: 1.0 }); // screen blend
+
   feedback.setFeedbackSrc(floodFill);
 
   return {
@@ -749,6 +901,15 @@ async function createFloodFillChain(device: GPUDevice, width: number, height: nu
     floodFillSeed,
     floodFill,
     display,
+    colorRemove,
+    bloomPreprocess,
+    mipWidths,
+    mipHeights,
+    hBlurs,
+    vBlurs,
+    upComposites,
+    bloomToFullRes,
+    bloomComposite,
   };
 }
 
