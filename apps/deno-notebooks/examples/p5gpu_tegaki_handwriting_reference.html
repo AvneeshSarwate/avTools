@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <title>Tegaki Thai reference — Charmonman</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Charmonman:wght@400;700&family=Inter:wght@400;600&display=swap"
+    rel="stylesheet"
+  />
+  <!--
+    Visual reference for examples/p5gpu_tegaki_handwriting.ts.
+
+    This file renders the same Thai demo text at the same layout width,
+    font-size, and line-height as the sketch so the tegaki stroke render
+    can be visually compared against a browser-native Charmonman render.
+
+    Layout constants mirror the sketch:
+      WIDTH:        1280
+      HEIGHT:       800
+      FONT_SIZE:    50
+      LINE_HEIGHT:  130
+      MARGIN_X:     80     (paragraph left/right padding)
+      MARGIN_Y:     100    (paragraph top padding)
+      MAX_WIDTH:    1120   (WIDTH - 2 * MARGIN_X)
+      FONT_FAMILY:  "Charmonman"
+  -->
+  <style>
+    :root {
+      --canvas-w: 1280px;
+      --canvas-h: 800px;
+      --font-size: 50px;
+      --line-height: 130px;
+      --margin-x: 80px;
+      --margin-y: 100px;
+      --bg: #0d1017;
+      --ink: #ffe9a8;
+      --hud: #96969c;
+      --grid: rgba(255, 233, 168, 0.08);
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      background: #0a0c11;
+      color: #ddd;
+      font-family: "Inter", system-ui, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+
+    .wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      padding: 32px;
+    }
+
+    .canvas {
+      position: relative;
+      width: var(--canvas-w);
+      height: var(--canvas-h);
+      background: var(--bg);
+      overflow: hidden;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+      border-radius: 4px;
+    }
+
+    .text {
+      position: absolute;
+      top: var(--margin-y);
+      left: var(--margin-x);
+      width: calc(var(--canvas-w) - 2 * var(--margin-x));
+      font-family: "Charmonman", serif;
+      font-weight: 400;
+      font-size: var(--font-size);
+      line-height: var(--line-height);
+      color: var(--ink);
+      white-space: normal;          /* word-wrap at whitespace */
+      overflow-wrap: break-word;
+      word-break: normal;
+      /* Match the native engine: left-aligned, word-wrap, LTR. */
+    }
+
+    .hud {
+      position: absolute;
+      bottom: 12px;
+      color: var(--hud);
+      font-family: "Inter", system-ui, sans-serif;
+      font-size: 13px;
+    }
+
+    .hud.left  { left: 20px; }
+    .hud.right { right: 20px; }
+
+    /* Baseline grid overlay. Each row = one line-height. First baseline
+       sits near the top of each row plus ascender. Useful to eyeball
+       whether the sketch's glyph (x, y) positions line up. */
+    .grid {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      opacity: 0.35;
+      background-image:
+        linear-gradient(to bottom, transparent calc(var(--line-height) - 1px), var(--grid) 1px),
+        linear-gradient(to right, transparent calc(var(--margin-x) - 1px), var(--grid) 1px);
+      background-size: 100% var(--line-height), var(--canvas-w) 100%;
+      background-position:
+        0 var(--margin-y),       /* horizontal lines start at MARGIN_Y */
+        0 0;
+    }
+
+    .meta {
+      color: #8b8b92;
+      font-size: 12px;
+      max-width: var(--canvas-w);
+      line-height: 1.5;
+    }
+
+    .meta code {
+      background: #1a1d25;
+      padding: 1px 5px;
+      border-radius: 3px;
+      color: #d6d6dc;
+    }
+
+    .toggle {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      font-size: 13px;
+    }
+
+    .toggle label { cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="toggle">
+      <label>
+        <input id="grid-toggle" type="checkbox" checked />
+        baseline grid (line-height rows, left margin)
+      </label>
+    </div>
+
+    <div class="canvas" id="canvas">
+      <div class="grid" id="grid"></div>
+      <div class="text" id="text" dir="ltr"
+        >สวัสดีชาวโลก การเขียนอักษรไทย เป็นศิลปะที่งดงาม ฝึกฝนให้เชี่ยวชาญ จะพบความภูมิใจ ในมรดกทางวัฒนธรรมของชาติ ทุกเส้นขีดบนกระดาษ คือบทกวีที่ไม่มีคำพูด อักษรนี้มีชีวิตและจิตใจ Hello World</div>
+      <div class="hud left"  id="hud-left">Charmonman · 50px / 130lh · word-wrap @ 1120px</div>
+      <div class="hud right" id="hud-right">reference (browser)</div>
+    </div>
+
+    <div class="meta">
+      Reference for <code>examples/p5gpu_tegaki_handwriting.ts</code>. The
+      <code>&lt;div&gt;</code> above uses the same Charmonman font, same
+      font-size / line-height, same wrap width (<code>1120px</code>) and
+      same margins as the sketch — so visually comparing this to the
+      tegaki-stroked p5gpu window should surface misalignment in glyph
+      positions, baseline, line breaks, or combining-mark placement.
+      The first baseline should sit at approximately
+      <code>MARGIN_Y + ascender × fontSize / unitsPerEm</code>
+      = <code>100 + 1200 × 50 / 1000 = 160px</code> from the canvas top.
+    </div>
+  </div>
+
+  <script>
+    const toggle = document.getElementById("grid-toggle");
+    const grid = document.getElementById("grid");
+    toggle.addEventListener("change", () => {
+      grid.style.display = toggle.checked ? "" : "none";
+    });
+  </script>
+</body>
+</html>

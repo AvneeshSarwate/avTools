@@ -147,6 +147,11 @@ struct LayoutGlyphOut {
     key: u64,
     x: i32,
     y: i32,
+    /// Source text byte offset (HarfBuzz cluster value). For JS consumers
+    /// this lets them map a positioned glyph back to its originating UTF-8
+    /// byte range in the input text, which is necessary when shaping
+    /// collapses/reorders codepoints (Thai marks, ligatures, etc.).
+    cluster: u32,
 }
 
 /// A shaped glyph ready for positioning.
@@ -156,6 +161,8 @@ struct ShapedGlyph {
     x_advance: f32,  // in pixels
     x_offset: f32,   // in pixels
     y_offset: f32,   // in pixels
+    /// HarfBuzz cluster value — byte offset into the source text.
+    cluster: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -393,6 +400,7 @@ impl TextEngine {
                         x_advance: pos.x_advance as f32 * scale,
                         x_offset: pos.x_offset as f32 * scale,
                         y_offset: pos.y_offset as f32 * scale,
+                        cluster: info.cluster,
                     });
                 }
                 glyphs
@@ -515,6 +523,11 @@ impl TextEngine {
 
         let mut current_y = 0.0f32;
 
+        // Track each hard_line's byte offset in the original text so we can
+        // thread absolute UTF-8 byte offsets into glyph cluster values (the
+        // shaper emits per-segment-relative clusters which would otherwise
+        // collide once we shape multiple words).
+        let mut hard_line_byte_offset: u32 = 0;
         for hard_line in &hard_lines {
             if do_wrap && max_width.is_some() {
                 let max_w = max_width.unwrap();
@@ -523,6 +536,7 @@ impl TextEngine {
                     // Word wrapping
                     self.layout_word_wrapped(
                         hard_line,
+                        hard_line_byte_offset,
                         font_id,
                         size,
                         leading,
@@ -551,6 +565,7 @@ impl TextEngine {
                     // Glyph wrapping
                     self.layout_glyph_wrapped(
                         hard_line,
+                        hard_line_byte_offset,
                         font_id,
                         size,
                         leading,
@@ -578,7 +593,11 @@ impl TextEngine {
                 }
             } else {
                 // No wrapping (or no width set)
-                let shaped = self.shape_text(font_id, hard_line, size, weight, style, &axes_arc, axes_hash);
+                let mut shaped = self.shape_text(font_id, hard_line, size, weight, style, &axes_arc, axes_hash);
+                // Shift per-line-relative clusters to absolute text byte offsets
+                for g in &mut shaped {
+                    g.cluster = g.cluster.saturating_add(hard_line_byte_offset);
+                }
 
                 let line_y = current_y + leading * ascent_ratio;
                 let line_top = current_y;
@@ -614,6 +633,11 @@ impl TextEngine {
                 total_height = total_height.max(current_y + leading - first_line_top);
                 current_y += leading;
             }
+
+            // +1 for the '\n' we split on (saturating in case of overflow)
+            hard_line_byte_offset = hard_line_byte_offset
+                .saturating_add(hard_line.len() as u32)
+                .saturating_add(1);
         }
 
         // Restore outline contexts
@@ -647,9 +671,10 @@ impl TextEngine {
             leading
         };
 
-        // Binary protocol: 44-byte header + 16 bytes per glyph
+        // Binary protocol: 44-byte header + 20 bytes per glyph
+        // (header format unchanged; per-glyph record gained a u32 cluster)
         let glyph_count = glyphs_out.len() as u32;
-        let total_size = 44 + (glyph_count as usize) * 16;
+        let total_size = 44 + (glyph_count as usize) * 20;
         let mut buf = Vec::with_capacity(total_size);
 
         // Header: 10 x f32 + 1 x u32 = 44 bytes
@@ -665,11 +690,16 @@ impl TextEngine {
         buf.extend_from_slice(&(line_count as f32).to_le_bytes()); // offset 36
         buf.extend_from_slice(&glyph_count.to_le_bytes());         // offset 40
 
-        // Per-glyph records: 16 bytes each (u64 key + i32 x + i32 y)
+        // Per-glyph records: 20 bytes each
+        //   offset +0  u64 key
+        //   offset +8  i32 x
+        //   offset +12 i32 y
+        //   offset +16 u32 cluster (UTF-8 byte offset in the source text)
         for glyph in &glyphs_out {
-            buf.extend_from_slice(&glyph.key.to_le_bytes());  // offset +0: u64
-            buf.extend_from_slice(&glyph.x.to_le_bytes());    // offset +8: i32
-            buf.extend_from_slice(&glyph.y.to_le_bytes());    // offset +12: i32
+            buf.extend_from_slice(&glyph.key.to_le_bytes());
+            buf.extend_from_slice(&glyph.x.to_le_bytes());
+            buf.extend_from_slice(&glyph.y.to_le_bytes());
+            buf.extend_from_slice(&glyph.cluster.to_le_bytes());
         }
 
         buf
@@ -679,10 +709,14 @@ impl TextEngine {
     // Word wrapping layout
     // ------------------------------------------------------------------
 
+    /// `base_byte_offset`: byte offset of `text` within the full source text.
+    /// Added to each shaped glyph's `cluster` so consumers see absolute
+    /// UTF-8 offsets rather than offsets relative to the per-line segment.
     #[allow(clippy::too_many_arguments)]
     fn layout_word_wrapped(
         &mut self,
         text: &str,
+        base_byte_offset: u32,
         font_id: fontdb::ID,
         font_size: f32,
         line_height: f32,
@@ -725,10 +759,16 @@ impl TextEngine {
         // We shape each segment separately so we can break between words.
         let segments = split_into_segments(text);
 
-        // Shape all segments
+        // Shape all segments. Each call to shape_text returns clusters that
+        // are relative to the *segment*; shift them by (base_byte_offset +
+        // segment's byte offset within `text`) to recover absolute offsets.
         let mut shaped_segments: Vec<(Vec<ShapedGlyph>, f32, bool)> = Vec::new(); // (glyphs, total_advance, is_whitespace)
-        for (seg_text, is_ws) in &segments {
-            let shaped = self.shape_text(font_id, seg_text, font_size, weight, style, axes, axes_hash);
+        for (seg_text, is_ws, seg_byte_offset) in &segments {
+            let mut shaped = self.shape_text(font_id, seg_text, font_size, weight, style, axes, axes_hash);
+            let abs_offset = base_byte_offset.saturating_add(*seg_byte_offset);
+            for g in &mut shaped {
+                g.cluster = g.cluster.saturating_add(abs_offset);
+            }
             let advance: f32 = shaped.iter().map(|g| g.x_advance).sum();
             shaped_segments.push((shaped, advance, *is_ws));
         }
@@ -819,10 +859,12 @@ impl TextEngine {
     // Glyph wrapping layout
     // ------------------------------------------------------------------
 
+    /// `base_byte_offset`: see `layout_word_wrapped`.
     #[allow(clippy::too_many_arguments)]
     fn layout_glyph_wrapped(
         &mut self,
         text: &str,
+        base_byte_offset: u32,
         font_id: fontdb::ID,
         font_size: f32,
         line_height: f32,
@@ -847,7 +889,11 @@ impl TextEngine {
         outline_scale_context: &mut swash::scale::ScaleContext,
         outline_bounds_cache: &mut HashMap<GlyphOutlineBoundsKey, Option<(f32, f32)>>,
     ) {
-        let shaped = self.shape_text(font_id, text, font_size, weight, style, axes, axes_hash);
+        let mut shaped = self.shape_text(font_id, text, font_size, weight, style, axes, axes_hash);
+        // Shift per-segment-relative clusters to absolute text byte offsets
+        for g in &mut shaped {
+            g.cluster = g.cluster.saturating_add(base_byte_offset);
+        }
 
         if shaped.is_empty() {
             // Empty line
@@ -1042,6 +1088,7 @@ impl TextEngine {
                 key,
                 x: px,
                 y: py,
+                cluster: glyph.cluster,
             });
             pending_records.push((
                 key,
@@ -1532,26 +1579,30 @@ impl TextEngine {
 // Free functions
 // ---------------------------------------------------------------------------
 
-/// Split text into alternating (text, is_whitespace) segments.
-fn split_into_segments(text: &str) -> Vec<(String, bool)> {
+/// Split text into alternating (text, is_whitespace, byte_offset) segments,
+/// where byte_offset is the UTF-8 byte offset of the segment within `text`.
+fn split_into_segments(text: &str) -> Vec<(String, bool, u32)> {
     let mut segments = Vec::new();
     if text.is_empty() {
         return segments;
     }
 
+    let mut byte_offset: u32 = 0;
     let mut chars = text.chars().peekable();
     while chars.peek().is_some() {
         let is_ws = chars.peek().unwrap().is_whitespace();
         let mut seg = String::new();
+        let seg_start = byte_offset;
         while let Some(&ch) = chars.peek() {
             if ch.is_whitespace() == is_ws {
                 seg.push(ch);
+                byte_offset += ch.len_utf8() as u32;
                 chars.next();
             } else {
                 break;
             }
         }
-        segments.push((seg, is_ws));
+        segments.push((seg, is_ws, seg_start));
     }
     segments
 }

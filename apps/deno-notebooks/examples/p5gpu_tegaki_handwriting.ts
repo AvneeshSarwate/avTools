@@ -4,7 +4,7 @@
 //
 // - Loads Caveat's tegaki glyph data + TTF from the vendored tegaki repo.
 // - Lays out a long paragraph (multi-line word-wrap) via NativeTextEngine.
-// - Stores per-character phase in a flat ECS-style array (`charStates[]`).
+// - Stores per-laid-out-glyph phase in a flat ECS-style array (`glyphStates[]`).
 // - Renderer is a dumb loop: for each char, draw its tegaki strokes up to `phase`.
 // - Animation is core-timing branches writing to `state.phase`. A trigger loop
 //   picks random characters and spawns short-lived ramp branches that drive
@@ -37,26 +37,29 @@ interface TegakiGlyph {
 }
 type TegakiGlyphData = Record<string, TegakiGlyph>;
 
-// Caveat bundle metadata (from its bundle.ts)
-const FONT_META = { unitsPerEm: 1000, ascender: 960, descender: -300 };
-const FONT_FAMILY = "Caveat";
+// Charmonman bundle metadata (from its bundle.ts)
+const FONT_META = { unitsPerEm: 1000, ascender: 1200, descender: -700 };
+const FONT_FAMILY = "Charmonman";
 
 // ── Config ───────────────────────────────────────────────────────────
 
 const WIDTH = 1280;
 const HEIGHT = 800;
-const FONT_SIZE = 54;
-const LINE_HEIGHT = 70;
+const FONT_SIZE = 50;
+const LINE_HEIGHT = 130;   // Charmonman has tall asc+desc (em ≈ 1.9x fontSize)
 const MARGIN_X = 80;
-const MARGIN_Y = 80;
+const MARGIN_Y = 100;
 const MAX_WIDTH = WIDTH - MARGIN_X * 2;
 
+// Thai demo text — multiple phrases separated by spaces so the native
+// layout engine has break opportunities (Thai has no inter-word spaces
+// in normal prose, so we'd otherwise get one long unbreakable line).
 const LOREM =
-  "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod " +
-  "tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim " +
-  "veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea " +
-  "commodo consequat. Duis aute irure dolor in reprehenderit in voluptate " +
-  "velit esse cillum dolore eu fugiat nulla pariatur.";
+  "สวัสดีชาวโลก การเขียนอักษรไทย เป็นศิลปะที่งดงาม " +
+  "ฝึกฝนให้เชี่ยวชาญ จะพบความภูมิใจ " +
+  "ในมรดกทางวัฒนธรรมของชาติ ทุกเส้นขีดบนกระดาษ " +
+  "คือบทกวีที่ไม่มีคำพูด อักษรนี้มีชีวิตและจิตใจ " +
+  "Hello World";
 
 const params = {
   triggerRate: 18,     // trigger attempts per second
@@ -72,14 +75,14 @@ const params = {
 // ── Load tegaki bundle ───────────────────────────────────────────────
 
 const TEGAKI_ROOT = new URL(
-  "../../../clonedCompanionRepos/tegaki/packages/renderer/fonts/caveat/",
+  "../../../clonedCompanionRepos/tegaki/packages/renderer/fonts/charmonman/",
   import.meta.url,
 );
 const glyphData: TegakiGlyphData = JSON.parse(
   await Deno.readTextFile(new URL("glyphData.json", TEGAKI_ROOT)),
 );
-const fontBytes = await Deno.readFile(new URL("caveat.ttf", TEGAKI_ROOT));
-console.log(`Loaded ${Object.keys(glyphData).length} tegaki glyphs`);
+const fontBytes = await Deno.readFile(new URL("charmonman.ttf", TEGAKI_ROOT));
+console.log(`Loaded ${Object.keys(glyphData).length} tegaki glyphs (${FONT_FAMILY})`);
 
 // ── Native layout: shape + wrap + per-line positions ─────────────────
 
@@ -106,47 +109,83 @@ console.log(
   `firstBaseline=${layout.firstBaseline.toFixed(1)}px`,
 );
 
-// ── ECS-style per-character store ────────────────────────────────────
+// ── ECS-style per-glyph store (cluster-mapped) ───────────────────────
 //
-// One entry per laid-out glyph. `phase ∈ [0,1]` is the shared state the
-// animation branches write and the render loop reads. We assume 1:1
-// glyph↔char (holds for Caveat + ASCII — script font, no ligatures).
+// One entry per laid-out glyph, NOT per source character. For Thai (and
+// any script with combining marks / ligatures) the shaper's glyph list
+// doesn't 1:1 match the input codepoints: a base consonant + its above
+// vowel + its tone mark can all share one cluster (same `cluster` byte
+// offset) but emit 2–3 glyphs at different (x, y) positions.
+//
+// We rebuilt the native engine to emit HarfBuzz's `cluster` per glyph
+// (absolute UTF-8 byte offset into the source text). To map glyph→char
+// we:
+//   1. Build a byte→char-index lookup for the source text.
+//   2. Walk glyphs in order, grouping consecutive glyphs with the same
+//      cluster. Within a cluster-run, the k-th glyph maps to the k-th
+//      source char in that cluster's char range (logical order holds
+//      for Thai LTR since base precedes its marks in source).
+//
+// Each resulting GlyphState gets its own phase — so retriggering can
+// flash an individual mark independently of its base, which is the
+// exact effect we want for Thai.
 
-interface CharState {
-  ch: string;
-  glyph: TegakiGlyph | null;
+interface GlyphState {
+  ch: string;                   // source char this glyph corresponds to
+  glyph: TegakiGlyph | null;    // tegaki stroke data for that char (null = skipped)
   baselineX: number;
   baselineY: number;
-  phase: number;  // 0..1
-  epoch: number;  // incremented when a new ramp preempts the old one
+  phase: number;
+  epoch: number;
+}
+
+function buildByteToCharIdx(text: string): Int32Array {
+  const enc = new TextEncoder();
+  const bytes = enc.encode(text);
+  const arr = new Int32Array(bytes.length + 1);
+  const chars = [...text];
+  let b = 0;
+  for (let i = 0; i < chars.length; i++) {
+    const len = enc.encode(chars[i]!).length;
+    for (let k = 0; k < len; k++) arr[b + k] = i;
+    b += len;
+  }
+  arr[b] = chars.length;
+  return arr;
 }
 
 const chars = [...LOREM];
-if (layout.glyphs.length !== chars.length) {
-  console.warn(
-    `glyph/char count mismatch (${layout.glyphs.length} vs ${chars.length}) — ` +
-    `Caveat isn't expected to produce ligatures; animation mapping may drift.`,
-  );
-}
+const byteToChar = buildByteToCharIdx(LOREM);
 
-const charStates: CharState[] = [];
-const pairCount = Math.min(chars.length, layout.glyphs.length);
-for (let i = 0; i < pairCount; i++) {
-  const ch = chars[i]!;
-  const g = layout.glyphs[i]!;
-  charStates.push({
-    ch,
-    glyph: glyphData[ch] ?? null,
-    baselineX: MARGIN_X + g.x,
-    baselineY: MARGIN_Y + g.y,
-    phase: params.idlePhase,
-    epoch: 0,
-  });
+const glyphStates: GlyphState[] = [];
+{
+  let i = 0;
+  while (i < layout.glyphs.length) {
+    const cluster = layout.glyphs[i]!.cluster;
+    let j = i;
+    while (j < layout.glyphs.length && layout.glyphs[j]!.cluster === cluster) j++;
+    const startCharIdx = byteToChar[cluster] ?? 0;
+    for (let k = 0; k < j - i; k++) {
+      const g = layout.glyphs[i + k]!;
+      const ch = chars[startCharIdx + k] ?? "";
+      glyphStates.push({
+        ch,
+        glyph: glyphData[ch] ?? null,
+        baselineX: MARGIN_X + g.x,
+        baselineY: MARGIN_Y + g.y,
+        phase: params.idlePhase,
+        epoch: 0,
+      });
+    }
+    i = j;
+  }
 }
-const drawableIndices = charStates
+const drawableIndices = glyphStates
   .map((s, i) => (s.glyph ? i : -1))
   .filter((i) => i >= 0);
-console.log(`Drawable chars: ${drawableIndices.length} / ${charStates.length}`);
+console.log(
+  `Glyphs: ${glyphStates.length} (chars: ${chars.length}, drawable: ${drawableIndices.length})`,
+);
 
 // ── Tegaki stroke rendering ──────────────────────────────────────────
 //
@@ -223,7 +262,7 @@ function drawStrokeUpTo(
 
 function drawGlyphAtPhase(
   p5: P5GPU,
-  state: CharState,
+  state: GlyphState,
   scale: number,
   widthScale: number,
 ) {
@@ -262,7 +301,7 @@ const rootAnim = launch(async (ctx) => {
       const pick = drawableIndices[
         Math.floor(triggerCtx.random() * drawableIndices.length)
       ]!;
-      const state = charStates[pick]!;
+      const state = glyphStates[pick]!;
       const minD = Math.max(0.05, params.minDuration);
       const maxD = Math.max(minD, params.maxDuration);
       const duration = minD + triggerCtx.random() * (maxD - minD);
@@ -311,10 +350,10 @@ function setupPane(pane: WindowTweakpane) {
   pane.addBinding(params, "inkColor", { label: "Ink" });
   pane.addBinding(params, "bgColor", { label: "BG" });
   pane.addButton({ title: "Reset all → idle" }).on("click", () => {
-    for (const s of charStates) { s.phase = params.idlePhase; s.epoch += 1; }
+    for (const s of glyphStates) { s.phase = params.idlePhase; s.epoch += 1; }
   });
   pane.addButton({ title: "Reset all → 0" }).on("click", () => {
-    for (const s of charStates) { s.phase = 0; s.epoch += 1; }
+    for (const s of glyphStates) { s.phase = 0; s.epoch += 1; }
   });
 }
 
@@ -366,7 +405,7 @@ function renderFrame() {
   p5.stroke(ir, ig, ib, 255);
 
   // The entire animation is just: read phase, draw.
-  for (const state of charStates) {
+  for (const state of glyphStates) {
     drawGlyphAtPhase(p5, state, scale, params.widthScale);
   }
 

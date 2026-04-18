@@ -21,6 +21,11 @@ export interface TextLayoutGlyph {
   key: bigint;
   x: number;
   y: number;
+  /** UTF-8 byte offset in the source text where this glyph's cluster begins.
+   *  Multiple glyphs can share a cluster (e.g. decomposed mark + base); a
+   *  single input codepoint can also be absent from the glyph list if the
+   *  shaper collapsed it. Use this to map glyphs back to source text. */
+  cluster: number;
 }
 
 export interface TextLayoutResult {
@@ -174,7 +179,8 @@ function parseBinaryLayout(buffer: Uint8Array, byteLength: number): TextLayoutRe
   const lineCount = dv.getFloat32(36, true);
   const glyphCount = dv.getUint32(40, true);
 
-  const expectedSize = 44 + glyphCount * 16;
+  // Per-glyph record is 20 bytes: u64 key + i32 x + i32 y + u32 cluster
+  const expectedSize = 44 + glyphCount * 20;
   if (byteLength < expectedSize) return emptyResult;
 
   const glyphs: TextLayoutGlyph[] = new Array(glyphCount);
@@ -183,8 +189,9 @@ function parseBinaryLayout(buffer: Uint8Array, byteLength: number): TextLayoutRe
     const key = dv.getBigUint64(offset, true);
     const x = dv.getInt32(offset + 8, true);
     const y = dv.getInt32(offset + 12, true);
-    glyphs[i] = { key, x, y };
-    offset += 16;
+    const cluster = dv.getUint32(offset + 16, true);
+    glyphs[i] = { key, x, y, cluster };
+    offset += 20;
   }
 
   return {
