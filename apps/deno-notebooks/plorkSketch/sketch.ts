@@ -209,6 +209,15 @@ const activeCircles: Set<CircleState> = new Set();
 let orbitAccum = 0;
 let lastOrbitTime = performance.now() * 0.001;
 
+// Mark-dirty flag: set by setParam or by animation scrubbing; the root loop
+// flushes one batched pane.refresh() per tick when dirty.
+let paramsDirty = false;
+
+function setParam(name: string, value: unknown): void {
+  (params as Record<string, unknown>)[name] = value;
+  paramsDirty = true;
+}
+
 // Square walk state: 4 vertices indexed 0=TL, 1=TR, 2=BR, 3=BL
 const SQUARE_VERTS: Array<[number, number]> = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
 
@@ -558,7 +567,11 @@ const rootAnim = launch(async (ctx) => {
     });
 
     if (lastAppliedTime === null || Math.abs(playbackTime - lastAppliedTime) > 1e-6) {
+      // Suppress per-binding refresh messages; batch-flush below via pane.refresh().
+      syncRef.enabled = false;
       animationHandle.scrubAndEvaluate(playbackTime);
+      syncRef.enabled = true;
+      paramsDirty = true;
       lastAppliedTime = playbackTime;
       lastPlaybackSignature = playbackSignature;
     } else if (playbackSignature !== lastPlaybackSignature) {
@@ -567,6 +580,12 @@ const rootAnim = launch(async (ctx) => {
     }
 
     animationHandle.setLivePlayhead(playbackTime);
+
+    if (paramsDirty) {
+      renderWindow.pane?.refresh();
+      paramsDirty = false;
+    }
+
     await ctx.waitSec(1 / 60);
   }
 });
@@ -935,3 +954,14 @@ function hue2rgb(p: number, q: number, t: number): number {
   if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
   return p;
 }
+
+/*
+to have this run properly in a notebook, just remove the await 
+from the line  `await renderWindow.run(renderFrame, { cleanup: cleanup });`
+
+to be able to fully live-code drawing in the runloop, set up the 
+(drawFuncs<string, () => void) pattern where the drawfuncs are closures using 
+the p5 instance, and the launched branches add/remove the map entry at the 
+animation start/end for "oneshots". if you want to control draw order you can have
+drawFuncs<string, {ord: number, func: () => void}) where num is z order
+*/
