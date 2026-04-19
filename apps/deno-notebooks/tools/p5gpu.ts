@@ -2736,7 +2736,7 @@ export class P5GPU {
   }
 
   private _emitStrokePathLocal(points: Vec2[], closed: boolean, color: ColorTuple): void {
-    if (points.length < 2) return;
+    if (points.length === 0) return;
 
     const transformed = points.map((p) => transformPoint(this._state.matrix, p[0], p[1]));
     this._emitStrokePathScreen(transformed, closed, color);
@@ -2749,12 +2749,28 @@ export class P5GPU {
     const weight = Math.max(0.0001, this._state.strokeWeight * scale);
     const half = weight * 0.5;
 
+    const path: Vec2[] = [];
+    for (const p of points) {
+      const prev = path[path.length - 1];
+      if (!prev || Math.hypot(p[0] - prev[0], p[1] - prev[1]) > EPS) {
+        path.push([p[0], p[1]]);
+      }
+    }
+
+    if (closed && path.length > 1) {
+      const first = path[0];
+      const last = path[path.length - 1];
+      if (Math.hypot(first[0] - last[0], first[1] - last[1]) <= EPS) {
+        path.pop();
+      }
+    }
+
+    if (path.length === 0) return;
+
     const blend = this._currentBlendMode();
     this._ensureBatch(blend, false);
 
-    // Single point or two coincident points — emit a dot
-    if (points.length === 1 || (points.length === 2 && Math.hypot(points[1][0] - points[0][0], points[1][1] - points[0][1]) <= EPS)) {
-      const p = points[0];
+    const emitDot = (p: Vec2): void => {
       if (this._state.strokeCap === this.ROUND) {
         this._emitRoundCap(p, [1, 0], half, color);
         this._emitRoundCap(p, [-1, 0], half, color);
@@ -2762,14 +2778,16 @@ export class P5GPU {
         this._pushTriangleVertices(p[0] - half, p[1] - half, p[0] + half, p[1] - half, p[0] + half, p[1] + half, color);
         this._pushTriangleVertices(p[0] - half, p[1] - half, p[0] + half, p[1] + half, p[0] - half, p[1] + half, color);
       }
+    };
+
+    if (path.length === 1) {
+      emitDot(path[0]);
       return;
     }
 
-    // Only clone when we need to mutate endpoints (open + SQUARE/PROJECT caps)
-    const needsClone = !closed && (this._state.strokeCap === this.SQUARE || this._state.strokeCap === this.PROJECT);
-    const path = needsClone ? points.map((p) => [p[0], p[1]] as Vec2) : points;
+    const isClosed = closed && path.length > 2;
 
-    if (needsClone && path.length >= 2) {
+    if (!isClosed && (this._state.strokeCap === this.SQUARE || this._state.strokeCap === this.PROJECT)) {
       const first = path[0];
       const second = path[1];
       const last = path[path.length - 1];
@@ -2783,167 +2801,131 @@ export class P5GPU {
     }
 
     const n = path.length;
-    const miterLimit = this._state.strokeMiterLimit;
-    const joinMode = this._state.strokeJoin;
-
-    // Build offset vertices for each polyline point.
-    // For each point we compute left (+) and right (-) offset positions.
-    // At interior joints, we compute the miter vector; if it exceeds the
-    // miter limit, we use bevel (two separate offsets per side).
-    //
-    // leftX/Y[i], rightX/Y[i] = the offset vertices at path[i].
-    // For bevel joints, we emit extra triangles to fill the outer side.
-
-    const leftX = new Float64Array(n);
-    const leftY = new Float64Array(n);
-    const rightX = new Float64Array(n);
-    const rightY = new Float64Array(n);
-
-    for (let i = 0; i < n; i++) {
-      const isFirst = !closed && i === 0;
-      const isLast = !closed && i === n - 1;
-
-      // Directions of adjacent segments
-      const prevIdx = (i - 1 + n) % n;
-      const nextIdx = (i + 1) % n;
-
-      if (isFirst) {
-        // Open start: use perpendicular of the first segment
-        const dx = path[nextIdx][0] - path[i][0];
-        const dy = path[nextIdx][1] - path[i][1];
-        const len = Math.hypot(dx, dy);
-        if (len <= EPS) { leftX[i] = path[i][0]; leftY[i] = path[i][1]; rightX[i] = path[i][0]; rightY[i] = path[i][1]; continue; }
-        const nx = -dy / len * half;
-        const ny = dx / len * half;
-        leftX[i] = path[i][0] + nx;
-        leftY[i] = path[i][1] + ny;
-        rightX[i] = path[i][0] - nx;
-        rightY[i] = path[i][1] - ny;
-      } else if (isLast) {
-        // Open end: use perpendicular of the last segment
-        const dx = path[i][0] - path[prevIdx][0];
-        const dy = path[i][1] - path[prevIdx][1];
-        const len = Math.hypot(dx, dy);
-        if (len <= EPS) { leftX[i] = path[i][0]; leftY[i] = path[i][1]; rightX[i] = path[i][0]; rightY[i] = path[i][1]; continue; }
-        const nx = -dy / len * half;
-        const ny = dx / len * half;
-        leftX[i] = path[i][0] + nx;
-        leftY[i] = path[i][1] + ny;
-        rightX[i] = path[i][0] - nx;
-        rightY[i] = path[i][1] - ny;
-      } else {
-        // Interior vertex (or any vertex if closed): compute miter
-        const dAx = path[i][0] - path[prevIdx][0];
-        const dAy = path[i][1] - path[prevIdx][1];
-        const dBx = path[nextIdx][0] - path[i][0];
-        const dBy = path[nextIdx][1] - path[i][1];
-        const lenA = Math.hypot(dAx, dAy);
-        const lenB = Math.hypot(dBx, dBy);
-
-        if (lenA <= EPS || lenB <= EPS) {
-          // Degenerate: fall back to simple perpendicular
-          const dx = lenA > EPS ? dAx : dBx;
-          const dy = lenA > EPS ? dAy : dBy;
-          const len = Math.hypot(dx, dy);
-          const nx = -dy / len * half;
-          const ny = dx / len * half;
-          leftX[i] = path[i][0] + nx;
-          leftY[i] = path[i][1] + ny;
-          rightX[i] = path[i][0] - nx;
-          rightY[i] = path[i][1] - ny;
-          continue;
-        }
-
-        // Unit normals of each segment (pointing left)
-        const nAx = -dAy / lenA;
-        const nAy = dAx / lenA;
-        const nBx = -dBy / lenB;
-        const nBy = dBx / lenB;
-
-        // Miter direction = average of the two normals
-        let mx = nAx + nBx;
-        let my = nAy + nBy;
-        const mLen = Math.hypot(mx, my);
-
-        if (mLen < 1e-5) {
-          // Near-parallel reversal: use segment A normal
-          leftX[i] = path[i][0] + nAx * half;
-          leftY[i] = path[i][1] + nAy * half;
-          rightX[i] = path[i][0] - nAx * half;
-          rightY[i] = path[i][1] - nAy * half;
-          continue;
-        }
-
-        mx /= mLen;
-        my /= mLen;
-
-        // Miter length: half / dot(miter, normal)
-        const dot = mx * nAx + my * nAy;
-        const miterLen = Math.abs(dot) > 1e-5 ? half / dot : half * miterLimit;
-
-        // Check miter limit
-        if (Math.abs(miterLen) > half * miterLimit || joinMode === this.BEVEL) {
-          // Bevel: use per-segment normals (not miter)
-          // Use segment A's normal for this vertex's offset.
-          // The gap between segments will be filled with a bevel triangle below.
-          leftX[i] = path[i][0] + nAx * half;
-          leftY[i] = path[i][1] + nAy * half;
-          rightX[i] = path[i][0] - nAx * half;
-          rightY[i] = path[i][1] - nAy * half;
-
-          // Emit bevel/round join geometry to fill the gap
-          const cross = dAx * dBy - dAy * dBx;
-          const sign = cross > 0 ? 1 : -1;
-
-          // Outer side offsets from segments A and B
-          const outerAx = path[i][0] + nAx * half * sign;
-          const outerAy = path[i][1] + nAy * half * sign;
-          const outerBx = path[i][0] + nBx * half * sign;
-          const outerBy = path[i][1] + nBy * half * sign;
-
-          if (joinMode === this.ROUND) {
-            this._emitRoundJoin(
-              path[i],
-              nAx * half * sign, nAy * half * sign,
-              nBx * half * sign, nBy * half * sign,
-              half, sign, color,
-            );
-          } else {
-            // Bevel triangle
-            this._pushTriangleVertices(path[i][0], path[i][1], outerAx, outerAy, outerBx, outerBy, color);
-          }
-
-          // For the next segment quad, use segment B's normal on the outer side
-          // so the mesh connects cleanly. We store segment B's offsets so the
-          // next quad picks them up. But since we have one left/right per vertex,
-          // we need to handle this via the quad emission below.
-          // The inner side is fine (segment quads overlap at the center).
-          // Adjust offset to segment B normal for forward connectivity.
-          leftX[i] = path[i][0] + nBx * half;
-          leftY[i] = path[i][1] + nBy * half;
-          rightX[i] = path[i][0] - nBx * half;
-          rightY[i] = path[i][1] - nBy * half;
-        } else {
-          // Miter: single offset point per side
-          leftX[i] = path[i][0] + mx * miterLen;
-          leftY[i] = path[i][1] + my * miterLen;
-          rightX[i] = path[i][0] - mx * miterLen;
-          rightY[i] = path[i][1] - my * miterLen;
-        }
-      }
+    const segCount = isClosed ? n : n - 1;
+    if (segCount <= 0) {
+      emitDot(path[0]);
+      return;
     }
 
-    // Emit connected quads between consecutive offset vertices
-    const segCount = closed ? n : n - 1;
+    const joinMode =
+      this._state.strokeJoin === this.ROUND ||
+      this._state.strokeJoin === this.BEVEL ||
+      this._state.strokeJoin === this.MITER
+        ? this._state.strokeJoin
+        : this.MITER;
+    const miterLimitRatio = this._state.strokeMiterLimit;
+    const dirX = new Float64Array(segCount);
+    const dirY = new Float64Array(segCount);
+    const normalX = new Float64Array(segCount);
+    const normalY = new Float64Array(segCount);
+
     for (let i = 0; i < segCount; i++) {
-      const j = (i + 1) % n;
-      // Two triangles: (left[i], right[i], right[j]) and (left[i], right[j], left[j])
-      this._pushTriangleVertices(leftX[i], leftY[i], rightX[i], rightY[i], rightX[j], rightY[j], color);
-      this._pushTriangleVertices(leftX[i], leftY[i], rightX[j], rightY[j], leftX[j], leftY[j], color);
+      const a = path[i];
+      const b = path[(i + 1) % n];
+      const dx = b[0] - a[0];
+      const dy = b[1] - a[1];
+      const len = Math.hypot(dx, dy);
+      if (len <= EPS) {
+        emitDot(path[0]);
+        return;
+      }
+      const ux = dx / len;
+      const uy = dy / len;
+      dirX[i] = ux;
+      dirY[i] = uy;
+      normalX[i] = -uy;
+      normalY[i] = ux;
     }
 
-    // Caps for open paths
-    if (!closed && path.length >= 2) {
+    const miterOffsetsAt = (vertexIndex: number, prevSeg: number, nextSeg: number): [number, number, number, number] | null => {
+      if (joinMode !== this.MITER) return null;
+
+      let mx = normalX[prevSeg] + normalX[nextSeg];
+      let my = normalY[prevSeg] + normalY[nextSeg];
+      const mLen = Math.hypot(mx, my);
+      if (mLen <= 1e-5) return null;
+
+      mx /= mLen;
+      my /= mLen;
+
+      const dot = mx * normalX[prevSeg] + my * normalY[prevSeg];
+      if (Math.abs(dot) <= 1e-5) return null;
+
+      const miterLen = half / dot;
+      if (!Number.isFinite(miterLen) || Math.abs(miterLen) > half * miterLimitRatio) {
+        return null;
+      }
+
+      const p = path[vertexIndex];
+      return [p[0] + mx * miterLen, p[1] + my * miterLen, p[0] - mx * miterLen, p[1] - my * miterLen];
+    };
+
+    const endpointOffsets = (
+      vertexIndex: number,
+      segmentIndex: number,
+      prevSeg: number,
+      nextSeg: number,
+      canJoin: boolean,
+    ): [number, number, number, number] => {
+      if (canJoin) {
+        const miter = miterOffsetsAt(vertexIndex, prevSeg, nextSeg);
+        if (miter) return miter;
+      }
+
+      const p = path[vertexIndex];
+      const nx = normalX[segmentIndex] * half;
+      const ny = normalY[segmentIndex] * half;
+      return [p[0] + nx, p[1] + ny, p[0] - nx, p[1] - ny];
+    };
+
+    for (let seg = 0; seg < segCount; seg++) {
+      const startIndex = seg;
+      const endIndex = (seg + 1) % n;
+
+      const startCanJoin = isClosed || startIndex > 0;
+      const startPrevSeg = (seg - 1 + segCount) % segCount;
+      const start = endpointOffsets(startIndex, seg, startPrevSeg, seg, startCanJoin);
+
+      const endCanJoin = isClosed || endIndex < n - 1;
+      const endNextSeg = (seg + 1) % segCount;
+      const end = endpointOffsets(endIndex, seg, seg, endNextSeg, endCanJoin);
+
+      this._pushTriangleVertices(start[0], start[1], start[2], start[3], end[2], end[3], color);
+      this._pushTriangleVertices(start[0], start[1], end[2], end[3], end[0], end[1], color);
+    }
+
+    const emitJoin = (vertexIndex: number, prevSeg: number, nextSeg: number): void => {
+      if (miterOffsetsAt(vertexIndex, prevSeg, nextSeg)) return;
+
+      const cross = dirX[prevSeg] * dirY[nextSeg] - dirY[prevSeg] * dirX[nextSeg];
+      const dot = dirX[prevSeg] * dirX[nextSeg] + dirY[prevSeg] * dirY[nextSeg];
+      if (Math.abs(cross) < 1e-4 && dot > 0) return;
+
+      const turnSign = cross >= 0 ? 1 : -1;
+      const outerSide = cross >= 0 ? -1 : 1;
+      const fromX = normalX[prevSeg] * half * outerSide;
+      const fromY = normalY[prevSeg] * half * outerSide;
+      const toX = normalX[nextSeg] * half * outerSide;
+      const toY = normalY[nextSeg] * half * outerSide;
+      const p = path[vertexIndex];
+
+      if (joinMode === this.ROUND) {
+        this._emitRoundJoin(p, fromX, fromY, toX, toY, half, turnSign, color);
+        return;
+      }
+
+      this._pushTriangleVertices(p[0], p[1], p[0] + fromX, p[1] + fromY, p[0] + toX, p[1] + toY, color);
+    };
+
+    const joinCount = isClosed ? n : Math.max(0, n - 2);
+    for (let i = 0; i < joinCount; i++) {
+      const vertexIndex = isClosed ? i : i + 1;
+      const prevSeg = (vertexIndex - 1 + segCount) % segCount;
+      const nextSeg = vertexIndex % segCount;
+      emitJoin(vertexIndex, prevSeg, nextSeg);
+    }
+
+    if (!isClosed) {
       if (this._state.strokeCap === this.ROUND) {
         const d0 = normalize(path[1][0] - path[0][0], path[1][1] - path[0][1]);
         const d1 = normalize(path[n - 1][0] - path[n - 2][0], path[n - 1][1] - path[n - 2][1]);

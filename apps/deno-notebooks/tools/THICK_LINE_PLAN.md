@@ -437,6 +437,95 @@ and correctness while maintaining the current architecture.
 
 ---
 
+## 8. Current Problems
+
+### What was attempted
+
+Two rewrites of `_emitStrokePathScreen` were attempted:
+
+**Attempt 1: Two-pass connected mesh (offset arrays)**
+
+Replaced the original independent-quads + join-patches approach with a two-pass
+system: first compute miter/bevel offsets for every vertex into `Float64Array`
+buffers (`leftX/Y`, `rightX/Y`), then emit connected quads between consecutive
+offset vertices.
+
+- **Result:** Regressed to visible splayed rectangles, worse than the original.
+- **Root cause:** At bevel joints, a single left/right offset per vertex cannot
+  represent both adjacent segments. The code stored segment B's normal (overwriting
+  A's) so the quad connecting from the previous segment to this vertex used the
+  wrong normal on one side. The standard technique handles this by "splitting" the
+  vertex — emitting two offset pairs (one per adjacent segment) — but the fixed-
+  size array approach can't represent that without a more complex data structure.
+
+**Attempt 2: Single-pass connected mesh**
+
+Rewrote to walk segments in order, carrying the previous segment's end offsets
+forward. At bevel joints, close the previous segment with segment A's normal,
+emit the bevel/round fill, then start the new segment with segment B's normal.
+
+- **Result:** Still showed splayed rectangles and inner triangle flickering.
+- **Root cause (suspected):** The connecting quads between previous-segment-end
+  and current-segment-start were being emitted incorrectly. For miter joints, the
+  previous end and current start should be identical (shared miter point), but the
+  code emitted redundant degenerate quads. For bevel joints, the closing quad from
+  `prevEnd` to segment-A normal was connecting miter-computed offsets to segment-
+  normal offsets, creating mismatched geometry. The interplay of independently
+  computed offsets at the same vertex across iterations introduced subtle
+  misalignments.
+
+### Pre-existing issues (visible even with original code)
+
+These were present before any rewrite attempts, visible when the p5gpu changes
+are stashed:
+
+1. **Inner triangle flickering at near-collinear joints.** When the cross product
+   in `_emitStrokeJoin` is very close to zero (nearly straight segments), the
+   `sign` variable can flip between +1 and -1 across frames due to floating-point
+   instability. This causes the join triangle to alternate sides frame-to-frame,
+   producing a visible flicker. A larger epsilon guard on the cross product (e.g.
+   skip join emission when `|cross| < threshold` scaled to segment length) would
+   fix this.
+
+2. **Small edge gaps at joints.** The independent-quad approach has inherent gaps
+   between segment quads at joints. The join triangles (bevel/miter/round) are
+   supposed to fill these, but for very small angular differences the join geometry
+   can be slightly misaligned with the quad edges, leaving hairline gaps visible
+   at certain angles.
+
+### Remaining phase 1 changes that ARE working
+
+The following changes from the original phase 1 plan were applied and are working
+correctly (kept even after the mesh rewrite attempts):
+
+- `strokeMiterLimit` property added to state (default 4.0) with `strokeMiterLimit()` API
+- Miter limit calculation fixed: `half * strokeMiterLimit` instead of `weight * scale * 2`
+- Adaptive round join steps: `arcLen / 3`, capped at 64
+- Capped round cap steps: max 128 (normal) / 64 (optimized)
+- Single-point / degenerate path handling (dot emission)
+- Stroke-aware curve tolerance in Wang's formula: `min(0.5, strokeHalf * 0.1)`
+
+### Recommended next steps
+
+1. **Revert `_emitStrokePathScreen` to the original independent-quads approach**
+   with the phase 1 constant-tuning fixes. This was "mostly right."
+
+2. **Fix inner triangle flicker** by adding a scaled epsilon guard to the cross
+   product in `_emitStrokeJoin` — skip join emission entirely when segments are
+   nearly collinear (the overlap of adjacent quads already covers the joint).
+
+3. **For a proper connected mesh** (if needed later), the correct approach is:
+   - Single pass, but each vertex can emit 1 pair (miter) or 2 pairs (bevel)
+     of offset vertices
+   - Use a dynamic vertex list, not fixed-size arrays
+   - At miter joints: shared offsets, one quad spans both segments
+   - At bevel/round joints: close segment A with A-normal offsets, emit join fill,
+     open segment B with B-normal offsets — three separate pieces of geometry
+   - This is exactly what Mapbox/deck.gl do in their vertex shader template, with
+     extra template vertices reserved for the bevel case
+
+---
+
 ## References
 
 - [Drawing Lines is Hard -- Matt DesLauriers](https://mattdesl.svbtle.com/drawing-lines-is-hard)
