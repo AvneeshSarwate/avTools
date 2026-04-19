@@ -154,6 +154,7 @@ function renderFrame() {
     return trail.composite;
   }
 
+  trail.current.render();
   return trail.current;
 }
 
@@ -233,7 +234,7 @@ function handleOscMessage(message: OSCMessage): void {
 
   if (filterParams.mode === "delayed-reject") {
     const delayed = getDelayedMedianFrame();
-    if (delayed) {
+    if (delayed && delayed.confidence >= renderParams.confidenceThreshold) {
       note.pitch = delayed.pitch;
       note.confidence = delayed.confidence;
       note.volume = delayed.volume;
@@ -242,9 +243,11 @@ function handleOscMessage(message: OSCMessage): void {
     rejectFilteredHead = (rejectFilteredHead + 1) % FILTERED_HISTORY_SIZE;
     rejectFilteredCount = Math.min(rejectFilteredCount + 1, FILTERED_HISTORY_SIZE);
   } else {
-    note.confidence = rawConfidence;
-    note.volume = rawVolume;
-    note.pitch = getSmoothedPitch(rawConfidence);
+    if (rawConfidence >= renderParams.confidenceThreshold) {
+      note.confidence = rawConfidence;
+      note.volume = rawVolume;
+      note.pitch = getSmoothedPitch(rawConfidence);
+    }
     pushFilteredPitch(smoothFilteredHistory, smoothFilteredHead, note.pitch);
     smoothFilteredHead = (smoothFilteredHead + 1) % FILTERED_HISTORY_SIZE;
     smoothFilteredCount = Math.min(smoothFilteredCount + 1, FILTERED_HISTORY_SIZE);
@@ -254,10 +257,6 @@ function handleOscMessage(message: OSCMessage): void {
 function drawNoteCircle(time: number): void {
   p5.clear();
   p5.noStroke();
-
-  if (note.confidence < renderParams.confidenceThreshold) {
-    return;
-  }
 
   if (pathParams.mode === "history-line") {
     drawHistoryLine();
