@@ -30,11 +30,44 @@ const MAX_SMOOTHING_WINDOW = 5;
 const DELAY_BUFFER_SIZE = 32;
 
 const renderParams = {
+  confidenceThreshold: 0.5,
+};
+
+const postProcessParams = {
+  enabled: true,
   trailDecay: 0.94,
+};
+
+const drawingParams = {
+  r: 255,
+  g: 0,
+  b: 0,
+  circleBaseSize: 10,
+  volumeScale: 40,
+  strokeWeight: 2,
+};
+
+const pathParams = {
+  mode: "linear" as "linear" | "polar" | "history-line",
+};
+
+const linearParams = {
   pitchCenter: 60,
   pitchRadius: 600,
-  confidenceThreshold: 0.5,
-  volumeScale: 40,
+  period: 5,
+};
+
+const polarParams = {
+  pitchCenter: 60,
+  baseRadius: 200,
+  pitchRadiusScale: 300,
+  period: 5,
+};
+
+const historyLineParams = {
+  pitchCenter: 60,
+  pitchRadius: 600,
+  historyLength: 90,
 };
 
 const smoothParams = {
@@ -61,6 +94,15 @@ const note = {
 const pitchHistory = new Array<number>(PITCH_HISTORY_SIZE);
 let pitchHistoryHead = 0;
 let pitchHistoryCount = 0;
+
+// --- per-filter-mode post-filtered pitch history ---
+const FILTERED_HISTORY_SIZE = 180;
+const smoothFilteredHistory = new Float64Array(FILTERED_HISTORY_SIZE);
+let smoothFilteredHead = 0;
+let smoothFilteredCount = 0;
+const rejectFilteredHistory = new Float64Array(FILTERED_HISTORY_SIZE);
+let rejectFilteredHead = 0;
+let rejectFilteredCount = 0;
 
 // --- delay buffer for delayed-reject mode ---
 interface DelayFrame {
@@ -106,10 +148,13 @@ function renderFrame() {
   p5.beginFrame();
   drawNoteCircle(time);
   trail.current.setSrcs({ src: p5.endFrame() });
-  trail.decay.setUniforms({ mult: renderParams.trailDecay });
-  trail.composite.renderAll();
+  if (postProcessParams.enabled) {
+    trail.decay.setUniforms({ mult: postProcessParams.trailDecay });
+    trail.composite.renderAll();
+    return trail.composite;
+  }
 
-  return trail.composite;
+  return trail.current;
 }
 
 function cleanup(): void {
@@ -121,11 +166,41 @@ function cleanup(): void {
 
 function setupPane(pane: WindowTweakpane): void {
   const render = pane.addFolder({ title: "Render" });
-  render.addBinding(renderParams, "trailDecay", { min: 0, max: 1, step: 0.001, label: "Trail Decay" });
-  render.addBinding(renderParams, "pitchCenter", { min: 0, max: 127, step: 1, label: "Pitch Center" });
-  render.addBinding(renderParams, "pitchRadius", { min: 0, max: 800, step: 1, label: "Pitch Radius" });
   render.addBinding(renderParams, "confidenceThreshold", { min: 0, max: 1, step: 0.001, label: "Conf Threshold" });
-  render.addBinding(renderParams, "volumeScale", { min: 0, max: 200, step: 1, label: "Volume Scale" });
+
+  const drawing = pane.addFolder({ title: "Drawing" });
+  drawing.addBinding(drawingParams, "r", { min: 0, max: 255, step: 1, label: "Red" });
+  drawing.addBinding(drawingParams, "g", { min: 0, max: 255, step: 1, label: "Green" });
+  drawing.addBinding(drawingParams, "b", { min: 0, max: 255, step: 1, label: "Blue" });
+  drawing.addBinding(drawingParams, "circleBaseSize", { min: 1, max: 50, step: 1, label: "Circle Size" });
+  drawing.addBinding(drawingParams, "volumeScale", { min: 0, max: 200, step: 1, label: "Volume Scale" });
+  drawing.addBinding(drawingParams, "strokeWeight", { min: 0.5, max: 10, step: 0.5, label: "Stroke Weight" });
+
+  const postProc = pane.addFolder({ title: "Post Processing" });
+  postProc.addBinding(postProcessParams, "enabled", { label: "Enabled" });
+  postProc.addBinding(postProcessParams, "trailDecay", { min: 0, max: 1, step: 0.001, label: "Trail Decay" });
+
+  const path = pane.addFolder({ title: "Path" });
+  path.addBinding(pathParams, "mode", {
+    options: { "Linear": "linear", "Polar": "polar", "History Line": "history-line" },
+    label: "Mode",
+  });
+
+  const linear = path.addFolder({ title: "Linear" });
+  linear.addBinding(linearParams, "pitchCenter", { min: 0, max: 127, step: 1, label: "Pitch Center" });
+  linear.addBinding(linearParams, "pitchRadius", { min: 0, max: 800, step: 1, label: "Pitch Radius" });
+  linear.addBinding(linearParams, "period", { min: 1, max: 30, step: 0.5, label: "Period (s)" });
+
+  const polar = path.addFolder({ title: "Polar" });
+  polar.addBinding(polarParams, "pitchCenter", { min: 0, max: 127, step: 1, label: "Pitch Center" });
+  polar.addBinding(polarParams, "baseRadius", { min: 10, max: 400, step: 1, label: "Base Radius" });
+  polar.addBinding(polarParams, "pitchRadiusScale", { min: 0, max: 800, step: 1, label: "Pitch Scale" });
+  polar.addBinding(polarParams, "period", { min: 1, max: 30, step: 0.5, label: "Period (s)" });
+
+  const histLine = path.addFolder({ title: "History Line" });
+  histLine.addBinding(historyLineParams, "pitchCenter", { min: 0, max: 127, step: 1, label: "Pitch Center" });
+  histLine.addBinding(historyLineParams, "pitchRadius", { min: 0, max: 800, step: 1, label: "Pitch Radius" });
+  histLine.addBinding(historyLineParams, "historyLength", { min: 1, max: 180, step: 1, label: "History Length" });
 
   const filter = pane.addFolder({ title: "Pitch Filter" });
   filter.addBinding(filterParams, "mode", {
@@ -133,10 +208,10 @@ function setupPane(pane: WindowTweakpane): void {
     label: "Mode",
   });
 
-  const smooth = pane.addFolder({ title: "Smooth Mode" });
+  const smooth = filter.addFolder({ title: "Smooth Mode" });
   smooth.addBinding(smoothParams, "smoothingConfidenceThreshold", { min: 0, max: 1, step: 0.001, label: "Smooth Conf" });
 
-  const reject = pane.addFolder({ title: "Delayed Reject Mode" });
+  const reject = filter.addFolder({ title: "Delayed Reject Mode" });
   reject.addBinding(rejectParams, "delayFrames", { min: 1, max: 5, step: 1, label: "Delay Frames" });
   reject.addBinding(rejectParams, "medianWindow", { min: 3, max: 7, step: 2, label: "Median Window" });
   reject.addBinding(rejectParams, "spikeThreshold", { min: 1, max: 24, step: 1, label: "Spike Thresh (st)" });
@@ -163,10 +238,16 @@ function handleOscMessage(message: OSCMessage): void {
       note.confidence = delayed.confidence;
       note.volume = delayed.volume;
     }
+    pushFilteredPitch(rejectFilteredHistory, rejectFilteredHead, note.pitch);
+    rejectFilteredHead = (rejectFilteredHead + 1) % FILTERED_HISTORY_SIZE;
+    rejectFilteredCount = Math.min(rejectFilteredCount + 1, FILTERED_HISTORY_SIZE);
   } else {
     note.confidence = rawConfidence;
     note.volume = rawVolume;
     note.pitch = getSmoothedPitch(rawConfidence);
+    pushFilteredPitch(smoothFilteredHistory, smoothFilteredHead, note.pitch);
+    smoothFilteredHead = (smoothFilteredHead + 1) % FILTERED_HISTORY_SIZE;
+    smoothFilteredCount = Math.min(smoothFilteredCount + 1, FILTERED_HISTORY_SIZE);
   }
 }
 
@@ -178,17 +259,56 @@ function drawNoteCircle(time: number): void {
     return;
   }
 
-  const x = WIDTH * ((time % 5) / 5);
-  const yOffset = ((note.pitch - renderParams.pitchCenter) / (103 - 24)) * renderParams.pitchRadius * 2;
-  const y = clamp(HEIGHT * 0.5 - yOffset, 0, HEIGHT);
-  const size = 10 + note.volume * renderParams.volumeScale;
-  const colorMix = 0.5 + 0.5 * Math.sin((time / 15) * Math.PI * 2);
-  const red = 255 * (1 - colorMix);
-  const blue = 255 * colorMix;
+  if (pathParams.mode === "history-line") {
+    drawHistoryLine();
+    return;
+  }
 
-  // p5.fill(red, 0, blue);
-  p5.fill(255, 0, 0);
+  const size = drawingParams.circleBaseSize + note.volume * drawingParams.volumeScale;
+
+  let x: number;
+  let y: number;
+
+  if (pathParams.mode === "polar") {
+    const angle = ((time % polarParams.period) / polarParams.period) * Math.PI * 2;
+    const pitchOffset = ((note.pitch - polarParams.pitchCenter) / (103 - 24)) * polarParams.pitchRadiusScale;
+    const r = polarParams.baseRadius + pitchOffset;
+    x = WIDTH * 0.5 + r * Math.cos(angle);
+    y = HEIGHT * 0.5 + r * Math.sin(angle);
+  } else {
+    x = WIDTH * ((time % linearParams.period) / linearParams.period);
+    const yOffset = ((note.pitch - linearParams.pitchCenter) / (103 - 24)) * linearParams.pitchRadius * 2;
+    y = HEIGHT * 0.5 - yOffset;
+  }
+
+  x = clamp(x, 0, WIDTH);
+  y = clamp(y, 0, HEIGHT);
+
+  p5.fill(drawingParams.r, drawingParams.g, drawingParams.b);
   p5.circle(x, y, size);
+}
+
+function drawHistoryLine(): void {
+  const { buf, head, count } = getActiveFilteredHistory();
+  const len = Math.min(historyLineParams.historyLength, count);
+  if (len < 2) return;
+
+  p5.noFill();
+  p5.stroke(drawingParams.r, drawingParams.g, drawingParams.b);
+  p5.strokeWeight(drawingParams.strokeWeight);
+  p5.beginShape();
+
+  for (let i = 0; i < len; i++) {
+    // i=0 is oldest rendered sample, i=len-1 is newest
+    const sampleIdx = (head - len + i + FILTERED_HISTORY_SIZE) % FILTERED_HISTORY_SIZE;
+    const pitch = buf[sampleIdx];
+    const x = (i / (len - 1)) * WIDTH;
+    const yOffset = ((pitch - historyLineParams.pitchCenter) / (103 - 24)) * historyLineParams.pitchRadius * 2;
+    const y = clamp(HEIGHT * 0.5 - yOffset, 0, HEIGHT);
+    p5.vertex(x, y);
+  }
+
+  p5.endShape();
 }
 
 async function createTrailChain(device: GPUDevice, width: number, height: number) {
@@ -290,6 +410,17 @@ function getRecentPitchAverage(windowSize: number): number {
   }
 
   return sum / count;
+}
+
+function pushFilteredPitch(buf: Float64Array, head: number, pitch: number): void {
+  buf[head] = pitch;
+}
+
+function getActiveFilteredHistory(): { buf: Float64Array; head: number; count: number } {
+  if (filterParams.mode === "delayed-reject") {
+    return { buf: rejectFilteredHistory, head: rejectFilteredHead, count: rejectFilteredCount };
+  }
+  return { buf: smoothFilteredHistory, head: smoothFilteredHead, count: smoothFilteredCount };
 }
 
 function pushDelayFrame(pitch: number, confidence: number, volume: number): void {
