@@ -12,7 +12,7 @@
 import {
   createWindowRenderManager,
   requestWebGpuDevice,
-  type WindowTweakpane,
+  type PaneContainer,
 } from "../../window/mod.ts";
 import { P5GPU } from "../../tools/p5gpu.ts";
 import { createOSCServer, type OSCMessage } from "../../tools/osc.ts";
@@ -100,7 +100,7 @@ export const state = {
   },
 };
 
-export function setupPane(pane: WindowTweakpane): void {
+export function setupPane(pane: PaneContainer): void {
   const render = pane.addFolder({ title: "Render" });
   render.addBinding(state.render, "confidenceThreshold", { min: 0, max: 1, step: 0.001, label: "Conf Threshold" });
 
@@ -149,7 +149,7 @@ export function setupPane(pane: WindowTweakpane): void {
   reject.addBinding(state.reject, "spikeThreshold", { min: 1, max: 24, step: 1, label: "Spike Thresh (st)" });
 }
 
-export async function setup(_device: GPUDevice): Promise<void> {
+export function setup(_device: GPUDevice): void {
   state.runtime.oscServer = createOSCServer(OSC_PORT);
   console.log(`Listening for OSC ${OSC_ADDRESS} on udp://0.0.0.0:${OSC_PORT}`);
   state.runtime.oscServer.on("message", handleOscMessage);

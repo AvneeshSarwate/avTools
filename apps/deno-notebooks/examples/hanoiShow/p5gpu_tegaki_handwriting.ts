@@ -18,7 +18,7 @@ import { P5GPU } from "../../tools/p5gpu.ts";
 import {
   createWindowRenderManager,
   requestWebGpuDevice,
-  type WindowTweakpane,
+  type PaneContainer,
 } from "../../window/mod.ts";
 import { NativeTextEngine } from "../../tools/p5gpu_text/ffi.ts";
 import { launch } from "@avtools/core-timing";
@@ -260,7 +260,7 @@ function drawGlyphAtPhase(
 
 // ── Tweakpane setup ─────────────────────────────────────────────────
 
-export function setupPane(pane: WindowTweakpane) {
+export function setupPane(pane: PaneContainer) {
   pane.addBinding(state.params, "triggerRate", {
     min: 0.5,
     max: 80,

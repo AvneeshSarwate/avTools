@@ -30,5 +30,6 @@ export {
   PaneBinding,
   PaneButton,
   createWindowTweakpane,
+  type PaneContainer,
 } from "./tweakpane_panel.ts";
 export { generatePanelHtml } from "./panel_html.ts";

@@ -87,14 +87,9 @@ function setupPane(pane: WindowTweakpane) {
   const debug = global.addFolder({ title: "Debug" });
   debug.addBinding(globalParams, "showTiming", { label: "Frame Timing" });
 
-  // Per-scene tabs — cast to any since TabPageProxy and WindowTweakpane
-  // share the same container API but don't share a typed interface
-  // deno-lint-ignore no-explicit-any
-  oscSetupPane(tab.pages[1] as any);
-  // deno-lint-ignore no-explicit-any
-  tegakiSetupPane(tab.pages[2] as any);
-  // deno-lint-ignore no-explicit-any
-  bodySetupPane(tab.pages[3] as any);
+  oscSetupPane(tab.pages[1]);
+  tegakiSetupPane(tab.pages[2]);
+  bodySetupPane(tab.pages[3]);
 }
 
 function updateTiming(frameStart: number, cpuMs: number): void {

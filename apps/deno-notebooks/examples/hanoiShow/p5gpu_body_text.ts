@@ -11,7 +11,7 @@ import { P5GPU } from "../../tools/p5gpu.ts";
 import {
   createWindowRenderManager,
   requestWebGpuDevice,
-  type WindowTweakpane,
+  type PaneContainer,
 } from "../../window/mod.ts";
 import { type Point, textOnPath } from "../../tools/text_on_path.ts";
 import {
@@ -78,7 +78,7 @@ export const state = {
 
 // ── Tweakpane setup ─────────────────────────────────────────────
 
-export function setupPane(pane: WindowTweakpane) {
+export function setupPane(pane: PaneContainer) {
   const smooth = pane.addFolder({ title: "Smoothing" });
   smooth.addBinding(state.smooth, "mincutoff", {
     min: 0.1,
