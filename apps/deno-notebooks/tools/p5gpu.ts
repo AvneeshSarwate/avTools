@@ -15,7 +15,16 @@ export interface P5GPUOptions {
 type Vec2 = [number, number];
 type ColorTuple = [number, number, number, number];
 
+type DrawBatchKind =
+  | "geom"
+  | "text"
+  | "stencilStrokeMask"
+  | "stencilStrokeCover"
+  | "stencilFillMask"
+  | "stencilFillCover";
+
 type DrawBatch = {
+  kind: DrawBatchKind;
   startVertex: number;
   vertexCount: number;
   blendMode: number;
@@ -72,6 +81,11 @@ const EPS = 1e-6;
 const CURVE_TOLERANCE = 0.5;
 const CURVE_MIN_SEGMENTS = 2;
 const CURVE_MAX_SEGMENTS = 64;
+const ENABLE_STENCIL_STROKES = true;
+const ENABLE_STENCIL_FILLS = true;
+const STENCIL_STROKE_SEGMENT_THRESHOLD = 64;
+const STENCIL_FILL_SEGMENT_THRESHOLD = 64;
+const STENCIL_TEXTURE_FORMAT: GPUTextureFormat = "depth24plus-stencil8";
 const GEOM_FLOATS_PER_VERTEX = 6;
 const GEOM_BYTES_PER_VERTEX = GEOM_FLOATS_PER_VERTEX * 4;
 const TEXT_FLOATS_PER_VERTEX = 8;
@@ -226,6 +240,35 @@ function normalize(vx: number, vy: number): Vec2 {
   const len = Math.hypot(vx, vy);
   if (len <= EPS) return [0, 0];
   return [vx / len, vy / len];
+}
+
+function orient(a: Vec2, b: Vec2, c: Vec2): number {
+  return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+}
+
+function pointOnSegment(p: Vec2, a: Vec2, b: Vec2): boolean {
+  return Math.abs(orient(a, b, p)) <= 1e-5 &&
+    p[0] >= Math.min(a[0], b[0]) - 1e-5 &&
+    p[0] <= Math.max(a[0], b[0]) + 1e-5 &&
+    p[1] >= Math.min(a[1], b[1]) - 1e-5 &&
+    p[1] <= Math.max(a[1], b[1]) + 1e-5;
+}
+
+function segmentsIntersect(a0: Vec2, a1: Vec2, b0: Vec2, b1: Vec2): boolean {
+  const o1 = orient(a0, a1, b0);
+  const o2 = orient(a0, a1, b1);
+  const o3 = orient(b0, b1, a0);
+  const o4 = orient(b0, b1, a1);
+
+  if (((o1 > 0 && o2 < 0) || (o1 < 0 && o2 > 0)) &&
+    ((o3 > 0 && o4 < 0) || (o3 < 0 && o4 > 0))) {
+    return true;
+  }
+
+  return pointOnSegment(b0, a0, a1) ||
+    pointOnSegment(b1, a0, a1) ||
+    pointOnSegment(a0, b0, b1) ||
+    pointOnSegment(a1, b0, b1);
 }
 
 function lineIntersectionPoint(p1: Vec2, d1: Vec2, p2: Vec2, d2: Vec2): Vec2 | null {
@@ -524,6 +567,10 @@ export class P5GPU {
   private _textPipelineLayout: GPUPipelineLayout;
   private _geomPipelineCache = new Map<string, GPURenderPipeline>();
   private _textPipelineCache = new Map<string, GPURenderPipeline>();
+  private _strokeStencilPipelineCache = new Map<string, GPURenderPipeline>();
+  private _stencilCoverPipelineCache = new Map<string, GPURenderPipeline>();
+  private _fillStencilPipelineCache = new Map<string, GPURenderPipeline>();
+  private _fillCoverPipelineCache = new Map<string, GPURenderPipeline>();
 
   private _geomStagingBuffer: Float32Array;
   private _geomStagingCursor = 0;
@@ -538,6 +585,9 @@ export class P5GPU {
   private _textVertexBufferCapacityBytes = 0;
   private _sampleCount = 1;
   private _msaaColorTexture: GPUTexture | null = null;
+  private _stencilTexture: GPUTexture | null = null;
+  private _stencilTextureSampleCount = 0;
+  private _stencilUnavailable = false;
 
   private _textEngine: NativeTextEngine | null = null;
   private _textAtlas: GlyphAtlas | null = null;
@@ -679,7 +729,13 @@ export class P5GPU {
     const encoder = this.device.createCommandEncoder();
     const useLoadOp = !this._clearRequested && this._hasRenderedFrame;
     const loadOp: GPULoadOp = useLoadOp ? "load" : "clear";
-    const frameSampleCount = (!useLoadOp && this._msaaColorTexture && this._sampleCount > 1) ? this._sampleCount : 1;
+    const isStencilBatch = (batch: DrawBatch): boolean =>
+      batch.kind === "stencilStrokeMask" ||
+      batch.kind === "stencilStrokeCover" ||
+      batch.kind === "stencilFillMask" ||
+      batch.kind === "stencilFillCover";
+    const hasStencilCommands = this._batches.some(isStencilBatch);
+    const frameSampleCount = hasStencilCommands ? 1 : ((!useLoadOp && this._msaaColorTexture && this._sampleCount > 1) ? this._sampleCount : 1);
     const clearColor: GPUColor = {
       r: this._clearColor[0],
       g: this._clearColor[1],
@@ -688,20 +744,7 @@ export class P5GPU {
     };
     const outputView = this.outputTexture.createView();
     const msaaView = frameSampleCount > 1 ? this._msaaColorTexture!.createView() : null;
-
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [
-        {
-          view: msaaView ?? outputView,
-          resolveTarget: msaaView ? outputView : undefined,
-          loadOp,
-          storeOp: "store",
-          clearValue: clearColor,
-        },
-      ],
-    });
-
-    pass.setBindGroup(0, this._canvasBindGroup);
+    const stencilView = hasStencilCommands ? this._ensureStencilTexture(frameSampleCount)?.createView() ?? null : null;
 
     let hasGeom = false;
     let hasText = false;
@@ -720,30 +763,107 @@ export class P5GPU {
       hasText = this._syncTextBindGroup();
     }
 
-    if (hasGeom || hasText) {
-      let lastPipeline: GPURenderPipeline | null = null;
-      let lastVB: GPUBuffer | null = null;
-      let lastTextBG = false;
-      for (const batch of this._batches) {
-        if (batch.vertexCount <= 0) continue;
-        if (batch.isText) {
-          if (!hasText || !this._textVertexBuffer || !this._textBindGroup) continue;
-          const pipeline = this._getTextPipeline(batch.blendMode, frameSampleCount);
-          if (pipeline !== lastPipeline) { pass.setPipeline(pipeline); lastPipeline = pipeline; }
-          if (!lastTextBG) { pass.setBindGroup(1, this._textBindGroup); lastTextBG = true; }
-          if (this._textVertexBuffer !== lastVB) { pass.setVertexBuffer(0, this._textVertexBuffer); lastVB = this._textVertexBuffer; }
-        } else {
-          if (!hasGeom || !this._geomVertexBuffer) continue;
-          const pipeline = this._getGeomPipeline(batch.blendMode, frameSampleCount);
-          if (pipeline !== lastPipeline) { pass.setPipeline(pipeline); lastPipeline = pipeline; }
-          if (this._geomVertexBuffer !== lastVB) { pass.setVertexBuffer(0, this._geomVertexBuffer); lastVB = this._geomVertexBuffer; }
-          lastTextBG = false;
-        }
+    let nextColorLoadOp: GPULoadOp = loadOp;
+    const beginRenderPass = (withStencil: boolean): GPURenderPassEncoder => {
+      const descriptor: GPURenderPassDescriptor = {
+        colorAttachments: [
+          {
+            view: msaaView ?? outputView,
+            resolveTarget: msaaView ? outputView : undefined,
+            loadOp: nextColorLoadOp,
+            storeOp: "store",
+            clearValue: clearColor,
+          },
+        ],
+      };
+      if (withStencil && stencilView) {
+        descriptor.depthStencilAttachment = this._stencilRenderPassAttachment(stencilView);
+      }
+      const pass = encoder.beginRenderPass(descriptor);
+      pass.setBindGroup(0, this._canvasBindGroup);
+      nextColorLoadOp = "load";
+      return pass;
+    };
+
+    const drawBatch = (
+      pass: GPURenderPassEncoder,
+      batch: DrawBatch,
+      stencilPass: boolean,
+      state: {
+        lastPipeline: GPURenderPipeline | null;
+        lastVB: GPUBuffer | null;
+        lastTextBG: boolean;
+      },
+    ): void => {
+      if (batch.vertexCount <= 0) return;
+
+      if (stencilPass) {
+        if (!hasGeom || !this._geomVertexBuffer || !stencilView) return;
+        const pipeline = batch.kind === "stencilStrokeMask"
+          ? this._getStrokeStencilPipeline(frameSampleCount)
+          : batch.kind === "stencilFillMask"
+          ? this._getFillStencilPipeline(frameSampleCount)
+          : batch.kind === "stencilFillCover"
+          ? this._getFillCoverPipeline(batch.blendMode, frameSampleCount)
+          : this._getStencilCoverPipeline(batch.blendMode, frameSampleCount);
+        if (pipeline !== state.lastPipeline) { pass.setPipeline(pipeline); state.lastPipeline = pipeline; }
+        if (this._geomVertexBuffer !== state.lastVB) { pass.setVertexBuffer(0, this._geomVertexBuffer); state.lastVB = this._geomVertexBuffer; }
+        pass.setStencilReference(batch.kind === "stencilFillCover" ? 0 : 1);
         pass.draw(batch.vertexCount, 1, batch.startVertex, 0);
+        state.lastTextBG = false;
+        return;
+      }
+
+      if (batch.kind === "stencilStrokeCover" || batch.kind === "stencilFillCover") return;
+
+      if (batch.isText) {
+        if (!hasText || !this._textVertexBuffer || !this._textBindGroup) return;
+        const pipeline = this._getTextPipeline(batch.blendMode, frameSampleCount);
+        if (pipeline !== state.lastPipeline) { pass.setPipeline(pipeline); state.lastPipeline = pipeline; }
+        if (!state.lastTextBG) { pass.setBindGroup(1, this._textBindGroup); state.lastTextBG = true; }
+        if (this._textVertexBuffer !== state.lastVB) { pass.setVertexBuffer(0, this._textVertexBuffer); state.lastVB = this._textVertexBuffer; }
+        pass.draw(batch.vertexCount, 1, batch.startVertex, 0);
+        return;
+      }
+
+      if (!hasGeom || !this._geomVertexBuffer) return;
+      const pipeline = this._getGeomPipeline(batch.blendMode, frameSampleCount);
+      if (pipeline !== state.lastPipeline) { pass.setPipeline(pipeline); state.lastPipeline = pipeline; }
+      if (this._geomVertexBuffer !== state.lastVB) { pass.setVertexBuffer(0, this._geomVertexBuffer); state.lastVB = this._geomVertexBuffer; }
+      state.lastTextBG = false;
+      pass.draw(batch.vertexCount, 1, batch.startVertex, 0);
+    };
+
+    if (!hasGeom && !hasText) {
+      const pass = beginRenderPass(false);
+      pass.end();
+    } else {
+      let i = 0;
+      while (i < this._batches.length) {
+        while (i < this._batches.length && this._batches[i].vertexCount <= 0) i++;
+        if (i >= this._batches.length) break;
+
+        const firstBatch = this._batches[i];
+        const stencilPass = !!stencilView && isStencilBatch(firstBatch);
+        const pass = beginRenderPass(stencilPass);
+        const state = {
+          lastPipeline: null as GPURenderPipeline | null,
+          lastVB: null as GPUBuffer | null,
+          lastTextBG: false,
+        };
+
+        while (i < this._batches.length) {
+          const batch = this._batches[i];
+          const batchStencilPass = !!stencilView && isStencilBatch(batch);
+          if (batch.vertexCount > 0 && batchStencilPass !== stencilPass) break;
+          drawBatch(pass, batch, stencilPass, state);
+          i++;
+        }
+
+        pass.end();
       }
     }
 
-    pass.end();
     this.device.queue.submit([encoder.finish()]);
     this._hasRenderedFrame = true;
     return this.outputTexture;
@@ -754,6 +874,7 @@ export class P5GPU {
     try { this._textVertexBuffer?.destroy(); } catch (_) { /* ignore */ }
     try { this._uniformBuffer.destroy(); } catch (_) { /* ignore */ }
     try { this._msaaColorTexture?.destroy(); } catch (_) { /* ignore */ }
+    try { this._stencilTexture?.destroy(); } catch (_) { /* ignore */ }
     try { this.outputTexture.destroy(); } catch (_) { /* ignore */ }
     try { this._textAtlas?.dispose(); } catch (_) { /* ignore */ }
     try { this._textEngine?.dispose(); } catch (_) { /* ignore */ }
@@ -2709,6 +2830,11 @@ export class P5GPU {
     const validRings = rings.filter((ring) => ring.length >= 3);
     if (validRings.length === 0) return;
 
+    if (validRings.length === 1 && this._shouldUseStencilFill(validRings[0], color)) {
+      this._emitStencilFillLocal(validRings[0], color);
+      return;
+    }
+
     const flat: number[] = [];
     const holes: number[] = [];
     let cursor = 0;
@@ -2733,6 +2859,77 @@ export class P5GPU {
       const c: Vec2 = [flat[ic], flat[ic + 1]];
       this._emitLocalTriangle(a, b, c, color);
     }
+  }
+
+  private _emitStencilFillLocal(ring: Vec2[], color: ColorTuple): void {
+    const path: Vec2[] = [];
+    for (const p of ring) {
+      const tp = transformPoint(this._state.matrix, p[0], p[1]);
+      const prev = path[path.length - 1];
+      if (!prev || Math.hypot(tp[0] - prev[0], tp[1] - prev[1]) > EPS) {
+        path.push(tp);
+      }
+    }
+
+    if (path.length > 1) {
+      const first = path[0];
+      const last = path[path.length - 1];
+      if (Math.hypot(first[0] - last[0], first[1] - last[1]) <= EPS) {
+        path.pop();
+      }
+    }
+    if (path.length < 3) return;
+
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    for (const p of path) {
+      minX = Math.min(minX, p[0]);
+      minY = Math.min(minY, p[1]);
+      maxX = Math.max(maxX, p[0]);
+      maxY = Math.max(maxY, p[1]);
+    }
+
+    const blend = this._currentBlendMode();
+    const anchor = path[0];
+    this._ensureBatch(blend, false, "stencilFillMask");
+    for (let i = 1; i + 1 < path.length; i++) {
+      const b = path[i];
+      const c = path[i + 1];
+      this._pushTriangleVertices(anchor[0], anchor[1], b[0], b[1], c[0], c[1], color);
+    }
+
+    this._ensureBatch(blend, false, "stencilFillCover");
+    this._pushCoverQuad(minX - 1, minY - 1, maxX + 1, maxY + 1, color);
+  }
+
+  private _shouldUseStencilFill(ring: Vec2[], color: ColorTuple): boolean {
+    if (!ENABLE_STENCIL_FILLS) return false;
+    if (this._state.eraseMode || this._stencilUnavailable) return false;
+    if (color[3] < 0.999) return true;
+    if (ring.length >= STENCIL_FILL_SEGMENT_THRESHOLD) return true;
+    return this._pathHasSelfIntersection(ring);
+  }
+
+  private _pathHasSelfIntersection(path: Vec2[]): boolean {
+    const n = path.length;
+    if (n < 4) return false;
+
+    for (let i = 0; i < n; i++) {
+      const a0 = path[i];
+      const a1 = path[(i + 1) % n];
+      for (let j = i + 1; j < n; j++) {
+        if (Math.abs(i - j) <= 1) continue;
+        if (i === 0 && j === n - 1) continue;
+
+        const b0 = path[j];
+        const b1 = path[(j + 1) % n];
+        if (segmentsIntersect(a0, a1, b0, b1)) return true;
+      }
+    }
+
+    return false;
   }
 
   private _emitStrokePathLocal(points: Vec2[], closed: boolean, color: ColorTuple): void {
@@ -2768,9 +2965,9 @@ export class P5GPU {
     if (path.length === 0) return;
 
     const blend = this._currentBlendMode();
-    this._ensureBatch(blend, false);
 
     const emitDot = (p: Vec2): void => {
+      this._ensureBatch(blend, false, "geom");
       if (this._state.strokeCap === this.ROUND) {
         this._emitRoundCap(p, [1, 0], half, color);
         this._emitRoundCap(p, [-1, 0], half, color);
@@ -2818,6 +3015,18 @@ export class P5GPU {
     const dirY = new Float64Array(segCount);
     const normalX = new Float64Array(segCount);
     const normalY = new Float64Array(segCount);
+    const useStencilStroke = this._shouldUseStencilStroke(isClosed, segCount, color);
+    const coverPad = half * Math.max(1, miterLimitRatio) + 2;
+    let coverMinX = Number.POSITIVE_INFINITY;
+    let coverMinY = Number.POSITIVE_INFINITY;
+    let coverMaxX = Number.NEGATIVE_INFINITY;
+    let coverMaxY = Number.NEGATIVE_INFINITY;
+    for (const p of path) {
+      coverMinX = Math.min(coverMinX, p[0] - coverPad);
+      coverMinY = Math.min(coverMinY, p[1] - coverPad);
+      coverMaxX = Math.max(coverMaxX, p[0] + coverPad);
+      coverMaxY = Math.max(coverMaxY, p[1] + coverPad);
+    }
 
     for (let i = 0; i < segCount; i++) {
       const a = path[i];
@@ -2836,6 +3045,8 @@ export class P5GPU {
       normalX[i] = -uy;
       normalY[i] = ux;
     }
+
+    this._ensureBatch(blend, false, useStencilStroke ? "stencilStrokeMask" : "geom");
 
     const miterOffsetsAt = (vertexIndex: number, prevSeg: number, nextSeg: number): [number, number, number, number] | null => {
       if (joinMode !== this.MITER) return null;
@@ -2933,6 +3144,34 @@ export class P5GPU {
         this._emitRoundCap(path[n - 1], [d1[0], d1[1]], half, color);
       }
     }
+
+    if (useStencilStroke) {
+      this._ensureBatch(blend, false, "stencilStrokeCover");
+      this._pushCoverQuad(coverMinX, coverMinY, coverMaxX, coverMaxY, color);
+    }
+  }
+
+  private _shouldUseStencilStroke(closed: boolean, segmentCount: number, color: ColorTuple): boolean {
+    if (!ENABLE_STENCIL_STROKES) return false;
+    if (this._state.eraseMode || this._stencilUnavailable) return false;
+    if (color[3] < 0.999) return true;
+    return closed && segmentCount >= STENCIL_STROKE_SEGMENT_THRESHOLD;
+  }
+
+  private _pushCoverQuad(minX: number, minY: number, maxX: number, maxY: number, color: ColorTuple): void {
+    if (
+      !Number.isFinite(minX) ||
+      !Number.isFinite(minY) ||
+      !Number.isFinite(maxX) ||
+      !Number.isFinite(maxY) ||
+      maxX <= minX ||
+      maxY <= minY
+    ) {
+      return;
+    }
+
+    this._pushTriangleVertices(minX, minY, maxX, minY, maxX, maxY, color);
+    this._pushTriangleVertices(minX, minY, maxX, maxY, minX, maxY, color);
   }
 
   private _emitRoundJoin(center: Vec2, fromX: number, fromY: number, toX: number, toY: number, radius: number, sign: number, color: ColorTuple): void {
@@ -3109,11 +3348,12 @@ export class P5GPU {
     return Math.max(0.0001, (sx + sy) * 0.5);
   }
 
-  private _ensureBatch(blendMode: number, isText: boolean): void {
+  private _ensureBatch(blendMode: number, isText: boolean, kind?: DrawBatchKind): void {
+    const batchKind = kind ?? (isText ? "text" : "geom");
     const batch = this._batches[this._batches.length - 1];
-    if (!batch || batch.blendMode !== blendMode || batch.isText !== isText) {
+    if (!batch || batch.blendMode !== blendMode || batch.isText !== isText || batch.kind !== batchKind) {
       const startVertex = isText ? this._textVertexCount : this._geomVertexCount;
-      this._batches.push({ startVertex, vertexCount: 0, blendMode, isText });
+      this._batches.push({ kind: batchKind, startVertex, vertexCount: 0, blendMode, isText });
     }
   }
 
@@ -3202,6 +3442,257 @@ export class P5GPU {
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
     this._textVertexBufferCapacityBytes = newSize;
+  }
+
+  private _ensureStencilTexture(sampleCount: number): GPUTexture | null {
+    if (this._stencilUnavailable) return null;
+    if (
+      this._stencilTexture &&
+      this._stencilTextureSampleCount === sampleCount
+    ) {
+      return this._stencilTexture;
+    }
+
+    try { this._stencilTexture?.destroy(); } catch (_) { /* ignore */ }
+    this._stencilTexture = null;
+    this._stencilTextureSampleCount = 0;
+
+    try {
+      const texture = this.device.createTexture({
+        size: { width: this.width, height: this.height },
+        sampleCount,
+        format: STENCIL_TEXTURE_FORMAT,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      this._stencilTexture = texture;
+      this._stencilTextureSampleCount = sampleCount;
+      return texture;
+    } catch (_) {
+      this._stencilUnavailable = true;
+      return null;
+    }
+  }
+
+  private _stencilRenderPassAttachment(view: GPUTextureView): GPURenderPassDepthStencilAttachment {
+    return {
+      view,
+      depthLoadOp: "clear",
+      depthStoreOp: "discard",
+      depthClearValue: 1,
+      stencilLoadOp: "clear",
+      stencilStoreOp: "store",
+      stencilClearValue: 0,
+    };
+  }
+
+  private _getStrokeStencilPipeline(sampleCount: number): GPURenderPipeline {
+    const cacheKey = `${sampleCount}`;
+    const existing = this._strokeStencilPipelineCache.get(cacheKey);
+    if (existing) return existing;
+
+    const pipeline = this.device.createRenderPipeline({
+      layout: this._geomPipelineLayout,
+      vertex: {
+        module: this._geomShaderModule,
+        entryPoint: "vsMain",
+        buffers: [
+          {
+            arrayStride: GEOM_BYTES_PER_VERTEX,
+            stepMode: "vertex",
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x2" },
+              { shaderLocation: 1, offset: 8, format: "float32x4" },
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module: this._geomShaderModule,
+        entryPoint: "fsMain",
+        targets: [
+          {
+            format: this.format,
+            writeMask: 0,
+          },
+        ],
+      },
+      primitive: {
+        topology: "triangle-list",
+      },
+      depthStencil: {
+        format: STENCIL_TEXTURE_FORMAT,
+        depthCompare: "always",
+        depthWriteEnabled: false,
+        stencilFront: { compare: "always", passOp: "replace" },
+        stencilBack: { compare: "always", passOp: "replace" },
+        stencilReadMask: 0xff,
+        stencilWriteMask: 0xff,
+      },
+      multisample: {
+        count: sampleCount,
+      },
+    });
+
+    this._strokeStencilPipelineCache.set(cacheKey, pipeline);
+    return pipeline;
+  }
+
+  private _getStencilCoverPipeline(mode: number, sampleCount: number): GPURenderPipeline {
+    const cacheKey = `${mode}:${sampleCount}`;
+    const existing = this._stencilCoverPipelineCache.get(cacheKey);
+    if (existing) return existing;
+
+    const pipeline = this.device.createRenderPipeline({
+      layout: this._geomPipelineLayout,
+      vertex: {
+        module: this._geomShaderModule,
+        entryPoint: "vsMain",
+        buffers: [
+          {
+            arrayStride: GEOM_BYTES_PER_VERTEX,
+            stepMode: "vertex",
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x2" },
+              { shaderLocation: 1, offset: 8, format: "float32x4" },
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module: this._geomShaderModule,
+        entryPoint: "fsMain",
+        targets: [
+          {
+            format: this.format,
+            blend: resolveBlendState(mode),
+            writeMask: GPUColorWrite.ALL,
+          },
+        ],
+      },
+      primitive: {
+        topology: "triangle-list",
+      },
+      depthStencil: {
+        format: STENCIL_TEXTURE_FORMAT,
+        depthCompare: "always",
+        depthWriteEnabled: false,
+        stencilFront: { compare: "equal", passOp: "zero" },
+        stencilBack: { compare: "equal", passOp: "zero" },
+        stencilReadMask: 0xff,
+        stencilWriteMask: 0xff,
+      },
+      multisample: {
+        count: sampleCount,
+      },
+    });
+
+    this._stencilCoverPipelineCache.set(cacheKey, pipeline);
+    return pipeline;
+  }
+
+  private _getFillStencilPipeline(sampleCount: number): GPURenderPipeline {
+    const cacheKey = `${sampleCount}`;
+    const existing = this._fillStencilPipelineCache.get(cacheKey);
+    if (existing) return existing;
+
+    const pipeline = this.device.createRenderPipeline({
+      layout: this._geomPipelineLayout,
+      vertex: {
+        module: this._geomShaderModule,
+        entryPoint: "vsMain",
+        buffers: [
+          {
+            arrayStride: GEOM_BYTES_PER_VERTEX,
+            stepMode: "vertex",
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x2" },
+              { shaderLocation: 1, offset: 8, format: "float32x4" },
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module: this._geomShaderModule,
+        entryPoint: "fsMain",
+        targets: [
+          {
+            format: this.format,
+            writeMask: 0,
+          },
+        ],
+      },
+      primitive: {
+        topology: "triangle-list",
+      },
+      depthStencil: {
+        format: STENCIL_TEXTURE_FORMAT,
+        depthCompare: "always",
+        depthWriteEnabled: false,
+        stencilFront: { compare: "always", passOp: "increment-wrap" },
+        stencilBack: { compare: "always", passOp: "decrement-wrap" },
+        stencilReadMask: 0xff,
+        stencilWriteMask: 0xff,
+      },
+      multisample: {
+        count: sampleCount,
+      },
+    });
+
+    this._fillStencilPipelineCache.set(cacheKey, pipeline);
+    return pipeline;
+  }
+
+  private _getFillCoverPipeline(mode: number, sampleCount: number): GPURenderPipeline {
+    const cacheKey = `${mode}:${sampleCount}`;
+    const existing = this._fillCoverPipelineCache.get(cacheKey);
+    if (existing) return existing;
+
+    const pipeline = this.device.createRenderPipeline({
+      layout: this._geomPipelineLayout,
+      vertex: {
+        module: this._geomShaderModule,
+        entryPoint: "vsMain",
+        buffers: [
+          {
+            arrayStride: GEOM_BYTES_PER_VERTEX,
+            stepMode: "vertex",
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x2" },
+              { shaderLocation: 1, offset: 8, format: "float32x4" },
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module: this._geomShaderModule,
+        entryPoint: "fsMain",
+        targets: [
+          {
+            format: this.format,
+            blend: resolveBlendState(mode),
+            writeMask: GPUColorWrite.ALL,
+          },
+        ],
+      },
+      primitive: {
+        topology: "triangle-list",
+      },
+      depthStencil: {
+        format: STENCIL_TEXTURE_FORMAT,
+        depthCompare: "always",
+        depthWriteEnabled: false,
+        stencilFront: { compare: "not-equal", passOp: "zero" },
+        stencilBack: { compare: "not-equal", passOp: "zero" },
+        stencilReadMask: 0xff,
+        stencilWriteMask: 0xff,
+      },
+      multisample: {
+        count: sampleCount,
+      },
+    });
+
+    this._fillCoverPipelineCache.set(cacheKey, pipeline);
+    return pipeline;
   }
 
   private _getGeomPipeline(mode: number, sampleCount: number): GPURenderPipeline {
