@@ -40,6 +40,7 @@ interface DrawState {
   strokeWeight: number;
   strokeCap: number;
   strokeJoin: number;
+  strokeMiterLimit: number;
   rectMode: number;
   ellipseMode: number;
   colorMode: number;
@@ -172,6 +173,7 @@ function cloneState(state: DrawState): DrawState {
     strokeWeight: state.strokeWeight,
     strokeCap: state.strokeCap,
     strokeJoin: state.strokeJoin,
+    strokeMiterLimit: state.strokeMiterLimit,
     rectMode: state.rectMode,
     ellipseMode: state.ellipseMode,
     colorMode: state.colorMode,
@@ -298,6 +300,7 @@ function createDefaultState(): DrawState {
     strokeWeight: 1,
     strokeCap: P5_CONST.ROUND,
     strokeJoin: P5_CONST.MITER,
+    strokeMiterLimit: 4,
     rectMode: P5_CONST.CORNER,
     ellipseMode: P5_CONST.CENTER,
     colorMode: P5_CONST.RGB,
@@ -862,6 +865,10 @@ export class P5GPU {
 
   strokeJoin(join: number): void {
     this._state.strokeJoin = toNumber(join, this.MITER);
+  }
+
+  strokeMiterLimit(limit: number): void {
+    this._state.strokeMiterLimit = Math.max(1, toNumber(limit, 4));
   }
 
   curveTightness(amount: number): void {
@@ -2736,7 +2743,7 @@ export class P5GPU {
   }
 
   private _emitStrokePathScreen(points: Vec2[], closed: boolean, color: ColorTuple): void {
-    if (points.length < 2) return;
+    if (points.length === 0) return;
 
     const scale = this._estimatedStrokeScale();
     const weight = Math.max(0.0001, this._state.strokeWeight * scale);
@@ -2744,6 +2751,19 @@ export class P5GPU {
 
     const blend = this._currentBlendMode();
     this._ensureBatch(blend, false);
+
+    // Single point or two coincident points — emit a dot
+    if (points.length === 1 || (points.length === 2 && Math.hypot(points[1][0] - points[0][0], points[1][1] - points[0][1]) <= EPS)) {
+      const p = points[0];
+      if (this._state.strokeCap === this.ROUND) {
+        this._emitRoundCap(p, [1, 0], half, color);
+        this._emitRoundCap(p, [-1, 0], half, color);
+      } else {
+        this._pushTriangleVertices(p[0] - half, p[1] - half, p[0] + half, p[1] - half, p[0] + half, p[1] + half, color);
+        this._pushTriangleVertices(p[0] - half, p[1] - half, p[0] + half, p[1] + half, p[0] - half, p[1] + half, color);
+      }
+      return;
+    }
 
     // Only clone when we need to mutate endpoints (open + SQUARE/PROJECT caps)
     const needsClone = !closed && (this._state.strokeCap === this.SQUARE || this._state.strokeCap === this.PROJECT);
@@ -2754,7 +2774,6 @@ export class P5GPU {
       const second = path[1];
       const last = path[path.length - 1];
       const prev = path[path.length - 2];
-
       const d0 = normalize(second[0] - first[0], second[1] - first[1]);
       const d1 = normalize(last[0] - prev[0], last[1] - prev[1]);
       first[0] -= d0[0] * half;
@@ -2763,88 +2782,175 @@ export class P5GPU {
       last[1] += d1[1] * half;
     }
 
-    const segmentCount = closed ? path.length : path.length - 1;
-    for (let i = 0; i < segmentCount; i++) {
-      const a = path[i];
-      const b = path[(i + 1) % path.length];
-      this._emitStrokeSegmentQuad(a, b, half, color);
-    }
+    const n = path.length;
+    const miterLimit = this._state.strokeMiterLimit;
+    const joinMode = this._state.strokeJoin;
 
-    const joinCount = closed ? path.length : path.length - 2;
-    for (let i = 0; i < joinCount; i++) {
-      const currIndex = closed ? i : i + 1;
-      const prevIndex = (currIndex - 1 + path.length) % path.length;
-      const nextIndex = (currIndex + 1) % path.length;
-      this._emitStrokeJoin(path[prevIndex], path[currIndex], path[nextIndex], half, color);
-    }
+    // Build offset vertices for each polyline point.
+    // For each point we compute left (+) and right (-) offset positions.
+    // At interior joints, we compute the miter vector; if it exceeds the
+    // miter limit, we use bevel (two separate offsets per side).
+    //
+    // leftX/Y[i], rightX/Y[i] = the offset vertices at path[i].
+    // For bevel joints, we emit extra triangles to fill the outer side.
 
-    if (!closed && this._state.strokeCap === this.ROUND && path.length >= 2) {
-      const first = path[0];
-      const second = path[1];
-      const last = path[path.length - 1];
-      const prev = path[path.length - 2];
-      const d0 = normalize(second[0] - first[0], second[1] - first[1]);
-      const d1 = normalize(last[0] - prev[0], last[1] - prev[1]);
-      this._emitRoundCap(first, [-d0[0], -d0[1]], half, color);
-      this._emitRoundCap(last, [d1[0], d1[1]], half, color);
-    }
-  }
+    const leftX = new Float64Array(n);
+    const leftY = new Float64Array(n);
+    const rightX = new Float64Array(n);
+    const rightY = new Float64Array(n);
 
-  private _emitStrokeSegmentQuad(a: Vec2, b: Vec2, half: number, color: ColorTuple): void {
-    const dx = b[0] - a[0], dy = b[1] - a[1];
-    const len = Math.hypot(dx, dy);
-    if (len <= EPS) return;
+    for (let i = 0; i < n; i++) {
+      const isFirst = !closed && i === 0;
+      const isLast = !closed && i === n - 1;
 
-    const nx = -dy / len * half;
-    const ny = dx / len * half;
+      // Directions of adjacent segments
+      const prevIdx = (i - 1 + n) % n;
+      const nextIdx = (i + 1) % n;
 
-    // Inline quad vertices — avoid 4 Vec2 tuple allocations
-    const ax0 = a[0] + nx, ay0 = a[1] + ny;
-    const ax1 = a[0] - nx, ay1 = a[1] - ny;
-    const bx1 = b[0] - nx, by1 = b[1] - ny;
-    const bx0 = b[0] + nx, by0 = b[1] + ny;
+      if (isFirst) {
+        // Open start: use perpendicular of the first segment
+        const dx = path[nextIdx][0] - path[i][0];
+        const dy = path[nextIdx][1] - path[i][1];
+        const len = Math.hypot(dx, dy);
+        if (len <= EPS) { leftX[i] = path[i][0]; leftY[i] = path[i][1]; rightX[i] = path[i][0]; rightY[i] = path[i][1]; continue; }
+        const nx = -dy / len * half;
+        const ny = dx / len * half;
+        leftX[i] = path[i][0] + nx;
+        leftY[i] = path[i][1] + ny;
+        rightX[i] = path[i][0] - nx;
+        rightY[i] = path[i][1] - ny;
+      } else if (isLast) {
+        // Open end: use perpendicular of the last segment
+        const dx = path[i][0] - path[prevIdx][0];
+        const dy = path[i][1] - path[prevIdx][1];
+        const len = Math.hypot(dx, dy);
+        if (len <= EPS) { leftX[i] = path[i][0]; leftY[i] = path[i][1]; rightX[i] = path[i][0]; rightY[i] = path[i][1]; continue; }
+        const nx = -dy / len * half;
+        const ny = dx / len * half;
+        leftX[i] = path[i][0] + nx;
+        leftY[i] = path[i][1] + ny;
+        rightX[i] = path[i][0] - nx;
+        rightY[i] = path[i][1] - ny;
+      } else {
+        // Interior vertex (or any vertex if closed): compute miter
+        const dAx = path[i][0] - path[prevIdx][0];
+        const dAy = path[i][1] - path[prevIdx][1];
+        const dBx = path[nextIdx][0] - path[i][0];
+        const dBy = path[nextIdx][1] - path[i][1];
+        const lenA = Math.hypot(dAx, dAy);
+        const lenB = Math.hypot(dBx, dBy);
 
-    this._pushTriangleVertices(ax0, ay0, ax1, ay1, bx1, by1, color);
-    this._pushTriangleVertices(ax0, ay0, bx1, by1, bx0, by0, color);
-  }
+        if (lenA <= EPS || lenB <= EPS) {
+          // Degenerate: fall back to simple perpendicular
+          const dx = lenA > EPS ? dAx : dBx;
+          const dy = lenA > EPS ? dAy : dBy;
+          const len = Math.hypot(dx, dy);
+          const nx = -dy / len * half;
+          const ny = dx / len * half;
+          leftX[i] = path[i][0] + nx;
+          leftY[i] = path[i][1] + ny;
+          rightX[i] = path[i][0] - nx;
+          rightY[i] = path[i][1] - ny;
+          continue;
+        }
 
-  private _emitStrokeJoin(prev: Vec2, curr: Vec2, next: Vec2, half: number, color: ColorTuple): void {
-    const dirA = normalize(curr[0] - prev[0], curr[1] - prev[1]);
-    const dirB = normalize(next[0] - curr[0], next[1] - curr[1]);
+        // Unit normals of each segment (pointing left)
+        const nAx = -dAy / lenA;
+        const nAy = dAx / lenA;
+        const nBx = -dBy / lenB;
+        const nBy = dBx / lenB;
 
-    if (Math.hypot(dirA[0], dirA[1]) <= EPS || Math.hypot(dirB[0], dirB[1]) <= EPS) return;
+        // Miter direction = average of the two normals
+        let mx = nAx + nBx;
+        let my = nAy + nBy;
+        const mLen = Math.hypot(mx, my);
 
-    const cross = dirA[0] * dirB[1] - dirA[1] * dirB[0];
-    if (Math.abs(cross) < 1e-5) return;
+        if (mLen < 1e-5) {
+          // Near-parallel reversal: use segment A normal
+          leftX[i] = path[i][0] + nAx * half;
+          leftY[i] = path[i][1] + nAy * half;
+          rightX[i] = path[i][0] - nAx * half;
+          rightY[i] = path[i][1] - nAy * half;
+          continue;
+        }
 
-    const sign = cross > 0 ? 1 : -1;
+        mx /= mLen;
+        my /= mLen;
 
-    const nAx = -dirA[1] * half * sign, nAy = dirA[0] * half * sign;
-    const nBx = -dirB[1] * half * sign, nBy = dirB[0] * half * sign;
+        // Miter length: half / dot(miter, normal)
+        const dot = mx * nAx + my * nAy;
+        const miterLen = Math.abs(dot) > 1e-5 ? half / dot : half * miterLimit;
 
-    const outerAx = curr[0] + nAx, outerAy = curr[1] + nAy;
-    const outerBx = curr[0] + nBx, outerBy = curr[1] + nBy;
+        // Check miter limit
+        if (Math.abs(miterLen) > half * miterLimit || joinMode === this.BEVEL) {
+          // Bevel: use per-segment normals (not miter)
+          // Use segment A's normal for this vertex's offset.
+          // The gap between segments will be filled with a bevel triangle below.
+          leftX[i] = path[i][0] + nAx * half;
+          leftY[i] = path[i][1] + nAy * half;
+          rightX[i] = path[i][0] - nAx * half;
+          rightY[i] = path[i][1] - nAy * half;
 
-    if (this._state.strokeJoin === this.ROUND) {
-      this._emitRoundJoin(curr, nAx, nAy, nBx, nBy, half, sign, color);
-      return;
-    }
+          // Emit bevel/round join geometry to fill the gap
+          const cross = dAx * dBy - dAy * dBx;
+          const sign = cross > 0 ? 1 : -1;
 
-    if (this._state.strokeJoin === this.MITER) {
-      const miterPoint = lineIntersectionPoint(
-        [outerAx, outerAy], dirA, [outerBx, outerBy], dirB,
-      );
-      const miterLimit = this._state.strokeWeight * this._estimatedStrokeScale() * 2;
-      if (miterPoint) {
-        const d = Math.hypot(miterPoint[0] - curr[0], miterPoint[1] - curr[1]);
-        if (d <= miterLimit) {
-          this._pushTriangleVertices(outerAx, outerAy, miterPoint[0], miterPoint[1], outerBx, outerBy, color);
-          return;
+          // Outer side offsets from segments A and B
+          const outerAx = path[i][0] + nAx * half * sign;
+          const outerAy = path[i][1] + nAy * half * sign;
+          const outerBx = path[i][0] + nBx * half * sign;
+          const outerBy = path[i][1] + nBy * half * sign;
+
+          if (joinMode === this.ROUND) {
+            this._emitRoundJoin(
+              path[i],
+              nAx * half * sign, nAy * half * sign,
+              nBx * half * sign, nBy * half * sign,
+              half, sign, color,
+            );
+          } else {
+            // Bevel triangle
+            this._pushTriangleVertices(path[i][0], path[i][1], outerAx, outerAy, outerBx, outerBy, color);
+          }
+
+          // For the next segment quad, use segment B's normal on the outer side
+          // so the mesh connects cleanly. We store segment B's offsets so the
+          // next quad picks them up. But since we have one left/right per vertex,
+          // we need to handle this via the quad emission below.
+          // The inner side is fine (segment quads overlap at the center).
+          // Adjust offset to segment B normal for forward connectivity.
+          leftX[i] = path[i][0] + nBx * half;
+          leftY[i] = path[i][1] + nBy * half;
+          rightX[i] = path[i][0] - nBx * half;
+          rightY[i] = path[i][1] - nBy * half;
+        } else {
+          // Miter: single offset point per side
+          leftX[i] = path[i][0] + mx * miterLen;
+          leftY[i] = path[i][1] + my * miterLen;
+          rightX[i] = path[i][0] - mx * miterLen;
+          rightY[i] = path[i][1] - my * miterLen;
         }
       }
     }
 
-    this._pushTriangleVertices(curr[0], curr[1], outerAx, outerAy, outerBx, outerBy, color);
+    // Emit connected quads between consecutive offset vertices
+    const segCount = closed ? n : n - 1;
+    for (let i = 0; i < segCount; i++) {
+      const j = (i + 1) % n;
+      // Two triangles: (left[i], right[i], right[j]) and (left[i], right[j], left[j])
+      this._pushTriangleVertices(leftX[i], leftY[i], rightX[i], rightY[i], rightX[j], rightY[j], color);
+      this._pushTriangleVertices(leftX[i], leftY[i], rightX[j], rightY[j], leftX[j], leftY[j], color);
+    }
+
+    // Caps for open paths
+    if (!closed && path.length >= 2) {
+      if (this._state.strokeCap === this.ROUND) {
+        const d0 = normalize(path[1][0] - path[0][0], path[1][1] - path[0][1]);
+        const d1 = normalize(path[n - 1][0] - path[n - 2][0], path[n - 1][1] - path[n - 2][1]);
+        this._emitRoundCap(path[0], [-d0[0], -d0[1]], half, color);
+        this._emitRoundCap(path[n - 1], [d1[0], d1[1]], half, color);
+      }
+    }
   }
 
   private _emitRoundJoin(center: Vec2, fromX: number, fromY: number, toX: number, toY: number, radius: number, sign: number, color: ColorTuple): void {
@@ -2858,7 +2964,8 @@ export class P5GPU {
     }
 
     const delta = a1 - a0;
-    const steps = Math.max(2, Math.ceil(Math.abs(delta) / (Math.PI / 24)));
+    const arcLen = Math.abs(delta) * radius;
+    const steps = Math.min(64, Math.max(2, Math.ceil(arcLen / 3)));
     const cx = center[0], cy = center[1];
 
     let prevX = cx + Math.cos(a0) * radius;
@@ -2878,8 +2985,8 @@ export class P5GPU {
     const start = base - Math.PI * 0.5;
     const end = base + Math.PI * 0.5;
     const steps = this.optimizedMode
-      ? Math.max(4, Math.ceil((Math.PI * radius) / 6))
-      : Math.max(8, Math.ceil((Math.PI * radius) / 3));
+      ? Math.min(64, Math.max(4, Math.ceil((Math.PI * radius) / 6)))
+      : Math.min(128, Math.max(8, Math.ceil((Math.PI * radius) / 3)));
     const cx = center[0], cy = center[1];
 
     let prevX = cx + Math.cos(start) * radius;
@@ -2906,7 +3013,9 @@ export class P5GPU {
     const dy2 = b3[1] - 2 * b2[1] + b1[1];
     const maxDeviation = Math.max(Math.hypot(dx1, dy1), Math.hypot(dx2, dy2));
     if (maxDeviation <= EPS) return CURVE_MIN_SEGMENTS;
-    const n = Math.ceil(Math.sqrt(Math.sqrt(3.0 / 8.0) * maxDeviation / CURVE_TOLERANCE));
+    const strokeHalf = this._state.strokeWeight * this._estimatedStrokeScale() * 0.5;
+    const tol = Math.min(CURVE_TOLERANCE, Math.max(0.05, strokeHalf * 0.1));
+    const n = Math.ceil(Math.sqrt(Math.sqrt(3.0 / 8.0) * maxDeviation / tol));
     return Math.max(CURVE_MIN_SEGMENTS, Math.min(n, CURVE_MAX_SEGMENTS));
   }
 
@@ -2918,7 +3027,9 @@ export class P5GPU {
     const dy = p2[1] - 2 * p1[1] + p0[1];
     const maxDeviation = Math.hypot(dx, dy);
     if (maxDeviation <= EPS) return CURVE_MIN_SEGMENTS;
-    const n = Math.ceil(Math.sqrt(Math.sqrt(1.0 / 8.0) * maxDeviation / CURVE_TOLERANCE));
+    const strokeHalf = this._state.strokeWeight * this._estimatedStrokeScale() * 0.5;
+    const tol = Math.min(CURVE_TOLERANCE, Math.max(0.05, strokeHalf * 0.1));
+    const n = Math.ceil(Math.sqrt(Math.sqrt(1.0 / 8.0) * maxDeviation / tol));
     return Math.max(CURVE_MIN_SEGMENTS, Math.min(n, CURVE_MAX_SEGMENTS));
   }
 

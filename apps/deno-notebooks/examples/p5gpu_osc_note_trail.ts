@@ -34,7 +34,7 @@ const renderParams = {
 };
 
 const postProcessParams = {
-  enabled: true,
+  enabled: false,
   trailDecay: 0.94,
 };
 
@@ -44,11 +44,11 @@ const drawingParams = {
   b: 0,
   circleBaseSize: 10,
   volumeScale: 40,
-  strokeWeight: 2,
+  strokeWeight: 20,
 };
 
 const pathParams = {
-  mode: "linear" as "linear" | "polar" | "history-line",
+  mode: "history-line" as "linear" | "polar" | "history-line",
 };
 
 const linearParams = {
@@ -175,7 +175,7 @@ function setupPane(pane: WindowTweakpane): void {
   drawing.addBinding(drawingParams, "b", { min: 0, max: 255, step: 1, label: "Blue" });
   drawing.addBinding(drawingParams, "circleBaseSize", { min: 1, max: 50, step: 1, label: "Circle Size" });
   drawing.addBinding(drawingParams, "volumeScale", { min: 0, max: 200, step: 1, label: "Volume Scale" });
-  drawing.addBinding(drawingParams, "strokeWeight", { min: 0.5, max: 10, step: 0.5, label: "Stroke Weight" });
+  drawing.addBinding(drawingParams, "strokeWeight", { min: 0.5, max: 30, step: 0.5, label: "Stroke Weight" });
 
   const postProc = pane.addFolder({ title: "Post Processing" });
   postProc.addBinding(postProcessParams, "enabled", { label: "Enabled" });
@@ -298,13 +298,14 @@ function drawHistoryLine(): void {
   p5.beginShape();
 
   for (let i = 0; i < len; i++) {
-    // i=0 is oldest rendered sample, i=len-1 is newest
     const sampleIdx = (head - len + i + FILTERED_HISTORY_SIZE) % FILTERED_HISTORY_SIZE;
     const pitch = buf[sampleIdx];
     const x = (i / (len - 1)) * WIDTH;
     const yOffset = ((pitch - historyLineParams.pitchCenter) / (103 - 24)) * historyLineParams.pitchRadius * 2;
     const y = clamp(HEIGHT * 0.5 - yOffset, 0, HEIGHT);
-    p5.vertex(x, y);
+    // repeat first and last points so the spline passes through endpoints
+    if (i === 0 || i === len - 1) p5.curveVertex(x, y);
+    p5.curveVertex(x, y);
   }
 
   p5.endShape();
