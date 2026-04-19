@@ -70,6 +70,7 @@ const params = {
   inkColor: "#ffe9a8",
   idlePhase: 1.0,      // 0 = invisible when not animating, 1 = fully drawn
   paused: false,
+  glyphScale: 1.0,
 };
 
 // ── Load tegaki bundle ───────────────────────────────────────────────
@@ -347,6 +348,9 @@ function setupPane(pane: WindowTweakpane) {
   pane.addBinding(params, "widthScale", {
     min: 0.2, max: 2.5, step: 0.05, label: "Width x",
   });
+  pane.addBinding(params, "glyphScale", {
+    min: 0, max: 1, step: 0.01, label: "Glyph scale",
+  });
   pane.addBinding(params, "idlePhase", {
     min: 0, max: 1, step: 0.01, label: "Idle phase",
   });
@@ -400,17 +404,20 @@ function renderFrame() {
 
   const [br, bg, bb] = hexToRgb(params.bgColor);
   const [ir, ig, ib] = hexToRgb(params.inkColor);
-  const scale = FONT_SIZE / FONT_META.unitsPerEm;
+  const scale = (FONT_SIZE / FONT_META.unitsPerEm) * params.glyphScale;
 
   p5.beginFrame();
   p5.background(br, bg, bb);
-  p5.noFill();
-  p5.strokeCap(p5.ROUND);
-  p5.stroke(ir, ig, ib, 255);
 
-  // The entire animation is just: read phase, draw.
-  for (const state of glyphStates) {
-    drawGlyphAtPhase(p5, state, scale, params.widthScale);
+  if (params.glyphScale > 0) {
+    p5.noFill();
+    p5.strokeCap(p5.ROUND);
+    p5.stroke(ir, ig, ib, 255);
+
+    // The entire animation is just: read phase, draw.
+    for (const state of glyphStates) {
+      drawGlyphAtPhase(p5, state, scale, params.widthScale);
+    }
   }
 
   // HUD
