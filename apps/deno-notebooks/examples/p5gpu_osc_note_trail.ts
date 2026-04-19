@@ -27,14 +27,28 @@ const OSC_PORT = 9003;
 const OSC_ADDRESS = "/noteInfo";
 const PITCH_HISTORY_SIZE = 100;
 const MAX_SMOOTHING_WINDOW = 5;
+const DELAY_BUFFER_SIZE = 32;
 
-const params = {
+const renderParams = {
   trailDecay: 0.94,
   pitchCenter: 60,
   pitchRadius: 600,
   confidenceThreshold: 0.5,
-  smoothingConfidenceThreshold: 0.8,
   volumeScale: 40,
+};
+
+const smoothParams = {
+  smoothingConfidenceThreshold: 0.8,
+};
+
+const rejectParams = {
+  delayFrames: 2,
+  medianWindow: 3,
+  spikeThreshold: 7,
+};
+
+const filterParams = {
+  mode: "smooth" as "smooth" | "delayed-reject",
 };
 
 const note = {
@@ -42,9 +56,23 @@ const note = {
   confidence: 0,
   volume: 0,
 };
+
+// --- shared ring buffer for raw pitches ---
 const pitchHistory = new Array<number>(PITCH_HISTORY_SIZE);
 let pitchHistoryHead = 0;
 let pitchHistoryCount = 0;
+
+// --- delay buffer for delayed-reject mode ---
+interface DelayFrame {
+  pitch: number;
+  confidence: number;
+  volume: number;
+}
+const delayBuffer: DelayFrame[] = Array.from({ length: DELAY_BUFFER_SIZE }, () => ({
+  pitch: 60, confidence: 0, volume: 0,
+}));
+let delayHead = 0;
+let delayCount = 0;
 
 const device = await requestWebGpuDevice();
 const renderWindow = await createWindowRenderManager({
@@ -59,7 +87,7 @@ const renderWindow = await createWindowRenderManager({
   pane: {
     title: "OSC Trail",
     panelWidth: 360,
-    panelHeight: 220,
+    panelHeight: 420,
     setup: setupPane,
   },
 });
@@ -78,7 +106,7 @@ function renderFrame() {
   p5.beginFrame();
   drawNoteCircle(time);
   trail.current.setSrcs({ src: p5.endFrame() });
-  trail.decay.setUniforms({ mult: params.trailDecay });
+  trail.decay.setUniforms({ mult: renderParams.trailDecay });
   trail.composite.renderAll();
 
   return trail.composite;
@@ -92,12 +120,26 @@ function cleanup(): void {
 }
 
 function setupPane(pane: WindowTweakpane): void {
-  pane.addBinding(params, "trailDecay", { min: 0, max: 1, step: 0.001, label: "Trail Decay" });
-  pane.addBinding(params, "pitchCenter", { min: 0, max: 127, step: 1, label: "Pitch Center" });
-  pane.addBinding(params, "pitchRadius", { min: 0, max: 800, step: 1, label: "Pitch Radius" });
-  pane.addBinding(params, "confidenceThreshold", { min: 0, max: 1, step: 0.001, label: "Conf Threshold" });
-  pane.addBinding(params, "smoothingConfidenceThreshold", { min: 0, max: 1, step: 0.001, label: "Smooth Conf" });
-  pane.addBinding(params, "volumeScale", { min: 0, max: 200, step: 1, label: "Volume Scale" });
+  const render = pane.addFolder({ title: "Render" });
+  render.addBinding(renderParams, "trailDecay", { min: 0, max: 1, step: 0.001, label: "Trail Decay" });
+  render.addBinding(renderParams, "pitchCenter", { min: 0, max: 127, step: 1, label: "Pitch Center" });
+  render.addBinding(renderParams, "pitchRadius", { min: 0, max: 800, step: 1, label: "Pitch Radius" });
+  render.addBinding(renderParams, "confidenceThreshold", { min: 0, max: 1, step: 0.001, label: "Conf Threshold" });
+  render.addBinding(renderParams, "volumeScale", { min: 0, max: 200, step: 1, label: "Volume Scale" });
+
+  const filter = pane.addFolder({ title: "Pitch Filter" });
+  filter.addBinding(filterParams, "mode", {
+    options: { "Smooth": "smooth", "Delayed Reject": "delayed-reject" },
+    label: "Mode",
+  });
+
+  const smooth = pane.addFolder({ title: "Smooth Mode" });
+  smooth.addBinding(smoothParams, "smoothingConfidenceThreshold", { min: 0, max: 1, step: 0.001, label: "Smooth Conf" });
+
+  const reject = pane.addFolder({ title: "Delayed Reject Mode" });
+  reject.addBinding(rejectParams, "delayFrames", { min: 1, max: 5, step: 1, label: "Delay Frames" });
+  reject.addBinding(rejectParams, "medianWindow", { min: 3, max: 7, step: 2, label: "Median Window" });
+  reject.addBinding(rejectParams, "spikeThreshold", { min: 1, max: 24, step: 1, label: "Spike Thresh (st)" });
 }
 
 function handleOscMessage(message: OSCMessage): void {
@@ -107,24 +149,39 @@ function handleOscMessage(message: OSCMessage): void {
   }
 
   const rawPitch = clamp(next[0], 0, 127);
-  note.confidence = clamp(next[1], 0, 1);
-  note.volume = clamp(next[2], 0, 1);
+  const rawConfidence = clamp(next[1], 0, 1);
+  const rawVolume = clamp(next[2], 0, 1);
+
+  // always push to both buffers
   pushPitch(rawPitch);
-  note.pitch = getSmoothedPitch(note.confidence);
+  pushDelayFrame(rawPitch, rawConfidence, rawVolume);
+
+  if (filterParams.mode === "delayed-reject") {
+    const delayed = getDelayedMedianFrame();
+    if (delayed) {
+      note.pitch = delayed.pitch;
+      note.confidence = delayed.confidence;
+      note.volume = delayed.volume;
+    }
+  } else {
+    note.confidence = rawConfidence;
+    note.volume = rawVolume;
+    note.pitch = getSmoothedPitch(rawConfidence);
+  }
 }
 
 function drawNoteCircle(time: number): void {
   p5.clear();
   p5.noStroke();
 
-  if (note.confidence < params.confidenceThreshold) {
+  if (note.confidence < renderParams.confidenceThreshold) {
     return;
   }
 
   const x = WIDTH * ((time % 5) / 5);
-  const yOffset = ((note.pitch - params.pitchCenter) / (103 - 24)) * params.pitchRadius * 2;
+  const yOffset = ((note.pitch - renderParams.pitchCenter) / (103 - 24)) * renderParams.pitchRadius * 2;
   const y = clamp(HEIGHT * 0.5 - yOffset, 0, HEIGHT);
-  const size = 10 + note.volume * params.volumeScale;
+  const size = 10 + note.volume * renderParams.volumeScale;
   const colorMix = 0.5 + 0.5 * Math.sin((time / 15) * Math.PI * 2);
   const red = 255 * (1 - colorMix);
   const blue = 255 * colorMix;
@@ -213,7 +270,7 @@ function getSmoothedPitch(confidence: number): number {
     return note.pitch;
   }
 
-  const threshold = params.smoothingConfidenceThreshold;
+  const threshold = smoothParams.smoothingConfidenceThreshold;
   if (threshold <= 0 || confidence >= threshold) {
     return getRecentPitchAverage(1);
   }
@@ -233,6 +290,50 @@ function getRecentPitchAverage(windowSize: number): number {
   }
 
   return sum / count;
+}
+
+function pushDelayFrame(pitch: number, confidence: number, volume: number): void {
+  delayBuffer[delayHead] = { pitch, confidence, volume };
+  delayHead = (delayHead + 1) % DELAY_BUFFER_SIZE;
+  delayCount = Math.min(delayCount + 1, DELAY_BUFFER_SIZE);
+}
+
+function getDelayedMedianFrame(): DelayFrame | null {
+  const delay = rejectParams.delayFrames;
+  const halfWin = Math.floor(rejectParams.medianWindow / 2);
+  // need at least delay + halfWin + 1 frames buffered
+  if (delayCount < delay + halfWin + 1) {
+    return null;
+  }
+
+  // the frame we want to emit (delay frames behind the latest)
+  const centerIdx = (delayHead - 1 - delay + DELAY_BUFFER_SIZE) % DELAY_BUFFER_SIZE;
+  const centerPitch = delayBuffer[centerIdx].pitch;
+
+  // check if the jump from the previous frame exceeds the spike threshold
+  const prevIdx = (centerIdx - 1 + DELAY_BUFFER_SIZE) % DELAY_BUFFER_SIZE;
+  const prevPitch = delayBuffer[prevIdx].pitch;
+  const jump = Math.abs(centerPitch - prevPitch);
+
+  if (jump < rejectParams.spikeThreshold) {
+    // no spike detected, pass through directly
+    return delayBuffer[centerIdx];
+  }
+
+  // spike detected — apply median filter over the window
+  const windowPitches: number[] = [];
+  for (let i = -halfWin; i <= halfWin; i++) {
+    const idx = (centerIdx + i + DELAY_BUFFER_SIZE) % DELAY_BUFFER_SIZE;
+    windowPitches.push(delayBuffer[idx].pitch);
+  }
+  windowPitches.sort((a, b) => a - b);
+  const medianPitch = windowPitches[Math.floor(windowPitches.length / 2)];
+
+  return {
+    pitch: medianPitch,
+    confidence: delayBuffer[centerIdx].confidence,
+    volume: delayBuffer[centerIdx].volume,
+  };
 }
 
 function toFiniteNumber(value: unknown): number | null {
