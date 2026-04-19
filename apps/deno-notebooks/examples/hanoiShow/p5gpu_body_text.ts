@@ -13,10 +13,10 @@ import {
   requestWebGpuDevice,
   type WindowTweakpane,
 } from "../../window/mod.ts";
-import { textOnPath, type Point } from "../../tools/text_on_path.ts";
+import { type Point, textOnPath } from "../../tools/text_on_path.ts";
 import {
-  createContourReceiver,
   type ContourFrame,
+  createContourReceiver,
 } from "../../tools/contour_receiver.ts";
 import {
   createContourSmoother,
@@ -29,6 +29,14 @@ import {
 
 const WIDTH = 1280;
 const HEIGHT = 720;
+
+interface RenderContour {
+  id: number;
+  points: Point[];
+  parentIndex: number;
+  opacity: number;
+  radius: number;
+}
 
 // ── Consolidated state ──────────────────────────────────────────
 
@@ -57,9 +65,13 @@ export const state = {
     lastFrameTime: performance.now(),
     fpsSmooth: 60,
     lastProcessedFrame: -1,
-    smoothedFrame: null as ReturnType<
-      ReturnType<typeof createContourSmoother>["process"]
-    > | null,
+    renderCacheKey: "",
+    renderContours: [] as RenderContour[],
+    smoothedFrame: null as
+      | ReturnType<
+        ReturnType<typeof createContourSmoother>["process"]
+      >
+      | null,
     lastRawFrame: null as ContourFrame | null,
   },
 };
@@ -69,66 +81,117 @@ export const state = {
 export function setupPane(pane: WindowTweakpane) {
   const smooth = pane.addFolder({ title: "Smoothing" });
   smooth.addBinding(state.smooth, "mincutoff", {
-    min: 0.1, max: 15, step: 0.1, label: "Min Cutoff",
+    min: 0.1,
+    max: 15,
+    step: 0.1,
+    label: "Min Cutoff",
   });
   smooth.addBinding(state.smooth, "beta", {
-    min: 0.0, max: 0.2, step: 0.001, label: "Beta",
+    min: 0.0,
+    max: 0.2,
+    step: 0.001,
+    label: "Beta",
   });
   smooth.addBinding(state.smooth, "dcutoff", {
-    min: 0.1, max: 5.0, step: 0.1, label: "D Cutoff",
+    min: 0.1,
+    max: 5.0,
+    step: 0.1,
+    label: "D Cutoff",
   });
   smooth.addBinding(state.smooth, "resampleCount", {
-    min: 50, max: 800, step: 10, label: "Resample N",
+    min: 50,
+    max: 800,
+    step: 10,
+    label: "Resample N",
   });
   smooth.addBinding(state.smooth, "matchThreshold", {
-    min: 0.01, max: 0.5, step: 0.01, label: "Match Thresh",
+    min: 0.01,
+    max: 0.5,
+    step: 0.01,
+    label: "Match Thresh",
   });
   smooth.addBinding(state.smooth, "fadeInFrames", {
-    min: 1, max: 20, step: 1, label: "Fade In",
+    min: 1,
+    max: 20,
+    step: 1,
+    label: "Fade In",
   });
   smooth.addBinding(state.smooth, "fadeOutFrames", {
-    min: 1, max: 30, step: 1, label: "Fade Out",
+    min: 1,
+    max: 30,
+    step: 1,
+    label: "Fade Out",
   });
 
   const stability = pane.addFolder({ title: "Stability" });
   stability.addBinding(state.smooth, "youngMaxAge", {
-    min: 1, max: 10, step: 1, label: "Young Max Age",
+    min: 1,
+    max: 10,
+    step: 1,
+    label: "Young Max Age",
   });
   stability.addBinding(state.smooth, "overlapDist", {
-    min: 0.0, max: 0.3, step: 0.01, label: "Overlap Dist",
+    min: 0.0,
+    max: 0.3,
+    step: 0.01,
+    label: "Overlap Dist",
   });
   stability.addBinding(state.smooth, "shapeResetThreshold", {
-    min: 0.01, max: 0.2, step: 0.005, label: "Shape Reset",
+    min: 0.01,
+    max: 0.2,
+    step: 0.005,
+    label: "Shape Reset",
   });
 
   const spring = pane.addFolder({ title: "Spring Physics" });
   spring.addBinding(state.spring, "enabled", { label: "Enabled" });
   spring.addBinding(state.spring, "stiffness", {
-    min: 10, max: 500, step: 5, label: "Stiffness",
+    min: 10,
+    max: 500,
+    step: 5,
+    label: "Stiffness",
   });
   spring.addBinding(state.spring, "damping", {
-    min: 0.05, max: 2.0, step: 0.05, label: "Damping",
+    min: 0.05,
+    max: 2.0,
+    step: 0.05,
+    label: "Damping",
   });
 
   const render = pane.addFolder({ title: "Render" });
   render.addBinding(state.render, "fade", {
-    min: 0, max: 1, step: 0.01, label: "Fade",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    label: "Fade",
   });
   render.addBinding(state.render, "enableSmoothing", { label: "Smoothing" });
   render.addBinding(state.render, "enableMinRadius", {
     label: "Min Radius Filter",
   });
   render.addBinding(state.render, "scrollSpeed", {
-    min: 0, max: 300, step: 1, label: "Scroll Speed",
+    min: 0,
+    max: 300,
+    step: 1,
+    label: "Scroll Speed",
   });
   render.addBinding(state.render, "outerSize", {
-    min: 8, max: 48, step: 1, label: "Outer Size",
+    min: 8,
+    max: 48,
+    step: 1,
+    label: "Outer Size",
   });
   render.addBinding(state.render, "innerSize", {
-    min: 6, max: 36, step: 1, label: "Inner Size",
+    min: 6,
+    max: 36,
+    step: 1,
+    label: "Inner Size",
   });
   render.addBinding(state.render, "minRadius", {
-    min: 0, max: 200, step: 1, label: "Min Radius",
+    min: 0,
+    max: 200,
+    step: 1,
+    label: "Min Radius",
   });
   render.addBinding(state.render, "showDebugPath", { label: "Show Path" });
 }
@@ -136,14 +199,74 @@ export function setupPane(pane: WindowTweakpane) {
 // ── Helper ───────────────────────────────────────────────────────
 
 function drawPath(p5: P5GPU, pts: Point[]) {
-  for (let i = 0; i < pts.length - 1; i++) {
-    p5.line(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
+  if (pts.length < 2) {
+    return;
   }
+
+  p5.noFill();
+  p5.beginShape();
+  for (const pt of pts) {
+    p5.vertex(pt.x, pt.y);
+  }
+  p5.endShape();
+}
+
+function updateRenderContourCache(): void {
+  const useSmoothed = state.render.enableSmoothing;
+  const sourceFrame = useSmoothed
+    ? state.frame.smoothedFrame
+    : state.frame.lastRawFrame;
+  if (!sourceFrame) {
+    state.frame.renderCacheKey = "";
+    state.frame.renderContours = [];
+    return;
+  }
+
+  const cacheKey = `${
+    useSmoothed ? "smooth" : "raw"
+  }:${sourceFrame.frameNumber}`;
+  if (cacheKey === state.frame.renderCacheKey) {
+    return;
+  }
+
+  const renderContours: RenderContour[] = [];
+  for (let i = 0; i < sourceFrame.contours.length; i += 1) {
+    const contour = sourceFrame.contours[i]!;
+    const smoothedContour = useSmoothed
+      ? state.frame.smoothedFrame!.contours[i]!
+      : null;
+    const points = contour.points.map((p) => ({
+      x: p.x * WIDTH,
+      y: p.y * HEIGHT,
+    }));
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const p of points) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+
+    renderContours.push({
+      id: smoothedContour?.id ?? -1,
+      points,
+      parentIndex: contour.parentIndex,
+      opacity: smoothedContour?.opacity ?? 1.0,
+      radius: Math.sqrt((maxX - minX) ** 2 + (maxY - minY) ** 2) / 2,
+    });
+  }
+
+  state.frame.renderCacheKey = cacheKey;
+  state.frame.renderContours = renderContours;
 }
 
 // ── Setup / cleanup ─────────────────────────────────────────────
 
-export async function setup() {
+export function setup() {
   const receiver = createContourReceiver();
   const smoother = createContourSmoother(state.smooth);
   const springText = createSpringTextRenderer(state.spring);
@@ -185,33 +308,8 @@ export function draw(p5: P5GPU, time: number) {
     state.frame.lastProcessedFrame = rawFrame.frameNumber;
   }
 
-  // Build contour list (smoothed or raw)
-  const contoursToRender: Array<{
-    id: number;
-    points: Point[];
-    parentIndex: number;
-    opacity: number;
-  }> = [];
-
-  if (state.render.enableSmoothing && state.frame.smoothedFrame) {
-    for (const c of state.frame.smoothedFrame.contours) {
-      contoursToRender.push({
-        id: c.id,
-        points: c.points,
-        parentIndex: c.parentIndex,
-        opacity: c.opacity,
-      });
-    }
-  } else if (state.frame.lastRawFrame) {
-    for (const c of state.frame.lastRawFrame.contours) {
-      contoursToRender.push({
-        id: -1,
-        points: c.points,
-        parentIndex: c.parentIndex,
-        opacity: 1.0,
-      });
-    }
-  }
+  updateRenderContourCache();
+  const contoursToRender = state.frame.renderContours;
 
   // Track active contour IDs for spring cleanup
   const activeIds = new Set<number>();
@@ -221,26 +319,9 @@ export function draw(p5: P5GPU, time: number) {
       if (contour.points.length < state.render.minPoints) continue;
       if (contour.id >= 0) activeIds.add(contour.id);
 
-      const scaled: Point[] = contour.points.map((p) => ({
-        x: p.x * WIDTH,
-        y: p.y * HEIGHT,
-      }));
-
       // Skip small contours by bounding-box half-diagonal
       if (state.render.enableMinRadius) {
-        let minX = Infinity,
-          minY = Infinity,
-          maxX = -Infinity,
-          maxY = -Infinity;
-        for (const p of scaled) {
-          if (p.x < minX) minX = p.x;
-          if (p.y < minY) minY = p.y;
-          if (p.x > maxX) maxX = p.x;
-          if (p.y > maxY) maxY = p.y;
-        }
-        const radius =
-          Math.sqrt((maxX - minX) ** 2 + (maxY - minY) ** 2) / 2;
-        if (radius < state.render.minRadius) continue;
+        if (contour.radius < state.render.minRadius) continue;
       }
 
       const isOuter = contour.parentIndex === -1;
@@ -254,7 +335,7 @@ export function draw(p5: P5GPU, time: number) {
           isOuter ? 190 : 160,
           Math.round(alpha * 0.5),
         );
-        drawPath(p5, scaled);
+        drawPath(p5, contour.points);
         p5.noStroke();
       }
 
@@ -267,17 +348,15 @@ export function draw(p5: P5GPU, time: number) {
         p5.fill(200, 140, 255, alpha);
       }
 
-      const txt = isOuter
-        ? state.render.outerText
-        : state.render.innerText;
+      const txt = isOuter ? state.render.outerText : state.render.innerText;
 
       if (contour.id >= 0 && state.spring.enabled) {
-        springText.renderTextOnPath(p5, contour.id, txt, scaled, {
+        springText.renderTextOnPath(p5, contour.id, txt, contour.points, {
           offset: scrollOffset,
           letterSpacing: 1,
         });
       } else {
-        textOnPath(p5, txt, scaled, {
+        textOnPath(p5, txt, contour.points, {
           fill: "wrap",
           offset: scrollOffset,
           letterSpacing: 1,
