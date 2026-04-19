@@ -964,4 +964,9 @@ to be able to fully live-code drawing in the runloop, set up the
 the p5 instance, and the launched branches add/remove the map entry at the 
 animation start/end for "oneshots". if you want to control draw order you can have
 drawFuncs<string, {ord: number, func: () => void}) where num is z order
+
+todo - to make sketch code management easier, can refactor sketch to have a window launch function, 
+and then import that + the params object + p5 instance + post-processing graph/bundle object.
+can also import the drawFuncs<> map. 
+inner draw loop isn't directly live codeable anyway so you just need the things that it references.
 */
