@@ -15,38 +15,23 @@ import {
 } from "../../window/mod.ts";
 import { type Point, textOnPath } from "../../tools/text_on_path.ts";
 import {
-  type ContourFrame,
-  createContourReceiver,
-} from "../../tools/contour_receiver.ts";
-import {
-  createContourSmoother,
-  defaultSmootherParams,
-} from "../../tools/contour_smoother.ts";
-import {
   createSpringTextRenderer,
   defaultSpringParams,
 } from "../../tools/contour_spring.ts";
+import {
+  type BodyContourProvider,
+  createBodyContourProvider,
+} from "./body_contour_provider.ts";
 
 const WIDTH = 1280;
 const HEIGHT = 720;
 
-interface RenderContour {
-  id: number;
-  points: Point[];
-  parentIndex: number;
-  opacity: number;
-  radius: number;
-}
-
 // ── Consolidated state ──────────────────────────────────────────
 
 export const state = {
-  smooth: { ...defaultSmootherParams },
   spring: { ...defaultSpringParams },
   render: {
     fade: 1.0,
-    enableSmoothing: true,
-    enableMinRadius: true,
     scrollSpeed: 80,
     outerText: "body outline ",
     innerText: "inner contour ",
@@ -55,92 +40,31 @@ export const state = {
     outerSize: 22,
     innerSize: 16,
     showDebugPath: true,
+    enableMinRadius: true,
   },
   runtime: {
-    receiver: null as ReturnType<typeof createContourReceiver> | null,
-    smoother: null as ReturnType<typeof createContourSmoother> | null,
     springText: null as ReturnType<typeof createSpringTextRenderer> | null,
   },
   frame: {
     lastFrameTime: performance.now(),
     fpsSmooth: 60,
-    lastProcessedFrame: -1,
-    renderCacheKey: "",
-    renderContours: [] as RenderContour[],
-    smoothedFrame: null as
-      | ReturnType<
-        ReturnType<typeof createContourSmoother>["process"]
-      >
-      | null,
-    lastRawFrame: null as ContourFrame | null,
   },
+  /**
+   * Shared contour data source. Set by the host (combined.ts) or created
+   * privately in standalone mode. Consumers should treat null as "no contour
+   * data available" and draw nothing (or a placeholder).
+   */
+  contourProvider: null as BodyContourProvider | null,
 };
 
 // ── Tweakpane setup ─────────────────────────────────────────────
 
 export function setupPane(pane: PaneContainer) {
-  const smooth = pane.addFolder({ title: "Smoothing" });
-  smooth.addBinding(state.smooth, "mincutoff", {
-    min: 0.1,
-    max: 15,
-    step: 0.1,
-    label: "Min Cutoff",
-  });
-  smooth.addBinding(state.smooth, "beta", {
-    min: 0.0,
-    max: 0.2,
-    step: 0.001,
-    label: "Beta",
-  });
-  smooth.addBinding(state.smooth, "dcutoff", {
-    min: 0.1,
-    max: 5.0,
-    step: 0.1,
-    label: "D Cutoff",
-  });
-  smooth.addBinding(state.smooth, "resampleCount", {
-    min: 50,
-    max: 800,
-    step: 10,
-    label: "Resample N",
-  });
-  smooth.addBinding(state.smooth, "matchThreshold", {
-    min: 0.01,
-    max: 0.5,
+  pane.addBinding(state.render, "fade", {
+    min: 0,
+    max: 1,
     step: 0.01,
-    label: "Match Thresh",
-  });
-  smooth.addBinding(state.smooth, "fadeInFrames", {
-    min: 1,
-    max: 20,
-    step: 1,
-    label: "Fade In",
-  });
-  smooth.addBinding(state.smooth, "fadeOutFrames", {
-    min: 1,
-    max: 30,
-    step: 1,
-    label: "Fade Out",
-  });
-
-  const stability = pane.addFolder({ title: "Stability" });
-  stability.addBinding(state.smooth, "youngMaxAge", {
-    min: 1,
-    max: 10,
-    step: 1,
-    label: "Young Max Age",
-  });
-  stability.addBinding(state.smooth, "overlapDist", {
-    min: 0.0,
-    max: 0.3,
-    step: 0.01,
-    label: "Overlap Dist",
-  });
-  stability.addBinding(state.smooth, "shapeResetThreshold", {
-    min: 0.01,
-    max: 0.2,
-    step: 0.005,
-    label: "Shape Reset",
+    label: "Fade",
   });
 
   const spring = pane.addFolder({ title: "Spring Physics" });
@@ -159,13 +83,6 @@ export function setupPane(pane: PaneContainer) {
   });
 
   const render = pane.addFolder({ title: "Render" });
-  render.addBinding(state.render, "fade", {
-    min: 0,
-    max: 1,
-    step: 0.01,
-    label: "Fade",
-  });
-  render.addBinding(state.render, "enableSmoothing", { label: "Smoothing" });
   render.addBinding(state.render, "enableMinRadius", {
     label: "Min Radius Filter",
   });
@@ -199,10 +116,7 @@ export function setupPane(pane: PaneContainer) {
 // ── Helper ───────────────────────────────────────────────────────
 
 function drawPath(p5: P5GPU, pts: Point[]) {
-  if (pts.length < 2) {
-    return;
-  }
-
+  if (pts.length < 2) return;
   p5.noFill();
   p5.beginShape();
   for (const pt of pts) {
@@ -211,72 +125,15 @@ function drawPath(p5: P5GPU, pts: Point[]) {
   p5.endShape();
 }
 
-function updateRenderContourCache(): void {
-  const useSmoothed = state.render.enableSmoothing;
-  const sourceFrame = useSmoothed
-    ? state.frame.smoothedFrame
-    : state.frame.lastRawFrame;
-  if (!sourceFrame) {
-    state.frame.renderCacheKey = "";
-    state.frame.renderContours = [];
-    return;
-  }
-
-  const cacheKey = `${
-    useSmoothed ? "smooth" : "raw"
-  }:${sourceFrame.frameNumber}`;
-  if (cacheKey === state.frame.renderCacheKey) {
-    return;
-  }
-
-  const renderContours: RenderContour[] = [];
-  for (let i = 0; i < sourceFrame.contours.length; i += 1) {
-    const contour = sourceFrame.contours[i]!;
-    const smoothedContour = useSmoothed
-      ? state.frame.smoothedFrame!.contours[i]!
-      : null;
-    const points = contour.points.map((p) => ({
-      x: p.x * WIDTH,
-      y: p.y * HEIGHT,
-    }));
-
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const p of points) {
-      if (p.x < minX) minX = p.x;
-      if (p.y < minY) minY = p.y;
-      if (p.x > maxX) maxX = p.x;
-      if (p.y > maxY) maxY = p.y;
-    }
-
-    renderContours.push({
-      id: smoothedContour?.id ?? -1,
-      points,
-      parentIndex: contour.parentIndex,
-      opacity: smoothedContour?.opacity ?? 1.0,
-      radius: Math.sqrt((maxX - minX) ** 2 + (maxY - minY) ** 2) / 2,
-    });
-  }
-
-  state.frame.renderCacheKey = cacheKey;
-  state.frame.renderContours = renderContours;
-}
-
 // ── Setup / cleanup ─────────────────────────────────────────────
 
 export function setup() {
-  const receiver = createContourReceiver();
-  const smoother = createContourSmoother(state.smooth);
-  const springText = createSpringTextRenderer(state.spring);
-  state.runtime.receiver = receiver;
-  state.runtime.smoother = smoother;
-  state.runtime.springText = springText;
+  state.runtime.springText = createSpringTextRenderer(state.spring);
 }
 
 export function cleanup() {
-  state.runtime.receiver?.close();
+  // Provider lifecycle is managed by the host that set it on state.
+  // If we created it in standalone mode, the import.meta.main block cleans up.
 }
 
 // ── Draw function ───────────────────────────────────────────────
@@ -284,6 +141,9 @@ export function cleanup() {
 export function draw(p5: P5GPU, time: number) {
   const fade = state.render.fade;
   if (fade <= 0) return;
+
+  const provider = state.contourProvider;
+  if (!provider) return;
 
   const now = performance.now();
   const fps = 1000 / (now - state.frame.lastFrameTime);
@@ -295,78 +155,11 @@ export function draw(p5: P5GPU, time: number) {
   p5.noStroke();
   p5.textFont("Inter Variable");
 
-  const receiver = state.runtime.receiver!;
-  const smoother = state.runtime.smoother!;
   const springText = state.runtime.springText!;
-
-  const rawFrame = receiver.latestFrame;
-  if (rawFrame && rawFrame.frameNumber !== state.frame.lastProcessedFrame) {
-    if (state.render.enableSmoothing) {
-      state.frame.smoothedFrame = smoother.process(rawFrame);
-    }
-    state.frame.lastRawFrame = rawFrame;
-    state.frame.lastProcessedFrame = rawFrame.frameNumber;
-  }
-
-  updateRenderContourCache();
-  const contoursToRender = state.frame.renderContours;
-
-  // Track active contour IDs for spring cleanup
+  const contours = provider.getContours();
   const activeIds = new Set<number>();
 
-  if (contoursToRender.length > 0) {
-    for (const contour of contoursToRender) {
-      if (contour.points.length < state.render.minPoints) continue;
-      if (contour.id >= 0) activeIds.add(contour.id);
-
-      // Skip small contours by bounding-box half-diagonal
-      if (state.render.enableMinRadius) {
-        if (contour.radius < state.render.minRadius) continue;
-      }
-
-      const isOuter = contour.parentIndex === -1;
-      const alpha = Math.round(contour.opacity * 255 * fade);
-
-      if (state.render.showDebugPath) {
-        p5.strokeWeight(10);
-        p5.stroke(
-          isOuter ? 0 : 130,
-          isOuter ? 160 : 0,
-          isOuter ? 190 : 160,
-          Math.round(alpha * 0.5),
-        );
-        drawPath(p5, contour.points);
-        p5.noStroke();
-      }
-
-      p5.textSize(
-        isOuter ? state.render.outerSize : state.render.innerSize,
-      );
-      if (isOuter) {
-        p5.fill(100, 200, 255, alpha);
-      } else {
-        p5.fill(200, 140, 255, alpha);
-      }
-
-      const txt = isOuter ? state.render.outerText : state.render.innerText;
-
-      if (contour.id >= 0 && state.spring.enabled) {
-        springText.renderTextOnPath(p5, contour.id, txt, contour.points, {
-          offset: scrollOffset,
-          letterSpacing: 1,
-        });
-      } else {
-        textOnPath(p5, txt, contour.points, {
-          fill: "wrap",
-          offset: scrollOffset,
-          letterSpacing: 1,
-        });
-      }
-    }
-
-    springText.tick();
-    springText.cleanup(activeIds);
-  } else {
+  if (contours.length === 0) {
     p5.fill(100, 100, 120, Math.round(255 * fade));
     p5.textSize(20);
     p5.textAlign("center", "center");
@@ -375,13 +168,86 @@ export function draw(p5: P5GPU, time: number) {
       WIDTH / 2,
       HEIGHT / 2,
     );
+    return;
   }
+
+  for (const contour of contours) {
+    if (contour.points.length < state.render.minPoints) continue;
+    if (contour.id >= 0) activeIds.add(contour.id);
+
+    // Scale normalized points to pixel coords
+    const scaled: Point[] = contour.points.map((p) => ({
+      x: p.x * WIDTH,
+      y: p.y * HEIGHT,
+    }));
+
+    if (state.render.enableMinRadius) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const p of scaled) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
+      const radius = Math.sqrt((maxX - minX) ** 2 + (maxY - minY) ** 2) / 2;
+      if (radius < state.render.minRadius) continue;
+    }
+
+    const isOuter = contour.parentIndex === -1;
+    const alpha = Math.round(contour.opacity * 255 * fade);
+
+    if (state.render.showDebugPath) {
+      p5.strokeWeight(10);
+      p5.stroke(
+        isOuter ? 0 : 130,
+        isOuter ? 160 : 0,
+        isOuter ? 190 : 160,
+        Math.round(alpha * 0.5),
+      );
+      drawPath(p5, scaled);
+      p5.noStroke();
+    }
+
+    p5.textSize(isOuter ? state.render.outerSize : state.render.innerSize);
+    if (isOuter) {
+      p5.fill(100, 200, 255, alpha);
+    } else {
+      p5.fill(200, 140, 255, alpha);
+    }
+
+    const txt = isOuter ? state.render.outerText : state.render.innerText;
+
+    if (contour.id >= 0 && state.spring.enabled) {
+      springText.renderTextOnPath(p5, contour.id, txt, scaled, {
+        offset: scrollOffset,
+        letterSpacing: 1,
+      });
+    } else {
+      textOnPath(p5, txt, scaled, {
+        fill: "wrap",
+        offset: scrollOffset,
+        letterSpacing: 1,
+      });
+    }
+  }
+
+  springText.tick();
+  springText.cleanup(activeIds);
 }
 
 // ── Standalone entry point ──────────────────────────────────────
 
 if (import.meta.main) {
   const device = await requestWebGpuDevice();
+
+  // Standalone: create our own provider and wire it up.
+  const provider = createBodyContourProvider();
+  state.contourProvider = provider;
+  provider.setup();
+
   const renderWindow = await createWindowRenderManager({
     device,
     width: WIDTH,
@@ -391,16 +257,20 @@ if (import.meta.main) {
       title: "Body Text",
       panelWidth: 520,
       panelHeight: 520,
-      setup: setupPane,
+      setup: (pane) => {
+        setupPane(pane);
+        provider.setupPane(pane.addFolder({ title: "Contour Processing" }));
+      },
     },
   });
   const p5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 
-  await setup();
+  setup();
 
   await renderWindow.run(
     () => {
       const t = performance.now() * 0.001;
+      provider.tick();
       p5.beginFrame();
       p5.background(15, 18, 26);
       draw(p5, t);
@@ -410,13 +280,11 @@ if (import.meta.main) {
       p5.fill(100, 100, 120);
       p5.textAlign("left", "bottom");
       p5.text(`${Math.round(state.frame.fpsSmooth)} fps`, 20, HEIGHT - 12);
-      if (state.frame.smoothedFrame) {
+      const frameNum = provider.getFrameNumber();
+      if (frameNum >= 0) {
         p5.textAlign("right", "bottom");
-        const nVisible = state.frame.smoothedFrame.contours.filter(
-          (c) => c.opacity > 0.01,
-        ).length;
         p5.text(
-          `frame ${state.frame.smoothedFrame.frameNumber} · ${nVisible} contours`,
+          `frame ${frameNum} · ${provider.getContours().length} contours`,
           WIDTH - 20,
           HEIGHT - 12,
         );
@@ -427,6 +295,7 @@ if (import.meta.main) {
     {
       cleanup: () => {
         cleanup();
+        provider.cleanup();
         p5.dispose();
       },
     },

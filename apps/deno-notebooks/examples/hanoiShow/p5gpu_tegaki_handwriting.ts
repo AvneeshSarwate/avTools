@@ -21,7 +21,11 @@ import {
   type PaneContainer,
 } from "../../window/mod.ts";
 import { NativeTextEngine } from "../../tools/p5gpu_text/ffi.ts";
-import { launch } from "@avtools/core-timing";
+import { type DateTimeContext, launch } from "@avtools/core-timing";
+import {
+  type BodyContourProvider,
+  createBodyContourProvider,
+} from "./body_contour_provider.ts";
 
 // ── Tegaki data types (subset of packages/renderer/src/types.ts) ─────
 
@@ -49,14 +53,53 @@ type PreparedTegakiGlyphData = Record<string, PreparedTegakiGlyph>;
 
 // ── Per-glyph state ─────────────────────────────────────────────────
 
+/**
+ * A single trigger mode's animation state for one glyph. Each mode has its
+ * own buffer so switching modes doesn't disturb in-progress animations
+ * driven by the other mode.
+ */
+interface PhaseTrack {
+  phase: number;
+  epoch: number; // bumped on each trigger so stale ramps can self-cancel
+  inProgress: boolean;
+}
+
+interface Bbox {
+  xMin: number;
+  yMin: number;
+  xMax: number;
+  yMax: number;
+}
+
 interface GlyphState {
   ch: string; // source char this glyph corresponds to
   glyph: PreparedTegakiGlyph | null; // tegaki stroke data for that char (null = skipped)
   baselineX: number;
   baselineY: number;
-  phase: number;
-  epoch: number;
+  /** Glyph stroke bbox in normalized [0,1] coords (tegaki's layout canvas). Null for non-drawable. */
+  bbox: Bbox | null;
+  random: PhaseTrack;
+  intersection: PhaseTrack;
+  /** True if any body contour segment overlapped this glyph's bbox last frame. */
+  intersecting: boolean;
+  /** performance.now() timestamp before which intersection triggers are ignored. */
+  cooldownUntil: number;
 }
+
+/**
+ * Uniform grid over normalized [0,1]² storing drawable glyph indices per cell.
+ * Glyph bboxes are static after layout, so the grid is built once in setup()
+ * and queried per frame against dynamic contour segments.
+ */
+interface SpatialGrid {
+  cols: number;
+  rows: number;
+  /** Flat array of length cols*rows. Each cell holds indices into state.glyphStates. */
+  cells: number[][];
+}
+
+const GRID_COLS = 32;
+const GRID_ROWS = 32;
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -85,7 +128,8 @@ const LOREM = "สวัสดีชาวโลก การเขียนอ�
 
 export const state = {
   params: {
-    triggerRate: 18, // trigger attempts per second
+    triggerMode: "random" as "random" | "intersection",
+    triggerRate: 18, // trigger attempts per second (random mode)
     minDuration: 0.35,
     maxDuration: 1.40,
     widthScale: 1.0,
@@ -94,12 +138,22 @@ export const state = {
     idlePhase: 1.0, // 0 = invisible when not animating, 1 = fully drawn
     paused: false,
     glyphScale: 1.0, // 0–1, multiplies font scale; 0 = skip drawing
+    showContourDebug: true, // draw body contour outlines as sanity check
+    contourDebugWeight: 4,
+    /** Seconds after a glyph finishes animating before intersection can re-trigger it. */
+    intersectionCooldownSec: 0.3,
   },
   glyphStates: [] as GlyphState[],
   drawableIndices: [] as number[],
   runtime: {
     rootAnim: null as ReturnType<typeof launch> | null,
     engine: null as NativeTextEngine | null,
+    /** Long-lived core-timing context used to spawn ramp branches from any call site. */
+    triggerCtx: null as DateTimeContext | null,
+    /** Uniform spatial grid over normalized [0,1] for fast bbox queries by contour segments. */
+    spatialGrid: null as SpatialGrid | null,
+    /** Scratch set for current-frame intersection tracking (avoids per-frame allocation). */
+    intersectingScratch: new Set<number>(),
   },
   meta: {
     fontMeta: FONT_META,
@@ -111,6 +165,12 @@ export const state = {
     maxWidth: MAX_WIDTH,
     lorem: LOREM,
   },
+  /**
+   * Optional shared body contour source (set by combined.ts). Null in
+   * standalone mode. Consumers can read `getContours()` each frame to get
+   * the current smoothed outlines in normalized [0,1] coords.
+   */
+  contourProvider: null as BodyContourProvider | null,
 };
 
 // ── Helper functions ────────────────────────────────────────────────
@@ -233,15 +293,233 @@ function drawStrokeUpTo(
   p5.endShape();
 }
 
+// ── Spatial index + intersection detection ──────────────────────────
+//
+// The glyph bbox is computed once after layout using the LAYOUT_SCALE (font
+// em scale). It does NOT factor in `glyphScale` — we use the "canonical"
+// full-size bbox so triggers fire based on where the letter *would* be at
+// full scale, independent of the fade-out proxy.
+//
+// TODO: Add interior (point-in-polygon) semantics as an alternative mode.
+// Current implementation tests bbox-vs-contour-polyline — rising edge fires
+// when the outline itself crosses the bbox. Interior mode would test
+// whether the bbox (or its center) is inside any contour's filled polygon;
+// letters stay "intersecting" while enveloped by the silhouette. Could
+// share this spatial grid by rasterizing filled polygons to a grid once
+// per frame and doing a single cell lookup per glyph.
+
+const LAYOUT_SCALE = FONT_SIZE / FONT_META.unitsPerEm;
+
+function computeGlyphBboxes(): void {
+  for (const gs of state.glyphStates) {
+    const glyph = gs.glyph;
+    if (!glyph) continue;
+
+    let xMin = Infinity;
+    let yMin = Infinity;
+    let xMax = -Infinity;
+    let yMax = -Infinity;
+    for (const stroke of glyph.s) {
+      for (const pt of stroke.p) {
+        const px = gs.baselineX + pt[0]! * LAYOUT_SCALE;
+        const py = gs.baselineY + pt[1]! * LAYOUT_SCALE;
+        if (px < xMin) xMin = px;
+        if (py < yMin) yMin = py;
+        if (px > xMax) xMax = px;
+        if (py > yMax) yMax = py;
+      }
+    }
+    if (xMin === Infinity) continue;
+
+    // Normalize to [0,1] using tegaki's layout canvas dimensions. Contour
+    // points arrive in normalized coords relative to the render canvas, so
+    // equal layout/render dimensions are assumed. If the combined sketch
+    // renders tegaki into a differently-sized canvas, intersection positions
+    // drift proportionally — keep tegaki WIDTH/HEIGHT matched to the host.
+    gs.bbox = {
+      xMin: xMin / WIDTH,
+      yMin: yMin / HEIGHT,
+      xMax: xMax / WIDTH,
+      yMax: yMax / HEIGHT,
+    };
+  }
+}
+
+function buildSpatialGrid(): SpatialGrid {
+  const cells: number[][] = Array.from({ length: GRID_COLS * GRID_ROWS }, () => []);
+  for (let i = 0; i < state.glyphStates.length; i += 1) {
+    const bbox = state.glyphStates[i]!.bbox;
+    if (!bbox) continue;
+    const cxMin = Math.max(0, Math.min(GRID_COLS - 1, Math.floor(bbox.xMin * GRID_COLS)));
+    const cyMin = Math.max(0, Math.min(GRID_ROWS - 1, Math.floor(bbox.yMin * GRID_ROWS)));
+    const cxMax = Math.max(0, Math.min(GRID_COLS - 1, Math.floor(bbox.xMax * GRID_COLS)));
+    const cyMax = Math.max(0, Math.min(GRID_ROWS - 1, Math.floor(bbox.yMax * GRID_ROWS)));
+    for (let cy = cyMin; cy <= cyMax; cy += 1) {
+      for (let cx = cxMin; cx <= cxMax; cx += 1) {
+        cells[cx + cy * GRID_COLS]!.push(i);
+      }
+    }
+  }
+  return { cols: GRID_COLS, rows: GRID_ROWS, cells };
+}
+
+function segmentIntersectsBbox(
+  ax: number, ay: number, bx: number, by: number,
+  xMin: number, yMin: number, xMax: number, yMax: number,
+): boolean {
+  // Trivial reject: segment's own bbox doesn't overlap glyph bbox
+  if (Math.max(ax, bx) < xMin) return false;
+  if (Math.min(ax, bx) > xMax) return false;
+  if (Math.max(ay, by) < yMin) return false;
+  if (Math.min(ay, by) > yMax) return false;
+  // Trivial accept: either endpoint inside bbox
+  if (ax >= xMin && ax <= xMax && ay >= yMin && ay <= yMax) return true;
+  if (bx >= xMin && bx <= xMax && by >= yMin && by <= yMax) return true;
+  // Test segment against each of the 4 bbox edges (Cohen-Sutherland style).
+  if (segSeg(ax, ay, bx, by, xMin, yMin, xMax, yMin)) return true;
+  if (segSeg(ax, ay, bx, by, xMax, yMin, xMax, yMax)) return true;
+  if (segSeg(ax, ay, bx, by, xMax, yMax, xMin, yMax)) return true;
+  if (segSeg(ax, ay, bx, by, xMin, yMax, xMin, yMin)) return true;
+  return false;
+}
+
+function segSeg(
+  ax: number, ay: number, bx: number, by: number,
+  cx: number, cy: number, dx: number, dy: number,
+): boolean {
+  const d1 = cross(dx - cx, dy - cy, ax - cx, ay - cy);
+  const d2 = cross(dx - cx, dy - cy, bx - cx, by - cy);
+  const d3 = cross(bx - ax, by - ay, cx - ax, cy - ay);
+  const d4 = cross(bx - ax, by - ay, dx - ax, dy - ay);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+    ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+function cross(ux: number, uy: number, vx: number, vy: number): number {
+  return ux * vy - uy * vx;
+}
+
+function scheduleRamp(
+  gs: GlyphState,
+  trackName: "random" | "intersection",
+  duration: number,
+): void {
+  const triggerCtx = state.runtime.triggerCtx;
+  if (!triggerCtx) return;
+  const track = trackName === "random" ? gs.random : gs.intersection;
+
+  track.epoch += 1;
+  const myEpoch = track.epoch;
+  track.inProgress = true;
+
+  triggerCtx.branch(async (rampCtx) => {
+    track.phase = 0;
+    while (!rampCtx.isCanceled && rampCtx.progTime < duration) {
+      if (track.epoch !== myEpoch) return; // preempted by a newer ramp
+      track.phase = Math.min(1, rampCtx.progTime / duration);
+      await rampCtx.waitSec(1 / 60);
+    }
+    if (track.epoch === myEpoch) {
+      track.phase = state.params.idlePhase;
+      track.inProgress = false;
+      gs.cooldownUntil = performance.now() +
+        state.params.intersectionCooldownSec * 1000;
+    }
+  });
+}
+
+/**
+ * Detect rising edges: glyph bboxes that transitioned from not-intersecting
+ * to intersecting any body contour segment this frame. Spawn ramps on the
+ * intersection track for each rising edge, subject to inProgress / cooldown.
+ */
+function processIntersectionTriggers(): void {
+  if (state.params.paused) return;
+  const provider = state.contourProvider;
+  const grid = state.runtime.spatialGrid;
+  const triggerCtx = state.runtime.triggerCtx;
+  if (!provider || !grid || !triggerCtx) return;
+
+  const contours = provider.getContours();
+
+  const current = state.runtime.intersectingScratch;
+  current.clear();
+
+  if (contours.length > 0) {
+    for (const contour of contours) {
+      const pts = contour.points;
+      if (pts.length < 2) continue;
+      // Walk segments (closed polyline — wrap last→first).
+      for (let i = 0; i < pts.length; i += 1) {
+        const a = pts[i]!;
+        const b = pts[(i + 1) % pts.length]!;
+        const ax = a.x, ay = a.y, bx = b.x, by = b.y;
+
+        // Cells overlapped by segment's axis-aligned bbox.
+        const lo_x = Math.min(ax, bx);
+        const hi_x = Math.max(ax, bx);
+        const lo_y = Math.min(ay, by);
+        const hi_y = Math.max(ay, by);
+        const cxMin = Math.max(0, Math.min(grid.cols - 1, Math.floor(lo_x * grid.cols)));
+        const cxMax = Math.max(0, Math.min(grid.cols - 1, Math.floor(hi_x * grid.cols)));
+        const cyMin = Math.max(0, Math.min(grid.rows - 1, Math.floor(lo_y * grid.rows)));
+        const cyMax = Math.max(0, Math.min(grid.rows - 1, Math.floor(hi_y * grid.rows)));
+
+        for (let cy = cyMin; cy <= cyMax; cy += 1) {
+          for (let cx = cxMin; cx <= cxMax; cx += 1) {
+            const cell = grid.cells[cx + cy * grid.cols]!;
+            for (let k = 0; k < cell.length; k += 1) {
+              const gi = cell[k]!;
+              if (current.has(gi)) continue;
+              const gbbox = state.glyphStates[gi]!.bbox!;
+              if (
+                segmentIntersectsBbox(
+                  ax, ay, bx, by,
+                  gbbox.xMin, gbbox.yMin, gbbox.xMax, gbbox.yMax,
+                )
+              ) {
+                current.add(gi);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Rising-edge detection + trigger dispatch.
+  const now = performance.now();
+  const minD = Math.max(0.05, state.params.minDuration);
+  const maxD = Math.max(minD, state.params.maxDuration);
+
+  for (let i = 0; i < state.glyphStates.length; i += 1) {
+    const gs = state.glyphStates[i]!;
+    const wasIntersecting = gs.intersecting;
+    const nowIntersecting = current.has(i);
+
+    if (nowIntersecting && !wasIntersecting) {
+      if (!gs.intersection.inProgress && now >= gs.cooldownUntil) {
+        const duration = minD +
+          triggerCtx.random() * (maxD - minD);
+        scheduleRamp(gs, "intersection", duration);
+      }
+    }
+    gs.intersecting = nowIntersecting;
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────
+
 function drawGlyphAtPhase(
   p5: P5GPU,
   gs: GlyphState,
+  phase: number,
   scale: number,
   widthScale: number,
 ) {
   const glyph = gs.glyph;
-  if (!glyph || gs.phase <= 0) return;
-  const localTime = gs.phase * glyph.t;
+  if (!glyph || phase <= 0) return;
+  const localTime = phase * glyph.t;
   for (const stroke of glyph.s) {
     if (localTime < stroke.d) continue;
     const elapsed = localTime - stroke.d;
@@ -261,11 +539,27 @@ function drawGlyphAtPhase(
 // ── Tweakpane setup ─────────────────────────────────────────────────
 
 export function setupPane(pane: PaneContainer) {
+  pane.addBinding(state.params, "glyphScale", {
+    min: 0,
+    max: 1,
+    step: 0.01,
+    label: "Glyph scale",
+  });
+  pane.addBinding(state.params, "triggerMode", {
+    options: { "Random": "random", "Body intersection": "intersection" },
+    label: "Trigger mode",
+  });
   pane.addBinding(state.params, "triggerRate", {
     min: 0.5,
     max: 80,
     step: 0.5,
-    label: "Trigger Hz",
+    label: "Trigger Hz (random)",
+  });
+  pane.addBinding(state.params, "intersectionCooldownSec", {
+    min: 0,
+    max: 5,
+    step: 0.05,
+    label: "Cooldown (s)",
   });
   pane.addBinding(state.params, "minDuration", {
     min: 0.05,
@@ -285,12 +579,6 @@ export function setupPane(pane: PaneContainer) {
     step: 0.05,
     label: "Width x",
   });
-  pane.addBinding(state.params, "glyphScale", {
-    min: 0,
-    max: 1,
-    step: 0.01,
-    label: "Glyph scale",
-  });
   pane.addBinding(state.params, "idlePhase", {
     min: 0,
     max: 1,
@@ -300,16 +588,33 @@ export function setupPane(pane: PaneContainer) {
   pane.addBinding(state.params, "paused", { label: "Pause triggers" });
   pane.addBinding(state.params, "inkColor", { label: "Ink" });
   pane.addBinding(state.params, "bgColor", { label: "BG" });
+
+  const contour = pane.addFolder({ title: "Body Contour" });
+  contour.addBinding(state.params, "showContourDebug", { label: "Show outline" });
+  contour.addBinding(state.params, "contourDebugWeight", {
+    min: 1,
+    max: 12,
+    step: 0.5,
+    label: "Outline weight",
+  });
   pane.addButton({ title: "Reset all → idle" }).on("click", () => {
     for (const s of state.glyphStates) {
-      s.phase = state.params.idlePhase;
-      s.epoch += 1;
+      s.random.phase = state.params.idlePhase;
+      s.random.epoch += 1;
+      s.intersection.phase = state.params.idlePhase;
+      s.intersection.epoch += 1;
+      s.intersecting = false;
+      s.cooldownUntil = 0;
     }
   });
   pane.addButton({ title: "Reset all → 0" }).on("click", () => {
     for (const s of state.glyphStates) {
-      s.phase = 0;
-      s.epoch += 1;
+      s.random.phase = 0;
+      s.random.epoch += 1;
+      s.intersection.phase = 0;
+      s.intersection.epoch += 1;
+      s.intersecting = false;
+      s.cooldownUntil = 0;
     }
   });
 }
@@ -383,8 +688,11 @@ export async function setup() {
           glyph: preparedGlyphData[ch] ?? null,
           baselineX: MARGIN_X + g.x,
           baselineY: MARGIN_Y + g.y,
-          phase: state.params.idlePhase,
-          epoch: 0,
+          bbox: null,
+          random: { phase: state.params.idlePhase, epoch: 0, inProgress: false },
+          intersection: { phase: state.params.idlePhase, epoch: 0, inProgress: false },
+          intersecting: false,
+          cooldownUntil: 0,
         });
       }
       i = j;
@@ -401,13 +709,23 @@ export async function setup() {
     `Glyphs: ${glyphStates.length} (chars: ${chars.length}, drawable: ${drawableIndices.length})`,
   );
 
-  // Core-timing animation system
+  // Compute per-glyph normalized bboxes and build the spatial grid.
+  computeGlyphBboxes();
+  state.runtime.spatialGrid = buildSpatialGrid();
+
+  // Core-timing animation system. The random-mode trigger loop gates on
+  // triggerMode === "random"; intersection-mode ramps are spawned from draw()
+  // via scheduleRamp using the stored triggerCtx. Ramps already in flight
+  // continue even after a mode switch — they're keyed to their own track.
   const rootAnim = launch(async (ctx) => {
     ctx.branch(async (triggerCtx) => {
+      state.runtime.triggerCtx = triggerCtx;
       while (!triggerCtx.isCanceled) {
         const rate = Math.max(0.1, state.params.triggerRate);
         await triggerCtx.waitSec(1 / rate);
-        if (state.params.paused || state.drawableIndices.length === 0) continue;
+        if (state.params.paused) continue;
+        if (state.params.triggerMode !== "random") continue;
+        if (state.drawableIndices.length === 0) continue;
 
         const pick = state.drawableIndices[
           Math.floor(triggerCtx.random() * state.drawableIndices.length)
@@ -417,18 +735,7 @@ export async function setup() {
         const maxD = Math.max(minD, state.params.maxDuration);
         const duration = minD + triggerCtx.random() * (maxD - minD);
 
-        gs.epoch += 1;
-        const myEpoch = gs.epoch;
-
-        triggerCtx.branch(async (rampCtx) => {
-          gs.phase = 0;
-          while (!rampCtx.isCanceled && rampCtx.progTime < duration) {
-            if (gs.epoch !== myEpoch) return; // preempted by a newer ramp
-            gs.phase = Math.min(1, rampCtx.progTime / duration);
-            await rampCtx.waitSec(1 / 60);
-          }
-          if (gs.epoch === myEpoch) gs.phase = state.params.idlePhase;
-        });
+        scheduleRamp(gs, "random", duration);
       }
     });
 
@@ -445,10 +752,21 @@ export async function setup() {
 // ── Draw (no beginFrame/endFrame, no HUD) ───────────────────────────
 
 export function draw(p5: P5GPU) {
+  const [ir, ig, ib] = hexToRgb(state.params.inkColor);
+
+  if (state.params.showContourDebug) {
+    drawContourDebug(p5, ir, ig, ib);
+  }
+
   if (state.params.glyphScale <= 0) return;
 
-  const [ir, ig, ib] = hexToRgb(state.params.inkColor);
+  // Intersection-mode triggers fire here so they're gated by scene visibility.
+  if (state.params.triggerMode === "intersection") {
+    processIntersectionTriggers();
+  }
+
   const scale = (FONT_SIZE / FONT_META.unitsPerEm) * state.params.glyphScale;
+  const activeTrackName = state.params.triggerMode;
 
   p5.noFill();
   p5.strokeCap(p5.ROUND);
@@ -456,7 +774,35 @@ export function draw(p5: P5GPU) {
   p5.stroke(ir, ig, ib, 255);
 
   for (const gs of state.glyphStates) {
-    drawGlyphAtPhase(p5, gs, scale, state.params.widthScale);
+    const phase = activeTrackName === "intersection"
+      ? gs.intersection.phase
+      : gs.random.phase;
+    drawGlyphAtPhase(p5, gs, phase, scale, state.params.widthScale);
+  }
+}
+
+function drawContourDebug(p5: P5GPU, r: number, g: number, b: number): void {
+  const provider = state.contourProvider;
+  if (!provider) return;
+  const contours = provider.getContours();
+  if (contours.length === 0) return;
+
+  const w = p5.width;
+  const h = p5.height;
+
+  p5.noFill();
+  p5.strokeCap(p5.ROUND);
+  p5.strokeJoin(p5.ROUND);
+  p5.strokeWeight(state.params.contourDebugWeight);
+
+  for (const contour of contours) {
+    const alpha = Math.round(contour.opacity * 255);
+    p5.stroke(r, g, b, alpha);
+    p5.beginShape();
+    for (const pt of contour.points) {
+      p5.vertex(pt.x * w, pt.y * h);
+    }
+    p5.endShape();
   }
 }
 
@@ -477,6 +823,12 @@ export function cleanup() {
 
 if (import.meta.main) {
   const device = await requestWebGpuDevice();
+
+  // Standalone: create our own contour provider and wire it up.
+  const provider = createBodyContourProvider();
+  state.contourProvider = provider;
+  provider.setup();
+
   const renderWindow = await createWindowRenderManager({
     device,
     width: WIDTH,
@@ -485,8 +837,11 @@ if (import.meta.main) {
     pane: {
       title: "Tegaki",
       panelWidth: 380,
-      panelHeight: 380,
-      setup: setupPane,
+      panelHeight: 420,
+      setup: (pane) => {
+        setupPane(pane);
+        provider.setupPane(pane.addFolder({ title: "Contour Processing" }));
+      },
     },
   });
   const p5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
@@ -500,6 +855,8 @@ if (import.meta.main) {
     const now = performance.now();
     fpsSmooth += (1000 / Math.max(1, now - lastFrameTime) - fpsSmooth) * 0.1;
     lastFrameTime = now;
+
+    provider.tick();
 
     p5.beginFrame();
     const [br, bg, bb] = hexToRgb(state.params.bgColor);
@@ -527,6 +884,7 @@ if (import.meta.main) {
   }, {
     cleanup: () => {
       cleanup();
+      provider.cleanup();
       p5.dispose();
     },
   });

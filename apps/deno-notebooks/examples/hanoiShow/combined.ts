@@ -26,6 +26,7 @@ import {
   draw as tegakiDraw,
   setup as tegakiSetup,
   setupPane as tegakiSetupPane,
+  state as tegakiState,
 } from "./p5gpu_tegaki_handwriting.ts";
 
 import {
@@ -33,7 +34,10 @@ import {
   draw as bodyDraw,
   setup as bodySetup,
   setupPane as bodySetupPane,
+  state as bodyState,
 } from "./p5gpu_body_text.ts";
+
+import { createBodyContourProvider } from "./body_contour_provider.ts";
 
 const WIDTH = 1280;
 const HEIGHT = 720;
@@ -62,10 +66,15 @@ const timing = {
   intervalMaxMs: 0,
 };
 
+const bodyContourProvider = createBodyContourProvider();
+tegakiState.contourProvider = bodyContourProvider;
+bodyState.contourProvider = bodyContourProvider;
+
 function setupPane(pane: WindowTweakpane) {
   const tab = pane.addTab({
     pages: [
       { title: "Global" },
+      { title: "Body Contour" },
       { title: "OSC Trail" },
       { title: "Tegaki" },
       { title: "Body Text" },
@@ -87,9 +96,10 @@ function setupPane(pane: WindowTweakpane) {
   const debug = global.addFolder({ title: "Debug" });
   debug.addBinding(globalParams, "showTiming", { label: "Frame Timing" });
 
-  oscSetupPane(tab.pages[1]);
-  tegakiSetupPane(tab.pages[2]);
-  bodySetupPane(tab.pages[3]);
+  bodyContourProvider.setupPane(tab.pages[1]);
+  oscSetupPane(tab.pages[2]);
+  tegakiSetupPane(tab.pages[3]);
+  bodySetupPane(tab.pages[4]);
 }
 
 function updateTiming(frameStart: number, cpuMs: number): void {
@@ -153,6 +163,9 @@ function drawTimingOverlay(p5: P5GPU): void {
 const device = await requestWebGpuDevice();
 const p5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 
+// Initialize provider first so scenes see a ready-to-use contourProvider on state
+bodyContourProvider.setup();
+
 // Initialize all scenes
 await Promise.all([
   oscSetup(device),
@@ -176,6 +189,9 @@ const renderWindow = await createWindowRenderManager({
 await renderWindow.run(() => {
   const frameStart = performance.now();
   const time = performance.now() * 0.001;
+
+  // Advance shared contour data once before any consumer reads.
+  bodyContourProvider.tick();
 
   p5.beginFrame();
   p5.background(globalParams.bgR, globalParams.bgG, globalParams.bgB);
@@ -201,6 +217,7 @@ await renderWindow.run(() => {
     oscCleanup();
     tegakiCleanup();
     bodyCleanup();
+    bodyContourProvider.cleanup();
     p5.dispose();
   },
 });
