@@ -27,8 +27,8 @@ import { launch } from "@avtools/core-timing";
 
 interface TegakiStroke {
   p: number[][]; // [x, y, width] tuples in font units
-  d: number;     // delay before stroke starts (seconds)
-  a: number;     // stroke animation duration (seconds)
+  d: number; // delay before stroke starts (seconds)
+  a: number; // stroke animation duration (seconds)
 }
 interface TegakiGlyph {
   w: number; // advance width (font units)
@@ -37,11 +37,21 @@ interface TegakiGlyph {
 }
 type TegakiGlyphData = Record<string, TegakiGlyph>;
 
+interface PreparedTegakiStroke extends TegakiStroke {
+  cumLen: Float32Array;
+  totalLen: number;
+  avgWidth: number;
+}
+interface PreparedTegakiGlyph extends Omit<TegakiGlyph, "s"> {
+  s: PreparedTegakiStroke[];
+}
+type PreparedTegakiGlyphData = Record<string, PreparedTegakiGlyph>;
+
 // ── Per-glyph state ─────────────────────────────────────────────────
 
 interface GlyphState {
-  ch: string;                   // source char this glyph corresponds to
-  glyph: TegakiGlyph | null;    // tegaki stroke data for that char (null = skipped)
+  ch: string; // source char this glyph corresponds to
+  glyph: PreparedTegakiGlyph | null; // tegaki stroke data for that char (null = skipped)
   baselineX: number;
   baselineY: number;
   phase: number;
@@ -57,7 +67,7 @@ const FONT_FAMILY = "Charmonman";
 const WIDTH = 1280;
 const HEIGHT = 800;
 const FONT_SIZE = 50;
-const LINE_HEIGHT = 130;   // Charmonman has tall asc+desc (em ≈ 1.9x fontSize)
+const LINE_HEIGHT = 130; // Charmonman has tall asc+desc (em ≈ 1.9x fontSize)
 const MARGIN_X = 80;
 const MARGIN_Y = 100;
 const MAX_WIDTH = WIDTH - MARGIN_X * 2;
@@ -65,8 +75,7 @@ const MAX_WIDTH = WIDTH - MARGIN_X * 2;
 // Thai demo text — multiple phrases separated by spaces so the native
 // layout engine has break opportunities (Thai has no inter-word spaces
 // in normal prose, so we'd otherwise get one long unbreakable line).
-const LOREM =
-  "สวัสดีชาวโลก การเขียนอักษรไทย เป็นศิลปะที่งดงาม " +
+const LOREM = "สวัสดีชาวโลก การเขียนอักษรไทย เป็นศิลปะที่งดงาม " +
   "ฝึกฝนให้เชี่ยวชาญ จะพบความภูมิใจ " +
   "ในมรดกทางวัฒนธรรมของชาติ ทุกเส้นขีดบนกระดาษ " +
   "คือบทกวีที่ไม่มีคำพูด อักษรนี้มีชีวิตและจิตใจ " +
@@ -76,15 +85,15 @@ const LOREM =
 
 export const state = {
   params: {
-    triggerRate: 18,     // trigger attempts per second
+    triggerRate: 18, // trigger attempts per second
     minDuration: 0.35,
     maxDuration: 1.40,
     widthScale: 1.0,
     bgColor: "#0d1017",
     inkColor: "#ffe9a8",
-    idlePhase: 1.0,      // 0 = invisible when not animating, 1 = fully drawn
+    idlePhase: 1.0, // 0 = invisible when not animating, 1 = fully drawn
     paused: false,
-    glyphScale: 1.0,     // 0–1, multiplies font scale; 0 = skip drawing
+    glyphScale: 1.0, // 0–1, multiplies font scale; 0 = skip drawing
   },
   glyphStates: [] as GlyphState[],
   drawableIndices: [] as number[],
@@ -134,6 +143,41 @@ function buildByteToCharIdx(text: string): Int32Array {
   return arr;
 }
 
+function prepareGlyphData(glyphData: TegakiGlyphData): PreparedTegakiGlyphData {
+  const prepared: PreparedTegakiGlyphData = {};
+  for (const [ch, glyph] of Object.entries(glyphData)) {
+    prepared[ch] = {
+      ...glyph,
+      s: glyph.s.map(prepareStroke),
+    };
+  }
+  return prepared;
+}
+
+function prepareStroke(stroke: TegakiStroke): PreparedTegakiStroke {
+  const pts = stroke.p;
+  const cumLen = new Float32Array(pts.length);
+  let totalLen = 0;
+  let widthSum = 0;
+
+  for (let i = 0; i < pts.length; i++) {
+    widthSum += pts[i]![2]!;
+    if (i > 0) {
+      const dx = pts[i]![0]! - pts[i - 1]![0]!;
+      const dy = pts[i]![1]! - pts[i - 1]![1]!;
+      totalLen += Math.sqrt(dx * dx + dy * dy);
+    }
+    cumLen[i] = totalLen;
+  }
+
+  return {
+    ...stroke,
+    cumLen,
+    totalLen,
+    avgWidth: pts.length > 0 ? widthSum / pts.length : 0,
+  };
+}
+
 // ── Tegaki stroke rendering ──────────────────────────────────────────
 //
 // Baseline-relative: px = baselineX + x * scale, py = baselineY + y * scale.
@@ -142,7 +186,7 @@ function buildByteToCharIdx(text: string): Int32Array {
 
 function drawStrokeUpTo(
   p5: P5GPU,
-  stroke: TegakiStroke,
+  stroke: PreparedTegakiStroke,
   baselineX: number,
   baselineY: number,
   scale: number,
@@ -152,55 +196,41 @@ function drawStrokeUpTo(
   const pts = stroke.p;
   if (pts.length === 0 || progress <= 0) return;
 
-  const px = (x: number) => baselineX + x * scale;
-  const py = (y: number) => baselineY + y * scale;
-
   if (pts.length === 1) {
     const p0 = pts[0]!;
     p5.strokeWeight(Math.max(p0[2]!, 0.5) * scale * widthScale);
-    p5.point(px(p0[0]!), py(p0[1]!));
+    p5.point(baselineX + p0[0]! * scale, baselineY + p0[1]! * scale);
     return;
   }
 
-  let totalLen = 0;
-  let widthSum = 0;
-  for (let i = 0; i < pts.length; i++) {
-    widthSum += pts[i]![2]!;
-    if (i > 0) {
-      const dx = pts[i]![0]! - pts[i - 1]![0]!;
-      const dy = pts[i]![1]! - pts[i - 1]![1]!;
-      totalLen += Math.sqrt(dx * dx + dy * dy);
-    }
-  }
-  p5.strokeWeight(Math.max(widthSum / pts.length, 0.5) * scale * widthScale);
-
-  const drawLen = totalLen * progress;
+  p5.strokeWeight(Math.max(stroke.avgWidth, 0.5) * scale * widthScale);
+  const drawLen = stroke.totalLen * Math.min(progress, 1);
   if (drawLen <= 0) return;
 
-  let accum = 0;
-  let prevX = px(pts[0]![0]!);
-  let prevY = py(pts[0]![1]!);
+  p5.beginShape();
+  p5.vertex(baselineX + pts[0]![0]! * scale, baselineY + pts[0]![1]! * scale);
+
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1]!;
     const b = pts[i]!;
-    const dx = b[0]! - a[0]!;
-    const dy = b[1]! - a[1]!;
-    const segLen = Math.sqrt(dx * dx + dy * dy);
-    if (accum + segLen <= drawLen) {
-      const bx = px(b[0]!);
-      const by = py(b[1]!);
-      p5.line(prevX, prevY, bx, by);
-      prevX = bx; prevY = by;
-      accum += segLen;
-    } else {
-      const remain = drawLen - accum;
-      if (remain > 0 && segLen > 0) {
-        const t = remain / segLen;
-        p5.line(prevX, prevY, px(a[0]! + dx * t), py(a[1]! + dy * t));
-      }
-      return;
+    const segStart = stroke.cumLen[i - 1]!;
+    const segEnd = stroke.cumLen[i]!;
+
+    if (segEnd <= drawLen) {
+      p5.vertex(baselineX + b[0]! * scale, baselineY + b[1]! * scale);
+      continue;
     }
+
+    const segLen = segEnd - segStart;
+    if (segLen > 0) {
+      const t = (drawLen - segStart) / segLen;
+      const x = a[0]! + (b[0]! - a[0]!) * t;
+      const y = a[1]! + (b[1]! - a[1]!) * t;
+      p5.vertex(baselineX + x * scale, baselineY + y * scale);
+    }
+    break;
   }
+  p5.endShape();
 }
 
 function drawGlyphAtPhase(
@@ -217,8 +247,13 @@ function drawGlyphAtPhase(
     const elapsed = localTime - stroke.d;
     const lin = Math.min(elapsed / Math.max(stroke.a, 1e-6), 1);
     drawStrokeUpTo(
-      p5, stroke, gs.baselineX, gs.baselineY, scale,
-      easeOutQuad(lin), widthScale,
+      p5,
+      stroke,
+      gs.baselineX,
+      gs.baselineY,
+      scale,
+      easeOutQuad(lin),
+      widthScale,
     );
   }
 }
@@ -227,31 +262,55 @@ function drawGlyphAtPhase(
 
 export function setupPane(pane: WindowTweakpane) {
   pane.addBinding(state.params, "triggerRate", {
-    min: 0.5, max: 80, step: 0.5, label: "Trigger Hz",
+    min: 0.5,
+    max: 80,
+    step: 0.5,
+    label: "Trigger Hz",
   });
   pane.addBinding(state.params, "minDuration", {
-    min: 0.05, max: 3, step: 0.05, label: "Min dur (s)",
+    min: 0.05,
+    max: 3,
+    step: 0.05,
+    label: "Min dur (s)",
   });
   pane.addBinding(state.params, "maxDuration", {
-    min: 0.05, max: 5, step: 0.05, label: "Max dur (s)",
+    min: 0.05,
+    max: 5,
+    step: 0.05,
+    label: "Max dur (s)",
   });
   pane.addBinding(state.params, "widthScale", {
-    min: 0.2, max: 2.5, step: 0.05, label: "Width x",
+    min: 0.2,
+    max: 2.5,
+    step: 0.05,
+    label: "Width x",
   });
   pane.addBinding(state.params, "glyphScale", {
-    min: 0, max: 1, step: 0.01, label: "Glyph scale",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    label: "Glyph scale",
   });
   pane.addBinding(state.params, "idlePhase", {
-    min: 0, max: 1, step: 0.01, label: "Idle phase",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    label: "Idle phase",
   });
   pane.addBinding(state.params, "paused", { label: "Pause triggers" });
   pane.addBinding(state.params, "inkColor", { label: "Ink" });
   pane.addBinding(state.params, "bgColor", { label: "BG" });
   pane.addButton({ title: "Reset all → idle" }).on("click", () => {
-    for (const s of state.glyphStates) { s.phase = state.params.idlePhase; s.epoch += 1; }
+    for (const s of state.glyphStates) {
+      s.phase = state.params.idlePhase;
+      s.epoch += 1;
+    }
   });
   pane.addButton({ title: "Reset all → 0" }).on("click", () => {
-    for (const s of state.glyphStates) { s.phase = 0; s.epoch += 1; }
+    for (const s of state.glyphStates) {
+      s.phase = 0;
+      s.epoch += 1;
+    }
   });
 }
 
@@ -266,8 +325,11 @@ export async function setup() {
   const glyphData: TegakiGlyphData = JSON.parse(
     await Deno.readTextFile(new URL("glyphData.json", TEGAKI_ROOT)),
   );
+  const preparedGlyphData = prepareGlyphData(glyphData);
   const fontBytes = await Deno.readFile(new URL("charmonman.ttf", TEGAKI_ROOT));
-  console.log(`Loaded ${Object.keys(glyphData).length} tegaki glyphs (${FONT_FAMILY})`);
+  console.log(
+    `Loaded ${Object.keys(glyphData).length} tegaki glyphs (${FONT_FAMILY})`,
+  );
 
   // Native layout: shape + wrap + per-line positions
   const engine = new NativeTextEngine();
@@ -283,8 +345,8 @@ export async function setup() {
     lineHeight: LINE_HEIGHT,
     width: MAX_WIDTH,
     height: null,
-    alignH: 0,         // left
-    wrapMode: 0,       // word wrap
+    alignH: 0, // left
+    wrapMode: 0, // word wrap
     weight: 400,
     style: 0,
     axisQuantization: 0,
@@ -296,7 +358,7 @@ export async function setup() {
   });
   console.log(
     `Layout: ${layout.glyphs.length} glyphs, ${layout.lineCount} lines, ` +
-    `firstBaseline=${layout.firstBaseline.toFixed(1)}px`,
+      `firstBaseline=${layout.firstBaseline.toFixed(1)}px`,
   );
 
   // ECS-style per-glyph store (cluster-mapped)
@@ -309,14 +371,16 @@ export async function setup() {
     while (i < layout.glyphs.length) {
       const cluster = layout.glyphs[i]!.cluster;
       let j = i;
-      while (j < layout.glyphs.length && layout.glyphs[j]!.cluster === cluster) j++;
+      while (
+        j < layout.glyphs.length && layout.glyphs[j]!.cluster === cluster
+      ) j++;
       const startCharIdx = byteToChar[cluster] ?? 0;
       for (let k = 0; k < j - i; k++) {
         const g = layout.glyphs[i + k]!;
         const ch = chars[startCharIdx + k] ?? "";
         glyphStates.push({
           ch,
-          glyph: glyphData[ch] ?? null,
+          glyph: preparedGlyphData[ch] ?? null,
           baselineX: MARGIN_X + g.x,
           baselineY: MARGIN_Y + g.y,
           phase: state.params.idlePhase,
@@ -388,6 +452,7 @@ export function draw(p5: P5GPU) {
 
   p5.noFill();
   p5.strokeCap(p5.ROUND);
+  p5.strokeJoin(p5.ROUND);
   p5.stroke(ir, ig, ib, 255);
 
   for (const gs of state.glyphStates) {
@@ -417,7 +482,12 @@ if (import.meta.main) {
     width: WIDTH,
     height: HEIGHT,
     title: "Tegaki × p5gpu — random retrigger",
-    pane: { title: "Tegaki", panelWidth: 380, panelHeight: 380, setup: setupPane },
+    pane: {
+      title: "Tegaki",
+      panelWidth: 380,
+      panelHeight: 380,
+      setup: setupPane,
+    },
   });
   const p5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 
@@ -443,9 +513,12 @@ if (import.meta.main) {
     p5.textSize(13);
     p5.textAlign("left", "bottom");
     p5.text(
-      `${Math.round(fpsSmooth)} fps · ${state.drawableIndices.length} glyphs · ` +
-      `trigger ${state.params.triggerRate.toFixed(1)} Hz`,
-      20, HEIGHT - 12,
+      `${
+        Math.round(fpsSmooth)
+      } fps · ${state.drawableIndices.length} glyphs · ` +
+        `trigger ${state.params.triggerRate.toFixed(1)} Hz`,
+      20,
+      HEIGHT - 12,
     );
     p5.textAlign("right", "bottom");
     p5.text("tegaki × p5gpu × core-timing", WIDTH - 20, HEIGHT - 12);

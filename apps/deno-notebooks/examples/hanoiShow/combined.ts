@@ -48,6 +48,18 @@ const globalParams = {
   oscEnabled: true,
   tegakiEnabled: true,
   bodyEnabled: true,
+  showTiming: false,
+};
+
+const timing = {
+  frame: 0,
+  lastFrameStart: 0,
+  cpuMs: 0,
+  cpuAvgMs: 0,
+  cpuMaxMs: 0,
+  intervalMs: 0,
+  intervalAvgMs: 0,
+  intervalMaxMs: 0,
 };
 
 function setupPane(pane: WindowTweakpane) {
@@ -72,6 +84,9 @@ function setupPane(pane: WindowTweakpane) {
   scenes.addBinding(globalParams, "tegakiEnabled", { label: "Tegaki" });
   scenes.addBinding(globalParams, "bodyEnabled", { label: "Body Text" });
 
+  const debug = global.addFolder({ title: "Debug" });
+  debug.addBinding(globalParams, "showTiming", { label: "Frame Timing" });
+
   // Per-scene tabs — cast to any since TabPageProxy and WindowTweakpane
   // share the same container API but don't share a typed interface
   // deno-lint-ignore no-explicit-any
@@ -80,6 +95,64 @@ function setupPane(pane: WindowTweakpane) {
   tegakiSetupPane(tab.pages[2] as any);
   // deno-lint-ignore no-explicit-any
   bodySetupPane(tab.pages[3] as any);
+}
+
+function updateTiming(frameStart: number, cpuMs: number): void {
+  const intervalMs = timing.lastFrameStart > 0
+    ? frameStart - timing.lastFrameStart
+    : 0;
+  timing.lastFrameStart = frameStart;
+  timing.frame += 1;
+
+  const smooth = 0.08;
+  timing.cpuMs = cpuMs;
+  timing.cpuAvgMs = timing.cpuAvgMs === 0
+    ? cpuMs
+    : timing.cpuAvgMs + (cpuMs - timing.cpuAvgMs) * smooth;
+  timing.cpuMaxMs = timing.frame % 120 === 1
+    ? cpuMs
+    : Math.max(timing.cpuMaxMs, cpuMs);
+
+  if (intervalMs > 0) {
+    timing.intervalMs = intervalMs;
+    timing.intervalAvgMs = timing.intervalAvgMs === 0
+      ? intervalMs
+      : timing.intervalAvgMs + (intervalMs - timing.intervalAvgMs) * smooth;
+    timing.intervalMaxMs = timing.frame % 120 === 1
+      ? intervalMs
+      : Math.max(timing.intervalMaxMs, intervalMs);
+  }
+}
+
+function drawTimingOverlay(p5: P5GPU): void {
+  if (!globalParams.showTiming) {
+    return;
+  }
+
+  const fps = timing.intervalAvgMs > 0 ? 1000 / timing.intervalAvgMs : 0;
+  const lines = [
+    `frame ${timing.frame}`,
+    `cpu ${timing.cpuMs.toFixed(2)} ms  avg ${
+      timing.cpuAvgMs.toFixed(2)
+    }  max ${timing.cpuMaxMs.toFixed(2)}`,
+    `loop ${timing.intervalMs.toFixed(2)} ms  avg ${
+      timing.intervalAvgMs.toFixed(2)
+    }  max ${timing.intervalMaxMs.toFixed(2)}`,
+    `fps ${fps.toFixed(1)}  yield ${COMBINED_RENDER_YIELD_MS} ms`,
+  ];
+
+  p5.push();
+  p5.noStroke();
+  p5.fill(0, 0, 0, 180);
+  p5.rect(16, 16, 440, 112);
+  p5.textFont("Inter Variable");
+  p5.textSize(15);
+  p5.textAlign("left", "top");
+  p5.fill(230, 235, 245, 255);
+  for (let i = 0; i < lines.length; i += 1) {
+    p5.text(lines[i], 28, 28 + i * 23);
+  }
+  p5.pop();
 }
 
 const device = await requestWebGpuDevice();
@@ -106,6 +179,7 @@ const renderWindow = await createWindowRenderManager({
 });
 
 await renderWindow.run(() => {
+  const frameStart = performance.now();
   const time = performance.now() * 0.001;
 
   p5.beginFrame();
@@ -121,8 +195,11 @@ await renderWindow.run(() => {
   if (globalParams.bodyEnabled) {
     bodyDraw(p5, time);
   }
+  drawTimingOverlay(p5);
 
-  return p5.endFrame();
+  const output = p5.endFrame();
+  updateTiming(frameStart, performance.now() - frameStart);
+  return output;
 }, {
   yieldMs: COMBINED_RENDER_YIELD_MS,
   cleanup() {
