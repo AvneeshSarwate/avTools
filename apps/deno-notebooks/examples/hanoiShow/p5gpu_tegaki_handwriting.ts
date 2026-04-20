@@ -26,6 +26,10 @@ import {
   type BodyContourProvider,
   createBodyContourProvider,
 } from "./body_contour_provider.ts";
+import {
+  createHandBBoxProvider,
+  type HandBBoxProvider,
+} from "./hand_bbox_provider.ts";
 
 // ── Tegaki data types (subset of packages/renderer/src/types.ts) ─────
 
@@ -69,6 +73,19 @@ interface Bbox {
   yMin: number;
   xMax: number;
   yMax: number;
+}
+
+/**
+ * A hand-emitter particle. Lives as shared state between the core-timing
+ * branch that drives its motion and the draw loop that renders it.
+ * Coordinates are in screen pixels.
+ */
+interface HandParticle {
+  x: number;
+  y: number;
+  radius: number;
+  progress: number; // 0..1 as branch progTime / duration
+  alive: boolean;
 }
 
 interface GlyphState {
@@ -128,7 +145,7 @@ const LOREM = "สวัสดีชาวโลก การเขียนอ�
 
 export const state = {
   params: {
-    triggerMode: "random" as "random" | "intersection",
+    triggerMode: "random" as "random" | "intersection" | "hand",
     triggerRate: 18, // trigger attempts per second (random mode)
     minDuration: 0.35,
     maxDuration: 1.40,
@@ -142,6 +159,17 @@ export const state = {
     contourDebugWeight: 4,
     /** Seconds after a glyph finishes animating before intersection can re-trigger it. */
     intersectionCooldownSec: 0.3,
+    /** Mirror hand-bbox X across 0.5 before triggering. Swift sends camera-space
+     *  coords; most camera feeds are rendered selfie-mirrored, so the user's
+     *  left hand visually appears on screen-right. Default true. */
+    mirrorHandX: true,
+
+    // ── Hand particle emitter ──
+    enableHandParticles: true,
+    /** Straight-line travel distance from emitter origin, in pixels. */
+    particleDistancePx: 150,
+    /** Draw the (mirrored-if-toggled) hand bboxes as a debug overlay. */
+    showHandBBoxDebug: false,
   },
   glyphStates: [] as GlyphState[],
   drawableIndices: [] as number[],
@@ -154,6 +182,8 @@ export const state = {
     spatialGrid: null as SpatialGrid | null,
     /** Scratch set for current-frame intersection tracking (avoids per-frame allocation). */
     intersectingScratch: new Set<number>(),
+    /** Live particles emitted from hand bbox centers. Mutated by branches and draw. */
+    handParticles: [] as HandParticle[],
   },
   meta: {
     fontMeta: FONT_META,
@@ -171,6 +201,11 @@ export const state = {
    * the current smoothed outlines in normalized [0,1] coords.
    */
   contourProvider: null as BodyContourProvider | null,
+  /**
+   * Optional shared hand-bbox source. Used by the "hand" trigger mode to
+   * fire glyph redraws when a hand bounding box overlaps a glyph bbox.
+   */
+  handBBoxProvider: null as HandBBoxProvider | null,
 };
 
 // ── Helper functions ────────────────────────────────────────────────
@@ -508,6 +543,189 @@ function processIntersectionTriggers(): void {
   }
 }
 
+/**
+ * Hand-bbox variant of processIntersectionTriggers: rising edge fires when a
+ * hand's AABB overlaps a glyph's AABB. Reuses the same `intersection` phase
+ * track so a mode switch doesn't break in-flight ramps.
+ */
+function processHandBBoxTriggers(): void {
+  if (state.params.paused) return;
+  const provider = state.handBBoxProvider;
+  const triggerCtx = state.runtime.triggerCtx;
+  if (!provider || !triggerCtx) return;
+
+  const hands = provider.getHands();
+
+  const current = state.runtime.intersectingScratch;
+  current.clear();
+
+  const mirror = state.params.mirrorHandX;
+  if (hands.length > 0) {
+    for (let i = 0; i < state.glyphStates.length; i += 1) {
+      const gbbox = state.glyphStates[i]!.bbox;
+      if (!gbbox) continue;
+      for (const h of hands) {
+        // Optionally mirror bbox X to match selfie-mirrored screen coords.
+        const hMinX = mirror ? 1 - h.maxX : h.minX;
+        const hMaxX = mirror ? 1 - h.minX : h.maxX;
+        // AABB overlap test (normalized [0,1], top-left origin — same space).
+        if (
+          hMaxX >= gbbox.xMin && hMinX <= gbbox.xMax &&
+          h.maxY >= gbbox.yMin && h.minY <= gbbox.yMax
+        ) {
+          current.add(i);
+          break;
+        }
+      }
+    }
+  }
+
+  const now = performance.now();
+  const minD = Math.max(0.05, state.params.minDuration);
+  const maxD = Math.max(minD, state.params.maxDuration);
+
+  for (let i = 0; i < state.glyphStates.length; i += 1) {
+    const gs = state.glyphStates[i]!;
+    const wasIntersecting = gs.intersecting;
+    const nowIntersecting = current.has(i);
+
+    if (nowIntersecting && !wasIntersecting) {
+      if (!gs.intersection.inProgress && now >= gs.cooldownUntil) {
+        const duration = minD + triggerCtx.random() * (maxD - minD);
+        scheduleRamp(gs, "intersection", duration);
+      }
+    }
+    gs.intersecting = nowIntersecting;
+  }
+}
+
+// ── Hand-bbox particle emitter ──────────────────────────────────────
+//
+// One emitter per visible hand, at the center of the (mirrored-if-toggled)
+// bbox. Particles are spawned every 30–150 ms at random and live
+// for 0.5–1.5 s as their own core-timing branches. Each particle snapshots
+// its origin on spawn, moves along a random 60–120° direction (measured
+// from horizontal; 90° = straight up), with a perpendicular sinusoidal
+// wobble. Straight-line travel distance is the slider-bound param.
+
+function spawnHandParticle(
+  ctx: DateTimeContext,
+  originX: number,
+  originY: number,
+): void {
+  const p: HandParticle = {
+    x: originX,
+    y: originY,
+    radius: 6 + ctx.random() * 10,
+    progress: 0,
+    alive: true,
+  };
+  state.runtime.handParticles.push(p);
+
+  ctx.branch(async (pCtx) => {
+    const angleRad = (60 + pCtx.random() * 60) * Math.PI / 180; // 60–120°
+    const dirX = Math.cos(angleRad);
+    const dirY = -Math.sin(angleRad); // screen Y grows downward
+    const perpX = -dirY;
+    const perpY = dirX;
+    const duration = 0.5 + pCtx.random() * 1.0;
+    const ampPx = 6 + pCtx.random() * 28; // perpendicular wobble 6–34 px
+    const periodSec = 0.15 + pCtx.random() * 0.45;
+    while (!pCtx.isCanceled && pCtx.progTime < duration) {
+      const t = pCtx.progTime / duration;
+      const distance = state.params.particleDistancePx;
+      const along = t * distance;
+      const wave = Math.sin(2 * Math.PI * pCtx.progTime / periodSec) *
+        ampPx * (1 - t * 0.3); // fade the wobble out a touch
+      p.x = originX + dirX * along + perpX * wave;
+      p.y = originY + dirY * along + perpY * wave;
+      p.progress = t;
+      await pCtx.waitSec(1 / 60);
+    }
+    p.alive = false;
+  });
+}
+
+/**
+ * Persistent emitter loop. Runs at ~60Hz; for each visible hand, spawns a
+ * particle when that hand's slot cooldown has elapsed. Slots are indexed by
+ * the current hand array position — if hand detection churns, particle
+ * origins jitter accordingly. Acceptable given the hand bbox itself jitters.
+ */
+async function runHandEmitterLoop(ctx: DateTimeContext): Promise<void> {
+  const nextSpawnMs: number[] = [0, 0, 0, 0];
+  while (!ctx.isCanceled) {
+    const provider = state.handBBoxProvider;
+    if (state.params.enableHandParticles && provider && !state.params.paused) {
+      const hands = provider.getHands();
+      const nowMs = ctx.progTime * 1000;
+      const mirror = state.params.mirrorHandX;
+      for (let i = 0; i < hands.length && i < nextSpawnMs.length; i += 1) {
+        if (nowMs < nextSpawnMs[i]!) continue;
+        const h = hands[i]!;
+        const minX = mirror ? 1 - h.maxX : h.minX;
+        const maxX = mirror ? 1 - h.minX : h.maxX;
+        const centerX = (minX + maxX) * 0.5;
+        const centerY = (h.minY + h.maxY) * 0.5;
+        spawnHandParticle(ctx, centerX * WIDTH, centerY * HEIGHT);
+        nextSpawnMs[i] = nowMs + 30 + ctx.random() * 120; // 30–150 ms
+      }
+    }
+    await ctx.waitSec(1 / 60);
+  }
+}
+
+function drawHandBBoxDebug(p5: P5GPU): void {
+  const provider = state.handBBoxProvider;
+  if (!provider) return;
+  const hands = provider.getHands();
+  if (hands.length === 0) return;
+
+  const w = p5.width;
+  const h = p5.height;
+  const mirror = state.params.mirrorHandX;
+
+  p5.push();
+  p5.noFill();
+  p5.strokeWeight(2);
+  for (const hand of hands) {
+    const minX = mirror ? 1 - hand.maxX : hand.minX;
+    const maxX = mirror ? 1 - hand.minX : hand.maxX;
+    const color: [number, number, number] = hand.chirality === "left"
+      ? [110, 220, 255] // cyan
+      : hand.chirality === "right"
+      ? [170, 255, 200] // mint
+      : [255, 220, 120]; // amber for unknown
+    p5.stroke(color[0], color[1], color[2], 220);
+    p5.rect(minX * w, hand.minY * h, (maxX - minX) * w, (hand.maxY - hand.minY) * h);
+  }
+  p5.pop();
+}
+
+function drawHandParticles(p5: P5GPU): void {
+  const particles = state.runtime.handParticles;
+  // Prune dead in place.
+  for (let i = particles.length - 1; i >= 0; i -= 1) {
+    if (!particles[i]!.alive) particles.splice(i, 1);
+  }
+  if (particles.length === 0) return;
+
+  p5.push();
+  p5.noStroke();
+  for (const p of particles) {
+    // Fire → smoke: brighten/orange at spawn, fade to transparent at end.
+    const t = p.progress;
+    const alpha = Math.round((1 - t) * 200);
+    const r = 255;
+    const g = Math.round(120 + (1 - t) * 120); // 240 → 120
+    const b = Math.round(40 + t * 80); // cools a touch as it fades
+    const sizeScale = 0.6 + (1 - t) * 0.8; // shrinks slightly
+    p5.fill(r, g, b, alpha);
+    p5.circle(p.x, p.y, p.radius * 2 * sizeScale);
+  }
+  p5.pop();
+}
+
 // ────────────────────────────────────────────────────────────────────
 
 function drawGlyphAtPhase(
@@ -546,7 +764,11 @@ export function setupPane(pane: PaneContainer) {
     label: "Glyph scale",
   });
   pane.addBinding(state.params, "triggerMode", {
-    options: { "Random": "random", "Body intersection": "intersection" },
+    options: {
+      "Random": "random",
+      "Body intersection": "intersection",
+      "Hand bbox": "hand",
+    },
     label: "Trigger mode",
   });
   pane.addBinding(state.params, "triggerRate", {
@@ -561,6 +783,17 @@ export function setupPane(pane: PaneContainer) {
     step: 0.05,
     label: "Cooldown (s)",
   });
+  pane.addBinding(state.params, "mirrorHandX", { label: "Mirror hand X" });
+
+  const particles = pane.addFolder({ title: "Hand Particles" });
+  particles.addBinding(state.params, "enableHandParticles", { label: "Enable" });
+  particles.addBinding(state.params, "particleDistancePx", {
+    min: 50,
+    max: 300,
+    step: 1,
+    label: "Distance (px)",
+  });
+  particles.addBinding(state.params, "showHandBBoxDebug", { label: "Show bbox" });
   pane.addBinding(state.params, "minDuration", {
     min: 0.05,
     max: 3,
@@ -718,6 +951,9 @@ export async function setup() {
   // via scheduleRamp using the stored triggerCtx. Ramps already in flight
   // continue even after a mode switch — they're keyed to their own track.
   const rootAnim = launch(async (ctx) => {
+    // Hand particle emitter — runs alongside the trigger loop.
+    ctx.branch((emitterCtx) => runHandEmitterLoop(emitterCtx));
+
     ctx.branch(async (triggerCtx) => {
       state.runtime.triggerCtx = triggerCtx;
       while (!triggerCtx.isCanceled) {
@@ -761,12 +997,17 @@ export function draw(p5: P5GPU) {
   if (state.params.glyphScale <= 0) return;
 
   // Intersection-mode triggers fire here so they're gated by scene visibility.
+  // "intersection" = body contour, "hand" = hand bbox. Both write to the
+  // shared `intersection` phase track so switching modes doesn't drop ramps.
   if (state.params.triggerMode === "intersection") {
     processIntersectionTriggers();
+  } else if (state.params.triggerMode === "hand") {
+    processHandBBoxTriggers();
   }
 
   const scale = (FONT_SIZE / FONT_META.unitsPerEm) * state.params.glyphScale;
-  const activeTrackName = state.params.triggerMode;
+  const useIntersectionPhase = state.params.triggerMode === "intersection" ||
+    state.params.triggerMode === "hand";
 
   p5.noFill();
   p5.strokeCap(p5.ROUND);
@@ -774,10 +1015,16 @@ export function draw(p5: P5GPU) {
   p5.stroke(ir, ig, ib, 255);
 
   for (const gs of state.glyphStates) {
-    const phase = activeTrackName === "intersection"
+    const phase = useIntersectionPhase
       ? gs.intersection.phase
       : gs.random.phase;
     drawGlyphAtPhase(p5, gs, phase, scale, state.params.widthScale);
+  }
+
+  drawHandParticles(p5);
+
+  if (state.params.showHandBBoxDebug) {
+    drawHandBBoxDebug(p5);
   }
 }
 
@@ -824,10 +1071,13 @@ export function cleanup() {
 if (import.meta.main) {
   const device = await requestWebGpuDevice();
 
-  // Standalone: create our own contour provider and wire it up.
+  // Standalone: create our own providers and wire them up.
   const provider = createBodyContourProvider();
+  const handProvider = createHandBBoxProvider();
   state.contourProvider = provider;
+  state.handBBoxProvider = handProvider;
   provider.setup();
+  handProvider.setup();
 
   const renderWindow = await createWindowRenderManager({
     device,
@@ -841,6 +1091,7 @@ if (import.meta.main) {
       setup: (pane) => {
         setupPane(pane);
         provider.setupPane(pane.addFolder({ title: "Contour Processing" }));
+        handProvider.setupPane(pane.addFolder({ title: "Hands" }));
       },
     },
   });
@@ -857,6 +1108,7 @@ if (import.meta.main) {
     lastFrameTime = now;
 
     provider.tick();
+    handProvider.tick();
 
     p5.beginFrame();
     const [br, bg, bb] = hexToRgb(state.params.bgColor);
@@ -885,6 +1137,7 @@ if (import.meta.main) {
     cleanup: () => {
       cleanup();
       provider.cleanup();
+      handProvider.cleanup();
       p5.dispose();
     },
   });

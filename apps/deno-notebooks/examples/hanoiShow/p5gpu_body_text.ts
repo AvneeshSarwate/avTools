@@ -38,7 +38,7 @@ export const state = {
     minPoints: 10,
     minRadius: 30,
     outerSize: 22,
-    innerSize: 16,
+    innerSize: 30,
     showDebugPath: true,
     enableMinRadius: true,
   },
@@ -87,7 +87,7 @@ export function setupPane(pane: PaneContainer) {
     label: "Min Radius Filter",
   });
   render.addBinding(state.render, "scrollSpeed", {
-    min: 0,
+    min: -300,
     max: 300,
     step: 1,
     label: "Scroll Speed",
@@ -100,7 +100,7 @@ export function setupPane(pane: PaneContainer) {
   });
   render.addBinding(state.render, "innerSize", {
     min: 6,
-    max: 36,
+    max: 100,
     step: 1,
     label: "Inner Size",
   });
@@ -199,24 +199,18 @@ export function draw(p5: P5GPU, time: number) {
     const isOuter = contour.parentIndex === -1;
     const alpha = Math.round(contour.opacity * 255 * fade);
 
+    // Ink color #ffe9a8 — matches the tegaki sketch's default ink so the
+    // two scenes read as one palette. Debug path uses the same color at
+    // half alpha.
     if (state.render.showDebugPath) {
       p5.strokeWeight(10);
-      p5.stroke(
-        isOuter ? 0 : 130,
-        isOuter ? 160 : 0,
-        isOuter ? 190 : 160,
-        Math.round(alpha * 0.5),
-      );
+      p5.stroke(255, 233, 168, Math.round(alpha * 0.5));
       drawPath(p5, scaled);
       p5.noStroke();
     }
 
     p5.textSize(isOuter ? state.render.outerSize : state.render.innerSize);
-    if (isOuter) {
-      p5.fill(100, 200, 255, alpha);
-    } else {
-      p5.fill(200, 140, 255, alpha);
-    }
+    p5.fill(255, 233, 168, alpha);
 
     const txt = isOuter ? state.render.outerText : state.render.innerText;
 

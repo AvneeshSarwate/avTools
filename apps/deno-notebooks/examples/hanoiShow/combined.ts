@@ -4,8 +4,7 @@
 // with tabbed Tweakpane controls per scene.
 //
 // Run from apps/deno-notebooks:
-//   deno run --unstable-webgpu --unstable-ffi --allow-all \
-//     examples/hanoiShow/combined.ts
+//   deno run --unstable-webgpu --unstable-ffi --allow-all examples/hanoiShow/combined.ts
 
 import {
   createWindowRenderManager,
@@ -38,6 +37,7 @@ import {
 } from "./p5gpu_body_text.ts";
 
 import { createBodyContourProvider } from "./body_contour_provider.ts";
+import { createHandBBoxProvider } from "./hand_bbox_provider.ts";
 
 const WIDTH = 1280;
 const HEIGHT = 720;
@@ -67,7 +67,9 @@ const timing = {
 };
 
 const bodyContourProvider = createBodyContourProvider();
+const handBBoxProvider = createHandBBoxProvider();
 tegakiState.contourProvider = bodyContourProvider;
+tegakiState.handBBoxProvider = handBBoxProvider;
 bodyState.contourProvider = bodyContourProvider;
 
 function setupPane(pane: WindowTweakpane) {
@@ -75,6 +77,7 @@ function setupPane(pane: WindowTweakpane) {
     pages: [
       { title: "Global" },
       { title: "Body Contour" },
+      { title: "Hands" },
       { title: "OSC Trail" },
       { title: "Tegaki" },
       { title: "Body Text" },
@@ -97,9 +100,10 @@ function setupPane(pane: WindowTweakpane) {
   debug.addBinding(globalParams, "showTiming", { label: "Frame Timing" });
 
   bodyContourProvider.setupPane(tab.pages[1]);
-  oscSetupPane(tab.pages[2]);
-  tegakiSetupPane(tab.pages[3]);
-  bodySetupPane(tab.pages[4]);
+  handBBoxProvider.setupPane(tab.pages[2]);
+  oscSetupPane(tab.pages[3]);
+  tegakiSetupPane(tab.pages[4]);
+  bodySetupPane(tab.pages[5]);
 }
 
 function updateTiming(frameStart: number, cpuMs: number): void {
@@ -163,8 +167,9 @@ function drawTimingOverlay(p5: P5GPU): void {
 const device = await requestWebGpuDevice();
 const p5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 
-// Initialize provider first so scenes see a ready-to-use contourProvider on state
+// Initialize providers first so scenes see ready-to-use providers on state
 bodyContourProvider.setup();
+handBBoxProvider.setup();
 
 // Initialize all scenes
 await Promise.all([
@@ -190,8 +195,9 @@ await renderWindow.run(() => {
   const frameStart = performance.now();
   const time = performance.now() * 0.001;
 
-  // Advance shared contour data once before any consumer reads.
+  // Advance shared contour + hand data once before any consumer reads.
   bodyContourProvider.tick();
+  handBBoxProvider.tick();
 
   p5.beginFrame();
   p5.background(globalParams.bgR, globalParams.bgG, globalParams.bgB);
@@ -218,6 +224,7 @@ await renderWindow.run(() => {
     tegakiCleanup();
     bodyCleanup();
     bodyContourProvider.cleanup();
+    handBBoxProvider.cleanup();
     p5.dispose();
   },
 });
