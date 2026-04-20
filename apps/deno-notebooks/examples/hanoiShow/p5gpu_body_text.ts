@@ -41,6 +41,11 @@ export const state = {
     innerSize: 30,
     showDebugPath: true,
     enableMinRadius: true,
+    /** Mirror contour points across X=0.5 before scaling to pixels. Matches
+     *  the selfie-mirror convention most camera feeds are rendered with.
+     *  Per-sketch because other consumers of the same provider may not
+     *  want the flip. */
+    mirrorContourX: true,
   },
   runtime: {
     springText: null as ReturnType<typeof createSpringTextRenderer> | null,
@@ -111,6 +116,7 @@ export function setupPane(pane: PaneContainer) {
     label: "Min Radius",
   });
   render.addBinding(state.render, "showDebugPath", { label: "Show Path" });
+  render.addBinding(state.render, "mirrorContourX", { label: "Mirror X" });
 }
 
 // ── Helper ───────────────────────────────────────────────────────
@@ -175,11 +181,18 @@ export function draw(p5: P5GPU, time: number) {
     if (contour.points.length < state.render.minPoints) continue;
     if (contour.id >= 0) activeIds.add(contour.id);
 
-    // Scale normalized points to pixel coords
+    // Scale normalized points to pixel coords, optionally mirroring X.
+    // Mirroring reflects the polygon across X=0.5, which reverses the
+    // winding direction (CW ↔ CCW). text_on_path uses winding to decide
+    // which side letters stick out of, so we also reverse the point order
+    // after mirroring to keep outer-contour letters outside and inner-
+    // contour letters inside.
+    const mirror = state.render.mirrorContourX;
     const scaled: Point[] = contour.points.map((p) => ({
-      x: p.x * WIDTH,
+      x: (mirror ? 1 - p.x : p.x) * WIDTH,
       y: p.y * HEIGHT,
     }));
+    if (mirror) scaled.reverse();
 
     if (state.render.enableMinRadius) {
       let minX = Infinity;

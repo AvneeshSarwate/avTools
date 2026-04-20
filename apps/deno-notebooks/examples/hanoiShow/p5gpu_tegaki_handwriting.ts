@@ -155,7 +155,7 @@ export const state = {
     idlePhase: 1.0, // 0 = invisible when not animating, 1 = fully drawn
     paused: false,
     glyphScale: 1.0, // 0–1, multiplies font scale; 0 = skip drawing
-    showContourDebug: true, // draw body contour outlines as sanity check
+    showContourDebug: false, // draw body contour outlines as sanity check
     contourDebugWeight: 4,
     /** Seconds after a glyph finishes animating before intersection can re-trigger it. */
     intersectionCooldownSec: 0.3,
