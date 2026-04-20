@@ -27,8 +27,16 @@ export interface TextOnPathOptions {
   /** Extra spacing between letters in pixels (default: 0) */
   letterSpacing?: number;
   /**
+   * Tangent finite-difference half-width in *polyline points*. 1 (default)
+   * reproduces the current atan2(next - prev-adjacent) behavior exactly.
+   * Larger values widen the stencil so local kinks (e.g. contour artifacts
+   * from hair) don't swing the rotation of letters placed near them.
+   */
+  tangentStencil?: number;
+  /**
    * Whether the path is closed (e.g. a circle). When true, character positions
-   * wrap around using modulo so text scrolls smoothly past the seam.
+   * wrap around using modulo so text scrolls smoothly past the seam, and the
+   * tangent stencil wraps at the seam too.
    * Auto-detected if omitted (first ≈ last point within 1px).
    */
   closed?: boolean;
@@ -91,29 +99,48 @@ export function polylineCumDists(pts: Point[]): number[] {
   return d;
 }
 
-/** Sample a polyline at a given arc-length distance → position + tangent. */
+/**
+ * Sample a polyline at a given arc-length distance → position + tangent.
+ *
+ * `stencil` (default 1) is the tangent finite-difference half-width in
+ * polyline-index units. `stencil = 1` is byte-identical to the original
+ * behavior (atan2 of the two endpoints of the containing segment).
+ * `stencil > 1` computes the tangent from points further away, smoothing
+ * out local kinks. When `closed` is true, the stencil wraps across the seam.
+ */
 export function samplePolyline(
   pts: Point[],
   cumDists: number[],
   dist: number,
+  stencil: number = 1,
+  closed: boolean = false,
 ): PathSample {
   const total = cumDists[cumDists.length - 1];
+  const n = pts.length;
+  const s = Math.max(1, Math.floor(stencil));
+
+  const idx = (i: number): number => {
+    if (closed) return ((i % n) + n) % n;
+    if (i < 0) return 0;
+    if (i >= n) return n - 1;
+    return i;
+  };
 
   // Clamp to endpoints
   if (dist <= 0) {
+    const a = pts[idx(0)];
+    const b = pts[idx(s)];
     return {
       ...pts[0],
-      angle: Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x),
+      angle: Math.atan2(b.y - a.y, b.x - a.x),
     };
   }
   if (dist >= total) {
-    const n = pts.length;
+    const a = pts[idx(n - 1 - s)];
+    const b = pts[idx(n - 1)];
     return {
       ...pts[n - 1],
-      angle: Math.atan2(
-        pts[n - 1].y - pts[n - 2].y,
-        pts[n - 1].x - pts[n - 2].x,
-      ),
+      angle: Math.atan2(b.y - a.y, b.x - a.x),
     };
   }
 
@@ -131,11 +158,59 @@ export function samplePolyline(
   const a = pts[lo];
   const b = pts[hi];
 
+  // Widened tangent: finite difference across ±(s-1) extra points around
+  // the containing segment. s = 1 reduces to atan2(pts[hi] - pts[lo]).
+  const ta = pts[idx(lo - s + 1)];
+  const tb = pts[idx(hi + s - 1)];
+
   return {
     x: a.x + t * (b.x - a.x),
     y: a.y + t * (b.y - a.y),
-    angle: Math.atan2(b.y - a.y, b.x - a.x),
+    angle: Math.atan2(tb.y - ta.y, tb.x - ta.x),
   };
+}
+
+/**
+ * Apply a [1,2,1]/4 binomial smoothing kernel to a polyline, `passes` times.
+ *
+ * `passes = 0` returns the input array unchanged (reference-equal). Each pass
+ * is one application of the kernel, which is roughly equivalent to a Gaussian
+ * with σ ≈ √(passes / 2) measured in points.
+ *
+ * When `closed` is true, the kernel wraps around the seam (pts[0]↔pts[n-1]);
+ * otherwise endpoints are replicated (clamp boundary).
+ */
+export function smoothPolyline(
+  pts: Point[],
+  passes: number,
+  closed: boolean = false,
+): Point[] {
+  if (passes <= 0 || pts.length < 3) return pts;
+  const n = pts.length;
+  let current: Point[] = pts;
+  for (let p = 0; p < passes; p++) {
+    const next: Point[] = new Array(n);
+    for (let i = 0; i < n; i++) {
+      let iPrev: number;
+      let iNext: number;
+      if (closed) {
+        iPrev = (i - 1 + n) % n;
+        iNext = (i + 1) % n;
+      } else {
+        iPrev = i > 0 ? i - 1 : 0;
+        iNext = i < n - 1 ? i + 1 : n - 1;
+      }
+      const a = current[iPrev];
+      const b = current[i];
+      const c = current[iNext];
+      next[i] = {
+        x: 0.25 * a.x + 0.5 * b.x + 0.25 * c.x,
+        y: 0.25 * a.y + 0.5 * b.y + 0.25 * c.y,
+      };
+    }
+    current = next;
+  }
+  return current;
 }
 
 // ── Character measurement ─────────────────────────────────────────
@@ -185,6 +260,7 @@ export function textOnPath(
     offset = 0,
     align = "left",
     letterSpacing = 0,
+    tangentStencil = 1,
     fill = false,
     fillSeparator = "   ",
   } = opts;
@@ -204,7 +280,7 @@ export function textOnPath(
   /** Place a character at an exact path distance (no wrapping). */
   function emitChar(ch: string, d: number): void {
     if (d < 0 || d > totalPathLen) return;
-    const sample = samplePolyline(path, cumDists, d);
+    const sample = samplePolyline(path, cumDists, d, tangentStencil, closed);
     p5.push();
     p5.translate(sample.x, sample.y);
     p5.rotate(sample.angle);

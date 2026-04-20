@@ -73,6 +73,8 @@ export function createSpringTextRenderer(params: SpringParams) {
         offset?: number;
         letterSpacing?: number;
         fillSeparator?: string;
+        tangentStencil?: number;
+        closed?: boolean;
       } = {},
     ): void {
       if (str.length === 0 || path.length < 2) return;
@@ -80,12 +82,22 @@ export function createSpringTextRenderer(params: SpringParams) {
       const now = performance.now();
       const dt = Math.min((now - lastTime) / 1000, 0.05);
 
-      const { offset = 0, letterSpacing = 0, fillSeparator = "   " } = opts;
+      const {
+        offset = 0,
+        letterSpacing = 0,
+        fillSeparator = "   ",
+        tangentStencil = 1,
+      } = opts;
       const widthFn = getWidthFn(p5);
 
       const cumDists = polylineCumDists(path);
       const totalPathLen = cumDists[cumDists.length - 1];
       if (totalPathLen < 1) return;
+
+      const closed = opts.closed ?? (
+        Math.abs(path[0].x - path[path.length - 1].x) < 1 &&
+        Math.abs(path[0].y - path[path.length - 1].y) < 1
+      );
 
       // Build repeating unit
       const unit = str + fillSeparator;
@@ -109,7 +121,7 @@ export function createSpringTextRenderer(params: SpringParams) {
         const adv = unitAdvances[i];
         const center = cursor + adv / 2;
         if (center >= 0 && center < totalPathLen) {
-          const sample = samplePolyline(path, cumDists, center);
+          const sample = samplePolyline(path, cumDists, center, tangentStencil, closed);
           anchors.push({ x: sample.x, y: sample.y, angle: sample.angle, ch: unit[i] });
         }
         cursor += adv + letterSpacing;

@@ -13,7 +13,11 @@ import {
   requestWebGpuDevice,
   type PaneContainer,
 } from "../../window/mod.ts";
-import { type Point, textOnPath } from "../../tools/text_on_path.ts";
+import {
+  type Point,
+  smoothPolyline,
+  textOnPath,
+} from "../../tools/text_on_path.ts";
 import {
   createSpringTextRenderer,
   defaultSpringParams,
@@ -46,6 +50,15 @@ export const state = {
      *  Per-sketch because other consumers of the same provider may not
      *  want the flip. */
     mirrorContourX: true,
+    /** Extra spatial low-pass passes on the resampled polyline before text
+     *  layout. 0 = identity (no-op). Each pass is one [1,2,1]/4 binomial
+     *  kernel step, wrapping across the closed seam. Smooths out fine
+     *  contour bulges (hair etc.) that cause anchor drift. */
+    polylineSmoothPasses: 0,
+    /** Tangent finite-difference half-width for letter rotation. 1 =
+     *  current behavior (atan2 of a single 1/300th segment). Larger widens
+     *  the stencil so local kinks don't swing letter angles. */
+    tangentStencil: 1,
   },
   runtime: {
     springText: null as ReturnType<typeof createSpringTextRenderer> | null,
@@ -117,6 +130,20 @@ export function setupPane(pane: PaneContainer) {
   });
   render.addBinding(state.render, "showDebugPath", { label: "Show Path" });
   render.addBinding(state.render, "mirrorContourX", { label: "Mirror X" });
+
+  const stabilize = pane.addFolder({ title: "Anchor Stabilization" });
+  stabilize.addBinding(state.render, "polylineSmoothPasses", {
+    min: 0,
+    max: 30,
+    step: 1,
+    label: "Smooth Passes",
+  });
+  stabilize.addBinding(state.render, "tangentStencil", {
+    min: 1,
+    max: 20,
+    step: 1,
+    label: "Tangent Stencil",
+  });
 }
 
 // ── Helper ───────────────────────────────────────────────────────
@@ -188,11 +215,18 @@ export function draw(p5: P5GPU, time: number) {
     // after mirroring to keep outer-contour letters outside and inner-
     // contour letters inside.
     const mirror = state.render.mirrorContourX;
-    const scaled: Point[] = contour.points.map((p) => ({
+    let scaled: Point[] = contour.points.map((p) => ({
       x: (mirror ? 1 - p.x : p.x) * WIDTH,
       y: p.y * HEIGHT,
     }));
     if (mirror) scaled.reverse();
+
+    // Spatial low-pass across the closed polyline smooths out fine bulges
+    // (hair etc.) that would otherwise flicker the tangent and arc-length
+    // positions of letter anchors. 0 passes → identity.
+    if (state.render.polylineSmoothPasses > 0) {
+      scaled = smoothPolyline(scaled, state.render.polylineSmoothPasses, true);
+    }
 
     if (state.render.enableMinRadius) {
       let minX = Infinity;
@@ -231,12 +265,16 @@ export function draw(p5: P5GPU, time: number) {
       springText.renderTextOnPath(p5, contour.id, txt, scaled, {
         offset: scrollOffset,
         letterSpacing: 1,
+        tangentStencil: state.render.tangentStencil,
+        closed: true,
       });
     } else {
       textOnPath(p5, txt, scaled, {
         fill: "wrap",
         offset: scrollOffset,
         letterSpacing: 1,
+        tangentStencil: state.render.tangentStencil,
+        closed: true,
       });
     }
   }
