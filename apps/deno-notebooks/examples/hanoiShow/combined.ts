@@ -175,7 +175,7 @@ handBBoxProvider.setup();
 await Promise.all([
   oscSetup(device),
   tegakiSetup(),
-  bodySetup(),
+  bodySetup(p5),
 ]);
 
 const renderWindow = await createWindowRenderManager({

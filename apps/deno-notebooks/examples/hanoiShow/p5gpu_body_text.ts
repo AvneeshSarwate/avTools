@@ -37,8 +37,8 @@ export const state = {
   render: {
     fade: 1.0,
     scrollSpeed: 80,
-    outerText: "body outline ",
-    innerText: "inner contour ",
+    outerText: "สวัสดีชาวโลก ",
+    innerText: "ศิลปะที่งดงาม ",
     minPoints: 10,
     minRadius: 30,
     outerSize: 22,
@@ -54,11 +54,11 @@ export const state = {
      *  layout. 0 = identity (no-op). Each pass is one [1,2,1]/4 binomial
      *  kernel step, wrapping across the closed seam. Smooths out fine
      *  contour bulges (hair etc.) that cause anchor drift. */
-    polylineSmoothPasses: 0,
+    polylineSmoothPasses: 10,
     /** Tangent finite-difference half-width for letter rotation. 1 =
-     *  current behavior (atan2 of a single 1/300th segment). Larger widens
-     *  the stencil so local kinks don't swing letter angles. */
-    tangentStencil: 1,
+     *  atan2 of a single 1/300th segment. Larger widens the stencil so
+     *  local kinks don't swing letter angles. */
+    tangentStencil: 10,
   },
   runtime: {
     springText: null as ReturnType<typeof createSpringTextRenderer> | null,
@@ -160,8 +160,18 @@ function drawPath(p5: P5GPU, pts: Point[]) {
 
 // ── Setup / cleanup ─────────────────────────────────────────────
 
-export function setup() {
+const CHARMONMAN_FONT_URL = new URL(
+  "../../../../clonedCompanionRepos/tegaki/packages/renderer/fonts/charmonman/charmonman.ttf",
+  import.meta.url,
+);
+
+export async function setup(p5?: P5GPU): Promise<void> {
   state.runtime.springText = createSpringTextRenderer(state.spring);
+  if (p5) {
+    // Load Charmonman into this p5 instance's native text engine so
+    // `textFont("Charmonman")` resolves. Same file the tegaki sketch uses.
+    await p5.loadFont(CHARMONMAN_FONT_URL);
+  }
 }
 
 export function cleanup() {
@@ -186,7 +196,7 @@ export function draw(p5: P5GPU, time: number) {
   const scrollOffset = time * state.render.scrollSpeed;
 
   p5.noStroke();
-  p5.textFont("Inter Variable");
+  p5.textFont("Charmonman");
 
   const springText = state.runtime.springText!;
   const contours = provider.getContours();
@@ -310,7 +320,7 @@ if (import.meta.main) {
   });
   const p5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 
-  setup();
+  await setup(p5);
 
   await renderWindow.run(
     () => {
