@@ -63,6 +63,75 @@ The WebSocket carries the Tweakpane protocol. The wry postMessage IPC is a side 
 
 ---
 
+## Programmatic parameter updates (kernel → UI)
+
+When sketch code mutates a bound value, the Tweakpane UI does **not** automatically reflect it — you have to push the change. The bridge is only automatic in one direction (UI drag → kernel). The reverse needs an explicit call.
+
+### Two kinds of controls
+
+- **Bindings** (`pane.addBinding(obj, 'key', {...})`) — bound to a property on an object. The UI reads from and writes to `obj.key`.
+- **Standalone blades** (`pane.addBlade({view: 'slider', value: 0.5, ...})` etc) — carry their own `value` property, not bound to an external object. Used less often in hanoiShow but the mechanics differ.
+
+### Binding case — the common one
+
+```ts
+// Move a slider programmatically:
+params.fade = 0.3
+binding.refresh()          // or pane.refresh() to refresh everything
+```
+
+Under the hood (`tools/tweakpaneServer.ts:445-448`):
+
+```ts
+BindingProxy.refresh() {
+  const value = this.boundObj[this.key]
+  this._server._broadcastToIframes({ type: 'refresh', values: { [this.proxyId]: value } })
+}
+```
+
+The `refresh` op travels over the WebSocket. On the client (`tweakpane-client.ts:196-220`):
+
+1. Sets `suppressSync = true` (echo-suppression flag).
+2. Writes `entry.obj[entry.key] = value` into the client's *local* bound object.
+3. Calls the real tweakpane `api.refresh()`, which re-reads the local bound object and redraws the control.
+4. Clears `suppressSync`.
+
+Without `refresh()`, the bound object's new value is invisible to the UI — the widget only re-reads on explicit refresh (or on the next user interaction, which will overwrite your programmatic change anyway).
+
+### `pane.refresh()` vs `binding.refresh()` vs `folder.refresh()`
+
+- `BindingProxy.refresh()` — one binding. Cheapest. Sends a single-entry `refresh` op.
+- `FolderProxy.refresh()` — recursively calls `refresh()` on every child (`tools/tweakpaneServer.ts:540-546`).
+- `TweakpaneServer.refresh()` (root) — walks every registered binding AND every registered blade value, packages them into one big `refresh` op, sends once (`tools/tweakpaneServer.ts:1105-1116`). Use this when you've changed many values at once (e.g. preset recall).
+
+### Standalone blade case
+
+For blades created via `addBlade({ view: 'slider', ... })`, set `.value` directly on the proxy — the setter broadcasts a `bladeValue` op automatically (`tools/tweakpaneServer.ts:786-790`):
+
+```ts
+const slider = pane.addBlade({ view: 'slider', value: 0, min: 0, max: 1 })
+slider.value = 0.5         // broadcasts; no refresh() needed
+```
+
+### Cross-session fan-out (free for bindings)
+
+When the user drags a slider in session A (e.g. the phone), the server calls `_handleValueChange` (`tools/tweakpaneServer.ts:1367-1382`):
+
+1. Updates `binding.obj[binding.key]` on the kernel.
+2. Fires kernel-side `change` listeners (anything registered via `binding.on('change', ...)`).
+3. **Broadcasts a `refresh` op to all *other* sessions** (the `originSessionId` is excluded to break the loop).
+
+So the native panel's slider moves in real time when the phone's slider is dragged, and vice versa. You get this for free — you don't need to call `refresh()` in response to a UI change from another session.
+
+### Pitfalls
+
+- **Every-frame mutation without refresh.** Scenes mutate `state.whatever` constantly inside `draw`. None of that reaches the UI. Only `refresh()` does. That's usually what you want — you don't want the "frame counter" field twitching in the panel 60 times a second.
+- **If you DO want per-frame UI feedback** (e.g. a VU meter showing current audio level), it needs a per-frame `binding.refresh()`. Weigh the cost: each refresh is a WebSocket message to every connected session, plus DOM update.
+- **Don't call `refresh()` inside a binding's `on('change', ...)` handler.** The echo-suppression protects the *client*, but a kernel-side re-broadcast from inside the change handler can cause feedback loops across sessions. If you need to derive one bound value from another, mutate the second value in the handler and call `refresh()` for that second binding only.
+- **Presets / scene-recall pattern.** Mutate a batch of properties, then call `pane.refresh()` once at the end (the root walk is cheaper than N individual binding refreshes for large presets).
+
+---
+
 ## QR-code phone control
 
 The wry panel has a "show qr code" button in its toolbar. Scanning the code from a phone on the same LAN opens the same Tweakpane in a mobile browser, driving the same bound state in real time.
@@ -140,6 +209,59 @@ Consequences an agent should internalize:
 - **Per-scene `p5.push()` / `p5.pop()` hygiene** is essential. The P5GPU style stack is a real stack (`tools/p5gpu.ts:883-888`). A scene that forgets to restore stroke/fill/textFont/textAlign will corrupt the next scene's draws.
 - **One `p5.background()`** is called before any scene. Scenes must NOT call `background` — that would clobber earlier scenes' pixels. (The scene's standalone main files do call it themselves, but their exported `draw()` does not; check before adding a new scene.)
 - **Scenes don't allocate P5GPU.** Only `combined.ts` (or the scene's standalone `main` block) constructs the instance. In combined mode, scene `setup()` signatures vary: `oscSetup(device)`, `tegakiSetup()` (no args), `bodySetup(p5)` — only body needs the P5GPU handle at setup time.
+
+---
+
+## Dual-mode: standalone vs combined
+
+Every scene file is **both** a library module (imported by `combined.ts`) and a standalone runnable. The split is gated by `if (import.meta.main)` at the bottom of each file.
+
+```
+deno run --unstable-webgpu --unstable-ffi --allow-all \
+    examples/hanoiShow/p5gpu_osc_note_trail.ts      # standalone
+    examples/hanoiShow/p5gpu_tegaki_handwriting.ts  # standalone
+    examples/hanoiShow/p5gpu_body_text.ts           # standalone
+    examples/hanoiShow/combined.ts                  # all three
+```
+
+### What the scene exports (used by `combined.ts`)
+
+| Export         | Contract                                                                                          |
+|----------------|---------------------------------------------------------------------------------------------------|
+| `setup(...)`   | Allocate internal resources only. Does **not** construct P5GPU or a window. Signatures vary: `oscSetup(device)`, `tegakiSetup()`, `bodySetup(p5)`. |
+| `draw(p5, …)`  | Issue draw calls against the provided P5GPU. Does **not** call `beginFrame` / `endFrame` / `background`. |
+| `cleanup()`    | Release internal resources only. Does not dispose P5GPU or the window.                            |
+| `setupPane(c)` | Add blades to the provided `PaneContainer` (a tab page, folder, or pane root).                    |
+| `state`        | The scene's live state object. `combined.ts` writes shared providers onto it before `setup()`.    |
+
+### What the `import.meta.main` block adds (standalone mode)
+
+A scene's standalone block is a tiny self-contained runner that does everything `combined.ts` would have done *for that one scene*:
+
+1. `await requestWebGpuDevice()` — its own device.
+2. Construct its own data providers (e.g. `createBodyContourProvider()` in `p5gpu_body_text.ts:302`) and wire them into the scene's `state` via the same seam combined uses (`state.contourProvider = provider`).
+3. `createWindowRenderManager(...)` — its own window + pane, with `setupPane` calling `setupPane(pane)` and *also* folding in the provider's pane controls.
+4. `new P5GPU(device, {width, height})` — its own P5GPU instance.
+5. `await setup(...)` — calls the scene's own exported setup.
+6. `renderWindow.run(() => { p5.beginFrame(); p5.background(...); draw(p5, t); /* HUD */ return p5.endFrame(); }, { cleanup })`.
+
+See `p5gpu_body_text.ts:298-360`, `p5gpu_tegaki_handwriting.ts:1071-1145`, `p5gpu_osc_note_trail.ts:379` for the three concrete blocks.
+
+### Asymmetries
+
+- **Background color.** Standalone blocks hardcode a bg (e.g. `p5.background(15, 18, 26)`). `combined.ts` uses the Global-tab RGB params. Scenes must not call `background` in their exported `draw()` — it's the runner's job.
+- **HUD / overlay.** Each standalone block draws its own "fps / frame / contour count" HUD. `combined.ts` replaces that with a unified `drawTimingOverlay` gated by the Global tab.
+- **Provider ownership.** Standalone scenes own (create + setup + tick + cleanup) their own providers. In combined mode, `combined.ts` owns them and injects them.
+- **Pane layout.** Standalone scenes put their blades at the pane root (plus a `Contour Processing` subfolder for the provider). In combined mode, each scene's `setupPane` receives a *tab page* and builds folders inside it.
+
+### Adding a new scene
+
+Mirror the existing pattern exactly:
+1. Export `setup` / `draw` / `cleanup` / `setupPane` / `state` with the contract above.
+2. Add an `if (import.meta.main)` standalone block for isolated development and testing.
+3. Register imports + tab page + provider injection + draw call + cleanup call in `combined.ts`.
+
+Keeping both modes working is load-bearing — it's how scenes get developed and debugged in isolation before being composed into a show.
 
 ---
 
