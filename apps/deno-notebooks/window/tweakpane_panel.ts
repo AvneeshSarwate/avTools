@@ -234,7 +234,7 @@ export class WindowTweakpane extends TweakpaneServer {
   }
 
   /** @internal */
-  _createPanelHtml(): string {
+  _createPanelHtml(renderShell?: (args: RenderShellArgs) => string): string {
     const sessionId = this.#ensurePanelSession();
     const wsUrl = this.getSessionWebSocketUrl(sessionId, "loopback");
     if (!wsUrl) {
@@ -242,14 +242,23 @@ export class WindowTweakpane extends TweakpaneServer {
     }
 
     const shareInfo = this.getMobileShareInfo();
-    return generatePanelHtml({
+    const args: RenderShellArgs = {
       title: this.title ?? "Controls",
       sessionId,
       wsUrl,
       mobileUrl: shareInfo?.lanUrl ?? null,
       qrSvg: shareInfo?.qrSvg ?? null,
-    });
+    };
+    return renderShell ? renderShell(args) : generatePanelHtml(args);
   }
+}
+
+export interface RenderShellArgs {
+  title: string;
+  sessionId: string;
+  wsUrl: string;
+  mobileUrl: string | null;
+  qrSvg: string | null;
 }
 
 export type PaneContainer = Pick<
@@ -270,6 +279,8 @@ export function createWindowTweakpane(
     panelHeight?: number;
     toggleKey?: string;
     syphon?: SyphonServer;
+    /** Override the panel HTML. When provided, the default Tweakpane shell is skipped. */
+    renderShell?: (args: RenderShellArgs) => string;
   },
 ): WindowTweakpane {
   const pane = new WindowTweakpane(options?.title);
@@ -285,7 +296,7 @@ export function createWindowTweakpane(
     },
   });
 
-  const html = pane._createPanelHtml();
+  const html = pane._createPanelHtml(options?.renderShell);
   panel.init(html);
   pane._attachPanel(panel, gpuWindow);
 

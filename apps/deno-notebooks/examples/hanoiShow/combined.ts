@@ -14,6 +14,7 @@ import {
 } from "../../window/mod.ts";
 import { P5GPU } from "../../tools/p5gpu.ts";
 import { installMacros } from "../../tools/macros.ts";
+import { renderPerfShellHtml } from "../../tools/perf_shell_html.ts";
 
 import {
   cleanup as oscCleanup,
@@ -217,8 +218,14 @@ const renderWindow = await createWindowRenderManager({
 
 const perfPane = createWindowTweakpane(renderWindow.window, {
   title: "Perf",
-  panelWidth: 360,
-  panelHeight: 480,
+  panelWidth: 420,
+  panelHeight: 560,
+  renderShell: (args) => renderPerfShellHtml({
+    title: args.title,
+    wsUrl: args.wsUrl,
+    mobileUrl: args.mobileUrl,
+    qrSvg: args.qrSvg,
+  }),
 });
 setupPerfPane(perfPane, triggerRefresh);
 
