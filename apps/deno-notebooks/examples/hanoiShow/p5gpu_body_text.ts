@@ -26,6 +26,12 @@ import {
   type BodyContourProvider,
   createBodyContourProvider,
 } from "./body_contour_provider.ts";
+import {
+  easeInOutQuart,
+  installMacros,
+  lerp,
+  type MacroDef,
+} from "../../tools/macros.ts";
 
 const WIDTH = 1280;
 const HEIGHT = 720;
@@ -73,11 +79,26 @@ export const state = {
    * data available" and draw nothing (or a placeholder).
    */
   contourProvider: null as BodyContourProvider | null,
+  macros: {} as Record<string, number>,
 };
 
 // ── Tweakpane setup ─────────────────────────────────────────────
 
-export function setupPane(pane: PaneContainer) {
+export const macroDefs: MacroDef<number>[] = [
+  {
+    key: "scrollSpeed",
+    defaultValue: 0.5,
+    opts: { min: 0, max: 1, step: 0.001, label: "Scroll Speed" },
+    apply: (v) => {
+      state.render.scrollSpeed = lerp(0, 300, easeInOutQuart(v));
+    },
+  },
+];
+
+export function setupPane(pane: PaneContainer, refresh?: () => void) {
+  const macros = pane.addFolder({ title: "Macros", expanded: true });
+  installMacros(macros, state.macros, macroDefs, refresh ?? (() => pane.refresh()));
+
   pane.addBinding(state.render, "fade", {
     min: 0,
     max: 1,

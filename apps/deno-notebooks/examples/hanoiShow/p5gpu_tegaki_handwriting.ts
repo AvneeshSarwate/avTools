@@ -30,6 +30,12 @@ import {
   createHandBBoxProvider,
   type HandBBoxProvider,
 } from "./hand_bbox_provider.ts";
+import {
+  easeInOutQuart,
+  installMacros,
+  lerp,
+  type MacroDef,
+} from "../../tools/macros.ts";
 
 // ── Tegaki data types (subset of packages/renderer/src/types.ts) ─────
 
@@ -171,6 +177,7 @@ export const state = {
     /** Draw the (mirrored-if-toggled) hand bboxes as a debug overlay. */
     showHandBBoxDebug: false,
   },
+  macros: {} as Record<string, number>,
   glyphStates: [] as GlyphState[],
   drawableIndices: [] as number[],
   runtime: {
@@ -756,7 +763,21 @@ function drawGlyphAtPhase(
 
 // ── Tweakpane setup ─────────────────────────────────────────────────
 
-export function setupPane(pane: PaneContainer) {
+export const macroDefs: MacroDef<number>[] = [
+  {
+    key: "widthScale",
+    defaultValue: 0.5,
+    opts: { min: 0, max: 1, step: 0.001, label: "Width x" },
+    apply: (v) => {
+      state.params.widthScale = lerp(0.2, 2.5, easeInOutQuart(v));
+    },
+  },
+];
+
+export function setupPane(pane: PaneContainer, refresh?: () => void) {
+  const macros = pane.addFolder({ title: "Macros", expanded: true });
+  installMacros(macros, state.macros, macroDefs, refresh ?? (() => pane.refresh()));
+
   pane.addBinding(state.params, "glyphScale", {
     min: 0,
     max: 1,

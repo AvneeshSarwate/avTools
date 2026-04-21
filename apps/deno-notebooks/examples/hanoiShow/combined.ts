@@ -8,21 +8,26 @@
 
 import {
   createWindowRenderManager,
+  createWindowTweakpane,
   requestWebGpuDevice,
   type WindowTweakpane,
 } from "../../window/mod.ts";
 import { P5GPU } from "../../tools/p5gpu.ts";
+import { installMacros } from "../../tools/macros.ts";
 
 import {
   cleanup as oscCleanup,
   draw as oscDraw,
+  macroDefs as oscMacroDefs,
   setup as oscSetup,
   setupPane as oscSetupPane,
+  state as oscState,
 } from "./p5gpu_osc_note_trail.ts";
 
 import {
   cleanup as tegakiCleanup,
   draw as tegakiDraw,
+  macroDefs as tegakiMacroDefs,
   setup as tegakiSetup,
   setupPane as tegakiSetupPane,
   state as tegakiState,
@@ -31,6 +36,7 @@ import {
 import {
   cleanup as bodyCleanup,
   draw as bodyDraw,
+  macroDefs as bodyMacroDefs,
   setup as bodySetup,
   setupPane as bodySetupPane,
   state as bodyState,
@@ -72,7 +78,7 @@ tegakiState.contourProvider = bodyContourProvider;
 tegakiState.handBBoxProvider = handBBoxProvider;
 bodyState.contourProvider = bodyContourProvider;
 
-function setupPane(pane: WindowTweakpane) {
+function setupPane(pane: WindowTweakpane, refresh: () => void) {
   const tab = pane.addTab({
     pages: [
       { title: "Global" },
@@ -101,9 +107,22 @@ function setupPane(pane: WindowTweakpane) {
 
   bodyContourProvider.setupPane(tab.pages[1]);
   handBBoxProvider.setupPane(tab.pages[2]);
-  oscSetupPane(tab.pages[3]);
-  tegakiSetupPane(tab.pages[4]);
-  bodySetupPane(tab.pages[5]);
+  oscSetupPane(tab.pages[3], refresh);
+  tegakiSetupPane(tab.pages[4], refresh);
+  bodySetupPane(tab.pages[5], refresh);
+}
+
+function setupPerfPane(pane: WindowTweakpane, refresh: () => void) {
+  const tab = pane.addTab({
+    pages: [
+      { title: "OSC" },
+      { title: "Tegaki" },
+      { title: "Body Text" },
+    ],
+  });
+  installMacros(tab.pages[0], oscState.macros, oscMacroDefs, refresh);
+  installMacros(tab.pages[1], tegakiState.macros, tegakiMacroDefs, refresh);
+  installMacros(tab.pages[2], bodyState.macros, bodyMacroDefs, refresh);
 }
 
 function updateTiming(frameStart: number, cpuMs: number): void {
@@ -178,6 +197,11 @@ await Promise.all([
   bodySetup(p5),
 ]);
 
+// Refresh both panes on any macro change. Declared before pane construction so
+// scene setupPanes can capture it by reference; reassigned once perfPane exists.
+let refreshAll: () => void = () => {};
+const triggerRefresh = () => refreshAll();
+
 const renderWindow = await createWindowRenderManager({
   device,
   width: WIDTH,
@@ -187,9 +211,21 @@ const renderWindow = await createWindowRenderManager({
     title: "Hanoi Show",
     panelWidth: 420,
     panelHeight: 520,
-    setup: setupPane,
+    setup: (pane) => setupPane(pane, triggerRefresh),
   },
 });
+
+const perfPane = createWindowTweakpane(renderWindow.window, {
+  title: "Perf",
+  panelWidth: 360,
+  panelHeight: 480,
+});
+setupPerfPane(perfPane, triggerRefresh);
+
+refreshAll = () => {
+  renderWindow.pane?.refresh();
+  perfPane.refresh();
+};
 
 await renderWindow.run(() => {
   const frameStart = performance.now();
@@ -225,6 +261,7 @@ await renderWindow.run(() => {
     bodyCleanup();
     bodyContourProvider.cleanup();
     handBBoxProvider.cleanup();
+    perfPane.destroy();
     p5.dispose();
   },
 });

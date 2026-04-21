@@ -16,6 +16,12 @@ import {
 } from "../../window/mod.ts";
 import { P5GPU } from "../../tools/p5gpu.ts";
 import { createOSCServer, type OSCMessage } from "../../tools/osc.ts";
+import {
+  easeInOutQuart,
+  installMacros,
+  lerp,
+  type MacroDef,
+} from "../../tools/macros.ts";
 
 const WIDTH = 1280;
 const HEIGHT = 720;
@@ -98,9 +104,24 @@ export const state = {
   runtime: {
     oscServer: null as ReturnType<typeof createOSCServer> | null,
   },
+  macros: {} as Record<string, number>,
 };
 
-export function setupPane(pane: PaneContainer): void {
+export const macroDefs: MacroDef<number>[] = [
+  {
+    key: "red",
+    defaultValue: 0.5,
+    opts: { min: 0, max: 1, step: 0.001, label: "Red" },
+    apply: (v) => {
+      state.drawing.r = Math.round(lerp(0, 255, easeInOutQuart(v)));
+    },
+  },
+];
+
+export function setupPane(pane: PaneContainer, refresh?: () => void): void {
+  const macros = pane.addFolder({ title: "Macros", expanded: true });
+  installMacros(macros, state.macros, macroDefs, refresh ?? (() => pane.refresh()));
+
   const render = pane.addFolder({ title: "Render" });
   render.addBinding(state.render, "confidenceThreshold", { min: 0, max: 1, step: 0.001, label: "Conf Threshold" });
 

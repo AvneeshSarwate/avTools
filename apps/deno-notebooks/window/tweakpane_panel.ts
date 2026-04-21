@@ -254,7 +254,7 @@ export class WindowTweakpane extends TweakpaneServer {
 
 export type PaneContainer = Pick<
   WindowTweakpane,
-  "addBinding" | "addFolder" | "addButton" | "addTab"
+  "addBinding" | "addFolder" | "addButton" | "addTab" | "refresh"
 >;
 
 /**
