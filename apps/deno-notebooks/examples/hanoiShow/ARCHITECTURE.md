@@ -197,7 +197,7 @@ High-level structure of `combined.ts`:
 - **Three headless syphon outputs** — see "Syphon outputs" below. Each has a per-frame source selector (OSC / Tegaki / Body Text / Composite).
 - **Shared data providers** — `bodyContourProvider`, `handBBoxProvider` own WS receivers + smoothing. Ticked once per frame before any scene reads.
 - **Tweakpane setup** — 6-tab panel (Global / Body Contour / Hands / OSC Trail / Tegaki / Body Text); Global tab has Background / Scenes / **Syphon Outputs** / Debug subfolders; each scene's `setupPane` delegates to one tab.
-- **Perf panel** — a second `WindowTweakpane` (`perfPane`) exposes macro controls for all three scenes on a separate floating panel with its own QR share.
+- **Perf panel** — a second `WindowTweakpane` (`perfPane`) in its own floating window, exposing macro controls for all three scenes with its own QR share. **Important:** the kernel-side class is the same `WindowTweakpane`, but the browser-side renderer is a *different* bundle (`@avtools/perf-pane`, a Vue custom element) that implements only a subset of the wire protocol. See "Perf pane — parallel Vue client" below before adding controls to it.
 - **Frame callback** — providers tick → each P5GPU does begin/draw/end → composite pass → syphon captures → submit. `yieldMs: 4` forces a `setTimeout` between frames so UDP/WS callbacks aren't starved.
 
 ### Shared-state injection
@@ -428,6 +428,62 @@ Current bindings:
 
 ---
 
+## Perf pane — parallel Vue client for the same protocol
+
+The perf pane shares the kernel-side plumbing with the main Tweakpane — same `WindowTweakpane` class, same `TweakpaneServer`, same op-log replay, same WebSocket wire protocol — but routes to a **different browser bundle** with a **restricted op vocabulary**. This is easy to miss because `perfPane` is typed as `WindowTweakpane`; the switch happens in the shell-HTML renderer.
+
+### How the routing happens
+
+`createWindowTweakpane` accepts an optional `renderShell` option. `combined.ts:392` passes `renderPerfShellHtml` from `tools/perf_shell_html.ts`, which:
+
+1. Loads the prebuilt Vue bundle at `webcomponents/perf-pane/dist/perf-pane.js` (the `@avtools/perf-pane` package).
+2. Inlines it into the shell HTML and mounts a `<perf-pane-component>` custom element pointed at the same loopback WebSocket URL the main pane uses.
+3. The custom element is a Vue app whose root is `apps/browser-projections/src/perfPane/PerfPaneRoot.vue`, driven by `perfPaneClient.ts`.
+
+The main pane, by contrast, uses the default shell (`tools/tweakpane_shell_html.ts`) which mounts the full `tweakpane-client.ts` bundle. Both bundles connect to WebSockets served by `DenoNotebookBridge`; both receive the same `replay` + op-stream; they just interpret it differently.
+
+### Op subset the perf client implements
+
+`apps/browser-projections/src/perfPane/perfPaneClient.ts` handles only:
+
+| Op                 | Behavior                                                                                       |
+|--------------------|------------------------------------------------------------------------------------------------|
+| `addTab`           | Renders tabbed pages with clickable buttons; each page is a flat list of sliders.              |
+| `addBinding`       | **Only when `typeof op.value === 'number'`.** Becomes a `VerticalSlider`. Non-numeric dropped. |
+| `refresh`          | Updates slider values from kernel-initiated writes.                                            |
+| `bladeValue`       | Updates slider value for standalone blades (rare in perf usage).                               |
+| `setProperty`      | Live updates for `label`, `min`, `max` on an existing slider.                                  |
+
+Silently ignored (see `perfPaneClient.ts:208-211`):
+- `addFolder` — **no folder hierarchy inside a tab page**. Sliders are flat per page.
+- `addButton` — **no buttons** (no OSC one-shot triggers, no "Reset" buttons, etc.).
+- `addBlade` — standalone slider/select blades.
+- `addSeparator`, `remove`, `dispose` — layout and lifecycle ops.
+- Non-numeric bindings — booleans, strings, and enum-`options` bindings never render.
+
+### Implications for adding controls
+
+- If you want a control to appear on the perf pane, it must be a **numeric binding inside a tab page** (root-level sliders also render, but combined.ts uses tabs). The existing `installMacros` + `MacroDef<number>` pattern is the only shape guaranteed to work.
+- Want to group sliders? Use separate tab pages, not sub-folders.
+- Want buttons, dropdowns, or non-numeric controls on the perf pane? You must **extend `PerfPaneClient` + `PerfPaneRoot.vue` and rebuild the bundle**. Alternatively, put those controls on the main Tweakpane, which handles everything.
+- The main Tweakpane always renders every op. So controls added to the *main* pane don't need any awareness of the perf pane's limits. It's only adding things to `setupPerfPane` (or to anything that will be visible on the perf window) that is constrained.
+
+### Rebuild
+
+When editing `perfPaneClient.ts`, `PerfPaneRoot.vue`, or any Vue component under `apps/browser-projections/src/perfPane/`:
+
+```
+cd apps/browser-projections && npm run buildPerfPane
+```
+
+`perf_shell_html.ts` reads the built bundle at startup — no HMR.
+
+### Why two clients instead of one pane with presets
+
+The perf pane is optimized for live operation: big vertical sliders, chunky hit targets, tabs-not-folders, no dropdowns or text fields that require keyboard focus. It's a hands-on-phone-or-touchscreen tool, whereas the main pane is a full Tweakpane for fine tuning. The wire protocol is a convenient shared contract, and `installMacros` already produces ops (`addBinding` numeric in a tab page) that are exactly the intersection both clients render — so a single `macroDefs` export drives both panes automatically.
+
+---
+
 ## Directory map — "where do I look when…"
 
 | Task                                         | Where                                                                                     |
@@ -440,7 +496,10 @@ Current bindings:
 | windowing / blit / render loop               | `apps/deno-notebooks/window/`                                                             |
 | headless syphon primitives                   | `apps/deno-notebooks/syphon/headless_syphon.ts`, `syphon/staging_buffers.ts`              |
 | pane protocol (kernel side)                  | `apps/deno-notebooks/tools/tweakpane{Server,Adapter,Protocol}.ts`                         |
-| pane protocol (browser side)                 | `webcomponents/tweakpane/src/tweakpane-client.ts` (rebuild `dist/` after edits)           |
+| pane protocol (browser side, main pane)      | `webcomponents/tweakpane/src/tweakpane-client.ts` (rebuild `dist/` after edits)           |
+| perf pane Vue client (browser side)          | `apps/browser-projections/src/perfPane/` → `perfPaneClient.ts`, `PerfPaneRoot.vue`, `components/VerticalSlider.vue` (rebuild via `npm run buildPerfPane`) |
+| perf pane shell HTML (kernel side)           | `apps/deno-notebooks/tools/perf_shell_html.ts` — loads bundle from `webcomponents/perf-pane/dist/perf-pane.js` |
+| macro helper (shared between main + perf)    | `apps/deno-notebooks/tools/macros.ts` — `MacroDef<T>` + `installMacros`                   |
 | native wry / winit / FFI                     | `apps/deno-notebooks/native/deno_window/src/lib.rs`                                       |
 | native syphon FFI                            | `apps/deno-notebooks/native/syphon_bridge/src/lib.rs`                                     |
 | FFI symbol list (window)                     | `apps/deno-notebooks/window/ffi.ts`                                                       |
@@ -475,6 +534,7 @@ See `io-lag-analysis.md` (same directory) for a prior writeup of the IO / frame-
 - **rgba→bgra swizzle is implicit.** Syphon's `bgra8unorm` staging texture + the blit shader's `vec4f(r,g,b,a)` output is what produces correct BGRA bytes for `publishFrame`. Change the staging format to rgba8 and the channels will come out wrong.
 - **Syphon readback is always one frame behind.** Ping-pong buffers mean publishFrame sees the previous frame's pixels. Acceptable in practice; don't try to "fix" it with a single-buffer design — that'll introduce GPU stalls or force-blocking on mapAsync.
 - **Three P5GPU instances all need their own font loads.** Today only `bodyP5` loads Charmonman (via `bodySetup(bodyP5)`). A future scene that uses a custom font on `oscP5` or `tegakiP5` needs its own `await p5.loadFont(...)` in that scene's setup — fonts do not cross P5GPU instances.
+- **Perf pane is a different browser client.** `perfPane` is kernel-typed as `WindowTweakpane`, but its shell mounts `@avtools/perf-pane` (Vue), not `tweakpane-client`. It renders numeric sliders in tab pages only — `addFolder`, `addButton`, non-numeric `addBinding`, `addBlade`, `addSeparator` are silently dropped. If a control you add doesn't appear on the perf window, it's probably one of those ops. See "Perf pane — parallel Vue client" section.
 
 ---
 
