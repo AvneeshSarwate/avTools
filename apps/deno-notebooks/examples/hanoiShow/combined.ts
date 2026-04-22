@@ -8,12 +8,16 @@
 
 import {
   alphaBlit,
+  blit,
+  type BlitPipeline,
   createAlphaBlitPipeline,
+  createBlitPipeline,
   createWindowRenderManager,
   createWindowTweakpane,
   requestWebGpuDevice,
   type WindowTweakpane,
 } from "../../window/mod.ts";
+import { alignedBytesPerRow, HeadlessSyphonServer } from "../../syphon/mod.ts";
 import { P5GPU } from "../../tools/p5gpu.ts";
 import { installMacros } from "../../tools/macros.ts";
 import { renderPerfShellHtml } from "../../tools/perf_shell_html.ts";
@@ -66,6 +70,8 @@ const { width: WIDTH, height: HEIGHT } = ASPECT_DIMS[ASPECT] ??
 // only run in occasional timer gaps.
 const COMBINED_RENDER_YIELD_MS = 4;
 
+type SyphonSource = "osc" | "tegaki" | "body" | "composite";
+
 const globalParams = {
   bgR: 13,
   bgG: 16,
@@ -74,6 +80,9 @@ const globalParams = {
   tegakiEnabled: true,
   bodyEnabled: true,
   showTiming: false,
+  syphon1Source: "composite" as SyphonSource,
+  syphon2Source: "composite" as SyphonSource,
+  syphon3Source: "composite" as SyphonSource,
 };
 
 const timing = {
@@ -116,6 +125,26 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
   scenes.addBinding(globalParams, "oscEnabled", { label: "OSC Trail" });
   scenes.addBinding(globalParams, "tegakiEnabled", { label: "Tegaki" });
   scenes.addBinding(globalParams, "bodyEnabled", { label: "Body Text" });
+
+  const syphonFolder = global.addFolder({ title: "Syphon Outputs" });
+  const syphonSourceOptions = {
+    "Composite": "composite",
+    "OSC Trail": "osc",
+    "Tegaki": "tegaki",
+    "Body Text": "body",
+  };
+  syphonFolder.addBinding(globalParams, "syphon1Source", {
+    options: syphonSourceOptions,
+    label: "Output 1",
+  });
+  syphonFolder.addBinding(globalParams, "syphon2Source", {
+    options: syphonSourceOptions,
+    label: "Output 2",
+  });
+  syphonFolder.addBinding(globalParams, "syphon3Source", {
+    options: syphonSourceOptions,
+    label: "Output 3",
+  });
 
   const debug = global.addFolder({ title: "Debug" });
   debug.addBinding(globalParams, "showTiming", { label: "Frame Timing" });
@@ -165,6 +194,104 @@ function updateTiming(frameStart: number, cpuMs: number): void {
       ? intervalMs
       : Math.max(timing.intervalMaxMs, intervalMs);
   }
+}
+
+// ── Headless Syphon output ─────────────────────────────────────────
+//
+// Each output owns a `bgra8unorm` staging texture and a ping-pong pair of
+// readback buffers. Per frame we blit the selected source texture into the
+// staging (the blit shader writes vec4f(r,g,b,a) into a bgra8unorm target,
+// which stores as BGRA bytes — that's exactly what HeadlessSyphon wants),
+// then queue a copyTextureToBuffer into the current write buffer.
+//
+// Publish runs async: we fire-and-forget a mapAsync + publishFrame + unmap on
+// the buffer that's NOT the current write target. A `busy` flag prevents us
+// from reusing a still-mapped buffer — if both are stuck mapped the frame
+// copy is skipped (harmless; Syphon just gets one fewer update).
+interface SyphonOutput {
+  readonly server: HeadlessSyphonServer;
+  readonly name: string;
+  captureFrame(encoder: GPUCommandEncoder, sourceView: GPUTextureView): void;
+  tryPublish(): void;
+  destroy(): void;
+}
+
+function createSyphonOutput(
+  device: GPUDevice,
+  width: number,
+  height: number,
+  serverName: string,
+  bgraBlitPipeline: BlitPipeline,
+): SyphonOutput {
+  const stagingTexture = device.createTexture({
+    size: { width, height },
+    format: "bgra8unorm",
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+  });
+  const bytesPerRow = alignedBytesPerRow(width);
+  const bufferSize = bytesPerRow * height;
+  const buffers: GPUBuffer[] = [0, 1].map(() =>
+    device.createBuffer({
+      size: bufferSize,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    })
+  );
+  const busy = [false, false];
+  const hasData = [false, false];
+  let writeIdx = 0;
+
+  const server = new HeadlessSyphonServer({ serverName, flipY: true });
+
+  return {
+    server,
+    name: serverName,
+
+    captureFrame(encoder, sourceView) {
+      if (busy[writeIdx]) return; // ping-pong buffer stuck mapped; skip
+      blit(
+        device,
+        encoder,
+        bgraBlitPipeline,
+        sourceView,
+        stagingTexture.createView(),
+      );
+      encoder.copyTextureToBuffer(
+        { texture: stagingTexture },
+        { buffer: buffers[writeIdx]!, bytesPerRow, rowsPerImage: height },
+        { width, height, depthOrArrayLayers: 1 },
+      );
+      hasData[writeIdx] = true;
+      writeIdx = (writeIdx + 1) % 2;
+    },
+
+    tryPublish() {
+      for (let i = 0; i < 2; i += 1) {
+        if (!hasData[i] || busy[i]) continue;
+        busy[i] = true;
+        const idx = i;
+        (async () => {
+          try {
+            await buffers[idx]!.mapAsync(GPUMapMode.READ);
+            const bytes = new Uint8Array(buffers[idx]!.getMappedRange());
+            server.publishFrame(bytes, width, height, bytesPerRow);
+            buffers[idx]!.unmap();
+          } catch (err) {
+            console.error(`syphon ${serverName} publish failed:`, err);
+          } finally {
+            busy[idx] = false;
+            hasData[idx] = false;
+          }
+        })();
+        return; // one publish per frame is enough
+      }
+    },
+
+    destroy() {
+      for (const buf of buffers) buf.destroy();
+      stagingTexture.destroy();
+      server.destroy();
+    },
+  };
 }
 
 function drawTimingOverlay(p5: P5GPU): void {
@@ -219,6 +346,16 @@ const compositeTexture = device.createTexture({
 const compositeView = compositeTexture.createView();
 const alphaBlitPipeline = createAlphaBlitPipeline(device, COMPOSITE_FORMAT);
 
+// Syphon outputs: each is independently routable to any scene texture or the
+// composite via the Global > Syphon Outputs tab. bgra8unorm matches what
+// HeadlessSyphon expects on disk (pixel_format = BGRA8).
+const syphonBgraBlitPipeline = createBlitPipeline(device, "bgra8unorm");
+const syphonOutputs: readonly SyphonOutput[] = [
+  createSyphonOutput(device, WIDTH, HEIGHT, "Hanoi Show 1", syphonBgraBlitPipeline),
+  createSyphonOutput(device, WIDTH, HEIGHT, "Hanoi Show 2", syphonBgraBlitPipeline),
+  createSyphonOutput(device, WIDTH, HEIGHT, "Hanoi Show 3", syphonBgraBlitPipeline),
+];
+
 // Initialize providers first so scenes see ready-to-use providers on state
 bodyContourProvider.setup();
 handBBoxProvider.setup();
@@ -240,10 +377,6 @@ const renderWindow = await createWindowRenderManager({
   width: WIDTH,
   height: HEIGHT,
   title: "Hanoi Show",
-  syphon: {
-    serverName: "Hanoi Show",
-    flipY: true,
-  },
   pane: {
     title: "Hanoi Show",
     panelWidth: 420,
@@ -315,10 +448,28 @@ await renderWindow.run(() => {
     }],
   });
   clearPass.end();
-  alphaBlit(device, encoder, alphaBlitPipeline, oscTex.createView(), compositeView);
-  alphaBlit(device, encoder, alphaBlitPipeline, tegakiTex.createView(), compositeView);
-  alphaBlit(device, encoder, alphaBlitPipeline, bodyTex.createView(), compositeView);
+  const oscView = oscTex.createView();
+  const tegakiView = tegakiTex.createView();
+  const bodyView = bodyTex.createView();
+  alphaBlit(device, encoder, alphaBlitPipeline, oscView, compositeView);
+  alphaBlit(device, encoder, alphaBlitPipeline, tegakiView, compositeView);
+  alphaBlit(device, encoder, alphaBlitPipeline, bodyView, compositeView);
   alphaBlit(device, encoder, alphaBlitPipeline, overlayTex.createView(), compositeView);
+
+  // Syphon captures: piggyback on the same encoder. Fire async publishes of
+  // any previous-frame ping-pong buffers first so their map requests race in
+  // parallel with this frame's GPU work.
+  for (const output of syphonOutputs) output.tryPublish();
+  const syphonSources: Record<SyphonSource, GPUTextureView> = {
+    osc: oscView,
+    tegaki: tegakiView,
+    body: bodyView,
+    composite: compositeView,
+  };
+  syphonOutputs[0]!.captureFrame(encoder, syphonSources[globalParams.syphon1Source]);
+  syphonOutputs[1]!.captureFrame(encoder, syphonSources[globalParams.syphon2Source]);
+  syphonOutputs[2]!.captureFrame(encoder, syphonSources[globalParams.syphon3Source]);
+
   device.queue.submit([encoder.finish()]);
 
   updateTiming(frameStart, performance.now() - frameStart);
@@ -337,5 +488,6 @@ await renderWindow.run(() => {
     bodyP5.dispose();
     overlayP5.dispose();
     compositeTexture.destroy();
+    for (const output of syphonOutputs) output.destroy();
   },
 });
