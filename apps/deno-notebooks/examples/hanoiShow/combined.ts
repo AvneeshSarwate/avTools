@@ -7,6 +7,8 @@
 //   deno run --unstable-webgpu --unstable-ffi --allow-all examples/hanoiShow/combined.ts
 
 import {
+  alphaBlit,
+  createAlphaBlitPipeline,
   createWindowRenderManager,
   createWindowTweakpane,
   requestWebGpuDevice,
@@ -46,8 +48,20 @@ import {
 import { createBodyContourProvider } from "./body_contour_provider.ts";
 import { createHandBBoxProvider } from "./hand_bbox_provider.ts";
 
-const WIDTH = 1280;
-const HEIGHT = 720;
+// Canvas aspect is picked once at startup. Edit ASPECT here, or override with
+// HANOI_ASPECT=portrait (or square / landscape) in the environment. Scenes pick
+// up the chosen dims at load time — no dynamic switching.
+type AspectRatio = "landscape" | "portrait" | "square";
+const ASPECT_DIMS: Record<AspectRatio, { width: number; height: number }> = {
+  landscape: { width: 1280, height: 720 },
+  portrait: { width: 720, height: 1280 },
+  square: { width: 1024, height: 1024 },
+};
+const ASPECT: AspectRatio =
+  (Deno.env.get("HANOI_ASPECT") as AspectRatio | undefined) ?? "portrait";
+const { width: WIDTH, height: HEIGHT } = ASPECT_DIMS[ASPECT] ??
+  ASPECT_DIMS.landscape;
+
 // Keep the composed sketch from spinning so hard that UDP/WebSocket callbacks
 // only run in occasional timer gaps.
 const COMBINED_RENDER_YIELD_MS = 4;
@@ -185,17 +199,35 @@ function drawTimingOverlay(p5: P5GPU): void {
 }
 
 const device = await requestWebGpuDevice();
-const p5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
+
+// Per-scene P5GPU instances. Each scene draws into its own offscreen texture;
+// the frame callback alpha-composites them onto `compositeTexture` in draw
+// order. Scenes MUST NOT call `background()` — the transparent clear
+// (P5GPU's default) is what makes alpha compositing work.
+const oscP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
+const tegakiP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
+const bodyP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
+const overlayP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
+
+const COMPOSITE_FORMAT: GPUTextureFormat = "rgba8unorm";
+const compositeTexture = device.createTexture({
+  size: { width: WIDTH, height: HEIGHT },
+  format: COMPOSITE_FORMAT,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.COPY_SRC,
+});
+const compositeView = compositeTexture.createView();
+const alphaBlitPipeline = createAlphaBlitPipeline(device, COMPOSITE_FORMAT);
 
 // Initialize providers first so scenes see ready-to-use providers on state
 bodyContourProvider.setup();
 handBBoxProvider.setup();
 
-// Initialize all scenes
+// Initialize all scenes. Body loads Charmonman into its own P5GPU instance.
 await Promise.all([
   oscSetup(device),
-  tegakiSetup(),
-  bodySetup(p5),
+  tegakiSetup({ width: WIDTH, height: HEIGHT }),
+  bodySetup(bodyP5),
 ]);
 
 // Refresh both panes on any macro change. Declared before pane construction so
@@ -208,6 +240,10 @@ const renderWindow = await createWindowRenderManager({
   width: WIDTH,
   height: HEIGHT,
   title: "Hanoi Show",
+  syphon: {
+    serverName: "Hanoi Show",
+    flipY: true,
+  },
   pane: {
     title: "Hanoi Show",
     panelWidth: 420,
@@ -242,24 +278,51 @@ await renderWindow.run(() => {
   bodyContourProvider.tick();
   handBBoxProvider.tick();
 
-  p5.beginFrame();
-  p5.background(globalParams.bgR, globalParams.bgG, globalParams.bgB);
+  // Each scene draws into its own P5GPU. We always begin/end the frame so
+  // every layer produces a valid texture (transparent if the scene is
+  // disabled or early-returned). alphaBlit of an all-transparent layer is a
+  // no-op visually, so we don't gate the composite step on the enable flags.
+  oscP5.beginFrame();
+  if (globalParams.oscEnabled) oscDraw(oscP5, time);
+  const oscTex = oscP5.endFrame();
 
-  // Draw enabled scenes in order.
-  if (globalParams.oscEnabled) {
-    oscDraw(p5, time);
-  }
-  if (globalParams.tegakiEnabled) {
-    tegakiDraw(p5);
-  }
-  if (globalParams.bodyEnabled) {
-    bodyDraw(p5, time);
-  }
-  drawTimingOverlay(p5);
+  tegakiP5.beginFrame();
+  if (globalParams.tegakiEnabled) tegakiDraw(tegakiP5);
+  const tegakiTex = tegakiP5.endFrame();
 
-  const output = p5.endFrame();
+  bodyP5.beginFrame();
+  if (globalParams.bodyEnabled) bodyDraw(bodyP5, time);
+  const bodyTex = bodyP5.endFrame();
+
+  overlayP5.beginFrame();
+  drawTimingOverlay(overlayP5);
+  const overlayTex = overlayP5.endFrame();
+
+  // Composite: clear target to bg RGB (alpha 1 so nothing behind leaks
+  // through), then alpha-blit the 4 layers in painter's-algorithm order.
+  const encoder = device.createCommandEncoder();
+  const clearPass = encoder.beginRenderPass({
+    colorAttachments: [{
+      view: compositeView,
+      loadOp: "clear",
+      storeOp: "store",
+      clearValue: {
+        r: globalParams.bgR / 255,
+        g: globalParams.bgG / 255,
+        b: globalParams.bgB / 255,
+        a: 1,
+      },
+    }],
+  });
+  clearPass.end();
+  alphaBlit(device, encoder, alphaBlitPipeline, oscTex.createView(), compositeView);
+  alphaBlit(device, encoder, alphaBlitPipeline, tegakiTex.createView(), compositeView);
+  alphaBlit(device, encoder, alphaBlitPipeline, bodyTex.createView(), compositeView);
+  alphaBlit(device, encoder, alphaBlitPipeline, overlayTex.createView(), compositeView);
+  device.queue.submit([encoder.finish()]);
+
   updateTiming(frameStart, performance.now() - frameStart);
-  return output;
+  return compositeView;
 }, {
   yieldMs: COMBINED_RENDER_YIELD_MS,
   cleanup() {
@@ -269,6 +332,10 @@ await renderWindow.run(() => {
     bodyContourProvider.cleanup();
     handBBoxProvider.cleanup();
     perfPane.destroy();
-    p5.dispose();
+    oscP5.dispose();
+    tegakiP5.dispose();
+    bodyP5.dispose();
+    overlayP5.dispose();
+    compositeTexture.destroy();
   },
 });

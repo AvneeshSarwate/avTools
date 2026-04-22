@@ -130,13 +130,10 @@ const GRID_ROWS = 32;
 const FONT_META = { unitsPerEm: 1000, ascender: 1200, descender: -700 };
 const FONT_FAMILY = "Charmonman";
 
-const WIDTH = 1280;
-const HEIGHT = 800;
 const FONT_SIZE = 50;
 const LINE_HEIGHT = 130; // Charmonman has tall asc+desc (em ≈ 1.9x fontSize)
 const MARGIN_X = 80;
 const MARGIN_Y = 100;
-const MAX_WIDTH = WIDTH - MARGIN_X * 2;
 
 // Thai demo text — multiple phrases separated by spaces so the native
 // layout engine has break opportunities (Thai has no inter-word spaces
@@ -199,7 +196,12 @@ export const state = {
     lineHeight: LINE_HEIGHT,
     marginX: MARGIN_X,
     marginY: MARGIN_Y,
-    maxWidth: MAX_WIDTH,
+    /** Canvas width in pixels. Populated by setup({width,height}). */
+    width: 0,
+    /** Canvas height in pixels. Populated by setup({width,height}). */
+    height: 0,
+    /** Text layout width = width - 2*marginX. Populated by setup. */
+    maxWidth: 0,
     lorem: LOREM,
   },
   /**
@@ -373,16 +375,15 @@ function computeGlyphBboxes(): void {
     }
     if (xMin === Infinity) continue;
 
-    // Normalize to [0,1] using tegaki's layout canvas dimensions. Contour
-    // points arrive in normalized coords relative to the render canvas, so
-    // equal layout/render dimensions are assumed. If the combined sketch
-    // renders tegaki into a differently-sized canvas, intersection positions
-    // drift proportionally — keep tegaki WIDTH/HEIGHT matched to the host.
+    // Normalize to [0,1] using the host canvas dimensions that were passed
+    // into setup(). Contour points arrive in normalized coords relative to
+    // the render canvas, so we use the same width/height for both the text
+    // layout and the bbox normalization.
     gs.bbox = {
-      xMin: xMin / WIDTH,
-      yMin: yMin / HEIGHT,
-      xMax: xMax / WIDTH,
-      yMax: yMax / HEIGHT,
+      xMin: xMin / state.meta.width,
+      yMin: yMin / state.meta.height,
+      xMax: xMax / state.meta.width,
+      yMax: yMax / state.meta.height,
     };
   }
 }
@@ -674,7 +675,7 @@ async function runHandEmitterLoop(ctx: DateTimeContext): Promise<void> {
         const maxX = mirror ? 1 - h.minX : h.maxX;
         const centerX = (minX + maxX) * 0.5;
         const centerY = (h.minY + h.maxY) * 0.5;
-        spawnHandParticle(ctx, centerX * WIDTH, centerY * HEIGHT);
+        spawnHandParticle(ctx, centerX * state.meta.width, centerY * state.meta.height);
         nextSpawnMs[i] = nowMs + 30 + ctx.random() * 120; // 30–150 ms
       }
     }
@@ -875,7 +876,11 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
 
 // ── Setup (load data, build layout, start animation) ────────────────
 
-export async function setup() {
+export async function setup(dims: { width: number; height: number }) {
+  state.meta.width = dims.width;
+  state.meta.height = dims.height;
+  state.meta.maxWidth = dims.width - MARGIN_X * 2;
+
   // Load tegaki bundle
   const TEGAKI_ROOT = new URL(
     "../../../../clonedCompanionRepos/tegaki/packages/renderer/fonts/charmonman/",
@@ -902,7 +907,7 @@ export async function setup() {
     family: FONT_FAMILY,
     fontSize: FONT_SIZE,
     lineHeight: LINE_HEIGHT,
-    width: MAX_WIDTH,
+    width: state.meta.maxWidth,
     height: null,
     alignH: 0, // left
     wrapMode: 0, // word wrap
@@ -1008,7 +1013,9 @@ export async function setup() {
 
 // ── Draw (no beginFrame/endFrame, no HUD) ───────────────────────────
 
-export function draw(p5: P5GPU) {
+export function draw(p5: P5GPU, autoClear = true) {
+  if (autoClear) p5.clear();
+
   const [ir, ig, ib] = hexToRgb(state.params.inkColor);
 
   if (state.params.showContourDebug) {
@@ -1090,6 +1097,8 @@ export function cleanup() {
 // ── Standalone entry point ──────────────────────────────────────────
 
 if (import.meta.main) {
+  const WIDTH = 1280;
+  const HEIGHT = 720;
   const device = await requestWebGpuDevice();
 
   // Standalone: create our own providers and wire them up.
@@ -1118,7 +1127,7 @@ if (import.meta.main) {
   });
   const p5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 
-  await setup();
+  await setup({ width: WIDTH, height: HEIGHT });
 
   let fpsSmooth = 60;
   let lastFrameTime = performance.now();
@@ -1134,7 +1143,7 @@ if (import.meta.main) {
     p5.beginFrame();
     const [br, bg, bb] = hexToRgb(state.params.bgColor);
     p5.background(br, bg, bb);
-    draw(p5);
+    draw(p5, false);
 
     // HUD
     p5.noStroke();

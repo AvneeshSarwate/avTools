@@ -33,9 +33,6 @@ import {
   type MacroDef,
 } from "../../tools/macros.ts";
 
-const WIDTH = 1280;
-const HEIGHT = 720;
-
 // ── Consolidated state ──────────────────────────────────────────
 
 export const state = {
@@ -202,7 +199,9 @@ export function cleanup() {
 
 // ── Draw function ───────────────────────────────────────────────
 
-export function draw(p5: P5GPU, time: number) {
+export function draw(p5: P5GPU, time: number, autoClear = true) {
+  if (autoClear) p5.clear();
+
   const fade = state.render.fade;
   if (fade <= 0) return;
 
@@ -229,8 +228,8 @@ export function draw(p5: P5GPU, time: number) {
     p5.textAlign("center", "center");
     p5.text(
       "Waiting for contour data on ws://127.0.0.1:9100...",
-      WIDTH / 2,
-      HEIGHT / 2,
+      p5.width / 2,
+      p5.height / 2,
     );
     return;
   }
@@ -246,9 +245,11 @@ export function draw(p5: P5GPU, time: number) {
     // after mirroring to keep outer-contour letters outside and inner-
     // contour letters inside.
     const mirror = state.render.mirrorContourX;
+    const w = p5.width;
+    const h = p5.height;
     let scaled: Point[] = contour.points.map((p) => ({
-      x: (mirror ? 1 - p.x : p.x) * WIDTH,
-      y: p.y * HEIGHT,
+      x: (mirror ? 1 - p.x : p.x) * w,
+      y: p.y * h,
     }));
     if (mirror) scaled.reverse();
 
@@ -317,6 +318,8 @@ export function draw(p5: P5GPU, time: number) {
 // ── Standalone entry point ──────────────────────────────────────
 
 if (import.meta.main) {
+  const WIDTH = 1280;
+  const HEIGHT = 720;
   const device = await requestWebGpuDevice();
 
   // Standalone: create our own provider and wire it up.
@@ -349,7 +352,7 @@ if (import.meta.main) {
       provider.tick();
       p5.beginFrame();
       p5.background(15, 18, 26);
-      draw(p5, t);
+      draw(p5, t, false);
 
       // HUD
       p5.textSize(14);

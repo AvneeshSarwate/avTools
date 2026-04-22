@@ -4,7 +4,15 @@ export {
   type GpuWindow,
   type WindowOptions,
 } from "./window.ts";
-export { createBlitPipeline, blit, blitToViewport, type BlitPipeline, type BlitViewport } from "./blit.ts";
+export {
+  createBlitPipeline,
+  createAlphaBlitPipeline,
+  blit,
+  blitToViewport,
+  alphaBlit,
+  type BlitPipeline,
+  type BlitViewport,
+} from "./blit.ts";
 export { startRenderLoop, type RenderLoopOptions } from "./render_loop.ts";
 export {
   createWindowRenderManager,

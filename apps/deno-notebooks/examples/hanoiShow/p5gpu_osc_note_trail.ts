@@ -23,8 +23,6 @@ import {
   type MacroDef,
 } from "../../tools/macros.ts";
 
-const WIDTH = 1280;
-const HEIGHT = 720;
 const OSC_PORT = 9003;
 const OSC_ADDRESS = "/noteInfo";
 const PITCH_HISTORY_SIZE = 100;
@@ -181,7 +179,8 @@ export function cleanup(): void {
   state.runtime.oscServer = null;
 }
 
-export function draw(p5: P5GPU, time: number): void {
+export function draw(p5: P5GPU, time: number, autoClear = true): void {
+  if (autoClear) p5.clear();
   if (state.note.confidence === 0) return;
   drawNoteCircle(p5, time);
 }
@@ -239,16 +238,16 @@ function drawNoteCircle(p5: P5GPU, time: number): void {
     const angle = ((time % state.polar.period) / state.polar.period) * Math.PI * 2;
     const pitchOffset = ((state.note.pitch - state.polar.pitchCenter) / (103 - 24)) * state.polar.pitchRadiusScale;
     const r = state.polar.baseRadius + pitchOffset;
-    x = WIDTH * 0.5 + r * Math.cos(angle);
-    y = HEIGHT * 0.5 + r * Math.sin(angle);
+    x = p5.width * 0.5 + r * Math.cos(angle);
+    y = p5.height * 0.5 + r * Math.sin(angle);
   } else {
-    x = WIDTH * ((time % state.linear.period) / state.linear.period);
+    x = p5.width * ((time % state.linear.period) / state.linear.period);
     const yOffset = ((state.note.pitch - state.linear.pitchCenter) / (103 - 24)) * state.linear.pitchRadius * 2;
-    y = HEIGHT * 0.5 - yOffset;
+    y = p5.height * 0.5 - yOffset;
   }
 
-  x = clamp(x, 0, WIDTH);
-  y = clamp(y, 0, HEIGHT);
+  x = clamp(x, 0, p5.width);
+  y = clamp(y, 0, p5.height);
 
   p5.fill(state.drawing.r, state.drawing.g, state.drawing.b);
   p5.circle(x, y, size);
@@ -267,9 +266,9 @@ function drawHistoryLine(p5: P5GPU): void {
   for (let i = 0; i < len; i++) {
     const sampleIdx = (head - len + i + FILTERED_HISTORY_SIZE) % FILTERED_HISTORY_SIZE;
     const pitch = buf[sampleIdx];
-    const x = (i / (len - 1)) * WIDTH;
+    const x = (i / (len - 1)) * p5.width;
     const yOffset = ((pitch - state.historyLine.pitchCenter) / (103 - 24)) * state.historyLine.pitchRadius * 2;
-    const y = clamp(HEIGHT * 0.5 - yOffset, 0, HEIGHT);
+    const y = clamp(p5.height * 0.5 - yOffset, 0, p5.height);
     // repeat first and last points so the spline passes through endpoints
     if (i === 0 || i === len - 1) p5.curveVertex(x, y);
     p5.curveVertex(x, y);
@@ -398,6 +397,8 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 if (import.meta.main) {
+  const WIDTH = 1280;
+  const HEIGHT = 720;
   const device = await requestWebGpuDevice();
   const p5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 
@@ -424,7 +425,7 @@ if (import.meta.main) {
     const time = performance.now() * 0.001;
     p5.beginFrame();
     p5.clear();
-    draw(p5, time);
+    draw(p5, time, false);
     return p5.endFrame();
   }, {
     cleanup() {
