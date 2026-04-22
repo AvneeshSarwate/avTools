@@ -14,16 +14,45 @@ From `apps/deno-notebooks/`:
 deno run --unstable-webgpu --unstable-ffi --allow-all examples/hanoiShow/combined.ts
 ```
 
-Prereq: the native FFI lib must be prebuilt.
+Override the aspect ratio (landscape / portrait / square) at launch:
 
 ```
-cd apps/deno-notebooks/native/deno_window
-cargo build --release
+HANOI_ASPECT=portrait deno run --unstable-webgpu --unstable-ffi --allow-all \
+  examples/hanoiShow/combined.ts
 ```
 
-Produces `target/release/libdeno_window.dylib` — `window/ffi.ts` loads it. Without this, `openLibrary()` throws.
+Prereqs: two native FFI libs must be prebuilt.
 
-**Platform caveat:** the wry webview path is `#[cfg(target_os = "macos")]` only (`native/deno_window/src/lib.rs`). On Linux/Windows `create_webview` returns null and the Tweakpane panel won't work. The GPU window itself is cross-platform.
+```
+cd apps/deno-notebooks/native/deno_window && cargo build --release
+cd apps/deno-notebooks/native/syphon_bridge && cargo build --release
+```
+
+Produces `libdeno_window.dylib` (windowing + wry webview) and `libsyphon_bridge.dylib` (Syphon publisher). Missing either → `openLibrary()` throws at startup.
+
+**Platform caveat:** the wry webview path is `#[cfg(target_os = "macos")]` only (`native/deno_window/src/lib.rs`). On Linux/Windows `create_webview` returns null and the Tweakpane panel won't work. The GPU window itself is cross-platform. The Syphon outputs are macOS-only (Syphon is a macOS IOSurface bridge).
+
+---
+
+## Aspect ratio — picked once at startup
+
+Top of `combined.ts`: a single `ASPECT: AspectRatio` toggle chooses one of three preset dim pairs, overridable via `HANOI_ASPECT` env var.
+
+```ts
+type AspectRatio = "landscape" | "portrait" | "square";
+const ASPECT_DIMS = {
+  landscape: { width: 1280, height: 720 },
+  portrait:  { width: 720, height: 1280 },
+  square:    { width: 1024, height: 1024 },
+};
+```
+
+**Not dynamically switchable.** `WIDTH` and `HEIGHT` flow once into: the GpuWindow (surface size), every P5GPU instance (scene offscreens + composite + syphon staging), tegaki's `setup({width,height})` (which bakes the text-layout `maxWidth`), and all syphon output pipelines. Changing aspect mid-run would require tearing down and reallocating basically everything.
+
+**Where scene code reads dims.**
+- Inside exported `draw()` functions: use `p5.width` / `p5.height` (`oscDraw`, `bodyDraw`). No plumbing needed — P5GPU already knows its size.
+- Inside tegaki helpers that don't have `p5` in scope (`computeGlyphBboxes`, `runHandEmitterLoop`, `spawnHandParticle`): read from `state.meta.width` / `state.meta.height` / `state.meta.maxWidth`, populated by `tegakiSetup({width,height})`.
+- Module-level `WIDTH`/`HEIGHT` constants exist only inside each scene's `if (import.meta.main)` block — standalone mode. They do not leak into the exported code paths.
 
 ---
 
@@ -158,17 +187,22 @@ Mechanism:
 
 ## Scene composition (`combined.ts`)
 
-Each scene module exports the same surface — `setup`, `draw`, `cleanup`, `setupPane`, `state` — so `combined.ts` imports them by name and runs all three in one WebGPU window.
+Each scene module exports the same surface — `setup`, `draw`, `cleanup`, `setupPane`, `state` — so `combined.ts` imports them by name and composes them in one WebGPU window.
 
-- `combined.ts:42-56` — canvas size + global tweakpane-backed params (bg RGB, per-scene enable toggles, timing overlay).
-- `combined.ts:69-73` — shared data providers (`bodyContourProvider`, `handBBoxProvider`) own the WS receivers + smoothing. Ticked once per frame so scenes don't redo smoothing.
-- `combined.ts:75-107` — `setupPane` builds a 6-tab Tweakpane (Global / Body Contour / Hands / OSC Trail / Tegaki / Body Text), delegating each scene's `setupPane` to one tab page.
-- `combined.ts:167-192` — boots a `WindowRenderManager` with `pane: { ..., setup: setupPane }`.
-- `combined.ts:194-230` — per-frame: poll providers → `p5.beginFrame` → draw enabled scenes in order → timing overlay → `p5.endFrame`. A `yieldMs: 4` forces a `setTimeout` between frames so UDP/WS callbacks aren't starved.
+High-level structure of `combined.ts`:
+
+- **Aspect resolution** — env var / default picks `WIDTH`, `HEIGHT`.
+- **Four P5GPU instances** — `oscP5`, `tegakiP5`, `bodyP5`, `overlayP5`. Each scene gets its own; the overlay hosts the timing HUD.
+- **Composite target** — a single `rgba8unorm` `compositeTexture` that the per-scene offscreens alpha-blend onto.
+- **Three headless syphon outputs** — see "Syphon outputs" below. Each has a per-frame source selector (OSC / Tegaki / Body Text / Composite).
+- **Shared data providers** — `bodyContourProvider`, `handBBoxProvider` own WS receivers + smoothing. Ticked once per frame before any scene reads.
+- **Tweakpane setup** — 6-tab panel (Global / Body Contour / Hands / OSC Trail / Tegaki / Body Text); Global tab has Background / Scenes / **Syphon Outputs** / Debug subfolders; each scene's `setupPane` delegates to one tab.
+- **Perf panel** — a second `WindowTweakpane` (`perfPane`) exposes macro controls for all three scenes on a separate floating panel with its own QR share.
+- **Frame callback** — providers tick → each P5GPU does begin/draw/end → composite pass → syphon captures → submit. `yieldMs: 4` forces a `setTimeout` between frames so UDP/WS callbacks aren't starved.
 
 ### Shared-state injection
 
-Scene modules expose their own `state` object. Before the scene's `setup()` runs, `combined.ts:71-73` assigns shared providers onto those state objects:
+Scene modules expose their own `state` object. Before the scene's `setup()` runs, `combined.ts` assigns shared providers onto those state objects:
 
 ```ts
 tegakiState.contourProvider = bodyContourProvider;
@@ -180,35 +214,108 @@ This is the dependency-injection seam. Keep it — it's how multiple scenes read
 
 ---
 
-## Compositing model — ONE shared P5GPU instance
+## Compositing model — per-scene P5GPU + alpha compositor
 
-**All scenes draw into the same P5GPU instance, into the same offscreen framebuffer, in one `beginFrame` / `endFrame` pair.**
+**Each scene draws into its own P5GPU offscreen. A per-frame composite pass alpha-blends them in draw order onto a shared `rgba8unorm` target, which is then blitted to the swapchain.**
 
 ```
   renderWindow.run(() => {
-    bodyContourProvider.tick();         // advance shared data once
+    bodyContourProvider.tick();
     handBBoxProvider.tick();
 
-    p5.beginFrame();                    // ONE begin
-    p5.background(bgR, bgG, bgB);       // ONE background clear
+    // 1. Each scene produces its own texture (transparent where untouched).
+    oscP5.beginFrame();    if (oscEnabled)    oscDraw(oscP5, t);       const oscTex    = oscP5.endFrame();
+    tegakiP5.beginFrame(); if (tegakiEnabled) tegakiDraw(tegakiP5);    const tegakiTex = tegakiP5.endFrame();
+    bodyP5.beginFrame();   if (bodyEnabled)   bodyDraw(bodyP5, t);     const bodyTex   = bodyP5.endFrame();
+    overlayP5.beginFrame(); drawTimingOverlay(overlayP5);               const overlayTex = overlayP5.endFrame();
 
-    if (oscEnabled)    oscDraw(p5, t);  // painter's-algorithm layering
-    if (tegakiEnabled) tegakiDraw(p5);  //   OSC  →  tegaki  →  body text
-    if (bodyEnabled)   bodyDraw(p5, t); //   (later calls paint on top)
-    drawTimingOverlay(p5);
+    // 2. Composite pass: clear to bg RGB, then alpha-blit 4 layers.
+    const encoder = device.createCommandEncoder();
+    /* clear pass on compositeTexture with bg color, loadOp: "clear" */
+    alphaBlit(device, encoder, alphaBlitPipeline, oscView,     compositeView);
+    alphaBlit(device, encoder, alphaBlitPipeline, tegakiView,  compositeView);
+    alphaBlit(device, encoder, alphaBlitPipeline, bodyView,    compositeView);
+    alphaBlit(device, encoder, alphaBlitPipeline, overlayView, compositeView);
 
-    return p5.endFrame();               // ONE end → returns GPUTexture,
-                                        // which is blitted to the swapchain
+    // 3. Syphon outputs: kick off previous-frame async publishes, then
+    //    blit+copy each selected source into its bgra8 staging + readback buffer.
+    for (const output of syphonOutputs) output.tryPublish();
+    syphonOutputs[0].captureFrame(encoder, sources[globalParams.syphon1Source]);
+    syphonOutputs[1].captureFrame(encoder, sources[globalParams.syphon2Source]);
+    syphonOutputs[2].captureFrame(encoder, sources[globalParams.syphon3Source]);
+
+    device.queue.submit([encoder.finish()]);
+    return compositeView; // render manager blits this to the swapchain
   });
 ```
 
 Consequences an agent should internalize:
 
-- **No per-scene offscreen buffer.** Scenes alpha-blend directly onto the shared target. There's no layer compositing — drawing order is the only compositing control.
-- **Draw order matters.** The fixed order in `combined.ts:206-214` is OSC → tegaki → body text. Later = on top. Changing the order changes the visual.
-- **Per-scene `p5.push()` / `p5.pop()` hygiene** is essential. The P5GPU style stack is a real stack (`tools/p5gpu.ts:883-888`). A scene that forgets to restore stroke/fill/textFont/textAlign will corrupt the next scene's draws.
-- **One `p5.background()`** is called before any scene. Scenes must NOT call `background` — that would clobber earlier scenes' pixels. (The scene's standalone main files do call it themselves, but their exported `draw()` does not; check before adding a new scene.)
-- **Scenes don't allocate P5GPU.** Only `combined.ts` (or the scene's standalone `main` block) constructs the instance. In combined mode, scene `setup()` signatures vary: `oscSetup(device)`, `tegakiSetup()` (no args), `bodySetup(p5)` — only body needs the P5GPU handle at setup time.
+- **Per-scene isolation.** Each P5GPU owns its own render target, style stack, and font cache. A scene can no longer corrupt another scene's state — the shared-p5 `push()`/`pop()` hygiene rule is **no longer load-bearing** (though it's still good practice inside a single scene).
+- **Draw order still matters.** Painter's-algorithm compositing: alphaBlit calls in order OSC → tegaki → body → overlay; later = on top. To change layering, reorder the alphaBlit calls in `combined.ts`.
+- **`autoClear` replaces the shared `background()` call.** Scene `draw()` functions now take a trailing `autoClear = true` param; when true, they call `p5.clear()` at the very start (before any early returns) so the offscreen starts transparent each frame. This is required because P5GPU's `endFrame()` uses `loadOp: "load"` by default (preserves previous frame pixels) unless `clear()` / `background()` was called during the frame. `combined.ts` relies on the default `true`; standalone runners pass `false` because they already call `p5.background(...)` after `beginFrame()`.
+- **Scenes STILL must NOT call `background()` in their exported `draw()`.** Doing so would paint a solid color across the scene's offscreen — wiping transparency — which breaks alpha compositing. Standalone-only `background()` calls live in the `import.meta.main` runner, not the exported draw.
+- **Disabled scenes still pay for begin/end.** We always beginFrame/endFrame on all 4 P5GPUs and always alphaBlit all 4 — an all-transparent layer is a no-op visually but still costs a pass. The `if (enabled)` gates only the scene's own draw calls, not the pipeline.
+- **P5GPU allocation lives in `combined.ts`.** Scene `setup()` signatures vary: `oscSetup(device)`, `tegakiSetup({width,height})`, `bodySetup(p5)`. Only body needs a p5 handle (to load Charmonman into that specific instance); tegaki needs dims (for setup-time text layout); osc needs just the device (for the OSC UDP server).
+
+### `alphaBlit` — how the compositor works
+
+Added to `apps/deno-notebooks/window/blit.ts` as a sibling to the existing `blit`:
+
+- `createAlphaBlitPipeline(device, targetFormat)` — identical shader to `createBlitPipeline`, but with WebGPU `blend: { color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" }, alpha: { ... } }` on the pipeline target. Standard source-over alpha.
+- `alphaBlit(device, encoder, pipeline, src, dst)` — same shape as `blit`, but uses `loadOp: "load"` so the destination is preserved. The clear-to-bg happens in a separate render pass at the top of the composite; subsequent alphaBlits layer onto it.
+
+---
+
+## Syphon outputs — three headless publishers with source selection
+
+`combined.ts` publishes three independent Syphon streams, each with its own runtime source selector on the Global tab. Options per output: **OSC Trail / Tegaki / Body Text / Composite** (default Composite). Server names: "Hanoi Show 1", "Hanoi Show 2", "Hanoi Show 3".
+
+**Why headless and not window-bound.** The simpler `SyphonServer` in `syphon/syphon.ts` latches whatever's on the window's CAMetalLayer — multiple instances on one window would all publish the same thing. `HeadlessSyphonServer` (`syphon/headless_syphon.ts`) accepts arbitrary pixel bytes via `publishFrame(bytes, w, h, bytesPerRow)`, so we can route any of the four scene/composite textures to any of the three outputs.
+
+### Per-output plumbing (`SyphonOutput` helper in `combined.ts`)
+
+Each output owns:
+
+- **`HeadlessSyphonServer`** — the Syphon publisher.
+- **`bgra8unorm` staging texture** — the format Syphon wants (`pixel_format = 0 = BGRA8`). `RENDER_ATTACHMENT | COPY_SRC`.
+- **Two readback `GPUBuffer`s** — ping-pong, each sized to `alignedBytesPerRow(width) * height` (256-byte row alignment — WebGPU requirement). `COPY_DST | MAP_READ`.
+- **`busy[2]`, `hasData[2]`, `writeIdx`** — per-buffer state. `busy` means currently mapped; `hasData` means a completed copy is ready to publish.
+
+### Per-frame flow (per output)
+
+```
+tryPublish():                      // called first, BEFORE queue.submit of this frame
+  for each buffer i:
+    if hasData[i] && !busy[i]:
+      busy[i] = true
+      (fire-and-forget) await buf.mapAsync(READ) → publish → unmap → clear flags
+      return                        // one publish per frame is enough
+
+captureFrame(encoder, sourceView):  // called as part of the composite encoder
+  if busy[writeIdx]: return         // both ping-pongs stuck? just skip this frame
+  blit(source → stagingTexture)     // rgba8 → bgra8 swizzle happens in the shader output
+  encoder.copyTextureToBuffer(stagingTexture → buffers[writeIdx])
+  hasData[writeIdx] = true
+  writeIdx = (writeIdx + 1) % 2
+```
+
+### The rgba→bgra swizzle trick
+
+All scene + composite textures are `rgba8unorm`. Syphon wants BGRA bytes. We bridge the formats in a single step: **blit the rgba source into a bgra8unorm target**. The blit shader outputs `vec4f(r, g, b, a)`; WebGPU writes those components to a bgra8unorm texture in BGRA byte order. No shader swizzle code needed. The subsequent `copyTextureToBuffer` then yields BGRA bytes directly.
+
+### Timing behavior
+
+- Publish runs async (fire-and-forget `mapAsync`). The submitted copy and the map request race in parallel on the GPU timeline.
+- Typical latency: **one frame behind** — we publish what was written last frame.
+- If `mapAsync` takes longer than 2 frames to resolve, that output silently skips copies for a frame or two; the user sees slightly lower Syphon fps on that output. No stalls on the main render loop.
+- Each output is independent — they can have different source selections and still all land in the same `encoder.finish()` submission.
+
+### Cleanup
+
+`SyphonOutput.destroy()` tears down both readback buffers, the staging texture, and the `HeadlessSyphonServer`. `combined.ts`'s `cleanup` loop calls it on all three.
+
+**Platform note.** Syphon is macOS-only. If this project ever grows a Windows/Linux target, this section becomes an `#ifdef` and the outputs need to become optional (or be replaced with Spout on Windows).
 
 ---
 
@@ -226,40 +333,44 @@ deno run --unstable-webgpu --unstable-ffi --allow-all \
 
 ### What the scene exports (used by `combined.ts`)
 
-| Export         | Contract                                                                                          |
-|----------------|---------------------------------------------------------------------------------------------------|
-| `setup(...)`   | Allocate internal resources only. Does **not** construct P5GPU or a window. Signatures vary: `oscSetup(device)`, `tegakiSetup()`, `bodySetup(p5)`. |
-| `draw(p5, …)`  | Issue draw calls against the provided P5GPU. Does **not** call `beginFrame` / `endFrame` / `background`. |
-| `cleanup()`    | Release internal resources only. Does not dispose P5GPU or the window.                            |
-| `setupPane(c)` | Add blades to the provided `PaneContainer` (a tab page, folder, or pane root).                    |
-| `state`        | The scene's live state object. `combined.ts` writes shared providers onto it before `setup()`.    |
+| Export               | Contract                                                                                                                                                                                                                                                                                                                      |
+|----------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `setup(...)`         | Allocate internal resources only. Does **not** construct P5GPU or a window. Signatures vary by scene: `oscSetup(device)` (opens UDP server), `tegakiSetup({width,height})` (populates `state.meta.width/height/maxWidth`, runs text layout, kicks off core-timing), `bodySetup(p5)` (loads Charmonman into that p5 instance). |
+| `draw(p5, ..., autoClear?)` | Issue draw calls against the provided P5GPU. Does **not** call `beginFrame` / `endFrame` / `background`. When `autoClear` is `true` (default), calls `p5.clear()` at the very start — required for combined-mode compositing. Standalone runners pass `false` because they already `p5.background(...)` before draw.  |
+| `cleanup()`          | Release internal resources only. Does not dispose P5GPU or the window.                                                                                                                                                                                                                                                        |
+| `setupPane(c, ref?)` | Add blades to the provided `PaneContainer` (a tab page, folder, or pane root). Optional `refresh` callback for programmatic UI updates.                                                                                                                                                                                       |
+| `state`              | The scene's live state object. `combined.ts` writes shared providers onto it before `setup()`.                                                                                                                                                                                                                                |
+| `macroDefs`          | Array of `MacroDef` descriptors for the perf panel's macro tab.                                                                                                                                                                                                                                                               |
 
 ### What the `import.meta.main` block adds (standalone mode)
 
 A scene's standalone block is a tiny self-contained runner that does everything `combined.ts` would have done *for that one scene*:
 
-1. `await requestWebGpuDevice()` — its own device.
-2. Construct its own data providers (e.g. `createBodyContourProvider()` in `p5gpu_body_text.ts:302`) and wire them into the scene's `state` via the same seam combined uses (`state.contourProvider = provider`).
-3. `createWindowRenderManager(...)` — its own window + pane, with `setupPane` calling `setupPane(pane)` and *also* folding in the provider's pane controls.
-4. `new P5GPU(device, {width, height})` — its own P5GPU instance.
-5. `await setup(...)` — calls the scene's own exported setup.
-6. `renderWindow.run(() => { p5.beginFrame(); p5.background(...); draw(p5, t); /* HUD */ return p5.endFrame(); }, { cleanup })`.
-
-See `p5gpu_body_text.ts:298-360`, `p5gpu_tegaki_handwriting.ts:1071-1145`, `p5gpu_osc_note_trail.ts:379` for the three concrete blocks.
+1. Local `const WIDTH`, `const HEIGHT` — standalone picks its own fixed dims.
+2. `await requestWebGpuDevice()` — its own device.
+3. Construct its own data providers and wire them into the scene's `state` via the same seam combined uses (`state.contourProvider = provider`).
+4. `createWindowRenderManager(...)` — its own window + pane, with `setupPane` calling `setupPane(pane)` and *also* folding in the provider's pane controls.
+5. `new P5GPU(device, {width, height})` — its own P5GPU instance.
+6. `await setup(...)` — calls the scene's own exported setup. Tegaki's standalone passes `{width: WIDTH, height: HEIGHT}`.
+7. `renderWindow.run(() => { p5.beginFrame(); p5.background(...); draw(p5, t, false); /* HUD */ return p5.endFrame(); }, { cleanup })`. Note the explicit `autoClear: false` — the runner's `background()` already handles clearing.
 
 ### Asymmetries
 
-- **Background color.** Standalone blocks hardcode a bg (e.g. `p5.background(15, 18, 26)`). `combined.ts` uses the Global-tab RGB params. Scenes must not call `background` in their exported `draw()` — it's the runner's job.
-- **HUD / overlay.** Each standalone block draws its own "fps / frame / contour count" HUD. `combined.ts` replaces that with a unified `drawTimingOverlay` gated by the Global tab.
+- **Background color.** Standalone blocks hardcode a bg (e.g. `p5.background(15, 18, 26)`) and pass `autoClear: false`. `combined.ts` clears the composite to the Global-tab RGB params once; scene P5GPUs clear to transparent via `autoClear: true` (default). Scenes must not call `background` in their exported `draw()` in either mode — it's either the runner's job (standalone) or the compositor's (combined).
+- **HUD / overlay.** Each standalone block draws its own "fps / frame / contour count" HUD on its own P5GPU. `combined.ts` uses a dedicated `overlayP5` instance with a unified `drawTimingOverlay` gated by the Global tab.
 - **Provider ownership.** Standalone scenes own (create + setup + tick + cleanup) their own providers. In combined mode, `combined.ts` owns them and injects them.
 - **Pane layout.** Standalone scenes put their blades at the pane root (plus a `Contour Processing` subfolder for the provider). In combined mode, each scene's `setupPane` receives a *tab page* and builds folders inside it.
+- **Syphon.** Standalone OSC scene publishes a single window-bound Syphon ("P5GPU_OSC_Note_Trail"). Combined.ts publishes three headless ones with source selectors (see above).
 
 ### Adding a new scene
 
 Mirror the existing pattern exactly:
-1. Export `setup` / `draw` / `cleanup` / `setupPane` / `state` with the contract above.
-2. Add an `if (import.meta.main)` standalone block for isolated development and testing.
-3. Register imports + tab page + provider injection + draw call + cleanup call in `combined.ts`.
+1. Export `setup` / `draw(p5, ..., autoClear?)` / `cleanup` / `setupPane` / `state` (+ optional `macroDefs`) with the contract above.
+2. Inside `draw`, start with `if (autoClear) p5.clear();` before any early returns.
+3. Use `p5.width` / `p5.height` for runtime dims. If you have helpers that don't receive `p5`, store dims on `state` at setup time (see tegaki's `state.meta`).
+4. Add an `if (import.meta.main)` standalone block for isolated development and testing — must pass `autoClear: false` when calling its own `draw`.
+5. Register imports + tab page + provider injection + per-frame `beginFrame/draw/endFrame` + alphaBlit layer + cleanup call in `combined.ts`. Also decide where it sits in the painter's-algorithm order (which determines its alphaBlit position).
+6. Optionally add it as a source option in the Syphon Outputs folder.
 
 Keeping both modes working is load-bearing — it's how scenes get developed and debugged in isolation before being composed into a show.
 
@@ -284,8 +395,18 @@ Current bindings:
 
 - `window.ts` — `createGpuWindow()` uses Deno FFI to the Rust `native/deno_window` lib to spawn a native window, extract the raw `NSView`, and hand it to `Deno.UnsafeWindowSurface` so WebGPU renders into it directly.
 - `window_render_manager.ts` — thin orchestrator: creates `GpuWindow`, a `BlitPipeline`, and a `WindowTweakpane` (if `pane` is passed). Its `run()` is the `while (!closed)` loop that calls `window.pollEvents()`, the user frame fn, blits the returned texture to the swapchain, presents, and awaits `yieldMs`.
-- `mod.ts` re-exports everything consumers use.
+- `blit.ts` — two flavors of blit:
+  - **`createBlitPipeline` / `blit`** — opaque, `loadOp: "clear"`. Used by the render manager to paint the final composite onto the swapchain, and by each syphon output to copy its source into its bgra staging texture (the opaque write is fine because the clear wipes to black and the whole frame is then painted).
+  - **`createAlphaBlitPipeline` / `alphaBlit`** — source-over alpha blending enabled on the pipeline target, `loadOp: "load"` so the destination is preserved. Used by the combined-mode compositor to layer per-scene offscreens onto `compositeTexture`.
+- `mod.ts` re-exports everything consumers use (including both blit variants + the alpha pipeline factory).
 - `ffi.ts` — the FFI symbol table (the canonical list of what the Rust lib exposes).
+
+### Syphon packages (`apps/deno-notebooks/syphon/`)
+
+- `syphon.ts` — **window-bound** `SyphonServer`. Binds to the GpuWindow's NSView/CAMetalLayer; `publishFrame()` latches what's on the surface. Not used by `combined.ts` anymore, but the OSC standalone still uses it.
+- `headless_syphon.ts` — **headless** `HeadlessSyphonServer`. Takes arbitrary BGRA8 bytes via `publishFrame(pixelData, width, height, bytesPerRow)`. This is the primitive combined.ts builds its 3 outputs on.
+- `staging_buffers.ts` — `alignedBytesPerRow(width)` helper (rounds to 256 — WebGPU row alignment requirement) + a `createStagingBufferPair` factory combined.ts does NOT use (it builds its own simpler busy-flag version inside `SyphonOutput` — see the Syphon section above).
+- `headless_renderer.ts` — a self-contained async render loop that uses the staging pair with inline `await mapAsync`. Useful for standalone headless capture; we don't use it here because our render loop is synchronous, so `SyphonOutput` uses fire-and-forget + busy flags instead.
 
 ---
 
@@ -309,16 +430,22 @@ Current bindings:
 
 ## Directory map — "where do I look when…"
 
-| Task                                | Where                                                                                  |
-|-------------------------------------|----------------------------------------------------------------------------------------|
-| add / modify a scene                | `examples/hanoiShow/p5gpu_*.ts` (exports `setup`/`draw`/`cleanup`/`setupPane`/`state`) |
-| share data across scenes            | `*_provider.ts` (owns WS receiver, ticked once per frame in `combined.ts`)              |
-| windowing / blit / render loop      | `apps/deno-notebooks/window/`                                                          |
-| pane protocol (kernel side)         | `apps/deno-notebooks/tools/tweakpane{Server,Adapter,Protocol}.ts`                      |
-| pane protocol (browser side)        | `webcomponents/tweakpane/src/tweakpane-client.ts` (rebuild `dist/` after edits)         |
-| native wry / winit / FFI            | `apps/deno-notebooks/native/deno_window/src/lib.rs`                                    |
-| FFI symbol list                     | `apps/deno-notebooks/window/ffi.ts`                                                    |
-| HTTP server / WS upgrade / iframes  | `packages/ui-bridge/deno_notebook_bridge.ts`                                           |
+| Task                                         | Where                                                                                     |
+|----------------------------------------------|-------------------------------------------------------------------------------------------|
+| add / modify a scene                         | `examples/hanoiShow/p5gpu_*.ts` (exports `setup`/`draw`/`cleanup`/`setupPane`/`state`)    |
+| change aspect ratio / composite / add scene  | `examples/hanoiShow/combined.ts` (aspect consts, per-scene P5GPU, compositor encoder)     |
+| change syphon source selection / output count | `examples/hanoiShow/combined.ts` (`syphonOutputs` array + `syphon{1,2,3}Source` params)  |
+| alpha compositing pipeline                   | `apps/deno-notebooks/window/blit.ts` (`createAlphaBlitPipeline`, `alphaBlit`)             |
+| share data across scenes                     | `*_provider.ts` (owns WS receiver, ticked once per frame in `combined.ts`)                |
+| windowing / blit / render loop               | `apps/deno-notebooks/window/`                                                             |
+| headless syphon primitives                   | `apps/deno-notebooks/syphon/headless_syphon.ts`, `syphon/staging_buffers.ts`              |
+| pane protocol (kernel side)                  | `apps/deno-notebooks/tools/tweakpane{Server,Adapter,Protocol}.ts`                         |
+| pane protocol (browser side)                 | `webcomponents/tweakpane/src/tweakpane-client.ts` (rebuild `dist/` after edits)           |
+| native wry / winit / FFI                     | `apps/deno-notebooks/native/deno_window/src/lib.rs`                                       |
+| native syphon FFI                            | `apps/deno-notebooks/native/syphon_bridge/src/lib.rs`                                     |
+| FFI symbol list (window)                     | `apps/deno-notebooks/window/ffi.ts`                                                       |
+| FFI symbol list (syphon)                     | `apps/deno-notebooks/syphon/ffi.ts`                                                       |
+| HTTP server / WS upgrade / iframes           | `packages/ui-bridge/deno_notebook_bridge.ts`                                              |
 
 ---
 
@@ -342,7 +469,12 @@ See `io-lag-analysis.md` (same directory) for a prior writeup of the IO / frame-
 - **CFRunLoop coupling.** `webview_pump` hard-codes `CFRunLoopRunInMode(..., 0.002, 0)` — that 2ms is the upper bound on webview responsiveness per frame. Combined with `yieldMs: 4` in `combined.ts`, that's the whole "don't starve WS/UDP" story.
 - **Custom `<select>` replacement** (`tweakpane_shell_html.ts:426-517`) exists because WKWebView's native popup enters a modal tracking loop that freezes the GPU thread. Don't delete it.
 - **Two native windows, not one.** The pane is a separate winit window, not a child view. Tab-toggle (`panel.ts:139`) shows/hides it; it doesn't overlay the GPU canvas.
-- **Cleanup order** in `combined.ts:221-229` — scenes first, then providers, then `p5`. Providers last so scenes can still flush in-flight WS callbacks on teardown.
+- **Cleanup order** in `combined.ts` — scenes first, then providers, then the four P5GPUs, then composite texture, then syphon outputs. Providers mid-order so scenes can still flush in-flight WS callbacks on teardown.
+- **P5GPU `loadOp: "load"` by default.** P5GPU's `endFrame()` preserves previous-frame pixels unless `clear()` or `background()` was called during the frame (`tools/p5gpu.ts:730` — `useLoadOp = !this._clearRequested && this._hasRenderedFrame`). In combined mode each scene relies on `autoClear = true` to force the per-frame clear; forget that and you get ghost trails.
+- **Scenes must NOT call `background()` in exported `draw()`.** In combined mode it would clobber alpha and break compositing; in standalone mode it's the runner's job. The rule applies regardless of mode.
+- **rgba→bgra swizzle is implicit.** Syphon's `bgra8unorm` staging texture + the blit shader's `vec4f(r,g,b,a)` output is what produces correct BGRA bytes for `publishFrame`. Change the staging format to rgba8 and the channels will come out wrong.
+- **Syphon readback is always one frame behind.** Ping-pong buffers mean publishFrame sees the previous frame's pixels. Acceptable in practice; don't try to "fix" it with a single-buffer design — that'll introduce GPU stalls or force-blocking on mapAsync.
+- **Three P5GPU instances all need their own font loads.** Today only `bodyP5` loads Charmonman (via `bodySetup(bodyP5)`). A future scene that uses a custom font on `oscP5` or `tegakiP5` needs its own `await p5.loadFont(...)` in that scene's setup — fonts do not cross P5GPU instances.
 
 ---
 
@@ -356,6 +488,6 @@ See `io-lag-analysis.md` (same directory) for a prior writeup of the IO / frame-
 
 Read these files when you touch them; they aren't worth summarizing here:
 
-- `tools/p5gpu.ts` — the WebGPU-backed p5-style renderer.
-- `@avtools/shader-fx` — `ShaderEffect` / blit pipeline used by the render manager.
+- `tools/p5gpu.ts` — the WebGPU-backed p5-style renderer. Relevant internals mentioned in this doc: `beginFrame`/`endFrame` clear semantics (`:715-775`), `_clearRequested` / `_clearColor` state (`:722-723`), `loadOp: "load"` default.
+- `@avtools/shader-fx` — `ShaderEffect` / generated shaders. Note `packages/shader-fx/generated-raw/shaders/composite.frag.raw.generated.ts` contains a proper `CompositeEffect` with blend modes (add/screen/multiply/overlay + opacity) — considered and not used here (our needs were simpler), but the upgrade path from `alphaBlit` to it is straightforward if per-layer blend modes become desirable.
 - Individual scene logic (`p5gpu_osc_note_trail.ts`, `p5gpu_tegaki_handwriting.ts`, `p5gpu_body_text.ts`).
