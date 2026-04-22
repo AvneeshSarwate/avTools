@@ -19,7 +19,8 @@ import {
 } from "../../window/mod.ts";
 import { alignedBytesPerRow, HeadlessSyphonServer } from "../../syphon/mod.ts";
 import { P5GPU } from "../../tools/p5gpu.ts";
-import { installMacros } from "../../tools/macros.ts";
+import { installMacros, type MacroDef } from "../../tools/macros.ts";
+import { createOSCClient, type OSCClient } from "../../tools/osc.ts";
 import { renderPerfShellHtml } from "../../tools/perf_shell_html.ts";
 
 import {
@@ -70,6 +71,12 @@ const { width: WIDTH, height: HEIGHT } = ASPECT_DIMS[ASPECT] ??
 // only run in occasional timer gaps.
 const COMBINED_RENDER_YIELD_MS = 4;
 
+// Outbound OSC destination for the "External N" macro tabs on the perf pane.
+// Single client; both groups send to the same host:port under different
+// address prefixes (/external1/*, /external2/*).
+const EXTERNAL_OSC_HOST = "127.0.0.1";
+const EXTERNAL_OSC_PORT = 9004;
+
 type SyphonSource = "osc" | "tegaki" | "body" | "composite";
 
 const globalParams = {
@@ -101,6 +108,51 @@ const handBBoxProvider = createHandBBoxProvider();
 tegakiState.contourProvider = bodyContourProvider;
 tegakiState.handBBoxProvider = handBBoxProvider;
 bodyState.contourProvider = bodyContourProvider;
+
+// Placeholder external-sketch macro groups. Each group is two numeric sliders
+// whose `apply` functions send OSC to EXTERNAL_OSC_HOST:EXTERNAL_OSC_PORT.
+// Uses the same MacroDef contract as scene macros, so they render identically
+// on the perf pane (numeric-slider-in-tab-page — the only shape the Vue perf
+// client knows how to draw).
+const externalOscClient: OSCClient = createOSCClient(
+  EXTERNAL_OSC_HOST,
+  EXTERNAL_OSC_PORT,
+);
+
+const external1Macros: Record<string, number> = {};
+const external1MacroDefs: MacroDef[] = [
+  {
+    key: "param1",
+    defaultValue: 0.5,
+    opts: { min: 0, max: 1, label: "Param 1" },
+    apply: (v) => externalOscClient.send("/external1/param1", v),
+  },
+  {
+    key: "param2",
+    defaultValue: 0.5,
+    opts: { min: 0, max: 1, label: "Param 2" },
+    apply: (v) => externalOscClient.send("/external1/param2", v),
+  },
+];
+
+const external2Macros: Record<string, number> = {};
+const external2MacroDefs: MacroDef[] = [
+  {
+    key: "param1",
+    defaultValue: 0.5,
+    opts: { min: 0, max: 1, label: "Param 1" },
+    apply: (v) => externalOscClient.send("/external2/param1", v),
+  },
+  {
+    key: "param2",
+    defaultValue: 0.5,
+    opts: { min: 0, max: 1, label: "Param 2" },
+    apply: (v) => {
+      console.log("/external2/param2", v)
+      externalOscClient.send("/external2/param2", v)
+    },
+  },
+];
 
 function setupPane(pane: WindowTweakpane, refresh: () => void) {
   const tab = pane.addTab({
@@ -162,11 +214,15 @@ function setupPerfPane(pane: WindowTweakpane, refresh: () => void) {
       { title: "OSC" },
       { title: "Tegaki" },
       { title: "Body Text" },
+      { title: "External 1" },
+      { title: "External 2" },
     ],
   });
   installMacros(tab.pages[0], oscState.macros, oscMacroDefs, refresh);
   installMacros(tab.pages[1], tegakiState.macros, tegakiMacroDefs, refresh);
   installMacros(tab.pages[2], bodyState.macros, bodyMacroDefs, refresh);
+  installMacros(tab.pages[3], external1Macros, external1MacroDefs, refresh);
+  installMacros(tab.pages[4], external2Macros, external2MacroDefs, refresh);
 }
 
 function updateTiming(frameStart: number, cpuMs: number): void {
@@ -483,6 +539,7 @@ await renderWindow.run(() => {
     bodyContourProvider.cleanup();
     handBBoxProvider.cleanup();
     perfPane.destroy();
+    externalOscClient.close();
     oscP5.dispose();
     tegakiP5.dispose();
     bodyP5.dispose();
