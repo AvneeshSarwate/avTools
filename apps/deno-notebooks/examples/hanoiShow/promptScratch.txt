@@ -1,5 +1,24 @@
 read app/deno-notebooks/examples/hanoiShow/architecture.md to learn how this creative coding setup for a specific performance works.
 
+i want to change how the vertical sketches are blitted into a single composite arrangement that gets sent over syphon
+
+the vertical columns should be quadrants and rotated 90 degrees - eg for a vertical sketch, they are laid out 2 by 2 on a 1080p and the "top" of the sketch is orent to the right side. the source sketches should be 720p vertical and then the blit should scale them down to fit in the quadrants and rotate them - you can write a custom shader for this if necessary - before you do this - do you understand what i'm asking. the 1/2/3 should be row major order, eg slot 1 in top left, and bottom right is empty
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+read app/deno-notebooks/examples/hanoiShow/architecture.md to learn how this creative coding setup for a specific performance works.
+
 I want to create a new sketch that fits into the whole. it has 3 different components that all blend into each other
 
 the first part is a bunch of yellow circles that orbit an invisible central point in a ring. the circles are not drawn as circles, but as splines with about 20 points each. every once in a while, a random circle will "pulse" - eg, some random points wil jut out and fall back in. the timing mechanism that selects which circle pulses and controls the timeline of the individual pulse should be similar to the random redraw triggers for individual characters in the tegaki sketch. the orbit radius should slowly sinusoudally vary 

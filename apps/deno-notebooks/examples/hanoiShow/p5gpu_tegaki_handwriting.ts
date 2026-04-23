@@ -150,6 +150,9 @@ const LOREM =
 
 export const state = {
   params: {
+    /** Scene-level alpha multiplier. At 0, draw early-returns and trigger
+     *  loops skip scheduling — matches burning_kinaree's `fade` semantics. */
+    fade: 1.0,
     triggerMode: "random" as "random" | "intersection" | "hand",
     triggerRate: 18, // trigger attempts per second (random mode)
     minDuration: 0.35,
@@ -666,7 +669,10 @@ async function runHandEmitterLoop(ctx: DateTimeContext): Promise<void> {
   const nextSpawnMs: number[] = [0, 0, 0, 0];
   while (!ctx.isCanceled) {
     const provider = state.handBBoxProvider;
-    if (state.params.enableHandParticles && provider && !state.params.paused) {
+    if (
+      state.params.enableHandParticles && provider &&
+      !state.params.paused && state.params.fade > 0
+    ) {
       const hands = provider.getHands();
       const nowMs = ctx.progTime * 1000;
       const mirror = state.params.mirrorHandX;
@@ -720,12 +726,13 @@ function drawHandParticles(p5: P5GPU): void {
   }
   if (particles.length === 0) return;
 
+  const fade = state.params.fade;
   p5.push();
   p5.noStroke();
   for (const p of particles) {
     // Fire → smoke: brighten/orange at spawn, fade to transparent at end.
     const t = p.progress;
-    const alpha = Math.round((1 - t) * 200);
+    const alpha = Math.round((1 - t) * 200 * fade);
     const r = 255;
     const g = Math.round(120 + (1 - t) * 120); // 240 → 120
     const b = Math.round(40 + t * 80); // cools a touch as it fades
@@ -781,6 +788,9 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
   const macros = pane.addFolder({ title: "Macros", expanded: true });
   installMacros(macros, state.macros, macroDefs, refresh ?? (() => pane.refresh()));
 
+  pane.addBinding(state.params, "fade", {
+    min: 0, max: 1, step: 0.01, label: "Scene Fade",
+  });
   pane.addBinding(state.params, "glyphScale", {
     min: 0,
     max: 1,
@@ -988,6 +998,7 @@ export async function setup(dims: { width: number; height: number }) {
         const rate = Math.max(0.1, state.params.triggerRate);
         await triggerCtx.waitSec(1 / rate);
         if (state.params.paused) continue;
+        if (state.params.fade <= 0) continue;
         if (state.params.triggerMode !== "random") continue;
         if (state.drawableIndices.length === 0) continue;
 
@@ -1019,6 +1030,12 @@ export function draw(p5: P5GPU, autoClear = true) {
   if (autoClear) p5.clear();
 
   const [ir, ig, ib] = hexToRgb(state.params.inkColor);
+  const fade = state.params.fade;
+
+  // Scene-level fade gate — at 0, nothing from this sketch draws (including
+  // debug overlays). Kept above the contour-debug call so fade=0 really
+  // means the whole layer is off.
+  if (fade <= 0) return;
 
   if (state.params.showContourDebug) {
     drawContourDebug(p5, ir, ig, ib);
@@ -1042,7 +1059,7 @@ export function draw(p5: P5GPU, autoClear = true) {
   p5.noFill();
   p5.strokeCap(p5.ROUND);
   p5.strokeJoin(p5.ROUND);
-  p5.stroke(ir, ig, ib, 255);
+  p5.stroke(ir, ig, ib, Math.round(255 * fade));
 
   for (const gs of state.glyphStates) {
     const phase = useIntersectionPhase
