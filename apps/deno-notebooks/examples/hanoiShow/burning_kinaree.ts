@@ -410,6 +410,11 @@ if (import.meta.main) {
       return p5.endFrame();
     },
     {
+      // Yield between frames so WS callbacks (tweakpane slider drags) and
+      // any future UDP/timer work aren't starved by the tight render loop.
+      // Matches combined.ts — without this, slider input events arrive in
+      // chunks every few hundred ms instead of smoothly.
+      yieldMs: 4,
       cleanup: () => {
         cleanup();
         p5.dispose();

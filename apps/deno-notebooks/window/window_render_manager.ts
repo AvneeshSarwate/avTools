@@ -29,6 +29,13 @@ export interface WindowRenderManagerContext {
 
 export interface WindowRenderManagerRunOptions {
   onEvent?: (event: WindowEvent, context: WindowRenderManagerContext) => void;
+  /**
+   * Milliseconds to `setTimeout`-yield between frames so WS/UDP callbacks
+   * (notably tweakpane slider drags) aren't starved by the render loop.
+   * Default 1 — the minimum that keeps event-loop callbacks flowing
+   * smoothly. Raise (e.g. 4) for scenes that also pump UDP or heavy WS
+   * traffic; `combined.ts` uses 4.
+   */
   yieldMs?: number;
   cleanup?: () => void;
 }
@@ -116,7 +123,7 @@ export async function createWindowRenderManager(
     frame: () => WindowRenderSource,
     runOptions: WindowRenderManagerRunOptions = {},
   ): Promise<void> => {
-    const yieldMs = runOptions.yieldMs ?? 0;
+    const yieldMs = runOptions.yieldMs ?? 1;
     stopRequested = false;
 
     try {
