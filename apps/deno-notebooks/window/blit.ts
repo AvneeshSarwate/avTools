@@ -122,6 +122,48 @@ export function blitToViewport(
   pass.end();
 }
 
+/**
+ * Blit a source into a sub-rectangle of the destination, preserving the
+ * destination's prior contents (`loadOp: "load"`). Unlike `blitToViewport`
+ * — which clears the whole destination before drawing to the viewport —
+ * this one composes cleanly: call it N times with different viewports to
+ * lay N tiles into the same target (e.g. a monitor-view texture showing
+ * multiple sources side by side). Establish the background with a
+ * separate clear pass, or by having `dst` already contain the desired
+ * backdrop.
+ */
+export function blitTile(
+  device: GPUDevice,
+  encoder: GPUCommandEncoder,
+  pipeline: BlitPipeline,
+  src: GPUTextureView,
+  dst: GPUTextureView,
+  viewport: BlitViewport,
+): void {
+  const bindGroup = device.createBindGroup({
+    layout: pipeline.bindGroupLayout,
+    entries: [
+      { binding: 0, resource: src },
+      { binding: 1, resource: pipeline.sampler },
+    ],
+  });
+
+  const pass = encoder.beginRenderPass({
+    colorAttachments: [
+      {
+        view: dst,
+        loadOp: "load",
+        storeOp: "store",
+      },
+    ],
+  });
+  pass.setViewport(viewport.x, viewport.y, viewport.width, viewport.height, 0, 1);
+  pass.setPipeline(pipeline.pipeline);
+  pass.setBindGroup(0, bindGroup);
+  pass.draw(3);
+  pass.end();
+}
+
 // ── Alpha-blending variant ──────────────────────────────────────────
 //
 // Same shader as the basic blit, but the pipeline target has standard

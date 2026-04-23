@@ -9,6 +9,7 @@
 import {
   alphaBlit,
   blit,
+  blitTile,
   type BlitPipeline,
   createAlphaBlitPipeline,
   createBlitPipeline,
@@ -74,6 +75,32 @@ const ASPECT: AspectRatio =
 const { width: WIDTH, height: HEIGHT } = ASPECT_DIMS[ASPECT] ??
   ASPECT_DIMS.landscape;
 
+// Landscape channel native dims — spatially match 3 portraits side-by-side
+// in the physical show layout, independent of HANOI_ASPECT. Landscape content
+// (not yet implemented) will render into this and ship over Syphon output 4
+// for the downstream compositor to slice across the 3 physical screens.
+const LANDSCAPE_WIDTH = 2160;
+const LANDSCAPE_HEIGHT = 1280;
+
+// Monitor window: 3 portrait tiles on top (channels 1–3), one landscape tile
+// below (channel 4). Native monitor is 3×WIDTH wide × (HEIGHT + landscape
+// tile height) tall. We scale the whole thing so the monitor window is
+// ~1080px wide on a dev screen.
+const MONITOR_TARGET_WIDTH = 1080;
+const MONITOR_NATIVE_ROW_WIDTH = 3 * WIDTH;
+const MONITOR_NATIVE_LANDSCAPE_TILE_HEIGHT = Math.round(
+  MONITOR_NATIVE_ROW_WIDTH * LANDSCAPE_HEIGHT / LANDSCAPE_WIDTH,
+);
+const MONITOR_NATIVE_HEIGHT = HEIGHT + MONITOR_NATIVE_LANDSCAPE_TILE_HEIGHT;
+const MONITOR_SCALE = MONITOR_TARGET_WIDTH / MONITOR_NATIVE_ROW_WIDTH;
+const MONITOR_WIDTH = Math.round(MONITOR_NATIVE_ROW_WIDTH * MONITOR_SCALE);
+const MONITOR_HEIGHT = Math.round(MONITOR_NATIVE_HEIGHT * MONITOR_SCALE);
+const MONITOR_PORTRAIT_TILE_WIDTH = Math.round(WIDTH * MONITOR_SCALE);
+const MONITOR_PORTRAIT_TILE_HEIGHT = Math.round(HEIGHT * MONITOR_SCALE);
+const MONITOR_LANDSCAPE_TILE_WIDTH = MONITOR_WIDTH;
+const MONITOR_LANDSCAPE_TILE_HEIGHT = MONITOR_HEIGHT -
+  MONITOR_PORTRAIT_TILE_HEIGHT;
+
 // Keep the composed sketch from spinning so hard that UDP/WebSocket callbacks
 // only run in occasional timer gaps.
 const COMBINED_RENDER_YIELD_MS = 4;
@@ -84,7 +111,19 @@ const COMBINED_RENDER_YIELD_MS = 4;
 const EXTERNAL_OSC_HOST = "127.0.0.1";
 const EXTERNAL_OSC_PORT = 9004;
 
-type SyphonSource = "osc" | "tegaki" | "body" | "kinaree" | "composite";
+// Portrait-output sources (channels 1–3). "none" = publish an opaque-black
+// frame; useful to mute a channel without disabling scenes upstream.
+type PortraitSyphonSource =
+  | "none"
+  | "osc"
+  | "tegaki"
+  | "body"
+  | "kinaree"
+  | "composite";
+// Landscape-output sources (channel 4). Options grow when landscape scenes
+// are added; for now just the landscape composite or "none".
+type LandscapeSyphonSource = "none" | "landscape";
+type AnySyphonSource = PortraitSyphonSource | LandscapeSyphonSource;
 
 const globalParams = {
   bgR: 13,
@@ -95,9 +134,10 @@ const globalParams = {
   bodyEnabled: true,
   kinareeEnabled: true,
   showTiming: false,
-  syphon1Source: "composite" as SyphonSource,
-  syphon2Source: "composite" as SyphonSource,
-  syphon3Source: "composite" as SyphonSource,
+  syphon1Source: "composite" as PortraitSyphonSource,
+  syphon2Source: "composite" as PortraitSyphonSource,
+  syphon3Source: "composite" as PortraitSyphonSource,
+  syphon4Source: "landscape" as LandscapeSyphonSource,
 };
 
 const timing = {
@@ -187,24 +227,33 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
   scenes.addBinding(globalParams, "kinareeEnabled", { label: "Kinaree" });
 
   const syphonFolder = global.addFolder({ title: "Syphon Outputs" });
-  const syphonSourceOptions = {
+  const portraitSyphonOptions = {
+    "None": "none",
     "Composite": "composite",
     "OSC Trail": "osc",
     "Tegaki": "tegaki",
     "Body Text": "body",
     "Kinaree": "kinaree",
   };
+  const landscapeSyphonOptions = {
+    "None": "none",
+    "Landscape Composite": "landscape",
+  };
   syphonFolder.addBinding(globalParams, "syphon1Source", {
-    options: syphonSourceOptions,
+    options: portraitSyphonOptions,
     label: "Output 1",
   });
   syphonFolder.addBinding(globalParams, "syphon2Source", {
-    options: syphonSourceOptions,
+    options: portraitSyphonOptions,
     label: "Output 2",
   });
   syphonFolder.addBinding(globalParams, "syphon3Source", {
-    options: syphonSourceOptions,
+    options: portraitSyphonOptions,
     label: "Output 3",
+  });
+  syphonFolder.addBinding(globalParams, "syphon4Source", {
+    options: landscapeSyphonOptions,
+    label: "Output 4 (landscape)",
   });
 
   // Shared providers — both feed multiple scenes, so they live under Global
@@ -420,14 +469,71 @@ const compositeTexture = device.createTexture({
 const compositeView = compositeTexture.createView();
 const alphaBlitPipeline = createAlphaBlitPipeline(device, COMPOSITE_FORMAT);
 
-// Syphon outputs: each is independently routable to any scene texture or the
-// composite via the Global > Syphon Outputs tab. bgra8unorm matches what
-// HeadlessSyphon expects on disk (pixel_format = BGRA8).
+// Landscape composite — empty placeholder for now (no landscape scenes yet).
+// Cleared to bg RGB each frame; Syphon output 4 samples from this. Once
+// landscape scenes land, they'll render into their own P5GPU offscreens at
+// LANDSCAPE_WIDTH×LANDSCAPE_HEIGHT and alphaBlit into here.
+const landscapeCompositeTexture = device.createTexture({
+  size: { width: LANDSCAPE_WIDTH, height: LANDSCAPE_HEIGHT },
+  format: COMPOSITE_FORMAT,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.COPY_SRC,
+});
+const landscapeCompositeView = landscapeCompositeTexture.createView();
+
+// Empty source: a small opaque-black texture that "None" channels sample
+// from. Cleared once at startup since nothing writes to it afterwards. The
+// blit path rescales it to any output size, so a 64×64 texel is plenty.
+const emptyTexture = device.createTexture({
+  size: { width: 64, height: 64 },
+  format: COMPOSITE_FORMAT,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+});
+const emptyView = emptyTexture.createView();
+{
+  const initEncoder = device.createCommandEncoder();
+  const pass = initEncoder.beginRenderPass({
+    colorAttachments: [{
+      view: emptyView,
+      loadOp: "clear",
+      storeOp: "store",
+      clearValue: { r: 0, g: 0, b: 0, a: 1 },
+    }],
+  });
+  pass.end();
+  device.queue.submit([initEncoder.finish()]);
+}
+
+// Monitor texture — what the window actually displays. 3 portrait tiles on
+// top (channels 1–3), landscape tile below (channel 4). Populated by
+// blitTile calls per frame. Same format as composite so the existing blit
+// pipeline (from render_manager) can present it.
+const monitorTexture = device.createTexture({
+  size: { width: MONITOR_WIDTH, height: MONITOR_HEIGHT },
+  format: COMPOSITE_FORMAT,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.COPY_SRC,
+});
+const monitorView = monitorTexture.createView();
+const monitorBlitPipeline = createBlitPipeline(device, COMPOSITE_FORMAT);
+
+// Syphon outputs: channels 1–3 are portrait, channel 4 is landscape. Channels
+// 1–3 are independently routable to any scene texture or the portrait
+// composite via the Global > Syphon Outputs tab. Channel 4 is hardcoded to
+// the landscape composite until a landscape source selector exists.
+// bgra8unorm matches what HeadlessSyphon expects on disk (pixel_format = BGRA8).
 const syphonBgraBlitPipeline = createBlitPipeline(device, "bgra8unorm");
 const syphonOutputs: readonly SyphonOutput[] = [
   createSyphonOutput(device, WIDTH, HEIGHT, "Hanoi Show 1", syphonBgraBlitPipeline),
   createSyphonOutput(device, WIDTH, HEIGHT, "Hanoi Show 2", syphonBgraBlitPipeline),
   createSyphonOutput(device, WIDTH, HEIGHT, "Hanoi Show 3", syphonBgraBlitPipeline),
+  createSyphonOutput(
+    device,
+    LANDSCAPE_WIDTH,
+    LANDSCAPE_HEIGHT,
+    "Hanoi Show 4",
+    syphonBgraBlitPipeline,
+  ),
 ];
 
 // Initialize providers first so scenes see ready-to-use providers on state
@@ -450,8 +556,8 @@ const triggerRefresh = () => refreshAll();
 
 const renderWindow = await createWindowRenderManager({
   device,
-  width: WIDTH,
-  height: HEIGHT,
+  width: MONITOR_WIDTH,
+  height: MONITOR_HEIGHT,
   title: "Hanoi Show",
   pane: {
     title: "Hanoi Show",
@@ -514,20 +620,34 @@ await renderWindow.run(() => {
   // Composite: clear target to bg RGB (alpha 1 so nothing behind leaks
   // through), then alpha-blit the 4 layers in painter's-algorithm order.
   const encoder = device.createCommandEncoder();
+  const clearColor = {
+    r: globalParams.bgR / 255,
+    g: globalParams.bgG / 255,
+    b: globalParams.bgB / 255,
+    a: 1,
+  };
   const clearPass = encoder.beginRenderPass({
     colorAttachments: [{
       view: compositeView,
       loadOp: "clear",
       storeOp: "store",
-      clearValue: {
-        r: globalParams.bgR / 255,
-        g: globalParams.bgG / 255,
-        b: globalParams.bgB / 255,
-        a: 1,
-      },
+      clearValue: clearColor,
     }],
   });
   clearPass.end();
+  // Landscape composite is empty (no landscape scenes yet) — we just clear
+  // it to the bg color so the Syphon 4 output and monitor tile have stable
+  // content instead of whatever was left in the texture last frame.
+  const landscapeClearPass = encoder.beginRenderPass({
+    colorAttachments: [{
+      view: landscapeCompositeView,
+      loadOp: "clear",
+      storeOp: "store",
+      clearValue: clearColor,
+    }],
+  });
+  landscapeClearPass.end();
+
   const oscView = oscTex.createView();
   const tegakiView = tegakiTex.createView();
   const bodyView = bodyTex.createView();
@@ -544,21 +664,59 @@ await renderWindow.run(() => {
   // any previous-frame ping-pong buffers first so their map requests race in
   // parallel with this frame's GPU work.
   for (const output of syphonOutputs) output.tryPublish();
-  const syphonSources: Record<SyphonSource, GPUTextureView> = {
+  const syphonSources: Record<AnySyphonSource, GPUTextureView> = {
+    none: emptyView,
     osc: oscView,
     tegaki: tegakiView,
     body: bodyView,
     kinaree: kinareeView,
     composite: compositeView,
+    landscape: landscapeCompositeView,
   };
-  syphonOutputs[0]!.captureFrame(encoder, syphonSources[globalParams.syphon1Source]);
-  syphonOutputs[1]!.captureFrame(encoder, syphonSources[globalParams.syphon2Source]);
-  syphonOutputs[2]!.captureFrame(encoder, syphonSources[globalParams.syphon3Source]);
+  const syphon1View = syphonSources[globalParams.syphon1Source];
+  const syphon2View = syphonSources[globalParams.syphon2Source];
+  const syphon3View = syphonSources[globalParams.syphon3Source];
+  const syphon4View = syphonSources[globalParams.syphon4Source];
+  syphonOutputs[0]!.captureFrame(encoder, syphon1View);
+  syphonOutputs[1]!.captureFrame(encoder, syphon2View);
+  syphonOutputs[2]!.captureFrame(encoder, syphon3View);
+  syphonOutputs[3]!.captureFrame(encoder, syphon4View);
+
+  // Monitor view: tile the four Syphon channels into the window texture.
+  // Top row: 3 portrait channels side-by-side. Bottom row: landscape channel
+  // full width. blitTile uses loadOp:"load", so start with one clear pass to
+  // establish the background behind any tile aspect mismatch.
+  const monitorClearPass = encoder.beginRenderPass({
+    colorAttachments: [{
+      view: monitorView,
+      loadOp: "clear",
+      storeOp: "store",
+      clearValue: { r: 0, g: 0, b: 0, a: 1 },
+    }],
+  });
+  monitorClearPass.end();
+  const tw = MONITOR_PORTRAIT_TILE_WIDTH;
+  const th = MONITOR_PORTRAIT_TILE_HEIGHT;
+  blitTile(device, encoder, monitorBlitPipeline, syphon1View, monitorView, {
+    x: 0, y: 0, width: tw, height: th,
+  });
+  blitTile(device, encoder, monitorBlitPipeline, syphon2View, monitorView, {
+    x: tw, y: 0, width: tw, height: th,
+  });
+  blitTile(device, encoder, monitorBlitPipeline, syphon3View, monitorView, {
+    x: 2 * tw, y: 0, width: tw, height: th,
+  });
+  blitTile(device, encoder, monitorBlitPipeline, syphon4View, monitorView, {
+    x: 0,
+    y: th,
+    width: MONITOR_LANDSCAPE_TILE_WIDTH,
+    height: MONITOR_LANDSCAPE_TILE_HEIGHT,
+  });
 
   device.queue.submit([encoder.finish()]);
 
   updateTiming(frameStart, performance.now() - frameStart);
-  return compositeView;
+  return monitorView;
 }, {
   yieldMs: COMBINED_RENDER_YIELD_MS,
   cleanup() {
@@ -576,6 +734,9 @@ await renderWindow.run(() => {
     kinareeP5.dispose();
     overlayP5.dispose();
     compositeTexture.destroy();
+    landscapeCompositeTexture.destroy();
+    monitorTexture.destroy();
+    emptyTexture.destroy();
     for (const output of syphonOutputs) output.destroy();
   },
 });

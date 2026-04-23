@@ -9,6 +9,7 @@ export {
   createAlphaBlitPipeline,
   blit,
   blitToViewport,
+  blitTile,
   alphaBlit,
   type BlitPipeline,
   type BlitViewport,
