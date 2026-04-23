@@ -450,17 +450,29 @@ await renderWindow.run(() => {
   // Each scene draws into its own P5GPU. We always begin/end the frame so
   // every layer produces a valid texture (transparent when disabled).
   tegakiP5.beginFrame();
-  if (globalParams.tegakiEnabled) tegakiDraw(tegakiP5);
+  if (globalParams.tegakiEnabled) {
+    tegakiDraw(tegakiP5);
+  } else {
+    tegakiP5.clear();
+  }
   const tegakiTex = tegakiP5.endFrame();
 
   kinareeP5.beginFrame();
-  if (globalParams.kinareeEnabled) kinareeDraw(kinareeP5, time);
+  if (globalParams.kinareeEnabled) {
+    kinareeDraw(kinareeP5, time);
+  } else {
+    kinareeP5.clear();
+  }
   const kinareeTex = kinareeP5.endFrame();
 
   const plorkView = plorkDraw(plorkP5, true, !globalParams.plorkEnabled);
 
   fabP5.beginFrame();
-  if (globalParams.fabEnabled) fabDraw(fabP5, time);
+  if (globalParams.fabEnabled) {
+    fabDraw(fabP5, time);
+  } else {
+    fabP5.clear();
+  }
   const fabTex = fabP5.endFrame();
 
   overlayP5.beginFrame();
