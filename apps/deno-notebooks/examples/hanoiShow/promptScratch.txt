@@ -1,0 +1,32 @@
+read app/deno-notebooks/examples/hanoiShow/architecture.md to learn how this creative coding setup for a specific performance works.
+
+I want to create a new sketch that fits into the whole. it has 3 different components that all blend into each other
+
+the first part is a bunch of yellow circles that orbit an invisible central point in a ring. the circles are not drawn as circles, but as splines with about 20 points each. every once in a while, a random circle will "pulse" - eg, some random points wil jut out and fall back in. the timing mechanism that selects which circle pulses and controls the timeline of the individual pulse should be similar to the random redraw triggers for individual characters in the tegaki sketch. the orbit radius should slowly sinusoudally vary 
+there should be a few parameters
+- orbit radius sine amplitude
+- orbit radius sine frequency 
+- pulse intensity (aka radius deviation for points in individual circle)
+- pulse frequency 
+- a "mix" parameter - it is a multiplier for any color alpha, and when it is 0, the sub-draw loop for this section just fully skips, and the launch trigger just no-ops
+
+
+the second part has red rectangles (with slightly random variations on the color) launching from left and right sides horizontally across the screen. They always launch from a random height on the y axis. they rotate around their center as they travel
+there should be a few parameters
+- the travel speed of the rectangles  
+- the random range of angle deviation from straight horizontal
+- the rectangle thickness
+- the rectangle rotation speed 
+- the launch rate 
+- a "mix" parameter - it is a multiplier for any color alpha, and when it is 0, the sub-draw loop for this section just fully skips, and the launch trigger just no-ops
+
+
+the third part is simple snowfall like falling of individual circles - they should each fall from a random x coordinate and move along the x axis as they fall - maybe using brownian motion to determine x displacement. 
+there should be a few parameters
+- launch rate
+- x displacement range 
+- whatever 2-3 browning motion parameters make sense for shaping the x axis wander aesthetically 
+- a "mix" parameter - it is a multiplier for any color alpha, and when it is 0, the sub-draw loop for this section just fully skips, and the launch trigger just no-ops
+
+
+we will proceed one section at a time - first, do you have any questions?
