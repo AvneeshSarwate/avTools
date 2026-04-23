@@ -17,8 +17,8 @@
 import {
   alphaBlit,
   blit,
-  blitTile,
   type BlitPipeline,
+  blitTile,
   createAlphaBlitPipeline,
   createBlitPipeline,
   createWindowRenderManager,
@@ -47,6 +47,13 @@ import {
   setup as kinareeSetup,
   setupPane as kinareeSetupPane,
 } from "./burning_kinaree.ts";
+
+import {
+  cleanup as plorkCleanup,
+  draw as plorkDraw,
+  setup as plorkSetup,
+  setupPane as plorkSetupPane,
+} from "./plorkSketch.ts";
 
 import {
   cleanup as fabCleanup,
@@ -80,6 +87,7 @@ const EXTERNAL_OSC_PORT = 9004;
 const globalParams = {
   tegakiEnabled: true,
   kinareeEnabled: true,
+  plorkEnabled: true,
   fabEnabled: true,
   showTiming: false,
 };
@@ -149,6 +157,7 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
       { title: "Global" },
       { title: "Tegaki" },
       { title: "Kinaree" },
+      { title: "Plork" },
       { title: "Fab & Lies" },
     ],
   });
@@ -158,6 +167,7 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
   const scenes = global.addFolder({ title: "Scenes" });
   scenes.addBinding(globalParams, "tegakiEnabled", { label: "Tegaki" });
   scenes.addBinding(globalParams, "kinareeEnabled", { label: "Kinaree" });
+  scenes.addBinding(globalParams, "plorkEnabled", { label: "Plork" });
   scenes.addBinding(globalParams, "fabEnabled", { label: "Fab & Lies" });
 
   bodyContourProvider.setupPane(
@@ -172,7 +182,8 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
 
   tegakiSetupPane(tab.pages[1], refresh);
   kinareeSetupPane(tab.pages[2], refresh);
-  fabSetupPane(tab.pages[3], refresh);
+  plorkSetupPane(tab.pages[3], refresh);
+  fabSetupPane(tab.pages[4], refresh);
 }
 
 function setupPerfPane(pane: WindowTweakpane, refresh: () => void) {
@@ -341,6 +352,7 @@ const device = await requestWebGpuDevice();
 // background() — the transparent clear is what makes alpha compositing work.
 const tegakiP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const kinareeP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
+const plorkP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const fabP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const overlayP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 
@@ -385,6 +397,7 @@ handBBoxProvider.setup();
 // fabP5's text engine during the async phase.
 await Promise.all([
   tegakiSetup({ width: WIDTH, height: HEIGHT }),
+  plorkSetup({ width: WIDTH, height: HEIGHT, device }),
   fabLoadAssets(fabP5),
 ]);
 kinareeSetup({ width: WIDTH, height: HEIGHT });
@@ -412,12 +425,13 @@ const perfPane = createWindowTweakpane(renderWindow.window, {
   title: "Perf",
   panelWidth: 620,
   panelHeight: 660,
-  renderShell: (args) => renderPerfShellHtml({
-    title: args.title,
-    wsUrl: args.wsUrl,
-    mobileUrl: args.mobileUrl,
-    qrSvg: args.qrSvg,
-  }),
+  renderShell: (args) =>
+    renderPerfShellHtml({
+      title: args.title,
+      wsUrl: args.wsUrl,
+      mobileUrl: args.mobileUrl,
+      qrSvg: args.qrSvg,
+    }),
 });
 setupPerfPane(perfPane, triggerRefresh);
 
@@ -443,6 +457,8 @@ await renderWindow.run(() => {
   if (globalParams.kinareeEnabled) kinareeDraw(kinareeP5, time);
   const kinareeTex = kinareeP5.endFrame();
 
+  const plorkView = plorkDraw(plorkP5, true, !globalParams.plorkEnabled);
+
   fabP5.beginFrame();
   if (globalParams.fabEnabled) fabDraw(fabP5, time);
   const fabTex = fabP5.endFrame();
@@ -467,10 +483,35 @@ await renderWindow.run(() => {
   });
   clearPass.end();
 
-  alphaBlit(device, encoder, alphaBlitPipeline, tegakiTex.createView(), compositeView);
-  alphaBlit(device, encoder, alphaBlitPipeline, kinareeTex.createView(), compositeView);
-  alphaBlit(device, encoder, alphaBlitPipeline, fabTex.createView(), compositeView);
-  alphaBlit(device, encoder, alphaBlitPipeline, overlayTex.createView(), compositeView);
+  alphaBlit(
+    device,
+    encoder,
+    alphaBlitPipeline,
+    tegakiTex.createView(),
+    compositeView,
+  );
+  alphaBlit(
+    device,
+    encoder,
+    alphaBlitPipeline,
+    kinareeTex.createView(),
+    compositeView,
+  );
+  alphaBlit(device, encoder, alphaBlitPipeline, plorkView, compositeView);
+  alphaBlit(
+    device,
+    encoder,
+    alphaBlitPipeline,
+    fabTex.createView(),
+    compositeView,
+  );
+  alphaBlit(
+    device,
+    encoder,
+    alphaBlitPipeline,
+    overlayTex.createView(),
+    compositeView,
+  );
 
   // Syphon capture: fire async publish of any previous-frame mapped buffer
   // first so its request races alongside this frame's GPU work.
@@ -491,7 +532,10 @@ await renderWindow.run(() => {
   });
   monitorClearPass.end();
   blitTile(device, encoder, alphaBlitPipeline, compositeView, monitorView, {
-    x: 0, y: 0, width: MONITOR_WIDTH, height: MONITOR_HEIGHT,
+    x: 0,
+    y: 0,
+    width: MONITOR_WIDTH,
+    height: MONITOR_HEIGHT,
   });
 
   device.queue.submit([encoder.finish()]);
@@ -503,6 +547,7 @@ await renderWindow.run(() => {
   cleanup() {
     tegakiCleanup();
     kinareeCleanup();
+    plorkCleanup();
     fabCleanup();
     bodyContourProvider.cleanup();
     handBBoxProvider.cleanup();
@@ -510,6 +555,7 @@ await renderWindow.run(() => {
     externalOscClient.close();
     tegakiP5.dispose();
     kinareeP5.dispose();
+    plorkP5.dispose();
     fabP5.dispose();
     overlayP5.dispose();
     compositeTexture.destroy();

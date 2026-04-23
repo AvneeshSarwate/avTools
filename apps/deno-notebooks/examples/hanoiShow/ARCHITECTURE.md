@@ -8,17 +8,10 @@ Orientation doc for a fresh coding agent session. Read this first; you can skip 
 
 ## Run & build
 
-From `apps/deno-notebooks/`:
+The active entry point is `combined_landscape.ts`. From `apps/deno-notebooks/`:
 
 ```
-deno run --unstable-webgpu --unstable-ffi --allow-all examples/hanoiShow/combined.ts
-```
-
-Override the aspect ratio (landscape / portrait / square) at launch:
-
-```
-HANOI_ASPECT=portrait deno run --unstable-webgpu --unstable-ffi --allow-all \
-  examples/hanoiShow/combined.ts
+deno run --unstable-webgpu --unstable-ffi --allow-all examples/hanoiShow/combined_landscape.ts
 ```
 
 Prereqs: two native FFI libs must be prebuilt.
@@ -30,29 +23,29 @@ cd apps/deno-notebooks/native/syphon_bridge && cargo build --release
 
 Produces `libdeno_window.dylib` (windowing + wry webview) and `libsyphon_bridge.dylib` (Syphon publisher). Missing either → `openLibrary()` throws at startup.
 
-**Platform caveat:** the wry webview path is `#[cfg(target_os = "macos")]` only (`native/deno_window/src/lib.rs`). On Linux/Windows `create_webview` returns null and the Tweakpane panel won't work. The GPU window itself is cross-platform. The Syphon outputs are macOS-only (Syphon is a macOS IOSurface bridge).
+**Platform caveat:** the wry webview path is `#[cfg(target_os = "macos")]` only (`native/deno_window/src/lib.rs`). On Linux/Windows `create_webview` returns null and the Tweakpane panel won't work. The GPU window itself is cross-platform. The Syphon output is macOS-only (Syphon is a macOS IOSurface bridge).
+
+> **Note on `combined.ts`:** an earlier portrait-first variant (`combined.ts`) exists in this directory with quad wire packing, 90°-CW rotation into quadrants, per-channel source selection, and two Syphon outputs. It is **deprecated** and not documented here — don't edit it, don't use it as a reference. Slicing into physical-display columns now happens downstream; this process just ships one flat landscape composite.
 
 ---
 
-## Aspect ratio — picked once at startup
+## Dimensions — fixed 1920×1080 landscape
 
-Top of `combined.ts`: a single `ASPECT: AspectRatio` toggle chooses one of three preset dim pairs, overridable via `HANOI_ASPECT` env var.
+Top of `combined_landscape.ts`:
 
 ```ts
-type AspectRatio = "landscape" | "portrait" | "square";
-const ASPECT_DIMS = {
-  landscape: { width: 1280, height: 720 },
-  portrait:  { width: 720, height: 1280 },
-  square:    { width: 1024, height: 1024 },
-};
+const WIDTH = 1920;
+const HEIGHT = 1080;
 ```
 
-**Not dynamically switchable.** `WIDTH` and `HEIGHT` flow once into: the GpuWindow (surface size), every P5GPU instance (scene offscreens + composite + syphon staging), tegaki's `setup({width,height})` (which bakes the text-layout `maxWidth`), and all syphon output pipelines. Changing aspect mid-run would require tearing down and reallocating basically everything.
+These flow once into: the GpuWindow (surface size), every P5GPU instance (scene offscreens + composite + syphon staging), tegaki's `setup({width,height})`, fab_and_lies' `setup({width,height})`, and the single Syphon output pipeline. No env-var override, no aspect branching — if you need a different canvas size, change the constants.
 
 **Where scene code reads dims.**
-- Inside exported `draw()` functions: use `p5.width` / `p5.height` (`oscDraw`, `bodyDraw`). No plumbing needed — P5GPU already knows its size.
+- Inside exported `draw()` functions: use `p5.width` / `p5.height`. No plumbing needed — P5GPU already knows its size.
 - Inside tegaki helpers that don't have `p5` in scope (`computeGlyphBboxes`, `runHandEmitterLoop`, `spawnHandParticle`): read from `state.meta.width` / `state.meta.height` / `state.meta.maxWidth`, populated by `tegakiSetup({width,height})`.
 - Module-level `WIDTH`/`HEIGHT` constants exist only inside each scene's `if (import.meta.main)` block — standalone mode. They do not leak into the exported code paths.
+
+A scene can encode "the downstream mapper will slice this into 3 columns" logic internally (see fab_and_lies' middle-third blackout), but the process itself has no column concept.
 
 ---
 
@@ -185,38 +178,52 @@ Mechanism:
 
 ---
 
-## Scene composition (`combined.ts`)
+## Scene composition (`combined_landscape.ts`)
 
-Each scene module exports the same surface — `setup`, `draw`, `cleanup`, `setupPane`, `state` — so `combined.ts` imports them by name and composes them in one WebGPU window.
+Each scene module exports the same surface — `setup`, `draw`, `cleanup`, `setupPane`, `state` — so `combined_landscape.ts` imports them by name and composes them in one WebGPU window.
 
-High-level structure of `combined.ts`:
+High-level structure:
 
-- **Aspect resolution** — env var / default picks `WIDTH`, `HEIGHT`.
-- **Four P5GPU instances** — `oscP5`, `tegakiP5`, `bodyP5`, `overlayP5`. Each scene gets its own; the overlay hosts the timing HUD.
-- **Composite target** — a single `rgba8unorm` `compositeTexture` that the per-scene offscreens alpha-blend onto.
-- **Three headless syphon outputs** — see "Syphon outputs" below. Each has a per-frame source selector (OSC / Tegaki / Body Text / Composite).
-- **Shared data providers** — `bodyContourProvider`, `handBBoxProvider` own WS receivers + smoothing. Ticked once per frame before any scene reads.
-- **Tweakpane setup** — 6-tab panel (Global / Body Contour / Hands / OSC Trail / Tegaki / Body Text); Global tab has Background / Scenes / **Syphon Outputs** / Debug subfolders; each scene's `setupPane` delegates to one tab.
-- **Perf panel** — a second `WindowTweakpane` (`perfPane`) in its own floating window, exposing macro controls for all three scenes with its own QR share. **Important:** the kernel-side class is the same `WindowTweakpane`, but the browser-side renderer is a *different* bundle (`@avtools/perf-pane`, a Vue custom element) that implements only a subset of the wire protocol. See "Perf pane — parallel Vue client" below before adding controls to it.
-- **Frame callback** — providers tick → each P5GPU does begin/draw/end → composite pass → syphon captures → submit. `yieldMs: 4` forces a `setTimeout` between frames so UDP/WS callbacks aren't starved.
+- **Fixed dims** — `WIDTH = 1920, HEIGHT = 1080`. All scenes render at this resolution.
+- **Four P5GPU instances** — `tegakiP5`, `kinareeP5`, `fabP5`, `overlayP5`. Each scene gets its own; the overlay hosts the timing HUD.
+- **Single composite** — one `rgba8unorm` `compositeTexture` at 1920×1080. Cleared to **transparent** each frame; per-scene offscreens alpha-blend onto it. Syphon ships it verbatim, no re-packaging.
+- **Single Syphon output** — one `HeadlessSyphonServer` named `"Hanoi Show L"` at 1920×1080. Downstream handles any column slicing / display mapping.
+- **Shared data providers** — `bodyContourProvider`, `handBBoxProvider` own WS receivers + smoothing. Ticked once per frame before any scene reads. Tegaki consumes both. (No body-text scene in this variant, so no `bodyState` injection.)
+- **Tweakpane setup** — 4-tab panel (Global / Tegaki / Kinaree / Fab & Lies); Global tab has Scenes / Body Contour / Hands / Debug subfolders. Each scene's `setupPane` delegates to one tab.
+- **Perf panel** — a second `WindowTweakpane` (`perfPane`) in its own floating window, exposing macro controls for scenes that expose `macroDefs`. 3 tabs: Tegaki / External 1 / External 2. **Important:** the kernel-side class is the same `WindowTweakpane`, but the browser-side renderer is a *different* bundle (`@avtools/perf-pane`, a Vue custom element) that implements only a subset of the wire protocol. See "Perf pane — parallel Vue client" below before adding controls to it.
+- **Monitor (dev preview)** — a single 1280×720 tile showing the composite scaled down. Cleared to opaque black so transparent regions of the composite preview as black (approximates typical Syphon-over-black consumer behavior). The monitor texture is what the GPU window actually displays; it is *not* what ships to Syphon (the Syphon wire carries true RGBA).
+- **Frame callback** — providers tick → each P5GPU does begin/draw/end → composite clear-to-transparent + alpha-blit all layers → Syphon capture from the composite → monitor blit → submit. `yieldMs: 4` forces a `setTimeout` between frames so UDP/WS callbacks aren't starved.
+
+### Why the composite is cleared to transparent
+
+Downstream Syphon consumers composite `combined_landscape`'s output over their own backdrop (video feed, other Syphon layers, etc.). Shipping a pre-multiplied opaque background would force that backdrop color on anyone using this output. Clearing to `{r:0, g:0, b:0, a:0}` keeps alpha honest across the wire; sketches draw opaque content where they draw and leave everything else transparent.
+
+### Currently wired scenes
+
+| Scene | Module | Notes |
+|---|---|---|
+| Tegaki | `p5gpu_tegaki_handwriting.ts` | Random / intersection / hand trigger modes. Consumes body contour + hand bbox. Has `state.params.fade`. |
+| Burning Kinaree | `burning_kinaree.ts` | Three mixable sections: orbit circles, rect launcher, snowfall. Has `state.params.fade` and per-section `mix`. |
+| Fab & Lies | `fab_and_lies.ts` | Thai text blocks launched from the sides; middle-third blackout for the 3-column-downstream context. Has `state.params.fade`. Async asset load (Ayuthaya .ttf) via `fabLoadAssets(fabP5)` in startup. |
+
+The older scenes `p5gpu_osc_note_trail.ts` and `p5gpu_body_text.ts` still exist in the directory as standalone-runnable sketches (see "Dual-mode"). They are not imported by `combined_landscape.ts`. Either can be wired back in by following the import/setup/frame/cleanup pattern of the existing scenes.
 
 ### Shared-state injection
 
-Scene modules expose their own `state` object. Before the scene's `setup()` runs, `combined.ts` assigns shared providers onto those state objects:
+Scene modules expose their own `state` object. Before each scene's `setup()` runs, `combined_landscape.ts` assigns shared providers onto those state objects:
 
 ```ts
 tegakiState.contourProvider = bodyContourProvider;
 tegakiState.handBBoxProvider = handBBoxProvider;
-bodyState.contourProvider  = bodyContourProvider;
 ```
 
-This is the dependency-injection seam. Keep it — it's how multiple scenes read one smoothed contour frame without each running its own receiver.
+This is the dependency-injection seam. It's how multiple scenes can read one smoothed contour frame without each running its own receiver. If you wire in a new scene that needs the provider, add one more line here.
 
 ---
 
 ## Compositing model — per-scene P5GPU + alpha compositor
 
-**Each scene draws into its own P5GPU offscreen. A per-frame composite pass alpha-blends them in draw order onto a shared `rgba8unorm` target, which is then blitted to the swapchain.**
+**Each scene draws into its own P5GPU offscreen. A per-frame composite pass alpha-blends them in draw order onto a shared `rgba8unorm` `compositeTexture`. The composite is then rotated 90° CW into quadrants of a 2×2 packed wire texture for Syphon output 1; Syphon output 2 ships the (currently placeholder) landscape composite. The monitor preview blits channels into its own tile layout.**
 
 ```
   renderWindow.run(() => {
@@ -224,39 +231,65 @@ This is the dependency-injection seam. Keep it — it's how multiple scenes read
     handBBoxProvider.tick();
 
     // 1. Each scene produces its own texture (transparent where untouched).
-    oscP5.beginFrame();    if (oscEnabled)    oscDraw(oscP5, t);       const oscTex    = oscP5.endFrame();
-    tegakiP5.beginFrame(); if (tegakiEnabled) tegakiDraw(tegakiP5);    const tegakiTex = tegakiP5.endFrame();
-    bodyP5.beginFrame();   if (bodyEnabled)   bodyDraw(bodyP5, t);     const bodyTex   = bodyP5.endFrame();
-    overlayP5.beginFrame(); drawTimingOverlay(overlayP5);               const overlayTex = overlayP5.endFrame();
+    oscP5.beginFrame();     if (oscEnabled)     oscDraw(oscP5, t);       const oscTex     = oscP5.endFrame();
+    tegakiP5.beginFrame();  if (tegakiEnabled)  tegakiDraw(tegakiP5);    const tegakiTex  = tegakiP5.endFrame();
+    bodyP5.beginFrame();    if (bodyEnabled)    bodyDraw(bodyP5, t);     const bodyTex    = bodyP5.endFrame();
+    kinareeP5.beginFrame(); if (kinareeEnabled) kinareeDraw(kinareeP5,t);const kinareeTex = kinareeP5.endFrame();
+    fabP5.beginFrame();     if (fabEnabled)     fabDraw(fabP5, t);       const fabTex     = fabP5.endFrame();
+    overlayP5.beginFrame(); drawTimingOverlay(overlayP5);                 const overlayTex = overlayP5.endFrame();
 
-    // 2. Composite pass: clear to bg RGB, then alpha-blit 4 layers.
+    // 2. Portrait composite: clear to bg RGB, alpha-blit 6 layers in painter order.
     const encoder = device.createCommandEncoder();
-    /* clear pass on compositeTexture with bg color, loadOp: "clear" */
+    /* clear passes: compositeView → bg RGB; portraitQuadView → bg RGB; landscapeCompositeView → bg RGB */
     alphaBlit(device, encoder, alphaBlitPipeline, oscView,     compositeView);
     alphaBlit(device, encoder, alphaBlitPipeline, tegakiView,  compositeView);
     alphaBlit(device, encoder, alphaBlitPipeline, bodyView,    compositeView);
+    alphaBlit(device, encoder, alphaBlitPipeline, kinareeView, compositeView);
+    alphaBlit(device, encoder, alphaBlitPipeline, fabView,     compositeView);
     alphaBlit(device, encoder, alphaBlitPipeline, overlayView, compositeView);
 
-    // 3. Syphon outputs: kick off previous-frame async publishes, then
-    //    blit+copy each selected source into its bgra8 staging + readback buffer.
+    // 3. Per-channel source resolution. Each of the 4 channel*Source params
+    //    maps to a texture view: none/red/osc/tegaki/body/kinaree/fab/portrait/landscape.
+    const ch1 = channelSources[ch1Src]; /* … and ch2, ch3, ch4 */
+
+    // 4. Pack 3 vertical channels into the 2×2 quad wire, each rotated 90° CW
+    //    into a 960×540 quadrant. Slot 4 stays cleared (wire slack).
+    blitTile(device, encoder, rotatedAlphaBlitPipeline, ch1, portraitQuadView, {x:0,   y:0,   w:960, h:540});
+    blitTile(device, encoder, rotatedAlphaBlitPipeline, ch2, portraitQuadView, {x:960, y:0,   w:960, h:540});
+    blitTile(device, encoder, rotatedAlphaBlitPipeline, ch3, portraitQuadView, {x:0,   y:540, w:960, h:540});
+
+    // 5. Syphon: output 1 always ships the packed quad (per-channel content
+    //    lives inside); output 2 ships whatever channel 4 resolves to.
     for (const output of syphonOutputs) output.tryPublish();
-    syphonOutputs[0].captureFrame(encoder, sources[globalParams.syphon1Source]);
-    syphonOutputs[1].captureFrame(encoder, sources[globalParams.syphon2Source]);
-    syphonOutputs[2].captureFrame(encoder, sources[globalParams.syphon3Source]);
+    syphonOutputs[0].captureFrame(encoder, portraitQuadView);
+    syphonOutputs[1].captureFrame(encoder, ch4);
+
+    // 6. Monitor preview: 3 portrait tiles (ch1/2/3 un-rotated) on top,
+    //    landscape tile (ch4) below, alpha-composited over a bg-cleared monitor.
+    /* clear monitorView to bg RGB; blitTile ch1/ch2/ch3 into three 240×427 tiles;
+       blitTile ch4 into the 720×405 tile below. */
 
     device.queue.submit([encoder.finish()]);
-    return compositeView; // render manager blits this to the swapchain
+    return monitorView; // render manager blits this to the swapchain
   });
 ```
 
 Consequences an agent should internalize:
 
 - **Per-scene isolation.** Each P5GPU owns its own render target, style stack, and font cache. A scene can no longer corrupt another scene's state — the shared-p5 `push()`/`pop()` hygiene rule is **no longer load-bearing** (though it's still good practice inside a single scene).
-- **Draw order still matters.** Painter's-algorithm compositing: alphaBlit calls in order OSC → tegaki → body → overlay; later = on top. To change layering, reorder the alphaBlit calls in `combined.ts`.
-- **`autoClear` replaces the shared `background()` call.** Scene `draw()` functions now take a trailing `autoClear = true` param; when true, they call `p5.clear()` at the very start (before any early returns) so the offscreen starts transparent each frame. This is required because P5GPU's `endFrame()` uses `loadOp: "load"` by default (preserves previous frame pixels) unless `clear()` / `background()` was called during the frame. `combined.ts` relies on the default `true`; standalone runners pass `false` because they already call `p5.background(...)` after `beginFrame()`.
+- **Draw order still matters.** Painter's-algorithm compositing: alphaBlit calls in order OSC → tegaki → body → kinaree → fab → overlay; later = on top. To change layering, reorder the alphaBlit calls in `combined.ts`. Kinaree + fab sit on top of the other scenes so their strobe flashes and fab's middle-third blackout overlay everything; overlay sits on top of all of them for the timing HUD.
+- **`autoClear` replaces the shared `background()` call.** Scene `draw()` functions take a trailing `autoClear = true` param; when true, they call `p5.clear()` at the very start (before any early returns) so the offscreen starts transparent each frame. This is required because P5GPU's `endFrame()` uses `loadOp: "load"` by default (preserves previous frame pixels) unless `clear()` / `background()` was called during the frame. `combined.ts` relies on the default `true`; standalone runners pass `false` because they already call `p5.background(...)` after `beginFrame()`.
 - **Scenes STILL must NOT call `background()` in their exported `draw()`.** Doing so would paint a solid color across the scene's offscreen — wiping transparency — which breaks alpha compositing. Standalone-only `background()` calls live in the `import.meta.main` runner, not the exported draw.
-- **Disabled scenes still pay for begin/end.** We always beginFrame/endFrame on all 4 P5GPUs and always alphaBlit all 4 — an all-transparent layer is a no-op visually but still costs a pass. The `if (enabled)` gates only the scene's own draw calls, not the pipeline.
-- **P5GPU allocation lives in `combined.ts`.** Scene `setup()` signatures vary: `oscSetup(device)`, `tegakiSetup({width,height})`, `bodySetup(p5)`. Only body needs a p5 handle (to load Charmonman into that specific instance); tegaki needs dims (for setup-time text layout); osc needs just the device (for the OSC UDP server).
+- **Disabled scenes still pay for begin/end.** We always beginFrame/endFrame on all 6 P5GPUs and always alphaBlit them all — an all-transparent layer is a no-op visually but still costs a pass. The `if (enabled)` gates only the scene's own draw calls, not the pipeline. See `noop-checker.md` for the broader work-gating story (scene-fade, not enable flags, is the actual quiescence signal).
+- **P5GPU allocation lives in `combined.ts`.** Scene `setup()` signatures vary: `oscSetup(device)` (UDP server), `tegakiSetup({width,height})` (setup-time text layout needs dims), `bodySetup(p5)` (needs a p5 handle to load Charmonman into that specific instance), `kinareeSetup({width,height})` (sync — captures dims for trigger helpers), `fabSetup({width,height})` + `fabLoadAssets(fabP5)` (dims sync, font load async — Ayuthaya .ttf for Thai glyphs into fabP5).
+
+### Rotation and the portrait-quad wire format
+
+Portrait scenes render at 720×1280 (9:16). Each of the 3 vertical channels gets rotated 90° CW into a 960×540 quadrant of the 1920×1080 portrait quad. The rotation is shader-baked: `window/blit.ts` exposes `createRotatedAlphaBlitPipeline`, which samples `vec2(1 - uv.y, 1 - uv.x)` — a 90° CW rotation combined with the y-flip already baked into the top-left-origin convention.
+
+Aspect arithmetic: 720×1280 rotated 90° CW becomes effectively 1280×720 (16:9), which fits the 960×540 quadrant (also 16:9) at exactly 0.75× uniform scale. That's the reason scenes author portrait-first: the rotation is clean, no stretching.
+
+Alpha-blending version of the rotated blit is used in `combined.ts` (not the plain rotated blit) so that individual sketch textures — which have transparent regions where they didn't draw — don't obliterate the quad's bg-color clear. Transparent regions of the sketch show bg instead of black.
 
 ### `alphaBlit` — how the compositor works
 
@@ -376,18 +409,36 @@ Keeping both modes working is load-bearing — it's how scenes get developed and
 
 ---
 
-## Per-scene "fade" convention (structural)
+## Scene mix — the load-bearing mixing parameter (structural)
 
-Each scene has one parameter that acts as a **per-scene amplitude / fade knob for live performance**. Its semantic meaning is sketch-specific; its *structural role* is uniform: at 0 the scene is invisible, at 1 it's fully present, and intermediate values cross-fade smoothly during show transitions.
+Each scene exposes one parameter that is **the** per-scene mix knob for live performance. Conventionally named `fade` and bound to the UI label `Scene Fade`. Semantic meaning can be sketch-specific (body_text still uses `state.render.fade`; a scene could equivalently name it `glyphScale` if that reads right for the content), but its *structural role* is uniform and non-negotiable — this is the only parameter an operator uses to cross-fade scenes during a show.
 
-Current bindings:
-- `p5gpu_body_text.ts` — `state.render.fade` (0..1). Multiplies stroke/fill alpha and early-returns at `fade <= 0`.
-- `p5gpu_tegaki_handwriting.ts` — `state.params.glyphScale`. Same role: glyphs shrink to nothing; early-returns at `glyphScale <= 0`.
-- `p5gpu_osc_note_trail.ts` — **not yet implemented**. Needs one for show use.
+**What "scene mix" does** — two responsibilities, both required:
 
-**Why this convention matters for upcoming work:** the Global tab's `bodyEnabled` / `tegakiEnabled` / `oscEnabled` toggles are hard on/off and will pop. The per-scene fade is the smooth control an operator (or automation) uses to move between scenes over the course of a show. New scenes should add one; the OSC scene should grow one. The name is sketch-specific (`fade`, `glyphScale`, whatever reads right for the scene's content), but behavior at the extremes should be consistent.
+1. **Alpha multiplier** on all visible draw calls for the scene. At 0 the scene is invisible, at 1 fully present, linearly in between. Every draw path (strokes, fills, particles, overlays) threads the fade into its alpha so nothing leaks through during a cross-fade.
+2. **Quiescence signal** for state-update work. At `fade <= 0` the scene stops doing *unnecessary* work: trigger loops skip spawning ramps, emitter loops skip spawning particles, intersection/hand-bbox trigger scan loops short-circuit. In-flight ramps can continue (they're cheap and their writes are invisible); what's forbidden is new work spawned while invisible.
 
-**Early-return discipline.** The convention is: when the fade is at 0, the scene's `draw()` returns immediately without issuing any draw calls or running expensive side effects (trigger processing, etc.). See `p5gpu_body_text.ts:185-186` and `p5gpu_tegaki_handwriting.ts:997` for the pattern.
+The second responsibility is the one that's easy to forget and the one that matters for running a show with many scenes. Without it: a "disabled" scene (fade=0) keeps allocating particles / scheduling ramps / touching phase state at full rate. Over minutes of stage time this is unbounded growth and wasted CPU. See `noop-checker.md` (same directory) for the prior audit that surfaced this across scenes.
+
+**Current bindings:**
+
+| Scene | Param | Notes |
+|---|---|---|
+| `burning_kinaree.ts` | `state.params.fade` | Section mixes multiply by `fade`; trigger branches gate on `mix <= 0`; orbit phase integration runs unconditionally (keeps motion continuous across transitions). Canonical implementation. |
+| `p5gpu_tegaki_handwriting.ts` | `state.params.fade` | Early-return on fade=0 before `drawContourDebug`; glyph stroke alpha multiplies by fade; hand-particle emitter outer condition includes `fade > 0`; random-trigger branch has `if (fade <= 0) continue;`. Intersection/hand triggers are free (gated by the draw early-return). Debug overlays intentionally *do not* multiply by fade — they're dev-only and never run during a show. |
+| `p5gpu_body_text.ts` | `state.render.fade` | Early-return at `fade <= 0`; alpha multiplier on strokes/fills. Spring physics runs inside `draw()` so it naturally stops with fade. |
+| `fab_and_lies.ts` | `state.params.fade` | Combined with per-section `mix` via `mix * fade`. Middle-third blackout is drawn inside the fade-gated path, so at fade=0 it's also off. |
+| `p5gpu_osc_note_trail.ts` | **not yet implemented** | Flagged in `noop-checker.md` as out-of-scope for the current cleanup pass but required before this scene is used in a show. UDP receiver + delay-buffer ring also need gating. |
+
+**Scene mix vs `<scene>Enabled` toggle.** The Global tab's enable flags are not a replacement for `fade`. They only gate the scene's `draw()` call inside `combined.ts` — the scene's core-timing branches, provider ticks, emitter loops all keep running regardless. Useful for instant mute during development; unusable for on-stage transitions (hard pop, not a fade) and insufficient for quiescence (no-op cleanup relies on fade, not enable).
+
+**Implementation discipline for new scenes:**
+
+1. Name it `fade` on `state.params` (or whatever state shape the scene uses) and default it to `1.0`. Bind with label "Scene Fade" at the top of the scene's pane.
+2. In `draw()`, compute `const fade = state.params.fade; if (fade <= 0) return;` as one of the first statements — before any trigger-processing helpers that fire from inside draw (intersection, hand bbox, etc.), but after any load-bearing phase integration that must keep running during fade=0 for motion continuity. The kinaree `orbitPhase` integration above the fade gate is the paradigm case — *don't* move it below.
+3. Thread the fade multiplier into every `fill/stroke` alpha. For scenes with self-attenuating effects (particle systems), multiply their computed alpha by fade.
+4. In every core-timing branch that schedules new work (triggers, emitters), add `if (state.params.fade <= 0) continue;` alongside the existing `paused` / mode checks. Not needed for logic that runs inside `draw()` — the early-return above covers it.
+5. Sections with their own per-section `mix` (kinaree, fab_and_lies) compute `const m = section.mix * state.params.fade` and early-return when `m <= 0`. Scene-fade is the global multiplier; section-mix is the internal balance between sketch components.
 
 ---
 
