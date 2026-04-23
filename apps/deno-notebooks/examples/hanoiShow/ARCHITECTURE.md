@@ -434,13 +434,29 @@ The perf pane shares the kernel-side plumbing with the main Tweakpane — same `
 
 ### How the routing happens
 
-`createWindowTweakpane` accepts an optional `renderShell` option. `combined.ts:392` passes `renderPerfShellHtml` from `tools/perf_shell_html.ts`, which:
+`createWindowTweakpane` accepts an optional `renderShell` option. `combined.ts` passes `renderPerfShellHtml` from `tools/perf_shell_html.ts`, which:
 
 1. Loads the prebuilt Vue bundle at `webcomponents/perf-pane/dist/perf-pane.js` (the `@avtools/perf-pane` package).
 2. Inlines it into the shell HTML and mounts a `<perf-pane-component>` custom element pointed at the same loopback WebSocket URL the main pane uses.
 3. The custom element is a Vue app whose root is `apps/browser-projections/src/perfPane/PerfPaneRoot.vue`, driven by `perfPaneClient.ts`.
 
 The main pane, by contrast, uses the default shell (`tools/tweakpane_shell_html.ts`) which mounts the full `tweakpane-client.ts` bundle. Both bundles connect to WebSockets served by `DenoNotebookBridge`; both receive the same `replay` + op-stream; they just interpret it differently.
+
+### `renderShell` reaches two paths — native webview AND HTTP (phone, iframe)
+
+There are **two places** a shell HTML gets produced for a single `WindowTweakpane`:
+
+1. **Native wry webview.** `WindowTweakpane._createPanelHtml(renderShell)` generates the HTML once at construction time, writes it to a tempfile, and loads it into the webview. This always respected `renderShell`.
+2. **HTTP-served clients** (phone scanning the QR code; notebook iframe). `DenoNotebookBridge`'s HTTP handler calls the adapter's `renderHTML(wsUrl, sessionId, sessionData)` (in `tools/tweakpaneAdapter.ts`) on each request. This path **used to hardcode** `renderTweakpaneShellHtml`, so the phone always loaded the default Tweakpane shell regardless of what `renderShell` the native webview got.
+
+To keep both paths in sync, `renderShell` is now also registered on the `TweakpaneServer` via `server.setShellRenderer(renderer)`:
+
+- `createWindowTweakpane` in `window/tweakpane_panel.ts` calls `pane.setShellRenderer(options.renderShell)` whenever a `renderShell` is provided, in addition to passing it to `_createPanelHtml`.
+- The adapter's `renderHTML` (`tools/tweakpaneAdapter.ts`) checks `_sessionData.server.shellRenderer` first. If set, it calls that with `{ title, sessionId, wsUrl, mobileUrl, qrSvg }`; otherwise falls back to `renderTweakpaneShellHtml`.
+
+Result: phone QR scan of the perf pane now loads the Vue shell, not Tweakpane. Without this step, the two browser clients diverge — native webview gets the custom shell, phone gets the default — and you'd see a full Tweakpane UI on your phone even though the floating native panel shows the Vue sliders.
+
+When adding a new custom shell: you only have to pass it via `createWindowTweakpane({..., renderShell})`. The registration with `TweakpaneServer` is automatic. The types — `ServerShellRenderer` and `ServerShellRenderArgs` — are exported from `tools/tweakpaneServer.ts`.
 
 ### Op subset the perf client implements
 
@@ -499,6 +515,7 @@ The perf pane is optimized for live operation: big vertical sliders, chunky hit 
 | pane protocol (browser side, main pane)      | `webcomponents/tweakpane/src/tweakpane-client.ts` (rebuild `dist/` after edits)           |
 | perf pane Vue client (browser side)          | `apps/browser-projections/src/perfPane/` → `perfPaneClient.ts`, `PerfPaneRoot.vue`, `components/VerticalSlider.vue` (rebuild via `npm run buildPerfPane`) |
 | perf pane shell HTML (kernel side)           | `apps/deno-notebooks/tools/perf_shell_html.ts` — loads bundle from `webcomponents/perf-pane/dist/perf-pane.js` |
+| shell-renderer routing (native + HTTP)       | `createWindowTweakpane` → `pane.setShellRenderer(...)` in `window/tweakpane_panel.ts`; consumed by `_createPanelHtml` (native) and `TweakpaneAdapter.renderHTML` (phone/iframe) |
 | macro helper (shared between main + perf)    | `apps/deno-notebooks/tools/macros.ts` — `MacroDef<T>` + `installMacros`                   |
 | native wry / winit / FFI                     | `apps/deno-notebooks/native/deno_window/src/lib.rs`                                       |
 | native syphon FFI                            | `apps/deno-notebooks/native/syphon_bridge/src/lib.rs`                                     |
@@ -535,6 +552,7 @@ See `io-lag-analysis.md` (same directory) for a prior writeup of the IO / frame-
 - **Syphon readback is always one frame behind.** Ping-pong buffers mean publishFrame sees the previous frame's pixels. Acceptable in practice; don't try to "fix" it with a single-buffer design — that'll introduce GPU stalls or force-blocking on mapAsync.
 - **Three P5GPU instances all need their own font loads.** Today only `bodyP5` loads Charmonman (via `bodySetup(bodyP5)`). A future scene that uses a custom font on `oscP5` or `tegakiP5` needs its own `await p5.loadFont(...)` in that scene's setup — fonts do not cross P5GPU instances.
 - **Perf pane is a different browser client.** `perfPane` is kernel-typed as `WindowTweakpane`, but its shell mounts `@avtools/perf-pane` (Vue), not `tweakpane-client`. It renders numeric sliders in tab pages only — `addFolder`, `addButton`, non-numeric `addBinding`, `addBlade`, `addSeparator` are silently dropped. If a control you add doesn't appear on the perf window, it's probably one of those ops. See "Perf pane — parallel Vue client" section.
+- **Custom shells must reach both render paths.** A `renderShell` passed to `createWindowTweakpane` applies to the native webview *and* to HTTP-served clients (phone QR, notebook iframe) only because `createWindowTweakpane` calls `pane.setShellRenderer(renderShell)`. If you bypass `createWindowTweakpane` and wire a custom shell some other way, remember that the adapter's `renderHTML` falls back to the default Tweakpane shell whenever `server.shellRenderer` is unset — and the phone will silently show the wrong UI.
 
 ---
 

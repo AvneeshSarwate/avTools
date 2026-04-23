@@ -285,6 +285,22 @@ export function createWindowTweakpane(
 ): WindowTweakpane {
   const pane = new WindowTweakpane(options?.title);
 
+  // Register the renderShell on the server so the adapter's HTTP-served HTML
+  // (phone QR, notebook iframe) uses the same shell as the native webview.
+  // Without this, the phone would fall back to the default tweakpane shell
+  // and show a Tweakpane UI instead of whatever custom shell (e.g. the perf
+  // pane's Vue UI) was passed here.
+  if (options?.renderShell) {
+    const renderShell = options.renderShell;
+    pane.setShellRenderer((args) => renderShell({
+      title: args.title,
+      sessionId: args.sessionId,
+      wsUrl: args.wsUrl,
+      mobileUrl: args.mobileUrl,
+      qrSvg: args.qrSvg,
+    }));
+  }
+
   const panel = new WindowPanel({
     lib: gpuWindow._lib,
     parentState: gpuWindow._state,

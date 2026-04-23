@@ -97,6 +97,18 @@ export interface TweakpaneSessionData {
   server: TweakpaneServer
 }
 
+/** Args passed to a custom HTML shell renderer (mobile + iframe HTTP path). */
+export interface ServerShellRenderArgs {
+  title: string
+  sessionId: string
+  wsUrl: string
+  mobileUrl: string | null
+  qrSvg: string | null
+}
+
+/** Optional hook servers can register to replace the default tweakpane shell HTML. */
+export type ServerShellRenderer = (args: ServerShellRenderArgs) => string
+
 // ============================================================================
 // ID Generation
 // ============================================================================
@@ -1005,6 +1017,7 @@ export class TweakpaneServer implements IContainerProxy {
   private _hidden = false
   private _inspectorName: string | undefined
   private _inspectorRegistered = false
+  private _shellRenderer: ServerShellRenderer | null = null
 
   constructor(config?: { title?: string; expanded?: boolean; name?: string }) {
     this._title = config?.title
@@ -1316,6 +1329,22 @@ export class TweakpaneServer implements IContainerProxy {
   /** @internal */
   get bridge(): DenoNotebookBridge<TweakpaneWsClient, TweakpaneHandle, TweakpaneSessionData> | null {
     return this._bridge
+  }
+
+  /**
+   * Register a custom HTML shell renderer for this server. The adapter will
+   * use this instead of the default tweakpane shell when serving HTTP-hosted
+   * clients (mobile QR-scan sessions + notebook iframes).
+   *
+   * Set to `null` to restore the default shell. Affects only this server.
+   */
+  setShellRenderer(renderer: ServerShellRenderer | null): void {
+    this._shellRenderer = renderer
+  }
+
+  /** @internal Used by the adapter's renderHTML to fetch the current override. */
+  get shellRenderer(): ServerShellRenderer | null {
+    return this._shellRenderer
   }
 
   /** @internal Record an operation: append to log + broadcast to live iframes */

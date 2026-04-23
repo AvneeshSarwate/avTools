@@ -118,7 +118,23 @@ function createTweakpaneAdapter(): ComponentAdapter<
     },
 
     renderHTML(wsUrl: string, sessionId: string, _sessionData: TweakpaneSessionData): string {
-      const shareInfo = _sessionData.server.getMobileShareInfo()
+      const server = _sessionData.server
+      const shareInfo = server.getMobileShareInfo()
+
+      // If the server has a custom shell renderer registered (e.g. the perf
+      // pane's Vue shell), use it for HTTP-hosted clients (phone QR + iframe).
+      // This mirrors the native-webview code path in WindowTweakpane._createPanelHtml.
+      const custom = server.shellRenderer
+      if (custom) {
+        return custom({
+          title: server.paneConfig.title ?? "Controls",
+          sessionId,
+          wsUrl,
+          mobileUrl: shareInfo?.lanUrl ?? null,
+          qrSvg: shareInfo?.qrSvg ?? null,
+        })
+      }
+
       return renderTweakpaneShellHtml({
         title: "Tweakpane",
         wsUrl,
