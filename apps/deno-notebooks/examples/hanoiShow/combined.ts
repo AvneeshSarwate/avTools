@@ -50,6 +50,13 @@ import {
   state as bodyState,
 } from "./p5gpu_body_text.ts";
 
+import {
+  cleanup as kinareeCleanup,
+  draw as kinareeDraw,
+  setup as kinareeSetup,
+  setupPane as kinareeSetupPane,
+} from "./burning_kinaree.ts";
+
 import { createBodyContourProvider } from "./body_contour_provider.ts";
 import { createHandBBoxProvider } from "./hand_bbox_provider.ts";
 
@@ -77,7 +84,7 @@ const COMBINED_RENDER_YIELD_MS = 4;
 const EXTERNAL_OSC_HOST = "127.0.0.1";
 const EXTERNAL_OSC_PORT = 9004;
 
-type SyphonSource = "osc" | "tegaki" | "body" | "composite";
+type SyphonSource = "osc" | "tegaki" | "body" | "kinaree" | "composite";
 
 const globalParams = {
   bgR: 13,
@@ -86,6 +93,7 @@ const globalParams = {
   oscEnabled: true,
   tegakiEnabled: true,
   bodyEnabled: true,
+  kinareeEnabled: true,
   showTiming: false,
   syphon1Source: "composite" as SyphonSource,
   syphon2Source: "composite" as SyphonSource,
@@ -158,11 +166,10 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
   const tab = pane.addTab({
     pages: [
       { title: "Global" },
-      { title: "Body Contour" },
-      { title: "Hands" },
       { title: "OSC Trail" },
       { title: "Tegaki" },
       { title: "Body Text" },
+      { title: "Kinaree" },
     ],
   });
 
@@ -177,6 +184,7 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
   scenes.addBinding(globalParams, "oscEnabled", { label: "OSC Trail" });
   scenes.addBinding(globalParams, "tegakiEnabled", { label: "Tegaki" });
   scenes.addBinding(globalParams, "bodyEnabled", { label: "Body Text" });
+  scenes.addBinding(globalParams, "kinareeEnabled", { label: "Kinaree" });
 
   const syphonFolder = global.addFolder({ title: "Syphon Outputs" });
   const syphonSourceOptions = {
@@ -184,6 +192,7 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
     "OSC Trail": "osc",
     "Tegaki": "tegaki",
     "Body Text": "body",
+    "Kinaree": "kinaree",
   };
   syphonFolder.addBinding(globalParams, "syphon1Source", {
     options: syphonSourceOptions,
@@ -198,14 +207,22 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
     label: "Output 3",
   });
 
+  // Shared providers — both feed multiple scenes, so they live under Global
+  // as folders rather than their own tabs.
+  bodyContourProvider.setupPane(
+    global.addFolder({ title: "Body Contour", expanded: false }),
+  );
+  handBBoxProvider.setupPane(
+    global.addFolder({ title: "Hands", expanded: false }),
+  );
+
   const debug = global.addFolder({ title: "Debug" });
   debug.addBinding(globalParams, "showTiming", { label: "Frame Timing" });
 
-  bodyContourProvider.setupPane(tab.pages[1]);
-  handBBoxProvider.setupPane(tab.pages[2]);
-  oscSetupPane(tab.pages[3], refresh);
-  tegakiSetupPane(tab.pages[4], refresh);
-  bodySetupPane(tab.pages[5], refresh);
+  oscSetupPane(tab.pages[1], refresh);
+  tegakiSetupPane(tab.pages[2], refresh);
+  bodySetupPane(tab.pages[3], refresh);
+  kinareeSetupPane(tab.pages[4], refresh);
 }
 
 function setupPerfPane(pane: WindowTweakpane, refresh: () => void) {
@@ -390,6 +407,7 @@ const device = await requestWebGpuDevice();
 const oscP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const tegakiP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const bodyP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
+const kinareeP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const overlayP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 
 const COMPOSITE_FORMAT: GPUTextureFormat = "rgba8unorm";
@@ -422,6 +440,8 @@ await Promise.all([
   tegakiSetup({ width: WIDTH, height: HEIGHT }),
   bodySetup(bodyP5),
 ]);
+// Kinaree setup is sync; called outside Promise.all for clarity.
+kinareeSetup({ width: WIDTH, height: HEIGHT });
 
 // Refresh both panes on any macro change. Declared before pane construction so
 // scene setupPanes can capture it by reference; reassigned once perfPane exists.
@@ -435,16 +455,16 @@ const renderWindow = await createWindowRenderManager({
   title: "Hanoi Show",
   pane: {
     title: "Hanoi Show",
-    panelWidth: 420,
-    panelHeight: 520,
+    panelWidth: 620,
+    panelHeight: 620,
     setup: (pane) => setupPane(pane, triggerRefresh),
   },
 });
 
 const perfPane = createWindowTweakpane(renderWindow.window, {
   title: "Perf",
-  panelWidth: 420,
-  panelHeight: 560,
+  panelWidth: 620,
+  panelHeight: 660,
   renderShell: (args) => renderPerfShellHtml({
     title: args.title,
     wsUrl: args.wsUrl,
@@ -483,6 +503,10 @@ await renderWindow.run(() => {
   if (globalParams.bodyEnabled) bodyDraw(bodyP5, time);
   const bodyTex = bodyP5.endFrame();
 
+  kinareeP5.beginFrame();
+  if (globalParams.kinareeEnabled) kinareeDraw(kinareeP5, time);
+  const kinareeTex = kinareeP5.endFrame();
+
   overlayP5.beginFrame();
   drawTimingOverlay(overlayP5);
   const overlayTex = overlayP5.endFrame();
@@ -507,9 +531,13 @@ await renderWindow.run(() => {
   const oscView = oscTex.createView();
   const tegakiView = tegakiTex.createView();
   const bodyView = bodyTex.createView();
+  const kinareeView = kinareeTex.createView();
+  // Painter's algorithm order: kinaree sits above osc/tegaki/body so its
+  // strobe flashes overlay everything; timing overlay stays on top.
   alphaBlit(device, encoder, alphaBlitPipeline, oscView, compositeView);
   alphaBlit(device, encoder, alphaBlitPipeline, tegakiView, compositeView);
   alphaBlit(device, encoder, alphaBlitPipeline, bodyView, compositeView);
+  alphaBlit(device, encoder, alphaBlitPipeline, kinareeView, compositeView);
   alphaBlit(device, encoder, alphaBlitPipeline, overlayTex.createView(), compositeView);
 
   // Syphon captures: piggyback on the same encoder. Fire async publishes of
@@ -520,6 +548,7 @@ await renderWindow.run(() => {
     osc: oscView,
     tegaki: tegakiView,
     body: bodyView,
+    kinaree: kinareeView,
     composite: compositeView,
   };
   syphonOutputs[0]!.captureFrame(encoder, syphonSources[globalParams.syphon1Source]);
@@ -536,6 +565,7 @@ await renderWindow.run(() => {
     oscCleanup();
     tegakiCleanup();
     bodyCleanup();
+    kinareeCleanup();
     bodyContourProvider.cleanup();
     handBBoxProvider.cleanup();
     perfPane.destroy();
@@ -543,6 +573,7 @@ await renderWindow.run(() => {
     oscP5.dispose();
     tegakiP5.dispose();
     bodyP5.dispose();
+    kinareeP5.dispose();
     overlayP5.dispose();
     compositeTexture.destroy();
     for (const output of syphonOutputs) output.destroy();

@@ -138,11 +138,13 @@ const MARGIN_Y = 100;
 // Thai demo text — multiple phrases separated by spaces so the native
 // layout engine has break opportunities (Thai has no inter-word spaces
 // in normal prose, so we'd otherwise get one long unbreakable line).
-const LOREM = "สวัสดีชาวโลก การเขียนอักษรไทย เป็นศิลปะที่งดงาม " +
-  "ฝึกฝนให้เชี่ยวชาญ จะพบความภูมิใจ " +
-  "ในมรดกทางวัฒนธรรมของชาติ ทุกเส้นขีดบนกระดาษ " +
-  "คือบทกวีที่ไม่มีคำพูด อักษรนี้มีชีวิตและจิตใจ " +
-  "Hello World";
+const LOREM = 
+`คำความรู้สึก
+ภพ พราก จากไกล คิดถึง
+แสงไฟลุก ใส่ใจ ม้วยมอด
+กาลผันผ่าน สองโลก บรรจบ
+ขม ขัด ปล่อย วาง เวียนเวลา
+`;
 
 // ── Consolidated state ──────────────────────────────────────────────
 
