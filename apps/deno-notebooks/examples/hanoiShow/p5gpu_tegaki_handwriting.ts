@@ -17,8 +17,8 @@
 import { P5GPU } from "../../tools/p5gpu.ts";
 import {
   createWindowRenderManager,
-  requestWebGpuDevice,
   type PaneContainer,
+  requestWebGpuDevice,
 } from "../../window/mod.ts";
 import { NativeTextEngine } from "../../tools/p5gpu_text/ffi.ts";
 import { type DateTimeContext, launch } from "@avtools/core-timing";
@@ -30,12 +30,7 @@ import {
   createHandBBoxProvider,
   type HandBBoxProvider,
 } from "./hand_bbox_provider.ts";
-import {
-  easeInOutQuart,
-  installMacros,
-  lerp,
-  type MacroDef,
-} from "../../tools/macros.ts";
+import { installMacros, type MacroDef } from "../../tools/macros.ts";
 
 // ── Tegaki data types (subset of packages/renderer/src/types.ts) ─────
 
@@ -138,8 +133,7 @@ const MARGIN_Y = 100;
 // Thai demo text — multiple phrases separated by spaces so the native
 // layout engine has break opportunities (Thai has no inter-word spaces
 // in normal prose, so we'd otherwise get one long unbreakable line).
-const LOREM = 
-`คำความรู้สึก
+const LOREM = `คำความรู้สึก
 ภพ พราก จากไกล คิดถึง
 แสงไฟลุก ใส่ใจ ม้วยมอด
 กาลผันผ่าน สองโลก บรรจบ
@@ -394,14 +388,29 @@ function computeGlyphBboxes(): void {
 }
 
 function buildSpatialGrid(): SpatialGrid {
-  const cells: number[][] = Array.from({ length: GRID_COLS * GRID_ROWS }, () => []);
+  const cells: number[][] = Array.from(
+    { length: GRID_COLS * GRID_ROWS },
+    () => [],
+  );
   for (let i = 0; i < state.glyphStates.length; i += 1) {
     const bbox = state.glyphStates[i]!.bbox;
     if (!bbox) continue;
-    const cxMin = Math.max(0, Math.min(GRID_COLS - 1, Math.floor(bbox.xMin * GRID_COLS)));
-    const cyMin = Math.max(0, Math.min(GRID_ROWS - 1, Math.floor(bbox.yMin * GRID_ROWS)));
-    const cxMax = Math.max(0, Math.min(GRID_COLS - 1, Math.floor(bbox.xMax * GRID_COLS)));
-    const cyMax = Math.max(0, Math.min(GRID_ROWS - 1, Math.floor(bbox.yMax * GRID_ROWS)));
+    const cxMin = Math.max(
+      0,
+      Math.min(GRID_COLS - 1, Math.floor(bbox.xMin * GRID_COLS)),
+    );
+    const cyMin = Math.max(
+      0,
+      Math.min(GRID_ROWS - 1, Math.floor(bbox.yMin * GRID_ROWS)),
+    );
+    const cxMax = Math.max(
+      0,
+      Math.min(GRID_COLS - 1, Math.floor(bbox.xMax * GRID_COLS)),
+    );
+    const cyMax = Math.max(
+      0,
+      Math.min(GRID_ROWS - 1, Math.floor(bbox.yMax * GRID_ROWS)),
+    );
     for (let cy = cyMin; cy <= cyMax; cy += 1) {
       for (let cx = cxMin; cx <= cxMax; cx += 1) {
         cells[cx + cy * GRID_COLS]!.push(i);
@@ -412,8 +421,14 @@ function buildSpatialGrid(): SpatialGrid {
 }
 
 function segmentIntersectsBbox(
-  ax: number, ay: number, bx: number, by: number,
-  xMin: number, yMin: number, xMax: number, yMax: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  xMin: number,
+  yMin: number,
+  xMax: number,
+  yMax: number,
 ): boolean {
   // Trivial reject: segment's own bbox doesn't overlap glyph bbox
   if (Math.max(ax, bx) < xMin) return false;
@@ -432,8 +447,14 @@ function segmentIntersectsBbox(
 }
 
 function segSeg(
-  ax: number, ay: number, bx: number, by: number,
-  cx: number, cy: number, dx: number, dy: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  cx: number,
+  cy: number,
+  dx: number,
+  dy: number,
 ): boolean {
   const d1 = cross(dx - cx, dy - cy, ax - cx, ay - cy);
   const d2 = cross(dx - cx, dy - cy, bx - cx, by - cy);
@@ -508,10 +529,22 @@ function processIntersectionTriggers(): void {
         const hi_x = Math.max(ax, bx);
         const lo_y = Math.min(ay, by);
         const hi_y = Math.max(ay, by);
-        const cxMin = Math.max(0, Math.min(grid.cols - 1, Math.floor(lo_x * grid.cols)));
-        const cxMax = Math.max(0, Math.min(grid.cols - 1, Math.floor(hi_x * grid.cols)));
-        const cyMin = Math.max(0, Math.min(grid.rows - 1, Math.floor(lo_y * grid.rows)));
-        const cyMax = Math.max(0, Math.min(grid.rows - 1, Math.floor(hi_y * grid.rows)));
+        const cxMin = Math.max(
+          0,
+          Math.min(grid.cols - 1, Math.floor(lo_x * grid.cols)),
+        );
+        const cxMax = Math.max(
+          0,
+          Math.min(grid.cols - 1, Math.floor(hi_x * grid.cols)),
+        );
+        const cyMin = Math.max(
+          0,
+          Math.min(grid.rows - 1, Math.floor(lo_y * grid.rows)),
+        );
+        const cyMax = Math.max(
+          0,
+          Math.min(grid.rows - 1, Math.floor(hi_y * grid.rows)),
+        );
 
         for (let cy = cyMin; cy <= cyMax; cy += 1) {
           for (let cx = cxMin; cx <= cxMax; cx += 1) {
@@ -522,8 +555,14 @@ function processIntersectionTriggers(): void {
               const gbbox = state.glyphStates[gi]!.bbox!;
               if (
                 segmentIntersectsBbox(
-                  ax, ay, bx, by,
-                  gbbox.xMin, gbbox.yMin, gbbox.xMax, gbbox.yMax,
+                  ax,
+                  ay,
+                  bx,
+                  by,
+                  gbbox.xMin,
+                  gbbox.yMin,
+                  gbbox.xMax,
+                  gbbox.yMax,
                 )
               ) {
                 current.add(gi);
@@ -683,7 +722,11 @@ async function runHandEmitterLoop(ctx: DateTimeContext): Promise<void> {
         const maxX = mirror ? 1 - h.minX : h.maxX;
         const centerX = (minX + maxX) * 0.5;
         const centerY = (h.minY + h.maxY) * 0.5;
-        spawnHandParticle(ctx, centerX * state.meta.width, centerY * state.meta.height);
+        spawnHandParticle(
+          ctx,
+          centerX * state.meta.width,
+          centerY * state.meta.height,
+        );
         nextSpawnMs[i] = nowMs + 30 + ctx.random() * 120; // 30–150 ms
       }
     }
@@ -713,7 +756,12 @@ function drawHandBBoxDebug(p5: P5GPU): void {
       ? [170, 255, 200] // mint
       : [255, 220, 120]; // amber for unknown
     p5.stroke(color[0], color[1], color[2], 220);
-    p5.rect(minX * w, hand.minY * h, (maxX - minX) * w, (hand.maxY - hand.minY) * h);
+    p5.rect(
+      minX * w,
+      hand.minY * h,
+      (maxX - minX) * w,
+      (hand.maxY - hand.minY) * h,
+    );
   }
   p5.pop();
 }
@@ -775,21 +823,29 @@ function drawGlyphAtPhase(
 
 export const macroDefs: MacroDef<number>[] = [
   {
-    key: "widthScale",
-    defaultValue: 0.5,
-    opts: { min: 0, max: 1, step: 0.001, label: "Width x" },
+    key: "fade",
+    defaultValue: 1.0,
+    opts: { min: 0, max: 1, step: 0.001, label: "Scene Fade" },
     apply: (v) => {
-      state.params.widthScale = lerp(0.2, 2.5, easeInOutQuart(v));
+      state.params.fade = v;
     },
   },
 ];
 
 export function setupPane(pane: PaneContainer, refresh?: () => void) {
   const macros = pane.addFolder({ title: "Macros", expanded: true });
-  installMacros(macros, state.macros, macroDefs, refresh ?? (() => pane.refresh()));
+  installMacros(
+    macros,
+    state.macros,
+    macroDefs,
+    refresh ?? (() => pane.refresh()),
+  );
 
   pane.addBinding(state.params, "fade", {
-    min: 0, max: 1, step: 0.01, label: "Scene Fade",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    label: "Scene Fade",
   });
   pane.addBinding(state.params, "glyphScale", {
     min: 0,
@@ -820,14 +876,18 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
   pane.addBinding(state.params, "mirrorHandX", { label: "Mirror hand X" });
 
   const particles = pane.addFolder({ title: "Hand Particles" });
-  particles.addBinding(state.params, "enableHandParticles", { label: "Enable" });
+  particles.addBinding(state.params, "enableHandParticles", {
+    label: "Enable",
+  });
   particles.addBinding(state.params, "particleDistancePx", {
     min: 50,
     max: 300,
     step: 1,
     label: "Distance (px)",
   });
-  particles.addBinding(state.params, "showHandBBoxDebug", { label: "Show bbox" });
+  particles.addBinding(state.params, "showHandBBoxDebug", {
+    label: "Show bbox",
+  });
   pane.addBinding(state.params, "minDuration", {
     min: 0.05,
     max: 3,
@@ -857,7 +917,9 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
   pane.addBinding(state.params, "bgColor", { label: "BG" });
 
   const contour = pane.addFolder({ title: "Body Contour" });
-  contour.addBinding(state.params, "showContourDebug", { label: "Show outline" });
+  contour.addBinding(state.params, "showContourDebug", {
+    label: "Show outline",
+  });
   contour.addBinding(state.params, "contourDebugWeight", {
     min: 1,
     max: 12,
@@ -960,8 +1022,16 @@ export async function setup(dims: { width: number; height: number }) {
           baselineX: MARGIN_X + g.x,
           baselineY: MARGIN_Y + g.y,
           bbox: null,
-          random: { phase: state.params.idlePhase, epoch: 0, inProgress: false },
-          intersection: { phase: state.params.idlePhase, epoch: 0, inProgress: false },
+          random: {
+            phase: state.params.idlePhase,
+            epoch: 0,
+            inProgress: false,
+          },
+          intersection: {
+            phase: state.params.idlePhase,
+            epoch: 0,
+            inProgress: false,
+          },
           intersecting: false,
           cooldownUntil: 0,
         });

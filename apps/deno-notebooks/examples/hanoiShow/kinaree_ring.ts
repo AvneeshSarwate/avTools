@@ -11,6 +11,7 @@ import {
   requestWebGpuDevice,
 } from "../../window/mod.ts";
 import { type DateTimeContext, launch } from "@avtools/core-timing";
+import { type MacroDef } from "../../tools/macros.ts";
 
 const MAX_CIRCLES = 20;
 const POINTS_PER_CIRCLE = 20;
@@ -93,6 +94,7 @@ export const state = {
     color: "#ffdb4a",
     strokeWeight: 2,
   },
+  macros: {} as Record<string, number>,
   runtime: {
     rootAnim: null as ReturnType<typeof launch> | null,
     circles: [] as RingCircle[],
@@ -103,6 +105,17 @@ export const state = {
     lastFrameTime: performance.now(),
   },
 };
+
+export const macroDefs: MacroDef<number>[] = [
+  {
+    key: "fade",
+    defaultValue: 1.0,
+    opts: { min: 0, max: 1, step: 0.001, label: "Scene Fade" },
+    apply: (v) => {
+      state.params.fade = v;
+    },
+  },
+];
 
 export function setup(): void {
   state.runtime.circles = Array.from(

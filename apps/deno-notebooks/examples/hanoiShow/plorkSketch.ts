@@ -17,6 +17,7 @@ import {
   selectShaderFxFormat,
   type ShaderEffect,
 } from "@avtools/shader-fx/raw";
+import { AlphaScaleEffect } from "@avtools/shader-fx/generated-raw/shaders/alphaScale.frag.raw.generated.ts";
 import { AlphaTimeTagEffect } from "@avtools/shader-fx/generated-raw/shaders/alphaTimeTag.frag.raw.generated.ts";
 import { BloomPreprocessEffect } from "@avtools/shader-fx/generated-raw/shaders/bloomPreprocess.frag.raw.generated.ts";
 import { ColorRemoveEffect } from "@avtools/shader-fx/generated-raw/shaders/colorRemove.frag.raw.generated.ts";
@@ -26,6 +27,7 @@ import { FloodFillStepEffect } from "@avtools/shader-fx/generated-raw/shaders/fl
 import { HorizontalBlurEffect } from "@avtools/shader-fx/generated-raw/shaders/horizontalBlur.frag.raw.generated.ts";
 import { VerticalBlurEffect } from "@avtools/shader-fx/generated-raw/shaders/verticalBlur.frag.raw.generated.ts";
 import { type DateTimeContext, launch } from "@avtools/core-timing";
+import { type MacroDef } from "../../tools/macros.ts";
 import { P5GPU } from "../../tools/p5gpu.ts";
 import { buildParamSystem } from "../../tools/paramSystem.ts";
 
@@ -180,6 +182,7 @@ const paramSystem = buildParamSystem(paramDefs);
 
 export const state = {
   params: paramSystem.params as SketchParams,
+  macros: {} as Record<string, number>,
   meta: {
     width: STANDALONE_WIDTH,
     height: STANDALONE_HEIGHT,
@@ -189,6 +192,17 @@ export const state = {
     floodFill: null as FloodFillChain | null,
   },
 };
+
+export const macroDefs: MacroDef<number>[] = [
+  {
+    key: "fade",
+    defaultValue: 1.0,
+    opts: { min: 0, max: 1, step: 0.001, label: "Scene Fade" },
+    apply: (v) => {
+      state.params.fade = v;
+    },
+  },
+];
 
 const activeCircles: Set<CircleState> = new Set();
 const actionQueue: Array<(ctx: DateTimeContext) => void> = [];
@@ -457,7 +471,7 @@ export function draw(
 
   const fade = forceSkip ? 0 : state.params.fade;
   if (fade > 0) {
-    drawCircles(p5, fade);
+    drawCircles(p5);
   }
 
   const sourceTexture = p5.endFrame();
@@ -479,9 +493,13 @@ export function draw(
   floodFill.floodFillSeed.setUniforms(stepUniforms);
   floodFill.floodFill.setUniforms(stepUniforms);
 
+  let terminal: ShaderEffect = floodFill.display;
+
   if (!state.params.bloomOn) {
-    floodFill.display.renderAll();
-    return floodFill.display.output;
+    floodFill.alphaScale.setSrcs({ src: terminal });
+    floodFill.alphaScale.setUniforms({ opacity: fade });
+    floodFill.alphaScale.renderAll();
+    return floodFill.alphaScale.output;
   }
 
   floodFill.colorRemove.setUniforms({
@@ -525,21 +543,26 @@ export function draw(
 
   switch (state.params.bloomDebug) {
     case "display":
-      floodFill.display.renderAll();
-      return floodFill.display.output;
+      terminal = floodFill.display;
+      break;
     case "colorRemove":
-      floodFill.colorRemove.renderAll();
-      return floodFill.colorRemove.output;
+      terminal = floodFill.colorRemove;
+      break;
     case "preprocess":
-      floodFill.bloomPreprocess.renderAll();
-      return floodFill.bloomPreprocess.output;
+      terminal = floodFill.bloomPreprocess;
+      break;
     case "bloom":
-      floodFill.bloomToFullRes.renderAll();
-      return floodFill.bloomToFullRes.output;
+      terminal = floodFill.bloomToFullRes;
+      break;
     default:
-      floodFill.bloomComposite.renderAll();
-      return floodFill.bloomComposite.output;
+      terminal = floodFill.bloomComposite;
+      break;
   }
+
+  floodFill.alphaScale.setSrcs({ src: terminal });
+  floodFill.alphaScale.setUniforms({ opacity: fade });
+  floodFill.alphaScale.renderAll();
+  return floodFill.alphaScale.output;
 }
 
 export function cleanup(): void {
@@ -559,15 +582,15 @@ export function cleanup(): void {
 function disposeFloodFill(): void {
   const floodFill = state.runtime.floodFill;
   if (!floodFill) return;
+  floodFill.alphaScale.dispose();
   floodFill.bloomComposite.disposeAll();
   floodFill.placeholder.destroy();
   state.runtime.floodFill = null;
 }
 
-function drawCircles(p5: P5GPU, fade: number): void {
+function drawCircles(p5: P5GPU): void {
   const cx = p5.width / 2;
   const cy = p5.height / 2;
-  const alpha = Math.round(255 * fade);
 
   p5.noStroke();
 
@@ -575,13 +598,13 @@ function drawCircles(p5: P5GPU, fade: number): void {
     const phase = (orbitAccum + state.params.orbitPhase) * Math.PI * 2;
     const orbitDiameter = state.params.orbitCircleRadius * 2;
 
-    p5.fill(255, 255, 255, alpha);
+    p5.fill(255, 255, 255, 255);
     p5.circle(
       cx + Math.cos(phase) * state.params.orbitRadius,
       cy + Math.sin(phase) * state.params.orbitRadius,
       orbitDiameter,
     );
-    p5.fill(0, 0, 0, alpha);
+    p5.fill(0, 0, 0, 255);
     p5.circle(
       cx + Math.cos(phase + Math.PI) * state.params.orbitRadius,
       cy + Math.sin(phase + Math.PI) * state.params.orbitRadius,
@@ -589,21 +612,21 @@ function drawCircles(p5: P5GPU, fade: number): void {
     );
   } else {
     const walkDiameter = state.params.walkCircleRadius * 2;
-    p5.fill(0, 0, 0, alpha);
+    p5.fill(0, 0, 0, 255);
     p5.circle(walkBlack.x, walkBlack.y, walkDiameter);
-    p5.fill(255, 255, 255, alpha);
+    p5.fill(255, 255, 255, 255);
     p5.circle(walkWhite.x, walkWhite.y, walkDiameter);
   }
 
   if (state.params.centerOn) {
     const cc = hslToRgb(state.params.centerHue / 360, 0.8, 0.6);
-    p5.fill(cc[0], cc[1], cc[2], alpha);
+    p5.fill(cc[0], cc[1], cc[2], 255);
     p5.circle(cx, cy, state.params.centerRadius * 2);
   }
 
   for (const circle of activeCircles) {
     const c = hslToRgb(circle.hue / 360, 0.8, 0.6);
-    p5.fill(c[0], c[1], c[2], alpha);
+    p5.fill(c[0], c[1], c[2], 255);
     p5.circle(circle.x, circle.y, circle.radius * 2);
   }
 }
@@ -774,6 +797,16 @@ async function createFloodFillChain(
   );
   bloomComposite.setUniforms({ mode: 1, opacity: 1.0 });
 
+  const alphaScale = new AlphaScaleEffect(
+    device,
+    { src: bloomComposite },
+    width,
+    height,
+    format,
+    CLEAR_COLOR,
+  );
+  alphaScale.setUniforms({ opacity: 1.0 });
+
   feedback.setFeedbackSrc(floodFill);
 
   return {
@@ -791,6 +824,7 @@ async function createFloodFillChain(
     upComposites,
     bloomToFullRes,
     bloomComposite,
+    alphaScale,
   };
 }
 

@@ -24,6 +24,7 @@ import {
   requestWebGpuDevice,
 } from "../../window/mod.ts";
 import { type DateTimeContext, launch } from "@avtools/core-timing";
+import { type MacroDef } from "../../tools/macros.ts";
 
 // ── Color helpers ───────────────────────────────────────────────────
 
@@ -300,6 +301,7 @@ export const state = {
       },
     },
   },
+  macros: {} as Record<string, number>,
   runtime: {
     rootAnim: null as ReturnType<typeof launch> | null,
     rectangles: [] as Rectangle[],
@@ -318,6 +320,17 @@ export const state = {
     fpsSmooth: 60,
   },
 };
+
+export const macroDefs: MacroDef<number>[] = [
+  {
+    key: "fade",
+    defaultValue: 1.0,
+    opts: { min: 0, max: 1, step: 0.001, label: "Scene Fade" },
+    apply: (v) => {
+      state.params.fade = v;
+    },
+  },
+];
 
 // ── Setup / cleanup ─────────────────────────────────────────────────
 

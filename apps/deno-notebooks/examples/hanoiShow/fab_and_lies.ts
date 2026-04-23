@@ -20,10 +20,11 @@
 import { P5GPU } from "../../tools/p5gpu.ts";
 import {
   createWindowRenderManager,
-  requestWebGpuDevice,
   type PaneContainer,
+  requestWebGpuDevice,
 } from "../../window/mod.ts";
 import { type DateTimeContext, launch } from "@avtools/core-timing";
+import { type MacroDef } from "../../tools/macros.ts";
 
 // ── Color helpers (copied from burning_kinaree for self-containment) ─
 
@@ -37,7 +38,9 @@ function hexToRgb(hex: string): [number, number, number] {
 }
 
 function rgbToHsv(r: number, g: number, b: number): [number, number, number] {
-  r /= 255; g /= 255; b /= 255;
+  r /= 255;
+  g /= 255;
+  b /= 255;
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
   const d = max - min;
@@ -45,7 +48,7 @@ function rgbToHsv(r: number, g: number, b: number): [number, number, number] {
   const s = max === 0 ? 0 : d / max;
   let h = 0;
   if (d !== 0) {
-    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0));
+    if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
     else if (max === g) h = (b - r) / d + 2;
     else h = (r - g) / d + 4;
     h *= 60;
@@ -59,12 +62,31 @@ function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
   const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
   const m = v - c;
   let r = 0, g = 0, b = 0;
-  if (h < 60) { r = c; g = x; b = 0; }
-  else if (h < 120) { r = x; g = c; b = 0; }
-  else if (h < 180) { r = 0; g = c; b = x; }
-  else if (h < 240) { r = 0; g = x; b = c; }
-  else if (h < 300) { r = x; g = 0; b = c; }
-  else { r = c; g = 0; b = x; }
+  if (h < 60) {
+    r = c;
+    g = x;
+    b = 0;
+  } else if (h < 120) {
+    r = x;
+    g = c;
+    b = 0;
+  } else if (h < 180) {
+    r = 0;
+    g = c;
+    b = x;
+  } else if (h < 240) {
+    r = 0;
+    g = x;
+    b = c;
+  } else if (h < 300) {
+    r = x;
+    g = 0;
+    b = c;
+  } else {
+    r = c;
+    g = 0;
+    b = x;
+  }
   return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
 }
 
@@ -117,15 +139,15 @@ const WORD_SAT_JITTER = 0.1;
 const WORD_VAL_JITTER = 0.1;
 
 interface TextBlock {
-  spawnTime: number;          // performance.now() at launch (ms)
+  spawnTime: number; // performance.now() at launch (ms)
   startX: number;
   startY: number;
-  travelAngle: number;        // radians — direction of motion
-  travelSpeed: number;        // pixels/sec, snapshotted
-  rotationSpeed: number;      // radians/sec, snapshotted
-  initialRotation: number;    // radians — random 0..2π
-  textSize: number;           // snapshotted font size
-  word: string;               // snapshotted from WORD_POOL
+  travelAngle: number; // radians — direction of motion
+  travelSpeed: number; // pixels/sec, snapshotted
+  rotationSpeed: number; // radians/sec, snapshotted
+  initialRotation: number; // radians — random 0..2π
+  textSize: number; // snapshotted font size
+  word: string; // snapshotted from WORD_POOL
   color: [number, number, number]; // rgb with HSV jitter
   // Which side the block was launched from; controls which column-edge
   // is treated as "off-screen" for the 2-screen simulation. Left-launched
@@ -184,21 +206,22 @@ export const state = {
     mix: 1.0,
     bgColor: "#0d1017",
 
-    launchRate: 2.5,          // text blocks per second
-    travelSpeed: 550,          // pixels/sec, snapshotted at launch
-    angleDeviation: 20,        // degrees, ± range from straight horizontal
-    textSize: 96,              // font size in pixels, snapshotted
-    rotationSpeed: 3.0,        // radians/sec, snapshotted at launch
+    launchRate: 2.5, // text blocks per second
+    travelSpeed: 550, // pixels/sec, snapshotted at launch
+    angleDeviation: 20, // degrees, ± range from straight horizontal
+    textSize: 96, // font size in pixels, snapshotted
+    rotationSpeed: 3.0, // radians/sec, snapshotted at launch
     color: "#e14a3a",
     // Strobe: during a pulse, every text block is drawn pure white instead
     // of its snapshotted color. `rate=0` disables the trigger. Same
     // mechanics as burning_kinaree's rect strobe.
     strobe: {
-      rate: 0,                 // pulses per second (0 = off)
-      widthPercent: 10,        // 0..50 — percent of current interval
-      jitter: 0,               // 0..1 — 0 = perfectly rhythmic, 1 = up to 2× base
+      rate: 0, // pulses per second (0 = off)
+      widthPercent: 10, // 0..50 — percent of current interval
+      jitter: 0, // 0..1 — 0 = perfectly rhythmic, 1 = up to 2× base
     },
   },
+  macros: {} as Record<string, number>,
   runtime: {
     rootAnim: null as ReturnType<typeof launch> | null,
     triggerCtx: null as DateTimeContext | null,
@@ -214,6 +237,17 @@ export const state = {
     fpsSmooth: 60,
   },
 };
+
+export const macroDefs: MacroDef<number>[] = [
+  {
+    key: "fade",
+    defaultValue: 1.0,
+    opts: { min: 0, max: 1, step: 0.001, label: "Scene Fade" },
+    apply: (v) => {
+      state.params.fade = v;
+    },
+  },
+];
 
 // ── Setup / cleanup ─────────────────────────────────────────────────
 
@@ -373,39 +407,72 @@ export function draw(p5: P5GPU, _time: number, autoClear = true): void {
 
 export function setupPane(pane: PaneContainer, _refresh?: () => void): void {
   pane.addBinding(state.params, "fade", {
-    min: 0, max: 1, step: 0.01, label: "Scene Fade",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    label: "Scene Fade",
   });
   pane.addBinding(state.params, "mix", {
-    min: 0, max: 1, step: 0.01, label: "Mix",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    label: "Mix",
   });
   pane.addBinding(state.params, "bgColor", { label: "BG" });
 
   pane.addBinding(state.params, "launchRate", {
-    min: 0, max: 20, step: 0.1, label: "Launch Rate (Hz)",
+    min: 0,
+    max: 20,
+    step: 0.1,
+    label: "Launch Rate (Hz)",
   });
   pane.addBinding(state.params, "travelSpeed", {
-    min: 50, max: 2000, step: 10, label: "Travel Speed",
+    min: 50,
+    max: 2000,
+    step: 10,
+    label: "Travel Speed",
   });
   pane.addBinding(state.params, "angleDeviation", {
-    min: 0, max: 60, step: 1, label: "Angle Dev (°)",
+    min: 0,
+    max: 60,
+    step: 1,
+    label: "Angle Dev (°)",
   });
   pane.addBinding(state.params, "textSize", {
-    min: 12, max: 400, step: 1, label: "Text Size",
+    min: 12,
+    max: 400,
+    step: 1,
+    label: "Text Size",
   });
   pane.addBinding(state.params, "rotationSpeed", {
-    min: -10, max: 10, step: 0.05, label: "Rotation Speed",
+    min: -10,
+    max: 10,
+    step: 0.05,
+    label: "Rotation Speed",
   });
   pane.addBinding(state.params, "color", { label: "Color" });
 
-  const strobe = pane.addFolder({ title: "Strobe (white flash)", expanded: false });
+  const strobe = pane.addFolder({
+    title: "Strobe (white flash)",
+    expanded: false,
+  });
   strobe.addBinding(state.params.strobe, "rate", {
-    min: 0, max: 30, step: 0.1, label: "Rate (Hz)",
+    min: 0,
+    max: 30,
+    step: 0.1,
+    label: "Rate (Hz)",
   });
   strobe.addBinding(state.params.strobe, "widthPercent", {
-    min: 0, max: 50, step: 0.5, label: "Width (% of interval)",
+    min: 0,
+    max: 50,
+    step: 0.5,
+    label: "Width (% of interval)",
   });
   strobe.addBinding(state.params.strobe, "jitter", {
-    min: 0, max: 1, step: 0.01, label: "Jitter",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    label: "Jitter",
   });
 }
 

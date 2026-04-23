@@ -28,8 +28,7 @@ import {
 } from "../../window/mod.ts";
 import { alignedBytesPerRow, HeadlessSyphonServer } from "../../syphon/mod.ts";
 import { P5GPU } from "../../tools/p5gpu.ts";
-import { installMacros, type MacroDef } from "../../tools/macros.ts";
-import { createOSCClient, type OSCClient } from "../../tools/osc.ts";
+import { installMacros } from "../../tools/macros.ts";
 import { renderPerfShellHtml } from "../../tools/perf_shell_html.ts";
 
 import {
@@ -44,30 +43,38 @@ import {
 import {
   cleanup as kinareeCleanup,
   draw as kinareeDraw,
+  macroDefs as kinareeMacroDefs,
   setup as kinareeSetup,
   setupPane as kinareeSetupPane,
+  state as kinareeState,
 } from "./burning_kinaree.ts";
 
 import {
   cleanup as kinareeRingCleanup,
   draw as kinareeRingDraw,
+  macroDefs as kinareeRingMacroDefs,
   setup as kinareeRingSetup,
   setupPane as kinareeRingSetupPane,
+  state as kinareeRingState,
 } from "./kinaree_ring.ts";
 
 import {
   cleanup as plorkCleanup,
   draw as plorkDraw,
+  macroDefs as plorkMacroDefs,
   setup as plorkSetup,
   setupPane as plorkSetupPane,
+  state as plorkState,
 } from "./plorkSketch.ts";
 
 import {
   cleanup as fabCleanup,
   draw as fabDraw,
   loadAssets as fabLoadAssets,
+  macroDefs as fabMacroDefs,
   setup as fabSetup,
   setupPane as fabSetupPane,
+  state as fabState,
 } from "./fab_and_lies.ts";
 
 import { createBodyContourProvider } from "./body_contour_provider.ts";
@@ -86,10 +93,6 @@ const MONITOR_HEIGHT = Math.round(MONITOR_WIDTH * HEIGHT / WIDTH);
 // Keep the composed sketch from spinning so hard that UDP/WebSocket callbacks
 // only run in occasional timer gaps.
 const COMBINED_RENDER_YIELD_MS = 4;
-
-// Outbound OSC destination for the "External N" macro tabs on the perf pane.
-const EXTERNAL_OSC_HOST = "127.0.0.1";
-const EXTERNAL_OSC_PORT = 9004;
 
 const globalParams = {
   tegakiEnabled: true,
@@ -117,47 +120,6 @@ const bodyContourProvider = createBodyContourProvider();
 const handBBoxProvider = createHandBBoxProvider();
 tegakiState.contourProvider = bodyContourProvider;
 tegakiState.handBBoxProvider = handBBoxProvider;
-
-// Placeholder external-sketch macro groups — same as combined.ts.
-const externalOscClient: OSCClient = createOSCClient(
-  EXTERNAL_OSC_HOST,
-  EXTERNAL_OSC_PORT,
-);
-
-const external1Macros: Record<string, number> = {};
-const external1MacroDefs: MacroDef[] = [
-  {
-    key: "param1",
-    defaultValue: 0.5,
-    opts: { min: 0, max: 1, label: "Param 1" },
-    apply: (v) => externalOscClient.send("/external1/param1", v),
-  },
-  {
-    key: "param2",
-    defaultValue: 0.5,
-    opts: { min: 0, max: 1, label: "Param 2" },
-    apply: (v) => externalOscClient.send("/external1/param2", v),
-  },
-];
-
-const external2Macros: Record<string, number> = {};
-const external2MacroDefs: MacroDef[] = [
-  {
-    key: "param1",
-    defaultValue: 0.5,
-    opts: { min: 0, max: 1, label: "Param 1" },
-    apply: (v) => externalOscClient.send("/external2/param1", v),
-  },
-  {
-    key: "param2",
-    defaultValue: 0.5,
-    opts: { min: 0, max: 1, label: "Param 2" },
-    apply: (v) => {
-      console.log("/external2/param2", v);
-      externalOscClient.send("/external2/param2", v);
-    },
-  },
-];
 
 function setupPane(pane: WindowTweakpane, refresh: () => void) {
   const tab = pane.addTab({
@@ -203,13 +165,22 @@ function setupPerfPane(pane: WindowTweakpane, refresh: () => void) {
   const tab = pane.addTab({
     pages: [
       { title: "Tegaki" },
-      { title: "External 1" },
-      { title: "External 2" },
+      { title: "Kinaree Ring" },
+      { title: "Kinaree" },
+      { title: "Plork" },
+      { title: "Fab & Lies" },
     ],
   });
   installMacros(tab.pages[0], tegakiState.macros, tegakiMacroDefs, refresh);
-  installMacros(tab.pages[1], external1Macros, external1MacroDefs, refresh);
-  installMacros(tab.pages[2], external2Macros, external2MacroDefs, refresh);
+  installMacros(
+    tab.pages[1],
+    kinareeRingState.macros,
+    kinareeRingMacroDefs,
+    refresh,
+  );
+  installMacros(tab.pages[2], kinareeState.macros, kinareeMacroDefs, refresh);
+  installMacros(tab.pages[3], plorkState.macros, plorkMacroDefs, refresh);
+  installMacros(tab.pages[4], fabState.macros, fabMacroDefs, refresh);
 }
 
 function updateTiming(frameStart: number, cpuMs: number): void {
@@ -595,7 +566,6 @@ await renderWindow.run(() => {
     bodyContourProvider.cleanup();
     handBBoxProvider.cleanup();
     perfPane.destroy();
-    externalOscClient.close();
     tegakiP5.dispose();
     kinareeRingP5.dispose();
     kinareeP5.dispose();
