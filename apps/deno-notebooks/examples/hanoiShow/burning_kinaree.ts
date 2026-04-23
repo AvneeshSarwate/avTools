@@ -4,7 +4,9 @@
 //   1. Yellow circles orbiting an invisible center, each drawn as a closed
 //      spline of ~20 points. Random circles pulse: a sparse subset of their
 //      points jut outward and fall back together.
-//   2. (TODO) Red rectangles launching horizontally across the screen.
+//   2. Red rectangles launching from left/right at a random y. Travel
+//      angle has ± angular deviation from horizontal; rotation speed is
+//      snapshotted at launch so the rect's orientation is its own thing.
 //   3. (TODO) Snowfall of small circles with brownian x-wander.
 //
 // Each section has a local `mix` (0..1) that gates both draw and trigger
@@ -141,6 +143,64 @@ function schedulePulse(
   });
 }
 
+// ── Section 2: red rectangles ───────────────────────────────────────
+
+const RECT_LENGTH_RATIO = 6;       // rectangle length = thickness × this
+const RECT_HUE_JITTER = 15;        // ± degrees
+const RECT_SAT_JITTER = 0.1;
+const RECT_VAL_JITTER = 0.1;
+
+interface Rectangle {
+  spawnTime: number;          // performance.now() at launch (ms)
+  startX: number;
+  startY: number;
+  travelAngle: number;        // radians — direction of motion
+  travelSpeed: number;        // pixels/sec, snapshotted
+  rotationSpeed: number;      // radians/sec, snapshotted
+  initialRotation: number;    // radians — random 0..2π
+  thickness: number;          // snapshotted
+  length: number;             // snapshotted
+  color: [number, number, number]; // rgb with HSV jitter
+  alive: boolean;
+}
+
+function spawnRectangle(
+  triggerCtx: DateTimeContext,
+  screenWidth: number,
+  screenHeight: number,
+): Rectangle {
+  const rects = state.params.rects;
+  const fromLeft = triggerCtx.random() < 0.5;
+  const baseAngle = fromLeft ? 0 : Math.PI;
+  const devRad = (rects.angleDeviation * Math.PI) / 180;
+  const travelAngle = baseAngle + (triggerCtx.random() - 0.5) * 2 * devRad;
+
+  const length = rects.thickness * RECT_LENGTH_RATIO;
+  // Spawn just off-screen so entry is clean regardless of rotation.
+  const margin = length;
+  const startX = fromLeft ? -margin : screenWidth + margin;
+  const startY = triggerCtx.random() * screenHeight;
+
+  return {
+    spawnTime: performance.now(),
+    startX,
+    startY,
+    travelAngle,
+    travelSpeed: rects.travelSpeed,
+    rotationSpeed: rects.rotationSpeed,
+    initialRotation: triggerCtx.random() * Math.PI * 2,
+    thickness: rects.thickness,
+    length,
+    color: jitterHsv(
+      rects.color,
+      RECT_HUE_JITTER,
+      RECT_SAT_JITTER,
+      RECT_VAL_JITTER,
+    ),
+    alive: true,
+  };
+}
+
 // ── Consolidated state ──────────────────────────────────────────────
 
 export const state = {
@@ -166,17 +226,45 @@ export const state = {
       strokeWeight: 2,
     },
 
-    // Section 2: red rectangles (TODO)
+    // Section 2: red rectangles
+    rects: {
+      mix: 1.0,
+      launchRate: 2.5,          // rectangles per second
+      travelSpeed: 550,         // pixels/sec, snapshotted at launch
+      angleDeviation: 20,       // degrees, ± range from straight horizontal
+      thickness: 14,            // pixels; length is RECT_LENGTH_RATIO × this
+      rotationSpeed: 3.0,       // radians/sec, snapshotted at launch
+      color: "#e14a3a",
+      // Strobe: during a pulse, every rectangle is drawn pure white instead
+      // of its snapshotted color. `rate=0` disables the trigger. Pulse
+      // interval may be jittered; pulse width is a percent of the (jittered)
+      // interval, capped at 50 so the duty cycle can't exceed half.
+      strobe: {
+        rate: 0,                // pulses per second (0 = off)
+        widthPercent: 10,       // 0..50 — percent of current interval
+        jitter: 0,              // 0..1 — 0 = perfectly rhythmic, 1 = interval ∈ [0, 2×base]
+      },
+    },
+
     // Section 3: snowfall (TODO)
   },
   runtime: {
     rootAnim: null as ReturnType<typeof launch> | null,
     triggerCtx: null as DateTimeContext | null,
     circles: [] as RingCircle[],
+    rectangles: [] as Rectangle[],
     // Continuously integrated phases — rate params multiply the increment,
     // so changing rate shifts speed without introducing position jumps.
     orbitPhase: 0,
     orbitRadiusPhase: 0,
+    // Screen dims, captured in setup() so the rect trigger loop can pick
+    // spawn positions without needing a p5 handle. Defaults match the
+    // standalone runner; combined.ts passes its own dims.
+    screenWidth: 1280,
+    screenHeight: 720,
+    // When true, the rect draw loop paints pure white instead of each
+    // rect's snapshotted color. Driven by the rect strobe trigger branch.
+    rectStrobeActive: false,
   },
   frame: {
     lastFrameTime: performance.now(),
@@ -186,7 +274,10 @@ export const state = {
 
 // ── Setup / cleanup ─────────────────────────────────────────────────
 
-export function setup(): void {
+export function setup(opts?: { width?: number; height?: number }): void {
+  if (opts?.width !== undefined) state.runtime.screenWidth = opts.width;
+  if (opts?.height !== undefined) state.runtime.screenHeight = opts.height;
+
   // Pre-allocate the full MAX_CIRCLES pool so in-flight pulse state survives
   // runtime changes to `circleCount`. Per-circle angular positions are
   // derived from (i / circleCount) at draw time, so the active prefix is
@@ -195,10 +286,12 @@ export function setup(): void {
     { length: MAX_CIRCLES },
     () => createRingCircle(),
   );
+  state.runtime.rectangles = [];
   state.runtime.orbitPhase = 0;
   state.runtime.orbitRadiusPhase = 0;
 
   const rootAnim = launch(async (ctx) => {
+    // Section 1: ring pulse trigger.
     ctx.branch(async (triggerCtx) => {
       state.runtime.triggerCtx = triggerCtx;
       while (!triggerCtx.isCanceled) {
@@ -221,7 +314,58 @@ export function setup(): void {
       }
     });
 
-    // Root tick — keep descendant-time fresh for the trigger loop.
+    // Section 2: rectangle strobe. One iteration = one full pulse cycle
+    // (on-phase → off-phase). Pulse width and off-phase are both computed
+    // from the *current* (jittered) interval, so the duty cycle the user
+    // sets via `widthPercent` stays stable even with `jitter` > 0 — the
+    // pulse train scales cleanly rather than drifting.
+    ctx.branch(async (strobeCtx) => {
+      while (!strobeCtx.isCanceled) {
+        const s = state.params.rects.strobe;
+        const rate = s.rate;
+        if (rate <= 0) {
+          state.runtime.rectStrobeActive = false;
+          await strobeCtx.waitSec(0.25);
+          continue;
+        }
+        const base = 1 / rate;
+        const jitter = Math.max(0, Math.min(1, s.jitter));
+        const jitterMul = 1 + (strobeCtx.random() - 0.5) * 2 * jitter;
+        // Floor to avoid degenerate near-zero intervals when jitter=1.
+        const interval = Math.max(0.01, base * jitterMul);
+        // Cap widthPercent at 50 so the pulse can never exceed half the
+        // interval (off-phase always stays ≥ on-phase).
+        const widthPct = Math.max(0, Math.min(50, s.widthPercent));
+        const onPhase = (widthPct / 100) * interval;
+        const offPhase = Math.max(0, interval - onPhase);
+
+        state.runtime.rectStrobeActive = true;
+        await strobeCtx.waitSec(onPhase);
+        state.runtime.rectStrobeActive = false;
+        await strobeCtx.waitSec(offPhase);
+      }
+    });
+
+    // Section 2: rectangle launch trigger.
+    ctx.branch(async (rectCtx) => {
+      while (!rectCtx.isCanceled) {
+        const rate = Math.max(0.01, state.params.rects.launchRate);
+        await rectCtx.waitSec(1 / rate);
+
+        const mix = state.params.rects.mix * state.params.fade;
+        if (mix <= 0) continue;
+
+        state.runtime.rectangles.push(
+          spawnRectangle(
+            rectCtx,
+            state.runtime.screenWidth,
+            state.runtime.screenHeight,
+          ),
+        );
+      }
+    });
+
+    // Root tick — keep descendant-time fresh for the trigger loops.
     while (!ctx.isCanceled) await ctx.waitSec(1 / 60);
   });
   state.runtime.rootAnim = rootAnim;
@@ -238,6 +382,8 @@ export function cleanup(): void {
   state.runtime.rootAnim = null;
   state.runtime.triggerCtx = null;
   state.runtime.circles = [];
+  state.runtime.rectangles = [];
+  state.runtime.rectStrobeActive = false;
 }
 
 // ── Section draws ───────────────────────────────────────────────────
@@ -297,6 +443,64 @@ function drawRingSection(p5: P5GPU): void {
   }
 }
 
+function drawRectsSection(p5: P5GPU): void {
+  const rects = state.params.rects;
+  const mix = rects.mix * state.params.fade;
+  if (mix <= 0) return;
+
+  const alpha = Math.round(255 * mix);
+  const now = performance.now();
+  const w = p5.width;
+  const h = p5.height;
+  const live = state.runtime.rectangles;
+  // Hoisted once per frame: during a strobe pulse, every rect is painted
+  // pure white regardless of its snapshotted HSV-jittered color.
+  const strobe = state.runtime.rectStrobeActive;
+
+  p5.noStroke();
+
+  for (let i = 0; i < live.length; i += 1) {
+    const r = live[i];
+    if (!r.alive) continue;
+
+    const elapsed = (now - r.spawnTime) / 1000;
+    const x = r.startX + Math.cos(r.travelAngle) * r.travelSpeed * elapsed;
+    const y = r.startY + Math.sin(r.travelAngle) * r.travelSpeed * elapsed;
+    const rot = r.initialRotation + r.rotationSpeed * elapsed;
+
+    // Cull once fully off-screen. Length is an upper bound on projected
+    // extent at any rotation since length > thickness.
+    const margin = r.length;
+    if (x < -margin || x > w + margin || y < -margin || y > h + margin) {
+      r.alive = false;
+      continue;
+    }
+
+    const hl = r.length / 2;
+    const ht = r.thickness / 2;
+    const cosR = Math.cos(rot);
+    const sinR = Math.sin(rot);
+
+    if (strobe) {
+      p5.fill(255, 255, 255, alpha);
+    } else {
+      p5.fill(r.color[0], r.color[1], r.color[2], alpha);
+    }
+    p5.beginShape();
+    // Rotate each local corner into world space; no transform stack use.
+    p5.vertex(x + -hl * cosR - -ht * sinR, y + -hl * sinR + -ht * cosR);
+    p5.vertex(x + hl * cosR - -ht * sinR, y + hl * sinR + -ht * cosR);
+    p5.vertex(x + hl * cosR - ht * sinR, y + hl * sinR + ht * cosR);
+    p5.vertex(x + -hl * cosR - ht * sinR, y + -hl * sinR + ht * cosR);
+    p5.endShape(p5.CLOSE);
+  }
+
+  // Compact occasionally — cheap for <200 rects; keeps memory bounded.
+  if (live.length > 0 && live.length % 32 === 0) {
+    state.runtime.rectangles = live.filter((r) => r.alive);
+  }
+}
+
 // ── Draw ────────────────────────────────────────────────────────────
 
 export function draw(p5: P5GPU, _time: number, autoClear = true): void {
@@ -319,7 +523,7 @@ export function draw(p5: P5GPU, _time: number, autoClear = true): void {
   if (state.params.fade <= 0) return;
 
   drawRingSection(p5);
-  // drawRectsSection(p5, dt);  — TODO
+  drawRectsSection(p5);
   // drawSnowSection(p5, dt);   — TODO
 }
 
@@ -368,6 +572,37 @@ export function setupPane(pane: PaneContainer, _refresh?: () => void): void {
   ring.addBinding(r, "strokeWeight", {
     min: 0.5, max: 10, step: 0.1, label: "Stroke Weight",
   });
+
+  const rects = pane.addFolder({ title: "Rects (red)", expanded: true });
+  const rc = state.params.rects;
+  rects.addBinding(rc, "mix", { min: 0, max: 1, step: 0.01, label: "Mix" });
+  rects.addBinding(rc, "launchRate", {
+    min: 0, max: 20, step: 0.1, label: "Launch Rate (Hz)",
+  });
+  rects.addBinding(rc, "travelSpeed", {
+    min: 50, max: 2000, step: 10, label: "Travel Speed",
+  });
+  rects.addBinding(rc, "angleDeviation", {
+    min: 0, max: 60, step: 1, label: "Angle Dev (°)",
+  });
+  rects.addBinding(rc, "thickness", {
+    min: 2, max: 80, step: 1, label: "Thickness",
+  });
+  rects.addBinding(rc, "rotationSpeed", {
+    min: -10, max: 10, step: 0.05, label: "Rotation Speed",
+  });
+  rects.addBinding(rc, "color", { label: "Color" });
+
+  const strobe = rects.addFolder({ title: "Strobe (white flash)", expanded: false });
+  strobe.addBinding(rc.strobe, "rate", {
+    min: 0, max: 30, step: 0.1, label: "Rate (Hz)",
+  });
+  strobe.addBinding(rc.strobe, "widthPercent", {
+    min: 0, max: 50, step: 0.5, label: "Width (% of interval)",
+  });
+  strobe.addBinding(rc.strobe, "jitter", {
+    min: 0, max: 1, step: 0.01, label: "Jitter",
+  });
 }
 
 // ── Standalone entry point ──────────────────────────────────────────
@@ -391,7 +626,7 @@ if (import.meta.main) {
   });
   const p5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 
-  setup();
+  setup({ width: WIDTH, height: HEIGHT });
 
   await renderWindow.run(
     () => {
