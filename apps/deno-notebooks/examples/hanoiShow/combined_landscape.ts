@@ -78,9 +78,6 @@ const EXTERNAL_OSC_HOST = "127.0.0.1";
 const EXTERNAL_OSC_PORT = 9004;
 
 const globalParams = {
-  bgR: 13,
-  bgG: 16,
-  bgB: 23,
   tegakiEnabled: true,
   kinareeEnabled: true,
   fabEnabled: true,
@@ -157,10 +154,6 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
   });
 
   const global = tab.pages[0];
-  const bg = global.addFolder({ title: "Background" });
-  bg.addBinding(globalParams, "bgR", { min: 0, max: 255, step: 1, label: "R" });
-  bg.addBinding(globalParams, "bgG", { min: 0, max: 255, step: 1, label: "G" });
-  bg.addBinding(globalParams, "bgB", { min: 0, max: 255, step: 1, label: "B" });
 
   const scenes = global.addFolder({ title: "Scenes" });
   scenes.addBinding(globalParams, "tegakiEnabled", { label: "Tegaki" });
@@ -458,21 +451,18 @@ await renderWindow.run(() => {
   drawTimingOverlay(overlayP5);
   const overlayTex = overlayP5.endFrame();
 
-  // Composite: clear to bg RGB (alpha 1), then alpha-blit the layers in
-  // painter's-algorithm order.
+  // Composite: clear to transparent so downstream (Syphon consumer) sees
+  // the sketches on a true alpha=0 backdrop and can composite over whatever
+  // it wants. Every scene itself draws with transparent clear, so
+  // alpha-blitting them over a transparent composite just stacks alpha.
   const encoder = device.createCommandEncoder();
-  const clearColor = {
-    r: globalParams.bgR / 255,
-    g: globalParams.bgG / 255,
-    b: globalParams.bgB / 255,
-    a: 1,
-  };
+  const transparentClear = { r: 0, g: 0, b: 0, a: 0 };
   const clearPass = encoder.beginRenderPass({
     colorAttachments: [{
       view: compositeView,
       loadOp: "clear",
       storeOp: "store",
-      clearValue: clearColor,
+      clearValue: transparentClear,
     }],
   });
   clearPass.end();
@@ -487,15 +477,16 @@ await renderWindow.run(() => {
   syphonOutput.tryPublish();
   syphonOutput.captureFrame(encoder, compositeView);
 
-  // Monitor: clear to bg and composite. Composite is already opaque after
-  // the bg clear + alpha-blits, so a direct blit would work too, but
-  // reusing alphaBlitPipeline keeps the pipeline set minimal.
+  // Monitor: clear to opaque black so transparent regions of the composite
+  // have something to sit on in the preview window. This matches what a
+  // typical Syphon consumer does (premultiplied-over-black), so the
+  // preview is an honest approximation of the downstream result.
   const monitorClearPass = encoder.beginRenderPass({
     colorAttachments: [{
       view: monitorView,
       loadOp: "clear",
       storeOp: "store",
-      clearValue: clearColor,
+      clearValue: { r: 0, g: 0, b: 0, a: 1 },
     }],
   });
   monitorClearPass.end();
