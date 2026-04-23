@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onBeforeUnmount, shallowRef, watch } from 'vue'
-import { PerfPaneClient, type SliderModel } from './perfPaneClient'
+import { onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { coerceSliderValue, PerfPaneClient, type SliderModel } from './perfPaneClient'
 import VerticalSlider from './components/VerticalSlider.vue'
 
 const props = defineProps<{
@@ -9,6 +9,7 @@ const props = defineProps<{
 }>()
 
 const client = shallowRef<PerfPaneClient | null>(null)
+const monoMode = ref(false)
 
 /** Dev-harness entry: mount with a pre-built client (e.g. backed by a mock WS). */
 function setClient(c: PerfPaneClient) {
@@ -17,6 +18,52 @@ function setClient(c: PerfPaneClient) {
 
 function onSliderChange(slider: SliderModel, value: number, last: boolean) {
   client.value?.setSliderValue(slider, value, last)
+}
+
+function onMixerSliderChange(slider: SliderModel, value: number, last: boolean) {
+  const c = client.value
+  if (!c) return
+
+  const nextValue = coerceSliderValue(slider, value)
+  const currentValue = slider.value
+
+  if (!monoMode.value || nextValue <= currentValue) {
+    c.setSliderValue(slider, nextValue, last)
+    return
+  }
+
+  const currentNorm = sliderValueToNorm(slider, currentValue)
+  const nextNorm = sliderValueToNorm(slider, nextValue)
+  if (nextNorm <= currentNorm) {
+    c.setSliderValue(slider, nextValue, last)
+    return
+  }
+
+  const denom = 1 - currentNorm
+  const scale = denom <= 1e-9 ? 0 : Math.max(0, (1 - nextNorm) / denom)
+
+  for (const mixer of c.model.mixerSliders) {
+    const other = mixer.slider
+    if (other.id === slider.id) continue
+    const otherNorm = sliderValueToNorm(other, other.value)
+    const otherNextValue = coerceSliderValue(
+      other,
+      sliderNormToValue(other, otherNorm * scale),
+    )
+    c.setSliderValue(other, otherNextValue, last)
+  }
+
+  c.setSliderValue(slider, nextValue, last)
+}
+
+function sliderValueToNorm(slider: SliderModel, value: number): number {
+  const range = slider.max - slider.min
+  if (range <= 0) return 0
+  return Math.max(0, Math.min(1, (value - slider.min) / range))
+}
+
+function sliderNormToValue(slider: SliderModel, norm: number): number {
+  return slider.min + Math.max(0, Math.min(1, norm)) * (slider.max - slider.min)
 }
 
 // React to props.wsUrl whenever it first becomes defined. When hosted as a
@@ -45,14 +92,20 @@ defineExpose({ setClient })
     <template v-else>
       <div v-if="!client.model.connected" class="perf-status">connecting…</div>
       <div v-if="client.model.mixerSliders.length > 0" class="perf-mixer">
-        <div class="perf-mixer-title">Scene Mixer</div>
+        <div class="perf-mixer-header">
+          <div class="perf-mixer-title">Scene Mixer</div>
+          <label class="perf-mixer-toggle">
+            <input v-model="monoMode" type="checkbox" />
+            <span>Mono Mode</span>
+          </label>
+        </div>
         <div class="perf-slider-row perf-mixer-row">
           <VerticalSlider
             v-for="mixer in client.model.mixerSliders"
             :key="mixer.id"
             :slider="mixer.slider"
             :label="mixer.label"
-            :change-handler="(v, last) => onSliderChange(mixer.slider, v, last)"
+            :change-handler="(v, last) => onMixerSliderChange(mixer.slider, v, last)"
           />
         </div>
       </div>
@@ -135,12 +188,30 @@ defineExpose({ setClient })
   border-radius: 10px;
   padding: 12px;
 }
+.perf-mixer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
 .perf-mixer-title {
   color: #dce6f4;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+.perf-mixer-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #c8d2e2;
+  font-size: 12px;
+  font-weight: 600;
+}
+.perf-mixer-toggle input {
+  accent-color: #8fc3ff;
 }
 .perf-mixer-row {
   padding-top: 2px;

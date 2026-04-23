@@ -93,6 +93,13 @@ export interface WsLike {
   onclose: ((ev: unknown) => void) | null
 }
 
+export function coerceSliderValue(slider: SliderModel, value: number): number {
+  const clamped = Math.max(slider.min, Math.min(slider.max, value))
+  return slider.step > 0
+    ? Math.round(clamped / slider.step) * slider.step
+    : clamped
+}
+
 // ── Client ──────────────────────────────────────────────────────────
 
 export class PerfPaneClient {
@@ -230,10 +237,7 @@ export class PerfPaneClient {
 
   /** Called by the UI on drag. `last=true` on pointerup. */
   setSliderValue(slider: SliderModel, value: number, last: boolean): void {
-    const clamped = Math.max(slider.min, Math.min(slider.max, value))
-    const stepped = slider.step > 0
-      ? Math.round(clamped / slider.step) * slider.step
-      : clamped
+    const stepped = coerceSliderValue(slider, value)
     slider.value = stepped
     if (this.suppressSync) return
     this.send({ type: 'valueChange', id: slider.id, key: slider.key, value: stepped, last })
