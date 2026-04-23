@@ -1,3 +1,14 @@
+read app/deno-notebooks/examples/hanoiShow/architecture.md to learn how this creative coding setup for a specific performance works. architecture.md is meant to be a shortcut map - but right now it might be a bit stale - check against combined_landscape.ts and the individual sketches it imports as source of truth
+
+I want you to to copy plorkSketch/sketch.ts into hanoiShow and integrate it as a scene in the show according to the architecture - you should also add a scene fade parameter (when fade is 0, you can just skip the draw loop, there doesn't seem like there's much other expensive state update that needs to be skipped per frame)
+
+
+
+
+
+
+
+
 read app/deno-notebooks/examples/hanoiShow/architecture.md to learn how this creative coding setup for a specific performance works.
 
 i want to change how the vertical sketches are blitted into a single composite arrangement that gets sent over syphon

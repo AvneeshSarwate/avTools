@@ -1,13 +1,10 @@
 /// <reference lib="dom" />
 
-// Burning Kinaree — three blended components:
-//   1. Yellow circles orbiting an invisible center, each drawn as a closed
-//      spline of ~20 points. Random circles pulse: a sparse subset of their
-//      points jut outward and fall back together.
-//   2. Red rectangles launching from left/right at a random y. Travel
+// Burning Kinaree — two blended components:
+//   1. Red rectangles launching from left/right at a random y. Travel
 //      angle has ± angular deviation from horizontal; rotation speed is
 //      snapshotted at launch so the rect's orientation is its own thing.
-//   3. Snowfall of small circles. Each flake falls at `fallSpeed` with an
+//   2. Snowfall of small circles. Each flake falls at `fallSpeed` with an
 //      independent brownian x-wander; the noise source is behind a small
 //      `NoiseSource` interface so the model is easy to swap later.
 //
@@ -23,8 +20,8 @@
 import { P5GPU } from "../../tools/p5gpu.ts";
 import {
   createWindowRenderManager,
-  requestWebGpuDevice,
   type PaneContainer,
+  requestWebGpuDevice,
 } from "../../window/mod.ts";
 import { type DateTimeContext, launch } from "@avtools/core-timing";
 
@@ -40,7 +37,9 @@ function hexToRgb(hex: string): [number, number, number] {
 }
 
 function rgbToHsv(r: number, g: number, b: number): [number, number, number] {
-  r /= 255; g /= 255; b /= 255;
+  r /= 255;
+  g /= 255;
+  b /= 255;
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
   const d = max - min;
@@ -48,7 +47,7 @@ function rgbToHsv(r: number, g: number, b: number): [number, number, number] {
   const s = max === 0 ? 0 : d / max;
   let h = 0;
   if (d !== 0) {
-    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0));
+    if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
     else if (max === g) h = (b - r) / d + 2;
     else h = (r - g) / d + 4;
     h *= 60;
@@ -62,12 +61,31 @@ function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
   const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
   const m = v - c;
   let r = 0, g = 0, b = 0;
-  if (h < 60) { r = c; g = x; b = 0; }
-  else if (h < 120) { r = x; g = c; b = 0; }
-  else if (h < 180) { r = 0; g = c; b = x; }
-  else if (h < 240) { r = 0; g = x; b = c; }
-  else if (h < 300) { r = x; g = 0; b = c; }
-  else { r = c; g = 0; b = x; }
+  if (h < 60) {
+    r = c;
+    g = x;
+    b = 0;
+  } else if (h < 120) {
+    r = x;
+    g = c;
+    b = 0;
+  } else if (h < 180) {
+    r = 0;
+    g = c;
+    b = x;
+  } else if (h < 240) {
+    r = 0;
+    g = x;
+    b = c;
+  } else if (h < 300) {
+    r = x;
+    g = 0;
+    b = c;
+  } else {
+    r = c;
+    g = 0;
+    b = x;
+  }
   return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
 }
 
@@ -85,83 +103,23 @@ function jitterHsv(
   return hsvToRgb(nh, ns, nv);
 }
 
-// ── Section 1: orbiting circles ─────────────────────────────────────
+// ── Section 1: red rectangles ───────────────────────────────────────
 
-const MAX_CIRCLES = 20;
-const POINTS_PER_CIRCLE = 20;
-
-interface RingCircle {
-  // Angular position around the orbit is derived from the circle's *index*
-  // and the live circleCount (`theta = (i/count) * 2π + orbitPhase`), so
-  // circles stay evenly spaced even when the count changes at runtime.
-  pointOffsets: Float32Array; // per-point 0..1 weight for the current pulse
-  envelope: number;        // current pulse envelope 0..1
-  epoch: number;           // bumped on each pulse so stale ramps self-cancel
-  inProgress: boolean;
-}
-
-function createRingCircle(): RingCircle {
-  return {
-    pointOffsets: new Float32Array(POINTS_PER_CIRCLE),
-    envelope: 0,
-    epoch: 0,
-    inProgress: false,
-  };
-}
-
-function schedulePulse(
-  circle: RingCircle,
-  triggerCtx: DateTimeContext,
-  duration: number,
-): void {
-  // Pick a sparse random subset of points and ramp them together: a single
-  // envelope drives all of them, so multiple spikes rise and fall as one.
-  circle.pointOffsets.fill(0);
-  const numSpikes = 3 + Math.floor(triggerCtx.random() * 4); // 3..6
-  for (let i = 0; i < numSpikes; i += 1) {
-    const idx = Math.floor(triggerCtx.random() * POINTS_PER_CIRCLE);
-    circle.pointOffsets[idx] = 0.5 + triggerCtx.random() * 0.5;
-  }
-
-  circle.epoch += 1;
-  const myEpoch = circle.epoch;
-  circle.inProgress = true;
-
-  triggerCtx.branch(async (rampCtx) => {
-    const start = rampCtx.progTime;
-    while (!rampCtx.isCanceled) {
-      if (circle.epoch !== myEpoch) return; // preempted by a newer pulse
-      const t = (rampCtx.progTime - start) / duration;
-      if (t >= 1) break;
-      // sin(pi*t) gives a smooth 0→1→0 bump
-      circle.envelope = Math.sin(t * Math.PI);
-      await rampCtx.waitSec(1 / 60);
-    }
-    if (circle.epoch === myEpoch) {
-      circle.envelope = 0;
-      circle.pointOffsets.fill(0);
-      circle.inProgress = false;
-    }
-  });
-}
-
-// ── Section 2: red rectangles ───────────────────────────────────────
-
-const RECT_LENGTH_RATIO = 6;       // rectangle length = thickness × this
-const RECT_HUE_JITTER = 15;        // ± degrees
+const RECT_LENGTH_RATIO = 6; // rectangle length = thickness × this
+const RECT_HUE_JITTER = 15; // ± degrees
 const RECT_SAT_JITTER = 0.1;
 const RECT_VAL_JITTER = 0.1;
 
 interface Rectangle {
-  spawnTime: number;          // performance.now() at launch (ms)
+  spawnTime: number; // performance.now() at launch (ms)
   startX: number;
   startY: number;
-  travelAngle: number;        // radians — direction of motion
-  travelSpeed: number;        // pixels/sec, snapshotted
-  rotationSpeed: number;      // radians/sec, snapshotted
-  initialRotation: number;    // radians — random 0..2π
-  thickness: number;          // snapshotted
-  length: number;             // snapshotted
+  travelAngle: number; // radians — direction of motion
+  travelSpeed: number; // pixels/sec, snapshotted
+  rotationSpeed: number; // radians/sec, snapshotted
+  initialRotation: number; // radians — random 0..2π
+  thickness: number; // snapshotted
+  length: number; // snapshotted
   color: [number, number, number]; // rgb with HSV jitter
   alive: boolean;
 }
@@ -203,7 +161,7 @@ function spawnRectangle(
   };
 }
 
-// ── Section 3: snowfall ─────────────────────────────────────────────
+// ── Section 2: snowfall ─────────────────────────────────────────────
 
 const SNOW_HUE_JITTER = 10;
 const SNOW_SAT_JITTER = 0.08;
@@ -228,9 +186,9 @@ interface NoiseSource {
 }
 
 interface BrownianNoiseParams {
-  stepSize: number;   // random-impulse magnitude (applied to velocity per sec)
-  damping: number;    // velocity decay rate (1/sec)
-  restoring: number;  // spring constant pulling x back to 0 (1/sec²)
+  stepSize: number; // random-impulse magnitude (applied to velocity per sec)
+  damping: number; // velocity decay rate (1/sec)
+  restoring: number; // spring constant pulling x back to 0 (1/sec²)
 }
 
 /**
@@ -252,17 +210,21 @@ function createBrownianNoise(
       vel += (impulse - p.damping * vel - p.restoring * x) * dt;
       x += vel * dt;
     },
-    get value() { return x; },
-    get velocity() { return vel; },
+    get value() {
+      return x;
+    },
+    get velocity() {
+      return vel;
+    },
   };
 }
 
 interface Snowflake {
-  startX: number;          // launch x in pixels
-  y: number;               // current y; integrated per-frame (variable fall speed)
-  size: number;            // snapshotted radius
+  startX: number; // launch x in pixels
+  y: number; // current y; integrated per-frame (variable fall speed)
+  size: number; // snapshotted radius
   color: [number, number, number]; // snapshotted with HSV jitter
-  noise: NoiseSource;      // per-flake x-wander
+  noise: NoiseSource; // per-flake x-wander
   alive: boolean;
 }
 
@@ -297,51 +259,34 @@ export const state = {
     fade: 1.0,
     bgColor: "#0d1017",
 
-    // Section 1: orbiting yellow circles
-    ring: {
-      mix: 1.0,
-      circleCount: 12,
-      circleRadius: 36,         // radius of each individual spline circle
-      baseOrbitRadius: 220,     // mean orbit radius
-      orbitAmplitude: 40,       // sine amplitude added to base orbit radius
-      orbitFrequency: 0.12,     // orbit-radius sine frequency (Hz)
-      orbitAngularSpeed: 0.3,   // revolutions per second (whole ring)
-      pulseIntensity: 70,       // max point deviation from circle radius
-      pulseRate: 2.0,           // pulse trigger attempts per second
-      pulseMinDuration: 0.25,
-      pulseMaxDuration: 0.7,
-      color: "#ffdb4a",
-      strokeWeight: 2,
-    },
-
-    // Section 2: red rectangles
+    // Section 1: red rectangles
     rects: {
       mix: 1.0,
-      launchRate: 2.5,          // rectangles per second
-      travelSpeed: 550,         // pixels/sec, snapshotted at launch
-      angleDeviation: 20,       // degrees, ± range from straight horizontal
-      thickness: 14,            // pixels; length is RECT_LENGTH_RATIO × this
-      rotationSpeed: 3.0,       // radians/sec, snapshotted at launch
+      launchRate: 2.5, // rectangles per second
+      travelSpeed: 550, // pixels/sec, snapshotted at launch
+      angleDeviation: 20, // degrees, ± range from straight horizontal
+      thickness: 14, // pixels; length is RECT_LENGTH_RATIO × this
+      rotationSpeed: 3.0, // radians/sec, snapshotted at launch
       color: "#e14a3a",
       // Strobe: during a pulse, every rectangle is drawn pure white instead
       // of its snapshotted color. `rate=0` disables the trigger. Pulse
       // interval may be jittered; pulse width is a percent of the (jittered)
       // interval, capped at 50 so the duty cycle can't exceed half.
       strobe: {
-        rate: 0,                // pulses per second (0 = off)
-        widthPercent: 10,       // 0..50 — percent of current interval
-        jitter: 0,              // 0..1 — 0 = perfectly rhythmic, 1 = interval ∈ [0, 2×base]
+        rate: 0, // pulses per second (0 = off)
+        widthPercent: 10, // 0..50 — percent of current interval
+        jitter: 0, // 0..1 — 0 = perfectly rhythmic, 1 = interval ∈ [0, 2×base]
       },
     },
 
-    // Section 3: snowfall
+    // Section 2: snowfall
     snow: {
       mix: 1.0,
-      launchRate: 18,              // flakes per second
-      fallSpeed: 170,              // pixels/sec (baseline, pre-coupling)
-      flakeSize: 5,                // circle radius in pixels
+      launchRate: 18, // flakes per second
+      fallSpeed: 170, // pixels/sec (baseline, pre-coupling)
+      flakeSize: 5, // circle radius in pixels
       color: "#e8f4ff",
-      xDisplacementRange: 1000,    // pixel cap on horizontal drift from startX
+      xDisplacementRange: 1000, // pixel cap on horizontal drift from startX
       // Momentum coupling: fast horizontal motion steals fall speed.
       // effectiveFallSpeed = fallSpeed * max(0, 1 - coupling * |vx| / fallSpeed)
       // 0 = off, 1 = full stall when |vx| matches fallSpeed.
@@ -357,14 +302,8 @@ export const state = {
   },
   runtime: {
     rootAnim: null as ReturnType<typeof launch> | null,
-    triggerCtx: null as DateTimeContext | null,
-    circles: [] as RingCircle[],
     rectangles: [] as Rectangle[],
     snowflakes: [] as Snowflake[],
-    // Continuously integrated phases — rate params multiply the increment,
-    // so changing rate shifts speed without introducing position jumps.
-    orbitPhase: 0,
-    orbitRadiusPhase: 0,
     // Screen dims, captured in setup() so the rect trigger loop can pick
     // spawn positions without needing a p5 handle. Defaults match the
     // standalone runner; combined.ts passes its own dims.
@@ -386,44 +325,11 @@ export function setup(opts?: { width?: number; height?: number }): void {
   if (opts?.width !== undefined) state.runtime.screenWidth = opts.width;
   if (opts?.height !== undefined) state.runtime.screenHeight = opts.height;
 
-  // Pre-allocate the full MAX_CIRCLES pool so in-flight pulse state survives
-  // runtime changes to `circleCount`. Per-circle angular positions are
-  // derived from (i / circleCount) at draw time, so the active prefix is
-  // always evenly spaced.
-  state.runtime.circles = Array.from(
-    { length: MAX_CIRCLES },
-    () => createRingCircle(),
-  );
   state.runtime.rectangles = [];
   state.runtime.snowflakes = [];
-  state.runtime.orbitPhase = 0;
-  state.runtime.orbitRadiusPhase = 0;
 
   const rootAnim = launch(async (ctx) => {
-    // Section 1: ring pulse trigger.
-    ctx.branch(async (triggerCtx) => {
-      state.runtime.triggerCtx = triggerCtx;
-      while (!triggerCtx.isCanceled) {
-        const rate = Math.max(0.01, state.params.ring.pulseRate);
-        await triggerCtx.waitSec(1 / rate);
-
-        const mix = state.params.ring.mix * state.params.fade;
-        if (mix <= 0) continue;
-
-        const count = Math.max(1, Math.floor(state.params.ring.circleCount));
-        const pick = Math.floor(triggerCtx.random() * count);
-        const circle = state.runtime.circles[pick];
-        if (!circle) continue;
-
-        const minD = Math.max(0.05, state.params.ring.pulseMinDuration);
-        const maxD = Math.max(minD, state.params.ring.pulseMaxDuration);
-        const duration = minD + triggerCtx.random() * (maxD - minD);
-
-        schedulePulse(circle, triggerCtx, duration);
-      }
-    });
-
-    // Section 2: rectangle strobe. One iteration = one full pulse cycle
+    // Section 1: rectangle strobe. One iteration = one full pulse cycle
     // (on-phase → off-phase). Pulse width and off-phase are both computed
     // from the *current* (jittered) interval, so the duty cycle the user
     // sets via `widthPercent` stays stable even with `jitter` > 0 — the
@@ -455,7 +361,7 @@ export function setup(opts?: { width?: number; height?: number }): void {
       }
     });
 
-    // Section 2: rectangle launch trigger.
+    // Section 1: rectangle launch trigger.
     ctx.branch(async (rectCtx) => {
       while (!rectCtx.isCanceled) {
         const rate = Math.max(0.01, state.params.rects.launchRate);
@@ -474,7 +380,7 @@ export function setup(opts?: { width?: number; height?: number }): void {
       }
     });
 
-    // Section 3: snowflake launch trigger.
+    // Section 2: snowflake launch trigger.
     ctx.branch(async (snowCtx) => {
       while (!snowCtx.isCanceled) {
         const rate = Math.max(0.01, state.params.snow.launchRate);
@@ -504,69 +410,12 @@ export function cleanup(): void {
   // core-timing doesn't expose a direct cancel here; the branches self-exit
   // when the process tears down. Kept as a hook for future symmetry.
   state.runtime.rootAnim = null;
-  state.runtime.triggerCtx = null;
-  state.runtime.circles = [];
   state.runtime.rectangles = [];
   state.runtime.snowflakes = [];
   state.runtime.rectStrobeActive = false;
 }
 
 // ── Section draws ───────────────────────────────────────────────────
-
-function drawRingSection(p5: P5GPU): void {
-  const ring = state.params.ring;
-  const mix = ring.mix * state.params.fade;
-  if (mix <= 0) return;
-
-  const cx = p5.width / 2;
-  const cy = p5.height / 2;
-
-  const orbitR = ring.baseOrbitRadius +
-    Math.sin(state.runtime.orbitRadiusPhase) * ring.orbitAmplitude;
-
-  const [cr, cg, cb] = hexToRgb(ring.color);
-  const alpha = Math.round(255 * mix);
-
-  p5.noFill();
-  p5.stroke(cr, cg, cb, alpha);
-  p5.strokeWeight(ring.strokeWeight);
-
-  const count = Math.max(1, Math.floor(ring.circleCount));
-  const circles = state.runtime.circles;
-  const ringPhase = state.runtime.orbitPhase;
-  const angleStep = (Math.PI * 2) / count;
-
-  for (let i = 0; i < count; i += 1) {
-    const circle = circles[i];
-    if (!circle) continue;
-
-    const theta = ringPhase + i * angleStep;
-    const ox = cx + Math.cos(theta) * orbitR;
-    const oy = cy + Math.sin(theta) * orbitR;
-
-    // Build the closed spline points with per-point pulse displacement.
-    // Displacement direction is radial outward from the circle's own center.
-    const pts: [number, number][] = new Array(POINTS_PER_CIRCLE);
-    for (let j = 0; j < POINTS_PER_CIRCLE; j += 1) {
-      const a = (j / POINTS_PER_CIRCLE) * Math.PI * 2;
-      const disp = ring.pulseIntensity * circle.envelope * circle.pointOffsets[j];
-      const r = ring.circleRadius + disp;
-      pts[j] = [ox + Math.cos(a) * r, oy + Math.sin(a) * r];
-    }
-
-    // Catmull-Rom closed curve: repeat last→all→first→second so the spline
-    // wraps smoothly around the seam.
-    p5.beginShape();
-    const prev = pts[POINTS_PER_CIRCLE - 1];
-    p5.curveVertex(prev[0], prev[1]);
-    for (let j = 0; j < POINTS_PER_CIRCLE; j += 1) {
-      p5.curveVertex(pts[j][0], pts[j][1]);
-    }
-    p5.curveVertex(pts[0][0], pts[0][1]);
-    p5.curveVertex(pts[1][0], pts[1][1]);
-    p5.endShape();
-  }
-}
 
 function drawRectsSection(p5: P5GPU): void {
   const rects = state.params.rects;
@@ -684,15 +533,8 @@ export function draw(p5: P5GPU, _time: number, autoClear = true): void {
   state.frame.fpsSmooth += (fps - state.frame.fpsSmooth) * 0.1;
   state.frame.lastFrameTime = now;
 
-  // Integrate rate-driven phases regardless of fade — they're cheap and
-  // keep ring geometry continuous across mix/fade transitions.
-  const ring = state.params.ring;
-  state.runtime.orbitPhase += Math.PI * 2 * ring.orbitAngularSpeed * dt;
-  state.runtime.orbitRadiusPhase += Math.PI * 2 * ring.orbitFrequency * dt;
-
   if (state.params.fade <= 0) return;
 
-  drawRingSection(p5);
   drawRectsSection(p5);
   drawSnowSection(p5, dt);
 }
@@ -701,108 +543,127 @@ export function draw(p5: P5GPU, _time: number, autoClear = true): void {
 
 export function setupPane(pane: PaneContainer, _refresh?: () => void): void {
   pane.addBinding(state.params, "fade", {
-    min: 0, max: 1, step: 0.01, label: "Scene Fade",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    label: "Scene Fade",
   });
   pane.addBinding(state.params, "bgColor", { label: "BG" });
-
-  const ring = pane.addFolder({ title: "Ring (yellow circles)", expanded: true });
-  const r = state.params.ring;
-  ring.addBinding(r, "mix", { min: 0, max: 1, step: 0.01, label: "Mix" });
-  ring.addBinding(r, "circleCount", {
-    min: 6, max: MAX_CIRCLES, step: 1, label: "Circle Count",
-  });
-  ring.addBinding(r, "circleRadius", {
-    min: 4, max: 120, step: 1, label: "Circle Radius",
-  });
-  ring.addBinding(r, "baseOrbitRadius", {
-    min: 20, max: 600, step: 1, label: "Orbit Radius",
-  });
-  ring.addBinding(r, "orbitAmplitude", {
-    min: 0, max: 300, step: 1, label: "Orbit Sine Amp",
-  });
-  ring.addBinding(r, "orbitFrequency", {
-    min: 0, max: 2, step: 0.005, label: "Orbit Sine Freq",
-  });
-  ring.addBinding(r, "orbitAngularSpeed", {
-    min: -2, max: 2, step: 0.01, label: "Orbit Angular Speed",
-  });
-  ring.addBinding(r, "pulseIntensity", {
-    min: 0, max: 300, step: 1, label: "Pulse Intensity",
-  });
-  ring.addBinding(r, "pulseRate", {
-    min: 0, max: 20, step: 0.1, label: "Pulse Rate (Hz)",
-  });
-  ring.addBinding(r, "pulseMinDuration", {
-    min: 0.05, max: 3, step: 0.01, label: "Pulse Min Dur",
-  });
-  ring.addBinding(r, "pulseMaxDuration", {
-    min: 0.05, max: 3, step: 0.01, label: "Pulse Max Dur",
-  });
-  ring.addBinding(r, "color", { label: "Color" });
-  ring.addBinding(r, "strokeWeight", {
-    min: 0.5, max: 10, step: 0.1, label: "Stroke Weight",
-  });
 
   const rects = pane.addFolder({ title: "Rects (red)", expanded: true });
   const rc = state.params.rects;
   rects.addBinding(rc, "mix", { min: 0, max: 1, step: 0.01, label: "Mix" });
   rects.addBinding(rc, "launchRate", {
-    min: 0, max: 20, step: 0.1, label: "Launch Rate (Hz)",
+    min: 0,
+    max: 20,
+    step: 0.1,
+    label: "Launch Rate (Hz)",
   });
   rects.addBinding(rc, "travelSpeed", {
-    min: 50, max: 2000, step: 10, label: "Travel Speed",
+    min: 50,
+    max: 2000,
+    step: 10,
+    label: "Travel Speed",
   });
   rects.addBinding(rc, "angleDeviation", {
-    min: 0, max: 60, step: 1, label: "Angle Dev (°)",
+    min: 0,
+    max: 60,
+    step: 1,
+    label: "Angle Dev (°)",
   });
   rects.addBinding(rc, "thickness", {
-    min: 2, max: 80, step: 1, label: "Thickness",
+    min: 2,
+    max: 80,
+    step: 1,
+    label: "Thickness",
   });
   rects.addBinding(rc, "rotationSpeed", {
-    min: -10, max: 10, step: 0.05, label: "Rotation Speed",
+    min: -10,
+    max: 10,
+    step: 0.05,
+    label: "Rotation Speed",
   });
   rects.addBinding(rc, "color", { label: "Color" });
 
-  const strobe = rects.addFolder({ title: "Strobe (white flash)", expanded: false });
+  const strobe = rects.addFolder({
+    title: "Strobe (white flash)",
+    expanded: false,
+  });
   strobe.addBinding(rc.strobe, "rate", {
-    min: 0, max: 30, step: 0.1, label: "Rate (Hz)",
+    min: 0,
+    max: 30,
+    step: 0.1,
+    label: "Rate (Hz)",
   });
   strobe.addBinding(rc.strobe, "widthPercent", {
-    min: 0, max: 50, step: 0.5, label: "Width (% of interval)",
+    min: 0,
+    max: 50,
+    step: 0.5,
+    label: "Width (% of interval)",
   });
   strobe.addBinding(rc.strobe, "jitter", {
-    min: 0, max: 1, step: 0.01, label: "Jitter",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    label: "Jitter",
   });
 
-  const snow = pane.addFolder({ title: "Snow (falling circles)", expanded: true });
+  const snow = pane.addFolder({
+    title: "Snow (falling circles)",
+    expanded: true,
+  });
   const sn = state.params.snow;
   snow.addBinding(sn, "mix", { min: 0, max: 1, step: 0.01, label: "Mix" });
   snow.addBinding(sn, "launchRate", {
-    min: 0, max: 80, step: 0.5, label: "Launch Rate (Hz)",
+    min: 0,
+    max: 80,
+    step: 0.5,
+    label: "Launch Rate (Hz)",
   });
   snow.addBinding(sn, "fallSpeed", {
-    min: 20, max: 800, step: 5, label: "Fall Speed",
+    min: 20,
+    max: 800,
+    step: 5,
+    label: "Fall Speed",
   });
   snow.addBinding(sn, "flakeSize", {
-    min: 1, max: 30, step: 0.5, label: "Flake Size",
+    min: 1,
+    max: 30,
+    step: 0.5,
+    label: "Flake Size",
   });
   snow.addBinding(sn, "color", { label: "Color" });
   snow.addBinding(sn, "xDisplacementRange", {
-    min: 0, max: 2000, step: 5, label: "X Displacement",
+    min: 0,
+    max: 2000,
+    step: 5,
+    label: "X Displacement",
   });
   snow.addBinding(sn, "momentumCoupling", {
-    min: 0, max: 1, step: 0.01, label: "Momentum Coupling",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    label: "Momentum Coupling",
   });
 
   const nz = snow.addFolder({ title: "Brownian Noise", expanded: false });
   nz.addBinding(sn.noise, "stepSize", {
-    min: 0, max: 4000, step: 5, label: "Step Size",
+    min: 0,
+    max: 4000,
+    step: 5,
+    label: "Step Size",
   });
   nz.addBinding(sn.noise, "damping", {
-    min: 0, max: 10, step: 0.05, label: "Damping",
+    min: 0,
+    max: 10,
+    step: 0.05,
+    label: "Damping",
   });
   nz.addBinding(sn.noise, "restoring", {
-    min: 0, max: 20, step: 0.05, label: "Restoring",
+    min: 0,
+    max: 20,
+    step: 0.05,
+    label: "Restoring",
   });
 }
 

@@ -49,6 +49,13 @@ import {
 } from "./burning_kinaree.ts";
 
 import {
+  cleanup as kinareeRingCleanup,
+  draw as kinareeRingDraw,
+  setup as kinareeRingSetup,
+  setupPane as kinareeRingSetupPane,
+} from "./kinaree_ring.ts";
+
+import {
   cleanup as plorkCleanup,
   draw as plorkDraw,
   setup as plorkSetup,
@@ -86,6 +93,7 @@ const EXTERNAL_OSC_PORT = 9004;
 
 const globalParams = {
   tegakiEnabled: true,
+  kinareeRingEnabled: true,
   kinareeEnabled: true,
   plorkEnabled: true,
   fabEnabled: true,
@@ -156,6 +164,7 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
     pages: [
       { title: "Global" },
       { title: "Tegaki" },
+      { title: "Kinaree Ring" },
       { title: "Kinaree" },
       { title: "Plork" },
       { title: "Fab & Lies" },
@@ -166,6 +175,9 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
 
   const scenes = global.addFolder({ title: "Scenes" });
   scenes.addBinding(globalParams, "tegakiEnabled", { label: "Tegaki" });
+  scenes.addBinding(globalParams, "kinareeRingEnabled", {
+    label: "Kinaree Ring",
+  });
   scenes.addBinding(globalParams, "kinareeEnabled", { label: "Kinaree" });
   scenes.addBinding(globalParams, "plorkEnabled", { label: "Plork" });
   scenes.addBinding(globalParams, "fabEnabled", { label: "Fab & Lies" });
@@ -181,9 +193,10 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
   debug.addBinding(globalParams, "showTiming", { label: "Frame Timing" });
 
   tegakiSetupPane(tab.pages[1], refresh);
-  kinareeSetupPane(tab.pages[2], refresh);
-  plorkSetupPane(tab.pages[3], refresh);
-  fabSetupPane(tab.pages[4], refresh);
+  kinareeRingSetupPane(tab.pages[2], refresh);
+  kinareeSetupPane(tab.pages[3], refresh);
+  plorkSetupPane(tab.pages[4], refresh);
+  fabSetupPane(tab.pages[5], refresh);
 }
 
 function setupPerfPane(pane: WindowTweakpane, refresh: () => void) {
@@ -351,6 +364,7 @@ const device = await requestWebGpuDevice();
 // Per-scene P5GPU instances, all at native 1920×1080. Scenes MUST NOT call
 // background() — the transparent clear is what makes alpha compositing work.
 const tegakiP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
+const kinareeRingP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const kinareeP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const plorkP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const fabP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
@@ -400,6 +414,7 @@ await Promise.all([
   plorkSetup({ width: WIDTH, height: HEIGHT, device }),
   fabLoadAssets(fabP5),
 ]);
+kinareeRingSetup();
 kinareeSetup({ width: WIDTH, height: HEIGHT });
 fabSetup({ width: WIDTH, height: HEIGHT });
 
@@ -457,6 +472,14 @@ await renderWindow.run(() => {
   }
   const tegakiTex = tegakiP5.endFrame();
 
+  kinareeRingP5.beginFrame();
+  if (globalParams.kinareeRingEnabled) {
+    kinareeRingDraw(kinareeRingP5, time);
+  } else {
+    kinareeRingP5.clear();
+  }
+  const kinareeRingTex = kinareeRingP5.endFrame();
+
   kinareeP5.beginFrame();
   if (globalParams.kinareeEnabled) {
     kinareeDraw(kinareeP5, time);
@@ -500,6 +523,13 @@ await renderWindow.run(() => {
     encoder,
     alphaBlitPipeline,
     tegakiTex.createView(),
+    compositeView,
+  );
+  alphaBlit(
+    device,
+    encoder,
+    alphaBlitPipeline,
+    kinareeRingTex.createView(),
     compositeView,
   );
   alphaBlit(
@@ -558,6 +588,7 @@ await renderWindow.run(() => {
   yieldMs: COMBINED_RENDER_YIELD_MS,
   cleanup() {
     tegakiCleanup();
+    kinareeRingCleanup();
     kinareeCleanup();
     plorkCleanup();
     fabCleanup();
@@ -566,6 +597,7 @@ await renderWindow.run(() => {
     perfPane.destroy();
     externalOscClient.close();
     tegakiP5.dispose();
+    kinareeRingP5.dispose();
     kinareeP5.dispose();
     plorkP5.dispose();
     fabP5.dispose();
