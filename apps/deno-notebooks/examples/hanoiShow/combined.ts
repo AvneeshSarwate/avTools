@@ -13,6 +13,7 @@ import {
   type BlitPipeline,
   createAlphaBlitPipeline,
   createBlitPipeline,
+  createRotatedBlitPipeline,
   createWindowRenderManager,
   createWindowTweakpane,
   requestWebGpuDevice,
@@ -65,15 +66,14 @@ import { createHandBBoxProvider } from "./hand_bbox_provider.ts";
 // HANOI_ASPECT=portrait (or square / landscape) in the environment. Scenes pick
 // up the chosen dims at load time — no dynamic switching.
 //
-// "portrait" is the show aspect: each scene renders at 1/3 of a 1080p-wide
-// strip, i.e. column dims = 640×1080 (16:27, close enough to 9:16). Three
-// scene columns composite into a 1920×1080 strip that ships as a single
-// Syphon output; the downstream compositor slices the strip into the three
-// physical portrait screens.
+// "portrait" is the source-scene aspect: 720×1280 (9:16). Scenes are
+// rotated 90° clockwise and tiled into a 2×2 quadrant layout at 1080p
+// (1920×1080) to form the portrait Syphon output. Each quadrant is 960×540
+// (16:9), which is the rotated scene's aspect exactly — 0.75× uniform scale.
 type AspectRatio = "landscape" | "portrait" | "square";
 const ASPECT_DIMS: Record<AspectRatio, { width: number; height: number }> = {
   landscape: { width: 1280, height: 720 },
-  portrait: { width: 640, height: 1080 },
+  portrait: { width: 720, height: 1280 },
   square: { width: 1024, height: 1024 },
 };
 const ASPECT: AspectRatio =
@@ -81,23 +81,26 @@ const ASPECT: AspectRatio =
 const { width: WIDTH, height: HEIGHT } = ASPECT_DIMS[ASPECT] ??
   ASPECT_DIMS.landscape;
 
-// Portrait strip — the 4K wide texture with 3 portrait columns side-by-side.
-// Shipped as a single Syphon output; downstream slices per physical screen.
-const STRIP_WIDTH = 3 * WIDTH;
-const STRIP_HEIGHT = HEIGHT;
+// Portrait quad — 1080p output with 2×2 quadrants in row-major order:
+//   slot 1 top-left, slot 2 top-right, slot 3 bottom-left, slot 4 empty.
+// Each scene is rotated 90° CW into its quadrant. Shipped as a single
+// Syphon output; downstream maps slots 1–3 onto the three physical screens.
+const QUAD_WIDTH = 1920;
+const QUAD_HEIGHT = 1080;
+const QUADRANT_WIDTH = QUAD_WIDTH / 2; // 960
+const QUADRANT_HEIGHT = QUAD_HEIGHT / 2; // 540
 
-// Landscape channel — same spatial footprint as the strip (one continuous
-// scene spanning all 3 portrait screens). Kept as a separate Syphon output
-// so a downstream compositor can route it differently from the 3-up strip.
-const LANDSCAPE_WIDTH = STRIP_WIDTH;
-const LANDSCAPE_HEIGHT = STRIP_HEIGHT;
+// Landscape channel — same output dims as the quad (1080p). One continuous
+// landscape scene (not yet implemented) will render here and ship over the
+// landscape Syphon output.
+const LANDSCAPE_WIDTH = QUAD_WIDTH;
+const LANDSCAPE_HEIGHT = QUAD_HEIGHT;
 
-// Monitor window: strip tile on top, landscape tile below. Both are at the
-// same aspect (STRIP_WIDTH:STRIP_HEIGHT), so the monitor is two stacked rows
-// of the same aspect. Scale width to ~1080 for a reasonable dev-screen size.
+// Monitor window: quad tile on top, landscape tile below. Both 16:9. Scale
+// width to ~1080 for a reasonable dev-screen size.
 const MONITOR_TARGET_WIDTH = 1080;
 const MONITOR_TILE_HEIGHT = Math.round(
-  MONITOR_TARGET_WIDTH * STRIP_HEIGHT / STRIP_WIDTH,
+  MONITOR_TARGET_WIDTH * QUAD_HEIGHT / QUAD_WIDTH,
 );
 const MONITOR_WIDTH = MONITOR_TARGET_WIDTH;
 const MONITOR_HEIGHT = 2 * MONITOR_TILE_HEIGHT;
@@ -112,12 +115,12 @@ const COMBINED_RENDER_YIELD_MS = 4;
 const EXTERNAL_OSC_HOST = "127.0.0.1";
 const EXTERNAL_OSC_PORT = 9004;
 
-// Strip (portrait) output. "strip" = the 3-column portrait composite.
-// "none" = opaque black; "red" = solid red debug fill.
-type StripSyphonSource = "none" | "red" | "strip";
+// Quad (portrait) output. "quad" = the 2×2 quadrant composite with scenes
+// rotated 90° CW. "none" = opaque black; "red" = solid red debug fill.
+type QuadSyphonSource = "none" | "red" | "quad";
 // Landscape output — landscape composite or debug fills.
 type LandscapeSyphonSource = "none" | "red" | "landscape";
-type AnySyphonSource = StripSyphonSource | LandscapeSyphonSource;
+type AnySyphonSource = QuadSyphonSource | LandscapeSyphonSource;
 
 const globalParams = {
   bgR: 13,
@@ -128,7 +131,7 @@ const globalParams = {
   bodyEnabled: true,
   kinareeEnabled: true,
   showTiming: false,
-  syphon1Source: "strip" as StripSyphonSource,
+  syphon1Source: "quad" as QuadSyphonSource,
   syphon2Source: "landscape" as LandscapeSyphonSource,
 };
 
@@ -219,10 +222,10 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
   scenes.addBinding(globalParams, "kinareeEnabled", { label: "Kinaree" });
 
   const syphonFolder = global.addFolder({ title: "Syphon Outputs" });
-  const stripSyphonOptions = {
+  const quadSyphonOptions = {
     "None": "none",
     "Red (debug)": "red",
-    "Portrait Strip": "strip",
+    "Portrait Quad (2×2)": "quad",
   };
   const landscapeSyphonOptions = {
     "None": "none",
@@ -230,8 +233,8 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
     "Landscape Composite": "landscape",
   };
   syphonFolder.addBinding(globalParams, "syphon1Source", {
-    options: stripSyphonOptions,
-    label: "Output 1 (strip)",
+    options: quadSyphonOptions,
+    label: "Output 1 (quad)",
   });
   syphonFolder.addBinding(globalParams, "syphon2Source", {
     options: landscapeSyphonOptions,
@@ -443,10 +446,10 @@ const overlayP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 
 const COMPOSITE_FORMAT: GPUTextureFormat = "rgba8unorm";
 
-// Per-column portrait composite: scenes alphaBlit into this at native
-// column dims (WIDTH×HEIGHT = 1280×2160 for portrait mode). Until the
-// composition model lands, all 3 columns of the strip show this same
-// composite; later, per-column composites differentiate.
+// Per-scene portrait composite: scenes alphaBlit into this at their native
+// dims (WIDTH×HEIGHT = 720×1280 for portrait mode). Until the composition
+// model lands, all 3 populated quadrants of the quad texture show this same
+// composite; later, per-slot composites differentiate.
 const compositeTexture = device.createTexture({
   size: { width: WIDTH, height: HEIGHT },
   format: COMPOSITE_FORMAT,
@@ -456,16 +459,17 @@ const compositeTexture = device.createTexture({
 const compositeView = compositeTexture.createView();
 const alphaBlitPipeline = createAlphaBlitPipeline(device, COMPOSITE_FORMAT);
 
-// Portrait strip — 4K wide, 3 columns × WIDTH. Shipped as Syphon output 1.
-// Each frame we blitTile `compositeTexture` into each of the 3 columns. No
-// scaling (column dims == scene dims).
-const portraitStripTexture = device.createTexture({
-  size: { width: STRIP_WIDTH, height: STRIP_HEIGHT },
+// Portrait quad — 1080p, 2×2 layout. Slots 1–3 get the composite rotated
+// 90° CW and scaled into the quadrant (960×540); slot 4 (bottom-right) is
+// left cleared to the bg color. Shipped as Syphon output 1.
+const portraitQuadTexture = device.createTexture({
+  size: { width: QUAD_WIDTH, height: QUAD_HEIGHT },
   format: COMPOSITE_FORMAT,
   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING |
     GPUTextureUsage.COPY_SRC,
 });
-const portraitStripView = portraitStripTexture.createView();
+const portraitQuadView = portraitQuadTexture.createView();
+const rotatedBlitPipeline = createRotatedBlitPipeline(device, COMPOSITE_FORMAT);
 
 // Landscape composite — empty placeholder (no landscape scenes yet). Cleared
 // to bg RGB each frame; Syphon output 2 samples from this. When landscape
@@ -526,16 +530,16 @@ const monitorTexture = device.createTexture({
 const monitorView = monitorTexture.createView();
 const monitorBlitPipeline = createBlitPipeline(device, COMPOSITE_FORMAT);
 
-// Syphon outputs: output 1 is the 3-column portrait strip (4K wide); output
-// 2 is the landscape channel. Each has its own Global > Syphon Outputs
-// selector (including None / Red debug fills).
+// Syphon outputs: output 1 is the portrait quad (1080p, 2×2); output 2 is
+// the landscape channel. Each has its own Global > Syphon Outputs selector
+// (including None / Red debug fills).
 // bgra8unorm matches what HeadlessSyphon expects on disk (pixel_format = BGRA8).
 const syphonBgraBlitPipeline = createBlitPipeline(device, "bgra8unorm");
 const syphonOutputs: readonly SyphonOutput[] = [
   createSyphonOutput(
     device,
-    STRIP_WIDTH,
-    STRIP_HEIGHT,
+    QUAD_WIDTH,
+    QUAD_HEIGHT,
     "Hanoi Show 1",
     syphonBgraBlitPipeline,
   ),
@@ -647,17 +651,17 @@ await renderWindow.run(() => {
     }],
   });
   clearPass.end();
-  // Portrait strip — clear once so the three column blits lay into a stable
-  // background.
-  const stripClearPass = encoder.beginRenderPass({
+  // Portrait quad — clear once so the three rotated quadrant blits lay into
+  // a stable background (slot 4 stays the bg color, never overwritten).
+  const quadClearPass = encoder.beginRenderPass({
     colorAttachments: [{
-      view: portraitStripView,
+      view: portraitQuadView,
       loadOp: "clear",
       storeOp: "store",
       clearValue: clearColor,
     }],
   });
-  stripClearPass.end();
+  quadClearPass.end();
   // Landscape composite is empty (no landscape scenes yet) — we just clear
   // it to the bg color so Syphon output 2 and the monitor tile have stable
   // content instead of whatever was left in the texture last frame.
@@ -683,18 +687,24 @@ await renderWindow.run(() => {
   alphaBlit(device, encoder, alphaBlitPipeline, kinareeView, compositeView);
   alphaBlit(device, encoder, alphaBlitPipeline, overlayTex.createView(), compositeView);
 
-  // Blit the portrait composite into each of the 3 columns of the strip.
-  // Same content in all columns for now (stopgap); the composition model
-  // will differentiate per-column content later. No scaling — column dims
-  // match scene/composite dims.
-  for (let col = 0; col < 3; col += 1) {
+  // Blit the portrait composite into slots 1–3 of the quad, rotated 90° CW
+  // and scaled into the quadrant. Row-major order: top-left, top-right,
+  // bottom-left. Slot 4 (bottom-right) stays cleared. Same content in all
+  // three slots for now (stopgap); the composition model will differentiate
+  // per-slot content later.
+  const quadrantPositions: Array<{ x: number; y: number }> = [
+    { x: 0, y: 0 }, // slot 1: top-left
+    { x: QUADRANT_WIDTH, y: 0 }, // slot 2: top-right
+    { x: 0, y: QUADRANT_HEIGHT }, // slot 3: bottom-left
+  ];
+  for (const pos of quadrantPositions) {
     blitTile(
       device,
       encoder,
-      monitorBlitPipeline,
+      rotatedBlitPipeline,
       compositeView,
-      portraitStripView,
-      { x: col * WIDTH, y: 0, width: WIDTH, height: HEIGHT },
+      portraitQuadView,
+      { x: pos.x, y: pos.y, width: QUADRANT_WIDTH, height: QUADRANT_HEIGHT },
     );
   }
 
@@ -705,7 +715,7 @@ await renderWindow.run(() => {
   const syphonSources: Record<AnySyphonSource, GPUTextureView> = {
     none: emptyView,
     red: redView,
-    strip: portraitStripView,
+    quad: portraitQuadView,
     landscape: landscapeCompositeView,
   };
   const syphon1View = syphonSources[globalParams.syphon1Source];
@@ -713,7 +723,7 @@ await renderWindow.run(() => {
   syphonOutputs[0]!.captureFrame(encoder, syphon1View);
   syphonOutputs[1]!.captureFrame(encoder, syphon2View);
 
-  // Monitor view: strip tile on top, landscape tile below. Both use the
+  // Monitor view: quad tile on top, landscape tile below. Both use the
   // same tile height since they have the same aspect. blitTile uses
   // loadOp:"load", so start with one clear pass to establish background.
   const monitorClearPass = encoder.beginRenderPass({
@@ -756,7 +766,7 @@ await renderWindow.run(() => {
     kinareeP5.dispose();
     overlayP5.dispose();
     compositeTexture.destroy();
-    portraitStripTexture.destroy();
+    portraitQuadTexture.destroy();
     landscapeCompositeTexture.destroy();
     monitorTexture.destroy();
     emptyTexture.destroy();
