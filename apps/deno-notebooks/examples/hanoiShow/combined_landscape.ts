@@ -135,7 +135,7 @@ const mirageMacros: Record<string, number> = {};
 const mirageMacroDefs: MacroDef<number>[] = [
   {
     key: "sceneFade",
-    defaultValue: 1.0,
+    defaultValue: 0.0,
     opts: { min: 0, max: 1, step: 0.001, label: "Scene Fade" },
     apply: (v) => externalOscClient.send("/mirage/sceneFade", v),
   },
@@ -145,7 +145,7 @@ const pickingKinarreeMacros: Record<string, number> = {};
 const pickingKinarreeMacroDefs: MacroDef<number>[] = [
   {
     key: "sceneFade",
-    defaultValue: 1.0,
+    defaultValue: 0.0,
     opts: { min: 0, max: 1, step: 0.001, label: "Scene Fade" },
     apply: (v) => externalOscClient.send("/picking_kinarree/sceneFade", v),
   },

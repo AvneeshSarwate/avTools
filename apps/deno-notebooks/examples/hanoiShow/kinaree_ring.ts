@@ -78,7 +78,7 @@ function hexToRgb(hex: string): [number, number, number] {
 
 export const state = {
   params: {
-    fade: 1.0,
+    fade: 0.0,
     bgColor: "#0d1017",
     mix: 1.0,
     circleCount: 12,
@@ -109,7 +109,7 @@ export const state = {
 export const macroDefs: MacroDef<number>[] = [
   {
     key: "fade",
-    defaultValue: 1.0,
+    defaultValue: 0.0,
     opts: { min: 0, max: 1, step: 0.001, label: "Scene Fade" },
     apply: (v) => {
       state.params.fade = v;

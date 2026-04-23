@@ -36,7 +36,7 @@ const STANDALONE_HEIGHT = 720;
 const CLEAR_COLOR: GPUColor = { r: 0, g: 0, b: 0, a: 0 };
 
 const paramDefs = {
-  fade: { value: 1.0, min: 0, max: 1, step: 0.001, label: "Scene Fade" },
+  fade: { value: 0.0, min: 0, max: 1, step: 0.001, label: "Scene Fade" },
   launch: {
     _folder: "Launch",
     duration: { value: 2.0, min: 0.1, max: 10, step: 0.1 },
@@ -196,7 +196,7 @@ export const state = {
 export const macroDefs: MacroDef<number>[] = [
   {
     key: "fade",
-    defaultValue: 1.0,
+    defaultValue: 0.0,
     opts: { min: 0, max: 1, step: 0.001, label: "Scene Fade" },
     apply: (v) => {
       state.params.fade = v;
