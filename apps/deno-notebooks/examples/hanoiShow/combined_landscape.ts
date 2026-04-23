@@ -28,7 +28,8 @@ import {
 } from "../../window/mod.ts";
 import { alignedBytesPerRow, HeadlessSyphonServer } from "../../syphon/mod.ts";
 import { P5GPU } from "../../tools/p5gpu.ts";
-import { installMacros } from "../../tools/macros.ts";
+import { installMacros, type MacroDef } from "../../tools/macros.ts";
+import { createOSCClient, type OSCClient } from "../../tools/osc.ts";
 import { renderPerfShellHtml } from "../../tools/perf_shell_html.ts";
 
 import {
@@ -94,6 +95,10 @@ const MONITOR_HEIGHT = Math.round(MONITOR_WIDTH * HEIGHT / WIDTH);
 // only run in occasional timer gaps.
 const COMBINED_RENDER_YIELD_MS = 4;
 
+// Outbound OSC destination for external-scene macro tabs on the perf pane.
+const EXTERNAL_OSC_HOST = "127.0.0.1";
+const EXTERNAL_OSC_PORT = 9004;
+
 const globalParams = {
   tegakiEnabled: true,
   kinareeRingEnabled: true,
@@ -120,6 +125,31 @@ const bodyContourProvider = createBodyContourProvider();
 const handBBoxProvider = createHandBBoxProvider();
 tegakiState.contourProvider = bodyContourProvider;
 tegakiState.handBBoxProvider = handBBoxProvider;
+
+const externalOscClient: OSCClient = createOSCClient(
+  EXTERNAL_OSC_HOST,
+  EXTERNAL_OSC_PORT,
+);
+
+const mirageMacros: Record<string, number> = {};
+const mirageMacroDefs: MacroDef<number>[] = [
+  {
+    key: "sceneFade",
+    defaultValue: 1.0,
+    opts: { min: 0, max: 1, step: 0.001, label: "Scene Fade" },
+    apply: (v) => externalOscClient.send("/mirage/sceneFade", v),
+  },
+];
+
+const pickingKinarreeMacros: Record<string, number> = {};
+const pickingKinarreeMacroDefs: MacroDef<number>[] = [
+  {
+    key: "sceneFade",
+    defaultValue: 1.0,
+    opts: { min: 0, max: 1, step: 0.001, label: "Scene Fade" },
+    apply: (v) => externalOscClient.send("/picking_kinarree/sceneFade", v),
+  },
+];
 
 function setupPane(pane: WindowTweakpane, refresh: () => void) {
   const tab = pane.addTab({
@@ -169,6 +199,8 @@ function setupPerfPane(pane: WindowTweakpane, refresh: () => void) {
       { title: "Kinaree" },
       { title: "Plork" },
       { title: "Fab & Lies" },
+      { title: "Mirage" },
+      { title: "picking_kinarree" },
     ],
   });
   installMacros(tab.pages[0], tegakiState.macros, tegakiMacroDefs, refresh);
@@ -181,6 +213,13 @@ function setupPerfPane(pane: WindowTweakpane, refresh: () => void) {
   installMacros(tab.pages[2], kinareeState.macros, kinareeMacroDefs, refresh);
   installMacros(tab.pages[3], plorkState.macros, plorkMacroDefs, refresh);
   installMacros(tab.pages[4], fabState.macros, fabMacroDefs, refresh);
+  installMacros(tab.pages[5], mirageMacros, mirageMacroDefs, refresh);
+  installMacros(
+    tab.pages[6],
+    pickingKinarreeMacros,
+    pickingKinarreeMacroDefs,
+    refresh,
+  );
 }
 
 function updateTiming(frameStart: number, cpuMs: number): void {
@@ -566,6 +605,7 @@ await renderWindow.run(() => {
     bodyContourProvider.cleanup();
     handBBoxProvider.cleanup();
     perfPane.destroy();
+    externalOscClient.close();
     tegakiP5.dispose();
     kinareeRingP5.dispose();
     kinareeP5.dispose();
