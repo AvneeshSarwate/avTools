@@ -13,7 +13,7 @@ import {
   type BlitPipeline,
   createAlphaBlitPipeline,
   createBlitPipeline,
-  createRotatedBlitPipeline,
+  createRotatedAlphaBlitPipeline,
   createWindowRenderManager,
   createWindowTweakpane,
   requestWebGpuDevice,
@@ -59,6 +59,14 @@ import {
   setupPane as kinareeSetupPane,
 } from "./burning_kinaree.ts";
 
+import {
+  cleanup as fabCleanup,
+  draw as fabDraw,
+  loadAssets as fabLoadAssets,
+  setup as fabSetup,
+  setupPane as fabSetupPane,
+} from "./fab_and_lies.ts";
+
 import { createBodyContourProvider } from "./body_contour_provider.ts";
 import { createHandBBoxProvider } from "./hand_bbox_provider.ts";
 
@@ -96,14 +104,24 @@ const QUADRANT_HEIGHT = QUAD_HEIGHT / 2; // 540
 const LANDSCAPE_WIDTH = QUAD_WIDTH;
 const LANDSCAPE_HEIGHT = QUAD_HEIGHT;
 
-// Monitor window: quad tile on top, landscape tile below. Both 16:9. Scale
-// width to ~1080 for a reasonable dev-screen size.
-const MONITOR_TARGET_WIDTH = 1080;
-const MONITOR_TILE_HEIGHT = Math.round(
-  MONITOR_TARGET_WIDTH * QUAD_HEIGHT / QUAD_WIDTH,
+// Monitor window: top row is the 3 vertical channels side-by-side (each
+// in its native 9:16 portrait orientation, *not* the packed quad —
+// packing is purely the Syphon wire format). Bottom row is the landscape
+// channel tile (16:9). Sized to fit comfortably on a 1080p dev display.
+//
+// Portrait row math: MONITOR_WIDTH / 3 per tile, tile height scaled to
+// match the source sketch's portrait aspect (HEIGHT/WIDTH = 1280/720).
+// Landscape tile matches the landscape output's 16:9 at full MONITOR_WIDTH.
+const MONITOR_WIDTH = 720;
+const MONITOR_PORTRAIT_TILE_WIDTH = Math.floor(MONITOR_WIDTH / 3);
+const MONITOR_PORTRAIT_TILE_HEIGHT = Math.round(
+  MONITOR_PORTRAIT_TILE_WIDTH * HEIGHT / WIDTH,
 );
-const MONITOR_WIDTH = MONITOR_TARGET_WIDTH;
-const MONITOR_HEIGHT = 2 * MONITOR_TILE_HEIGHT;
+const MONITOR_LANDSCAPE_TILE_HEIGHT = Math.round(
+  MONITOR_WIDTH * LANDSCAPE_HEIGHT / LANDSCAPE_WIDTH,
+);
+const MONITOR_HEIGHT = MONITOR_PORTRAIT_TILE_HEIGHT +
+  MONITOR_LANDSCAPE_TILE_HEIGHT;
 
 // Keep the composed sketch from spinning so hard that UDP/WebSocket callbacks
 // only run in occasional timer gaps.
@@ -115,12 +133,30 @@ const COMBINED_RENDER_YIELD_MS = 4;
 const EXTERNAL_OSC_HOST = "127.0.0.1";
 const EXTERNAL_OSC_PORT = 9004;
 
-// Quad (portrait) output. "quad" = the 2×2 quadrant composite with scenes
-// rotated 90° CW. "none" = opaque black; "red" = solid red debug fill.
-type QuadSyphonSource = "none" | "red" | "quad";
-// Landscape output — landscape composite or debug fills.
-type LandscapeSyphonSource = "none" | "red" | "landscape";
-type AnySyphonSource = QuadSyphonSource | LandscapeSyphonSource;
+// Channel sources. Conceptually there are 4 channels — 3 vertical (portrait)
+// + 1 horizontal (landscape) — each independently selectable. The 2×2 quad
+// tiling of the vertical channels is purely the wire format for packing
+// them into one Syphon output; the "what's in this slot" decision stays
+// per channel, and each channel can pick any individual sketch's output
+// (not just the stacked composite).
+//
+// Fills: "none" = opaque black; "red" = solid red debug fill.
+// Sketches: each listed below maps to one sketch's own 720×1280 P5GPU
+// render texture, composited over the quadrant's bg-clear via the
+// rotated-alpha-blit pipeline.
+// Composites: "portrait" = all portrait sketches stacked (handy "show
+// everything" option); "landscape" = the landscape channel's composite
+// (empty placeholder until landscape sketches exist).
+type ChannelSource =
+  | "none"
+  | "red"
+  | "osc"
+  | "tegaki"
+  | "body"
+  | "kinaree"
+  | "fab"
+  | "portrait"
+  | "landscape";
 
 const globalParams = {
   bgR: 13,
@@ -130,9 +166,15 @@ const globalParams = {
   tegakiEnabled: true,
   bodyEnabled: true,
   kinareeEnabled: true,
+  fabEnabled: true,
   showTiming: false,
-  syphon1Source: "quad" as QuadSyphonSource,
-  syphon2Source: "landscape" as LandscapeSyphonSource,
+  // Per-channel source selection. Channels 1–3 are the vertical portrait
+  // outputs (packed into quad slots 1/2/3); channel 4 is the landscape
+  // output. Quad slot 4 is wire slack — no channel assigned.
+  channel1Source: "kinaree" as ChannelSource,
+  channel2Source: "fab" as ChannelSource,
+  channel3Source: "tegaki" as ChannelSource,
+  channel4Source: "landscape" as ChannelSource,
 };
 
 const timing = {
@@ -205,6 +247,7 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
       { title: "Tegaki" },
       { title: "Body Text" },
       { title: "Kinaree" },
+      { title: "Fab & Lies" },
     ],
   });
 
@@ -220,25 +263,35 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
   scenes.addBinding(globalParams, "tegakiEnabled", { label: "Tegaki" });
   scenes.addBinding(globalParams, "bodyEnabled", { label: "Body Text" });
   scenes.addBinding(globalParams, "kinareeEnabled", { label: "Kinaree" });
+  scenes.addBinding(globalParams, "fabEnabled", { label: "Fab & Lies" });
 
-  const syphonFolder = global.addFolder({ title: "Syphon Outputs" });
-  const quadSyphonOptions = {
+  const syphonFolder = global.addFolder({ title: "Channel Sources" });
+  const channelSourceOptions = {
     "None": "none",
     "Red (debug)": "red",
-    "Portrait Quad (2×2)": "quad",
-  };
-  const landscapeSyphonOptions = {
-    "None": "none",
-    "Red (debug)": "red",
+    "OSC Trail": "osc",
+    "Tegaki": "tegaki",
+    "Body Text": "body",
+    "Kinaree": "kinaree",
+    "Fab & Lies": "fab",
+    "All Portrait (stacked)": "portrait",
     "Landscape Composite": "landscape",
   };
-  syphonFolder.addBinding(globalParams, "syphon1Source", {
-    options: quadSyphonOptions,
-    label: "Output 1 (quad)",
+  syphonFolder.addBinding(globalParams, "channel1Source", {
+    options: channelSourceOptions,
+    label: "Ch 1 (vert, slot 1)",
   });
-  syphonFolder.addBinding(globalParams, "syphon2Source", {
-    options: landscapeSyphonOptions,
-    label: "Output 2 (landscape)",
+  syphonFolder.addBinding(globalParams, "channel2Source", {
+    options: channelSourceOptions,
+    label: "Ch 2 (vert, slot 2)",
+  });
+  syphonFolder.addBinding(globalParams, "channel3Source", {
+    options: channelSourceOptions,
+    label: "Ch 3 (vert, slot 3)",
+  });
+  syphonFolder.addBinding(globalParams, "channel4Source", {
+    options: channelSourceOptions,
+    label: "Ch 4 (horiz)",
   });
 
   // Shared providers — both feed multiple scenes, so they live under Global
@@ -257,6 +310,7 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
   tegakiSetupPane(tab.pages[2], refresh);
   bodySetupPane(tab.pages[3], refresh);
   kinareeSetupPane(tab.pages[4], refresh);
+  fabSetupPane(tab.pages[5], refresh);
 }
 
 function setupPerfPane(pane: WindowTweakpane, refresh: () => void) {
@@ -442,6 +496,7 @@ const oscP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const tegakiP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const bodyP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const kinareeP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
+const fabP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const overlayP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 
 const COMPOSITE_FORMAT: GPUTextureFormat = "rgba8unorm";
@@ -469,7 +524,10 @@ const portraitQuadTexture = device.createTexture({
     GPUTextureUsage.COPY_SRC,
 });
 const portraitQuadView = portraitQuadTexture.createView();
-const rotatedBlitPipeline = createRotatedBlitPipeline(device, COMPOSITE_FORMAT);
+// Alpha-blending rotated blit so transparent regions of a per-sketch
+// source (e.g. fab_and_lies' non-drawn pixels) preserve the quad's
+// bg-color clear instead of overwriting it with alpha=0.
+const rotatedBlitPipeline = createRotatedAlphaBlitPipeline(device, COMPOSITE_FORMAT);
 
 // Landscape composite — empty placeholder (no landscape scenes yet). Cleared
 // to bg RGB each frame; Syphon output 2 samples from this. When landscape
@@ -528,7 +586,6 @@ const monitorTexture = device.createTexture({
     GPUTextureUsage.COPY_SRC,
 });
 const monitorView = monitorTexture.createView();
-const monitorBlitPipeline = createBlitPipeline(device, COMPOSITE_FORMAT);
 
 // Syphon outputs: output 1 is the portrait quad (1080p, 2×2); output 2 is
 // the landscape channel. Each has its own Global > Syphon Outputs selector
@@ -556,14 +613,17 @@ const syphonOutputs: readonly SyphonOutput[] = [
 bodyContourProvider.setup();
 handBBoxProvider.setup();
 
-// Initialize all scenes. Body loads Charmonman into its own P5GPU instance.
+// Initialize all scenes. Body loads Charmonman into its own P5GPU instance;
+// fab_and_lies loads the Thai font (Ayuthaya) into its own P5GPU instance.
 await Promise.all([
   oscSetup(device),
   tegakiSetup({ width: WIDTH, height: HEIGHT }),
   bodySetup(bodyP5),
+  fabLoadAssets(fabP5),
 ]);
-// Kinaree setup is sync; called outside Promise.all for clarity.
+// Kinaree + fab_and_lies setup are sync; called outside Promise.all for clarity.
 kinareeSetup({ width: WIDTH, height: HEIGHT });
+fabSetup({ width: WIDTH, height: HEIGHT });
 
 // Refresh both panes on any macro change. Declared before pane construction so
 // scene setupPanes can capture it by reference; reassigned once perfPane exists.
@@ -629,6 +689,10 @@ await renderWindow.run(() => {
   if (globalParams.kinareeEnabled) kinareeDraw(kinareeP5, time);
   const kinareeTex = kinareeP5.endFrame();
 
+  fabP5.beginFrame();
+  if (globalParams.fabEnabled) fabDraw(fabP5, time);
+  const fabTex = fabP5.endFrame();
+
   overlayP5.beginFrame();
   drawTimingOverlay(overlayP5);
   const overlayTex = overlayP5.endFrame();
@@ -679,32 +743,55 @@ await renderWindow.run(() => {
   const tegakiView = tegakiTex.createView();
   const bodyView = bodyTex.createView();
   const kinareeView = kinareeTex.createView();
-  // Painter's algorithm order: kinaree sits above osc/tegaki/body so its
-  // strobe flashes overlay everything; timing overlay stays on top.
+  const fabView = fabTex.createView();
+  // Painter's algorithm order: kinaree + fab_and_lies sit above osc/tegaki/
+  // body so their strobe flashes and middle-third blackout overlay
+  // everything; timing overlay stays on top.
   alphaBlit(device, encoder, alphaBlitPipeline, oscView, compositeView);
   alphaBlit(device, encoder, alphaBlitPipeline, tegakiView, compositeView);
   alphaBlit(device, encoder, alphaBlitPipeline, bodyView, compositeView);
   alphaBlit(device, encoder, alphaBlitPipeline, kinareeView, compositeView);
+  alphaBlit(device, encoder, alphaBlitPipeline, fabView, compositeView);
   alphaBlit(device, encoder, alphaBlitPipeline, overlayTex.createView(), compositeView);
 
-  // Blit the portrait composite into slots 1–3 of the quad, rotated 90° CW
-  // and scaled into the quadrant. Row-major order: top-left, top-right,
-  // bottom-left. Slot 4 (bottom-right) stays cleared. Same content in all
-  // three slots for now (stopgap); the composition model will differentiate
-  // per-slot content later.
-  const quadrantPositions: Array<{ x: number; y: number }> = [
-    { x: 0, y: 0 }, // slot 1: top-left
-    { x: QUADRANT_WIDTH, y: 0 }, // slot 2: top-right
-    { x: 0, y: QUADRANT_HEIGHT }, // slot 3: bottom-left
+  // Resolve each channel's source view. Sketches render at 720×1280
+  // (portrait); rotated 90° CW into a 960×540 (16:9) quadrant the aspect
+  // matches exactly. Landscape in a vertical slot (or vertical in the
+  // landscape slot) will rotate+stretch — kept selectable for debugging.
+  // Ch 4 doesn't rotate; its view drives the landscape Syphon output
+  // directly.
+  const channelSources: Record<ChannelSource, GPUTextureView> = {
+    none: emptyView,
+    red: redView,
+    osc: oscView,
+    tegaki: tegakiView,
+    body: bodyView,
+    kinaree: kinareeView,
+    fab: fabView,
+    portrait: compositeView,
+    landscape: landscapeCompositeView,
+  };
+  const channel1View = channelSources[globalParams.channel1Source];
+  const channel2View = channelSources[globalParams.channel2Source];
+  const channel3View = channelSources[globalParams.channel3Source];
+  const channel4View = channelSources[globalParams.channel4Source];
+
+  // Pack the 3 vertical channels into slots 1–3 of the quad wire format
+  // (row-major: top-left, top-right, bottom-left), each rotated 90° CW
+  // into its 16:9 quadrant. Slot 4 stays cleared (wire slack).
+  const quadSlots: Array<{ x: number; y: number; view: GPUTextureView }> = [
+    { x: 0, y: 0, view: channel1View }, // slot 1: top-left
+    { x: QUADRANT_WIDTH, y: 0, view: channel2View }, // slot 2: top-right
+    { x: 0, y: QUADRANT_HEIGHT, view: channel3View }, // slot 3: bottom-left
   ];
-  for (const pos of quadrantPositions) {
+  for (const slot of quadSlots) {
     blitTile(
       device,
       encoder,
       rotatedBlitPipeline,
-      compositeView,
+      slot.view,
       portraitQuadView,
-      { x: pos.x, y: pos.y, width: QUADRANT_WIDTH, height: QUADRANT_HEIGHT },
+      { x: slot.x, y: slot.y, width: QUADRANT_WIDTH, height: QUADRANT_HEIGHT },
     );
   }
 
@@ -712,37 +799,46 @@ await renderWindow.run(() => {
   // any previous-frame ping-pong buffers first so their map requests race in
   // parallel with this frame's GPU work.
   for (const output of syphonOutputs) output.tryPublish();
-  const syphonSources: Record<AnySyphonSource, GPUTextureView> = {
-    none: emptyView,
-    red: redView,
-    quad: portraitQuadView,
-    landscape: landscapeCompositeView,
-  };
-  const syphon1View = syphonSources[globalParams.syphon1Source];
-  const syphon2View = syphonSources[globalParams.syphon2Source];
+  // Output 1 always ships the packed quad (per-channel content lives inside);
+  // Output 2 ships the selected landscape channel directly.
+  const syphon1View = portraitQuadView;
+  const syphon2View = channel4View;
   syphonOutputs[0]!.captureFrame(encoder, syphon1View);
   syphonOutputs[1]!.captureFrame(encoder, syphon2View);
 
-  // Monitor view: quad tile on top, landscape tile below. Both use the
-  // same tile height since they have the same aspect. blitTile uses
-  // loadOp:"load", so start with one clear pass to establish background.
+  // Monitor view: top row is the 3 vertical channels side-by-side in
+  // their native portrait orientation (*not* the packed quad — packing
+  // is only for the Syphon wire). Bottom row is the landscape channel.
+  // Clear to bg RGB so each sketch's transparent regions show the same
+  // backdrop the Syphon output uses; alpha-blend per tile so
+  // sketches-with-transparency composite correctly.
   const monitorClearPass = encoder.beginRenderPass({
     colorAttachments: [{
       view: monitorView,
       loadOp: "clear",
       storeOp: "store",
-      clearValue: { r: 0, g: 0, b: 0, a: 1 },
+      clearValue: clearColor,
     }],
   });
   monitorClearPass.end();
-  blitTile(device, encoder, monitorBlitPipeline, syphon1View, monitorView, {
-    x: 0, y: 0, width: MONITOR_WIDTH, height: MONITOR_TILE_HEIGHT,
-  });
-  blitTile(device, encoder, monitorBlitPipeline, syphon2View, monitorView, {
+  const portraitTiles: Array<{ x: number; view: GPUTextureView }> = [
+    { x: 0, view: channel1View },
+    { x: MONITOR_PORTRAIT_TILE_WIDTH, view: channel2View },
+    { x: 2 * MONITOR_PORTRAIT_TILE_WIDTH, view: channel3View },
+  ];
+  for (const tile of portraitTiles) {
+    blitTile(device, encoder, alphaBlitPipeline, tile.view, monitorView, {
+      x: tile.x,
+      y: 0,
+      width: MONITOR_PORTRAIT_TILE_WIDTH,
+      height: MONITOR_PORTRAIT_TILE_HEIGHT,
+    });
+  }
+  blitTile(device, encoder, alphaBlitPipeline, channel4View, monitorView, {
     x: 0,
-    y: MONITOR_TILE_HEIGHT,
+    y: MONITOR_PORTRAIT_TILE_HEIGHT,
     width: MONITOR_WIDTH,
-    height: MONITOR_TILE_HEIGHT,
+    height: MONITOR_LANDSCAPE_TILE_HEIGHT,
   });
 
   device.queue.submit([encoder.finish()]);
@@ -756,6 +852,7 @@ await renderWindow.run(() => {
     tegakiCleanup();
     bodyCleanup();
     kinareeCleanup();
+    fabCleanup();
     bodyContourProvider.cleanup();
     handBBoxProvider.cleanup();
     perfPane.destroy();
@@ -764,6 +861,7 @@ await renderWindow.run(() => {
     tegakiP5.dispose();
     bodyP5.dispose();
     kinareeP5.dispose();
+    fabP5.dispose();
     overlayP5.dispose();
     compositeTexture.destroy();
     portraitQuadTexture.destroy();

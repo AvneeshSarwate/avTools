@@ -233,6 +233,47 @@ export function createRotatedBlitPipeline(
   return { pipeline, bindGroupLayout, sampler };
 }
 
+/**
+ * Alpha-blending variant of `createRotatedBlitPipeline`. Same 90° CW
+ * rotation shader, but the target has standard source-over alpha blending
+ * enabled so transparent regions of `src` preserve whatever was in `dst`.
+ * Use with `blitTile` (loadOp:"load") to rotate-composite a layer into a
+ * quadrant whose backdrop was established by a prior clear pass — the
+ * backdrop shows through `src`'s transparent pixels instead of being
+ * overwritten.
+ */
+export function createRotatedAlphaBlitPipeline(
+  device: GPUDevice,
+  targetFormat: GPUTextureFormat,
+): BlitPipeline {
+  const module = device.createShaderModule({ code: ROTATED_BLIT_SHADER });
+  const bindGroupLayout = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+      { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
+    ],
+  });
+  const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
+  const pipeline = device.createRenderPipeline({
+    layout: pipelineLayout,
+    vertex: { module, entryPoint: "vs" },
+    fragment: {
+      module,
+      entryPoint: "fs",
+      targets: [{
+        format: targetFormat,
+        blend: {
+          color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
+          alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" },
+        },
+      }],
+    },
+    primitive: { topology: "triangle-list", cullMode: "none" },
+  });
+  const sampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
+  return { pipeline, bindGroupLayout, sampler };
+}
+
 // ── Alpha-blending variant ──────────────────────────────────────────
 //
 // Same shader as the basic blit, but the pipeline target has standard

@@ -8,6 +8,7 @@ export {
   createBlitPipeline,
   createAlphaBlitPipeline,
   createRotatedBlitPipeline,
+  createRotatedAlphaBlitPipeline,
   blit,
   blitToViewport,
   blitTile,

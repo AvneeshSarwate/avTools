@@ -127,6 +127,11 @@ interface TextBlock {
   textSize: number;           // snapshotted font size
   word: string;               // snapshotted from WORD_POOL
   color: [number, number, number]; // rgb with HSV jitter
+  // Which side the block was launched from; controls which column-edge
+  // is treated as "off-screen" for the 2-screen simulation. Left-launched
+  // blocks die once they're fully past x = w/3; right-launched blocks die
+  // once they're fully past x = 2w/3.
+  fromLeft: boolean;
   alive: boolean;
 }
 
@@ -166,6 +171,7 @@ function spawnTextBlock(
       WORD_SAT_JITTER,
       WORD_VAL_JITTER,
     ),
+    fromLeft,
     alive: true,
   };
 }
@@ -318,10 +324,20 @@ export function draw(p5: P5GPU, _time: number, autoClear = true): void {
     const y = b.startY + Math.sin(b.travelAngle) * b.travelSpeed * elapsed;
     const rot = b.initialRotation + b.rotationSpeed * elapsed;
 
-    // Cull once fully off-screen. Margin scales with textSize so long
-    // words rotated at arbitrary angles still clear before being culled.
+    // Kill once the center crosses the screen's horizontal midpoint —
+    // simulates a 2-screen setup where a word launched from one side
+    // "falls off" once it's past halfway. The middle-third blackout
+    // hides the actual vanish, so this reads as the word going off-edge
+    // on whichever column it belongs to.
+    if (b.fromLeft ? x > w / 2 : x < w / 2) {
+      b.alive = false;
+      continue;
+    }
+
+    // Safety net for extreme travel angles that would carry a block off
+    // the top/bottom before it ever reaches the midpoint.
     const margin = b.textSize * 4;
-    if (x < -margin || x > w + margin || y < -margin || y > h + margin) {
+    if (y < -margin || y > h + margin) {
       b.alive = false;
       continue;
     }
