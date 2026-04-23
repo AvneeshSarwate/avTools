@@ -44,6 +44,18 @@ defineExpose({ setClient })
     <div v-if="!client" class="perf-status">waiting for client…</div>
     <template v-else>
       <div v-if="!client.model.connected" class="perf-status">connecting…</div>
+      <div v-if="client.model.mixerSliders.length > 0" class="perf-mixer">
+        <div class="perf-mixer-title">Scene Mixer</div>
+        <div class="perf-slider-row perf-mixer-row">
+          <VerticalSlider
+            v-for="mixer in client.model.mixerSliders"
+            :key="mixer.id"
+            :slider="mixer.slider"
+            :label="mixer.label"
+            :change-handler="(v, last) => onSliderChange(mixer.slider, v, last)"
+          />
+        </div>
+      </div>
       <div v-for="tab in client.model.tabs" :key="tab.id" class="perf-tab">
         <div class="perf-tab-header">
           <button
@@ -113,6 +125,25 @@ defineExpose({ setClient })
   border: 1px solid rgba(148, 170, 196, 0.16);
   border-radius: 10px;
   padding: 12px;
+}
+.perf-mixer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: rgba(14, 20, 29, 0.52);
+  border: 1px solid rgba(148, 170, 196, 0.2);
+  border-radius: 10px;
+  padding: 12px;
+}
+.perf-mixer-title {
+  color: #dce6f4;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.perf-mixer-row {
+  padding-top: 2px;
 }
 .perf-tab-header {
   display: flex;

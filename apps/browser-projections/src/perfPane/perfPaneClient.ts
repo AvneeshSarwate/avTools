@@ -65,10 +65,17 @@ export interface TabModel {
   selectedIndex: number
 }
 
+export interface MixerSliderModel {
+  id: string
+  label: string
+  slider: SliderModel
+}
+
 export interface PerfPaneModel {
   connected: boolean
   title: string
   tabs: TabModel[]
+  mixerSliders: MixerSliderModel[]
   /** Sliders that live at the root (no tab container). */
   rootSliders: SliderModel[]
 }
@@ -100,6 +107,7 @@ export class PerfPaneClient {
       connected: false,
       title: '',
       tabs: [],
+      mixerSliders: [],
       rootSliders: [],
     }) as PerfPaneModel
 
@@ -128,6 +136,7 @@ export class PerfPaneClient {
     if (msg.type === 'replay') {
       this.model.title = msg.paneConfig?.title ?? ''
       this.model.tabs = []
+      this.model.mixerSliders = []
       this.model.rootSliders = []
       this.sliderById.clear()
       this.tabPageParentOf.clear()
@@ -171,6 +180,13 @@ export class PerfPaneClient {
         const parent = this.tabPageParentOf.get(op.parentId)
         if (parent) {
           parent.tab.pages[parent.pageIndex].sliders.push(slider)
+          if (isSceneFadeSlider(op.key, slider.label)) {
+            this.model.mixerSliders.push({
+              id: `mixer_${slider.id}`,
+              label: parent.tab.pages[parent.pageIndex].title,
+              slider,
+            })
+          }
         } else {
           this.model.rootSliders.push(slider)
         }
@@ -232,4 +248,8 @@ export class PerfPaneClient {
   disconnect(): void {
     if (this.ws.readyState === 1) this.ws.close()
   }
+}
+
+function isSceneFadeSlider(key: string, label: string): boolean {
+  return label === 'Scene Fade' || key === 'fade' || key === 'sceneFade'
 }

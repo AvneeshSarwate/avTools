@@ -4,6 +4,7 @@ import type { SliderModel } from '../perfPaneClient'
 
 const props = defineProps<{
   slider: SliderModel
+  label?: string
   changeHandler: (value: number, last: boolean) => void
 }>()
 
@@ -53,7 +54,7 @@ function displayValue(): string {
 
 <template>
   <div class="vslider">
-    <div class="vslider-label">{{ slider.label }}</div>
+    <div class="vslider-label">{{ label ?? slider.label }}</div>
     <div
       ref="trackRef"
       class="vslider-track"

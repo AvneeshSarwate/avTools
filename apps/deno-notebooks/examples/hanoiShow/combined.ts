@@ -645,7 +645,7 @@ const renderWindow = await createWindowRenderManager({
 
 const perfPane = createWindowTweakpane(renderWindow.window, {
   title: "Perf",
-  panelWidth: 620,
+  panelWidth: 720,
   panelHeight: 660,
   renderShell: (args) => renderPerfShellHtml({
     title: args.title,
