@@ -7,6 +7,7 @@ export {
 export {
   createBlitPipeline,
   createAlphaBlitPipeline,
+  createRotatedBlitPipeline,
   blit,
   blitToViewport,
   blitTile,

@@ -164,6 +164,75 @@ export function blitTile(
   pass.end();
 }
 
+// ── Rotated variant (90° clockwise) ─────────────────────────────────
+//
+// Samples the source rotated 90° CW: source's top edge maps to the right
+// edge of the destination, right → bottom, bottom → left, left → top.
+// Combined with the same y-flip the standard shader uses (to match top-left
+// canvas origin), the fragment shader samples at `(1 - v, 1 - u)`.
+// Intended for use with `blitTile` + a quadrant viewport. Source & dst
+// aspects should match after rotation (e.g. a 720×1280 source into a
+// 960×540 viewport both resolve to 16:9); mismatched aspects will stretch.
+
+const ROTATED_BLIT_SHADER = `struct VsOut {
+  @builtin(position) pos: vec4f,
+  @location(0) uv: vec2f,
+};
+
+@vertex
+fn vs(@builtin(vertex_index) i: u32) -> VsOut {
+  let uv = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+  var out: VsOut;
+  out.pos = vec4f(uv * 2.0 - 1.0, 0.0, 1.0);
+  out.uv = uv;
+  return out;
+}
+
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var srcSampler: sampler;
+
+@fragment
+fn fs(in: VsOut) -> @location(0) vec4f {
+  // 90° CW rotation + top-left origin y-flip baked in.
+  return textureSample(src, srcSampler, vec2f(1.0 - in.uv.y, 1.0 - in.uv.x));
+}
+`;
+
+export function createRotatedBlitPipeline(
+  device: GPUDevice,
+  targetFormat: GPUTextureFormat,
+): BlitPipeline {
+  const module = device.createShaderModule({ code: ROTATED_BLIT_SHADER });
+  const bindGroupLayout = device.createBindGroupLayout({
+    entries: [
+      {
+        binding: 0,
+        visibility: GPUShaderStage.FRAGMENT,
+        texture: { sampleType: "float" },
+      },
+      {
+        binding: 1,
+        visibility: GPUShaderStage.FRAGMENT,
+        sampler: { type: "filtering" },
+      },
+    ],
+  });
+  const pipelineLayout = device.createPipelineLayout({
+    bindGroupLayouts: [bindGroupLayout],
+  });
+  const pipeline = device.createRenderPipeline({
+    layout: pipelineLayout,
+    vertex: { module, entryPoint: "vs" },
+    fragment: { module, entryPoint: "fs", targets: [{ format: targetFormat }] },
+    primitive: { topology: "triangle-list", cullMode: "none" },
+  });
+  const sampler = device.createSampler({
+    magFilter: "linear",
+    minFilter: "linear",
+  });
+  return { pipeline, bindGroupLayout, sampler };
+}
+
 // ── Alpha-blending variant ──────────────────────────────────────────
 //
 // Same shader as the basic blit, but the pipeline target has standard
