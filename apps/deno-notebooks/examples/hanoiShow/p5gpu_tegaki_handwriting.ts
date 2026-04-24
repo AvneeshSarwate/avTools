@@ -65,6 +65,7 @@ type PreparedTegakiGlyphData = Record<string, PreparedTegakiGlyph>;
  */
 interface PhaseTrack {
   phase: number;
+  alpha: number;
   epoch: number; // bumped on each trigger so stale ramps can self-cancel
   inProgress: boolean;
 }
@@ -174,6 +175,7 @@ export const state = {
     triggerRate: 18, // trigger attempts per second (random mode)
     minDuration: 0.35,
     maxDuration: 1.40,
+    alphaFadeDuration: 0.75,
     widthScale: 2.0,
     bgColor: "#0d1017",
     inkColor: "#ffe9a8",
@@ -838,13 +840,33 @@ function scheduleRamp(
 
   triggerCtx.branch(async (rampCtx) => {
     track.phase = 0;
+    track.alpha = 1;
     while (!rampCtx.isCanceled && rampCtx.progTime < duration) {
       if (track.epoch !== myEpoch) return; // preempted by a newer ramp
       track.phase = Math.min(1, rampCtx.progTime / duration);
+      track.alpha = 1;
       await rampCtx.waitSec(1 / 60);
     }
     if (track.epoch === myEpoch) {
+      track.phase = 1;
+      track.alpha = 1;
+
+      const fadeDuration = Math.max(0, state.params.alphaFadeDuration);
+      if (fadeDuration > 0) {
+        const fadeStart = rampCtx.progTime;
+        while (
+          !rampCtx.isCanceled && (rampCtx.progTime - fadeStart) < fadeDuration
+        ) {
+          if (track.epoch !== myEpoch) return;
+          const t = (rampCtx.progTime - fadeStart) / fadeDuration;
+          track.phase = 1;
+          track.alpha = Math.max(0, 1 - t);
+          await rampCtx.waitSec(1 / 60);
+        }
+      }
+
       track.phase = state.params.idlePhase;
+      track.alpha = 0;
       track.inProgress = false;
       gs.cooldownUntil = performance.now() +
         state.params.intersectionCooldownSec * 1000;
@@ -1365,6 +1387,12 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
     step: 0.05,
     label: "Max dur (s)",
   });
+  pane.addBinding(state.params, "alphaFadeDuration", {
+    min: 0,
+    max: 5,
+    step: 0.05,
+    label: "Fade out (s)",
+  });
   pane.addBinding(state.params, "widthScale", {
     min: 0.2,
     max: 5.5,
@@ -1394,8 +1422,10 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
   pane.addButton({ title: "Reset all → idle" }).on("click", () => {
     for (const s of state.glyphStates) {
       s.random.phase = state.params.idlePhase;
+      s.random.alpha = 1;
       s.random.epoch += 1;
       s.intersection.phase = state.params.idlePhase;
+      s.intersection.alpha = 1;
       s.intersection.epoch += 1;
       s.intersecting = false;
       s.cooldownUntil = 0;
@@ -1404,8 +1434,10 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
   pane.addButton({ title: "Reset all → 0" }).on("click", () => {
     for (const s of state.glyphStates) {
       s.random.phase = 0;
+      s.random.alpha = 0;
       s.random.epoch += 1;
       s.intersection.phase = 0;
+      s.intersection.alpha = 0;
       s.intersection.epoch += 1;
       s.intersecting = false;
       s.cooldownUntil = 0;
@@ -1494,11 +1526,13 @@ export async function setup(dims: { width: number; height: number }) {
           bbox: null,
           random: {
             phase: state.params.idlePhase,
+            alpha: 1,
             epoch: 0,
             inProgress: false,
           },
           intersection: {
             phase: state.params.idlePhase,
+            alpha: 1,
             epoch: 0,
             inProgress: false,
           },
@@ -1604,12 +1638,12 @@ export function draw(p5: P5GPU, autoClear = true) {
   p5.noFill();
   p5.strokeCap(p5.ROUND);
   p5.strokeJoin(p5.ROUND);
-  p5.stroke(ir, ig, ib, Math.round(255 * fade));
-
   for (const gs of state.glyphStates) {
-    const phase = useIntersectionPhase
-      ? gs.intersection.phase
-      : gs.random.phase;
+    const track = useIntersectionPhase ? gs.intersection : gs.random;
+    const phase = track.phase;
+    const glyphAlpha = track.alpha;
+    if (glyphAlpha <= 0) continue;
+    p5.stroke(ir, ig, ib, Math.round(255 * fade * glyphAlpha));
     drawGlyphAtPhase(p5, gs, phase, scale, state.params.widthScale);
   }
 
