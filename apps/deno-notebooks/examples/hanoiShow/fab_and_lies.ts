@@ -113,16 +113,32 @@ const POEM_PATH = new URL("./poem.txt", import.meta.url);
 const POEM_TEXT = Deno.readTextFileSync(POEM_PATH);
 const WORD_POOL = POEM_TEXT.split(/\s+/).filter((w) => w.length > 0);
 
-// macOS system font with Thai glyph coverage. p5gpu's text engine only
-// auto-loads fonts bundled in `assets/fonts/` (Inter, NotoSans, RobotoFlex)
-// — none of which have Thai coverage — so we have to explicitly load a
-// system font file via `p5.loadFont(path)` before drawing. The family name
-// must match the font file's embedded OS/2 family for HarfBuzz lookup.
-// Going with Ayuthaya (.ttf, brushy display) — plain TTF is safer than
-// Thonburi which is a .ttc collection. Swap to "Silom" / "Sathu" /
-// "Krungthep" (also plain .ttf in Supplemental/) for different looks.
-const THAI_FONT_PATH = "/System/Library/Fonts/Supplemental/Ayuthaya.ttf";
-const THAI_FONT = "Ayuthaya";
+// Local Hanoi-show Thai fonts. p5gpu's text engine only auto-loads fonts
+// bundled in `assets/fonts/`, so this scene explicitly loads one of the
+// local .ttf files in this folder. The family name must match the font's
+// embedded family for HarfBuzz lookup. These family names were pulled from
+// the font files' embedded name tables so it's easy to switch fonts here.
+interface LocalThaiFont {
+  path: URL;
+  family: string;
+}
+
+const TORSILP_YINGYAI_FONT: LocalThaiFont = {
+  path: new URL("./TorsilpYingyai.ttf", import.meta.url),
+  family: "Torsilp Yingyai",
+};
+
+const SOV_SANNOGA_FONT: LocalThaiFont = {
+  path: new URL("./SOV_sannoga2467.ttf", import.meta.url),
+  family: "SOV_sannoga2467",
+};
+
+const SOV_SORM_FONT: LocalThaiFont = {
+  path: new URL("./SOV_sorm2496.ttf", import.meta.url),
+  family: "SOV_sorm2496",
+};
+
+const ACTIVE_THAI_FONT = TORSILP_YINGYAI_FONT;
 
 /**
  * Load the Thai font into the p5gpu text engine. Must be called once
@@ -131,7 +147,7 @@ const THAI_FONT = "Ayuthaya";
  * must await this during their own setup phase.
  */
 export async function loadAssets(p5: P5GPU): Promise<void> {
-  await p5.loadFont(THAI_FONT_PATH);
+  await p5.loadFont(ACTIVE_THAI_FONT.path, ACTIVE_THAI_FONT.family);
 }
 
 const WORD_HUE_JITTER = 15; // ± degrees
@@ -345,7 +361,7 @@ export function draw(p5: P5GPU, _time: number, autoClear = true): void {
   // transform origin — the p5gpu equivalent of the rect's center-origin.
   // Thai font must be set every frame because the standalone HUD below
   // (and potentially combined.ts) resets textFont to the default.
-  p5.textFont(THAI_FONT);
+  p5.textFont(ACTIVE_THAI_FONT.family);
   p5.textAlign("center", "center");
   p5.noStroke();
 

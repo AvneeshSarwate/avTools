@@ -149,6 +149,18 @@ const mirageMacroDefs: MacroDef<number>[] = [
     opts: { min: 0, max: 1, step: 0.001, label: "Scene Fade" },
     apply: (v) => externalOscClient.send("/mirage/sceneFade", v),
   },
+  {
+    key: "displace",
+    defaultValue: 0.03,
+    opts: { min: 0, max: 0.2, step: 0.001, label: "Displace" },
+    apply: (v) => externalOscClient.send("/mirage/displace", v),
+  },
+  {
+    key: "speed",
+    defaultValue: 0.5,
+    opts: { min: 0, max: 2, step: 0.01, label: "Speed" },
+    apply: (v) => externalOscClient.send("/mirage/speed", v),
+  },
 ];
 
 const pickingKinarreeMacros: Record<string, number> = {};
@@ -158,6 +170,18 @@ const pickingKinarreeMacroDefs: MacroDef<number>[] = [
     defaultValue: 0.0,
     opts: { min: 0, max: 1, step: 0.001, label: "Scene Fade" },
     apply: (v) => externalOscClient.send("/picking_kinarree/sceneFade", v),
+  },
+  {
+    key: "crossfade",
+    defaultValue: 0.33,
+    opts: { min: 0, max: 1, step: 0.001, label: "Crossfade" },
+    apply: (v) => externalOscClient.send("/picking_kinarree/crossfade", v),
+  },
+  {
+    key: "spread",
+    defaultValue: 1.0,
+    opts: { min: 0, max: 1, step: 0.001, label: "Spread" },
+    apply: (v) => externalOscClient.send("/picking_kinarree/spread", v),
   },
 ];
 
