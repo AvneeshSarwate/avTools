@@ -169,10 +169,10 @@ export const state = {
     // Section 1: red rectangles
     rects: {
       mix: 1.0,
-      launchRate: 2.5, // rectangles per second
-      travelSpeed: 550, // pixels/sec, snapshotted at launch
+      launchRate: 10.5, // rectangles per second
+      travelSpeed: 1170, // pixels/sec, snapshotted at launch
       angleDeviation: 20, // degrees, ± range from straight horizontal
-      thickness: 14, // pixels; length is RECT_LENGTH_RATIO × this
+      thickness: 44, // pixels; length is RECT_LENGTH_RATIO × this
       rotationSpeed: 3.0, // radians/sec, snapshotted at launch
       color: "#e14a3a",
       // Strobe: during a pulse, every rectangle is drawn pure white instead
