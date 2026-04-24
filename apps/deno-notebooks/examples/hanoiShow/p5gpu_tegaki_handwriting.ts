@@ -66,6 +66,7 @@ type PreparedTegakiGlyphData = Record<string, PreparedTegakiGlyph>;
 interface PhaseTrack {
   phase: number;
   alpha: number;
+  needsRecovery: boolean;
   epoch: number; // bumped on each trigger so stale ramps can self-cancel
   inProgress: boolean;
 }
@@ -235,6 +236,7 @@ export const state = {
     lissajousPhaseAccumX: 0,
     lissajousPhaseAccumY: 0,
     lastMorphPhaseUpdateMs: null as number | null,
+    prevPaused: false,
   },
   meta: {
     fontMeta: FONT_META,
@@ -825,14 +827,51 @@ function cross(ux: number, uy: number, vx: number, vy: number): number {
   return ux * vy - uy * vx;
 }
 
+function markPausedRecoverySubset(): void {
+  for (const gs of state.glyphStates) {
+    gs.random.needsRecovery = gs.random.alpha < 1;
+    gs.intersection.needsRecovery = gs.intersection.alpha < 1;
+  }
+}
+
+function clearPausedRecoverySubset(): void {
+  for (const gs of state.glyphStates) {
+    gs.random.needsRecovery = false;
+    gs.intersection.needsRecovery = false;
+  }
+}
+
+function updatePausedRecoveryState(): void {
+  const wasPaused = state.runtime.prevPaused;
+  const isPaused = state.params.paused;
+  if (isPaused && !wasPaused) {
+    markPausedRecoverySubset();
+  } else if (!isPaused && wasPaused) {
+    clearPausedRecoverySubset();
+  }
+  state.runtime.prevPaused = isPaused;
+}
+
+function activeTrackName(): "random" | "intersection" {
+  return state.params.triggerMode === "random" ? "random" : "intersection";
+}
+
+function getTrack(
+  gs: GlyphState,
+  trackName: "random" | "intersection",
+): PhaseTrack {
+  return trackName === "random" ? gs.random : gs.intersection;
+}
+
 function scheduleRamp(
   gs: GlyphState,
   trackName: "random" | "intersection",
   duration: number,
+  purpose: "normal" | "recovery" = "normal",
 ): void {
   const triggerCtx = state.runtime.triggerCtx;
   if (!triggerCtx) return;
-  const track = trackName === "random" ? gs.random : gs.intersection;
+  const track = getTrack(gs, trackName);
 
   track.epoch += 1;
   const myEpoch = track.epoch;
@@ -852,7 +891,8 @@ function scheduleRamp(
       track.alpha = 1;
 
       const fadeDuration = Math.max(0, state.params.alphaFadeDuration);
-      if (fadeDuration > 0) {
+      const shouldEndHidden = purpose === "normal" && !state.params.paused;
+      if (shouldEndHidden && fadeDuration > 0) {
         const fadeStart = rampCtx.progTime;
         while (
           !rampCtx.isCanceled && (rampCtx.progTime - fadeStart) < fadeDuration
@@ -865,8 +905,19 @@ function scheduleRamp(
         }
       }
 
-      track.phase = state.params.idlePhase;
-      track.alpha = 0;
+      if (purpose === "recovery") {
+        track.phase = 1;
+        track.alpha = 1;
+        track.needsRecovery = false;
+      } else if (shouldEndHidden) {
+        track.phase = state.params.idlePhase;
+        track.alpha = 0;
+        if (!state.params.paused) track.needsRecovery = false;
+      } else {
+        track.phase = 1;
+        track.alpha = 1;
+        track.needsRecovery = false;
+      }
       track.inProgress = false;
       gs.cooldownUntil = performance.now() +
         state.params.intersectionCooldownSec * 1000;
@@ -1288,7 +1339,7 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
   const lissajous = pathMorph.addFolder({ title: "Lissajous" });
   lissajous.addBinding(state.params, "lissajousAmpX", {
     min: 0,
-    max: 800,
+    max: 1600,
     step: 1,
     label: "Amp X",
   });
@@ -1423,9 +1474,11 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
     for (const s of state.glyphStates) {
       s.random.phase = state.params.idlePhase;
       s.random.alpha = 1;
+      s.random.needsRecovery = false;
       s.random.epoch += 1;
       s.intersection.phase = state.params.idlePhase;
       s.intersection.alpha = 1;
+      s.intersection.needsRecovery = false;
       s.intersection.epoch += 1;
       s.intersecting = false;
       s.cooldownUntil = 0;
@@ -1435,9 +1488,11 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
     for (const s of state.glyphStates) {
       s.random.phase = 0;
       s.random.alpha = 0;
+      s.random.needsRecovery = false;
       s.random.epoch += 1;
       s.intersection.phase = 0;
       s.intersection.alpha = 0;
+      s.intersection.needsRecovery = false;
       s.intersection.epoch += 1;
       s.intersecting = false;
       s.cooldownUntil = 0;
@@ -1456,6 +1511,7 @@ export async function setup(dims: { width: number; height: number }) {
   state.runtime.lastMorphPhaseUpdateMs = null;
   state.runtime.morphPathLut = null;
   state.runtime.morphPathKey = "";
+  state.runtime.prevPaused = state.params.paused;
 
   // Load tegaki bundle
   const TEGAKI_ROOT = new URL(
@@ -1527,12 +1583,14 @@ export async function setup(dims: { width: number; height: number }) {
           random: {
             phase: state.params.idlePhase,
             alpha: 1,
+            needsRecovery: false,
             epoch: 0,
             inProgress: false,
           },
           intersection: {
             phase: state.params.idlePhase,
             alpha: 1,
+            needsRecovery: false,
             epoch: 0,
             inProgress: false,
           },
@@ -1574,17 +1632,35 @@ export async function setup(dims: { width: number; height: number }) {
       while (!triggerCtx.isCanceled) {
         const rate = Math.max(0.1, state.params.triggerRate);
         await triggerCtx.waitSec(1 / rate);
-        if (state.params.paused) continue;
         if (state.params.fade <= 0) continue;
-        if (state.params.triggerMode !== "random") continue;
         if (state.drawableIndices.length === 0) continue;
+
+        const minD = Math.max(0.05, state.params.minDuration);
+        const maxD = Math.max(minD, state.params.maxDuration);
+
+        if (state.params.paused) {
+          const trackName = activeTrackName();
+          const recoveryCandidates = state.drawableIndices.filter((idx) => {
+            const track = getTrack(state.glyphStates[idx]!, trackName);
+            return track.needsRecovery && !track.inProgress;
+          });
+          if (recoveryCandidates.length === 0) continue;
+
+          const pick = recoveryCandidates[
+            Math.floor(triggerCtx.random() * recoveryCandidates.length)
+          ]!;
+          const gs = state.glyphStates[pick]!;
+          const duration = minD + triggerCtx.random() * (maxD - minD);
+          scheduleRamp(gs, trackName, duration, "recovery");
+          continue;
+        }
+
+        if (state.params.triggerMode !== "random") continue;
 
         const pick = state.drawableIndices[
           Math.floor(triggerCtx.random() * state.drawableIndices.length)
         ]!;
         const gs = state.glyphStates[pick]!;
-        const minD = Math.max(0.05, state.params.minDuration);
-        const maxD = Math.max(minD, state.params.maxDuration);
         const duration = minD + triggerCtx.random() * (maxD - minD);
 
         scheduleRamp(gs, "random", duration);
@@ -1606,6 +1682,7 @@ export async function setup(dims: { width: number; height: number }) {
 export function draw(p5: P5GPU, autoClear = true) {
   if (autoClear) p5.clear();
   updateMorphPhaseAccumulators();
+  updatePausedRecoveryState();
 
   const [ir, ig, ib] = hexToRgb(state.params.inkColor);
   const fade = state.params.fade;
