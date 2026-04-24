@@ -115,6 +115,54 @@ export const macroDefs: MacroDef<number>[] = [
       state.params.fade = v;
     },
   },
+  {
+    key: "orbitRadius",
+    defaultValue: 375,
+    opts: { min: 20, max: 600, step: 1, label: "O Radius" },
+    apply: (v) => {
+      state.params.baseOrbitRadius = v;
+    },
+  },
+  {
+    key: "orbitSineAmp",
+    defaultValue: 174,
+    opts: { min: 0, max: 300, step: 1, label: "O Sine Amp" },
+    apply: (v) => {
+      state.params.orbitAmplitude = v;
+    },
+  },
+  {
+    key: "orbitSineFreq",
+    defaultValue: 0.115,
+    opts: { min: 0, max: 2, step: 0.005, label: "O Sine Freq" },
+    apply: (v) => {
+      state.params.orbitFrequency = v;
+    },
+  },
+  {
+    key: "orbitAngularSpeed",
+    defaultValue: 0.1,
+    opts: { min: -2, max: 2, step: 0.01, label: "O Angular Speed" },
+    apply: (v) => {
+      state.params.orbitAngularSpeed = v;
+    },
+  },
+  {
+    key: "pulseIntensity",
+    defaultValue: 159,
+    opts: { min: 0, max: 300, step: 1, label: "Pulse Intensity" },
+    apply: (v) => {
+      state.params.pulseIntensity = v;
+    },
+  },
+  {
+    key: "pulseFreq",
+    defaultValue: 1.0,
+    opts: { min: 0, max: 20, step: 0.1, label: "Pulse Freq" },
+    apply: (v) => {
+      state.params.pulseRate = v;
+    },
+  },
 ];
 
 export function setup(): void {

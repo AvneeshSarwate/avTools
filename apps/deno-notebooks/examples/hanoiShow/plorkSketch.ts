@@ -12,10 +12,10 @@ import {
   requestWebGpuDevice,
 } from "../../window/mod.ts";
 import {
-  FeedbackNode,
   PassthruEffect,
   selectShaderFxFormat,
   type ShaderEffect,
+  type ShaderSource,
 } from "@avtools/shader-fx/raw";
 import { AlphaScaleEffect } from "@avtools/shader-fx/generated-raw/shaders/alphaScale.frag.raw.generated.ts";
 import { AlphaTimeTagEffect } from "@avtools/shader-fx/generated-raw/shaders/alphaTimeTag.frag.raw.generated.ts";
@@ -66,8 +66,8 @@ const paramDefs = {
     orbit: {
       _folder: "Orbit",
       orbitRadius: { value: 150, min: 0, max: 400, step: 1 },
-      orbitSpeed: { value: 1.0, min: -5, max: 5, step: 0.05 },
-      orbitPhase: { value: 0, min: 0, max: 1, step: 0.01 },
+      orbitSpeed: { value: 1.0, min: -3.5, max: 3.5, step: 0.01 },
+      orbitPhase: { value: 0, min: -1, max: 1, step: 0.01 },
       orbitCircleRadius: { value: 15, min: 1, max: 100, step: 1 },
     },
     walk: {
@@ -81,18 +81,20 @@ const paramDefs = {
   center: {
     _folder: "Center Circle",
     centerOn: { value: true },
-    centerRadius: { value: 30, min: 1, max: 200, step: 1 },
+    centerRadius: { value: 30, min: 1, max: 500, step: 1 },
     centerHue: { value: 0, min: 0, max: 360, step: 1 },
   },
   floodFill: {
     _folder: "Flood Fill",
     alphaThreshold: { value: 0.99, min: 0, max: 1, step: 0.01 },
     useDisk: { value: true },
-    diskRadius: { value: 4, min: 1, max: 10, step: 1 },
+    diskRadius: { value: 4, min: 1, max: 40, step: 1 },
+    iterations: { value: 1, min: 1, max: 8, step: 1 },
+    skipDistance: { value: 0, min: 0, max: 8, step: 1 },
   },
   bloom: {
     _folder: "Bloom",
-    bloomOn: { value: true },
+    bloomOn: { value: false },
     preBlackLevel: { value: 0.05, min: 0, max: 1, step: 0.01 },
     preBrightness: { value: 2.0, min: 0, max: 10, step: 0.1 },
     bloomThreshold: { value: 0.12, min: 0, max: 1, step: 0.01 },
@@ -141,6 +143,8 @@ type SketchParams = {
   alphaThreshold: number;
   useDisk: boolean;
   diskRadius: number;
+  iterations: number;
+  skipDistance: number;
   startAngle: number;
   orbitRad: number;
   bloomOn: boolean;
@@ -178,6 +182,12 @@ interface WalkCircle {
 }
 
 type FloodFillChain = Awaited<ReturnType<typeof createFloodFillChain>>;
+type FloodFillStepUniforms = {
+  diskRadius: number;
+  useDisk: number;
+  skipDistance: number;
+  currentPhase: number;
+};
 
 const paramSystem = buildParamSystem(paramDefs);
 
@@ -492,17 +502,23 @@ export function draw(
   const stepUniforms = {
     diskRadius: state.params.diskRadius,
     useDisk: state.params.useDisk ? 1 : 0,
+    skipDistance: state.params.skipDistance,
     currentPhase: recencyPhase,
   };
-  floodFill.floodFillSeed.setUniforms(stepUniforms);
-  floodFill.floodFill.setUniforms(stepUniforms);
+  const floodFillTerminal = renderFloodFillIterations(
+    floodFill,
+    stepUniforms,
+    state.params.iterations,
+  );
+  floodFill.display.setSrcs({ src: floodFillTerminal });
+  floodFill.display.render();
 
   let terminal: ShaderEffect = floodFill.display;
 
   if (!state.params.bloomOn) {
     floodFill.alphaScale.setSrcs({ src: terminal });
     floodFill.alphaScale.setUniforms({ opacity: fade });
-    floodFill.alphaScale.renderAll();
+    floodFill.alphaScale.render();
     return floodFill.alphaScale.output;
   }
 
@@ -550,22 +566,56 @@ export function draw(
       terminal = floodFill.display;
       break;
     case "colorRemove":
+      floodFill.colorRemove.render();
       terminal = floodFill.colorRemove;
       break;
     case "preprocess":
+      floodFill.colorRemove.render();
+      floodFill.bloomPreprocess.render();
       terminal = floodFill.bloomPreprocess;
       break;
     case "bloom":
+      floodFill.colorRemove.render();
+      floodFill.bloomPreprocess.render();
+      for (const down of floodFill.downs) {
+        down.render();
+      }
+      for (const blur of floodFill.hBlurs) {
+        blur.render();
+      }
+      for (const blur of floodFill.vBlurs) {
+        blur.render();
+      }
+      for (const up of floodFill.upComposites) {
+        up.render();
+      }
+      floodFill.bloomToFullRes.render();
       terminal = floodFill.bloomToFullRes;
       break;
     default:
+      floodFill.colorRemove.render();
+      floodFill.bloomPreprocess.render();
+      for (const down of floodFill.downs) {
+        down.render();
+      }
+      for (const blur of floodFill.hBlurs) {
+        blur.render();
+      }
+      for (const blur of floodFill.vBlurs) {
+        blur.render();
+      }
+      for (const up of floodFill.upComposites) {
+        up.render();
+      }
+      floodFill.bloomToFullRes.render();
+      floodFill.bloomComposite.render();
       terminal = floodFill.bloomComposite;
       break;
   }
 
   floodFill.alphaScale.setSrcs({ src: terminal });
   floodFill.alphaScale.setUniforms({ opacity: fade });
-  floodFill.alphaScale.renderAll();
+  floodFill.alphaScale.render();
   return floodFill.alphaScale.output;
 }
 
@@ -587,9 +637,63 @@ function disposeFloodFill(): void {
   const floodFill = state.runtime.floodFill;
   if (!floodFill) return;
   floodFill.alphaScale.dispose();
-  floodFill.bloomComposite.disposeAll();
+  floodFill.bloomComposite.dispose();
+  floodFill.bloomToFullRes.dispose();
+  for (const up of floodFill.upComposites) {
+    up.dispose();
+  }
+  for (const blur of floodFill.vBlurs) {
+    blur.dispose();
+  }
+  for (const blur of floodFill.hBlurs) {
+    blur.dispose();
+  }
+  for (const down of floodFill.downs) {
+    down.dispose();
+  }
+  floodFill.bloomPreprocess.dispose();
+  floodFill.colorRemove.dispose();
+  floodFill.display.dispose();
+  floodFill.floodFillPong.dispose();
+  floodFill.floodFillPing.dispose();
+  floodFill.feedbackStore.dispose();
+  floodFill.timeStamper.dispose();
   floodFill.placeholder.destroy();
   state.runtime.floodFill = null;
+}
+
+function renderFloodFillIterations(
+  floodFill: FloodFillChain,
+  stepUniforms: FloodFillStepUniforms,
+  requestedIterations: number,
+): ShaderEffect {
+  const iterations = Math.max(1, Math.round(requestedIterations));
+  floodFill.timeStamper.render();
+  floodFill.floodFillPing.setUniforms(stepUniforms);
+  floodFill.floodFillPong.setUniforms(stepUniforms);
+
+  const initialFeedback: ShaderSource = floodFill.feedbackPrimed
+    ? floodFill.feedbackStore
+    : floodFill.timeStamper;
+
+  let terminal: ShaderEffect = floodFill.floodFillPing;
+  for (let i = 0; i < iterations; i += 1) {
+    const step = i % 2 === 0 ? floodFill.floodFillPing : floodFill.floodFillPong;
+    const feedbackSrc = i === 0
+      ? initialFeedback
+      : (i % 2 === 0 ? floodFill.floodFillPong : floodFill.floodFillPing);
+    step.setSrcs({
+      seed: floodFill.timeStamper,
+      feedback: feedbackSrc,
+    });
+    step.render();
+    terminal = step;
+  }
+
+  floodFill.feedbackStore.setSrcs({ src: terminal });
+  floodFill.feedbackStore.render();
+  floodFill.feedbackPrimed = true;
+  return terminal;
 }
 
 function drawCircles(p5: P5GPU): void {
@@ -655,36 +759,27 @@ async function createFloodFillChain(
     format,
     CLEAR_COLOR,
   );
-  const floodFillSeed = new FloodFillStepEffect(
+  const feedbackStore = new PassthruEffect(
     device,
-    { seed: timeStamper, feedback: timeStamper },
+    { src: placeholder },
     width,
     height,
     format,
     CLEAR_COLOR,
     "nearest",
   );
-  const feedbackSeed = new PassthruEffect(
+  const floodFillPing = new FloodFillStepEffect(
     device,
-    { src: floodFillSeed },
+    { seed: timeStamper, feedback: feedbackStore },
     width,
     height,
     format,
     CLEAR_COLOR,
     "nearest",
   );
-  const feedback = new FeedbackNode(
+  const floodFillPong = new FloodFillStepEffect(
     device,
-    feedbackSeed,
-    width,
-    height,
-    format,
-    CLEAR_COLOR,
-    "nearest",
-  );
-  const floodFill = new FloodFillStepEffect(
-    device,
-    { seed: timeStamper, feedback },
+    { seed: timeStamper, feedback: floodFillPing },
     width,
     height,
     format,
@@ -693,7 +788,7 @@ async function createFloodFillChain(
   );
   const display = new FloodFillDisplayEffect(
     device,
-    { src: floodFill },
+    { src: floodFillPing },
     width,
     height,
     format,
@@ -811,18 +906,19 @@ async function createFloodFillChain(
   );
   alphaScale.setUniforms({ opacity: 1.0 });
 
-  feedback.setFeedbackSrc(floodFill);
-
   return {
     placeholder,
     timeStamper,
-    floodFillSeed,
-    floodFill,
+    feedbackStore,
+    feedbackPrimed: false,
+    floodFillPing,
+    floodFillPong,
     display,
     colorRemove,
     bloomPreprocess,
     mipWidths,
     mipHeights,
+    downs,
     hBlurs,
     vBlurs,
     upComposites,

@@ -34,7 +34,12 @@ import {
   type WindowTweakpane,
   type PaneBinding,
 } from "../window/mod.ts";
-import { FeedbackNode, PassthruEffect, selectShaderFxFormat, type ShaderEffect } from "@avtools/shader-fx/raw";
+import {
+  PassthruEffect,
+  selectShaderFxFormat,
+  type ShaderEffect,
+  type ShaderSource,
+} from "@avtools/shader-fx/raw";
 import { AlphaTimeTagEffect } from "@avtools/shader-fx/generated-raw/shaders/alphaTimeTag.frag.raw.generated.ts";
 import { BloomPreprocessEffect } from "@avtools/shader-fx/generated-raw/shaders/bloomPreprocess.frag.raw.generated.ts";
 import { ColorRemoveEffect } from "@avtools/shader-fx/generated-raw/shaders/colorRemove.frag.raw.generated.ts";
@@ -115,6 +120,8 @@ const paramDefs = {
     alphaThreshold: { value: 0.99, min: 0, max: 1, step: 0.01 },
     useDisk: { value: true },
     diskRadius: { value: 4, min: 1, max: 10, step: 1 },
+    iterations: { value: 1, min: 1, max: 8, step: 1 },
+    skipDistance: { value: 0, min: 0, max: 8, step: 1 },
   },
   bloom: {
     _folder: "Bloom",
@@ -154,6 +161,8 @@ type SketchParams = {
   alphaThreshold: number;
   useDisk: boolean;
   diskRadius: number;
+  iterations: number;
+  skipDistance: number;
   startAngle: number;
   orbitRad: number;
   bloomOn: boolean;
@@ -204,6 +213,13 @@ interface CircleState {
   radius: number;
   handle: { cancel: () => void; handleCancel: (f: () => void) => () => void };
 }
+
+type FloodFillStepUniforms = {
+  diskRadius: number;
+  useDisk: number;
+  skipDistance: number;
+  currentPhase: number;
+};
 
 const activeCircles: Set<CircleState> = new Set();
 
@@ -678,10 +694,16 @@ function renderFrame() {
   const stepUniforms = {
     diskRadius: params.diskRadius,
     useDisk: params.useDisk ? 1 : 0,
+    skipDistance: params.skipDistance,
     currentPhase: recencyPhase,
   };
-  floodFill.floodFillSeed.setUniforms(stepUniforms);
-  floodFill.floodFill.setUniforms(stepUniforms);
+  const floodFillTerminal = renderFloodFillIterations(
+    floodFill,
+    stepUniforms,
+    params.iterations,
+  );
+  floodFill.display.setSrcs({ src: floodFillTerminal });
+  floodFill.display.render();
 
   if (params.bloomOn) {
     floodFill.colorRemove.setUniforms({
@@ -714,23 +736,51 @@ function renderFrame() {
 
     // Debug views
     if (params.bloomDebug === "display") {
-      floodFill.display.renderAll();
       return floodFill.display;
     } else if (params.bloomDebug === "colorRemove") {
-      floodFill.colorRemove.renderAll();
+      floodFill.colorRemove.render();
       return floodFill.colorRemove;
     } else if (params.bloomDebug === "preprocess") {
-      floodFill.bloomPreprocess.renderAll();
+      floodFill.colorRemove.render();
+      floodFill.bloomPreprocess.render();
       return floodFill.bloomPreprocess;
     } else if (params.bloomDebug === "bloom") {
-      floodFill.bloomToFullRes.renderAll();
+      floodFill.colorRemove.render();
+      floodFill.bloomPreprocess.render();
+      for (const down of floodFill.downs) {
+        down.render();
+      }
+      for (const blur of floodFill.hBlurs) {
+        blur.render();
+      }
+      for (const blur of floodFill.vBlurs) {
+        blur.render();
+      }
+      for (const up of floodFill.upComposites) {
+        up.render();
+      }
+      floodFill.bloomToFullRes.render();
       return floodFill.bloomToFullRes;
     }
 
-    floodFill.bloomComposite.renderAll();
+    floodFill.colorRemove.render();
+    floodFill.bloomPreprocess.render();
+    for (const down of floodFill.downs) {
+      down.render();
+    }
+    for (const blur of floodFill.hBlurs) {
+      blur.render();
+    }
+    for (const blur of floodFill.vBlurs) {
+      blur.render();
+    }
+    for (const up of floodFill.upComposites) {
+      up.render();
+    }
+    floodFill.bloomToFullRes.render();
+    floodFill.bloomComposite.render();
     return floodFill.bloomComposite;
   } else {
-    floodFill.display.renderAll();
     return floodFill.display;
   }
 }
@@ -739,9 +789,63 @@ function cleanup(): void {
   rootAnim.cancel();
   animationHandle.disconnect();
   animationBridge.shutdown();
-  floodFill.bloomComposite.disposeAll();
+  floodFill.bloomComposite.dispose();
+  floodFill.bloomToFullRes.dispose();
+  for (const up of floodFill.upComposites) {
+    up.dispose();
+  }
+  for (const blur of floodFill.vBlurs) {
+    blur.dispose();
+  }
+  for (const blur of floodFill.hBlurs) {
+    blur.dispose();
+  }
+  for (const down of floodFill.downs) {
+    down.dispose();
+  }
+  floodFill.bloomPreprocess.dispose();
+  floodFill.colorRemove.dispose();
+  floodFill.display.dispose();
+  floodFill.floodFillPong.dispose();
+  floodFill.floodFillPing.dispose();
+  floodFill.feedbackStore.dispose();
+  floodFill.timeStamper.dispose();
   floodFill.placeholder.destroy();
   p5.dispose();
+}
+
+function renderFloodFillIterations(
+  floodFill: Awaited<ReturnType<typeof createFloodFillChain>>,
+  stepUniforms: FloodFillStepUniforms,
+  requestedIterations: number,
+): ShaderEffect {
+  const iterations = Math.max(1, Math.round(requestedIterations));
+  floodFill.timeStamper.render();
+  floodFill.floodFillPing.setUniforms(stepUniforms);
+  floodFill.floodFillPong.setUniforms(stepUniforms);
+
+  const initialFeedback: ShaderSource = floodFill.feedbackPrimed
+    ? floodFill.feedbackStore
+    : floodFill.timeStamper;
+
+  let terminal: ShaderEffect = floodFill.floodFillPing;
+  for (let i = 0; i < iterations; i += 1) {
+    const step = i % 2 === 0 ? floodFill.floodFillPing : floodFill.floodFillPong;
+    const feedbackSrc = i === 0
+      ? initialFeedback
+      : (i % 2 === 0 ? floodFill.floodFillPong : floodFill.floodFillPing);
+    step.setSrcs({
+      seed: floodFill.timeStamper,
+      feedback: feedbackSrc,
+    });
+    step.render();
+    terminal = step;
+  }
+
+  floodFill.feedbackStore.setSrcs({ src: terminal });
+  floodFill.feedbackStore.render();
+  floodFill.feedbackPrimed = true;
+  return terminal;
 }
 
 // ============================================================================
@@ -800,10 +904,10 @@ function drawCircle(): void {
 
 // ============================================================================
 // 12. SHADER CHAIN SETUP
-//     Builds a flood-fill-with-time-decay DAG: source → AlphaTimeTag (stamp
-//     draw time into alpha) → FloodFillStep(seed) → Passthru → FeedbackNode
-//     → FloodFillStep(feedback) → FloodFillDisplay (terminal). Uses rgba16float
-//     for feedback precision. Terminal is returned from renderFrame.
+//     Builds a flood-fill-with-time-decay graph: source → AlphaTimeTag (stamp
+//     draw time into alpha) → iterative FloodFillStep ping-pong →
+//     FloodFillDisplay (terminal). A passthrough buffer stores the previous
+//     frame's result so iteration count can vary at runtime.
 // ============================================================================
 
 async function createFloodFillChain(device: GPUDevice, width: number, height: number) {
@@ -819,29 +923,24 @@ async function createFloodFillChain(device: GPUDevice, width: number, height: nu
     { src: placeholder },
     width, height, format, CLEAR_COLOR,
   );
-  const floodFillSeed = new FloodFillStepEffect(
+  const feedbackStore = new PassthruEffect(
     device,
-    { seed: timeStamper, feedback: timeStamper },
+    { src: placeholder },
     width, height, format, CLEAR_COLOR, "nearest",
   );
-  const feedbackSeed = new PassthruEffect(
+  const floodFillPing = new FloodFillStepEffect(
     device,
-    { src: floodFillSeed },
+    { seed: timeStamper, feedback: feedbackStore },
     width, height, format, CLEAR_COLOR, "nearest",
   );
-  const feedback = new FeedbackNode(
+  const floodFillPong = new FloodFillStepEffect(
     device,
-    feedbackSeed,
-    width, height, format, CLEAR_COLOR, "nearest",
-  );
-  const floodFill = new FloodFillStepEffect(
-    device,
-    { seed: timeStamper, feedback },
+    { seed: timeStamper, feedback: floodFillPing },
     width, height, format, CLEAR_COLOR, "nearest",
   );
   const display = new FloodFillDisplayEffect(
     device,
-    { src: floodFill },
+    { src: floodFillPing },
     width, height, format, CLEAR_COLOR,
   );
 
@@ -919,18 +1018,19 @@ async function createFloodFillChain(device: GPUDevice, width: number, height: nu
   );
   bloomComposite.setUniforms({ mode: 1, opacity: 1.0 }); // screen blend
 
-  feedback.setFeedbackSrc(floodFill);
-
   return {
     placeholder,
     timeStamper,
-    floodFillSeed,
-    floodFill,
+    feedbackStore,
+    feedbackPrimed: false,
+    floodFillPing,
+    floodFillPong,
     display,
     colorRemove,
     bloomPreprocess,
     mipWidths,
     mipHeights,
+    downs,
     hBlurs,
     vBlurs,
     upComposites,

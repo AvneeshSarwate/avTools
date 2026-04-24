@@ -263,6 +263,38 @@ export const macroDefs: MacroDef<number>[] = [
       state.params.fade = v;
     },
   },
+  {
+    key: "travelSpeed",
+    defaultValue: 180,
+    opts: { min: 50, max: 2000, step: 10, label: "Travel Speed" },
+    apply: (v) => {
+      state.params.travelSpeed = v;
+    },
+  },
+  {
+    key: "angleDeviation",
+    defaultValue: 6,
+    opts: { min: 0, max: 60, step: 1, label: "Angle Dev (°)" },
+    apply: (v) => {
+      state.params.angleDeviation = v;
+    },
+  },
+  {
+    key: "textSize",
+    defaultValue: 28,
+    opts: { min: 12, max: 400, step: 1, label: "Text Size" },
+    apply: (v) => {
+      state.params.textSize = v;
+    },
+  },
+  {
+    key: "rotationSpeed",
+    defaultValue: 0.25,
+    opts: { min: -10, max: 10, step: 0.05, label: "Rotation Speed" },
+    apply: (v) => {
+      state.params.rotationSpeed = v;
+    },
+  },
 ];
 
 // ── Setup / cleanup ─────────────────────────────────────────────────

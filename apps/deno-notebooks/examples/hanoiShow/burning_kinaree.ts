@@ -207,11 +207,51 @@ export const state = {
 
 export const macroDefs: MacroDef<number>[] = [
   {
+    key: "launchRate",
+    defaultValue: 10.5,
+    opts: { min: 0, max: 20, step: 0.1, label: "Launch Rate (Hz)" },
+    apply: (v) => {
+      state.params.rects.launchRate = v;
+    },
+  },
+  {
     key: "fade",
     defaultValue: 0.0,
     opts: { min: 0, max: 1, step: 0.001, label: "Scene Fade" },
     apply: (v) => {
       state.params.fade = v;
+    },
+  },
+  {
+    key: "travelSpeed",
+    defaultValue: 1170,
+    opts: { min: 50, max: 2000, step: 10, label: "Travel Speed" },
+    apply: (v) => {
+      state.params.rects.travelSpeed = v;
+    },
+  },
+  {
+    key: "angleDeviation",
+    defaultValue: 20,
+    opts: { min: 0, max: 60, step: 1, label: "Angle Dev (°)" },
+    apply: (v) => {
+      state.params.rects.angleDeviation = v;
+    },
+  },
+  {
+    key: "thickness",
+    defaultValue: 44,
+    opts: { min: 4, max: 120, step: 1, label: "Thickness" },
+    apply: (v) => {
+      state.params.rects.thickness = v;
+    },
+  },
+  {
+    key: "rotationSpeed",
+    defaultValue: 3.0,
+    opts: { min: -10, max: 10, step: 0.05, label: "Rotation Speed" },
+    apply: (v) => {
+      state.params.rects.rotationSpeed = v;
     },
   },
 ];

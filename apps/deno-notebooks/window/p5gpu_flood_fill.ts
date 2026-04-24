@@ -1,9 +1,9 @@
 /// <reference lib="dom" />
 
 import {
-  FeedbackNode,
   PassthruEffect,
   selectShaderFxFormat,
+  type ShaderEffect,
   type ShaderSource,
 } from "@avtools/shader-fx/raw";
 import { AlphaTimeTagEffect } from "@avtools/shader-fx/generated-raw/shaders/alphaTimeTag.frag.raw.generated.ts";
@@ -28,10 +28,9 @@ export interface FloodFillGraph {
   readonly height: number;
   readonly format: GPUTextureFormat;
   readonly timeStamper: AlphaTimeTagEffect;
-  readonly floodFillSeed: FloodFillStepEffect;
-  readonly feedbackSeed: PassthruEffect;
-  readonly feedback: FeedbackNode;
-  readonly floodFill: FloodFillStepEffect;
+  readonly feedbackStore: PassthruEffect;
+  readonly floodFillPing: FloodFillStepEffect;
+  readonly floodFillPong: FloodFillStepEffect;
   readonly display: FloodFillDisplayEffect;
   setSource(source: ShaderSource): void;
   render(time: number): FloodFillDisplayEffect;
@@ -62,59 +61,51 @@ export async function createFloodFillGraph(
     format,
     clearColor,
   );
-  const floodFillSeed = new FloodFillStepEffect(
+  const feedbackStore = new PassthruEffect(
     device,
-    { seed: timeStamper, feedback: timeStamper },
+    { src: placeholderSource },
     options.width,
     options.height,
     format,
     clearColor,
+    "nearest",
   );
-  const feedbackSeed = new PassthruEffect(
+  const floodFillPing = new FloodFillStepEffect(
     device,
-    { src: floodFillSeed },
+    { seed: timeStamper, feedback: feedbackStore },
     options.width,
     options.height,
     format,
     clearColor,
-    "linear",
+    "nearest",
   );
-  const feedback = new FeedbackNode(
+  const floodFillPong = new FloodFillStepEffect(
     device,
-    feedbackSeed,
+    { seed: timeStamper, feedback: floodFillPing },
     options.width,
     options.height,
     format,
     clearColor,
-    "linear",
-  );
-  const floodFill = new FloodFillStepEffect(
-    device,
-    { seed: timeStamper, feedback },
-    options.width,
-    options.height,
-    format,
-    clearColor,
+    "nearest",
   );
   const display = new FloodFillDisplayEffect(
     device,
-    { src: floodFill },
+    { src: floodFillPing },
     options.width,
     options.height,
     format,
     clearColor,
   );
-  feedback.setFeedbackSrc(floodFill);
+  let feedbackPrimed = false;
 
   return {
     width: options.width,
     height: options.height,
     format,
     timeStamper,
-    floodFillSeed,
-    feedbackSeed,
-    feedback,
-    floodFill,
+    feedbackStore,
+    floodFillPing,
+    floodFillPong,
     display,
     setSource(source: ShaderSource): void {
       timeStamper.setSrcs({ src: source });
@@ -125,21 +116,47 @@ export async function createFloodFillGraph(
         drawTime: time,
         recencyPeriod: DEFAULT_RECENCY_PERIOD_SEC,
       });
-      floodFillSeed.setUniforms({
+      const stepUniforms = {
         diskRadius: 1,
         useDisk: 0,
+        skipDistance: 0,
         currentPhase,
-      });
-      floodFill.setUniforms({
-        diskRadius: 1,
-        useDisk: 0,
-        currentPhase,
-      });
-      display.renderAll();
+      };
+      timeStamper.render();
+      floodFillPing.setUniforms(stepUniforms);
+      floodFillPong.setUniforms(stepUniforms);
+
+      const initialFeedback: ShaderSource = feedbackPrimed
+        ? feedbackStore
+        : timeStamper;
+
+      let terminal: ShaderEffect = floodFillPing;
+      for (let i = 0; i < 1; i += 1) {
+        const step = i % 2 === 0 ? floodFillPing : floodFillPong;
+        const feedbackSrc = i === 0
+          ? initialFeedback
+          : (i % 2 === 0 ? floodFillPong : floodFillPing);
+        step.setSrcs({
+          seed: timeStamper,
+          feedback: feedbackSrc,
+        });
+        step.render();
+        terminal = step;
+      }
+
+      feedbackStore.setSrcs({ src: terminal });
+      feedbackStore.render();
+      feedbackPrimed = true;
+      display.setSrcs({ src: terminal });
+      display.render();
       return display;
     },
     dispose(): void {
-      display.disposeAll();
+      display.dispose();
+      floodFillPong.dispose();
+      floodFillPing.dispose();
+      feedbackStore.dispose();
+      timeStamper.dispose();
       if (ownsPlaceholderSource && "destroy" in placeholderSource) {
         placeholderSource.destroy();
       }

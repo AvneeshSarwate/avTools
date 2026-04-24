@@ -30,6 +30,7 @@ export const FloodFillStepFragmentSources = [
 struct FloodFillStepUniforms {
   diskRadius: f32,
   useDisk: f32,
+  skipDistance: f32,
   currentPhase: f32,
 };
 
@@ -59,6 +60,7 @@ fn pass0(uv: vec2f, uniforms: FloodFillStepUniforms, seed: texture_2d<f32>, seed
   let useDisk = uniforms.useDisk > 0.5;
   let r = select(1, i32(max(1.0, uniforms.diskRadius)), useDisk);
   let rSq = uniforms.diskRadius * uniforms.diskRadius;
+  let stride = i32(max(0.0, uniforms.skipDistance)) + 1;
 
   for (var y = -r; y <= r; y = y + 1) {
     for (var x = -r; x <= r; x = x + 1) {
@@ -66,7 +68,11 @@ fn pass0(uv: vec2f, uniforms: FloodFillStepUniforms, seed: texture_2d<f32>, seed
         let d = f32(x * x + y * y);
         if (d > rSq) { continue; }
       }
-      let neighborCoord = clamp(feedbackCoord + vec2i(x, y), vec2i(0), feedbackDims - vec2i(1));
+      let neighborCoord = clamp(
+        feedbackCoord + vec2i(x, y) * stride,
+        vec2i(0),
+        feedbackDims - vec2i(1),
+      );
       let candidate = textureLoad(feedback, neighborCoord, 0);
       if (candidate.a <= 0.0) {
         continue;
@@ -128,6 +134,11 @@ export const FloodFillStepUniformMeta: UniformDescriptor[] = [
     bindingName: 'uniforms_useDisk',
   },
   {
+    name: 'skipDistance',
+    kind: 'f32',
+    bindingName: 'uniforms_skipDistance',
+  },
+  {
     name: 'currentPhase',
     kind: 'f32',
     bindingName: 'uniforms_currentPhase',
@@ -137,16 +148,18 @@ export const FloodFillStepUniformMeta: UniformDescriptor[] = [
 export interface FloodFillStepUniforms {
   diskRadius: number;
   useDisk: number;
+  skipDistance: number;
   currentPhase: number;
 }
 
 export const FloodFillStepUniformsDefaults: FloodFillStepUniforms = {
   diskRadius: 0,
   useDisk: 0,
+  skipDistance: 0,
   currentPhase: 0,
 };
 
-const FloodFillStepUniformsLayoutSize = 12;
+const FloodFillStepUniformsLayoutSize = 16;
 
 function packFloodFillStepUniforms(floatView: Float32Array, intView: Int32Array, uintView: Uint32Array, floatOffset: number, value: FloodFillStepUniforms): void {
   {
@@ -161,6 +174,11 @@ function packFloodFillStepUniforms(floatView: Float32Array, intView: Int32Array,
   }
   {
     const base = floatOffset + 2;
+    const raw = value.skipDistance;
+    floatView[base] = raw !== undefined ? Number(raw) : 0;
+  }
+  {
+    const base = floatOffset + 3;
     const raw = value.currentPhase;
     floatView[base] = raw !== undefined ? Number(raw) : 0;
   }
@@ -283,13 +301,16 @@ export class FloodFillStepEffect extends CustomShaderEffect<FloodFillStepUniform
     });
   }
 
-  override setUniforms(uniforms: { diskRadius?: Dynamic<number>, useDisk?: Dynamic<number>, currentPhase?: Dynamic<number> }): void {
+  override setUniforms(uniforms: { diskRadius?: Dynamic<number>, useDisk?: Dynamic<number>, skipDistance?: Dynamic<number>, currentPhase?: Dynamic<number> }): void {
     const record: ShaderUniforms = {};
     if (uniforms.diskRadius !== undefined) {
       record['diskRadius'] = uniforms.diskRadius;
     }
     if (uniforms.useDisk !== undefined) {
       record['useDisk'] = uniforms.useDisk;
+    }
+    if (uniforms.skipDistance !== undefined) {
+      record['skipDistance'] = uniforms.skipDistance;
     }
     if (uniforms.currentPhase !== undefined) {
       record['currentPhase'] = uniforms.currentPhase;
