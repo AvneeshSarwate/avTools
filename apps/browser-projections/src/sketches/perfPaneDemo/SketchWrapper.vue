@@ -83,6 +83,14 @@ const MOCK_REPLAY = {
       value: 0.5,
       opts: { min: 0, max: 1, step: 0.001, label: 'Scroll Speed' },
     },
+    {
+      type: 'addBinding',
+      id: 'b_bt_gate',
+      parentId: 'page_bt',
+      key: 'gateEnabled',
+      value: true,
+      opts: { label: 'Gate' },
+    },
   ],
 }
 

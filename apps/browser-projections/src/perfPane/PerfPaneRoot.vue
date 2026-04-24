@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, shallowRef, watch } from 'vue'
-import { coerceSliderValue, PerfPaneClient, type SliderModel } from './perfPaneClient'
+import { coerceSliderValue, PerfPaneClient, type SliderModel, type ToggleModel } from './perfPaneClient'
 import VerticalSlider from './components/VerticalSlider.vue'
+import ToggleButton from './components/ToggleButton.vue'
 
 const props = defineProps<{
   /** WebSocket URL. If provided, the component creates its own client when set. */
@@ -18,6 +19,10 @@ function setClient(c: PerfPaneClient) {
 
 function onSliderChange(slider: SliderModel, value: number, last: boolean) {
   client.value?.setSliderValue(slider, value, last)
+}
+
+function onToggleChange(toggle: ToggleModel, value: boolean, last: boolean) {
+  client.value?.setToggleValue(toggle, value, last)
 }
 
 function onMixerSliderChange(slider: SliderModel, value: number, last: boolean) {
@@ -132,18 +137,33 @@ defineExpose({ setClient })
               :slider="slider"
               :change-handler="(v, last) => onSliderChange(slider, v, last)"
             />
-            <div v-if="page.sliders.length === 0" class="perf-empty">
+            <ToggleButton
+              v-for="toggle in page.toggles"
+              :key="toggle.id"
+              :toggle="toggle"
+              :change-handler="(v, last) => onToggleChange(toggle, v, last)"
+            />
+            <div v-if="page.sliders.length === 0 && page.toggles.length === 0" class="perf-empty">
               no macros on this page
             </div>
           </div>
         </div>
       </div>
-      <div v-if="client.model.rootSliders.length > 0" class="perf-slider-row perf-root-row">
+      <div
+        v-if="client.model.rootSliders.length > 0 || client.model.rootToggles.length > 0"
+        class="perf-slider-row perf-root-row"
+      >
         <VerticalSlider
           v-for="slider in client.model.rootSliders"
           :key="slider.id"
           :slider="slider"
           :change-handler="(v, last) => onSliderChange(slider, v, last)"
+        />
+        <ToggleButton
+          v-for="toggle in client.model.rootToggles"
+          :key="toggle.id"
+          :toggle="toggle"
+          :change-handler="(v, last) => onToggleChange(toggle, v, last)"
         />
       </div>
     </template>

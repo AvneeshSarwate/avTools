@@ -53,10 +53,19 @@ export interface SliderModel {
   value: number
 }
 
+export interface ToggleModel {
+  id: string
+  parentId: string
+  key: string
+  label: string
+  value: boolean
+}
+
 export interface TabPageModel {
   id: string
   title: string
   sliders: SliderModel[]
+  toggles: ToggleModel[]
 }
 
 export interface TabModel {
@@ -78,6 +87,8 @@ export interface PerfPaneModel {
   mixerSliders: MixerSliderModel[]
   /** Sliders that live at the root (no tab container). */
   rootSliders: SliderModel[]
+  /** Boolean bindings that live at the root (no tab container). */
+  rootToggles: ToggleModel[]
 }
 
 /**
@@ -106,6 +117,7 @@ export class PerfPaneClient {
   readonly model: PerfPaneModel
   private ws: WsLike
   private sliderById = new Map<string, SliderModel>()
+  private toggleById = new Map<string, ToggleModel>()
   private tabPageParentOf = new Map<string, { tab: TabModel; pageIndex: number }>()
   private suppressSync = false
 
@@ -116,6 +128,7 @@ export class PerfPaneClient {
       tabs: [],
       mixerSliders: [],
       rootSliders: [],
+      rootToggles: [],
     }) as PerfPaneModel
 
     this.ws = typeof wsOrUrl === 'string' ? (new WebSocket(wsOrUrl) as WsLike) : wsOrUrl
@@ -145,7 +158,9 @@ export class PerfPaneClient {
       this.model.tabs = []
       this.model.mixerSliders = []
       this.model.rootSliders = []
+      this.model.rootToggles = []
       this.sliderById.clear()
+      this.toggleById.clear()
       this.tabPageParentOf.clear()
       for (const op of msg.operations) this.applyOp(op)
       return
@@ -162,6 +177,7 @@ export class PerfPaneClient {
             id: op.pageIds[i],
             title: p.title,
             sliders: [] as SliderModel[],
+            toggles: [] as ToggleModel[],
           })),
           selectedIndex: 0,
         }) as TabModel
@@ -172,30 +188,45 @@ export class PerfPaneClient {
         break
       }
       case 'addBinding': {
-        if (typeof op.value !== 'number') break
-        const slider: SliderModel = reactive({
-          id: op.id,
-          parentId: op.parentId,
-          key: op.key,
-          label: (op.opts.label as string) ?? op.key,
-          min: typeof op.opts.min === 'number' ? (op.opts.min as number) : 0,
-          max: typeof op.opts.max === 'number' ? (op.opts.max as number) : 1,
-          step: typeof op.opts.step === 'number' ? (op.opts.step as number) : 0.001,
-          value: op.value,
-        }) as SliderModel
-        this.sliderById.set(op.id, slider)
         const parent = this.tabPageParentOf.get(op.parentId)
-        if (parent) {
-          parent.tab.pages[parent.pageIndex].sliders.push(slider)
-          if (isSceneFadeSlider(op.key, slider.label)) {
-            this.model.mixerSliders.push({
-              id: `mixer_${slider.id}`,
-              label: parent.tab.pages[parent.pageIndex].title,
-              slider,
-            })
+        if (typeof op.value === 'number') {
+          const slider: SliderModel = reactive({
+            id: op.id,
+            parentId: op.parentId,
+            key: op.key,
+            label: (op.opts.label as string) ?? op.key,
+            min: typeof op.opts.min === 'number' ? (op.opts.min as number) : 0,
+            max: typeof op.opts.max === 'number' ? (op.opts.max as number) : 1,
+            step: typeof op.opts.step === 'number' ? (op.opts.step as number) : 0.001,
+            value: op.value,
+          }) as SliderModel
+          this.sliderById.set(op.id, slider)
+          if (parent) {
+            parent.tab.pages[parent.pageIndex].sliders.push(slider)
+            if (isSceneFadeSlider(op.key, slider.label)) {
+              this.model.mixerSliders.push({
+                id: `mixer_${slider.id}`,
+                label: parent.tab.pages[parent.pageIndex].title,
+                slider,
+              })
+            }
+          } else {
+            this.model.rootSliders.push(slider)
           }
-        } else {
-          this.model.rootSliders.push(slider)
+        } else if (typeof op.value === 'boolean') {
+          const toggle: ToggleModel = reactive({
+            id: op.id,
+            parentId: op.parentId,
+            key: op.key,
+            label: (op.opts.label as string) ?? op.key,
+            value: op.value,
+          }) as ToggleModel
+          this.toggleById.set(op.id, toggle)
+          if (parent) {
+            parent.tab.pages[parent.pageIndex].toggles.push(toggle)
+          } else {
+            this.model.rootToggles.push(toggle)
+          }
         }
         break
       }
@@ -205,6 +236,8 @@ export class PerfPaneClient {
           for (const [id, value] of Object.entries(op.values)) {
             const slider = this.sliderById.get(id)
             if (slider && typeof value === 'number') slider.value = value
+            const toggle = this.toggleById.get(id)
+            if (toggle && typeof value === 'boolean') toggle.value = value
           }
         } finally {
           this.suppressSync = false
@@ -218,14 +251,25 @@ export class PerfPaneClient {
           slider.value = op.value
           this.suppressSync = false
         }
+        const toggle = this.toggleById.get(op.id)
+        if (toggle && typeof op.value === 'boolean') {
+          this.suppressSync = true
+          toggle.value = op.value
+          this.suppressSync = false
+        }
         break
       }
       case 'setProperty': {
         const slider = this.sliderById.get(op.id)
-        if (!slider) break
-        if (op.prop === 'label' && typeof op.value === 'string') slider.label = op.value
-        if (op.prop === 'min' && typeof op.value === 'number') slider.min = op.value
-        if (op.prop === 'max' && typeof op.value === 'number') slider.max = op.value
+        if (slider) {
+          if (op.prop === 'label' && typeof op.value === 'string') slider.label = op.value
+          if (op.prop === 'min' && typeof op.value === 'number') slider.min = op.value
+          if (op.prop === 'max' && typeof op.value === 'number') slider.max = op.value
+        }
+        const toggle = this.toggleById.get(op.id)
+        if (toggle) {
+          if (op.prop === 'label' && typeof op.value === 'string') toggle.label = op.value
+        }
         break
       }
       // addFolder / addButton / addBlade / addSeparator / remove / dispose —
@@ -241,6 +285,12 @@ export class PerfPaneClient {
     slider.value = stepped
     if (this.suppressSync) return
     this.send({ type: 'valueChange', id: slider.id, key: slider.key, value: stepped, last })
+  }
+
+  setToggleValue(toggle: ToggleModel, value: boolean, last: boolean): void {
+    toggle.value = value
+    if (this.suppressSync) return
+    this.send({ type: 'valueChange', id: toggle.id, key: toggle.key, value, last })
   }
 
   private send(msg: ClientMessage): void {

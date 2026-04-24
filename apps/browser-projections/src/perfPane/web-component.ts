@@ -14,6 +14,7 @@ export { PerfPaneClient } from './perfPaneClient'
 export type {
   PerfPaneModel,
   SliderModel,
+  ToggleModel,
   TabModel,
   TabPageModel,
   WsLike,

@@ -184,9 +184,9 @@ export const state = {
     paused: false,
     glyphScale: 1.0, // 0–1, multiplies font scale; 0 = skip drawing
     pathMorph: 0.0, // 0 = laid-out text, 1 = shared target path
-    pathMode: "circle" as "circle" | "lissajous",
-    pathCenterX: 640,
-    pathCenterY: 360,
+    pathMode: "lissajous" as "circle" | "lissajous",
+    pathCenterX: 960,
+    pathCenterY: 540,
     pathUniformWidth: false,
     circleRadius: 220,
     lissajousAmpX: 260,
@@ -195,8 +195,8 @@ export const state = {
     lissajousFreqY: 2,
     lissajousPhaseX: 0,
     lissajousPhaseY: Math.PI / 2,
-    lissajousFreeRunPhaseX: false,
-    lissajousFreeRunPhaseY: false,
+    lissajousFreeRunPhaseX: true,
+    lissajousFreeRunPhaseY: true,
     lissajousPhaseSpeedX: 0,
     lissajousPhaseSpeedY: 0,
     showContourDebug: false, // draw body contour outlines as sanity check
@@ -215,7 +215,7 @@ export const state = {
     /** Draw the (mirrored-if-toggled) hand bboxes as a debug overlay. */
     showHandBBoxDebug: false,
   },
-  macros: {} as Record<string, number>,
+  macros: {} as Record<string, number | boolean>,
   glyphStates: [] as GlyphState[],
   drawableIndices: [] as number[],
   runtime: {
@@ -1268,13 +1268,61 @@ function drawGlyphAtPhase(
 
 // ── Tweakpane setup ─────────────────────────────────────────────────
 
-export const macroDefs: MacroDef<number>[] = [
+export const macroDefs: MacroDef<number | boolean>[] = [
   {
     key: "fade",
     defaultValue: 1.0,
     opts: { min: 0, max: 1, step: 0.001, label: "Scene Fade" },
     apply: (v) => {
-      state.params.fade = v;
+      state.params.fade = v as number;
+    },
+  },
+  {
+    key: "morph",
+    defaultValue: 0.0,
+    opts: { min: 0, max: 1, step: 0.001, label: "Morph" },
+    apply: (v) => {
+      state.params.pathMorph = v as number;
+    },
+  },
+  {
+    key: "lissajousPhaseSpeedX",
+    defaultValue: 0.0,
+    opts: { min: -TAU * 2, max: TAU * 2, step: 0.01, label: "Speed X" },
+    apply: (v) => {
+      state.params.lissajousPhaseSpeedX = v as number;
+    },
+  },
+  {
+    key: "lissajousPhaseSpeedY",
+    defaultValue: 0.0,
+    opts: { min: -TAU * 2, max: TAU * 2, step: 0.01, label: "Speed Y" },
+    apply: (v) => {
+      state.params.lissajousPhaseSpeedY = v as number;
+    },
+  },
+  {
+    key: "lissajousAmpX",
+    defaultValue: 260,
+    opts: { min: 0, max: 1600, step: 1, label: "Amp X" },
+    apply: (v) => {
+      state.params.lissajousAmpX = v as number;
+    },
+  },
+  {
+    key: "lissajousAmpY",
+    defaultValue: 180,
+    opts: { min: 0, max: 800, step: 1, label: "Amp Y" },
+    apply: (v) => {
+      state.params.lissajousAmpY = v as number;
+    },
+  },
+  {
+    key: "paused",
+    defaultValue: false,
+    opts: { label: "Pause triggers" },
+    apply: (v) => {
+      state.params.paused = v as boolean;
     },
   },
 ];
@@ -1446,7 +1494,7 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
   });
   pane.addBinding(state.params, "widthScale", {
     min: 0.2,
-    max: 5.5,
+    max: 9.5,
     step: 0.05,
     label: "Width x",
   });
