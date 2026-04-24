@@ -30,7 +30,19 @@ export const FloodFillStepFragmentSources = [
 struct FloodFillStepUniforms {
   diskRadius: f32,
   useDisk: f32,
+  currentPhase: f32,
 };
+
+const RECENCY_TAG_EPSILON: f32 = 0.00048828125;
+
+fn decodeRecencyTag(tag: f32) -> f32 {
+  return clamp((tag - RECENCY_TAG_EPSILON) / (1.0 - RECENCY_TAG_EPSILON), 0.0, 1.0);
+}
+
+fn wrappedAge(currentPhase: f32, tag: f32) -> f32 {
+  let candidatePhase = decodeRecencyTag(tag);
+  return fract(currentPhase - candidatePhase + 1.0);
+}
 
 fn pass0(uv: vec2f, uniforms: FloodFillStepUniforms, seed: texture_2d<f32>, seedSampler: sampler, feedback: texture_2d<f32>, feedbackSampler: sampler) -> vec4f {
   let seedDims = vec2i(textureDimensions(seed, 0));
@@ -41,7 +53,8 @@ fn pass0(uv: vec2f, uniforms: FloodFillStepUniforms, seed: texture_2d<f32>, seed
   let seedColor = textureLoad(seed, seedCoord, 0);
   let feedbackColor = textureLoad(feedback, feedbackCoord, 0);
 
-  var recentColor = vec4f(-1.0, -1.0, -1.0, -1.0);
+  var chosenFeedback = feedbackColor;
+  var bestAge = select(2.0, wrappedAge(uniforms.currentPhase, feedbackColor.a), feedbackColor.a > 0.0);
 
   let useDisk = uniforms.useDisk > 0.5;
   let r = select(1, i32(max(1.0, uniforms.diskRadius)), useDisk);
@@ -55,15 +68,15 @@ fn pass0(uv: vec2f, uniforms: FloodFillStepUniforms, seed: texture_2d<f32>, seed
       }
       let neighborCoord = clamp(feedbackCoord + vec2i(x, y), vec2i(0), feedbackDims - vec2i(1));
       let candidate = textureLoad(feedback, neighborCoord, 0);
-      if (candidate.a > recentColor.a) {
-        recentColor = candidate;
+      if (candidate.a <= 0.0) {
+        continue;
+      }
+      let candidateAge = wrappedAge(uniforms.currentPhase, candidate.a);
+      if (candidateAge < bestAge) {
+        bestAge = candidateAge;
+        chosenFeedback = candidate;
       }
     }
-  }
-
-  var chosenFeedback = recentColor;
-  if (feedbackColor.a == recentColor.a) {
-    chosenFeedback = feedbackColor;
   }
 
   if (seedColor.a > 0.0) {
@@ -114,19 +127,26 @@ export const FloodFillStepUniformMeta: UniformDescriptor[] = [
     kind: 'f32',
     bindingName: 'uniforms_useDisk',
   },
+  {
+    name: 'currentPhase',
+    kind: 'f32',
+    bindingName: 'uniforms_currentPhase',
+  },
 ];
 
 export interface FloodFillStepUniforms {
   diskRadius: number;
   useDisk: number;
+  currentPhase: number;
 }
 
 export const FloodFillStepUniformsDefaults: FloodFillStepUniforms = {
   diskRadius: 0,
   useDisk: 0,
+  currentPhase: 0,
 };
 
-const FloodFillStepUniformsLayoutSize = 8;
+const FloodFillStepUniformsLayoutSize = 12;
 
 function packFloodFillStepUniforms(floatView: Float32Array, intView: Int32Array, uintView: Uint32Array, floatOffset: number, value: FloodFillStepUniforms): void {
   {
@@ -137,6 +157,11 @@ function packFloodFillStepUniforms(floatView: Float32Array, intView: Int32Array,
   {
     const base = floatOffset + 1;
     const raw = value.useDisk;
+    floatView[base] = raw !== undefined ? Number(raw) : 0;
+  }
+  {
+    const base = floatOffset + 2;
+    const raw = value.currentPhase;
     floatView[base] = raw !== undefined ? Number(raw) : 0;
   }
 }
@@ -258,13 +283,16 @@ export class FloodFillStepEffect extends CustomShaderEffect<FloodFillStepUniform
     });
   }
 
-  override setUniforms(uniforms: { diskRadius?: Dynamic<number>, useDisk?: Dynamic<number> }): void {
+  override setUniforms(uniforms: { diskRadius?: Dynamic<number>, useDisk?: Dynamic<number>, currentPhase?: Dynamic<number> }): void {
     const record: ShaderUniforms = {};
     if (uniforms.diskRadius !== undefined) {
       record['diskRadius'] = uniforms.diskRadius;
     }
     if (uniforms.useDisk !== undefined) {
       record['useDisk'] = uniforms.useDisk;
+    }
+    if (uniforms.currentPhase !== undefined) {
+      record['currentPhase'] = uniforms.currentPhase;
     }
     super.setUniforms(record);
   }

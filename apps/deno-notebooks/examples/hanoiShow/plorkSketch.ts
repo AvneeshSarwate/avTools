@@ -34,6 +34,7 @@ import { buildParamSystem } from "../../tools/paramSystem.ts";
 const STANDALONE_WIDTH = 1280;
 const STANDALONE_HEIGHT = 720;
 const CLEAR_COLOR: GPUColor = { r: 0, g: 0, b: 0, a: 0 };
+const FLOOD_FILL_RECENCY_PERIOD_SEC = 16;
 
 const paramDefs = {
   fade: { value: 0.0, min: 0, max: 1, step: 0.001, label: "Scene Fade" },
@@ -459,6 +460,7 @@ export function draw(
   forceSkip = false,
 ): GPUTextureView {
   const now = performance.now() * 0.001;
+  const recencyPhase = (now / FLOOD_FILL_RECENCY_PERIOD_SEC) % 1;
   const dt = now - lastOrbitTime;
   lastOrbitTime = now;
 
@@ -484,11 +486,13 @@ export function draw(
   floodFill.timeStamper.setUniforms({
     drawTime: now,
     alphaThreshold: state.params.alphaThreshold,
+    recencyPeriod: FLOOD_FILL_RECENCY_PERIOD_SEC,
   });
 
   const stepUniforms = {
     diskRadius: state.params.diskRadius,
     useDisk: state.params.useDisk ? 1 : 0,
+    currentPhase: recencyPhase,
   };
   floodFill.floodFillSeed.setUniforms(stepUniforms);
   floodFill.floodFill.setUniforms(stepUniforms);

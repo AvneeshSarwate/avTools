@@ -59,6 +59,7 @@ import {
 const WIDTH = 1280;
 const HEIGHT = 720;
 const CLEAR_COLOR: GPUColor = { r: 0, g: 0, b: 0, a: 0 };
+const FLOOD_FILL_RECENCY_PERIOD_SEC = 16;
 
 // ============================================================================
 // 3. PARAM DEFINITIONS — edit paramDefs to add/remove controls; mirror the leaf
@@ -662,16 +663,22 @@ await renderWindow.run(renderFrame, { cleanup: cleanup });
 
 function renderFrame() {
   const time = performance.now() * 0.001;
+  const recencyPhase = (time / FLOOD_FILL_RECENCY_PERIOD_SEC) % 1;
 
   p5.beginFrame();
   drawCircle();
   const sourceTexture = p5.endFrame();
 
   floodFill.timeStamper.setSrcs({ src: sourceTexture });
-  floodFill.timeStamper.setUniforms({ drawTime: time, alphaThreshold: params.alphaThreshold });
+  floodFill.timeStamper.setUniforms({
+    drawTime: time,
+    alphaThreshold: params.alphaThreshold,
+    recencyPeriod: FLOOD_FILL_RECENCY_PERIOD_SEC,
+  });
   const stepUniforms = {
     diskRadius: params.diskRadius,
     useDisk: params.useDisk ? 1 : 0,
+    currentPhase: recencyPhase,
   };
   floodFill.floodFillSeed.setUniforms(stepUniforms);
   floodFill.floodFill.setUniforms(stepUniforms);

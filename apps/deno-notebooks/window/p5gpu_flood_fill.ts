@@ -12,6 +12,7 @@ import { FloodFillStepEffect } from "@avtools/shader-fx/generated-raw/shaders/fl
 
 const DEFAULT_CLEAR_COLOR: GPUColor = { r: 0, g: 0, b: 0, a: 0 };
 const DEFAULT_FORMATS: GPUTextureFormat[] = ["rgba16float", "rgba32float", "rgba8unorm"];
+const DEFAULT_RECENCY_PERIOD_SEC = 16;
 
 export interface FloodFillGraphOptions {
   width: number;
@@ -119,7 +120,21 @@ export async function createFloodFillGraph(
       timeStamper.setSrcs({ src: source });
     },
     render(time: number): FloodFillDisplayEffect {
-      timeStamper.setUniforms({ drawTime: time });
+      const currentPhase = (time / DEFAULT_RECENCY_PERIOD_SEC) % 1;
+      timeStamper.setUniforms({
+        drawTime: time,
+        recencyPeriod: DEFAULT_RECENCY_PERIOD_SEC,
+      });
+      floodFillSeed.setUniforms({
+        diskRadius: 1,
+        useDisk: 0,
+        currentPhase,
+      });
+      floodFill.setUniforms({
+        diskRadius: 1,
+        useDisk: 0,
+        currentPhase,
+      });
       display.renderAll();
       return display;
     },

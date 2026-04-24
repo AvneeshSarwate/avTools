@@ -30,13 +30,19 @@ export const AlphaTimeTagFragmentSources = [
 struct AlphaTimeTagUniforms {
   drawTime: f32,
   alphaThreshold: f32,
+  recencyPeriod: f32,
 };
+
+const RECENCY_TAG_EPSILON: f32 = 0.00048828125;
 
 fn pass0(uv: vec2f, uniforms: AlphaTimeTagUniforms, src: texture_2d<f32>, srcSampler: sampler) -> vec4f {
   let dims = vec2i(textureDimensions(src, 0));
   let coord = clamp(vec2i(uv * vec2f(dims)), vec2i(0), dims - vec2i(1));
   let color = textureLoad(src, coord, 0);
-  let alphaTime = select(0.0, uniforms.drawTime, color.a > uniforms.alphaThreshold);
+  let period = max(0.001, uniforms.recencyPeriod);
+  let recencyPhase = fract(uniforms.drawTime / period);
+  let encodedRecency = RECENCY_TAG_EPSILON + recencyPhase * (1.0 - RECENCY_TAG_EPSILON);
+  let alphaTime = select(0.0, encodedRecency, color.a > uniforms.alphaThreshold);
   return vec4f(color.rgb, alphaTime);
 }
 
@@ -78,19 +84,26 @@ export const AlphaTimeTagUniformMeta: UniformDescriptor[] = [
     kind: 'f32',
     bindingName: 'uniforms_alphaThreshold',
   },
+  {
+    name: 'recencyPeriod',
+    kind: 'f32',
+    bindingName: 'uniforms_recencyPeriod',
+  },
 ];
 
 export interface AlphaTimeTagUniforms {
   drawTime: number;
   alphaThreshold: number;
+  recencyPeriod: number;
 }
 
 export const AlphaTimeTagUniformsDefaults: AlphaTimeTagUniforms = {
   drawTime: 0,
   alphaThreshold: 0,
+  recencyPeriod: 0,
 };
 
-const AlphaTimeTagUniformsLayoutSize = 8;
+const AlphaTimeTagUniformsLayoutSize = 12;
 
 function packAlphaTimeTagUniforms(floatView: Float32Array, intView: Int32Array, uintView: Uint32Array, floatOffset: number, value: AlphaTimeTagUniforms): void {
   {
@@ -101,6 +114,11 @@ function packAlphaTimeTagUniforms(floatView: Float32Array, intView: Int32Array, 
   {
     const base = floatOffset + 1;
     const raw = value.alphaThreshold;
+    floatView[base] = raw !== undefined ? Number(raw) : 0;
+  }
+  {
+    const base = floatOffset + 2;
+    const raw = value.recencyPeriod;
     floatView[base] = raw !== undefined ? Number(raw) : 0;
   }
 }
@@ -215,13 +233,16 @@ export class AlphaTimeTagEffect extends CustomShaderEffect<AlphaTimeTagUniforms,
     });
   }
 
-  override setUniforms(uniforms: { drawTime?: Dynamic<number>, alphaThreshold?: Dynamic<number> }): void {
+  override setUniforms(uniforms: { drawTime?: Dynamic<number>, alphaThreshold?: Dynamic<number>, recencyPeriod?: Dynamic<number> }): void {
     const record: ShaderUniforms = {};
     if (uniforms.drawTime !== undefined) {
       record['drawTime'] = uniforms.drawTime;
     }
     if (uniforms.alphaThreshold !== undefined) {
       record['alphaThreshold'] = uniforms.alphaThreshold;
+    }
+    if (uniforms.recencyPeriod !== undefined) {
+      record['recencyPeriod'] = uniforms.recencyPeriod;
     }
     super.setUniforms(record);
   }
