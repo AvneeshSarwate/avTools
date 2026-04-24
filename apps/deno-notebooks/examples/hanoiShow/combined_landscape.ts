@@ -166,11 +166,11 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
     pages: [
       { title: "Global" },
       { title: "Tegaki" },
+      { title: "Fab & Lies" },
+      { title: "Plork" },
       { title: "Kinaree Ring" },
       { title: "Kinaree" },
       { title: "Ashes" },
-      { title: "Plork" },
-      { title: "Fab & Lies" },
     ],
   });
 
@@ -178,13 +178,13 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
 
   const scenes = global.addFolder({ title: "Scenes" });
   scenes.addBinding(globalParams, "tegakiEnabled", { label: "Tegaki" });
+  scenes.addBinding(globalParams, "fabEnabled", { label: "Fab & Lies" });
+  scenes.addBinding(globalParams, "plorkEnabled", { label: "Plork" });
   scenes.addBinding(globalParams, "kinareeRingEnabled", {
     label: "Kinaree Ring",
   });
   scenes.addBinding(globalParams, "kinareeEnabled", { label: "Kinaree" });
   scenes.addBinding(globalParams, "ashesEnabled", { label: "Ashes" });
-  scenes.addBinding(globalParams, "plorkEnabled", { label: "Plork" });
-  scenes.addBinding(globalParams, "fabEnabled", { label: "Fab & Lies" });
 
   bodyContourProvider.setupPane(
     global.addFolder({ title: "Body Contour", expanded: false }),
@@ -197,37 +197,37 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
   debug.addBinding(globalParams, "showTiming", { label: "Frame Timing" });
 
   tegakiSetupPane(tab.pages[1], refresh);
-  kinareeRingSetupPane(tab.pages[2], refresh);
-  kinareeSetupPane(tab.pages[3], refresh);
-  ashesSetupPane(tab.pages[4], refresh);
-  plorkSetupPane(tab.pages[5], refresh);
-  fabSetupPane(tab.pages[6], refresh);
+  fabSetupPane(tab.pages[2], refresh);
+  plorkSetupPane(tab.pages[3], refresh);
+  kinareeRingSetupPane(tab.pages[4], refresh);
+  kinareeSetupPane(tab.pages[5], refresh);
+  ashesSetupPane(tab.pages[6], refresh);
 }
 
 function setupPerfPane(pane: WindowTweakpane, refresh: () => void) {
   const tab = pane.addTab({
     pages: [
       { title: "Tegaki" },
+      { title: "Fab & Lies" },
+      { title: "Plork" },
       { title: "Kinaree Ring" },
       { title: "Kinaree" },
       { title: "Ashes" },
-      { title: "Plork" },
-      { title: "Fab & Lies" },
       { title: "Mirage" },
       { title: "picking_kinarree" },
     ],
   });
   installMacros(tab.pages[0], tegakiState.macros, tegakiMacroDefs, refresh);
+  installMacros(tab.pages[1], fabState.macros, fabMacroDefs, refresh);
+  installMacros(tab.pages[2], plorkState.macros, plorkMacroDefs, refresh);
   installMacros(
-    tab.pages[1],
+    tab.pages[3],
     kinareeRingState.macros,
     kinareeRingMacroDefs,
     refresh,
   );
-  installMacros(tab.pages[2], kinareeState.macros, kinareeMacroDefs, refresh);
-  installMacros(tab.pages[3], ashesState.macros, ashesMacroDefs, refresh);
-  installMacros(tab.pages[4], plorkState.macros, plorkMacroDefs, refresh);
-  installMacros(tab.pages[5], fabState.macros, fabMacroDefs, refresh);
+  installMacros(tab.pages[4], kinareeState.macros, kinareeMacroDefs, refresh);
+  installMacros(tab.pages[5], ashesState.macros, ashesMacroDefs, refresh);
   installMacros(tab.pages[6], mirageMacros, mirageMacroDefs, refresh);
   installMacros(
     tab.pages[7],
@@ -564,6 +564,14 @@ await renderWindow.run(() => {
     device,
     encoder,
     alphaBlitPipeline,
+    fabTex.createView(),
+    compositeView,
+  );
+  alphaBlit(device, encoder, alphaBlitPipeline, plorkView, compositeView);
+  alphaBlit(
+    device,
+    encoder,
+    alphaBlitPipeline,
     kinareeRingTex.createView(),
     compositeView,
   );
@@ -579,14 +587,6 @@ await renderWindow.run(() => {
     encoder,
     alphaBlitPipeline,
     ashesTex.createView(),
-    compositeView,
-  );
-  alphaBlit(device, encoder, alphaBlitPipeline, plorkView, compositeView);
-  alphaBlit(
-    device,
-    encoder,
-    alphaBlitPipeline,
-    fabTex.createView(),
     compositeView,
   );
   alphaBlit(
