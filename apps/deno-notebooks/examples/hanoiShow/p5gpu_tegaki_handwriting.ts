@@ -983,7 +983,7 @@ export async function setup(dims: { width: number; height: number }) {
     lineHeight: LINE_HEIGHT,
     width: state.meta.maxWidth,
     height: null,
-    alignH: 0, // left
+    alignH: 1, // center
     wrapMode: 0, // word wrap
     weight: 400,
     style: 0,
