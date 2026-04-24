@@ -77,6 +77,7 @@ const paramDefs = {
     duration: { value: 2.0, min: 0.1, max: 10, step: 0.1 },
     radius: { value: 20, min: 1, max: 200, step: 1 },
     hue: { value: 180, min: 0, max: 360, step: 1 },
+    hueJitter: { value: 24, min: 0, max: 180, step: 1, label: "Hue Jitter" },
     randomColor: { value: false },
     waveAmp: { value: 80, min: 0, max: 300, step: 1 },
     waveFreq: { value: 2.0, min: 0, max: 10, step: 0.1 },
@@ -121,7 +122,7 @@ const paramDefs = {
     useDisk: { value: true },
     diskRadius: { value: 4, min: 1, max: 10, step: 1 },
     iterations: { value: 1, min: 1, max: 8, step: 1 },
-    skipDistance: { value: 0, min: 0, max: 8, step: 1 },
+    skipDistance: { value: 0, min: 0, max: 8, step: 0.05 },
   },
   bloom: {
     _folder: "Bloom",
@@ -143,6 +144,7 @@ type SketchParams = {
   duration: number;
   radius: number;
   hue: number;
+  hueJitter: number;
   randomColor: boolean;
   waveAmp: number;
   waveFreq: number;
@@ -343,6 +345,7 @@ const actionQueue: Array<(ctx: DateTimeContext) => void> = [];
 
 type LaunchParams = {
   hue: number;
+  hueJitter: number;
   randomColor: number; //not great but this is a bool which we use a falsy number for
   duration: number;
   radius: number;
@@ -350,7 +353,7 @@ type LaunchParams = {
   waveFreq: number;
 }
 
-const launchParamKeys = ["hue", "randomColor", "duration", "radius", "waveAmp", "waveFreq"]
+const launchParamKeys = ["hue", "hueJitter", "randomColor", "duration", "radius", "waveAmp", "waveFreq"]
 const launchTypes = ["up", "down", "left", "right", "cw", "ccw"]
 
 function parseLaunchStringToLaunchConfig(launchString: string) {
@@ -399,7 +402,12 @@ function launchCircle(dir: Direction, launchParams?: Partial<LaunchParams>) {
   actionQueue.push((ctx) => {
     const lp = launchParams ?? {}
     const randCol = lp.randomColor ?? params.randomColor
-    const hue = randCol ? Math.random() * 360 : (lp.hue ?? params.hue);
+    const baseHue = lp.hue ?? params.hue;
+    const hueJitter = lp.hueJitter ?? params.hueJitter;
+    const hueOffset = (Math.random() * 2 - 1) * hueJitter;
+    const hue = randCol
+      ? Math.random() * 360
+      : ((baseHue + hueOffset) % 360 + 360) % 360;
     const duration = lp.duration ?? params.duration;
     const radius = lp.radius ?? params.radius;
     const waveAmp = lp.waveAmp ?? params.waveAmp;

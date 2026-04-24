@@ -40,9 +40,10 @@ const paramDefs = {
   fade: { value: 0.0, min: 0, max: 1, step: 0.001, label: "Scene Fade" },
   launch: {
     _folder: "Launch",
-    duration: { value: 2.0, min: 0.1, max: 10, step: 0.1 },
+    duration: { value: 0.7, min: 0.1, max: 10, step: 0.01 },
     radius: { value: 20, min: 1, max: 200, step: 1 },
     hue: { value: 180, min: 0, max: 360, step: 1 },
+    hueJitter: { value: 24, min: 0, max: 180, step: 1, label: "Hue Jitter" },
     randomColor: { value: false },
     waveAmp: { value: 80, min: 0, max: 300, step: 1 },
     waveFreq: { value: 2.0, min: 0, max: 10, step: 0.1 },
@@ -82,7 +83,7 @@ const paramDefs = {
     _folder: "Center Circle",
     centerOn: { value: true },
     centerRadius: { value: 30, min: 1, max: 500, step: 1 },
-    centerHue: { value: 0, min: 0, max: 360, step: 1 },
+    centerHue: { value: 0, min: 0, max: 50, step: 0.1 },
   },
   floodFill: {
     _folder: "Flood Fill",
@@ -90,7 +91,7 @@ const paramDefs = {
     useDisk: { value: true },
     diskRadius: { value: 4, min: 1, max: 40, step: 1 },
     iterations: { value: 1, min: 1, max: 8, step: 1 },
-    skipDistance: { value: 0, min: 0, max: 8, step: 1 },
+    skipDistance: { value: 0, min: 0, max: 8, step: 0.05 },
   },
   bloom: {
     _folder: "Bloom",
@@ -125,6 +126,7 @@ type SketchParams = {
   duration: number;
   radius: number;
   hue: number;
+  hueJitter: number;
   randomColor: boolean;
   waveAmp: number;
   waveFreq: number;
@@ -213,6 +215,54 @@ export const macroDefs: MacroDef<number>[] = [
       state.params.fade = v;
     },
   },
+  {
+    key: "orbitRadius",
+    defaultValue: 150,
+    opts: { min: 0, max: 400, step: 1, label: "Or Radius" },
+    apply: (v) => {
+      state.params.orbitRadius = v;
+    },
+  },
+  {
+    key: "orbitSpeed",
+    defaultValue: 1.0,
+    opts: { min: -3.5, max: 3.5, step: 0.01, label: "Or Speed" },
+    apply: (v) => {
+      state.params.orbitSpeed = v;
+    },
+  },
+  {
+    key: "orbitPhase",
+    defaultValue: 0,
+    opts: { min: -1, max: 1, step: 0.01, label: "Or Phase" },
+    apply: (v) => {
+      state.params.orbitPhase = v;
+    },
+  },
+  {
+    key: "centerRadius",
+    defaultValue: 30,
+    opts: { min: 1, max: 500, step: 1, label: "Ce Radius" },
+    apply: (v) => {
+      state.params.centerRadius = v;
+    },
+  },
+  {
+    key: "centerHue",
+    defaultValue: 0,
+    opts: { min: 0, max: 50, step: 0.1, label: "Ce Hue" },
+    apply: (v) => {
+      state.params.centerHue = v;
+    },
+  },
+  {
+    key: "skipDistance",
+    defaultValue: 0,
+    opts: { min: 0, max: 8, step: 0.05, label: "Skip Dist" },
+    apply: (v) => {
+      state.params.skipDistance = v;
+    },
+  },
 ];
 
 const activeCircles: Set<CircleState> = new Set();
@@ -281,6 +331,7 @@ function randomWalkDuration(): number {
 
 type LaunchParams = {
   hue: number;
+  hueJitter: number;
   randomColor: number;
   duration: number;
   radius: number;
@@ -382,7 +433,12 @@ function launchCircle(
   actionQueue.push((ctx) => {
     const lp = launchParams ?? {};
     const randCol = lp.randomColor ?? (state.params.randomColor ? 1 : 0);
-    const hue = randCol ? Math.random() * 360 : (lp.hue ?? state.params.hue);
+    const baseHue = lp.hue ?? state.params.hue;
+    const hueJitter = lp.hueJitter ?? state.params.hueJitter;
+    const hueOffset = (Math.random() * 2 - 1) * hueJitter;
+    const hue = randCol
+      ? Math.random() * 360
+      : ((baseHue + hueOffset) % 360 + 360) % 360;
     const duration = lp.duration ?? state.params.duration;
     const radius = lp.radius ?? state.params.radius;
     const waveAmp = lp.waveAmp ?? state.params.waveAmp;
