@@ -155,11 +155,17 @@ const LINE_HEIGHT = 130; // Charmonman has tall asc+desc (em ≈ 1.9x fontSize)
 const MARGIN_X = 80;
 const MARGIN_Y = 100;
 
+
+const full = `คำความรู้สึก
+ภพ พราก จากไกล คิดถึง
+แสงไฟลุก ใส่ใจ ม้วยมอด
+กาลผันผ่าน สองโลก บรรจบ
+ขม ขัด ปล่อย วางเวียน เวลา
+`
 // Thai demo text — multiple phrases separated by spaces so the native
 // layout engine has break opportunities (Thai has no inter-word spaces
 // in normal prose, so we'd otherwise get one long unbreakable line).
-const LOREM = `คำความรู้สึก
-ภพ พราก จากไกล คิดถึง
+const LOREM = `ภพ พราก จากไกล คิดถึง
 แสงไฟลุก ใส่ใจ ม้วยมอด
 กาลผันผ่าน สองโลก บรรจบ
 ขม ขัด ปล่อย วางเวียน เวลา
