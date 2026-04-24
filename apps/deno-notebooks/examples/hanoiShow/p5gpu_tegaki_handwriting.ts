@@ -89,10 +89,22 @@ interface HandParticle {
   alive: boolean;
 }
 
-interface CircleArc {
-  startAngle: number;
-  endAngle: number;
+interface PathSpan {
+  startU: number;
+  endU: number;
   sourceAvgWidthPx: number;
+}
+
+interface MorphPathSample {
+  t: number;
+  x: number;
+  y: number;
+  cumLen: number;
+}
+
+interface MorphPathLut {
+  samples: MorphPathSample[];
+  totalLen: number;
 }
 
 interface GlyphState {
@@ -108,8 +120,8 @@ interface GlyphState {
   intersecting: boolean;
   /** performance.now() timestamp before which intersection triggers are ignored. */
   cooldownUntil: number;
-  /** Per-stroke arc assignment on the shared circle morph target. */
-  circleArcs: CircleArc[];
+  /** Per-stroke normalized span assignment on the shared morph path target. */
+  pathSpans: PathSpan[];
 }
 
 /**
@@ -128,6 +140,7 @@ const GRID_COLS = 32;
 const GRID_ROWS = 32;
 const TAU = Math.PI * 2;
 const CIRCLE_START_ANGLE = -Math.PI / 2;
+const MORPH_PATH_SAMPLES = 1024;
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -161,17 +174,24 @@ export const state = {
     triggerRate: 18, // trigger attempts per second (random mode)
     minDuration: 0.35,
     maxDuration: 1.40,
-    widthScale: 1.0,
+    widthScale: 2.0,
     bgColor: "#0d1017",
     inkColor: "#ffe9a8",
     idlePhase: 1.0, // 0 = invisible when not animating, 1 = fully drawn
     paused: false,
     glyphScale: 1.0, // 0–1, multiplies font scale; 0 = skip drawing
-    circleMorph: 0.0, // 0 = laid-out text, 1 = shared circle
+    pathMorph: 0.0, // 0 = laid-out text, 1 = shared target path
+    pathMode: "circle" as "circle" | "lissajous",
+    pathCenterX: 640,
+    pathCenterY: 360,
+    pathUniformWidth: false,
     circleRadius: 220,
-    circleCenterX: 640,
-    circleCenterY: 360,
-    circleUniformWidth: false,
+    lissajousAmpX: 260,
+    lissajousAmpY: 180,
+    lissajousFreqX: 3,
+    lissajousFreqY: 2,
+    lissajousPhaseX: 0,
+    lissajousPhaseY: Math.PI / 2,
     showContourDebug: false, // draw body contour outlines as sanity check
     contourDebugWeight: 4,
     /** Seconds after a glyph finishes animating before intersection can re-trigger it. */
@@ -202,8 +222,10 @@ export const state = {
     intersectingScratch: new Set<number>(),
     /** Live particles emitted from hand bbox centers. Mutated by branches and draw. */
     handParticles: [] as HandParticle[],
-    /** Shared target stroke width when circleUniformWidth is enabled. */
-    circleUniformWidthPx: FONT_SIZE / FONT_META.unitsPerEm,
+    /** Shared target stroke width when pathUniformWidth is enabled. */
+    pathUniformWidthPx: FONT_SIZE / FONT_META.unitsPerEm,
+    morphPathKey: "",
+    morphPathLut: null as MorphPathLut | null,
   },
   meta: {
     fontMeta: FONT_META,
@@ -353,13 +375,13 @@ function drawStrokeUpTo(
   p5.endShape();
 }
 
-function assignCircleArcs(): void {
+function assignPathSpans(): void {
   let totalStrokeLengthPx = 0;
   let weightedWidthSum = 0;
   let widthWeightSum = 0;
 
   for (const gs of state.glyphStates) {
-    gs.circleArcs = [];
+    gs.pathSpans = [];
     const glyph = gs.glyph;
     if (!glyph) continue;
     for (const stroke of glyph.s) {
@@ -371,34 +393,132 @@ function assignCircleArcs(): void {
     }
   }
 
-  state.runtime.circleUniformWidthPx = widthWeightSum > 0
+  state.runtime.pathUniformWidthPx = widthWeightSum > 0
     ? weightedWidthSum / widthWeightSum
     : LAYOUT_SCALE;
 
-  const angleScale = totalStrokeLengthPx > 1e-6 ? TAU / totalStrokeLengthPx : 0;
-  let angle = CIRCLE_START_ANGLE;
+  let u = 0;
 
   for (const gs of state.glyphStates) {
     const glyph = gs.glyph;
     if (!glyph) continue;
     for (const stroke of glyph.s) {
       const strokeLengthPx = stroke.totalLen * LAYOUT_SCALE;
-      const startAngle = angle;
-      const endAngle = angle + strokeLengthPx * angleScale;
-      gs.circleArcs.push({
-        startAngle,
-        endAngle,
+      const span = totalStrokeLengthPx > 1e-6
+        ? strokeLengthPx / totalStrokeLengthPx
+        : 0;
+      const startU = u;
+      const endU = u + span;
+      gs.pathSpans.push({
+        startU,
+        endU,
         sourceAvgWidthPx: Math.max(stroke.avgWidth, 0.5) * LAYOUT_SCALE,
       });
-      angle = endAngle;
+      u = endU;
     }
   }
 }
 
-function setCircleMorphPoint(
+function evaluateMorphPath(t: number): { x: number; y: number } {
+  const clampedT = Math.max(0, Math.min(1, t));
+  const p = state.params;
+
+  if (p.pathMode === "lissajous") {
+    const theta = clampedT * TAU;
+    return {
+      x: p.pathCenterX +
+        Math.sin(theta * p.lissajousFreqX + p.lissajousPhaseX) *
+          p.lissajousAmpX,
+      y: p.pathCenterY +
+        Math.sin(theta * p.lissajousFreqY + p.lissajousPhaseY) *
+          p.lissajousAmpY,
+    };
+  }
+
+  const theta = CIRCLE_START_ANGLE + clampedT * TAU;
+  return {
+    x: p.pathCenterX + Math.cos(theta) * p.circleRadius,
+    y: p.pathCenterY + Math.sin(theta) * p.circleRadius,
+  };
+}
+
+function buildMorphPathLut(): MorphPathLut {
+  const samples: MorphPathSample[] = [];
+  let prev = evaluateMorphPath(0);
+  samples.push({ t: 0, x: prev.x, y: prev.y, cumLen: 0 });
+
+  let totalLen = 0;
+  for (let i = 1; i <= MORPH_PATH_SAMPLES; i += 1) {
+    const t = i / MORPH_PATH_SAMPLES;
+    const cur = evaluateMorphPath(t);
+    totalLen += Math.hypot(cur.x - prev.x, cur.y - prev.y);
+    samples.push({ t, x: cur.x, y: cur.y, cumLen: totalLen });
+    prev = cur;
+  }
+
+  return { samples, totalLen };
+}
+
+function morphPathKey(): string {
+  const p = state.params;
+  return [
+    p.pathMode,
+    p.pathCenterX,
+    p.pathCenterY,
+    p.circleRadius,
+    p.lissajousAmpX,
+    p.lissajousAmpY,
+    p.lissajousFreqX,
+    p.lissajousFreqY,
+    p.lissajousPhaseX,
+    p.lissajousPhaseY,
+  ].join("|");
+}
+
+function ensureMorphPathLut(): MorphPathLut {
+  const key = morphPathKey();
+  if (state.runtime.morphPathLut && state.runtime.morphPathKey === key) {
+    return state.runtime.morphPathLut;
+  }
+  const lut = buildMorphPathLut();
+  state.runtime.morphPathLut = lut;
+  state.runtime.morphPathKey = key;
+  return lut;
+}
+
+function sampleMorphPathByArc(u: number): { x: number; y: number } {
+  const lut = state.runtime.morphPathLut ?? ensureMorphPathLut();
+  const samples = lut.samples;
+  if (samples.length === 0 || lut.totalLen <= 1e-6) {
+    return evaluateMorphPath(u);
+  }
+
+  const targetLen = Math.max(0, Math.min(1, u)) * lut.totalLen;
+  let lo = 0;
+  let hi = samples.length - 1;
+
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) * 0.5);
+    if (samples[mid]!.cumLen < targetLen) lo = mid + 1;
+    else hi = mid;
+  }
+
+  const upper = samples[lo]!;
+  if (lo === 0) return { x: upper.x, y: upper.y };
+  const lower = samples[lo - 1]!;
+  const segLen = upper.cumLen - lower.cumLen;
+  if (segLen <= 1e-6) return { x: upper.x, y: upper.y };
+  const t = (targetLen - lower.cumLen) / segLen;
+  return {
+    x: lower.x + (upper.x - lower.x) * t,
+    y: lower.y + (upper.y - lower.y) * t,
+  };
+}
+
+function setPathMorphPoint(
   out: { x: number; y: number },
   stroke: PreparedTegakiStroke,
-  circleArc: CircleArc,
+  pathSpan: PathSpan,
   baselineX: number,
   baselineY: number,
   sourceScale: number,
@@ -413,20 +533,16 @@ function setCircleMorphPoint(
     : stroke.p.length > 1
     ? index / (stroke.p.length - 1)
     : 0.5;
-  const theta = circleArc.startAngle +
-    (circleArc.endAngle - circleArc.startAngle) * frac;
-  const dstX = state.params.circleCenterX +
-    Math.cos(theta) * state.params.circleRadius;
-  const dstY = state.params.circleCenterY +
-    Math.sin(theta) * state.params.circleRadius;
-  out.x = srcX + (dstX - srcX) * morph;
-  out.y = srcY + (dstY - srcY) * morph;
+  const u = pathSpan.startU + (pathSpan.endU - pathSpan.startU) * frac;
+  const dst = sampleMorphPathByArc(u);
+  out.x = srcX + (dst.x - srcX) * morph;
+  out.y = srcY + (dst.y - srcY) * morph;
 }
 
-function drawStrokeCircleMorphUpTo(
+function drawStrokePathMorphUpTo(
   p5: P5GPU,
   stroke: PreparedTegakiStroke,
-  circleArc: CircleArc,
+  pathSpan: PathSpan,
   baselineX: number,
   baselineY: number,
   sourceScale: number,
@@ -450,9 +566,9 @@ function drawStrokeCircleMorphUpTo(
   }
 
   const sourceStrokeWeight = Math.max(stroke.avgWidth, 0.5) * sourceScale;
-  const targetStrokeWeight = state.params.circleUniformWidth
-    ? state.runtime.circleUniformWidthPx
-    : circleArc.sourceAvgWidthPx;
+  const targetStrokeWeight = state.params.pathUniformWidth
+    ? state.runtime.pathUniformWidthPx
+    : pathSpan.sourceAvgWidthPx;
   p5.strokeWeight(
     (sourceStrokeWeight + (targetStrokeWeight - sourceStrokeWeight) * morph) *
       widthScale,
@@ -460,10 +576,10 @@ function drawStrokeCircleMorphUpTo(
 
   const p0 = { x: 0, y: 0 };
   const p1 = { x: 0, y: 0 };
-  setCircleMorphPoint(
+  setPathMorphPoint(
     p0,
     stroke,
-    circleArc,
+    pathSpan,
     baselineX,
     baselineY,
     sourceScale,
@@ -480,10 +596,10 @@ function drawStrokeCircleMorphUpTo(
   let prevX = p0.x;
   let prevY = p0.y;
   for (let i = 1; i < pts.length; i += 1) {
-    setCircleMorphPoint(
+    setPathMorphPoint(
       p1,
       stroke,
-      circleArc,
+      pathSpan,
       baselineX,
       baselineY,
       sourceScale,
@@ -509,10 +625,10 @@ function drawStrokeCircleMorphUpTo(
   let traveled = 0;
 
   for (let i = 1; i < pts.length; i += 1) {
-    setCircleMorphPoint(
+    setPathMorphPoint(
       p1,
       stroke,
-      circleArc,
+      pathSpan,
       baselineX,
       baselineY,
       sourceScale,
@@ -1009,24 +1125,24 @@ function drawGlyphAtPhase(
   const glyph = gs.glyph;
   if (!glyph || phase <= 0) return;
   const localTime = phase * glyph.t;
-  const circleMorph = state.params.circleMorph;
+  const pathMorph = state.params.pathMorph;
   for (let strokeIdx = 0; strokeIdx < glyph.s.length; strokeIdx += 1) {
     const stroke = glyph.s[strokeIdx]!;
     if (localTime < stroke.d) continue;
     const elapsed = localTime - stroke.d;
     const lin = Math.min(elapsed / Math.max(stroke.a, 1e-6), 1);
-    if (circleMorph > 0) {
-      const circleArc = gs.circleArcs[strokeIdx];
-      if (circleArc) {
-        drawStrokeCircleMorphUpTo(
+    if (pathMorph > 0) {
+      const pathSpan = gs.pathSpans[strokeIdx];
+      if (pathSpan) {
+        drawStrokePathMorphUpTo(
           p5,
           stroke,
-          circleArc,
+          pathSpan,
           gs.baselineX,
           gs.baselineY,
           scale,
           easeOutQuad(lin),
-          circleMorph,
+          pathMorph,
           widthScale,
         );
         continue;
@@ -1078,33 +1194,78 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
     step: 0.01,
     label: "Glyph scale",
   });
-  const circleMorph = pane.addFolder({ title: "Circle Morph" });
-  circleMorph.addBinding(state.params, "circleMorph", {
+  const pathMorph = pane.addFolder({ title: "Path Morph" });
+  pathMorph.addBinding(state.params, "pathMorph", {
     min: 0,
     max: 1,
     step: 0.01,
     label: "Morph",
   });
-  circleMorph.addBinding(state.params, "circleRadius", {
-    min: 0,
-    max: 800,
-    step: 1,
-    label: "Radius",
+  pathMorph.addBinding(state.params, "pathMode", {
+    options: {
+      Circle: "circle",
+      Lissajous: "lissajous",
+    },
+    label: "Mode",
   });
-  circleMorph.addBinding(state.params, "circleCenterX", {
+  pathMorph.addBinding(state.params, "pathCenterX", {
     min: 0,
     max: 1280,
     step: 1,
     label: "Center X",
   });
-  circleMorph.addBinding(state.params, "circleCenterY", {
+  pathMorph.addBinding(state.params, "pathCenterY", {
     min: 0,
     max: 720,
     step: 1,
     label: "Center Y",
   });
-  circleMorph.addBinding(state.params, "circleUniformWidth", {
+  pathMorph.addBinding(state.params, "pathUniformWidth", {
     label: "Uniform width",
+  });
+  const circle = pathMorph.addFolder({ title: "Circle" });
+  circle.addBinding(state.params, "circleRadius", {
+    min: 0,
+    max: 800,
+    step: 1,
+    label: "Radius",
+  });
+  const lissajous = pathMorph.addFolder({ title: "Lissajous" });
+  lissajous.addBinding(state.params, "lissajousAmpX", {
+    min: 0,
+    max: 800,
+    step: 1,
+    label: "Amp X",
+  });
+  lissajous.addBinding(state.params, "lissajousAmpY", {
+    min: 0,
+    max: 800,
+    step: 1,
+    label: "Amp Y",
+  });
+  lissajous.addBinding(state.params, "lissajousFreqX", {
+    min: 1,
+    max: 12,
+    step: 0.01,
+    label: "Freq X",
+  });
+  lissajous.addBinding(state.params, "lissajousFreqY", {
+    min: 1,
+    max: 12,
+    step: 0.01,
+    label: "Freq Y",
+  });
+  lissajous.addBinding(state.params, "lissajousPhaseX", {
+    min: -TAU,
+    max: TAU,
+    step: 0.01,
+    label: "Phase X",
+  });
+  lissajous.addBinding(state.params, "lissajousPhaseY", {
+    min: -TAU,
+    max: TAU,
+    step: 0.01,
+    label: "Phase Y",
   });
   pane.addBinding(state.params, "triggerMode", {
     options: {
@@ -1155,7 +1316,7 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
   });
   pane.addBinding(state.params, "widthScale", {
     min: 0.2,
-    max: 2.5,
+    max: 5.5,
     step: 0.05,
     label: "Width x",
   });
@@ -1287,7 +1448,7 @@ export async function setup(dims: { width: number; height: number }) {
           },
           intersecting: false,
           cooldownUntil: 0,
-          circleArcs: [],
+          pathSpans: [],
         });
       }
       i = j;
@@ -1304,7 +1465,7 @@ export async function setup(dims: { width: number; height: number }) {
     `Glyphs: ${glyphStates.length} (chars: ${chars.length}, drawable: ${drawableIndices.length})`,
   );
 
-  assignCircleArcs();
+  assignPathSpans();
 
   // Compute per-glyph normalized bboxes and build the spatial grid.
   computeGlyphBboxes();
@@ -1367,7 +1528,7 @@ export function draw(p5: P5GPU, autoClear = true) {
     drawContourDebug(p5, ir, ig, ib);
   }
 
-  if (state.params.glyphScale <= 0 && state.params.circleMorph <= 0) return;
+  if (state.params.glyphScale <= 0 && state.params.pathMorph <= 0) return;
 
   // Intersection-mode triggers fire here so they're gated by scene visibility.
   // "intersection" = body contour, "hand" = hand bbox. Both write to the
@@ -1381,6 +1542,7 @@ export function draw(p5: P5GPU, autoClear = true) {
   const scale = (FONT_SIZE / FONT_META.unitsPerEm) * state.params.glyphScale;
   const useIntersectionPhase = state.params.triggerMode === "intersection" ||
     state.params.triggerMode === "hand";
+  if (state.params.pathMorph > 0) ensureMorphPathLut();
 
   p5.noFill();
   p5.strokeCap(p5.ROUND);
@@ -1437,6 +1599,8 @@ export function cleanup() {
     state.runtime.engine.dispose();
     state.runtime.engine = null;
   }
+  state.runtime.morphPathLut = null;
+  state.runtime.morphPathKey = "";
 }
 
 // ── Standalone entry point ──────────────────────────────────────────
