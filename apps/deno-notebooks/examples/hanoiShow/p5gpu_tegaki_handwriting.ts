@@ -192,6 +192,10 @@ export const state = {
     lissajousFreqY: 2,
     lissajousPhaseX: 0,
     lissajousPhaseY: Math.PI / 2,
+    lissajousFreeRunPhaseX: false,
+    lissajousFreeRunPhaseY: false,
+    lissajousPhaseSpeedX: 0,
+    lissajousPhaseSpeedY: 0,
     showContourDebug: false, // draw body contour outlines as sanity check
     contourDebugWeight: 4,
     /** Seconds after a glyph finishes animating before intersection can re-trigger it. */
@@ -226,6 +230,9 @@ export const state = {
     pathUniformWidthPx: FONT_SIZE / FONT_META.unitsPerEm,
     morphPathKey: "",
     morphPathLut: null as MorphPathLut | null,
+    lissajousPhaseAccumX: 0,
+    lissajousPhaseAccumY: 0,
+    lastMorphPhaseUpdateMs: null as number | null,
   },
   meta: {
     fontMeta: FONT_META,
@@ -419,6 +426,32 @@ function assignPathSpans(): void {
   }
 }
 
+function effectiveLissajousPhaseX(): number {
+  return state.params.lissajousPhaseX + state.runtime.lissajousPhaseAccumX;
+}
+
+function effectiveLissajousPhaseY(): number {
+  return state.params.lissajousPhaseY + state.runtime.lissajousPhaseAccumY;
+}
+
+function updateMorphPhaseAccumulators(nowMs = performance.now()): void {
+  const lastMs = state.runtime.lastMorphPhaseUpdateMs;
+  state.runtime.lastMorphPhaseUpdateMs = nowMs;
+  if (lastMs === null) return;
+
+  const dtSec = Math.max(0, (nowMs - lastMs) / 1000);
+  if (dtSec <= 0) return;
+
+  if (state.params.lissajousFreeRunPhaseX) {
+    state.runtime.lissajousPhaseAccumX += state.params.lissajousPhaseSpeedX *
+      dtSec;
+  }
+  if (state.params.lissajousFreeRunPhaseY) {
+    state.runtime.lissajousPhaseAccumY += state.params.lissajousPhaseSpeedY *
+      dtSec;
+  }
+}
+
 function evaluateMorphPath(t: number): { x: number; y: number } {
   const clampedT = Math.max(0, Math.min(1, t));
   const p = state.params;
@@ -427,10 +460,10 @@ function evaluateMorphPath(t: number): { x: number; y: number } {
     const theta = clampedT * TAU;
     return {
       x: p.pathCenterX +
-        Math.sin(theta * p.lissajousFreqX + p.lissajousPhaseX) *
+        Math.sin(theta * p.lissajousFreqX + effectiveLissajousPhaseX()) *
           p.lissajousAmpX,
       y: p.pathCenterY +
-        Math.sin(theta * p.lissajousFreqY + p.lissajousPhaseY) *
+        Math.sin(theta * p.lissajousFreqY + effectiveLissajousPhaseY()) *
           p.lissajousAmpY,
     };
   }
@@ -470,8 +503,8 @@ function morphPathKey(): string {
     p.lissajousAmpY,
     p.lissajousFreqX,
     p.lissajousFreqY,
-    p.lissajousPhaseX,
-    p.lissajousPhaseY,
+    effectiveLissajousPhaseX(),
+    effectiveLissajousPhaseY(),
   ].join("|");
 }
 
@@ -1267,6 +1300,24 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
     step: 0.01,
     label: "Phase Y",
   });
+  lissajous.addBinding(state.params, "lissajousFreeRunPhaseX", {
+    label: "Free-run X",
+  });
+  lissajous.addBinding(state.params, "lissajousPhaseSpeedX", {
+    min: -TAU * 2,
+    max: TAU * 2,
+    step: 0.01,
+    label: "Speed X",
+  });
+  lissajous.addBinding(state.params, "lissajousFreeRunPhaseY", {
+    label: "Free-run Y",
+  });
+  lissajous.addBinding(state.params, "lissajousPhaseSpeedY", {
+    min: -TAU * 2,
+    max: TAU * 2,
+    step: 0.01,
+    label: "Speed Y",
+  });
   pane.addBinding(state.params, "triggerMode", {
     options: {
       "Random": "random",
@@ -1368,6 +1419,11 @@ export async function setup(dims: { width: number; height: number }) {
   state.meta.width = dims.width;
   state.meta.height = dims.height;
   state.meta.maxWidth = dims.width - MARGIN_X * 2;
+  state.runtime.lissajousPhaseAccumX = 0;
+  state.runtime.lissajousPhaseAccumY = 0;
+  state.runtime.lastMorphPhaseUpdateMs = null;
+  state.runtime.morphPathLut = null;
+  state.runtime.morphPathKey = "";
 
   // Load tegaki bundle
   const TEGAKI_ROOT = new URL(
@@ -1515,6 +1571,7 @@ export async function setup(dims: { width: number; height: number }) {
 
 export function draw(p5: P5GPU, autoClear = true) {
   if (autoClear) p5.clear();
+  updateMorphPhaseAccumulators();
 
   const [ir, ig, ib] = hexToRgb(state.params.inkColor);
   const fade = state.params.fade;
@@ -1601,6 +1658,9 @@ export function cleanup() {
   }
   state.runtime.morphPathLut = null;
   state.runtime.morphPathKey = "";
+  state.runtime.lissajousPhaseAccumX = 0;
+  state.runtime.lissajousPhaseAccumY = 0;
+  state.runtime.lastMorphPhaseUpdateMs = null;
 }
 
 // ── Standalone entry point ──────────────────────────────────────────
