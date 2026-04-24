@@ -89,6 +89,12 @@ interface HandParticle {
   alive: boolean;
 }
 
+interface CircleArc {
+  startAngle: number;
+  endAngle: number;
+  sourceAvgWidthPx: number;
+}
+
 interface GlyphState {
   ch: string; // source char this glyph corresponds to
   glyph: PreparedTegakiGlyph | null; // tegaki stroke data for that char (null = skipped)
@@ -102,6 +108,8 @@ interface GlyphState {
   intersecting: boolean;
   /** performance.now() timestamp before which intersection triggers are ignored. */
   cooldownUntil: number;
+  /** Per-stroke arc assignment on the shared circle morph target. */
+  circleArcs: CircleArc[];
 }
 
 /**
@@ -118,6 +126,8 @@ interface SpatialGrid {
 
 const GRID_COLS = 32;
 const GRID_ROWS = 32;
+const TAU = Math.PI * 2;
+const CIRCLE_START_ANGLE = -Math.PI / 2;
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -157,6 +167,11 @@ export const state = {
     idlePhase: 1.0, // 0 = invisible when not animating, 1 = fully drawn
     paused: false,
     glyphScale: 1.0, // 0–1, multiplies font scale; 0 = skip drawing
+    circleMorph: 0.0, // 0 = laid-out text, 1 = shared circle
+    circleRadius: 220,
+    circleCenterX: 640,
+    circleCenterY: 360,
+    circleUniformWidth: false,
     showContourDebug: false, // draw body contour outlines as sanity check
     contourDebugWeight: 4,
     /** Seconds after a glyph finishes animating before intersection can re-trigger it. */
@@ -187,6 +202,8 @@ export const state = {
     intersectingScratch: new Set<number>(),
     /** Live particles emitted from hand bbox centers. Mutated by branches and draw. */
     handParticles: [] as HandParticle[],
+    /** Shared target stroke width when circleUniformWidth is enabled. */
+    circleUniformWidthPx: FONT_SIZE / FONT_META.unitsPerEm,
   },
   meta: {
     fontMeta: FONT_META,
@@ -333,6 +350,195 @@ function drawStrokeUpTo(
     }
     break;
   }
+  p5.endShape();
+}
+
+function assignCircleArcs(): void {
+  let totalStrokeLengthPx = 0;
+  let weightedWidthSum = 0;
+  let widthWeightSum = 0;
+
+  for (const gs of state.glyphStates) {
+    gs.circleArcs = [];
+    const glyph = gs.glyph;
+    if (!glyph) continue;
+    for (const stroke of glyph.s) {
+      const strokeLengthPx = stroke.totalLen * LAYOUT_SCALE;
+      const strokeWidthPx = Math.max(stroke.avgWidth, 0.5) * LAYOUT_SCALE;
+      totalStrokeLengthPx += strokeLengthPx;
+      weightedWidthSum += strokeWidthPx * Math.max(strokeLengthPx, 1);
+      widthWeightSum += Math.max(strokeLengthPx, 1);
+    }
+  }
+
+  state.runtime.circleUniformWidthPx = widthWeightSum > 0
+    ? weightedWidthSum / widthWeightSum
+    : LAYOUT_SCALE;
+
+  const angleScale = totalStrokeLengthPx > 1e-6 ? TAU / totalStrokeLengthPx : 0;
+  let angle = CIRCLE_START_ANGLE;
+
+  for (const gs of state.glyphStates) {
+    const glyph = gs.glyph;
+    if (!glyph) continue;
+    for (const stroke of glyph.s) {
+      const strokeLengthPx = stroke.totalLen * LAYOUT_SCALE;
+      const startAngle = angle;
+      const endAngle = angle + strokeLengthPx * angleScale;
+      gs.circleArcs.push({
+        startAngle,
+        endAngle,
+        sourceAvgWidthPx: Math.max(stroke.avgWidth, 0.5) * LAYOUT_SCALE,
+      });
+      angle = endAngle;
+    }
+  }
+}
+
+function setCircleMorphPoint(
+  out: { x: number; y: number },
+  stroke: PreparedTegakiStroke,
+  circleArc: CircleArc,
+  baselineX: number,
+  baselineY: number,
+  sourceScale: number,
+  morph: number,
+  index: number,
+): void {
+  const pt = stroke.p[index]!;
+  const srcX = baselineX + pt[0]! * sourceScale;
+  const srcY = baselineY + pt[1]! * sourceScale;
+  const frac = stroke.totalLen > 1e-6
+    ? stroke.cumLen[index]! / stroke.totalLen
+    : stroke.p.length > 1
+    ? index / (stroke.p.length - 1)
+    : 0.5;
+  const theta = circleArc.startAngle +
+    (circleArc.endAngle - circleArc.startAngle) * frac;
+  const dstX = state.params.circleCenterX +
+    Math.cos(theta) * state.params.circleRadius;
+  const dstY = state.params.circleCenterY +
+    Math.sin(theta) * state.params.circleRadius;
+  out.x = srcX + (dstX - srcX) * morph;
+  out.y = srcY + (dstY - srcY) * morph;
+}
+
+function drawStrokeCircleMorphUpTo(
+  p5: P5GPU,
+  stroke: PreparedTegakiStroke,
+  circleArc: CircleArc,
+  baselineX: number,
+  baselineY: number,
+  sourceScale: number,
+  progress: number,
+  morph: number,
+  widthScale: number,
+): void {
+  const pts = stroke.p;
+  if (pts.length === 0 || progress <= 0) return;
+  if (morph <= 0) {
+    drawStrokeUpTo(
+      p5,
+      stroke,
+      baselineX,
+      baselineY,
+      sourceScale,
+      progress,
+      widthScale,
+    );
+    return;
+  }
+
+  const sourceStrokeWeight = Math.max(stroke.avgWidth, 0.5) * sourceScale;
+  const targetStrokeWeight = state.params.circleUniformWidth
+    ? state.runtime.circleUniformWidthPx
+    : circleArc.sourceAvgWidthPx;
+  p5.strokeWeight(
+    (sourceStrokeWeight + (targetStrokeWeight - sourceStrokeWeight) * morph) *
+      widthScale,
+  );
+
+  const p0 = { x: 0, y: 0 };
+  const p1 = { x: 0, y: 0 };
+  setCircleMorphPoint(
+    p0,
+    stroke,
+    circleArc,
+    baselineX,
+    baselineY,
+    sourceScale,
+    morph,
+    0,
+  );
+
+  if (pts.length === 1) {
+    p5.point(p0.x, p0.y);
+    return;
+  }
+
+  let totalLen = 0;
+  let prevX = p0.x;
+  let prevY = p0.y;
+  for (let i = 1; i < pts.length; i += 1) {
+    setCircleMorphPoint(
+      p1,
+      stroke,
+      circleArc,
+      baselineX,
+      baselineY,
+      sourceScale,
+      morph,
+      i,
+    );
+    totalLen += Math.hypot(p1.x - prevX, p1.y - prevY);
+    prevX = p1.x;
+    prevY = p1.y;
+  }
+  if (totalLen <= 1e-6) {
+    p5.point(p0.x, p0.y);
+    return;
+  }
+
+  const drawLen = totalLen * Math.min(progress, 1);
+  if (drawLen <= 0) return;
+
+  p5.beginShape();
+  p5.vertex(p0.x, p0.y);
+  prevX = p0.x;
+  prevY = p0.y;
+  let traveled = 0;
+
+  for (let i = 1; i < pts.length; i += 1) {
+    setCircleMorphPoint(
+      p1,
+      stroke,
+      circleArc,
+      baselineX,
+      baselineY,
+      sourceScale,
+      morph,
+      i,
+    );
+    const segLen = Math.hypot(p1.x - prevX, p1.y - prevY);
+
+    if (traveled + segLen <= drawLen) {
+      p5.vertex(p1.x, p1.y);
+      traveled += segLen;
+      prevX = p1.x;
+      prevY = p1.y;
+      continue;
+    }
+
+    if (segLen > 1e-6) {
+      const t = (drawLen - traveled) / segLen;
+      p5.vertex(
+        prevX + (p1.x - prevX) * t,
+        prevY + (p1.y - prevY) * t,
+      );
+    }
+    break;
+  }
+
   p5.endShape();
 }
 
@@ -803,10 +1009,29 @@ function drawGlyphAtPhase(
   const glyph = gs.glyph;
   if (!glyph || phase <= 0) return;
   const localTime = phase * glyph.t;
-  for (const stroke of glyph.s) {
+  const circleMorph = state.params.circleMorph;
+  for (let strokeIdx = 0; strokeIdx < glyph.s.length; strokeIdx += 1) {
+    const stroke = glyph.s[strokeIdx]!;
     if (localTime < stroke.d) continue;
     const elapsed = localTime - stroke.d;
     const lin = Math.min(elapsed / Math.max(stroke.a, 1e-6), 1);
+    if (circleMorph > 0) {
+      const circleArc = gs.circleArcs[strokeIdx];
+      if (circleArc) {
+        drawStrokeCircleMorphUpTo(
+          p5,
+          stroke,
+          circleArc,
+          gs.baselineX,
+          gs.baselineY,
+          scale,
+          easeOutQuad(lin),
+          circleMorph,
+          widthScale,
+        );
+        continue;
+      }
+    }
     drawStrokeUpTo(
       p5,
       stroke,
@@ -852,6 +1077,34 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
     max: 1,
     step: 0.01,
     label: "Glyph scale",
+  });
+  const circleMorph = pane.addFolder({ title: "Circle Morph" });
+  circleMorph.addBinding(state.params, "circleMorph", {
+    min: 0,
+    max: 1,
+    step: 0.01,
+    label: "Morph",
+  });
+  circleMorph.addBinding(state.params, "circleRadius", {
+    min: 0,
+    max: 800,
+    step: 1,
+    label: "Radius",
+  });
+  circleMorph.addBinding(state.params, "circleCenterX", {
+    min: 0,
+    max: 1280,
+    step: 1,
+    label: "Center X",
+  });
+  circleMorph.addBinding(state.params, "circleCenterY", {
+    min: 0,
+    max: 720,
+    step: 1,
+    label: "Center Y",
+  });
+  circleMorph.addBinding(state.params, "circleUniformWidth", {
+    label: "Uniform width",
   });
   pane.addBinding(state.params, "triggerMode", {
     options: {
@@ -1034,6 +1287,7 @@ export async function setup(dims: { width: number; height: number }) {
           },
           intersecting: false,
           cooldownUntil: 0,
+          circleArcs: [],
         });
       }
       i = j;
@@ -1049,6 +1303,8 @@ export async function setup(dims: { width: number; height: number }) {
   console.log(
     `Glyphs: ${glyphStates.length} (chars: ${chars.length}, drawable: ${drawableIndices.length})`,
   );
+
+  assignCircleArcs();
 
   // Compute per-glyph normalized bboxes and build the spatial grid.
   computeGlyphBboxes();
@@ -1111,7 +1367,7 @@ export function draw(p5: P5GPU, autoClear = true) {
     drawContourDebug(p5, ir, ig, ib);
   }
 
-  if (state.params.glyphScale <= 0) return;
+  if (state.params.glyphScale <= 0 && state.params.circleMorph <= 0) return;
 
   // Intersection-mode triggers fire here so they're gated by scene visibility.
   // "intersection" = body contour, "hand" = hand bbox. Both write to the
