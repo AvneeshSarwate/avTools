@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
 import type { SliderModel } from '../perfPaneClient'
 
 const props = defineProps<{
@@ -10,22 +10,69 @@ const props = defineProps<{
 
 const trackRef = ref<HTMLElement | null>(null)
 let dragging = false
+let activePointerId: number | null = null
+
+function preventBrowserDrag(e: Event) {
+  e.preventDefault()
+}
+
+function lockDocumentSelection() {
+  document.documentElement.classList.add('perf-dragging')
+  document.addEventListener('selectstart', preventBrowserDrag)
+  document.addEventListener('dragstart', preventBrowserDrag)
+}
+
+function unlockDocumentSelection() {
+  document.documentElement.classList.remove('perf-dragging')
+  document.removeEventListener('selectstart', preventBrowserDrag)
+  document.removeEventListener('dragstart', preventBrowserDrag)
+}
 
 function onPointerDown(e: PointerEvent) {
+  if (e.button !== 0) return
+  e.preventDefault()
   dragging = true
+  activePointerId = e.pointerId
   ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
+  lockDocumentSelection()
   dispatch(e, false)
 }
 
 function onPointerMove(e: PointerEvent) {
+  if (activePointerId !== null && e.pointerId !== activePointerId) return
   if (!dragging) return
+  e.preventDefault()
   dispatch(e, false)
 }
 
 function onPointerUp(e: PointerEvent) {
+  if (activePointerId !== null && e.pointerId !== activePointerId) return
   if (!dragging) return
-  dragging = false
+  e.preventDefault()
   dispatch(e, true)
+  endDrag(e)
+}
+
+function onPointerCancel(e: PointerEvent) {
+  if (activePointerId !== null && e.pointerId !== activePointerId) return
+  if (!dragging) return
+  endDrag(e)
+}
+
+function onLostPointerCapture(e: PointerEvent) {
+  if (activePointerId !== null && e.pointerId !== activePointerId) return
+  endDrag(e)
+}
+
+function endDrag(e?: PointerEvent) {
+  if (!dragging && activePointerId === null) return
+  const track = trackRef.value
+  if (track && e && activePointerId !== null && track.hasPointerCapture(activePointerId)) {
+    track.releasePointerCapture(activePointerId)
+  }
+  dragging = false
+  activePointerId = null
+  unlockDocumentSelection()
 }
 
 function dispatch(e: PointerEvent, last: boolean) {
@@ -50,6 +97,10 @@ function displayValue(): string {
   if (s >= 0.01) return props.slider.value.toFixed(2)
   return props.slider.value.toFixed(3)
 }
+
+onBeforeUnmount(() => {
+  endDrag()
+})
 </script>
 
 <template>
@@ -61,7 +112,8 @@ function displayValue(): string {
       @pointerdown="onPointerDown"
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
-      @pointercancel="onPointerUp"
+      @pointercancel="onPointerCancel"
+      @lostpointercapture="onLostPointerCapture"
     >
       <div class="vslider-fill" :style="{ height: fillPct() + '%' }"></div>
     </div>
@@ -77,6 +129,11 @@ function displayValue(): string {
   gap: 6px;
   min-width: 56px;
   user-select: none;
+}
+:global(html.perf-dragging),
+:global(html.perf-dragging *) {
+  user-select: none !important;
+  -webkit-user-select: none !important;
 }
 .vslider-label {
   color: #b8c4d4;
