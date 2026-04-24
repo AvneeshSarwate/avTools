@@ -1,17 +1,13 @@
 /// <reference lib="dom" />
 
-// Burning Kinaree — two blended components:
-//   1. Red rectangles launching from left/right at a random y. Travel
-//      angle has ± angular deviation from horizontal; rotation speed is
-//      snapshotted at launch so the rect's orientation is its own thing.
-//   2. Snowfall of small circles. Each flake falls at `fallSpeed` with an
-//      independent brownian x-wander; the noise source is behind a small
-//      `NoiseSource` interface so the model is easy to swap later.
+// Burning Kinaree — rectangle section of the original composite scene.
+// Red rectangles launch from left/right at a random y. Travel angle has
+// ± angular deviation from horizontal; rotation speed is snapshotted at
+// launch so the rect's orientation is its own thing.
 //
-// Each section has a local `mix` (0..1) that gates both draw and trigger
-// work — mix=0 means the section fully no-ops. A top-level `fade` matches
-// the per-scene fade convention used by the other hanoiShow sketches and
-// multiplies every section's effective mix.
+// The falling-circle section was extracted into ashes.ts. This scene now
+// owns only the rectangle layer, with the same per-scene fade convention
+// used by the other hanoiShow sketches.
 //
 // Run standalone from apps/deno-notebooks:
 //   deno run --unstable-webgpu --unstable-ffi --allow-all \
@@ -162,96 +158,6 @@ function spawnRectangle(
   };
 }
 
-// ── Section 2: snowfall ─────────────────────────────────────────────
-
-const SNOW_HUE_JITTER = 10;
-const SNOW_SAT_JITTER = 0.08;
-const SNOW_VAL_JITTER = 0.06;
-
-/**
- * Minimal noise interface — anything with `step(dt)` and a `value` getter
- * can stand in. The snow sketch owns one instance per flake; swap
- * `createBrownianNoise` below for a different factory (perlin, sine+phase,
- * simplex) and nothing else has to change.
- */
-interface NoiseSource {
-  step(dt: number): void;
-  readonly value: number;
-  /**
-   * Rate of change of `value`. For OU the internal velocity variable;
-   * for other noise models this can be numerically differentiated
-   * (`(value - prevValue) / dt`). Used by the snow section to couple
-   * horizontal motion to vertical fall speed (momentum feel).
-   */
-  readonly velocity: number;
-}
-
-interface BrownianNoiseParams {
-  stepSize: number; // random-impulse magnitude (applied to velocity per sec)
-  damping: number; // velocity decay rate (1/sec)
-  restoring: number; // spring constant pulling x back to 0 (1/sec²)
-}
-
-/**
- * Ornstein-Uhlenbeck-style brownian motion: a noisy driven, damped,
- * spring-restored scalar. Trajectories are smooth because velocity is
- * continuous, and restoring keeps wander bounded around 0 without needing
- * a hard clip. Reads params each step so runtime changes take effect live.
- */
-function createBrownianNoise(
-  getParams: () => BrownianNoiseParams,
-): NoiseSource {
-  let x = 0;
-  let vel = 0;
-  return {
-    step(dt: number) {
-      const p = getParams();
-      const impulse = (Math.random() - 0.5) * 2 * p.stepSize;
-      // a = impulse − damping·v − restoring·x
-      vel += (impulse - p.damping * vel - p.restoring * x) * dt;
-      x += vel * dt;
-    },
-    get value() {
-      return x;
-    },
-    get velocity() {
-      return vel;
-    },
-  };
-}
-
-interface Snowflake {
-  startX: number; // launch x in pixels
-  y: number; // current y; integrated per-frame (variable fall speed)
-  size: number; // snapshotted radius
-  color: [number, number, number]; // snapshotted with HSV jitter
-  noise: NoiseSource; // per-flake x-wander
-  alive: boolean;
-}
-
-function spawnSnowflake(
-  triggerCtx: DateTimeContext,
-  screenWidth: number,
-): Snowflake {
-  const snow = state.params.snow;
-  return {
-    startX: triggerCtx.random() * screenWidth,
-    y: 0,
-    size: snow.flakeSize,
-    color: jitterHsv(
-      snow.color,
-      SNOW_HUE_JITTER,
-      SNOW_SAT_JITTER,
-      SNOW_VAL_JITTER,
-    ),
-    // Closure reads snow.noise live so tweakpane changes affect in-flight
-    // flakes. Each flake has its own state (x, vel) via the factory's
-    // internal `let` bindings.
-    noise: createBrownianNoise(() => state.params.snow.noise),
-    alive: true,
-  };
-}
-
 // ── Consolidated state ──────────────────────────────────────────────
 
 export const state = {
@@ -279,33 +185,11 @@ export const state = {
         jitter: 0, // 0..1 — 0 = perfectly rhythmic, 1 = interval ∈ [0, 2×base]
       },
     },
-
-    // Section 2: snowfall
-    snow: {
-      mix: 1.0,
-      launchRate: 18, // flakes per second
-      fallSpeed: 170, // pixels/sec (baseline, pre-coupling)
-      flakeSize: 5, // circle radius in pixels
-      color: "#e8f4ff",
-      xDisplacementRange: 1000, // pixel cap on horizontal drift from startX
-      // Momentum coupling: fast horizontal motion steals fall speed.
-      // effectiveFallSpeed = fallSpeed * max(0, 1 - coupling * |vx| / fallSpeed)
-      // 0 = off, 1 = full stall when |vx| matches fallSpeed.
-      momentumCoupling: 0.4,
-      // Brownian shaping — tune these to taste. Swap createBrownianNoise
-      // in spawnSnowflake to try a different model entirely.
-      noise: {
-        stepSize: 800,
-        damping: 1.5,
-        restoring: 2.0,
-      },
-    },
   },
   macros: {} as Record<string, number>,
   runtime: {
     rootAnim: null as ReturnType<typeof launch> | null,
     rectangles: [] as Rectangle[],
-    snowflakes: [] as Snowflake[],
     // Screen dims, captured in setup() so the rect trigger loop can pick
     // spawn positions without needing a p5 handle. Defaults match the
     // standalone runner; combined.ts passes its own dims.
@@ -338,8 +222,8 @@ export function setup(opts?: { width?: number; height?: number }): void {
   if (opts?.width !== undefined) state.runtime.screenWidth = opts.width;
   if (opts?.height !== undefined) state.runtime.screenHeight = opts.height;
 
+  state.runtime.rootAnim?.cancel();
   state.runtime.rectangles = [];
-  state.runtime.snowflakes = [];
 
   const rootAnim = launch(async (ctx) => {
     // Section 1: rectangle strobe. One iteration = one full pulse cycle
@@ -393,21 +277,6 @@ export function setup(opts?: { width?: number; height?: number }): void {
       }
     });
 
-    // Section 2: snowflake launch trigger.
-    ctx.branch(async (snowCtx) => {
-      while (!snowCtx.isCanceled) {
-        const rate = Math.max(0.01, state.params.snow.launchRate);
-        await snowCtx.waitSec(1 / rate);
-
-        const mix = state.params.snow.mix * state.params.fade;
-        if (mix <= 0) continue;
-
-        state.runtime.snowflakes.push(
-          spawnSnowflake(snowCtx, state.runtime.screenWidth),
-        );
-      }
-    });
-
     // Root tick — keep descendant-time fresh for the trigger loops.
     while (!ctx.isCanceled) await ctx.waitSec(1 / 60);
   });
@@ -420,11 +289,9 @@ export function setup(opts?: { width?: number; height?: number }): void {
 }
 
 export function cleanup(): void {
-  // core-timing doesn't expose a direct cancel here; the branches self-exit
-  // when the process tears down. Kept as a hook for future symmetry.
+  state.runtime.rootAnim?.cancel();
   state.runtime.rootAnim = null;
   state.runtime.rectangles = [];
-  state.runtime.snowflakes = [];
   state.runtime.rectStrobeActive = false;
 }
 
@@ -488,51 +355,6 @@ function drawRectsSection(p5: P5GPU): void {
   }
 }
 
-function drawSnowSection(p5: P5GPU, dt: number): void {
-  const snow = state.params.snow;
-  const mix = snow.mix * state.params.fade;
-  if (mix <= 0) return;
-
-  const alpha = Math.round(255 * mix);
-  const h = p5.height;
-  const range = snow.xDisplacementRange;
-  const fallSpeed = snow.fallSpeed;
-  // Guard div-by-zero; coupling uses |vx| / fallSpeed as its scale.
-  const fallRef = Math.max(1, fallSpeed);
-  const coupling = Math.max(0, Math.min(1, snow.momentumCoupling));
-  const live = state.runtime.snowflakes;
-
-  p5.noStroke();
-
-  for (let i = 0; i < live.length; i += 1) {
-    const f = live[i];
-    if (!f.alive) continue;
-
-    f.noise.step(dt);
-    const offset = Math.max(-range, Math.min(range, f.noise.value));
-    const x = f.startX + offset;
-
-    // Momentum coupling: fast horizontal noise velocity steals fall speed.
-    // max(0, …) guarantees a non-negative fall even at coupling=1.
-    const vx = f.noise.velocity;
-    const effectiveFall = fallSpeed *
-      Math.max(0, 1 - coupling * Math.abs(vx) / fallRef);
-    f.y += effectiveFall * dt;
-
-    if (f.y > h + f.size) {
-      f.alive = false;
-      continue;
-    }
-
-    p5.fill(f.color[0], f.color[1], f.color[2], alpha);
-    p5.circle(x, f.y, f.size * 2);
-  }
-
-  if (live.length > 0 && live.length % 64 === 0) {
-    state.runtime.snowflakes = live.filter((f) => f.alive);
-  }
-}
-
 // ── Draw ────────────────────────────────────────────────────────────
 
 export function draw(p5: P5GPU, _time: number, autoClear = true): void {
@@ -540,8 +362,6 @@ export function draw(p5: P5GPU, _time: number, autoClear = true): void {
 
   const now = performance.now();
   const dtMs = now - state.frame.lastFrameTime;
-  // Cap dt so a long pause (tab blur, breakpoint) doesn't jerk positions.
-  const dt = Math.min(dtMs / 1000, 0.1);
   const fps = 1000 / Math.max(1, dtMs);
   state.frame.fpsSmooth += (fps - state.frame.fpsSmooth) * 0.1;
   state.frame.lastFrameTime = now;
@@ -549,7 +369,6 @@ export function draw(p5: P5GPU, _time: number, autoClear = true): void {
   if (state.params.fade <= 0) return;
 
   drawRectsSection(p5);
-  drawSnowSection(p5, dt);
 }
 
 // ── Tweakpane ───────────────────────────────────────────────────────
@@ -619,64 +438,6 @@ export function setupPane(pane: PaneContainer, _refresh?: () => void): void {
     max: 1,
     step: 0.01,
     label: "Jitter",
-  });
-
-  const snow = pane.addFolder({
-    title: "Snow (falling circles)",
-    expanded: true,
-  });
-  const sn = state.params.snow;
-  snow.addBinding(sn, "mix", { min: 0, max: 1, step: 0.01, label: "Mix" });
-  snow.addBinding(sn, "launchRate", {
-    min: 0,
-    max: 80,
-    step: 0.5,
-    label: "Launch Rate (Hz)",
-  });
-  snow.addBinding(sn, "fallSpeed", {
-    min: 20,
-    max: 800,
-    step: 5,
-    label: "Fall Speed",
-  });
-  snow.addBinding(sn, "flakeSize", {
-    min: 1,
-    max: 30,
-    step: 0.5,
-    label: "Flake Size",
-  });
-  snow.addBinding(sn, "color", { label: "Color" });
-  snow.addBinding(sn, "xDisplacementRange", {
-    min: 0,
-    max: 2000,
-    step: 5,
-    label: "X Displacement",
-  });
-  snow.addBinding(sn, "momentumCoupling", {
-    min: 0,
-    max: 1,
-    step: 0.01,
-    label: "Momentum Coupling",
-  });
-
-  const nz = snow.addFolder({ title: "Brownian Noise", expanded: false });
-  nz.addBinding(sn.noise, "stepSize", {
-    min: 0,
-    max: 4000,
-    step: 5,
-    label: "Step Size",
-  });
-  nz.addBinding(sn.noise, "damping", {
-    min: 0,
-    max: 10,
-    step: 0.05,
-    label: "Damping",
-  });
-  nz.addBinding(sn.noise, "restoring", {
-    min: 0,
-    max: 20,
-    step: 0.05,
-    label: "Restoring",
   });
 }
 

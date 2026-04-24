@@ -51,6 +51,15 @@ import {
 } from "./burning_kinaree.ts";
 
 import {
+  cleanup as ashesCleanup,
+  draw as ashesDraw,
+  macroDefs as ashesMacroDefs,
+  setup as ashesSetup,
+  setupPane as ashesSetupPane,
+  state as ashesState,
+} from "./ashes.ts";
+
+import {
   cleanup as kinareeRingCleanup,
   draw as kinareeRingDraw,
   macroDefs as kinareeRingMacroDefs,
@@ -103,6 +112,7 @@ const globalParams = {
   tegakiEnabled: true,
   kinareeRingEnabled: true,
   kinareeEnabled: true,
+  ashesEnabled: true,
   plorkEnabled: true,
   fabEnabled: true,
   showTiming: false,
@@ -158,6 +168,7 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
       { title: "Tegaki" },
       { title: "Kinaree Ring" },
       { title: "Kinaree" },
+      { title: "Ashes" },
       { title: "Plork" },
       { title: "Fab & Lies" },
     ],
@@ -171,6 +182,7 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
     label: "Kinaree Ring",
   });
   scenes.addBinding(globalParams, "kinareeEnabled", { label: "Kinaree" });
+  scenes.addBinding(globalParams, "ashesEnabled", { label: "Ashes" });
   scenes.addBinding(globalParams, "plorkEnabled", { label: "Plork" });
   scenes.addBinding(globalParams, "fabEnabled", { label: "Fab & Lies" });
 
@@ -187,8 +199,9 @@ function setupPane(pane: WindowTweakpane, refresh: () => void) {
   tegakiSetupPane(tab.pages[1], refresh);
   kinareeRingSetupPane(tab.pages[2], refresh);
   kinareeSetupPane(tab.pages[3], refresh);
-  plorkSetupPane(tab.pages[4], refresh);
-  fabSetupPane(tab.pages[5], refresh);
+  ashesSetupPane(tab.pages[4], refresh);
+  plorkSetupPane(tab.pages[5], refresh);
+  fabSetupPane(tab.pages[6], refresh);
 }
 
 function setupPerfPane(pane: WindowTweakpane, refresh: () => void) {
@@ -197,6 +210,7 @@ function setupPerfPane(pane: WindowTweakpane, refresh: () => void) {
       { title: "Tegaki" },
       { title: "Kinaree Ring" },
       { title: "Kinaree" },
+      { title: "Ashes" },
       { title: "Plork" },
       { title: "Fab & Lies" },
       { title: "Mirage" },
@@ -211,11 +225,12 @@ function setupPerfPane(pane: WindowTweakpane, refresh: () => void) {
     refresh,
   );
   installMacros(tab.pages[2], kinareeState.macros, kinareeMacroDefs, refresh);
-  installMacros(tab.pages[3], plorkState.macros, plorkMacroDefs, refresh);
-  installMacros(tab.pages[4], fabState.macros, fabMacroDefs, refresh);
-  installMacros(tab.pages[5], mirageMacros, mirageMacroDefs, refresh);
+  installMacros(tab.pages[3], ashesState.macros, ashesMacroDefs, refresh);
+  installMacros(tab.pages[4], plorkState.macros, plorkMacroDefs, refresh);
+  installMacros(tab.pages[5], fabState.macros, fabMacroDefs, refresh);
+  installMacros(tab.pages[6], mirageMacros, mirageMacroDefs, refresh);
   installMacros(
-    tab.pages[6],
+    tab.pages[7],
     pickingKinarreeMacros,
     pickingKinarreeMacroDefs,
     refresh,
@@ -376,6 +391,7 @@ const device = await requestWebGpuDevice();
 const tegakiP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const kinareeRingP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const kinareeP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
+const ashesP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const plorkP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const fabP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
 const overlayP5 = new P5GPU(device, { width: WIDTH, height: HEIGHT });
@@ -426,6 +442,7 @@ await Promise.all([
 ]);
 kinareeRingSetup();
 kinareeSetup({ width: WIDTH, height: HEIGHT });
+ashesSetup({ width: WIDTH, height: HEIGHT });
 fabSetup({ width: WIDTH, height: HEIGHT });
 
 // Refresh both panes on any macro change. Declared before pane construction
@@ -448,7 +465,7 @@ const renderWindow = await createWindowRenderManager({
 
 const perfPane = createWindowTweakpane(renderWindow.window, {
   title: "Perf",
-  panelWidth: 620,
+  panelWidth: 700,
   panelHeight: 660,
   renderShell: (args) =>
     renderPerfShellHtml({
@@ -497,6 +514,14 @@ await renderWindow.run(() => {
     kinareeP5.clear();
   }
   const kinareeTex = kinareeP5.endFrame();
+
+  ashesP5.beginFrame();
+  if (globalParams.ashesEnabled) {
+    ashesDraw(ashesP5, time);
+  } else {
+    ashesP5.clear();
+  }
+  const ashesTex = ashesP5.endFrame();
 
   const plorkView = plorkDraw(plorkP5, true, !globalParams.plorkEnabled);
 
@@ -547,6 +572,13 @@ await renderWindow.run(() => {
     encoder,
     alphaBlitPipeline,
     kinareeTex.createView(),
+    compositeView,
+  );
+  alphaBlit(
+    device,
+    encoder,
+    alphaBlitPipeline,
+    ashesTex.createView(),
     compositeView,
   );
   alphaBlit(device, encoder, alphaBlitPipeline, plorkView, compositeView);
@@ -600,6 +632,7 @@ await renderWindow.run(() => {
     tegakiCleanup();
     kinareeRingCleanup();
     kinareeCleanup();
+    ashesCleanup();
     plorkCleanup();
     fabCleanup();
     bodyContourProvider.cleanup();
@@ -609,6 +642,7 @@ await renderWindow.run(() => {
     tegakiP5.dispose();
     kinareeRingP5.dispose();
     kinareeP5.dispose();
+    ashesP5.dispose();
     plorkP5.dispose();
     fabP5.dispose();
     overlayP5.dispose();
