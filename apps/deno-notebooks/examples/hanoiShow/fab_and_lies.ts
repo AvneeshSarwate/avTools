@@ -222,12 +222,12 @@ export const state = {
     mix: 1.0,
     bgColor: "#0d1017",
 
-    launchRate: 2.5, // text blocks per second
-    travelSpeed: 550, // pixels/sec, snapshotted at launch
-    angleDeviation: 20, // degrees, ± range from straight horizontal
-    textSize: 96, // font size in pixels, snapshotted
-    rotationSpeed: 3.0, // radians/sec, snapshotted at launch
-    color: "#e14a3a",
+    launchRate: 17.9, // text blocks per second
+    travelSpeed: 180, // pixels/sec, snapshotted at launch
+    angleDeviation: 6, // degrees, ± range from straight horizontal
+    textSize: 28, // font size in pixels, snapshotted
+    rotationSpeed: 0.25, // radians/sec, snapshotted at launch
+    color: "#ffffff",
     // Strobe: during a pulse, every text block is drawn pure white instead
     // of its snapshotted color. `rate=0` disables the trigger. Same
     // mechanics as burning_kinaree's rect strobe.
