@@ -51,6 +51,7 @@ export interface SliderModel {
   max: number
   step: number
   value: number
+  defaultValue: number
 }
 
 export interface ToggleModel {
@@ -199,6 +200,7 @@ export class PerfPaneClient {
             max: typeof op.opts.max === 'number' ? (op.opts.max as number) : 1,
             step: typeof op.opts.step === 'number' ? (op.opts.step as number) : 0.001,
             value: op.value,
+            defaultValue: op.value,
           }) as SliderModel
           this.sliderById.set(op.id, slider)
           if (parent) {

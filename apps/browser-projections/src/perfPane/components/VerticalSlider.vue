@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import type { SliderModel } from '../perfPaneClient'
 
 const props = defineProps<{
@@ -9,6 +9,8 @@ const props = defineProps<{
 }>()
 
 const trackRef = ref<HTMLElement | null>(null)
+const valueDraft = ref('')
+const editingValue = ref(false)
 let dragging = false
 let activePointerId: number | null = null
 
@@ -91,21 +93,82 @@ function fillPct(): number {
   return ((props.slider.value - props.slider.min) / range) * 100
 }
 
-function displayValue(): string {
+function formatValue(value: number): string {
   const s = props.slider.step
-  if (s >= 1) return props.slider.value.toFixed(0)
-  if (s >= 0.01) return props.slider.value.toFixed(2)
-  return props.slider.value.toFixed(3)
+  if (s >= 1) return value.toFixed(0)
+  if (s >= 0.01) return value.toFixed(2)
+  return value.toFixed(3)
+}
+
+function syncDraftFromSlider(): void {
+  valueDraft.value = formatValue(props.slider.value)
+}
+
+function onValueFocus(): void {
+  editingValue.value = true
+  valueDraft.value = String(props.slider.value)
+}
+
+function onValueInput(e: Event): void {
+  valueDraft.value = (e.target as HTMLInputElement).value
+}
+
+function commitDraft(): void {
+  const parsed = Number(valueDraft.value)
+  if (!Number.isFinite(parsed)) {
+    syncDraftFromSlider()
+    return
+  }
+  props.changeHandler(parsed, true)
+  syncDraftFromSlider()
+}
+
+function onValueBlur(): void {
+  commitDraft()
+  editingValue.value = false
+}
+
+function onValueKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Enter') {
+    commitDraft()
+    ;(e.target as HTMLInputElement).blur()
+    return
+  }
+  if (e.key === 'Escape') {
+    syncDraftFromSlider()
+    ;(e.target as HTMLInputElement).blur()
+  }
+}
+
+function resetToDefault(): void {
+  props.changeHandler(props.slider.defaultValue, true)
+  if (!editingValue.value) {
+    syncDraftFromSlider()
+  }
 }
 
 onBeforeUnmount(() => {
   endDrag()
 })
+
+watch(
+  () => [props.slider.value, props.slider.step],
+  () => {
+    if (!editingValue.value) {
+      syncDraftFromSlider()
+    }
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
   <div class="vslider">
-    <div class="vslider-label">{{ label ?? slider.label }}</div>
+    <div
+      class="vslider-label"
+      title="Double-click to reset"
+      @dblclick="resetToDefault"
+    >{{ label ?? slider.label }}</div>
     <div
       ref="trackRef"
       class="vslider-track"
@@ -117,7 +180,19 @@ onBeforeUnmount(() => {
     >
       <div class="vslider-fill" :style="{ height: fillPct() + '%' }"></div>
     </div>
-    <div class="vslider-value">{{ displayValue() }}</div>
+    <input
+      class="vslider-value-input"
+      type="number"
+      inputmode="decimal"
+      :min="slider.min"
+      :max="slider.max"
+      :step="slider.step"
+      :value="valueDraft"
+      @focus="onValueFocus"
+      @input="onValueInput"
+      @blur="onValueBlur"
+      @keydown="onValueKeydown"
+    />
   </div>
 </template>
 
@@ -162,11 +237,29 @@ onBeforeUnmount(() => {
   bottom: 0;
   background: linear-gradient(180deg, #8fc3ff 0%, #5a9eff 100%);
 }
-.vslider-value {
+.vslider-value-input {
   color: #dce6f4;
+  background: #0f1621;
+  border: 1px solid #2d3547;
+  border-radius: 4px;
   font-family: SFMono-Regular, ui-monospace, Menlo, monospace;
   font-size: 11px;
-  min-width: 50px;
+  width: 56px;
   text-align: center;
+  padding: 4px 6px;
+  box-sizing: border-box;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.vslider-value-input:focus {
+  outline: none;
+  border-color: #8fc3ff;
+  box-shadow: 0 0 0 1px rgba(143, 195, 255, 0.35);
+}
+.vslider-value-input::-webkit-outer-spin-button,
+.vslider-value-input::-webkit-inner-spin-button {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
 }
 </style>
