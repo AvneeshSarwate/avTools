@@ -1399,8 +1399,8 @@ const RUN_INSTALL_NUMERIC_MACRO_SPECS: RunInstallNumericMacroSpec[] = [
   },
   {
     key: "lissajousPhaseSpeedX",
-    min: -4,
-    max: 4,
+    min: -1,
+    max: 1,
     getCurrent: () =>
       typeof state.macros.lissajousPhaseSpeedX === "number"
         ? state.macros.lissajousPhaseSpeedX
@@ -1408,8 +1408,8 @@ const RUN_INSTALL_NUMERIC_MACRO_SPECS: RunInstallNumericMacroSpec[] = [
   },
   {
     key: "lissajousPhaseSpeedY",
-    min: -4,
-    max: 4,
+    min: -1,
+    max: 1,
     getCurrent: () =>
       typeof state.macros.lissajousPhaseSpeedY === "number"
         ? state.macros.lissajousPhaseSpeedY
