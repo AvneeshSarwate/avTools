@@ -189,6 +189,7 @@ export const state = {
     idlePhase: 1.0, // 0 = invisible when not animating, 1 = fully drawn
     paused: false,
     runInstall: false,
+    installWaitSec: 60,
     glyphScale: 1.0, // 0–1, multiplies font scale; 0 = skip drawing
     pathMorph: 0.0, // 0 = laid-out text, 1 = shared target path
     pathMode: "lissajous" as "circle" | "lissajous",
@@ -244,6 +245,7 @@ export const state = {
     lissajousPhaseAccumX: 0,
     lissajousPhaseAccumY: 0,
     lastMorphPhaseUpdateMs: null as number | null,
+    installPauseAutoOffTimeout: null as ReturnType<typeof setTimeout> | null,
     prevPaused: false,
   },
   meta: {
@@ -1352,7 +1354,7 @@ export const macroDefs: MacroDef<number | boolean>[] = [
   },
 ];
 
-type RunInstallMacroSpec = {
+type RunInstallNumericMacroSpec = {
   key: "morph" | "lissajousAmpX" | "lissajousAmpY" |
     "lissajousPhaseSpeedX" | "lissajousPhaseSpeedY";
   min: number;
@@ -1360,7 +1362,14 @@ type RunInstallMacroSpec = {
   getCurrent: () => number;
 };
 
-const RUN_INSTALL_MACRO_SPECS: RunInstallMacroSpec[] = [
+type RunInstallToggleMacroSpec = {
+  key: "paused";
+  getCurrent: () => boolean;
+};
+
+type RunInstallMacroSpec = RunInstallNumericMacroSpec | RunInstallToggleMacroSpec;
+
+const RUN_INSTALL_NUMERIC_MACRO_SPECS: RunInstallNumericMacroSpec[] = [
   {
     key: "morph",
     min: 0.2,
@@ -1408,12 +1417,22 @@ const RUN_INSTALL_MACRO_SPECS: RunInstallMacroSpec[] = [
   },
 ];
 
+const RUN_INSTALL_TOGGLE_MACRO_SPECS: RunInstallToggleMacroSpec[] = [
+  {
+    key: "paused",
+    getCurrent: () =>
+      typeof state.macros.paused === "boolean"
+        ? state.macros.paused
+        : state.params.paused,
+  },
+];
+
 function clamp01(x: number): number {
   return Math.max(0, Math.min(1, x));
 }
 
 function applyNumericMacroValue(
-  key: RunInstallMacroSpec["key"],
+  key: RunInstallNumericMacroSpec["key"],
   value: number,
 ): void {
   const def = macroDefs.find((candidate) => candidate.key === key);
@@ -1422,9 +1441,36 @@ function applyNumericMacroValue(
   def.apply(value);
 }
 
+function applyBooleanMacroValue(
+  key: RunInstallToggleMacroSpec["key"],
+  value: boolean,
+): void {
+  const def = macroDefs.find((candidate) => candidate.key === key);
+  if (!def) return;
+  state.macros[key] = value;
+  def.apply(value);
+}
+
+function clearInstallPauseAutoOff(): void {
+  if (state.runtime.installPauseAutoOffTimeout !== null) {
+    clearTimeout(state.runtime.installPauseAutoOffTimeout);
+    state.runtime.installPauseAutoOffTimeout = null;
+  }
+}
+
+function scheduleInstallPauseAutoOff(): void {
+  clearInstallPauseAutoOff();
+  state.runtime.installPauseAutoOffTimeout = setTimeout(() => {
+    state.runtime.installPauseAutoOffTimeout = null;
+    if (!state.params.runInstall || !state.params.paused) return;
+    applyBooleanMacroValue("paused", false);
+    state.runtime.refreshUi?.();
+  }, 5 * 60 * 1000);
+}
+
 function pickRunInstallTarget(
   currentValue: number,
-  spec: RunInstallMacroSpec,
+  spec: RunInstallNumericMacroSpec,
   randomUnit: () => number,
 ): number {
   const boundedCurrent = Math.max(spec.min, Math.min(spec.max, currentValue));
@@ -1462,14 +1508,18 @@ function pickRunInstallTarget(
 async function runInstallLoop(ctx: DateTimeContext): Promise<void> {
   while (!ctx.isCanceled) {
     if (!state.params.runInstall) {
+      clearInstallPauseAutoOff();
       await ctx.waitSec(1);
       continue;
     }
 
-    const specPool = [...RUN_INSTALL_MACRO_SPECS];
+    const specPool: RunInstallMacroSpec[] = [
+      ...RUN_INSTALL_NUMERIC_MACRO_SPECS,
+      ...RUN_INSTALL_TOGGLE_MACRO_SPECS,
+    ];
     const pickedCount = ctx.random() < 0.5 ? 1 : 2;
     const ramps: Array<{
-      spec: RunInstallMacroSpec;
+      spec: RunInstallNumericMacroSpec;
       start: number;
       target: number;
     }> = [];
@@ -1477,10 +1527,24 @@ async function runInstallLoop(ctx: DateTimeContext): Promise<void> {
     for (let i = 0; i < pickedCount && specPool.length > 0; i += 1) {
       const pickIndex = Math.floor(ctx.random() * specPool.length);
       const spec = specPool.splice(pickIndex, 1)[0]!;
-      const start = spec.getCurrent();
-      const target = pickRunInstallTarget(start, spec, () => ctx.random());
-      ramps.push({ spec, start, target });
+      if ("min" in spec) {
+        const start = spec.getCurrent();
+        const target = pickRunInstallTarget(start, spec, () => ctx.random());
+        ramps.push({ spec, start, target });
+      } else {
+        const nextValue = !spec.getCurrent();
+        applyBooleanMacroValue(spec.key, nextValue);
+        if (spec.key === "paused") {
+          if (nextValue) {
+            scheduleInstallPauseAutoOff();
+          } else {
+            clearInstallPauseAutoOff();
+          }
+        }
+      }
     }
+
+    state.runtime.refreshUi?.();
 
     const duration = 1 + ctx.random() * 9;
     const startTime = ctx.progTime;
@@ -1501,7 +1565,8 @@ async function runInstallLoop(ctx: DateTimeContext): Promise<void> {
     }
     state.runtime.refreshUi?.();
 
-    for (let i = 0; i < 5 && !ctx.isCanceled; i += 1) {
+    const waitSec = Math.max(5, Math.min(60, Math.round(state.params.installWaitSec)));
+    for (let i = 0; i < waitSec && !ctx.isCanceled; i += 1) {
       await ctx.waitSec(1);
       if (!state.params.runInstall) break;
     }
@@ -1688,6 +1753,12 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
   });
   pane.addBinding(state.params, "paused", { label: "Pause triggers" });
   pane.addBinding(state.params, "runInstall", { label: "Run install" });
+  pane.addBinding(state.params, "installWaitSec", {
+    min: 5,
+    max: 60,
+    step: 1,
+    label: "Install wait (s)",
+  });
   pane.addBinding(state.params, "inkColor", { label: "Ink" });
   pane.addBinding(state.params, "bgColor", { label: "BG" });
 
@@ -1988,6 +2059,7 @@ function drawContourDebug(p5: P5GPU, r: number, g: number, b: number): void {
 // ── Cleanup ─────────────────────────────────────────────────────────
 
 export function cleanup() {
+  clearInstallPauseAutoOff();
   if (state.runtime.rootAnim) {
     state.runtime.rootAnim.cancel();
     state.runtime.rootAnim = null;
