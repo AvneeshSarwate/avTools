@@ -228,6 +228,7 @@ export const state = {
   runtime: {
     rootAnim: null as ReturnType<typeof launch> | null,
     engine: null as NativeTextEngine | null,
+    refreshUi: null as (() => void) | null,
     /** Long-lived core-timing context used to spawn ramp branches from any call site. */
     triggerCtx: null as DateTimeContext | null,
     /** Uniform spatial grid over normalized [0,1] for fast bbox queries by contour segments. */
@@ -1351,13 +1352,170 @@ export const macroDefs: MacroDef<number | boolean>[] = [
   },
 ];
 
+type RunInstallMacroSpec = {
+  key: "morph" | "lissajousAmpX" | "lissajousAmpY" |
+    "lissajousPhaseSpeedX" | "lissajousPhaseSpeedY";
+  min: number;
+  max: number;
+  getCurrent: () => number;
+};
+
+const RUN_INSTALL_MACRO_SPECS: RunInstallMacroSpec[] = [
+  {
+    key: "morph",
+    min: 0.2,
+    max: 0.75,
+    getCurrent: () =>
+      typeof state.macros.morph === "number"
+        ? state.macros.morph
+        : state.params.pathMorph,
+  },
+  {
+    key: "lissajousAmpX",
+    min: 150,
+    max: 1170,
+    getCurrent: () =>
+      typeof state.macros.lissajousAmpX === "number"
+        ? state.macros.lissajousAmpX
+        : state.params.lissajousAmpX,
+  },
+  {
+    key: "lissajousAmpY",
+    min: 150,
+    max: 585,
+    getCurrent: () =>
+      typeof state.macros.lissajousAmpY === "number"
+        ? state.macros.lissajousAmpY
+        : state.params.lissajousAmpY,
+  },
+  {
+    key: "lissajousPhaseSpeedX",
+    min: -4,
+    max: 4,
+    getCurrent: () =>
+      typeof state.macros.lissajousPhaseSpeedX === "number"
+        ? state.macros.lissajousPhaseSpeedX
+        : state.params.lissajousPhaseSpeedX,
+  },
+  {
+    key: "lissajousPhaseSpeedY",
+    min: -4,
+    max: 4,
+    getCurrent: () =>
+      typeof state.macros.lissajousPhaseSpeedY === "number"
+        ? state.macros.lissajousPhaseSpeedY
+        : state.params.lissajousPhaseSpeedY,
+  },
+];
+
+function clamp01(x: number): number {
+  return Math.max(0, Math.min(1, x));
+}
+
+function applyNumericMacroValue(
+  key: RunInstallMacroSpec["key"],
+  value: number,
+): void {
+  const def = macroDefs.find((candidate) => candidate.key === key);
+  if (!def) return;
+  state.macros[key] = value;
+  def.apply(value);
+}
+
+function pickRunInstallTarget(
+  currentValue: number,
+  spec: RunInstallMacroSpec,
+  randomUnit: () => number,
+): number {
+  const boundedCurrent = Math.max(spec.min, Math.min(spec.max, currentValue));
+  const range = spec.max - spec.min;
+  const minDelta = range * 0.25;
+  const maxDelta = range * 0.5;
+
+  const roomDown = boundedCurrent - spec.min;
+  const roomUp = spec.max - boundedCurrent;
+  const canGoDown = roomDown >= minDelta;
+  const canGoUp = roomUp >= minDelta;
+
+  let direction = 1;
+  if (canGoDown && canGoUp) {
+    direction = randomUnit() < 0.5 ? -1 : 1;
+  } else if (canGoDown) {
+    direction = -1;
+  }
+
+  const room = direction > 0 ? roomUp : roomDown;
+  if (room <= 0) return boundedCurrent;
+
+  const deltaLo = Math.min(minDelta, room);
+  const deltaHi = Math.min(maxDelta, room);
+  const delta = deltaHi <= deltaLo
+    ? deltaHi
+    : deltaLo + randomUnit() * (deltaHi - deltaLo);
+
+  return Math.max(
+    spec.min,
+    Math.min(spec.max, boundedCurrent + direction * delta),
+  );
+}
+
+async function runInstallLoop(ctx: DateTimeContext): Promise<void> {
+  while (!ctx.isCanceled) {
+    if (!state.params.runInstall) {
+      await ctx.waitSec(1);
+      continue;
+    }
+
+    const specPool = [...RUN_INSTALL_MACRO_SPECS];
+    const pickedCount = ctx.random() < 0.5 ? 1 : 2;
+    const ramps: Array<{
+      spec: RunInstallMacroSpec;
+      start: number;
+      target: number;
+    }> = [];
+
+    for (let i = 0; i < pickedCount && specPool.length > 0; i += 1) {
+      const pickIndex = Math.floor(ctx.random() * specPool.length);
+      const spec = specPool.splice(pickIndex, 1)[0]!;
+      const start = spec.getCurrent();
+      const target = pickRunInstallTarget(start, spec, () => ctx.random());
+      ramps.push({ spec, start, target });
+    }
+
+    const duration = 1 + ctx.random() * 9;
+    const startTime = ctx.progTime;
+
+    while (!ctx.isCanceled && (ctx.progTime - startTime) < duration) {
+      const t = clamp01((ctx.progTime - startTime) / duration);
+      const eased = t * t * (3 - 2 * t);
+      for (const ramp of ramps) {
+        const value = ramp.start + (ramp.target - ramp.start) * eased;
+        applyNumericMacroValue(ramp.spec.key, value);
+      }
+      state.runtime.refreshUi?.();
+      await ctx.waitSec(1 / 60);
+    }
+
+    for (const ramp of ramps) {
+      applyNumericMacroValue(ramp.spec.key, ramp.target);
+    }
+    state.runtime.refreshUi?.();
+
+    for (let i = 0; i < 5 && !ctx.isCanceled; i += 1) {
+      await ctx.waitSec(1);
+      if (!state.params.runInstall) break;
+    }
+  }
+}
+
 export function setupPane(pane: PaneContainer, refresh?: () => void) {
+  state.runtime.refreshUi = refresh ?? (() => pane.refresh());
   const macros = pane.addFolder({ title: "Macros", expanded: true });
   installMacros(
     macros,
     state.macros,
     macroDefs,
-    refresh ?? (() => pane.refresh()),
+    state.runtime.refreshUi,
   );
 
   pane.addBinding(state.params, "fade", {
@@ -1699,6 +1857,7 @@ export async function setup(dims: { width: number; height: number }) {
   const rootAnim = launch(async (ctx) => {
     // Hand particle emitter — runs alongside the trigger loop.
     ctx.branch((emitterCtx) => runHandEmitterLoop(emitterCtx));
+    ctx.branch((installCtx) => runInstallLoop(installCtx));
 
     ctx.branch(async (triggerCtx) => {
       state.runtime.triggerCtx = triggerCtx;
@@ -1837,6 +1996,7 @@ export function cleanup() {
     state.runtime.engine.dispose();
     state.runtime.engine = null;
   }
+  state.runtime.refreshUi = null;
   state.runtime.morphPathLut = null;
   state.runtime.morphPathKey = "";
   state.runtime.lissajousPhaseAccumX = 0;
