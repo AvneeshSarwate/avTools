@@ -31,6 +31,7 @@ import { P5GPU } from "../../tools/p5gpu.ts";
 import { installMacros, type MacroDef } from "../../tools/macros.ts";
 import { createOSCClient, type OSCClient } from "../../tools/osc.ts";
 import { renderPerfShellHtml } from "../../tools/perf_shell_html.ts";
+import { MidiAccess, type MidiInput } from "../../midi/mod.ts";
 
 import {
   cleanup as tegakiCleanup,
@@ -107,6 +108,10 @@ const COMBINED_RENDER_YIELD_MS = 4;
 // Outbound OSC destination for external-scene macro tabs on the perf pane.
 const EXTERNAL_OSC_HOST = "127.0.0.1";
 const EXTERNAL_OSC_PORT = 9004;
+const MIDI_FIGHTER_TWISTER_NAME = "Midi Fighter Twister";
+const MIDI_FALLBACK_PORT_NAME = "IAC Driver Bus 1";
+const MIDI_FIGHTER_TWISTER_ENCODER_CHANNEL = 0;
+const MIDI_FIGHTER_TWISTER_ENCODER_CC_MAX = 63;
 
 const globalParams = {
   tegakiEnabled: true,
@@ -259,6 +264,86 @@ function setupPerfPane(pane: WindowTweakpane, refresh: () => void) {
     pickingKinarreeMacroDefs,
     refresh,
   );
+}
+
+interface PerfPaneMidiBinding {
+  readonly midi: MidiAccess;
+  readonly input: MidiInput;
+}
+
+function decodeTwisterRelativeDelta(ctrlVal: number): number {
+  return ctrlVal - 64;
+}
+
+function findMidiInputPort(midi: MidiAccess) {
+  const inputs = midi.listInputs();
+  const twister = inputs.find((port) =>
+    port.name.toLowerCase().includes(MIDI_FIGHTER_TWISTER_NAME.toLowerCase())
+  );
+  if (twister) {
+    return {
+      port: twister,
+      source: MIDI_FIGHTER_TWISTER_NAME,
+    };
+  }
+
+  const fallback = inputs.find((port) =>
+    port.name.toLowerCase().includes(MIDI_FALLBACK_PORT_NAME.toLowerCase())
+  );
+  if (fallback) {
+    return {
+      port: fallback,
+      source: MIDI_FALLBACK_PORT_NAME,
+    };
+  }
+
+  return null;
+}
+
+function attachPerfPaneMidi(pane: WindowTweakpane): PerfPaneMidiBinding | null {
+  let midi: MidiAccess | null = null;
+  try {
+    midi = MidiAccess.open();
+    const selected = findMidiInputPort(midi);
+
+    if (!selected) {
+      console.warn(
+        `[combined_landscape] No ${MIDI_FIGHTER_TWISTER_NAME} or ${MIDI_FALLBACK_PORT_NAME} MIDI input found; perf-pane MIDI disabled.`,
+      );
+      midi.close();
+      return null;
+    }
+
+    const input = midi.openInput(selected.port.id, {
+      rateHz: 500,
+      rawCC: true,
+    });
+
+    input.onCC((evt) => {
+      if (evt.channel !== MIDI_FIGHTER_TWISTER_ENCODER_CHANNEL) return;
+      if (evt.ctrlNum < 0 || evt.ctrlNum > MIDI_FIGHTER_TWISTER_ENCODER_CC_MAX) return;
+
+      const delta = decodeTwisterRelativeDelta(evt.ctrlVal);
+      if (delta === 0) return;
+
+      pane.sendClientMessage({
+        type: "midiEncoderDelta",
+        channel: evt.channel,
+        cc: evt.ctrlNum,
+        delta,
+      });
+    });
+
+    console.log(
+      `[combined_landscape] Perf-pane MIDI attached to "${selected.port.name}" via ${selected.source} using default Twister encoder CCs.`,
+    );
+
+    return { midi, input };
+  } catch (err) {
+    console.warn("[combined_landscape] Failed to initialize perf-pane MIDI:", err);
+    midi?.close();
+    return null;
+  }
 }
 
 function updateTiming(frameStart: number, cpuMs: number): void {
@@ -500,6 +585,7 @@ const perfPane = createWindowTweakpane(renderWindow.window, {
     }),
 });
 setupPerfPane(perfPane, triggerRefresh);
+const perfPaneMidi = attachPerfPaneMidi(perfPane);
 
 refreshAll = () => {
   renderWindow.pane?.refresh();
@@ -653,6 +739,8 @@ await renderWindow.run(() => {
 }, {
   yieldMs: COMBINED_RENDER_YIELD_MS,
   cleanup() {
+    perfPaneMidi?.input.close();
+    perfPaneMidi?.midi.close();
     tegakiCleanup();
     kinareeRingCleanup();
     kinareeCleanup();

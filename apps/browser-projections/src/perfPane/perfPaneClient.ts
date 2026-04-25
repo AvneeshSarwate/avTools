@@ -34,6 +34,7 @@ type OpMessage =
 
 type ServerMessage =
   | { type: 'replay'; paneConfig: { title?: string }; operations: OpMessage[] }
+  | { type: 'midiEncoderDelta'; channel: number; cc: number; delta: number }
   | OpMessage
 
 type ClientMessage =
@@ -112,6 +113,12 @@ export function coerceSliderValue(slider: SliderModel, value: number): number {
     : clamped
 }
 
+const MIDI_FIGHTER_TWISTER_ENCODER_CHANNEL = 0
+const MIDI_FIGHTER_TWISTER_ENCODER_CC_MIN = 0
+const MIDI_FIGHTER_TWISTER_ENCODER_CC_MAX = 63
+const MIDI_FIGHTER_TWISTER_ENCODERS_PER_BANK = 16
+const MIDI_TARGET_FULL_SWEEP_TICKS = 96
+
 // ── Client ──────────────────────────────────────────────────────────
 
 export class PerfPaneClient {
@@ -164,6 +171,10 @@ export class PerfPaneClient {
       this.toggleById.clear()
       this.tabPageParentOf.clear()
       for (const op of msg.operations) this.applyOp(op)
+      return
+    }
+    if (msg.type === 'midiEncoderDelta') {
+      this.applyMidiEncoderDelta(msg.channel, msg.cc, msg.delta)
       return
     }
     this.applyOp(msg)
@@ -295,6 +306,37 @@ export class PerfPaneClient {
     this.send({ type: 'valueChange', id: toggle.id, key: toggle.key, value, last })
   }
 
+  private applyMidiEncoderDelta(channel: number, cc: number, delta: number): void {
+    if (delta === 0) return
+    const slider = this.findMidiMappedSlider(channel, cc)
+    if (!slider) return
+
+    const stepSize = getMidiStepSize(slider)
+    this.setSliderValue(slider, slider.value + delta * stepSize, true)
+  }
+
+  private findMidiMappedSlider(channel: number, cc: number): SliderModel | null {
+    if (channel !== MIDI_FIGHTER_TWISTER_ENCODER_CHANNEL) return null
+    if (cc < MIDI_FIGHTER_TWISTER_ENCODER_CC_MIN || cc > MIDI_FIGHTER_TWISTER_ENCODER_CC_MAX) {
+      return null
+    }
+
+    const activePage = this.getActivePage()
+    if (!activePage) return null
+
+    // Default Twister encoder CCs are assigned in 16-wide bank blocks.
+    const macroIndex = cc % MIDI_FIGHTER_TWISTER_ENCODERS_PER_BANK
+    return activePage.sliders[macroIndex] ?? null
+  }
+
+  private getActivePage(): TabPageModel | null {
+    for (const tab of this.model.tabs) {
+      const page = tab.pages[tab.selectedIndex]
+      if (page) return page
+    }
+    return null
+  }
+
   private send(msg: ClientMessage): void {
     if (this.ws.readyState === 1 /* OPEN */) {
       this.ws.send(JSON.stringify(msg))
@@ -308,4 +350,19 @@ export class PerfPaneClient {
 
 function isSceneFadeSlider(key: string, label: string): boolean {
   return label === 'Scene Fade' || key === 'fade' || key === 'sceneFade'
+}
+
+function getMidiStepSize(slider: SliderModel): number {
+  const range = slider.max - slider.min
+  if (!(range > 0)) {
+    return slider.step > 0 ? slider.step : 0.01
+  }
+
+  const targetDelta = range / MIDI_TARGET_FULL_SWEEP_TICKS
+  if (slider.step > 0) {
+    const stepCount = Math.max(1, Math.round(targetDelta / slider.step))
+    return stepCount * slider.step
+  }
+
+  return targetDelta
 }

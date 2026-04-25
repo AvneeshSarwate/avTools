@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MIDI Fighter Twister Mock</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0f17;
+      --panel: #111826;
+      --panel-2: #151f31;
+      --border: rgba(185, 206, 234, 0.18);
+      --text: #e5edf9;
+      --muted: #9fb2cf;
+      --accent: #8ec7ff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top, rgba(86, 142, 204, 0.15), transparent 38%),
+        linear-gradient(180deg, #0d1320 0%, var(--bg) 100%);
+      color: var(--text);
+      font-family: system-ui, sans-serif;
+    }
+
+    .page {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 16px;
+      align-items: center;
+      padding: 14px 16px;
+      background: rgba(17, 24, 38, 0.82);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+    }
+
+    .toolbar-title {
+      font-size: 18px;
+      font-weight: 700;
+      margin-right: 8px;
+    }
+
+    .toolbar label,
+    .toolbar .status {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .toolbar select,
+    .toolbar input,
+    .toolbar button {
+      font: inherit;
+      color: var(--text);
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 10px;
+    }
+
+    .toolbar button {
+      cursor: pointer;
+      background: linear-gradient(180deg, #24334c 0%, #1a263a 100%);
+    }
+
+    .toolbar button:hover {
+      border-color: rgba(142, 199, 255, 0.5);
+    }
+
+    .toolbar input {
+      width: 84px;
+    }
+
+    .status strong {
+      color: var(--text);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .encoder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 10px 16px;
+      border-radius: 14px;
+      background: rgba(17, 24, 38, 0.82);
+      border: 1px solid var(--border);
+      min-height: 320px;
+    }
+
+    .encoder-label {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .encoder-subtitle {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: -6px;
+    }
+
+    .encoder-readout {
+      min-width: 48px;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .encoder-slider {
+      -webkit-appearance: slider-vertical;
+      appearance: auto;
+      width: 34px;
+      height: 220px;
+      margin: 0;
+      background: transparent;
+      cursor: ns-resize;
+      touch-action: none;
+    }
+
+    .encoder-note {
+      font-size: 11px;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.35;
+    }
+
+    @media (max-width: 840px) {
+      .grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 480px) {
+      .page {
+        padding: 14px;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="toolbar">
+      <div class="toolbar-title">MIDI Fighter Twister Mock</div>
+      <button id="connectButton" type="button">Connect WebMIDI</button>
+      <label>
+        Output
+        <select id="outputSelect"></select>
+      </label>
+      <label>
+        Full Rotation Ticks
+        <input id="fullRotationTicks" type="number" min="1" step="1" value="96" />
+      </label>
+      <div class="status" id="status">
+        <strong>Idle.</strong> Serve this over <code>http://localhost</code> and connect to
+        <code>IAC Driver Bus 1</code>.
+      </div>
+    </div>
+
+    <div class="grid" id="encoderGrid"></div>
+  </div>
+
+  <script>
+    const SLIDER_COUNT = 16;
+    const CC_BASE = 0;
+    const MIDI_CHANNEL = 0;
+    const DEFAULT_OUTPUT_NAME = "IAC Driver Bus 1";
+    const RANGE_MAX = 1000;
+
+    const connectButton = document.getElementById("connectButton");
+    const outputSelect = document.getElementById("outputSelect");
+    const statusEl = document.getElementById("status");
+    const fullRotationTicksInput = document.getElementById("fullRotationTicks");
+    const grid = document.getElementById("encoderGrid");
+
+    let midiAccess = null;
+    let midiOutput = null;
+
+    function setStatus(html) {
+      statusEl.innerHTML = html;
+    }
+
+    function getFullRotationTicks() {
+      const raw = Number(fullRotationTicksInput.value);
+      return Number.isFinite(raw) && raw > 0 ? Math.round(raw) : 96;
+    }
+
+    function relativeCcValue(delta) {
+      return delta > 0 ? 65 : 63;
+    }
+
+    function sendRelativeCC(cc, delta) {
+      if (!midiOutput || !delta) {
+        return;
+      }
+
+      const status = 0xB0 + MIDI_CHANNEL;
+      const value = relativeCcValue(delta);
+      const count = Math.abs(delta);
+      const now = performance.now();
+      for (let i = 0; i < count; i += 1) {
+        midiOutput.send([status, cc, value], now);
+      }
+    }
+
+    function desiredTicksFromSlider(sliderValue) {
+      const normalized = Number(sliderValue) / RANGE_MAX;
+      return Math.round(normalized * getFullRotationTicks());
+    }
+
+    function createEncoder(cc) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "encoder";
+
+      const label = document.createElement("div");
+      label.className = "encoder-label";
+      label.textContent = `Encoder ${cc + 1}`;
+
+      const subtitle = document.createElement("div");
+      subtitle.className = "encoder-subtitle";
+      subtitle.textContent = `CC ${cc}`;
+
+      const readout = document.createElement("div");
+      readout.className = "encoder-readout";
+      readout.textContent = "0";
+
+      const slider = document.createElement("input");
+      slider.className = "encoder-slider";
+      slider.type = "range";
+      slider.min = String(-RANGE_MAX);
+      slider.max = String(RANGE_MAX);
+      slider.step = "1";
+      slider.value = "0";
+
+      const note = document.createElement("div");
+      note.className = "encoder-note";
+      note.innerHTML = "Spring-centered.<br>Full throw = full encoder rotation.";
+
+      const state = {
+        lastTicks: 0,
+      };
+
+      function resetSlider() {
+        slider.value = "0";
+        state.lastTicks = 0;
+        readout.textContent = "0";
+      }
+
+      slider.addEventListener("input", () => {
+        const desiredTicks = desiredTicksFromSlider(slider.value);
+        const delta = desiredTicks - state.lastTicks;
+        if (delta !== 0) {
+          sendRelativeCC(cc, delta);
+          state.lastTicks = desiredTicks;
+        }
+
+        readout.textContent = desiredTicks > 0 ? `+${desiredTicks}` : String(desiredTicks);
+      });
+
+      slider.addEventListener("pointerup", resetSlider);
+      slider.addEventListener("pointercancel", resetSlider);
+      slider.addEventListener("change", resetSlider);
+      slider.addEventListener("dblclick", resetSlider);
+
+      wrapper.append(label, subtitle, readout, slider, note);
+      return wrapper;
+    }
+
+    function rebuildOutputOptions() {
+      const outputs = midiAccess ? Array.from(midiAccess.outputs.values()) : [];
+      outputSelect.innerHTML = "";
+
+      if (outputs.length === 0) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No MIDI outputs";
+        outputSelect.appendChild(option);
+        midiOutput = null;
+        setStatus("<strong>No MIDI outputs available.</strong> Create or enable <code>IAC Driver Bus 1</code> first.");
+        return;
+      }
+
+      outputs.forEach((output) => {
+        const option = document.createElement("option");
+        option.value = output.id;
+        option.textContent = output.name;
+        outputSelect.appendChild(option);
+      });
+
+      const preferred = outputs.find((output) => output.name.includes(DEFAULT_OUTPUT_NAME)) ?? outputs[0];
+      outputSelect.value = preferred.id;
+      midiOutput = preferred;
+      setStatus(`<strong>Connected.</strong> Sending relative CC to <code>${preferred.name}</code> on MIDI channel 1.`);
+    }
+
+    async function connectMidi() {
+      if (!("requestMIDIAccess" in navigator)) {
+        setStatus("<strong>WebMIDI is not available</strong> in this browser.");
+        return;
+      }
+
+      try {
+        midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+        midiAccess.onstatechange = rebuildOutputOptions;
+        rebuildOutputOptions();
+      } catch (err) {
+        console.error(err);
+        setStatus(`<strong>Failed to open WebMIDI.</strong> ${String(err)}`);
+      }
+    }
+
+    outputSelect.addEventListener("change", () => {
+      if (!midiAccess) {
+        midiOutput = null;
+        return;
+      }
+
+      midiOutput = midiAccess.outputs.get(outputSelect.value) ?? null;
+      if (midiOutput) {
+        setStatus(`<strong>Connected.</strong> Sending relative CC to <code>${midiOutput.name}</code> on MIDI channel 1.`);
+      }
+    });
+
+    connectButton.addEventListener("click", connectMidi);
+
+    for (let i = 0; i < SLIDER_COUNT; i += 1) {
+      grid.appendChild(createEncoder(CC_BASE + i));
+    }
+  </script>
+</body>
+</html>

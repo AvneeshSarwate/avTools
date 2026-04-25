@@ -57,7 +57,7 @@ class TweakpaneWebSocketClient
     return this._connected
   }
 
-  sendMessage(msg: ServerMessage): void {
+  sendMessage(msg: unknown): void {
     this.send(msg as TweakpaneOutgoing)
   }
 

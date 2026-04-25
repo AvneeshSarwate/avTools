@@ -85,7 +85,7 @@ export function _setAdapterFactory(
 // Placeholder types that the adapter will concretize
 export interface TweakpaneWsClient {
   readonly connected: boolean
-  sendMessage(msg: ServerMessage): void
+  sendMessage(msg: unknown): void
   disconnect(): void
 }
 
@@ -1362,6 +1362,22 @@ export class TweakpaneServer implements IContainerProxy {
       const session = this._bridge.getSession(sessionId)
       if (session?.client?.connected) {
         session.client.sendMessage(msg as ServerMessage)
+      }
+    }
+  }
+
+  /**
+   * Broadcast a custom message to connected clients for shell-specific
+   * behavior that lives outside the core tweakpane op protocol.
+   */
+  sendClientMessage(msg: Record<string, unknown>, excludeSessionId?: string): void {
+    if (!this._bridge) return
+
+    for (const sessionId of this._sessions) {
+      if (sessionId === excludeSessionId) continue
+      const session = this._bridge.getSession(sessionId)
+      if (session?.client?.connected) {
+        session.client.sendMessage(msg)
       }
     }
   }
