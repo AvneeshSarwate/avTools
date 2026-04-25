@@ -128,9 +128,15 @@ function createBrownianNoise(
 interface AshParticle {
   startX: number;
   y: number;
-  size: number;
+  baseWidth: number;
+  baseHeight: number;
   color: [number, number, number];
   noise: NoiseSource;
+  angle: number;
+  angularVelocity: number;
+  widthPhase: number;
+  widthPhaseVelocity: number;
+  widthModAmount: number;
   alive: boolean;
 }
 
@@ -142,7 +148,8 @@ function spawnAshParticle(
   return {
     startX: triggerCtx.random() * screenWidth,
     y: 0,
-    size: ashes.flakeSize,
+    baseWidth: ashes.flakeSize * ashes.flakeAspect,
+    baseHeight: ashes.flakeSize,
     color: jitterHsv(
       ashes.color,
       ASH_HUE_JITTER,
@@ -150,6 +157,15 @@ function spawnAshParticle(
       ASH_VAL_JITTER,
     ),
     noise: createBrownianNoise(() => state.params.ashes.noise),
+    angle: triggerCtx.random() * Math.PI * 2,
+    angularVelocity: (triggerCtx.random() < 0.5 ? -1 : 1) *
+      (ashes.rotationSpeedMin +
+        triggerCtx.random() * (ashes.rotationSpeedMax - ashes.rotationSpeedMin)),
+    widthPhase: triggerCtx.random() * Math.PI * 2,
+    widthPhaseVelocity: ashes.widthModSpeed *
+      (0.8 + triggerCtx.random() * 0.4),
+    widthModAmount: ashes.widthModAmount *
+      (0.8 + triggerCtx.random() * 0.4),
     alive: true,
   };
 }
@@ -163,9 +179,16 @@ export const state = {
       launchRate: 18,
       fallSpeed: 170,
       flakeSize: 5,
+      flakeAspect: 1.1,
+      scale: 2.0,
       color: "#e8f4ff",
       xDisplacementRange: 1000,
-      momentumCoupling: 0.4,
+      momentumCoupling: 10,
+      rotationSpeedMin: 0.08,
+      rotationSpeedMax: 0.35,
+      rotationNoiseCoupling: 12,
+      widthModAmount: 0.16,
+      widthModSpeed: 2.0,
       noise: {
         stepSize: 800,
         damping: 1.5,
@@ -249,27 +272,43 @@ function drawAshesSection(p5: P5GPU, dt: number): void {
   const live = state.runtime.ashParticles;
 
   p5.noStroke();
+  p5.rectMode(p5.CENTER);
 
   for (let i = 0; i < live.length; i += 1) {
     const particle = live[i];
     if (!particle.alive) continue;
 
     particle.noise.step(dt);
+    particle.widthPhase += particle.widthPhaseVelocity * dt;
     const offset = Math.max(-range, Math.min(range, particle.noise.value));
     const x = particle.startX + offset;
 
     const vx = particle.noise.velocity;
+    const rotationFromNoise = ashes.rotationNoiseCoupling * vx / fallRef;
+    particle.angle += (particle.angularVelocity + rotationFromNoise) * dt;
     const effectiveFall = fallSpeed *
       Math.max(0, 1 - coupling * Math.abs(vx) / fallRef);
     particle.y += effectiveFall * dt;
 
-    if (particle.y > h + particle.size) {
+    const scaledHeight = particle.baseHeight * ashes.scale;
+    const currentWidth = Math.max(
+      particle.baseHeight * 0.75,
+      particle.baseWidth *
+        (1 + particle.widthModAmount * Math.sin(particle.widthPhase)),
+    );
+    const scaledWidth = currentWidth * ashes.scale;
+
+    if (particle.y > h + scaledHeight) {
       particle.alive = false;
       continue;
     }
 
     p5.fill(particle.color[0], particle.color[1], particle.color[2], alpha);
-    p5.circle(x, particle.y, particle.size * 2);
+    p5.push();
+    p5.translate(x, particle.y);
+    p5.rotate(particle.angle);
+    p5.rect(0, 0, scaledWidth, scaledHeight);
+    p5.pop();
   }
 
   if (live.length > 0 && live.length % 64 === 0) {
@@ -302,7 +341,7 @@ export function setupPane(pane: PaneContainer, _refresh?: () => void): void {
   pane.addBinding(state.params, "bgColor", { label: "BG" });
 
   const ashes = pane.addFolder({
-    title: "Ashes (falling circles)",
+    title: "Ashes (fluttering paper)",
     expanded: true,
   });
   const ash = state.params.ashes;
@@ -323,7 +362,19 @@ export function setupPane(pane: PaneContainer, _refresh?: () => void): void {
     min: 1,
     max: 30,
     step: 0.5,
-    label: "Flake Size",
+    label: "Piece Height",
+  });
+  ashes.addBinding(ash, "flakeAspect", {
+    min: 0.5,
+    max: 4,
+    step: 0.05,
+    label: "Aspect",
+  });
+  ashes.addBinding(ash, "scale", {
+    min: 0.2,
+    max: 8,
+    step: 0.05,
+    label: "Scale",
   });
   ashes.addBinding(ash, "color", { label: "Color" });
   ashes.addBinding(ash, "xDisplacementRange", {
@@ -335,8 +386,38 @@ export function setupPane(pane: PaneContainer, _refresh?: () => void): void {
   ashes.addBinding(ash, "momentumCoupling", {
     min: 0,
     max: 1,
-    step: 0.01,
+    step: 20,
     label: "Momentum Coupling",
+  });
+  ashes.addBinding(ash, "rotationSpeedMin", {
+    min: 0,
+    max: 1,
+    step: 0.01,
+    label: "Rot Speed Min",
+  });
+  ashes.addBinding(ash, "rotationSpeedMax", {
+    min: 0,
+    max: 1,
+    step: 0.01,
+    label: "Rot Speed Max",
+  });
+  ashes.addBinding(ash, "rotationNoiseCoupling", {
+    min: 0,
+    max: 200,
+    step: 0.01,
+    label: "Brownian Rot",
+  });
+  ashes.addBinding(ash, "widthModAmount", {
+    min: 0,
+    max: 0.5,
+    step: 0.01,
+    label: "Width Mod",
+  });
+  ashes.addBinding(ash, "widthModSpeed", {
+    min: 0,
+    max: 8,
+    step: 0.05,
+    label: "Width Mod Speed",
   });
 
   const noise = ashes.addFolder({ title: "Brownian Noise", expanded: false });
