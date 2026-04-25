@@ -137,12 +137,14 @@ defineExpose({ setClient })
               :slider="slider"
               :change-handler="(v, last) => onSliderChange(slider, v, last)"
             />
-            <ToggleButton
-              v-for="toggle in page.toggles"
-              :key="toggle.id"
-              :toggle="toggle"
-              :change-handler="(v, last) => onToggleChange(toggle, v, last)"
-            />
+            <div v-if="page.toggles.length > 0" class="perf-toggle-column">
+              <ToggleButton
+                v-for="toggle in page.toggles"
+                :key="toggle.id"
+                :toggle="toggle"
+                :change-handler="(v, last) => onToggleChange(toggle, v, last)"
+              />
+            </div>
             <div v-if="page.sliders.length === 0 && page.toggles.length === 0" class="perf-empty">
               no macros on this page
             </div>
@@ -159,12 +161,14 @@ defineExpose({ setClient })
           :slider="slider"
           :change-handler="(v, last) => onSliderChange(slider, v, last)"
         />
-        <ToggleButton
-          v-for="toggle in client.model.rootToggles"
-          :key="toggle.id"
-          :toggle="toggle"
-          :change-handler="(v, last) => onToggleChange(toggle, v, last)"
-        />
+        <div v-if="client.model.rootToggles.length > 0" class="perf-toggle-column">
+          <ToggleButton
+            v-for="toggle in client.model.rootToggles"
+            :key="toggle.id"
+            :toggle="toggle"
+            :change-handler="(v, last) => onToggleChange(toggle, v, last)"
+          />
+        </div>
       </div>
     </template>
   </div>
@@ -235,6 +239,14 @@ defineExpose({ setClient })
 }
 .perf-mixer-row {
   padding-top: 2px;
+}
+.perf-toggle-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  min-width: 88px;
 }
 .perf-tab-header {
   display: flex;

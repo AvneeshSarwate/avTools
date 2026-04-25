@@ -180,14 +180,15 @@ export const state = {
     fade: 1.0,
     triggerMode: "random" as "random" | "intersection" | "hand",
     triggerRate: 18, // trigger attempts per second (random mode)
-    minDuration: 0.35,
-    maxDuration: 1.40,
+    duration: 1.3,
+    durationVariation: .25,
     alphaFadeDuration: 0.75,
     widthScale: 2.0,
     bgColor: "#0d1017",
     inkColor: "#ffe9a8",
     idlePhase: 1.0, // 0 = invisible when not animating, 1 = fully drawn
     paused: false,
+    runInstall: false,
     glyphScale: 1.0, // 0–1, multiplies font scale; 0 = skip drawing
     pathMorph: 0.0, // 0 = laid-out text, 1 = shared target path
     pathMode: "lissajous" as "circle" | "lissajous",
@@ -862,6 +863,12 @@ function activeTrackName(): "random" | "intersection" {
   return state.params.triggerMode === "random" ? "random" : "intersection";
 }
 
+function sampleTriggerDuration(randomUnit: () => number): number {
+  const baseDuration = Math.max(0.05, state.params.duration);
+  const variation = Math.max(0, state.params.durationVariation);
+  return baseDuration + randomUnit() * variation;
+}
+
 function getTrack(
   gs: GlyphState,
   trackName: "random" | "intersection",
@@ -1010,8 +1017,6 @@ function processIntersectionTriggers(): void {
 
   // Rising-edge detection + trigger dispatch.
   const now = performance.now();
-  const minD = Math.max(0.05, state.params.minDuration);
-  const maxD = Math.max(minD, state.params.maxDuration);
 
   for (let i = 0; i < state.glyphStates.length; i += 1) {
     const gs = state.glyphStates[i]!;
@@ -1020,8 +1025,7 @@ function processIntersectionTriggers(): void {
 
     if (nowIntersecting && !wasIntersecting) {
       if (!gs.intersection.inProgress && now >= gs.cooldownUntil) {
-        const duration = minD +
-          triggerCtx.random() * (maxD - minD);
+        const duration = sampleTriggerDuration(() => triggerCtx.random());
         scheduleRamp(gs, "intersection", duration);
       }
     }
@@ -1067,8 +1071,6 @@ function processHandBBoxTriggers(): void {
   }
 
   const now = performance.now();
-  const minD = Math.max(0.05, state.params.minDuration);
-  const maxD = Math.max(minD, state.params.maxDuration);
 
   for (let i = 0; i < state.glyphStates.length; i += 1) {
     const gs = state.glyphStates[i]!;
@@ -1077,7 +1079,7 @@ function processHandBBoxTriggers(): void {
 
     if (nowIntersecting && !wasIntersecting) {
       if (!gs.intersection.inProgress && now >= gs.cooldownUntil) {
-        const duration = minD + triggerCtx.random() * (maxD - minD);
+        const duration = sampleTriggerDuration(() => triggerCtx.random());
         scheduleRamp(gs, "intersection", duration);
       }
     }
@@ -1284,6 +1286,14 @@ export const macroDefs: MacroDef<number | boolean>[] = [
     },
   },
   {
+    key: "widthScale",
+    defaultValue: 2.0,
+    opts: { min: 0.2, max: 9.5, step: 0.05, label: "Width x" },
+    apply: (v) => {
+      state.params.widthScale = v as number;
+    },
+  },
+  {
     key: "morph",
     defaultValue: 0.0,
     opts: { min: 0, max: 1, step: 0.001, label: "Morph" },
@@ -1329,6 +1339,14 @@ export const macroDefs: MacroDef<number | boolean>[] = [
     opts: { label: "Pause triggers" },
     apply: (v) => {
       state.params.paused = v as boolean;
+    },
+  },
+  {
+    key: "runInstall",
+    defaultValue: false,
+    opts: { label: "Run install" },
+    apply: (v) => {
+      state.params.runInstall = v as boolean;
     },
   },
 ];
@@ -1480,17 +1498,17 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
   particles.addBinding(state.params, "showHandBBoxDebug", {
     label: "Show bbox",
   });
-  pane.addBinding(state.params, "minDuration", {
+  pane.addBinding(state.params, "duration", {
     min: 0.05,
-    max: 3,
+    max: 10,
     step: 0.05,
-    label: "Min dur (s)",
+    label: "Duration (s)",
   });
-  pane.addBinding(state.params, "maxDuration", {
-    min: 0.05,
+  pane.addBinding(state.params, "durationVariation", {
+    min: 0,
     max: 5,
     step: 0.05,
-    label: "Max dur (s)",
+    label: "Duration variation (s)",
   });
   pane.addBinding(state.params, "alphaFadeDuration", {
     min: 0,
@@ -1511,6 +1529,7 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
     label: "Idle phase",
   });
   pane.addBinding(state.params, "paused", { label: "Pause triggers" });
+  pane.addBinding(state.params, "runInstall", { label: "Run install" });
   pane.addBinding(state.params, "inkColor", { label: "Ink" });
   pane.addBinding(state.params, "bgColor", { label: "BG" });
 
@@ -1689,9 +1708,6 @@ export async function setup(dims: { width: number; height: number }) {
         if (state.params.fade <= 0) continue;
         if (state.drawableIndices.length === 0) continue;
 
-        const minD = Math.max(0.05, state.params.minDuration);
-        const maxD = Math.max(minD, state.params.maxDuration);
-
         if (state.params.paused) {
           const trackName = activeTrackName();
           const recoveryCandidates = state.drawableIndices.filter((idx) => {
@@ -1704,7 +1720,7 @@ export async function setup(dims: { width: number; height: number }) {
             Math.floor(triggerCtx.random() * recoveryCandidates.length)
           ]!;
           const gs = state.glyphStates[pick]!;
-          const duration = minD + triggerCtx.random() * (maxD - minD);
+          const duration = sampleTriggerDuration(() => triggerCtx.random());
           scheduleRamp(gs, trackName, duration, "recovery");
           continue;
         }
@@ -1715,7 +1731,7 @@ export async function setup(dims: { width: number; height: number }) {
           Math.floor(triggerCtx.random() * state.drawableIndices.length)
         ]!;
         const gs = state.glyphStates[pick]!;
-        const duration = minD + triggerCtx.random() * (maxD - minD);
+        const duration = sampleTriggerDuration(() => triggerCtx.random());
 
         scheduleRamp(gs, "random", duration);
       }
