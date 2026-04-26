@@ -158,7 +158,7 @@ export const macroDefs: MacroDef<number>[] = [
   {
     key: "pulseFreq",
     defaultValue: 1.0,
-    opts: { min: 0, max: 20, step: 0.1, label: "Pulse Freq" },
+    opts: { min: 0.01, max: 20, step: 0.1, label: "Pulse Freq" },
     apply: (v) => {
       state.params.pulseRate = v;
     },
@@ -327,7 +327,7 @@ export function setupPane(pane: PaneContainer, _refresh?: () => void): void {
     label: "Pulse Intensity",
   });
   pane.addBinding(state.params, "pulseRate", {
-    min: 0,
+    min: 0.01,
     max: 20,
     step: 0.1,
     label: "Pulse Rate (Hz)",

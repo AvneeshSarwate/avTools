@@ -1544,6 +1544,21 @@ async function runInstallLoop(ctx: DateTimeContext): Promise<void> {
       }
     }
 
+    const morphSpec = RUN_INSTALL_NUMERIC_MACRO_SPECS.find((spec) =>
+      spec.key === "morph"
+    );
+    const morphAlreadySelected = ramps.some((ramp) => ramp.spec.key === "morph");
+    if (morphSpec && !morphAlreadySelected) {
+      const morphCurrent = morphSpec.getCurrent();
+      if (morphCurrent < morphSpec.min) {
+        ramps.push({
+          spec: morphSpec,
+          start: morphCurrent,
+          target: pickRunInstallTarget(morphCurrent, morphSpec, () => ctx.random()),
+        });
+      }
+    }
+
     state.runtime.refreshUi?.();
 
     const duration = 1 + ctx.random() * 9;
