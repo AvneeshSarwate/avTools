@@ -76,6 +76,20 @@ function hexToRgb(hex: string): [number, number, number] {
   ];
 }
 
+async function waitForNextPulse(triggerCtx: DateTimeContext): Promise<void> {
+  let waited = 0;
+  while (!triggerCtx.isCanceled) {
+    const rate = Math.max(0.01, state.params.pulseRate);
+    const currentPeriod = 1 / rate;
+    if (waited >= currentPeriod) return;
+
+    const remaining = currentPeriod - waited;
+    const step = Math.min(0.1, remaining);
+    await triggerCtx.waitSec(step);
+    waited += step;
+  }
+}
+
 export const state = {
   params: {
     fade: 0.0,
@@ -176,8 +190,8 @@ export function setup(): void {
   const rootAnim = launch(async (ctx) => {
     ctx.branch(async (triggerCtx) => {
       while (!triggerCtx.isCanceled) {
-        const rate = Math.max(0.01, state.params.pulseRate);
-        await triggerCtx.waitSec(1 / rate);
+        await waitForNextPulse(triggerCtx);
+        if (triggerCtx.isCanceled) break;
 
         const mix = state.params.mix * state.params.fade;
         if (mix <= 0) continue;
