@@ -1,49 +1,51 @@
 {
+  "approach": "v3-row-transient-snow-wide-grid",
   "width": 320,
   "height": 240,
   "frame": 0,
   "profile": "stable",
   "candidateCount": 6,
   "gridSearch": false,
+  "gridMode": "off",
   "best": {
-    "candidate": "v2-stable-approx",
+    "candidate": "v3-stable-base",
     "stats": {
-      "rmse": 21.874049979370533,
-      "meanAbsError": 12.592395833333333,
-      "maxError": 213,
-      "diffPixels": 48983,
+      "rmse": 19.31934940117607,
+      "meanAbsError": 11.023094618055556,
+      "maxError": 225,
+      "diffPixels": 47787,
       "totalPixels": 76800,
       "channelRmse": {
-        "r": 19.93761886066973,
-        "g": 16.055507557117796,
-        "b": 27.93088288525803
+        "r": 18.818219299502456,
+        "g": 15.110947328565032,
+        "b": 23.178560720703373
       }
     }
   },
   "top": [
     {
-      "candidate": "v2-stable-approx",
+      "candidate": "v3-stable-base",
       "stats": {
-        "rmse": 21.874049979370533,
-        "meanAbsError": 12.592395833333333,
-        "maxError": 213,
-        "diffPixels": 48983,
+        "rmse": 19.31934940117607,
+        "meanAbsError": 11.023094618055556,
+        "maxError": 225,
+        "diffPixels": 47787,
         "totalPixels": 76800,
         "channelRmse": {
-          "r": 19.93761886066973,
-          "g": 16.055507557117796,
-          "b": 27.93088288525803
+          "r": 18.818219299502456,
+          "g": 15.110947328565032,
+          "b": 23.178560720703373
         }
       },
       "settings": {
         "lumaSmear": 0,
-        "chromaBlur": 0.3,
-        "chromaDelayX": 0,
+        "chromaBlur": 0.15,
+        "chromaDelayX": 2,
         "chromaDelayY": 0,
-        "compositeSharpness": 1.55,
+        "compositeSharpness": 1.75,
         "ringingIntensity": 0,
         "ringingFrequency": 0.42,
-        "vhsSharpen": 0.16,
+        "vhsSharpen": 0.24,
         "scanlineIntensity": 0,
         "edgeWaveIntensity": 0,
         "edgeWaveFrequency": 0.045,
@@ -56,28 +58,28 @@
         "chromaPhaseError": 0,
         "chromaLossDensity": 0,
         "chromaLossAmount": 1,
-        "verticalBlend": 1,
+        "verticalBlend": 0,
         "tapeSpeed": 1
       }
     },
     {
       "candidate": "v2-sharper",
       "stats": {
-        "rmse": 39.56549005727368,
-        "meanAbsError": 23.009453125,
+        "rmse": 41.56192642670226,
+        "meanAbsError": 24.6974609375,
         "maxError": 213,
-        "diffPixels": 52187,
+        "diffPixels": 51548,
         "totalPixels": 76800,
         "channelRmse": {
-          "r": 38.81015710185716,
-          "g": 37.050009664584884,
-          "b": 42.630417544284036
+          "r": 41.54718499163531,
+          "g": 37.52851780229936,
+          "b": 45.25066801417595
         }
       },
       "settings": {
         "lumaSmear": 0.18,
         "chromaBlur": 0.55,
-        "chromaDelayX": 0,
+        "chromaDelayX": 2,
         "chromaDelayY": 0,
         "compositeSharpness": 0.88,
         "ringingIntensity": 1.25,
@@ -95,7 +97,7 @@
         "chromaPhaseError": 0,
         "chromaLossDensity": 0,
         "chromaLossAmount": 1,
-        "verticalBlend": 1,
+        "verticalBlend": 0,
         "tapeSpeed": 1
       }
     },
@@ -137,32 +139,30 @@
         "verticalBlend": 1,
         "tapeSpeed": 1
       }
-    }
-  ],
-  "results": [
+    },
     {
-      "candidate": "v2-stable-approx",
+      "candidate": "v2-low-delay",
       "stats": {
-        "rmse": 21.874049979370533,
-        "meanAbsError": 12.592395833333333,
+        "rmse": 44.56182240017793,
+        "meanAbsError": 26.92404513888889,
         "maxError": 213,
-        "diffPixels": 48983,
+        "diffPixels": 51924,
         "totalPixels": 76800,
         "channelRmse": {
-          "r": 19.93761886066973,
-          "g": 16.055507557117796,
-          "b": 27.93088288525803
+          "r": 44.42463186866794,
+          "g": 40.037514634714775,
+          "b": 48.79259730823246
         }
       },
       "settings": {
-        "lumaSmear": 0,
-        "chromaBlur": 0.3,
-        "chromaDelayX": 0,
+        "lumaSmear": 0.28,
+        "chromaBlur": 0.8,
+        "chromaDelayX": 1,
         "chromaDelayY": 0,
-        "compositeSharpness": 1.55,
-        "ringingIntensity": 0,
+        "compositeSharpness": 0.65,
+        "ringingIntensity": 0.95,
         "ringingFrequency": 0.42,
-        "vhsSharpen": 0.16,
+        "vhsSharpen": 0.14,
         "scanlineIntensity": 0,
         "edgeWaveIntensity": 0,
         "edgeWaveFrequency": 0.045,
@@ -175,7 +175,160 @@
         "chromaPhaseError": 0,
         "chromaLossDensity": 0,
         "chromaLossAmount": 1,
-        "verticalBlend": 1,
+        "verticalBlend": 0,
+        "tapeSpeed": 1
+      }
+    },
+    {
+      "candidate": "v2-softer",
+      "stats": {
+        "rmse": 46.01776778872422,
+        "meanAbsError": 27.97751302083333,
+        "maxError": 213,
+        "diffPixels": 52003,
+        "totalPixels": 76800,
+        "channelRmse": {
+          "r": 45.78209768839781,
+          "g": 40.44556366020465,
+          "b": 51.19629643078849
+        }
+      },
+      "settings": {
+        "lumaSmear": 0.32,
+        "chromaBlur": 0.92,
+        "chromaDelayX": 2,
+        "chromaDelayY": 0,
+        "compositeSharpness": 0.45,
+        "ringingIntensity": 0.65,
+        "ringingFrequency": 0.42,
+        "vhsSharpen": 0.1,
+        "scanlineIntensity": 0,
+        "edgeWaveIntensity": 0,
+        "edgeWaveFrequency": 0.045,
+        "edgeWaveSpeed": 0.9,
+        "headSwitchingHeight": 0,
+        "headSwitchingShift": 0,
+        "noiseIntensity": 0,
+        "snowDensity": 0,
+        "snowStrength": 0.65,
+        "chromaPhaseError": 0,
+        "chromaLossDensity": 0,
+        "chromaLossAmount": 1,
+        "verticalBlend": 0,
+        "tapeSpeed": 1
+      }
+    },
+    {
+      "candidate": "v2-wide-smear",
+      "stats": {
+        "rmse": 49.48692171682276,
+        "meanAbsError": 30.231236979166667,
+        "maxError": 213,
+        "diffPixels": 53348,
+        "totalPixels": 76800,
+        "channelRmse": {
+          "r": 49.11691528574958,
+          "g": 43.625466061264035,
+          "b": 55.05645835658913
+        }
+      },
+      "settings": {
+        "lumaSmear": 0.46,
+        "chromaBlur": 1.16,
+        "chromaDelayX": 2,
+        "chromaDelayY": 0,
+        "compositeSharpness": 0.55,
+        "ringingIntensity": 0.8,
+        "ringingFrequency": 0.42,
+        "vhsSharpen": 0.08,
+        "scanlineIntensity": 0,
+        "edgeWaveIntensity": 0,
+        "edgeWaveFrequency": 0.045,
+        "edgeWaveSpeed": 0.9,
+        "headSwitchingHeight": 0,
+        "headSwitchingShift": 0,
+        "noiseIntensity": 0,
+        "snowDensity": 0,
+        "snowStrength": 0.65,
+        "chromaPhaseError": 0,
+        "chromaLossDensity": 0,
+        "chromaLossAmount": 1,
+        "verticalBlend": 0,
+        "tapeSpeed": 1
+      }
+    }
+  ],
+  "visualOutputs": [
+    {
+      "name": "vhs-look",
+      "path": ".output/ntsc-vhs-gpu/visual-vhs-look.png"
+    },
+    {
+      "name": "snow-sparse",
+      "path": ".output/ntsc-vhs-gpu/visual-snow-sparse.png"
+    },
+    {
+      "name": "snow-transients",
+      "path": ".output/ntsc-vhs-gpu/visual-snow-transients.png"
+    },
+    {
+      "name": "snow-heavy",
+      "path": ".output/ntsc-vhs-gpu/visual-snow-heavy.png"
+    },
+    {
+      "name": "chroma-loss-soft",
+      "path": ".output/ntsc-vhs-gpu/visual-chroma-loss-soft.png"
+    },
+    {
+      "name": "chroma-loss-hard",
+      "path": ".output/ntsc-vhs-gpu/visual-chroma-loss-hard.png"
+    },
+    {
+      "name": "color-noise",
+      "path": ".output/ntsc-vhs-gpu/visual-color-noise.png"
+    },
+    {
+      "name": "tracking-ish",
+      "path": ".output/ntsc-vhs-gpu/visual-tracking-ish.png"
+    }
+  ],
+  "results": [
+    {
+      "candidate": "v3-stable-base",
+      "stats": {
+        "rmse": 19.31934940117607,
+        "meanAbsError": 11.023094618055556,
+        "maxError": 225,
+        "diffPixels": 47787,
+        "totalPixels": 76800,
+        "channelRmse": {
+          "r": 18.818219299502456,
+          "g": 15.110947328565032,
+          "b": 23.178560720703373
+        }
+      },
+      "settings": {
+        "lumaSmear": 0,
+        "chromaBlur": 0.15,
+        "chromaDelayX": 2,
+        "chromaDelayY": 0,
+        "compositeSharpness": 1.75,
+        "ringingIntensity": 0,
+        "ringingFrequency": 0.42,
+        "vhsSharpen": 0.24,
+        "scanlineIntensity": 0,
+        "edgeWaveIntensity": 0,
+        "edgeWaveFrequency": 0.045,
+        "edgeWaveSpeed": 0.9,
+        "headSwitchingHeight": 0,
+        "headSwitchingShift": 0,
+        "noiseIntensity": 0,
+        "snowDensity": 0,
+        "snowStrength": 0.65,
+        "chromaPhaseError": 0,
+        "chromaLossDensity": 0,
+        "chromaLossAmount": 1,
+        "verticalBlend": 0,
         "tapeSpeed": 1
       }
     },
@@ -221,21 +374,21 @@
     {
       "candidate": "v2-softer",
       "stats": {
-        "rmse": 42.20362773004696,
-        "meanAbsError": 25.133094618055555,
+        "rmse": 46.01776778872422,
+        "meanAbsError": 27.97751302083333,
         "maxError": 213,
-        "diffPixels": 52567,
+        "diffPixels": 52003,
         "totalPixels": 76800,
         "channelRmse": {
-          "r": 41.6155102107876,
-          "g": 39.49425014189829,
-          "b": 45.29671176094537
+          "r": 45.78209768839781,
+          "g": 40.44556366020465,
+          "b": 51.19629643078849
         }
       },
       "settings": {
         "lumaSmear": 0.32,
         "chromaBlur": 0.92,
-        "chromaDelayX": 0,
+        "chromaDelayX": 2,
         "chromaDelayY": 0,
         "compositeSharpness": 0.45,
         "ringingIntensity": 0.65,
@@ -253,28 +406,28 @@
         "chromaPhaseError": 0,
         "chromaLossDensity": 0,
         "chromaLossAmount": 1,
-        "verticalBlend": 1,
+        "verticalBlend": 0,
         "tapeSpeed": 1
       }
     },
     {
       "candidate": "v2-sharper",
       "stats": {
-        "rmse": 39.56549005727368,
-        "meanAbsError": 23.009453125,
+        "rmse": 41.56192642670226,
+        "meanAbsError": 24.6974609375,
         "maxError": 213,
-        "diffPixels": 52187,
+        "diffPixels": 51548,
         "totalPixels": 76800,
         "channelRmse": {
-          "r": 38.81015710185716,
-          "g": 37.050009664584884,
-          "b": 42.630417544284036
+          "r": 41.54718499163531,
+          "g": 37.52851780229936,
+          "b": 45.25066801417595
         }
       },
       "settings": {
         "lumaSmear": 0.18,
         "chromaBlur": 0.55,
-        "chromaDelayX": 0,
+        "chromaDelayX": 2,
         "chromaDelayY": 0,
         "compositeSharpness": 0.88,
         "ringingIntensity": 1.25,
@@ -292,28 +445,28 @@
         "chromaPhaseError": 0,
         "chromaLossDensity": 0,
         "chromaLossAmount": 1,
-        "verticalBlend": 1,
+        "verticalBlend": 0,
         "tapeSpeed": 1
       }
     },
     {
       "candidate": "v2-wide-smear",
       "stats": {
-        "rmse": 45.35546516668207,
-        "meanAbsError": 27.133619791666668,
-        "maxError": 214,
-        "diffPixels": 54121,
+        "rmse": 49.48692171682276,
+        "meanAbsError": 30.231236979166667,
+        "maxError": 213,
+        "diffPixels": 53348,
         "totalPixels": 76800,
         "channelRmse": {
-          "r": 44.73251389626081,
-          "g": 42.5854907619661,
-          "b": 48.5472227685752
+          "r": 49.11691528574958,
+          "g": 43.625466061264035,
+          "b": 55.05645835658913
         }
       },
       "settings": {
         "lumaSmear": 0.46,
         "chromaBlur": 1.16,
-        "chromaDelayX": 0,
+        "chromaDelayX": 2,
         "chromaDelayY": 0,
         "compositeSharpness": 0.55,
         "ringingIntensity": 0.8,
@@ -331,22 +484,22 @@
         "chromaPhaseError": 0,
         "chromaLossDensity": 0,
         "chromaLossAmount": 1,
-        "verticalBlend": 1,
+        "verticalBlend": 0,
         "tapeSpeed": 1
       }
     },
     {
       "candidate": "v2-low-delay",
       "stats": {
-        "rmse": 42.30357652498847,
-        "meanAbsError": 25.02536458333333,
+        "rmse": 44.56182240017793,
+        "meanAbsError": 26.92404513888889,
         "maxError": 213,
-        "diffPixels": 52578,
+        "diffPixels": 51924,
         "totalPixels": 76800,
         "channelRmse": {
-          "r": 41.63357394179206,
-          "g": 39.4807280913739,
-          "b": 45.570773425793426
+          "r": 44.42463186866794,
+          "g": 40.037514634714775,
+          "b": 48.79259730823246
         }
       },
       "settings": {
@@ -370,7 +523,7 @@
         "chromaPhaseError": 0,
         "chromaLossDensity": 0,
         "chromaLossAmount": 1,
-        "verticalBlend": 1,
+        "verticalBlend": 0,
         "tapeSpeed": 1
       }
     }

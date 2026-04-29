@@ -63,11 +63,11 @@ export const DEFAULT_NTSC_VHS_SETTINGS: NtscVhsSettings = {
 export const NTSC_RS_STABLE_APPROX_SETTINGS: NtscVhsSettings = {
   ...DEFAULT_NTSC_VHS_SETTINGS,
   lumaSmear: 0.0,
-  chromaBlur: 0.30,
-  chromaDelayX: 0.0,
-  compositeSharpness: 1.55,
+  chromaBlur: 0.15,
+  chromaDelayX: 2.0,
+  compositeSharpness: 1.75,
   ringingIntensity: 0.0,
-  vhsSharpen: 0.16,
+  vhsSharpen: 0.24,
   scanlineIntensity: 0.0,
   edgeWaveIntensity: 0.0,
   headSwitchingHeight: 0.0,
@@ -78,6 +78,7 @@ export const NTSC_RS_STABLE_APPROX_SETTINGS: NtscVhsSettings = {
   chromaPhaseError: 0.0,
   chromaLossDensity: 0.0,
   chromaLossAmount: 1.0,
+  verticalBlend: 0.0,
 };
 
 export const VHS_LOOK_SETTINGS: NtscVhsSettings = {
@@ -91,6 +92,7 @@ export const VHS_LOOK_SETTINGS: NtscVhsSettings = {
   snowStrength: 0.65,
   chromaLossDensity: 0.002,
   chromaLossAmount: 1.0,
+  verticalBlend: 1.0,
 };
 
 const UNIFORM_FLOAT_COUNT = 32;
@@ -237,6 +239,53 @@ fn lowCompositeAt(x: i32, y: i32, u: NtscUniforms) -> f32 {
 
 fn chromaFromCompositeAt(x: i32, y: i32, u: NtscUniforms) -> f32 {
   return loadComposite(x, y, u) - lowCompositeAt(x, y, u);
+}
+
+fn snowTransientAt(x: i32, y: i32, u: NtscUniforms) -> f32 {
+  if (u.snowDensity <= 0.0 || u.snowStrength == 0.0) {
+    return 0.0;
+  }
+
+  let slotWidth = 16.0;
+  let slot = i32(floor(f32(x) / slotWidth));
+  let frameSeed = f32(i32(u.frame) & 2047);
+  let rowRand = hash12(vec2f(f32(y) * 3.97 + frameSeed * 0.37, 101.3));
+  let rowClump = 0.25 + 3.0 * pow(rowRand, 5.0);
+  let eventProbability = clamp(u.snowDensity * slotWidth * rowClump, 0.0, 0.85);
+  let speedScale = max(0.25, u.tapeSpeed);
+  var accum = 0.0;
+
+  for (var offset = -5; offset <= 1; offset = offset + 1) {
+    let eventSlot = slot + offset;
+    let seed = vec2f(
+      f32(eventSlot) * 17.13 + frameSeed * 5.71,
+      f32(y) * 3.97 + frameSeed * 0.37
+    );
+    if (hash12(seed) >= eventProbability) {
+      continue;
+    }
+
+    let start = f32(eventSlot) * slotWidth +
+      hash12(seed + vec2f(2.31, 7.43)) * slotWidth;
+    let transientLen =
+      mix(8.0, 64.0, hash12(seed + vec2f(11.7, 19.3))) * speedScale;
+    let localX = f32(x) - start;
+    if (localX < 0.0 || localX > transientLen) {
+      continue;
+    }
+
+    let transientFreq = transientLen *
+      mix(3.0, 5.0, hash12(seed + vec2f(23.9, 3.19)));
+    let signedAmp = mix(
+      -1.0,
+      2.0,
+      hash12(seed + vec2f(localX * 0.73, 41.9))
+    );
+    let falloff = pow(1.0 - localX / max(1.0, transientLen), 2.0);
+    accum += cos((localX * PI) / max(1.0, transientFreq)) * falloff * signedAmp;
+  }
+
+  return accum * u.snowStrength * 0.35;
 }
 
 @compute @workgroup_size(16, 16, 1)
@@ -390,10 +439,7 @@ fn postProcessYiq(@builtin(global_invocation_id) gid: vec3u) {
 
   let noise = hash12(vec2f(f32(x) * 0.37, f32(y) * 1.91) + vec2f(u.frame * 23.0, 5.0)) - 0.5;
   luma += noise * u.noiseIntensity;
-  if (hash12(vec2f(f32(x), f32(y)) + vec2f(u.frame * 31.0, 9.0)) < u.snowDensity) {
-    let snow = 0.45 + 0.35 * hash12(vec2f(f32(x) + 3.0, f32(y)) + vec2f(u.frame, 1.0));
-    luma += snow * u.snowStrength;
-  }
+  luma += snowTransientAt(x, y, u);
 
   textureStore(yiqOut, vec2i(x, y), vec4f(luma, i, q, 1.0));
 }
@@ -624,7 +670,7 @@ export class NtscVhsGpuEffect extends ShaderEffect<NtscVhsInputs> {
     this.uniformData.fill(0);
     this.uniformData[0] = this.width;
     this.uniformData[1] = this.height;
-    this.uniformData[2] = this.frame;
+    this.uniformData[2] = this.frame % 2048;
     this.uniformData[3] = s.lumaSmear;
     this.uniformData[4] = s.chromaBlur;
     this.uniformData[5] = s.chromaDelayX;
