@@ -55,7 +55,8 @@ export const sketchNames = [
   'mpe_projmapGL_sonar',
   'newPianoRollTest',
   'animationEditorDemo',
-  'perfPaneDemo'
+  'perfPaneDemo',
+  'hapSamplerPlayer'
 ]
 
 const sketchRoutes = sketchNames.map(name => {
