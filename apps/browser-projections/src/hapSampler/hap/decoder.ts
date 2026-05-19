@@ -1,5 +1,5 @@
 import type { FrameDecodeInfo } from '../happack/types'
-import { snappyUncompress } from './snappy'
+import { snappyUncompressInto } from './snappy'
 
 const HAP_SCALED_YCOCG_BC3 = 0xaf
 const HAP_SCALED_YCOCG_BC3_SNAPPY = 0xbf
@@ -16,6 +16,14 @@ export function decodeHapYFrame(
   decodeInfo: FrameDecodeInfo,
   expectedLength: number,
 ): Uint8Array {
+  return decodeHapYFrameInto(encoded, decodeInfo, new Uint8Array(expectedLength))
+}
+
+export function decodeHapYFrameInto(
+  encoded: Uint8Array,
+  decodeInfo: FrameDecodeInfo,
+  output: Uint8Array,
+): Uint8Array {
   if (
     decodeInfo.hapSectionType !== HAP_SCALED_YCOCG_BC3 &&
     decodeInfo.hapSectionType !== HAP_SCALED_YCOCG_BC3_SNAPPY &&
@@ -24,7 +32,6 @@ export function decodeHapYFrame(
     throw new Error(`Unsupported HAP top-level section 0x${decodeInfo.hapSectionType.toString(16)}.`)
   }
 
-  const output = new Uint8Array(expectedLength)
   let expectedDecodedOffset = 0
 
   for (const [index, chunkInfo] of decodeInfo.chunks.entries()) {
@@ -49,9 +56,11 @@ export function decodeHapYFrame(
       }
       output.set(payload, chunkInfo.decodedOffsetInBc3Frame)
     } else if (chunkInfo.compressor === 'snappy') {
-      output.set(
-        snappyUncompress(payload, chunkInfo.decodedByteLength),
+      snappyUncompressInto(
+        payload,
+        output,
         chunkInfo.decodedOffsetInBc3Frame,
+        chunkInfo.decodedByteLength,
       )
     } else {
       throw new Error(`Unsupported HAP chunk compressor ${chunkInfo.compressor}.`)
@@ -60,9 +69,9 @@ export function decodeHapYFrame(
     expectedDecodedOffset += chunkInfo.decodedByteLength
   }
 
-  if (expectedDecodedOffset !== expectedLength) {
+  if (expectedDecodedOffset !== output.byteLength) {
     throw new Error(
-      `Decoded BC3 byte length mismatch. Expected ${expectedLength}, got ${expectedDecodedOffset}.`,
+      `Decoded BC3 byte length mismatch. Expected ${output.byteLength}, got ${expectedDecodedOffset}.`,
     )
   }
   return output

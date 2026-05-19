@@ -1,4 +1,4 @@
-import { decodeHapYFrame, expectedBc3ByteLength } from '../hap/decoder'
+import { decodeHapYFrameInto, expectedBc3ByteLength } from '../hap/decoder'
 import type { FrameIndexEntry, HapPackMetadata } from '../happack/types'
 
 type InitMessage = {
@@ -20,13 +20,21 @@ type CancelBeforeMessage = {
   generation: number
 }
 
-type WorkerInput = InitMessage | DecodeFrameMessage | CancelBeforeMessage
+type ReleaseFrameBufferMessage = {
+  type: 'releaseFrameBuffer'
+  buffer: ArrayBuffer
+}
+
+type WorkerInput = InitMessage | DecodeFrameMessage | CancelBeforeMessage | ReleaseFrameBufferMessage
+
+const MAX_DECODED_BUFFER_POOL_SIZE = 4
 
 let file: File | undefined
 let metadata: HapPackMetadata | undefined
 let index: FrameIndexEntry[] = []
 let activeGeneration = 0
 let expectedDecodedLength = 0
+let decodedBufferPool: ArrayBuffer[] = []
 const ctx = self as unknown as {
   onmessage: ((event: MessageEvent<WorkerInput>) => void | Promise<void>) | null
   postMessage(message: unknown, transfer?: Transferable[]): void
@@ -39,6 +47,22 @@ async function readFrame(frameNumber: number): Promise<ArrayBuffer> {
   return await file.slice(entry.offset, entry.offset + entry.byteLength).arrayBuffer()
 }
 
+function checkoutDecodedBuffer(): ArrayBuffer {
+  const buffer = decodedBufferPool.pop()
+  if (buffer && buffer.byteLength === expectedDecodedLength) return buffer
+  return new ArrayBuffer(expectedDecodedLength)
+}
+
+function releaseDecodedBuffer(buffer: ArrayBuffer) {
+  if (
+    expectedDecodedLength > 0 &&
+    buffer.byteLength === expectedDecodedLength &&
+    decodedBufferPool.length < MAX_DECODED_BUFFER_POOL_SIZE
+  ) {
+    decodedBufferPool.push(buffer)
+  }
+}
+
 ctx.onmessage = async (event: MessageEvent<WorkerInput>) => {
   const message = event.data
   try {
@@ -47,6 +71,7 @@ ctx.onmessage = async (event: MessageEvent<WorkerInput>) => {
       metadata = message.metadata
       index = message.index
       expectedDecodedLength = expectedBc3ByteLength(message.metadata.width, message.metadata.height)
+      decodedBufferPool = []
       activeGeneration = 1
       ctx.postMessage({ type: 'ready' })
       return
@@ -54,6 +79,11 @@ ctx.onmessage = async (event: MessageEvent<WorkerInput>) => {
 
     if (message.type === 'cancelBefore') {
       activeGeneration = Math.max(activeGeneration, message.generation)
+      return
+    }
+
+    if (message.type === 'releaseFrameBuffer') {
+      releaseDecodedBuffer(message.buffer)
       return
     }
 
@@ -69,13 +99,19 @@ ctx.onmessage = async (event: MessageEvent<WorkerInput>) => {
       const decodeStart = performance.now()
       const decodeInfo = metadata.decodeIndex[message.frameNumber]
       if (!decodeInfo) throw new Error(`Frame ${message.frameNumber} is missing decode metadata.`)
-      const bcBytes = decodeHapYFrame(
-        encoded,
-        decodeInfo,
-        expectedDecodedLength,
-      )
+      const outputBuffer = checkoutDecodedBuffer()
+      let bcBytes: Uint8Array
+      try {
+        bcBytes = decodeHapYFrameInto(encoded, decodeInfo, new Uint8Array(outputBuffer))
+      } catch (decodeError) {
+        releaseDecodedBuffer(outputBuffer)
+        throw decodeError
+      }
       const decodeMs = performance.now() - decodeStart
-      if (message.generation < activeGeneration) return
+      if (message.generation < activeGeneration) {
+        releaseDecodedBuffer(outputBuffer)
+        return
+      }
       const transferBytes =
         bcBytes.byteOffset === 0 && bcBytes.byteLength === bcBytes.buffer.byteLength
           ? bcBytes

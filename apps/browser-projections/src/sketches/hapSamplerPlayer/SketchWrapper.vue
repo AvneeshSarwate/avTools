@@ -106,6 +106,10 @@ function cancelOutstandingRequests() {
   worker?.postMessage({ type: 'cancelBefore', generation })
 }
 
+function releaseDecodedBuffer(buffer: ArrayBuffer) {
+  worker?.postMessage({ type: 'releaseFrameBuffer', buffer }, [buffer])
+}
+
 function requestExactFrame(frameNumber: number) {
   if (!worker || !metadata.value) return
   const clamped = clampFrame(frameNumber)
@@ -138,6 +142,7 @@ function handleWorkerMessage(event: MessageEvent<WorkerOutput>) {
   }
   if (message.generation !== generation || message.frameNumber !== requestedFrame) {
     staleFrames.value += 1
+    releaseDecodedBuffer(message.buffer)
     return
   }
 
@@ -146,12 +151,16 @@ function handleWorkerMessage(event: MessageEvent<WorkerOutput>) {
   inFlight.value = 0
   readMs.value = message.readMs
   decodeMs.value = message.decodeMs
-  if (renderer && uploadedFrame.value !== message.frameNumber) {
-    const start = performance.now()
-    renderer.uploadFrame(new Uint8Array(message.buffer))
-    uploadMs.value = performance.now() - start
-    uploadedFrame.value = message.frameNumber
-    currentFrame.value = message.frameNumber
+  try {
+    if (renderer && uploadedFrame.value !== message.frameNumber) {
+      const start = performance.now()
+      renderer.uploadFrame(new Uint8Array(message.buffer))
+      uploadMs.value = performance.now() - start
+      uploadedFrame.value = message.frameNumber
+      currentFrame.value = message.frameNumber
+    }
+  } finally {
+    releaseDecodedBuffer(message.buffer)
   }
 }
 

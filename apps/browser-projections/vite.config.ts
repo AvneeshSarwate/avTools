@@ -81,6 +81,7 @@ export default defineConfig({
       { find: '@avtools/shader-fx/raw', replacement: fileURLToPath(new URL('../../packages/shader-fx/raw/mod.ts', import.meta.url)) },
       { find: '@avtools/shader-fx/generated', replacement: fileURLToPath(new URL('../../packages/shader-fx/generated', import.meta.url)) },
       { find: '@avtools/shader-fx', replacement: fileURLToPath(new URL('../../packages/shader-fx/mod.ts', import.meta.url)) },
+      { find: 'hysnappy2', replacement: fileURLToPath(new URL('../../packages/hysnappy2/js/index.js', import.meta.url)) },
     ]
   },
   server: {

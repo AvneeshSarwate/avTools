@@ -1,7 +1,12 @@
-import { snappyUncompressor } from 'hysnappy'
+import { snappyUncompressorInto } from 'hysnappy2'
 
-const wasmSnappyUncompress = snappyUncompressor()
+const wasmSnappyUncompressInto = snappyUncompressorInto()
 
-export function snappyUncompress(input: Uint8Array, expectedLength: number): Uint8Array {
-  return wasmSnappyUncompress(input, expectedLength)
+export function snappyUncompressInto(
+  input: Uint8Array,
+  output: Uint8Array,
+  outputOffset: number,
+  expectedLength: number,
+): Uint8Array {
+  return wasmSnappyUncompressInto(input, output, outputOffset, expectedLength)
 }
