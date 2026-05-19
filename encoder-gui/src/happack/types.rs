@@ -55,10 +55,28 @@ pub struct HapPackMetadata {
     pub has_audio: bool,
     pub chunks: u32,
     pub compressor: String,
+    pub decode_index: Vec<FrameDecodeInfo>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrameDecodeInfo {
+    pub hap_section_type: u8,
+    pub chunks: Vec<HapChunkDecodeInfo>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HapChunkDecodeInfo {
+    pub compressor: String,
+    pub payload_offset_in_frame: u64,
+    pub compressed_byte_length: u64,
+    pub decoded_byte_length: u64,
+    pub decoded_offset_in_bc3_frame: u64,
 }
 
 pub const HAPPACK_MAGIC: &[u8; 8] = b"HAPPACK\0";
-pub const HAPPACK_VERSION: u32 = 1;
+pub const HAPPACK_VERSION: u32 = 2;
 pub const HAPPACK_HEADER_SIZE: u32 = 64;
 pub const HAPPACK_INDEX_ENTRY_SIZE: u32 = 32;
 pub const FRAME_FLAG_KEYFRAME: u32 = 0x0000_0001;

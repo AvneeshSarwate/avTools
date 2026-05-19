@@ -1,4 +1,4 @@
-import { decodeHapYFrame } from '../hap/decoder'
+import { decodeHapYFrame, expectedBc3ByteLength } from '../hap/decoder'
 import type { FrameIndexEntry, HapPackMetadata } from '../happack/types'
 
 type InitMessage = {
@@ -26,6 +26,7 @@ let file: File | undefined
 let metadata: HapPackMetadata | undefined
 let index: FrameIndexEntry[] = []
 let activeGeneration = 0
+let expectedDecodedLength = 0
 const ctx = self as unknown as {
   onmessage: ((event: MessageEvent<WorkerInput>) => void | Promise<void>) | null
   postMessage(message: unknown, transfer?: Transferable[]): void
@@ -45,6 +46,7 @@ ctx.onmessage = async (event: MessageEvent<WorkerInput>) => {
       file = message.file
       metadata = message.metadata
       index = message.index
+      expectedDecodedLength = expectedBc3ByteLength(message.metadata.width, message.metadata.height)
       activeGeneration = 1
       ctx.postMessage({ type: 'ready' })
       return
@@ -65,11 +67,12 @@ ctx.onmessage = async (event: MessageEvent<WorkerInput>) => {
       if (message.generation < activeGeneration) return
 
       const decodeStart = performance.now()
+      const decodeInfo = metadata.decodeIndex[message.frameNumber]
+      if (!decodeInfo) throw new Error(`Frame ${message.frameNumber} is missing decode metadata.`)
       const bcBytes = decodeHapYFrame(
         encoded,
-        metadata.width,
-        metadata.height,
-        metadata.compressor,
+        decodeInfo,
+        expectedDecodedLength,
       )
       const decodeMs = performance.now() - decodeStart
       if (message.generation < activeGeneration) return

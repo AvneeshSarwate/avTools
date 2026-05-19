@@ -1,5 +1,5 @@
 export type HapPackMetadata = {
-  version: 1
+  version: 2
   codec: 'HapY'
   hapFlavor: 'hap_q'
   gpuFormat: 'bc3-rgba-unorm'
@@ -14,6 +14,22 @@ export type HapPackMetadata = {
   hasAudio: false
   chunks: number
   compressor: 'snappy' | 'none'
+  decodeIndex: FrameDecodeInfo[]
+}
+
+export type HapSecondStageCompressor = 'snappy' | 'none'
+
+export type FrameDecodeInfo = {
+  hapSectionType: number
+  chunks: HapChunkDecodeInfo[]
+}
+
+export type HapChunkDecodeInfo = {
+  compressor: HapSecondStageCompressor
+  payloadOffsetInFrame: number
+  compressedByteLength: number
+  decodedByteLength: number
+  decodedOffsetInBc3Frame: number
 }
 
 export type FrameIndexEntry = {
