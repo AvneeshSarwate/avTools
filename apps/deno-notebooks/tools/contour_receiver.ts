@@ -107,7 +107,7 @@ export function createContourReceiver(
 
     ws.onclose = () => {
       if (!closed) {
-        console.log("[ContourReceiver] disconnected, reconnecting in 1s...");
+        // console.log("[ContourReceiver] disconnected, reconnecting in 1s...");
         setTimeout(connect, 1000);
       }
     };

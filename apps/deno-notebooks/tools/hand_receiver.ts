@@ -99,7 +99,7 @@ export function createHandReceiver(
 
     ws.onclose = () => {
       if (!closed) {
-        console.log("[HandReceiver] disconnected, reconnecting in 1s...");
+        // console.log("[HandReceiver] disconnected, reconnecting in 1s...");
         setTimeout(connect, 1000);
       }
     };
