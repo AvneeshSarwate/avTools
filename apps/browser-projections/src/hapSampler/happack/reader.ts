@@ -6,17 +6,11 @@ import {
   type FrameIndexEntry,
   type HapChunkDecodeInfo,
   type HapPackHeader,
-  type HapPackMetadata,
+  type HapPackMetadata
 } from './types'
+import { FileByteSource, type ByteSource } from '../io/byteSource'
 
 const decoder = new TextDecoder()
-
-async function readRange(file: File, offset: number, length: number): Promise<ArrayBuffer> {
-  if (offset < 0 || length < 0 || offset + length > file.size) {
-    throw new Error(`Read range is outside file bounds: offset=${offset}, length=${length}`)
-  }
-  return await file.slice(offset, offset + length).arrayBuffer()
-}
 
 function u64(view: DataView, offset: number): number {
   const value = view.getBigUint64(offset, true)
@@ -56,7 +50,7 @@ function parseHeader(buffer: ArrayBuffer): HapPackHeader {
     metadataLength: u64(view, 24),
     indexOffset: u64(view, 32),
     indexEntryCount: u64(view, 40),
-    indexEntrySize: view.getUint32(48, true),
+    indexEntrySize: view.getUint32(48, true)
   }
 
   if (header.version !== 2) throw new Error(`Unsupported happack version ${header.version}.`)
@@ -78,22 +72,40 @@ function assertMetadata(value: unknown): asserts value is HapPackMetadata {
   if (metadata.version !== 2) throw new Error('Happack metadata version must be 2.')
   if (metadata.codec !== 'HapY') throw new Error('Only HapY / Hap Q happacks are supported.')
   if (metadata.hapFlavor !== 'hap_q') throw new Error('Only hap_q happacks are supported.')
-  if (metadata.gpuFormat !== 'bc3-rgba-unorm') throw new Error('Only BC3 RGBA happacks are supported.')
-  if (metadata.colorModel !== 'scaled-ycocg') throw new Error('Only Scaled YCoCg happacks are supported.')
+  if (metadata.gpuFormat !== 'bc3-rgba-unorm')
+    throw new Error('Only BC3 RGBA happacks are supported.')
+  if (metadata.colorModel !== 'scaled-ycocg')
+    throw new Error('Only Scaled YCoCg happacks are supported.')
   if (metadata.hasAudio !== false) throw new Error('Audio tracks are not supported.')
   if (metadata.compressor !== 'snappy' && metadata.compressor !== 'none') {
     throw new Error('Only Snappy or uncompressed HAP happacks are supported.')
   }
-  if (typeof metadata.width !== 'number' || !Number.isFinite(metadata.width) || metadata.width <= 0) {
+  if (
+    typeof metadata.width !== 'number' ||
+    !Number.isFinite(metadata.width) ||
+    metadata.width <= 0
+  ) {
     throw new Error('Invalid width.')
   }
-  if (typeof metadata.height !== 'number' || !Number.isFinite(metadata.height) || metadata.height <= 0) {
+  if (
+    typeof metadata.height !== 'number' ||
+    !Number.isFinite(metadata.height) ||
+    metadata.height <= 0
+  ) {
     throw new Error('Invalid height.')
   }
-  if (typeof metadata.frameCount !== 'number' || !Number.isInteger(metadata.frameCount) || metadata.frameCount <= 0) {
+  if (
+    typeof metadata.frameCount !== 'number' ||
+    !Number.isInteger(metadata.frameCount) ||
+    metadata.frameCount <= 0
+  ) {
     throw new Error('Invalid frame count.')
   }
-  if (typeof metadata.durationUs !== 'number' || !Number.isFinite(metadata.durationUs) || metadata.durationUs <= 0) {
+  if (
+    typeof metadata.durationUs !== 'number' ||
+    !Number.isFinite(metadata.durationUs) ||
+    metadata.durationUs <= 0
+  ) {
     throw new Error('Invalid duration.')
   }
   if (!Array.isArray(metadata.decodeIndex)) {
@@ -112,7 +124,7 @@ function assertMetadata(value: unknown): asserts value is HapPackMetadata {
 function assertFrameDecodeInfo(
   value: unknown,
   frameNumber: number,
-  decodedLength: number,
+  decodedLength: number
 ): asserts value is FrameDecodeInfo {
   const info = value as Partial<FrameDecodeInfo>
   if (
@@ -142,7 +154,7 @@ function assertFrameDecodeInfo(
 function assertChunkDecodeInfo(
   value: unknown,
   frameNumber: number,
-  chunkNumber: number,
+  chunkNumber: number
 ): asserts value is HapChunkDecodeInfo {
   const chunk = value as Partial<HapChunkDecodeInfo>
   if (chunk.compressor !== 'snappy' && chunk.compressor !== 'none') {
@@ -161,7 +173,9 @@ function assertChunkDecodeInfo(
     throw new Error(`Frame ${frameNumber} chunk ${chunkNumber} has an invalid decoded offset.`)
   }
   if (chunk.compressor === 'none' && chunk.compressedByteLength !== chunk.decodedByteLength) {
-    throw new Error(`Frame ${frameNumber} chunk ${chunkNumber} has inconsistent uncompressed lengths.`)
+    throw new Error(
+      `Frame ${frameNumber} chunk ${chunkNumber} has inconsistent uncompressed lengths.`
+    )
   }
 }
 
@@ -179,7 +193,7 @@ function parseIndex(buffer: ArrayBuffer, count: number): FrameIndexEntry[] {
       durationUs: view.getUint32(base + 8, true),
       flags: view.getUint32(base + 12, true),
       offset: u64(view, base + 16),
-      byteLength: u64(view, base + 24),
+      byteLength: u64(view, base + 24)
     })
   }
   return entries
@@ -187,29 +201,32 @@ function parseIndex(buffer: ArrayBuffer, count: number): FrameIndexEntry[] {
 
 export class HapPackReader {
   private constructor(
-    readonly file: File,
+    private readonly source: ByteSource,
     readonly header: HapPackHeader,
     readonly metadata: HapPackMetadata,
-    readonly index: FrameIndexEntry[],
+    readonly index: FrameIndexEntry[]
   ) {}
 
   static async open(file: File): Promise<HapPackReader> {
-    const header = parseHeader(await readRange(file, 0, HAPPACK_HEADER_SIZE))
-    if (header.metadataOffset + header.metadataLength > file.size) {
+    return await HapPackReader.openSource(new FileByteSource(file))
+  }
+
+  static async openSource(source: ByteSource): Promise<HapPackReader> {
+    const header = parseHeader(await source.readRange(0, HAPPACK_HEADER_SIZE))
+    if (header.metadataOffset + header.metadataLength > source.size) {
       throw new Error('Metadata range is outside file bounds.')
     }
-    if (header.indexOffset + header.indexEntryCount * header.indexEntrySize > file.size) {
+    if (header.indexOffset + header.indexEntryCount * header.indexEntrySize > source.size) {
       throw new Error('Frame index range is outside file bounds.')
     }
 
-    const metadataBuffer = await readRange(file, header.metadataOffset, header.metadataLength)
+    const metadataBuffer = await source.readRange(header.metadataOffset, header.metadataLength)
     const metadata = JSON.parse(decoder.decode(metadataBuffer)) as unknown
     assertMetadata(metadata)
 
-    const indexBuffer = await readRange(
-      file,
+    const indexBuffer = await source.readRange(
       header.indexOffset,
-      header.indexEntryCount * header.indexEntrySize,
+      header.indexEntryCount * header.indexEntrySize
     )
     const index = parseIndex(indexBuffer, header.indexEntryCount)
 
@@ -219,22 +236,24 @@ export class HapPackReader {
 
     for (const [frameNumber, entry] of index.entries()) {
       if (entry.byteLength <= 0) throw new Error(`Frame ${frameNumber} is empty.`)
-      if (entry.offset + entry.byteLength > file.size) {
+      if (entry.offset + entry.byteLength > source.size) {
         throw new Error(`Frame ${frameNumber} payload range is outside file bounds.`)
       }
       for (const [chunkNumber, chunk] of metadata.decodeIndex[frameNumber].chunks.entries()) {
         if (chunk.payloadOffsetInFrame + chunk.compressedByteLength > entry.byteLength) {
-          throw new Error(`Frame ${frameNumber} chunk ${chunkNumber} payload range exceeds frame bounds.`)
+          throw new Error(
+            `Frame ${frameNumber} chunk ${chunkNumber} payload range exceeds frame bounds.`
+          )
         }
       }
     }
 
-    return new HapPackReader(file, header, metadata, index)
+    return new HapPackReader(source, header, metadata, index)
   }
 
   async readFrame(frameNumber: number): Promise<ArrayBuffer> {
     const entry = this.index[frameNumber]
     if (!entry) throw new Error(`Frame ${frameNumber} is outside the index.`)
-    return await readRange(this.file, entry.offset, entry.byteLength)
+    return await this.source.readRange(entry.offset, entry.byteLength)
   }
 }

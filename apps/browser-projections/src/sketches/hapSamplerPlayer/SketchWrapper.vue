@@ -1,11 +1,19 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createHapDevice, HapWebGpuRenderer } from '@/hapSampler/gpu/renderer'
 import { HapPackReader } from '@/hapSampler/happack/reader'
 import type { FrameIndexEntry, HapPackMetadata } from '@/hapSampler/happack/types'
+import {
+  cleanupStaleOpfsCacheEntries,
+  importFileToOpfs,
+  isOpfsAvailable,
+  removeOpfsCacheEntry,
+  type OpfsCacheEntry
+} from '@/hapSampler/io/opfsCache'
 import { PlaybackClock } from '@/hapSampler/playback/clock'
 
 type WorkerReadyMessage = { type: 'ready' }
+type WorkerDisposedMessage = { type: 'disposed' }
 type WorkerDecodedMessage = {
   type: 'decodedFrame'
   requestId: number
@@ -20,7 +28,13 @@ type WorkerErrorMessage = {
   requestId?: number
   error: string
 }
-type WorkerOutput = WorkerReadyMessage | WorkerDecodedMessage | WorkerErrorMessage
+type WorkerOutput =
+  | WorkerReadyMessage
+  | WorkerDisposedMessage
+  | WorkerDecodedMessage
+  | WorkerErrorMessage
+
+type WorkerSourceMessage = { kind: 'file'; file: File } | OpfsCacheEntry
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const fileName = ref('')
@@ -38,6 +52,11 @@ const decodeMs = ref(0)
 const uploadMs = ref(0)
 const averageFps = ref(0)
 const staleFrames = ref(0)
+const useOpfs = ref(false)
+const opfsAvailable = ref(false)
+const sourceMode = ref<'File API' | 'OPFS SyncAccessHandle'>('File API')
+const loading = ref(false)
+const workerReady = ref(false)
 
 let reader: HapPackReader | null = null
 let device: GPUDevice | null = null
@@ -53,6 +72,7 @@ let frameCounter = 0
 let fpsWindowStart = performance.now()
 let pendingSeekFrame: number | null = null
 let seekDebounceTimer: number | undefined
+let activeOpfsEntry: OpfsCacheEntry | null = null
 
 const frameCount = computed(() => metadata.value?.frameCount ?? 0)
 const durationSeconds = computed(() => (metadata.value ? metadata.value.durationUs / 1_000_000 : 0))
@@ -63,22 +83,70 @@ const fps = computed(() => {
   }
   return metadata.value.frameCount / Math.max(0.001, durationSeconds.value)
 })
-const canPlay = computed(() => !!metadata.value && !error.value)
+const canPlay = computed(() => !!metadata.value && workerReady.value && !error.value)
 const playLabel = computed(() => (playing.value ? 'Pause' : 'Play'))
+const opfsToggleLabel = computed(() => (opfsAvailable.value ? 'Use OPFS' : 'OPFS unavailable'))
 
 watch(loop, (value) => {
   clock?.setLoop(value)
 })
 
-function resetPlaybackState() {
+function disposeWorker(): Promise<void> {
+  const activeWorker = worker
+  if (!activeWorker) return Promise.resolve()
+  worker = null
+
+  return new Promise((resolve) => {
+    let settled = false
+    let timeoutId = 0
+
+    const finish = () => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timeoutId)
+      activeWorker.removeEventListener('message', handleDisposed)
+      activeWorker.removeEventListener('error', finish)
+      activeWorker.terminate()
+      resolve()
+    }
+
+    const handleDisposed = (event: MessageEvent<WorkerOutput>) => {
+      if (event.data.type === 'disposed') finish()
+    }
+
+    activeWorker.addEventListener('message', handleDisposed)
+    activeWorker.addEventListener('error', finish)
+    timeoutId = window.setTimeout(finish, 750)
+
+    try {
+      activeWorker.postMessage({ type: 'dispose' })
+    } catch {
+      finish()
+    }
+  })
+}
+
+async function cleanupActiveOpfsFile() {
+  const entry = activeOpfsEntry
+  if (!entry) return
+  activeOpfsEntry = null
+  sourceMode.value = 'File API'
+  try {
+    await removeOpfsCacheEntry(entry)
+  } catch (caught) {
+    console.warn('Failed to remove HAP OPFS cache entry.', caught)
+  }
+}
+
+async function resetPlaybackState() {
   clearScheduledSeek()
   reader = null
   renderer?.destroy()
   renderer = null
-  worker?.terminate()
-  worker = null
+  const workerDisposed = disposeWorker()
   clock = null
   metadata.value = null
+  workerReady.value = false
   currentFrame.value = 0
   targetFrame.value = 0
   uploadedFrame.value = null
@@ -91,6 +159,8 @@ function resetPlaybackState() {
   generation += 1
   requestedFrame = null
   pendingRequestCount = 0
+  await workerDisposed
+  await cleanupActiveOpfsFile()
 }
 
 async function ensureDevice() {
@@ -111,7 +181,7 @@ function releaseDecodedBuffer(buffer: ArrayBuffer) {
 }
 
 function requestExactFrame(frameNumber: number) {
-  if (!worker || !metadata.value) return
+  if (!worker || !metadata.value || !workerReady.value) return
   const clamped = clampFrame(frameNumber)
   if (requestedFrame === clamped) return
   if (uploadedFrame.value === clamped && pendingRequestCount === 0) return
@@ -124,18 +194,25 @@ function requestExactFrame(frameNumber: number) {
     type: 'decodeFrame',
     requestId: requestId++,
     generation,
-    frameNumber: clamped,
+    frameNumber: clamped
   })
 }
 
 function handleWorkerMessage(event: MessageEvent<WorkerOutput>) {
   const message = event.data
   if (message.type === 'ready') {
-    status.value = 'Decoder worker ready.'
+    workerReady.value = true
+    loading.value = false
+    status.value =
+      sourceMode.value === 'OPFS SyncAccessHandle' ? 'Happack loaded from OPFS.' : 'Happack loaded.'
+    requestExactFrame(targetFrame.value)
     return
   }
+  if (message.type === 'disposed') return
   if (message.type === 'error') {
     error.value = message.error
+    loading.value = false
+    workerReady.value = false
     playing.value = false
     clock?.pause()
     return
@@ -187,13 +264,32 @@ async function handleFileChange(event: Event) {
   if (!file) return
 
   cancelAnimationFrame(rafId)
-  resetPlaybackState()
+  loading.value = true
+  await resetPlaybackState()
   fileName.value = file.name
   error.value = ''
   status.value = 'Opening happack...'
 
   try {
-    const opened = await HapPackReader.open(file)
+    const selectedUseOpfs = useOpfs.value
+    let opened = await HapPackReader.open(file)
+    let workerSource: WorkerSourceMessage = { kind: 'file', file }
+
+    if (selectedUseOpfs) {
+      if (!opfsAvailable.value) throw new Error('OPFS is not available in this browser/context.')
+      status.value = 'Importing happack into OPFS...'
+      const imported = await importFileToOpfs(file, ({ copiedBytes, totalBytes }) => {
+        const percent = totalBytes > 0 ? (copiedBytes / totalBytes) * 100 : 0
+        status.value = `Importing happack into OPFS... ${percent.toFixed(1)}%`
+      })
+      activeOpfsEntry = imported.entry
+      opened = await HapPackReader.openSource(imported.source)
+      workerSource = imported.entry
+      sourceMode.value = 'OPFS SyncAccessHandle'
+    } else {
+      sourceMode.value = 'File API'
+    }
+
     reader = opened
     metadata.value = opened.metadata
 
@@ -205,33 +301,36 @@ async function handleFileChange(event: Event) {
       canvas,
       await ensureDevice(),
       opened.metadata.width,
-      opened.metadata.height,
+      opened.metadata.height
     )
     renderer.resize()
 
     worker = new Worker(new URL('../../hapSampler/workers/decode.worker.ts', import.meta.url), {
-      type: 'module',
+      type: 'module'
     })
     worker.onmessage = handleWorkerMessage
     worker.postMessage({
       type: 'init',
-      file,
+      source: workerSource,
       metadata: opened.metadata,
-      index: opened.index,
+      index: opened.index
     } satisfies {
       type: 'init'
-      file: File
+      source: WorkerSourceMessage
       metadata: HapPackMetadata
       index: FrameIndexEntry[]
     })
 
     clock = new PlaybackClock(fps.value, opened.metadata.frameCount, loop.value)
-    requestExactFrame(0)
     rafId = requestAnimationFrame(tick)
-    status.value = 'Happack loaded.'
+    status.value = selectedUseOpfs
+      ? 'Initializing OPFS decoder worker...'
+      : 'Initializing decoder worker...'
   } catch (caught) {
+    await resetPlaybackState()
     error.value = caught instanceof Error ? caught.message : String(caught)
     status.value = 'Load failed.'
+    loading.value = false
   } finally {
     input.value = ''
   }
@@ -349,13 +448,30 @@ function resizeRenderer() {
   renderer?.resize()
 }
 
+function handlePageClose() {
+  void disposeWorker().finally(() => {
+    void cleanupActiveOpfsFile()
+  })
+}
+
 window.addEventListener('resize', resizeRenderer)
+window.addEventListener('pagehide', handlePageClose)
+window.addEventListener('beforeunload', handlePageClose)
+
+onMounted(() => {
+  opfsAvailable.value = isOpfsAvailable()
+  void cleanupStaleOpfsCacheEntries().catch((caught) => {
+    console.warn('Failed to clean stale HAP OPFS cache entries.', caught)
+  })
+})
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(rafId)
   window.removeEventListener('resize', resizeRenderer)
+  window.removeEventListener('pagehide', handlePageClose)
+  window.removeEventListener('beforeunload', handlePageClose)
   clearScheduledSeek()
-  resetPlaybackState()
+  void resetPlaybackState()
 })
 </script>
 
@@ -363,7 +479,7 @@ onBeforeUnmount(() => {
   <main class="hap-page">
     <section class="toolbar">
       <label class="file-button">
-        <input type="file" accept=".happack" @change="handleFileChange" />
+        <input type="file" accept=".happack" :disabled="loading" @change="handleFileChange" />
         Select .happack
       </label>
       <button type="button" :disabled="!canPlay" @click="togglePlayback">{{ playLabel }}</button>
@@ -372,6 +488,10 @@ onBeforeUnmount(() => {
       <label class="loop-toggle">
         <input v-model="loop" type="checkbox" />
         Loop
+      </label>
+      <label class="opfs-toggle">
+        <input v-model="useOpfs" type="checkbox" :disabled="loading || !opfsAvailable" />
+        {{ opfsToggleLabel }}
       </label>
       <span class="status" :class="{ bad: !!error }">{{ error || status }}</span>
     </section>
@@ -406,30 +526,76 @@ onBeforeUnmount(() => {
       <div class="detail-block">
         <h2>Source</h2>
         <dl>
-          <div><dt>File</dt><dd>{{ fileName || 'none' }}</dd></div>
-          <div><dt>Codec</dt><dd>{{ metadata?.codec ?? '-' }}</dd></div>
-          <div><dt>Compressor</dt><dd>{{ metadata?.compressor ?? '-' }}</dd></div>
-          <div><dt>Format</dt><dd>{{ metadata?.gpuFormat ?? '-' }}</dd></div>
-          <div><dt>Size</dt><dd>{{ metadata ? `${metadata.width} x ${metadata.height}` : '-' }}</dd></div>
-          <div><dt>Duration</dt><dd>{{ durationSeconds.toFixed(2) }}s</dd></div>
+          <div>
+            <dt>File</dt>
+            <dd>{{ fileName || 'none' }}</dd>
+          </div>
+          <div>
+            <dt>Read path</dt>
+            <dd>{{ sourceMode }}</dd>
+          </div>
+          <div>
+            <dt>Codec</dt>
+            <dd>{{ metadata?.codec ?? '-' }}</dd>
+          </div>
+          <div>
+            <dt>Compressor</dt>
+            <dd>{{ metadata?.compressor ?? '-' }}</dd>
+          </div>
+          <div>
+            <dt>Format</dt>
+            <dd>{{ metadata?.gpuFormat ?? '-' }}</dd>
+          </div>
+          <div>
+            <dt>Size</dt>
+            <dd>{{ metadata ? `${metadata.width} x ${metadata.height}` : '-' }}</dd>
+          </div>
+          <div>
+            <dt>Duration</dt>
+            <dd>{{ durationSeconds.toFixed(2) }}s</dd>
+          </div>
         </dl>
       </div>
       <div class="detail-block">
         <h2>Runtime</h2>
         <dl>
-          <div><dt>Target</dt><dd>{{ targetFrame }}</dd></div>
-          <div><dt>Uploaded</dt><dd>{{ uploadedFrame ?? '-' }}</dd></div>
-          <div><dt>In flight</dt><dd>{{ inFlight }}</dd></div>
-          <div><dt>Display</dt><dd>{{ averageFps.toFixed(1) }} fps</dd></div>
+          <div>
+            <dt>Target</dt>
+            <dd>{{ targetFrame }}</dd>
+          </div>
+          <div>
+            <dt>Uploaded</dt>
+            <dd>{{ uploadedFrame ?? '-' }}</dd>
+          </div>
+          <div>
+            <dt>In flight</dt>
+            <dd>{{ inFlight }}</dd>
+          </div>
+          <div>
+            <dt>Display</dt>
+            <dd>{{ averageFps.toFixed(1) }} fps</dd>
+          </div>
         </dl>
       </div>
       <div class="detail-block">
         <h2>Timing</h2>
         <dl>
-          <div><dt>Read</dt><dd>{{ readMs.toFixed(2) }} ms</dd></div>
-          <div><dt>Decode</dt><dd>{{ decodeMs.toFixed(2) }} ms</dd></div>
-          <div><dt>Upload</dt><dd>{{ uploadMs.toFixed(2) }} ms</dd></div>
-          <div><dt>Stale</dt><dd>{{ staleFrames }}</dd></div>
+          <div>
+            <dt>Read</dt>
+            <dd>{{ readMs.toFixed(2) }} ms</dd>
+          </div>
+          <div>
+            <dt>Decode</dt>
+            <dd>{{ decodeMs.toFixed(2) }} ms</dd>
+          </div>
+          <div>
+            <dt>Upload</dt>
+            <dd>{{ uploadMs.toFixed(2) }} ms</dd>
+          </div>
+          <div>
+            <dt>Stale</dt>
+            <dd>{{ staleFrames }}</dd>
+          </div>
         </dl>
       </div>
     </section>
@@ -442,7 +608,13 @@ onBeforeUnmount(() => {
   color: #eef3f8;
   background: #101316;
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
 }
 
 .toolbar {
@@ -480,12 +652,17 @@ button:disabled {
   display: none;
 }
 
-.loop-toggle {
+.loop-toggle,
+.opfs-toggle {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   color: #c7d0d8;
   font-size: 13px;
+}
+
+.opfs-toggle:has(input:disabled) {
+  opacity: 0.52;
 }
 
 .status {
