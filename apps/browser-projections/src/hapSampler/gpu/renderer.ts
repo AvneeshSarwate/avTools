@@ -10,7 +10,7 @@ export async function createHapDevice(): Promise<GPUDevice> {
   }
 
   const device = await adapter.requestDevice({
-    requiredFeatures: ['texture-compression-bc'],
+    requiredFeatures: ['texture-compression-bc']
   })
   device.addEventListener('uncapturederror', (event) => {
     const gpuEvent = event as unknown as { error: { message: string } }
@@ -84,7 +84,7 @@ export class HapWebGpuRenderer {
     private readonly canvas: HTMLCanvasElement,
     private readonly device: GPUDevice,
     private readonly width: number,
-    private readonly height: number,
+    private readonly height: number
   ) {
     const context = canvas.getContext('webgpu')
     if (!context) throw new Error('Could not create a WebGPU canvas context.')
@@ -95,7 +95,7 @@ export class HapWebGpuRenderer {
     this.context.configure({
       device,
       format: this.presentationFormat,
-      alphaMode: 'opaque',
+      alphaMode: 'opaque'
     })
 
     const module = device.createShaderModule({ code: shaderCode })
@@ -105,24 +105,24 @@ export class HapWebGpuRenderer {
       fragment: {
         module,
         entryPoint: 'fsMain',
-        targets: [{ format: this.presentationFormat }],
+        targets: [{ format: this.presentationFormat }]
       },
-      primitive: { topology: 'triangle-list' },
+      primitive: { topology: 'triangle-list' }
     })
 
     this.sampler = device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',
       addressModeU: 'clamp-to-edge',
-      addressModeV: 'clamp-to-edge',
+      addressModeV: 'clamp-to-edge'
     })
 
     this.textures = Array.from({ length: 3 }, () =>
       device.createTexture({
         size: { width, height, depthOrArrayLayers: 1 },
         format: 'bc3-rgba-unorm',
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-      }),
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
+      })
     )
 
     this.bindGroups = this.textures.map((texture) =>
@@ -130,14 +130,15 @@ export class HapWebGpuRenderer {
         layout: this.pipeline.getBindGroupLayout(0),
         entries: [
           { binding: 0, resource: texture.createView() },
-          { binding: 1, resource: this.sampler },
-        ],
-      }),
+          { binding: 1, resource: this.sampler }
+        ]
+      })
     )
   }
 
   resize() {
-    const dpr = window.devicePixelRatio || 1
+    const ownerWindow = this.canvas.ownerDocument.defaultView ?? window
+    const dpr = ownerWindow.devicePixelRatio || 1
     const rect = this.canvas.getBoundingClientRect()
     this.canvas.width = Math.max(1, Math.floor(rect.width * dpr))
     this.canvas.height = Math.max(1, Math.floor(rect.height * dpr))
@@ -159,13 +160,13 @@ export class HapWebGpuRenderer {
       bcBytes,
       {
         bytesPerRow: blockWidth * 16,
-        rowsPerImage: blockHeight,
+        rowsPerImage: blockHeight
       },
       {
         width: this.width,
         height: this.height,
-        depthOrArrayLayers: 1,
-      },
+        depthOrArrayLayers: 1
+      }
     )
     this.currentBindGroup = textureIndex
     this.nextTexture = (this.nextTexture + 1) % this.textures.length
@@ -180,9 +181,9 @@ export class HapWebGpuRenderer {
           view: this.context.getCurrentTexture().createView(),
           loadOp: 'clear',
           storeOp: 'store',
-          clearValue: { r: 0.02, g: 0.025, b: 0.03, a: 1 },
-        },
-      ],
+          clearValue: { r: 0.02, g: 0.025, b: 0.03, a: 1 }
+        }
+      ]
     })
     pass.setPipeline(this.pipeline)
     pass.setBindGroup(0, this.bindGroups[this.currentBindGroup])

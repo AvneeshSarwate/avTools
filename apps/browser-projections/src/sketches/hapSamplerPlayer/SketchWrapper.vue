@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import type { CSSProperties } from 'vue'
+import PopoutWindow from '@/components/PopoutWindow.vue'
 import { createHapDevice, HapWebGpuRenderer } from '@/hapSampler/gpu/renderer'
 import { HapPackReader } from '@/hapSampler/happack/reader'
 import type { FrameIndexEntry, HapPackMetadata } from '@/hapSampler/happack/types'
@@ -10,7 +12,9 @@ import {
   removeOpfsCacheEntry,
   type OpfsCacheEntry
 } from '@/hapSampler/io/opfsCache'
+import { MIDI_READY, midiInputs } from '@/io/midi'
 import { PlaybackClock } from '@/hapSampler/playback/clock'
+import type { NoteMessage } from '@midival/core'
 
 type WorkerReadyMessage = { type: 'ready' }
 type WorkerDisposedMessage = { type: 'disposed' }
@@ -36,6 +40,13 @@ type WorkerOutput =
 
 type WorkerSourceMessage = { kind: 'file'; file: File } | OpfsCacheEntry
 
+type MidiMapping = {
+  id: number
+  note: number
+  frame: number
+}
+
+const viewerRef = ref<HTMLElement | null>(null)
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const fileName = ref('')
 const status = ref('Select a .happack file to inspect and play.')
@@ -57,6 +68,15 @@ const opfsAvailable = ref(false)
 const sourceMode = ref<'File API' | 'OPFS SyncAccessHandle'>('File API')
 const loading = ref(false)
 const workerReady = ref(false)
+const canvasPopped = ref(false)
+const dockedCanvasWidth = ref(0)
+const dockedCanvasHeight = ref(0)
+const midiInputNames = ref<string[]>([])
+const selectedMidiInput = ref('')
+const midiStatus = ref('MIDI not initialized.')
+const latestMidiNote = ref<number | null>(null)
+const latestMidiVelocity = ref<number | null>(null)
+const midiMappings = ref<MidiMapping[]>([])
 
 let reader: HapPackReader | null = null
 let device: GPUDevice | null = null
@@ -64,6 +84,7 @@ let renderer: HapWebGpuRenderer | null = null
 let worker: Worker | null = null
 let clock: PlaybackClock | null = null
 let rafId = 0
+let rafWindow: Window = window
 let requestId = 1
 let generation = 1
 let requestedFrame: number | null = null
@@ -73,6 +94,10 @@ let fpsWindowStart = performance.now()
 let pendingSeekFrame: number | null = null
 let seekDebounceTimer: number | undefined
 let activeOpfsEntry: OpfsCacheEntry | null = null
+let canvasPopoutWindow: Window | null = null
+let viewerResizeObserver: ResizeObserver | null = null
+let unregisterMidiNoteOn: (() => void) | null = null
+let nextMidiMappingId = 1
 
 const frameCount = computed(() => metadata.value?.frameCount ?? 0)
 const durationSeconds = computed(() => (metadata.value ? metadata.value.durationUs / 1_000_000 : 0))
@@ -86,10 +111,77 @@ const fps = computed(() => {
 const canPlay = computed(() => !!metadata.value && workerReady.value && !error.value)
 const playLabel = computed(() => (playing.value ? 'Pause' : 'Play'))
 const opfsToggleLabel = computed(() => (opfsAvailable.value ? 'Use OPFS' : 'OPFS unavailable'))
+const showPerfStats = new URLSearchParams(window.location.search).has('perfStats')
+const popoutWidth = computed(() => metadata.value?.width ?? 1280)
+const popoutHeight = computed(() => metadata.value?.height ?? 720)
+const canvasAspectRatio = computed(() => popoutWidth.value / Math.max(1, popoutHeight.value))
+const currentTimeSeconds = computed(() =>
+  metadata.value
+    ? Math.min(durationSeconds.value, currentFrame.value / Math.max(0.001, fps.value))
+    : 0
+)
+const targetTimeSeconds = computed(() =>
+  metadata.value
+    ? Math.min(durationSeconds.value, targetFrame.value / Math.max(0.001, fps.value))
+    : 0
+)
+const latestMidiMapping = computed(() =>
+  latestMidiNote.value === null
+    ? null
+    : (midiMappings.value.find((mapping) => mapping.note === latestMidiNote.value) ?? null)
+)
+const latestMidiMappedTime = computed(() =>
+  latestMidiMapping.value ? frameToSeconds(latestMidiMapping.value.frame) : null
+)
+const canvasStageStyle = computed<CSSProperties>(() => {
+  if (canvasPopped.value) return {}
+  if (dockedCanvasWidth.value > 0 && dockedCanvasHeight.value > 0) {
+    return {
+      width: `${dockedCanvasWidth.value}px`,
+      height: `${dockedCanvasHeight.value}px`
+    }
+  }
+  return {
+    aspectRatio: String(canvasAspectRatio.value),
+    width: '100%',
+    height: 'auto'
+  }
+})
 
 watch(loop, (value) => {
   clock?.setLoop(value)
 })
+
+watch([canvasAspectRatio, canvasPopped], () => {
+  void nextTick().then(() => {
+    if (canvasPopped.value) resizeRendererNextFrame()
+    else resizeDockedCanvas(true)
+  })
+})
+
+watch(selectedMidiInput, (deviceName) => {
+  attachMidiInput(deviceName)
+})
+
+function frameToSeconds(frame: number) {
+  return Math.min(durationSeconds.value, clampFrame(frame) / Math.max(0.001, fps.value))
+}
+
+function formatTime(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '0:00.000'
+  const minutes = Math.floor(seconds / 60)
+  const wholeSeconds = Math.floor(seconds % 60)
+  const millis = Math.floor((seconds % 1) * 1000)
+  return `${minutes}:${String(wholeSeconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`
+}
+
+function formatMidiNote(note: number | null) {
+  if (note === null) return ''
+  const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+  const pitchClass = ((note % 12) + 12) % 12
+  const octave = Math.floor(note / 12) - 1
+  return `${note} ${names[pitchClass]}${octave}`
+}
 
 function disposeWorker(): Promise<void> {
   const activeWorker = worker
@@ -241,8 +333,31 @@ function handleWorkerMessage(event: MessageEvent<WorkerOutput>) {
   }
 }
 
+function scheduleRenderLoop() {
+  const ownerWindow = canvasRef.value?.ownerDocument.defaultView ?? window
+  rafWindow = ownerWindow
+  rafId = ownerWindow.requestAnimationFrame(tick)
+}
+
+function cancelRenderLoop() {
+  if (rafId === 0) return
+  try {
+    rafWindow.cancelAnimationFrame(rafId)
+  } catch {
+    // The render loop may be owned by a popup that is already closing.
+  }
+  rafId = 0
+  rafWindow = window
+}
+
+function restartRenderLoopInCanvasWindow() {
+  if (rafId === 0) return
+  cancelRenderLoop()
+  scheduleRenderLoop()
+}
+
 function tick(now: number) {
-  rafId = requestAnimationFrame(tick)
+  scheduleRenderLoop()
   if (!renderer || !clock) return
 
   const desired = clock.currentFrame(now)
@@ -263,7 +378,7 @@ async function handleFileChange(event: Event) {
   const file = input.files?.[0]
   if (!file) return
 
-  cancelAnimationFrame(rafId)
+  cancelRenderLoop()
   loading.value = true
   await resetPlaybackState()
   fileName.value = file.name
@@ -294,6 +409,8 @@ async function handleFileChange(event: Event) {
     metadata.value = opened.metadata
 
     await nextTick()
+    resizeDockedCanvas(true)
+    await nextTick()
     const canvas = canvasRef.value
     if (!canvas) throw new Error('Canvas is not mounted.')
 
@@ -322,7 +439,7 @@ async function handleFileChange(event: Event) {
     })
 
     clock = new PlaybackClock(fps.value, opened.metadata.frameCount, loop.value)
-    rafId = requestAnimationFrame(tick)
+    scheduleRenderLoop()
     status.value = selectedUseOpfs
       ? 'Initializing OPFS decoder worker...'
       : 'Initializing decoder worker...'
@@ -444,8 +561,200 @@ function handleTimelineKeydown(event: KeyboardEvent) {
   }
 }
 
-function resizeRenderer() {
-  renderer?.resize()
+function clampMidiNote(note: number) {
+  return Math.min(127, Math.max(0, Math.round(note)))
+}
+
+function refreshMidiInputs() {
+  const names = Array.from(midiInputs.keys()).sort((a, b) => a.localeCompare(b))
+  midiInputNames.value = names
+  if (!selectedMidiInput.value || !midiInputs.has(selectedMidiInput.value)) {
+    selectedMidiInput.value = names[0] ?? ''
+  }
+  if (names.length === 0) midiStatus.value = 'No MIDI inputs found.'
+}
+
+async function initializeMidiInputList() {
+  midiStatus.value = 'Initializing MIDI...'
+  try {
+    await MIDI_READY
+    refreshMidiInputs()
+    if (selectedMidiInput.value) {
+      midiStatus.value = `Listening to ${selectedMidiInput.value}.`
+    }
+  } catch (caught) {
+    midiStatus.value = caught instanceof Error ? caught.message : String(caught)
+  }
+}
+
+function detachMidiInput() {
+  if (!unregisterMidiNoteOn) return
+  unregisterMidiNoteOn()
+  unregisterMidiNoteOn = null
+}
+
+function attachMidiInput(deviceName: string) {
+  detachMidiInput()
+  if (!deviceName) return
+  const input = midiInputs.get(deviceName)
+  if (!input) {
+    midiStatus.value = 'Selected MIDI input is unavailable.'
+    return
+  }
+  unregisterMidiNoteOn = input.onAllNoteOn(handleMidiNoteOn)
+  midiStatus.value = `Listening to ${deviceName}.`
+}
+
+function handleMidiNoteOn(message: NoteMessage) {
+  latestMidiNote.value = message.note
+  latestMidiVelocity.value = message.velocity
+  const mapping = midiMappings.value.find((entry) => entry.note === message.note)
+  if (mapping) seekTo(mapping.frame)
+}
+
+function upsertMidiMapping(note: number, frame: number) {
+  const clampedNote = clampMidiNote(note)
+  const clampedFrame = clampFrame(frame)
+  const existing = midiMappings.value.find((mapping) => mapping.note === clampedNote)
+  if (existing) {
+    existing.frame = clampedFrame
+    return
+  }
+  midiMappings.value.push({
+    id: nextMidiMappingId++,
+    note: clampedNote,
+    frame: clampedFrame
+  })
+}
+
+function saveCurrentTimeForLatestNote() {
+  if (latestMidiNote.value === null) return
+  upsertMidiMapping(latestMidiNote.value, targetFrame.value)
+}
+
+function addMidiMapping() {
+  const usedNotes = new Set(midiMappings.value.map((mapping) => mapping.note))
+  const baseNote = latestMidiNote.value ?? 60
+  let note = baseNote
+  for (let offset = 0; offset < 128; offset += 1) {
+    const candidate = clampMidiNote(baseNote + offset)
+    if (!usedNotes.has(candidate)) {
+      note = candidate
+      break
+    }
+  }
+  upsertMidiMapping(note, targetFrame.value)
+}
+
+function updateMidiMappingNote(mappingId: number, note: number) {
+  const mapping = midiMappings.value.find((entry) => entry.id === mappingId)
+  if (!mapping) return
+
+  const clampedNote = clampMidiNote(note)
+  const duplicate = midiMappings.value.find(
+    (entry) => entry.id !== mappingId && entry.note === clampedNote
+  )
+  if (duplicate) {
+    duplicate.frame = mapping.frame
+    removeMidiMapping(mappingId)
+    return
+  }
+  mapping.note = clampedNote
+}
+
+function updateMidiMappingTime(mappingId: number, seconds: number) {
+  const mapping = midiMappings.value.find((entry) => entry.id === mappingId)
+  if (!mapping || !Number.isFinite(seconds)) return
+  mapping.frame = clampFrame(seconds * Math.max(0.001, fps.value))
+}
+
+function handleMidiMappingNoteInput(mappingId: number, event: Event) {
+  const input = event.target as HTMLInputElement
+  updateMidiMappingNote(mappingId, Number(input.value))
+}
+
+function handleMidiMappingTimeInput(mappingId: number, event: Event) {
+  const input = event.target as HTMLInputElement
+  updateMidiMappingTime(mappingId, Number(input.value))
+}
+
+function saveCurrentTimeToMapping(mappingId: number) {
+  const mapping = midiMappings.value.find((entry) => entry.id === mappingId)
+  if (!mapping) return
+  mapping.frame = clampFrame(targetFrame.value)
+}
+
+function jumpToMidiMapping(mapping: MidiMapping) {
+  seekTo(mapping.frame)
+}
+
+function removeMidiMapping(mappingId: number) {
+  midiMappings.value = midiMappings.value.filter((mapping) => mapping.id !== mappingId)
+}
+
+function resizeRendererNextFrame() {
+  const ownerWindow = canvasRef.value?.ownerDocument.defaultView ?? window
+  ownerWindow.requestAnimationFrame(() => {
+    renderer?.resize()
+  })
+}
+
+function resizeDockedCanvas(forceResize = false) {
+  const viewer = viewerRef.value
+  if (!viewer || canvasPopped.value) return
+
+  const rect = viewer.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) return
+
+  const aspect = canvasAspectRatio.value
+  let width = rect.width
+  let height = width / aspect
+  if (height > rect.height) {
+    height = rect.height
+    width = height * aspect
+  }
+
+  const nextWidth = Math.max(1, Math.floor(width))
+  const nextHeight = Math.max(1, Math.floor(height))
+  const changed = nextWidth !== dockedCanvasWidth.value || nextHeight !== dockedCanvasHeight.value
+  if (!changed && !forceResize) return
+
+  if (changed) {
+    dockedCanvasWidth.value = nextWidth
+    dockedCanvasHeight.value = nextHeight
+  }
+  void nextTick().then(resizeRendererNextFrame)
+}
+
+function handleWindowResize() {
+  if (canvasPopped.value) return
+  resizeDockedCanvas(true)
+}
+
+function removeCanvasPopoutListeners() {
+  if (!canvasPopoutWindow) return
+  try {
+    canvasPopoutWindow.removeEventListener('resize', resizeRendererNextFrame)
+    canvasPopoutWindow.document.removeEventListener('fullscreenchange', resizeRendererNextFrame)
+  } catch {
+    // The popup may already be closed.
+  }
+  canvasPopoutWindow = null
+}
+
+function handleCanvasPopoutOpened(win: Window) {
+  removeCanvasPopoutListeners()
+  canvasPopoutWindow = win
+  win.addEventListener('resize', resizeRendererNextFrame)
+  win.document.addEventListener('fullscreenchange', resizeRendererNextFrame)
+  restartRenderLoopInCanvasWindow()
+  void nextTick().then(resizeRendererNextFrame)
+}
+
+function handleCanvasPopoutClosed() {
+  removeCanvasPopoutListeners()
+  restartRenderLoopInCanvasWindow()
+  void nextTick().then(() => resizeDockedCanvas(true))
 }
 
 function handlePageClose() {
@@ -454,20 +763,30 @@ function handlePageClose() {
   })
 }
 
-window.addEventListener('resize', resizeRenderer)
+window.addEventListener('resize', handleWindowResize)
 window.addEventListener('pagehide', handlePageClose)
 window.addEventListener('beforeunload', handlePageClose)
 
 onMounted(() => {
   opfsAvailable.value = isOpfsAvailable()
+  if (viewerRef.value && 'ResizeObserver' in window) {
+    viewerResizeObserver = new ResizeObserver(() => resizeDockedCanvas())
+    viewerResizeObserver.observe(viewerRef.value)
+  }
+  resizeDockedCanvas(true)
+  void initializeMidiInputList()
   void cleanupStaleOpfsCacheEntries().catch((caught) => {
     console.warn('Failed to clean stale HAP OPFS cache entries.', caught)
   })
 })
 
 onBeforeUnmount(() => {
-  cancelAnimationFrame(rafId)
-  window.removeEventListener('resize', resizeRenderer)
+  cancelRenderLoop()
+  removeCanvasPopoutListeners()
+  detachMidiInput()
+  viewerResizeObserver?.disconnect()
+  viewerResizeObserver = null
+  window.removeEventListener('resize', handleWindowResize)
   window.removeEventListener('pagehide', handlePageClose)
   window.removeEventListener('beforeunload', handlePageClose)
   clearScheduledSeek()
@@ -476,15 +795,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="hap-page">
+  <main class="hap-page" :class="{ 'with-stats': showPerfStats }">
     <section class="toolbar">
       <label class="file-button">
         <input type="file" accept=".happack" :disabled="loading" @change="handleFileChange" />
         Select .happack
       </label>
-      <button type="button" :disabled="!canPlay" @click="togglePlayback">{{ playLabel }}</button>
-      <button type="button" :disabled="!canPlay" @click="stepFrame(-1)">Prev</button>
-      <button type="button" :disabled="!canPlay" @click="stepFrame(1)">Next</button>
       <label class="loop-toggle">
         <input v-model="loop" type="checkbox" />
         Loop
@@ -496,33 +812,140 @@ onBeforeUnmount(() => {
       <span class="status" :class="{ bad: !!error }">{{ error || status }}</span>
     </section>
 
-    <section class="viewer">
-      <canvas ref="canvasRef" class="hap-canvas"></canvas>
-      <div v-if="!metadata" class="empty-state">
-        <div class="empty-title">HAP Q WebGPU Sampler</div>
-        <div class="empty-subtitle">Load a packaged HapY file to decode frames in a worker.</div>
-      </div>
+    <section ref="viewerRef" class="viewer">
+      <PopoutWindow
+        v-model="canvasPopped"
+        title="HAP Sampler Video"
+        :width="popoutWidth"
+        :height="popoutHeight"
+        fullscreen-target=".canvas-stage"
+        @opened="handleCanvasPopoutOpened"
+        @closed="handleCanvasPopoutClosed"
+      >
+        <template #controls="{ popped, popOut, popIn }">
+          <button type="button" class="popout-button" @click="popped ? popIn() : popOut()">
+            {{ popped ? 'Dock Video' : 'Pop Out Video' }}
+          </button>
+        </template>
+        <div class="canvas-stage" :class="{ popped: canvasPopped }" :style="canvasStageStyle">
+          <canvas ref="canvasRef" class="hap-canvas"></canvas>
+          <div v-if="!metadata" class="empty-state">
+            <div class="empty-title">HAP Q WebGPU Sampler</div>
+            <div class="empty-subtitle">
+              Load a packaged HapY file to decode frames in a worker.
+            </div>
+          </div>
+        </div>
+      </PopoutWindow>
     </section>
 
     <section class="timeline">
-      <input
-        type="range"
-        min="0"
-        :max="Math.max(0, frameCount - 1)"
-        :value="targetFrame"
-        :disabled="!canPlay"
-        @input="handleTimelineInput"
-        @change="handleTimelineChange"
-        @pointerdown="handleTimelinePointerDown"
-        @keydown="handleTimelineKeydown"
-      />
+      <div class="timeline-row">
+        <div class="transport-controls">
+          <button type="button" :disabled="!canPlay" @click="togglePlayback">
+            {{ playLabel }}
+          </button>
+          <button type="button" :disabled="!canPlay" @click="stepFrame(-1)">Prev</button>
+          <button type="button" :disabled="!canPlay" @click="stepFrame(1)">Next</button>
+        </div>
+        <input
+          type="range"
+          min="0"
+          :max="Math.max(0, frameCount - 1)"
+          :value="targetFrame"
+          :disabled="!canPlay"
+          @input="handleTimelineInput"
+          @change="handleTimelineChange"
+          @pointerdown="handleTimelinePointerDown"
+          @keydown="handleTimelineKeydown"
+        />
+      </div>
       <div class="time-readout">
-        <span>Frame {{ currentFrame }} / {{ Math.max(0, frameCount - 1) }}</span>
-        <span>{{ fps.toFixed(2) }} fps</span>
+        <span>
+          Frame {{ currentFrame }} / {{ Math.max(0, frameCount - 1) }} ·
+          {{ formatTime(currentTimeSeconds) }} / {{ formatTime(durationSeconds) }}
+        </span>
+        <span v-if="showPerfStats">{{ fps.toFixed(2) }} fps</span>
       </div>
     </section>
 
-    <section class="details">
+    <section class="midi-panel">
+      <div class="midi-device-row">
+        <label>
+          <span>Input</span>
+          <select v-model="selectedMidiInput" :disabled="midiInputNames.length === 0">
+            <option value="">None</option>
+            <option v-for="name in midiInputNames" :key="name" :value="name">
+              {{ name }}
+            </option>
+          </select>
+        </label>
+        <button type="button" @click="refreshMidiInputs">Refresh</button>
+        <span class="midi-status">{{ midiStatus }}</span>
+      </div>
+
+      <div class="midi-latest-row">
+        <div>
+          <span class="midi-label">Latest note</span>
+          <strong>{{ formatMidiNote(latestMidiNote) }}</strong>
+          <span v-if="latestMidiVelocity !== null" class="midi-muted">
+            vel {{ latestMidiVelocity }}
+          </span>
+        </div>
+        <div>
+          <span class="midi-label">Mapped time</span>
+          <strong>
+            {{ latestMidiMappedTime === null ? '' : formatTime(latestMidiMappedTime) }}
+          </strong>
+        </div>
+        <button
+          type="button"
+          :disabled="latestMidiNote === null || !metadata"
+          @click="saveCurrentTimeForLatestNote"
+        >
+          Save Current Time
+        </button>
+      </div>
+
+      <div class="midi-mapping-list" :class="{ empty: midiMappings.length === 0 }">
+        <div v-if="midiMappings.length === 0" class="midi-empty">No mappings</div>
+        <div v-for="mapping in midiMappings" :key="mapping.id" class="midi-mapping-row">
+          <label>
+            <span>Note</span>
+            <input
+              type="number"
+              min="0"
+              max="127"
+              :value="mapping.note"
+              @change="handleMidiMappingNoteInput(mapping.id, $event)"
+            />
+          </label>
+          <span class="midi-note-name">{{ formatMidiNote(mapping.note) }}</span>
+          <label>
+            <span>Time</span>
+            <input
+              type="number"
+              min="0"
+              step="0.001"
+              :max="durationSeconds"
+              :value="frameToSeconds(mapping.frame).toFixed(3)"
+              @change="handleMidiMappingTimeInput(mapping.id, $event)"
+            />
+          </label>
+          <span class="midi-time-label">{{ formatTime(frameToSeconds(mapping.frame)) }}</span>
+          <button type="button" @click="jumpToMidiMapping(mapping)">Jump</button>
+          <button type="button" @click="saveCurrentTimeToMapping(mapping.id)">Set</button>
+          <button type="button" @click="removeMidiMapping(mapping.id)">Delete</button>
+        </div>
+      </div>
+
+      <div class="midi-add-row">
+        <button type="button" :disabled="!metadata" @click="addMidiMapping">Add Mapping</button>
+        <span class="midi-muted">Current time {{ formatTime(targetTimeSeconds) }}</span>
+      </div>
+    </section>
+
+    <section v-if="showPerfStats" class="details">
       <div class="detail-block">
         <h2>Source</h2>
         <dl>
@@ -681,15 +1104,70 @@ button:disabled {
 
 .viewer {
   position: relative;
-  height: min(68vh, calc(100vh - 240px));
-  min-height: 360px;
+  display: grid;
+  place-items: center;
+  height: calc(100vh - 354px);
+  min-height: 300px;
   background: #050607;
+  overflow: hidden;
+}
+
+.viewer :deep(.popout-wrapper) {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  gap: 0;
+}
+
+.viewer :deep(.popout-toolbar) {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 3;
+}
+
+.viewer :deep(.popout-anchor) {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.viewer :deep(.popout-anchor > div) {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.with-stats .viewer {
+  height: min(52vh, calc(100vh - 430px));
+}
+
+.canvas-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #050607;
+}
+
+.canvas-stage.popped {
+  width: 100%;
+  height: 100%;
 }
 
 .hap-canvas {
   width: 100%;
   height: 100%;
   display: block;
+}
+
+.popout-button {
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.35);
 }
 
 .empty-state {
@@ -719,8 +1197,26 @@ button:disabled {
   background: #15191d;
 }
 
+.timeline-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.transport-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.transport-controls button {
+  min-width: 56px;
+}
+
 .timeline input[type='range'] {
   width: 100%;
+  min-width: 0;
 }
 
 .time-readout {
@@ -729,6 +1225,102 @@ button:disabled {
   margin-top: 6px;
   color: #aeb9c2;
   font-size: 12px;
+}
+
+.midi-panel {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #2a3238;
+  background: #12171b;
+}
+
+.midi-device-row,
+.midi-latest-row,
+.midi-add-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.midi-device-row label,
+.midi-latest-row > div,
+.midi-mapping-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.midi-device-row select,
+.midi-mapping-row input {
+  height: 30px;
+  min-width: 0;
+  border: 1px solid #34404a;
+  border-radius: 6px;
+  background: #0f1317;
+  color: #edf3f7;
+  font: inherit;
+  font-size: 12px;
+}
+
+.midi-device-row select {
+  width: 220px;
+  padding: 0 8px;
+}
+
+.midi-mapping-row input {
+  width: 74px;
+  padding: 0 6px;
+}
+
+.midi-label,
+.midi-mapping-row label span {
+  color: #8d9aa4;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.midi-muted,
+.midi-status,
+.midi-note-name,
+.midi-time-label,
+.midi-empty {
+  color: #9aa7b0;
+  font-size: 12px;
+}
+
+.midi-latest-row strong {
+  min-width: 70px;
+  color: #f2f7fb;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.midi-mapping-list {
+  display: grid;
+  gap: 6px;
+  max-height: 128px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.midi-mapping-list.empty {
+  place-items: center start;
+  min-height: 34px;
+}
+
+.midi-mapping-row {
+  display: grid;
+  grid-template-columns: auto 72px auto 76px auto auto auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.midi-add-row {
+  grid-template-columns: auto minmax(0, 1fr);
 }
 
 .details {
@@ -790,7 +1382,32 @@ dd {
 
   .viewer {
     min-height: 300px;
-    height: 52vh;
+    height: calc(100vh - 470px);
+  }
+
+  .with-stats .viewer {
+    height: 38vh;
+  }
+
+  .timeline-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .transport-controls {
+    justify-content: flex-start;
+  }
+
+  .midi-device-row,
+  .midi-latest-row,
+  .midi-mapping-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .midi-device-row select,
+  .midi-mapping-row input {
+    width: 100%;
   }
 
   .details {

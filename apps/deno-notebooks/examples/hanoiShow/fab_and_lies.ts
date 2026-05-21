@@ -443,12 +443,12 @@ export function draw(p5: P5GPU, _time: number, autoClear = true): void {
     state.runtime.blocks = live.filter((b) => b.alive);
   }
 
-  // Middle-third blackout — simulates the physical 3-column portrait
-  // layout with the center column off. Drawn last and fully opaque so it
-  // covers whatever text happens to be passing through that band.
-  p5.noStroke();
-  p5.fill(0, 0, 0, alpha);
-  p5.rect(w / 3, 0, w / 3, h);
+  // // Middle-third blackout — simulates the physical 3-column portrait
+  // // layout with the center column off. Drawn last and fully opaque so it
+  // // covers whatever text happens to be passing through that band.
+  // p5.noStroke();
+  // p5.fill(0, 0, 0, alpha);
+  // p5.rect(w / 3, 0, w / 3, h);
 }
 
 // ── Tweakpane ───────────────────────────────────────────────────────
