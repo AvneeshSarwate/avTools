@@ -209,7 +209,7 @@ export async function createGpuWindow(
       if (ev.type === "resize") {
         width = ev.width;
         height = ev.height;
-        surface.resize(width, height);
+        resizeSurface(surface, width, height);
       } else if (ev.type === "close") {
         markClosed();
       }
@@ -264,4 +264,22 @@ export async function createGpuWindow(
     _lib: lib,
     _state: state,
   };
+}
+
+function resizeSurface(
+  surface: Deno.UnsafeWindowSurface,
+  width: number,
+  height: number,
+): void {
+  const legacySurface = surface as Deno.UnsafeWindowSurface & {
+    resize?: (width: number, height: number) => void;
+  };
+  if (typeof legacySurface.resize === "function") {
+    legacySurface.resize(width, height);
+    return;
+  }
+  // Deno 2.8 replaced resize() with width/height setters, but those setters
+  // currently panic for active WebGPU surfaces due to a nested surface-data
+  // borrow. Keep native resize events in our window state and leave the Deno
+  // surface at its initial size until that runtime path is fixed.
 }

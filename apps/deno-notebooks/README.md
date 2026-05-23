@@ -75,7 +75,17 @@ This builds the native library into `./native/midi_bridge/target/release/` for D
 > Other DAWs (Bitwig, Reaper) and MIDI Monitor are unaffected.
 > See [midir#94](https://github.com/Boddlnagg/midir/issues/94) for details.
 
-## 1d) Cache Deno dependencies
+## 1d) Build the HAP decoder native library
+
+From the repo root:
+
+```bash
+./scripts/build_hap_decoder.sh
+```
+
+This builds the native HAP decoder into `./native/hap_decoder/target/release/` for Deno FFI to load.
+
+## 1e) Cache Deno dependencies
 
 Install/cache all Deno dependencies (including npm packages) from `deno.json`:
 

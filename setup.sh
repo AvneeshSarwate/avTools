@@ -230,6 +230,7 @@ echo "[2/6] Building native Rust/FFI helpers..."
 #   bash apps/deno-notebooks/scripts/build_syphon_bridge.sh
 #   bash apps/deno-notebooks/scripts/build_midi_bridge.sh
 #   bash apps/deno-notebooks/scripts/build_text_engine.sh
+#   bash apps/deno-notebooks/scripts/build_hap_decoder.sh
 
 if ensure_in_path cargo; then
   ensure_syphon_framework_links
@@ -238,6 +239,7 @@ if ensure_in_path cargo; then
   bash "$NOTEBOOK_DIR/scripts/build_syphon_bridge.sh"
   bash "$NOTEBOOK_DIR/scripts/build_midi_bridge.sh"
   bash "$NOTEBOOK_DIR/scripts/build_text_engine.sh"
+  bash "$NOTEBOOK_DIR/scripts/build_hap_decoder.sh"
 else
   echo "Cargo not available; skipping native builds."
 fi
