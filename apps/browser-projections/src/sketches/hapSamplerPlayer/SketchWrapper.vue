@@ -42,6 +42,7 @@ type WorkerSourceMessage = { kind: 'file'; file: File } | OpfsCacheEntry
 
 type MidiMapping = {
   id: number
+  channel: number
   note: number
   frame: number
 }
@@ -76,6 +77,7 @@ const selectedMidiInput = ref('')
 const midiStatus = ref('MIDI not initialized.')
 const latestMidiNote = ref<number | null>(null)
 const latestMidiVelocity = ref<number | null>(null)
+const latestMidiChannel = ref<number | null>(null)
 const midiMappings = ref<MidiMapping[]>([])
 
 let reader: HapPackReader | null = null
@@ -125,10 +127,18 @@ const targetTimeSeconds = computed(() =>
     ? Math.min(durationSeconds.value, targetFrame.value / Math.max(0.001, fps.value))
     : 0
 )
+const playProgressPercent = computed(() => {
+  const max = Math.max(1, frameCount.value - 1)
+  if (max <= 0) return 0
+  return Math.min(100, Math.max(0, (targetFrame.value / max) * 100))
+})
 const latestMidiMapping = computed(() =>
-  latestMidiNote.value === null
+  latestMidiNote.value === null || latestMidiChannel.value === null
     ? null
-    : (midiMappings.value.find((mapping) => mapping.note === latestMidiNote.value) ?? null)
+    : (midiMappings.value.find(
+        (mapping) =>
+          mapping.note === latestMidiNote.value && mapping.channel === latestMidiChannel.value
+      ) ?? null)
 )
 const latestMidiMappedTime = computed(() =>
   latestMidiMapping.value ? frameToSeconds(latestMidiMapping.value.frame) : null
@@ -565,6 +575,10 @@ function clampMidiNote(note: number) {
   return Math.min(127, Math.max(0, Math.round(note)))
 }
 
+function clampMidiChannel(channel: number) {
+  return Math.min(16, Math.max(1, Math.round(channel)))
+}
+
 function refreshMidiInputs() {
   const names = Array.from(midiInputs.keys()).sort((a, b) => a.localeCompare(b))
   midiInputNames.value = names
@@ -606,60 +620,96 @@ function attachMidiInput(deviceName: string) {
 }
 
 function handleMidiNoteOn(message: NoteMessage) {
+  latestMidiChannel.value = message.channel
   latestMidiNote.value = message.note
   latestMidiVelocity.value = message.velocity
-  const mapping = midiMappings.value.find((entry) => entry.note === message.note)
+  const mapping = midiMappings.value.find(
+    (entry) => entry.note === message.note && entry.channel === message.channel
+  )
   if (mapping) seekTo(mapping.frame)
 }
 
-function upsertMidiMapping(note: number, frame: number) {
-  const clampedNote = clampMidiNote(note)
-  const clampedFrame = clampFrame(frame)
-  const existing = midiMappings.value.find((mapping) => mapping.note === clampedNote)
+function upsertMidiMapping(channel: number, note: number, frame: number) {
+  const c = clampMidiChannel(channel)
+  const n = clampMidiNote(note)
+  const f = clampFrame(frame)
+  const existing = midiMappings.value.find((m) => m.channel === c && m.note === n)
   if (existing) {
-    existing.frame = clampedFrame
+    existing.frame = f
     return
   }
   midiMappings.value.push({
     id: nextMidiMappingId++,
-    note: clampedNote,
-    frame: clampedFrame
+    channel: c,
+    note: n,
+    frame: f
   })
 }
 
 function saveCurrentTimeForLatestNote() {
-  if (latestMidiNote.value === null) return
-  upsertMidiMapping(latestMidiNote.value, targetFrame.value)
+  if (latestMidiNote.value === null || latestMidiChannel.value === null) return
+  upsertMidiMapping(latestMidiChannel.value, latestMidiNote.value, targetFrame.value)
 }
 
 function addMidiMapping() {
-  const usedNotes = new Set(midiMappings.value.map((mapping) => mapping.note))
-  const baseNote = latestMidiNote.value ?? 60
-  let note = baseNote
-  for (let offset = 0; offset < 128; offset += 1) {
-    const candidate = clampMidiNote(baseNote + offset)
-    if (!usedNotes.has(candidate)) {
-      note = candidate
-      break
+  const used = new Set(midiMappings.value.map((m) => `${m.channel}:${m.note}`))
+  const lastCh = latestMidiChannel.value
+  const lastNote = latestMidiNote.value
+  if (
+    lastCh !== null &&
+    lastNote !== null &&
+    !used.has(`${lastCh}:${lastNote}`)
+  ) {
+    upsertMidiMapping(lastCh, lastNote, targetFrame.value)
+    return
+  }
+  const baseCh = lastCh ?? 1
+  for (let n = 0; n < 128; n += 1) {
+    if (!used.has(`${baseCh}:${n}`)) {
+      upsertMidiMapping(baseCh, n, targetFrame.value)
+      return
     }
   }
-  upsertMidiMapping(note, targetFrame.value)
+  for (let c = 1; c <= 16; c += 1) {
+    for (let n = 0; n < 128; n += 1) {
+      if (!used.has(`${c}:${n}`)) {
+        upsertMidiMapping(c, n, targetFrame.value)
+        return
+      }
+    }
+  }
 }
 
 function updateMidiMappingNote(mappingId: number, note: number) {
   const mapping = midiMappings.value.find((entry) => entry.id === mappingId)
   if (!mapping) return
 
-  const clampedNote = clampMidiNote(note)
+  const n = clampMidiNote(note)
   const duplicate = midiMappings.value.find(
-    (entry) => entry.id !== mappingId && entry.note === clampedNote
+    (entry) => entry.id !== mappingId && entry.note === n && entry.channel === mapping.channel
   )
   if (duplicate) {
     duplicate.frame = mapping.frame
     removeMidiMapping(mappingId)
     return
   }
-  mapping.note = clampedNote
+  mapping.note = n
+}
+
+function updateMidiMappingChannel(mappingId: number, channel: number) {
+  const mapping = midiMappings.value.find((entry) => entry.id === mappingId)
+  if (!mapping) return
+
+  const c = clampMidiChannel(channel)
+  const duplicate = midiMappings.value.find(
+    (entry) => entry.id !== mappingId && entry.channel === c && entry.note === mapping.note
+  )
+  if (duplicate) {
+    duplicate.frame = mapping.frame
+    removeMidiMapping(mappingId)
+    return
+  }
+  mapping.channel = c
 }
 
 function updateMidiMappingTime(mappingId: number, seconds: number) {
@@ -671,6 +721,11 @@ function updateMidiMappingTime(mappingId: number, seconds: number) {
 function handleMidiMappingNoteInput(mappingId: number, event: Event) {
   const input = event.target as HTMLInputElement
   updateMidiMappingNote(mappingId, Number(input.value))
+}
+
+function handleMidiMappingChannelInput(mappingId: number, event: Event) {
+  const input = event.target as HTMLInputElement
+  updateMidiMappingChannel(mappingId, Number(input.value))
 }
 
 function handleMidiMappingTimeInput(mappingId: number, event: Event) {
@@ -801,14 +856,6 @@ onBeforeUnmount(() => {
         <input type="file" accept=".happack" :disabled="loading" @change="handleFileChange" />
         Select .happack
       </label>
-      <label class="loop-toggle">
-        <input v-model="loop" type="checkbox" />
-        Loop
-      </label>
-      <label class="opfs-toggle">
-        <input v-model="useOpfs" type="checkbox" :disabled="loading || !opfsAvailable" />
-        {{ opfsToggleLabel }}
-      </label>
       <span class="status" :class="{ bad: !!error }">{{ error || status }}</span>
     </section>
 
@@ -840,16 +887,69 @@ onBeforeUnmount(() => {
     </section>
 
     <section class="timeline">
-      <div class="timeline-row">
-        <div class="transport-controls">
-          <button type="button" :disabled="!canPlay" @click="togglePlayback">
-            {{ playLabel }}
-          </button>
-          <button type="button" :disabled="!canPlay" @click="stepFrame(-1)">Prev</button>
-          <button type="button" :disabled="!canPlay" @click="stepFrame(1)">Next</button>
+      <div class="timeline-inner">
+        <div class="timeline-top">
+          <div class="transport-cluster">
+            <div class="transport-controls">
+              <button
+                type="button"
+                class="transport-btn"
+                :disabled="!canPlay"
+                title="Previous frame"
+                @click="stepFrame(-1)"
+              >
+                <span class="transport-icon">⏮</span>
+              </button>
+              <button
+                type="button"
+                class="transport-btn transport-btn-primary"
+                :class="{ 'is-playing': playing }"
+                :disabled="!canPlay"
+                @click="togglePlayback"
+              >
+                <span class="transport-icon">{{ playing ? '⏸' : '▶' }}</span>
+                <span class="transport-btn-label">{{ playLabel }}</span>
+              </button>
+              <button
+                type="button"
+                class="transport-btn"
+                :disabled="!canPlay"
+                title="Next frame"
+                @click="stepFrame(1)"
+              >
+                <span class="transport-icon">⏭</span>
+              </button>
+            </div>
+            <button
+              type="button"
+              class="transport-aux"
+              :class="{ 'is-on': loop }"
+              :aria-pressed="loop"
+              title="Toggle loop"
+              @click="loop = !loop"
+            >
+              <span class="transport-aux-led"></span>
+              <span class="transport-aux-label">Loop</span>
+            </button>
+          </div>
+          <div class="time-readout">
+            <div class="time-readout-primary">
+              <span class="time-current">{{ formatTime(currentTimeSeconds) }}</span>
+              <span class="time-divider">/</span>
+              <span class="time-total">{{ formatTime(durationSeconds) }}</span>
+            </div>
+            <div class="time-readout-meta">
+              <span>Frame {{ currentFrame }} / {{ Math.max(0, frameCount - 1) }}</span>
+              <span v-if="showPerfStats" class="time-readout-fps">
+                · {{ fps.toFixed(2) }} fps
+              </span>
+            </div>
+          </div>
         </div>
         <input
           type="range"
+          class="timeline-slider"
+          :style="{ '--progress': `${playProgressPercent}%` }"
           min="0"
           :max="Math.max(0, frameCount - 1)"
           :value="targetFrame"
@@ -860,88 +960,186 @@ onBeforeUnmount(() => {
           @keydown="handleTimelineKeydown"
         />
       </div>
-      <div class="time-readout">
-        <span>
-          Frame {{ currentFrame }} / {{ Math.max(0, frameCount - 1) }} ·
-          {{ formatTime(currentTimeSeconds) }} / {{ formatTime(durationSeconds) }}
-        </span>
-        <span v-if="showPerfStats">{{ fps.toFixed(2) }} fps</span>
-      </div>
     </section>
 
     <section class="midi-panel">
-      <div class="midi-device-row">
-        <label>
-          <span>Input</span>
-          <select v-model="selectedMidiInput" :disabled="midiInputNames.length === 0">
-            <option value="">None</option>
+      <div class="midi-panel-inner">
+      <header class="midi-panel-header">
+        <div class="midi-panel-title">
+          <span class="midi-panel-eyebrow">CH 01</span>
+          <h2>Midi Mapping</h2>
+        </div>
+        <div class="midi-device-control">
+          <select
+            v-model="selectedMidiInput"
+            :disabled="midiInputNames.length === 0"
+            class="midi-device-select"
+          >
+            <option value="">— No input —</option>
             <option v-for="name in midiInputNames" :key="name" :value="name">
               {{ name }}
             </option>
           </select>
-        </label>
-        <button type="button" @click="refreshMidiInputs">Refresh</button>
-        <span class="midi-status">{{ midiStatus }}</span>
+          <button
+            type="button"
+            class="midi-icon-button"
+            title="Refresh MIDI inputs"
+            @click="refreshMidiInputs"
+          >
+            ↻
+          </button>
+        </div>
+      </header>
+
+      <div
+        class="midi-status-line"
+        :class="{ 'is-active': !!selectedMidiInput && midiInputNames.length > 0 }"
+      >
+        <span class="midi-status-dot"></span>
+        <span>{{ midiStatus }}</span>
       </div>
 
-      <div class="midi-latest-row">
-        <div>
-          <span class="midi-label">Latest note</span>
-          <strong>{{ formatMidiNote(latestMidiNote) }}</strong>
-          <span v-if="latestMidiVelocity !== null" class="midi-muted">
-            vel {{ latestMidiVelocity }}
-          </span>
+      <div class="midi-display">
+        <div class="midi-display-cell">
+          <div class="midi-display-label">
+            <span>Latest Note</span>
+            <span v-if="latestMidiChannel !== null" class="midi-display-chip">
+              CH {{ latestMidiChannel }}
+            </span>
+          </div>
+          <div
+            class="midi-display-value"
+            :class="{ 'is-empty': latestMidiNote === null }"
+          >
+            {{ latestMidiNote === null ? '— —' : formatMidiNote(latestMidiNote) }}
+          </div>
+          <div class="midi-display-meta">
+            <span v-if="latestMidiVelocity !== null">vel {{ latestMidiVelocity }}</span>
+            <span v-else>awaiting input</span>
+          </div>
         </div>
-        <div>
-          <span class="midi-label">Mapped time</span>
-          <strong>
-            {{ latestMidiMappedTime === null ? '' : formatTime(latestMidiMappedTime) }}
-          </strong>
+        <div class="midi-display-cell">
+          <div class="midi-display-label">Mapped To</div>
+          <div
+            class="midi-display-value"
+            :class="{ 'is-empty': latestMidiMappedTime === null }"
+          >
+            {{ latestMidiMappedTime === null ? '—:——.———' : formatTime(latestMidiMappedTime) }}
+          </div>
+          <div class="midi-display-meta">
+            {{ latestMidiMapping ? `frame ${latestMidiMapping.frame}` : 'no mapping' }}
+          </div>
         </div>
+      </div>
+
+      <button
+        type="button"
+        class="midi-save-current"
+        :disabled="latestMidiNote === null || !metadata"
+        @click="saveCurrentTimeForLatestNote"
+      >
+        <span class="midi-save-current-icon">●</span>
+        Save Current Time to Latest Note
+      </button>
+
+      <div class="midi-mappings">
+        <div v-if="midiMappings.length > 0" class="midi-mappings-header">
+          <span>Channel</span>
+          <span>Note</span>
+          <span>Time</span>
+          <span></span>
+        </div>
+        <div
+          class="midi-mapping-list"
+          :class="{ 'is-empty': midiMappings.length === 0 }"
+        >
+          <div v-if="midiMappings.length === 0" class="midi-empty">
+            No mappings — play a note, then hit Save
+          </div>
+          <div
+            v-for="mapping in midiMappings"
+            :key="mapping.id"
+            class="midi-mapping-row"
+            :class="{
+              'is-active':
+                latestMidiNote === mapping.note && latestMidiChannel === mapping.channel
+            }"
+          >
+            <div class="midi-mapping-field">
+              <span class="midi-mapping-prefix">CH</span>
+              <input
+                type="number"
+                min="1"
+                max="16"
+                :value="mapping.channel"
+                @change="handleMidiMappingChannelInput(mapping.id, $event)"
+              />
+            </div>
+            <div class="midi-mapping-field">
+              <input
+                type="number"
+                min="0"
+                max="127"
+                :value="mapping.note"
+                @change="handleMidiMappingNoteInput(mapping.id, $event)"
+              />
+              <span class="midi-mapping-suffix">
+                {{ formatMidiNote(mapping.note).split(' ')[1] }}
+              </span>
+            </div>
+            <div class="midi-mapping-field">
+              <input
+                type="number"
+                min="0"
+                step="0.001"
+                :max="durationSeconds"
+                :value="frameToSeconds(mapping.frame).toFixed(3)"
+                @change="handleMidiMappingTimeInput(mapping.id, $event)"
+              />
+              <span class="midi-mapping-suffix">s</span>
+            </div>
+            <div class="midi-mapping-actions">
+              <button
+                type="button"
+                class="midi-action"
+                @click="jumpToMidiMapping(mapping)"
+              >
+                Jump
+              </button>
+              <button
+                type="button"
+                class="midi-action"
+                @click="saveCurrentTimeToMapping(mapping.id)"
+              >
+                Set
+              </button>
+              <button
+                type="button"
+                class="midi-action midi-action-danger"
+                title="Remove mapping"
+                @click="removeMidiMapping(mapping.id)"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <footer class="midi-panel-footer">
         <button
           type="button"
-          :disabled="latestMidiNote === null || !metadata"
-          @click="saveCurrentTimeForLatestNote"
+          class="midi-add-button"
+          @click="addMidiMapping"
         >
-          Save Current Time
+          <span class="midi-add-icon">+</span>
+          Add Mapping
         </button>
-      </div>
-
-      <div class="midi-mapping-list" :class="{ empty: midiMappings.length === 0 }">
-        <div v-if="midiMappings.length === 0" class="midi-empty">No mappings</div>
-        <div v-for="mapping in midiMappings" :key="mapping.id" class="midi-mapping-row">
-          <label>
-            <span>Note</span>
-            <input
-              type="number"
-              min="0"
-              max="127"
-              :value="mapping.note"
-              @change="handleMidiMappingNoteInput(mapping.id, $event)"
-            />
-          </label>
-          <span class="midi-note-name">{{ formatMidiNote(mapping.note) }}</span>
-          <label>
-            <span>Time</span>
-            <input
-              type="number"
-              min="0"
-              step="0.001"
-              :max="durationSeconds"
-              :value="frameToSeconds(mapping.frame).toFixed(3)"
-              @change="handleMidiMappingTimeInput(mapping.id, $event)"
-            />
-          </label>
-          <span class="midi-time-label">{{ formatTime(frameToSeconds(mapping.frame)) }}</span>
-          <button type="button" @click="jumpToMidiMapping(mapping)">Jump</button>
-          <button type="button" @click="saveCurrentTimeToMapping(mapping.id)">Set</button>
-          <button type="button" @click="removeMidiMapping(mapping.id)">Delete</button>
+        <div class="midi-current-time">
+          <span class="midi-current-time-label">Playhead</span>
+          <span class="midi-current-time-value">{{ formatTime(targetTimeSeconds) }}</span>
         </div>
-      </div>
-
-      <div class="midi-add-row">
-        <button type="button" :disabled="!metadata" @click="addMidiMapping">Add Mapping</button>
-        <span class="midi-muted">Current time {{ formatTime(targetTimeSeconds) }}</span>
+      </footer>
       </div>
     </section>
 
@@ -1026,7 +1224,23 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
 .hap-page {
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --led: #ffb74d;
+  --led-hi: #ffd28a;
+  --led-glow: rgba(255, 183, 77, 0.45);
+  --led-dim: #7a5828;
+  --chassis-deep: #07090c;
+  --chassis-row: #131a20;
+  --chassis-row-hover: #181f25;
+  --hairline: #1f262c;
+  --hairline-strong: #2a3238;
+  --text-primary: #e9eef3;
+  --text-muted: #7e8b95;
+  --text-faint: #4f5862;
+
   min-height: 100vh;
   color: #eef3f8;
   background: #101316;
@@ -1190,137 +1404,912 @@ button:disabled {
   font-size: 14px;
 }
 
+/* === TIMELINE / TRANSPORT — tape deck ============================ */
 .timeline {
-  padding: 12px 14px;
-  border-top: 1px solid #2a3238;
-  border-bottom: 1px solid #2a3238;
-  background: #15191d;
+  padding: 14px 18px 16px;
+  border-top: 1px solid var(--hairline-strong);
+  border-bottom: 1px solid var(--hairline-strong);
+  background: linear-gradient(180deg, #181d22 0%, #14191e 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
-.timeline-row {
+.timeline-inner {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
   gap: 12px;
+}
+
+.timeline-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* ── Transport button group ─────────────── */
+.transport-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .transport-controls {
   display: inline-flex;
   align-items: center;
+  gap: 3px;
+  padding: 3px;
+  background: var(--chassis-deep);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.transport-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   gap: 8px;
+  height: 32px;
+  min-width: 38px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: var(--chassis-row);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 120ms, background 120ms, border-color 120ms, box-shadow 200ms;
 }
 
-.transport-controls button {
-  min-width: 56px;
+.transport-btn:hover:not(:disabled) {
+  color: var(--led);
+  background: var(--chassis-row-hover);
+  border-color: var(--hairline);
 }
 
-.timeline input[type='range'] {
-  width: 100%;
-  min-width: 0;
+.transport-btn:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
+.transport-btn:disabled {
+  opacity: 0.32;
+  cursor: default;
+}
+
+.transport-btn-primary {
+  min-width: 96px;
+  padding: 0 16px;
+  background: linear-gradient(180deg, rgba(255, 183, 77, 0.18), rgba(255, 183, 77, 0.06));
+  border-color: var(--led-dim);
+  color: var(--led);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 183, 77, 0.2),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+}
+
+.transport-btn-primary:hover:not(:disabled) {
+  color: var(--led-hi);
+  background: linear-gradient(180deg, rgba(255, 183, 77, 0.3), rgba(255, 183, 77, 0.12));
+  border-color: var(--led);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 183, 77, 0.26),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3),
+    0 0 16px var(--led-glow);
+}
+
+.transport-btn-primary.is-playing {
+  background: linear-gradient(180deg, rgba(255, 183, 77, 0.34), rgba(255, 183, 77, 0.16));
+  color: var(--led-hi);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 183, 77, 0.32),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3),
+    0 0 14px var(--led-glow);
+}
+
+.transport-icon {
+  font-size: 12px;
+  line-height: 1;
+  text-shadow: 0 0 6px currentColor;
+}
+
+.transport-btn:not(.transport-btn-primary) .transport-icon {
+  text-shadow: none;
+}
+
+.transport-btn-label {
+  font-variant-caps: all-small-caps;
+}
+
+/* ── Aux toggle (loop) ──────────────────── */
+.transport-aux {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--chassis-deep);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 140ms, background 140ms, border-color 140ms, box-shadow 200ms;
+}
+
+.transport-aux:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--hairline-strong);
+}
+
+.transport-aux.is-on {
+  color: var(--led);
+  border-color: var(--led-dim);
+  background: rgba(255, 183, 77, 0.08);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 183, 77, 0.12),
+    0 0 12px rgba(255, 183, 77, 0.15);
+  text-shadow: 0 0 6px var(--led-glow);
+}
+
+.transport-aux.is-on:hover {
+  background: rgba(255, 183, 77, 0.14);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 183, 77, 0.18),
+    0 0 16px rgba(255, 183, 77, 0.25);
+}
+
+.transport-aux-led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.5);
+  flex-shrink: 0;
+}
+
+.transport-aux.is-on .transport-aux-led {
+  background: var(--led);
+  box-shadow:
+    0 0 8px var(--led-glow),
+    0 0 3px var(--led),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+}
+
+/* ── Time readout (tape deck timecode) ──── */
 .time-readout {
   display: flex;
-  justify-content: space-between;
-  margin-top: 6px;
-  color: #aeb9c2;
-  font-size: 12px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-family: var(--mono);
 }
 
-.midi-panel {
-  display: grid;
+.time-readout-primary {
+  display: inline-flex;
+  align-items: baseline;
   gap: 8px;
-  padding: 12px 14px;
-  border-bottom: 1px solid #2a3238;
-  background: #12171b;
 }
 
-.midi-device-row,
-.midi-latest-row,
-.midi-add-row {
+.time-current {
+  color: var(--led);
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 12px var(--led-glow);
+  font-variant-numeric: tabular-nums;
+}
+
+.time-divider {
+  color: var(--text-faint);
+  font-size: 14px;
+  font-weight: 300;
+}
+
+.time-total {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.time-readout-meta {
+  display: inline-flex;
+  gap: 6px;
+  color: var(--text-faint);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Scrub slider ───────────────────────── */
+.timeline-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  background: transparent;
+  cursor: ew-resize;
+  padding: 0;
+  margin: 0;
+}
+
+.timeline-slider:focus {
+  outline: none;
+}
+
+.timeline-slider::-webkit-slider-runnable-track {
+  height: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  background:
+    linear-gradient(
+      to right,
+      rgba(255, 183, 77, 0.85) 0%,
+      rgba(255, 183, 77, 0.85) var(--progress, 0%),
+      var(--chassis-deep) var(--progress, 0%),
+      var(--chassis-deep) 100%
+    );
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.timeline-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 4px;
+  height: 22px;
+  background: var(--led-hi);
+  border: 0;
+  border-radius: 1px;
+  margin-top: -8px;
+  box-shadow:
+    0 0 10px var(--led-glow),
+    0 0 4px var(--led),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+  cursor: ew-resize;
+}
+
+.timeline-slider:focus::-webkit-slider-thumb {
+  box-shadow:
+    0 0 16px var(--led-glow),
+    0 0 6px var(--led),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+}
+
+.timeline-slider:disabled {
+  cursor: default;
+}
+
+.timeline-slider:disabled::-webkit-slider-runnable-track {
+  background: var(--chassis-deep);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.timeline-slider:disabled::-webkit-slider-thumb {
+  background: var(--text-faint);
+  box-shadow: none;
+}
+
+/* Firefox */
+.timeline-slider::-moz-range-track {
+  height: 8px;
+  background: var(--chassis-deep);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+.timeline-slider::-moz-range-progress {
+  height: 8px;
+  background: rgba(255, 183, 77, 0.85);
+  border-radius: 2px 0 0 2px;
+}
+
+.timeline-slider::-moz-range-thumb {
+  width: 4px;
+  height: 22px;
+  background: var(--led-hi);
+  border: 0;
+  border-radius: 1px;
+  box-shadow: 0 0 10px var(--led-glow), 0 0 4px var(--led);
+}
+
+.timeline-slider:disabled::-moz-range-progress {
+  background: var(--chassis-deep);
+}
+.timeline-slider:disabled::-moz-range-thumb {
+  background: var(--text-faint);
+  box-shadow: none;
+}
+
+/* === MIDI MAPPING PANEL — vintage hardware sampler ============== */
+.midi-panel {
+  padding: 18px 18px 16px;
+  background:
+    linear-gradient(180deg, #181d22 0%, #12171b 60%, #0f1418 100%);
+  border-bottom: 1px solid var(--hairline-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  position: relative;
+}
+
+.midi-panel-inner {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
+  gap: 14px;
+  max-width: 880px;
+  margin: 0 auto;
 }
 
-.midi-device-row label,
-.midi-latest-row > div,
-.midi-mapping-row label {
+.midi-panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(840px, calc(100% - 48px));
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 183, 77, 0.28) 50%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+/* ── Header ─────────────────────────────── */
+.midi-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.midi-panel-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.midi-panel-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  color: var(--led);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  border: 1px solid var(--led-dim);
+  border-radius: 2px;
+  background: rgba(255, 183, 77, 0.05);
+  text-shadow: 0 0 6px var(--led-glow);
+}
+
+.midi-panel-title h2 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+}
+
+.midi-device-control {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-width: 0;
 }
 
-.midi-device-row select,
-.midi-mapping-row input {
-  height: 30px;
-  min-width: 0;
-  border: 1px solid #34404a;
-  border-radius: 6px;
-  background: #0f1317;
-  color: #edf3f7;
-  font: inherit;
-  font-size: 12px;
-}
-
-.midi-device-row select {
-  width: 220px;
-  padding: 0 8px;
-}
-
-.midi-mapping-row input {
-  width: 74px;
-  padding: 0 6px;
-}
-
-.midi-label,
-.midi-mapping-row label span {
-  color: #8d9aa4;
+.midi-device-select {
+  height: 28px;
+  min-width: 200px;
+  padding: 0 28px 0 10px;
+  background-color: var(--chassis-deep);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='%237e8b95'><path d='M0 0l5 6 5-6z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  color: var(--text-primary);
+  font-family: var(--mono);
   font-size: 11px;
+  letter-spacing: 0.04em;
+  appearance: none;
+  cursor: pointer;
+}
+
+.midi-device-select:focus {
+  outline: none;
+  border-color: var(--led-dim);
+  box-shadow: 0 0 0 1px var(--led-dim);
+}
+
+.midi-device-select:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.midi-icon-button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  background: var(--chassis-deep);
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease;
+}
+
+.midi-icon-button:hover {
+  color: var(--led);
+  border-color: var(--led-dim);
+}
+
+/* ── Status line ────────────────────────── */
+.midi-status-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.midi-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4);
+  flex-shrink: 0;
+}
+
+.midi-status-line.is-active .midi-status-dot {
+  background: var(--led);
+  box-shadow: 0 0 8px var(--led-glow), inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+  animation: midi-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes midi-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* ── LED Display window ─────────────────── */
+.midi-display {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background:
+    radial-gradient(120% 100% at 50% 0%, rgba(255, 183, 77, 0.035), transparent 60%),
+    radial-gradient(ellipse at center, #0a0e12 0%, #06080a 100%);
+  border: 1px solid #161c22;
+  border-radius: 5px;
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, 0.65),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.4),
+    0 1px 0 rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+  position: relative;
+}
+
+.midi-display::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent 0px,
+    transparent 2px,
+    rgba(255, 183, 77, 0.02) 2px,
+    rgba(255, 183, 77, 0.02) 3px
+  );
+  pointer-events: none;
+}
+
+.midi-display-cell {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 14px 18px 12px;
+  position: relative;
+  z-index: 1;
+}
+
+.midi-display-cell + .midi-display-cell {
+  border-left: 1px solid #161c22;
+  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.02);
+}
+
+.midi-display-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
 }
 
-.midi-muted,
-.midi-status,
-.midi-note-name,
-.midi-time-label,
-.midi-empty {
-  color: #9aa7b0;
-  font-size: 12px;
+.midi-display-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 6px;
+  margin-left: auto;
+  color: var(--led);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  border: 1px solid var(--led-dim);
+  border-radius: 2px;
+  background: rgba(255, 183, 77, 0.07);
+  text-shadow: 0 0 4px var(--led-glow);
 }
 
-.midi-latest-row strong {
-  min-width: 70px;
-  color: #f2f7fb;
-  font-size: 13px;
-  font-weight: 650;
+.midi-display-value {
+  color: var(--led);
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 14px var(--led-glow);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.midi-display-value.is-empty {
+  color: var(--led-dim);
+  text-shadow: none;
+}
+
+.midi-display-meta {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* ── Save current time (prominent action) ── */
+.midi-save-current {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 16px;
+  border: 1px solid var(--led-dim);
+  border-radius: 3px;
+  background:
+    linear-gradient(180deg, rgba(255, 183, 77, 0.16), rgba(255, 183, 77, 0.06));
+  color: var(--led);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 183, 77, 0.18),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+  transition: background 140ms, box-shadow 200ms;
+  justify-self: start;
+}
+
+.midi-save-current:hover:not(:disabled) {
+  background:
+    linear-gradient(180deg, rgba(255, 183, 77, 0.3), rgba(255, 183, 77, 0.12));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 183, 77, 0.26),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3),
+    0 0 18px var(--led-glow);
+}
+
+.midi-save-current:disabled {
+  opacity: 0.32;
+  cursor: default;
+}
+
+.midi-save-current-icon {
+  font-size: 9px;
+  line-height: 1;
+  color: var(--led);
+  text-shadow: 0 0 6px var(--led-glow);
+}
+
+/* ── Mappings (channel strip table) ─────── */
+.midi-mappings {
+  display: grid;
+  gap: 6px;
+}
+
+.midi-mappings-header {
+  display: grid;
+  grid-template-columns: 90px 130px 130px 1fr;
+  gap: 10px;
+  padding: 0 12px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
 }
 
 .midi-mapping-list {
   display: grid;
-  gap: 6px;
-  max-height: 128px;
+  gap: 2px;
+  max-height: 200px;
   overflow-y: auto;
-  padding-right: 4px;
+  background: var(--chassis-deep);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 3px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
-.midi-mapping-list.empty {
-  place-items: center start;
-  min-height: 34px;
+.midi-mapping-list.is-empty {
+  display: grid;
+  place-items: center;
+  min-height: 56px;
+  max-width: 360px;
+  padding: 14px 18px;
+  justify-self: start;
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--hairline);
+  box-shadow: none;
+}
+
+.midi-mapping-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.midi-mapping-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.midi-mapping-list::-webkit-scrollbar-thumb {
+  background: var(--hairline-strong);
+  border-radius: 4px;
+}
+
+.midi-empty {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-align: center;
 }
 
 .midi-mapping-row {
   display: grid;
-  grid-template-columns: auto 72px auto 76px auto auto auto;
+  grid-template-columns: 90px 130px 130px 1fr;
   align-items: center;
-  gap: 8px;
-  min-width: 0;
+  gap: 10px;
+  padding: 6px 9px;
+  background: var(--chassis-row);
+  border-radius: 3px;
+  position: relative;
+  transition: background 120ms ease, box-shadow 120ms ease;
 }
 
-.midi-add-row {
-  grid-template-columns: auto minmax(0, 1fr);
+.midi-mapping-row:hover {
+  background: var(--chassis-row-hover);
+}
+
+.midi-mapping-row.is-active {
+  background: rgba(255, 183, 77, 0.08);
+  box-shadow: inset 2px 0 0 var(--led);
+}
+
+.midi-mapping-row.is-active .midi-mapping-field {
+  border-color: var(--led-dim);
+}
+
+.midi-mapping-row.is-active .midi-mapping-field input {
+  color: var(--led-hi);
+  text-shadow: 0 0 8px var(--led-glow);
+}
+
+.midi-mapping-field {
+  display: inline-flex;
+  align-items: stretch;
+  height: 28px;
+  background: var(--chassis-deep);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.midi-mapping-field:focus-within {
+  border-color: var(--led-dim);
+  box-shadow: 0 0 0 1px var(--led-dim);
+}
+
+.midi-mapping-field input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.midi-mapping-field input:focus {
+  outline: none;
+}
+
+.midi-mapping-field input::-webkit-outer-spin-button,
+.midi-mapping-field input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.midi-mapping-field input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.midi-mapping-suffix,
+.midi-mapping-prefix {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  padding: 0 8px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.midi-mapping-suffix {
+  border-left: 1px solid var(--hairline);
+}
+
+.midi-mapping-prefix {
+  border-right: 1px solid var(--hairline);
+}
+
+.midi-mapping-actions {
+  display: inline-flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.midi-action {
+  height: 26px;
+  padding: 0 11px;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms, background 120ms;
+}
+
+.midi-action:hover {
+  color: var(--led);
+  border-color: var(--led-dim);
+  background: rgba(255, 183, 77, 0.05);
+}
+
+.midi-action-danger {
+  width: 26px;
+  padding: 0;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.midi-action-danger:hover {
+  color: #ff7770;
+  border-color: #8a3835;
+  background: rgba(255, 119, 112, 0.07);
+}
+
+/* ── Footer ─────────────────────────────── */
+.midi-panel-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.midi-add-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px dashed var(--hairline-strong);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 140ms, border-color 140ms, background 140ms;
+}
+
+.midi-add-button:hover:not(:disabled) {
+  color: var(--led);
+  border-color: var(--led-dim);
+  border-style: solid;
+  background: rgba(255, 183, 77, 0.04);
+}
+
+.midi-add-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.midi-add-icon {
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 400;
+}
+
+.midi-current-time {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--mono);
+}
+
+.midi-current-time-label {
+  color: var(--text-faint);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.midi-current-time-value {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
 }
 
 .details {
@@ -1389,26 +2378,53 @@ dd {
     height: 38vh;
   }
 
-  .timeline-row {
-    grid-template-columns: 1fr;
-    gap: 8px;
+  .timeline-top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .time-readout {
+    align-items: flex-start;
   }
 
   .transport-controls {
     justify-content: flex-start;
   }
 
-  .midi-device-row,
-  .midi-latest-row,
-  .midi-mapping-row {
-    grid-template-columns: 1fr;
-    align-items: stretch;
+  .midi-panel {
+    padding: 14px;
   }
 
-  .midi-device-row select,
-  .midi-mapping-row input {
-    width: 100%;
+  .midi-display {
+    grid-template-columns: 1fr;
   }
+
+  .midi-display-cell + .midi-display-cell {
+    border-left: 0;
+    border-top: 1px solid #161c22;
+  }
+
+  .midi-device-select {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .midi-mappings-header {
+    display: none;
+  }
+
+  .midi-mapping-row {
+    grid-template-columns: 90px 1fr 1fr;
+    grid-template-areas:
+      'ch note time'
+      'actions actions actions';
+    gap: 8px;
+  }
+
+  .midi-mapping-row .midi-mapping-field:nth-of-type(1) { grid-area: ch; }
+  .midi-mapping-row .midi-mapping-field:nth-of-type(2) { grid-area: note; }
+  .midi-mapping-row .midi-mapping-field:nth-of-type(3) { grid-area: time; }
+  .midi-mapping-actions { grid-area: actions; justify-content: flex-start; }
 
   .details {
     grid-template-columns: 1fr;
