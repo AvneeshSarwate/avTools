@@ -3,6 +3,16 @@ name = "avtools-hap-encoder"
 version = "0.1.0"
 edition = "2021"
 
+[package.metadata.bundle]
+name = "HAP Encoder"
+identifier = "com.avneesh.hapencoder"
+short_description = "HAP video encoder GUI"
+category = "public.app-category.video"
+osx_minimum_system_version = "11.0"
+# Sidecar ffmpeg/ffprobe + their dylib chain are staged here by
+# bundle/macos/stage-ffmpeg.sh before `cargo bundle --release`.
+resources = ["bundle/macos/staging/*"]
+
 [dependencies]
 anyhow = "1.0.102"
 byteorder = "1.5.0"

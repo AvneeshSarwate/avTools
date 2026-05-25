@@ -1,3 +1,9 @@
+// Run the encoder GUI:
+//   cd encoder-gui && cargo run --release
+//
+// Build a self-contained macOS .app bundle (bundles ffmpeg + dylibs):
+//   cd encoder-gui && bundle/macos/build-app.sh
+// Output: encoder-gui/target/release/bundle/osx/HAP Encoder.app
 use crate::config::{AppConfig, EncodePreset};
 use crate::encode::jobs::{run_jobs, EncodeJob, JobEvent, JobRequest, JobStatus};
 use crossbeam_channel::{unbounded, Receiver, Sender};
