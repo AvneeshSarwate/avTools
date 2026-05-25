@@ -1,6 +1,6 @@
 import type { Push2 } from "../push2.ts";
 import type { GridLayout } from "../grid_layout.ts";
-import { padIJToN, COLOR } from "../constants.ts";
+import { COLOR, padIJToN } from "../constants.ts";
 
 const IS_SHARP = new Set([1, 3, 6, 8, 10]);
 
@@ -126,6 +126,14 @@ export class NoteToggleModule {
   /** Replace the on-notes set. Updates lights if visible. No MIDI sent. */
   setNotes(notes: Map<number, number>): void {
     this.onNotes = new Map(notes);
+    if (this.visible) this.updateLights();
+    this.emitChange();
+  }
+
+  /** Replace selected notes and local playing-note bookkeeping without sending MIDI. */
+  rebaseNotes(notes: Map<number, number>): void {
+    this.onNotes = new Map(notes);
+    this.playingNotes = new Set(notes.keys());
     if (this.visible) this.updateLights();
     this.emitChange();
   }
