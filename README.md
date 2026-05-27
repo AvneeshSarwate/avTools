@@ -69,6 +69,35 @@ avTools/
 └─ webcomponents/            # Standalone webcomponent bundles for UI that runs in the notebooks
 ```
 
+## Standalone Builds
+
+Two parts of the repo can be built as self-contained, double-clickable
+macOS `.app` bundles — no Homebrew, no Deno on PATH, no other host setup
+required. The build scripts walk the dylib chain, stage assets in
+`Contents/Resources/`, and ad-hoc sign so the kernel will launch them.
+Distribution outside the dev's own machine still needs a Developer ID
+cert + notarization; see the per-app READMEs.
+
+- **`encoder-gui/`** — Rust + egui frontend that drives `ffmpeg` to
+  encode video into HAP / HAP-Q `.happack` files. The bundled `.app`
+  ships its own `ffmpeg` + `ffprobe` and the full Homebrew dylib chain
+  they need, so end users don't need ffmpeg installed.
+  See [`encoder-gui/README.md`](encoder-gui/README.md).
+  Build: `cd encoder-gui && bundle/macos/build-app.sh`.
+
+- **`apps/deno-notebooks/examples/hanoiShow/`** — `combined_landscape.ts`
+  packaged as a Deno-compiled binary plus the four FFI Rust dylibs
+  (`deno_window`, `syphon_bridge`, `text_engine`, `midi_bridge`),
+  `Syphon.framework`, fonts, the poem, and the tweakpane / perf-pane
+  web bundles.
+  See [`apps/deno-notebooks/examples/hanoiShow/README.md`](apps/deno-notebooks/examples/hanoiShow/README.md).
+  Build: `cd apps/deno-notebooks && examples/hanoiShow/bundle/macos/build-app.sh`.
+
+A shared pattern, `apps/deno-notebooks/bundle_paths.ts`, handles the
+`deno compile` virtual-filesystem path mismatch by rewriting both
+`Deno.dlopen` and asset URLs to `Contents/Resources/...` when the
+binary is running compiled.
+
 ## Architecture Notes
 
 - **Deno workspace first.** The root `deno.json` defines all workspace members and the import map. Shared packages are Deno‑native and are referenced via `@avtools/*`.
@@ -85,3 +114,36 @@ avTools/
 
 - Use `@avtools/*` for cross‑workspace imports.
 - For Deno + Vite compatibility, use explicit `.ts` extensions for local relative imports inside packages.
+
+## Docs to Improve (TODO)
+
+Most subtrees still lack a README. The two `.app`-bundle READMEs above
+are the most recent and detailed; the rest of this list is a punch-card
+of what's missing and what's stale, ordered roughly by how often you'd
+want to read it.
+
+### No README at all
+
+- **Native crates** under `apps/deno-notebooks/native/`:
+  `deno_window` (wry-based window + webview FFI),
+  `text_engine` (HarfBuzz shaping FFI),
+  `hap_decoder` (HAP frame decoder used by the encoder + browser
+  projections), `push2_display` (Ableton Push 2 RGB display FFI),
+  `fastsleep` (precise-sleep FFI).
+- **Shared packages** under `packages/`: `core-timing`,
+  `creative-algs`, `music-types`, `ui-bridge`, `power2d`,
+  `power2d-codegen`, `shader-fx`, `shader-fx-codegen`,
+  `compute-shader`, `compute-shader-codegen`, `codegen-common`.
+- **Tools** under `tools/`: `vite-shader-plugin`, `shader-watch`.
+
+### Exists but likely stale
+
+- [`apps/browser-projections/README.md`](apps/browser-projections/README.md)
+  — explicitly self-labelled "Documentation in progress, bugs
+  guaranteed". The repo has grown a lot since.
+- [`apps/browser-projections/src/pianoRoll/README.md`](apps/browser-projections/src/pianoRoll/README.md)
+  — Oct 2025, may have drifted from the Konva implementation.
+- [`apps/browser-projections/reaction-diffusion-webgl/README.md`](apps/browser-projections/reaction-diffusion-webgl/README.md)
+  — Oct 2025, single-component, may still be accurate.
+- [`webcomponents/README.md`](webcomponents/README.md) — short (15
+  lines); components have grown since it was written.
