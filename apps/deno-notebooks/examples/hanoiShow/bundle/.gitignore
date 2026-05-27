@@ -2,3 +2,4 @@ macos/staging/
 macos/staging_assets/
 macos/staging_bin/
 macos/*.app/
+macos/.npm_excludes

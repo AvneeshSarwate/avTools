@@ -87,11 +87,27 @@ rm -rf "$STAGED_BIN"
 mkdir -p "$STAGED_BIN"
 
 echo "==> deno compile $ENTRY"
-cd "$NOTEBOOKS_DIR"
+# Compile from the workspace root so `--exclude` patterns (which are CWD-
+# relative) line up with where node_modules actually lives in the bundle.
+cd "$REPO_ROOT"
+
+# Auto-derive exclude flags by walking the actual import graph from
+# `deno info --json`, expanding through each reachable package's
+# package.json dependencies. Everything in node_modules/.deno/ that isn't
+# reachable from the entry script gets excluded — no hand-curated list.
+# See gen_npm_excludes.py for the resolver logic.
+echo "==> Computing npm exclude set from import graph"
+EXCLUDE_FILE="$SCRIPT_DIR/.npm_excludes"
+"$SCRIPT_DIR/gen_npm_excludes.py" "$REPO_ROOT" "$ENTRY" > "$EXCLUDE_FILE"
+excl_count=$(wc -l < "$EXCLUDE_FILE" | tr -d ' ')
+echo "    excluding $excl_count npm packages not reachable from $EXEC_NAME"
+
+# Pass the excludes as @-prefixed argfile to dodge ARG_MAX.
 deno compile \
   --allow-all \
   --unstable-webgpu \
   --unstable-ffi \
+  $(< "$EXCLUDE_FILE") \
   --output "$STAGED_BIN/$EXEC_NAME" \
   "$ENTRY"
 
