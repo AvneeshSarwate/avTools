@@ -1,3 +1,5 @@
+import { resolveNativeLib } from "../bundle_paths.ts";
+
 export const FFI_SYMBOLS = {
   syphon_init: {
     parameters: ["usize", "pointer", "u32", "pointer", "u32"],
@@ -111,7 +113,7 @@ function defaultLibUrl(): URL {
     : ["libsyphon_bridge.so"];
 
   for (const name of candidates) {
-    const url = new URL(name, base);
+    const url = resolveNativeLib(base, name);
     try {
       const test = Deno.dlopen(url, FFI_SYMBOLS);
       test.close();

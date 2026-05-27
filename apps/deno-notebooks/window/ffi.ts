@@ -1,3 +1,5 @@
+import { resolveNativeLib } from "../bundle_paths.ts";
+
 export const FFI_SYMBOLS = {
   create_window: { parameters: ["u32", "u32", "pointer", "u32"], result: "pointer" },
   get_raw_window_handle: { parameters: ["pointer"], result: "usize" },
@@ -34,7 +36,7 @@ function defaultLibUrl(): URL {
       : ["libdeno_window.so"];
 
   for (const name of candidates) {
-    const u = new URL(name, base);
+    const u = resolveNativeLib(base, name);
     try {
       const t = Deno.dlopen(u, FFI_SYMBOLS);
       t.close();

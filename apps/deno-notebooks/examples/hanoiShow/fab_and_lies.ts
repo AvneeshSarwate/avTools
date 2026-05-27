@@ -109,7 +109,9 @@ function jitterHsv(
 // Word pool loaded from poem.txt (Thai). Read synchronously at module load
 // so imports stay non-async. Whitespace-split + empty-filter — each
 // whitespace-separated token becomes a candidate word.
-const POEM_PATH = new URL("./poem.txt", import.meta.url);
+import { resolveAsset } from "../../bundle_paths.ts";
+
+const POEM_PATH = resolveAsset("./poem.txt", import.meta.url);
 const POEM_TEXT = Deno.readTextFileSync(POEM_PATH);
 const WORD_POOL = POEM_TEXT.split(/\s+/).filter((w) => w.length > 0);
 
@@ -124,17 +126,17 @@ interface LocalThaiFont {
 }
 
 const TORSILP_YINGYAI_FONT: LocalThaiFont = {
-  path: new URL("./TorsilpYingyai.ttf", import.meta.url),
+  path: resolveAsset("./TorsilpYingyai.ttf", import.meta.url),
   family: "Torsilp Yingyai",
 };
 
 const SOV_SANNOGA_FONT: LocalThaiFont = {
-  path: new URL("./SOV_sannoga2467.ttf", import.meta.url),
+  path: resolveAsset("./SOV_sannoga2467.ttf", import.meta.url),
   family: "SOV_sannoga2467",
 };
 
 const SOV_SORM_FONT: LocalThaiFont = {
-  path: new URL("./SOV_sorm2496.ttf", import.meta.url),
+  path: resolveAsset("./SOV_sorm2496.ttf", import.meta.url),
   family: "SOV_sorm2496",
 };
 

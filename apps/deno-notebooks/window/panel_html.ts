@@ -1,4 +1,5 @@
 import { renderTweakpaneShellHtml } from "../tools/tweakpane_shell_html.ts";
+import { resolveAsset } from "../bundle_paths.ts";
 
 let _cachedClientModuleUrl: string | null = null;
 
@@ -12,8 +13,8 @@ export interface NativePanelHtmlOptions {
 
 function loadTweakpaneClientBundle(): string {
   const candidates = [
-    new URL("../../webcomponents/tweakpane/dist/tweakpane-client.js", import.meta.url),
-    new URL("../../../webcomponents/tweakpane/dist/tweakpane-client.js", import.meta.url),
+    resolveAsset("../../webcomponents/tweakpane/dist/tweakpane-client.js", import.meta.url),
+    resolveAsset("../../../webcomponents/tweakpane/dist/tweakpane-client.js", import.meta.url),
   ];
 
   for (const url of candidates) {

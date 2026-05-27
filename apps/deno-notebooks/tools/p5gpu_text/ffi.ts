@@ -1,5 +1,7 @@
 /// <reference lib="dom" />
 
+import { resolveAssetDir, resolveNativeLib } from "../../bundle_paths.ts";
+
 const textEncoder = new TextEncoder();
 
 export interface TextLayoutRequest {
@@ -125,7 +127,7 @@ function defaultLibUrl(): URL {
       : ["libtext_engine.so"];
 
   for (const name of candidates) {
-    const url = new URL(name, base);
+    const url = resolveNativeLib(base, name);
     try {
       const test = Deno.dlopen(url, FFI_SYMBOLS);
       test.close();
@@ -407,7 +409,7 @@ export class NativeTextEngine {
 
   private loadBundledFonts(): void {
     try {
-      const fontsDir = new URL("../../assets/fonts/", import.meta.url);
+      const fontsDir = resolveAssetDir("../../assets/fonts/", import.meta.url);
       const entries = Array.from(Deno.readDirSync(fontsDir))
         .filter((entry) => entry.isFile && /\.(ttf|otf|woff2?)$/i.test(entry.name))
         .sort((a, b) => a.name.localeCompare(b.name));

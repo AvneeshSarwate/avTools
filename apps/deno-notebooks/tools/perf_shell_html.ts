@@ -10,6 +10,8 @@
  *   cd apps/browser-projections && npm run buildPerfPane
  */
 
+import { resolveAsset } from "../bundle_paths.ts"
+
 let _cachedBundle: string | null = null
 
 export interface PerfShellOptions {
@@ -23,8 +25,8 @@ function loadPerfPaneBundle(): string {
   if (_cachedBundle) return _cachedBundle
 
   const candidates = [
-    new URL("../../../webcomponents/perf-pane/dist/perf-pane.js", import.meta.url),
-    new URL("../../webcomponents/perf-pane/dist/perf-pane.js", import.meta.url),
+    resolveAsset("../../../webcomponents/perf-pane/dist/perf-pane.js", import.meta.url),
+    resolveAsset("../../webcomponents/perf-pane/dist/perf-pane.js", import.meta.url),
   ]
   for (const url of candidates) {
     try {

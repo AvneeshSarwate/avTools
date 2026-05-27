@@ -21,6 +21,7 @@ import {
   requestWebGpuDevice,
 } from "../../window/mod.ts";
 import { NativeTextEngine } from "../../tools/p5gpu_text/ffi.ts";
+import { resolveAsset } from "../../bundle_paths.ts";
 import { type DateTimeContext, launch } from "@avtools/core-timing";
 import {
   type BodyContourProvider,
@@ -1830,16 +1831,19 @@ export async function setup(dims: { width: number; height: number }) {
   state.runtime.morphPathKey = "";
   state.runtime.prevPaused = state.params.paused;
 
-  // Load tegaki bundle
-  const TEGAKI_ROOT = new URL(
-    "../../../../clonedCompanionRepos/tegaki/packages/renderer/fonts/charmonman/",
-    import.meta.url,
-  );
+  // Load tegaki bundle. In dev these live in the cloned companion repo;
+  // in compiled mode they're flattened into Contents/Resources/assets/.
+  const tegakiDir =
+    "../../../../clonedCompanionRepos/tegaki/packages/renderer/fonts/charmonman/";
   const glyphData: TegakiGlyphData = JSON.parse(
-    await Deno.readTextFile(new URL("glyphData.json", TEGAKI_ROOT)),
+    await Deno.readTextFile(
+      resolveAsset(tegakiDir + "glyphData.json", import.meta.url),
+    ),
   );
   const preparedGlyphData = prepareGlyphData(glyphData);
-  const fontBytes = await Deno.readFile(new URL("charmonman.ttf", TEGAKI_ROOT));
+  const fontBytes = await Deno.readFile(
+    resolveAsset(tegakiDir + "charmonman.ttf", import.meta.url),
+  );
   console.log(
     `Loaded ${Object.keys(glyphData).length} tegaki glyphs (${FONT_FAMILY})`,
   );

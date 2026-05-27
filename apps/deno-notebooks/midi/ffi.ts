@@ -1,4 +1,5 @@
 import type { PortInfo } from "./types.ts";
+import { resolveNativeLib } from "../bundle_paths.ts";
 
 export const CALLBACK_DEF = {
   parameters: ["pointer", "u32"],
@@ -37,7 +38,7 @@ function defaultLibUrl(): URL {
       : ["libmidi_bridge.so"];
 
   for (const name of candidates) {
-    const u = new URL(name, base);
+    const u = resolveNativeLib(base, name);
     try {
       const t = Deno.dlopen(u, FFI_SYMBOLS);
       t.close();

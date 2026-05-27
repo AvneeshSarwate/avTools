@@ -11,8 +11,7 @@
 // encode that internally.
 //
 // Run from apps/deno-notebooks:
-//   deno run --unstable-webgpu --unstable-ffi --allow-all \
-//     examples/hanoiShow/combined_landscape.ts
+//   deno run --unstable-webgpu --unstable-ffi --allow-all examples/hanoiShow/combined_landscape.ts
 
 import {
   alphaBlit,
