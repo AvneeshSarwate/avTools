@@ -87,9 +87,9 @@ export default async function(ctx: TimeContext) {
   const mel1 = makeRandomMelody();
   const mel2 = makeRandomMelody();
 
-  await visualizedAwait("callsite_1", playMelody(ctx, mel1));
-  await visualizedAwait("callsite_2", ctx.wait(1));
-  await visualizedAwait("callsite_3", playMelody(ctx, mel2));
+  await visualizedAwait("module_1", "callsite_1", playMelody(ctx, mel1));
+  await visualizedAwait("module_1", "callsite_2", ctx.wait(1));
+  await visualizedAwait("module_1", "callsite_3", playMelody(ctx, mel2));
 }
 ```
 
@@ -97,14 +97,15 @@ Runtime helper:
 
 ```ts
 async function visualizedAwait<T>(
+  moduleId: string,
   id: string,
   promise: PromiseLike<T>,
 ): Promise<T> {
-  enterWait(id);
+  enterWait(moduleId, id);
   try {
     return await promise;
   } finally {
-    exitWait(id);
+    exitWait(moduleId, id);
   }
 }
 ```
@@ -130,24 +131,36 @@ active.add(id);
 active.delete(id); // incorrectly appears inactive while one activation remains
 ```
 
-Use a per-run count map instead:
+Use a count map instead:
 
 ```ts
 class ActiveCallsiteCounts {
-  private counts = new Map<string, number>();
+  private counts = new Map<string, Map<string, number>>();
 
-  enter(id: string) {
-    this.counts.set(id, (this.counts.get(id) ?? 0) + 1);
+  enter(moduleId: string, id: string) {
+    const moduleCounts = this.counts.get(moduleId) ?? new Map<string, number>();
+    moduleCounts.set(id, (moduleCounts.get(id) ?? 0) + 1);
+    this.counts.set(moduleId, moduleCounts);
   }
 
-  exit(id: string) {
-    const next = (this.counts.get(id) ?? 0) - 1;
-    if (next <= 0) this.counts.delete(id);
-    else this.counts.set(id, next);
+  exit(moduleId: string, id: string) {
+    const moduleCounts = this.counts.get(moduleId);
+    if (!moduleCounts) return;
+
+    const next = (moduleCounts.get(id) ?? 0) - 1;
+    if (next <= 0) moduleCounts.delete(id);
+    else moduleCounts.set(id, next);
+
+    if (moduleCounts.size === 0) this.counts.delete(moduleId);
   }
 
-  activeIds(): string[] {
-    return [...this.counts.keys()];
+  activeByModule(): Record<string, string[]> {
+    return Object.fromEntries(
+      [...this.counts].map(([moduleId, moduleCounts]) => [
+        moduleId,
+        [...moduleCounts.keys()],
+      ]),
+    );
   }
 }
 ```
@@ -164,34 +177,42 @@ are expected to be unique.
 Example singleton runtime module:
 
 ```ts
-const activeWaitCounts = new Map<string, number>();
+const activeWaitCounts = new Map<string, Map<string, number>>();
 
-export function enterWait(id: string) {
-  activeWaitCounts.set(id, (activeWaitCounts.get(id) ?? 0) + 1);
+export function enterWait(moduleId: string, id: string) {
+  const moduleCounts = activeWaitCounts.get(moduleId) ?? new Map<string, number>();
+  moduleCounts.set(id, (moduleCounts.get(id) ?? 0) + 1);
+  activeWaitCounts.set(moduleId, moduleCounts);
   publishSnapshot();
 }
 
-export function exitWait(id: string) {
-  const next = (activeWaitCounts.get(id) ?? 0) - 1;
-  if (next <= 0) activeWaitCounts.delete(id);
-  else activeWaitCounts.set(id, next);
+export function exitWait(moduleId: string, id: string) {
+  const moduleCounts = activeWaitCounts.get(moduleId);
+  if (!moduleCounts) return;
+  const next = (moduleCounts.get(id) ?? 0) - 1;
+  if (next <= 0) moduleCounts.delete(id);
+  else moduleCounts.set(id, next);
+  if (moduleCounts.size === 0) activeWaitCounts.delete(moduleId);
   publishSnapshot();
 }
 
 export async function visualizedAwait<T>(
+  moduleId: string,
   id: string,
   promise: PromiseLike<T>,
 ): Promise<T> {
-  enterWait(id);
+  enterWait(moduleId, id);
   try {
     return await promise;
   } finally {
-    exitWait(id);
+    exitWait(moduleId, id);
   }
 }
 
-export function getActiveWaitIds() {
-  return [...activeWaitCounts.keys()];
+export function getActiveWaitsByModule() {
+  return Object.fromEntries(
+    [...activeWaitCounts].map(([moduleId, counts]) => [moduleId, [...counts.keys()]]),
+  );
 }
 ```
 
@@ -201,20 +222,13 @@ Generated code can then import the helper directly:
 import { visualizedAwait } from "./timeContextVisualizerRuntime.ts";
 
 export default async function(ctx: TimeContext) {
-  await visualizedAwait("uid_1", playMelody(ctx, mel1));
-  await visualizedAwait("uid_2", ctx.wait(1));
+  await visualizedAwait("module_1", "uid_1", playMelody(ctx, mel1));
+  await visualizedAwait("module_1", "uid_2", ctx.wait(1));
 }
 ```
 
-The singleton can later grow a simple module namespace if needed:
-
-```ts
-visualizedAwait(moduleId, "uid_1", playMelody(ctx, mel1));
-```
-
-That would make the runtime event protocol clearer once multiple editors are
-running separate modules simultaneously, but it is not required for the first
-version if UUID ownership is already tracked in the manifest.
+`moduleId` is part of the first protocol so multiple editor modules can be
+routed cleanly later.
 
 ## Stable IDs And Manifest
 
@@ -367,7 +381,7 @@ The helper updates the singleton visualizer runtime module's count map.
 Conceptual event flow:
 
 1. Generated code imports `visualizedAwait`.
-2. `visualizedAwait(id, promise)` increments the singleton count map.
+2. `visualizedAwait(moduleId, id, promise)` increments the singleton count map.
 3. The singleton emits or schedules an active-ID snapshot.
 4. Browser batches snapshots with `requestAnimationFrame`.
 5. CodeMirror extension dispatches direct decoration effects for active IDs.
@@ -379,19 +393,15 @@ Events should include at least:
 
 ```ts
 interface RuntimeWaitSnapshot {
-  moduleId?: string;
-  activeCallsiteIds: string[];
+  modules: Record<string, string[]>;
 }
 ```
 
-`moduleId` is optional in the first version if callsite UUIDs are enough to map
-events back to editor manifests. It becomes useful once multiple editors or
-multiple launched modules need clearer routing.
+Each key is a `moduleId`; each value is the active callsite UUIDs for that
+module.
 
 ## Open Design Questions
 
-- Whether `moduleId` should be included in the first runtime event protocol or
-  deferred until multiple simultaneous editor modules are running.
 - Whether imported helper calls should ever be instrumented by transforming
   helper modules, or whether the visualizer should stay focused on user-edited
   module source only.
@@ -407,7 +417,7 @@ Start with the smallest architecture that matches the real use case:
    awaited calls inside branch bodies are highlighted too.
 5. Treat detectable unsupported async patterns as transform-blocking errors.
 6. Track active callsites with a singleton count map in the visualizer runtime
-   module.
+   module, keyed by `moduleId` and callsite UUID.
 7. Emit active callsite snapshots to the browser.
 8. Decorate CodeMirror using the manifest ranges and active IDs.
 

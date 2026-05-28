@@ -87,10 +87,9 @@ interface MultiModuleActiveWaitSnapshot {
 }
 ```
 
-Both shapes are compatible with the singleton count-map approach. If initial
-UUIDs are globally unique and the client can route them through manifest
-ownership, `moduleId` can be optional. Keeping `moduleId` in the protocol is
-clearer once multiple editor modules are launched at the same time.
+Both shapes are compatible with the singleton count-map approach. Include
+`moduleId` from the start so multiple editor modules can be routed cleanly
+without changing the protocol later.
 
 ## Server Cadence
 

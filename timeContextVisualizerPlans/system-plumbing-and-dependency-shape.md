@@ -43,6 +43,8 @@ Relevant design implication:
 - LSP and runtime execution should be separate channels.
 - The LSP should see real files and a real `deno.json` context where possible.
 - Dynamic imports should use file URLs for transformed modules.
+- The first local server can run with broad Deno permissions, effectively
+  `--allow-all`, because this is a local-only trusted tool.
 - If the same generated file URL is imported repeatedly, Deno module caching
   becomes relevant. The implementation should write each generated execution
   revision to a unique path or use an explicit revisioned specifier if rerunning
@@ -91,8 +93,12 @@ call-like expressions. The ts-morph docs expose the project type checker via
 Dependency note:
 
 - The current repo already has `ts-morph` in `apps/browser-projections`.
-- The exact package version should be pinned intentionally when this becomes a
-  Deno server package.
+- Use standard explicit package pins in the Deno import map or package boundary
+  for the analyzer, for example `npm:ts-morph@...` and
+  `npm:typescript@...`.
+- The project does not need unusual TypeScript behavior, so current stable
+  versions are fine. Pin them so analyzer behavior is reproducible, and update
+  them normally when needed.
 - The analysis project must resolve `@avtools/core-timing` consistently with the
   session's Deno imports.
 
@@ -156,10 +162,16 @@ Important local findings from the cloned repo:
 
 Initial recommendation:
 
-- Reuse or adapt VTLSP for the Deno LSP channel.
+- Use the published VTLSP packages for the Deno LSP channel:
+  - `@valtown/codemirror-ls`
+  - `@valtown/ls-ws-server`
 - Keep the runtime visualization channel separate from VTLSP/LSP.
 - Start by mirroring editor buffers to a session work directory so Deno LSP,
   transform analysis, and runtime import all have concrete files.
+
+The cloned `clonedCompanionRepos/vtlsp` checkout is for local inspection and
+research. It is not expected to be vendored unless the published packages prove
+insufficient.
 
 ## Browser Shape
 
@@ -171,6 +183,8 @@ Browser responsibilities per module:
 - connect to Deno LSP through the LSP WebSocket
 - send source changes or run requests to the runtime server
 - receive transform diagnostics and manifest
+- receive and display the generated three-random-words module name for a
+  successful run
 - cache `moduleId -> callsite manifest`
 - receive active wait snapshots
 - apply CodeMirror runtime decorations on animation frames
@@ -237,6 +251,7 @@ interface AnalyzeSuccess {
   type: "analyzeSuccess";
   moduleId: string;
   sourceVersion: number;
+  generatedModuleName: string;
   manifest: VisualizerManifestMessage;
   transformedModuleUri: string;
 }
@@ -282,11 +297,20 @@ Responsibilities:
 
 - receive launch/stop commands
 - dynamically import transformed modules
-- create the root `TimeContext`
-- call the module's default export with `ctx`
+- maintain a parent `TimeContext` loop that drains launch/stop actions from a
+  queue
+- launch generated modules by branching from the parent context
 - expose a singleton visualizer runtime module used by transformed code
 - sample active wait UUIDs around 30fps
 - send active wait snapshots to the browser
+
+This should follow the existing Sonar pattern in
+`apps/browser-projections/src/sketches/sonar_sketch/LivecodeHolder.vue`:
+
+- a parent `launchLoop(...)` stores the root context
+- each tick drains `launchQueue`
+- queued work starts with `parentCtx.branch(async (ctx) => ...)`
+- branch handles are stored so stop/cancel can cancel active work
 
 Launch command:
 
@@ -296,6 +320,7 @@ interface LaunchModuleRequest {
   moduleId: string;
   sourceVersion: number;
   transformedModuleUri: string;
+  generatedModuleName: string;
 }
 ```
 
@@ -325,33 +350,48 @@ Generated output:
 
 ```ts
 import { visualizedAwait } from "./timeContextVisualizerRuntime.ts";
+import type { TimeContext } from "@avtools/core-timing";
 
-export default async function(ctx: TimeContext) {
-  await visualizedAwait("uuid_1", playMelody(ctx, melody));
-  await visualizedAwait("uuid_2", ctx.wait(1));
+export async function runFunc(ctx: TimeContext) {
+  await visualizedAwait("module_1", "uuid_1", playMelody(ctx, melody));
+  await visualizedAwait("module_1", "uuid_2", ctx.wait(1));
 }
+
+export default runFunc;
+```
+
+The user-facing convention is still a default export. The generated execution
+module may normalize that default export into a named `runFunc` so launch code
+can consistently do:
+
+```ts
+const { runFunc } = await import(generatedModuleUrl);
+parentCtx.branch(async (ctx) => runFunc(ctx));
 ```
 
 Visualizer runtime singleton:
 
 ```ts
-const activeWaitCounts = new Map<string, number>();
+const activeWaitCounts = new Map<string, Map<string, number>>();
 
 export async function visualizedAwait<T>(
+  moduleId: string,
   id: string,
   promise: PromiseLike<T>,
 ): Promise<T> {
-  enterWait(id);
+  enterWait(moduleId, id);
   try {
     return await promise;
   } finally {
-    exitWait(id);
+    exitWait(moduleId, id);
   }
 }
 ```
 
-The singleton count map is enough for the first implementation. The browser
-uses the manifest to map UUIDs back to editor source ranges.
+The singleton count map is enough for the first implementation. It can store
+counts by module and UUID, for example `Map<moduleId, Map<uuid, count>>`. The
+browser uses the manifest to map each module's UUIDs back to editor source
+ranges.
 
 ## File And Module Layout
 
@@ -385,23 +425,37 @@ apps/livecode-editor/
     activeWaitDecorations.ts
 ```
 
-This could also be integrated into `apps/browser-projections` first if that is
-faster, but the package boundary is cleaner if the visualizer becomes reusable.
+Current implementation target:
+
+- UI page inside `apps/browser-projections/src/sketches`
+- local Deno server code inside `apps/deno-notebooks`
+
+Shared analysis/transform/runtime code can move into a package later if the
+visualizer becomes reusable.
 
 ## Session Files
 
 A server session should have a real directory, for example:
 
 ```txt
-.avtools-livecode-sessions/
+apps/deno-notebooks/.avtools-livecode-sessions/
   <sessionId>/
     deno.json
     modules/
       <moduleId>.ts
     generated/
-      <moduleId>.<sourceVersion>.visualized.ts
+      <three-random-words>.ts
       timeContextVisualizerRuntime.ts
 ```
+
+Every successful source change + execution should create a newly named
+generated module file. Use a three-random-words naming scheme, retry if the
+generated filename collides, and return the generated name to the browser so it
+can be shown in the UI.
+
+Generated session files should not be aggressively deleted. Leaving successful
+generated modules on disk is useful for debugging, Deno import identity, and
+later inspection.
 
 The same physical files can support:
 
@@ -425,36 +479,53 @@ The clean boundaries are:
 - CodeMirror owns editor state and visual decorations.
 - `@avtools/core-timing` owns logical-time semantics.
 - visualizer runtime owns `uuid -> active count` tracking and snapshots.
+- `moduleId` is included in manifest and snapshot messages from the start so
+  multiple editor modules can be routed cleanly later.
 
 No dependency except generated visualizer runtime code should know about active
 wait UUIDs.
 
 ## First Plumbing Milestone
 
-1. Single browser CodeMirror editor.
-2. Deno server with `/lsp` and `/runtime`.
+1. Single browser CodeMirror editor page under
+   `apps/browser-projections/src/sketches`.
+2. Deno server under `apps/deno-notebooks` with `/lsp` and `/runtime`.
 3. VTLSP-style bridge to `deno lsp`.
 4. Default-exported timed module file in a session directory.
 5. Analysis/transform for direct awaited `TimeContext` callsites.
 6. Hard errors for detectable unsupported async patterns.
-7. Transformed file written to session `generated/`.
+7. Transformed file written to session `generated/` using a three-random-words
+   generated module name.
 8. Dynamic import of transformed file.
-9. Singleton visualizer runtime with `Map<uuid, count>`.
-10. 30fps active snapshot loop.
-11. CodeMirror decoration extension driven by cached manifest and snapshots.
+9. Parent timing loop drains launch actions and starts generated modules with
+   `parentCtx.branch(async (ctx) => runFunc(ctx))`.
+10. Stop/cancel cancels the stored branch handle and clears active wait counts
+    for that module.
+11. Singleton visualizer runtime with `Map<moduleId, Map<uuid, count>>`.
+12. 30fps active snapshot loop.
+13. CodeMirror decoration extension driven by cached manifest and snapshots.
+
+## Settled Implementation Choices
+
+- Use published `@valtown/codemirror-ls` and `@valtown/ls-ws-server`.
+- Include `moduleId` in the first manifest and snapshot protocol.
+- Keep generated session files instead of deleting them aggressively.
+- Use explicit standard semver pins for `ts-morph` and TypeScript.
+- Put the first UI in `apps/browser-projections/src/sketches`.
+- Put the first local server code in `apps/deno-notebooks`.
+- Run the local server with broad Deno permissions, effectively `--allow-all`,
+  because this is a local-only trusted tool.
+- Launch generated modules from a parent timing context by queueing actions and
+  branching, following the Sonar `launchQueue` pattern.
 
 ## Decisions Still Worth Reviewing
 
-- Whether to depend directly on published `@valtown/codemirror-ls` and
-  `@valtown/ls-ws-server`, vendor a copy, or adapt the cloned source.
-- Whether `moduleId` is mandatory in the first manifest/snapshot protocol.
-- Where session directories should live and how aggressively they should be
-  cleaned up.
-- How to pin `ts-morph` and TypeScript versions for the Deno-side analyzer.
-- Whether the first implementation should live inside `apps/browser-projections`
-  or a new app/package boundary.
-- What Deno permissions the local server should require.
-- How launch/stop/cancel maps onto the existing `@avtools/core-timing` lifecycle.
+- Exact route/message shape for creating a new generated module name and
+  returning it to the browser.
+- Whether the three-random-words name should also become `moduleId`, or whether
+  `moduleId` should be editor-owned and the random name should be a separate
+  generated run/build name.
+- How much generated session history should be surfaced in the UI.
 
 ## External References
 
