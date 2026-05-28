@@ -71,7 +71,11 @@ export async function createLivecodeVisualizerServer(
   const sessionDir = join(sessionRoot, sessionId);
   const modulesDir = join(sessionDir, "modules");
   const generatedDir = join(sessionDir, "generated");
-  const lspWorkspacesDir = join(sessionRoot, "lsp-workspaces");
+  const lspWorkspacesDir = join(
+    Deno.env.get("TMPDIR") ?? "/tmp",
+    "avtools-livecode-lsp-workspaces",
+    sessionId,
+  );
   const logsDir = join(sessionRoot, "logs");
   const lspLogsDir = join(logsDir, "lsp");
   const logPath = join(logsDir, "server.log");

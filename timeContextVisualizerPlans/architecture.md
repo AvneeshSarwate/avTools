@@ -75,6 +75,10 @@ active wait snapshots, and CodeMirror wait decorations.
 - `apps/deno-notebooks/livecode_visualizer/lsp_proxy.ts` runs as the spawned
   LSP proxy process. It creates a real temp workspace, writes a normalized
   `deno.json`, mirrors editor documents into files, and runs `deno lsp -q`.
+  These synthetic LSP workspaces live under
+  `$TMPDIR/avtools-livecode-lsp-workspaces/...`, outside the repo, so Deno does
+  not treat the repo root `deno.json` as the owning workspace and ignore the
+  generated LSP config.
 - `apps/deno-notebooks/livecode_visualizer/analyze_transform.ts` uses
   ts-morph and magic-string to find the default timed root, detect supported
   awaited wait/helper callsites, reject unsupported async patterns, wrap calls
@@ -106,7 +110,8 @@ active wait snapshots, and CodeMirror wait decorations.
   verifies health, analyze, launch, snapshot, and stop over HTTP/WebSocket
   without a browser.
 - `apps/deno-notebooks/livecode_visualizer_tests/lsp_smoke_test.ts` verifies
-  the `/lsp` bridge reaches real `deno lsp` diagnostics.
+  the `/lsp` bridge reaches real `deno lsp` diagnostics and that
+  `@avtools/core-timing` resolves for `ctx.wait` / `ctx.waitSec` completion.
 - `apps/deno-notebooks/livecode_visualizer_tests/server_smoke_test.ts` spawns
   the server CLI, parses `serverReady`, and checks the server responds.
 

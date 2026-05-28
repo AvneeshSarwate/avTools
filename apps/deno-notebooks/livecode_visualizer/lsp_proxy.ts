@@ -18,6 +18,7 @@ const workspaceRoot = resolvePath(
     await Deno.makeTempDir({ prefix: "avtools-lsp-workspaces-" }),
 );
 const workspaceDir = join(workspaceRoot, crypto.randomUUID());
+const documentVersions = new Map<string, number>();
 
 await Deno.mkdir(workspaceDir, { recursive: true });
 await writeWorkspaceDenoConfig(workspaceDir, repoRoot);
@@ -32,14 +33,19 @@ const proxy = new LSProxy({
   clientToProcMiddlewares: {
     initialize: async (params) => {
       await writeWorkspaceDenoConfig(workspaceDir, repoRoot);
+      const workspaceUri = toFileUrl(workspaceDir).href;
       return {
         ...params,
-        rootUri: params.rootUri ?? toFileUrl(workspaceDir).href,
-        workspaceFolders: params.workspaceFolders ??
-          [{ uri: toFileUrl(workspaceDir).href, name: "Livecode" }],
+        rootPath: workspaceDir,
+        rootUri: workspaceUri,
+        workspaceFolders: [{ uri: workspaceUri, name: "Livecode" }],
       };
     },
     "textDocument/didOpen": async (params) => {
+      rememberDocumentVersion(
+        params.textDocument.uri,
+        params.textDocument.version,
+      );
       await writeTextDocument(
         params.textDocument.uri,
         params.textDocument.text,
@@ -47,11 +53,41 @@ const proxy = new LSProxy({
       return params;
     },
     "textDocument/didChange": async (params) => {
+      rememberDocumentVersion(
+        params.textDocument.uri,
+        params.textDocument.version,
+      );
       const text = params.contentChanges.find((change) =>
         "text" in change && !("range" in change)
       )?.text;
       if (typeof text === "string") {
         await writeTextDocument(params.textDocument.uri, text);
+      }
+      return params;
+    },
+  },
+  procToClientHandlers: {
+    "workspace/configuration": (params: unknown) => {
+      return getConfigurationItems(params).map((item) =>
+        denoConfigurationForItem(item)
+      );
+    },
+    "client/registerCapability": () => null,
+    "client/unregisterCapability": () => null,
+    "workspace/workspaceFolders": () => [
+      { uri: toFileUrl(workspaceDir).href, name: "Livecode" },
+    ],
+  },
+  procToClientMiddlewares: {
+    "textDocument/publishDiagnostics": (params) => {
+      if (
+        typeof params.version !== "number" &&
+        typeof params.uri === "string"
+      ) {
+        const version = documentVersions.get(params.uri);
+        if (typeof version === "number") {
+          return { ...params, version };
+        }
       }
       return params;
     },
@@ -77,20 +113,57 @@ async function writeTextDocument(uri: string, text: string) {
   await Deno.writeTextFile(filePath, text);
 }
 
-async function writeWorkspaceDenoConfig(targetDir: string, rootDir: string) {
-  const notebookConfigPath = join(rootDir, "apps/deno-notebooks/deno.json");
-  const notebookConfig = JSON.parse(
-    await Deno.readTextFile(notebookConfigPath),
-  ) as JsonRecord;
+function rememberDocumentVersion(uri: string, version: number) {
+  if (typeof version !== "number") return;
+  const virtualUri = utils.tempDirUriToVirtualUri(uri, workspaceDir);
+  documentVersions.set(virtualUri, version);
+}
 
-  const imports = normalizeImports(
-    (notebookConfig.imports ?? {}) as Record<string, string>,
-    dirname(notebookConfigPath),
-  );
+function getConfigurationItems(params: unknown): unknown[] {
+  if (!params || typeof params !== "object" || Array.isArray(params)) return [];
+  const items = (params as { items?: unknown }).items;
+  return Array.isArray(items) ? items : [];
+}
+
+function denoConfigurationForItem(item: unknown): unknown {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+  const section = (item as { section?: unknown }).section;
+  if (section === "deno") return denoWorkspaceSettings();
+  if (section === "deno.enable") return true;
+  if (section === "deno.lint") return true;
+  if (section === "deno.config") return join(workspaceDir, "deno.json");
+  return null;
+}
+
+function denoWorkspaceSettings(): JsonRecord {
+  return {
+    enable: true,
+    lint: true,
+    config: join(workspaceDir, "deno.json"),
+  };
+}
+
+async function writeWorkspaceDenoConfig(targetDir: string, rootDir: string) {
+  const rootConfigPath = join(rootDir, "deno.json");
+  const notebookConfigPath = join(rootDir, "apps/deno-notebooks/deno.json");
+  const imports = {
+    ...await readNormalizedImports(rootConfigPath),
+    ...await readNormalizedImports(notebookConfigPath),
+  };
 
   await Deno.writeTextFile(
     join(targetDir, "deno.json"),
-    JSON.stringify({ imports }, null, 2),
+    JSON.stringify({ nodeModulesDir: "auto", imports }, null, 2),
+  );
+}
+
+async function readNormalizedImports(
+  configPath: string,
+): Promise<Record<string, string>> {
+  const config = JSON.parse(await Deno.readTextFile(configPath)) as JsonRecord;
+  return normalizeImports(
+    (config.imports ?? {}) as Record<string, string>,
+    dirname(configPath),
   );
 }
 

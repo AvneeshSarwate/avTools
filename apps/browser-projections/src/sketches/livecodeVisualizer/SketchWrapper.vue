@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { basicSetup, EditorView } from 'codemirror'
 import { javascript } from '@codemirror/lang-javascript'
+import { lintGutter } from '@codemirror/lint'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { Decoration, showDialog, type DecorationSet } from '@codemirror/view'
-import { StateEffect, StateField, type Extension } from '@codemirror/state'
-import { LSClient, languageServerWithClient } from '@valtown/codemirror-ls'
+import { Compartment, StateEffect, StateField, type Extension } from '@codemirror/state'
+import { LSClient, LSCore, languageServerWithClient } from '@valtown/codemirror-ls'
 import { LSWebSocketTransport } from '@valtown/codemirror-ls/transport'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
@@ -72,9 +73,28 @@ interface LivecodeVisualizerDebug {
   receivedSnapshots: ActiveWaitSnapshot[]
   appliedHighlightsByModule: Record<string, string[]>
   appliedHighlightHistoryByModule: Record<string, string[][]>
+  lspReady: boolean
+  lspNotifications: string[]
+  lspRequests: string[]
+  lspErrors: string[]
+  lspDiagnosticsByUri: Record<string, LspDiagnosticSummary[]>
+  lspCompletionLabels: string[]
   setSource?: (source: string) => void
   getSource?: () => string
+  getModuleId?: () => string
+  getLspSessionId?: () => string
+  focusEditorEnd?: () => void
+  focusEditorAtOffset?: (offset: number) => void
+  requestLspCompletionAtCursor?: () => Promise<string[]>
+  requestLspHoverAtOffset?: (offset: number) => Promise<string>
   reset?: () => void
+}
+
+interface LspDiagnosticSummary {
+  message: string
+  severity?: number
+  source?: string
+  code?: string | number
 }
 
 declare global {
@@ -160,12 +180,14 @@ const visualizerTheme = EditorView.theme({
 })
 
 const editorHost = ref<HTMLDivElement | null>(null)
-const serverBaseUrl = ref(localStorage.getItem('tcv-server-base-url') ?? 'http://127.0.0.1:7777')
-const moduleId = ref(localStorage.getItem('tcv-module-id') ?? `editor-${crypto.randomUUID()}`)
+const initialSearchParams = new URLSearchParams(window.location.search)
+clearLegacyLivecodeStorage()
+const serverBaseUrl = ref(initialSearchParams.get('serverBaseUrl') ?? 'http://127.0.0.1:7777')
+const moduleId = ref(createEditorModuleId())
 const sourceVersion = ref(0)
 const status = ref('Disconnected')
 const socketState = ref<'closed' | 'connecting' | 'open'>('closed')
-const lspStatus = ref<'closed' | 'connecting' | 'open' | 'error'>('closed')
+const lspStatus = ref<'closed' | 'connecting' | 'open' | 'ready' | 'error'>('closed')
 const diagnostics = ref<VisualizerDiagnostic[]>([])
 const manifest = ref<VisualizerManifestMessage | null>(null)
 const history = ref<HistoryEntry[]>([])
@@ -176,14 +198,22 @@ let editorView: EditorView | null = null
 let snapshotsSocket: WebSocket | null = null
 let lspTransport: LSWebSocketTransport | null = null
 let lspClient: LSClient | null = null
+let lspSessionId = createLspSessionId()
 let pendingSnapshot: ActiveWaitSnapshot | null = null
 let animationFrame = 0
+const lspCompartment = new Compartment()
 
 const debugState: LivecodeVisualizerDebug = {
   lastManifestByModule: {},
   receivedSnapshots: [],
   appliedHighlightsByModule: {},
-  appliedHighlightHistoryByModule: {}
+  appliedHighlightHistoryByModule: {},
+  lspReady: false,
+  lspNotifications: [],
+  lspRequests: [],
+  lspErrors: [],
+  lspDiagnosticsByUri: {},
+  lspCompletionLabels: []
 }
 window.__livecodeVisualizerDebug = debugState
 
@@ -215,7 +245,8 @@ onMounted(async () => {
       basicSetup,
       javascript({ typescript: true }),
       oneDark,
-      ...createDenoLspExtensions(),
+      lintGutter(),
+      lspCompartment.of(createDenoLspExtensions()),
       waitDecorationField,
       visualizerTheme,
       EditorView.lineWrapping
@@ -224,7 +255,6 @@ onMounted(async () => {
   })
   installDebugHooks()
 
-  localStorage.setItem('tcv-module-id', moduleId.value)
   connectSnapshots()
   void connectDenoLsp()
 })
@@ -232,9 +262,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   if (animationFrame) cancelAnimationFrame(animationFrame)
   snapshotsSocket?.close()
-  lspClient?.close()
-  lspTransport?.dispose()
   editorView?.destroy()
+  retireLspTransport(lspTransport)
 })
 
 async function runModule() {
@@ -245,8 +274,6 @@ async function runModule() {
   status.value = 'Analyzing'
   activeIds.value = []
   applyActiveIds([])
-  localStorage.setItem('tcv-server-base-url', serverBaseUrl.value)
-  localStorage.setItem('tcv-module-id', moduleId.value)
 
   const response = await postJson<AnalyzeResponse>('/runtime/analyze', {
     moduleId: moduleId.value,
@@ -292,21 +319,28 @@ async function checkHealth() {
   )
   status.value = `Connected to server ${response.serverVersion}`
   connectSnapshots()
-  await connectDenoLsp()
+  await reconnectDenoLsp()
 }
 
 function createDenoLspExtensions(): Extension[] {
   const transport = new LSWebSocketTransport(
-    toWebSocketUrl(`/lsp?session=${encodeURIComponent(moduleId.value)}`),
+    toWebSocketUrl(`/lsp?session=${encodeURIComponent(lspSessionId)}`),
     {
       onWSOpen: () => {
+        if (lspTransport !== transport) return
         lspStatus.value = 'open'
       },
       onWSClose: () => {
+        if (lspTransport !== transport) return
         lspStatus.value = 'closed'
       },
       onWSError: () => {
+        if (lspTransport !== transport) return
         lspStatus.value = 'error'
+      },
+      onLSHealthy: () => {
+        if (lspTransport !== transport) return
+        lspStatus.value = 'ready'
       }
     }
   )
@@ -314,6 +348,22 @@ function createDenoLspExtensions(): Extension[] {
   const client = new LSClient({
     transport,
     workspaceFolders: [{ uri: 'file:///', name: 'Livecode' }],
+    capabilities: (defaults) => ({
+      ...defaults,
+      textDocument: {
+        ...defaults.textDocument,
+        publishDiagnostics: {
+          relatedInformation: true,
+          versionSupport: true,
+          codeDescriptionSupport: true,
+          dataSupport: true
+        }
+      },
+      workspace: {
+        ...defaults.workspace,
+        configuration: true
+      }
+    }),
     initializationOptions: {
       inlayHints: {
         parameterNames: {
@@ -329,6 +379,28 @@ function createDenoLspExtensions(): Extension[] {
         functionLikeReturnTypes: { enabled: true },
         enumMemberValues: { enabled: true }
       }
+    }
+  })
+
+  client.onInitialize(() => {
+    debugState.lspReady = true
+    lspStatus.value = 'ready'
+  })
+  client.onRequest((method) => {
+    debugState.lspRequests.push(method)
+  })
+  client.onError((error) => {
+    debugState.lspErrors.push(stringifyError(error))
+  })
+  client.onNotification((method, params) => {
+    debugState.lspNotifications.push(method)
+    if (method === 'textDocument/publishDiagnostics' && isLspDiagnosticsParams(params)) {
+      debugState.lspDiagnosticsByUri[params.uri] = params.diagnostics.map((diagnostic) => ({
+        message: diagnostic.message,
+        severity: diagnostic.severity,
+        source: diagnostic.source,
+        code: diagnostic.code
+      }))
     }
   })
 
@@ -351,7 +423,10 @@ function createDenoLspExtensions(): Extension[] {
       },
       completion: {
         render: renderLspContents,
-        completionMatchBefore: /[\w$./"'-]+$/
+        completionMatchBefore: /[\w$./"'-]+$/,
+        additionalCompletionConfig: {
+          activateOnTyping: true
+        }
       },
       signatureHelp: { disabled: true },
       references: { disabled: true },
@@ -365,13 +440,31 @@ function createDenoLspExtensions(): Extension[] {
 
 async function connectDenoLsp() {
   if (!lspTransport || lspTransport.connected()) return
+  const transport = lspTransport
   lspStatus.value = 'connecting'
   try {
-    await lspTransport.connect()
+    await transport.connect()
   } catch (error) {
-    lspStatus.value = 'error'
+    if (lspTransport === transport) lspStatus.value = 'error'
     console.error('Deno LSP connection failed', error)
   }
+}
+
+async function reconnectDenoLsp() {
+  if (!editorView) return
+
+  const oldClient = lspClient
+  const oldTransport = lspTransport
+
+  lspSessionId = createLspSessionId()
+  debugState.lspReady = false
+  lspStatus.value = 'connecting'
+  editorView.dispatch({
+    effects: lspCompartment.reconfigure(createDenoLspExtensions())
+  })
+  void oldClient
+  retireLspTransport(oldTransport)
+  await connectDenoLsp()
 }
 
 function connectSnapshots() {
@@ -433,11 +526,114 @@ function installDebugHooks() {
     })
   }
   debugState.getSource = () => editorView?.state.doc.toString() ?? ''
+  debugState.getModuleId = () => moduleId.value
+  debugState.getLspSessionId = () => lspSessionId
+  debugState.focusEditorEnd = () => {
+    if (!editorView) throw new Error('Editor is not ready')
+    editorView.dispatch({
+      selection: { anchor: editorView.state.doc.length }
+    })
+    editorView.focus()
+  }
+  debugState.focusEditorAtOffset = (offset: number) => {
+    if (!editorView) throw new Error('Editor is not ready')
+    editorView.dispatch({
+      selection: { anchor: clampPosition(editorView.state.doc.length, offset) }
+    })
+    editorView.focus()
+  }
+  debugState.requestLspCompletionAtCursor = async () => {
+    if (!editorView) throw new Error('Editor is not ready')
+    const lspCore = LSCore.ofOrThrow(editorView)
+    await lspCore.syncChanges()
+    const cursor = editorView.state.selection.main.head
+    const position = lspPositionAtOffset(editorView.state.doc, cursor)
+    const previousCharacter = editorView.state.doc.sliceString(Math.max(0, cursor - 1), cursor)
+    const result = await lspCore.requestWithLock('textDocument/completion', {
+      textDocument: { uri: lspCore.documentUri },
+      position,
+      context: {
+        triggerKind: previousCharacter === '.' ? 2 : 1,
+        ...(previousCharacter === '.' ? { triggerCharacter: '.' } : {})
+      }
+    })
+    const labels = lspCompletionLabels(result)
+    debugState.lspCompletionLabels = labels
+    return labels
+  }
+  debugState.requestLspHoverAtOffset = async (offset: number) => {
+    if (!editorView) throw new Error('Editor is not ready')
+    const lspCore = LSCore.ofOrThrow(editorView)
+    await lspCore.syncChanges()
+    const position = lspPositionAtOffset(
+      editorView.state.doc,
+      clampPosition(editorView.state.doc.length, offset)
+    )
+    const result = await lspCore.requestWithLock('textDocument/hover', {
+      textDocument: { uri: lspCore.documentUri },
+      position
+    })
+    return lspHoverText(result)
+  }
   debugState.reset = () => {
     debugState.lastManifestByModule = {}
     debugState.receivedSnapshots.length = 0
     debugState.appliedHighlightsByModule = {}
     debugState.appliedHighlightHistoryByModule = {}
+    debugState.lspNotifications.length = 0
+    debugState.lspRequests.length = 0
+    debugState.lspErrors.length = 0
+    debugState.lspDiagnosticsByUri = {}
+    debugState.lspCompletionLabels = []
+  }
+}
+
+function isLspDiagnosticsParams(params: unknown): params is {
+  uri: string
+  diagnostics: LspDiagnosticSummary[]
+} {
+  if (!params || typeof params !== 'object') return false
+  const record = params as Record<string, unknown>
+  return typeof record.uri === 'string' && Array.isArray(record.diagnostics)
+}
+
+function lspCompletionLabels(result: unknown): string[] {
+  const items = Array.isArray(result)
+    ? result
+    : result && typeof result === 'object' && Array.isArray((result as { items?: unknown }).items)
+      ? (result as { items: unknown[] }).items
+      : []
+  return items
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+      const label = (item as { label?: unknown }).label
+      return typeof label === 'string' ? label : null
+    })
+    .filter((label): label is string => Boolean(label))
+}
+
+function lspHoverText(result: unknown): string {
+  if (!result || typeof result !== 'object') return ''
+  const contents = (result as { contents?: unknown }).contents
+  if (typeof contents === 'string') return contents
+  if (Array.isArray(contents)) return contents.map(lspHoverContentText).join('\n\n')
+  return lspHoverContentText(contents)
+}
+
+function lspHoverContentText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (content && typeof content === 'object') {
+    const value = (content as { value?: unknown }).value
+    return typeof value === 'string' ? value : ''
+  }
+  return ''
+}
+
+function lspPositionAtOffset(doc: EditorView['state']['doc'], offset: number) {
+  const line = doc.lineAt(offset)
+  return {
+    line: line.number - 1,
+    character: offset - line.from
   }
 }
 
@@ -488,6 +684,39 @@ function normalizedServerBase() {
 
 function clampPosition(length: number, value: number) {
   return Math.max(0, Math.min(length, value))
+}
+
+function createEditorModuleId() {
+  return `editor-${crypto.randomUUID()}`
+}
+
+function createLspSessionId() {
+  return `lsp-${crypto.randomUUID()}`
+}
+
+function retireLspTransport(transport: LSWebSocketTransport | null) {
+  if (!transport?.connection) return
+  window.setTimeout(() => {
+    const socket = transport.connection
+    if (socket && socket.readyState < WebSocket.CLOSING) {
+      socket.close(1000, 'LSP session retired')
+    }
+  }, 100)
+}
+
+function stringifyError(error: unknown) {
+  if (error instanceof Error) return `${error.name}: ${error.message}`
+  if (typeof error === 'string') return error
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return String(error)
+  }
+}
+
+function clearLegacyLivecodeStorage() {
+  localStorage.removeItem('tcv-module-id')
+  localStorage.removeItem('tcv-server-base-url')
 }
 </script>
 

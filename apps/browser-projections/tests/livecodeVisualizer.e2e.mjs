@@ -1,7 +1,7 @@
 import { chromium } from 'playwright'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -24,11 +24,12 @@ const sessionRoot = path.join(
   '.avtools-livecode-sessions',
   `e2e-${Date.now()}-${Math.random().toString(16).slice(2)}`
 )
-const moduleId = `e2e-${Date.now()}-${Math.random().toString(16).slice(2)}`
+let moduleId = ''
 const headless = process.env.PW_HEADLESS !== '0'
 
 const serverOutput = []
 const viteOutput = []
+const browserOutput = []
 let browser
 let page
 let serverProc
@@ -41,33 +42,37 @@ try {
   const viteBaseUrl = await startVite()
   const serverInfo = await serverReady
 
-  browser = await chromium.launch({ headless })
+  browser = await launchBrowserWithRetry()
   page = await browser.newPage()
   page.on('console', (message) => {
     if (message.type() === 'error') {
-      serverOutput.push(`[browser:${message.type()}] ${message.text()}`)
+      browserOutput.push(`[browser:${message.type()}] ${message.text()}`)
     }
   })
+  page.on('pageerror', (error) => {
+    browserOutput.push(`[browser:pageerror] ${error.stack ?? error.message}`)
+  })
 
-  await page.addInitScript(
-    ({ serverBaseUrl, moduleId }) => {
-      localStorage.setItem('tcv-server-base-url', serverBaseUrl)
-      localStorage.setItem('tcv-module-id', moduleId)
-    },
-    { serverBaseUrl: serverInfo.baseUrl, moduleId }
-  )
-
-  await page.goto(new URL('/livecodeVisualizer', viteBaseUrl).href, {
+  await page.goto(livecodeVisualizerUrl(viteBaseUrl, serverInfo.baseUrl), {
     waitUntil: 'domcontentloaded'
   })
-  await page.getByTestId('livecode-editor').waitFor({ timeout: 20_000 })
-  await waitForText('snapshots: open', 'snapshot websocket')
-  await waitForText('lsp: open', 'deno lsp websocket')
-  await waitForPageValue(
-    () => Boolean(window.__livecodeVisualizerDebug?.setSource),
-    'debug hooks installed'
-  )
+  await waitForLivecodeVisualizerReady()
+  const firstModuleId = moduleId
+  const firstLspSessionId = await getLspSessionId()
+  assertNoBrowserLspErrors('initial load')
 
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await waitForLivecodeVisualizerReady()
+  assert(moduleId !== firstModuleId, 'reload should create a fresh runtime module id')
+  assert(
+    (await getLspSessionId()) !== firstLspSessionId,
+    'reload should create a fresh LSP process session id'
+  )
+  assertNoBrowserLspErrors('reload')
+
+  await runLspDiagnosticsCase()
+  await runLspDotCompletionCase()
+  await runLspCtxCompletionCase()
   await runLinearWaitsCase()
   await runAwaitedHelperCase()
   await runRepeatedBranchCountCase()
@@ -91,6 +96,88 @@ try {
   await browser?.close().catch(() => {})
   await stopProcess(viteProc)
   await stopProcess(serverProc)
+}
+
+async function runLspDiagnosticsCase() {
+  const source = `const typedValue: string = 1;
+`
+
+  await setSourceOnly(source)
+  const diagnostics = await waitForPageValue(
+    () => window.__livecodeVisualizerDebug?.lspDiagnosticsByUri['file:///main.ts'] ?? null,
+    'deno lsp diagnostics',
+    15_000
+  )
+  assert(
+    diagnostics.some(
+      (diagnostic) => diagnostic.message.includes('number') && diagnostic.message.includes('string')
+    ),
+    'Deno LSP diagnostics should report the number/string assignment error'
+  )
+  await waitForPageValue(
+    () => document.querySelectorAll('.cm-lintRange-error').length > 0,
+    'CodeMirror diagnostic underline',
+    5_000
+  )
+}
+
+async function runLspDotCompletionCase() {
+  const source = `const objectForCompletion = { alphaValue: 1, betaValue: "two" };
+objectForCompletion`
+
+  await setSourceOnly(source)
+  await page.evaluate(() => window.__livecodeVisualizerDebug?.focusEditorEnd?.())
+  await page.keyboard.type('.')
+  await waitForPageValue(
+    () => document.querySelector('.cm-tooltip-autocomplete')?.textContent?.includes('alphaValue'),
+    'dot-triggered CodeMirror autocomplete',
+    15_000
+  )
+
+  const labels = await page.evaluate(
+    async () => await window.__livecodeVisualizerDebug?.requestLspCompletionAtCursor?.()
+  )
+  assert(labels?.includes('alphaValue'), 'Deno LSP completion should include object.alphaValue')
+  assert(labels?.includes('betaValue'), 'Deno LSP completion should include object.betaValue')
+}
+
+async function runLspCtxCompletionCase() {
+  const source = `import type { TimeContext } from "@avtools/core-timing";
+
+export default async function(ctx: TimeContext) {
+  ctx
+}
+`
+
+  await setSourceOnly(source)
+  const importOffset = source.indexOf('@avtools/core-timing') + 5
+  const hoverText = await page.evaluate(
+    async (offset) => await window.__livecodeVisualizerDebug?.requestLspHoverAtOffset?.(offset),
+    importOffset
+  )
+  assert(
+    hoverText?.includes('/packages/core-timing/mod.ts') &&
+      !hoverText.includes('[errored]') &&
+      !hoverText.includes('not a dependency'),
+    `Deno LSP hover should resolve @avtools/core-timing cleanly, got: ${hoverText}`
+  )
+
+  await page.evaluate(
+    (offset) => window.__livecodeVisualizerDebug?.focusEditorAtOffset?.(offset),
+    source.indexOf('ctx\n') + 'ctx'.length
+  )
+  await page.keyboard.type('.')
+  await waitForPageValue(
+    () => document.querySelector('.cm-tooltip-autocomplete')?.textContent?.includes('waitSec'),
+    'ctx dot-triggered TimeContext autocomplete',
+    15_000
+  )
+
+  const labels = await page.evaluate(
+    async () => await window.__livecodeVisualizerDebug?.requestLspCompletionAtCursor?.()
+  )
+  assert(labels?.includes('wait'), 'Deno LSP completion should include ctx.wait')
+  assert(labels?.includes('waitSec'), 'Deno LSP completion should include ctx.waitSec')
 }
 
 async function runLinearWaitsCase() {
@@ -301,6 +388,11 @@ export default async function(ctx: TimeContext) {
 
 async function setSourceAndRun(source) {
   await waitForAppliedIds([], 'previous highlights clear', 8_000)
+  await setSourceOnly(source)
+  await page.getByTestId('run-module').click()
+}
+
+async function setSourceOnly(source) {
   await page.evaluate(() => window.__livecodeVisualizerDebug?.reset?.())
   await page.evaluate((nextSource) => {
     window.__livecodeVisualizerDebug?.setSource?.(nextSource)
@@ -311,7 +403,36 @@ async function setSourceAndRun(source) {
     2_000,
     source
   )
-  await page.getByTestId('run-module').click()
+}
+
+async function waitForLivecodeVisualizerReady() {
+  await page.getByTestId('livecode-editor').waitFor({ timeout: 20_000 })
+  await waitForText('snapshots: open', 'snapshot websocket')
+  await waitForPageValue(
+    () => Boolean(window.__livecodeVisualizerDebug?.setSource),
+    'debug hooks installed'
+  )
+  await waitForPageValue(
+    () => Boolean(window.__livecodeVisualizerDebug?.lspReady),
+    'deno lsp initialized',
+    20_000
+  )
+  moduleId = await page.evaluate(() => window.__livecodeVisualizerDebug?.getModuleId?.() ?? '')
+  assert(moduleId.length > 0, 'page should expose a runtime module id')
+}
+
+async function getLspSessionId() {
+  return await page.evaluate(() => window.__livecodeVisualizerDebug?.getLspSessionId?.() ?? '')
+}
+
+function assertNoBrowserLspErrors(label) {
+  const lspErrors = browserOutput.filter(
+    (line) =>
+      line.includes('_ResponseError') ||
+      line.includes('Invalid request') ||
+      line.includes('codemirror-ls')
+  )
+  assert(lspErrors.length === 0, `${label} had browser LSP errors:\n${lspErrors.join('\n')}`)
 }
 
 async function waitForManifest(expectedCallsiteCount, label) {
@@ -432,6 +553,12 @@ function serverOutputText() {
   return serverOutput.join('\n')
 }
 
+function livecodeVisualizerUrl(viteBaseUrl, serverBaseUrl) {
+  const url = new URL('/livecodeVisualizer', viteBaseUrl)
+  url.searchParams.set('serverBaseUrl', serverBaseUrl)
+  return url.href
+}
+
 function runtimeFixtureOutputText() {
   return serverOutputText()
     .split(/\r?\n/)
@@ -478,9 +605,25 @@ function startDenoServer() {
     })
     serverProc.stderr.on('data', (chunk) => serverOutput.push(chunk))
     serverProc.once('exit', (code, signal) => {
-      if (!settled) reject(new Error(`Deno server exited early: ${code ?? signal}`))
+      if (!settled) {
+        reject(new Error(`Deno server exited early: ${code ?? signal}`))
+      }
     })
   })
+}
+
+async function launchBrowserWithRetry(attempts = 5) {
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await chromium.launch({ headless })
+    } catch (error) {
+      lastError = error
+      if (attempt === attempts) break
+      await sleep(2_000 * attempt)
+    }
+  }
+  throw lastError
 }
 
 async function startVite() {
@@ -562,6 +705,7 @@ async function writeFailureArtifacts(error) {
   }
   writeFileSync(path.join(artifactDir, 'server-output.log'), serverOutputText())
   writeFileSync(path.join(artifactDir, 'vite-output.log'), viteOutput.join('\n'))
+  writeFileSync(path.join(artifactDir, 'browser-output.log'), browserOutput.join('\n'))
   writeFileSync(
     path.join(artifactDir, 'failure.txt'),
     `${error?.stack ?? error}\n\nsessionRoot=${sessionRoot}\n`

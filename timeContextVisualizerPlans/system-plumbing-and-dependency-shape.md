@@ -183,8 +183,9 @@ Initial recommendation:
   - `@valtown/codemirror-ls`
   - `@valtown/ls-ws-server`
 - Keep the runtime visualization channel separate from VTLSP/LSP.
-- Start by mirroring editor buffers to a session work directory so Deno LSP,
-  transform analysis, and runtime import all have concrete files.
+- Mirror editor buffers to a synthetic LSP workspace outside the repo so Deno
+  LSP has concrete files without inheriting the repo root workspace. Runtime
+  analysis and dynamic import use the persistent session files separately.
 
 The cloned `clonedCompanionRepos/vtlsp` checkout is for local inspection and
 research. It is not expected to be vendored unless the published packages prove
@@ -292,7 +293,8 @@ Responsibilities:
 
 - accept browser WebSocket connections
 - spawn or reuse a Deno LSP process through a proxy
-- mirror opened/changed editor documents into a session directory
+- mirror opened/changed editor documents into a synthetic workspace directory
+  outside the repo
 - translate virtual/editor URIs to file URIs if needed
 - keep `deno lsp` independent from runtime execution
 
@@ -535,15 +537,16 @@ apps/deno-notebooks/.avtools-livecode-sessions/
     lsp/
       proxy-stdout.log
       proxy-stderr.log
-  lsp-workspaces/
-    <lspWorkspaceId>/
-      deno.json
-      main.ts
   <sessionId>/
     modules/
       <moduleId>.ts
     generated/
       <generatedRunId>.ts
+
+$TMPDIR/avtools-livecode-lsp-workspaces/<serverSessionId>/
+  <lspWorkspaceId>/
+    deno.json
+    main.ts
 ```
 
 The generated module currently imports the visualizer runtime helper from the
@@ -572,8 +575,11 @@ The same physical files can support:
 - sourcemap/debugging output
 
 The LSP bridge uses separate per-session workspace files under
-`lsp-workspaces/`. This still mirrors the VTLSP Deno demo's key idea: Deno LSP
-behaves better when the documents it sees are real files in a real workspace.
+`$TMPDIR/avtools-livecode-lsp-workspaces/<serverSessionId>/`, not under the
+repo. This avoids Deno treating the repo root `deno.json` as the owning
+workspace and ignoring the synthetic LSP `deno.json`. It still mirrors the
+VTLSP Deno demo's key idea: Deno LSP behaves better when the documents it sees
+are real files in a real workspace.
 
 ## Dependency Boundaries
 
