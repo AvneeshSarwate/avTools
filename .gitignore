@@ -28,6 +28,7 @@ node_modules/
 **/.nuxt/
 **/.svelte-kit/
 **/.cache/
+.playwright-cli/
 **/dist/
 **/build/
 **/out/
@@ -39,6 +40,7 @@ node_modules/
 # Deno
 .deno/
 **/.deno/
+apps/deno-notebooks/.avtools-livecode-sessions/
 
 # Rust
 **/target/

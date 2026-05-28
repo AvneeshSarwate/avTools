@@ -1,7 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Homepage from '../views/Homepage.vue'
 
-
 export const sketchNames = [
   'template',
   'devTest',
@@ -56,10 +55,11 @@ export const sketchNames = [
   'newPianoRollTest',
   'animationEditorDemo',
   'perfPaneDemo',
-  'hapSamplerPlayer'
+  'hapSamplerPlayer',
+  'livecodeVisualizer'
 ]
 
-const sketchRoutes = sketchNames.map(name => {
+const sketchRoutes = sketchNames.map((name) => {
   return {
     path: `/${name}`,
     name: name,

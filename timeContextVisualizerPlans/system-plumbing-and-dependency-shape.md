@@ -173,6 +173,28 @@ The cloned `clonedCompanionRepos/vtlsp` checkout is for local inspection and
 research. It is not expected to be vendored unless the published packages prove
 insufficient.
 
+### Playwright
+
+Playwright is the browser E2E verification dependency, not part of the runtime
+architecture.
+
+Responsibilities:
+
+- start a real Chromium browser
+- drive the `/livecodeVisualizer` page through stable test selectors
+- verify manifest/debug state from the browser
+- verify CodeMirror wait decorations, generated history, transform diagnostics,
+  and runtime log behavior
+
+The implemented runner lives in:
+
+```txt
+apps/browser-projections/tests/livecodeVisualizer.e2e.mjs
+```
+
+It is wired through `npm run test:livecode:e2e` in the browser project and
+`deno task test:livecode:e2e` from `apps/deno-notebooks`.
+
 ## Browser Shape
 
 Each CodeMirror instance represents one user-edited timed module.
@@ -432,6 +454,20 @@ Current implementation target:
 
 Shared analysis/transform/runtime code can move into a package later if the
 visualizer becomes reusable.
+
+First implementation paths:
+
+- Browser runtime visualizer page:
+  `apps/browser-projections/src/sketches/livecodeVisualizer/SketchWrapper.vue`
+- Deno analyzer/server/runtime:
+  `apps/deno-notebooks/livecode_visualizer/`
+- Deno source-of-truth tests:
+  `apps/deno-notebooks/livecode_visualizer_tests/`
+- Browser E2E runner:
+  `apps/browser-projections/tests/livecodeVisualizer.e2e.mjs`
+
+The first implemented pass covers runtime analysis, transform, launch/stop,
+CodeMirror active-wait decoration plumbing, and a Deno LSP WebSocket bridge.
 
 ## Session Files
 

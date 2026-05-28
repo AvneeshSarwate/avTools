@@ -14,8 +14,8 @@ The self-test loop should support:
   protocol behavior
 - checking visible CodeMirror decorations against runtime snapshots
 
-This document describes the intended verification shape. It is not a test
-implementation yet.
+This document describes the intended verification shape and the first
+implemented automated loop.
 
 ## Verification Layers
 
@@ -39,15 +39,17 @@ keep that process attached long enough to inspect logs.
 Recommended command shape:
 
 ```sh
-deno run --allow-all apps/deno-notebooks/livecode_visualizer_server/main.ts \
+deno run --allow-all apps/deno-notebooks/livecode_visualizer/main.ts \
   --host 127.0.0.1 \
-  --port 0 \
+  --port 7777 \
   --session-root apps/deno-notebooks/.avtools-livecode-sessions \
   --log-level debug
 ```
 
-`--port 0` lets the OS choose a free port. The server should print one clear
-machine-readable line when ready:
+Use `--port 7777` when manually checking the first browser page, because the UI
+defaults to `http://127.0.0.1:7777`. For automated server tests, `--port 0`
+lets the OS choose a free port. The server should print one clear
+machine-readable line when ready either way:
 
 ```json
 {"type":"serverReady","host":"127.0.0.1","port":54321,"baseUrl":"http://127.0.0.1:54321","sessionRoot":"..."}
@@ -112,16 +114,25 @@ apps/deno-notebooks/livecode_visualizer_tests/
   playwright_editor_smoke.ts
 ```
 
-Suggested Deno tasks:
+Implemented task shape:
 
 ```json
 {
   "tasks": {
-    "test:livecode:unit": "deno test --allow-read --allow-write apps/deno-notebooks/livecode_visualizer_tests/*_test.ts",
-    "test:livecode:server": "deno run --allow-all apps/deno-notebooks/livecode_visualizer_tests/server_smoke_test.ts",
-    "test:livecode:e2e": "deno run --allow-all apps/deno-notebooks/livecode_visualizer_tests/playwright_editor_smoke.ts"
+    "test:livecode:unit": "deno test --allow-env --allow-sys --allow-read --allow-write livecode_visualizer_tests/analyzer_transform_test.ts livecode_visualizer_tests/runtime_counts_test.ts livecode_visualizer_tests/dynamic_import_execution_test.ts",
+    "test:livecode:server": "deno test --allow-all livecode_visualizer_tests/protocol_smoke_test.ts livecode_visualizer_tests/server_smoke_test.ts",
+    "test:livecode:e2e": "cd ../browser-projections && npm run test:livecode:e2e",
+    "test:livecode": "deno task test:livecode:unit && deno task test:livecode:server && deno task test:livecode:e2e"
   }
 }
+```
+
+Run the implemented Deno tasks from `apps/deno-notebooks`:
+
+```sh
+deno task test:livecode:unit
+deno task test:livecode:server
+deno task test:livecode:e2e
 ```
 
 ## Analyzer And Transform Tests
@@ -484,6 +495,7 @@ interface LivecodeVisualizerDebug {
   lastManifestByModule: Record<string, VisualizerManifestMessage>;
   receivedSnapshots: ActiveWaitSnapshot[];
   appliedHighlightsByModule: Record<string, string[]>;
+  appliedHighlightHistoryByModule: Record<string, string[][]>;
 }
 
 declare global {
@@ -596,18 +608,35 @@ side is healthy.
 
 ## Playwright Browser E2E
 
-`playwright_editor_smoke.ts` should verify the real browser/editor path.
+The implemented browser E2E runner verifies the real browser/editor path:
 
-The Playwright skill has been installed for future Codex sessions, but repo
-tests should also be runnable as normal scripts. The script can use Playwright
-directly from the project dependency setup or from the installed skill path,
-whichever is cleaner at implementation time.
+```txt
+apps/browser-projections/tests/livecodeVisualizer.e2e.mjs
+```
+
+It uses the browser project's normal `playwright` dev dependency and can be run
+directly:
+
+```sh
+cd apps/browser-projections
+npm run test:livecode:e2e
+```
+
+The browser project currently needs Node 20+ for Vite/Playwright. The runner
+fails early with a clear error if it is launched with an older Node binary.
+
+or through the Deno notebook task:
+
+```sh
+cd apps/deno-notebooks
+deno task test:livecode:e2e
+```
 
 Recommended browser flow:
 
 1. Start or connect to the Deno visualizer server.
 2. Start the Vite/browser editor app if the Deno server is not serving the UI.
-3. Open the livecode visualizer page.
+3. Open the livecode visualizer page at `/livecodeVisualizer`.
 4. Wait for the CodeMirror editor to be visible.
 5. Insert a valid timed module:
 
@@ -642,6 +671,22 @@ export default async function(ctx: TimeContext) {
 
 12. Click Run.
 13. Assert execution is blocked and an unsupported-await diagnostic appears.
+
+The first implemented E2E runner covers more than the initial smoke:
+
+- linear direct waits: manifest count, runtime logs, active IDs, CodeMirror
+  decoration, and clear after completion
+- awaited helper calls: only root-level helper awaits are manifested, helper
+  internals are not
+- repeated branch callsite: three branches share one callsite UUID, active
+  snapshots/decorations show that UUID once while the root wait overlaps
+- unsupported arbitrary await: transform diagnostic, no generated history, and
+  no runtime fixture logs
+- split promise helper call: transform diagnostic, no generated history, and no
+  runtime fixture logs
+
+On failure the runner writes a screenshot, server output, Vite output, and the
+session root path to a temp artifact directory and prints that directory.
 
 The browser smoke should rely on stable test selectors rather than visual text
 where possible.
