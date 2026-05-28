@@ -81,7 +81,7 @@ export default async function(ctx: TimeContext) {
 Conceptual output:
 
 ```ts
-import { visualizedAwait } from "./timeContextVisualizerRuntime.ts";
+import { visualizedAwait } from "file:///.../livecode_visualizer/runtime.ts";
 
 export default async function(ctx: TimeContext) {
   const mel1 = makeRandomMelody();
@@ -219,13 +219,17 @@ export function getActiveWaitsByModule() {
 Generated code can then import the helper directly:
 
 ```ts
-import { visualizedAwait } from "./timeContextVisualizerRuntime.ts";
+import { visualizedAwait } from "file:///.../livecode_visualizer/runtime.ts";
 
 export default async function(ctx: TimeContext) {
   await visualizedAwait("module_1", "uid_1", playMelody(ctx, mel1));
   await visualizedAwait("module_1", "uid_2", ctx.wait(1));
 }
 ```
+
+The current implementation imports `visualizedAwait` from the repo runtime file
+`apps/deno-notebooks/livecode_visualizer/runtime.ts`; it does not copy a helper
+module into each generated session directory.
 
 `moduleId` is part of the first protocol so multiple editor modules can be
 routed cleanly later.

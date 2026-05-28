@@ -26,13 +26,19 @@ Deno is the local server and execution runtime.
 
 Responsibilities:
 
-- serve the browser editor app
 - host WebSocket endpoints
 - spawn or proxy `deno lsp`
 - write user/transformed modules to local session files
 - dynamically import transformed modules
 - execute the default exported timed process
 - stream runtime visualization snapshots
+
+The current implementation does not serve the browser app from the Deno
+runtime server. Manual and automated runs use two local processes:
+
+- Vite serves the browser app from `apps/browser-projections`.
+- The Deno server exposes LSP/runtime HTTP and WebSocket endpoints from
+  `apps/deno-notebooks`.
 
 The Deno language server is a normal LSP process. The official docs describe
 `deno lsp` as communicating over stdin/stdout using the Language Server
@@ -84,6 +90,17 @@ Responsibilities:
 - identify awaited calls that receive a `TimeContext` argument
 - walk inline callbacks passed to `ctx.branch(...)` / `ctx.branchWait(...)`
 - produce transform-blocking diagnostics for unsupported async patterns
+
+Current implementation limit:
+
+- The analyzer supports the normal first-pass style: a default exported async
+  root function with a `TimeContext` parameter, direct `ctx.wait...` calls,
+  awaited calls that receive that context, and inline branch callbacks.
+- It uses TypeScript/ts-morph for parsing, types, and Promise-like return
+  checks, but it is not yet a full symbol/alias-resolution engine.
+- Aggressive context aliasing, dynamic method access, split promises, and
+  arbitrary awaited calls are treated as unsupported and should fail with
+  transform diagnostics rather than silently producing partial visualization.
 
 The important type-checker operations are resolving types and signatures for
 call-like expressions. The ts-morph docs expose the project type checker via
@@ -195,6 +212,41 @@ apps/browser-projections/tests/livecodeVisualizer.e2e.mjs
 It is wired through `npm run test:livecode:e2e` in the browser project and
 `deno task test:livecode:e2e` from `apps/deno-notebooks`.
 
+## Current Implementation Snapshot
+
+Manual startup uses two local processes:
+
+```sh
+cd apps/deno-notebooks
+deno run --allow-all livecode_visualizer/main.ts --host 127.0.0.1 --port 7777 --log-level debug
+```
+
+```sh
+cd apps/browser-projections
+npm run dev
+```
+
+Then open:
+
+```txt
+http://127.0.0.1:5173/livecodeVisualizer
+```
+
+Implemented server routes:
+
+```txt
+GET  /health
+GET  /lsp?session=<moduleOrEditorSessionId>
+POST /runtime/analyze
+POST /runtime/launch
+POST /runtime/stop
+GET  /runtime/snapshots
+```
+
+The browser page keeps the Deno LSP channel and runtime visualization channel
+separate. LSP traffic goes through `/lsp`; transform, launch/stop, and active
+wait snapshots use the `/runtime/...` routes.
+
 ## Browser Shape
 
 Each CodeMirror instance represents one user-edited timed module.
@@ -248,8 +300,7 @@ This can be built directly from VTLSP's `ls-ws-server` pattern.
 
 ### 2. Analysis And Transform
 
-Endpoint shape could be request/response over the runtime WebSocket or a simple
-HTTP endpoint:
+Implemented HTTP endpoint:
 
 ```txt
 POST /runtime/analyze
@@ -309,10 +360,12 @@ Unsupported async patterns should be errors for the initial version.
 
 ### 3. Runtime Execution And Visualization
 
-Endpoint:
+Implemented runtime endpoints:
 
 ```txt
-GET /runtime
+POST /runtime/launch
+POST /runtime/stop
+GET /runtime/snapshots
 ```
 
 Responsibilities:
@@ -338,9 +391,7 @@ Launch command:
 
 ```ts
 interface LaunchModuleRequest {
-  type: "launchModule";
   moduleId: string;
-  sourceVersion: number;
   transformedModuleUri: string;
   generatedRunId: string;
 }
@@ -357,6 +408,10 @@ interface ActiveWaitSnapshot {
 }
 ```
 
+There is no single `GET /runtime` endpoint in the first implementation.
+Snapshot streaming is its own WebSocket at `/runtime/snapshots`, while launch
+and stop are simple POST endpoints.
+
 ## Generated Runtime Shape
 
 User input:
@@ -371,7 +426,7 @@ export default async function(ctx: TimeContext) {
 Generated output:
 
 ```ts
-import { visualizedAwait } from "./timeContextVisualizerRuntime.ts";
+import { visualizedAwait } from "file:///.../livecode_visualizer/runtime.ts";
 import type { TimeContext } from "@avtools/core-timing";
 
 export async function runFunc(ctx: TimeContext) {
@@ -429,7 +484,7 @@ packages/time-context-visualizer/
     transformTimedModule.ts
     manifest.ts
   runtime/
-    timeContextVisualizerRuntime.ts
+    runtime.ts
     activeWaitSnapshots.ts
   protocol/
     messages.ts
@@ -475,14 +530,25 @@ A server session should have a real directory, for example:
 
 ```txt
 apps/deno-notebooks/.avtools-livecode-sessions/
+  logs/
+    server.log
+    lsp/
+      proxy-stdout.log
+      proxy-stderr.log
+  lsp-workspaces/
+    <lspWorkspaceId>/
+      deno.json
+      main.ts
   <sessionId>/
-    deno.json
     modules/
       <moduleId>.ts
     generated/
       <generatedRunId>.ts
-      timeContextVisualizerRuntime.ts
 ```
+
+The generated module currently imports the visualizer runtime helper from the
+repo source file `apps/deno-notebooks/livecode_visualizer/runtime.ts`; that
+helper is not copied into each generated session directory.
 
 Every successful source change + execution should create a newly named
 generated module file. Use a UUID for the first implementation, generated by a
@@ -501,13 +567,13 @@ and metadata at this stage, and can be optimized later if it becomes noisy.
 
 The same physical files can support:
 
-- Deno LSP
 - ts-morph analysis
 - dynamic Deno import
 - sourcemap/debugging output
 
-This mirrors the VTLSP Deno demo's key idea: Deno LSP behaves better when the
-documents it sees are real files in a real workspace.
+The LSP bridge uses separate per-session workspace files under
+`lsp-workspaces/`. This still mirrors the VTLSP Deno demo's key idea: Deno LSP
+behaves better when the documents it sees are real files in a real workspace.
 
 ## Dependency Boundaries
 

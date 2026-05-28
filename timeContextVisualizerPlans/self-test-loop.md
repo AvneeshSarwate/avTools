@@ -64,6 +64,19 @@ The server should also write logs to disk:
 apps/deno-notebooks/.avtools-livecode-sessions/logs/server.log
 ```
 
+For manual browser testing, start the browser app separately from
+`apps/browser-projections`:
+
+```sh
+npm run dev
+```
+
+Then open:
+
+```txt
+http://127.0.0.1:5173/livecodeVisualizer
+```
+
 The agent verification loop should be:
 
 1. Start the Deno server in a long-running shell session.
@@ -96,23 +109,27 @@ The repo should contain deterministic scripts that can be run without opening a
 browser. These scripts should fail with non-zero exit codes and print concise
 diagnostics.
 
-Suggested location:
+Implemented server/runtime tests:
 
 ```txt
 apps/deno-notebooks/livecode_visualizer_tests/
-  fixtures/
-    valid-basic.ts
-    valid-branch.ts
-    error-arbitrary-await.ts
-    error-split-promise.ts
-    error-unawaited-timecontext-call.ts
   analyzer_transform_test.ts
   runtime_counts_test.ts
   dynamic_import_execution_test.ts
   protocol_smoke_test.ts
+  lsp_smoke_test.ts
   server_smoke_test.ts
-  playwright_editor_smoke.ts
 ```
+
+Implemented browser E2E runner:
+
+```txt
+apps/browser-projections/tests/livecodeVisualizer.e2e.mjs
+```
+
+The first browser fixtures are inlined in the E2E runner rather than stored as
+separate fixture files. That keeps the cases readable in the test that drives
+the actual browser/editor loop.
 
 Implemented task shape:
 
@@ -635,7 +652,7 @@ deno task test:livecode:e2e
 Recommended browser flow:
 
 1. Start or connect to the Deno visualizer server.
-2. Start the Vite/browser editor app if the Deno server is not serving the UI.
+2. Start the Vite/browser editor app.
 3. Open the livecode visualizer page at `/livecodeVisualizer`.
 4. Wait for the CodeMirror editor to be visible.
 5. Insert a valid timed module:

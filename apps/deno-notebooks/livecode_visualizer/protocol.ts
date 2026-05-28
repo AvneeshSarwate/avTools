@@ -60,15 +60,12 @@ export interface AnalyzeFailure {
 export type AnalyzeResponse = AnalyzeSuccess | AnalyzeFailure;
 
 export interface LaunchModuleRequest {
-  type: "launchModule";
   moduleId: string;
-  sourceVersion: number;
   transformedModuleUri: string;
   generatedRunId: string;
 }
 
 export interface StopModuleRequest {
-  type: "stopModule";
   moduleId: string;
 }
 
