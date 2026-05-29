@@ -1,5 +1,6 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { fromFileUrl } from "jsr:@std/path@1";
+import { DEFAULT_LIVECODE_SOURCE } from "../../browser-projections/src/sketches/livecodeVisualizer/defaultSource.ts";
 import { createLivecodeVisualizerServer } from "../livecode_visualizer/server.ts";
 
 interface JsonRpcMessage {
@@ -220,6 +221,7 @@ Deno.test("deno lsp bridge initializes and publishes diagnostics", async () => {
         message.includes("not a dependency") ||
         message.includes("Cannot find module") ||
         message.includes("@avtools/core-timing") ||
+        message.includes("midi-helpers") ||
         message.includes("seedrandom")
       );
     assertEquals(dependencyDiagnostics, []);
@@ -290,9 +292,48 @@ Deno.test("deno lsp bridge initializes and publishes diagnostics", async () => {
         message.includes("not a dependency") ||
         message.includes("Cannot find module") ||
         message.includes("@avtools/core-timing") ||
+        message.includes("midi-helpers") ||
         message.includes("seedrandom")
       );
     assertEquals(lateDependencyDiagnostics, []);
+
+    const defaultSourceStartIndex = messages.length;
+    sendLspMessage(socket, {
+      jsonrpc: "2.0",
+      method: "textDocument/didChange",
+      params: {
+        textDocument: {
+          uri: "file:///main.ts",
+          version: 4,
+        },
+        contentChanges: [{ text: DEFAULT_LIVECODE_SOURCE }],
+      },
+    });
+
+    await waitForMessage(
+      messages,
+      (message) => {
+        if (message.method !== "textDocument/publishDiagnostics") return false;
+        const params = message.params as { uri?: string; version?: number };
+        return params.uri === "file:///main.ts" && params.version === 4;
+      },
+      "version 4 default source diagnostics",
+      15_000,
+    );
+    await sleep(250);
+
+    const defaultSourceDependencyDiagnostics = messages.slice(
+      defaultSourceStartIndex,
+    )
+      .flatMap((message) => lspDiagnosticMessages(message))
+      .filter((message) =>
+        message.includes("not a dependency") ||
+        message.includes("Cannot find module") ||
+        message.includes("@avtools/core-timing") ||
+        message.includes("midi-helpers") ||
+        message.includes("seedrandom")
+      );
+    assertEquals(defaultSourceDependencyDiagnostics, []);
   } finally {
     socket.close();
     await server.close();

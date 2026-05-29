@@ -8,6 +8,7 @@ import { Compartment, StateEffect, StateField, type Extension } from '@codemirro
 import { LSClient, LSCore, languageServerWithClient } from '@valtown/codemirror-ls'
 import { LSWebSocketTransport } from '@valtown/codemirror-ls/transport'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { DEFAULT_LIVECODE_SOURCE } from './defaultSource'
 
 interface SourceRange {
   from: number
@@ -102,31 +103,6 @@ declare global {
     __livecodeVisualizerDebug?: LivecodeVisualizerDebug
   }
 }
-
-const DEFAULT_SOURCE = `import type { TimeContext } from "@avtools/core-timing";
-
-function log(label: string, ctx?: TimeContext) {
-  const wall = Date.now();
-  const logical = ctx ? ctx.time.toFixed(3) : "none";
-  console.log(\`[fixture] wall=\${wall} logical=\${logical} \${label}\`);
-}
-
-async function helper(ctx: TimeContext, label: string) {
-  log(\`helper \${label} start\`, ctx);
-  await ctx.waitSec(5.0);
-  log(\`helper \${label} done\`, ctx);
-}
-
-export default async function(ctx: TimeContext) {
-  log("root start", ctx);
-
-  await helper(ctx, "a");
-  log("between helpers", ctx);
-
-  await ctx.waitSec(5.0);
-  log("root done", ctx);
-}
-`
 
 const setWaitDecorationsEffect = StateEffect.define<SourceRange[]>()
 
@@ -240,7 +216,7 @@ onMounted(async () => {
   if (!editorHost.value) return
 
   editorView = new EditorView({
-    doc: DEFAULT_SOURCE,
+    doc: DEFAULT_LIVECODE_SOURCE,
     extensions: [
       basicSetup,
       javascript({ typescript: true }),

@@ -41,6 +41,7 @@
     "@img/png": "jsr:@img/png@^0.1.6",
     "babylonjs": "npm:babylonjs@^8.20.0",
     "earcut": "npm:earcut@^3.0.0",
+    "midi-helpers": "./apps/deno-notebooks/livecode_helpers/midi_helpers.ts",
     "seedrandom": "npm:seedrandom@^3.0.5",
     "wgsl_reflect": "npm:wgsl_reflect@^1.2.3"
   }
