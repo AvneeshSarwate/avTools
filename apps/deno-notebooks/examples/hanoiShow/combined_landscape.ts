@@ -6,9 +6,8 @@
 // (landscape 1080p) and alpha-blends into a single composite. One Syphon
 // output ("Hanoi Show L") ships that composite verbatim — downstream
 // handles column slicing and any physical-display mapping. No per-channel
-// routing, no 2×2 packing, no rotation. Scenes that are aware of the 3-
-// column projection (e.g. fab_and_lies' middle-third blackout) still
-// encode that internally.
+// routing, no 2×2 packing, no rotation. Scenes can still encode
+// projection-specific behavior internally when needed.
 //
 // Run from apps/deno-notebooks:
 //   deno run --unstable-webgpu --unstable-ffi --allow-all examples/hanoiShow/combined_landscape.ts
@@ -109,8 +108,17 @@ const EXTERNAL_OSC_HOST = "127.0.0.1";
 const EXTERNAL_OSC_PORT = 9004;
 const PHYSICAL_MIDI_CONTROLLER_NAME = "Ableton Push 2 Live Port";
 const MIDI_FALLBACK_PORT_NAME = "IAC Driver Bus 1";
-const MIDI_FIGHTER_TWISTER_ENCODER_CHANNEL = 0;
-const MIDI_FIGHTER_TWISTER_ENCODER_CC_MAX = 63;
+const AKAI_LPD8_PORT_NAME = "LPD8";
+type PerfPaneMidiControllerMode =
+  | "auto"
+  | "push2-relative"
+  | "akai-lpd8-absolute";
+const PERF_PANE_MIDI_CONTROLLER_MODE: PerfPaneMidiControllerMode = "auto";
+const PERF_PANE_MIDI_CONTROLLER_CHANNEL = 0;
+const PUSH2_ENCODER_CC_MIN = 71;
+const PUSH2_ENCODER_CC_MAX = 78;
+const AKAI_LPD8_ENCODER_CC_MIN = 70;
+const AKAI_LPD8_ENCODER_CC_MAX = 77;
 
 const globalParams = {
   tegakiEnabled: true,
@@ -270,37 +278,91 @@ interface PerfPaneMidiBinding {
   readonly input: MidiInput;
 }
 
-function decodeTwisterRelativeDelta(ctrlVal: number): number {
-  return ctrlVal - 64;
+type PerfPaneMidiSelectedMode = Exclude<
+  PerfPaneMidiControllerMode,
+  "auto"
+>;
+
+interface PerfPaneMidiPortSelection {
+  readonly port: ReturnType<MidiAccess["listInputs"]>[number];
+  readonly source: string;
+  readonly mode: PerfPaneMidiSelectedMode;
 }
 
 function decodePush2RelativeDelta(ctrlVal: number): number {
-  return ctrlVal > 64 ?  -(128 - ctrlVal) : ctrlVal
+  return ctrlVal > 64 ? -(128 - ctrlVal) : ctrlVal;
 }
 
-function findMidiInputPort(midi: MidiAccess) {
+function findMidiInputPort(midi: MidiAccess): PerfPaneMidiPortSelection | null {
   const inputs = midi.listInputs();
-  const twister = inputs.find((port) =>
-    port.name.toLowerCase().includes(PHYSICAL_MIDI_CONTROLLER_NAME.toLowerCase())
-  );
-  if (twister) {
-    return {
-      port: twister,
-      source: PHYSICAL_MIDI_CONTROLLER_NAME,
-    };
-  }
+  const candidates: Array<{
+    source: string;
+    mode: PerfPaneMidiSelectedMode;
+  }> = [
+    { source: AKAI_LPD8_PORT_NAME, mode: "akai-lpd8-absolute" },
+    { source: PHYSICAL_MIDI_CONTROLLER_NAME, mode: "push2-relative" },
+    { source: MIDI_FALLBACK_PORT_NAME, mode: "push2-relative" },
+  ];
 
-  const fallback = inputs.find((port) =>
-    port.name.toLowerCase().includes(MIDI_FALLBACK_PORT_NAME.toLowerCase())
-  );
-  if (fallback) {
-    return {
-      port: fallback,
-      source: MIDI_FALLBACK_PORT_NAME,
-    };
+  for (const candidate of candidates) {
+    if (
+      PERF_PANE_MIDI_CONTROLLER_MODE !== "auto" &&
+      candidate.mode !== PERF_PANE_MIDI_CONTROLLER_MODE
+    ) {
+      continue;
+    }
+
+    const port = inputs.find((inputPort) =>
+      inputPort.name.toLowerCase().includes(candidate.source.toLowerCase())
+    );
+    if (port) return { ...candidate, port };
   }
 
   return null;
+}
+
+function handlePush2RelativeCC(pane: WindowTweakpane, evt: {
+  channel: number;
+  ctrlNum: number;
+  ctrlVal: number;
+}) {
+  if (evt.channel !== PERF_PANE_MIDI_CONTROLLER_CHANNEL) return;
+  if (
+    evt.ctrlNum < PUSH2_ENCODER_CC_MIN || evt.ctrlNum > PUSH2_ENCODER_CC_MAX
+  ) {
+    return;
+  }
+
+  const delta = decodePush2RelativeDelta(evt.ctrlVal);
+  if (delta === 0) return;
+
+  pane.sendClientMessage({
+    type: "midiEncoderDelta",
+    channel: evt.channel,
+    cc: evt.ctrlNum - PUSH2_ENCODER_CC_MIN,
+    delta,
+  });
+}
+
+function handleAkaiLpd8AbsoluteCC(pane: WindowTweakpane, evt: {
+  channel: number;
+  ctrlNum: number;
+  ctrlVal: number;
+}) {
+  if (evt.channel !== PERF_PANE_MIDI_CONTROLLER_CHANNEL) return;
+  if (
+    evt.ctrlNum < AKAI_LPD8_ENCODER_CC_MIN ||
+    evt.ctrlNum > AKAI_LPD8_ENCODER_CC_MAX
+  ) {
+    return;
+  }
+
+  pane.sendClientMessage({
+    type: "midiControllerAbsolute",
+    channel: evt.channel,
+    cc: evt.ctrlNum - AKAI_LPD8_ENCODER_CC_MIN,
+    value: evt.ctrlVal / 127,
+  });
 }
 
 function attachPerfPaneMidi(pane: WindowTweakpane): PerfPaneMidiBinding | null {
@@ -311,7 +373,7 @@ function attachPerfPaneMidi(pane: WindowTweakpane): PerfPaneMidiBinding | null {
 
     if (!selected) {
       console.warn(
-        `[combined_landscape] No ${PHYSICAL_MIDI_CONTROLLER_NAME} or ${MIDI_FALLBACK_PORT_NAME} MIDI input found; perf-pane MIDI disabled.`,
+        `[combined_landscape] No matching perf-pane MIDI input found for mode "${PERF_PANE_MIDI_CONTROLLER_MODE}"; perf-pane MIDI disabled.`,
       );
       midi.close();
       return null;
@@ -323,28 +385,23 @@ function attachPerfPaneMidi(pane: WindowTweakpane): PerfPaneMidiBinding | null {
     });
 
     input.onCC((evt) => {
-      console.log(evt)
-      if (evt.channel !== MIDI_FIGHTER_TWISTER_ENCODER_CHANNEL) return;
-      // if (evt.ctrlNum < 0 || evt.ctrlNum > MIDI_FIGHTER_TWISTER_ENCODER_CC_MAX) return;
-
-      const delta = decodePush2RelativeDelta(evt.ctrlVal);
-      if (delta === 0) return;
-
-      pane.sendClientMessage({
-        type: "midiEncoderDelta",
-        channel: evt.channel,
-        cc: evt.ctrlNum - 71,
-        delta,
-      });
+      if (selected.mode === "akai-lpd8-absolute") {
+        handleAkaiLpd8AbsoluteCC(pane, evt);
+      } else {
+        handlePush2RelativeCC(pane, evt);
+      }
     });
 
     console.log(
-      `[combined_landscape] Perf-pane MIDI attached to "${selected.port.name}" via ${selected.source} using default Twister encoder CCs.`,
+      `[combined_landscape] Perf-pane MIDI attached to "${selected.port.name}" via ${selected.source} in ${selected.mode} mode.`,
     );
 
     return { midi, input };
   } catch (err) {
-    console.warn("[combined_landscape] Failed to initialize perf-pane MIDI:", err);
+    console.warn(
+      "[combined_landscape] Failed to initialize perf-pane MIDI:",
+      err,
+    );
     midi?.close();
     return null;
   }

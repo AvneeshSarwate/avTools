@@ -20,10 +20,23 @@ interface SerializedOptions {
 }
 
 type OpMessage =
-  | { type: 'addBinding'; id: string; parentId: string; key: string; value: unknown; opts: SerializedOptions }
+  | {
+      type: 'addBinding'
+      id: string
+      parentId: string
+      key: string
+      value: unknown
+      opts: SerializedOptions
+    }
   | { type: 'addFolder'; id: string; parentId: string; opts: { title: string; expanded?: boolean } }
   | { type: 'addButton'; id: string; parentId: string; opts: { title: string; label?: string } }
-  | { type: 'addTab'; id: string; parentId: string; opts: { pages: { title: string }[] }; pageIds: string[] }
+  | {
+      type: 'addTab'
+      id: string
+      parentId: string
+      opts: { pages: { title: string }[] }
+      pageIds: string[]
+    }
   | { type: 'addBlade'; id: string; parentId: string; opts: SerializedOptions }
   | { type: 'addSeparator'; id: string; parentId: string; opts?: unknown }
   | { type: 'remove'; id: string; parentId: string }
@@ -35,6 +48,7 @@ type OpMessage =
 type ServerMessage =
   | { type: 'replay'; paneConfig: { title?: string }; operations: OpMessage[] }
   | { type: 'midiEncoderDelta'; channel: number; cc: number; delta: number }
+  | { type: 'midiControllerAbsolute'; channel: number; cc: number; value: number }
   | OpMessage
 
 type ClientMessage =
@@ -108,9 +122,7 @@ export interface WsLike {
 
 export function coerceSliderValue(slider: SliderModel, value: number): number {
   const clamped = Math.max(slider.min, Math.min(slider.max, value))
-  return slider.step > 0
-    ? Math.round(clamped / slider.step) * slider.step
-    : clamped
+  return slider.step > 0 ? Math.round(clamped / slider.step) * slider.step : clamped
 }
 
 const MIDI_FIGHTER_TWISTER_ENCODER_CHANNEL = 0
@@ -118,6 +130,7 @@ const MIDI_FIGHTER_TWISTER_ENCODER_CC_MIN = 0
 const MIDI_FIGHTER_TWISTER_ENCODER_CC_MAX = 63
 const MIDI_FIGHTER_TWISTER_ENCODERS_PER_BANK = 16
 const MIDI_TARGET_FULL_SWEEP_TICKS = 96
+const MIDI_ABSOLUTE_TAKEOVER_THRESHOLD = 0.04
 
 // ── Client ──────────────────────────────────────────────────────────
 
@@ -127,6 +140,7 @@ export class PerfPaneClient {
   private sliderById = new Map<string, SliderModel>()
   private toggleById = new Map<string, ToggleModel>()
   private tabPageParentOf = new Map<string, { tab: TabModel; pageIndex: number }>()
+  private absoluteMidiTakeoverByControl = new Map<string, string>()
   private suppressSync = false
 
   constructor(wsOrUrl: WsLike | string) {
@@ -136,7 +150,7 @@ export class PerfPaneClient {
       tabs: [],
       mixerSliders: [],
       rootSliders: [],
-      rootToggles: [],
+      rootToggles: []
     }) as PerfPaneModel
 
     this.ws = typeof wsOrUrl === 'string' ? (new WebSocket(wsOrUrl) as WsLike) : wsOrUrl
@@ -150,9 +164,8 @@ export class PerfPaneClient {
     }
     this.ws.onmessage = (ev) => {
       try {
-        const msg: ServerMessage = typeof ev.data === 'string'
-          ? JSON.parse(ev.data)
-          : (ev.data as ServerMessage)
+        const msg: ServerMessage =
+          typeof ev.data === 'string' ? JSON.parse(ev.data) : (ev.data as ServerMessage)
         this.handleMessage(msg)
       } catch (e) {
         console.error('[PerfPaneClient] parse error', e)
@@ -170,11 +183,16 @@ export class PerfPaneClient {
       this.sliderById.clear()
       this.toggleById.clear()
       this.tabPageParentOf.clear()
+      this.absoluteMidiTakeoverByControl.clear()
       for (const op of msg.operations) this.applyOp(op)
       return
     }
     if (msg.type === 'midiEncoderDelta') {
       this.applyMidiEncoderDelta(msg.channel, msg.cc, msg.delta)
+      return
+    }
+    if (msg.type === 'midiControllerAbsolute') {
+      this.applyMidiControllerAbsolute(msg.channel, msg.cc, msg.value)
       return
     }
     this.applyOp(msg)
@@ -189,9 +207,9 @@ export class PerfPaneClient {
             id: op.pageIds[i],
             title: p.title,
             sliders: [] as SliderModel[],
-            toggles: [] as ToggleModel[],
+            toggles: [] as ToggleModel[]
           })),
-          selectedIndex: 0,
+          selectedIndex: 0
         }) as TabModel
         this.model.tabs.push(tab)
         op.pageIds.forEach((pageId, i) => {
@@ -211,7 +229,7 @@ export class PerfPaneClient {
             max: typeof op.opts.max === 'number' ? (op.opts.max as number) : 1,
             step: typeof op.opts.step === 'number' ? (op.opts.step as number) : 0.001,
             value: op.value,
-            defaultValue: op.value,
+            defaultValue: op.value
           }) as SliderModel
           this.sliderById.set(op.id, slider)
           if (parent) {
@@ -220,7 +238,7 @@ export class PerfPaneClient {
               this.model.mixerSliders.push({
                 id: `mixer_${slider.id}`,
                 label: parent.tab.pages[parent.pageIndex].title,
-                slider,
+                slider
               })
             }
           } else {
@@ -232,7 +250,7 @@ export class PerfPaneClient {
             parentId: op.parentId,
             key: op.key,
             label: (op.opts.label as string) ?? op.key,
-            value: op.value,
+            value: op.value
           }) as ToggleModel
           this.toggleById.set(op.id, toggle)
           if (parent) {
@@ -248,7 +266,10 @@ export class PerfPaneClient {
         try {
           for (const [id, value] of Object.entries(op.values)) {
             const slider = this.sliderById.get(id)
-            if (slider && typeof value === 'number') slider.value = value
+            if (slider && typeof value === 'number') {
+              slider.value = value
+              this.releaseAbsoluteMidiTakeoverForSlider(slider.id)
+            }
             const toggle = this.toggleById.get(id)
             if (toggle && typeof value === 'boolean') toggle.value = value
           }
@@ -262,6 +283,7 @@ export class PerfPaneClient {
         if (slider && typeof op.value === 'number') {
           this.suppressSync = true
           slider.value = op.value
+          this.releaseAbsoluteMidiTakeoverForSlider(slider.id)
           this.suppressSync = false
         }
         const toggle = this.toggleById.get(op.id)
@@ -278,6 +300,9 @@ export class PerfPaneClient {
           if (op.prop === 'label' && typeof op.value === 'string') slider.label = op.value
           if (op.prop === 'min' && typeof op.value === 'number') slider.min = op.value
           if (op.prop === 'max' && typeof op.value === 'number') slider.max = op.value
+          if ((op.prop === 'min' || op.prop === 'max') && typeof op.value === 'number') {
+            this.releaseAbsoluteMidiTakeoverForSlider(slider.id)
+          }
         }
         const toggle = this.toggleById.get(op.id)
         if (toggle) {
@@ -294,6 +319,11 @@ export class PerfPaneClient {
 
   /** Called by the UI on drag. `last=true` on pointerup. */
   setSliderValue(slider: SliderModel, value: number, last: boolean): void {
+    this.releaseAbsoluteMidiTakeoverForSlider(slider.id)
+    this.writeSliderValue(slider, value, last)
+  }
+
+  private writeSliderValue(slider: SliderModel, value: number, last: boolean): void {
     const stepped = coerceSliderValue(slider, value)
     slider.value = stepped
     if (this.suppressSync) return
@@ -313,6 +343,25 @@ export class PerfPaneClient {
 
     const stepSize = getMidiStepSize(slider)
     this.setSliderValue(slider, slider.value + delta * stepSize, true)
+  }
+
+  private applyMidiControllerAbsolute(channel: number, cc: number, value: number): void {
+    const slider = this.findMidiMappedSlider(channel, cc)
+    if (!slider) return
+
+    const controlKey = getMidiControlKey(channel, cc)
+    const controllerNorm = clampNormalized(value)
+    const sliderNorm = sliderValueToNorm(slider, slider.value)
+    const latchedSliderId = this.absoluteMidiTakeoverByControl.get(controlKey)
+
+    if (latchedSliderId !== slider.id) {
+      if (Math.abs(controllerNorm - sliderNorm) > MIDI_ABSOLUTE_TAKEOVER_THRESHOLD) {
+        return
+      }
+      this.absoluteMidiTakeoverByControl.set(controlKey, slider.id)
+    }
+
+    this.writeSliderValue(slider, sliderNormToValue(slider, controllerNorm), true)
   }
 
   private findMidiMappedSlider(channel: number, cc: number): SliderModel | null {
@@ -346,6 +395,14 @@ export class PerfPaneClient {
   disconnect(): void {
     if (this.ws.readyState === 1) this.ws.close()
   }
+
+  private releaseAbsoluteMidiTakeoverForSlider(sliderId: string): void {
+    for (const [controlKey, latchedSliderId] of this.absoluteMidiTakeoverByControl) {
+      if (latchedSliderId === sliderId) {
+        this.absoluteMidiTakeoverByControl.delete(controlKey)
+      }
+    }
+  }
 }
 
 function isSceneFadeSlider(key: string, label: string): boolean {
@@ -365,4 +422,22 @@ function getMidiStepSize(slider: SliderModel): number {
   }
 
   return targetDelta
+}
+
+function getMidiControlKey(channel: number, cc: number): string {
+  return `${channel}:${cc}`
+}
+
+function clampNormalized(value: number): number {
+  return Math.max(0, Math.min(1, value))
+}
+
+function sliderValueToNorm(slider: SliderModel, value: number): number {
+  const range = slider.max - slider.min
+  if (range <= 0) return 0
+  return clampNormalized((value - slider.min) / range)
+}
+
+function sliderNormToValue(slider: SliderModel, norm: number): number {
+  return slider.min + clampNormalized(norm) * (slider.max - slider.min)
 }

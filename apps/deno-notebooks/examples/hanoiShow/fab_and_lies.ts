@@ -1,7 +1,8 @@
 /// <reference lib="dom" />
 
-// Fab and Lies — text blocks launched from the left or right, each drifting
-// and rotating on its own snapshotted trajectory. Structurally this is a
+// Fab and Lies — text blocks launched from the left or top, each drifting
+// and rotating toward the bottom-right on its own snapshotted trajectory.
+// Structurally this is a
 // direct descendant of the rectangle-launch section of `burning_kinaree.ts`:
 // the launch cadence, angle deviation, travel/rotation speed, and strobe
 // (pure white) mechanics are the same. The only change is *what* gets drawn
@@ -167,11 +168,6 @@ interface TextBlock {
   textSize: number; // snapshotted font size
   word: string; // snapshotted from WORD_POOL
   color: [number, number, number]; // rgb with HSV jitter
-  // Which side the block was launched from; controls which column-edge
-  // is treated as "off-screen" for the 2-screen simulation. Left-launched
-  // blocks die once they're fully past x = w/3; right-launched blocks die
-  // once they're fully past x = 2w/3.
-  fromLeft: boolean;
   alive: boolean;
 }
 
@@ -181,17 +177,21 @@ function spawnTextBlock(
   screenHeight: number,
 ): TextBlock {
   const p = state.params;
-  const fromLeft = triggerCtx.random() < 0.5;
-  const baseAngle = fromLeft ? 0 : Math.PI;
+  const margin = p.textSize * 4;
+  const fromLeftEdge = triggerCtx.random() < 0.5;
+  const cornerPower = Math.max(1, Math.min(10, p.launchCornerPower));
+  const edgeT = Math.pow(triggerCtx.random(), cornerPower);
+
+  // Spawn just off the selected edge so entry is clean regardless of
+  // rotation. edgeT=0 is the top-left corner; edgeT=1 is bottom-left/top-right.
+  const startX = fromLeftEdge ? -margin : edgeT * screenWidth;
+  const startY = fromLeftEdge ? edgeT * screenHeight : -margin;
+
+  const targetX = screenWidth + margin;
+  const targetY = screenHeight + margin;
+  const baseAngle = Math.atan2(targetY - startY, targetX - startX);
   const devRad = (p.angleDeviation * Math.PI) / 180;
   const travelAngle = baseAngle + (triggerCtx.random() - 0.5) * 2 * devRad;
-
-  // Spawn just off-screen so entry is clean regardless of rotation.
-  // Margin is a generous multiple of textSize since text extent can't be
-  // measured cheaply without laying it out.
-  const margin = p.textSize * 4;
-  const startX = fromLeft ? -margin : screenWidth + margin;
-  const startY = triggerCtx.random() * screenHeight;
 
   const word = WORD_POOL[Math.floor(triggerCtx.random() * WORD_POOL.length)];
 
@@ -211,7 +211,6 @@ function spawnTextBlock(
       WORD_SAT_JITTER,
       WORD_VAL_JITTER,
     ),
-    fromLeft,
     alive: true,
   };
 }
@@ -225,8 +224,9 @@ export const state = {
     bgColor: "#0d1017",
 
     launchRate: 17.9, // text blocks per second
+    launchCornerPower: 1, // 1 = uniform edge sampling, higher = top-left bias
     travelSpeed: 180, // pixels/sec, snapshotted at launch
-    angleDeviation: 6, // degrees, ± range from straight horizontal
+    angleDeviation: 6, // degrees, ± range around the bottom-right trajectory
     textSize: 28, // font size in pixels, snapshotted
     rotationSpeed: 0.25, // radians/sec, snapshotted at launch
     color: "#ffffff",
@@ -295,6 +295,14 @@ export const macroDefs: MacroDef<number>[] = [
     opts: { min: -10, max: 10, step: 0.05, label: "Rotation Speed" },
     apply: (v) => {
       state.params.rotationSpeed = v;
+    },
+  },
+  {
+    key: "launchCornerPower",
+    defaultValue: 1,
+    opts: { min: 1, max: 10, step: 0.1, label: "Corner Bias" },
+    apply: (v) => {
+      state.params.launchCornerPower = v;
     },
   },
 ];
@@ -408,20 +416,11 @@ export function draw(p5: P5GPU, _time: number, autoClear = true): void {
     const y = b.startY + Math.sin(b.travelAngle) * b.travelSpeed * elapsed;
     const rot = b.initialRotation + b.rotationSpeed * elapsed;
 
-    // Kill once the center crosses the screen's horizontal midpoint —
-    // simulates a 2-screen setup where a word launched from one side
-    // "falls off" once it's past halfway. The middle-third blackout
-    // hides the actual vanish, so this reads as the word going off-edge
-    // on whichever column it belongs to.
-    if (b.fromLeft ? x > w / 2 : x < w / 2) {
-      b.alive = false;
-      continue;
-    }
-
-    // Safety net for extreme travel angles that would carry a block off
-    // the top/bottom before it ever reaches the midpoint.
     const margin = b.textSize * 4;
-    if (y < -margin || y > h + margin) {
+    if (
+      x > w + margin || y > h + margin ||
+      x < -margin * 2 || y < -margin * 2
+    ) {
       b.alive = false;
       continue;
     }
@@ -444,13 +443,6 @@ export function draw(p5: P5GPU, _time: number, autoClear = true): void {
   if (live.length > 0 && live.length % 32 === 0) {
     state.runtime.blocks = live.filter((b) => b.alive);
   }
-
-  // // Middle-third blackout — simulates the physical 3-column portrait
-  // // layout with the center column off. Drawn last and fully opaque so it
-  // // covers whatever text happens to be passing through that band.
-  // p5.noStroke();
-  // p5.fill(0, 0, 0, alpha);
-  // p5.rect(w / 3, 0, w / 3, h);
 }
 
 // ── Tweakpane ───────────────────────────────────────────────────────
@@ -475,6 +467,12 @@ export function setupPane(pane: PaneContainer, _refresh?: () => void): void {
     max: 20,
     step: 0.1,
     label: "Launch Rate (Hz)",
+  });
+  pane.addBinding(state.params, "launchCornerPower", {
+    min: 1,
+    max: 10,
+    step: 0.1,
+    label: "Corner Bias",
   });
   pane.addBinding(state.params, "travelSpeed", {
     min: 50,

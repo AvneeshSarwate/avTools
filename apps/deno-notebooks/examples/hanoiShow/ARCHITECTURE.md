@@ -45,7 +45,7 @@ These flow once into: the GpuWindow (surface size), every P5GPU instance (scene 
 - Inside tegaki helpers that don't have `p5` in scope (`computeGlyphBboxes`, `runHandEmitterLoop`, `spawnHandParticle`): read from `state.meta.width` / `state.meta.height` / `state.meta.maxWidth`, populated by `tegakiSetup({width,height})`.
 - Module-level `WIDTH`/`HEIGHT` constants exist only inside each scene's `if (import.meta.main)` block — standalone mode. They do not leak into the exported code paths.
 
-A scene can encode "the downstream mapper will slice this into 3 columns" logic internally (see fab_and_lies' middle-third blackout), but the process itself has no column concept.
+A scene can encode projection-specific behavior internally, but the process itself has no column concept.
 
 ---
 
@@ -204,7 +204,7 @@ Downstream Syphon consumers composite `combined_landscape`'s output over their o
 |---|---|---|
 | Tegaki | `p5gpu_tegaki_handwriting.ts` | Random / intersection / hand trigger modes. Consumes body contour + hand bbox. Has `state.params.fade`. |
 | Burning Kinaree | `burning_kinaree.ts` | Three mixable sections: orbit circles, rect launcher, snowfall. Has `state.params.fade` and per-section `mix`. |
-| Fab & Lies | `fab_and_lies.ts` | Thai text blocks launched from the sides; middle-third blackout for the 3-column-downstream context. Has `state.params.fade`. Async asset load (Ayuthaya .ttf) via `fabLoadAssets(fabP5)` in startup. |
+| Fab & Lies | `fab_and_lies.ts` | Thai text blocks launched from the left/top toward the bottom-right. Has `state.params.fade`. Async asset load (local Thai .ttf) via `fabLoadAssets(fabP5)` in startup. |
 
 The older scenes `p5gpu_osc_note_trail.ts` and `p5gpu_body_text.ts` still exist in the directory as standalone-runnable sketches (see "Dual-mode"). They are not imported by `combined_landscape.ts`. Either can be wired back in by following the import/setup/frame/cleanup pattern of the existing scenes.
 
@@ -277,7 +277,7 @@ This is the dependency-injection seam. It's how multiple scenes can read one smo
 Consequences an agent should internalize:
 
 - **Per-scene isolation.** Each P5GPU owns its own render target, style stack, and font cache. A scene can no longer corrupt another scene's state — the shared-p5 `push()`/`pop()` hygiene rule is **no longer load-bearing** (though it's still good practice inside a single scene).
-- **Draw order still matters.** Painter's-algorithm compositing: alphaBlit calls in order OSC → tegaki → body → kinaree → fab → overlay; later = on top. To change layering, reorder the alphaBlit calls in `combined.ts`. Kinaree + fab sit on top of the other scenes so their strobe flashes and fab's middle-third blackout overlay everything; overlay sits on top of all of them for the timing HUD.
+- **Draw order still matters.** Painter's-algorithm compositing: alphaBlit calls in order OSC → tegaki → body → kinaree → fab → overlay; later = on top. To change layering, reorder the alphaBlit calls in `combined.ts`. Kinaree + fab sit on top of the other scenes so their strobe flashes overlay earlier layers; overlay sits on top of all of them for the timing HUD.
 - **`autoClear` replaces the shared `background()` call.** Scene `draw()` functions take a trailing `autoClear = true` param; when true, they call `p5.clear()` at the very start (before any early returns) so the offscreen starts transparent each frame. This is required because P5GPU's `endFrame()` uses `loadOp: "load"` by default (preserves previous frame pixels) unless `clear()` / `background()` was called during the frame. `combined.ts` relies on the default `true`; standalone runners pass `false` because they already call `p5.background(...)` after `beginFrame()`.
 - **Scenes STILL must NOT call `background()` in their exported `draw()`.** Doing so would paint a solid color across the scene's offscreen — wiping transparency — which breaks alpha compositing. Standalone-only `background()` calls live in the `import.meta.main` runner, not the exported draw.
 - **Disabled scenes still pay for begin/end.** We always beginFrame/endFrame on all 6 P5GPUs and always alphaBlit them all — an all-transparent layer is a no-op visually but still costs a pass. The `if (enabled)` gates only the scene's own draw calls, not the pipeline. See `noop-checker.md` for the broader work-gating story (scene-fade, not enable flags, is the actual quiescence signal).
@@ -427,7 +427,7 @@ The second responsibility is the one that's easy to forget and the one that matt
 | `burning_kinaree.ts` | `state.params.fade` | Section mixes multiply by `fade`; trigger branches gate on `mix <= 0`; orbit phase integration runs unconditionally (keeps motion continuous across transitions). Canonical implementation. |
 | `p5gpu_tegaki_handwriting.ts` | `state.params.fade` | Early-return on fade=0 before `drawContourDebug`; glyph stroke alpha multiplies by fade; hand-particle emitter outer condition includes `fade > 0`; random-trigger branch has `if (fade <= 0) continue;`. Intersection/hand triggers are free (gated by the draw early-return). Debug overlays intentionally *do not* multiply by fade — they're dev-only and never run during a show. |
 | `p5gpu_body_text.ts` | `state.render.fade` | Early-return at `fade <= 0`; alpha multiplier on strokes/fills. Spring physics runs inside `draw()` so it naturally stops with fade. |
-| `fab_and_lies.ts` | `state.params.fade` | Combined with per-section `mix` via `mix * fade`. Middle-third blackout is drawn inside the fade-gated path, so at fade=0 it's also off. |
+| `fab_and_lies.ts` | `state.params.fade` | Combined with scene `mix` via `mix * fade`; launch and draw work are both gated when that product is 0. |
 | `p5gpu_osc_note_trail.ts` | **not yet implemented** | Flagged in `noop-checker.md` as out-of-scope for the current cleanup pass but required before this scene is used in a show. UDP receiver + delay-buffer ring also need gating. |
 
 **Scene mix vs `<scene>Enabled` toggle.** The Global tab's enable flags are not a replacement for `fade`. They only gate the scene's `draw()` call inside `combined.ts` — the scene's core-timing branches, provider ticks, emitter loops all keep running regardless. Useful for instant mute during development; unusable for on-stage transitions (hard pop, not a fade) and insufficient for quiescence (no-op cleanup relies on fade, not enable).
