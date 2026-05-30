@@ -1,7 +1,35 @@
-# Time Context Visualizer Architecture
+# Time Context Visualizer Architecture And File Index
 
-This is the quick entrypoint for the local Deno livecoding editor/runtime
-visualizer work.
+This is the quick entrypoint for agent chats about the local Deno livecoding
+editor/runtime visualizer work. Start here before editing code.
+
+## Agent Jumpstart
+
+The project is a local-only browser CodeMirror editor connected to a local Deno
+server/runtime.
+
+Core constraints:
+
+- Deno LSP and runtime visualization are separate systems.
+- Deno LSP handles editor semantics: diagnostics, hover, completions,
+  references.
+- Runtime visualization handles transform diagnostics, generated runs, active
+  wait snapshots, and CodeMirror wait decorations.
+- User code is independent single-file livecode modules. The first convention is
+  a default exported async function whose first parameter is a `TimeContext`.
+- Only user-written code from the editor module is highlighted. Imported helper
+  internals are not highlighted, but awaited helper calls that receive a
+  `TimeContext` can be visualized at the callsite.
+- The server analyzes/transforms/writes generated modules on edit, debounced in
+  the browser. `Run` launches the latest matching prepared build and then Deno
+  dynamically imports it.
+- Dynamic import stays on `Run`, not edit, because importing evaluates module
+  top-level code.
+- Active wait state is tracked by stable callsite UUIDs plus `moduleId`, with a
+  count map so repeated/overlapping waits at the same callsite remain active
+  until all outstanding waits finish.
+- Unsupported detectable async patterns should error rather than silently
+  produce misleading visualization.
 
 For details, read these next:
 
@@ -12,6 +40,15 @@ For details, read these next:
 - `batched-runtime-editor-updates.md`: runtime snapshot cadence and CodeMirror
   decoration update strategy.
 - `self-test-loop.md`: manual and automated verification workflow.
+
+When resuming work, usually inspect these first:
+
+```sh
+sed -n '1,220p' timeContextVisualizerPlans/architecture.md
+sed -n '1,260p' apps/deno-notebooks/livecode/visualizer/analyze_transform.ts
+sed -n '1,220p' apps/deno-notebooks/livecode/visualizer/server.ts
+sed -n '1,260p' apps/browser-projections/src/sketches/livecodeVisualizer/SketchWrapper.vue
+```
 
 ## Current Shape
 
@@ -44,25 +81,51 @@ POST /runtime/stop
 GET  /runtime/snapshots
 ```
 
-LSP and runtime visualization are separate channels. LSP is for Deno editor
-semantics; runtime visualization is for transform diagnostics, generated runs,
-active wait snapshots, and CodeMirror wait decorations.
+The browser page accepts an optional server override:
 
-## Important Files
+```txt
+http://127.0.0.1:5173/livecodeVisualizer?serverBaseUrl=http://127.0.0.1:7777
+```
 
-### Browser
+## Runtime Flow
+
+1. Browser editor changes.
+2. `SketchWrapper.vue` schedules `/runtime/analyze` with a 100ms debounce.
+3. Deno server writes the source module, runs the typed transform, writes a
+   generated module, and returns a manifest plus generated module URI.
+4. Browser caches the prepared build if it still matches current `sourceText`,
+   `moduleId`, and server URL.
+5. User hits `Run`.
+6. Browser launches the cached prepared build, or analyzes immediately only if
+   no current prepared build exists.
+7. Server queues launch into the parent `TimeContext` loop, dynamically imports
+   the generated module, and branches the default export.
+8. Generated code calls `visualizedAwait(moduleId, callsiteId, promise)` around
+   instrumented waits/helper awaits.
+9. Runtime snapshots publish active callsite UUIDs at frame-ish cadence.
+10. Browser batches snapshot handling through `requestAnimationFrame` and
+    updates CodeMirror decorations directly.
+
+## File Index
+
+### Browser Editor
 
 - `apps/browser-projections/src/sketches/livecodeVisualizer/SketchWrapper.vue`
-  owns the first CodeMirror UI, Deno LSP client, runtime HTTP/WebSocket client,
-  manifest cache, generated run history, wait decoration extension, and test
-  debug hooks.
+  owns the CodeMirror UI, Deno LSP client, runtime HTTP/WebSocket client,
+  edit-time analyze debounce, prepared-build cache, generated run history, wait
+  decoration extension, snapshot batching, and test debug hooks.
+- `apps/browser-projections/src/sketches/livecodeVisualizer/defaultSource.ts`
+  contains the built-in example source shown when the editor loads. It currently
+  exercises `midi-helpers`, `ctx.branch`, helper-defined waits, root waits, and
+  Deno import-map resolution.
 - `apps/browser-projections/src/router/index.ts` registers the
   `/livecodeVisualizer` sketch route.
 - `apps/browser-projections/tests/livecodeVisualizer.e2e.mjs` starts the Deno
-  server and Vite, drives the real browser page, and verifies several runtime
-  visualization cases end to end.
+  server and Vite, drives the real browser page with Playwright, and verifies
+  Deno LSP diagnostics/completions, prepared-build Run behavior, CodeMirror Tab
+  indentation, runtime snapshots, wait highlighting, and transform errors.
 - `apps/browser-projections/package.json` declares `@valtown/codemirror-ls`,
-  `playwright`, and the `test:livecode:e2e` npm script.
+  CodeMirror packages, `playwright`, and the `test:livecode:e2e` npm script.
 
 ### Deno Server And Runtime
 
@@ -71,7 +134,7 @@ active wait snapshots, and CodeMirror wait decorations.
 - `apps/deno-notebooks/livecode/visualizer/server.ts` owns HTTP/WebSocket
   routes, session directories, analysis/transform requests, generated module
   writes, dynamic imports, parent `TimeContext` launch queue, snapshot
-  broadcasting, and LSP WebSocket server setup.
+  broadcasting, duration logging, and LSP WebSocket server setup.
 - `apps/deno-notebooks/livecode/visualizer/lsp_proxy.ts` runs as the spawned LSP
   proxy process. It creates a real temp workspace, writes a normalized
   `deno.json`, mirrors editor documents into files, and runs `deno lsp -q`.
@@ -82,7 +145,7 @@ active wait snapshots, and CodeMirror wait decorations.
 - `apps/deno-notebooks/livecode/visualizer/analyze_transform.ts` uses ts-morph
   and magic-string to find the default timed root, detect supported awaited
   wait/helper callsites, reject unsupported async patterns, wrap calls in
-  `visualizedAwait`, and produce the manifest.
+  `visualizedAwait`, and produce the source-range manifest.
 - `apps/deno-notebooks/livecode/visualizer/runtime.ts` is the singleton runtime
   store used by generated modules. It tracks active wait counts by `moduleId`
   and callsite UUID and produces active wait snapshots.
@@ -95,8 +158,13 @@ active wait snapshots, and CodeMirror wait decorations.
 - `apps/deno-notebooks/livecode/helpers/` contains local helper modules meant
   for livecode scripts, including the eager MIDI device wrapper exposed as
   `midi-helpers`.
+- `apps/deno-notebooks/livecode/helpers/midi_helpers.ts` initializes MIDI
+  outputs up front and exposes `midiDevices`, `getMidiDevice`,
+  `requireMidiDevice`, `listMidiDevices`, and `closeMidiDevices`.
 - `apps/deno-notebooks/deno.json` wires Deno imports and the livecode test
   tasks.
+- `deno.json` at repo root also maps `midi-helpers` for repo-level Deno checks
+  and LSP workspace config generation.
 
 ### Tests
 
@@ -110,10 +178,26 @@ active wait snapshots, and CodeMirror wait decorations.
 - `apps/deno-notebooks/livecode/tests/protocol_smoke_test.ts` verifies health,
   analyze, launch, snapshot, and stop over HTTP/WebSocket without a browser.
 - `apps/deno-notebooks/livecode/tests/lsp_smoke_test.ts` verifies the `/lsp`
-  bridge reaches real `deno lsp` diagnostics and that `@avtools/core-timing`
-  resolves for `ctx.wait` / `ctx.waitSec` completion.
+  bridge reaches real `deno lsp` diagnostics and that `@avtools/core-timing` and
+  `midi-helpers` resolve for diagnostics, hover, and completion.
 - `apps/deno-notebooks/livecode/tests/server_smoke_test.ts` spawns the server
   CLI, parses `serverReady`, and checks the server responds.
+- `apps/deno-notebooks/livecode/tests/default_source_integration_test.ts`
+  verifies the built-in editor source type-checks with Deno, analyzes to the
+  expected wait callsites, and initializes MIDI helpers.
+
+### Planning Docs
+
+- `timeContextVisualizerPlans/architecture.md` is this agent handoff and file
+  index.
+- `timeContextVisualizerPlans/system-plumbing-and-dependency-shape.md` is the
+  fuller architecture/protocol/dependency plan.
+- `timeContextVisualizerPlans/top-level-wait-callsite-visualization.md` records
+  the transform design decisions and scope.
+- `timeContextVisualizerPlans/batched-runtime-editor-updates.md` records the
+  snapshot/decorator update strategy.
+- `timeContextVisualizerPlans/self-test-loop.md` records manual and automated
+  verification workflows and minimal fixture sources.
 
 ## Current Analyzer Scope
 
@@ -147,3 +231,8 @@ deno task test:livecode:e2e
 
 The browser E2E runner requires Node 20+ because the browser app uses Vite 7 and
 Playwright.
+
+Known broad check caveat: `npm run type-check` in `apps/browser-projections`
+currently fails on unrelated repo-wide TypeScript issues outside the livecode
+visualizer area. Prefer the livecode-specific Deno and E2E commands above for
+this work unless you are intentionally fixing repo-wide type checking.

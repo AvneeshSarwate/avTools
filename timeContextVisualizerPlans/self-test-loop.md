@@ -648,7 +648,7 @@ npm run test:livecode:e2e
 The browser project currently needs Node 20+ for Vite/Playwright. The runner
 fails early with a clear error if it is launched with an older Node binary.
 
-or through the Deno notebook task:
+or through the Deno livecode task:
 
 ```sh
 cd apps/deno-notebooks

@@ -16,8 +16,6 @@ The target system is:
 - dynamic module execution in Deno
 - runtime wait snapshots streamed back to CodeMirror
 
-This is not a Jupyter notebook architecture.
-
 ## Important Dependencies
 
 ### Deno
