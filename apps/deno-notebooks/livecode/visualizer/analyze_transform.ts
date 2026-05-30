@@ -5,7 +5,9 @@ import {
   CallExpression,
   FunctionDeclaration,
   FunctionExpression,
+  MethodDeclaration,
   Node,
+  ParameterDeclaration,
   Project,
   SourceFile,
   ts,
@@ -56,6 +58,11 @@ interface RootFunctionInfo {
 
 interface VisualScope {
   ctxNames: Set<string>;
+}
+
+interface VisualFunctionScope extends VisualScope {
+  body: Node;
+  owner: Node;
 }
 
 interface InstrumentedCallsiteData {
@@ -110,8 +117,11 @@ export function analyzeAndTransformTimedModule(
   const runtimeImport = request.runtimeImport ??
     "./timeContextVisualizerRuntime.ts";
   const instrumentedCalls = new Map<CallExpression, InstrumentedCallsiteData>();
+  const processedBodies = new Set<Node>();
 
-  processNode(root.fn.getBodyOrThrow(), { ctxNames: new Set([root.ctxName]) });
+  for (const scope of collectVisualFunctionScopes(sourceFile)) {
+    processVisualBody(scope);
+  }
 
   for (const callsite of collectSortedInstrumentedCallsites()) {
     const call = callsite.call;
@@ -164,7 +174,9 @@ export function analyzeAndTransformTimedModule(
   };
 
   function collectSortedInstrumentedCallsites(): InstrumentedCallsite[] {
-    return [...instrumentedCalls.entries()].map(([call, data]) => {
+    return [...instrumentedCalls.entries()].sort(([a], [b]) =>
+      a.getStart() - b.getStart()
+    ).map(([call, data]) => {
       const start = call.getStart();
       const end = call.getEnd();
       const displayName = call.getExpression().getText();
@@ -181,7 +193,32 @@ export function analyzeAndTransformTimedModule(
         kind: data.kind,
         displayName,
       };
-    }).sort((a, b) => a.call.getStart() - b.call.getStart());
+    });
+  }
+
+  function collectVisualFunctionScopes(sourceFile: SourceFile) {
+    return sourceFile.getDescendants()
+      .map((node): VisualFunctionScope | null => {
+        const body = getFunctionBody(node);
+        if (!body) return null;
+
+        const ctxNames = getTimeContextParameterNames(node);
+        if (ctxNames.length === 0) return null;
+
+        return {
+          body,
+          ctxNames: new Set(ctxNames),
+          owner: node,
+        };
+      })
+      .filter((scope): scope is VisualFunctionScope => Boolean(scope))
+      .sort((a, b) => a.owner.getStart() - b.owner.getStart());
+  }
+
+  function processVisualBody(scope: VisualFunctionScope) {
+    if (processedBodies.has(scope.body)) return;
+    processedBodies.add(scope.body);
+    processNode(scope.body, scope);
   }
 
   function processNode(node: Node, scope: VisualScope) {
@@ -294,7 +331,7 @@ export function analyzeAndTransformTimedModule(
 
     const nextScope = { ctxNames: new Set([...scope.ctxNames, callbackCtx]) };
     const body = callback.getBody();
-    processNode(body, nextScope);
+    processVisualBody({ body, owner: callback, ...nextScope });
   }
 
   function isSupportedAwaitedCall(call: CallExpression, ctxNames: Set<string>) {
@@ -370,6 +407,40 @@ export function analyzeAndTransformTimedModule(
       to: node.getEnd(),
     });
   }
+}
+
+function getFunctionBody(node: Node): Node | null {
+  if (Node.isArrowFunction(node)) return node.getBody();
+  if (Node.isFunctionDeclaration(node)) return node.getBody() ?? null;
+  if (Node.isFunctionExpression(node)) return node.getBody();
+  if (Node.isMethodDeclaration(node)) return node.getBody() ?? null;
+  return null;
+}
+
+function getTimeContextParameterNames(node: Node): string[] {
+  if (!hasParameters(node)) return [];
+  return node.getParameters()
+    .filter(isTimeContextParameter)
+    .map((parameter) => parameter.getName());
+}
+
+function hasParameters(
+  node: Node,
+): node is
+  | ArrowFunction
+  | FunctionDeclaration
+  | FunctionExpression
+  | MethodDeclaration {
+  return Node.isArrowFunction(node) ||
+    Node.isFunctionDeclaration(node) ||
+    Node.isFunctionExpression(node) ||
+    Node.isMethodDeclaration(node);
+}
+
+function isTimeContextParameter(parameter: ParameterDeclaration) {
+  const paramType = parameter.getTypeNode()?.getText() ??
+    parameter.getType().getText(parameter);
+  return /\bTimeContext\b/.test(paramType);
 }
 
 function failure(

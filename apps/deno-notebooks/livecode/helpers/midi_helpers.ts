@@ -1,4 +1,4 @@
-import { MidiAccess, MidiOutput, type PortInfo } from "../midi/mod.ts";
+import { MidiAccess, MidiOutput, type PortInfo } from "../../midi/mod.ts";
 
 export interface LivecodeMidiOutput {
   readonly name: string;

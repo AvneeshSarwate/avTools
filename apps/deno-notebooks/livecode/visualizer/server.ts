@@ -42,9 +42,9 @@ export interface LivecodeVisualizerServer {
 }
 
 const SERVER_VERSION = "0.1.0";
-const REPO_ROOT = fromFileUrl(new URL("../../..", import.meta.url));
+const REPO_ROOT = fromFileUrl(new URL("../../../..", import.meta.url));
 const DEFAULT_SESSION_ROOT = fromFileUrl(
-  new URL("../.avtools-livecode-sessions", import.meta.url),
+  new URL("../../.avtools-livecode-sessions", import.meta.url),
 );
 const CORS_HEADERS = {
   "access-control-allow-origin": "*",
@@ -285,6 +285,7 @@ export async function createLivecodeVisualizerServer(
   async function analyzeModule(
     requestBody: AnalyzeRequest,
   ): Promise<AnalyzeResponse> {
+    const analyzeStartedAt = performance.now();
     await log({
       type: "analyzeStart",
       moduleId: requestBody.moduleId,
@@ -315,6 +316,7 @@ export async function createLivecodeVisualizerServer(
         moduleId: requestBody.moduleId,
         sourceVersion: requestBody.sourceVersion,
         diagnosticCount: result.diagnostics.length,
+        durationMs: elapsedMs(analyzeStartedAt),
       });
       return result;
     }
@@ -328,6 +330,7 @@ export async function createLivecodeVisualizerServer(
       generatedRunId,
       callsiteCount: result.manifest.callsites.length,
       transformedModuleUri,
+      durationMs: elapsedMs(analyzeStartedAt),
     });
 
     return {
@@ -349,10 +352,17 @@ export async function createLivecodeVisualizerServer(
     launchQueue.push(async (ctx) => {
       const moduleUrl =
         `${requestBody.transformedModuleUri}?launch=${crypto.randomUUID()}`;
+      const importStartedAt = performance.now();
       const mod = await import(moduleUrl) as {
         runFunc?: (ctx: TimeContext) => Promise<void>;
         default?: (ctx: TimeContext) => Promise<void>;
       };
+      await log({
+        type: "moduleImported",
+        moduleId: requestBody.moduleId,
+        generatedRunId: requestBody.generatedRunId,
+        durationMs: elapsedMs(importStartedAt),
+      });
       const runFunc = mod.runFunc ?? mod.default;
       if (!runFunc) {
         throw new Error(
@@ -442,6 +452,10 @@ function resolvePath(path: string): string {
 
 function sanitizeFilePart(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function elapsedMs(startedAt: number): number {
+  return Math.round((performance.now() - startedAt) * 1000) / 1000;
 }
 
 function isAbortError(error: unknown): boolean {

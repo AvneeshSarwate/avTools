@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { basicSetup, EditorView } from 'codemirror'
+import { indentWithTab } from '@codemirror/commands'
 import { javascript } from '@codemirror/lang-javascript'
 import { lintGutter } from '@codemirror/lint'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { Decoration, showDialog, type DecorationSet } from '@codemirror/view'
+import { Decoration, keymap, showDialog, type DecorationSet } from '@codemirror/view'
 import { Compartment, StateEffect, StateField, type Extension } from '@codemirror/state'
 import { LSClient, LSCore, languageServerWithClient } from '@valtown/codemirror-ls'
 import { LSWebSocketTransport } from '@valtown/codemirror-ls/transport'
@@ -69,6 +70,24 @@ interface HistoryEntry {
   transformedModuleUri: string
 }
 
+interface PreparedBuild extends AnalyzeSuccess {
+  sourceText: string
+  serverBaseUrl: string
+}
+
+interface PreparedFailure extends AnalyzeFailure {
+  sourceText: string
+  serverBaseUrl: string
+}
+
+interface PreparedBuildSummary {
+  generatedRunId: string
+  sourceVersion: number
+  transformedModuleUri: string
+  sourceText: string
+  serverBaseUrl: string
+}
+
 interface LivecodeVisualizerDebug {
   lastManifestByModule: Record<string, VisualizerManifestMessage>
   receivedSnapshots: ActiveWaitSnapshot[]
@@ -80,10 +99,15 @@ interface LivecodeVisualizerDebug {
   lspErrors: string[]
   lspDiagnosticsByUri: Record<string, LspDiagnosticSummary[]>
   lspCompletionLabels: string[]
+  analyzeRequestCount: number
+  latestPreparedBuild: PreparedBuildSummary | null
   setSource?: (source: string) => void
   getSource?: () => string
   getModuleId?: () => string
   getLspSessionId?: () => string
+  getBuildStatus?: () => string
+  getAnalyzeRequestCount?: () => number
+  getLatestPreparedBuild?: () => PreparedBuildSummary | null
   focusEditorEnd?: () => void
   focusEditorAtOffset?: (offset: number) => void
   requestLspCompletionAtCursor?: () => Promise<string[]>
@@ -105,6 +129,7 @@ declare global {
 }
 
 const setWaitDecorationsEffect = StateEffect.define<SourceRange[]>()
+const BUILD_DEBOUNCE_MS = 100
 
 const waitLineDecoration = Decoration.line({
   attributes: { class: 'tcv-wait-line' }
@@ -164,6 +189,7 @@ const sourceVersion = ref(0)
 const status = ref('Disconnected')
 const socketState = ref<'closed' | 'connecting' | 'open'>('closed')
 const lspStatus = ref<'closed' | 'connecting' | 'open' | 'ready' | 'error'>('closed')
+const buildStatus = ref('not built')
 const diagnostics = ref<VisualizerDiagnostic[]>([])
 const manifest = ref<VisualizerManifestMessage | null>(null)
 const history = ref<HistoryEntry[]>([])
@@ -177,6 +203,16 @@ let lspClient: LSClient | null = null
 let lspSessionId = createLspSessionId()
 let pendingSnapshot: ActiveWaitSnapshot | null = null
 let animationFrame = 0
+let buildTimer = 0
+let analyzeSequence = 0
+let pendingAnalyze: {
+  moduleId: string
+  sourceText: string
+  serverBaseUrl: string
+  promise: Promise<PreparedBuild | null>
+} | null = null
+let latestBuild: PreparedBuild | null = null
+let latestFailure: PreparedFailure | null = null
 const lspCompartment = new Compartment()
 
 const debugState: LivecodeVisualizerDebug = {
@@ -189,7 +225,9 @@ const debugState: LivecodeVisualizerDebug = {
   lspRequests: [],
   lspErrors: [],
   lspDiagnosticsByUri: {},
-  lspCompletionLabels: []
+  lspCompletionLabels: [],
+  analyzeRequestCount: 0,
+  latestPreparedBuild: null
 }
 window.__livecodeVisualizerDebug = debugState
 
@@ -219,17 +257,22 @@ onMounted(async () => {
     doc: DEFAULT_LIVECODE_SOURCE,
     extensions: [
       basicSetup,
+      keymap.of([indentWithTab]),
       javascript({ typescript: true }),
       oneDark,
       lintGutter(),
       lspCompartment.of(createDenoLspExtensions()),
       waitDecorationField,
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged) scheduleAnalyzeCurrentSource()
+      }),
       visualizerTheme,
       EditorView.lineWrapping
     ],
     parent: editorHost.value
   })
   installDebugHooks()
+  scheduleAnalyzeCurrentSource(0)
 
   connectSnapshots()
   void connectDenoLsp()
@@ -237,6 +280,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (animationFrame) cancelAnimationFrame(animationFrame)
+  if (buildTimer) clearTimeout(buildTimer)
   snapshotsSocket?.close()
   editorView?.destroy()
   retireLspTransport(lspTransport)
@@ -245,41 +289,25 @@ onBeforeUnmount(() => {
 async function runModule() {
   if (!editorView) return
 
-  sourceVersion.value += 1
-  diagnostics.value = []
-  status.value = 'Analyzing'
-  activeIds.value = []
-  applyActiveIds([])
-
-  const response = await postJson<AnalyzeResponse>('/runtime/analyze', {
-    moduleId: moduleId.value,
-    sourceVersion: sourceVersion.value,
-    sourceText: editorView.state.doc.toString()
-  })
-
-  if (response.type === 'analyzeFailure') {
-    diagnostics.value = response.diagnostics
-    manifest.value = null
-    delete debugState.lastManifestByModule[moduleId.value]
-    status.value = `Blocked by ${response.diagnostics.length} diagnostic(s)`
+  const build = await ensureBuildForCurrentSource()
+  if (!build) {
+    status.value = diagnostics.value.length
+      ? `Blocked by ${diagnostics.value.length} diagnostic(s)`
+      : 'Blocked: build failed'
     return
   }
 
-  manifest.value = response.manifest
-  debugState.lastManifestByModule[moduleId.value] = response.manifest
-  history.value.unshift({
-    generatedRunId: response.generatedRunId,
-    sourceVersion: response.sourceVersion,
-    callsiteCount: response.manifest.callsites.length,
-    transformedModuleUri: response.transformedModuleUri
-  })
+  activeIds.value = []
+  applyActiveIds([])
 
+  manifest.value = build.manifest
+  debugState.lastManifestByModule[moduleId.value] = build.manifest
   await postJson('/runtime/launch', {
-    moduleId: response.moduleId,
-    generatedRunId: response.generatedRunId,
-    transformedModuleUri: response.transformedModuleUri
+    moduleId: build.moduleId,
+    generatedRunId: build.generatedRunId,
+    transformedModuleUri: build.transformedModuleUri
   })
-  status.value = `Running ${response.generatedRunId}`
+  status.value = `Running ${build.generatedRunId}`
 }
 
 async function stopModule() {
@@ -296,6 +324,149 @@ async function checkHealth() {
   status.value = `Connected to server ${response.serverVersion}`
   connectSnapshots()
   await reconnectDenoLsp()
+  scheduleAnalyzeCurrentSource(0)
+}
+
+function scheduleAnalyzeCurrentSource(delayMs = BUILD_DEBOUNCE_MS) {
+  if (!editorView) return
+  const sourceText = editorView.state.doc.toString()
+  const serverForRequest = normalizedServerBase()
+  if (latestBuild && isPreparedFor(latestBuild, sourceText, serverForRequest)) return
+  if (
+    pendingAnalyze?.moduleId === moduleId.value &&
+    pendingAnalyze?.sourceText === sourceText &&
+    pendingAnalyze.serverBaseUrl === serverForRequest
+  ) {
+    return
+  }
+
+  latestFailure = null
+  diagnostics.value = []
+  if (buildTimer) clearTimeout(buildTimer)
+  buildStatus.value = delayMs === 0 ? 'building' : 'build queued'
+  buildTimer = window.setTimeout(() => {
+    buildTimer = 0
+    void analyzeSource(sourceText)
+  }, delayMs)
+}
+
+async function ensureBuildForCurrentSource(): Promise<PreparedBuild | null> {
+  if (!editorView) return null
+  const sourceText = editorView.state.doc.toString()
+  const serverForRequest = normalizedServerBase()
+  if (latestBuild && isPreparedFor(latestBuild, sourceText, serverForRequest)) return latestBuild
+  if (latestFailure && isPreparedFor(latestFailure, sourceText, serverForRequest)) return null
+  if (
+    pendingAnalyze?.moduleId === moduleId.value &&
+    pendingAnalyze?.sourceText === sourceText &&
+    pendingAnalyze.serverBaseUrl === serverForRequest
+  ) {
+    const build = await pendingAnalyze.promise
+    return build && isPreparedFor(build, sourceText, serverForRequest) ? build : null
+  }
+
+  if (buildTimer) {
+    clearTimeout(buildTimer)
+    buildTimer = 0
+  }
+  const build = await analyzeSource(sourceText)
+  return build && isPreparedFor(build, sourceText, serverForRequest) ? build : null
+}
+
+async function analyzeSource(sourceText: string): Promise<PreparedBuild | null> {
+  const sequence = ++analyzeSequence
+  const requestSourceVersion = sourceVersion.value + 1
+  const requestModuleId = moduleId.value
+  const requestServerBaseUrl = normalizedServerBase()
+  sourceVersion.value = requestSourceVersion
+  buildStatus.value = `building v${requestSourceVersion}`
+  debugState.analyzeRequestCount += 1
+
+  const promise = postJson<AnalyzeResponse>('/runtime/analyze', {
+    moduleId: requestModuleId,
+    sourceVersion: requestSourceVersion,
+    sourceText
+  })
+    .then((response) => {
+      const isCurrentBuildTarget =
+        editorView?.state.doc.toString() === sourceText &&
+        response.moduleId === requestModuleId &&
+        moduleId.value === requestModuleId &&
+        normalizedServerBase() === requestServerBaseUrl
+      if (response.type === 'analyzeFailure') {
+        const failure: PreparedFailure = {
+          ...response,
+          sourceText,
+          serverBaseUrl: requestServerBaseUrl
+        }
+        if (isCurrentBuildTarget && sequence === analyzeSequence) {
+          latestBuild = null
+          latestFailure = failure
+          debugState.latestPreparedBuild = null
+          diagnostics.value = response.diagnostics
+          buildStatus.value = `blocked: ${response.diagnostics.length} diagnostic(s)`
+        }
+        return null
+      }
+
+      const build: PreparedBuild = { ...response, sourceText, serverBaseUrl: requestServerBaseUrl }
+      if (isCurrentBuildTarget && sequence === analyzeSequence) {
+        latestBuild = build
+        latestFailure = null
+        diagnostics.value = []
+        buildStatus.value = `ready v${response.sourceVersion}`
+        debugState.latestPreparedBuild = summarizePreparedBuild(build)
+        history.value.unshift({
+          generatedRunId: response.generatedRunId,
+          sourceVersion: response.sourceVersion,
+          callsiteCount: response.manifest.callsites.length,
+          transformedModuleUri: response.transformedModuleUri
+        })
+      }
+      return build
+    })
+    .catch((error) => {
+      if (editorView?.state.doc.toString() === sourceText && sequence === analyzeSequence) {
+        latestBuild = null
+        latestFailure = null
+        debugState.latestPreparedBuild = null
+        buildStatus.value = `build failed: ${stringifyError(error)}`
+      }
+      return null
+    })
+    .finally(() => {
+      if (pendingAnalyze?.promise === promise) pendingAnalyze = null
+    })
+
+  pendingAnalyze = {
+    moduleId: requestModuleId,
+    sourceText,
+    serverBaseUrl: requestServerBaseUrl,
+    promise
+  }
+  return await promise
+}
+
+function summarizePreparedBuild(build: PreparedBuild): PreparedBuildSummary {
+  return {
+    generatedRunId: build.generatedRunId,
+    sourceVersion: build.sourceVersion,
+    transformedModuleUri: build.transformedModuleUri,
+    sourceText: build.sourceText,
+    serverBaseUrl: build.serverBaseUrl
+  }
+}
+
+function isPreparedFor(
+  build: { sourceText: string; moduleId: string; serverBaseUrl: string },
+  sourceText: string,
+  serverBaseUrl: string
+) {
+  return (
+    build.sourceText === sourceText &&
+    build.moduleId === moduleId.value &&
+    build.serverBaseUrl === serverBaseUrl
+  )
 }
 
 function createDenoLspExtensions(): Extension[] {
@@ -504,6 +675,9 @@ function installDebugHooks() {
   debugState.getSource = () => editorView?.state.doc.toString() ?? ''
   debugState.getModuleId = () => moduleId.value
   debugState.getLspSessionId = () => lspSessionId
+  debugState.getBuildStatus = () => buildStatus.value
+  debugState.getAnalyzeRequestCount = () => debugState.analyzeRequestCount
+  debugState.getLatestPreparedBuild = () => debugState.latestPreparedBuild
   debugState.focusEditorEnd = () => {
     if (!editorView) throw new Error('Editor is not ready')
     editorView.dispatch({
@@ -561,6 +735,17 @@ function installDebugHooks() {
     debugState.lspErrors.length = 0
     debugState.lspDiagnosticsByUri = {}
     debugState.lspCompletionLabels = []
+    debugState.analyzeRequestCount = 0
+    debugState.latestPreparedBuild = null
+    analyzeSequence += 1
+    pendingAnalyze = null
+    latestBuild = null
+    latestFailure = null
+    if (buildTimer) {
+      clearTimeout(buildTimer)
+      buildTimer = 0
+    }
+    buildStatus.value = 'not built'
   }
 }
 
@@ -716,6 +901,7 @@ function clearLegacyLivecodeStorage() {
       <div class="status-strip">
         <span :data-state="socketState">snapshots: {{ socketState }}</span>
         <span :data-state="lspStatus">lsp: {{ lspStatus }}</span>
+        <span>build: {{ buildStatus }}</span>
         <span>status: {{ status }}</span>
         <span v-if="lastSnapshotSeq !== null">seq: {{ lastSnapshotSeq }}</span>
       </div>

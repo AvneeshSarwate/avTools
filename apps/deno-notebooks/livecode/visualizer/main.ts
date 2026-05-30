@@ -1,3 +1,5 @@
+// run from apps/deno-notebooks with - deno run --allow-all livecode/visualizer/main.ts --host 127.0.0.1 --port 7777 --log-level debug
+
 import { createLivecodeVisualizerServer } from "./server.ts";
 
 const args = parseArgs(Deno.args);

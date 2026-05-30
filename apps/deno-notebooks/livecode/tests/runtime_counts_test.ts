@@ -6,7 +6,7 @@ import {
   exitWait,
   getActiveWaitsByModule,
   visualizedAwait,
-} from "../livecode_visualizer/runtime.ts";
+} from "../visualizer/runtime.ts";
 
 Deno.test("runtime count map keeps ids active until count reaches zero", () => {
   clearAllWaits();

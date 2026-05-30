@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
-import { analyzeAndTransformTimedModule } from "../livecode_visualizer/analyze_transform.ts";
+import { analyzeAndTransformTimedModule } from "../visualizer/analyze_transform.ts";
 
 function analyze(sourceText: string) {
   return analyzeAndTransformTimedModule({
@@ -51,7 +51,7 @@ export default async function(ctx: TimeContext) {
   );
 });
 
-Deno.test("analyzer instruments root helper calls but not helper internals", () => {
+Deno.test("analyzer instruments root helper calls and local helper internals", () => {
   const result = analyze(`
 import type { TimeContext } from "@avtools/core-timing";
 
@@ -68,20 +68,43 @@ export default async function(ctx: TimeContext) {
   assertEquals(result.type, "analyzeSuccess");
   if (result.type !== "analyzeSuccess") return;
 
-  assertEquals(result.manifest.callsites.length, 2);
+  assertEquals(result.manifest.callsites.length, 3);
   assertEquals(result.manifest.callsites.map((c) => c.displayName), [
+    "ctx.waitSec",
     "helper",
     "helper",
   ]);
   assertStringIncludes(
     result.transformedCode,
-    '__tcvVisualizedAwait("module-test", "id_1", helper(ctx))',
+    '__tcvVisualizedAwait("module-test", "id_1", ctx.waitSec(0.20))',
   );
-  assert(
-    !result.transformedCode.includes(
-      '__tcvVisualizedAwait("module-test", "id_3"',
-    ),
+  assertStringIncludes(
+    result.transformedCode,
+    '__tcvVisualizedAwait("module-test", "id_2", helper(ctx))',
   );
+});
+
+Deno.test("analyzer instruments local arrow helpers with TimeContext parameters", () => {
+  const result = analyze(`
+import type { TimeContext } from "@avtools/core-timing";
+
+const helper = async (ctx: TimeContext) => {
+  await ctx.waitSec(0.20);
+};
+
+export default async function(ctx: TimeContext) {
+  await helper(ctx);
+}
+`);
+
+  assertEquals(result.type, "analyzeSuccess");
+  if (result.type !== "analyzeSuccess") return;
+
+  assertEquals(result.manifest.callsites.length, 2);
+  assertEquals(result.manifest.callsites.map((c) => c.displayName), [
+    "ctx.waitSec",
+    "helper",
+  ]);
 });
 
 Deno.test("analyzer walks inline branch callback bodies", () => {

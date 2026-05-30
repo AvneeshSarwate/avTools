@@ -11,7 +11,7 @@ type JsonRecord = Record<string, unknown>;
 
 const args = parseArgs(Deno.args);
 const repoRoot = resolvePath(
-  args["repo-root"] ?? fromFileUrl(new URL("../../..", import.meta.url)),
+  args["repo-root"] ?? fromFileUrl(new URL("../../../..", import.meta.url)),
 );
 const workspaceRoot = resolvePath(
   args["workspace-root"] ??

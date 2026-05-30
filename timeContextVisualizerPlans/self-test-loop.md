@@ -39,7 +39,7 @@ keep that process attached long enough to inspect logs.
 Recommended command shape:
 
 ```sh
-deno run --allow-all apps/deno-notebooks/livecode_visualizer/main.ts \
+deno run --allow-all apps/deno-notebooks/livecode/visualizer/main.ts \
   --host 127.0.0.1 \
   --port 7777 \
   --session-root apps/deno-notebooks/.avtools-livecode-sessions \
@@ -47,12 +47,18 @@ deno run --allow-all apps/deno-notebooks/livecode_visualizer/main.ts \
 ```
 
 Use `--port 7777` when manually checking the first browser page, because the UI
-defaults to `http://127.0.0.1:7777`. For automated server tests, `--port 0`
-lets the OS choose a free port. The server should print one clear
-machine-readable line when ready either way:
+defaults to `http://127.0.0.1:7777`. For automated server tests, `--port 0` lets
+the OS choose a free port. The server should print one clear machine-readable
+line when ready either way:
 
 ```json
-{"type":"serverReady","host":"127.0.0.1","port":54321,"baseUrl":"http://127.0.0.1:54321","sessionRoot":"..."}
+{
+  "type": "serverReady",
+  "host": "127.0.0.1",
+  "port": 54321,
+  "baseUrl": "http://127.0.0.1:54321",
+  "sessionRoot": "..."
+}
 ```
 
 This line is important because the agent can parse it from stdout and then use
@@ -112,7 +118,7 @@ diagnostics.
 Implemented server/runtime tests:
 
 ```txt
-apps/deno-notebooks/livecode_visualizer_tests/
+apps/deno-notebooks/livecode/tests/
   analyzer_transform_test.ts
   runtime_counts_test.ts
   dynamic_import_execution_test.ts
@@ -136,8 +142,8 @@ Implemented task shape:
 ```json
 {
   "tasks": {
-    "test:livecode:unit": "deno test --allow-env --allow-sys --allow-read --allow-write livecode_visualizer_tests/analyzer_transform_test.ts livecode_visualizer_tests/runtime_counts_test.ts livecode_visualizer_tests/dynamic_import_execution_test.ts",
-    "test:livecode:server": "deno test --allow-all livecode_visualizer_tests/protocol_smoke_test.ts livecode_visualizer_tests/server_smoke_test.ts",
+    "test:livecode:unit": "deno test --allow-env --allow-sys --allow-read --allow-write livecode/tests/analyzer_transform_test.ts livecode/tests/runtime_counts_test.ts livecode/tests/dynamic_import_execution_test.ts",
+    "test:livecode:server": "deno test --allow-all livecode/tests/protocol_smoke_test.ts livecode/tests/server_smoke_test.ts",
     "test:livecode:e2e": "cd ../browser-projections && npm run test:livecode:e2e",
     "test:livecode": "deno task test:livecode:unit && deno task test:livecode:server && deno task test:livecode:e2e"
   }
@@ -209,8 +215,8 @@ Comments marked `HIGHLIGHT` indicate source locations where the visualizer
 should create a manifest entry and where CodeMirror should be able to show an
 active wait decoration while that awaited call is pending.
 
-Comments marked `NO HIGHLIGHT` indicate synchronous code that should not
-produce a visualized callsite.
+Comments marked `NO HIGHLIGHT` indicate synchronous code that should not produce
+a visualized callsite.
 
 ### Shared Test Helper
 
@@ -238,7 +244,7 @@ function log(label: string, ctx?: TimeContext) {
   console.log(`[fixture] wall=${wall} logical=${logical} ${label}`);
 }
 
-export default async function(ctx: TimeContext) {
+export default async function (ctx: TimeContext) {
   log("start", ctx); // NO HIGHLIGHT
 
   await ctx.waitSec(0.20); // HIGHLIGHT: id linear_wait_1
@@ -290,7 +296,7 @@ async function helper(ctx: TimeContext, label: string) {
   log(`helper ${label} done`, ctx); // NO HIGHLIGHT
 }
 
-export default async function(ctx: TimeContext) {
+export default async function (ctx: TimeContext) {
   log("root start", ctx); // NO HIGHLIGHT
 
   await helper(ctx, "a"); // HIGHLIGHT: id helper_call_1
@@ -337,7 +343,7 @@ function log(label: string, ctx?: TimeContext) {
   console.log(`[fixture] wall=${wall} logical=${logical} ${label}`);
 }
 
-export default async function(ctx: TimeContext) {
+export default async function (ctx: TimeContext) {
   log("root start", ctx); // NO HIGHLIGHT
 
   ctx.branch(async (branchCtx) => {
@@ -374,8 +380,8 @@ Expected snapshots:
 Expected client checks:
 
 - manifest has three callsites
-- client sees snapshots containing branch and root IDs at the same time at
-  least once, unless timing cadence misses the short overlap
+- client sees snapshots containing branch and root IDs at the same time at least
+  once, unless timing cadence misses the short overlap
 - CodeMirror can highlight both active source ranges simultaneously
 
 ### Fixture: Repeated Same Callsite Count
@@ -389,7 +395,7 @@ function log(label: string, ctx?: TimeContext) {
   console.log(`[fixture] wall=${wall} logical=${logical} ${label}`);
 }
 
-export default async function(ctx: TimeContext) {
+export default async function (ctx: TimeContext) {
   for (const name of ["a", "b", "c"]) {
     ctx.branch(async (branchCtx) => {
       log(`branch ${name} start`, branchCtx); // NO HIGHLIGHT
@@ -427,7 +433,7 @@ Expected client checks:
 ```ts
 import type { TimeContext } from "@avtools/core-timing";
 
-export default async function(ctx: TimeContext) {
+export default async function (ctx: TimeContext) {
   console.log("[fixture] start");
   await fetch("https://example.com/data.json"); // ERROR: arbitrary await not tied to TimeContext.
   await ctx.waitSec(0.10); // not reached; transform should fail before execution
@@ -453,7 +459,7 @@ async function helper(ctx: TimeContext) {
   console.log("[fixture] helper done");
 }
 
-export default async function(ctx: TimeContext) {
+export default async function (ctx: TimeContext) {
   const p = helper(ctx); // ERROR: timed helper promise is created before visualized await wrapper.
   await p;
 }
@@ -475,7 +481,7 @@ async function helper(ctx: TimeContext) {
   await ctx.waitSec(0.10);
 }
 
-export default async function(ctx: TimeContext) {
+export default async function (ctx: TimeContext) {
   helper(ctx); // ERROR: unawaited Promise-like call that receives TimeContext.
   await ctx.waitSec(0.10);
 }
@@ -492,7 +498,7 @@ Expected behavior:
 ```ts
 import type { TimeContext } from "@avtools/core-timing";
 
-export default async function(ctx: TimeContext) {
+export default async function (ctx: TimeContext) {
   const method = "waitSec";
   await ctx[method](0.10); // ERROR: dynamic TimeContext method access is unsupported.
 }
@@ -502,7 +508,7 @@ Expected behavior:
 
 - transform fails
 - diagnostic range points at `ctx[method](0.10)`
- 
+
 ## Browser Snapshot Truth
 
 For browser-side verification, expose a test-only debug object on `window`:
@@ -664,7 +670,7 @@ async function playNote(ctx: TimeContext) {
   await ctx.waitSec(0.25);
 }
 
-export default async function(ctx: TimeContext) {
+export default async function (ctx: TimeContext) {
   await playNote(ctx);
   await ctx.wait(1);
 }
@@ -681,7 +687,7 @@ export default async function(ctx: TimeContext) {
 ```ts
 import type { TimeContext } from "@avtools/core-timing";
 
-export default async function(ctx: TimeContext) {
+export default async function (ctx: TimeContext) {
   await fetch("https://example.com");
 }
 ```

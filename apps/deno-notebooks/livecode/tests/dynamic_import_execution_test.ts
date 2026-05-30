@@ -1,18 +1,18 @@
 import { assertEquals } from "jsr:@std/assert@1";
 import { OfflineRunner, type TimeContext } from "@avtools/core-timing";
 import { pathToFileURL } from "node:url";
-import { analyzeAndTransformTimedModule } from "../livecode_visualizer/analyze_transform.ts";
+import { analyzeAndTransformTimedModule } from "../visualizer/analyze_transform.ts";
 import {
   clearAllWaits,
   getActiveWaitsByModule,
-} from "../livecode_visualizer/runtime.ts";
+} from "../visualizer/runtime.ts";
 
 Deno.test("generated module imports and reports active wait ids", async () => {
   clearAllWaits();
   const tempDir = await Deno.makeTempDir({ prefix: "tcv-dynamic-import-" });
   try {
     const runtimeUrl =
-      new URL("../livecode_visualizer/runtime.ts", import.meta.url).href;
+      new URL("../visualizer/runtime.ts", import.meta.url).href;
     const sourceText = `
 import type { TimeContext } from "@avtools/core-timing";
 

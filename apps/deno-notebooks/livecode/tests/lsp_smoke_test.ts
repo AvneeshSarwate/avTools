@@ -1,7 +1,7 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { fromFileUrl } from "jsr:@std/path@1";
-import { DEFAULT_LIVECODE_SOURCE } from "../../browser-projections/src/sketches/livecodeVisualizer/defaultSource.ts";
-import { createLivecodeVisualizerServer } from "../livecode_visualizer/server.ts";
+import { DEFAULT_LIVECODE_SOURCE } from "../../../browser-projections/src/sketches/livecodeVisualizer/defaultSource.ts";
+import { createLivecodeVisualizerServer } from "../visualizer/server.ts";
 
 interface JsonRpcMessage {
   jsonrpc: "2.0";
@@ -14,7 +14,7 @@ interface JsonRpcMessage {
 
 Deno.test("deno lsp bridge initializes and publishes diagnostics", async () => {
   const repoLocalSessionParent = fromFileUrl(
-    new URL("../.avtools-livecode-sessions", import.meta.url),
+    new URL("../../.avtools-livecode-sessions", import.meta.url),
   );
   await Deno.mkdir(repoLocalSessionParent, { recursive: true });
   const sessionRoot = await Deno.makeTempDir({

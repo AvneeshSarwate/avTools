@@ -5,8 +5,8 @@
 The initial design question was whether the runtime visualizer needed a full
 transitive timed-function analysis pass:
 
-- Detect functions that directly call `ctx.wait`, `ctx.waitSec`, `ctx.waitFrame`,
-  `ctx.branch`, or `ctx.branchWait`.
+- Detect functions that directly call `ctx.wait`, `ctx.waitSec`,
+  `ctx.waitFrame`, `ctx.branch`, or `ctx.branchWait`.
 - Build a call graph.
 - Mark any caller of those functions as part of the timed flow.
 - Use those results to decide where to insert runtime visualization hooks.
@@ -32,20 +32,20 @@ async function rootTimedProcess(ctx: TimeContext) {
 }
 ```
 
-The important visualization target is not necessarily every internal wait
-inside `playMelody`. The main goal is to show that the source-level callsite
+The important visualization target is not necessarily every internal wait inside
+`playMelody`. The main goal is to show that the source-level callsite
 `await playMelody(ctx, mel1)` is currently waiting somewhere underneath.
 
 ## Agreed Reframe
 
-The first transform does not need full transitive timed-function detection.
-It can instead perform timed callsite detection.
+The first transform does not need full transitive timed-function detection. It
+can instead perform timed callsite detection.
 
 Supported rule:
 
-> Inside a timed process function, instrument awaited call expressions where
-> the call either targets a known `TimeContext` method or receives a value typed
-> as `TimeContext` as one of its arguments.
+> Inside a timed process function, instrument awaited call expressions where the
+> call either targets a known `TimeContext` method or receives a value typed as
+> `TimeContext` as one of its arguments.
 
 This handles top-level abstractions naturally:
 
@@ -68,7 +68,7 @@ without needing to prove that `playMelody` transitively calls `ctx.wait`.
 Input:
 
 ```ts
-export default async function(ctx: TimeContext) {
+export default async function (ctx: TimeContext) {
   const mel1 = makeRandomMelody();
   const mel2 = makeRandomMelody();
 
@@ -81,9 +81,9 @@ export default async function(ctx: TimeContext) {
 Conceptual output:
 
 ```ts
-import { visualizedAwait } from "file:///.../livecode_visualizer/runtime.ts";
+import { visualizedAwait } from "file:///.../livecode/visualizer/runtime.ts";
 
-export default async function(ctx: TimeContext) {
+export default async function (ctx: TimeContext) {
   const mel1 = makeRandomMelody();
   const mel2 = makeRandomMelody();
 
@@ -180,7 +180,8 @@ Example singleton runtime module:
 const activeWaitCounts = new Map<string, Map<string, number>>();
 
 export function enterWait(moduleId: string, id: string) {
-  const moduleCounts = activeWaitCounts.get(moduleId) ?? new Map<string, number>();
+  const moduleCounts = activeWaitCounts.get(moduleId) ??
+    new Map<string, number>();
   moduleCounts.set(id, (moduleCounts.get(id) ?? 0) + 1);
   activeWaitCounts.set(moduleId, moduleCounts);
   publishSnapshot();
@@ -211,7 +212,9 @@ export async function visualizedAwait<T>(
 
 export function getActiveWaitsByModule() {
   return Object.fromEntries(
-    [...activeWaitCounts].map(([moduleId, counts]) => [moduleId, [...counts.keys()]]),
+    [...activeWaitCounts].map((
+      [moduleId, counts],
+    ) => [moduleId, [...counts.keys()]]),
   );
 }
 ```
@@ -219,16 +222,16 @@ export function getActiveWaitsByModule() {
 Generated code can then import the helper directly:
 
 ```ts
-import { visualizedAwait } from "file:///.../livecode_visualizer/runtime.ts";
+import { visualizedAwait } from "file:///.../livecode/visualizer/runtime.ts";
 
-export default async function(ctx: TimeContext) {
+export default async function (ctx: TimeContext) {
   await visualizedAwait("module_1", "uid_1", playMelody(ctx, mel1));
   await visualizedAwait("module_1", "uid_2", ctx.wait(1));
 }
 ```
 
 The current implementation imports `visualizedAwait` from the repo runtime file
-`apps/deno-notebooks/livecode_visualizer/runtime.ts`; it does not copy a helper
+`apps/deno-notebooks/livecode/visualizer/runtime.ts`; it does not copy a helper
 module into each generated session directory.
 
 `moduleId` is part of the first protocol so multiple editor modules can be
@@ -260,8 +263,8 @@ The manifest is still required because the browser needs to know which source
 range each generated UUID belongs to.
 
 IDs can become deterministic later if preserving marker identity across edits,
-debugging transformed output, or comparing revisions becomes important. A
-future deterministic ID can be derived from:
+debugging transformed output, or comparing revisions becomes important. A future
+deterministic ID can be derived from:
 
 - source file identity
 - original source range
@@ -277,7 +280,7 @@ runtime visualization path should not depend on sourcemaps.
 Initial supported root convention:
 
 ```ts
-export default async function(ctx: TimeContext) {
+export default async function (ctx: TimeContext) {
   // user code
 }
 ```
@@ -330,13 +333,13 @@ const { waitSec } = ctx;
 await waitSec(1);
 ```
 
-Aggressive mangling of the `ctx` instance is considered user error. The
-analysis only needs to be robust under normal usage.
+Aggressive mangling of the `ctx` instance is considered user error. The analysis
+only needs to be robust under normal usage.
 
 Detectable unsupported async patterns inside the default exported timed process
 should be hard errors for now. The expected authoring style is happy-path,
-direct code in the live editor, and the transform should fail clearly instead
-of silently producing misleading visualization.
+direct code in the live editor, and the transform should fail clearly instead of
+silently producing misleading visualization.
 
 Errors should include:
 
@@ -375,8 +378,8 @@ is simpler and matches the desired user experience better.
 
 Imported helpers are intentionally opaque in this model. For example,
 `await playMelody(ctx, melody)` highlights the callsite written in the custom
-editor module. The transform does not need to inspect or instrument the
-internal waits inside `playMelody`.
+editor module. The transform does not need to inspect or instrument the internal
+waits inside `playMelody`.
 
 ## Runtime Event Flow
 

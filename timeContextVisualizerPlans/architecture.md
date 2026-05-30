@@ -19,7 +19,7 @@ Manual development uses two local processes:
 
 ```sh
 cd apps/deno-notebooks
-deno run --allow-all livecode_visualizer/main.ts --host 127.0.0.1 --port 7777 --log-level debug
+deno run --allow-all livecode/visualizer/main.ts --host 127.0.0.1 --port 7777 --log-level debug
 ```
 
 ```sh
@@ -66,54 +66,54 @@ active wait snapshots, and CodeMirror wait decorations.
 
 ### Deno Server And Runtime
 
-- `apps/deno-notebooks/livecode_visualizer/main.ts` is the CLI entrypoint for
+- `apps/deno-notebooks/livecode/visualizer/main.ts` is the CLI entrypoint for
   the local Deno visualizer server.
-- `apps/deno-notebooks/livecode_visualizer/server.ts` owns HTTP/WebSocket
+- `apps/deno-notebooks/livecode/visualizer/server.ts` owns HTTP/WebSocket
   routes, session directories, analysis/transform requests, generated module
   writes, dynamic imports, parent `TimeContext` launch queue, snapshot
   broadcasting, and LSP WebSocket server setup.
-- `apps/deno-notebooks/livecode_visualizer/lsp_proxy.ts` runs as the spawned
-  LSP proxy process. It creates a real temp workspace, writes a normalized
+- `apps/deno-notebooks/livecode/visualizer/lsp_proxy.ts` runs as the spawned LSP
+  proxy process. It creates a real temp workspace, writes a normalized
   `deno.json`, mirrors editor documents into files, and runs `deno lsp -q`.
   These synthetic LSP workspaces live under
   `$TMPDIR/avtools-livecode-lsp-workspaces/...`, outside the repo, so Deno does
   not treat the repo root `deno.json` as the owning workspace and ignore the
   generated LSP config.
-- `apps/deno-notebooks/livecode_visualizer/analyze_transform.ts` uses
-  ts-morph and magic-string to find the default timed root, detect supported
-  awaited wait/helper callsites, reject unsupported async patterns, wrap calls
-  in `visualizedAwait`, and produce the manifest.
-- `apps/deno-notebooks/livecode_visualizer/runtime.ts` is the singleton
-  runtime store used by generated modules. It tracks active wait counts by
-  `moduleId` and callsite UUID and produces active wait snapshots.
-- `apps/deno-notebooks/livecode_visualizer/protocol.ts` defines the shared
+- `apps/deno-notebooks/livecode/visualizer/analyze_transform.ts` uses ts-morph
+  and magic-string to find the default timed root, detect supported awaited
+  wait/helper callsites, reject unsupported async patterns, wrap calls in
+  `visualizedAwait`, and produce the manifest.
+- `apps/deno-notebooks/livecode/visualizer/runtime.ts` is the singleton runtime
+  store used by generated modules. It tracks active wait counts by `moduleId`
+  and callsite UUID and produces active wait snapshots.
+- `apps/deno-notebooks/livecode/visualizer/protocol.ts` defines the shared
   request/response, diagnostic, manifest, launch, stop, health, and snapshot
   message shapes.
-- `apps/deno-notebooks/livecode_visualizer/generated_run_id.ts` wraps generated
+- `apps/deno-notebooks/livecode/visualizer/generated_run_id.ts` wraps generated
   run/build ID creation so UUIDs can later be replaced with a human-readable
   naming scheme.
+- `apps/deno-notebooks/livecode/helpers/` contains local helper modules meant
+  for livecode scripts, including the eager MIDI device wrapper exposed as
+  `midi-helpers`.
 - `apps/deno-notebooks/deno.json` wires Deno imports and the livecode test
   tasks.
 
 ### Tests
 
-- `apps/deno-notebooks/livecode_visualizer_tests/analyzer_transform_test.ts`
-  verifies the transform contract for linear waits, helper awaits, inline
-  branch callbacks, and current transform-blocking diagnostics.
-- `apps/deno-notebooks/livecode_visualizer_tests/runtime_counts_test.ts`
-  verifies the singleton active wait count map and `visualizedAwait` cleanup
-  behavior.
-- `apps/deno-notebooks/livecode_visualizer_tests/dynamic_import_execution_test.ts`
-  verifies generated module files can be imported and run with a real
-  `TimeContext`.
-- `apps/deno-notebooks/livecode_visualizer_tests/protocol_smoke_test.ts`
-  verifies health, analyze, launch, snapshot, and stop over HTTP/WebSocket
-  without a browser.
-- `apps/deno-notebooks/livecode_visualizer_tests/lsp_smoke_test.ts` verifies
-  the `/lsp` bridge reaches real `deno lsp` diagnostics and that
-  `@avtools/core-timing` resolves for `ctx.wait` / `ctx.waitSec` completion.
-- `apps/deno-notebooks/livecode_visualizer_tests/server_smoke_test.ts` spawns
-  the server CLI, parses `serverReady`, and checks the server responds.
+- `apps/deno-notebooks/livecode/tests/analyzer_transform_test.ts` verifies the
+  transform contract for linear waits, helper awaits, inline branch callbacks,
+  and current transform-blocking diagnostics.
+- `apps/deno-notebooks/livecode/tests/runtime_counts_test.ts` verifies the
+  singleton active wait count map and `visualizedAwait` cleanup behavior.
+- `apps/deno-notebooks/livecode/tests/dynamic_import_execution_test.ts` verifies
+  generated module files can be imported and run with a real `TimeContext`.
+- `apps/deno-notebooks/livecode/tests/protocol_smoke_test.ts` verifies health,
+  analyze, launch, snapshot, and stop over HTTP/WebSocket without a browser.
+- `apps/deno-notebooks/livecode/tests/lsp_smoke_test.ts` verifies the `/lsp`
+  bridge reaches real `deno lsp` diagnostics and that `@avtools/core-timing`
+  resolves for `ctx.wait` / `ctx.waitSec` completion.
+- `apps/deno-notebooks/livecode/tests/server_smoke_test.ts` spawns the server
+  CLI, parses `serverReady`, and checks the server responds.
 
 ## Current Analyzer Scope
 
@@ -145,5 +145,5 @@ deno task test:livecode:server
 deno task test:livecode:e2e
 ```
 
-The browser E2E runner requires Node 20+ because the browser app uses Vite 7
-and Playwright.
+The browser E2E runner requires Node 20+ because the browser app uses Vite 7 and
+Playwright.

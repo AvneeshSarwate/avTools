@@ -1,10 +1,10 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { createLivecodeVisualizerServer } from "../livecode_visualizer/server.ts";
+import { createLivecodeVisualizerServer } from "../visualizer/server.ts";
 import type {
   ActiveWaitSnapshot,
   AnalyzeFailure,
   AnalyzeSuccess,
-} from "../livecode_visualizer/protocol.ts";
+} from "../visualizer/protocol.ts";
 
 Deno.test("server analyze, launch, snapshot, and stop protocol smoke", async () => {
   const sessionRoot = await Deno.makeTempDir({ prefix: "tcv-server-smoke-" });

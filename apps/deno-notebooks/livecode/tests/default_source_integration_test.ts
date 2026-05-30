@@ -1,9 +1,9 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { fromFileUrl } from "jsr:@std/path@1";
-import { DEFAULT_LIVECODE_SOURCE } from "../../browser-projections/src/sketches/livecodeVisualizer/defaultSource.ts";
-import { analyzeAndTransformTimedModule } from "../livecode_visualizer/analyze_transform.ts";
-import type { LivecodeMidiOutput } from "../livecode_helpers/midi_helpers.ts";
-import type { PortInfo } from "../midi/mod.ts";
+import { DEFAULT_LIVECODE_SOURCE } from "../../../browser-projections/src/sketches/livecodeVisualizer/defaultSource.ts";
+import { analyzeAndTransformTimedModule } from "../visualizer/analyze_transform.ts";
+import type { LivecodeMidiOutput } from "../helpers/midi_helpers.ts";
+import type { PortInfo } from "../../midi/mod.ts";
 
 Deno.test("built-in editor source checks, analyzes, and initializes MIDI helpers", async () => {
   const tempDir = await Deno.makeTempDir({
@@ -18,7 +18,7 @@ Deno.test("built-in editor source checks, analyzes, and initializes MIDI helpers
       args: [
         "check",
         "--config",
-        fromFileUrl(new URL("../../../deno.json", import.meta.url)),
+        fromFileUrl(new URL("../../../../deno.json", import.meta.url)),
         sourcePath,
       ],
       stdout: "piped",
@@ -39,7 +39,7 @@ Deno.test("built-in editor source checks, analyzes, and initializes MIDI helpers
       sourceUri: sourcePath,
       sourceText: DEFAULT_LIVECODE_SOURCE,
       generatedRunId: "default-source-run",
-      runtimeImport: "../livecode_visualizer/runtime.ts",
+      runtimeImport: "../visualizer/runtime.ts",
       idFactory: ({ index }) => `default_source_wait_${index + 1}`,
     });
 
@@ -48,6 +48,8 @@ Deno.test("built-in editor source checks, analyzes, and initializes MIDI helpers
     assertEquals(
       analysis.manifest.callsites.map((entry) => entry.displayName),
       [
+        "noteCtx.waitSec",
+        "ctx.waitSec",
         "ctx.waitSec",
       ],
     );

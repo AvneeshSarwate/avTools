@@ -18,7 +18,7 @@ if (nodeMajor < 20) {
 const browserProjectRoot = path.resolve(__dirname, '..')
 const repoRoot = path.resolve(browserProjectRoot, '../..')
 const denoNotebookRoot = path.join(repoRoot, 'apps/deno-notebooks')
-const denoServerPath = path.join(denoNotebookRoot, 'livecode_visualizer/main.ts')
+const denoServerPath = path.join(denoNotebookRoot, 'livecode/visualizer/main.ts')
 const sessionRoot = path.join(
   denoNotebookRoot,
   '.avtools-livecode-sessions',
@@ -70,9 +70,11 @@ try {
   )
   assertNoBrowserLspErrors('reload')
 
+  await runEditorTabIndentCase()
   await runLspDiagnosticsCase()
   await runLspDotCompletionCase()
   await runLspCtxCompletionCase()
+  await runPrebuiltLaunchCase()
   await runLinearWaitsCase()
   await runAwaitedHelperCase()
   await runRepeatedBranchCountCase()
@@ -98,13 +100,47 @@ try {
   await stopProcess(serverProc)
 }
 
+async function runEditorTabIndentCase() {
+  const source = `export default function example() {
+
+}
+`
+  const expected = 'export default function example() {\n' + '  \n' + '}\n'
+
+  await setSourceOnly(source)
+  await page.evaluate(
+    (offset) => window.__livecodeVisualizerDebug?.focusEditorAtOffset?.(offset),
+    source.indexOf('\n') + 1
+  )
+  await page.keyboard.press('Tab')
+  await waitForPageValue(
+    (expected) => window.__livecodeVisualizerDebug?.getSource?.() === expected,
+    'CodeMirror Tab indentation',
+    2_000,
+    expected
+  )
+  const focusedEditor = await page.evaluate(() =>
+    document.activeElement?.classList.contains('cm-content')
+  )
+  assert(focusedEditor, 'Tab should keep focus inside the CodeMirror editor')
+}
+
 async function runLspDiagnosticsCase() {
   const source = `const typedValue: string = 1;
 `
 
   await setSourceOnly(source)
   const diagnostics = await waitForPageValue(
-    () => window.__livecodeVisualizerDebug?.lspDiagnosticsByUri['file:///main.ts'] ?? null,
+    () => {
+      const diagnostics =
+        window.__livecodeVisualizerDebug?.lspDiagnosticsByUri['file:///main.ts'] ?? []
+      return diagnostics.some(
+        (diagnostic) =>
+          diagnostic.message.includes('number') && diagnostic.message.includes('string')
+      )
+        ? diagnostics
+        : null
+    },
     'deno lsp diagnostics',
     15_000
   )
@@ -180,6 +216,38 @@ export default async function(ctx: TimeContext) {
   assert(labels?.includes('waitSec'), 'Deno LSP completion should include ctx.waitSec')
 }
 
+async function runPrebuiltLaunchCase() {
+  const source = `import type { TimeContext } from "@avtools/core-timing";
+
+export default async function(ctx: TimeContext) {
+  console.log("[fixture] prebuilt start", ctx.time);
+  await ctx.waitSec(0.08);
+  console.log("[fixture] prebuilt done", ctx.time);
+}
+`
+
+  await setSourceOnly(source)
+  await waitForPreparedBuild(source, 'prebuilt launch build')
+  const analyzeCountBeforeRun = await getAnalyzeRequestCount()
+
+  await page.getByTestId('run-module').click()
+  const manifest = await waitForManifest(1, 'prebuilt launch manifest')
+  assertDeepEqual(
+    manifest.callsites.map((callsite) => callsite.displayName),
+    ['ctx.waitSec'],
+    'prebuilt launch callsite display names'
+  )
+  const analyzeCountAfterRun = await getAnalyzeRequestCount()
+  assert(
+    analyzeCountAfterRun === analyzeCountBeforeRun,
+    `Run should use the cached prepared build without another analyze request; before=${analyzeCountBeforeRun} after=${analyzeCountAfterRun}`
+  )
+  const [waitId] = manifest.callsites.map((callsite) => callsite.id)
+  await waitForAppliedIds([waitId], 'prebuilt launch wait highlight')
+  await waitForAppliedIds([], 'prebuilt launch highlights clear', 8_000)
+  assertServerLogsInOrder(['[fixture] prebuilt start', '[fixture] prebuilt done'])
+}
+
 async function runLinearWaitsCase() {
   const source = `import type { TimeContext } from "@avtools/core-timing";
 
@@ -248,18 +316,18 @@ export default async function(ctx: TimeContext) {
 `
 
   await setSourceAndRun(source)
-  const manifest = await waitForManifest(2, 'helper manifest')
+  const manifest = await waitForManifest(3, 'helper manifest')
   assertDeepEqual(
     manifest.callsites.map((callsite) => callsite.displayName),
-    ['helper', 'helper'],
-    'helper callsites are root-level helper awaits'
+    ['ctx.waitSec', 'helper', 'helper'],
+    'helper callsites include local helper internals and root-level helper awaits'
   )
 
-  const [firstId, secondId] = manifest.callsites.map((callsite) => callsite.id)
-  await waitForAppliedIds([firstId], 'helper first call highlight')
-  await waitForAppliedIds([secondId], 'helper second call highlight', 8_000)
+  const [internalId, firstId, secondId] = manifest.callsites.map((callsite) => callsite.id)
+  await waitForAppliedIds([firstId, internalId], 'helper first call highlight')
+  await waitForAppliedIds([secondId, internalId], 'helper second call highlight', 8_000)
   await waitForAppliedIds([], 'helper highlights clear', 8_000)
-  assertNoCallsiteDisplayName(manifest, 'ctx.waitSec')
+  await assertHighlightHistoryIncludes(internalId, 'helper internal wait applied history')
   assertServerLogsInOrder([
     '[fixture] helper',
     'root start',
@@ -402,6 +470,24 @@ async function setSourceOnly(source) {
     'editor source update',
     2_000,
     source
+  )
+}
+
+async function waitForPreparedBuild(source, label) {
+  return await waitForPageValue(
+    (expectedSource) => {
+      const build = window.__livecodeVisualizerDebug?.getLatestPreparedBuild?.()
+      return build?.sourceText === expectedSource ? build : null
+    },
+    label,
+    15_000,
+    source
+  )
+}
+
+async function getAnalyzeRequestCount() {
+  return await page.evaluate(
+    () => window.__livecodeVisualizerDebug?.getAnalyzeRequestCount?.() ?? 0
   )
 }
 

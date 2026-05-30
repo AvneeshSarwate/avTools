@@ -4,9 +4,9 @@ import { dirname, fromFileUrl } from "jsr:@std/path@1";
 Deno.test("server CLI prints serverReady and responds to health", async () => {
   const sessionRoot = await Deno.makeTempDir({ prefix: "tcv-cli-smoke-" });
   const serverMain = fromFileUrl(
-    new URL("../livecode_visualizer/main.ts", import.meta.url),
+    new URL("../visualizer/main.ts", import.meta.url),
   );
-  const notebookRoot = dirname(dirname(serverMain));
+  const notebookRoot = dirname(dirname(dirname(serverMain)));
   const command = new Deno.Command(Deno.execPath(), {
     args: [
       "run",
