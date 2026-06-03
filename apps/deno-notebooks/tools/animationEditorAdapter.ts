@@ -843,6 +843,11 @@ function createAnimationEditorAdapter(): ComponentAdapter<
     .toolbar-button:active {
       background: linear-gradient(180deg, var(--tp-button-background-color-active), #b6c2d1);
     }
+    .toolbar-button[data-active='true'] {
+      border-color: rgba(26, 91, 155, 0.45);
+      background: linear-gradient(180deg, #d8e9fb, #bfd4ea);
+      color: #123a5f;
+    }
     .toolbar-button[disabled] {
       cursor: default;
       opacity: 0.55;
@@ -1000,7 +1005,8 @@ function createAnimationEditorAdapter(): ComponentAdapter<
         <button type="button" class="toolbar-button" id="delete-btn">Delete</button>
       </div>
       <div class="toolbar-row toolbar-row-playback">
-        <button type="button" class="toolbar-button" id="play-toggle-btn">Play</button>
+        <button type="button" class="toolbar-button" id="play-btn">Play</button>
+        <button type="button" class="toolbar-button" id="stop-btn">Stop</button>
         <div class="toolbar-field">
           <label class="toolbar-label" for="scrub-slider">Playhead</label>
           <div class="toolbar-scrub">
@@ -1099,7 +1105,8 @@ function createAnimationEditorAdapter(): ComponentAdapter<
         !exportButton ||
         !syncToggle ||
         !deleteButton ||
-        !playToggleButton ||
+        !playButton ||
+        !stopButton ||
         !scrubSlider ||
         !scrubReadout ||
         !durationInput ||
@@ -1154,7 +1161,8 @@ function createAnimationEditorAdapter(): ComponentAdapter<
       durationInput.value = String(duration)
       speedInput.value = String(Number.isFinite(managementState.playback.speed) ? managementState.playback.speed : 1)
       loopToggle.checked = !!managementState.playback.loop
-      playToggleButton.textContent = managementState.playback.playing ? 'Stop' : 'Play'
+      playButton.dataset.active = String(!!managementState.playback.playing)
+      stopButton.dataset.active = String(!managementState.playback.playing)
       scrubReadout.textContent = currentTime.toFixed(3) + ' / ' + duration.toFixed(3)
     }
 
@@ -1238,7 +1246,14 @@ function createAnimationEditorAdapter(): ComponentAdapter<
 
     const sendManagementMessage = (message) => {
       const socket = managementSocketRef.current
-      if (!socket || socket.readyState !== originalWebSocket.OPEN) return false
+      if (!socket || socket.readyState !== 1) {
+        console.warn('[Animation Editor] Management socket is not open', {
+          hasSocket: !!socket,
+          readyState: socket?.readyState,
+          message,
+        })
+        return false
+      }
       socket.send(JSON.stringify(message))
       return true
     }
@@ -1255,7 +1270,8 @@ function createAnimationEditorAdapter(): ComponentAdapter<
     const exportButton = document.getElementById('export-btn')
     const deleteButton = document.getElementById('delete-btn')
     const syncToggle = document.getElementById('sync-toggle')
-    const playToggleButton = document.getElementById('play-toggle-btn')
+    const playButton = document.getElementById('play-btn')
+    const stopButton = document.getElementById('stop-btn')
     const scrubSlider = document.getElementById('scrub-slider')
     const scrubReadout = document.getElementById('scrub-readout')
     const durationInput = document.getElementById('duration-input')
@@ -1321,8 +1337,16 @@ function createAnimationEditorAdapter(): ComponentAdapter<
         sendManagementMessage({ type: 'toggleSync', enabled: syncToggle.checked })
       })
 
-      playToggleButton?.addEventListener('click', () => {
-        sendManagementMessage({ type: 'setPlaying', playing: !managementState.playback.playing })
+      playButton?.addEventListener('click', () => {
+        managementState.playback.playing = true
+        updateUiFromManagementState()
+        sendManagementMessage({ type: 'setPlaying', playing: true })
+      })
+
+      stopButton?.addEventListener('click', () => {
+        managementState.playback.playing = false
+        updateUiFromManagementState()
+        sendManagementMessage({ type: 'setPlaying', playing: false })
       })
 
       scrubSlider?.addEventListener('input', () => {
@@ -1462,9 +1486,9 @@ function createAnimationEditorAdapter(): ComponentAdapter<
           if (playback) {
             playback.currentTime = time
             clampPlaybackTime(playback)
-            sendPlaybackState(session)
           }
           session.client?.scrubToTime(time)
+          sendPlaybackState(session)
         },
 
         scrubAndEvaluate(time: number): void {
@@ -1472,9 +1496,9 @@ function createAnimationEditorAdapter(): ComponentAdapter<
           if (playback) {
             playback.currentTime = time
             clampPlaybackTime(playback)
-            sendPlaybackState(session)
           }
           session.client?.scrubAndEvaluate(time)
+          sendPlaybackState(session)
         },
 
         setCallbacks(callbacks: TrackCallbacks): void {

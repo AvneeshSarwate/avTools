@@ -6,8 +6,6 @@
 
 import type { ShaderSource } from "@avtools/shader-fx/raw";
 import { GrainEffect } from "@avtools/shader-fx/generated-raw/shaders/grain.frag.raw.generated.ts";
-import { HorizontalBlurEffect } from "@avtools/shader-fx/generated-raw/shaders/horizontalBlur.frag.raw.generated.ts";
-import { VerticalBlurEffect } from "@avtools/shader-fx/generated-raw/shaders/verticalBlur.frag.raw.generated.ts";
 import { launch } from "@avtools/core-timing";
 import { dirname } from "jsr:@std/path@1";
 import {
@@ -39,7 +37,6 @@ const VIDEO_OUTPUT_FORMAT: GPUTextureFormat = "rgba8unorm";
 const FX_FORMAT: GPUTextureFormat = "rgba8unorm";
 const CLEAR_COLOR: GPUColor = { r: 0, g: 0, b: 0, a: 1 };
 const DEFAULT_ANIMATION = "default";
-const DEFAULT_GRAIN_AMOUNT = 0.075;
 const DEFAULT_HAPPACK_PATH = `${
   Deno.env.get("HOME") ?? ""
 }/Downloads/Local_dialect_avneesh_promo_chunk4.happack`;
@@ -62,13 +59,27 @@ const paramDefs = {
   },
   effects: {
     _folder: "Effects",
-    blurRadius: { value: 0, min: 0, max: 32, step: 1, label: "Blur Radius" },
+    displacementPixels: {
+      value: 1.6,
+      min: 0,
+      max: 100,
+      step: 0.05,
+      label: "Displacement Pixels",
+    },
+    grainCellSize: {
+      value: 2,
+      min: 1,
+      max: 16,
+      step: 1,
+      label: "Grain Cell Size",
+    },
   },
 } as const;
 
 type FxParams = {
   frameNumber: number;
-  blurRadius: number;
+  displacementPixels: number;
+  grainCellSize: number;
 };
 
 const sourceParams = {
@@ -86,6 +97,8 @@ const exportParams = {
   preset: "hapq" as ExportPreset,
   fps: 60,
   outputPath: "",
+  run: false,
+  rate: "0.0x",
   status: "idle",
 };
 
@@ -120,6 +133,14 @@ let lastPaneRefreshMs = 0;
 let lastRenderMs = performance.now();
 let fpsSmooth = 60;
 let exporting = false;
+let exportCancelRequested = false;
+let exportChild: Deno.ChildProcess | null = null;
+
+class ExportCancelledError extends Error {
+  constructor() {
+    super("Export stopped");
+  }
+}
 
 class RgbaReadback {
   readonly bytesPerRow: number;
@@ -236,8 +257,19 @@ function setupPane(pane: WindowTweakpane): void {
     label: "FPS",
   });
   exportFolder.addBinding(exportParams, "outputPath", { label: "Output Path" });
-  exportFolder.addButton({ title: "Export Video" }).on("click", () => {
-    void exportVideo();
+  exportFolder.addBinding(exportParams, "run", { label: "Start / Stop" }).on(
+    "change",
+    (event) => {
+      if (event.value) {
+        void exportVideo();
+      } else {
+        requestExportStop();
+      }
+    },
+  );
+  exportFolder.addBinding(exportParams, "rate", {
+    readonly: true,
+    label: "Rate",
   });
   exportFolder.addBinding(exportParams, "status", {
     readonly: true,
@@ -331,22 +363,6 @@ const placeholder = device.createTexture({
 const grain = new GrainEffect(
   device,
   { src: placeholder },
-  WIDTH,
-  HEIGHT,
-  FX_FORMAT,
-  CLEAR_COLOR,
-);
-const horizontalBlur = new HorizontalBlurEffect(
-  device,
-  { src: grain },
-  WIDTH,
-  HEIGHT,
-  FX_FORMAT,
-  CLEAR_COLOR,
-);
-const verticalBlur = new VerticalBlurEffect(
-  device,
-  { src: horizontalBlur },
   WIDTH,
   HEIGHT,
   FX_FORMAT,
@@ -469,7 +485,7 @@ function renderFrame(): ShaderSource {
 
   if (exporting) {
     refreshPane(now);
-    return verticalBlur;
+    return grain;
   }
 
   const rendered = renderFxFrame(animationPlayback.currentTime);
@@ -492,23 +508,15 @@ function renderFxFrame(animationTimeSeconds: number): ShaderSource | null {
     return null;
   }
 
-  const blurPixels = Math.max(0, Math.round(params.blurRadius));
   grain.setSrcs({ src: videoTexture });
   grain.setUniforms({
-    amount: DEFAULT_GRAIN_AMOUNT,
+    deviationPixels: params.displacementPixels,
     time: animationTimeSeconds,
     frameNumber: params.frameNumber,
+    cellSize: params.grainCellSize,
   });
   grain.render();
-
-  horizontalBlur.setSrcs({ src: grain });
-  horizontalBlur.setUniforms({ pixels: blurPixels, resolution: WIDTH });
-  horizontalBlur.render();
-
-  verticalBlur.setSrcs({ src: horizontalBlur });
-  verticalBlur.setUniforms({ pixels: blurPixels, resolution: HEIGHT });
-  verticalBlur.render();
-  return verticalBlur;
+  return grain;
 }
 
 function updateVideoFrame(): GPUTexture | null {
@@ -622,11 +630,28 @@ function seedDefaultVideoAnimation(): void {
       };
     }
 
-    if (track.name === "blurRadius" && track.elementData.length === 0) {
+    if (track.name === "displacementPixels" && track.elementData.length === 0) {
       return {
         ...track,
         elementData: [
-          { id: `blur_start_${nowId}`, time: 0, value: params.blurRadius },
+          {
+            id: `displacement_start_${nowId}`,
+            time: 0,
+            value: params.displacementPixels,
+          },
+        ],
+      };
+    }
+
+    if (track.name === "grainCellSize" && track.elementData.length === 0) {
+      return {
+        ...track,
+        elementData: [
+          {
+            id: `grain_cell_start_${nowId}`,
+            time: 0,
+            value: params.grainCellSize,
+          },
         ],
       };
     }
@@ -677,6 +702,7 @@ function syncReadout(): void {
 async function exportVideo(): Promise<void> {
   if (!video) {
     exportParams.status = "load a happack first";
+    exportParams.run = false;
     paneRefreshRequested = true;
     paneRef?.refresh();
     return;
@@ -686,6 +712,7 @@ async function exportVideo(): Promise<void> {
   }
 
   exporting = true;
+  exportCancelRequested = false;
   const previousPlayback = { ...animationPlayback };
   const previousFrame = params.frameNumber;
   const fps = Number.isFinite(exportParams.fps)
@@ -701,23 +728,30 @@ async function exportVideo(): Promise<void> {
 
   animationPlayback.playing = false;
   pendingFrame = null;
+  exportParams.run = true;
+  exportParams.rate = "0.0x";
   exportParams.status = `exporting 0 / ${frameCount}`;
   paneRefreshRequested = true;
   paneRef?.refresh();
 
-  let child: Deno.ChildProcess | null = null;
+  const startedAtMs = performance.now();
+  let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
   try {
     await Deno.mkdir(dirname(outputPath), { recursive: true });
-    child = new Deno.Command("ffmpeg", {
+    exportChild = new Deno.Command("ffmpeg", {
       args: ffmpegArgs,
       stdin: "piped",
       stdout: "null",
       stderr: "piped",
     }).spawn();
-    const stderrPromise = new Response(child.stderr).text();
-    const writer = child.stdin.getWriter();
+    const stderrPromise = new Response(exportChild.stderr).text();
+    writer = exportChild.stdin.getWriter();
 
     for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+      if (exportCancelRequested) {
+        throw new ExportCancelledError();
+      }
+
       const timeSeconds = frameIndex / fps;
       animationPlayback.currentTime = clampPlaybackTime(timeSeconds);
       syncRef.enabled = false;
@@ -734,6 +768,12 @@ async function exportVideo(): Promise<void> {
         frameIndex === frameCount - 1 ||
         frameIndex % Math.max(1, Math.floor(fps / 2)) === 0
       ) {
+        const elapsedSeconds = Math.max(
+          0.001,
+          (performance.now() - startedAtMs) / 1000,
+        );
+        const renderedSeconds = (frameIndex + 1) / fps;
+        exportParams.rate = `${(renderedSeconds / elapsedSeconds).toFixed(2)}x`;
         exportParams.status = `exporting ${frameIndex + 1} / ${frameCount}`;
         paneRefreshRequested = true;
         paneRef?.refresh();
@@ -741,22 +781,34 @@ async function exportVideo(): Promise<void> {
     }
 
     await writer.close();
-    const [status, stderr] = await Promise.all([child.status, stderrPromise]);
+    writer = null;
+    const [status, stderr] = await Promise.all([
+      exportChild.status,
+      stderrPromise,
+    ]);
     if (!status.success) {
+      if (exportCancelRequested) {
+        throw new ExportCancelledError();
+      }
       throw new Error(`ffmpeg exited ${status.code}: ${stderr.trim()}`);
     }
 
     exportParams.outputPath = outputPath;
     exportParams.status = `exported ${outputPath}`;
   } catch (error) {
-    try {
-      child?.kill("SIGKILL");
-    } catch {
-      // The process may already have exited.
+    if (error instanceof ExportCancelledError || exportCancelRequested) {
+      exportParams.status = "stopped";
+    } else {
+      exportParams.status = error instanceof Error
+        ? error.message
+        : String(error);
     }
-    exportParams.status = error instanceof Error
-      ? error.message
-      : String(error);
+    killExportChild();
+    try {
+      await writer?.close();
+    } catch {
+      // The pipe is expected to be broken after stopping ffmpeg.
+    }
   } finally {
     animationPlayback.playing = false;
     animationPlayback.currentTime = clampPlaybackTime(
@@ -772,8 +824,32 @@ async function exportVideo(): Promise<void> {
     syncRef.enabled = true;
     animationHandle.setLivePlayhead(animationPlayback.currentTime);
     exporting = false;
+    exportCancelRequested = false;
+    exportChild = null;
+    exportParams.run = false;
     paneRefreshRequested = true;
     paneRef?.refresh();
+  }
+}
+
+function requestExportStop(): void {
+  if (!exporting) {
+    exportParams.run = false;
+    return;
+  }
+
+  exportCancelRequested = true;
+  exportParams.status = "stopping";
+  killExportChild();
+  paneRefreshRequested = true;
+  paneRef?.refresh();
+}
+
+function killExportChild(): void {
+  try {
+    exportChild?.kill("SIGTERM");
+  } catch {
+    // The process may already have exited.
   }
 }
 
@@ -783,7 +859,7 @@ async function readRenderedRgba(): Promise<Uint8Array> {
     device,
     encoder,
     exportBlitPipeline,
-    verticalBlur.output,
+    grain.output,
     exportTexture.createView(),
   );
   return await exportReadback.read(encoder, exportTexture);
@@ -883,8 +959,6 @@ function cleanup(): void {
   rootAnim.cancel();
   animationHandle.disconnect();
   animationBridge.shutdown();
-  verticalBlur.dispose();
-  horizontalBlur.dispose();
   grain.dispose();
   exportReadback.destroy();
   exportTexture.destroy();
