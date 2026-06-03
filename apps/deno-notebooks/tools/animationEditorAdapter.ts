@@ -619,7 +619,6 @@ function createAnimationEditorAdapter(): ComponentAdapter<
           }
         } else {
           playback.playing = false
-          playback.currentTime = 0
           clampPlaybackTime(playback)
           broadcastPlaybackState(trackMap, bridge)
           return

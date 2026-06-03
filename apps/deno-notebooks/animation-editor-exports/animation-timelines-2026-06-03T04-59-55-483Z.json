@@ -1,0 +1,50 @@
+{
+  "format": "avtools-animation-timelines",
+  "version": 1,
+  "exportedAt": "2026-06-03T04:59:55.483Z",
+  "currentAnimation": "default",
+  "animations": [
+    {
+      "name": "default",
+      "trackOrder": [
+        "track_1_1780462781624",
+        "track_2_1780462781624"
+      ],
+      "tracks": [
+        {
+          "id": "track_1_1780462781624",
+          "name": "frameNumber",
+          "fieldType": "number",
+          "elementData": [
+            {
+              "id": "frame_start_1780462781957",
+              "time": 0,
+              "value": 0
+            },
+            {
+              "id": "frame_end_1780462781957",
+              "time": 36.8,
+              "value": 1104
+            }
+          ],
+          "low": 0,
+          "high": 1104
+        },
+        {
+          "id": "track_2_1780462781624",
+          "name": "blurRadius",
+          "fieldType": "number",
+          "elementData": [
+            {
+              "id": "blur_start_1780462781957",
+              "time": 0,
+              "value": 0
+            }
+          ],
+          "low": 0,
+          "high": 32
+        }
+      ]
+    }
+  ]
+}
