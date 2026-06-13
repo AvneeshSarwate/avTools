@@ -2,10 +2,8 @@ import { assert, assertEquals } from "jsr:@std/assert@1";
 import { fromFileUrl } from "jsr:@std/path@1";
 import { DEFAULT_LIVECODE_SOURCE } from "../../../browser-projections/src/sketches/livecodeVisualizer/defaultSource.ts";
 import { analyzeAndTransformTimedModule } from "../visualizer/analyze_transform.ts";
-import type { LivecodeMidiOutput } from "../helpers/midi_helpers.ts";
-import type { PortInfo } from "../../midi/mod.ts";
 
-Deno.test("built-in editor source checks, analyzes, and initializes MIDI helpers", async () => {
+Deno.test("built-in editor source checks, analyzes, and initializes piano roll helpers", async () => {
   const tempDir = await Deno.makeTempDir({
     prefix: "tcv-default-source-",
   });
@@ -48,27 +46,15 @@ Deno.test("built-in editor source checks, analyzes, and initializes MIDI helpers
     assertEquals(
       analysis.manifest.callsites.map((entry) => entry.displayName),
       [
-        "noteCtx.waitSec",
-        "ctx.waitSec",
+        "playPianoRoll",
         "ctx.waitSec",
       ],
     );
 
-    const midiHelpers = await import("midi-helpers") as {
-      closeMidiDevices(): void;
-      listMidiDevices(): PortInfo[];
-      midiDevices: Record<string, LivecodeMidiOutput>;
+    const pianoRollHelpers = await import("piano-roll-helpers") as {
+      getPianoRollClip(name: string): { notes: unknown[] };
     };
-
-    try {
-      const outputs = midiHelpers.listMidiDevices();
-      assert(Array.isArray(outputs));
-      for (const output of outputs) {
-        assertEquals(midiHelpers.midiDevices[output.name].name, output.name);
-      }
-    } finally {
-      midiHelpers.closeMidiDevices();
-    }
+    assert(pianoRollHelpers.getPianoRollClip("melody").notes.length > 0);
   } finally {
     await Deno.remove(tempDir, { recursive: true });
   }

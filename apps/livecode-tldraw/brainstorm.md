@@ -1,0 +1,2 @@
+- add the ability to have agent send commands to running UI to steer it (eg, create piano roll with id, add/modify ntoes in piano roll, create code block, start/stop code block) 
+- add known data ids into text editors so you can use playwrite or something like that to add the code back to the editors?

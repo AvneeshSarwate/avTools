@@ -222,6 +222,8 @@ Deno.test("deno lsp bridge initializes and publishes diagnostics", async () => {
         message.includes("Cannot find module") ||
         message.includes("@avtools/core-timing") ||
         message.includes("midi-helpers") ||
+        message.includes("piano-roll-helpers") ||
+        message.includes("@avtools/music-types") ||
         message.includes("seedrandom")
       );
     assertEquals(dependencyDiagnostics, []);
@@ -293,6 +295,8 @@ Deno.test("deno lsp bridge initializes and publishes diagnostics", async () => {
         message.includes("Cannot find module") ||
         message.includes("@avtools/core-timing") ||
         message.includes("midi-helpers") ||
+        message.includes("piano-roll-helpers") ||
+        message.includes("@avtools/music-types") ||
         message.includes("seedrandom")
       );
     assertEquals(lateDependencyDiagnostics, []);
@@ -331,6 +335,8 @@ Deno.test("deno lsp bridge initializes and publishes diagnostics", async () => {
         message.includes("Cannot find module") ||
         message.includes("@avtools/core-timing") ||
         message.includes("midi-helpers") ||
+        message.includes("piano-roll-helpers") ||
+        message.includes("@avtools/music-types") ||
         message.includes("seedrandom")
       );
     assertEquals(defaultSourceDependencyDiagnostics, []);

@@ -10,8 +10,17 @@ import type {
   AnalyzeResponse,
   HealthResponse,
   LaunchModuleRequest,
+  PianoRollHistoryRequest,
+  SetPianoRollRequest,
   StopModuleRequest,
 } from "./protocol.ts";
+import {
+  makePianoRollSnapshot,
+  redoPianoRoll,
+  seedDemoPianoRoll,
+  setPianoRoll,
+  undoPianoRoll,
+} from "./piano_roll_store.ts";
 import { clearModuleWaits, makeActiveWaitSnapshot } from "./runtime.ts";
 
 interface BranchHandle {
@@ -87,11 +96,13 @@ export async function createLivecodeVisualizerServer(
   await Deno.mkdir(lspLogsDir, { recursive: true });
 
   const sockets = new Set<WebSocket>();
+  const pianoRollSockets = new Set<WebSocket>();
   const activeModules = new Map<string, ActiveModule>();
   const launchQueue: Array<(ctx: TimeContext) => Promise<void> | void> = [];
   let parentContext: TimeContext | null = null;
   let lastSnapshotJson = "";
   let snapshotTimer: number | undefined;
+  let pianoRollSnapshotTimer: number | undefined;
   let closing = false;
 
   const log = async (entry: Record<string, unknown>) => {
@@ -182,6 +193,22 @@ export async function createLivecodeVisualizerServer(
     }
   }, 33) as unknown as number;
 
+  seedDemoPianoRoll();
+  pianoRollSnapshotTimer = setInterval(() => {
+    const snapshot = makePianoRollSnapshot();
+    if (!snapshot) return;
+    const payload = JSON.stringify(snapshot);
+    for (const socket of pianoRollSockets) {
+      if (socket.readyState === WebSocket.OPEN) socket.send(payload);
+    }
+    if (options.logLevel === "debug") {
+      void log({
+        type: "pianoRollSnapshot",
+        rollCount: Object.keys(snapshot.rolls).length,
+      });
+    }
+  }, 100) as unknown as number;
+
   const handler = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
 
@@ -214,6 +241,47 @@ export async function createLivecodeVisualizerServer(
       const requestBody = await request.json() as StopModuleRequest;
       await stopModule(requestBody.moduleId, "stopRequest");
       return json({ ok: true });
+    }
+
+    if (request.method === "GET" && url.pathname === "/piano-roll/snapshots") {
+      const { socket, response } = Deno.upgradeWebSocket(request);
+      socket.onopen = () => {
+        pianoRollSockets.add(socket);
+        socket.send(JSON.stringify(makePianoRollSnapshot({ force: true })));
+      };
+      socket.onclose = () => pianoRollSockets.delete(socket);
+      socket.onerror = () => pianoRollSockets.delete(socket);
+      return response;
+    }
+
+    if (request.method === "GET" && url.pathname === "/piano-roll/list") {
+      return json(makePianoRollSnapshot({ force: true }));
+    }
+
+    if (request.method === "POST" && url.pathname === "/piano-roll/set") {
+      const requestBody = await request.json() as SetPianoRollRequest;
+      return json(setPianoRoll(requestBody.name, requestBody.data, {
+        label: requestBody.label,
+        source: requestBody.source ?? "client",
+        originId: requestBody.originId,
+        undoable: requestBody.undoable,
+      }));
+    }
+
+    if (request.method === "POST" && url.pathname === "/piano-roll/undo") {
+      const requestBody = await request.json() as PianoRollHistoryRequest;
+      return json(
+        undoPianoRoll(requestBody.name, { originId: requestBody.originId }) ??
+          { ok: false },
+      );
+    }
+
+    if (request.method === "POST" && url.pathname === "/piano-roll/redo") {
+      const requestBody = await request.json() as PianoRollHistoryRequest;
+      return json(
+        redoPianoRoll(requestBody.name, { originId: requestBody.originId }) ??
+          { ok: false },
+      );
     }
 
     if (request.method === "GET" && url.pathname === "/lsp") {
@@ -272,7 +340,11 @@ export async function createLivecodeVisualizerServer(
     close: async () => {
       closing = true;
       if (snapshotTimer !== undefined) clearInterval(snapshotTimer);
+      if (pianoRollSnapshotTimer !== undefined) {
+        clearInterval(pianoRollSnapshotTimer);
+      }
       for (const socket of sockets) socket.close();
+      for (const socket of pianoRollSockets) socket.close();
       for (const moduleId of [...activeModules.keys()]) {
         await stopModule(moduleId, "serverClose");
       }

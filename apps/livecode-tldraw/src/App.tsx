@@ -8,8 +8,14 @@ import {
   type LivecodeEditorShape,
 } from './LivecodeEditorShape'
 import { LivecodeRuntimeProvider, useLivecodeRuntime } from './livecodeRuntime'
+import { PianoRollRuntimeProvider } from './pianoRollRuntime'
+import {
+  PianoRollShapeUtil,
+  PIANO_ROLL_SHAPE_TYPE,
+  type PianoRollShape,
+} from './PianoRollShape'
 
-const shapeUtils = [LivecodeEditorShapeUtil]
+const shapeUtils = [LivecodeEditorShapeUtil, PianoRollShapeUtil]
 
 export function App() {
   return (
@@ -67,21 +73,34 @@ function LivecodeTldrawPage() {
   }, [editor, registerModule, setModuleSource, unregisterModule])
 
   return (
-    <div className="app-shell">
-      <TopBar editor={editor} />
-      <div className="canvas-shell">
-        <Tldraw
-          persistenceKey="livecode-tldraw-poc"
-          shapeUtils={shapeUtils}
-          onMount={(mountedEditor) => {
-            setEditor(mountedEditor)
-            if (!hasLivecodeShapes(mountedEditor)) {
-              createLivecodeShape(mountedEditor, { x: 120, y: 120, title: 'module 1' })
-            }
-          }}
-        />
+    <PianoRollRuntimeProvider serverBaseUrl={runtime.serverBaseUrl}>
+      <div className="app-shell">
+        <TopBar editor={editor} />
+        <div className="canvas-shell">
+          <Tldraw
+            persistenceKey="livecode-tldraw-poc-piano-roll-v1"
+            shapeUtils={shapeUtils}
+            onMount={(mountedEditor) => {
+              setEditor(mountedEditor)
+              if (!hasLivecodeShapes(mountedEditor)) {
+                createLivecodeShape(mountedEditor, {
+                  x: 120,
+                  y: 120,
+                  title: 'module 1',
+                })
+              }
+              if (!hasPianoRollShapes(mountedEditor)) {
+                createPianoRollShape(mountedEditor, {
+                  x: 820,
+                  y: 120,
+                  rollName: 'melody',
+                })
+              }
+            }}
+          />
+        </div>
       </div>
-    </div>
+    </PianoRollRuntimeProvider>
   )
 }
 
@@ -162,6 +181,43 @@ function createLivecodeShape(
       moduleId,
       title: options.title ?? `module ${moduleId.slice(7, 15)}`,
       source: options.source ?? DEFAULT_LIVECODE_SOURCE,
+    },
+  })
+  editor.select(id)
+  return id
+}
+
+function isPianoRollShape(shape: unknown): shape is PianoRollShape {
+  return Boolean(
+    shape &&
+      typeof shape === 'object' &&
+      'type' in shape &&
+      (shape as { type?: unknown }).type === PIANO_ROLL_SHAPE_TYPE,
+  )
+}
+
+function hasPianoRollShapes(editor: Editor) {
+  return editor.getCurrentPageShapes().some(isPianoRollShape)
+}
+
+function createPianoRollShape(
+  editor: Editor,
+  options: Partial<PianoRollShape['props']> & { x?: number; y?: number } = {},
+) {
+  const id = createShapeId()
+  const rollName = options.rollName ?? 'melody'
+  editor.createShape<PianoRollShape>({
+    id,
+    type: PIANO_ROLL_SHAPE_TYPE,
+    x: options.x ?? 820,
+    y: options.y ?? 120,
+    props: {
+      w: options.w ?? 720,
+      h: options.h ?? 500,
+      rollName,
+      title: options.title ?? `piano roll: ${rollName}`,
+      showControlPanel: options.showControlPanel ?? true,
+      interactive: options.interactive ?? true,
     },
   })
   editor.select(id)

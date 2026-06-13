@@ -1,0 +1,2118 @@
+13 files changed
++1122
+-61
+
+
+
+apps/deno-notebooks/deno.json
+    "test:p5:browser": "deno run --unstable-webgpu --unstable-ffi --allow-ffi --allow-read --allow-env --allow-write --allow-run --allow-net libraryIntegrationTetsts/p5_browser_comparison_tests.ts",
+    "test:p5:browser:text": "P5GPU_MAX_PHASE=6 P5GPU_NAME_FILTER='text-' deno run --unstable-webgpu --unstable-ffi --allow-ffi --allow-read --allow-env --allow-write --allow-run --allow-net libraryIntegrationTetsts/p5_browser_comparison_tests.ts",
+    "test:livecode:unit": "deno test --allow-env --allow-sys --allow-read --allow-write livecode/tests/analyzer_transform_test.ts livecode/tests/runtime_counts_test.ts livecode/tests/dynamic_import_execution_test.ts",
+    "test:livecode:server": "deno test --allow-all livecode/tests/protocol_smoke_test.ts livecode/tests/lsp_smoke_test.ts livecode/tests/server_smoke_test.ts livecode/tests/default_source_integration_test.ts",
+    "test:livecode:e2e": "cd ../browser-projections && npm run test:livecode:e2e",
+    "test:livecode": "deno task test:livecode:unit && deno task test:livecode:server && deno task test:livecode:e2e",
+    "watch:power2d-raw": "deno run --allow-read --allow-write ../../tools/shader-watch/watch_power2d_raw.ts ./shaders ../../packages/power2d/generated-raw",
+    "watch:shaderfx-raw": "deno run --allow-read --allow-write ../../tools/shader-watch/watch_shaderfx_raw.ts ./shaders ../../packages/shader-fx/generated-raw",
+    "gen:shaderfx-raw": "deno run --allow-read --allow-write generate_shaderfx_raw.ts ./shaders ../../packages/shader-fx/generated-raw",
+    "watch:compute-raw": "deno run --allow-read --allow-write ../../tools/shader-watch/watch_compute_raw.ts ./shaders ../../packages/compute-shader/generated-raw"
+  },
+  "imports": {
+    "@gfx/canvas": "jsr:@gfx/canvas@^0.5.8",
+    "@gfx/canvas-wasm": "jsr:@gfx/canvas-wasm@^0.4.2",
+    "@std/assert": "jsr:@std/assert@1",
+    "@std/random": "jsr:@std/random@^0.1.4",
+    "@valtown/ls-ws-server": "npm:@valtown/ls-ws-server@0.0.26",
+    "@valtown/ls-ws-server/proxy": "npm:@valtown/ls-ws-server@0.0.26/proxy",
+    "earcut": "npm:earcut@^3",
+    "fast-xml-parser": "npm:fast-xml-parser@4.3.5",
+    "node-osc": "npm:node-osc@^9.1.0",
+    "node-web-audio-api": "npm:node-web-audio-api",
+    "pako": "npm:pako@2.1.0",
+    "three": "npm:three@^0.178.0",
+    "midi-helpers": "./livecode/helpers/midi_helpers.ts",
+    "@babylonjs/core": "npm:@babylonjs/core@^8.20.0",
+    "tone": "npm:tone",
+    "gifenc": "npm:gifenc@1.0.3/dist/gifenc.esm.js",
+    "@avtools/core-timing": "../../packages/core-timing/mod.ts",
+    "@avtools/creative-algs": "../../packages/creative-algs/mod.ts",
+    "@avtools/music-types": "../../packages/music-types/mod.ts",
+    "@avtools/ui-bridge": "../../packages/ui-bridge/mod.ts",
+    "@avtools/power2d": "../../packages/power2d/mod.ts",
+    "@avtools/power2d/core": "../../packages/power2d/core/mod.ts",
+    "@avtools/power2d/babylon": "../../packages/power2d/babylon/mod.ts",
+    "@avtools/power2d/raw": "../../packages/power2d/raw/mod.ts",
+    "@avtools/codegen-common": "../../packages/codegen-common/mod.ts",
+    "@avtools/power2d-codegen": "../../packages/power2d-codegen/mod.ts",
+    "@avtools/compute-shader-codegen": "../../packages/compute-shader-codegen/mod.ts",
+    "@avtools/shader-fx-codegen": "../../packages/shader-fx-codegen/mod.ts",
+    "@avtools/power2d/generated/": "../../packages/power2d/generated/",
+    "@avtools/power2d/generated-raw/": "../../packages/power2d/generated-raw/",
+    "@avtools/compute-shader/generated/": "../../packages/compute-shader/generated/",
+    "@avtools/compute-shader/generated-raw/": "../../packages/compute-shader/generated-raw/",
+    "@avtools/shader-fx": "../../packages/shader-fx/mod.ts",
+    "@avtools/shader-fx/babylon": "../../packages/shader-fx/babylon/mod.ts",
+    "@avtools/shader-fx/babylonGL": "../../packages/shader-fx/babylonGL/mod.ts",
+    "@avtools/shader-fx/generated/": "../../packages/shader-fx/generated/",
+    "@avtools/shader-fx/raw": "../../packages/shader-fx/raw/mod.ts",
+    "@avtools/shader-fx/generated-raw/": "../../packages/shader-fx/generated-raw/",
+    "test:p5:browser": "deno run --unstable-webgpu --unstable-ffi --allow-ffi --allow-read --allow-env --allow-write --allow-run --allow-net libraryIntegrationTetsts/p5_browser_comparison_tests.ts",
+    "test:p5:browser:text": "P5GPU_MAX_PHASE=6 P5GPU_NAME_FILTER='text-' deno run --unstable-webgpu --unstable-ffi --allow-ffi --allow-read --allow-env --allow-write --allow-run --allow-net libraryIntegrationTetsts/p5_browser_comparison_tests.ts",
+    "test:livecode:unit": "deno test --allow-env --allow-sys --allow-read --allow-write livecode/tests/analyzer_transform_test.ts livecode/tests/runtime_counts_test.ts livecode/tests/dynamic_import_execution_test.ts",
+    "test:livecode:server": "deno test --allow-all livecode/tests/protocol_smoke_test.ts livecode/tests/lsp_smoke_test.ts livecode/tests/server_smoke_test.ts livecode/tests/default_source_integration_test.ts",
+    "test:livecode:e2e": "cd ../browser-projections && npm run test:livecode:e2e",
+    "test:livecode": "deno task test:livecode:unit && deno task test:livecode:server && deno task test:livecode:e2e",
+    "watch:power2d-raw": "deno run --allow-read --allow-write ../../tools/shader-watch/watch_power2d_raw.ts ./shaders ../../packages/power2d/generated-raw",
+    "watch:shaderfx-raw": "deno run --allow-read --allow-write ../../tools/shader-watch/watch_shaderfx_raw.ts ./shaders ../../packages/shader-fx/generated-raw",
+    "gen:shaderfx-raw": "deno run --allow-read --allow-write generate_shaderfx_raw.ts ./shaders ../../packages/shader-fx/generated-raw",
+    "watch:compute-raw": "deno run --allow-read --allow-write ../../tools/shader-watch/watch_compute_raw.ts ./shaders ../../packages/compute-shader/generated-raw"
+  },
+  "imports": {
+    "@gfx/canvas": "jsr:@gfx/canvas@^0.5.8",
+    "@gfx/canvas-wasm": "jsr:@gfx/canvas-wasm@^0.4.2",
+    "@std/assert": "jsr:@std/assert@1",
+    "@std/random": "jsr:@std/random@^0.1.4",
+    "@valtown/ls-ws-server": "npm:@valtown/ls-ws-server@0.0.26",
+    "@valtown/ls-ws-server/proxy": "npm:@valtown/ls-ws-server@0.0.26/proxy",
+    "earcut": "npm:earcut@^3",
+    "fast-xml-parser": "npm:fast-xml-parser@4.3.5",
+    "node-osc": "npm:node-osc@^9.1.0",
+    "node-web-audio-api": "npm:node-web-audio-api",
+    "pako": "npm:pako@2.1.0",
+    "three": "npm:three@^0.178.0",
+    "midi-helpers": "./livecode/helpers/midi_helpers.ts",
+    "piano-roll-store": "./livecode/visualizer/piano_roll_store.ts",
+    "@babylonjs/core": "npm:@babylonjs/core@^8.20.0",
+    "tone": "npm:tone",
+    "gifenc": "npm:gifenc@1.0.3/dist/gifenc.esm.js",
+    "@avtools/core-timing": "../../packages/core-timing/mod.ts",
+    "@avtools/creative-algs": "../../packages/creative-algs/mod.ts",
+    "@avtools/music-types": "../../packages/music-types/mod.ts",
+    "@avtools/ui-bridge": "../../packages/ui-bridge/mod.ts",
+    "@avtools/power2d": "../../packages/power2d/mod.ts",
+    "@avtools/power2d/core": "../../packages/power2d/core/mod.ts",
+    "@avtools/power2d/babylon": "../../packages/power2d/babylon/mod.ts",
+    "@avtools/power2d/raw": "../../packages/power2d/raw/mod.ts",
+    "@avtools/codegen-common": "../../packages/codegen-common/mod.ts",
+    "@avtools/power2d-codegen": "../../packages/power2d-codegen/mod.ts",
+    "@avtools/compute-shader-codegen": "../../packages/compute-shader-codegen/mod.ts",
+    "@avtools/shader-fx-codegen": "../../packages/shader-fx-codegen/mod.ts",
+    "@avtools/power2d/generated/": "../../packages/power2d/generated/",
+    "@avtools/power2d/generated-raw/": "../../packages/power2d/generated-raw/",
+    "@avtools/compute-shader/generated/": "../../packages/compute-shader/generated/",
+    "@avtools/compute-shader/generated-raw/": "../../packages/compute-shader/generated-raw/",
+    "@avtools/shader-fx": "../../packages/shader-fx/mod.ts",
+    "@avtools/shader-fx/babylon": "../../packages/shader-fx/babylon/mod.ts",
+    "@avtools/shader-fx/babylonGL": "../../packages/shader-fx/babylonGL/mod.ts",
+    "@avtools/shader-fx/generated/": "../../packages/shader-fx/generated/",
+    "@avtools/shader-fx/raw": "../../packages/shader-fx/raw/mod.ts",
+    "@avtools/shader-fx/generated-raw/": "../../packages/shader-fx/generated-raw/",
+apps/deno-notebooks/livecode/visualizer/piano_roll_store.ts
+Full file content failed to load
+Retry
+import type {
+  NoteData,
+  NoteDataInput,
+  PianoRollData,
+  PianoRollObject,
+  PianoRollSnapshot,
+  PianoRollUpdateSource,
+} from "./protocol.ts";
+
+interface HistoryEntry {
+  label: string;
+  data: PianoRollData;
+  source: PianoRollUpdateSource;
+  timestampMs: number;
+}
+
+interface PianoRollRecord extends PianoRollObject {
+  undoStack: HistoryEntry[];
+  redoStack: HistoryEntry[];
+}
+
+export interface SetPianoRollOptions {
+  label?: string;
+  source?: PianoRollUpdateSource;
+  originId?: string;
+  undoable?: boolean;
+}
+
+const DEFAULT_ROLL_NAME = "melody";
+const MAX_HISTORY = 100;
+const records = new Map<string, PianoRollRecord>();
+let snapshotSeq = 0;
+let dirty = true;
+
+export function listPianoRollNames(): string[] {
+  ensureDefaultPianoRoll();
+  return [...records.keys()].sort((a, b) => a.localeCompare(b));
+}
+
+export function getPianoRoll(name: string): PianoRollObject | undefined {
+  ensureDefaultPianoRoll();
+  const record = records.get(name);
+  return record ? toObject(record) : undefined;
+}
+
+export function getAllPianoRolls(): Record<string, PianoRollObject> {
+  ensureDefaultPianoRoll();
+  return Object.fromEntries(
+    [...records.entries()].map(([name, record]) => [name, toObject(record)]),
+  );
+}
+
+export function setPianoRoll(
+  name: string,
+  data: PianoRollData,
+  options: SetPianoRollOptions = {},
+): PianoRollObject {
+  const normalizedName = normalizeName(name);
+  const nextData = normalizeData(data);
+  const existing = records.get(normalizedName);
+  const source = options.source ?? "server";
+  const undoable = options.undoable ?? true;
+
+  if (existing) {
+    if (JSON.stringify(existing.data) === JSON.stringify(nextData)) {
+      return toObject(existing);
+    }
+
+    if (undoable) {
+      pushHistory(existing.undoStack, {
+        label: options.label ?? "Set piano roll",
+        data: cloneData(existing.data),
+        source,
+        timestampMs: Date.now(),
+      });
+      existing.redoStack = [];
+    }
+
+    existing.rev += 1;
+    existing.data = nextData;
+    existing.updatedAt = Date.now();
+    existing.updatedBy = options.originId ?? source;
+    markDirty();
+    return toObject(existing);
+  }
+
+  const record: PianoRollRecord = {
+    name: normalizedName,
+    rev: 1,
+    data: nextData,
+    updatedAt: Date.now(),
+    updatedBy: options.originId ?? source,
+    canUndo: false,
+    canRedo: false,
+    undoStack: [],
+    redoStack: [],
+  };
+  records.set(normalizedName, record);
+  markDirty();
+  return toObject(record);
+}
+
+export function undoPianoRoll(
+  name: string,
+  options: { originId?: string } = {},
+): PianoRollObject | undefined {
+  ensureDefaultPianoRoll();
+  const record = records.get(normalizeName(name));
+  const previous = record?.undoStack.pop();
+  if (!record || !previous) return record ? toObject(record) : undefined;
+
+  pushHistory(record.redoStack, {
+    label: "Redo piano roll",
+    data: cloneData(record.data),
+    source: "undoRedo",
+    timestampMs: Date.now(),
+  });
+  record.rev += 1;
+  record.data = cloneData(previous.data);
+  record.updatedAt = Date.now();
+  record.updatedBy = options.originId ?? "undo";
+  markDirty();
+  return toObject(record);
+}
+
+export function redoPianoRoll(
+  name: string,
+  options: { originId?: string } = {},
+): PianoRollObject | undefined {
+  ensureDefaultPianoRoll();
+  const record = records.get(normalizeName(name));
+  const next = record?.redoStack.pop();
+  if (!record || !next) return record ? toObject(record) : undefined;
+
+  pushHistory(record.undoStack, {
+    label: "Undo piano roll",
+    data: cloneData(record.data),
+    source: "undoRedo",
+    timestampMs: Date.now(),
+  });
+  record.rev += 1;
+  record.data = cloneData(next.data);
+  record.updatedAt = Date.now();
+  record.updatedBy = options.originId ?? "redo";
+  markDirty();
+  return toObject(record);
+}
+
+export function makePianoRollSnapshot(
+  options: { force?: boolean } = {},
+): PianoRollSnapshot | null {
+  if (!options.force && !dirty) return null;
+  dirty = false;
+  return {
+    type: "pianoRollSnapshot",
+    seq: ++snapshotSeq,
+    timestampMs: Date.now(),
+    rolls: getAllPianoRolls(),
+  };
+}
+
+export function seedDemoPianoRoll(name = DEFAULT_ROLL_NAME): PianoRollObject {
+  const existing = records.get(normalizeName(name));
+  if (existing) return toObject(existing);
+  return setPianoRoll(name, {
+    notes: [
+      { id: "demo-c4", pitch: 60, position: 0, duration: 0.75, velocity: 100 },
+      {
+        id: "demo-e4",
+        pitch: 64,
+        position: 0.75,
+        duration: 0.75,
+        velocity: 96,
+      },
+      { id: "demo-g4", pitch: 67, position: 1.5, duration: 1, velocity: 104 },
+      { id: "demo-b4", pitch: 71, position: 2.75, duration: 0.5, velocity: 90 },
+      {
+        id: "demo-c5",
+        pitch: 72,
+        position: 3.25,
+        duration: 1.25,
+        velocity: 110,
+      },
+    ],
+  }, { label: "Seed demo", source: "server", undoable: false });
+}
+
+export function markPianoRollStoreDirty(): void {
+  markDirty();
+}
+
+function ensureDefaultPianoRoll(): void {
+  seedDemoPianoRoll(DEFAULT_ROLL_NAME);
+}
+
+function normalizeName(name: string): string {
+  const normalized = name.trim();
+  if (!normalized) throw new Error("Piano roll name must not be empty");
+  return normalized;
+}
+
+function normalizeData(data: PianoRollData): PianoRollData {
+  return {
+    ...data,
+    notes: data.notes.map((note, index) => normalizeNote(note, index)),
+  };
+}
+
+function normalizeNote(note: NoteDataInput, index: number): NoteData {
+  const id = note.id && note.id.length > 0
+    ? note.id
+    : `note_${Date.now()}_${index}`;
+  return {
+    ...note,
+    id,
+    velocity: note.velocity ?? 100,
+  };
+}
+
+function cloneData(data: PianoRollData): PianoRollData {
+  return structuredClone(data);
+}
+
+function toObject(record: PianoRollRecord): PianoRollObject {
+  return {
+    name: record.name,
+    rev: record.rev,
+    data: cloneData(record.data),
+    updatedAt: record.updatedAt,
+    updatedBy: record.updatedBy,
+    canUndo: record.undoStack.length > 0,
+    canRedo: record.redoStack.length > 0,
+  };
+}
+
+function pushHistory(stack: HistoryEntry[], entry: HistoryEntry): void {
+  stack.push(entry);
+  if (stack.length > MAX_HISTORY) stack.splice(0, stack.length - MAX_HISTORY);
+}
+
+function markDirty(): void {
+  dirty = true;
+}
+apps/deno-notebooks/livecode/visualizer/protocol.ts
+export type AnalyzeResponse = AnalyzeSuccess | AnalyzeFailure;
+
+export interface LaunchModuleRequest {
+  moduleId: string;
+  transformedModuleUri: string;
+  generatedRunId: string;
+}
+
+export interface StopModuleRequest {
+  moduleId: string;
+}
+
+export interface ActiveWaitSnapshot {
+  type: "activeWaitSnapshot";
+  seq: number;
+  timestampMs: number;
+  modules: Record<string, string[]>;
+}
+
+export interface HealthResponse {
+  ok: true;
+  serverVersion: string;
+  sessionRoot: string;
+  activeModules: string[];
+}
+export type AnalyzeResponse = AnalyzeSuccess | AnalyzeFailure;
+
+export interface LaunchModuleRequest {
+  moduleId: string;
+  transformedModuleUri: string;
+  generatedRunId: string;
+}
+
+export interface StopModuleRequest {
+  moduleId: string;
+}
+
+export interface ActiveWaitSnapshot {
+  type: "activeWaitSnapshot";
+  seq: number;
+  timestampMs: number;
+  modules: Record<string, string[]>;
+}
+
+export interface HealthResponse {
+  ok: true;
+  serverVersion: string;
+  sessionRoot: string;
+  activeModules: string[];
+}
+
+export type PianoRollUpdateSource =
+  | "server"
+  | "client"
+  | "livecode"
+  | "undoRedo";
+
+export interface MpePitchPoint {
+  time: number;
+  pitchOffset: number;
+  metadata?: Record<string, unknown>;
+  rooted?: boolean;
+}
+
+export interface MpePitchData {
+  points: MpePitchPoint[];
+}
+
+export interface NoteDataInput {
+  id?: string;
+  pitch: number;
+  position: number;
+  duration: number;
+  velocity?: number;
+  mpePitch?: MpePitchData;
+  metadata?: Record<string, unknown>;
+}
+
+export interface NoteData extends NoteDataInput {
+  id: string;
+  velocity: number;
+}
+
+export interface PianoRollData {
+  notes: NoteDataInput[];
+  viewport?: {
+    scrollX: number;
+    scrollY: number;
+    zoomX: number;
+    zoomY: number;
+  };
+  grid?: {
+    subdivision?: number;
+  };
+}
+
+export interface PianoRollObject {
+  name: string;
+  rev: number;
+  data: PianoRollData;
+  updatedAt: number;
+  updatedBy: string;
+  canUndo: boolean;
+  canRedo: boolean;
+}
+
+export interface PianoRollSnapshot {
+  type: "pianoRollSnapshot";
+  seq: number;
+  timestampMs: number;
+  rolls: Record<string, PianoRollObject>;
+}
+
+export interface SetPianoRollRequest {
+  name: string;
+  data: PianoRollData;
+  originId?: string;
+  label?: string;
+  source?: PianoRollUpdateSource;
+  undoable?: boolean;
+}
+
+export interface PianoRollHistoryRequest {
+  name: string;
+  originId?: string;
+}
+apps/deno-notebooks/livecode/visualizer/server.ts
+import { launch, type TimeContext } from "@avtools/core-timing";
+import { LSWSServer } from "@valtown/ls-ws-server";
+import { fromFileUrl, isAbsolute, join } from "jsr:@std/path@1";
+import { pathToFileURL } from "node:url";
+import { analyzeAndTransformTimedModule } from "./analyze_transform.ts";
+import { createGeneratedRunId } from "./generated_run_id.ts";
+import type {
+  ActiveWaitSnapshot,
+  AnalyzeRequest,
+  AnalyzeResponse,
+  HealthResponse,
+  LaunchModuleRequest,
+  StopModuleRequest,
+} from "./protocol.ts";
+import { clearModuleWaits, makeActiveWaitSnapshot } from "./runtime.ts";
+
+interface BranchHandle {
+  cancel: () => void;
+  finally: (f: () => void) => void;
+}
+
+interface ActiveModule {
+  moduleId: string;
+  generatedRunId: string;
+  transformedModuleUri: string;
+  handle: BranchHandle;
+}
+
+export interface LivecodeVisualizerServerOptions {
+  host?: string;
+  port?: number;
+  sessionRoot?: string;
+  logLevel?: "debug" | "info";
+}
+
+export interface LivecodeVisualizerServer {
+  baseUrl: string;
+  host: string;
+  port: number;
+  sessionRoot: string;
+  const host = options.host ?? "127.0.0.1";
+  const port = options.port ?? 0;
+  const sessionRoot = options.sessionRoot
+    ? resolvePath(options.sessionRoot)
+    : DEFAULT_SESSION_ROOT;
+  const sessionId = crypto.randomUUID();
+  const sessionDir = join(sessionRoot, sessionId);
+  const modulesDir = join(sessionDir, "modules");
+  const generatedDir = join(sessionDir, "generated");
+  const lspWorkspacesDir = join(
+    Deno.env.get("TMPDIR") ?? "/tmp",
+    "avtools-livecode-lsp-workspaces",
+    sessionId,
+  );
+  const logsDir = join(sessionRoot, "logs");
+  const lspLogsDir = join(logsDir, "lsp");
+  const logPath = join(logsDir, "server.log");
+
+  await Deno.mkdir(modulesDir, { recursive: true });
+  await Deno.mkdir(generatedDir, { recursive: true });
+  await Deno.mkdir(lspWorkspacesDir, { recursive: true });
+  await Deno.mkdir(logsDir, { recursive: true });
+  await Deno.mkdir(lspLogsDir, { recursive: true });
+
+  const sockets = new Set<WebSocket>();
+  const activeModules = new Map<string, ActiveModule>();
+  const launchQueue: Array<(ctx: TimeContext) => Promise<void> | void> = [];
+  let parentContext: TimeContext | null = null;
+  let lastSnapshotJson = "";
+  let snapshotTimer: number | undefined;
+  let closing = false;
+
+  const log = async (entry: Record<string, unknown>) => {
+    const line = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      ...entry,
+    });
+    console.log(line);
+    await Deno.writeTextFile(logPath, `${line}\n`, {
+      append: true,
+      create: true,
+    });
+  };
+
+  const parentHandle = launch(async (ctx) => {
+    parentContext = ctx;
+    await log({ type: "parentLoopStarted" });
+    while (!closing) {
+      const queued = launchQueue.splice(0);
+      for (const action of queued) {
+        await action(ctx);
+      }
+      try {
+        await ctx.waitSec(0.03);
+      } catch (error) {
+      });
+    },
+  });
+
+  snapshotTimer = setInterval(() => {
+    const snapshot = makeActiveWaitSnapshot();
+    const snapshotJson = JSON.stringify(snapshot.modules);
+    if (snapshotJson === lastSnapshotJson) return;
+    lastSnapshotJson = snapshotJson;
+    const payload = JSON.stringify(snapshot);
+    for (const socket of sockets) {
+      if (socket.readyState === WebSocket.OPEN) socket.send(payload);
+    }
+    if (options.logLevel === "debug") {
+      void log({
+        type: "snapshot",
+        activeModuleCount: Object.keys(snapshot.modules).length,
+        activeCallsiteCount: Object.values(snapshot.modules).reduce(
+          (sum, ids) => sum + ids.length,
+          0,
+        ),
+      });
+    }
+  }, 33) as unknown as number;
+
+  const handler = async (request: Request): Promise<Response> => {
+    const url = new URL(request.url);
+
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
+    if (request.method === "GET" && url.pathname === "/health") {
+      const response: HealthResponse = {
+        ok: true,
+        serverVersion: SERVER_VERSION,
+        sessionRoot,
+        activeModules: [...activeModules.keys()],
+      };
+      return json(response);
+    }
+
+    if (request.method === "POST" && url.pathname === "/runtime/analyze") {
+      const requestBody = await request.json() as AnalyzeRequest;
+      return json(await analyzeModule(requestBody));
+    }
+
+    if (request.method === "POST" && url.pathname === "/runtime/launch") {
+      const requestBody = await request.json() as LaunchModuleRequest;
+      await launchModule(requestBody);
+      return json({ ok: true });
+    }
+
+    if (request.method === "POST" && url.pathname === "/runtime/stop") {
+      const requestBody = await request.json() as StopModuleRequest;
+      await stopModule(requestBody.moduleId, "stopRequest");
+      return json({ ok: true });
+    }
+
+    if (request.method === "GET" && url.pathname === "/lsp") {
+      const session = url.searchParams.get("session");
+      if (!session) {
+        return new Response("Missing lsp session", {
+          status: 400,
+          headers: CORS_HEADERS,
+        });
+      }
+
+      const { socket, response } = Deno.upgradeWebSocket(request);
+      await log({ type: "lspSocketAccepted", sessionId: session });
+      try {
+        return response;
+      } finally {
+        lspWsServer.handleNewWebsocket(socket, session);
+      }
+    }
+
+    if (request.method === "GET" && url.pathname === "/runtime/snapshots") {
+      const { socket, response } = Deno.upgradeWebSocket(request);
+      socket.onopen = () => {
+        sockets.add(socket);
+        socket.send(
+          JSON.stringify(makeActiveWaitSnapshot() satisfies ActiveWaitSnapshot),
+        );
+    return new Response("Not found", { status: 404, headers: CORS_HEADERS });
+  };
+
+  const server = Deno.serve({ hostname: host, port }, handler);
+  const addr = server.addr as Deno.NetAddr;
+  const baseUrl = `http://${host}:${addr.port}`;
+
+  await log({
+    type: "serverReady",
+    host,
+    port: addr.port,
+    baseUrl,
+    sessionRoot,
+    sessionId,
+    logPath,
+  });
+
+  return {
+    baseUrl,
+    host,
+    port: addr.port,
+    sessionRoot,
+    close: async () => {
+      closing = true;
+      if (snapshotTimer !== undefined) clearInterval(snapshotTimer);
+      for (const socket of sockets) socket.close();
+      for (const moduleId of [...activeModules.keys()]) {
+        await stopModule(moduleId, "serverClose");
+      }
+      parentHandle.cancel();
+      await lspWsServer.shutdown();
+      await server.shutdown();
+    },
+  };
+
+  async function analyzeModule(
+    requestBody: AnalyzeRequest,
+  ): Promise<AnalyzeResponse> {
+    const analyzeStartedAt = performance.now();
+    await log({
+      type: "analyzeStart",
+      moduleId: requestBody.moduleId,
+      sourceVersion: requestBody.sourceVersion,
+    });
+
+    const generatedRunId = createGeneratedRunId();
+    const modulePath = join(
+      modulesDir,
+      `${sanitizeFilePart(requestBody.moduleId)}.ts`,
+    );
+import { launch, type TimeContext } from "@avtools/core-timing";
+import { LSWSServer } from "@valtown/ls-ws-server";
+import { fromFileUrl, isAbsolute, join } from "jsr:@std/path@1";
+import { pathToFileURL } from "node:url";
+import { analyzeAndTransformTimedModule } from "./analyze_transform.ts";
+import { createGeneratedRunId } from "./generated_run_id.ts";
+import type {
+  ActiveWaitSnapshot,
+  AnalyzeRequest,
+  AnalyzeResponse,
+  HealthResponse,
+  LaunchModuleRequest,
+  PianoRollHistoryRequest,
+  SetPianoRollRequest,
+  StopModuleRequest,
+} from "./protocol.ts";
+import { clearModuleWaits, makeActiveWaitSnapshot } from "./runtime.ts";
+import {
+  makePianoRollSnapshot,
+  redoPianoRoll,
+  seedDemoPianoRoll,
+  setPianoRoll,
+  undoPianoRoll,
+} from "./piano_roll_store.ts";
+
+interface BranchHandle {
+  cancel: () => void;
+  finally: (f: () => void) => void;
+}
+
+interface ActiveModule {
+  moduleId: string;
+  generatedRunId: string;
+  transformedModuleUri: string;
+  handle: BranchHandle;
+}
+
+export interface LivecodeVisualizerServerOptions {
+  host?: string;
+  port?: number;
+  sessionRoot?: string;
+  logLevel?: "debug" | "info";
+}
+
+export interface LivecodeVisualizerServer {
+  baseUrl: string;
+  host: string;
+  port: number;
+  sessionRoot: string;
+  const host = options.host ?? "127.0.0.1";
+  const port = options.port ?? 0;
+  const sessionRoot = options.sessionRoot
+    ? resolvePath(options.sessionRoot)
+    : DEFAULT_SESSION_ROOT;
+  const sessionId = crypto.randomUUID();
+  const sessionDir = join(sessionRoot, sessionId);
+  const modulesDir = join(sessionDir, "modules");
+  const generatedDir = join(sessionDir, "generated");
+  const lspWorkspacesDir = join(
+    Deno.env.get("TMPDIR") ?? "/tmp",
+    "avtools-livecode-lsp-workspaces",
+    sessionId,
+  );
+  const logsDir = join(sessionRoot, "logs");
+  const lspLogsDir = join(logsDir, "lsp");
+  const logPath = join(logsDir, "server.log");
+
+  await Deno.mkdir(modulesDir, { recursive: true });
+  await Deno.mkdir(generatedDir, { recursive: true });
+  await Deno.mkdir(lspWorkspacesDir, { recursive: true });
+  await Deno.mkdir(logsDir, { recursive: true });
+  await Deno.mkdir(lspLogsDir, { recursive: true });
+
+  const sockets = new Set<WebSocket>();
+  const pianoRollSockets = new Set<WebSocket>();
+  const activeModules = new Map<string, ActiveModule>();
+  const launchQueue: Array<(ctx: TimeContext) => Promise<void> | void> = [];
+  let parentContext: TimeContext | null = null;
+  let lastSnapshotJson = "";
+  let snapshotTimer: number | undefined;
+  let pianoRollSnapshotTimer: number | undefined;
+  let closing = false;
+
+  const log = async (entry: Record<string, unknown>) => {
+    const line = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      ...entry,
+    });
+    console.log(line);
+    await Deno.writeTextFile(logPath, `${line}\n`, {
+      append: true,
+      create: true,
+    });
+  };
+
+  const parentHandle = launch(async (ctx) => {
+    parentContext = ctx;
+    await log({ type: "parentLoopStarted" });
+    while (!closing) {
+      const queued = launchQueue.splice(0);
+      for (const action of queued) {
+        await action(ctx);
+      }
+      try {
+        await ctx.waitSec(0.03);
+      } catch (error) {
+      });
+    },
+  });
+
+  snapshotTimer = setInterval(() => {
+    const snapshot = makeActiveWaitSnapshot();
+    const snapshotJson = JSON.stringify(snapshot.modules);
+    if (snapshotJson === lastSnapshotJson) return;
+    lastSnapshotJson = snapshotJson;
+    const payload = JSON.stringify(snapshot);
+    for (const socket of sockets) {
+      if (socket.readyState === WebSocket.OPEN) socket.send(payload);
+    }
+    if (options.logLevel === "debug") {
+      void log({
+        type: "snapshot",
+        activeModuleCount: Object.keys(snapshot.modules).length,
+        activeCallsiteCount: Object.values(snapshot.modules).reduce(
+          (sum, ids) => sum + ids.length,
+          0,
+        ),
+      });
+    }
+  }, 33) as unknown as number;
+
+  seedDemoPianoRoll();
+  pianoRollSnapshotTimer = setInterval(() => {
+    const snapshot = makePianoRollSnapshot();
+    if (!snapshot) return;
+    const payload = JSON.stringify(snapshot);
+    for (const socket of pianoRollSockets) {
+      if (socket.readyState === WebSocket.OPEN) socket.send(payload);
+    }
+    if (options.logLevel === "debug") {
+      void log({
+        type: "pianoRollSnapshot",
+        rollCount: Object.keys(snapshot.rolls).length,
+      });
+    }
+  }, 100) as unknown as number;
+
+  const handler = async (request: Request): Promise<Response> => {
+    const url = new URL(request.url);
+
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
+    if (request.method === "GET" && url.pathname === "/health") {
+      const response: HealthResponse = {
+        ok: true,
+        serverVersion: SERVER_VERSION,
+        sessionRoot,
+        activeModules: [...activeModules.keys()],
+      };
+      return json(response);
+    }
+
+    if (request.method === "POST" && url.pathname === "/runtime/analyze") {
+      const requestBody = await request.json() as AnalyzeRequest;
+      return json(await analyzeModule(requestBody));
+    }
+
+    if (request.method === "POST" && url.pathname === "/runtime/launch") {
+      const requestBody = await request.json() as LaunchModuleRequest;
+      await launchModule(requestBody);
+      return json({ ok: true });
+    }
+
+    if (request.method === "POST" && url.pathname === "/runtime/stop") {
+      const requestBody = await request.json() as StopModuleRequest;
+      await stopModule(requestBody.moduleId, "stopRequest");
+      return json({ ok: true });
+    }
+
+    if (request.method === "GET" && url.pathname === "/piano-roll/snapshots") {
+      const { socket, response } = Deno.upgradeWebSocket(request);
+      socket.onopen = () => {
+        pianoRollSockets.add(socket);
+        socket.send(JSON.stringify(makePianoRollSnapshot({ force: true })));
+      };
+      socket.onclose = () => pianoRollSockets.delete(socket);
+      socket.onerror = () => pianoRollSockets.delete(socket);
+      return response;
+    }
+
+    if (request.method === "GET" && url.pathname === "/piano-roll/list") {
+      return json(makePianoRollSnapshot({ force: true }));
+    }
+
+    if (request.method === "POST" && url.pathname === "/piano-roll/set") {
+      const requestBody = await request.json() as SetPianoRollRequest;
+      return json(setPianoRoll(requestBody.name, requestBody.data, {
+        label: requestBody.label,
+        source: requestBody.source ?? "client",
+        originId: requestBody.originId,
+        undoable: requestBody.undoable,
+      }));
+    }
+
+    if (request.method === "POST" && url.pathname === "/piano-roll/undo") {
+      const requestBody = await request.json() as PianoRollHistoryRequest;
+      return json(
+        undoPianoRoll(requestBody.name, { originId: requestBody.originId }) ??
+          { ok: false },
+      );
+    }
+
+    if (request.method === "POST" && url.pathname === "/piano-roll/redo") {
+      const requestBody = await request.json() as PianoRollHistoryRequest;
+      return json(
+        redoPianoRoll(requestBody.name, { originId: requestBody.originId }) ??
+          { ok: false },
+      );
+    }
+
+    if (request.method === "GET" && url.pathname === "/lsp") {
+      const session = url.searchParams.get("session");
+      if (!session) {
+        return new Response("Missing lsp session", {
+          status: 400,
+          headers: CORS_HEADERS,
+        });
+      }
+
+      const { socket, response } = Deno.upgradeWebSocket(request);
+      await log({ type: "lspSocketAccepted", sessionId: session });
+      try {
+        return response;
+      } finally {
+        lspWsServer.handleNewWebsocket(socket, session);
+      }
+    }
+
+    if (request.method === "GET" && url.pathname === "/runtime/snapshots") {
+      const { socket, response } = Deno.upgradeWebSocket(request);
+      socket.onopen = () => {
+        sockets.add(socket);
+        socket.send(
+          JSON.stringify(makeActiveWaitSnapshot() satisfies ActiveWaitSnapshot),
+        );
+    return new Response("Not found", { status: 404, headers: CORS_HEADERS });
+  };
+
+  const server = Deno.serve({ hostname: host, port }, handler);
+  const addr = server.addr as Deno.NetAddr;
+  const baseUrl = `http://${host}:${addr.port}`;
+
+  await log({
+    type: "serverReady",
+    host,
+    port: addr.port,
+    baseUrl,
+    sessionRoot,
+    sessionId,
+    logPath,
+  });
+
+  return {
+    baseUrl,
+    host,
+    port: addr.port,
+    sessionRoot,
+    close: async () => {
+      closing = true;
+      if (snapshotTimer !== undefined) clearInterval(snapshotTimer);
+      if (pianoRollSnapshotTimer !== undefined) {
+        clearInterval(pianoRollSnapshotTimer);
+      }
+      for (const socket of sockets) socket.close();
+      for (const moduleId of [...activeModules.keys()]) {
+        await stopModule(moduleId, "serverClose");
+      }
+      parentHandle.cancel();
+      await lspWsServer.shutdown();
+      await server.shutdown();
+    },
+  };
+
+  async function analyzeModule(
+    requestBody: AnalyzeRequest,
+  ): Promise<AnalyzeResponse> {
+    const analyzeStartedAt = performance.now();
+    await log({
+      type: "analyzeStart",
+      moduleId: requestBody.moduleId,
+      sourceVersion: requestBody.sourceVersion,
+    });
+
+    const generatedRunId = createGeneratedRunId();
+    const modulePath = join(
+      modulesDir,
+      `${sanitizeFilePart(requestBody.moduleId)}.ts`,
+    );
+apps/livecode-tldraw/piano-roll-tldraw-sandbox.png
+No image
+apps/livecode-tldraw/src/App.tsx
+import { useEffect, useMemo, useState } from 'react'
+import { type Editor, Tldraw, createShapeId } from 'tldraw'
+import { DEFAULT_LIVECODE_SOURCE } from './defaultSource'
+import {
+  LIVECODE_EDITOR_SHAPE_TYPE,
+  LivecodeEditorShapeUtil,
+  createModuleId,
+  type LivecodeEditorShape,
+} from './LivecodeEditorShape'
+import { LivecodeRuntimeProvider, useLivecodeRuntime } from './livecodeRuntime'
+
+const shapeUtils = [LivecodeEditorShapeUtil]
+
+export function App() {
+  return (
+    <LivecodeRuntimeProvider>
+      <LivecodeTldrawPage />
+    </LivecodeRuntimeProvider>
+  )
+}
+
+function LivecodeTldrawPage() {
+  const [editor, setEditor] = useState<Editor | null>(null)
+  const runtime = useLivecodeRuntime()
+  const { registerModule, unregisterModule, setModuleSource } = runtime
+
+  useEffect(() => {
+    if (!editor) return
+
+    for (const shape of editor.getCurrentPageShapes()) {
+      if (isLivecodeShape(shape)) {
+        registerModule(shape.props.moduleId, shape.props.source)
+      }
+    }
+
+    return editor.store.listen(
+      (entry) => {
+        for (const record of Object.values(entry.changes.added)) {
+          if (isLivecodeShape(record)) {
+            registerModule(record.props.moduleId, record.props.source)
+          }
+        }
+
+        for (const [before, after] of Object.values(entry.changes.updated)) {
+          if (isLivecodeShape(before) && !isLivecodeShape(after)) {
+            unregisterModule(before.props.moduleId)
+          } else if (!isLivecodeShape(before) && isLivecodeShape(after)) {
+            registerModule(after.props.moduleId, after.props.source)
+          } else if (isLivecodeShape(before) && isLivecodeShape(after)) {
+            if (before.props.moduleId !== after.props.moduleId) {
+              unregisterModule(before.props.moduleId)
+              registerModule(after.props.moduleId, after.props.source)
+            } else if (before.props.source !== after.props.source) {
+              setModuleSource(after.props.moduleId, after.props.source)
+            }
+          }
+        }
+
+        for (const record of Object.values(entry.changes.removed)) {
+          if (isLivecodeShape(record)) {
+            unregisterModule(record.props.moduleId)
+          }
+        }
+      },
+      { source: 'all', scope: 'document' },
+    )
+  }, [editor, registerModule, setModuleSource, unregisterModule])
+
+  return (
+    <div className="app-shell">
+      <TopBar editor={editor} />
+      <div className="canvas-shell">
+        <Tldraw
+          persistenceKey="livecode-tldraw-poc"
+          shapeUtils={shapeUtils}
+          onMount={(mountedEditor) => {
+            setEditor(mountedEditor)
+            if (!hasLivecodeShapes(mountedEditor)) {
+              createLivecodeShape(mountedEditor, { x: 120, y: 120, title: 'module 1' })
+            }
+          }}
+        />
+      </div>
+    </div>
+  )
+}
+
+function TopBar({ editor }: { editor: Editor | null }) {
+  const runtime = useLivecodeRuntime()
+  const moduleCount = useMemo(() => Object.keys(runtime.modules).length, [runtime.modules])
+
+  return (
+    <div className="topbar" onPointerDown={(event) => event.stopPropagation()}>
+      <div className="topbar__group topbar__group--server">
+        <label htmlFor="server-url">Server</label>
+        <input
+          id="server-url"
+          value={runtime.serverBaseUrl}
+          onChange={(event) => runtime.setServerBaseUrl(event.currentTarget.value)}
+          spellCheck={false}
+        />
+        <button
+          type="button"
+          disabled={runtime.connectionStatus === 'connecting'}
+          onClick={() =>
+            runtime.connectionStatus === 'open' ? runtime.disconnect() : void runtime.connect()
+          }
+        >
+          {runtime.connectionStatus === 'open' ? 'Disconnect' : 'Connect'}
+        </button>
+      </div>
+
+      <button
+        type="button"
+        disabled={!editor}
+        onClick={() => {
+          if (editor) createLivecodeShape(editor)
+        }}
+      >
+        New module
+      </button>
+
+      <div className="topbar__status">
+        <span className={`status-pill status-pill--${runtime.connectionStatus}`}>
+          {runtime.connectionStatus}
+        </span>
+        <span className={`status-pill status-pill--${runtime.lspStatus}`}>
+          lsp: {runtime.lspStatus}
+        </span>
+        <span>{moduleCount} modules</span>
+        {runtime.connectionError ? <span className="topbar__error">{runtime.connectionError}</span> : null}
+      </div>
+    </div>
+  )
+}
+
+function hasLivecodeShapes(editor: Editor) {
+  return editor.getCurrentPageShapes().some((shape) => shape.type === LIVECODE_EDITOR_SHAPE_TYPE)
+}
+
+function isLivecodeShape(record: unknown): record is LivecodeEditorShape {
+  if (!record || typeof record !== 'object') return false
+  const candidate = record as { typeName?: unknown; type?: unknown }
+  return candidate.typeName === 'shape' && candidate.type === LIVECODE_EDITOR_SHAPE_TYPE
+}
+
+function createLivecodeShape(
+  editor: Editor,
+  options: { x?: number; y?: number; title?: string; source?: string } = {},
+) {
+  const id = createShapeId()
+  const moduleId = createModuleId()
+  const center = editor.getViewportPageBounds().center
+  editor.createShape<LivecodeEditorShape>({
+    id,
+    type: LIVECODE_EDITOR_SHAPE_TYPE,
+    x: options.x ?? center.x - 320,
+    y: options.y ?? center.y - 260,
+    props: {
+      w: 640,
+      h: 520,
+      moduleId,
+      title: options.title ?? `module ${moduleId.slice(7, 15)}`,
+      source: options.source ?? DEFAULT_LIVECODE_SOURCE,
+    },
+  })
+  editor.select(id)
+  return id
+}
+import { useEffect, useMemo, useState } from "react";
+import { type Editor, Tldraw, createShapeId } from "tldraw";
+import { DEFAULT_LIVECODE_SOURCE } from "./defaultSource";
+import {
+  LIVECODE_EDITOR_SHAPE_TYPE,
+  LivecodeEditorShapeUtil,
+  createModuleId,
+  type LivecodeEditorShape,
+} from "./LivecodeEditorShape";
+import { LivecodeRuntimeProvider, useLivecodeRuntime } from "./livecodeRuntime";
+import { PianoRollRuntimeProvider } from "./pianoRollRuntime";
+import {
+  PianoRollShapeUtil,
+  PIANO_ROLL_SHAPE_TYPE,
+  type PianoRollShape,
+} from "./PianoRollShape";
+
+const shapeUtils = [LivecodeEditorShapeUtil, PianoRollShapeUtil];
+
+export function App() {
+  return (
+    <LivecodeRuntimeProvider>
+      <LivecodeTldrawPage />
+    </LivecodeRuntimeProvider>
+  );
+}
+
+function LivecodeTldrawPage() {
+  const [editor, setEditor] = useState<Editor | null>(null);
+  const runtime = useLivecodeRuntime();
+  const { registerModule, unregisterModule, setModuleSource } = runtime;
+
+  useEffect(() => {
+    if (!editor) return;
+
+    for (const shape of editor.getCurrentPageShapes()) {
+      if (isLivecodeShape(shape)) {
+        registerModule(shape.props.moduleId, shape.props.source);
+      }
+    }
+
+    return editor.store.listen(
+      (entry) => {
+        for (const record of Object.values(entry.changes.added)) {
+          if (isLivecodeShape(record)) {
+            registerModule(record.props.moduleId, record.props.source);
+          }
+        }
+
+        for (const [before, after] of Object.values(entry.changes.updated)) {
+          if (isLivecodeShape(before) && !isLivecodeShape(after)) {
+            unregisterModule(before.props.moduleId);
+          } else if (!isLivecodeShape(before) && isLivecodeShape(after)) {
+            registerModule(after.props.moduleId, after.props.source);
+          } else if (isLivecodeShape(before) && isLivecodeShape(after)) {
+            if (before.props.moduleId !== after.props.moduleId) {
+              unregisterModule(before.props.moduleId);
+              registerModule(after.props.moduleId, after.props.source);
+            } else if (before.props.source !== after.props.source) {
+              setModuleSource(after.props.moduleId, after.props.source);
+            }
+          }
+        }
+
+        for (const record of Object.values(entry.changes.removed)) {
+          if (isLivecodeShape(record)) {
+            unregisterModule(record.props.moduleId);
+          }
+        }
+      },
+      { source: "all", scope: "document" },
+    );
+  }, [editor, registerModule, setModuleSource, unregisterModule]);
+
+  return (
+    <PianoRollRuntimeProvider serverBaseUrl={runtime.serverBaseUrl}>
+      <div className="app-shell">
+        <TopBar editor={editor} />
+        <div className="canvas-shell">
+          <Tldraw
+            persistenceKey="livecode-tldraw-poc"
+            shapeUtils={shapeUtils}
+            onMount={(mountedEditor) => {
+              setEditor(mountedEditor);
+              if (!hasLivecodeShapes(mountedEditor)) {
+                createLivecodeShape(mountedEditor, {
+                  x: 120,
+                  y: 120,
+                  title: "module 1",
+                });
+              }
+              if (!hasPianoRollShapes(mountedEditor)) {
+                createPianoRollShape(mountedEditor, {
+                  x: 820,
+                  y: 120,
+                  rollName: "melody",
+                });
+              }
+            }}
+          />
+        </div>
+      </div>
+    </PianoRollRuntimeProvider>
+  );
+}
+
+function TopBar({ editor }: { editor: Editor | null }) {
+  const runtime = useLivecodeRuntime();
+  const moduleCount = useMemo(
+    () => Object.keys(runtime.modules).length,
+    [runtime.modules],
+  );
+
+  return (
+    <div className="topbar" onPointerDown={(event) => event.stopPropagation()}>
+      <div className="topbar__group topbar__group--server">
+        <label htmlFor="server-url">Server</label>
+        <input
+          id="server-url"
+          value={runtime.serverBaseUrl}
+          onChange={(event) =>
+            runtime.setServerBaseUrl(event.currentTarget.value)
+          }
+          spellCheck={false}
+        />
+        <button
+          type="button"
+          disabled={runtime.connectionStatus === "connecting"}
+          onClick={() =>
+            runtime.connectionStatus === "open"
+              ? runtime.disconnect()
+              : void runtime.connect()
+          }
+        >
+          {runtime.connectionStatus === "open" ? "Disconnect" : "Connect"}
+        </button>
+      </div>
+
+      <button
+        type="button"
+        disabled={!editor}
+        onClick={() => {
+          if (editor) createLivecodeShape(editor);
+        }}
+      >
+        New module
+      </button>
+
+      <div className="topbar__status">
+        <span
+          className={`status-pill status-pill--${runtime.connectionStatus}`}
+        >
+          {runtime.connectionStatus}
+        </span>
+        <span className={`status-pill status-pill--${runtime.lspStatus}`}>
+          lsp: {runtime.lspStatus}
+        </span>
+        <span>{moduleCount} modules</span>
+        {runtime.connectionError ? (
+          <span className="topbar__error">{runtime.connectionError}</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function hasLivecodeShapes(editor: Editor) {
+  return editor
+    .getCurrentPageShapes()
+    .some((shape) => shape.type === LIVECODE_EDITOR_SHAPE_TYPE);
+}
+
+function isLivecodeShape(record: unknown): record is LivecodeEditorShape {
+  if (!record || typeof record !== "object") return false;
+  const candidate = record as { typeName?: unknown; type?: unknown };
+  return (
+    candidate.typeName === "shape" &&
+    candidate.type === LIVECODE_EDITOR_SHAPE_TYPE
+  );
+}
+
+function createLivecodeShape(
+  editor: Editor,
+  options: { x?: number; y?: number; title?: string; source?: string } = {},
+) {
+  const id = createShapeId();
+  const moduleId = createModuleId();
+  const center = editor.getViewportPageBounds().center;
+  editor.createShape<LivecodeEditorShape>({
+    id,
+    type: LIVECODE_EDITOR_SHAPE_TYPE,
+    x: options.x ?? center.x - 320,
+    y: options.y ?? center.y - 260,
+    props: {
+      w: 640,
+      h: 520,
+      moduleId,
+      title: options.title ?? `module ${moduleId.slice(7, 15)}`,
+      source: options.source ?? DEFAULT_LIVECODE_SOURCE,
+    },
+  });
+  editor.select(id);
+  return id;
+}
+
+function isPianoRollShape(shape: unknown): shape is PianoRollShape {
+  return Boolean(
+    shape &&
+    typeof shape === "object" &&
+    "type" in shape &&
+    (shape as { type?: unknown }).type === PIANO_ROLL_SHAPE_TYPE,
+  );
+}
+
+function hasPianoRollShapes(editor: Editor) {
+  return editor.getCurrentPageShapes().some(isPianoRollShape);
+}
+
+function createPianoRollShape(
+  editor: Editor,
+  options: Partial<PianoRollShape["props"]> & { x?: number; y?: number } = {},
+) {
+  const id = createShapeId();
+  const rollName = options.rollName ?? "melody";
+  editor.createShape<PianoRollShape>({
+    id,
+    type: PIANO_ROLL_SHAPE_TYPE,
+    x: options.x ?? 820,
+    y: options.y ?? 120,
+    props: {
+      w: options.w ?? 720,
+      h: options.h ?? 500,
+      rollName,
+      title: options.title ?? `piano roll: ${rollName}`,
+      showControlPanel: options.showControlPanel ?? true,
+      interactive: options.interactive ?? true,
+    },
+  });
+  editor.select(id);
+}
+apps/livecode-tldraw/src/PianoRollShape.tsx
+Full file content failed to load
+Retry
+import { useEffect, useMemo, useRef } from "react";
+import {
+  BaseBoxShapeUtil,
+  HTMLContainer,
+  RecordProps,
+  T,
+  TLShape,
+} from "tldraw";
+import "@avtools/piano-roll";
+import type { NoteData, NoteDataInput, PianoRollData } from "./pianoRollTypes";
+import { usePianoRollRuntime } from "./pianoRollRuntime";
+
+export const PIANO_ROLL_SHAPE_TYPE = "piano-roll-view";
+
+declare module "tldraw" {
+  export interface TLGlobalShapePropsMap {
+    [PIANO_ROLL_SHAPE_TYPE]: {
+      w: number;
+      h: number;
+      rollName: string;
+      title: string;
+      showControlPanel: boolean;
+      interactive: boolean;
+    };
+  }
+}
+
+export type PianoRollShape = TLShape<typeof PIANO_ROLL_SHAPE_TYPE>;
+
+interface PianoRollElement extends HTMLElement {
+  width?: number;
+  height?: number;
+  initialNotes?: Array<[string, NoteData]>;
+  interactive?: boolean;
+  showControlPanel?: boolean;
+  setNotes?: (notes: NoteDataInput[]) => void;
+  fitZoomToNotes?: () => void;
+}
+
+export class PianoRollShapeUtil extends BaseBoxShapeUtil<PianoRollShape> {
+  static override type = PIANO_ROLL_SHAPE_TYPE;
+  static override props: RecordProps<PianoRollShape> = {
+    w: T.number,
+    h: T.number,
+    rollName: T.string,
+    title: T.string,
+    showControlPanel: T.boolean,
+    interactive: T.boolean,
+  };
+
+  override canScroll(): boolean {
+    return true;
+  }
+
+  override canEdit(): boolean {
+    return true;
+  }
+
+  override canResize(): boolean {
+    return true;
+  }
+
+  override getDefaultProps(): PianoRollShape["props"] {
+    return {
+      w: 720,
+      h: 500,
+      rollName: "melody",
+      title: "piano roll: melody",
+      showControlPanel: true,
+      interactive: true,
+    };
+  }
+
+  override component(shape: PianoRollShape) {
+    return <PianoRollShapeComponent shape={shape} />;
+  }
+
+  override getIndicatorPath(shape: PianoRollShape) {
+    const path = new Path2D();
+    path.rect(0, 0, shape.props.w, shape.props.h);
+    return path;
+  }
+}
+
+function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
+  const runtime = usePianoRollRuntime();
+  const roll = runtime.rolls[shape.props.rollName];
+  const elementRef = useRef<PianoRollElement | null>(null);
+  const lastAppliedRevRef = useRef<number | null>(null);
+  const originId = useMemo(() => `piano-roll-view-${shape.id}`, [shape.id]);
+
+  useEffect(() => {
+    const el = elementRef.current;
+    if (!el) return;
+    el.width = Math.max(120, shape.props.w - 24);
+    el.height = Math.max(160, shape.props.h - 104);
+    el.interactive = shape.props.interactive;
+    el.showControlPanel = shape.props.showControlPanel;
+  }, [
+    shape.props.h,
+    shape.props.interactive,
+    shape.props.showControlPanel,
+    shape.props.w,
+  ]);
+
+  useEffect(() => {
+    const el = elementRef.current;
+    if (!el || !roll) return;
+    if (lastAppliedRevRef.current === roll.rev) return;
+    lastAppliedRevRef.current = roll.rev;
+    el.setNotes?.(roll.data.notes);
+    if (roll.rev === 1) {
+      window.setTimeout(() => el.fitZoomToNotes?.(), 0);
+    }
+  }, [roll]);
+
+  useEffect(() => {
+    const el = elementRef.current;
+    if (!el) return;
+
+    const handleNotesUpdate = (event: Event) => {
+      const customEvent = event as CustomEvent<[Array<[string, NoteData]>]>;
+      const notesEntries = customEvent.detail?.[0];
+      if (!notesEntries || !shape.props.interactive) return;
+      const data: PianoRollData = {
+        notes: notesEntries.map(([, note]) => note),
+      };
+      void runtime.setRoll(shape.props.rollName, data, {
+        originId,
+        label: `Edit ${shape.props.rollName}`,
+      });
+    };
+
+    el.addEventListener("notes-update", handleNotesUpdate);
+    return () => el.removeEventListener("notes-update", handleNotesUpdate);
+  }, [originId, runtime, shape.props.interactive, shape.props.rollName]);
+
+  const stopCanvasEvent = (event: React.SyntheticEvent) => {
+    event.stopPropagation();
+  };
+
+  const stageWidth = Math.max(120, shape.props.w - 24);
+  const stageHeight = Math.max(160, shape.props.h - 104);
+
+  return (
+    <HTMLContainer
+      className="piano-roll-shape"
+      style={{ width: shape.props.w, height: shape.props.h }}
+      onPointerDown={stopCanvasEvent}
+      onPointerMove={stopCanvasEvent}
+      onPointerUp={stopCanvasEvent}
+      onWheel={stopCanvasEvent}
+    >
+      <div className="piano-roll-shape__header">
+        <div className="piano-roll-shape__title">
+          <strong>{shape.props.title}</strong>
+          <span>
+            {runtime.connectionStatus} · rev {roll?.rev ?? "-"} · snapshot{" "}
+            {runtime.latestSeq ?? "-"}
+          </span>
+        </div>
+        <div
+          className="piano-roll-shape__actions"
+          onPointerDown={stopCanvasEvent}
+        >
+          <button
+            type="button"
+            disabled={!roll?.canUndo}
+            onClick={() =>
+              void runtime.undoRoll(shape.props.rollName, originId)
+            }
+          >
+            Undo object
+          </button>
+          <button
+            type="button"
+            disabled={!roll?.canRedo}
+            onClick={() =>
+              void runtime.redoRoll(shape.props.rollName, originId)
+            }
+          >
+            Redo object
+          </button>
+        </div>
+      </div>
+      <div className="piano-roll-shape__body">
+        {roll ? (
+          <piano-roll-component
+            ref={elementRef}
+            style={{ width: stageWidth + 24, height: stageHeight + 72 }}
+          />
+        ) : (
+          <div className="piano-roll-shape__empty">
+            Waiting for <code>{shape.props.rollName}</code> from the server…
+            {runtime.connectionError ? (
+              <span>{runtime.connectionError}</span>
+            ) : null}
+          </div>
+        )}
+      </div>
+    </HTMLContainer>
+  );
+}
+apps/livecode-tldraw/src/custom-elements.d.ts
+Full file content failed to load
+Retry
+import type React from 'react'
+
+declare module '@avtools/piano-roll'
+
+declare module 'react' {
+  namespace JSX {
+    interface IntrinsicElements {
+      'piano-roll-component': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>
+    }
+  }
+}
+apps/livecode-tldraw/src/pianoRollRuntime.tsx
+Full file content failed to load
+Retry
+import {
+  createContext,
+  type PropsWithChildren,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type {
+  PianoRollData,
+  PianoRollObject,
+  PianoRollSnapshot,
+} from "./pianoRollTypes";
+
+export type PianoRollConnectionStatus =
+  | "closed"
+  | "connecting"
+  | "open"
+  | "error";
+
+export interface PianoRollRuntimeApi {
+  connectionStatus: PianoRollConnectionStatus;
+  rolls: Record<string, PianoRollObject>;
+  latestSeq: number | null;
+  connectionError: string | null;
+  setRoll(
+    name: string,
+    data: PianoRollData,
+    options?: { originId?: string; label?: string },
+  ): Promise<void>;
+  undoRoll(name: string, originId?: string): Promise<void>;
+  redoRoll(name: string, originId?: string): Promise<void>;
+}
+
+const PianoRollRuntimeContext = createContext<PianoRollRuntimeApi | null>(null);
+
+export function usePianoRollRuntime() {
+  const runtime = useContext(PianoRollRuntimeContext);
+  if (!runtime) {
+    throw new Error(
+      "usePianoRollRuntime must be used inside PianoRollRuntimeProvider",
+    );
+  }
+  return runtime;
+}
+
+export function PianoRollRuntimeProvider({
+  serverBaseUrl,
+  children,
+}: PropsWithChildren<{ serverBaseUrl: string }>) {
+  const [connectionStatus, setConnectionStatus] =
+    useState<PianoRollConnectionStatus>("closed");
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [rolls, setRolls] = useState<Record<string, PianoRollObject>>({});
+  const [latestSeq, setLatestSeq] = useState<number | null>(null);
+  const serverBaseUrlRef = useRef(serverBaseUrl);
+  const socketRef = useRef<WebSocket | null>(null);
+  const pendingSnapshotRef = useRef<PianoRollSnapshot | null>(null);
+  const rafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    serverBaseUrlRef.current = serverBaseUrl;
+  }, [serverBaseUrl]);
+
+  const postJson = useCallback(
+    async <T,>(path: string, body: unknown): Promise<T> => {
+      const response = await fetch(`${serverBaseUrlRef.current}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        throw new Error(
+          `${path} failed with ${response.status}: ${await response.text()}`,
+        );
+      }
+      return (await response.json()) as T;
+    },
+    [],
+  );
+
+  const flushPendingSnapshot = useCallback(() => {
+    rafRef.current = null;
+    const snapshot = pendingSnapshotRef.current;
+    if (!snapshot) return;
+    pendingSnapshotRef.current = null;
+    setRolls(snapshot.rolls);
+    setLatestSeq(snapshot.seq);
+  }, []);
+
+  useEffect(() => {
+    setConnectionError(null);
+    setConnectionStatus("connecting");
+    socketRef.current?.close();
+
+    const socketUrl = `${serverBaseUrl.replace(/^http/, "ws")}/piano-roll/snapshots`;
+    const socket = new WebSocket(socketUrl);
+    socketRef.current = socket;
+
+    socket.onopen = () => setConnectionStatus("open");
+    socket.onerror = () => {
+      setConnectionError("piano roll websocket failed");
+      setConnectionStatus("error");
+    };
+    socket.onclose = () => {
+      if (socketRef.current === socket) socketRef.current = null;
+      setConnectionStatus((current) =>
+        current === "error" ? current : "closed",
+      );
+    };
+    socket.onmessage = (event) => {
+      pendingSnapshotRef.current = JSON.parse(
+        event.data as string,
+      ) as PianoRollSnapshot;
+      if (rafRef.current === null) {
+        rafRef.current = window.requestAnimationFrame(flushPendingSnapshot);
+      }
+    };
+
+    return () => {
+      socket.close();
+      if (rafRef.current !== null) window.cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    };
+  }, [flushPendingSnapshot, serverBaseUrl]);
+
+  const setRoll = useCallback(
+    async (
+      name: string,
+      data: PianoRollData,
+      options: { originId?: string; label?: string } = {},
+    ) => {
+      await postJson("/piano-roll/set", {
+        name,
+        data,
+        originId: options.originId,
+        label: options.label ?? "Edit piano roll",
+        source: "client",
+        undoable: true,
+      });
+    },
+    [postJson],
+  );
+
+  const undoRoll = useCallback(
+    async (name: string, originId?: string) => {
+      await postJson("/piano-roll/undo", { name, originId });
+    },
+    [postJson],
+  );
+
+  const redoRoll = useCallback(
+    async (name: string, originId?: string) => {
+      await postJson("/piano-roll/redo", { name, originId });
+    },
+    [postJson],
+  );
+
+  const value = useMemo(
+    () => ({
+      connectionStatus,
+      rolls,
+      latestSeq,
+      connectionError,
+      setRoll,
+      undoRoll,
+      redoRoll,
+    }),
+    [
+      connectionError,
+      connectionStatus,
+      latestSeq,
+      redoRoll,
+      rolls,
+      setRoll,
+      undoRoll,
+    ],
+  );
+
+  return (
+    <PianoRollRuntimeContext.Provider value={value}>
+      {children}
+    </PianoRollRuntimeContext.Provider>
+  );
+}
+apps/livecode-tldraw/src/pianoRollTypes.ts
+Full file content failed to load
+Retry
+export type PianoRollUpdateSource =
+  | "server"
+  | "client"
+  | "livecode"
+  | "undoRedo";
+
+export interface MpePitchPoint {
+  time: number;
+  pitchOffset: number;
+  metadata?: Record<string, unknown>;
+  rooted?: boolean;
+}
+
+export interface MpePitchData {
+  points: MpePitchPoint[];
+}
+
+export interface NoteDataInput {
+  id?: string;
+  pitch: number;
+  position: number;
+  duration: number;
+  velocity?: number;
+  mpePitch?: MpePitchData;
+  metadata?: Record<string, unknown>;
+}
+
+export interface NoteData extends NoteDataInput {
+  id: string;
+  velocity: number;
+}
+
+export interface PianoRollData {
+  notes: NoteDataInput[];
+  viewport?: {
+    scrollX: number;
+    scrollY: number;
+    zoomX: number;
+    zoomY: number;
+  };
+  grid?: {
+    subdivision?: number;
+  };
+}
+
+export interface PianoRollObject {
+  name: string;
+  rev: number;
+  data: PianoRollData;
+  updatedAt: number;
+  updatedBy: string;
+  canUndo: boolean;
+  canRedo: boolean;
+}
+
+export interface PianoRollSnapshot {
+  type: "pianoRollSnapshot";
+  seq: number;
+  timestampMs: number;
+  rolls: Record<string, PianoRollObject>;
+}
+apps/livecode-tldraw/src/styles.css
+:root {
+  color: #e8ece9;
+  background: #171a18;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+}
+
+.status-pill--open,
+.status-pill--ready,
+.status-pill--running {
+  color: #c6f6e2;
+  background: rgba(37, 176, 141, 0.22);
+  border-color: rgba(37, 176, 141, 0.34);
+}
+
+.status-pill--error,
+.status-pill--not-connected {
+  color: #ffd0c9;
+  background: rgba(218, 72, 59, 0.22);
+  border-color: rgba(218, 72, 59, 0.34);
+}
+
+.status-pill--queued,
+.status-pill--analyzing,
+.status-pill--connecting,
+.status-pill--stopping {
+  color: #ffe7b8;
+  background: rgba(190, 136, 35, 0.24);
+  border-color: rgba(190, 136, 35, 0.36);
+}
+:root {
+  color: #e8ece9;
+  background: #171a18;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+}
+
+.status-pill--open,
+.status-pill--ready,
+.status-pill--running {
+  color: #c6f6e2;
+  background: rgba(37, 176, 141, 0.22);
+  border-color: rgba(37, 176, 141, 0.34);
+}
+
+.status-pill--error,
+.status-pill--not-connected {
+  color: #ffd0c9;
+  background: rgba(218, 72, 59, 0.22);
+  border-color: rgba(218, 72, 59, 0.34);
+}
+
+.status-pill--queued,
+.status-pill--analyzing,
+.status-pill--connecting,
+.status-pill--stopping {
+  color: #ffe7b8;
+  background: rgba(190, 136, 35, 0.24);
+  border-color: rgba(190, 136, 35, 0.36);
+}
+
+.piano-roll-shape {
+  display: grid;
+  grid-template-rows: 58px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(236, 244, 239, 0.18);
+  border-radius: 8px;
+  color: #eef5f1;
+  background: #111412;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  pointer-events: all;
+}
+
+.piano-roll-shape__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #171c19;
+}
+
+.piano-roll-shape__title {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.piano-roll-shape__title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.piano-roll-shape__title span {
+  overflow: hidden;
+  color: #9ca8a2;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.piano-roll-shape__actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.piano-roll-shape__actions button {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: #eef5f1;
+  background: #263029;
+  cursor: pointer;
+}
+
+.piano-roll-shape__actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.piano-roll-shape__body {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 10px;
+  background: #f5f5f5;
+}
+
+.piano-roll-shape__empty {
+  display: grid;
+  height: 100%;
+  place-content: center;
+  gap: 8px;
+  color: #2c332f;
+  font-size: 13px;
+}
+apps/livecode-tldraw/vite.config.ts
+import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  plugins: [react()],
+})
+import react from "@vitejs/plugin-react";
+import { fileURLToPath, URL } from "node:url";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [react()],
+  resolve: {
+    alias: {
+      "@avtools/piano-roll": fileURLToPath(
+        new URL(
+          "../../webcomponents/piano-roll/dist/piano-roll.js",
+          import.meta.url,
+        ),
+      ),
+    },
+  },
+});
