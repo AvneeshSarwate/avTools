@@ -256,7 +256,7 @@ input {
 
 .piano-roll-shape {
   display: grid;
-  grid-template-rows: 58px minmax(0, 1fr);
+  grid-template-rows: 52px minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid rgba(236, 244, 239, 0.18);
   border-radius: 8px;
@@ -271,9 +271,11 @@ input {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
   padding: 8px 10px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   background: #171c19;
+  cursor: grab;
 }
 
 .piano-roll-shape__title {
@@ -321,8 +323,20 @@ input {
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 8px 10px;
+  padding: 8px;
   background: #f5f5f5;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
+}
+
+.piano-roll-shape__viewport {
+  width: max-content;
+  min-width: 100%;
+  min-height: 100%;
+}
+
+.piano-roll-shape__viewport piano-roll-component {
+  display: block;
 }
 
 .piano-roll-shape__empty {

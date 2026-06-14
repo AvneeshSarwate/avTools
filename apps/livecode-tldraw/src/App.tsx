@@ -78,7 +78,6 @@ function LivecodeTldrawPage() {
         <TopBar editor={editor} />
         <div className="canvas-shell">
           <Tldraw
-            persistenceKey="livecode-tldraw-poc-piano-roll-v1"
             shapeUtils={shapeUtils}
             onMount={(mountedEditor) => {
               setEditor(mountedEditor)
@@ -212,8 +211,8 @@ function createPianoRollShape(
     x: options.x ?? 820,
     y: options.y ?? 120,
     props: {
-      w: options.w ?? 720,
-      h: options.h ?? 500,
+      w: options.w ?? 560,
+      h: options.h ?? 360,
       rollName,
       title: options.title ?? `piano roll: ${rollName}`,
       showControlPanel: options.showControlPanel ?? true,

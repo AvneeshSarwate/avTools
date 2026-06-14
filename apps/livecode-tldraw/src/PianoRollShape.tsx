@@ -5,6 +5,10 @@ import type { NoteData, NoteDataInput, PianoRollData } from './pianoRollTypes'
 import { usePianoRollRuntime } from './pianoRollRuntime'
 
 export const PIANO_ROLL_SHAPE_TYPE = 'piano-roll-view'
+const DEFAULT_PIANO_ROLL_WIDTH = 560
+const DEFAULT_PIANO_ROLL_HEIGHT = 360
+const PIANO_ROLL_STAGE_WIDTH = 640
+const PIANO_ROLL_STAGE_HEIGHT = 320
 
 declare module 'tldraw' {
   export interface TLGlobalShapePropsMap {
@@ -56,8 +60,8 @@ export class PianoRollShapeUtil extends BaseBoxShapeUtil<PianoRollShape> {
 
   override getDefaultProps(): PianoRollShape['props'] {
     return {
-      w: 720,
-      h: 500,
+      w: DEFAULT_PIANO_ROLL_WIDTH,
+      h: DEFAULT_PIANO_ROLL_HEIGHT,
       rollName: 'melody',
       title: 'piano roll: melody',
       showControlPanel: true,
@@ -86,15 +90,13 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
   useEffect(() => {
     const el = elementRef.current
     if (!el) return
-    el.width = Math.max(120, shape.props.w - 24)
-    el.height = Math.max(160, shape.props.h - 104)
+    el.width = PIANO_ROLL_STAGE_WIDTH
+    el.height = PIANO_ROLL_STAGE_HEIGHT
     el.interactive = shape.props.interactive
     el.showControlPanel = shape.props.showControlPanel
   }, [
-    shape.props.h,
     shape.props.interactive,
     shape.props.showControlPanel,
-    shape.props.w,
   ])
 
   useEffect(() => {
@@ -133,17 +135,10 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
     event.stopPropagation()
   }
 
-  const stageWidth = Math.max(120, shape.props.w - 24)
-  const stageHeight = Math.max(160, shape.props.h - 104)
-
   return (
     <HTMLContainer
       className="piano-roll-shape"
       style={{ width: shape.props.w, height: shape.props.h }}
-      onPointerDown={stopCanvasEvent}
-      onPointerMove={stopCanvasEvent}
-      onPointerUp={stopCanvasEvent}
-      onWheel={stopCanvasEvent}
     >
       <div className="piano-roll-shape__header">
         <div className="piano-roll-shape__title">
@@ -170,12 +165,25 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
           </button>
         </div>
       </div>
-      <div className="piano-roll-shape__body">
+      <div
+        className="piano-roll-shape__body"
+        onPointerDown={stopCanvasEvent}
+        onPointerMove={stopCanvasEvent}
+        onPointerUp={stopCanvasEvent}
+        onPointerCancel={stopCanvasEvent}
+        onTouchStart={stopCanvasEvent}
+        onWheel={stopCanvasEvent}
+      >
         {roll ? (
-          <piano-roll-component
-            ref={elementRef}
-            style={{ width: stageWidth + 24, height: stageHeight + 72 }}
-          />
+          <div className="piano-roll-shape__viewport">
+            <piano-roll-component
+              ref={elementRef}
+              style={{
+                width: PIANO_ROLL_STAGE_WIDTH + 42,
+                minHeight: PIANO_ROLL_STAGE_HEIGHT + 76,
+              }}
+            />
+          </div>
         ) : (
           <div className="piano-roll-shape__empty">
             Waiting for <code>{shape.props.rollName}</code> from the server...

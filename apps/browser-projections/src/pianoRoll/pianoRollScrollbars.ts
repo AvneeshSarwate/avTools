@@ -6,9 +6,36 @@ import { clamp, getStageHeight, getStageWidth } from './pianoRollViewport'
 export type HorizontalDragMode = 'move' | 'resize-start' | 'resize-end'
 export type VerticalDragMode = 'move' | 'resize-start' | 'resize-end'
 
+const POINTER_DRAG_CAPTURE_PHASE = true
+
+const captureDragPointer = (event: PointerEvent): Element | null => {
+  const target = event.currentTarget
+  if (!(target instanceof Element)) return null
+
+  try {
+    target.setPointerCapture(event.pointerId)
+    return target
+  } catch {
+    return null
+  }
+}
+
+const releaseDragPointer = (target: Element | null, pointerId: number) => {
+  if (!target) return
+
+  try {
+    if (target.hasPointerCapture(pointerId)) {
+      target.releasePointerCapture(pointerId)
+    }
+  } catch {
+    // Pointer capture can already be gone if the browser cancelled the pointer.
+  }
+}
+
 export interface HorizontalDragState {
   mode: HorizontalDragMode
   pointerId: number
+  captureTarget: Element | null
   pointerStart: number
   trackRect: DOMRect
   startQuarter: number
@@ -22,6 +49,7 @@ export interface HorizontalDragState {
 export interface VerticalDragState {
   mode: VerticalDragMode
   pointerId: number
+  captureTarget: Element | null
   pointerStart: number
   trackRect: DOMRect
   topIndex: number
@@ -117,9 +145,12 @@ export class HorizontalScrollbarController {
       pointerOffset = event.clientX - (trackRect.left + endNormalized * trackRect.width)
     }
 
+    const captureTarget = captureDragPointer(event)
+
     this.dragState = {
       mode,
       pointerId: event.pointerId,
+      captureTarget,
       pointerStart: event.clientX,
       trackRect,
       startQuarter,
@@ -130,16 +161,21 @@ export class HorizontalScrollbarController {
       pointerOffset
     }
 
-    window.addEventListener('pointermove', this.handlePointerMove)
-    window.addEventListener('pointerup', this.stopDrag)
+    window.addEventListener('pointermove', this.handlePointerMove, POINTER_DRAG_CAPTURE_PHASE)
+    window.addEventListener('pointerup', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
+    window.addEventListener('pointercancel', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
 
     event.preventDefault()
   }
 
   stopDrag = () => {
-    if (!this.dragState) return
-    window.removeEventListener('pointermove', this.handlePointerMove)
-    window.removeEventListener('pointerup', this.stopDrag)
+    const drag = this.dragState
+    if (!drag) return
+
+    releaseDragPointer(drag.captureTarget, drag.pointerId)
+    window.removeEventListener('pointermove', this.handlePointerMove, POINTER_DRAG_CAPTURE_PHASE)
+    window.removeEventListener('pointerup', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
+    window.removeEventListener('pointercancel', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
     this.dragState = null
   }
 
@@ -282,9 +318,12 @@ export class VerticalScrollbarController {
       pointerOffset = event.clientY - (trackRect.top + bottomNormalized * trackRect.height)
     }
 
+    const captureTarget = captureDragPointer(event)
+
     this.dragState = {
       mode,
       pointerId: event.pointerId,
+      captureTarget,
       pointerStart: event.clientY,
       trackRect,
       topIndex,
@@ -295,16 +334,21 @@ export class VerticalScrollbarController {
       pointerOffset
     }
 
-    window.addEventListener('pointermove', this.handlePointerMove)
-    window.addEventListener('pointerup', this.stopDrag)
+    window.addEventListener('pointermove', this.handlePointerMove, POINTER_DRAG_CAPTURE_PHASE)
+    window.addEventListener('pointerup', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
+    window.addEventListener('pointercancel', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
 
     event.preventDefault()
   }
 
   stopDrag = () => {
-    if (!this.dragState) return
-    window.removeEventListener('pointermove', this.handlePointerMove)
-    window.removeEventListener('pointerup', this.stopDrag)
+    const drag = this.dragState
+    if (!drag) return
+
+    releaseDragPointer(drag.captureTarget, drag.pointerId)
+    window.removeEventListener('pointermove', this.handlePointerMove, POINTER_DRAG_CAPTURE_PHASE)
+    window.removeEventListener('pointerup', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
+    window.removeEventListener('pointercancel', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
     this.dragState = null
   }
 
