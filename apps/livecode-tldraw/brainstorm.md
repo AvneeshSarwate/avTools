@@ -1,2 +1,3 @@
+- module structure and relationships need to be cleaned up - module level instantiations (eg, piano roll store, midi init) should happen in a unified way (how is tbd). maybe force editor scripts to init the modules via an idempotent module level init func. editor scripts are modules so have access to top level await and can `await init()` before defining their `run()` function - the small amount of boiler plate is worth it for "no magic" understandability
 - add the ability to have agent send commands to running UI to steer it (eg, create piano roll with id, add/modify ntoes in piano roll, create code block, start/stop code block) 
 - add known data ids into text editors so you can use playwrite or something like that to add the code back to the editors?
