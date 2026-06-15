@@ -12,6 +12,9 @@
 #   3) Caches Deno dependencies
 #   4) Creates a uv-managed Python venv and installs Jupyter
 #   5) Installs the custom Deno Jupyter kernelspec
+#   6) Installs browser-projections npm dependencies and builds piano-roll
+#      web component assets
+#   7) Installs livecode-tldraw npm dependencies
 #
 # Run: ./setup.sh
 # =============================================================================
@@ -21,6 +24,8 @@ IFS=$'\n\t'
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NOTEBOOK_DIR="$ROOT_DIR/apps/deno-notebooks"
+BROWSER_PROJECTIONS_DIR="$ROOT_DIR/apps/browser-projections"
+LIVECODE_TLDRAW_DIR="$ROOT_DIR/apps/livecode-tldraw"
 
 echo "================================================"
 echo "avTools Setup"
@@ -34,6 +39,19 @@ ensure_in_path() {
     return 1
   fi
   return 0
+}
+
+node_major_version() {
+  if ! ensure_in_path node; then
+    return 1
+  fi
+  node -p "Number(process.versions.node.split('.')[0])" 2>/dev/null
+}
+
+node_supports_browser_apps() {
+  local major
+  major="$(node_major_version)" || return 1
+  [ "$major" -ge 20 ]
 }
 
 confirm_toolchain_install() {
@@ -164,7 +182,7 @@ ensure_syphon_framework_links() {
   echo "Syphon.framework links verified/repaired."
 }
 
-echo "[1/6] Ensuring toolchains are installed..."
+echo "[1/7] Ensuring toolchains are installed..."
 
 want_install_toolchains=true
 if ! confirm_toolchain_install; then
@@ -205,11 +223,11 @@ else
   echo "uv already installed: $(uv --version)"
 fi
 
-if ! ensure_in_path node || ! ensure_in_path npm; then
+if ! ensure_in_path node || ! ensure_in_path npm || ! node_supports_browser_apps; then
   if [ "$want_install_toolchains" = true ]; then
     install_node
   else
-    missing_toolchains+=("Node.js + npm")
+    missing_toolchains+=("Node.js 20+ + npm")
   fi
 else
   echo "Node already installed: $(node --version)"
@@ -222,7 +240,7 @@ fi
 
 echo ""
 
-echo "[2/6] Building native Rust/FFI helpers..."
+echo "[2/7] Building native Rust/FFI helpers..."
 
 # One-liners for rebuilding specific FFI pieces (run from repo root):
 #   cargo build --release --manifest-path apps/deno-notebooks/native/fastsleep/Cargo.toml
@@ -247,7 +265,7 @@ fi
 echo "Native helpers built."
 echo ""
 
-echo "[3/6] Caching Deno dependencies..."
+echo "[3/7] Caching Deno dependencies..."
 
 shopt -s nullglob
 cache_targets=(
@@ -308,7 +326,7 @@ else
 fi
 echo ""
 
-echo "[4/6] Setting up Python venv with uv + Jupyter..."
+echo "[4/7] Setting up Python venv with uv + Jupyter..."
 
 if ! ensure_in_path uv; then
   echo "uv not found after install step. Aborting."
@@ -327,7 +345,7 @@ popd >/dev/null
 echo "Python venv ready at $NOTEBOOK_DIR/.venv"
 echo ""
 
-echo "[5/6] Installing avtools Deno Jupyter kernel..."
+echo "[5/7] Installing avtools Deno Jupyter kernel..."
 
 if ensure_in_path deno; then
   export PATH="$NOTEBOOK_DIR/.venv/bin:$PATH"
@@ -337,14 +355,26 @@ else
 fi
 
 echo ""
-echo "[6/6] Installing browser-projections npm dependencies..."
+echo "[6/7] Installing browser-projections npm dependencies..."
 
 if ensure_in_path npm; then
-  pushd "$ROOT_DIR/apps/browser-projections" >/dev/null
+  pushd "$BROWSER_PROJECTIONS_DIR" >/dev/null
   npm install
+  npm run buildPianoRoll
   popd >/dev/null
 else
   echo "npm not available; skipping browser-projections install."
+fi
+
+echo ""
+echo "[7/7] Installing livecode-tldraw npm dependencies..."
+
+if ensure_in_path npm; then
+  pushd "$LIVECODE_TLDRAW_DIR" >/dev/null
+  npm install
+  popd >/dev/null
+else
+  echo "npm not available; skipping livecode-tldraw install."
 fi
 
 echo ""

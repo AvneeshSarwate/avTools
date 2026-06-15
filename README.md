@@ -28,6 +28,8 @@ Then it will:
 - Create the uv venv and install Jupyter
 - Install the custom **Deno (avtools unstable)** Jupyter kernel
 - Install npm dependencies for `apps/browser-projections`
+- Build the piano-roll web component bundle used by livecode/tldraw views
+- Install npm dependencies for `apps/livecode-tldraw`
 
 After that:
 1. Open `avtools.code-workspace` in VS Code - this should 
