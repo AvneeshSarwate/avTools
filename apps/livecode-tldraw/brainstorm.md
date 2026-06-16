@@ -22,6 +22,10 @@ some core things that need to be worked out for this
 - might need some kind of clean "restart all" for when you need to change the shape of your shared state (will need to kill/restart drawloop with new state, or worse, kill/restart windows?)
 
 
+## view vs edit mode of modules
+much like for the sonar_sketch editor, you could have tldraw code modules be either in edit or run/view mode. when you execute a module, it could switch to view mode and cease to be editable until stopped. then in view mode, you could do all kinds of run-time data code-view augmentation (eg, like in sonar_sketch, inject slider values over the variables where they are used). View mode could also help solve the problem of the user not knowing whether the version of code in a buffer is currently running or not. if tldraw code modules can import other modules, you could even see about doing this transitiviely? eg if the run-loop module imports the state module, then hitting run on the run-loop also makes the state module view-mode. You'd still have live-codeable modules that modify state, but then those would see a view-only state module so you know what shape you're dealing with 
+
+
 ## general todos and smaller ideas
 - module structure and relationships need to be cleaned up - module level instantiations (eg, piano roll store, midi init) should happen in a unified way (how is tbd). maybe force editor scripts to init the modules via an idempotent module level init func. editor scripts are modules so have access to top level await and can `await init()` before defining their `run()` function - the small amount of boiler plate is worth it for "no magic" understandability
 - figure out some solution for persistence keys for the UI (quick flag to allow refreshes while developing stuff), and then also file-system data saving for "projects"
