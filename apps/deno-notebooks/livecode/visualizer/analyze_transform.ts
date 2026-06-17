@@ -37,6 +37,7 @@ export interface AnalyzeAndTransformRequest {
   sourceText: string;
   generatedRunId?: string;
   runtimeImport?: string;
+  requireDefaultTimedRoot?: boolean;
   idFactory?: (input: {
     moduleId: string;
     sourceUri: string;
@@ -99,7 +100,7 @@ export function analyzeAndTransformTimedModule(
   const diagnostics: VisualizerDiagnostic[] = [];
   const root = findDefaultTimedRoot(sourceFile);
 
-  if (!root) {
+  if (!root && request.requireDefaultTimedRoot !== false) {
     return failure(request, [{
       severity: "error",
       code: "TCV_NO_DEFAULT_TIMED_ROOT",
@@ -146,13 +147,17 @@ export function analyzeAndTransformTimedModule(
 
   if (diagnostics.length > 0) return failure(request, diagnostics);
 
-  normalizeDefaultExportToRunFunc(root.fn, magic, request.sourceText);
-  magic.prepend(
-    `import { visualizedAwait as __tcvVisualizedAwait } from ${
-      JSON.stringify(runtimeImport)
-    };\n`,
-  );
-  magic.append("\nexport default runFunc;\n");
+  if (root) {
+    normalizeDefaultExportToRunFunc(root.fn, magic, request.sourceText);
+    magic.append("\nexport default runFunc;\n");
+  }
+  if (manifestEntries.length > 0) {
+    magic.prepend(
+      `import { visualizedAwait as __tcvVisualizedAwait } from ${
+        JSON.stringify(runtimeImport)
+      };\n`,
+    );
+  }
 
   const generatedRunId = request.generatedRunId ?? createGeneratedRunId();
   const manifest: VisualizerManifestMessage = {

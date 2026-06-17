@@ -37,7 +37,9 @@ export interface AnalyzeRequest {
   moduleId: string;
   sourceVersion: number;
   sourceUri?: string;
-  sourceText: string;
+  sourceText?: string;
+  projectModuleId?: string;
+  projectModulePath?: string;
 }
 
 export interface AnalyzeSuccess {
@@ -46,8 +48,14 @@ export interface AnalyzeSuccess {
   sourceVersion: number;
   generatedRunId: string;
   manifest: VisualizerManifestMessage;
+  projectManifests?: VisualizerManifestMessage[];
   transformedModuleUri: string;
   transformedCode?: string;
+  sourceHash?: string;
+  projectSourceHash?: string;
+  projectModulePath?: string;
+  projectSourcePath?: string;
+  projectRuntimePath?: string;
 }
 
 export interface AnalyzeFailure {
@@ -63,6 +71,9 @@ export interface LaunchModuleRequest {
   moduleId: string;
   transformedModuleUri: string;
   generatedRunId: string;
+  sourceHash?: string;
+  projectSourceHash?: string;
+  projectModulePath?: string;
 }
 
 export interface StopModuleRequest {
@@ -81,6 +92,109 @@ export interface HealthResponse {
   serverVersion: string;
   sessionRoot: string;
   activeModules: string[];
+}
+
+export type ProjectModuleKind = "library" | "runnable";
+
+export interface ProjectModuleRecord {
+  id: string;
+  path: string;
+  sourcePath: string;
+  runtimePath: string;
+  kind: ProjectModuleKind;
+  title: string;
+  sourceVersion: number;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+}
+
+export interface LivecodeProjectManifest {
+  version: 1;
+  name: string;
+  modules: ProjectModuleRecord[];
+  canvas?: Record<string, unknown>;
+  pianoRollViews?: unknown[];
+}
+
+export interface ProjectModuleInput {
+  id?: string;
+  path: string;
+  kind?: ProjectModuleKind;
+  title?: string;
+  sourceText?: string;
+  sourceVersion?: number;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+}
+
+export interface CreateProjectRequest {
+  projectPath?: string;
+  name?: string;
+  modules?: ProjectModuleInput[];
+}
+
+export interface OpenProjectRequest {
+  projectPath: string;
+}
+
+export interface ProjectModuleLocator {
+  id?: string;
+  path?: string;
+}
+
+export interface AddProjectModuleRequest extends ProjectModuleInput {}
+
+export interface UpdateProjectModuleRequest extends ProjectModuleInput {}
+
+export interface WriteProjectModuleRequest extends ProjectModuleLocator {
+  sourceText: string;
+  sourceVersion?: number;
+}
+
+export interface ReloadProjectModuleRequest extends ProjectModuleLocator {}
+
+export interface RemoveProjectModuleRequest extends ProjectModuleLocator {}
+
+export interface ProjectCurrentResponse {
+  ok: true;
+  project: {
+    root: string;
+    manifestPath: string;
+    manifest: LivecodeProjectManifest;
+  } | null;
+}
+
+export interface RuntimeModuleStatus {
+  moduleId: string;
+  generatedRunId: string;
+  transformedModuleUri: string;
+  projectModulePath?: string;
+  sourceHash?: string;
+  projectSourceHash?: string;
+}
+
+export interface ProjectModuleStatus extends ProjectModuleRecord {
+  diskHash: string | null;
+  editorHash: string | null;
+  lastLoadedHash: string | null;
+  runHash: string | null;
+  dirty: boolean;
+  changedOnDisk: boolean;
+  conflict: boolean;
+  running: boolean;
+  runningStale: boolean;
+}
+
+export interface ProjectStatusResponse {
+  ok: true;
+  project: ProjectCurrentResponse["project"];
+  modules: ProjectModuleStatus[];
+  activeModules: RuntimeModuleStatus[];
+  projectSourceHash: string | null;
 }
 
 export type PianoRollUpdateSource =

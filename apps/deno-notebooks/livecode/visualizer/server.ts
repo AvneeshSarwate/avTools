@@ -1,18 +1,39 @@
 import { launch, type TimeContext } from "@avtools/core-timing";
 import { LSWSServer } from "@valtown/ls-ws-server";
-import { fromFileUrl, isAbsolute, join } from "jsr:@std/path@1";
+import {
+  basename,
+  dirname,
+  fromFileUrl,
+  isAbsolute,
+  join,
+  normalize,
+} from "jsr:@std/path@1";
 import { pathToFileURL } from "node:url";
 import { analyzeAndTransformTimedModule } from "./analyze_transform.ts";
 import { createGeneratedRunId } from "./generated_run_id.ts";
 import type {
   ActiveWaitSnapshot,
+  AddProjectModuleRequest,
   AnalyzeRequest,
   AnalyzeResponse,
+  CreateProjectRequest,
   HealthResponse,
   LaunchModuleRequest,
+  LivecodeProjectManifest,
+  OpenProjectRequest,
   PianoRollHistoryRequest,
+  ProjectCurrentResponse,
+  ProjectModuleInput,
+  ProjectModuleRecord,
+  ProjectModuleStatus,
+  ProjectStatusResponse,
+  ReloadProjectModuleRequest,
+  RemoveProjectModuleRequest,
+  RuntimeModuleStatus,
   SetPianoRollRequest,
   StopModuleRequest,
+  UpdateProjectModuleRequest,
+  WriteProjectModuleRequest,
 } from "./protocol.ts";
 import {
   makePianoRollSnapshot,
@@ -33,6 +54,37 @@ interface ActiveModule {
   generatedRunId: string;
   transformedModuleUri: string;
   handle: BranchHandle;
+  projectModulePath?: string;
+  sourceHash?: string;
+  projectSourceHash?: string;
+}
+
+interface PreparedRun {
+  moduleId: string;
+  generatedRunId: string;
+  transformedModuleUri: string;
+  projectModulePath?: string;
+  sourceHash?: string;
+  projectSourceHash?: string;
+}
+
+interface ProjectModuleHashes {
+  editorHash: string | null;
+  lastLoadedHash: string | null;
+}
+
+interface ProjectState {
+  root: string;
+  manifestPath: string;
+  manifest: LivecodeProjectManifest;
+  hashes: Map<string, ProjectModuleHashes>;
+}
+
+interface ProjectMaterializeResult {
+  generatedRunId: string;
+  projectSourceHash: string;
+  sourceHashes: Map<string, string>;
+  results: Map<string, AnalyzeResponse>;
 }
 
 export interface LivecodeVisualizerServerOptions {
@@ -51,6 +103,8 @@ export interface LivecodeVisualizerServer {
 }
 
 const SERVER_VERSION = "0.1.0";
+const PROJECT_MANIFEST_FILENAME = "project.avtools-livecode.json";
+const SOURCE_SUFFIX = ".orig.ts";
 const REPO_ROOT = fromFileUrl(new URL("../../../..", import.meta.url));
 const DEFAULT_SESSION_ROOT = fromFileUrl(
   new URL("../../.avtools-livecode-sessions", import.meta.url),
@@ -98,7 +152,9 @@ export async function createLivecodeVisualizerServer(
   const sockets = new Set<WebSocket>();
   const pianoRollSockets = new Set<WebSocket>();
   const activeModules = new Map<string, ActiveModule>();
+  const preparedRuns = new Map<string, PreparedRun>();
   const launchQueue: Array<(ctx: TimeContext) => Promise<void> | void> = [];
+  let currentProject: ProjectState | null = null;
   let parentContext: TimeContext | null = null;
   let lastSnapshotJson = "";
   let snapshotTimer: number | undefined;
@@ -243,6 +299,84 @@ export async function createLivecodeVisualizerServer(
       return json({ ok: true });
     }
 
+    if (request.method === "GET" && url.pathname === "/runtime/status") {
+      return json({ ok: true, activeModules: listRuntimeStatus() });
+    }
+
+    if (request.method === "POST" && url.pathname === "/runtime/stop-all") {
+      await stopAllModules("stopAllRequest");
+      return json({ ok: true });
+    }
+
+    if (request.method === "POST" && url.pathname === "/runtime/restart-all") {
+      await stopAllModules("restartAllRequest");
+      if (currentProject) await materializeProjectRuntime(currentProject);
+      return json({ ok: true, activeModules: listRuntimeStatus() });
+    }
+
+    if (request.method === "POST" && url.pathname === "/project/create") {
+      const requestBody = await request.json() as CreateProjectRequest;
+      return json(await createProject(requestBody));
+    }
+
+    if (request.method === "POST" && url.pathname === "/project/open") {
+      const requestBody = await request.json() as OpenProjectRequest;
+      return json(await openProject(requestBody.projectPath));
+    }
+
+    if (request.method === "POST" && url.pathname === "/project/save") {
+      if (!currentProject) {
+        return json({ ok: false, error: "No project open" }, { status: 400 });
+      }
+      await writeProjectManifest(currentProject);
+      return json(await makeProjectCurrentResponse());
+    }
+
+    if (request.method === "GET" && url.pathname === "/project/current") {
+      return json(await makeProjectCurrentResponse());
+    }
+
+    if (request.method === "GET" && url.pathname === "/project/status") {
+      return json(await makeProjectStatusResponse());
+    }
+
+    if (request.method === "GET" && url.pathname === "/project/events") {
+      return json(await makeProjectStatusResponse());
+    }
+
+    if (request.method === "POST" && url.pathname === "/project/modules/add") {
+      const requestBody = await request.json() as AddProjectModuleRequest;
+      return json(await addProjectModule(requestBody));
+    }
+
+    if (
+      request.method === "POST" && url.pathname === "/project/modules/update"
+    ) {
+      const requestBody = await request.json() as UpdateProjectModuleRequest;
+      return json(await updateProjectModule(requestBody));
+    }
+
+    if (
+      request.method === "POST" && url.pathname === "/project/modules/write"
+    ) {
+      const requestBody = await request.json() as WriteProjectModuleRequest;
+      return json(await writeProjectModule(requestBody));
+    }
+
+    if (
+      request.method === "POST" && url.pathname === "/project/modules/reload"
+    ) {
+      const requestBody = await request.json() as ReloadProjectModuleRequest;
+      return json(await reloadProjectModule(requestBody));
+    }
+
+    if (
+      request.method === "POST" && url.pathname === "/project/modules/remove"
+    ) {
+      const requestBody = await request.json() as RemoveProjectModuleRequest;
+      return json(await removeProjectModule(requestBody));
+    }
+
     if (request.method === "GET" && url.pathname === "/piano-roll/snapshots") {
       const { socket, response } = Deno.upgradeWebSocket(request);
       socket.onopen = () => {
@@ -354,6 +488,463 @@ export async function createLivecodeVisualizerServer(
     },
   };
 
+  async function createProject(
+    requestBody: CreateProjectRequest,
+  ): Promise<ProjectCurrentResponse> {
+    const root = requestBody.projectPath
+      ? resolvePath(requestBody.projectPath)
+      : join(sessionDir, "project");
+    const state: ProjectState = {
+      root,
+      manifestPath: join(root, PROJECT_MANIFEST_FILENAME),
+      manifest: {
+        version: 1,
+        name: requestBody.name ?? basename(root),
+        modules: [],
+      },
+      hashes: new Map(),
+    };
+
+    await Deno.mkdir(root, { recursive: true });
+    currentProject = state;
+    for (const moduleInput of requestBody.modules ?? []) {
+      await addOrUpdateProjectModule(state, moduleInput, {
+        allowNew: true,
+        writeManifest: false,
+      });
+    }
+    await writeProjectManifest(state);
+    if (state.manifest.modules.length > 0) {
+      await materializeProjectRuntime(state);
+    }
+    await log({
+      type: "projectCreated",
+      root,
+      moduleCount: state.manifest.modules.length,
+    });
+    return await makeProjectCurrentResponse();
+  }
+
+  async function openProject(
+    projectPath: string,
+  ): Promise<ProjectCurrentResponse> {
+    const resolved = resolvePath(projectPath);
+    const manifestPath = resolved.endsWith(".json")
+      ? resolved
+      : join(resolved, PROJECT_MANIFEST_FILENAME);
+    const root = dirname(manifestPath);
+    const manifest = JSON.parse(
+      await Deno.readTextFile(manifestPath),
+    ) as LivecodeProjectManifest;
+    manifest.modules = manifest.modules.map(normalizeProjectModuleRecord);
+    const state: ProjectState = {
+      root,
+      manifestPath,
+      manifest,
+      hashes: new Map(),
+    };
+    currentProject = state;
+    for (const moduleRecord of state.manifest.modules) {
+      const sourceText = await readProjectModuleSource(state, moduleRecord);
+      const diskHash = await hashText(sourceText);
+      state.hashes.set(moduleRecord.id, {
+        editorHash: diskHash,
+        lastLoadedHash: diskHash,
+      });
+    }
+    if (state.manifest.modules.length > 0) {
+      await materializeProjectRuntime(state);
+    }
+    await log({
+      type: "projectOpened",
+      root,
+      moduleCount: state.manifest.modules.length,
+    });
+    return await makeProjectCurrentResponse();
+  }
+
+  async function addProjectModule(
+    requestBody: AddProjectModuleRequest,
+  ): Promise<ProjectStatusResponse> {
+    const state = requireCurrentProject();
+    await addOrUpdateProjectModule(state, requestBody, {
+      allowNew: true,
+      writeManifest: true,
+    });
+    await materializeProjectRuntime(state);
+    return await makeProjectStatusResponse();
+  }
+
+  async function updateProjectModule(
+    requestBody: UpdateProjectModuleRequest,
+  ): Promise<ProjectStatusResponse> {
+    const state = requireCurrentProject();
+    await addOrUpdateProjectModule(state, requestBody, {
+      allowNew: false,
+      writeManifest: true,
+    });
+    await materializeProjectRuntime(state);
+    return await makeProjectStatusResponse();
+  }
+
+  async function writeProjectModule(
+    requestBody: WriteProjectModuleRequest,
+  ): Promise<ProjectStatusResponse> {
+    const state = requireCurrentProject();
+    const moduleRecord = findProjectModule(state, requestBody);
+    if (!moduleRecord) {
+      throw new Error("Project module not found");
+    }
+    if (requestBody.sourceVersion !== undefined) {
+      moduleRecord.sourceVersion = requestBody.sourceVersion;
+    } else {
+      moduleRecord.sourceVersion += 1;
+    }
+    await writeProjectModuleSource(state, moduleRecord, requestBody.sourceText);
+    await writeProjectManifest(state);
+    await materializeProjectRuntime(state);
+    return await makeProjectStatusResponse();
+  }
+
+  async function reloadProjectModule(
+    requestBody: ReloadProjectModuleRequest,
+  ): Promise<ProjectStatusResponse> {
+    const state = requireCurrentProject();
+    const moduleRecord = findProjectModule(state, requestBody);
+    if (!moduleRecord) {
+      throw new Error("Project module not found");
+    }
+    const sourceText = await readProjectModuleSource(state, moduleRecord);
+    const diskHash = await hashText(sourceText);
+    state.hashes.set(moduleRecord.id, {
+      editorHash: diskHash,
+      lastLoadedHash: diskHash,
+    });
+    await materializeProjectRuntime(state);
+    return await makeProjectStatusResponse();
+  }
+
+  async function removeProjectModule(
+    requestBody: RemoveProjectModuleRequest,
+  ): Promise<ProjectStatusResponse> {
+    const state = requireCurrentProject();
+    const moduleRecord = findProjectModule(state, requestBody);
+    if (!moduleRecord) {
+      throw new Error("Project module not found");
+    }
+    state.manifest.modules = state.manifest.modules.filter((moduleEntry) =>
+      moduleEntry.id !== moduleRecord.id
+    );
+    state.hashes.delete(moduleRecord.id);
+    await writeProjectManifest(state);
+    return await makeProjectStatusResponse();
+  }
+
+  async function addOrUpdateProjectModule(
+    state: ProjectState,
+    input: ProjectModuleInput,
+    options: { allowNew: boolean; writeManifest: boolean },
+  ): Promise<ProjectModuleRecord> {
+    const normalized = normalizeProjectModuleInput(input);
+    const existing = findProjectModule(state, {
+      id: input.id,
+      path: input.path,
+    }) ?? findProjectModule(state, { path: normalized.path });
+
+    if (!existing && !options.allowNew) {
+      throw new Error("Project module not found");
+    }
+
+    const moduleRecord = existing ?? normalized;
+    Object.assign(moduleRecord, {
+      kind: input.kind ?? moduleRecord.kind,
+      title: input.title ?? moduleRecord.title,
+      sourceVersion: input.sourceVersion ?? moduleRecord.sourceVersion,
+      x: input.x ?? moduleRecord.x,
+      y: input.y ?? moduleRecord.y,
+      w: input.w ?? moduleRecord.w,
+      h: input.h ?? moduleRecord.h,
+    });
+
+    if (!existing) state.manifest.modules.push(moduleRecord);
+    if (input.sourceText !== undefined) {
+      await writeProjectModuleSource(state, moduleRecord, input.sourceText);
+    } else {
+      await ensureProjectModuleSource(state, moduleRecord);
+    }
+    if (options.writeManifest) await writeProjectManifest(state);
+    return moduleRecord;
+  }
+
+  async function materializeProjectRuntime(
+    state: ProjectState,
+  ): Promise<ProjectMaterializeResult> {
+    const generatedRunId = createGeneratedRunId();
+    const runtimeUrl = new URL("./runtime.ts", import.meta.url).href;
+    const results = new Map<string, AnalyzeResponse>();
+    const sourceHashes = new Map<string, string>();
+
+    for (const moduleRecord of state.manifest.modules) {
+      const sourceText = await readProjectModuleSource(state, moduleRecord);
+      const sourceHash = await hashText(sourceText);
+      sourceHashes.set(moduleRecord.id, sourceHash);
+    }
+
+    const projectSourceHash = await hashText(
+      [...sourceHashes.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([id, hash]) => `${id}:${hash}`)
+        .join("\n"),
+    );
+
+    for (const moduleRecord of state.manifest.modules) {
+      const sourceText = await readProjectModuleSource(state, moduleRecord);
+      const sourceHash = sourceHashes.get(moduleRecord.id) ??
+        await hashText(sourceText);
+      const result = analyzeAndTransformTimedModule({
+        moduleId: moduleRecord.id,
+        sourceVersion: moduleRecord.sourceVersion,
+        sourceUri: projectAbsolutePath(state, moduleRecord.sourcePath),
+        sourceText,
+        generatedRunId,
+        runtimeImport: runtimeUrl,
+        requireDefaultTimedRoot: moduleRecord.kind === "runnable",
+      });
+      results.set(moduleRecord.id, result);
+
+      if (result.type === "analyzeFailure") continue;
+
+      const runtimePath = projectAbsolutePath(state, moduleRecord.runtimePath);
+      await Deno.mkdir(dirname(runtimePath), { recursive: true });
+      await Deno.writeTextFile(runtimePath, result.transformedCode);
+      state.hashes.set(moduleRecord.id, {
+        editorHash: sourceHash,
+        lastLoadedHash: sourceHash,
+      });
+    }
+
+    return { generatedRunId, projectSourceHash, sourceHashes, results };
+  }
+
+  async function makeProjectCurrentResponse(): Promise<ProjectCurrentResponse> {
+    return {
+      ok: true,
+      project: currentProject
+        ? {
+          root: currentProject.root,
+          manifestPath: currentProject.manifestPath,
+          manifest: currentProject.manifest,
+        }
+        : null,
+    };
+  }
+
+  async function makeProjectStatusResponse(): Promise<ProjectStatusResponse> {
+    const current = await makeProjectCurrentResponse();
+    if (!currentProject) {
+      return {
+        ok: true,
+        project: null,
+        modules: [],
+        activeModules: listRuntimeStatus(),
+        projectSourceHash: null,
+      };
+    }
+
+    const moduleStatuses: ProjectModuleStatus[] = [];
+    const diskHashes = new Map<string, string>();
+    for (const moduleRecord of currentProject.manifest.modules) {
+      const diskText = await readProjectModuleSource(
+        currentProject,
+        moduleRecord,
+      );
+      const diskHash = await hashText(diskText);
+      diskHashes.set(moduleRecord.id, diskHash);
+    }
+    const projectSourceHash = await hashText(
+      [...diskHashes.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([id, hash]) => `${id}:${hash}`)
+        .join("\n"),
+    );
+
+    for (const moduleRecord of currentProject.manifest.modules) {
+      const diskHash = diskHashes.get(moduleRecord.id) ?? null;
+      const hashState = currentProject.hashes.get(moduleRecord.id);
+      const active = activeModules.get(moduleRecord.id);
+      const editorHash = hashState?.editorHash ?? null;
+      const lastLoadedHash = hashState?.lastLoadedHash ?? null;
+      const changedOnDisk = Boolean(
+        diskHash && lastLoadedHash && diskHash !== lastLoadedHash,
+      );
+      const dirty = Boolean(
+        editorHash && lastLoadedHash && editorHash !== lastLoadedHash,
+      );
+      moduleStatuses.push({
+        ...moduleRecord,
+        diskHash,
+        editorHash,
+        lastLoadedHash,
+        runHash: active?.sourceHash ?? null,
+        dirty,
+        changedOnDisk,
+        conflict: dirty && changedOnDisk,
+        running: Boolean(active),
+        runningStale: Boolean(
+          active && active.projectSourceHash &&
+            active.projectSourceHash !== projectSourceHash,
+        ),
+      });
+    }
+
+    return {
+      ok: true,
+      project: current.project,
+      modules: moduleStatuses,
+      activeModules: listRuntimeStatus(),
+      projectSourceHash,
+    };
+  }
+
+  function listRuntimeStatus(): RuntimeModuleStatus[] {
+    return [...activeModules.values()].map((active) => ({
+      moduleId: active.moduleId,
+      generatedRunId: active.generatedRunId,
+      transformedModuleUri: active.transformedModuleUri,
+      projectModulePath: active.projectModulePath,
+      sourceHash: active.sourceHash,
+      projectSourceHash: active.projectSourceHash,
+    }));
+  }
+
+  function requireCurrentProject(): ProjectState {
+    if (!currentProject) throw new Error("No project open");
+    return currentProject;
+  }
+
+  function findProjectModule(
+    state: ProjectState,
+    locator: { id?: string; path?: string },
+  ): ProjectModuleRecord | null {
+    if (locator.id) {
+      const byId = state.manifest.modules.find((moduleEntry) =>
+        moduleEntry.id === locator.id
+      );
+      if (byId) return byId;
+    }
+    if (!locator.path) return null;
+    const runtimePath = normalizeProjectRuntimePath(locator.path);
+    return state.manifest.modules.find((moduleEntry) =>
+      moduleEntry.path === runtimePath ||
+      moduleEntry.runtimePath === runtimePath ||
+      moduleEntry.sourcePath === normalizeProjectSourcePath(locator.path!)
+    ) ?? null;
+  }
+
+  async function readProjectModuleSource(
+    state: ProjectState,
+    moduleRecord: ProjectModuleRecord,
+  ): Promise<string> {
+    return await Deno.readTextFile(
+      projectAbsolutePath(state, moduleRecord.sourcePath),
+    );
+  }
+
+  async function ensureProjectModuleSource(
+    state: ProjectState,
+    moduleRecord: ProjectModuleRecord,
+  ): Promise<void> {
+    const sourcePath = projectAbsolutePath(state, moduleRecord.sourcePath);
+    try {
+      const sourceText = await Deno.readTextFile(sourcePath);
+      const sourceHash = await hashText(sourceText);
+      if (!state.hashes.has(moduleRecord.id)) {
+        state.hashes.set(moduleRecord.id, {
+          editorHash: sourceHash,
+          lastLoadedHash: sourceHash,
+        });
+      }
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+      await writeProjectModuleSource(state, moduleRecord, "");
+    }
+  }
+
+  async function writeProjectModuleSource(
+    state: ProjectState,
+    moduleRecord: ProjectModuleRecord,
+    sourceText: string,
+  ): Promise<void> {
+    const sourcePath = projectAbsolutePath(state, moduleRecord.sourcePath);
+    await Deno.mkdir(dirname(sourcePath), { recursive: true });
+    await Deno.writeTextFile(sourcePath, sourceText);
+    const sourceHash = await hashText(sourceText);
+    state.hashes.set(moduleRecord.id, {
+      editorHash: sourceHash,
+      lastLoadedHash: sourceHash,
+    });
+  }
+
+  async function writeProjectManifest(state: ProjectState): Promise<void> {
+    const manifest: LivecodeProjectManifest = {
+      ...state.manifest,
+      modules: state.manifest.modules.map(normalizeProjectModuleRecord),
+    };
+    await Deno.mkdir(dirname(state.manifestPath), { recursive: true });
+    await Deno.writeTextFile(
+      state.manifestPath,
+      `${JSON.stringify(manifest, null, 2)}\n`,
+    );
+    state.manifest = manifest;
+  }
+
+  function normalizeProjectModuleInput(
+    input: ProjectModuleInput,
+  ): ProjectModuleRecord {
+    const runtimePath = normalizeProjectRuntimePath(input.path);
+    const sourcePath = sourcePathForRuntimePath(runtimePath);
+    return {
+      id: input.id ?? moduleIdFromPath(runtimePath),
+      path: runtimePath,
+      sourcePath,
+      runtimePath,
+      kind: input.kind ?? "runnable",
+      title: input.title ?? basename(runtimePath, ".ts"),
+      sourceVersion: input.sourceVersion ?? 1,
+      x: input.x,
+      y: input.y,
+      w: input.w,
+      h: input.h,
+    };
+  }
+
+  function normalizeProjectModuleRecord(
+    moduleRecord: ProjectModuleRecord,
+  ): ProjectModuleRecord {
+    const runtimePath = normalizeProjectRuntimePath(
+      moduleRecord.runtimePath ?? moduleRecord.path,
+    );
+    const sourcePath = moduleRecord.sourcePath
+      ? normalizeProjectSourcePath(moduleRecord.sourcePath)
+      : sourcePathForRuntimePath(runtimePath);
+    return {
+      ...moduleRecord,
+      path: runtimePath,
+      runtimePath,
+      sourcePath,
+      sourceVersion: moduleRecord.sourceVersion ?? 1,
+      kind: moduleRecord.kind ?? "runnable",
+      title: moduleRecord.title ?? basename(runtimePath, ".ts"),
+    };
+  }
+
+  function projectAbsolutePath(
+    state: ProjectState,
+    relativePath: string,
+  ): string {
+    return join(state.root, relativePath);
+  }
+
   async function analyzeModule(
     requestBody: AnalyzeRequest,
   ): Promise<AnalyzeResponse> {
@@ -363,6 +954,86 @@ export async function createLivecodeVisualizerServer(
       moduleId: requestBody.moduleId,
       sourceVersion: requestBody.sourceVersion,
     });
+
+    const projectModule = currentProject
+      ? findProjectModule(currentProject, {
+        id: requestBody.projectModuleId ?? requestBody.moduleId,
+        path: requestBody.projectModulePath,
+      })
+      : null;
+
+    if (currentProject && projectModule) {
+      const materialized = await materializeProjectRuntime(currentProject);
+      const result = materialized.results.get(projectModule.id);
+      if (!result) {
+        throw new Error(`No materialized result for ${projectModule.id}`);
+      }
+      if (result.type === "analyzeFailure") {
+        await log({
+          type: "analyzeFailure",
+          moduleId: projectModule.id,
+          sourceVersion: projectModule.sourceVersion,
+          diagnosticCount: result.diagnostics.length,
+          durationMs: elapsedMs(analyzeStartedAt),
+        });
+        return result;
+      }
+
+      const transformedModuleUri = pathToFileURL(
+        projectAbsolutePath(currentProject, projectModule.runtimePath),
+      ).href;
+      const sourceHash = materialized.sourceHashes.get(projectModule.id);
+      preparedRuns.set(materialized.generatedRunId, {
+        moduleId: projectModule.id,
+        generatedRunId: materialized.generatedRunId,
+        transformedModuleUri,
+        projectModulePath: projectModule.path,
+        sourceHash,
+        projectSourceHash: materialized.projectSourceHash,
+      });
+      await log({
+        type: "analyzeSuccess",
+        moduleId: projectModule.id,
+        sourceVersion: projectModule.sourceVersion,
+        generatedRunId: materialized.generatedRunId,
+        callsiteCount: result.manifest.callsites.length,
+        transformedModuleUri,
+        projectModulePath: projectModule.path,
+        durationMs: elapsedMs(analyzeStartedAt),
+      });
+      const projectManifests = [...materialized.results.values()]
+        .filter((entry) => entry.type === "analyzeSuccess")
+        .map((entry) => entry.manifest);
+
+      return {
+        ...result,
+        projectManifests,
+        transformedModuleUri,
+        generatedRunId: materialized.generatedRunId,
+        transformedCode: undefined,
+        sourceHash,
+        projectSourceHash: materialized.projectSourceHash,
+        projectModulePath: projectModule.path,
+        projectSourcePath: projectModule.sourcePath,
+        projectRuntimePath: projectModule.runtimePath,
+      };
+    }
+
+    if (requestBody.sourceText === undefined) {
+      return {
+        type: "analyzeFailure",
+        moduleId: requestBody.moduleId,
+        sourceVersion: requestBody.sourceVersion,
+        diagnostics: [{
+          severity: "error",
+          code: "TCV_MISSING_SOURCE_TEXT",
+          message:
+            "sourceText is required unless analyzing an open project module.",
+          from: 0,
+          to: 0,
+        }],
+      };
+    }
 
     const generatedRunId = createGeneratedRunId();
     const modulePath = join(
@@ -380,6 +1051,7 @@ export async function createLivecodeVisualizerServer(
       sourceText: requestBody.sourceText,
       generatedRunId,
       runtimeImport: runtimeUrl,
+      requireDefaultTimedRoot: true,
     });
 
     if (result.type === "analyzeFailure") {
@@ -395,6 +1067,13 @@ export async function createLivecodeVisualizerServer(
 
     await Deno.writeTextFile(generatedPath, result.transformedCode);
     const transformedModuleUri = pathToFileURL(generatedPath).href;
+    const sourceHash = await hashText(requestBody.sourceText);
+    preparedRuns.set(generatedRunId, {
+      moduleId: requestBody.moduleId,
+      generatedRunId,
+      transformedModuleUri,
+      sourceHash,
+    });
     await log({
       type: "analyzeSuccess",
       moduleId: requestBody.moduleId,
@@ -410,10 +1089,12 @@ export async function createLivecodeVisualizerServer(
       transformedModuleUri,
       generatedRunId,
       transformedCode: undefined,
+      sourceHash,
     };
   }
 
   async function launchModule(requestBody: LaunchModuleRequest) {
+    const prepared = preparedRuns.get(requestBody.generatedRunId);
     await log({
       type: "launchQueued",
       moduleId: requestBody.moduleId,
@@ -422,8 +1103,11 @@ export async function createLivecodeVisualizerServer(
 
     await stopModule(requestBody.moduleId, "replaceBeforeLaunch");
     launchQueue.push(async (ctx) => {
-      const moduleUrl =
-        `${requestBody.transformedModuleUri}?launch=${crypto.randomUUID()}`;
+      const moduleUrl = appendImportQuery(
+        requestBody.transformedModuleUri,
+        "launch",
+        crypto.randomUUID(),
+      );
       const importStartedAt = performance.now();
       const mod = await import(moduleUrl) as {
         runFunc?: (ctx: TimeContext) => Promise<void>;
@@ -480,6 +1164,11 @@ export async function createLivecodeVisualizerServer(
         moduleId: requestBody.moduleId,
         generatedRunId: requestBody.generatedRunId,
         transformedModuleUri: requestBody.transformedModuleUri,
+        projectModulePath: prepared?.projectModulePath ??
+          requestBody.projectModulePath,
+        sourceHash: prepared?.sourceHash ?? requestBody.sourceHash,
+        projectSourceHash: prepared?.projectSourceHash ??
+          requestBody.projectSourceHash,
         handle,
       });
     });
@@ -503,6 +1192,12 @@ export async function createLivecodeVisualizerServer(
       reason,
     });
   }
+
+  async function stopAllModules(reason: string) {
+    for (const moduleId of [...activeModules.keys()]) {
+      await stopModule(moduleId, reason);
+    }
+  }
 }
 
 function json(value: unknown, init?: ResponseInit) {
@@ -524,6 +1219,67 @@ function resolvePath(path: string): string {
 
 function sanitizeFilePart(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function normalizeProjectRelativePath(path: string): string {
+  if (!path || path.includes("\0")) {
+    throw new Error("Project module path is required");
+  }
+  if (path.startsWith("file:") || isAbsolute(path)) {
+    throw new Error("Project module paths must be relative");
+  }
+  const normalized = normalize(path).replaceAll("\\", "/");
+  if (
+    normalized === "." || normalized === ".." ||
+    normalized.startsWith("../")
+  ) {
+    throw new Error("Project module paths must stay inside the project");
+  }
+  if (!normalized.endsWith(".ts")) {
+    throw new Error("Project module paths must end in .ts");
+  }
+  return normalized;
+}
+
+function normalizeProjectRuntimePath(path: string): string {
+  const normalized = normalizeProjectRelativePath(path);
+  if (normalized.endsWith(SOURCE_SUFFIX)) {
+    return `${normalized.slice(0, -SOURCE_SUFFIX.length)}.ts`;
+  }
+  return normalized;
+}
+
+function normalizeProjectSourcePath(path: string): string {
+  const normalized = normalizeProjectRelativePath(path);
+  if (normalized.endsWith(SOURCE_SUFFIX)) return normalized;
+  return sourcePathForRuntimePath(normalized);
+}
+
+function sourcePathForRuntimePath(runtimePath: string): string {
+  const normalized = normalizeProjectRelativePath(runtimePath);
+  if (normalized.endsWith(SOURCE_SUFFIX)) return normalized;
+  return `${normalized.slice(0, -".ts".length)}${SOURCE_SUFFIX}`;
+}
+
+function moduleIdFromPath(runtimePath: string): string {
+  return normalizeProjectRuntimePath(runtimePath);
+}
+
+function appendImportQuery(uri: string, key: string, value: string): string {
+  const separator = uri.includes("?") ? "&" : "?";
+  return `${uri}${separator}${encodeURIComponent(key)}=${
+    encodeURIComponent(value)
+  }`;
+}
+
+async function hashText(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(text),
+  );
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function elapsedMs(startedAt: number): number {
