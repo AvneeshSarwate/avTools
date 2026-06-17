@@ -72,6 +72,24 @@ Library modules are written to disk and imported by other modules. Runnable
 modules are analyzed, transformed, and launched using the default async
 `TimeContext` root function convention.
 
+Runnable modules may also export an optional module cleanup hook:
+
+```ts
+export function stop() {
+  // Close native windows, stop render loops, dispose GPU resources, etc.
+}
+
+export default async function (ctx: TimeContext) {
+  // Long-running timed root.
+}
+```
+
+The livecode server calls `stop()` when the user stops a module, when a module
+is replaced before relaunch, and during `stop-all`. The hook is intentionally
+outside the timed root instrumentation path; it should be short, idempotent, and
+safe to call even if the module already cleaned itself up. This is the expected
+place for p5gpu/windowed sketches to close native windows and stop render loops.
+
 For this MVP, all tldraw-authored modules pass through the visualization
 transform before runtime materialization. Library files without a default timed
 root can transform/pass through. Runnable files still require the default async
@@ -127,8 +145,8 @@ project source file changes on disk, mark running modules stale and recommend
 
 ## Agent Steering API
 
-Server endpoints should allow agents and tests to drive the project without
-Playwright:
+Server endpoints should allow agents and tests to manipulate the project model
+without Playwright:
 
 ```txt
 POST /project/create
@@ -152,8 +170,35 @@ GET  /runtime/status
 ```
 
 This is enough for automated tests and coding agents to create modules, write
-source, run modules, stop modules, and inspect state without driving the browser
-UI.
+source, launch transformed runtime modules, stop modules, and inspect server
+state.
+
+Some actions still need the live tldraw client because they change browser
+canvas state or use the same UI runtime path as a human would. The client opens
+a browser-control WebSocket, and agents send HTTP commands to the server:
+
+```txt
+GET  /client/clients
+GET  /client/control            # browser websocket
+POST /client/command            # agent -> server -> browser websocket
+```
+
+`POST /client/command` forwards a command envelope to one connected
+livecode-tldraw client and waits for a `clientCommandResult`. Initial commands:
+
+- `getState`
+- `openProject`
+- `addProjectModule`
+- `reloadProjectModule`
+- `setModuleSource`
+- `runModule`
+- `stopModule`
+- `stopAllModules`
+
+This gives agents a browser-aware path for tests without needing to click tldraw
+internals through Playwright. The state response includes both local UI
+build/run status and server runtime truth (`serverRunning`) from
+`/runtime/status`.
 
 ## Required p5gpu Proof
 
@@ -219,5 +264,7 @@ The current implementation lives in the livecode visualizer server:
 - `apps/deno-notebooks/livecode/visualizer/analyze_transform.ts`
 - `apps/deno-notebooks/livecode/tests/project_p5gpu_e2e_test.ts`
 
-The UI still needs to adopt the project endpoints and the paired source/runtime
-file model.
+The livecode-tldraw UI now loads project modules from `projectPath`, displays
+`.orig.ts` editor files, writes through `/project/modules/write`, and launches
+the transformed `.ts` runtime files. It also connects to `/client/control` for
+agent steering commands.

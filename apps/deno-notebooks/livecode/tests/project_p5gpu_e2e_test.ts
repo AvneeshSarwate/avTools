@@ -41,21 +41,29 @@ Deno.test("project modules share transformed files and drive a p5gpu snapshot", 
           sourceText: `
 export const state = {
   frame: 0,
-  color: [20, 30, 60] as [number, number, number],
+  x: 32,
+  direction: 1,
+  speed: 1.4,
+  color: [235, 90, 140] as [number, number, number],
   snapshotRequested: false,
   snapshotPath: ${JSON.stringify(snapshotPath)},
 };
 `,
         },
         {
-          path: "modules/timing.ts",
-          kind: "library",
-          title: "timing",
+          path: "modules/modifiers/color-loop.ts",
+          kind: "runnable",
+          title: "color loop",
           sourceText: `
 import type { TimeContext } from "@avtools/core-timing";
+import { state } from "../state.ts";
 
-export async function settleFrame(ctx: TimeContext) {
-  await ctx.waitSec(0.02);
+export default async function(ctx: TimeContext) {
+  while (true) {
+    state.color = [80, 230, 170];
+    state.speed = 2.5;
+    await ctx.waitSec(1);
+  }
 }
 `,
         },
@@ -70,7 +78,6 @@ import { requestWebGpuDevice, writeTextureToPng } from ${
             JSON.stringify(webgpuHelpersUrl)
           };
 import { state } from "./state.ts";
-import { settleFrame } from "./timing.ts";
 
 const device = await requestWebGpuDevice();
 const p5 = new P5GPU(device, { width: 64, height: 64, sampleCount: 1 });
@@ -81,18 +88,23 @@ async function saveCurrentFrame(_ctx: unknown, texture: GPUTexture) {
 
 export default async function(ctx: TimeContext) {
   while (true) {
+    state.x += state.direction * state.speed;
+    if (state.x > 52 || state.x < 12) {
+      state.direction *= -1;
+      state.x = Math.max(12, Math.min(52, state.x));
+    }
     p5.beginFrame();
-    p5.background(state.color[0], state.color[1], state.color[2], 255);
+    p5.background(18, 22, 34, 255);
     p5.noStroke();
-    p5.fill(235, 90, 140, 255);
-    p5.circle(20 + (state.frame % 25), 32, 18);
+    p5.fill(state.color[0], state.color[1], state.color[2], 255);
+    p5.circle(state.x, 32, 18);
     const texture = p5.endFrame();
     state.frame += 1;
     if (state.snapshotRequested) {
       await saveCurrentFrame(ctx, texture);
       state.snapshotRequested = false;
     }
-    await settleFrame(ctx);
+    await ctx.waitSec(0.02);
   }
 }
 `,
@@ -115,8 +127,12 @@ export default async function(_ctx: TimeContext) {
 
     await assertExists(join(projectRoot, "modules", "state.orig.ts"));
     await assertExists(join(projectRoot, "modules", "state.ts"));
-    await assertExists(join(projectRoot, "modules", "timing.orig.ts"));
-    await assertExists(join(projectRoot, "modules", "timing.ts"));
+    await assertExists(
+      join(projectRoot, "modules", "modifiers", "color-loop.orig.ts"),
+    );
+    await assertExists(
+      join(projectRoot, "modules", "modifiers", "color-loop.ts"),
+    );
     await assertExists(join(projectRoot, "modules", "sketch.orig.ts"));
     await assertExists(join(projectRoot, "modules", "sketch.ts"));
 
@@ -131,10 +147,10 @@ export default async function(_ctx: TimeContext) {
     );
     assert(
       sketchAnalyze.projectManifests?.some((manifest) =>
-        manifest.moduleId === "modules/timing.ts" &&
+        manifest.moduleId === "modules/modifiers/color-loop.ts" &&
         manifest.callsites.length === 1
       ),
-      "project analyze should expose transformed library manifests",
+      "project analyze should expose transformed modifier manifests",
     );
     await launchAnalyzedModule(server.baseUrl, sketchAnalyze);
 
@@ -142,6 +158,20 @@ export default async function(_ctx: TimeContext) {
       server.baseUrl,
       "modules/sketch.ts",
       "sketch running",
+      8_000,
+    );
+
+    const colorLoopAnalyze = await analyzeProjectModule(
+      server.baseUrl,
+      "modules/modifiers/color-loop.ts",
+    );
+    assertEquals(colorLoopAnalyze.type, "analyzeSuccess");
+    await launchAnalyzedModule(server.baseUrl, colorLoopAnalyze);
+
+    await waitForRuntimeModule(
+      server.baseUrl,
+      "modules/modifiers/color-loop.ts",
+      "color loop running",
       8_000,
     );
 
@@ -159,8 +189,8 @@ export default async function(_ctx: TimeContext) {
     assertEquals(decoded.header.width, 64);
     assertEquals(decoded.header.height, 64);
     assert(
-      hasNonBackgroundPixel(decoded.body, [20, 30, 60, 255]),
-      "snapshot should include drawn p5gpu geometry",
+      hasPixelNear(decoded.body, [80, 230, 170, 255], 20),
+      "snapshot should include the livecoded shared-state color",
     );
 
     const status = await fetchJson<ProjectStatusResponse>(
@@ -174,22 +204,22 @@ export default async function(_ctx: TimeContext) {
     );
 
     await Deno.writeTextFile(
-      join(projectRoot, "modules", "timing.orig.ts"),
+      join(projectRoot, "modules", "modifiers", "color-loop.orig.ts"),
       "\n// changed on disk by e2e test\n",
       { append: true },
     );
     const staleStatus = await fetchJson<ProjectStatusResponse>(
       `${server.baseUrl}/project/status`,
     );
-    const timingStatus = staleStatus.modules.find((moduleEntry) =>
-      moduleEntry.path === "modules/timing.ts"
+    const colorStatus = staleStatus.modules.find((moduleEntry) =>
+      moduleEntry.path === "modules/modifiers/color-loop.ts"
     );
     const sketchStatus = staleStatus.modules.find((moduleEntry) =>
       moduleEntry.path === "modules/sketch.ts"
     );
     assert(
-      timingStatus?.changedOnDisk,
-      "timing source should be changed on disk",
+      colorStatus?.changedOnDisk,
+      "color loop source should be changed on disk",
     );
     assert(sketchStatus?.runningStale, "running sketch should be stale");
   } finally {
@@ -296,16 +326,17 @@ async function waitFor(
   throw new Error(`Timed out waiting for ${label}`);
 }
 
-function hasNonBackgroundPixel(
+function hasPixelNear(
   pixels: Uint8Array,
-  background: [number, number, number, number],
+  target: [number, number, number, number],
+  tolerance: number,
 ): boolean {
   for (let index = 0; index < pixels.length; index += 4) {
     if (
-      Math.abs(pixels[index] - background[0]) > 8 ||
-      Math.abs(pixels[index + 1] - background[1]) > 8 ||
-      Math.abs(pixels[index + 2] - background[2]) > 8 ||
-      Math.abs(pixels[index + 3] - background[3]) > 8
+      Math.abs(pixels[index] - target[0]) <= tolerance &&
+      Math.abs(pixels[index + 1] - target[1]) <= tolerance &&
+      Math.abs(pixels[index + 2] - target[2]) <= tolerance &&
+      Math.abs(pixels[index + 3] - target[3]) <= tolerance
     ) {
       return true;
     }

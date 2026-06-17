@@ -56,7 +56,7 @@ Manual development uses two local processes:
 
 ```sh
 cd apps/deno-notebooks
-deno run --allow-all livecode/visualizer/main.ts --host 127.0.0.1 --port 7777 --log-level debug
+deno run --unstable-webgpu --unstable-ffi --allow-all livecode/visualizer/main.ts --host localhost --port 7777 --log-level debug
 ```
 
 ```sh

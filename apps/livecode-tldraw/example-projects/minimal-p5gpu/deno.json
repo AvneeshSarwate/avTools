@@ -1,0 +1,7 @@
+{
+  "imports": {
+    "@avtools/core-timing": "../../../../packages/core-timing/mod.ts",
+    "@img/png": "jsr:@img/png@^0.1.6",
+    "earcut": "npm:earcut@^3.0.0"
+  }
+}

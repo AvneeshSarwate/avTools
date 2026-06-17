@@ -4,6 +4,8 @@ import type {
   ActiveWaitSnapshot,
   AnalyzeFailure,
   AnalyzeSuccess,
+  ClientControlCommandResponse,
+  ClientControlEnvelope,
 } from "../visualizer/protocol.ts";
 
 Deno.test("server analyze, launch, snapshot, and stop protocol smoke", async () => {
@@ -95,6 +97,123 @@ export default async function(ctx: TimeContext) {
       "cleared wait snapshot",
       2_000,
     );
+
+    const stopMarkerPath = `${sessionRoot}/stop-hook.txt`;
+    const stopAnalyze = await postJson(`${server.baseUrl}/runtime/analyze`, {
+      moduleId: "module-stop-hook",
+      sourceVersion: 1,
+      sourceUri: "module-stop-hook.ts",
+      sourceText: `
+import type { TimeContext } from "@avtools/core-timing";
+
+export function stop() {
+  Deno.writeTextFileSync(${JSON.stringify(stopMarkerPath)}, "stopped");
+}
+
+export default async function(ctx: TimeContext) {
+  await ctx.waitSec(30);
+}
+`,
+    }) as AnalyzeSuccess;
+    assertEquals(stopAnalyze.type, "analyzeSuccess");
+
+    await postJson(`${server.baseUrl}/runtime/launch`, {
+      type: "launchModule",
+      moduleId: stopAnalyze.moduleId,
+      sourceVersion: stopAnalyze.sourceVersion,
+      transformedModuleUri: stopAnalyze.transformedModuleUri,
+      generatedRunId: stopAnalyze.generatedRunId,
+    });
+
+    await waitForRuntimeModule(
+      server.baseUrl,
+      "module-stop-hook",
+      "stop hook fixture running",
+      2_000,
+    );
+
+    await postJson(`${server.baseUrl}/runtime/stop`, {
+      type: "stopModule",
+      moduleId: "module-stop-hook",
+    });
+
+    await waitFor(
+      () => fileExists(stopMarkerPath),
+      "stop hook marker file",
+      2_000,
+    );
+    assertEquals(await Deno.readTextFile(stopMarkerPath), "stopped");
+  } finally {
+    socket.close();
+    await server.close();
+    await Deno.remove(sessionRoot, { recursive: true });
+  }
+});
+
+Deno.test("server forwards agent commands to a connected tldraw client websocket", async () => {
+  const sessionRoot = await Deno.makeTempDir({
+    prefix: "tcv-client-control-",
+  });
+  const server = await createLivecodeVisualizerServer({
+    port: 0,
+    sessionRoot,
+    logLevel: "debug",
+  });
+  const clientId = "test-client";
+  const socket = new WebSocket(
+    `${
+      server.baseUrl.replace("http", "ws")
+    }/client/control?clientId=${clientId}`,
+  );
+  const received: ClientControlEnvelope[] = [];
+  socket.onmessage = (event) => {
+    const envelope = JSON.parse(event.data) as ClientControlEnvelope;
+    received.push(envelope);
+    socket.send(JSON.stringify({
+      type: "clientCommandResult",
+      commandId: envelope.commandId,
+      ok: true,
+      result: {
+        commandType: envelope.command.type,
+        moduleCount: 0,
+      },
+    }));
+  };
+
+  try {
+    await waitFor(
+      () => socket.readyState === WebSocket.OPEN,
+      "client control socket open",
+    );
+
+    const clients = await fetchJson(`${server.baseUrl}/client/clients`);
+    assertEquals(clients.ok, true);
+
+    const response = await postJson<ClientControlCommandResponse>(
+      `${server.baseUrl}/client/command`,
+      {
+        clientId,
+        command: { type: "getState" },
+        timeoutMs: 1_000,
+      },
+    );
+    assertEquals(response.ok, true);
+    assertEquals(response.clientId, clientId);
+    assertEquals(response.result, {
+      commandType: "getState",
+      moduleCount: 0,
+    });
+    assertEquals(received[0].command.type, "getState");
+
+    const missingClient = await postJson<ClientControlCommandResponse>(
+      `${server.baseUrl}/client/command`,
+      {
+        clientId: "missing-client",
+        command: { type: "getState" },
+        timeoutMs: 100,
+      },
+    );
+    assertEquals(missingClient.ok, false);
   } finally {
     socket.close();
     await server.close();
@@ -110,7 +229,7 @@ async function fetchJson(url: string): Promise<Record<string, unknown>> {
   return await response.json();
 }
 
-async function postJson(url: string, body: unknown): Promise<unknown> {
+async function postJson<T = unknown>(url: string, body: unknown): Promise<T> {
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -122,14 +241,46 @@ async function postJson(url: string, body: unknown): Promise<unknown> {
   return await response.json();
 }
 
+async function waitForRuntimeModule(
+  baseUrl: string,
+  moduleId: string,
+  label: string,
+  timeoutMs: number,
+) {
+  await waitFor(
+    async () => {
+      const status = await fetchJson(`${baseUrl}/runtime/status`) as {
+        activeModules?: Array<{ moduleId: string }>;
+      };
+      return Boolean(
+        status.activeModules?.some((moduleEntry) =>
+          moduleEntry.moduleId === moduleId
+        ),
+      );
+    },
+    label,
+    timeoutMs,
+  );
+}
+
+function fileExists(path: string): boolean {
+  try {
+    Deno.statSync(path);
+    return true;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
+    throw error;
+  }
+}
+
 async function waitFor(
-  predicate: () => boolean,
+  predicate: () => boolean | Promise<boolean>,
   label: string,
   timeoutMs = 1_000,
 ) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error(`Timed out waiting for ${label}`);

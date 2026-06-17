@@ -340,6 +340,51 @@ Deno.test("deno lsp bridge initializes and publishes diagnostics", async () => {
         message.includes("seedrandom")
       );
     assertEquals(defaultSourceDependencyDiagnostics, []);
+
+    const sampleSketchUrl = new URL(
+      "../../../livecode-tldraw/example-projects/minimal-p5gpu/modules/sketch.orig.ts",
+      import.meta.url,
+    );
+    const sampleSketchUri = sampleSketchUrl.href;
+    const sampleSketchStartIndex = messages.length;
+    sendLspMessage(socket, {
+      jsonrpc: "2.0",
+      method: "textDocument/didOpen",
+      params: {
+        textDocument: {
+          uri: sampleSketchUri,
+          languageId: "typescript",
+          version: 1,
+          text: await Deno.readTextFile(fromFileUrl(sampleSketchUrl)),
+        },
+      },
+    });
+
+    await waitForMessage(
+      messages,
+      (message) => {
+        if (message.method !== "textDocument/publishDiagnostics") return false;
+        const params = message.params as { uri?: string; version?: number };
+        return params.uri === sampleSketchUri && params.version === 1;
+      },
+      "sample project sketch diagnostics",
+      15_000,
+    );
+    await sleep(250);
+
+    const sampleNoLocalDiagnostics = messages.slice(sampleSketchStartIndex)
+      .flatMap((message) => lspDiagnosticMessages(message))
+      .filter((message) =>
+        message.includes("Unable to load a local module") &&
+        (message.includes("/apps/deno-notebooks/tools/p5gpu.ts") ||
+          message.includes(
+            "/apps/deno-notebooks/libraryIntegrationTetsts/raw-webgpu-helpers.ts",
+          ) ||
+          message.includes(
+            "/apps/livecode-tldraw/example-projects/minimal-p5gpu/modules/state.ts",
+          ))
+      );
+    assertEquals(sampleNoLocalDiagnostics, []);
   } finally {
     socket.close();
     await server.close();

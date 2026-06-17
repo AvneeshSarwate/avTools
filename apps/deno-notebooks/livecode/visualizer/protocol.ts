@@ -92,6 +92,14 @@ export interface HealthResponse {
   serverVersion: string;
   sessionRoot: string;
   activeModules: string[];
+  runtimeCapabilities: RuntimeCapabilityStatus;
+}
+
+export interface RuntimeCapabilityStatus {
+  webgpu: boolean;
+  unsafeWindowSurface: boolean;
+  windowedP5gpu: boolean;
+  warnings: string[];
 }
 
 export type ProjectModuleKind = "library" | "runnable";
@@ -195,6 +203,61 @@ export interface ProjectStatusResponse {
   modules: ProjectModuleStatus[];
   activeModules: RuntimeModuleStatus[];
   projectSourceHash: string | null;
+}
+
+export interface ProjectModuleSourceResponse {
+  ok: true;
+  module: ProjectModuleRecord;
+  sourceText: string;
+}
+
+export interface ClientControlTarget {
+  clientId?: string;
+}
+
+export type ClientControlCommand =
+  | { type: "getState" }
+  | { type: "openProject"; projectPath: string; connect?: boolean }
+  | ({ type: "runModule" } & ProjectModuleLocator)
+  | ({ type: "stopModule" } & ProjectModuleLocator)
+  | { type: "stopAllModules" }
+  | ({ type: "setModuleSource"; sourceText: string } & ProjectModuleLocator)
+  | { type: "addProjectModule"; module: AddProjectModuleRequest }
+  | ({ type: "reloadProjectModule" } & ProjectModuleLocator);
+
+export interface ClientControlRequest extends ClientControlTarget {
+  command: ClientControlCommand;
+  timeoutMs?: number;
+}
+
+export interface ClientControlEnvelope {
+  type: "clientCommand";
+  commandId: string;
+  command: ClientControlCommand;
+}
+
+export interface ClientControlResultMessage {
+  type: "clientCommandResult";
+  commandId: string;
+  ok: boolean;
+  result?: unknown;
+  error?: string;
+}
+
+export interface ClientControlCommandResponse {
+  ok: boolean;
+  commandId: string;
+  clientId: string;
+  result?: unknown;
+  error?: string;
+}
+
+export interface ClientControlClientsResponse {
+  ok: true;
+  clients: Array<{
+    clientId: string;
+    connectedAt: number;
+  }>;
 }
 
 export type PianoRollUpdateSource =

@@ -51,6 +51,27 @@ export default async function(ctx: TimeContext) {
   );
 });
 
+Deno.test("analyzer preserves explicit module stop export", () => {
+  const result = analyze(`
+import type { TimeContext } from "@avtools/core-timing";
+
+export function stop() {
+  console.log("cleanup");
+}
+
+export default async function(ctx: TimeContext) {
+  await ctx.waitSec(0.20);
+}
+`);
+
+  assertEquals(result.type, "analyzeSuccess");
+  if (result.type !== "analyzeSuccess") return;
+
+  assertStringIncludes(result.transformedCode, "export function stop()");
+  assertStringIncludes(result.transformedCode, "export async function runFunc");
+  assertStringIncludes(result.transformedCode, "export default runFunc");
+});
+
 Deno.test("analyzer instruments root helper calls and local helper internals", () => {
   const result = analyze(`
 import type { TimeContext } from "@avtools/core-timing";

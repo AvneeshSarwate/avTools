@@ -7,15 +7,15 @@ import {
   useMemo,
   useRef,
   useState,
-} from 'react'
-import type { LSClient } from '@valtown/codemirror-ls'
+} from "react";
+import type { LSClient } from "@valtown/codemirror-ls";
 import {
   createDenoLspConnection,
-  retireLspConnection,
   type DenoLspConnection,
   type LspDiagnosticSummary,
   type LspStatus,
-} from './denoLsp'
+  retireLspConnection,
+} from "./denoLsp";
 import type {
   ActiveWaitSnapshot,
   AnalyzeResponse,
@@ -25,195 +25,244 @@ import type {
   PreparedFailure,
   VisualizerDiagnostic,
   VisualizerManifestMessage,
-} from './livecodeProtocol'
+} from "./livecodeProtocol";
 
-const BUILD_DEBOUNCE_MS = 100
+const BUILD_DEBOUNCE_MS = 100;
 
-export type ConnectionStatus = 'closed' | 'connecting' | 'open' | 'error'
-export type BuildStatus = 'idle' | 'queued' | 'analyzing' | 'ready' | 'error' | 'not-connected'
-export type RunStatus = 'idle' | 'running' | 'stopping' | 'stopped' | 'error'
+export type ConnectionStatus = "closed" | "connecting" | "open" | "error";
+export type BuildStatus =
+  | "idle"
+  | "queued"
+  | "analyzing"
+  | "ready"
+  | "error"
+  | "not-connected";
+export type RunStatus = "idle" | "running" | "stopping" | "stopped" | "error";
 
 export interface ModuleViewState {
-  moduleId: string
-  sourceText: string
-  sourceVersion: number
-  buildStatus: BuildStatus
-  runStatus: RunStatus
-  diagnostics: VisualizerDiagnostic[]
-  manifest: VisualizerManifestMessage | null
-  history: HistoryEntry[]
-  activeIds: string[]
-  lastSnapshotSeq: number | null
-  latestError: string | null
+  moduleId: string;
+  projectModulePath?: string;
+  sourceText: string;
+  sourceVersion: number;
+  buildStatus: BuildStatus;
+  runStatus: RunStatus;
+  diagnostics: VisualizerDiagnostic[];
+  manifest: VisualizerManifestMessage | null;
+  history: HistoryEntry[];
+  activeIds: string[];
+  lastSnapshotSeq: number | null;
+  latestError: string | null;
 }
 
 interface ModuleRecord extends ModuleViewState {
-  buildTimer: number | null
-  analyzeSequence: number
+  buildTimer: number | null;
+  analyzeSequence: number;
   pendingAnalyze: {
-    sourceText: string
-    serverBaseUrl: string
-    promise: Promise<PreparedBuild | null>
-  } | null
-  latestBuild: PreparedBuild | null
-  latestFailure: PreparedFailure | null
+    sourceText: string;
+    serverBaseUrl: string;
+    promise: Promise<PreparedBuild | null>;
+  } | null;
+  latestBuild: PreparedBuild | null;
+  latestFailure: PreparedFailure | null;
 }
 
 export interface LivecodeRuntimeApi {
-  serverBaseUrl: string
-  setServerBaseUrl(next: string): void
-  connectionStatus: ConnectionStatus
-  lspStatus: LspStatus
-  lspSessionId: string | null
-  lspClient: LSClient | null
-  lspDiagnosticsByUri: Record<string, LspDiagnosticSummary[]>
-  health: HealthResponse | null
-  connectionError: string | null
-  modules: Record<string, ModuleViewState>
-  connect(): Promise<void>
-  disconnect(): void
-  registerModule(moduleId: string, sourceText: string): void
-  unregisterModule(moduleId: string): void
-  setModuleSource(moduleId: string, sourceText: string): void
-  runModule(moduleId: string): Promise<void>
-  stopModule(moduleId: string): Promise<void>
+  serverBaseUrl: string;
+  setServerBaseUrl(next: string): void;
+  connectionStatus: ConnectionStatus;
+  lspStatus: LspStatus;
+  lspSessionId: string | null;
+  lspClient: LSClient | null;
+  lspDiagnosticsByUri: Record<string, LspDiagnosticSummary[]>;
+  health: HealthResponse | null;
+  connectionError: string | null;
+  modules: Record<string, ModuleViewState>;
+  connect(): Promise<void>;
+  disconnect(): void;
+  registerModule(
+    moduleId: string,
+    sourceText: string,
+    projectModulePath?: string,
+  ): void;
+  unregisterModule(moduleId: string): void;
+  setModuleSource(moduleId: string, sourceText: string): void;
+  runModule(moduleId: string): Promise<void>;
+  stopModule(moduleId: string): Promise<void>;
 }
 
-const LivecodeRuntimeContext = createContext<LivecodeRuntimeApi | null>(null)
+const LivecodeRuntimeContext = createContext<LivecodeRuntimeApi | null>(null);
 
 export function useLivecodeRuntime() {
-  const runtime = useContext(LivecodeRuntimeContext)
+  const runtime = useContext(LivecodeRuntimeContext);
   if (!runtime) {
-    throw new Error('useLivecodeRuntime must be used inside LivecodeRuntimeProvider')
+    throw new Error(
+      "useLivecodeRuntime must be used inside LivecodeRuntimeProvider",
+    );
   }
-  return runtime
+  return runtime;
 }
 
 export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
   const initialServerUrl =
-    new URLSearchParams(window.location.search).get('serverBaseUrl') ?? 'http://127.0.0.1:7777'
+    new URLSearchParams(window.location.search).get("serverBaseUrl") ??
+      "http://localhost:7777";
 
-  const [serverBaseUrl, setServerBaseUrlState] = useState(initialServerUrl)
-  const serverBaseUrlRef = useRef(initialServerUrl)
-  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('closed')
-  const connectionStatusRef = useRef<ConnectionStatus>('closed')
-  const [lspStatus, setLspStatus] = useState<LspStatus>('closed')
-  const [lspSessionId, setLspSessionId] = useState<string | null>(null)
-  const [lspClient, setLspClient] = useState<LSClient | null>(null)
+  const [serverBaseUrl, setServerBaseUrlState] = useState(initialServerUrl);
+  const serverBaseUrlRef = useRef(initialServerUrl);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>(
+    "closed",
+  );
+  const connectionStatusRef = useRef<ConnectionStatus>("closed");
+  const [lspStatus, setLspStatus] = useState<LspStatus>("closed");
+  const [lspSessionId, setLspSessionId] = useState<string | null>(null);
+  const [lspClient, setLspClient] = useState<LSClient | null>(null);
   const [lspDiagnosticsByUri, setLspDiagnosticsByUri] = useState<
     Record<string, LspDiagnosticSummary[]>
-  >({})
-  const [connectionError, setConnectionError] = useState<string | null>(null)
-  const [health, setHealth] = useState<HealthResponse | null>(null)
-  const [modules, setModules] = useState<Record<string, ModuleViewState>>({})
-  const modulesRef = useRef(new Map<string, ModuleRecord>())
-  const snapshotsSocketRef = useRef<WebSocket | null>(null)
-  const lspConnectionRef = useRef<DenoLspConnection | null>(null)
+  >({});
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [modules, setModules] = useState<Record<string, ModuleViewState>>({});
+  const modulesRef = useRef(new Map<string, ModuleRecord>());
+  const snapshotsSocketRef = useRef<WebSocket | null>(null);
+  const lspConnectionRef = useRef<DenoLspConnection | null>(null);
 
   const publishModule = useCallback((record: ModuleRecord) => {
-    const view = toViewState(record)
-    setModules((current) => ({ ...current, [record.moduleId]: view }))
-  }, [])
+    const view = toViewState(record);
+    setModules((current) => ({ ...current, [record.moduleId]: view }));
+  }, []);
 
   const publishAllModules = useCallback(() => {
-    const next: Record<string, ModuleViewState> = {}
+    const next: Record<string, ModuleViewState> = {};
     for (const record of modulesRef.current.values()) {
-      next[record.moduleId] = toViewState(record)
+      next[record.moduleId] = toViewState(record);
     }
-    setModules(next)
-  }, [])
+    setModules(next);
+  }, []);
 
   const setConnectionStatusRef = useCallback((next: ConnectionStatus) => {
-    connectionStatusRef.current = next
-    setConnectionStatus(next)
-  }, [])
+    connectionStatusRef.current = next;
+    setConnectionStatus(next);
+  }, []);
 
   const setServerBaseUrl = useCallback((next: string) => {
-    const normalized = normalizeServerBaseUrl(next)
-    serverBaseUrlRef.current = normalized
-    setServerBaseUrlState(normalized)
-  }, [])
+    const normalized = normalizeServerBaseUrl(next);
+    serverBaseUrlRef.current = normalized;
+    setServerBaseUrlState(normalized);
+  }, []);
 
   const reconnectDenoLsp = useCallback(() => {
-    const oldConnection = lspConnectionRef.current
-    const sessionId = `lsp-${crypto.randomUUID()}`
+    const oldConnection = lspConnectionRef.current;
+    const sessionId = `lsp-${crypto.randomUUID()}`;
 
-    setLspStatus('connecting')
-    setLspSessionId(sessionId)
-    setLspDiagnosticsByUri({})
+    setLspStatus("connecting");
+    setLspSessionId(sessionId);
+    setLspDiagnosticsByUri({});
 
     const connection = createDenoLspConnection({
       serverBaseUrl: serverBaseUrlRef.current,
       sessionId,
       onStatus: setLspStatus,
       onDiagnostics: (uri, diagnostics) => {
-        setLspDiagnosticsByUri((current) => ({ ...current, [uri]: diagnostics }))
+        setLspDiagnosticsByUri((current) => ({
+          ...current,
+          [uri]: diagnostics,
+        }));
       },
       onError: (message) => {
-        setConnectionError(message)
+        setConnectionError(message);
       },
-    })
+    });
 
-    lspConnectionRef.current = connection
-    setLspClient(connection.client)
-    retireLspConnection(oldConnection)
+    lspConnectionRef.current = connection;
+    setLspClient(connection.client);
+    retireLspConnection(oldConnection);
 
     void connection.transport.connect().catch((error) => {
-      if (lspConnectionRef.current !== connection) return
-      setLspStatus('error')
-      setConnectionError(error instanceof Error ? error.message : String(error))
-    })
-  }, [])
+      if (lspConnectionRef.current !== connection) return;
+      setLspStatus("error");
+      setConnectionError(
+        error instanceof Error ? error.message : String(error),
+      );
+    });
+  }, []);
 
-  const postJson = useCallback(async <T,>(path: string, body: unknown): Promise<T> => {
-    const response = await fetch(`${serverBaseUrlRef.current}${path}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    if (!response.ok) {
-      throw new Error(`${path} failed with ${response.status}: ${await response.text()}`)
-    }
-    return (await response.json()) as T
-  }, [])
+  const postJson = useCallback(
+    async <T,>(path: string, body: unknown): Promise<T> => {
+      const response = await fetch(`${serverBaseUrlRef.current}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        throw new Error(
+          `${path} failed with ${response.status}: ${await response.text()}`,
+        );
+      }
+      return (await response.json()) as T;
+    },
+    [],
+  );
 
   const analyzeNow = useCallback(
-    async (record: ModuleRecord, sourceText: string): Promise<PreparedBuild | null> => {
-      if (connectionStatusRef.current !== 'open') {
-        record.buildStatus = 'not-connected'
-        publishModule(record)
-        return null
+    async (
+      record: ModuleRecord,
+      sourceText: string,
+    ): Promise<PreparedBuild | null> => {
+      if (connectionStatusRef.current !== "open") {
+        record.buildStatus = "not-connected";
+        publishModule(record);
+        return null;
       }
 
-      const sourceVersion = record.sourceVersion + 1
-      const analyzeSequence = record.analyzeSequence + 1
-      const requestServerUrl = serverBaseUrlRef.current
-      record.sourceVersion = sourceVersion
-      record.analyzeSequence = analyzeSequence
-      record.buildStatus = 'analyzing'
-      record.latestError = null
-      publishModule(record)
+      const sourceVersion = record.sourceVersion + 1;
+      const analyzeSequence = record.analyzeSequence + 1;
+      const requestServerUrl = serverBaseUrlRef.current;
+      record.sourceVersion = sourceVersion;
+      record.analyzeSequence = analyzeSequence;
+      record.buildStatus = "analyzing";
+      record.latestError = null;
+      publishModule(record);
 
-      const promise = postJson<AnalyzeResponse>('/runtime/analyze', {
-        moduleId: record.moduleId,
-        sourceVersion,
-        sourceUri: `livecode-editor://${record.moduleId}.ts`,
-        sourceText,
-      })
+      const analyzeRequest = record.projectModulePath
+        ? {
+          moduleId: record.moduleId,
+          sourceVersion,
+          projectModulePath: record.projectModulePath,
+        }
+        : {
+          moduleId: record.moduleId,
+          sourceVersion,
+          sourceUri: `livecode-editor://${record.moduleId}.ts`,
+          sourceText,
+        };
+
+      const promise = (async () => {
+        if (record.projectModulePath) {
+          await postJson("/project/modules/write", {
+            path: record.projectModulePath,
+            sourceText,
+            sourceVersion,
+          });
+        }
+        return await postJson<AnalyzeResponse>(
+          "/runtime/analyze",
+          analyzeRequest,
+        );
+      })()
         .then((response): PreparedBuild | null => {
-          if (record.analyzeSequence !== analyzeSequence) return null
+          if (record.analyzeSequence !== analyzeSequence) return null;
 
-          if (response.type === 'analyzeSuccess') {
+          if (response.type === "analyzeSuccess") {
             const prepared: PreparedBuild = {
               ...response,
               sourceText,
               serverBaseUrl: requestServerUrl,
-            }
-            record.latestBuild = prepared
-            record.latestFailure = null
-            record.manifest = response.manifest
-            record.diagnostics = []
-            record.buildStatus = 'ready'
+            };
+            record.latestBuild = prepared;
+            record.latestFailure = null;
+            record.manifest = response.manifest;
+            record.diagnostics = [];
+            record.buildStatus = "ready";
             record.history = [
               {
                 generatedRunId: response.generatedRunId,
@@ -222,67 +271,71 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
                 transformedModuleUri: response.transformedModuleUri,
               },
               ...record.history,
-            ]
-            publishModule(record)
-            return prepared
+            ];
+            publishModule(record);
+            return prepared;
           }
 
-          record.latestBuild = null
+          record.latestBuild = null;
           record.latestFailure = {
             ...response,
             sourceText,
             serverBaseUrl: requestServerUrl,
-          }
-          record.manifest = null
-          record.diagnostics = response.diagnostics
-          record.activeIds = []
-          record.buildStatus = 'error'
-          publishModule(record)
-          return null
+          };
+          record.manifest = null;
+          record.diagnostics = response.diagnostics;
+          record.activeIds = [];
+          record.buildStatus = "error";
+          publishModule(record);
+          return null;
         })
         .catch((error: unknown) => {
-          if (record.analyzeSequence !== analyzeSequence) return null
-          record.latestBuild = null
-          record.latestFailure = null
-          record.manifest = null
-          record.diagnostics = []
-          record.activeIds = []
-          record.buildStatus = 'error'
-          record.latestError = error instanceof Error ? error.message : String(error)
-          publishModule(record)
-          return null
+          if (record.analyzeSequence !== analyzeSequence) return null;
+          record.latestBuild = null;
+          record.latestFailure = null;
+          record.manifest = null;
+          record.diagnostics = [];
+          record.activeIds = [];
+          record.buildStatus = "error";
+          record.latestError = error instanceof Error
+            ? error.message
+            : String(error);
+          publishModule(record);
+          return null;
         })
         .finally(() => {
           if (record.pendingAnalyze?.promise === promise) {
-            record.pendingAnalyze = null
+            record.pendingAnalyze = null;
           }
-        })
+        });
 
       record.pendingAnalyze = {
         sourceText,
         serverBaseUrl: requestServerUrl,
         promise,
-      }
+      };
 
-      return promise
+      return promise;
     },
     [postJson, publishModule],
-  )
+  );
 
   const scheduleAnalyze = useCallback(
     (record: ModuleRecord, delayMs = BUILD_DEBOUNCE_MS) => {
       if (record.buildTimer !== null) {
-        window.clearTimeout(record.buildTimer)
+        window.clearTimeout(record.buildTimer);
       }
-      record.buildStatus = connectionStatusRef.current === 'open' ? 'queued' : 'not-connected'
-      publishModule(record)
+      record.buildStatus = connectionStatusRef.current === "open"
+        ? "queued"
+        : "not-connected";
+      publishModule(record);
       record.buildTimer = window.setTimeout(() => {
-        record.buildTimer = null
-        void analyzeNow(record, record.sourceText)
-      }, delayMs)
+        record.buildTimer = null;
+        void analyzeNow(record, record.sourceText);
+      }, delayMs);
     },
     [analyzeNow, publishModule],
-  )
+  );
 
   const ensureBuild = useCallback(
     async (record: ModuleRecord): Promise<PreparedBuild | null> => {
@@ -291,7 +344,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
         record.latestBuild.sourceText === record.sourceText &&
         record.latestBuild.serverBaseUrl === serverBaseUrlRef.current
       ) {
-        return record.latestBuild
+        return record.latestBuild;
       }
 
       if (
@@ -299,200 +352,219 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
         record.pendingAnalyze.sourceText === record.sourceText &&
         record.pendingAnalyze.serverBaseUrl === serverBaseUrlRef.current
       ) {
-        return await record.pendingAnalyze.promise
+        return await record.pendingAnalyze.promise;
       }
 
       if (record.buildTimer !== null) {
-        window.clearTimeout(record.buildTimer)
-        record.buildTimer = null
+        window.clearTimeout(record.buildTimer);
+        record.buildTimer = null;
       }
 
-      return await analyzeNow(record, record.sourceText)
+      return await analyzeNow(record, record.sourceText);
     },
     [analyzeNow],
-  )
+  );
 
   const connect = useCallback(async () => {
-    setConnectionError(null)
-    setConnectionStatusRef('connecting')
-    snapshotsSocketRef.current?.close()
+    setConnectionError(null);
+    setConnectionStatusRef("connecting");
+    snapshotsSocketRef.current?.close();
 
     try {
-      const response = await fetch(`${serverBaseUrlRef.current}/health`)
+      const response = await fetch(`${serverBaseUrlRef.current}/health`);
       if (!response.ok) {
-        throw new Error(`/health failed with ${response.status}: ${await response.text()}`)
+        throw new Error(
+          `/health failed with ${response.status}: ${await response.text()}`,
+        );
       }
-      const healthResponse = (await response.json()) as HealthResponse
-      setHealth(healthResponse)
-      reconnectDenoLsp()
+      const healthResponse = (await response.json()) as HealthResponse;
+      setHealth(healthResponse);
+      reconnectDenoLsp();
 
-      const socketUrl = `${serverBaseUrlRef.current.replace(/^http/, 'ws')}/runtime/snapshots`
-      const socket = new WebSocket(socketUrl)
-      snapshotsSocketRef.current = socket
+      const socketUrl = `${
+        serverBaseUrlRef.current.replace(/^http/, "ws")
+      }/runtime/snapshots`;
+      const socket = new WebSocket(socketUrl);
+      snapshotsSocketRef.current = socket;
 
       socket.onopen = () => {
-        setConnectionStatusRef('open')
+        setConnectionStatusRef("open");
         for (const record of modulesRef.current.values()) {
-          scheduleAnalyze(record, 0)
+          scheduleAnalyze(record, 0);
         }
-      }
+      };
 
       socket.onmessage = (event) => {
-        const snapshot = JSON.parse(event.data as string) as ActiveWaitSnapshot
+        const snapshot = JSON.parse(event.data as string) as ActiveWaitSnapshot;
         for (const record of modulesRef.current.values()) {
-          record.activeIds = snapshot.modules[record.moduleId] ?? []
-          record.lastSnapshotSeq = snapshot.seq
+          record.activeIds = snapshot.modules[record.moduleId] ?? [];
+          record.lastSnapshotSeq = snapshot.seq;
         }
-        publishAllModules()
-      }
+        publishAllModules();
+      };
 
       socket.onerror = () => {
-        setConnectionError('runtime snapshot websocket failed')
-        setConnectionStatusRef('error')
-      }
+        setConnectionError("runtime snapshot websocket failed");
+        setConnectionStatusRef("error");
+      };
 
       socket.onclose = () => {
         if (snapshotsSocketRef.current === socket) {
-          snapshotsSocketRef.current = null
+          snapshotsSocketRef.current = null;
         }
-        if (connectionStatusRef.current !== 'closed') {
-          setConnectionStatusRef('closed')
+        if (connectionStatusRef.current !== "closed") {
+          setConnectionStatusRef("closed");
         }
-      }
+      };
     } catch (error) {
-      setConnectionError(error instanceof Error ? error.message : String(error))
-      setConnectionStatusRef('error')
+      setConnectionError(
+        error instanceof Error ? error.message : String(error),
+      );
+      setConnectionStatusRef("error");
     }
-  }, [publishAllModules, reconnectDenoLsp, scheduleAnalyze, setConnectionStatusRef])
+  }, [
+    publishAllModules,
+    reconnectDenoLsp,
+    scheduleAnalyze,
+    setConnectionStatusRef,
+  ]);
 
   const disconnect = useCallback(() => {
-    setConnectionError(null)
-    snapshotsSocketRef.current?.close()
-    snapshotsSocketRef.current = null
-    const lspConnection = lspConnectionRef.current
-    lspConnectionRef.current = null
-    setLspClient(null)
-    setLspSessionId(null)
-    setLspDiagnosticsByUri({})
-    setLspStatus('closed')
-    retireLspConnection(lspConnection)
-    setConnectionStatusRef('closed')
+    setConnectionError(null);
+    snapshotsSocketRef.current?.close();
+    snapshotsSocketRef.current = null;
+    const lspConnection = lspConnectionRef.current;
+    lspConnectionRef.current = null;
+    setLspClient(null);
+    setLspSessionId(null);
+    setLspDiagnosticsByUri({});
+    setLspStatus("closed");
+    retireLspConnection(lspConnection);
+    setConnectionStatusRef("closed");
     for (const record of modulesRef.current.values()) {
-      record.activeIds = []
-      record.lastSnapshotSeq = null
+      record.activeIds = [];
+      record.lastSnapshotSeq = null;
     }
-    publishAllModules()
-  }, [publishAllModules, setConnectionStatusRef])
+    publishAllModules();
+  }, [publishAllModules, setConnectionStatusRef]);
 
   useEffect(() => {
     return () => {
-      snapshotsSocketRef.current?.close()
-      retireLspConnection(lspConnectionRef.current)
-    }
-  }, [])
+      snapshotsSocketRef.current?.close();
+      retireLspConnection(lspConnectionRef.current);
+    };
+  }, []);
 
   const registerModule = useCallback(
-    (moduleId: string, sourceText: string) => {
-      const existing = modulesRef.current.get(moduleId)
-      if (existing) return
-      const record = makeModuleRecord(moduleId, sourceText)
-      modulesRef.current.set(moduleId, record)
-      publishModule(record)
-      if (connectionStatusRef.current === 'open') {
-        scheduleAnalyze(record, 0)
+    (moduleId: string, sourceText: string, projectModulePath?: string) => {
+      const existing = modulesRef.current.get(moduleId);
+      if (existing) return;
+      const record = makeModuleRecord(moduleId, sourceText, projectModulePath);
+      modulesRef.current.set(moduleId, record);
+      publishModule(record);
+      if (connectionStatusRef.current === "open") {
+        scheduleAnalyze(record, 0);
       }
     },
     [publishModule, scheduleAnalyze],
-  )
+  );
 
   const unregisterModule = useCallback(
     (moduleId: string) => {
-      const record = modulesRef.current.get(moduleId)
-      if (!record) return
+      const record = modulesRef.current.get(moduleId);
+      if (!record) return;
       if (record.buildTimer !== null) {
-        window.clearTimeout(record.buildTimer)
+        window.clearTimeout(record.buildTimer);
       }
-      modulesRef.current.delete(moduleId)
+      modulesRef.current.delete(moduleId);
       setModules((current) => {
-        const next = { ...current }
-        delete next[moduleId]
-        return next
-      })
-      if (connectionStatusRef.current === 'open') {
-        void postJson('/runtime/stop', { moduleId }).catch(() => undefined)
+        const next = { ...current };
+        delete next[moduleId];
+        return next;
+      });
+      if (connectionStatusRef.current === "open") {
+        void postJson("/runtime/stop", { moduleId }).catch(() => undefined);
       }
     },
     [postJson],
-  )
+  );
 
   const setModuleSource = useCallback(
     (moduleId: string, sourceText: string) => {
-      const record = modulesRef.current.get(moduleId)
-      if (!record) return
-      if (record.sourceText === sourceText) return
-      record.sourceText = sourceText
-      record.latestBuild = null
-      record.latestFailure = null
-      record.activeIds = []
-      scheduleAnalyze(record)
+      const record = modulesRef.current.get(moduleId);
+      if (!record) return;
+      if (record.sourceText === sourceText) return;
+      record.sourceText = sourceText;
+      record.latestBuild = null;
+      record.latestFailure = null;
+      record.activeIds = [];
+      scheduleAnalyze(record);
     },
     [scheduleAnalyze],
-  )
+  );
 
   const runModule = useCallback(
     async (moduleId: string) => {
-      const record = modulesRef.current.get(moduleId)
-      if (!record) return
-      record.runStatus = 'running'
-      record.latestError = null
-      publishModule(record)
+      const record = modulesRef.current.get(moduleId);
+      if (!record) return;
+      record.runStatus = "running";
+      record.latestError = null;
+      publishModule(record);
 
-      const build = await ensureBuild(record)
+      const build = await ensureBuild(record);
       if (!build) {
-        record.runStatus = 'error'
-        record.latestError = record.latestError ?? 'module did not analyze successfully'
-        publishModule(record)
-        return
+        record.runStatus = "error";
+        record.latestError = record.latestError ??
+          "module did not analyze successfully";
+        publishModule(record);
+        return;
       }
 
       try {
-        await postJson('/runtime/launch', {
+        await postJson("/runtime/launch", {
           moduleId: build.moduleId,
           transformedModuleUri: build.transformedModuleUri,
           generatedRunId: build.generatedRunId,
-        })
-        record.runStatus = 'running'
-        record.latestError = null
-        publishModule(record)
+          sourceHash: build.sourceHash,
+          projectSourceHash: build.projectSourceHash,
+          projectModulePath: build.projectModulePath,
+        });
+        record.runStatus = "running";
+        record.latestError = null;
+        publishModule(record);
       } catch (error) {
-        record.runStatus = 'error'
-        record.latestError = error instanceof Error ? error.message : String(error)
-        publishModule(record)
+        record.runStatus = "error";
+        record.latestError = error instanceof Error
+          ? error.message
+          : String(error);
+        publishModule(record);
       }
     },
     [ensureBuild, postJson, publishModule],
-  )
+  );
 
   const stopModule = useCallback(
     async (moduleId: string) => {
-      const record = modulesRef.current.get(moduleId)
-      if (!record) return
-      record.runStatus = 'stopping'
-      publishModule(record)
+      const record = modulesRef.current.get(moduleId);
+      if (!record) return;
+      record.runStatus = "stopping";
+      publishModule(record);
 
       try {
-        await postJson('/runtime/stop', { moduleId })
-        record.runStatus = 'stopped'
-        record.activeIds = []
-        record.latestError = null
+        await postJson("/runtime/stop", { moduleId });
+        record.runStatus = "stopped";
+        record.activeIds = [];
+        record.latestError = null;
       } catch (error) {
-        record.runStatus = 'error'
-        record.latestError = error instanceof Error ? error.message : String(error)
+        record.runStatus = "error";
+        record.latestError = error instanceof Error
+          ? error.message
+          : String(error);
       }
-      publishModule(record)
+      publishModule(record);
     },
     [postJson, publishModule],
-  )
+  );
 
   const value = useMemo<LivecodeRuntimeApi>(
     () => ({
@@ -533,18 +605,27 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       runModule,
       stopModule,
     ],
-  )
+  );
 
-  return <LivecodeRuntimeContext.Provider value={value}>{children}</LivecodeRuntimeContext.Provider>
+  return (
+    <LivecodeRuntimeContext.Provider value={value}>
+      {children}
+    </LivecodeRuntimeContext.Provider>
+  );
 }
 
-function makeModuleRecord(moduleId: string, sourceText: string): ModuleRecord {
+function makeModuleRecord(
+  moduleId: string,
+  sourceText: string,
+  projectModulePath?: string,
+): ModuleRecord {
   return {
     moduleId,
+    projectModulePath,
     sourceText,
     sourceVersion: 0,
-    buildStatus: 'idle',
-    runStatus: 'idle',
+    buildStatus: "idle",
+    runStatus: "idle",
     diagnostics: [],
     manifest: null,
     history: [],
@@ -556,12 +637,13 @@ function makeModuleRecord(moduleId: string, sourceText: string): ModuleRecord {
     pendingAnalyze: null,
     latestBuild: null,
     latestFailure: null,
-  }
+  };
 }
 
 function toViewState(record: ModuleRecord): ModuleViewState {
   return {
     moduleId: record.moduleId,
+    projectModulePath: record.projectModulePath,
     sourceText: record.sourceText,
     sourceVersion: record.sourceVersion,
     buildStatus: record.buildStatus,
@@ -572,9 +654,9 @@ function toViewState(record: ModuleRecord): ModuleViewState {
     activeIds: record.activeIds,
     lastSnapshotSeq: record.lastSnapshotSeq,
     latestError: record.latestError,
-  }
+  };
 }
 
 function normalizeServerBaseUrl(value: string) {
-  return value.trim().replace(/\/+$/, '')
+  return value.trim().replace(/\/+$/, "");
 }

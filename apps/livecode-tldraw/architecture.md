@@ -32,7 +32,7 @@ Run the Deno server:
 
 ```sh
 cd apps/deno-notebooks
-deno run --allow-all livecode/visualizer/main.ts --host 127.0.0.1 --port 7777 --log-level debug
+deno run --unstable-webgpu --unstable-ffi --allow-all livecode/visualizer/main.ts --host localhost --port 7777 --log-level debug
 ```
 
 Run the tldraw app:
@@ -69,8 +69,8 @@ http://127.0.0.1:5173/?serverBaseUrl=http://127.0.0.1:7777
 3. `App.tsx` listens to the tldraw store. Added, removed, and updated
    `livecode-editor` shapes register/unregister/update module records in
    `livecodeRuntime.tsx`.
-4. `livecodeRuntime.tsx` connects to `/health`, `/lsp`, and
-   `/runtime/snapshots` when the user clicks Connect.
+4. `livecodeRuntime.tsx` connects to `/health`, `/lsp`, and `/runtime/snapshots`
+   when the user clicks Connect.
 5. Source edits update the tldraw shape prop and schedule `/runtime/analyze`
    with a 100 ms debounce.
 6. Run uses the latest matching prepared build if possible; otherwise it
@@ -212,7 +212,11 @@ tasks unless intentionally fixing the broader app.
 The first created livecode module imports:
 
 ```ts
-import { getPianoRollClip, playPianoRoll, setPianoRollClip } from "piano-roll-helpers";
+import {
+  getPianoRollClip,
+  playPianoRoll,
+  setPianoRollClip,
+} from "piano-roll-helpers";
 ```
 
 It reads the `melody` roll, randomly transposes the phrase up or down five

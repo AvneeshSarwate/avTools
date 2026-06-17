@@ -16,6 +16,11 @@ import type {
   AddProjectModuleRequest,
   AnalyzeRequest,
   AnalyzeResponse,
+  ClientControlClientsResponse,
+  ClientControlCommandResponse,
+  ClientControlEnvelope,
+  ClientControlRequest,
+  ClientControlResultMessage,
   CreateProjectRequest,
   HealthResponse,
   LaunchModuleRequest,
@@ -25,6 +30,7 @@ import type {
   ProjectCurrentResponse,
   ProjectModuleInput,
   ProjectModuleRecord,
+  ProjectModuleSourceResponse,
   ProjectModuleStatus,
   ProjectStatusResponse,
   ReloadProjectModuleRequest,
@@ -49,11 +55,14 @@ interface BranchHandle {
   finally: (f: () => void) => void;
 }
 
+type ModuleStopFunc = () => void | Promise<void>;
+
 interface ActiveModule {
   moduleId: string;
   generatedRunId: string;
   transformedModuleUri: string;
   handle: BranchHandle;
+  stopFunc?: ModuleStopFunc;
   projectModulePath?: string;
   sourceHash?: string;
   projectSourceHash?: string;
@@ -66,6 +75,18 @@ interface PreparedRun {
   projectModulePath?: string;
   sourceHash?: string;
   projectSourceHash?: string;
+}
+
+interface ClientControlSocket {
+  clientId: string;
+  socket: WebSocket;
+  connectedAt: number;
+}
+
+interface PendingClientCommand {
+  clientId: string;
+  resolve: (value: ClientControlCommandResponse) => void;
+  timer: number;
 }
 
 interface ProjectModuleHashes {
@@ -106,6 +127,7 @@ const SERVER_VERSION = "0.1.0";
 const PROJECT_MANIFEST_FILENAME = "project.avtools-livecode.json";
 const SOURCE_SUFFIX = ".orig.ts";
 const REPO_ROOT = fromFileUrl(new URL("../../../..", import.meta.url));
+const STOP_HOOK_TIMEOUT_MS = 2_000;
 const DEFAULT_SESSION_ROOT = fromFileUrl(
   new URL("../../.avtools-livecode-sessions", import.meta.url),
 );
@@ -151,6 +173,8 @@ export async function createLivecodeVisualizerServer(
 
   const sockets = new Set<WebSocket>();
   const pianoRollSockets = new Set<WebSocket>();
+  const clientControlSockets = new Map<string, ClientControlSocket>();
+  const pendingClientCommands = new Map<string, PendingClientCommand>();
   const activeModules = new Map<string, ActiveModule>();
   const preparedRuns = new Map<string, PreparedRun>();
   const launchQueue: Array<(ctx: TimeContext) => Promise<void> | void> = [];
@@ -172,6 +196,14 @@ export async function createLivecodeVisualizerServer(
       create: true,
     });
   };
+
+  const runtimeCapabilities = makeRuntimeCapabilityStatus();
+  if (runtimeCapabilities.warnings.length > 0) {
+    await log({
+      type: "runtimeCapabilityWarning",
+      ...runtimeCapabilities,
+    });
+  }
 
   const parentHandle = launch(async (ctx) => {
     parentContext = ctx;
@@ -278,8 +310,25 @@ export async function createLivecodeVisualizerServer(
         serverVersion: SERVER_VERSION,
         sessionRoot,
         activeModules: [...activeModules.keys()],
+        runtimeCapabilities,
       };
       return json(response);
+    }
+
+    if (request.method === "GET" && url.pathname === "/client/clients") {
+      const response: ClientControlClientsResponse = {
+        ok: true,
+        clients: [...clientControlSockets.values()].map((client) => ({
+          clientId: client.clientId,
+          connectedAt: client.connectedAt,
+        })),
+      };
+      return json(response);
+    }
+
+    if (request.method === "POST" && url.pathname === "/client/command") {
+      const requestBody = await request.json() as ClientControlRequest;
+      return json(await sendClientControlCommand(requestBody));
     }
 
     if (request.method === "POST" && url.pathname === "/runtime/analyze") {
@@ -338,6 +387,17 @@ export async function createLivecodeVisualizerServer(
 
     if (request.method === "GET" && url.pathname === "/project/status") {
       return json(await makeProjectStatusResponse());
+    }
+
+    if (
+      request.method === "GET" && url.pathname === "/project/modules/source"
+    ) {
+      return json(
+        await makeProjectModuleSourceResponse({
+          id: url.searchParams.get("id") ?? undefined,
+          path: url.searchParams.get("path") ?? undefined,
+        }),
+      );
     }
 
     if (request.method === "GET" && url.pathname === "/project/events") {
@@ -449,6 +509,33 @@ export async function createLivecodeVisualizerServer(
       return response;
     }
 
+    if (request.method === "GET" && url.pathname === "/client/control") {
+      const requestedClientId = url.searchParams.get("clientId")?.trim();
+      const clientId = requestedClientId || crypto.randomUUID();
+      const { socket, response } = Deno.upgradeWebSocket(request);
+      socket.onopen = () => {
+        const existing = clientControlSockets.get(clientId);
+        if (existing && existing.socket.readyState === WebSocket.OPEN) {
+          existing.socket.close();
+        }
+        clientControlSockets.set(clientId, {
+          clientId,
+          socket,
+          connectedAt: Date.now(),
+        });
+        void log({ type: "clientControlConnected", clientId });
+      };
+      socket.onmessage = (event) => {
+        if (typeof event.data !== "string") return;
+        handleClientControlMessage(clientId, event.data);
+      };
+      socket.onclose = () =>
+        removeClientControlSocket(clientId, "closed", socket);
+      socket.onerror = () =>
+        removeClientControlSocket(clientId, "error", socket);
+      return response;
+    }
+
     return new Response("Not found", { status: 404, headers: CORS_HEADERS });
   };
 
@@ -479,6 +566,19 @@ export async function createLivecodeVisualizerServer(
       }
       for (const socket of sockets) socket.close();
       for (const socket of pianoRollSockets) socket.close();
+      for (const client of clientControlSockets.values()) {
+        client.socket.close();
+      }
+      for (const [commandId, pending] of pendingClientCommands) {
+        clearTimeout(pending.timer);
+        pending.resolve({
+          ok: false,
+          commandId,
+          clientId: pending.clientId,
+          error: "server closed before client command completed",
+        });
+      }
+      pendingClientCommands.clear();
       for (const moduleId of [...activeModules.keys()]) {
         await stopModule(moduleId, "serverClose");
       }
@@ -487,6 +587,161 @@ export async function createLivecodeVisualizerServer(
       await server.shutdown();
     },
   };
+
+  async function sendClientControlCommand(
+    requestBody: ClientControlRequest,
+  ): Promise<ClientControlCommandResponse> {
+    const commandId = crypto.randomUUID();
+    const target = selectClientControlSocket(requestBody.clientId);
+    if (!target) {
+      return {
+        ok: false,
+        commandId,
+        clientId: requestBody.clientId ?? "",
+        error: requestBody.clientId
+          ? `No connected client ${requestBody.clientId}`
+          : "No connected livecode-tldraw client",
+      };
+    }
+
+    const timeoutMs = clampTimeoutMs(requestBody.timeoutMs);
+    const envelope: ClientControlEnvelope = {
+      type: "clientCommand",
+      commandId,
+      command: requestBody.command,
+    };
+
+    await log({
+      type: "clientCommandForwarded",
+      commandId,
+      clientId: target.clientId,
+      commandType: requestBody.command.type,
+    });
+
+    return await new Promise<ClientControlCommandResponse>((resolve) => {
+      const timer = setTimeout(() => {
+        pendingClientCommands.delete(commandId);
+        resolve({
+          ok: false,
+          commandId,
+          clientId: target.clientId,
+          error:
+            `Timed out waiting for client command result after ${timeoutMs}ms`,
+        });
+      }, timeoutMs) as unknown as number;
+
+      pendingClientCommands.set(commandId, {
+        clientId: target.clientId,
+        resolve,
+        timer,
+      });
+
+      try {
+        target.socket.send(JSON.stringify(envelope));
+      } catch (error) {
+        clearTimeout(timer);
+        pendingClientCommands.delete(commandId);
+        resolve({
+          ok: false,
+          commandId,
+          clientId: target.clientId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+  }
+
+  function selectClientControlSocket(
+    clientId?: string,
+  ): ClientControlSocket | null {
+    if (clientId) {
+      const client = clientControlSockets.get(clientId);
+      return client?.socket.readyState === WebSocket.OPEN ? client : null;
+    }
+    for (const client of clientControlSockets.values()) {
+      if (client.socket.readyState === WebSocket.OPEN) return client;
+    }
+    return null;
+  }
+
+  function handleClientControlMessage(clientId: string, payload: string) {
+    let message: ClientControlResultMessage;
+    try {
+      message = JSON.parse(payload) as ClientControlResultMessage;
+    } catch (error) {
+      void log({
+        type: "clientControlMalformedMessage",
+        clientId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
+    if (message.type !== "clientCommandResult") return;
+    const pending = pendingClientCommands.get(message.commandId);
+    if (!pending) {
+      void log({
+        type: "clientCommandUnexpectedResult",
+        clientId,
+        commandId: message.commandId,
+      });
+      return;
+    }
+    if (pending.clientId !== clientId) {
+      void log({
+        type: "clientCommandWrongClient",
+        expectedClientId: pending.clientId,
+        receivedClientId: clientId,
+        commandId: message.commandId,
+      });
+      return;
+    }
+
+    clearTimeout(pending.timer);
+    pendingClientCommands.delete(message.commandId);
+    void log({
+      type: "clientCommandResult",
+      commandId: message.commandId,
+      clientId,
+      ok: message.ok,
+      error: message.error,
+    });
+    pending.resolve({
+      ok: message.ok,
+      commandId: message.commandId,
+      clientId,
+      result: message.result,
+      error: message.error,
+    });
+  }
+
+  function removeClientControlSocket(
+    clientId: string,
+    reason: string,
+    expectedSocket?: WebSocket,
+  ) {
+    const client = clientControlSockets.get(clientId);
+    if (!client) return;
+    if (expectedSocket && client.socket !== expectedSocket) return;
+    clientControlSockets.delete(clientId);
+    void log({ type: "clientControlDisconnected", clientId, reason });
+    for (const [commandId, pending] of pendingClientCommands) {
+      if (pending.clientId !== clientId) continue;
+      clearTimeout(pending.timer);
+      pendingClientCommands.delete(commandId);
+      pending.resolve({
+        ok: false,
+        commandId,
+        clientId,
+        error: `Client disconnected before command completed: ${reason}`,
+      });
+    }
+  }
+
+  function clampTimeoutMs(value: number | undefined): number {
+    if (typeof value !== "number" || !Number.isFinite(value)) return 10_000;
+    return Math.max(100, Math.min(60_000, value));
+  }
 
   async function createProject(
     requestBody: CreateProjectRequest,
@@ -806,6 +1061,21 @@ export async function createLivecodeVisualizerServer(
     };
   }
 
+  async function makeProjectModuleSourceResponse(
+    locator: { id?: string; path?: string },
+  ): Promise<ProjectModuleSourceResponse> {
+    const state = requireCurrentProject();
+    const moduleRecord = findProjectModule(state, locator);
+    if (!moduleRecord) {
+      throw new Error("Project module not found");
+    }
+    return {
+      ok: true,
+      module: moduleRecord,
+      sourceText: await readProjectModuleSource(state, moduleRecord),
+    };
+  }
+
   function listRuntimeStatus(): RuntimeModuleStatus[] {
     return [...activeModules.values()].map((active) => ({
       moduleId: active.moduleId,
@@ -1112,6 +1382,7 @@ export async function createLivecodeVisualizerServer(
       const mod = await import(moduleUrl) as {
         runFunc?: (ctx: TimeContext) => Promise<void>;
         default?: (ctx: TimeContext) => Promise<void>;
+        stop?: ModuleStopFunc;
       };
       await log({
         type: "moduleImported",
@@ -1170,6 +1441,7 @@ export async function createLivecodeVisualizerServer(
         projectSourceHash: prepared?.projectSourceHash ??
           requestBody.projectSourceHash,
         handle,
+        stopFunc: typeof mod.stop === "function" ? mod.stop : undefined,
       });
     });
 
@@ -1182,6 +1454,7 @@ export async function createLivecodeVisualizerServer(
       clearModuleWaits(moduleId);
       return;
     }
+    await runModuleStopFunc(active, reason);
     active.handle.cancel();
     activeModules.delete(moduleId);
     clearModuleWaits(moduleId);
@@ -1191,6 +1464,31 @@ export async function createLivecodeVisualizerServer(
       generatedRunId: active.generatedRunId,
       reason,
     });
+  }
+
+  async function runModuleStopFunc(active: ActiveModule, reason: string) {
+    if (!active.stopFunc) return;
+    try {
+      await withTimeout(
+        Promise.resolve(active.stopFunc()),
+        STOP_HOOK_TIMEOUT_MS,
+        `module ${active.moduleId} stop() timed out after ${STOP_HOOK_TIMEOUT_MS}ms`,
+      );
+      await log({
+        type: "moduleStopHookCompleted",
+        moduleId: active.moduleId,
+        generatedRunId: active.generatedRunId,
+        reason,
+      });
+    } catch (error) {
+      await log({
+        type: "moduleStopHookError",
+        moduleId: active.moduleId,
+        generatedRunId: active.generatedRunId,
+        reason,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   async function stopAllModules(reason: string) {
@@ -1209,6 +1507,23 @@ function json(value: unknown, init?: ResponseInit) {
       ...init?.headers,
     },
   });
+}
+
+function makeRuntimeCapabilityStatus() {
+  const webgpu = typeof navigator.gpu?.requestAdapter === "function";
+  const unsafeWindowSurface = typeof (Deno as typeof Deno & {
+    UnsafeWindowSurface?: unknown;
+  }).UnsafeWindowSurface === "function";
+  const windowedP5gpu = webgpu && unsafeWindowSurface;
+  const warnings = windowedP5gpu ? [] : [
+    "Windowed p5gpu modules require the visualizer server to run with --unstable-webgpu --unstable-ffi.",
+  ];
+  return {
+    webgpu,
+    unsafeWindowSurface,
+    windowedP5gpu,
+    warnings,
+  };
 }
 
 function resolvePath(path: string): string {
@@ -1284,6 +1599,24 @@ async function hashText(text: string): Promise<string> {
 
 function elapsedMs(startedAt: number): number {
   return Math.round((performance.now() - startedAt) * 1000) / 1000;
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 function isAbortError(error: unknown): boolean {

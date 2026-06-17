@@ -4,6 +4,7 @@ import {
   fromFileUrl,
   isAbsolute,
   join,
+  normalize,
   toFileUrl,
 } from "jsr:@std/path@1";
 
@@ -21,6 +22,7 @@ const workspaceDir = join(workspaceRoot, crypto.randomUUID());
 const documentVersions = new Map<string, number>();
 
 await Deno.mkdir(workspaceDir, { recursive: true });
+await ensureRepoRootMirror(workspaceDir, repoRoot);
 await writeWorkspaceDenoConfig(workspaceDir, repoRoot);
 
 const proxy = new LSProxy({
@@ -105,12 +107,28 @@ const proxy = new LSProxy({
 await proxy.listen();
 
 async function writeTextDocument(uri: string, text: string) {
+  // Repo-backed docs are sent to Deno LSP as in-memory open documents. Do not
+  // write those buffers through the temp-workspace symlink, or editor changes
+  // would bypass the project write path.
+  if (isRepoFileUri(uri)) return;
+
   const mapped = utils.virtualUriToTempDirUri(uri, workspaceDir);
   if (!mapped?.startsWith("file:")) return;
 
   const filePath = fromFileUrl(mapped);
   await Deno.mkdir(dirname(filePath), { recursive: true });
   await Deno.writeTextFile(filePath, text);
+}
+
+async function ensureRepoRootMirror(targetDir: string, rootDir: string) {
+  const root = normalize(rootDir).replace(/\/+$/, "");
+  const mirrorPath = join(targetDir, root.replace(/^\/+/, ""));
+  await Deno.mkdir(dirname(mirrorPath), { recursive: true });
+  try {
+    await Deno.symlink(root, mirrorPath, { type: "dir" });
+  } catch (error) {
+    if (!(error instanceof Deno.errors.AlreadyExists)) throw error;
+  }
 }
 
 function rememberDocumentVersion(uri: string, version: number) {
@@ -186,6 +204,17 @@ function normalizeImportTarget(value: string, baseDir: string): string {
   let href = toFileUrl(path).href;
   if (value.endsWith("/") && !href.endsWith("/")) href += "/";
   return href;
+}
+
+function isRepoFileUri(uriString: string): boolean {
+  if (!uriString.startsWith("file:")) return false;
+  try {
+    const filePath = normalize(fromFileUrl(uriString));
+    const root = normalize(repoRoot);
+    return filePath === root || filePath.startsWith(`${root}/`);
+  } catch {
+    return false;
+  }
 }
 
 function parseArgs(rawArgs: string[]): Record<string, string | undefined> {

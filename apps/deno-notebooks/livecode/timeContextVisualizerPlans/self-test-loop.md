@@ -39,15 +39,15 @@ keep that process attached long enough to inspect logs.
 Recommended command shape:
 
 ```sh
-deno run --allow-all apps/deno-notebooks/livecode/visualizer/main.ts \
-  --host 127.0.0.1 \
+deno run --unstable-webgpu --unstable-ffi --allow-all apps/deno-notebooks/livecode/visualizer/main.ts \
+  --host localhost \
   --port 7777 \
   --session-root apps/deno-notebooks/.avtools-livecode-sessions \
   --log-level debug
 ```
 
 Use `--port 7777` when manually checking the first browser page, because the UI
-defaults to `http://127.0.0.1:7777`. For automated server tests, `--port 0` lets
+defaults to `http://localhost:7777`. For automated server tests, `--port 0` lets
 the OS choose a free port. The server should print one clear machine-readable
 line when ready either way:
 

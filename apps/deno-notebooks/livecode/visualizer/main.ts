@@ -1,4 +1,5 @@
-// run from apps/deno-notebooks with - deno run --allow-all livecode/visualizer/main.ts --host 127.0.0.1 --port 7777 --log-level debug
+// run from apps/deno-notebooks with:
+// deno run --unstable-webgpu --unstable-ffi --allow-all livecode/visualizer/main.ts --host localhost --port 7777 --log-level debug
 
 import { createLivecodeVisualizerServer } from "./server.ts";
 
