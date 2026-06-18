@@ -107,9 +107,9 @@ export function stop() {
 
 export async function runFunc (ctx: TimeContext) {
   stop();
-  const current = await __tcvVisualizedAwait("modules/sketch.ts", "7a0ce23e-82bf-4354-8d83-05ccc9d10035", openSketchWindow(ctx));
+  const current = await __tcvVisualizedAwait("modules/sketch.ts", "da47dd66-8866-468c-8ecc-9437ffe34cde", openSketchWindow(ctx));
   try {
-    await __tcvVisualizedAwait("modules/sketch.ts", "3a08c5f8-3212-463d-9b18-cfc9bc22f26e", runSketchWindow(ctx, current));
+    await __tcvVisualizedAwait("modules/sketch.ts", "fc31d70a-aec2-4ec7-9f8b-3958b3dfb629", runSketchWindow(ctx, current));
   } finally {
     stop();
   }

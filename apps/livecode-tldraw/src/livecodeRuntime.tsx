@@ -23,11 +23,13 @@ import type {
   HistoryEntry,
   PreparedBuild,
   PreparedFailure,
+  ProjectShadowCheckResponse,
   VisualizerDiagnostic,
   VisualizerManifestMessage,
 } from "./livecodeProtocol";
 
 const BUILD_DEBOUNCE_MS = 100;
+const PROJECT_DIAGNOSTICS_POLL_MS = 2_500;
 
 export type ConnectionStatus = "closed" | "connecting" | "open" | "error";
 export type BuildStatus =
@@ -75,6 +77,8 @@ export interface LivecodeRuntimeApi {
   lspClient: LSClient | null;
   lspDiagnosticsByUri: Record<string, LspDiagnosticSummary[]>;
   health: HealthResponse | null;
+  projectDiagnostics: ProjectShadowCheckResponse | null;
+  projectDiagnosticsError: string | null;
   connectionError: string | null;
   modules: Record<string, ModuleViewState>;
   connect(): Promise<void>;
@@ -121,6 +125,12 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
   >({});
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [projectDiagnostics, setProjectDiagnostics] = useState<
+    ProjectShadowCheckResponse | null
+  >(null);
+  const [projectDiagnosticsError, setProjectDiagnosticsError] = useState<
+    string | null
+  >(null);
   const [modules, setModules] = useState<Record<string, ModuleViewState>>({});
   const modulesRef = useRef(new Map<string, ModuleRecord>());
   const snapshotsSocketRef = useRef<WebSocket | null>(null);
@@ -202,6 +212,31 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     },
     [],
   );
+
+  const fetchProjectDiagnostics = useCallback(async () => {
+    if (connectionStatusRef.current !== "open") return null;
+    try {
+      const response = await fetch(
+        `${serverBaseUrlRef.current}/project/diagnostics`,
+      );
+      if (!response.ok) {
+        throw new Error(
+          `/project/diagnostics failed with ${response.status}: ${
+            await response.text()
+          }`,
+        );
+      }
+      const diagnostics = (await response.json()) as ProjectShadowCheckResponse;
+      setProjectDiagnostics(diagnostics);
+      setProjectDiagnosticsError(null);
+      return diagnostics;
+    } catch (error) {
+      setProjectDiagnosticsError(
+        error instanceof Error ? error.message : String(error),
+      );
+      return null;
+    }
+  }, []);
 
   const analyzeNow = useCallback(
     async (
@@ -431,6 +466,8 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
 
   const disconnect = useCallback(() => {
     setConnectionError(null);
+    setProjectDiagnostics(null);
+    setProjectDiagnosticsError(null);
     snapshotsSocketRef.current?.close();
     snapshotsSocketRef.current = null;
     const lspConnection = lspConnectionRef.current;
@@ -447,6 +484,16 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     }
     publishAllModules();
   }, [publishAllModules, setConnectionStatusRef]);
+
+  useEffect(() => {
+    if (connectionStatus !== "open") return;
+    void fetchProjectDiagnostics();
+    const timer = window.setInterval(
+      () => void fetchProjectDiagnostics(),
+      PROJECT_DIAGNOSTICS_POLL_MS,
+    );
+    return () => window.clearInterval(timer);
+  }, [connectionStatus, fetchProjectDiagnostics]);
 
   useEffect(() => {
     return () => {
@@ -521,6 +568,25 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       }
 
       try {
+        if (record.projectModulePath) {
+          const diagnostics = await fetchProjectDiagnostics();
+          if (!diagnostics) {
+            record.runStatus = "error";
+            record.latestError = "project diagnostics are not available";
+            publishModule(record);
+            return;
+          }
+          if (!diagnostics.denoCheck.success) {
+            record.runStatus = "error";
+            record.latestError = summarizeProjectDiagnostics(
+              record.moduleId,
+              diagnostics,
+            );
+            publishModule(record);
+            return;
+          }
+        }
+
         await postJson("/runtime/launch", {
           moduleId: build.moduleId,
           transformedModuleUri: build.transformedModuleUri,
@@ -529,7 +595,9 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
           projectSourceHash: build.projectSourceHash,
           projectModulePath: build.projectModulePath,
         });
-        record.runStatus = "running";
+        record.runStatus = build.manifest.callsites.length > 0
+          ? "running"
+          : "stopped";
         record.latestError = null;
         publishModule(record);
       } catch (error) {
@@ -540,7 +608,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
         publishModule(record);
       }
     },
-    [ensureBuild, postJson, publishModule],
+    [ensureBuild, fetchProjectDiagnostics, postJson, publishModule],
   );
 
   const stopModule = useCallback(
@@ -576,6 +644,8 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       lspClient,
       lspDiagnosticsByUri,
       health,
+      projectDiagnostics,
+      projectDiagnosticsError,
       connectionError,
       modules,
       connect,
@@ -595,6 +665,8 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       lspClient,
       lspDiagnosticsByUri,
       health,
+      projectDiagnostics,
+      projectDiagnosticsError,
       connectionError,
       modules,
       connect,
@@ -655,6 +727,25 @@ function toViewState(record: ModuleRecord): ModuleViewState {
     lastSnapshotSeq: record.lastSnapshotSeq,
     latestError: record.latestError,
   };
+}
+
+function summarizeProjectDiagnostics(
+  moduleId: string,
+  diagnostics: ProjectShadowCheckResponse,
+) {
+  const moduleDiagnostics = diagnostics.modules.find((moduleEntry) =>
+    moduleEntry.moduleId === moduleId
+  );
+  const directDiagnostic = moduleDiagnostics?.diagnostics[0] ??
+    moduleDiagnostics?.dependencyDiagnostics[0] ??
+    diagnostics.diagnostics[0];
+  const count = diagnostics.diagnostics.length;
+  if (!directDiagnostic) {
+    return `project typecheck failed (${count} diagnostics)`;
+  }
+  const location = directDiagnostic.path ?? directDiagnostic.moduleId ??
+    "project";
+  return `project typecheck failed (${count} diagnostics): ${location} ${directDiagnostic.code}: ${directDiagnostic.message}`;
 }
 
 function normalizeServerBaseUrl(value: string) {

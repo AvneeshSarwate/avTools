@@ -305,7 +305,8 @@ async function runModule() {
   await postJson('/runtime/launch', {
     moduleId: build.moduleId,
     generatedRunId: build.generatedRunId,
-    transformedModuleUri: build.transformedModuleUri
+    transformedModuleUri: build.transformedModuleUri,
+    replaceRunning: true
   })
   status.value = `Running ${build.generatedRunId}`
 }

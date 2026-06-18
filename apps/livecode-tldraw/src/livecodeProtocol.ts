@@ -64,9 +64,15 @@ export interface HealthResponse {
   serverVersion: string;
   sessionRoot: string;
   activeModules: string[];
+  runtimeCapabilities?: {
+    webgpu: boolean;
+    unsafeWindowSurface: boolean;
+    windowedP5gpu: boolean;
+    warnings: string[];
+  };
 }
 
-export type ProjectModuleKind = "library" | "runnable";
+export type ProjectModuleKind = "runnable";
 
 export interface ProjectModuleRecord {
   id: string;
@@ -144,6 +150,9 @@ export interface ProjectModuleStatus extends ProjectModuleRecord {
   conflict: boolean;
   running: boolean;
   runningStale: boolean;
+  dependencies: string[];
+  dependents: string[];
+  changedDependencies: string[];
 }
 
 export interface ProjectStatusResponse {
@@ -152,6 +161,56 @@ export interface ProjectStatusResponse {
   modules: ProjectModuleStatus[];
   activeModules: RuntimeModuleStatus[];
   projectSourceHash: string | null;
+}
+
+export interface ProjectDependencyEdge {
+  fromModuleId: string;
+  toModuleId?: string;
+  specifier: string;
+  kind: "static" | "dynamic";
+  resolvedPath?: string;
+  external?: boolean;
+  unresolved?: boolean;
+}
+
+export interface ProjectShadowDiagnostic {
+  source: "deno" | "visualizer";
+  moduleId?: string;
+  path?: string;
+  code: string;
+  message: string;
+  line?: number;
+  column?: number;
+  from?: number;
+  to?: number;
+  raw: string;
+}
+
+export interface ProjectShadowModuleStatus {
+  moduleId: string;
+  path: string;
+  dependencies: string[];
+  dependents: string[];
+  changedDependencies: string[];
+  diagnostics: ProjectShadowDiagnostic[];
+  dependencyDiagnostics: ProjectShadowDiagnostic[];
+  hasDependencyWarnings: boolean;
+}
+
+export interface ProjectShadowCheckResponse {
+  ok: true;
+  project: ProjectCurrentResponse["project"];
+  checkedAt: string;
+  shadowRoot: string;
+  projectSourceHash: string | null;
+  edges: ProjectDependencyEdge[];
+  modules: ProjectShadowModuleStatus[];
+  diagnostics: ProjectShadowDiagnostic[];
+  denoCheck: {
+    success: boolean;
+    code: number;
+    output: string;
+  };
 }
 
 export type ClientControlCommand =

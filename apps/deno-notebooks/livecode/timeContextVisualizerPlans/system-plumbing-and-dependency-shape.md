@@ -227,7 +227,7 @@ npm run dev
 Then open:
 
 ```txt
-http://127.0.0.1:5173/livecodeVisualizer
+http://localhost:5173/livecodeVisualizer
 ```
 
 Implemented server routes:
@@ -235,9 +235,21 @@ Implemented server routes:
 ```txt
 GET  /health
 GET  /lsp?session=<moduleOrEditorSessionId>
+GET  /project/status
+GET  /project/diagnostics
+GET  /project/modules/source
+POST /project/create
+POST /project/open
+POST /project/modules/add
+POST /project/modules/update
+POST /project/modules/remove
+POST /project/modules/reload
+POST /project/modules/write
 POST /runtime/analyze
 POST /runtime/launch
 POST /runtime/stop
+POST /runtime/stop-all
+GET  /runtime/status
 GET  /runtime/snapshots
 ```
 
@@ -364,6 +376,8 @@ Implemented runtime endpoints:
 ```txt
 POST /runtime/launch
 POST /runtime/stop
+POST /runtime/stop-all
+GET /runtime/status
 GET /runtime/snapshots
 ```
 
@@ -374,9 +388,33 @@ Responsibilities:
 - maintain a parent `TimeContext` loop that drains launch/stop actions from a
   queue
 - launch generated modules by branching from the parent context
+- reject replacing an already running module unless the request explicitly sets
+  `replaceRunning: true`
 - expose a singleton visualizer runtime module used by transformed code
 - sample active wait UUIDs around 30fps
 - send active wait snapshots to the browser
+
+### 4. Project Shadow Diagnostics
+
+Implemented project endpoint:
+
+```txt
+GET /project/diagnostics
+```
+
+Responsibilities:
+
+- read current project `*.orig.ts` source without changing editor buffers
+- build a static project import graph from project-local imports
+- transform current source into a session-owned `shadow/` runtime tree
+- run `deno check` against the shadow tree
+- report dependency edges, changed dependencies, transform diagnostics, and
+  Deno typecheck diagnostics
+- avoid rewriting real project `*.ts` runtime files
+- avoid importing or executing user code
+
+This supports coding-agent and external-editor workflows where changes can be
+detected and diagnosed before the user explicitly chooses to regenerate or run.
 
 This should follow the existing Sonar pattern in
 `apps/browser-projections/src/sketches/sonar_sketch/LivecodeHolder.vue`:
@@ -584,6 +622,8 @@ The clean boundaries are:
 - VTLSP owns browser-to-LSP message plumbing.
 - Deno LSP owns editor semantics like completion/hover/diagnostics.
 - ts-morph owns local typed transform analysis.
+- project shadow analysis owns project import graph and non-mutating dependency
+  diagnostics.
 - magic-string owns text rewriting.
 - CodeMirror owns editor state and visual decorations.
 - `@avtools/core-timing` owns logical-time semantics.

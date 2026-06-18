@@ -15,7 +15,7 @@ export async function runFunc (ctx: TimeContext) {
     state.color = [...palette[index % palette.length]];
     state.speed = 0.8 + ctx.random() * 3.2;
     index += 1;
-    await __tcvVisualizedAwait("modules/modifiers/color-loop.ts", "939bc639-5a0a-478d-9b46-521d174b67b8", ctx.waitSec(1));
+    await __tcvVisualizedAwait("modules/modifiers/color-loop.ts", "0b94e329-7eff-4d5b-9ae9-f12a8ed0a8d9", ctx.waitSec(1));
   }
 }
 

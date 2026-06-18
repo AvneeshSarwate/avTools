@@ -36,9 +36,11 @@ Deno.test("project modules share transformed files and drive a p5gpu snapshot", 
       modules: [
         {
           path: "modules/state.ts",
-          kind: "library",
+          kind: "runnable",
           title: "state",
           sourceText: `
+import type { TimeContext } from "@avtools/core-timing";
+
 export const state = {
   frame: 0,
   x: 32,
@@ -48,6 +50,8 @@ export const state = {
   snapshotRequested: false,
   snapshotPath: ${JSON.stringify(snapshotPath)},
 };
+
+export default async function(_ctx: TimeContext) {}
 `,
         },
         {
@@ -221,7 +225,11 @@ export default async function(_ctx: TimeContext) {
       colorStatus?.changedOnDisk,
       "color loop source should be changed on disk",
     );
-    assert(sketchStatus?.runningStale, "running sketch should be stale");
+    assertEquals(
+      sketchStatus?.runningStale,
+      false,
+      "running sketch should not be stale when an unrelated modifier changes",
+    );
   } finally {
     await postJson(`${server.baseUrl}/runtime/stop-all`, {});
     await server.close();

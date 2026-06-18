@@ -167,6 +167,12 @@ function TopBar({ editor }: { editor: Editor | null }) {
   const moduleCount = useMemo(() => Object.keys(runtime.modules).length, [
     runtime.modules,
   ]);
+  const dependencyIssueCount = runtime.projectDiagnostics?.modules.filter((
+    moduleEntry,
+  ) => moduleEntry.hasDependencyWarnings).length ?? 0;
+  const changedDependencyCount = runtime.projectDiagnostics?.modules.filter((
+    moduleEntry,
+  ) => moduleEntry.changedDependencies.length > 0).length ?? 0;
 
   return (
     <div
@@ -214,6 +220,19 @@ function TopBar({ editor }: { editor: Editor | null }) {
           lsp: {runtime.lspStatus}
         </span>
         <span>{moduleCount} modules</span>
+        {changedDependencyCount > 0
+          ? <span>{changedDependencyCount} dependency updates</span>
+          : null}
+        {dependencyIssueCount > 0
+          ? <span className="topbar__error">{dependencyIssueCount} dependency issues</span>
+          : null}
+        {runtime.projectDiagnosticsError
+          ? (
+            <span className="topbar__error">
+              diagnostics: {runtime.projectDiagnosticsError}
+            </span>
+          )
+          : null}
         {runtime.connectionError
           ? <span className="topbar__error">{runtime.connectionError}</span>
           : null}
@@ -492,6 +511,7 @@ async function makeClientControlState(
   runtime: LivecodeRuntimeApi,
 ) {
   const runtimeStatus = await fetchRuntimeStatus(runtime.serverBaseUrl);
+  const projectDiagnostics = runtime.projectDiagnostics;
   const activeModuleIds = new Set(
     runtimeStatus.activeModules.map((moduleEntry) => moduleEntry.moduleId),
   );
@@ -521,8 +541,15 @@ async function makeClientControlState(
         activeCount: moduleState?.activeIds.length ?? 0,
         sourceVersion: moduleState?.sourceVersion ?? 0,
         latestError: moduleState?.latestError ?? null,
+        dependencyStatus: projectDiagnostics?.modules.find((moduleEntry) =>
+          moduleEntry.moduleId === shape.props.moduleId
+        ) ?? null,
       };
     }),
+    dependencyIssueCount: projectDiagnostics?.modules.filter((moduleEntry) =>
+      moduleEntry.hasDependencyWarnings
+    ).length ?? 0,
+    projectDiagnosticsError: runtime.projectDiagnosticsError,
   };
 }
 
@@ -613,7 +640,7 @@ function createLivecodeShape(
     h?: number;
     moduleId?: string;
     projectModulePath?: string;
-    projectModuleKind?: "library" | "runnable";
+    projectModuleKind?: "runnable";
     projectSourceUri?: string;
     title?: string;
     source?: string;

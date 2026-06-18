@@ -64,15 +64,17 @@ Each tldraw code module should have:
 
 - stable module id
 - human-readable module path
-- kind: `library` or `runnable`
+- kind: currently normalized to `runnable`
 - title
 - canvas x/y/w/h
 
-Library modules are written to disk and imported by other modules. Runnable
-modules are analyzed, transformed, and launched using the default async
-`TimeContext` root function convention.
+All project modules are analyzed, transformed, typechecked as part of the
+project graph, and launched through the same Run path. Shared-state modules can
+still mainly export data for other modules, but they also need a default async
+`TimeContext` root. That root can be a no-op; running the module commits the
+editor buffer, regenerates runtime files, and surfaces project diagnostics.
 
-Runnable modules may also export an optional module cleanup hook:
+Project modules may also export an optional module cleanup hook:
 
 ```ts
 export function stop() {
@@ -91,13 +93,15 @@ safe to call even if the module already cleaned itself up. This is the expected
 place for p5gpu/windowed sketches to close native windows and stop render loops.
 
 For this MVP, all tldraw-authored modules pass through the visualization
-transform before runtime materialization. Library files without a default timed
-root can transform/pass through. Runnable files still require the default async
-`TimeContext` root.
+transform before runtime materialization and require the default async
+`TimeContext` root. This keeps the Run button meaningful for every module,
+including shared-state modules.
 
-No complex static import graph is required for MVP. The conservative approach is
-to materialize all project modules whenever a project module is analyzed or
-written.
+The server also computes a general static project import graph from the
+`.orig.ts` sources. This is intentionally not based on baked-in module roles.
+Project-local static imports and string-literal dynamic imports are resolved to
+other tldraw project modules when possible. The graph is used for dependency
+freshness and diagnostics; it does not imply automatic reload or automatic run.
 
 ## p5gpu Live-Performance Shape
 
@@ -107,8 +111,8 @@ The default p5gpu project should be organized like:
   and flags.
 - `modules/sketch.ts`: transformed runtime file owning GPU/P5GPU setup and the
   long-running draw loop.
-- `modules/modifiers/*.ts`: transformed runtime files for short runnable
-  livecode modules that mutate state.
+- `modules/modifiers/*.ts`: transformed runtime files for short livecode modules
+  that mutate state.
 
 Most performance iteration should happen in modifier modules. Changing the shape
 of `state.orig.ts` or sketch setup can require `Restart All`, because Deno
@@ -124,6 +128,10 @@ The server should track enough hashes to show useful UI state:
 - `runHash`: source hash used by the currently running module
 - `lastLoadedHash`: disk hash last loaded into the client
 - `projectSourceHash`: aggregate hash for all project source files
+- `dependencies`: project module ids this module imports
+- `dependents`: project module ids that import this module
+- `changedDependencies`: transitive dependencies whose `.orig.ts` hash differs
+  from the last loaded/generated hash
 
 Minimum states:
 
@@ -132,29 +140,72 @@ Minimum states:
 - changed on disk
 - conflict: editor dirty and disk changed
 - running stale: running code differs from disk/editor source
+- dependency changed: an imported module changed since this module was last
+  checked/generated
+- dependency issue: a changed dependency is associated with current typecheck or
+  transform diagnostics
 
 Do not auto-reload editor buffers. Show a warning and explicit actions:
 
 - `Reload from disk`
 - `Stop and reload` when a stale module is running
 - conflict choices: `Keep editor` or `Reload from disk`
+- `Regenerate` to explicitly rewrite real runtime `.ts` files
+- `Stop and run` or `Run selected` for explicit execution
 
-For MVP, imported library dependency staleness can be conservative. If any
-project source file changes on disk, mark running modules stale and recommend
-`Restart All`.
+Staleness is dependency-aware. Editing `modules/modifiers/color-loop.orig.ts`
+does not make `modules/sketch.ts` stale unless the sketch imports the modifier.
+Editing a shared dependency such as `modules/state.orig.ts` marks transitive
+dependents as dependency-changed, and a running dependent is `runningStale`.
+
+Run and replacement are no-surprise operations. `/runtime/launch` refuses to
+replace an already running module unless the caller explicitly passes
+`replaceRunning: true`.
+
+## Shadow Diagnostics
+
+The server exposes a non-mutating shadow check:
+
+```txt
+GET /project/diagnostics
+```
+
+The implementation writes transformed versions of current `*.orig.ts` files to
+a session-owned shadow directory:
+
+```txt
+<session>/shadow/
+  modules/state.ts
+  modules/sketch.ts
+  modules/modifiers/color-loop.ts
+```
+
+It then runs Deno type checking against the shadow runtime graph and returns:
+
+- dependency edges
+- per-module dependencies and dependents
+- changed dependencies
+- transform diagnostics
+- Deno typecheck diagnostics
+- dependency diagnostics for modules whose changed dependencies are implicated
+
+This check intentionally does not overwrite the real project `*.ts` runtime
+files and does not import or execute user code. It lets the UI and agents show
+"current source would typecheck if regenerated" separately from "real runtime
+output has been regenerated" and "running code has been restarted."
 
 ## Agent Steering API
 
-Server endpoints should allow agents and tests to manipulate the project model
-without Playwright:
+Implemented server endpoints allow agents and tests to manipulate the project
+model without Playwright:
 
 ```txt
 POST /project/create
 POST /project/open
-POST /project/save
 GET  /project/current
 GET  /project/status
-GET  /project/events
+GET  /project/diagnostics
+GET  /project/modules/source
 
 POST /project/modules/add
 POST /project/modules/update
@@ -165,13 +216,14 @@ POST /project/modules/write
 POST /runtime/launch
 POST /runtime/stop
 POST /runtime/stop-all
-POST /runtime/restart-all
 GET  /runtime/status
 ```
 
 This is enough for automated tests and coding agents to create modules, write
-source, launch transformed runtime modules, stop modules, and inspect server
-state.
+source, inspect dependency/typecheck status, launch transformed runtime modules,
+stop modules, and inspect server state. Launching a module that is already
+running requires explicit `replaceRunning: true`; otherwise the server returns a
+409 instead of stopping live code.
 
 Some actions still need the live tldraw client because they change browser
 canvas state or use the same UI runtime path as a human would. The client opens
@@ -242,9 +294,13 @@ export default async function (_ctx: TimeContext) {
    file appears.
 7. Assert the PNG exists and is non-empty. If practical, decode enough of it to
    verify width/height and at least one non-background/non-transparent pixel.
-8. Mutate one `.orig.ts` file on disk and assert project status reports both
-   changed-on-disk and running-stale state.
-9. Stop all modules and close the project.
+8. Mutate a modifier `.orig.ts` file on disk and assert project status reports
+   only that modifier changed, without marking the independent running sketch
+   stale.
+9. Mutate a shared dependency `.orig.ts` file and assert shadow diagnostics show
+   dependency warnings on affected dependents without rewriting real runtime
+   files.
+10. Stop all modules and close the project.
 
 This test proves:
 
@@ -262,9 +318,13 @@ The current implementation lives in the livecode visualizer server:
 - `apps/deno-notebooks/livecode/visualizer/server.ts`
 - `apps/deno-notebooks/livecode/visualizer/protocol.ts`
 - `apps/deno-notebooks/livecode/visualizer/analyze_transform.ts`
+- `apps/deno-notebooks/livecode/visualizer/project_shadow_analysis.ts`
 - `apps/deno-notebooks/livecode/tests/project_p5gpu_e2e_test.ts`
+- `apps/deno-notebooks/livecode/tests/project_shadow_diagnostics_test.ts`
 
 The livecode-tldraw UI now loads project modules from `projectPath`, displays
 `.orig.ts` editor files, writes through `/project/modules/write`, and launches
 the transformed `.ts` runtime files. It also connects to `/client/control` for
-agent steering commands.
+agent steering commands. It polls `/project/diagnostics` while connected and
+surfaces dependency-change and dependency-issue badges on module shapes; these
+warnings are informational and do not run, stop, or regenerate code.

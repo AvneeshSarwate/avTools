@@ -32,6 +32,7 @@ import type {
   ProjectModuleRecord,
   ProjectModuleSourceResponse,
   ProjectModuleStatus,
+  ProjectShadowCheckResponse,
   ProjectStatusResponse,
   ReloadProjectModuleRequest,
   RemoveProjectModuleRequest,
@@ -48,6 +49,11 @@ import {
   setPianoRoll,
   undoPianoRoll,
 } from "./piano_roll_store.ts";
+import {
+  analyzeProjectShadow,
+  buildProjectImportGraph,
+  collectTransitiveDependencies,
+} from "./project_shadow_analysis.ts";
 import { clearModuleWaits, makeActiveWaitSnapshot } from "./runtime.ts";
 
 interface BranchHandle {
@@ -156,6 +162,7 @@ export async function createLivecodeVisualizerServer(
   const sessionDir = join(sessionRoot, sessionId);
   const modulesDir = join(sessionDir, "modules");
   const generatedDir = join(sessionDir, "generated");
+  const shadowDir = join(sessionDir, "shadow");
   const lspWorkspacesDir = join(
     Deno.env.get("TMPDIR") ?? "/tmp",
     "avtools-livecode-lsp-workspaces",
@@ -191,10 +198,16 @@ export async function createLivecodeVisualizerServer(
       ...entry,
     });
     console.log(line);
-    await Deno.writeTextFile(logPath, `${line}\n`, {
-      append: true,
-      create: true,
-    });
+    try {
+      await Deno.writeTextFile(logPath, `${line}\n`, {
+        append: true,
+        create: true,
+      });
+    } catch (error) {
+      if (!(closing && error instanceof Deno.errors.NotFound)) {
+        console.warn("[livecode-visualizer] failed to write log", error);
+      }
+    }
   };
 
   const runtimeCapabilities = makeRuntimeCapabilityStatus();
@@ -338,8 +351,18 @@ export async function createLivecodeVisualizerServer(
 
     if (request.method === "POST" && url.pathname === "/runtime/launch") {
       const requestBody = await request.json() as LaunchModuleRequest;
-      await launchModule(requestBody);
-      return json({ ok: true });
+      try {
+        await launchModule(requestBody);
+        return json({ ok: true });
+      } catch (error) {
+        return json(
+          {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          { status: 409 },
+        );
+      }
     }
 
     if (request.method === "POST" && url.pathname === "/runtime/stop") {
@@ -387,6 +410,10 @@ export async function createLivecodeVisualizerServer(
 
     if (request.method === "GET" && url.pathname === "/project/status") {
       return json(await makeProjectStatusResponse());
+    }
+
+    if (request.method === "GET" && url.pathname === "/project/diagnostics") {
+      return json(await makeProjectDiagnosticsResponse());
     }
 
     if (
@@ -912,7 +939,7 @@ export async function createLivecodeVisualizerServer(
 
     const moduleRecord = existing ?? normalized;
     Object.assign(moduleRecord, {
-      kind: input.kind ?? moduleRecord.kind,
+      kind: "runnable",
       title: input.title ?? moduleRecord.title,
       sourceVersion: input.sourceVersion ?? moduleRecord.sourceVersion,
       x: input.x ?? moduleRecord.x,
@@ -963,7 +990,7 @@ export async function createLivecodeVisualizerServer(
         sourceText,
         generatedRunId,
         runtimeImport: runtimeUrl,
-        requireDefaultTimedRoot: moduleRecord.kind === "runnable",
+        requireDefaultTimedRoot: true,
       });
       results.set(moduleRecord.id, result);
 
@@ -1007,28 +1034,50 @@ export async function createLivecodeVisualizerServer(
     }
 
     const moduleStatuses: ProjectModuleStatus[] = [];
-    const diskHashes = new Map<string, string>();
-    for (const moduleRecord of currentProject.manifest.modules) {
-      const diskText = await readProjectModuleSource(
-        currentProject,
-        moduleRecord,
-      );
-      const diskHash = await hashText(diskText);
-      diskHashes.set(moduleRecord.id, diskHash);
-    }
+    const sourceModules = await readProjectSourceModules(currentProject);
+    const diskHashes = new Map(
+      sourceModules.map((moduleRecord) => [
+        moduleRecord.id,
+        moduleRecord.sourceHash,
+      ]),
+    );
     const projectSourceHash = await hashText(
       [...diskHashes.entries()]
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([id, hash]) => `${id}:${hash}`)
         .join("\n"),
     );
+    const graph = buildProjectImportGraph({
+      projectRoot: currentProject.root,
+      modules: sourceModules,
+    });
+    const changedModuleIds = new Set(
+      sourceModules
+        .filter((moduleRecord) =>
+          moduleRecord.lastLoadedHash !== null &&
+          moduleRecord.sourceHash !== moduleRecord.lastLoadedHash
+        )
+        .map((moduleRecord) => moduleRecord.id),
+    );
 
-    for (const moduleRecord of currentProject.manifest.modules) {
+    for (const moduleRecord of sourceModules) {
       const diskHash = diskHashes.get(moduleRecord.id) ?? null;
       const hashState = currentProject.hashes.get(moduleRecord.id);
       const active = activeModules.get(moduleRecord.id);
       const editorHash = hashState?.editorHash ?? null;
       const lastLoadedHash = hashState?.lastLoadedHash ?? null;
+      const dependencies = sortedIds(
+        graph.dependenciesByModule.get(moduleRecord.id),
+      );
+      const dependents = sortedIds(
+        graph.dependentsByModule.get(moduleRecord.id),
+      );
+      const changedDependencies = [...collectTransitiveDependencies(
+        moduleRecord.id,
+        graph.dependenciesByModule,
+      )]
+        .filter((moduleId) => changedModuleIds.has(moduleId))
+        .sort();
       const changedOnDisk = Boolean(
         diskHash && lastLoadedHash && diskHash !== lastLoadedHash,
       );
@@ -1046,9 +1095,14 @@ export async function createLivecodeVisualizerServer(
         conflict: dirty && changedOnDisk,
         running: Boolean(active),
         runningStale: Boolean(
-          active && active.projectSourceHash &&
-            active.projectSourceHash !== projectSourceHash,
+          active &&
+            ((diskHash && active.sourceHash &&
+              diskHash !== active.sourceHash) ||
+              changedDependencies.length > 0),
         ),
+        dependencies,
+        dependents,
+        changedDependencies,
       });
     }
 
@@ -1059,6 +1113,36 @@ export async function createLivecodeVisualizerServer(
       activeModules: listRuntimeStatus(),
       projectSourceHash,
     };
+  }
+
+  async function makeProjectDiagnosticsResponse(): Promise<
+    ProjectShadowCheckResponse
+  > {
+    const current = await makeProjectCurrentResponse();
+    if (!currentProject) {
+      return {
+        ok: true,
+        project: null,
+        checkedAt: new Date().toISOString(),
+        shadowRoot: shadowDir,
+        projectSourceHash: null,
+        edges: [],
+        modules: [],
+        diagnostics: [],
+        denoCheck: { success: true, code: 0, output: "" },
+      };
+    }
+
+    const sourceModules = await readProjectSourceModules(currentProject);
+    return await analyzeProjectShadow({
+      projectRoot: currentProject.root,
+      project: current.project,
+      modules: sourceModules,
+      shadowRoot: shadowDir,
+      repoRoot: REPO_ROOT,
+      denoConfigPath: join(REPO_ROOT, "deno.json"),
+      runtimeImport: new URL("./runtime.ts", import.meta.url).href,
+    });
   }
 
   async function makeProjectModuleSourceResponse(
@@ -1120,6 +1204,25 @@ export async function createLivecodeVisualizerServer(
     );
   }
 
+  async function readProjectSourceModules(state: ProjectState) {
+    return await Promise.all(
+      state.manifest.modules.map(async (moduleRecord) => {
+        const sourceText = await readProjectModuleSource(state, moduleRecord);
+        return {
+          ...moduleRecord,
+          absoluteSourcePath: projectAbsolutePath(
+            state,
+            moduleRecord.sourcePath,
+          ),
+          sourceText,
+          sourceHash: await hashText(sourceText),
+          lastLoadedHash: state.hashes.get(moduleRecord.id)?.lastLoadedHash ??
+            null,
+        };
+      }),
+    );
+  }
+
   async function ensureProjectModuleSource(
     state: ProjectState,
     moduleRecord: ProjectModuleRecord,
@@ -1178,7 +1281,7 @@ export async function createLivecodeVisualizerServer(
       path: runtimePath,
       sourcePath,
       runtimePath,
-      kind: input.kind ?? "runnable",
+      kind: "runnable",
       title: input.title ?? basename(runtimePath, ".ts"),
       sourceVersion: input.sourceVersion ?? 1,
       x: input.x,
@@ -1203,7 +1306,7 @@ export async function createLivecodeVisualizerServer(
       runtimePath,
       sourcePath,
       sourceVersion: moduleRecord.sourceVersion ?? 1,
-      kind: moduleRecord.kind ?? "runnable",
+      kind: "runnable",
       title: moduleRecord.title ?? basename(runtimePath, ".ts"),
     };
   }
@@ -1371,7 +1474,14 @@ export async function createLivecodeVisualizerServer(
       generatedRunId: requestBody.generatedRunId,
     });
 
-    await stopModule(requestBody.moduleId, "replaceBeforeLaunch");
+    if (activeModules.has(requestBody.moduleId)) {
+      if (!requestBody.replaceRunning) {
+        throw new Error(
+          `Module ${requestBody.moduleId} is already running; stop it first or pass replaceRunning: true.`,
+        );
+      }
+      await stopModule(requestBody.moduleId, "replaceBeforeLaunch");
+    }
     launchQueue.push(async (ctx) => {
       const moduleUrl = appendImportQuery(
         requestBody.transformedModuleUri,
@@ -1599,6 +1709,10 @@ async function hashText(text: string): Promise<string> {
 
 function elapsedMs(startedAt: number): number {
   return Math.round((performance.now() - startedAt) * 1000) / 1000;
+}
+
+function sortedIds(values: Set<string> | undefined): string[] {
+  return [...values ?? []].sort();
 }
 
 async function withTimeout<T>(

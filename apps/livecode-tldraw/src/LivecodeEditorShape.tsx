@@ -22,7 +22,7 @@ declare module "tldraw" {
       h: number;
       moduleId: string;
       projectModulePath?: string;
-      projectModuleKind?: "library" | "runnable";
+      projectModuleKind?: "runnable";
       projectSourceUri?: string;
       title: string;
       source: string;
@@ -40,7 +40,7 @@ export class LivecodeEditorShapeUtil
     h: T.number,
     moduleId: T.string,
     projectModulePath: T.string.optional(),
-    projectModuleKind: T.literalEnum("library", "runnable").optional(),
+    projectModuleKind: T.literalEnum("runnable").optional(),
     projectSourceUri: T.string.optional(),
     title: T.string,
     source: T.string,
@@ -111,11 +111,17 @@ function LivecodeEditorShapeComponent(
 
   const diagnostics = moduleState?.diagnostics ?? [];
   const lspDiagnostics = runtime.lspDiagnosticsByUri[documentUri] ?? [];
+  const projectModuleDiagnostics = runtime.projectDiagnostics?.modules.find((
+    moduleEntry,
+  ) => moduleEntry.moduleId === shape.props.moduleId);
+  const dependencyDiagnostics =
+    projectModuleDiagnostics?.dependencyDiagnostics ?? [];
+  const changedDependencies = projectModuleDiagnostics?.changedDependencies ??
+    [];
+  const dependencies = projectModuleDiagnostics?.dependencies ?? [];
   const buildStatus = moduleState?.buildStatus ?? "idle";
   const runStatus = moduleState?.runStatus ?? "idle";
   const callsiteCount = moduleState?.manifest?.callsites.length ?? 0;
-  const canRun = shape.props.projectModuleKind !== "library";
-
   return (
     <HTMLContainer
       className="livecode-shape"
@@ -135,18 +141,15 @@ function LivecodeEditorShapeComponent(
         >
           <button
             type="button"
-            disabled={!canRun || runtime.connectionStatus !== "open" ||
+            disabled={runtime.connectionStatus !== "open" ||
               runStatus === "running"}
-            title={!canRun
-              ? "Library modules are imported by runnable modules"
-              : undefined}
             onClick={() => void runtime.runModule(shape.props.moduleId)}
           >
             Run
           </button>
           <button
             type="button"
-            disabled={!canRun || runtime.connectionStatus !== "open" ||
+            disabled={runtime.connectionStatus !== "open" ||
               runStatus === "stopping"}
             onClick={() => void runtime.stopModule(shape.props.moduleId)}
           >
@@ -168,8 +171,18 @@ function LivecodeEditorShapeComponent(
         <span>{callsiteCount} callsites</span>
         <span>{moduleState?.activeIds.length ?? 0} active</span>
         <span>{lspDiagnostics.length} lsp diagnostics</span>
-        {shape.props.projectModuleKind
-          ? <span>{shape.props.projectModuleKind}</span>
+        {dependencies.length > 0 ? <span>{dependencies.length} deps</span> : null}
+        {changedDependencies.length > 0
+          ? (
+            <span
+              className={dependencyDiagnostics.length > 0
+                ? "dependency-pill dependency-pill--error"
+                : "dependency-pill dependency-pill--changed"}
+              title={changedDependencies.join(", ")}
+            >
+              {dependencyDiagnostics.length > 0 ? "dep issue" : "dep changed"}
+            </span>
+          )
           : null}
       </div>
 
@@ -203,6 +216,17 @@ function LivecodeEditorShapeComponent(
                 className="diagnostic"
               >
                 {diagnostic.message}
+              </div>
+            ))
+          )
+          : dependencyDiagnostics.length > 0
+          ? (
+            dependencyDiagnostics.slice(0, 2).map((diagnostic, index) => (
+              <div
+                key={`dependency-${diagnostic.code}-${index}`}
+                className="diagnostic"
+              >
+                dependency {diagnostic.code}: {diagnostic.message}
               </div>
             ))
           )

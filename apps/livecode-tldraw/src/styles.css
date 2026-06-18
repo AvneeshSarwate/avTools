@@ -254,6 +254,29 @@ input {
   border-color: rgba(190, 136, 35, 0.36);
 }
 
+.dependency-pill {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  min-height: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.dependency-pill--changed {
+  border-color: rgba(246, 201, 107, 0.35);
+  color: #f2d38b;
+  background: rgba(246, 201, 107, 0.1);
+}
+
+.dependency-pill--error {
+  border-color: rgba(255, 128, 128, 0.42);
+  color: #ffb3a9;
+  background: rgba(255, 128, 128, 0.12);
+}
+
 .piano-roll-shape {
   display: grid;
   grid-template-rows: 52px minmax(0, 1fr);

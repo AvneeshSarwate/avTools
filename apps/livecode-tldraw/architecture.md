@@ -16,6 +16,13 @@ Core constraints:
   execution, Deno LSP, active wait snapshots, and the shared piano-roll store.
 - Livecode source text is stored in `livecode-editor` shape props, then mirrored
   into the React runtime state for debounced analysis and execution.
+- For project modules, `*.orig.ts` files are the canonical editable source and
+  `*.ts` files are transformed runtime output. Coding agents should edit
+  `*.orig.ts`; the server regenerates runtime files only on explicit project
+  write/analyze/reload actions.
+- The app treats disk changes as detectable state, not an instruction to run
+  code. Dependency warnings and shadow diagnostics are surfaced in the UI, but
+  launch/replacement remains user- or agent-explicit.
 - Piano-roll note data is not stored canonically in tldraw shape props. Shapes
   are named views onto server-owned piano-roll objects, currently defaulting to
   the `melody` roll.
@@ -45,19 +52,19 @@ npm run dev
 Open:
 
 ```txt
-http://127.0.0.1:5173/
+http://localhost:5173/
 ```
 
 The server URL input defaults to:
 
 ```txt
-http://127.0.0.1:7777
+http://localhost:7777
 ```
 
 The app accepts the same override convention through the runtime provider:
 
 ```txt
-http://127.0.0.1:5173/?serverBaseUrl=http://127.0.0.1:7777
+http://localhost:5173/?serverBaseUrl=http://localhost:7777
 ```
 
 ## Runtime Flow
@@ -69,12 +76,18 @@ http://127.0.0.1:5173/?serverBaseUrl=http://127.0.0.1:7777
 3. `App.tsx` listens to the tldraw store. Added, removed, and updated
    `livecode-editor` shapes register/unregister/update module records in
    `livecodeRuntime.tsx`.
-4. `livecodeRuntime.tsx` connects to `/health`, `/lsp`, and `/runtime/snapshots`
-   when the user clicks Connect.
+4. `livecodeRuntime.tsx` connects to `/health`, `/lsp`, and
+   `/runtime/snapshots` when the user clicks Connect, then polls
+   `/project/diagnostics` while connected.
 5. Source edits update the tldraw shape prop and schedule `/runtime/analyze`
-   with a 100 ms debounce.
+   with a 100 ms debounce. Project module edits are written to the module's
+   `*.orig.ts` source through `/project/modules/write` before analysis.
 6. Run uses the latest matching prepared build if possible; otherwise it
-   analyzes immediately, then posts `/runtime/launch`.
+   analyzes immediately. For project modules it also refreshes
+   `/project/diagnostics` and blocks launch when project typechecking fails.
+   If diagnostics pass, it posts `/runtime/launch`. The server rejects replacing
+   an already running module unless the request explicitly sets
+   `replaceRunning: true`; the tldraw path keeps the no-surprise default.
 7. Active wait snapshots from `/runtime/snapshots` update the module record.
    `LivecodeEditorShape.tsx` maps active callsite IDs through the manifest and
    passes source ranges into CodeMirror for highlighting.
@@ -93,8 +106,8 @@ http://127.0.0.1:5173/?serverBaseUrl=http://127.0.0.1:7777
 - `src/App.tsx` owns top-level providers, the server toolbar, shape utilities,
   default shape creation, and tldraw store-to-runtime registration.
 - `src/LivecodeEditorShape.tsx` defines the `livecode-editor` custom tldraw
-  shape, Run/Stop controls, status rows, CodeMirror mounting, diagnostics, and
-  active wait range mapping.
+  shape, Run/Stop controls, status rows, dependency-change/dependency-issue
+  badges, CodeMirror mounting, diagnostics, and active wait range mapping.
 - `src/CodeMirrorEditor.tsx` owns the CodeMirror instance, Deno LSP extension,
   diagnostics display, editor event shielding, and active wait decorations.
 - `src/PianoRollShape.tsx` defines the `piano-roll-view` shape. It is a named
@@ -103,7 +116,7 @@ http://127.0.0.1:5173/?serverBaseUrl=http://127.0.0.1:7777
   internal note grid size.
 - `src/livecodeRuntime.tsx` is the React runtime store for livecode modules,
   build state, run state, prepared builds, active snapshots, health, Deno LSP,
-  and server connection state.
+  project diagnostics, and server connection state.
 - `src/pianoRollRuntime.tsx` is the React runtime store for named piano-roll
   objects. It consumes `/piano-roll/snapshots` and writes `/piano-roll/set`,
   `/piano-roll/undo`, and `/piano-roll/redo`.
@@ -125,9 +138,21 @@ http://127.0.0.1:5173/?serverBaseUrl=http://127.0.0.1:7777
 - `apps/deno-notebooks/livecode/visualizer/server.ts` exposes:
   - `GET /health`
   - `GET /lsp?session=...`
+  - `GET /project/status`
+  - `GET /project/diagnostics`
+  - `GET /project/modules/source`
+  - `POST /project/create`
+  - `POST /project/open`
+  - `POST /project/modules/add`
+  - `POST /project/modules/update`
+  - `POST /project/modules/remove`
+  - `POST /project/modules/reload`
+  - `POST /project/modules/write`
   - `POST /runtime/analyze`
   - `POST /runtime/launch`
   - `POST /runtime/stop`
+  - `POST /runtime/stop-all`
+  - `GET /runtime/status`
   - `GET /runtime/snapshots`
   - `GET /piano-roll/snapshots`
   - `GET /piano-roll/list`
@@ -137,6 +162,10 @@ http://127.0.0.1:5173/?serverBaseUrl=http://127.0.0.1:7777
 - `apps/deno-notebooks/livecode/visualizer/piano_roll_store.ts` is the
   server-owned named piano-roll object store. It seeds `melody`, normalizes
   notes, tracks revisions, and keeps per-object undo/redo history.
+- `apps/deno-notebooks/livecode/visualizer/project_shadow_analysis.ts` builds
+  the project import graph, writes transformed current source into a
+  session-owned shadow directory, runs Deno type checking there, and returns
+  non-mutating dependency diagnostics for `/project/diagnostics`.
 - `apps/deno-notebooks/livecode/helpers/piano_roll_helpers.ts` is the livecode
   API for the same store. It converts between piano-roll data and `AbletonClip`,
   exposes `getPianoRollClip` / `setPianoRollClip`, and `playPianoRoll`.
@@ -200,6 +229,8 @@ From `apps/deno-notebooks`:
 deno task test:livecode:unit
 deno task test:livecode:server
 deno task test:livecode:e2e
+deno test --allow-all livecode/tests/project_shadow_diagnostics_test.ts
+deno test --unstable-webgpu --unstable-ffi --allow-all livecode/tests/project_p5gpu_e2e_test.ts
 ```
 
 Known broad-check caveat: `npm run type-check` in `apps/browser-projections`

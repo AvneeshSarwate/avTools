@@ -25,6 +25,12 @@ Core constraints:
   dynamically imports it.
 - Dynamic import stays on `Run`, not edit, because importing evaluates module
   top-level code.
+- Project-mode tldraw modules use `*.orig.ts` as canonical editable source and
+  `*.ts` as transformed runtime output. The server can inspect current source
+  in a shadow directory without mutating real runtime files or importing user
+  code.
+- Runtime launch is no-surprise: launching an already running module is rejected
+  unless the caller explicitly passes `replaceRunning: true`.
 - Active wait state is tracked by stable callsite UUIDs plus `moduleId`, with a
   count map so repeated/overlapping waits at the same callsite remain active
   until all outstanding waits finish.
@@ -67,7 +73,7 @@ npm run dev
 Open:
 
 ```txt
-http://127.0.0.1:5173/livecodeVisualizer
+http://localhost:5173/livecodeVisualizer
 ```
 
 The Deno server exposes:
@@ -75,6 +81,8 @@ The Deno server exposes:
 ```txt
 GET  /health
 GET  /lsp?session=<moduleOrEditorSessionId>
+GET  /project/status
+GET  /project/diagnostics
 POST /runtime/analyze
 POST /runtime/launch
 POST /runtime/stop
@@ -84,7 +92,7 @@ GET  /runtime/snapshots
 The browser page accepts an optional server override:
 
 ```txt
-http://127.0.0.1:5173/livecodeVisualizer?serverBaseUrl=http://127.0.0.1:7777
+http://localhost:5173/livecodeVisualizer?serverBaseUrl=http://localhost:7777
 ```
 
 ## Runtime Flow
@@ -146,6 +154,11 @@ http://127.0.0.1:5173/livecodeVisualizer?serverBaseUrl=http://127.0.0.1:7777
   and magic-string to find the default timed root, detect supported awaited
   wait/helper callsites, reject unsupported async patterns, wrap calls in
   `visualizedAwait`, and produce the source-range manifest.
+- `apps/deno-notebooks/livecode/visualizer/project_shadow_analysis.ts` uses
+  ts-morph to build the project module import graph, writes transformed current
+  `*.orig.ts` source to a session-owned shadow runtime tree, runs `deno check`
+  against that tree, and returns non-mutating dependency/typecheck diagnostics
+  for `/project/diagnostics`.
 - `apps/deno-notebooks/livecode/visualizer/runtime.ts` is the singleton runtime
   store used by generated modules. It tracks active wait counts by `moduleId`
   and callsite UUID and produces active wait snapshots.
@@ -176,10 +189,19 @@ http://127.0.0.1:5173/livecodeVisualizer?serverBaseUrl=http://127.0.0.1:7777
 - `apps/deno-notebooks/livecode/tests/dynamic_import_execution_test.ts` verifies
   generated module files can be imported and run with a real `TimeContext`.
 - `apps/deno-notebooks/livecode/tests/protocol_smoke_test.ts` verifies health,
-  analyze, launch, snapshot, and stop over HTTP/WebSocket without a browser.
+  analyze, launch, launch replacement refusal, snapshot, and stop over
+  HTTP/WebSocket without a browser.
 - `apps/deno-notebooks/livecode/tests/lsp_smoke_test.ts` verifies the `/lsp`
   bridge reaches real `deno lsp` diagnostics and that `@avtools/core-timing` and
   `midi-helpers` resolve for diagnostics, hover, and completion.
+- `apps/deno-notebooks/livecode/tests/project_shadow_diagnostics_test.ts`
+  verifies `/project/diagnostics`, dependency-aware staleness, dependency
+  warnings, no-surprise launch refusal, and that shadow checks do not rewrite
+  real runtime `.ts` files.
+- `apps/deno-notebooks/livecode/tests/project_p5gpu_e2e_test.ts` verifies
+  project modules share transformed files, a livecoded modifier mutates shared
+  state seen by a p5gpu sketch, snapshot output is produced, and changing an
+  unrelated modifier does not mark the running sketch stale.
 - `apps/deno-notebooks/livecode/tests/server_smoke_test.ts` spawns the server
   CLI, parses `serverReady`, and checks the server responds.
 - `apps/deno-notebooks/livecode/tests/default_source_integration_test.ts`
