@@ -22,15 +22,7 @@ Deno.test("shadow diagnostics report dependency issues without rewriting runtime
   });
 
   try {
-    await postJson(`${server.baseUrl}/project/create`, {
-      projectPath: projectRoot,
-      name: "shadow-diagnostics",
-      modules: [
-        {
-          path: "modules/state.ts",
-          kind: "runnable",
-          title: "state",
-          sourceText: `
+    const goodStateSource = `
 import type { TimeContext } from "@avtools/core-timing";
 
 export const state = {
@@ -39,7 +31,20 @@ export const state = {
 };
 
 export default async function(_ctx: TimeContext) {}
-`,
+`;
+    const misspelledStateSource = goodStateSource.replace(
+      "speed: 1",
+      "sped: 1",
+    );
+    await postJson(`${server.baseUrl}/project/create`, {
+      projectPath: projectRoot,
+      name: "shadow-diagnostics",
+      modules: [
+        {
+          path: "modules/state.ts",
+          kind: "runnable",
+          title: "state",
+          sourceText: goodStateSource,
         },
         {
           path: "modules/sketch.ts",
@@ -67,6 +72,7 @@ import { state } from "../state.ts";
 
 export default async function(ctx: TimeContext) {
   state.color = [80, 230, 170];
+  state.speed = 2;
   await ctx.waitSec(1);
 }
 `,
@@ -93,6 +99,60 @@ export default async function(ctx: TimeContext) {
       ),
       "shadow diagnostics should include color-loop -> state dependency",
     );
+
+    await Deno.writeTextFile(
+      join(projectRoot, "modules", "state.orig.ts"),
+      misspelledStateSource,
+    );
+    const propertyDiagnostics = await fetchJson<ProjectShadowCheckResponse>(
+      `${server.baseUrl}/project/diagnostics`,
+    );
+    assertEquals(propertyDiagnostics.denoCheck.success, false);
+    const propertySketchDiagnostics = requireShadowModule(
+      propertyDiagnostics,
+      "modules/sketch.ts",
+    );
+    const propertyColorDiagnostics = requireShadowModule(
+      propertyDiagnostics,
+      "modules/modifiers/color-loop.ts",
+    );
+    assert(
+      propertySketchDiagnostics.dependencyDiagnostics.some((diagnostic) =>
+        diagnostic.message.includes("speed")
+      ),
+      "sketch should report the misspelled state.speed dependency",
+    );
+    assert(
+      propertyColorDiagnostics.dependencyDiagnostics.some((diagnostic) =>
+        diagnostic.message.includes("speed")
+      ),
+      "color-loop should report the misspelled state.speed dependency",
+    );
+
+    await Deno.writeTextFile(
+      join(projectRoot, "modules", "state.orig.ts"),
+      goodStateSource,
+    );
+    const fixedPropertyDiagnostics = await fetchJson<
+      ProjectShadowCheckResponse
+    >(
+      `${server.baseUrl}/project/diagnostics`,
+    );
+    assertEquals(fixedPropertyDiagnostics.denoCheck.success, true);
+    assertEquals(
+      requireShadowModule(fixedPropertyDiagnostics, "modules/sketch.ts")
+        .dependencyDiagnostics,
+      [],
+    );
+    assertEquals(
+      requireShadowModule(
+        fixedPropertyDiagnostics,
+        "modules/modifiers/color-loop.ts",
+      )
+        .dependencyDiagnostics,
+      [],
+    );
+
     const stateAnalyze = await analyzeProjectModule(
       server.baseUrl,
       "modules/state.ts",

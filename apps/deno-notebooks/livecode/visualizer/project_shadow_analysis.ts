@@ -408,20 +408,22 @@ function parseDenoDiagnostics(output: string): ParsedDenoDiagnostic[] {
   const lines = output.split(/\r?\n/);
   const diagnostics: ParsedDenoDiagnostic[] = [];
   for (let index = 0; index < lines.length; index++) {
-    const header = lines[index].match(/^([A-Z]+[0-9]+)\s+\[ERROR\]:\s+(.*)$/);
+    const strippedLine = stripAnsi(lines[index]);
+    const header = strippedLine.match(/^([A-Z]+[0-9]+)\s+\[ERROR\]:\s+(.*)$/);
     if (!header) continue;
     const block: string[] = [lines[index]];
     index++;
     while (
       index < lines.length &&
-      !/^([A-Z]+[0-9]+)\s+\[ERROR\]:/.test(lines[index]) &&
-      !/^error: /.test(lines[index])
+      !/^([A-Z]+[0-9]+)\s+\[ERROR\]:/.test(stripAnsi(lines[index])) &&
+      !/^error: /.test(stripAnsi(lines[index]))
     ) {
       block.push(lines[index]);
       index++;
     }
     index--;
-    const atLine = [...block].reverse()
+    const strippedBlock = block.map(stripAnsi);
+    const atLine = strippedBlock
       .map((line) => line.match(/\s+at (file:\/\/.*):(\d+):(\d+)$/))
       .find(Boolean);
     diagnostics.push({
@@ -434,6 +436,10 @@ function parseDenoDiagnostics(output: string): ParsedDenoDiagnostic[] {
     });
   }
   return diagnostics;
+}
+
+function stripAnsi(value: string): string {
+  return value.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
 function fromDenoDiagnostic(

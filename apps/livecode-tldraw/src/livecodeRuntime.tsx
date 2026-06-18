@@ -286,6 +286,9 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       })()
         .then((response): PreparedBuild | null => {
           if (record.analyzeSequence !== analyzeSequence) return null;
+          if (record.projectModulePath) {
+            void fetchProjectDiagnostics();
+          }
 
           if (response.type === "analyzeSuccess") {
             const prepared: PreparedBuild = {
@@ -352,7 +355,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
 
       return promise;
     },
-    [postJson, publishModule],
+    [fetchProjectDiagnostics, postJson, publishModule],
   );
 
   const scheduleAnalyze = useCallback(

@@ -119,6 +119,7 @@ function LivecodeEditorShapeComponent(
   const changedDependencies = projectModuleDiagnostics?.changedDependencies ??
     [];
   const dependencies = projectModuleDiagnostics?.dependencies ?? [];
+  const hasDependencyIssue = dependencyDiagnostics.length > 0;
   const buildStatus = moduleState?.buildStatus ?? "idle";
   const runStatus = moduleState?.runStatus ?? "idle";
   const callsiteCount = moduleState?.manifest?.callsites.length ?? 0;
@@ -172,15 +173,17 @@ function LivecodeEditorShapeComponent(
         <span>{moduleState?.activeIds.length ?? 0} active</span>
         <span>{lspDiagnostics.length} lsp diagnostics</span>
         {dependencies.length > 0 ? <span>{dependencies.length} deps</span> : null}
-        {changedDependencies.length > 0
+        {changedDependencies.length > 0 || hasDependencyIssue
           ? (
             <span
-              className={dependencyDiagnostics.length > 0
+              className={hasDependencyIssue
                 ? "dependency-pill dependency-pill--error"
                 : "dependency-pill dependency-pill--changed"}
-              title={changedDependencies.join(", ")}
+              title={changedDependencies.length > 0
+                ? changedDependencies.join(", ")
+                : "project diagnostics"}
             >
-              {dependencyDiagnostics.length > 0 ? "dep issue" : "dep changed"}
+              {hasDependencyIssue ? "dep issue" : "dep changed"}
             </span>
           )
           : null}
