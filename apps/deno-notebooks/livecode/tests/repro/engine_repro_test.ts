@@ -1,0 +1,447 @@
+// Reproducing tests for core-timing engine defects found during the
+// 2026-07 stability review. See livecode/timeContextVisualizerPlans/stability-fix-plan.md.
+//
+// IMPORTANT: these tests assert the CURRENT (buggy) behavior so they pass
+// against unmodified code and prove each defect is real. When a defect is
+// fixed, flip the marked assertions so the test becomes a regression test.
+//
+// Run with:
+//   deno test --allow-all livecode/tests/repro/engine_repro_test.ts
+
+import { assert, assertEquals } from "jsr:@std/assert@1";
+import {
+  awaitBarrier,
+  type CancelablePromiseProxy,
+  launch,
+  startBarrier,
+  type TimeContext,
+} from "@avtools/core-timing";
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Collects unhandledrejection events and prevents them from killing the
+ * process (which is exactly what they would do in the real server).
+ */
+function trapUnhandledRejections() {
+  const events: unknown[] = [];
+  const listener = (event: PromiseRejectionEvent) => {
+    event.preventDefault();
+    events.push(event.reason);
+  };
+  globalThis.addEventListener("unhandledrejection", listener);
+  return {
+    events,
+    dispose: () =>
+      globalThis.removeEventListener("unhandledrejection", listener),
+  };
+}
+
+Deno.test({
+  name:
+    "BUG E1: cancelling a root context emits an unhandled rejection (fatal in Deno without a trap)",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const trap = trapUnhandledRejections();
+    try {
+      // Root parked on an engine wait, like the server parent loop or any
+      // launched module tree.
+      const handle = launch(async (ctx) => {
+        await ctx.waitSec(60);
+      });
+      await sleep(30);
+      handle.cancel();
+      // Give the rejection time to be reported.
+      await sleep(150);
+
+      // BUGGY BEHAVIOR: the engine-internal `promiseProxy.finally(cleanupRoot)`
+      // (offline_time_context.ts ~1724) creates a derived promise nobody
+      // handles; it rejects when the root block rejects on cancel.
+      // AFTER FIX: flip to assertEquals(trap.events.length, 0).
+      assert(
+        trap.events.length >= 1,
+        `expected >=1 unhandled rejection from root cancel, got ${trap.events.length}`,
+      );
+    } finally {
+      trap.dispose();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "BUG E2: branch(...).finally(fn) emits an unhandled rejection when the branch is cancelled",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const trap = trapUnhandledRejections();
+    try {
+      let cleanupRan = false;
+      const handle = launch(async (ctx) => {
+        const branchHandle = ctx.branch(async (childCtx) => {
+          await childCtx.waitSec(60);
+        });
+        // The obvious user API for cleanup-on-stop. The returned derived
+        // promise is discarded, exactly as typical user code does.
+        branchHandle.finally(() => {
+          cleanupRan = true;
+        });
+        await ctx.waitSec(0.05);
+        branchHandle.cancel();
+        await ctx.waitSec(0.05);
+      });
+      await handle;
+      await sleep(150);
+
+      assert(cleanupRan, "finally callback itself does run");
+      // BUGGY BEHAVIOR: the promise returned by promise.finally(f) rejects
+      // uncaught when the branch block rejects on cancel.
+      // AFTER FIX: flip to assertEquals(trap.events.length, 0).
+      assert(
+        trap.events.length >= 1,
+        `expected >=1 unhandled rejection from branch cancel + finally, got ${trap.events.length}`,
+      );
+    } finally {
+      trap.dispose();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "BUG E3: cancelling a branchWait child rejects the awaiting parent block (parent dies too)",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const trap = trapUnhandledRejections();
+    try {
+      let parentReachedEnd = false;
+      let childProxy: CancelablePromiseProxy<void> | null = null;
+      let rootRejection: unknown = null;
+
+      const handle = launch(async (ctx) => {
+        childProxy = ctx.branchWait(async (childCtx) => {
+          await childCtx.waitSec(60);
+        });
+        await childProxy; // no user try/catch — the common case
+        parentReachedEnd = true;
+      });
+      const rootSettled = handle.catch((error) => {
+        rootRejection = error;
+      });
+
+      await sleep(50);
+      const proxy = childProxy as CancelablePromiseProxy<void> | null;
+      assert(proxy !== null);
+      proxy.cancel(); // targeted stop of ONE sub-process
+      await rootSettled;
+      await sleep(100);
+
+      // BUGGY BEHAVIOR: the parent block is torn down by the child's
+      // cancellation instead of being notified in a catchable, typed way.
+      assertEquals(parentReachedEnd, false);
+      assert(
+        rootRejection instanceof Error,
+        "parent/root block rejected because its branchWait child was cancelled",
+      );
+    } finally {
+      trap.dispose();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "BUG E4: no catch-up clamp — after an event-loop stall, overdue waits fire in a zero-delay burst",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const trap = trapUnhandledRejections();
+    try {
+      const stamps: number[] = [];
+      const WAITS = 30;
+      const STEP_SEC = 0.03;
+      const handle = launch(async (ctx) => {
+        for (let i = 0; i < WAITS; i++) {
+          await ctx.waitSec(STEP_SEC);
+          stamps.push(performance.now());
+        }
+      });
+
+      // Let a few waits fire normally, then stall the event loop ~500ms
+      // (stands in for a GC pause or heavy user code).
+      await sleep(120);
+      const stallStart = performance.now();
+      while (performance.now() - stallStart < 500) {
+        // busy-wait
+      }
+      await handle;
+
+      // Count the longest run of consecutive inter-wait gaps under 15ms.
+      // Nominal spacing is 30ms; a burst means the engine replayed overdue
+      // slices back-to-back with zero wall delay.
+      let longestBurst = 0;
+      let current = 0;
+      for (let i = 1; i < stamps.length; i++) {
+        if (stamps[i] - stamps[i - 1] < 15) {
+          current += 1;
+          longestBurst = Math.max(longestBurst, current);
+        } else {
+          current = 0;
+        }
+      }
+
+      // BUGGY BEHAVIOR (for a live instrument): ~16 overdue waits replay as a
+      // machine-gun burst. AFTER FIX (catch-up clamp/coalesce policy): expect
+      // longestBurst to be small (e.g. < 4) or events to be dropped/merged.
+      assert(
+        longestBurst >= 8,
+        `expected a catch-up burst of >=8 back-to-back waits, got ${longestBurst}`,
+      );
+    } finally {
+      trap.dispose();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "BUG E5: global mostRecentDescendentTime floor — a module resuming from a non-engine await jumps forward",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const trap = trapUnhandledRejections();
+    try {
+      let bTimeBeforeWait = -1;
+      let bTimeAfterWait = -1;
+
+      const handle = launch(async (ctx) => {
+        // Module A: keeps advancing global logical time.
+        ctx.branch(async (a) => {
+          for (let i = 0; i < 8; i++) {
+            await a.waitSec(0.05);
+          }
+        });
+        // Module B: suspends on a NON-engine await (e.g. fetch / fs / device
+        // IO) for 300ms, then asks for a small engine wait.
+        await ctx.branchWait(async (b) => {
+          await sleep(300);
+          bTimeBeforeWait = b.time;
+          await b.waitSec(0.05);
+          bTimeAfterWait = b.time;
+        });
+      });
+      await handle;
+      await sleep(250); // let branch A finish its remaining waits
+
+      // B accumulated no logical time while suspended...
+      assert(
+        bTimeBeforeWait < 0.05,
+        `B's logical time before its wait should be ~0, got ${bTimeBeforeWait}`,
+      );
+      // BUGGY/DEBATABLE BEHAVIOR: ...but its 0.05s wait lands relative to the
+      // GLOBAL max (~0.3s), not its own timeline — a silent 0.25s jump.
+      // If per-module baselines are adopted, flip this to assert
+      // bTimeAfterWait is close to 0.05.
+      assert(
+        bTimeAfterWait > 0.25,
+        `B's wait was rebased onto the global max; expected > 0.25, got ${bTimeAfterWait}`,
+      );
+    } finally {
+      trap.dispose();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "BUG E6: tempo map segments grow unbounded — every setBpm appends a segment forever",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const trap = trapUnhandledRejections();
+    try {
+      let segsBefore = -1;
+      let segsAfter = -1;
+      const handle = launch(async (ctx) => {
+        // deno-lint-ignore no-explicit-any
+        const tempoAny = ctx.tempo as any;
+        segsBefore = tempoAny.segs.length;
+        for (let i = 0; i < 100; i++) {
+          ctx.setBpm(100 + (i % 7));
+          await ctx.waitSec(0.001);
+        }
+        segsAfter = tempoAny.segs.length;
+      });
+      await handle;
+
+      // BUGGY BEHAVIOR: nothing prunes segments behind
+      // mostRecentDescendentTime. AFTER FIX (compaction): expect segsAfter to
+      // stay bounded (e.g. < 10).
+      assert(
+        segsAfter - segsBefore >= 100,
+        `expected >=100 appended tempo segments, got ${segsAfter - segsBefore}`,
+      );
+    } finally {
+      trap.dispose();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "BUG E7: scheduler beatPQs map leaks one entry per cancelled cloned-tempo branch",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const trap = trapUnhandledRejections();
+    try {
+      let beatPQCount = -1;
+      const CYCLES = 25;
+      const handle = launch(async (ctx) => {
+        for (let i = 0; i < CYCLES; i++) {
+          const branchHandle = ctx.branch(
+            async (c) => {
+              await c.wait(1000); // beat-space wait registers a beat PQ
+            },
+            `leak-${i}`,
+            { tempo: "cloned" }, // fresh tempoId per branch
+          );
+          await ctx.waitSec(0.004);
+          branchHandle.cancel();
+        }
+        await ctx.waitSec(0.02);
+        // deno-lint-ignore no-explicit-any
+        beatPQCount = (ctx.scheduler as any).beatPQs.size;
+      });
+      await handle;
+      await sleep(100);
+
+      // BUGGY BEHAVIOR: beatPQs entries for dead tempoIds are never deleted.
+      // AFTER FIX: expect beatPQCount to be small (0 or 1).
+      assert(
+        beatPQCount >= CYCLES,
+        `expected >=${CYCLES} leaked beatPQ entries, got ${beatPQCount}`,
+      );
+    } finally {
+      trap.dispose();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "BUG E8: wait(0) resolves without advancing logical time — a wait(0) loop spins the CPU forever",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const trap = trapUnhandledRejections();
+    try {
+      let iterations = 0;
+      let finalLogicalTime = -1;
+      const started = performance.now();
+      const handle = launch(async (ctx) => {
+        for (let i = 0; i < 300; i++) {
+          await ctx.wait(0);
+          iterations += 1;
+        }
+        finalLogicalTime = ctx.time;
+      });
+      await handle;
+      const wallMs = performance.now() - started;
+
+      assertEquals(iterations, 300);
+      // The core hazard: 300 awaited waits, zero logical progress. In user
+      // code, `while (true) { await ctx.wait(0) }` never terminates logically
+      // and starves the scheduler.
+      assertEquals(finalLogicalTime, 0);
+      assert(
+        wallMs < 5000,
+        `wait(0) loop should complete fast (unthrottled), took ${wallMs}ms`,
+      );
+    } finally {
+      trap.dispose();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "BUG E9: awaitBarrier on a never-started barrier is a silent no-op (resolves immediately, no sync)",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const trap = trapUnhandledRejections();
+    try {
+      let elapsedMs = -1;
+      const handle = launch(async (ctx) => {
+        const t0 = performance.now();
+        await awaitBarrier("repro-never-started", ctx);
+        elapsedMs = performance.now() - t0;
+      });
+      await handle;
+
+      // BUGGY BEHAVIOR: a consumer module launched before its producer gets
+      // no synchronization at all (console.warn only). AFTER FIX
+      // (auto-create-and-wait): this await should still be pending until a
+      // producer starts+resolves the barrier — restructure the test to start
+      // a producer later and assert the waiter is released by it.
+      assert(
+        elapsedMs >= 0 && elapsedMs < 50,
+        `awaitBarrier resolved immediately as a no-op (${elapsedMs}ms)`,
+      );
+    } finally {
+      trap.dispose();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "BUG E10: startBarrier while a cycle is in progress force-releases all waiters early",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const trap = trapUnhandledRejections();
+    try {
+      let releasedEarly = false;
+      let releasedBeforeSecondStart = true;
+      const handle = launch(async (ctx) => {
+        startBarrier("repro-cycle", ctx);
+        let released = false;
+        ctx.branch(async (c) => {
+          await awaitBarrier("repro-cycle", c);
+          released = true;
+        });
+        await ctx.waitSec(0.05);
+        releasedBeforeSecondStart = released; // should still be parked
+
+        // A replaced/relaunched "conductor" module calls startBarrier again.
+        // resolveBarrier() is NEVER called in this test.
+        startBarrier("repro-cycle", ctx);
+        await ctx.waitSec(0.05);
+        releasedEarly = released;
+      });
+      await handle;
+
+      assertEquals(
+        releasedBeforeSecondStart,
+        false,
+        "waiter is parked before the second startBarrier",
+      );
+      // BUGGY BEHAVIOR (for cross-module use): the stale-cycle auto-resolve in
+      // startBarrier releases every waiter at the wrong time when a conductor
+      // module is replaced. AFTER FIX (adopt-in-progress-cycle policy):
+      // expect released === false here.
+      assert(
+        releasedEarly,
+        "second startBarrier force-released the parked waiter without resolveBarrier",
+      );
+    } finally {
+      trap.dispose();
+    }
+  },
+});
