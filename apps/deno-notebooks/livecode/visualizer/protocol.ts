@@ -15,7 +15,8 @@ export interface VisualizerDiagnostic {
 
 export type WaitCallsiteKind =
   | "timeContextMethod"
-  | "timeContextArgumentCall";
+  | "timeContextArgumentCall"
+  | "pianoRollLookup";
 
 export interface WaitCallsiteManifestEntry {
   id: string;
@@ -24,6 +25,17 @@ export interface WaitCallsiteManifestEntry {
   range: SourceRange;
   kind: WaitCallsiteKind;
   displayName: string;
+  /**
+   * For `pianoRollLookup` callsites: the source range of the roll-name
+   * argument expression, so the editor can place an inline widget after it.
+   */
+  nameArgRange?: SourceRange;
+  /**
+   * For `pianoRollLookup` callsites: the static roll name when the name
+   * argument is a string literal (or a template literal without
+   * interpolation). Used as a fallback before the module runs.
+   */
+  staticName?: string;
 }
 
 export interface VisualizerManifestMessage {
@@ -81,11 +93,41 @@ export interface StopModuleRequest {
   moduleId: string;
 }
 
+export type RuntimeModuleRunState =
+  | "launching"
+  | "running"
+  | "stopped"
+  | "error";
+
+export interface RuntimeModuleRunSnapshotEntry {
+  moduleId: string;
+  generatedRunId: string;
+  state: RuntimeModuleRunState;
+  updatedAtMs: number;
+  projectModulePath?: string;
+  sourceHash?: string;
+  projectSourceHash?: string;
+  message?: string;
+}
+
 export interface ActiveWaitSnapshot {
   type: "activeWaitSnapshot";
   seq: number;
   timestampMs: number;
   modules: Record<string, string[]>;
+  /**
+   * Runtime-resolved piano-roll lookup names, keyed by moduleId then
+   * callsiteId. Populated by instrumented `__tcvPianoRollLookup` wrappers
+   * in generated modules. Absent/empty until a module runs.
+   */
+  pianoRollLookups?: Record<string, Record<string, string>>;
+  /** Active module ids according to the server runtime. */
+  activeModules?: string[];
+  /**
+   * Latest run lifecycle state by module id. This lets clients mark a module
+   * stopped/error even when it has no active wait callsites at completion.
+   */
+  moduleRuns?: Record<string, RuntimeModuleRunSnapshotEntry>;
 }
 
 export interface HealthResponse {

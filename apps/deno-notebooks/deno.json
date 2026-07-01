@@ -4,6 +4,7 @@
   ],
   "tasks": {
     "dev": "deno run --watch main.ts",
+    "livecode:server": "deno run --unstable-webgpu --unstable-ffi --allow-all livecode/visualizer/main.ts --host localhost --port 7777 --log-level debug",
     "install": "deno cache --node-modules-dir=auto tools/osc.ts",
     "test:p5:browser": "deno run --unstable-webgpu --unstable-ffi --allow-ffi --allow-read --allow-env --allow-write --allow-run --allow-net libraryIntegrationTetsts/p5_browser_comparison_tests.ts",
     "test:p5:browser:text": "P5GPU_MAX_PHASE=6 P5GPU_NAME_FILTER='text-' deno run --unstable-webgpu --unstable-ffi --allow-ffi --allow-read --allow-env --allow-write --allow-run --allow-net libraryIntegrationTetsts/p5_browser_comparison_tests.ts",

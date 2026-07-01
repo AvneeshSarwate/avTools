@@ -1,17 +1,22 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import {
   BaseBoxShapeUtil,
   HTMLContainer,
   RecordProps,
   T,
   TLShape,
+  createShapeId,
   useEditor,
 } from "tldraw";
-import { CodeMirrorEditor } from "./CodeMirrorEditor";
+import { CodeMirrorEditor, type PianoRollCallDecoration } from "./CodeMirrorEditor";
 import { DEFAULT_LIVECODE_SOURCE } from "./defaultSource";
 import { livecodeDocumentUri } from "./denoLsp";
 import type { SourceRange } from "./livecodeProtocol";
 import { useLivecodeRuntime } from "./livecodeRuntime";
+import {
+  PIANO_ROLL_SHAPE_TYPE,
+  type PianoRollShape,
+} from "./PianoRollShape";
 
 export const LIVECODE_EDITOR_SHAPE_TYPE = "livecode-editor";
 
@@ -109,6 +114,63 @@ function LivecodeEditorShapeComponent(
       .map((callsite) => callsite.range);
   }, [moduleState?.activeIds, moduleState?.manifest]);
 
+  const pianoRollCallsites = useMemo<PianoRollCallDecoration[]>(() => {
+    if (!moduleState?.manifest) return [];
+    const lookups = moduleState.pianoRollLookups ?? {};
+    const out: PianoRollCallDecoration[] = [];
+    for (const callsite of moduleState.manifest.callsites) {
+      if (callsite.kind !== "pianoRollLookup") continue;
+      if (!callsite.nameArgRange) continue;
+      const resolved = lookups[callsite.id];
+      if (resolved !== undefined) {
+        out.push({
+          at: callsite.nameArgRange.to,
+          rollName: resolved,
+          resolvedAtRuntime: true,
+        });
+      } else if (callsite.staticName !== undefined) {
+        out.push({
+          at: callsite.nameArgRange.to,
+          rollName: callsite.staticName,
+          resolvedAtRuntime: false,
+        });
+      }
+    }
+    return out;
+  }, [moduleState?.manifest, moduleState?.pianoRollLookups]);
+
+  const openPianoRoll = useCallback(
+    (rollName: string) => {
+      const existing = editor
+        .getCurrentPageShapes()
+        .find((s): s is PianoRollShape =>
+          s.type === PIANO_ROLL_SHAPE_TYPE && s.props.rollName === rollName);
+      if (existing) {
+        editor.select(existing.id);
+        editor.zoomToSelection();
+        return;
+      }
+      const id = createShapeId();
+      editor.createShape<PianoRollShape>({
+        id,
+        type: PIANO_ROLL_SHAPE_TYPE,
+        x: shape.x + shape.props.w + 40,
+        y: shape.y,
+        props: {
+          w: 560,
+          h: 360,
+          rollName,
+          title: `piano roll: ${rollName}`,
+          showControlPanel: true,
+          interactive: true,
+        },
+      });
+      editor.select(id);
+      editor.zoomToSelection();
+    },
+    [editor, shape.id, shape.x, shape.y, shape.props.w],
+  );
+
   const diagnostics = moduleState?.diagnostics ?? [];
   const lspDiagnostics = runtime.lspDiagnosticsByUri[documentUri] ?? [];
   const projectModuleDiagnostics = runtime.projectDiagnostics?.modules.find((
@@ -194,8 +256,10 @@ function LivecodeEditorShapeComponent(
           value={shape.props.source}
           documentUri={documentUri}
           activeRanges={activeRanges}
+          pianoRollCallsites={pianoRollCallsites}
           lspClient={runtime.lspClient}
           readOnly={runtime.connectionStatus === "connecting"}
+          onOpenPianoRoll={openPianoRoll}
           onChange={(next) => {
             setModuleSource(shape.props.moduleId, next);
             editor.updateShape({

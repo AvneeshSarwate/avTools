@@ -30,6 +30,30 @@ const TIME_CONTEXT_METHODS = new Set([
 ]);
 const ALLOWED_UNAWAITED_TIME_CONTEXT_METHODS = new Set(["branch"]);
 
+/**
+ * Piano-roll store access helpers whose first argument is the roll name.
+ * The transform wraps that argument with `visualizedPianoRollLookup` so the
+ * runtime can report the resolved roll name for each callsite.
+ */
+const PIANO_ROLL_LOOKUP_FUNCTIONS = new Set([
+  "getPianoRollClip",
+  "setPianoRollClip",
+  "getPianoRoll",
+  "setPianoRoll",
+]);
+const PIANO_ROLL_LOOKUP_IMPORT_ALIASES = new Set([
+  "piano-roll-helpers",
+  "piano-roll-store",
+]);
+const PIANO_ROLL_LOOKUP_SOURCE_SUFFIXES = [
+  "/helpers/piano_roll_helpers.ts",
+  "/visualizer/piano_roll_store.ts",
+];
+const PIANO_ROLL_LOOKUP_SOURCE_BASENAMES = new Set([
+  "piano_roll_helpers.ts",
+  "piano_roll_store.ts",
+]);
+
 export interface AnalyzeAndTransformRequest {
   moduleId: string;
   sourceVersion: number;
@@ -68,12 +92,20 @@ interface VisualFunctionScope extends VisualScope {
 
 interface InstrumentedCallsiteData {
   kind: WaitCallsiteKind;
+  staticName?: string;
+  nameArgRange?: { from: number; to: number };
 }
 
 interface InstrumentedCallsite extends InstrumentedCallsiteData {
   id: string;
   call: CallExpression;
   displayName: string;
+  nameArg?: Node;
+}
+
+interface PianoRollLookupBindings {
+  named: Map<ts.Symbol, { importedName: string }>;
+  namespaces: Map<ts.Symbol, { moduleSpecifier: string }>;
 }
 
 export function analyzeAndTransformTimedModule(
@@ -119,6 +151,7 @@ export function analyzeAndTransformTimedModule(
     "./timeContextVisualizerRuntime.ts";
   const instrumentedCalls = new Map<CallExpression, InstrumentedCallsiteData>();
   const processedBodies = new Set<Node>();
+  const pianoRollLookupBindings = collectPianoRollLookupImports(sourceFile);
 
   for (const scope of collectVisualFunctionScopes(sourceFile)) {
     processVisualBody(scope);
@@ -128,13 +161,25 @@ export function analyzeAndTransformTimedModule(
     const call = callsite.call;
     const start = call.getStart();
     const end = call.getEnd();
-    magic.prependLeft(
-      start,
-      `__tcvVisualizedAwait(${JSON.stringify(request.moduleId)}, ${
-        JSON.stringify(callsite.id)
-      }, `,
-    );
-    magic.appendRight(end, ")");
+    if (callsite.kind === "pianoRollLookup" && callsite.nameArg) {
+      const argStart = callsite.nameArg.getStart();
+      const argEnd = callsite.nameArg.getEnd();
+      magic.prependLeft(
+        argStart,
+        `__tcvPianoRollLookup(${JSON.stringify(request.moduleId)}, ${
+          JSON.stringify(callsite.id)
+        }, `,
+      );
+      magic.appendRight(argEnd, ")");
+    } else {
+      magic.prependLeft(
+        start,
+        `__tcvVisualizedAwait(${JSON.stringify(request.moduleId)}, ${
+          JSON.stringify(callsite.id)
+        }, `,
+      );
+      magic.appendRight(end, ")");
+    }
     manifestEntries.push({
       id: callsite.id,
       moduleId: request.moduleId,
@@ -142,6 +187,12 @@ export function analyzeAndTransformTimedModule(
       range: { from: start, to: end },
       kind: callsite.kind,
       displayName: callsite.displayName,
+      ...(callsite.staticName !== undefined
+        ? { staticName: callsite.staticName }
+        : {}),
+      ...(callsite.nameArgRange !== undefined
+        ? { nameArgRange: callsite.nameArgRange }
+        : {}),
     });
   }
 
@@ -153,7 +204,7 @@ export function analyzeAndTransformTimedModule(
   }
   if (manifestEntries.length > 0) {
     magic.prepend(
-      `import { visualizedAwait as __tcvVisualizedAwait } from ${
+      `import { visualizedAwait as __tcvVisualizedAwait, visualizedPianoRollLookup as __tcvPianoRollLookup } from ${
         JSON.stringify(runtimeImport)
       };\n`,
     );
@@ -185,6 +236,9 @@ export function analyzeAndTransformTimedModule(
       const start = call.getStart();
       const end = call.getEnd();
       const displayName = call.getExpression().getText();
+      const nameArg = data.kind === "pianoRollLookup"
+        ? call.getArguments()[0]
+        : undefined;
       return {
         call,
         id: idFactory({
@@ -197,6 +251,13 @@ export function analyzeAndTransformTimedModule(
         }),
         kind: data.kind,
         displayName,
+        ...(data.staticName !== undefined
+          ? { staticName: data.staticName }
+          : {}),
+        ...(data.nameArgRange !== undefined
+          ? { nameArgRange: data.nameArgRange }
+          : {}),
+        ...(nameArg ? { nameArg } : {}),
       };
     });
   }
@@ -229,14 +290,23 @@ export function analyzeAndTransformTimedModule(
   function processNode(node: Node, scope: VisualScope) {
     if (Node.isAwaitExpression(node)) {
       processAwait(node, scope);
+      // The awaited call itself is handled by processAwait, but non-await
+      // instrumentation such as piano-roll lookups can appear inside the
+      // awaited expression's callee/arguments and must still be discovered.
+      processChildNodes(node.getExpression(), scope);
       return;
     }
 
     if (Node.isCallExpression(node)) {
       processUnawaitedCall(node, scope);
       processBranchCallback(node, scope);
+      processPianoRollLookup(node);
     }
 
+    processChildNodes(node, scope);
+  }
+
+  function processChildNodes(node: Node, scope: VisualScope) {
     node.forEachChild((child) => {
       if (isNestedFunctionLike(child)) return;
       processNode(child, scope);
@@ -255,6 +325,7 @@ export function analyzeAndTransformTimedModule(
     }
 
     processBranchCallback(expr, scope);
+    processPianoRollLookup(expr);
 
     if (isDynamicTimeContextCall(expr, scope.ctxNames)) {
       addDiagnostic(
@@ -313,6 +384,57 @@ export function analyzeAndTransformTimedModule(
         call,
       );
     }
+  }
+
+  function processPianoRollLookup(call: CallExpression) {
+    const target = resolvePianoRollLookupTarget(call);
+    if (!target) return;
+
+    const args = call.getArguments();
+    const nameArg = args[0];
+    if (!nameArg) return;
+    const staticName = extractStaticRollName(nameArg);
+    const nameArgRange = {
+      from: nameArg.getStart(),
+      to: nameArg.getEnd(),
+    };
+    instrumentedCalls.set(call, {
+      kind: "pianoRollLookup",
+      ...(staticName !== undefined ? { staticName } : {}),
+      nameArgRange,
+    });
+  }
+
+  function resolvePianoRollLookupTarget(
+    call: CallExpression,
+  ): { importedName: string } | null {
+    const expr = call.getExpression();
+    if (Node.isIdentifier(expr)) {
+      const symbol = expr.getSymbol()?.compilerSymbol;
+      return symbol ? pianoRollLookupBindings.named.get(symbol) ?? null : null;
+    }
+
+    if (Node.isPropertyAccessExpression(expr)) {
+      const importedName = expr.getName();
+      if (!PIANO_ROLL_LOOKUP_FUNCTIONS.has(importedName)) return null;
+      const receiver = expr.getExpression();
+      if (!Node.isIdentifier(receiver)) return null;
+      const namespaceSymbol = receiver.getSymbol()?.compilerSymbol;
+      return namespaceSymbol &&
+          pianoRollLookupBindings.namespaces.has(namespaceSymbol)
+        ? { importedName }
+        : null;
+    }
+
+    return null;
+  }
+
+  function extractStaticRollName(node: Node): string | undefined {
+    if (Node.isStringLiteral(node)) return node.getLiteralValue();
+    if (Node.isNoSubstitutionTemplateLiteral(node)) {
+      return node.getLiteralValue();
+    }
+    return undefined;
   }
 
   function processBranchCallback(call: CallExpression, scope: VisualScope) {
@@ -507,4 +629,51 @@ function normalizeDefaultExportToRunFunc(
 
 function defaultIdFactory(): string {
   return crypto.randomUUID();
+}
+
+/**
+ * Collects the set of locally-bound names that are imported from a
+ * piano-roll store / helper module. Used to restrict piano-roll lookup
+ * instrumentation to genuine store access calls rather than same-named
+ * helpers from unrelated modules.
+ */
+function collectPianoRollLookupImports(
+  sourceFile: SourceFile,
+): PianoRollLookupBindings {
+  const named = new Map<ts.Symbol, { importedName: string }>();
+  const namespaces = new Map<ts.Symbol, { moduleSpecifier: string }>();
+  for (const declaration of sourceFile.getImportDeclarations()) {
+    const specifier = declaration.getModuleSpecifierValue();
+    if (!isPianoRollLookupModuleSpecifier(specifier)) continue;
+
+    for (const clause of declaration.getNamedImports()) {
+      const importedName = clause.getName();
+      if (!PIANO_ROLL_LOOKUP_FUNCTIONS.has(importedName)) continue;
+      const localName = clause.getAliasNode() ?? clause.getNameNode();
+      const symbol = localName.getSymbol()?.compilerSymbol;
+      if (symbol) named.set(symbol, { importedName });
+    }
+
+    const namespaceImport = declaration.getNamespaceImport();
+    const namespaceSymbol = namespaceImport?.getSymbol()?.compilerSymbol;
+    if (namespaceSymbol) {
+      namespaces.set(namespaceSymbol, { moduleSpecifier: specifier });
+    }
+  }
+  return { named, namespaces };
+}
+
+function isPianoRollLookupModuleSpecifier(specifier: string): boolean {
+  const normalized = specifier.replaceAll("\\", "/");
+  if (PIANO_ROLL_LOOKUP_IMPORT_ALIASES.has(normalized)) return true;
+  if (
+    PIANO_ROLL_LOOKUP_SOURCE_SUFFIXES.some((suffix) =>
+      normalized.endsWith(suffix)
+    )
+  ) {
+    return true;
+  }
+  return PIANO_ROLL_LOOKUP_SOURCE_BASENAMES.has(
+    normalized.replace(/^\.\//, ""),
+  );
 }

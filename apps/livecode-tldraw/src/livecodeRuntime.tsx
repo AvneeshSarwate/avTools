@@ -24,6 +24,7 @@ import type {
   PreparedBuild,
   PreparedFailure,
   ProjectShadowCheckResponse,
+  RuntimeModuleRunSnapshotEntry,
   VisualizerDiagnostic,
   VisualizerManifestMessage,
 } from "./livecodeProtocol";
@@ -52,6 +53,7 @@ export interface ModuleViewState {
   manifest: VisualizerManifestMessage | null;
   history: HistoryEntry[];
   activeIds: string[];
+  pianoRollLookups: Record<string, string>;
   lastSnapshotSeq: number | null;
   latestError: string | null;
 }
@@ -59,6 +61,7 @@ export interface ModuleViewState {
 interface ModuleRecord extends ModuleViewState {
   buildTimer: number | null;
   analyzeSequence: number;
+  activeGeneratedRunId: string | null;
   pendingAnalyze: {
     sourceText: string;
     serverBaseUrl: string;
@@ -67,7 +70,6 @@ interface ModuleRecord extends ModuleViewState {
   latestBuild: PreparedBuild | null;
   latestFailure: PreparedFailure | null;
 }
-
 export interface LivecodeRuntimeApi {
   serverBaseUrl: string;
   setServerBaseUrl(next: string): void;
@@ -323,6 +325,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
           record.manifest = null;
           record.diagnostics = response.diagnostics;
           record.activeIds = [];
+          record.pianoRollLookups = {};
           record.buildStatus = "error";
           publishModule(record);
           return null;
@@ -334,6 +337,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
           record.manifest = null;
           record.diagnostics = [];
           record.activeIds = [];
+          record.pianoRollLookups = {};
           record.buildStatus = "error";
           record.latestError = error instanceof Error
             ? error.message
@@ -434,8 +438,12 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
 
       socket.onmessage = (event) => {
         const snapshot = JSON.parse(event.data as string) as ActiveWaitSnapshot;
+        const pianoRollLookups = snapshot.pianoRollLookups ?? {};
+        const moduleRuns = snapshot.moduleRuns ?? {};
         for (const record of modulesRef.current.values()) {
           record.activeIds = snapshot.modules[record.moduleId] ?? [];
+          record.pianoRollLookups = pianoRollLookups[record.moduleId] ?? {};
+          applyModuleRunSnapshot(record, moduleRuns[record.moduleId]);
           record.lastSnapshotSeq = snapshot.seq;
         }
         publishAllModules();
@@ -483,6 +491,8 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     setConnectionStatusRef("closed");
     for (const record of modulesRef.current.values()) {
       record.activeIds = [];
+      record.pianoRollLookups = {};
+      record.activeGeneratedRunId = null;
       record.lastSnapshotSeq = null;
     }
     publishAllModules();
@@ -547,7 +557,11 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       record.sourceText = sourceText;
       record.latestBuild = null;
       record.latestFailure = null;
+      record.manifest = null;
+      record.diagnostics = [];
       record.activeIds = [];
+      record.pianoRollLookups = {};
+      record.activeGeneratedRunId = null;
       scheduleAnalyze(record);
     },
     [scheduleAnalyze],
@@ -590,6 +604,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
           }
         }
 
+        record.activeGeneratedRunId = build.generatedRunId;
         await postJson("/runtime/launch", {
           moduleId: build.moduleId,
           transformedModuleUri: build.transformedModuleUri,
@@ -598,13 +613,12 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
           projectSourceHash: build.projectSourceHash,
           projectModulePath: build.projectModulePath,
         });
-        record.runStatus = build.manifest.callsites.length > 0
-          ? "running"
-          : "stopped";
+        record.runStatus = "running";
         record.latestError = null;
         publishModule(record);
       } catch (error) {
         record.runStatus = "error";
+        record.activeGeneratedRunId = null;
         record.latestError = error instanceof Error
           ? error.message
           : String(error);
@@ -624,10 +638,12 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       try {
         await postJson("/runtime/stop", { moduleId });
         record.runStatus = "stopped";
+        record.activeGeneratedRunId = null;
         record.activeIds = [];
         record.latestError = null;
       } catch (error) {
         record.runStatus = "error";
+        record.activeGeneratedRunId = null;
         record.latestError = error instanceof Error
           ? error.message
           : String(error);
@@ -705,14 +721,45 @@ function makeModuleRecord(
     manifest: null,
     history: [],
     activeIds: [],
+    pianoRollLookups: {},
     lastSnapshotSeq: null,
     latestError: null,
     buildTimer: null,
+    activeGeneratedRunId: null,
     analyzeSequence: 0,
     pendingAnalyze: null,
     latestBuild: null,
     latestFailure: null,
   };
+}
+
+function applyModuleRunSnapshot(
+  record: ModuleRecord,
+  run: RuntimeModuleRunSnapshotEntry | undefined,
+) {
+  if (!run) return;
+  const matchesActiveRun = record.activeGeneratedRunId === run.generatedRunId;
+  const isServerActive = run.state === "launching" || run.state === "running";
+
+  if (isServerActive && (!record.activeGeneratedRunId || matchesActiveRun)) {
+    record.activeGeneratedRunId = run.generatedRunId;
+    if (record.runStatus !== "stopping") record.runStatus = "running";
+    return;
+  }
+
+  const mayApplyTerminalState = matchesActiveRun ||
+    (!record.activeGeneratedRunId &&
+      (record.runStatus === "running" || record.runStatus === "stopping"));
+  if (!mayApplyTerminalState) return;
+
+  record.activeGeneratedRunId = null;
+  record.activeIds = [];
+  if (run.state === "error") {
+    record.runStatus = "error";
+    record.latestError = run.message ?? record.latestError;
+  } else if (run.state === "stopped") {
+    record.runStatus = "stopped";
+  }
 }
 
 function toViewState(record: ModuleRecord): ModuleViewState {
@@ -727,6 +774,7 @@ function toViewState(record: ModuleRecord): ModuleViewState {
     manifest: record.manifest,
     history: record.history,
     activeIds: record.activeIds,
+    pianoRollLookups: record.pianoRollLookups,
     lastSnapshotSeq: record.lastSnapshotSeq,
     latestError: record.latestError,
   };

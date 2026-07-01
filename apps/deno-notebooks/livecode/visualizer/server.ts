@@ -36,6 +36,7 @@ import type {
   ProjectStatusResponse,
   ReloadProjectModuleRequest,
   RemoveProjectModuleRequest,
+  RuntimeModuleRunSnapshotEntry,
   RuntimeModuleStatus,
   SetPianoRollRequest,
   StopModuleRequest,
@@ -54,7 +55,11 @@ import {
   buildProjectImportGraph,
   collectTransitiveDependencies,
 } from "./project_shadow_analysis.ts";
-import { clearModuleWaits, makeActiveWaitSnapshot } from "./runtime.ts";
+import {
+  clearModulePianoRollLookups,
+  clearModuleWaits,
+  makeActiveWaitSnapshot,
+} from "./runtime.ts";
 
 interface BranchHandle {
   cancel: () => void;
@@ -183,6 +188,7 @@ export async function createLivecodeVisualizerServer(
   const clientControlSockets = new Map<string, ClientControlSocket>();
   const pendingClientCommands = new Map<string, PendingClientCommand>();
   const activeModules = new Map<string, ActiveModule>();
+  const moduleRunSnapshots = new Map<string, RuntimeModuleRunSnapshotEntry>();
   const preparedRuns = new Map<string, PreparedRun>();
   const launchQueue: Array<(ctx: TimeContext) => Promise<void> | void> = [];
   let currentProject: ProjectState | null = null;
@@ -274,8 +280,11 @@ export async function createLivecodeVisualizerServer(
   });
 
   snapshotTimer = setInterval(() => {
-    const snapshot = makeActiveWaitSnapshot();
-    const snapshotJson = JSON.stringify(snapshot.modules);
+    const snapshot = makeRuntimeSnapshot();
+    const snapshotJson = JSON.stringify(snapshot.modules) +
+      JSON.stringify(snapshot.pianoRollLookups ?? {}) +
+      JSON.stringify(snapshot.activeModules ?? []) +
+      JSON.stringify(snapshot.moduleRuns ?? {});
     if (snapshotJson === lastSnapshotJson) return;
     lastSnapshotJson = snapshotJson;
     const payload = JSON.stringify(snapshot);
@@ -528,7 +537,7 @@ export async function createLivecodeVisualizerServer(
       socket.onopen = () => {
         sockets.add(socket);
         socket.send(
-          JSON.stringify(makeActiveWaitSnapshot() satisfies ActiveWaitSnapshot),
+          JSON.stringify(makeRuntimeSnapshot() satisfies ActiveWaitSnapshot),
         );
       };
       socket.onclose = () => sockets.delete(socket);
@@ -1171,6 +1180,26 @@ export async function createLivecodeVisualizerServer(
     }));
   }
 
+  function makeRuntimeSnapshot(): ActiveWaitSnapshot {
+    const snapshot = makeActiveWaitSnapshot();
+    return {
+      ...snapshot,
+      activeModules: [...activeModules.keys()].sort((a, b) =>
+        a.localeCompare(b)
+      ),
+      moduleRuns: Object.fromEntries(moduleRunSnapshots.entries()),
+    };
+  }
+
+  function setModuleRunSnapshot(
+    entry: Omit<RuntimeModuleRunSnapshotEntry, "updatedAtMs">,
+  ): void {
+    moduleRunSnapshots.set(entry.moduleId, {
+      ...entry,
+      updatedAtMs: Date.now(),
+    });
+  }
+
   function requireCurrentProject(): ProjectState {
     if (!currentProject) throw new Error("No project open");
     return currentProject;
@@ -1327,6 +1356,11 @@ export async function createLivecodeVisualizerServer(
       moduleId: requestBody.moduleId,
       sourceVersion: requestBody.sourceVersion,
     });
+    // A new analyze means the source changed, so previously recorded
+    // piano-roll lookup names (keyed by stale callsite ids) are no longer
+    // valid. Clear them so the editor falls back to static names until the
+    // module runs again.
+    clearModulePianoRollLookups(requestBody.moduleId);
 
     const projectModule = currentProject
       ? findProjectModule(currentProject, {
@@ -1482,77 +1516,111 @@ export async function createLivecodeVisualizerServer(
       }
       await stopModule(requestBody.moduleId, "replaceBeforeLaunch");
     }
-    launchQueue.push(async (ctx) => {
-      const moduleUrl = appendImportQuery(
-        requestBody.transformedModuleUri,
-        "launch",
-        crypto.randomUUID(),
-      );
-      const importStartedAt = performance.now();
-      const mod = await import(moduleUrl) as {
-        runFunc?: (ctx: TimeContext) => Promise<void>;
-        default?: (ctx: TimeContext) => Promise<void>;
-        stop?: ModuleStopFunc;
-      };
-      await log({
-        type: "moduleImported",
-        moduleId: requestBody.moduleId,
-        generatedRunId: requestBody.generatedRunId,
-        durationMs: elapsedMs(importStartedAt),
-      });
-      const runFunc = mod.runFunc ?? mod.default;
-      if (!runFunc) {
-        throw new Error(
-          `Generated module ${moduleUrl} does not export runFunc/default`,
-        );
-      }
+    const runSnapshotBase = {
+      moduleId: requestBody.moduleId,
+      generatedRunId: requestBody.generatedRunId,
+      projectModulePath: prepared?.projectModulePath ??
+        requestBody.projectModulePath,
+      sourceHash: prepared?.sourceHash ?? requestBody.sourceHash,
+      projectSourceHash: prepared?.projectSourceHash ??
+        requestBody.projectSourceHash,
+    };
+    setModuleRunSnapshot({ ...runSnapshotBase, state: "launching" });
 
-      const handle = ctx.branch(async (branchCtx) => {
+    launchQueue.push(async (ctx) => {
+      try {
+        const moduleUrl = appendImportQuery(
+          requestBody.transformedModuleUri,
+          "launch",
+          crypto.randomUUID(),
+        );
+        const importStartedAt = performance.now();
+        const mod = await import(moduleUrl) as {
+          runFunc?: (ctx: TimeContext) => Promise<void>;
+          default?: (ctx: TimeContext) => Promise<void>;
+          stop?: ModuleStopFunc;
+        };
         await log({
-          type: "moduleStarted",
+          type: "moduleImported",
           moduleId: requestBody.moduleId,
           generatedRunId: requestBody.generatedRunId,
+          durationMs: elapsedMs(importStartedAt),
         });
-        let reason = "completed";
-        try {
-          await runFunc(branchCtx);
-        } catch (error) {
-          reason = isAbortError(error) ? "cancelled" : "error";
-          if (reason === "error") {
-            await log({
-              type: "moduleError",
-              moduleId: requestBody.moduleId,
-              generatedRunId: requestBody.generatedRunId,
-              message: error instanceof Error ? error.message : String(error),
-            });
-          }
-        } finally {
-          clearModuleWaits(requestBody.moduleId);
-          const active = activeModules.get(requestBody.moduleId);
-          if (active?.generatedRunId === requestBody.generatedRunId) {
-            activeModules.delete(requestBody.moduleId);
-            await log({
-              type: "moduleStopped",
-              moduleId: requestBody.moduleId,
-              generatedRunId: requestBody.generatedRunId,
-              reason,
-            });
-          }
+        const runFunc = mod.runFunc ?? mod.default;
+        if (!runFunc) {
+          throw new Error(
+            `Generated module ${moduleUrl} does not export runFunc/default`,
+          );
         }
-      }, requestBody.moduleId);
 
-      activeModules.set(requestBody.moduleId, {
-        moduleId: requestBody.moduleId,
-        generatedRunId: requestBody.generatedRunId,
-        transformedModuleUri: requestBody.transformedModuleUri,
-        projectModulePath: prepared?.projectModulePath ??
-          requestBody.projectModulePath,
-        sourceHash: prepared?.sourceHash ?? requestBody.sourceHash,
-        projectSourceHash: prepared?.projectSourceHash ??
-          requestBody.projectSourceHash,
-        handle,
-        stopFunc: typeof mod.stop === "function" ? mod.stop : undefined,
-      });
+        const handle = ctx.branch(async (branchCtx) => {
+          setModuleRunSnapshot({ ...runSnapshotBase, state: "running" });
+          await log({
+            type: "moduleStarted",
+            moduleId: requestBody.moduleId,
+            generatedRunId: requestBody.generatedRunId,
+          });
+          let reason = "completed";
+          let errorMessage: string | undefined;
+          try {
+            await runFunc(branchCtx);
+          } catch (error) {
+            reason = isAbortError(error) ? "cancelled" : "error";
+            if (reason === "error") {
+              errorMessage = error instanceof Error
+                ? error.message
+                : String(error);
+              await log({
+                type: "moduleError",
+                moduleId: requestBody.moduleId,
+                generatedRunId: requestBody.generatedRunId,
+                message: errorMessage,
+              });
+            }
+          } finally {
+            clearModuleWaits(requestBody.moduleId);
+            const active = activeModules.get(requestBody.moduleId);
+            if (active?.generatedRunId === requestBody.generatedRunId) {
+              activeModules.delete(requestBody.moduleId);
+              setModuleRunSnapshot({
+                ...runSnapshotBase,
+                state: reason === "error" ? "error" : "stopped",
+                ...(errorMessage ? { message: errorMessage } : {}),
+              });
+              await log({
+                type: "moduleStopped",
+                moduleId: requestBody.moduleId,
+                generatedRunId: requestBody.generatedRunId,
+                reason,
+              });
+            }
+          }
+        }, requestBody.moduleId);
+
+        activeModules.set(requestBody.moduleId, {
+          moduleId: requestBody.moduleId,
+          generatedRunId: requestBody.generatedRunId,
+          transformedModuleUri: requestBody.transformedModuleUri,
+          projectModulePath: runSnapshotBase.projectModulePath,
+          sourceHash: runSnapshotBase.sourceHash,
+          projectSourceHash: runSnapshotBase.projectSourceHash,
+          handle,
+          stopFunc: typeof mod.stop === "function" ? mod.stop : undefined,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setModuleRunSnapshot({
+          ...runSnapshotBase,
+          state: "error",
+          message,
+        });
+        await log({
+          type: "moduleError",
+          moduleId: requestBody.moduleId,
+          generatedRunId: requestBody.generatedRunId,
+          message,
+        });
+      }
     });
 
     if (!parentContext) await log({ type: "launchQueuedBeforeParentReady" });
@@ -1562,12 +1630,29 @@ export async function createLivecodeVisualizerServer(
     const active = activeModules.get(moduleId);
     if (!active) {
       clearModuleWaits(moduleId);
+      const previous = moduleRunSnapshots.get(moduleId);
+      if (previous?.state === "launching" || previous?.state === "running") {
+        setModuleRunSnapshot({
+          ...previous,
+          state: "stopped",
+          message: reason,
+        });
+      }
       return;
     }
     await runModuleStopFunc(active, reason);
     active.handle.cancel();
     activeModules.delete(moduleId);
     clearModuleWaits(moduleId);
+    setModuleRunSnapshot({
+      moduleId,
+      generatedRunId: active.generatedRunId,
+      state: "stopped",
+      projectModulePath: active.projectModulePath,
+      sourceHash: active.sourceHash,
+      projectSourceHash: active.projectSourceHash,
+      message: reason,
+    });
     await log({
       type: "moduleStopped",
       moduleId,

@@ -109,8 +109,14 @@ http://localhost:5173/livecodeVisualizer?serverBaseUrl=http://localhost:7777
 7. Server queues launch into the parent `TimeContext` loop, dynamically imports
    the generated module, and branches the default export.
 8. Generated code calls `visualizedAwait(moduleId, callsiteId, promise)` around
-   instrumented waits/helper awaits.
-9. Runtime snapshots publish active callsite UUIDs at frame-ish cadence.
+   instrumented waits/helper awaits, and `visualizedPianoRollLookup(moduleId,
+   callsiteId, name)` around the roll-name argument of piano-roll store access
+   calls. The lookup wrapper records the resolved roll name in the runtime
+   store and returns the name unchanged.
+9. Runtime snapshots publish active callsite UUIDs, piano-roll lookup names,
+   and module run lifecycle states (`launching` / `running` / `stopped` /
+   `error`) at frame-ish cadence. The run lifecycle state lets clients mark
+   modules stopped even when the module completed without any wait callsites.
 10. Browser batches snapshot handling through `requestAnimationFrame` and
     updates CodeMirror decorations directly.
 
@@ -153,7 +159,15 @@ http://localhost:5173/livecodeVisualizer?serverBaseUrl=http://localhost:7777
 - `apps/deno-notebooks/livecode/visualizer/analyze_transform.ts` uses ts-morph
   and magic-string to find the default timed root, detect supported awaited
   wait/helper callsites, reject unsupported async patterns, wrap calls in
-  `visualizedAwait`, and produce the source-range manifest.
+  `visualizedAwait`, and produce the source-range manifest. It also detects
+  piano-roll store access calls (`getPianoRollClip` / `setPianoRollClip` /
+  `getPianoRoll` / `setPianoRoll`) imported from `piano-roll-helpers` or the
+  store module using ts-morph symbols for local import bindings (so aliases,
+  namespace imports, and local shadowing are handled), records
+  `pianoRollLookup` manifest entries with the roll-name argument range and a
+  static literal name fallback, and wraps the name argument in
+  `visualizedPianoRollLookup` so the runtime can report the resolved roll name
+  for each callsite.
 - `apps/deno-notebooks/livecode/visualizer/project_shadow_analysis.ts` uses
   ts-morph to build the project module import graph, writes transformed current
   `*.orig.ts` source to a session-owned shadow runtime tree, runs `deno check`
@@ -161,7 +175,11 @@ http://localhost:5173/livecodeVisualizer?serverBaseUrl=http://localhost:7777
   for `/project/diagnostics`.
 - `apps/deno-notebooks/livecode/visualizer/runtime.ts` is the singleton runtime
   store used by generated modules. It tracks active wait counts by `moduleId`
-  and callsite UUID and produces active wait snapshots.
+  and callsite UUID and produces active wait snapshots. It also records
+  runtime-resolved piano-roll lookup names (`recordPianoRollLookup` /
+  `visualizedPianoRollLookup`) per `moduleId` and callsiteId and includes them
+  as `pianoRollLookups` on the active wait snapshot, so the editor can show
+  accurate roll names for instrumented store access callsites.
 - `apps/deno-notebooks/livecode/visualizer/protocol.ts` defines the shared
   request/response, diagnostic, manifest, launch, stop, health, and snapshot
   message shapes.
@@ -183,14 +201,15 @@ http://localhost:5173/livecodeVisualizer?serverBaseUrl=http://localhost:7777
 
 - `apps/deno-notebooks/livecode/tests/analyzer_transform_test.ts` verifies the
   transform contract for linear waits, helper awaits, inline branch callbacks,
-  and current transform-blocking diagnostics.
+  piano-roll lookup import binding/alias/shadowing/nesting behavior, and
+  current transform-blocking diagnostics.
 - `apps/deno-notebooks/livecode/tests/runtime_counts_test.ts` verifies the
   singleton active wait count map and `visualizedAwait` cleanup behavior.
 - `apps/deno-notebooks/livecode/tests/dynamic_import_execution_test.ts` verifies
   generated module files can be imported and run with a real `TimeContext`.
 - `apps/deno-notebooks/livecode/tests/protocol_smoke_test.ts` verifies health,
-  analyze, launch, launch replacement refusal, snapshot, and stop over
-  HTTP/WebSocket without a browser.
+  analyze, launch, launch replacement refusal, snapshot lookup/run lifecycle
+  data, and stop over HTTP/WebSocket without a browser.
 - `apps/deno-notebooks/livecode/tests/lsp_smoke_test.ts` verifies the `/lsp`
   bridge reaches real `deno lsp` diagnostics and that `@avtools/core-timing` and
   `midi-helpers` resolve for diagnostics, hover, and completion.
@@ -230,6 +249,13 @@ The first analyzer supports normal single-file livecoding usage:
 - direct awaited `ctx.wait...` calls
 - awaited helper calls that receive the active context
 - inline branch callbacks passed to `ctx.branch(...)` / `ctx.branchWait(...)`
+- piano-roll store access calls (`getPianoRollClip` / `setPianoRollClip` /
+  `getPianoRoll` / `setPianoRoll`) imported from `piano-roll-helpers` or the
+  store module, regardless of await and including nested calls inside awaited
+  expressions. Import matching is symbol-aware for named aliases, namespace
+  imports, and local shadowing. The roll-name argument is wrapped in a
+  transparent `visualizedPianoRollLookup` so the runtime can report the
+  resolved name; the call itself is otherwise unchanged.
 
 Unsupported detectable patterns are errors for now:
 
@@ -238,8 +264,9 @@ Unsupported detectable patterns are errors for now:
 - unawaited Promise-like calls that receive a `TimeContext`
 - dynamic context method access such as `ctx[method](...)`
 
-The implementation uses TypeScript/ts-morph, but it is not yet a full
-symbol/alias-resolution engine.
+The implementation uses TypeScript/ts-morph symbols for the supported local
+import-binding cases, but it is not yet a full inter-module re-export tracing
+engine.
 
 ## Verification Commands
 

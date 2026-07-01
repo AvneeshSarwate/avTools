@@ -1,9 +1,9 @@
 import { indentWithTab } from '@codemirror/commands'
 import { javascript } from '@codemirror/lang-javascript'
 import { lintGutter } from '@codemirror/lint'
-import { Compartment, StateEffect, StateField, type Extension } from '@codemirror/state'
+import { Compartment, StateEffect, StateField, type Extension, type Range } from '@codemirror/state'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { Decoration, EditorView, keymap, type DecorationSet } from '@codemirror/view'
+import { Decoration, EditorView, WidgetType, keymap, type DecorationSet } from '@codemirror/view'
 import { LSCore, type LSClient } from '@valtown/codemirror-ls'
 import { basicSetup } from 'codemirror'
 import { useEffect, useMemo, useRef } from 'react'
@@ -11,6 +11,7 @@ import { createDenoLspExtensions } from './denoLsp'
 import type { SourceRange } from './livecodeProtocol'
 
 const setWaitDecorationsEffect = StateEffect.define<SourceRange[]>()
+const setPianoRollDecorationsEffect = StateEffect.define<PianoRollCallDecoration[]>()
 const debugEditorViews = new Map<string, EditorView>()
 
 declare global {
@@ -25,6 +26,17 @@ interface LivecodeTldrawDebug {
   focusDocumentAtOffset(documentUri: string, offset: number): void
   requestCompletionAtOffset(documentUri: string, offset: number): Promise<string[]>
 }
+
+export interface PianoRollCallDecoration {
+  /** End offset of the roll-name argument; the widget is placed after it. */
+  at: number
+  /** Resolved roll name (runtime value) or static literal fallback. */
+  rollName: string
+  /** True when the name came from runtime data, not just a static literal. */
+  resolvedAtRuntime: boolean
+}
+
+export type OpenPianoRollCallback = (rollName: string) => void
 
 const waitLineDecoration = Decoration.line({
   attributes: { class: 'ltc-wait-line' },
@@ -54,6 +66,74 @@ const waitDecorationField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 })
 
+const pianoRollDecorationField = StateField.define<DecorationSet>({
+  create() {
+    return Decoration.none
+  },
+  update(decorations, transaction) {
+    decorations = decorations.map(transaction.changes)
+    for (const effect of transaction.effects) {
+      if (!effect.is(setPianoRollDecorationsEffect)) continue
+      const adds: Range<Decoration>[] = effect.value.map((entry) => {
+        const at = clampPosition(transaction.state.doc.length, entry.at)
+        return Decoration.widget({
+          widget: new PianoRollOpenWidget(entry.rollName, entry.resolvedAtRuntime),
+          side: 1,
+        }).range(at)
+      })
+      decorations = Decoration.set(adds, true)
+    }
+    return decorations
+  },
+  provide: (field) => EditorView.decorations.from(field),
+})
+
+class PianoRollOpenWidget extends WidgetType {
+  constructor(
+    readonly rollName: string,
+    readonly resolvedAtRuntime: boolean,
+  ) {
+    super()
+  }
+
+  override eq(other: PianoRollOpenWidget) {
+    return other.rollName === this.rollName &&
+      other.resolvedAtRuntime === this.resolvedAtRuntime
+  }
+
+  override toDOM(view: EditorView) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'ltc-piano-roll-open-btn'
+    const label = this.resolvedAtRuntime ? this.rollName : `${this.rollName}?`
+    button.textContent = `🎹 open ${label}`
+    button.title = this.resolvedAtRuntime
+      ? `Open a piano roll view for "${this.rollName}"`
+      : `Open a piano roll view for "${this.rollName}" (static name; run the module to confirm)`
+    button.addEventListener('pointerdown', (event) => {
+      event.stopPropagation()
+    })
+    button.addEventListener('click', (event) => {
+      event.stopPropagation()
+      event.preventDefault()
+      view.focus()
+      dispatchPianoRollOpen(view, this.rollName)
+    })
+    return button
+  }
+
+  override ignoreEvent() {
+    return true
+  }
+}
+
+const pianoRollOpenListeners = new Map<EditorView, OpenPianoRollCallback>()
+
+function dispatchPianoRollOpen(view: EditorView, rollName: string) {
+  const listener = pianoRollOpenListeners.get(view)
+  listener?.(rollName)
+}
+
 const livecodeTheme = EditorView.theme({
   '&': {
     height: '100%',
@@ -76,24 +156,46 @@ const livecodeTheme = EditorView.theme({
     backgroundColor: 'rgba(37, 176, 141, 0.28)',
     borderBottom: '1px solid rgba(37, 176, 141, 0.85)',
   },
+  '.ltc-piano-roll-open-btn': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    margin: '0 4px',
+    border: '1px solid rgba(37, 176, 141, 0.45)',
+    borderRadius: '999px',
+    padding: '0 6px',
+    color: '#c6f6e2',
+    background: 'rgba(37, 176, 141, 0.18)',
+    fontSize: '11px',
+    lineHeight: '18px',
+    cursor: 'pointer',
+    userSelect: 'none',
+    verticalAlign: 'middle',
+  },
+  '.ltc-piano-roll-open-btn:hover': {
+    background: 'rgba(37, 176, 141, 0.32)',
+  },
 })
 
 interface CodeMirrorEditorProps {
   value: string
   documentUri: string
   activeRanges: SourceRange[]
+  pianoRollCallsites: PianoRollCallDecoration[]
   lspClient: LSClient | null
   readOnly?: boolean
   onChange(next: string): void
+  onOpenPianoRoll?: OpenPianoRollCallback
 }
 
 export function CodeMirrorEditor({
   value,
   documentUri,
   activeRanges,
+  pianoRollCallsites,
   lspClient,
   readOnly = false,
   onChange,
+  onOpenPianoRoll,
 }: CodeMirrorEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -111,6 +213,7 @@ export function CodeMirrorEditor({
       lintGutter(),
       livecodeTheme,
       waitDecorationField,
+      pianoRollDecorationField,
       editableCompartmentRef.current.of(EditorView.editable.of(!readOnly)),
       lspCompartmentRef.current.of([]),
       EditorView.updateListener.of((update) => {
@@ -148,10 +251,21 @@ export function CodeMirrorEditor({
     debugEditorViews.set(documentUri, view)
     return () => {
       debugEditorViews.delete(documentUri)
+      pianoRollOpenListeners.delete(view)
       view.destroy()
       viewRef.current = null
     }
   }, [documentUri, extensions])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    if (onOpenPianoRoll) {
+      pianoRollOpenListeners.set(view, onOpenPianoRoll)
+    } else {
+      pianoRollOpenListeners.delete(view)
+    }
+  }, [onOpenPianoRoll])
 
   useEffect(() => {
     const view = viewRef.current
@@ -184,6 +298,14 @@ export function CodeMirrorEditor({
     if (!view) return
     view.dispatch({ effects: setWaitDecorationsEffect.of(activeRanges) })
   }, [activeRanges])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({
+      effects: setPianoRollDecorationsEffect.of(pianoRollCallsites),
+    })
+  }, [pianoRollCallsites])
 
   useEffect(() => {
     const view = viewRef.current

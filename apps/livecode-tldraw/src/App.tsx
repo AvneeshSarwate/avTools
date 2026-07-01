@@ -5,7 +5,13 @@ import {
   useRef,
   useState,
 } from "react";
-import { createShapeId, type Editor, Tldraw } from "tldraw";
+import {
+  createShapeId,
+  parseTldrawJsonFile,
+  serializeTldrawJson,
+  type Editor,
+  Tldraw,
+} from "tldraw";
 import { DEFAULT_LIVECODE_SOURCE } from "./defaultSource";
 import {
   createModuleId,
@@ -35,8 +41,10 @@ import {
   type PianoRollShape,
   PianoRollShapeUtil,
 } from "./PianoRollShape";
+import { setRuntimeDebugRefs } from "./livecodeTldrawDebug";
 
 const shapeUtils = [LivecodeEditorShapeUtil, PianoRollShapeUtil];
+const TLDR_MIME_TYPE = "application/vnd.tldraw+json";
 
 export function App() {
   return (
@@ -54,9 +62,18 @@ function LivecodeTldrawPage() {
     () => new URLSearchParams(window.location.search).get("projectPath"),
     [],
   );
+  const canvasUrl = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("tldr") ?? params.get("canvas") ?? params.get("canvasUrl");
+  }, []);
   const projectLoadedRef = useRef(false);
+  const canvasLoadedRef = useRef(false);
 
   useClientControlBridge(editor, runtime);
+
+  useEffect(() => {
+    setRuntimeDebugRefs(runtime, editor);
+  }, [runtime, editor]);
 
   useEffect(() => {
     if (!editor) return;
@@ -117,6 +134,16 @@ function LivecodeTldrawPage() {
   }, [editor, registerModule, setModuleSource, unregisterModule]);
 
   useEffect(() => {
+    if (!editor || !canvasUrl || projectPath || canvasLoadedRef.current) return;
+    canvasLoadedRef.current = true;
+
+    void loadTldrawCanvasFromUrl(editor, canvasUrl)
+      .catch((error) => {
+        console.error("[livecode-tldraw] failed to load tldraw canvas", error);
+      });
+  }, [canvasUrl, editor, projectPath]);
+
+  useEffect(() => {
     if (!editor || !projectPath || projectLoadedRef.current) return;
     projectLoadedRef.current = true;
 
@@ -140,19 +167,8 @@ function LivecodeTldrawPage() {
             shapeUtils={shapeUtils}
             onMount={(mountedEditor) => {
               setEditor(mountedEditor);
-              if (!projectPath && !hasLivecodeShapes(mountedEditor)) {
-                createLivecodeShape(mountedEditor, {
-                  x: 120,
-                  y: 120,
-                  title: "module 1",
-                });
-              }
-              if (!projectPath && !hasPianoRollShapes(mountedEditor)) {
-                createPianoRollShape(mountedEditor, {
-                  x: 820,
-                  y: 120,
-                  rollName: "melody",
-                });
+              if (!projectPath && !canvasUrl && !hasLivecodeShapes(mountedEditor)) {
+                createDefaultLivecodeCanvas(mountedEditor);
               }
             }}
           />
@@ -164,6 +180,7 @@ function LivecodeTldrawPage() {
 
 function TopBar({ editor }: { editor: Editor | null }) {
   const runtime = useLivecodeRuntime();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const moduleCount = useMemo(() => Object.keys(runtime.modules).length, [
     runtime.modules,
   ]);
@@ -200,6 +217,46 @@ function TopBar({ editor }: { editor: Editor | null }) {
         </button>
       </div>
 
+      <button
+        type="button"
+        disabled={!editor}
+        onClick={() => {
+          if (editor) createDefaultLivecodeCanvas(editor);
+        }}
+      >
+        New canvas
+      </button>
+      <button
+        type="button"
+        disabled={!editor}
+        onClick={() => fileInputRef.current?.click()}
+      >
+        Open .tldr
+      </button>
+      <button
+        type="button"
+        disabled={!editor}
+        onClick={() => {
+          if (editor) void saveTldrawCanvas(editor);
+        }}
+      >
+        Save .tldr
+      </button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".tldr,application/json"
+        style={{ display: "none" }}
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (editor && file) {
+            void loadTldrawCanvasFromFile(editor, file).catch((error) => {
+              console.error("[livecode-tldraw] failed to open .tldr file", error);
+            });
+          }
+        }}
+      />
       <button
         type="button"
         disabled={!editor}
@@ -667,6 +724,76 @@ function createLivecodeShape(
   });
   editor.select(id);
   return id;
+}
+
+function clearCurrentCanvas(editor: Editor) {
+  const shapes = editor.getCurrentPageShapes();
+  if (shapes.length > 0) editor.deleteShapes(shapes.map((shape) => shape.id));
+}
+
+function createDefaultLivecodeCanvas(editor: Editor) {
+  clearCurrentCanvas(editor);
+  const moduleId = createLivecodeShape(editor, {
+    x: 120,
+    y: 120,
+    title: "module 1",
+  });
+  createPianoRollShape(editor, {
+    x: 820,
+    y: 120,
+    rollName: "melody",
+  });
+  editor.select(moduleId);
+  editor.zoomToSelection();
+}
+
+async function saveTldrawCanvas(editor: Editor) {
+  const json = await serializeTldrawJson(editor);
+  const blob = new Blob([json], { type: TLDR_MIME_TYPE });
+  const url = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `livecode-tldraw-${new Date().toISOString().slice(0, 10)}.tldr`;
+    link.click();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function loadTldrawCanvasFromFile(editor: Editor, file: File) {
+  await loadTldrawCanvasJson(editor, await file.text(), file.name);
+}
+
+async function loadTldrawCanvasFromUrl(editor: Editor, url: string) {
+  const resolvedUrl = new URL(url, window.location.href).href;
+  const response = await fetch(resolvedUrl);
+  if (!response.ok) {
+    throw new Error(`${resolvedUrl} failed with ${response.status}: ${await response.text()}`);
+  }
+  await loadTldrawCanvasJson(editor, await response.text(), resolvedUrl);
+}
+
+async function loadTldrawCanvasJson(
+  editor: Editor,
+  json: string,
+  label: string,
+) {
+  const result = parseTldrawJsonFile({
+    json,
+    schema: editor.store.schema,
+  });
+  if (!result.ok) {
+    throw new Error(`Could not load ${label}: ${result.error.type}`);
+  }
+
+  const snapshot = result.value.getStoreSnapshot();
+  editor.loadSnapshot(snapshot);
+  editor.clearHistory();
+  const bounds = editor.getCurrentPageBounds();
+  if (bounds) {
+    editor.zoomToBounds(bounds, { targetZoom: 1, immediate: true });
+  }
 }
 
 async function loadProjectIntoCanvas(

@@ -1,6 +1,7 @@
 import type { ActiveWaitSnapshot } from "./protocol.ts";
 
 const activeWaitCounts = new Map<string, Map<string, number>>();
+const pianoRollLookups = new Map<string, Map<string, string>>();
 let snapshotSeq = 0;
 
 function getOrCreateModuleCounts(moduleId: string): Map<string, number> {
@@ -58,11 +59,62 @@ export function getActiveWaitsByModule(): Record<string, string[]> {
   );
 }
 
+export function recordPianoRollLookup(
+  moduleId: string,
+  callsiteId: string,
+  name: string,
+): void {
+  let moduleLookups = pianoRollLookups.get(moduleId);
+  if (!moduleLookups) {
+    moduleLookups = new Map<string, string>();
+    pianoRollLookups.set(moduleId, moduleLookups);
+  }
+  moduleLookups.set(callsiteId, name);
+}
+
+export function clearModulePianoRollLookups(moduleId: string): void {
+  pianoRollLookups.delete(moduleId);
+}
+
+export function clearAllPianoRollLookups(): void {
+  pianoRollLookups.clear();
+}
+
+export function getPianoRollLookupsByModule(): Record<
+  string,
+  Record<string, string>
+> {
+  return Object.fromEntries(
+    [...pianoRollLookups.entries()].map(([moduleId, moduleLookups]) => [
+      moduleId,
+      Object.fromEntries(moduleLookups.entries()),
+    ]),
+  );
+}
+
+/**
+ * Transparent pass-through wrapper inserted by the transform around the
+ * roll-name argument of piano-roll store access calls. Records the
+ * runtime-resolved roll name for the callsite and returns the name unchanged
+ * so the wrapped call behaves identically.
+ */
+export function visualizedPianoRollLookup<T>(
+  moduleId: string,
+  callsiteId: string,
+  name: T,
+): T {
+  if (typeof name === "string") {
+    recordPianoRollLookup(moduleId, callsiteId, name);
+  }
+  return name;
+}
+
 export function makeActiveWaitSnapshot(): ActiveWaitSnapshot {
   return {
     type: "activeWaitSnapshot",
     seq: ++snapshotSeq,
     timestampMs: Date.now(),
     modules: getActiveWaitsByModule(),
+    pianoRollLookups: getPianoRollLookupsByModule(),
   };
 }

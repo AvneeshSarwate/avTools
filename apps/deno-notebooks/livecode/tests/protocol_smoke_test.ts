@@ -98,6 +98,49 @@ export default async function(ctx: TimeContext) {
       2_000,
     );
 
+    const lookupOnlyAnalyze = await postJson(
+      `${server.baseUrl}/runtime/analyze`,
+      {
+        moduleId: "module-lookup-only",
+        sourceVersion: 1,
+        sourceUri: "module-lookup-only.ts",
+        sourceText: `
+import type { TimeContext } from "@avtools/core-timing";
+import { getPianoRollClip } from "piano-roll-helpers";
+
+export default async function(ctx: TimeContext) {
+  void ctx;
+  void getPianoRollClip("melody");
+}
+`,
+      },
+    ) as AnalyzeSuccess;
+    assertEquals(lookupOnlyAnalyze.type, "analyzeSuccess");
+    assertEquals(
+      lookupOnlyAnalyze.manifest.callsites[0].kind,
+      "pianoRollLookup",
+    );
+    const lookupOnlyId = lookupOnlyAnalyze.manifest.callsites[0].id;
+
+    await postJson(`${server.baseUrl}/runtime/launch`, {
+      type: "launchModule",
+      moduleId: lookupOnlyAnalyze.moduleId,
+      sourceVersion: lookupOnlyAnalyze.sourceVersion,
+      transformedModuleUri: lookupOnlyAnalyze.transformedModuleUri,
+      generatedRunId: lookupOnlyAnalyze.generatedRunId,
+    });
+
+    await waitFor(
+      () =>
+        snapshots.some((snapshot) =>
+          snapshot.pianoRollLookups?.["module-lookup-only"]?.[lookupOnlyId] ===
+            "melody" &&
+          snapshot.moduleRuns?.["module-lookup-only"]?.state === "stopped"
+        ),
+      "lookup-only module stopped snapshot",
+      2_000,
+    );
+
     const stopMarkerPath = `${sessionRoot}/stop-hook.txt`;
     const stopAnalyze = await postJson(`${server.baseUrl}/runtime/analyze`, {
       moduleId: "module-stop-hook",

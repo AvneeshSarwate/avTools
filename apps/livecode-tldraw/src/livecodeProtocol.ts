@@ -9,7 +9,10 @@ export interface VisualizerDiagnostic extends SourceRange {
   message: string;
 }
 
-export type WaitCallsiteKind = "timeContextMethod" | "timeContextArgumentCall";
+export type WaitCallsiteKind =
+  | "timeContextMethod"
+  | "timeContextArgumentCall"
+  | "pianoRollLookup";
 
 export interface WaitCallsiteManifestEntry {
   id: string;
@@ -18,6 +21,8 @@ export interface WaitCallsiteManifestEntry {
   range: SourceRange;
   kind: WaitCallsiteKind;
   displayName: string;
+  nameArgRange?: SourceRange;
+  staticName?: string;
 }
 
 export interface VisualizerManifestMessage {
@@ -52,11 +57,27 @@ export interface AnalyzeFailure {
 
 export type AnalyzeResponse = AnalyzeSuccess | AnalyzeFailure;
 
+export type RuntimeModuleRunState = "launching" | "running" | "stopped" | "error";
+
+export interface RuntimeModuleRunSnapshotEntry {
+  moduleId: string;
+  generatedRunId: string;
+  state: RuntimeModuleRunState;
+  updatedAtMs: number;
+  projectModulePath?: string;
+  sourceHash?: string;
+  projectSourceHash?: string;
+  message?: string;
+}
+
 export interface ActiveWaitSnapshot {
   type: "activeWaitSnapshot";
   seq: number;
   timestampMs: number;
   modules: Record<string, string[]>;
+  pianoRollLookups?: Record<string, Record<string, string>>;
+  activeModules?: string[];
+  moduleRuns?: Record<string, RuntimeModuleRunSnapshotEntry>;
 }
 
 export interface HealthResponse {

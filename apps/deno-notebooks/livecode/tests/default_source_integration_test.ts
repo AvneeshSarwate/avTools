@@ -44,12 +44,26 @@ Deno.test("built-in editor source checks, analyzes, and initializes piano roll h
     assertEquals(analysis.type, "analyzeSuccess");
     if (analysis.type !== "analyzeSuccess") return;
     assertEquals(
-      analysis.manifest.callsites.map((entry) => entry.displayName),
+      analysis.manifest.callsites.map((entry) => ({
+        display: entry.displayName,
+        kind: entry.kind,
+      })),
       [
-        "playPianoRoll",
-        "ctx.waitSec",
+        { display: "getPianoRollClip", kind: "pianoRollLookup" },
+        { display: "setPianoRollClip", kind: "pianoRollLookup" },
+        { display: "playPianoRoll", kind: "timeContextArgumentCall" },
+        { display: "ctx.waitSec", kind: "timeContextMethod" },
       ],
     );
+    // The default source reads the "melody" roll via a const-bound name; the
+    // static fallback should not be available for an identifier argument, but
+    // the lookup callsite should still be recorded for runtime resolution.
+    const getPianoRollEntry = analysis.manifest.callsites.find((entry) =>
+      entry.displayName === "getPianoRollClip"
+    );
+    assert(getPianoRollEntry, "expected getPianoRollClip callsite");
+    assertEquals(getPianoRollEntry.staticName, undefined);
+    assert(getPianoRollEntry.nameArgRange, "expected nameArgRange");
 
     const pianoRollHelpers = await import("piano-roll-helpers") as {
       getPianoRollClip(name: string): { notes: unknown[] };
