@@ -24,6 +24,7 @@ export interface SetPianoRollOptions {
   source?: PianoRollUpdateSource;
   originId?: string;
   undoable?: boolean;
+  expectedRev?: number;
 }
 
 const DEFAULT_ROLL_NAME = "melody";
@@ -62,6 +63,12 @@ export function setPianoRoll(
   const undoable = options.undoable ?? true;
 
   if (existing) {
+    if (
+      options.expectedRev !== undefined && existing.rev !== options.expectedRev
+    ) {
+      return { ...toObject(existing), conflict: true };
+    }
+
     if (JSON.stringify(existing.data) === JSON.stringify(nextData)) {
       return toObject(existing);
     }
@@ -216,10 +223,10 @@ function normalizeName(name: string): string {
 }
 
 function normalizeData(data: PianoRollData): PianoRollData {
-  return {
+  return structuredClone({
     ...data,
     notes: data.notes.map((note, index) => normalizeNote(note, index)),
-  };
+  });
 }
 
 function normalizeNote(note: NoteDataInput, index: number): NoteData {

@@ -6,6 +6,7 @@ import type {
   AnalyzeSuccess,
   ClientControlCommandResponse,
   ClientControlEnvelope,
+  RuntimeStateResponse,
 } from "../visualizer/protocol.ts";
 
 Deno.test("server analyze, launch, snapshot, and stop protocol smoke", async () => {
@@ -82,6 +83,14 @@ export default async function(ctx: TimeContext) {
       "active wait snapshot",
       2_000,
     );
+
+    const runtimeState = await fetchJson(
+      `${server.baseUrl}/runtime/state`,
+    ) as unknown as RuntimeStateResponse;
+    const activeModule = runtimeState.activeModules.find((moduleEntry) =>
+      moduleEntry.moduleId === "module-smoke"
+    );
+    assertEquals(activeModule?.manifest?.callsites[0]?.id, waitId);
 
     await postJson(`${server.baseUrl}/runtime/stop`, {
       type: "stopModule",

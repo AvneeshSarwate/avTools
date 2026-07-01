@@ -57,7 +57,22 @@ export interface AnalyzeFailure {
 
 export type AnalyzeResponse = AnalyzeSuccess | AnalyzeFailure;
 
-export type RuntimeModuleRunState = "launching" | "running" | "stopped" | "error";
+export interface LaunchModuleRequest {
+  moduleId: string;
+  transformedModuleUri: string;
+  generatedRunId: string;
+  sourceHash?: string;
+  projectSourceHash?: string;
+  projectModulePath?: string;
+  manifest?: VisualizerManifestMessage | null;
+  replaceRunning?: boolean;
+}
+
+export type RuntimeModuleRunState =
+  | "launching"
+  | "running"
+  | "stopped"
+  | "error";
 
 export interface RuntimeModuleRunSnapshotEntry {
   moduleId: string;
@@ -159,6 +174,21 @@ export interface RuntimeModuleStatus {
   projectModulePath?: string;
   sourceHash?: string;
   projectSourceHash?: string;
+}
+
+export interface RuntimeStateResponse {
+  ok: true;
+  activeModules: Array<
+    RuntimeModuleStatus & {
+      manifest: VisualizerManifestMessage | null;
+    }
+  >;
+  moduleRuns: Record<string, RuntimeModuleRunSnapshotEntry>;
+  latestPreparedByModule: Record<string, {
+    generatedRunId: string;
+    sourceHash?: string;
+    manifest: VisualizerManifestMessage;
+  }>;
 }
 
 export interface ProjectModuleStatus extends ProjectModuleRecord {

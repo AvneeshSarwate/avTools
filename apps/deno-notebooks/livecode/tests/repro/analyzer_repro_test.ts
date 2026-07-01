@@ -39,17 +39,14 @@ export default async function loop(ctx: TimeContext) {
 
   // The declaration is renamed to runFunc...
   assertStringIncludes(result.transformedCode, "export async function runFunc");
-  // ...but the recursive callsite still references `loop`, which no longer
-  // exists anywhere in the module. Importing and running this generated
-  // module throws `ReferenceError: loop is not defined` at the recursion.
+  // ...and the recursive callsite still references `loop`, preserved as an
+  // alias to runFunc after the function declaration.
   assertStringIncludes(result.transformedCode, "loop(ctx)");
-  const declaresLoop = /\bfunction\s+loop\b|\bconst\s+loop\b|\blet\s+loop\b|\bvar\s+loop\b/
-    .test(result.transformedCode);
-  // BUGGY BEHAVIOR. AFTER FIX (rename references too, or bind
-  // `const loop = runFunc`): flip this to assert(declaresLoop) or assert the
-  // recursive callsite was rewritten to runFunc.
+  const declaresLoop =
+    /\bfunction\s+loop\b|\bconst\s+loop\b|\blet\s+loop\b|\bvar\s+loop\b/
+      .test(result.transformedCode);
   assert(
-    !declaresLoop,
-    "transformed code references `loop` without any declaration of it",
+    declaresLoop,
+    "transformed code should preserve `loop` as an alias for recursive calls",
   );
 });

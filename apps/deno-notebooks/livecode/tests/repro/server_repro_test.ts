@@ -9,6 +9,7 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { join } from "jsr:@std/path@1";
 import { createLivecodeVisualizerServer } from "../../visualizer/server.ts";
+import type { AnalyzeSuccess } from "../../visualizer/protocol.ts";
 
 const FIXTURE_SOURCE = (marker: number) => `
 import type { TimeContext } from "@avtools/core-timing";
@@ -16,6 +17,19 @@ import type { TimeContext } from "@avtools/core-timing";
 export default async function(ctx: TimeContext) {
   console.log("fixture ${marker}", ctx.time);
   await ctx.waitSec(0.0${marker + 1});
+}
+`;
+
+const HUNG_STOP_SOURCE = (marker: string) => `
+import type { TimeContext } from "@avtools/core-timing";
+
+export function stop() {
+  console.log("hung stop ${marker}");
+  return new Promise(() => {});
+}
+
+export default async function(ctx: TimeContext) {
+  while (true) await ctx.waitSec(30);
 }
 `;
 
@@ -31,6 +45,65 @@ async function postJson(url: string, body: unknown): Promise<unknown> {
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+Deno.test({
+  name:
+    "runtime stop-all runs stop hooks in parallel, and runtime panic returns immediately",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const sessionRoot = await Deno.makeTempDir({ prefix: "tcv-repro-panic-" });
+    const server = await createLivecodeVisualizerServer({
+      port: 0,
+      sessionRoot,
+      logLevel: "info",
+    });
+    try {
+      await analyzeAndLaunch(
+        server.baseUrl,
+        "hung-stop-a",
+        HUNG_STOP_SOURCE("a"),
+      );
+      await analyzeAndLaunch(
+        server.baseUrl,
+        "hung-stop-b",
+        HUNG_STOP_SOURCE("b"),
+      );
+      await waitForActiveModules(
+        server.baseUrl,
+        2,
+        "two hung-stop modules active",
+      );
+
+      const stopStartedAt = performance.now();
+      await postJson(`${server.baseUrl}/runtime/stop-all`, {});
+      const stopElapsedMs = performance.now() - stopStartedAt;
+      assert(
+        stopElapsedMs < 3_500,
+        `expected parallel stop-all to finish under 3500ms, took ${stopElapsedMs}ms`,
+      );
+      await waitForActiveModules(server.baseUrl, 0, "stop-all cleared modules");
+
+      await analyzeAndLaunch(
+        server.baseUrl,
+        "panic-module",
+        HUNG_STOP_SOURCE("panic"),
+      );
+      await waitForActiveModules(server.baseUrl, 1, "panic module active");
+
+      const panicStartedAt = performance.now();
+      await postJson(`${server.baseUrl}/runtime/panic`, {});
+      const panicElapsedMs = performance.now() - panicStartedAt;
+      assert(
+        panicElapsedMs < 500,
+        `expected panic to finish under 500ms, took ${panicElapsedMs}ms`,
+      );
+      await waitForActiveModules(server.baseUrl, 0, "panic cleared modules");
+    } finally {
+      await server.close();
+    }
+  },
+});
 
 Deno.test({
   name:
@@ -54,25 +127,57 @@ Deno.test({
       );
       const bodyText = await response.text();
 
-      // BUGGY BEHAVIOR. AFTER FIX (wrap handler in try/catch returning a
-      // structured { ok:false, error, diagnostics? } JSON): flip to expect a
-      // JSON body and an application-level error field.
       assertEquals(response.status, 500);
-      let parsedAsJson = true;
-      try {
-        JSON.parse(bodyText);
-      } catch {
-        parsedAsJson = false;
-      }
+      const body = JSON.parse(bodyText) as { ok?: boolean; error?: unknown };
+      assertEquals(body.ok, false);
       assert(
-        !parsedAsJson,
-        `expected an opaque non-JSON 500 body, got: ${bodyText}`,
+        typeof body.error === "string" && body.error.length > 0,
+        `expected JSON error body, got: ${bodyText}`,
       );
     } finally {
       await server.close();
     }
   },
 });
+
+async function analyzeAndLaunch(
+  baseUrl: string,
+  moduleId: string,
+  sourceText: string,
+): Promise<void> {
+  const analyze = await postJson(`${baseUrl}/runtime/analyze`, {
+    moduleId,
+    sourceVersion: 1,
+    sourceUri: `${moduleId}.ts`,
+    sourceText,
+  }) as AnalyzeSuccess;
+  assertEquals(analyze.type, "analyzeSuccess");
+  await postJson(`${baseUrl}/runtime/launch`, {
+    type: "launchModule",
+    moduleId,
+    sourceVersion: analyze.sourceVersion,
+    transformedModuleUri: analyze.transformedModuleUri,
+    generatedRunId: analyze.generatedRunId,
+  });
+}
+
+async function waitForActiveModules(
+  baseUrl: string,
+  expectedCount: number,
+  label: string,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const response = await fetch(`${baseUrl}/runtime/status`);
+    const status = await response.json() as {
+      activeModules?: Array<{ moduleId: string }>;
+    };
+    if ((status.activeModules?.length ?? 0) === expectedCount) return;
+    await sleep(20);
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
 
 Deno.test({
   name:
@@ -112,15 +217,9 @@ Deno.test({
         }
       }
 
-      // BUGGY BEHAVIOR: one generated file (and one preparedRuns map entry)
-      // per debounced analyze, forever. At a 100ms edit debounce over an
-      // hours-long set this is thousands of files + entries for ONE module.
-      // AFTER FIX (retain latest N per module, delete superseded files): flip
-      // to expect <= N.
-      assertEquals(
-        generatedFileCount,
-        ANALYZE_COUNT,
-        `every analyze left its generated file behind (${generatedFileCount})`,
+      assert(
+        generatedFileCount <= 3,
+        `expected at most 3 generated files, got ${generatedFileCount}`,
       );
     } finally {
       await server.close();
@@ -154,11 +253,20 @@ Deno.test({
 
       const runtimePaths = moduleNames.map((name) => join(projectRoot, name));
       const mtimesBefore = await Promise.all(
-        runtimePaths.map(async (path) => (await Deno.stat(path)).mtime!.getTime()),
+        runtimePaths.map(async (path) =>
+          (await Deno.stat(path)).mtime!.getTime()
+        ),
       );
       await sleep(1100); // ensure mtime resolution can't mask rewrites
 
-      // Analyze ONLY mod_a — the equivalent of one 100ms edit debounce firing.
+      await postJson(`${server.baseUrl}/project/modules/write`, {
+        id: "mod_a.ts",
+        sourceVersion: 2,
+        sourceText: FIXTURE_SOURCE(9),
+      });
+
+      // Analyze ONLY mod_a — the equivalent of the second materialize call in
+      // the write -> analyze debounce path.
       const result = await postJson(`${server.baseUrl}/runtime/analyze`, {
         moduleId: "mod_a.ts",
         sourceVersion: 2,
@@ -167,18 +275,20 @@ Deno.test({
       assertEquals(result.type, "analyzeSuccess");
 
       const mtimesAfter = await Promise.all(
-        runtimePaths.map(async (path) => (await Deno.stat(path)).mtime!.getTime()),
+        runtimePaths.map(async (path) =>
+          (await Deno.stat(path)).mtime!.getTime()
+        ),
       );
 
-      // BUGGY BEHAVIOR: materializeProjectRuntime re-analyzes and rewrites
-      // every module in the project on every analyze call, so editing one
-      // module costs O(project size) per keystroke burst. AFTER FIX
-      // (skip unchanged modules by sourceHash): flip so only mod_a's runtime
-      // file has a new mtime.
-      for (let i = 0; i < runtimePaths.length; i++) {
-        assert(
-          mtimesAfter[i] > mtimesBefore[i],
-          `expected ${moduleNames[i]} to be rewritten by an unrelated module's analyze`,
+      assert(
+        mtimesAfter[0] > mtimesBefore[0],
+        "expected changed mod_a.ts to be rewritten",
+      );
+      for (let i = 1; i < runtimePaths.length; i++) {
+        assertEquals(
+          mtimesAfter[i],
+          mtimesBefore[i],
+          `expected unchanged ${moduleNames[i]} not to be rewritten`,
         );
       }
     } finally {

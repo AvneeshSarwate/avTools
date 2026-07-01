@@ -35,13 +35,12 @@ Deno.test("BUG P1: stored notes alias caller-owned nested objects (mpePitch muta
 
   const after = getPianoRoll("repro-alias");
   assert(after);
-  // BUGGY BEHAVIOR: the store's internal record shares the caller's nested
-  // mpePitch object (shallow spread in normalizeNote), so store state changed
-  // with NO rev bump and NO dirty flag — the UI never hears about it and undo
-  // history diverges. AFTER FIX (deep-clone on write): flip to expect 1 point
-  // and unchanged content.
-  assertEquals(after.data.notes[0].mpePitch?.points.length, 2);
-  assertEquals(after.rev, revAfterSet, "rev did not change despite store data changing");
+  assertEquals(after.data.notes[0].mpePitch?.points.length, 1);
+  assertEquals(
+    after.rev,
+    revAfterSet,
+    "rev did not change despite store data changing",
+  );
 });
 
 Deno.test("BUG P2: writes ignore revisions entirely — concurrent UI/livecode writers silently clobber", () => {
@@ -49,17 +48,22 @@ Deno.test("BUG P2: writes ignore revisions entirely — concurrent UI/livecode w
     notes: [{ pitch: 60, position: 0, duration: 1 }],
   }, { source: "client" });
 
-  // A livecode loop writes based on a STALE read (rev captured before the UI
-  // edit). The store has no revision argument and no conflict signal — the
-  // write just wins.
-  const second = setPianoRoll("repro-conflict", {
+  const uiEdit = setPianoRoll("repro-conflict", {
     notes: [{ pitch: 64, position: 0, duration: 1 }],
   }, { source: "livecode" });
 
-  // BUGGY-BY-OMISSION BEHAVIOR: last write wins unconditionally; there is no
-  // way for a caller to say "only apply this if the roll is still at rev N".
-  // AFTER FIX (optional expectedRev with conflict response): update to assert
-  // the conflict path.
-  assert(second.rev > first.rev);
-  assertEquals(second.data.notes[0].pitch, 64);
+  const staleWrite = setPianoRoll("repro-conflict", {
+    notes: [{ pitch: 67, position: 0, duration: 1 }],
+  }, { source: "livecode", expectedRev: first.rev });
+
+  assertEquals(staleWrite.conflict, true);
+  assertEquals(staleWrite.rev, uiEdit.rev);
+  assertEquals(staleWrite.data.notes[0].pitch, 64);
+
+  const freshWrite = setPianoRoll("repro-conflict", {
+    notes: [{ pitch: 69, position: 0, duration: 1 }],
+  }, { source: "livecode", expectedRev: uiEdit.rev });
+  assertEquals(freshWrite.conflict, undefined);
+  assert(freshWrite.rev > uiEdit.rev);
+  assertEquals(freshWrite.data.notes[0].pitch, 69);
 });

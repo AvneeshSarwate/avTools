@@ -9,6 +9,7 @@ import {
   normalize,
 } from "jsr:@std/path@1";
 import { pathToFileURL } from "node:url";
+import { panicMidi } from "../helpers/midi_helpers.ts";
 import { analyzeAndTransformTimedModule } from "./analyze_transform.ts";
 import { createGeneratedRunId } from "./generated_run_id.ts";
 import type {
@@ -38,9 +39,11 @@ import type {
   RemoveProjectModuleRequest,
   RuntimeModuleRunSnapshotEntry,
   RuntimeModuleStatus,
+  RuntimeStateResponse,
   SetPianoRollRequest,
   StopModuleRequest,
   UpdateProjectModuleRequest,
+  VisualizerManifestMessage,
   WriteProjectModuleRequest,
 } from "./protocol.ts";
 import {
@@ -63,7 +66,7 @@ import {
 
 interface BranchHandle {
   cancel: () => void;
-  finally: (f: () => void) => void;
+  finally: (f: () => void) => Promise<unknown>;
 }
 
 type ModuleStopFunc = () => void | Promise<void>;
@@ -77,6 +80,7 @@ interface ActiveModule {
   projectModulePath?: string;
   sourceHash?: string;
   projectSourceHash?: string;
+  manifest: VisualizerManifestMessage | null;
 }
 
 interface PreparedRun {
@@ -86,6 +90,7 @@ interface PreparedRun {
   projectModulePath?: string;
   sourceHash?: string;
   projectSourceHash?: string;
+  manifest: VisualizerManifestMessage;
 }
 
 interface ClientControlSocket {
@@ -110,6 +115,10 @@ interface ProjectState {
   manifestPath: string;
   manifest: LivecodeProjectManifest;
   hashes: Map<string, ProjectModuleHashes>;
+  materialized: Map<string, {
+    sourceHash: string;
+    result: AnalyzeResponse;
+  }>;
 }
 
 interface ProjectMaterializeResult {
@@ -139,6 +148,7 @@ const PROJECT_MANIFEST_FILENAME = "project.avtools-livecode.json";
 const SOURCE_SUFFIX = ".orig.ts";
 const REPO_ROOT = fromFileUrl(new URL("../../../..", import.meta.url));
 const STOP_HOOK_TIMEOUT_MS = 2_000;
+const MAX_PREPARED_RUNS_PER_MODULE = 3;
 const DEFAULT_SESSION_ROOT = fromFileUrl(
   new URL("../../.avtools-livecode-sessions", import.meta.url),
 );
@@ -168,15 +178,16 @@ export async function createLivecodeVisualizerServer(
   const modulesDir = join(sessionDir, "modules");
   const generatedDir = join(sessionDir, "generated");
   const shadowDir = join(sessionDir, "shadow");
-  const lspWorkspacesDir = join(
+  const lspWorkspacesRoot = join(
     Deno.env.get("TMPDIR") ?? "/tmp",
     "avtools-livecode-lsp-workspaces",
-    sessionId,
   );
+  const lspWorkspacesDir = join(lspWorkspacesRoot, sessionId);
   const logsDir = join(sessionRoot, "logs");
   const lspLogsDir = join(logsDir, "lsp");
   const logPath = join(logsDir, "server.log");
 
+  await sweepOldLspWorkspaces(lspWorkspacesRoot);
   await Deno.mkdir(modulesDir, { recursive: true });
   await Deno.mkdir(generatedDir, { recursive: true });
   await Deno.mkdir(lspWorkspacesDir, { recursive: true });
@@ -190,8 +201,13 @@ export async function createLivecodeVisualizerServer(
   const activeModules = new Map<string, ActiveModule>();
   const moduleRunSnapshots = new Map<string, RuntimeModuleRunSnapshotEntry>();
   const preparedRuns = new Map<string, PreparedRun>();
+  const preparedRunIdsByModule = new Map<string, string[]>();
   const launchQueue: Array<(ctx: TimeContext) => Promise<void> | void> = [];
   let currentProject: ProjectState | null = null;
+  let diagnosticsInFlight: Promise<ProjectShadowCheckResponse> | null = null;
+  let lastDiagnostics:
+    | { projectSourceHash: string; response: ProjectShadowCheckResponse }
+    | null = null;
   let parentContext: TimeContext | null = null;
   let lastSnapshotJson = "";
   let snapshotTimer: number | undefined;
@@ -320,6 +336,20 @@ export async function createLivecodeVisualizerServer(
   }, 100) as unknown as number;
 
   const handler = async (request: Request): Promise<Response> => {
+    try {
+      return await routeRequest(request);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      void log({
+        type: "handlerError",
+        path: new URL(request.url).pathname,
+        message,
+      });
+      return json({ ok: false, error: message }, { status: 500 });
+    }
+  };
+
+  const routeRequest = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
 
     if (request.method === "OPTIONS") {
@@ -384,8 +414,17 @@ export async function createLivecodeVisualizerServer(
       return json({ ok: true, activeModules: listRuntimeStatus() });
     }
 
+    if (request.method === "GET" && url.pathname === "/runtime/state") {
+      return json(makeRuntimeStateResponse());
+    }
+
     if (request.method === "POST" && url.pathname === "/runtime/stop-all") {
       await stopAllModules("stopAllRequest");
+      return json({ ok: true });
+    }
+
+    if (request.method === "POST" && url.pathname === "/runtime/panic") {
+      await panicRuntime("panic");
       return json({ ok: true });
     }
 
@@ -495,6 +534,7 @@ export async function createLivecodeVisualizerServer(
         source: requestBody.source ?? "client",
         originId: requestBody.originId,
         undoable: requestBody.undoable,
+        expectedRev: requestBody.expectedRev,
       }));
     }
 
@@ -615,9 +655,8 @@ export async function createLivecodeVisualizerServer(
         });
       }
       pendingClientCommands.clear();
-      for (const moduleId of [...activeModules.keys()]) {
-        await stopModule(moduleId, "serverClose");
-      }
+      await stopAllModules("serverClose");
+      panicMidi();
       parentHandle.cancel();
       await lspWsServer.shutdown();
       await server.shutdown();
@@ -794,6 +833,7 @@ export async function createLivecodeVisualizerServer(
         modules: [],
       },
       hashes: new Map(),
+      materialized: new Map(),
     };
 
     await Deno.mkdir(root, { recursive: true });
@@ -833,6 +873,7 @@ export async function createLivecodeVisualizerServer(
       manifestPath,
       manifest,
       hashes: new Map(),
+      materialized: new Map(),
     };
     currentProject = state;
     for (const moduleRecord of state.manifest.modules) {
@@ -911,6 +952,7 @@ export async function createLivecodeVisualizerServer(
       editorHash: diskHash,
       lastLoadedHash: diskHash,
     });
+    state.materialized.delete(moduleRecord.id);
     await materializeProjectRuntime(state);
     return await makeProjectStatusResponse();
   }
@@ -927,6 +969,7 @@ export async function createLivecodeVisualizerServer(
       moduleEntry.id !== moduleRecord.id
     );
     state.hashes.delete(moduleRecord.id);
+    state.materialized.delete(moduleRecord.id);
     await writeProjectManifest(state);
     return await makeProjectStatusResponse();
   }
@@ -974,40 +1017,58 @@ export async function createLivecodeVisualizerServer(
     const runtimeUrl = new URL("./runtime.ts", import.meta.url).href;
     const results = new Map<string, AnalyzeResponse>();
     const sourceHashes = new Map<string, string>();
+    const sourceTexts = new Map<string, string>();
 
     for (const moduleRecord of state.manifest.modules) {
       const sourceText = await readProjectModuleSource(state, moduleRecord);
       const sourceHash = await hashText(sourceText);
+      sourceTexts.set(moduleRecord.id, sourceText);
       sourceHashes.set(moduleRecord.id, sourceHash);
     }
 
-    const projectSourceHash = await hashText(
-      [...sourceHashes.entries()]
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([id, hash]) => `${id}:${hash}`)
-        .join("\n"),
-    );
+    const projectSourceHash = await projectSourceHashFromHashes(sourceHashes);
 
     for (const moduleRecord of state.manifest.modules) {
-      const sourceText = await readProjectModuleSource(state, moduleRecord);
+      const sourceText = sourceTexts.get(moduleRecord.id) ?? "";
       const sourceHash = sourceHashes.get(moduleRecord.id) ??
         await hashText(sourceText);
-      const result = analyzeAndTransformTimedModule({
-        moduleId: moduleRecord.id,
-        sourceVersion: moduleRecord.sourceVersion,
-        sourceUri: projectAbsolutePath(state, moduleRecord.sourcePath),
-        sourceText,
-        generatedRunId,
-        runtimeImport: runtimeUrl,
-        requireDefaultTimedRoot: true,
-      });
+      const cached = state.materialized.get(moduleRecord.id);
+      const usingCachedSuccess = cached?.sourceHash === sourceHash &&
+        cached.result.type === "analyzeSuccess";
+      const result = usingCachedSuccess
+        ? cached.result
+        : analyzeAndTransformTimedModule({
+          moduleId: moduleRecord.id,
+          sourceVersion: moduleRecord.sourceVersion,
+          sourceUri: projectAbsolutePath(state, moduleRecord.sourcePath),
+          sourceText,
+          generatedRunId,
+          runtimeImport: runtimeUrl,
+          requireDefaultTimedRoot: true,
+        });
       results.set(moduleRecord.id, result);
 
-      if (result.type === "analyzeFailure") continue;
+      if (usingCachedSuccess) {
+        state.hashes.set(moduleRecord.id, {
+          editorHash: sourceHash,
+          lastLoadedHash: sourceHash,
+        });
+        continue;
+      }
+
+      if (result.type === "analyzeFailure") {
+        state.materialized.delete(moduleRecord.id);
+        continue;
+      }
 
       const runtimePath = projectAbsolutePath(state, moduleRecord.runtimePath);
+      const transformedCode = result.transformedCode;
+      if (transformedCode === undefined) {
+        throw new Error(`Missing transformed code for ${moduleRecord.id}`);
+      }
       await Deno.mkdir(dirname(runtimePath), { recursive: true });
-      await Deno.writeTextFile(runtimePath, result.transformedCode);
+      await Deno.writeTextFile(runtimePath, transformedCode);
+      state.materialized.set(moduleRecord.id, { sourceHash, result });
       state.hashes.set(moduleRecord.id, {
         editorHash: sourceHash,
         lastLoadedHash: sourceHash,
@@ -1050,12 +1111,7 @@ export async function createLivecodeVisualizerServer(
         moduleRecord.sourceHash,
       ]),
     );
-    const projectSourceHash = await hashText(
-      [...diskHashes.entries()]
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([id, hash]) => `${id}:${hash}`)
-        .join("\n"),
-    );
+    const projectSourceHash = await projectSourceHashFromHashes(diskHashes);
     const graph = buildProjectImportGraph({
       projectRoot: currentProject.root,
       modules: sourceModules,
@@ -1143,7 +1199,19 @@ export async function createLivecodeVisualizerServer(
     }
 
     const sourceModules = await readProjectSourceModules(currentProject);
-    return await analyzeProjectShadow({
+    const sourceHashes = new Map(
+      sourceModules.map((moduleRecord) => [
+        moduleRecord.id,
+        moduleRecord.sourceHash,
+      ]),
+    );
+    const projectSourceHash = await projectSourceHashFromHashes(sourceHashes);
+    if (lastDiagnostics?.projectSourceHash === projectSourceHash) {
+      return lastDiagnostics.response;
+    }
+    if (diagnosticsInFlight) return await diagnosticsInFlight;
+
+    const promise = analyzeProjectShadow({
       projectRoot: currentProject.root,
       project: current.project,
       modules: sourceModules,
@@ -1151,7 +1219,16 @@ export async function createLivecodeVisualizerServer(
       repoRoot: REPO_ROOT,
       denoConfigPath: join(REPO_ROOT, "deno.json"),
       runtimeImport: new URL("./runtime.ts", import.meta.url).href,
+    }).then((response) => {
+      lastDiagnostics = { projectSourceHash, response };
+      return response;
     });
+    diagnosticsInFlight = promise;
+    try {
+      return await promise;
+    } finally {
+      if (diagnosticsInFlight === promise) diagnosticsInFlight = null;
+    }
   }
 
   async function makeProjectModuleSourceResponse(
@@ -1178,6 +1255,38 @@ export async function createLivecodeVisualizerServer(
       sourceHash: active.sourceHash,
       projectSourceHash: active.projectSourceHash,
     }));
+  }
+
+  function makeRuntimeStateResponse(): RuntimeStateResponse {
+    const latestPreparedByModule:
+      RuntimeStateResponse["latestPreparedByModule"] = {};
+    for (const [moduleId, ids] of preparedRunIdsByModule) {
+      for (let index = ids.length - 1; index >= 0; index--) {
+        const prepared = preparedRuns.get(ids[index]);
+        if (!prepared) continue;
+        latestPreparedByModule[moduleId] = {
+          generatedRunId: prepared.generatedRunId,
+          sourceHash: prepared.sourceHash,
+          manifest: prepared.manifest,
+        };
+        break;
+      }
+    }
+
+    return {
+      ok: true,
+      activeModules: [...activeModules.values()].map((active) => ({
+        moduleId: active.moduleId,
+        generatedRunId: active.generatedRunId,
+        transformedModuleUri: active.transformedModuleUri,
+        projectModulePath: active.projectModulePath,
+        sourceHash: active.sourceHash,
+        projectSourceHash: active.projectSourceHash,
+        manifest: active.manifest,
+      })),
+      moduleRuns: Object.fromEntries(moduleRunSnapshots.entries()),
+      latestPreparedByModule,
+    };
   }
 
   function makeRuntimeSnapshot(): ActiveWaitSnapshot {
@@ -1285,6 +1394,7 @@ export async function createLivecodeVisualizerServer(
       editorHash: sourceHash,
       lastLoadedHash: sourceHash,
     });
+    state.materialized.delete(moduleRecord.id);
   }
 
   async function writeProjectManifest(state: ProjectState): Promise<void> {
@@ -1390,13 +1500,14 @@ export async function createLivecodeVisualizerServer(
         projectAbsolutePath(currentProject, projectModule.runtimePath),
       ).href;
       const sourceHash = materialized.sourceHashes.get(projectModule.id);
-      preparedRuns.set(materialized.generatedRunId, {
+      await rememberPreparedRun({
         moduleId: projectModule.id,
         generatedRunId: materialized.generatedRunId,
         transformedModuleUri,
         projectModulePath: projectModule.path,
         sourceHash,
         projectSourceHash: materialized.projectSourceHash,
+        manifest: result.manifest,
       });
       await log({
         type: "analyzeSuccess",
@@ -1475,11 +1586,12 @@ export async function createLivecodeVisualizerServer(
     await Deno.writeTextFile(generatedPath, result.transformedCode);
     const transformedModuleUri = pathToFileURL(generatedPath).href;
     const sourceHash = await hashText(requestBody.sourceText);
-    preparedRuns.set(generatedRunId, {
+    await rememberPreparedRun({
       moduleId: requestBody.moduleId,
       generatedRunId,
       transformedModuleUri,
       sourceHash,
+      manifest: result.manifest,
     });
     await log({
       type: "analyzeSuccess",
@@ -1498,6 +1610,48 @@ export async function createLivecodeVisualizerServer(
       transformedCode: undefined,
       sourceHash,
     };
+  }
+
+  async function rememberPreparedRun(run: PreparedRun): Promise<void> {
+    preparedRuns.set(run.generatedRunId, run);
+    const ids = (preparedRunIdsByModule.get(run.moduleId) ?? [])
+      .filter((id) => preparedRuns.has(id) && id !== run.generatedRunId);
+    ids.push(run.generatedRunId);
+
+    while (ids.length > MAX_PREPARED_RUNS_PER_MODULE) {
+      const prunableIndex = ids.findIndex((id) => !isGeneratedRunActive(id));
+      if (prunableIndex < 0) break;
+      const [oldestId] = ids.splice(prunableIndex, 1);
+      const oldRun = preparedRuns.get(oldestId);
+      preparedRuns.delete(oldestId);
+      if (oldRun && !oldRun.projectModulePath) {
+        await removeGeneratedPreparedFile(oldRun);
+      }
+    }
+
+    preparedRunIdsByModule.set(run.moduleId, ids);
+  }
+
+  function isGeneratedRunActive(generatedRunId: string): boolean {
+    return [...activeModules.values()].some((active) =>
+      active.generatedRunId === generatedRunId
+    );
+  }
+
+  async function removeGeneratedPreparedFile(run: PreparedRun): Promise<void> {
+    try {
+      const url = new URL(run.transformedModuleUri);
+      if (url.protocol !== "file:") return;
+      await Deno.remove(fromFileUrl(url));
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) {
+        await log({
+          type: "preparedRunPruneFileError",
+          generatedRunId: run.generatedRunId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   }
 
   async function launchModule(requestBody: LaunchModuleRequest) {
@@ -1604,6 +1758,7 @@ export async function createLivecodeVisualizerServer(
           projectModulePath: runSnapshotBase.projectModulePath,
           sourceHash: runSnapshotBase.sourceHash,
           projectSourceHash: runSnapshotBase.projectSourceHash,
+          manifest: prepared?.manifest ?? requestBody.manifest ?? null,
           handle,
           stopFunc: typeof mod.stop === "function" ? mod.stop : undefined,
         });
@@ -1687,9 +1842,33 @@ export async function createLivecodeVisualizerServer(
   }
 
   async function stopAllModules(reason: string) {
-    for (const moduleId of [...activeModules.keys()]) {
-      await stopModule(moduleId, reason);
+    await Promise.all(
+      [...activeModules.keys()].map((moduleId) => stopModule(moduleId, reason)),
+    );
+  }
+
+  async function panicRuntime(reason: string) {
+    for (const active of [...activeModules.values()]) {
+      active.handle.cancel();
+      activeModules.delete(active.moduleId);
+      clearModuleWaits(active.moduleId);
+      setModuleRunSnapshot({
+        moduleId: active.moduleId,
+        generatedRunId: active.generatedRunId,
+        state: "stopped",
+        projectModulePath: active.projectModulePath,
+        sourceHash: active.sourceHash,
+        projectSourceHash: active.projectSourceHash,
+        message: reason,
+      });
+      await log({
+        type: "modulePanicStopped",
+        moduleId: active.moduleId,
+        generatedRunId: active.generatedRunId,
+        reason,
+      });
     }
+    panicMidi();
   }
 }
 
@@ -1719,6 +1898,39 @@ function makeRuntimeCapabilityStatus() {
     windowedP5gpu,
     warnings,
   };
+}
+
+async function sweepOldLspWorkspaces(root: string): Promise<void> {
+  const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
+  try {
+    for await (const entry of Deno.readDir(root)) {
+      if (!entry.isDirectory) continue;
+      const path = join(root, entry.name);
+      try {
+        const stat = await Deno.stat(path);
+        const modifiedMs = stat.mtime?.getTime() ?? 0;
+        if (modifiedMs > 0 && modifiedMs < cutoffMs) {
+          await Deno.remove(path, { recursive: true });
+        }
+      } catch (error) {
+        if (!(error instanceof Deno.errors.NotFound)) {
+          console.warn(
+            "[livecode-visualizer] failed to sweep LSP workspace",
+            path,
+            error,
+          );
+        }
+      }
+    }
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) {
+      console.warn(
+        "[livecode-visualizer] failed to sweep LSP workspace root",
+        root,
+        error,
+      );
+    }
+  }
 }
 
 function resolvePath(path: string): string {
@@ -1790,6 +2002,17 @@ async function hashText(text: string): Promise<string> {
   return [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
+}
+
+async function projectSourceHashFromHashes(
+  sourceHashes: Map<string, string>,
+): Promise<string> {
+  return await hashText(
+    [...sourceHashes.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([id, hash]) => `${id}:${hash}`)
+      .join("\n"),
+  );
 }
 
 function elapsedMs(startedAt: number): number {

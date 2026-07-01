@@ -86,6 +86,7 @@ export interface LaunchModuleRequest {
   sourceHash?: string;
   projectSourceHash?: string;
   projectModulePath?: string;
+  manifest?: VisualizerManifestMessage | null;
   replaceRunning?: boolean;
 }
 
@@ -226,6 +227,21 @@ export interface RuntimeModuleStatus {
   projectModulePath?: string;
   sourceHash?: string;
   projectSourceHash?: string;
+}
+
+export interface RuntimeStateResponse {
+  ok: true;
+  activeModules: Array<
+    RuntimeModuleStatus & {
+      manifest: VisualizerManifestMessage | null;
+    }
+  >;
+  moduleRuns: Record<string, RuntimeModuleRunSnapshotEntry>;
+  latestPreparedByModule: Record<string, {
+    generatedRunId: string;
+    sourceHash?: string;
+    manifest: VisualizerManifestMessage;
+  }>;
 }
 
 export interface ProjectModuleStatus extends ProjectModuleRecord {
@@ -409,6 +425,7 @@ export interface PianoRollObject {
   updatedBy: string;
   canUndo: boolean;
   canRedo: boolean;
+  conflict?: boolean;
 }
 
 export interface PianoRollSnapshot {
@@ -425,6 +442,7 @@ export interface SetPianoRollRequest {
   label?: string;
   source?: PianoRollUpdateSource;
   undoable?: boolean;
+  expectedRev?: number;
 }
 
 export interface PianoRollHistoryRequest {

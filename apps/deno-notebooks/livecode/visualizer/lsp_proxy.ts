@@ -20,6 +20,7 @@ const workspaceRoot = resolvePath(
 );
 const workspaceDir = join(workspaceRoot, crypto.randomUUID());
 const documentVersions = new Map<string, number>();
+let cleaningUp = false;
 
 await Deno.mkdir(workspaceDir, { recursive: true });
 await ensureRepoRootMirror(workspaceDir, repoRoot);
@@ -104,7 +105,21 @@ const proxy = new LSProxy({
   },
 });
 
-await proxy.listen();
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  Deno.addSignalListener(sig, async () => {
+    await cleanup();
+    Deno.exit(0);
+  });
+}
+
+try {
+  await proxy.listen();
+  await new Promise(() => {
+    // Keep this proxy process alive until the parent LSP server terminates it.
+  });
+} finally {
+  await cleanup();
+}
 
 async function writeTextDocument(uri: string, text: string) {
   // Repo-backed docs are sent to Deno LSP as in-memory open documents. Do not
@@ -238,4 +253,32 @@ function resolvePath(path: string): string {
   if (path.startsWith("file:")) return fromFileUrl(path);
   if (isAbsolute(path)) return path;
   return join(Deno.cwd(), path);
+}
+
+async function cleanup(): Promise<void> {
+  if (cleaningUp) return;
+  cleaningUp = true;
+  await shutdownProxyBestEffort(proxy);
+  try {
+    await Deno.remove(workspaceDir, { recursive: true });
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) {
+      console.warn("[livecode-lsp-proxy] failed to remove workspace", error);
+    }
+  }
+}
+
+async function shutdownProxyBestEffort(target: unknown): Promise<void> {
+  if (!target || typeof target !== "object") return;
+  const methods = ["shutdown", "dispose", "close", "kill"] as const;
+  for (const method of methods) {
+    const candidate = (target as Record<string, unknown>)[method];
+    if (typeof candidate !== "function") continue;
+    try {
+      await candidate.call(target);
+    } catch (error) {
+      console.warn(`[livecode-lsp-proxy] proxy ${method} failed`, error);
+    }
+    return;
+  }
 }

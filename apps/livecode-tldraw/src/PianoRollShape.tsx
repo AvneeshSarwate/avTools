@@ -85,6 +85,7 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
   const roll = runtime.rolls[shape.props.rollName]
   const elementRef = useRef<PianoRollElement | null>(null)
   const lastAppliedRevRef = useRef<number | null>(null)
+  const lastOwnRevRef = useRef<number | null>(null)
   const originId = useMemo(() => `piano-roll-view-${shape.id}`, [shape.id])
 
   useEffect(() => {
@@ -103,6 +104,10 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
     const el = elementRef.current
     if (!el || !roll) return
     if (lastAppliedRevRef.current === roll.rev) return
+    if (roll.updatedBy === originId && roll.rev === lastOwnRevRef.current) {
+      lastAppliedRevRef.current = roll.rev
+      return
+    }
     lastAppliedRevRef.current = roll.rev
     el.setNotes?.(roll.data.notes)
     if (roll.rev === 1) {
@@ -121,10 +126,16 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
       const data: PianoRollData = {
         notes: notesEntries.map(([, note]) => note),
       }
-      void runtime.setRoll(shape.props.rollName, data, {
-        originId,
-        label: `Edit ${shape.props.rollName}`,
-      })
+      void runtime
+        .setRoll(shape.props.rollName, data, {
+          originId,
+          label: `Edit ${shape.props.rollName}`,
+        })
+        .then((updated) => {
+          if (!updated.conflict && updated.updatedBy === originId) {
+            lastOwnRevRef.current = updated.rev
+          }
+        })
     }
 
     el.addEventListener('notes-update', handleNotesUpdate)
@@ -172,6 +183,7 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
         onPointerUp={stopCanvasEvent}
         onPointerCancel={stopCanvasEvent}
         onTouchStart={stopCanvasEvent}
+        onKeyDownCapture={stopCanvasEvent}
         onWheel={stopCanvasEvent}
       >
         {roll ? (

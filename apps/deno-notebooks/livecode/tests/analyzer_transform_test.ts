@@ -170,6 +170,20 @@ export default async function(ctx: TimeContext) {
   assertEquals(result.diagnostics[0].code, "TCV_UNSUPPORTED_AWAIT");
 });
 
+Deno.test("analyzer reports syntax errors with source ranges", () => {
+  const source =
+    `export default async function f(ctx: TimeContext) { await ctx.waitSec(0.1);`;
+  const result = analyze(source);
+
+  assertEquals(result.type, "analyzeFailure");
+  if (result.type !== "analyzeFailure") return;
+  assertEquals(result.diagnostics[0].code, "TCV_SYNTAX_ERROR");
+  assert(
+    result.diagnostics[0].from >= source.length - 2,
+    `expected syntax diagnostic near end, got ${result.diagnostics[0].from}`,
+  );
+});
+
 Deno.test("analyzer rejects split promise timed helper", () => {
   const result = analyze(`
 import type { TimeContext } from "@avtools/core-timing";

@@ -11,6 +11,7 @@ import {
 import type { LSClient } from "@valtown/codemirror-ls";
 import {
   createDenoLspConnection,
+  livecodeDocumentUri,
   type DenoLspConnection,
   type LspDiagnosticSummary,
   type LspStatus,
@@ -25,6 +26,7 @@ import type {
   PreparedFailure,
   ProjectShadowCheckResponse,
   RuntimeModuleRunSnapshotEntry,
+  RuntimeStateResponse,
   VisualizerDiagnostic,
   VisualizerManifestMessage,
 } from "./livecodeProtocol";
@@ -40,7 +42,13 @@ export type BuildStatus =
   | "ready"
   | "error"
   | "not-connected";
-export type RunStatus = "idle" | "running" | "stopping" | "stopped" | "error";
+export type RunStatus =
+  | "idle"
+  | "running"
+  | "stopping"
+  | "stopped"
+  | "error"
+  | "unknown";
 
 export interface ModuleViewState {
   moduleId: string;
@@ -136,6 +144,12 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
   const [modules, setModules] = useState<Record<string, ModuleViewState>>({});
   const modulesRef = useRef(new Map<string, ModuleRecord>());
   const snapshotsSocketRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectBackoffMsRef = useRef(1_000);
+  const shouldReconnectRef = useRef(false);
+  const connectRef = useRef<() => Promise<void>>(async () => {});
+  const disconnectRef = useRef<() => void>(() => {});
+  const pendingStopsRef = useRef<string[]>([]);
   const lspConnectionRef = useRef<DenoLspConnection | null>(null);
 
   const publishModule = useCallback((record: ModuleRecord) => {
@@ -156,10 +170,44 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     setConnectionStatus(next);
   }, []);
 
+  const markModulesUnknown = useCallback(() => {
+    for (const record of modulesRef.current.values()) {
+      record.runStatus = "unknown";
+      record.activeIds = [];
+      record.pianoRollLookups = {};
+      record.lastSnapshotSeq = null;
+    }
+    publishAllModules();
+  }, [publishAllModules]);
+
+  const clearReconnectTimer = useCallback(() => {
+    if (reconnectTimerRef.current === null) return;
+    window.clearTimeout(reconnectTimerRef.current);
+    reconnectTimerRef.current = null;
+  }, []);
+
+  const scheduleReconnect = useCallback(() => {
+    if (!shouldReconnectRef.current || reconnectTimerRef.current !== null) {
+      return;
+    }
+    const delayMs = reconnectBackoffMsRef.current;
+    reconnectBackoffMsRef.current = Math.min(delayMs * 2, 10_000);
+    reconnectTimerRef.current = window.setTimeout(() => {
+      reconnectTimerRef.current = null;
+      void connectRef.current();
+    }, delayMs);
+  }, []);
+
   const setServerBaseUrl = useCallback((next: string) => {
     const normalized = normalizeServerBaseUrl(next);
+    if (serverBaseUrlRef.current === normalized) return;
+    const reconnectAfterChange = connectionStatusRef.current !== "closed";
+    disconnectRef.current();
     serverBaseUrlRef.current = normalized;
     setServerBaseUrlState(normalized);
+    if (reconnectAfterChange) {
+      window.setTimeout(() => void connectRef.current(), 0);
+    }
   }, []);
 
   const reconnectDenoLsp = useCallback(() => {
@@ -223,9 +271,8 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       );
       if (!response.ok) {
         throw new Error(
-          `/project/diagnostics failed with ${response.status}: ${
-            await response.text()
-          }`,
+          `/project/diagnostics failed with ${response.status}: ${await response
+            .text()}`,
         );
       }
       const diagnostics = (await response.json()) as ProjectShadowCheckResponse;
@@ -239,6 +286,58 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       return null;
     }
   }, []);
+
+  const rehydrateRuntimeState = useCallback(async () => {
+    const response = await fetch(`${serverBaseUrlRef.current}/runtime/state`);
+    if (!response.ok) {
+      throw new Error(
+        `/runtime/state failed with ${response.status}: ${await response
+          .text()}`,
+      );
+    }
+    const state = (await response.json()) as RuntimeStateResponse;
+    const activeByModule = new Map(
+      state.activeModules.map((moduleEntry) => [
+        moduleEntry.moduleId,
+        moduleEntry,
+      ]),
+    );
+
+    for (const record of modulesRef.current.values()) {
+      const active = activeByModule.get(record.moduleId);
+      const run = state.moduleRuns[record.moduleId];
+      const latestPrepared = state.latestPreparedByModule[record.moduleId];
+      if (active) {
+        record.runStatus = "running";
+        record.activeGeneratedRunId = active.generatedRunId;
+        record.manifest = active.manifest ?? record.manifest;
+        record.latestError = null;
+      } else {
+        record.activeGeneratedRunId = null;
+        record.activeIds = [];
+        record.runStatus = run
+          ? moduleRunStateToRunStatus(run.state)
+          : "idle";
+        if (run?.state === "error") {
+          record.latestError = run.message ?? record.latestError;
+        }
+        if (latestPrepared?.manifest) {
+          record.manifest = latestPrepared.manifest;
+        }
+      }
+    }
+    publishAllModules();
+  }, [publishAllModules]);
+
+  const flushPendingStops = useCallback(async () => {
+    const pending = [...new Set(pendingStopsRef.current)];
+    pendingStopsRef.current = [];
+    await Promise.all(
+      pending.map((moduleId) =>
+        postJson("/runtime/stop", { moduleId }).catch(() => undefined)
+      ),
+    );
+  }, [postJson]);
 
   const analyzeNow = useCallback(
     async (
@@ -311,7 +410,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
                 transformedModuleUri: response.transformedModuleUri,
               },
               ...record.history,
-            ];
+            ].slice(0, 50);
             publishModule(record);
             return prepared;
           }
@@ -408,9 +507,13 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
   );
 
   const connect = useCallback(async () => {
+    shouldReconnectRef.current = true;
+    clearReconnectTimer();
     setConnectionError(null);
     setConnectionStatusRef("connecting");
-    snapshotsSocketRef.current?.close();
+    const oldSocket = snapshotsSocketRef.current;
+    snapshotsSocketRef.current = null;
+    oldSocket?.close();
 
     try {
       const response = await fetch(`${serverBaseUrlRef.current}/health`);
@@ -430,13 +533,27 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       snapshotsSocketRef.current = socket;
 
       socket.onopen = () => {
+        if (snapshotsSocketRef.current !== socket) return;
         setConnectionStatusRef("open");
-        for (const record of modulesRef.current.values()) {
-          scheduleAnalyze(record, 0);
-        }
+        reconnectBackoffMsRef.current = 1_000;
+        void (async () => {
+          try {
+            await rehydrateRuntimeState();
+            await flushPendingStops();
+            for (const record of modulesRef.current.values()) {
+              scheduleAnalyze(record, 0);
+            }
+          } catch (error) {
+            if (snapshotsSocketRef.current !== socket) return;
+            setConnectionError(
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+        })();
       };
 
       socket.onmessage = (event) => {
+        if (snapshotsSocketRef.current !== socket) return;
         const snapshot = JSON.parse(event.data as string) as ActiveWaitSnapshot;
         const pianoRollLookups = snapshot.pianoRollLookups ?? {};
         const moduleRuns = snapshot.moduleRuns ?? {};
@@ -450,6 +567,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       };
 
       socket.onerror = () => {
+        if (snapshotsSocketRef.current !== socket) return;
         setConnectionError("runtime snapshot websocket failed");
         setConnectionStatusRef("error");
       };
@@ -457,9 +575,11 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       socket.onclose = () => {
         if (snapshotsSocketRef.current === socket) {
           snapshotsSocketRef.current = null;
-        }
-        if (connectionStatusRef.current !== "closed") {
-          setConnectionStatusRef("closed");
+          markModulesUnknown();
+          if (connectionStatusRef.current !== "closed") {
+            setConnectionStatusRef("closed");
+          }
+          scheduleReconnect();
         }
       };
     } catch (error) {
@@ -467,15 +587,28 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
         error instanceof Error ? error.message : String(error),
       );
       setConnectionStatusRef("error");
+      markModulesUnknown();
+      scheduleReconnect();
     }
   }, [
+    clearReconnectTimer,
+    flushPendingStops,
+    markModulesUnknown,
     publishAllModules,
+    rehydrateRuntimeState,
     reconnectDenoLsp,
     scheduleAnalyze,
+    scheduleReconnect,
     setConnectionStatusRef,
   ]);
 
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
+
   const disconnect = useCallback(() => {
+    shouldReconnectRef.current = false;
+    clearReconnectTimer();
     setConnectionError(null);
     setProjectDiagnostics(null);
     setProjectDiagnosticsError(null);
@@ -489,14 +622,8 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     setLspStatus("closed");
     retireLspConnection(lspConnection);
     setConnectionStatusRef("closed");
-    for (const record of modulesRef.current.values()) {
-      record.activeIds = [];
-      record.pianoRollLookups = {};
-      record.activeGeneratedRunId = null;
-      record.lastSnapshotSeq = null;
-    }
-    publishAllModules();
-  }, [publishAllModules, setConnectionStatusRef]);
+    markModulesUnknown();
+  }, [clearReconnectTimer, markModulesUnknown, setConnectionStatusRef]);
 
   useEffect(() => {
     if (connectionStatus !== "open") return;
@@ -510,10 +637,12 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     return () => {
+      shouldReconnectRef.current = false;
+      clearReconnectTimer();
       snapshotsSocketRef.current?.close();
       retireLspConnection(lspConnectionRef.current);
     };
-  }, []);
+  }, [clearReconnectTimer]);
 
   const registerModule = useCallback(
     (moduleId: string, sourceText: string, projectModulePath?: string) => {
@@ -542,8 +671,16 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
         delete next[moduleId];
         return next;
       });
+      const documentUri = livecodeDocumentUri(moduleId);
+      setLspDiagnosticsByUri((current) => {
+        const next = { ...current };
+        delete next[documentUri];
+        return next;
+      });
       if (connectionStatusRef.current === "open") {
         void postJson("/runtime/stop", { moduleId }).catch(() => undefined);
+      } else {
+        pendingStopsRef.current.push(moduleId);
       }
     },
     [postJson],
@@ -612,6 +749,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
           sourceHash: build.sourceHash,
           projectSourceHash: build.projectSourceHash,
           projectModulePath: build.projectModulePath,
+          manifest: build.manifest,
         });
         record.runStatus = "running";
         record.latestError = null;
@@ -637,13 +775,10 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
 
       try {
         await postJson("/runtime/stop", { moduleId });
-        record.runStatus = "stopped";
-        record.activeGeneratedRunId = null;
-        record.activeIds = [];
+        record.runStatus = "stopping";
         record.latestError = null;
       } catch (error) {
         record.runStatus = "error";
-        record.activeGeneratedRunId = null;
         record.latestError = error instanceof Error
           ? error.message
           : String(error);
@@ -652,6 +787,10 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     },
     [postJson, publishModule],
   );
+
+  useEffect(() => {
+    disconnectRef.current = disconnect;
+  }, [disconnect]);
 
   const value = useMemo<LivecodeRuntimeApi>(
     () => ({
@@ -741,15 +880,14 @@ function applyModuleRunSnapshot(
   const matchesActiveRun = record.activeGeneratedRunId === run.generatedRunId;
   const isServerActive = run.state === "launching" || run.state === "running";
 
-  if (isServerActive && (!record.activeGeneratedRunId || matchesActiveRun)) {
+  if (isServerActive && (matchesActiveRun || record.runStatus === "unknown")) {
     record.activeGeneratedRunId = run.generatedRunId;
     if (record.runStatus !== "stopping") record.runStatus = "running";
     return;
   }
 
   const mayApplyTerminalState = matchesActiveRun ||
-    (!record.activeGeneratedRunId &&
-      (record.runStatus === "running" || record.runStatus === "stopping"));
+    (record.runStatus === "unknown" && !record.activeGeneratedRunId);
   if (!mayApplyTerminalState) return;
 
   record.activeGeneratedRunId = null;
@@ -760,6 +898,13 @@ function applyModuleRunSnapshot(
   } else if (run.state === "stopped") {
     record.runStatus = "stopped";
   }
+}
+
+function moduleRunStateToRunStatus(
+  state: RuntimeModuleRunSnapshotEntry["state"],
+): RunStatus {
+  if (state === "launching" || state === "running") return "unknown";
+  return state;
 }
 
 function toViewState(record: ModuleRecord): ModuleViewState {

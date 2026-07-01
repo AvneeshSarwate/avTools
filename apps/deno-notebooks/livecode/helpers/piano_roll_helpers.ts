@@ -56,7 +56,8 @@ export function setPianoRollClip(
     label: options.label ?? `Set ${name}`,
     source: options.source ?? "livecode",
     originId: options.originId ?? "livecode",
-    undoable: options.undoable,
+    undoable: options.undoable ?? false,
+    expectedRev: options.expectedRev,
   });
 }
 

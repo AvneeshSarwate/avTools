@@ -129,6 +129,17 @@ export function analyzeAndTransformTimedModule(
     request.sourceText,
     { overwrite: true },
   );
+  const syntacticDiagnostics = project.getProgram().compilerObject
+    .getSyntacticDiagnostics(sourceFile.compilerNode);
+  if (syntacticDiagnostics.length > 0) {
+    return failure(
+      request,
+      syntacticDiagnostics.map((diagnostic) =>
+        fromSyntacticDiagnostic(request.sourceText, diagnostic)
+      ),
+    );
+  }
+
   const diagnostics: VisualizerDiagnostic[] = [];
   const root = findDefaultTimedRoot(sourceFile);
 
@@ -196,10 +207,30 @@ export function analyzeAndTransformTimedModule(
     });
   }
 
+  const rootAliasName = root?.fn.getName();
+  const shouldAliasRootName = rootAliasName !== undefined &&
+    rootAliasName !== "runFunc";
+  if (
+    root && shouldAliasRootName &&
+    hasConflictingTopLevelBinding(sourceFile, rootAliasName, root.fn)
+  ) {
+    addDiagnostic(
+      "TCV_DEFAULT_EXPORT_RENAME_COLLISION",
+      `Cannot preserve recursive default export name "${rootAliasName}" because another top-level binding already uses it.`,
+      root.fn,
+    );
+  }
+
   if (diagnostics.length > 0) return failure(request, diagnostics);
 
   if (root) {
     normalizeDefaultExportToRunFunc(root.fn, magic, request.sourceText);
+    if (shouldAliasRootName) {
+      magic.appendLeft(
+        root.fn.getEnd(),
+        `\nconst ${rootAliasName} = runFunc;\n`,
+      );
+    }
     magic.append("\nexport default runFunc;\n");
   }
   if (manifestEntries.length > 0) {
@@ -568,6 +599,51 @@ function isTimeContextParameter(parameter: ParameterDeclaration) {
   const paramType = parameter.getTypeNode()?.getText() ??
     parameter.getType().getText(parameter);
   return /\bTimeContext\b/.test(paramType);
+}
+
+function fromSyntacticDiagnostic(
+  sourceText: string,
+  diagnostic: ts.Diagnostic,
+): VisualizerDiagnostic {
+  const start = diagnostic.start ?? 0;
+  const length = diagnostic.length ?? 1;
+  return {
+    severity: "error",
+    code: "TCV_SYNTAX_ERROR",
+    message: ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"),
+    from: clampOffset(start, sourceText.length),
+    to: clampOffset(start + length, sourceText.length),
+  };
+}
+
+function hasConflictingTopLevelBinding(
+  sourceFile: SourceFile,
+  name: string,
+  excluded: Node,
+): boolean {
+  return sourceFile.getStatements().some((statement) => {
+    if (statement === excluded) return false;
+    if (
+      (Node.isFunctionDeclaration(statement) ||
+        Node.isClassDeclaration(statement) ||
+        Node.isInterfaceDeclaration(statement) ||
+        Node.isEnumDeclaration(statement) ||
+        Node.isModuleDeclaration(statement)) &&
+      statement.getName() === name
+    ) {
+      return true;
+    }
+    if (Node.isVariableStatement(statement)) {
+      return statement.getDeclarations().some((declaration) =>
+        declaration.getName() === name
+      );
+    }
+    return false;
+  });
+}
+
+function clampOffset(value: number, max: number): number {
+  return Math.max(0, Math.min(max, value));
 }
 
 function failure(

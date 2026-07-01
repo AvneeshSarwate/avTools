@@ -5,12 +5,22 @@ import { createLivecodeVisualizerServer } from "./server.ts";
 
 const args = parseArgs(Deno.args);
 
-await createLivecodeVisualizerServer({
+const server = await createLivecodeVisualizerServer({
   host: args.host ?? "127.0.0.1",
   port: args.port ? Number(args.port) : 0,
   sessionRoot: args["session-root"],
   logLevel: args["log-level"] === "debug" ? "debug" : "info",
 });
+
+let closing = false;
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  Deno.addSignalListener(sig, async () => {
+    if (closing) return;
+    closing = true;
+    await server.close();
+    Deno.exit(0);
+  });
+}
 
 await new Promise(() => {
   // Keep the server process alive until it receives a signal.

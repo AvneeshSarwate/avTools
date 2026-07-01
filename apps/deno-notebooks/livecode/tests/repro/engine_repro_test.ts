@@ -14,7 +14,7 @@ import {
   type CancelablePromiseProxy,
   launch,
   startBarrier,
-  type TimeContext,
+  TempoMap,
 } from "@avtools/core-timing";
 
 function sleep(ms: number): Promise<void> {
@@ -57,14 +57,7 @@ Deno.test({
       // Give the rejection time to be reported.
       await sleep(150);
 
-      // BUGGY BEHAVIOR: the engine-internal `promiseProxy.finally(cleanupRoot)`
-      // (offline_time_context.ts ~1724) creates a derived promise nobody
-      // handles; it rejects when the root block rejects on cancel.
-      // AFTER FIX: flip to assertEquals(trap.events.length, 0).
-      assert(
-        trap.events.length >= 1,
-        `expected >=1 unhandled rejection from root cancel, got ${trap.events.length}`,
-      );
+      assertEquals(trap.events.length, 0);
     } finally {
       trap.dispose();
     }
@@ -97,13 +90,7 @@ Deno.test({
       await sleep(150);
 
       assert(cleanupRan, "finally callback itself does run");
-      // BUGGY BEHAVIOR: the promise returned by promise.finally(f) rejects
-      // uncaught when the branch block rejects on cancel.
-      // AFTER FIX: flip to assertEquals(trap.events.length, 0).
-      assert(
-        trap.events.length >= 1,
-        `expected >=1 unhandled rejection from branch cancel + finally, got ${trap.events.length}`,
-      );
+      assertEquals(trap.events.length, 0);
     } finally {
       trap.dispose();
     }
@@ -266,29 +253,67 @@ Deno.test({
     try {
       let segsBefore = -1;
       let segsAfter = -1;
+      let continuityError = "";
       const handle = launch(async (ctx) => {
-        // deno-lint-ignore no-explicit-any
-        const tempoAny = ctx.tempo as any;
+        const tempoAny = ctx.tempo as unknown as {
+          segs: Array<{
+            t0: number;
+            t1: number;
+            beats0: number;
+            beats1: number;
+          }>;
+        };
         segsBefore = tempoAny.segs.length;
         for (let i = 0; i < 100; i++) {
           ctx.setBpm(100 + (i % 7));
           await ctx.waitSec(0.001);
         }
         segsAfter = tempoAny.segs.length;
+        for (let i = 1; i < tempoAny.segs.length; i++) {
+          if (tempoAny.segs[i - 1].t1 !== tempoAny.segs[i].t0) {
+            continuityError = `tempo segment ${i} time continuity broke`;
+            break;
+          }
+          if (
+            Math.abs(tempoAny.segs[i - 1].beats1 - tempoAny.segs[i].beats0) >=
+              1e-9
+          ) {
+            continuityError = `tempo segment ${i} beat continuity broke`;
+            break;
+          }
+        }
       });
       await handle;
 
-      // BUGGY BEHAVIOR: nothing prunes segments behind
-      // mostRecentDescendentTime. AFTER FIX (compaction): expect segsAfter to
-      // stay bounded (e.g. < 10).
+      assertEquals(continuityError, "");
+      // AFTER FIX: old history is compacted while recent history and future
+      // beat continuity remain intact.
       assert(
-        segsAfter - segsBefore >= 100,
-        `expected >=100 appended tempo segments, got ${segsAfter - segsBefore}`,
+        segsAfter - segsBefore <= 18,
+        `expected bounded tempo history, got ${
+          segsAfter - segsBefore
+        } new segments`,
       );
     } finally {
       trap.dispose();
     }
   },
+});
+
+Deno.test("tempo compaction preserves post-boundary beat mapping", () => {
+  const tempo = new TempoMap(120);
+  for (let i = 1; i <= 24; i++) {
+    tempo._setBpmAtTime(80 + i, i * 0.1);
+  }
+
+  const probeTime = 2.41;
+  const beatsAtProbe = tempo.beatsAtTime(probeTime);
+  tempo._setBpmAtTime(150, 2.5);
+
+  assert(
+    Math.abs(tempo.beatsAtTime(probeTime) - beatsAtProbe) < 1e-9,
+    "compaction must preserve beat mapping for times after the retained boundary",
+  );
 });
 
 Deno.test({
@@ -320,11 +345,10 @@ Deno.test({
       await handle;
       await sleep(100);
 
-      // BUGGY BEHAVIOR: beatPQs entries for dead tempoIds are never deleted.
-      // AFTER FIX: expect beatPQCount to be small (0 or 1).
+      // AFTER FIX: beatPQs entries for dead cloned tempoIds are deleted.
       assert(
-        beatPQCount >= CYCLES,
-        `expected >=${CYCLES} leaked beatPQ entries, got ${beatPQCount}`,
+        beatPQCount <= 1,
+        `expected leaked beatPQ entries to be cleaned up, got ${beatPQCount}`,
       );
     } finally {
       trap.dispose();

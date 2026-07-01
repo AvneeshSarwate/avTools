@@ -1,5 +1,6 @@
 import {
   type MutableRefObject,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -68,8 +69,65 @@ function LivecodeTldrawPage() {
   }, []);
   const projectLoadedRef = useRef(false);
   const canvasLoadedRef = useRef(false);
+  const suppressStoreListenerRef = useRef(false);
+  const layoutUpdateTimersRef = useRef(new Map<string, number>());
 
   useClientControlBridge(editor, runtime);
+
+  const syncLivecodeShapesToRuntime = useCallback(() => {
+    if (!editor) return;
+    const shapes = editor.getCurrentPageShapes().filter(isLivecodeShape);
+    const shapeModuleIds = new Set(shapes.map((shape) => shape.props.moduleId));
+    for (const moduleId of Object.keys(runtime.modules)) {
+      if (!shapeModuleIds.has(moduleId)) unregisterModule(moduleId);
+    }
+    for (const shape of shapes) {
+      registerModule(
+        shape.props.moduleId,
+        shape.props.source,
+        shape.props.projectModulePath,
+      );
+    }
+  }, [editor, registerModule, runtime.modules, unregisterModule]);
+
+  const scheduleProjectModuleLayoutUpdate = useCallback(
+    (shape: LivecodeEditorShape) => {
+      if (!shape.props.projectModulePath) return;
+      const previous = layoutUpdateTimersRef.current.get(shape.props.moduleId);
+      if (previous !== undefined) window.clearTimeout(previous);
+      const timer = window.setTimeout(() => {
+        layoutUpdateTimersRef.current.delete(shape.props.moduleId);
+        void postJson<ProjectStatusResponse>(
+          `${runtime.serverBaseUrl}/project/modules/update`,
+          {
+            id: shape.props.moduleId,
+            x: shape.x,
+            y: shape.y,
+            w: shape.props.w,
+            h: shape.props.h,
+          },
+        ).catch((error) => {
+          console.error("[livecode-tldraw] failed to persist module layout", error);
+        });
+      }, 1_000);
+      layoutUpdateTimersRef.current.set(shape.props.moduleId, timer);
+    },
+    [runtime.serverBaseUrl],
+  );
+
+  const loadTldrawFile = useCallback(
+    async (file: File) => {
+      if (!editor) return;
+      suppressStoreListenerRef.current = true;
+      try {
+        await loadTldrawCanvasFromFile(editor, file);
+      } finally {
+        suppressStoreListenerRef.current = false;
+        syncLivecodeShapesToRuntime();
+      }
+    },
+    [editor, syncLivecodeShapesToRuntime],
+  );
 
   useEffect(() => {
     setRuntimeDebugRefs(runtime, editor);
@@ -78,18 +136,11 @@ function LivecodeTldrawPage() {
   useEffect(() => {
     if (!editor) return;
 
-    for (const shape of editor.getCurrentPageShapes()) {
-      if (isLivecodeShape(shape)) {
-        registerModule(
-          shape.props.moduleId,
-          shape.props.source,
-          shape.props.projectModulePath,
-        );
-      }
-    }
+    syncLivecodeShapesToRuntime();
 
-    return editor.store.listen(
+    const unsubscribe = editor.store.listen(
       (entry) => {
+        if (suppressStoreListenerRef.current) return;
         for (const record of Object.values(entry.changes.added)) {
           if (isLivecodeShape(record)) {
             registerModule(
@@ -120,6 +171,12 @@ function LivecodeTldrawPage() {
             } else if (before.props.source !== after.props.source) {
               setModuleSource(after.props.moduleId, after.props.source);
             }
+            if (
+              after.props.projectModulePath &&
+              hasShapeLayoutChanged(before, after)
+            ) {
+              scheduleProjectModuleLayoutUpdate(after);
+            }
           }
         }
 
@@ -131,37 +188,66 @@ function LivecodeTldrawPage() {
       },
       { source: "all", scope: "document" },
     );
-  }, [editor, registerModule, setModuleSource, unregisterModule]);
+
+    return () => {
+      unsubscribe();
+      for (const timer of layoutUpdateTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      layoutUpdateTimersRef.current.clear();
+    };
+  }, [
+    editor,
+    registerModule,
+    scheduleProjectModuleLayoutUpdate,
+    setModuleSource,
+    syncLivecodeShapesToRuntime,
+    unregisterModule,
+  ]);
 
   useEffect(() => {
     if (!editor || !canvasUrl || projectPath || canvasLoadedRef.current) return;
-    canvasLoadedRef.current = true;
 
-    void loadTldrawCanvasFromUrl(editor, canvasUrl)
-      .catch((error) => {
+    void (async () => {
+      suppressStoreListenerRef.current = true;
+      try {
+        await loadTldrawCanvasFromUrl(editor, canvasUrl);
+        canvasLoadedRef.current = true;
+      } catch (error) {
+        canvasLoadedRef.current = false;
         console.error("[livecode-tldraw] failed to load tldraw canvas", error);
-      });
-  }, [canvasUrl, editor, projectPath]);
+      } finally {
+        suppressStoreListenerRef.current = false;
+        syncLivecodeShapesToRuntime();
+      }
+    })();
+  }, [canvasUrl, editor, projectPath, syncLivecodeShapesToRuntime]);
 
   useEffect(() => {
     if (!editor || !projectPath || projectLoadedRef.current) return;
-    projectLoadedRef.current = true;
 
-    void loadProjectIntoCanvas(editor, runtime.serverBaseUrl, projectPath)
-      .then(() => {
+    void (async () => {
+      suppressStoreListenerRef.current = true;
+      try {
+        await loadProjectIntoCanvas(editor, runtime.serverBaseUrl, projectPath);
+        projectLoadedRef.current = true;
         if (runtime.connectionStatus === "closed") {
           void runtime.connect();
         }
-      })
-      .catch((error) => {
+      } catch (error) {
+        projectLoadedRef.current = false;
         console.error("[livecode-tldraw] failed to load project", error);
-      });
-  }, [editor, projectPath, runtime]);
+      } finally {
+        suppressStoreListenerRef.current = false;
+        syncLivecodeShapesToRuntime();
+      }
+    })();
+  }, [editor, projectPath, runtime, syncLivecodeShapesToRuntime]);
 
   return (
     <PianoRollRuntimeProvider serverBaseUrl={runtime.serverBaseUrl}>
       <div className="app-shell">
-        <TopBar editor={editor} />
+        <TopBar editor={editor} onOpenTldrawFile={loadTldrawFile} />
         <div className="canvas-shell">
           <Tldraw
             shapeUtils={shapeUtils}
@@ -178,7 +264,13 @@ function LivecodeTldrawPage() {
   );
 }
 
-function TopBar({ editor }: { editor: Editor | null }) {
+function TopBar({
+  editor,
+  onOpenTldrawFile,
+}: {
+  editor: Editor | null;
+  onOpenTldrawFile: (file: File) => Promise<void>;
+}) {
   const runtime = useLivecodeRuntime();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const moduleCount = useMemo(() => Object.keys(runtime.modules).length, [
@@ -251,7 +343,7 @@ function TopBar({ editor }: { editor: Editor | null }) {
           const file = event.currentTarget.files?.[0];
           event.currentTarget.value = "";
           if (editor && file) {
-            void loadTldrawCanvasFromFile(editor, file).catch((error) => {
+            void onOpenTldrawFile(file).catch((error) => {
               console.error("[livecode-tldraw] failed to open .tldr file", error);
             });
           }
@@ -324,6 +416,7 @@ function useClientControlBridge(
     let closed = false;
     let reconnectTimer: number | null = null;
     let socket: WebSocket | null = null;
+    const pendingResults = new Map<string, ClientControlResultMessage>();
     const socketUrl = `${
       normalizedServerBaseUrl.replace(/^http/, "ws")
     }/client/control?clientId=${encodeURIComponent(clientIdRef.current)}`;
@@ -331,6 +424,10 @@ function useClientControlBridge(
     const connect = () => {
       if (closed) return;
       socket = new WebSocket(socketUrl);
+
+      socket.onopen = () => {
+        flushClientControlResults(socket, pendingResults);
+      };
 
       socket.onmessage = (event) => {
         if (typeof event.data !== "string") return;
@@ -346,14 +443,13 @@ function useClientControlBridge(
         }
         if (envelope.type !== "clientCommand") return;
 
-        const responseSocket = socket;
         void executeClientControlCommand(
           envelope.command,
           editorRef,
           runtimeRef,
         )
           .then((result) => {
-            sendClientControlResult(responseSocket, {
+            queueClientControlResult(socket, pendingResults, {
               type: "clientCommandResult",
               commandId: envelope.commandId,
               ok: true,
@@ -361,7 +457,7 @@ function useClientControlBridge(
             });
           })
           .catch((error: unknown) => {
-            sendClientControlResult(responseSocket, {
+            queueClientControlResult(socket, pendingResults, {
               type: "clientCommandResult",
               commandId: envelope.commandId,
               ok: false,
@@ -397,6 +493,26 @@ function sendClientControlResult(
 ) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
   socket.send(JSON.stringify(message));
+}
+
+function queueClientControlResult(
+  socket: WebSocket | null,
+  pendingResults: Map<string, ClientControlResultMessage>,
+  message: ClientControlResultMessage,
+) {
+  pendingResults.set(message.commandId, message);
+  flushClientControlResults(socket, pendingResults);
+}
+
+function flushClientControlResults(
+  socket: WebSocket | null,
+  pendingResults: Map<string, ClientControlResultMessage>,
+) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  for (const [commandId, message] of pendingResults) {
+    sendClientControlResult(socket, message);
+    pendingResults.delete(commandId);
+  }
 }
 
 async function executeClientControlCommand(
@@ -686,6 +802,16 @@ function isLivecodeShape(record: unknown): record is LivecodeEditorShape {
   const candidate = record as { typeName?: unknown; type?: unknown };
   return candidate.typeName === "shape" &&
     candidate.type === LIVECODE_EDITOR_SHAPE_TYPE;
+}
+
+function hasShapeLayoutChanged(
+  before: LivecodeEditorShape,
+  after: LivecodeEditorShape,
+) {
+  return before.x !== after.x ||
+    before.y !== after.y ||
+    before.props.w !== after.props.w ||
+    before.props.h !== after.props.h;
 }
 
 function createLivecodeShape(

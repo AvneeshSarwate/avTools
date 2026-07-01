@@ -65,8 +65,26 @@ interface ParsedDenoDiagnostic {
 export async function analyzeProjectShadow(
   request: ProjectShadowAnalysisRequest,
 ): Promise<ProjectShadowCheckResponse> {
-  await recreateDirectory(request.shadowRoot);
+  const shadowRoot = join(request.shadowRoot, crypto.randomUUID());
+  await Deno.mkdir(shadowRoot, { recursive: true });
 
+  try {
+    return await analyzeProjectShadowInDirectory(request, shadowRoot);
+  } finally {
+    try {
+      await Deno.remove(shadowRoot, { recursive: true });
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) {
+        console.warn("[livecode-shadow] failed to remove shadow dir", error);
+      }
+    }
+  }
+}
+
+async function analyzeProjectShadowInDirectory(
+  request: ProjectShadowAnalysisRequest,
+  shadowRoot: string,
+): Promise<ProjectShadowCheckResponse> {
   const moduleById = new Map(
     request.modules.map((moduleRecord) => [moduleRecord.id, moduleRecord]),
   );
@@ -109,7 +127,7 @@ export async function analyzeProjectShadow(
 
   for (const moduleRecord of request.modules) {
     const shadowPath = normalize(
-      join(request.shadowRoot, moduleRecord.runtimePath),
+      join(shadowRoot, moduleRecord.runtimePath),
     );
     shadowPathByModule.set(moduleRecord.id, shadowPath);
     moduleByShadowPath.set(shadowPath, moduleRecord);
@@ -148,7 +166,7 @@ export async function analyzeProjectShadow(
   });
   const denoDiagnostics = parseDenoDiagnostics(denoCheck.output)
     .map((diagnostic) =>
-      fromDenoDiagnostic(diagnostic, request.shadowRoot, moduleByShadowPath)
+      fromDenoDiagnostic(diagnostic, shadowRoot, moduleByShadowPath)
     );
   const diagnostics = [...visualizerDiagnostics, ...denoDiagnostics];
   const diagnosticsByModule = groupDiagnosticsByModule(diagnostics);
@@ -194,7 +212,7 @@ export async function analyzeProjectShadow(
     ok: true,
     project: request.project,
     checkedAt: new Date().toISOString(),
-    shadowRoot: request.shadowRoot,
+    shadowRoot,
     projectSourceHash,
     edges: graph.edges,
     modules,
