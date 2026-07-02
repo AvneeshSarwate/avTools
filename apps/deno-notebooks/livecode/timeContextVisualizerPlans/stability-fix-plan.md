@@ -268,6 +268,56 @@ these principles point; if two principles conflict, stop and ask.
 - If a fix requires an engine semantics decision that is not spelled out here,
   STOP and ask the project owner. Do not invent timing semantics.
 
+## IMPLEMENTATION STATUS (as of 2026-07-02) — read this before picking up work
+
+**DONE (implemented, reviewed, all suites green):**
+
+- Phases 0–3 in full, plus Phase 4 items 4 (E6 tempo compaction) and
+  5 (E7 beatPQs cleanup).
+- A post-implementation multi-agent code review of that commit found 10
+  defects, ALL fixed since: real LSP child kill (`proxy.process.kill`),
+  tempo-compaction `progBeats` fix (contexts cache `startBeats` at
+  creation), in-flight diagnostics hash guard, parse-diagnostics without
+  `getProgram()` on the analyze hot path, never-throwing piano-roll
+  `normalizeData`, import-binding rename-collision check, broadened
+  run-adoption with `lastTerminalRun` staleness guard, one shared
+  `reconnectingSocket.ts` (replacing 3 bespoke copies; auto-reconnect also
+  re-runs health + LSP recovery in onOpen), piano-roll echo suppression
+  independent of HTTP timing (undo/redo use a distinct `:history` origin),
+  and piano-roll view layout persisted via `POST /project/canvas` +
+  restored on project load.
+- Phase 4 decision points, all resolved by the owner and implemented:
+  E3 (`cancelSafe(value)` on the proxy), E9/E10 barrier semantics
+  (start-never-releases / adopt; `purgeBarriersForRoot`), E8 zero-advance
+  stall guard (`MAX_ZERO_ADVANCE_SLICES = 10_000`).
+
+**OPEN WORK (documented in-place in the phases below; consolidated here):**
+
+1. **E4 replacement (Phase 4 item 2 — unblocked, no decisions pending):**
+   move the ts-morph analyze/materialize transform into a Deno `Worker`,
+   and pre-warm heavy library imports at server startup. The catch-up
+   clamp itself is deliberately NOT being built.
+2. **E5 visibility (Phase 4 item 3):** runtime rebase detection surfaced
+   as a snapshot badge — ships with the Phase 5 snapshot/detector work.
+3. **Barrier visibility (Phase 4 item 7):** barrier state in runtime
+   snapshots ("awaiting 'phrase' — no producer") so typo'd names / dead
+   producers are distinguishable from intentional free-run — also Phase 5.
+4. **All of Phase 5** (unified store, detector plugin API, MCP surface +
+   auth token, shared protocol package, shadow-diagnostic position
+   mapping). Each needs an owner checkpoint before starting.
+5. **Known-but-unfixed cleanup (from the code review; opportunistic, none
+   user-facing):** `panicRuntime` duplicates `stopModule`'s teardown tail
+   (extract a shared helper); `ProjectState.materialized` cache runs
+   parallel to `hashes` (desync risk if a new write path forgets to
+   invalidate both); the 2.5s diagnostics poll still re-reads + re-hashes
+   every project file from disk even when idle (derive the hash from
+   in-memory state); a third `clampMidi` copy in midi_helpers duplicates
+   piano_roll_helpers'; the startup LSP-workspace sweep runs serially
+   before the server listens; `setPianoRoll` double-clones + double-
+   serializes on the no-op path; test helpers (postJson/sleep/waitFor)
+   are copy-pasted across test files; the best-effort
+   `Deno.remove`-and-swallow idiom is repeated 4+ places.
+
 ## Validation status of the findings
 
 Reproduced by executable tests (all in `livecode/tests/repro/`, all passing
@@ -302,7 +352,7 @@ of its temp workspaces.
 
 ---
 
-# PHASE 0 — Process-killers and panic (do this first)
+# PHASE 0 — Process-killers and panic ✅ DONE 2026-07
 
 ## 0.1 Fix the engine's fatal `.finally` on root cleanup (E1)
 
@@ -478,7 +528,7 @@ tldraw client so an LSP session spawns, Ctrl-C the server, then check
 
 ---
 
-# PHASE 1 — Edit-loop robustness and performance
+# PHASE 1 — Edit-loop robustness and performance ✅ DONE 2026-07
 
 ## 1.1 Guard the HTTP handler (S1) (independent)
 
@@ -653,7 +703,7 @@ snapshot shapes must not break — `conflict` is optional).
 
 ---
 
-# PHASE 2 — Server-truth run state and rehydration
+# PHASE 2 — Server-truth run state and rehydration ✅ DONE 2026-07
 
 ## 2.1 Retain manifests server-side; add `GET /runtime/state`
 
@@ -776,7 +826,7 @@ on disk shows the new x/y).
 
 ---
 
-# PHASE 3 — Remaining client fixes (each independent)
+# PHASE 3 — Remaining client fixes ✅ DONE 2026-07
 
 For each, the evidence was verified by reading the cited code; there are no
 executable repros. Keep changes minimal and run
@@ -820,38 +870,52 @@ executable repros. Keep changes minimal and run
 
 ---
 
-# PHASE 4 — Engine hardening (decision points flagged)
+# PHASE 4 — Engine hardening — decisions RESOLVED 2026-07; open work: item 2 worker/pre-warm, items 3/7 visibility
 
 Work in `packages/core-timing/offline_time_context.ts`. These change timing
 semantics — implement each behind an option where noted, add tests, and flip
 the corresponding repro assertions per their `AFTER FIX:` comments.
 
-1. **E3 (branchWait teardown):** add
-   `branchWaitSafe(block, debugName?, opts?)` (or an option
-   `{ onChildCancel: "throw" | "resolve" }` on `branchWait`) where child
-   cancellation resolves the join with a sentinel
-   `{ cancelled: true }` instead of rejecting the parent. Keep the default
-   behavior unchanged (structured concurrency purists may rely on it) but
-   update the docs header. DECISION POINT: confirm the default with the owner
-   before changing any existing callsite.
-2. **E4 (catch-up clamp):** add `LaunchOptions.maxCatchupSec` (default:
-   `Infinity` = current behavior; recommended live value 0.25). In the
-   realtime pump loop (`pumpDue` / `stillDue`), when
-   `now() - sliceTargetTime > maxCatchupSec`, advance
-   `mostRecentDescendentTime` directly to `now() - maxCatchupSec` in one step
-   BEFORE resolving further slices, so intermediate slices resolve at their
-   (already-late) logical times but the burst is bounded; alternatively (
-   simpler and acceptable): resolve all overdue slices but insert one
-   macrotask + `setTimeout(0)` per K slices to let IO breathe. DECISION
-   POINT: the drop-vs-compress policy is musical; present both to the owner
-   before defaulting anything other than `Infinity`.
-3. **E5 (global floor):** no code change without owner sign-off — this is a
-   core semantic. Deliverable for now: document the behavior prominently in
-   the file header ("never use non-engine awaits inside timed code; your
-   timeline will be rebased to global now") and have the ANALYZER's existing
-   `TCV_UNSUPPORTED_AWAIT` error already guard most cases. Optionally add a
-   dev-mode warning: in `waitSec`, if `baseTime - ctx.time > 1.0`, log a
-   one-line warning naming `ctx.debugName`.
+1. **E3 (branchWait teardown): RESOLVED 2026-07 (owner decision,
+   implemented).** `CancelablePromiseProxy<T>` gained `cancelSafe(value: T)`:
+   it settles the awaited join with `value` ("yield with an arg"), then
+   cancels the subtree — the awaiting parent receives the value instead of a
+   rejection and keeps running. For `<void>` proxies it is callable with no
+   argument. Plain `cancel()` remains the hard path (parent's await rejects)
+   — unchanged default. Implementation: the proxy's then/catch/finally now
+   delegate to an internal first-settle-wins deferred (with a pre-attached
+   no-op catch, which also eliminates unhandled rejections from unawaited
+   proxies whose blocks reject on cancel). No nullable typing needed — the
+   parent always receives a T.
+2. **E4 (catch-up clamp): OWNER DECISION 2026-07 — do not implement the
+   clamp. Fix the stalls instead.** The owner's call: anything CPU-heavy on
+   the music thread is the design error, not the catch-up behavior. The
+   replacement work items (unblocked, no further decisions needed):
+   - **Move `analyzeAndTransformTimedModule` / `materializeProjectRuntime`'s
+     transform work into a Deno `Worker`.** The transform is a pure function
+     (plain-data request in, transformed code + manifest + diagnostics out);
+     the worker loads ts-morph, the main thread keeps HTTP handling and does
+     the cheap file writes from returned text.
+   - **Pre-warm heavy imports at server startup:** eagerly `import()` the
+     heavy helper libraries (midi-helpers, piano-roll-helpers, and the
+     graphics stacks used by project sketches) before any music runs, so
+     mid-set module launches only evaluate the small cache-busted user
+     module. Dynamic import of user modules cannot move off-thread (must
+     share the runtime isolate) — pre-warming is the mitigation.
+   After both land, remaining stalls are small enough that the current
+   compress-to-catch-up behavior is acceptable; revisit a clamp only if
+   measured stalls still exceed ~100ms in practice.
+3. **E5 (global floor): RESOLVED 2026-07 (owner decision) — semantics stay;
+   non-engine awaits inside timed code are user error.** The analyzer
+   already ERRORS at edit time on detectable cases in editor code
+   (`TCV_UNSUPPORTED_AWAIT`); the uncovered case is helper-INTERNAL IO,
+   which no static check can see. Remaining work (visibility only, goes
+   with the Phase 5 snapshot/detector work): runtime rebase detection — in
+   the wait path, when `baseTime - ctx.time` exceeds a threshold (~1s),
+   record a rebase event (module/debugName + jump size) and surface it in
+   runtime snapshots as a UI badge. NOTE: gaps also arise from legitimate
+   patterns (a context that computes or parks on a barrier while siblings
+   advance), so this is an advisory heuristic, not a precise error.
 4. **E6 (tempo compaction):** in `_setBpmAtTime` (and the ramp variant), after
    appending, compact: find the segment containing
    `rootContext.mostRecentDescendentTime`, and if more than ~16 segments lie
@@ -864,22 +928,47 @@ the corresponding repro assertions per their `AFTER FIX:` comments.
    `beatPQs`), after removing a waiter, if that tempo's PQ is empty AND the
    tempoId is not the root tempo's id, delete the map entry (and its
    tempoHeadPQ entry via the existing `refreshTempoHead` path).
-6. **E8 (wait(0) spin):** clamp: in `wait`/`waitSec`, treat requested
-   durations `<= 0` as a minimum slice (e.g. 1ms logical: `max(delta, 0.001)`)
-   so `wait(0)` loops advance logical time and yield through real scheduler
-   slices. DECISION POINT: confirm the epsilon with the owner (an
-   alternative is to reject `wait(<=0)` with an analyzer warning).
-7. **E9/E10 (barriers):** per the agreed design: (a) `awaitBarrier` on a
-   missing barrier auto-creates the BarrierState and parks the waiter
-   (remove the warn+resolve path); (b) `startBarrier`, when `inProgress` is
-   true AND the previous cycle's starter context is cancelled, ADOPTS the
-   cycle (sets ownership, does not resolve); when the previous starter is
-   alive, keep current force-resolve behavior (intra-module self-repair).
-   Track the starter: add `starterCtx: TimeContext | null` to `BarrierState`,
-   set in `startBarrier`. Also: clean up `barrierMap` entries for a root in
-   root cleanup (the `cleanupRoot` from item 0.1 — iterate `barrierMap` keys
-   with the root's id prefix). Flip repro E9/E10 per their comments
-   (E9's flip requires restructuring per the comment in the test).
+6. **E8 (wait(0) spin): RESOLVED 2026-07 (owner decision, implemented).**
+   Empirical finding: each `wait(0)` resolves through a real macrotask, so
+   the JS event loop is NOT starved (HTTP/Stop stay responsive) — but the
+   ENGINE's scheduler IS: a `wait(0)` hot loop in one branch prevented a
+   sibling's ordinary waits from EVER firing (the zero-advance waiter
+   re-enters the queue at the frozen earliest target every slice). A
+   fairness/reordering fix was considered and REJECTED because execution
+   order would start depending on wall-clock arrival, breaking realtime
+   re-run order-determinism and realtime/offline parity — under logical-time
+   semantics, starving later targets is the CORRECT reading of "infinite
+   work at one instant" (offline already bounds it: MAX_TIMESLICES throws).
+   Implemented instead: the realtime/offline-shared **zero-advance stall
+   guard** — `MAX_ZERO_ADVANCE_SLICES = 10_000` (constant at the top of
+   `offline_time_context.ts`). After that many consecutive slices at an
+   unchanged logical time, waiters at that instant are rejected with
+   "Logical time stalled at t=…"; the stalled branch tears down like any
+   module error and all other contexts keep exact timing. No reordering
+   ever occurs, so determinism is fully preserved and the failure itself is
+   deterministic across modes. Occasional/bounded `wait(0)` remains legal
+   and semantically unchanged (zero logical advance). Regression test:
+   "E8 guard (fixed)" in engine_repro_test.ts.
+7. **E9/E10 (barriers): RESOLVED 2026-07 (owner decisions, implemented).**
+   - **E9 is BY DESIGN, not a bug.** Barriers are an optional sync overlay:
+     `awaitBarrier` on a never-started barrier releases immediately (no sync
+     constraint until a producer exists); `resolveBarrier` on a missing
+     barrier no-ops. Do NOT add auto-create-and-park. The residual work is
+     VISIBILITY only (Phase 5 detector/snapshot work): a typo'd barrier name
+     or dead producer is currently indistinguishable from "no sync intended",
+     so barrier state should eventually appear in runtime snapshots.
+   - **E10 implemented as adopt-always:** `startBarrier` NEVER releases
+     waiters; if a cycle is in progress it adopts it (waiters stay parked
+     until the next explicit `resolveBarrier`). A producer wanting
+     release-on-restart calls `resolveBarrier` at the top of its loop.
+     Rationale: only-explicit-release keeps barrier semantics magic-free and
+     fits "no blessed orchestrators". NOTE: old sketches relying on
+     start-as-release (e.g. `mpe_projmapGL_sonar` transformed user code)
+     must add the explicit resolve. No `starterCtx` tracking was added
+     (not needed under adopt-always).
+   - `barrierMap` entries are purged in root cleanup
+     (`purgeBarriersForRoot`). Repro tests E9/E10 updated to assert the
+     intended semantics.
 
 ---
 

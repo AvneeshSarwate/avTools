@@ -13,6 +13,7 @@ import {
   awaitBarrier,
   type CancelablePromiseProxy,
   launch,
+  resolveBarrier,
   startBarrier,
   TempoMap,
 } from "@avtools/core-timing";
@@ -133,6 +134,56 @@ Deno.test({
       assert(
         rootRejection instanceof Error,
         "parent/root block rejected because its branchWait child was cancelled",
+      );
+    } finally {
+      trap.dispose();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "E3 addendum (fixed): cancelSafe(value) settles the awaiting parent with the value instead of rejecting",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const trap = trapUnhandledRejections();
+    try {
+      let received = -1;
+      let parentReachedEnd = false;
+      let numberProxy: CancelablePromiseProxy<number> | null = null;
+      let voidProxy: CancelablePromiseProxy<void> | null = null;
+      let voidJoinCompleted = false;
+
+      const handle = launch(async (ctx) => {
+        numberProxy = ctx.branchWait<number>(async (childCtx) => {
+          await childCtx.waitSec(60);
+          return 1;
+        });
+        received = await numberProxy; // resolves via cancelSafe(42)
+
+        voidProxy = ctx.branchWait(async (childCtx) => {
+          await childCtx.waitSec(60);
+        });
+        await voidProxy; // resolves via argless cancelSafe()
+        voidJoinCompleted = true;
+        parentReachedEnd = true;
+      });
+
+      await sleep(50);
+      (numberProxy as CancelablePromiseProxy<number> | null)!.cancelSafe(42);
+      await sleep(50);
+      (voidProxy as CancelablePromiseProxy<void> | null)!.cancelSafe();
+      await handle;
+      await sleep(100);
+
+      assertEquals(received, 42, "parent received the cancelSafe value");
+      assertEquals(voidJoinCompleted, true);
+      assertEquals(parentReachedEnd, true, "parent kept running after both");
+      assertEquals(
+        trap.events.length,
+        0,
+        "no unhandled rejections from cancelSafe teardown",
       );
     } finally {
       trap.dispose();
@@ -473,7 +524,65 @@ Deno.test({
 
 Deno.test({
   name:
-    "BUG E9: awaitBarrier on a never-started barrier is a silent no-op (resolves immediately, no sync)",
+    "E8 guard (fixed): a wait(0) hot loop errors out via the zero-advance stall guard while sibling timing continues",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const trap = trapUnhandledRejections();
+    try {
+      let spinError: unknown = null;
+      let spinIterations = 0;
+      const siblingStamps: number[] = [];
+
+      const handle = launch(async (ctx) => {
+        ctx.branch(async (a) => {
+          try {
+            while (true) {
+              await a.wait(0);
+              spinIterations++;
+            }
+          } catch (error) {
+            spinError = error;
+          }
+        });
+        await ctx.branchWait(async (b) => {
+          for (let i = 0; i < 5; i++) {
+            await b.waitSec(0.02);
+            siblingStamps.push(performance.now());
+          }
+        });
+      });
+      await handle;
+      await sleep(100);
+
+      // The spinner is rejected with the stall error once it exceeds
+      // MAX_ZERO_ADVANCE_SLICES consecutive zero-advance slices...
+      assert(
+        spinError instanceof Error &&
+          spinError.message.includes("Logical time stalled"),
+        `expected zero-advance stall error, got: ${String(spinError)}`,
+      );
+      assert(
+        spinIterations >= 9_000,
+        `spinner should run up to the guard threshold, got ${spinIterations}`,
+      );
+      // ...and the sibling's ordinary waits all fire (previously they were
+      // starved forever — a 100ms schedule never completed).
+      assertEquals(siblingStamps.length, 5);
+      assertEquals(
+        trap.events.length,
+        0,
+        "no unhandled rejections from the stall teardown",
+      );
+    } finally {
+      trap.dispose();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "E9 (by design): awaitBarrier on a never-started barrier releases immediately (barriers are an optional sync overlay)",
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
@@ -487,14 +596,14 @@ Deno.test({
       });
       await handle;
 
-      // BUGGY BEHAVIOR: a consumer module launched before its producer gets
-      // no synchronization at all (console.warn only). AFTER FIX
-      // (auto-create-and-wait): this await should still be pending until a
-      // producer starts+resolves the barrier — restructure the test to start
-      // a producer later and assert the waiter is released by it.
+      // INTENDED BEHAVIOR (owner decision, 2026-07): a barrier that no
+      // producer has started imposes no sync constraint — consumers free-run
+      // until a producer exists, then sync engages on their next await. The
+      // typo'd-name / dead-producer case should be surfaced via runtime
+      // visualization (barrier state in snapshots), not by changing this.
       assert(
         elapsedMs >= 0 && elapsedMs < 50,
-        `awaitBarrier resolved immediately as a no-op (${elapsedMs}ms)`,
+        `awaitBarrier on a missing barrier should release immediately (${elapsedMs}ms)`,
       );
     } finally {
       trap.dispose();
@@ -504,13 +613,14 @@ Deno.test({
 
 Deno.test({
   name:
-    "BUG E10: startBarrier while a cycle is in progress force-releases all waiters early",
+    "E10 (fixed): startBarrier adopts an in-progress cycle; only resolveBarrier releases waiters",
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
     const trap = trapUnhandledRejections();
     try {
-      let releasedEarly = false;
+      let releasedAfterSecondStart = false;
+      let releasedAfterResolve = false;
       let releasedBeforeSecondStart = true;
       const handle = launch(async (ctx) => {
         startBarrier("repro-cycle", ctx);
@@ -522,11 +632,17 @@ Deno.test({
         await ctx.waitSec(0.05);
         releasedBeforeSecondStart = released; // should still be parked
 
-        // A replaced/relaunched "conductor" module calls startBarrier again.
-        // resolveBarrier() is NEVER called in this test.
+        // A replaced/relaunched producer module calls startBarrier again while
+        // the previous cycle is still in progress. It must ADOPT the cycle,
+        // not force-release the parked waiters.
         startBarrier("repro-cycle", ctx);
         await ctx.waitSec(0.05);
-        releasedEarly = released;
+        releasedAfterSecondStart = released;
+
+        // Only an explicit resolveBarrier releases them.
+        resolveBarrier("repro-cycle", ctx);
+        await ctx.waitSec(0.05);
+        releasedAfterResolve = released;
       });
       await handle;
 
@@ -535,13 +651,15 @@ Deno.test({
         false,
         "waiter is parked before the second startBarrier",
       );
-      // BUGGY BEHAVIOR (for cross-module use): the stale-cycle auto-resolve in
-      // startBarrier releases every waiter at the wrong time when a conductor
-      // module is replaced. AFTER FIX (adopt-in-progress-cycle policy):
-      // expect released === false here.
-      assert(
-        releasedEarly,
-        "second startBarrier force-released the parked waiter without resolveBarrier",
+      assertEquals(
+        releasedAfterSecondStart,
+        false,
+        "startBarrier on an in-progress cycle adopts it instead of releasing waiters",
+      );
+      assertEquals(
+        releasedAfterResolve,
+        true,
+        "explicit resolveBarrier releases the adopted cycle's waiters",
       );
     } finally {
       trap.dispose();

@@ -321,6 +321,30 @@
 import { PriorityQueue } from "./priority_queue.ts";
 import seedrandom, { type PRNG as SeedrandomPRNG } from "./seedrandom_shim.ts";
 
+/**
+ * Zero-advance stall guard: the maximum number of CONSECUTIVE timeslices the
+ * scheduler will process at an unchanged logical time before rejecting the
+ * waiters at that instant. A `wait(0)`/`waitSec(0)` hot loop schedules
+ * infinite work at a single logical instant; under logical-time semantics
+ * that legitimately starves all later-scheduled work (offline advanceTo has
+ * the analogous MAX_TIMESLICES bound and throws). Instead of reordering
+ * slices (which would break realtime/offline determinism parity and
+ * realtime re-run order-determinism), the offending waits are rejected with
+ * an error — the stalled branch tears down like any module error and every
+ * other context's timing is untouched. Applies in BOTH realtime and offline
+ * modes (shared slice-processing path), so the failure itself is
+ * deterministic across modes.
+ */
+export const MAX_ZERO_ADVANCE_SLICES = 10_000;
+
+function zeroAdvanceStallError(t: number): Error {
+  return new Error(
+    `Logical time stalled at t=${t}: more than ${MAX_ZERO_ADVANCE_SLICES} ` +
+      "consecutive zero-advance timeslices (wait(0) hot loop?); " +
+      "rejecting stalled waits",
+  );
+}
+
 export type RandomSeed = string | number;
 export type SetTimeoutFn = (callback: () => void, ms: number) => number;
 export type ClearTimeoutFn = (id: number) => void;
@@ -427,17 +451,60 @@ export const wallNow = () => performance.now() / 1000 - wallStart;
 /* ---------------------------------------------------------------------------------------------- */
 
 export class CancelablePromiseProxy<T> implements Promise<T> {
-  public promise?: Promise<T>;
   public abortController: AbortController;
   public timeContext?: TimeContext;
 
+  // Consumers (then/catch/finally) await this deferred rather than the raw
+  // block promise, so cancelSafe(value) can settle the join with a value
+  // even though the underlying block will later reject on cancellation.
+  // First settle wins. The pre-attached no-op catch marks the deferred as
+  // handled so an unawaited proxy whose block rejects on cancel does not
+  // emit a process-fatal unhandled rejection in Deno.
+  // Typed as unknown internally so CancelablePromiseProxy stays covariant in
+  // T (a typed resolve parameter would make instantiations non-assignable to
+  // CancelablePromiseProxy<unknown>, which TimeContext.cancelPromise uses).
+  private settledResolve!: (value: unknown) => void;
+  private settledReject!: (reason: unknown) => void;
+  private settled: Promise<T>;
+  private blockPromise?: Promise<T>;
+
   constructor(ab: AbortController) {
     this.abortController = ab;
+    this.settled = new Promise<T>((resolve, reject) => {
+      this.settledResolve = resolve as (value: unknown) => void;
+      this.settledReject = reject;
+    });
+    this.settled.catch(() => {});
+  }
+
+  /** The raw block promise. Assigning it wires the deferred consumers await. */
+  public get promise(): Promise<T> | undefined {
+    return this.blockPromise;
+  }
+
+  public set promise(blockPromise: Promise<T> | undefined) {
+    this.blockPromise = blockPromise;
+    blockPromise?.then(
+      (value) => this.settledResolve(value),
+      (reason) => this.settledReject(reason),
+    );
   }
 
   public cancel() {
     this.abortController.abort();
     this.timeContext?.cancel();
+  }
+
+  /**
+   * Graceful cancel: settle the awaited join with `value`, then cancel the
+   * context subtree. A parent awaiting a branchWait proxy receives `value`
+   * instead of a cancellation rejection ("yield with an arg"). For
+   * CancelablePromiseProxy<void>, call with no argument. Plain cancel()
+   * remains the hard path that rejects the awaiting parent.
+   */
+  public cancelSafe(value: T) {
+    this.settledResolve(value);
+    this.cancel();
   }
 
   /**
@@ -478,7 +545,7 @@ export class CancelablePromiseProxy<T> implements Promise<T> {
       | undefined
       | null,
   ): Promise<TResult1 | TResult2> {
-    return this.promise!.then(onfulfilled, onrejected);
+    return this.settled.then(onfulfilled, onrejected);
   }
 
   catch<TResult = never>(
@@ -487,11 +554,11 @@ export class CancelablePromiseProxy<T> implements Promise<T> {
       | undefined
       | null,
   ): Promise<T | TResult> {
-    return this.promise!.catch(onrejected);
+    return this.settled.catch(onrejected);
   }
 
   finally(onfinally?: (() => void) | undefined | null): Promise<T> {
-    return this.promise!.finally(onfinally);
+    return this.settled.finally(onfinally);
   }
 }
 
@@ -795,6 +862,12 @@ export class TimeScheduler {
   // Most recent logical time-slice processed by the scheduler.
   // Used to deterministically stamp tempo writes that occur as immediate continuations of waits.
   private lastProcessedTime: number = 0;
+
+  // Zero-advance stall guard state (see MAX_ZERO_ADVANCE_SLICES). Counts
+  // consecutive slices processed at an unchanged logical time; once tripped,
+  // waiters at that instant are rejected until logical time advances.
+  private zeroAdvanceSliceCount = 0;
+  private zeroAdvanceGuardTripped = false;
 
   // True during the microtask phase immediately after processing a slice.
   // Cleared via queueMicrotask() after promise continuations for that slice run.
@@ -1227,6 +1300,15 @@ export class TimeScheduler {
 
   private processOneTimeslice(tSlice: number) {
     const sliceTime = tSlice;
+    if (sliceTime === this.lastProcessedTime) {
+      this.zeroAdvanceSliceCount += 1;
+      if (this.zeroAdvanceSliceCount > MAX_ZERO_ADVANCE_SLICES) {
+        this.zeroAdvanceGuardTripped = true;
+      }
+    } else {
+      this.zeroAdvanceSliceCount = 0;
+      this.zeroAdvanceGuardTripped = false;
+    }
     // Mark the current logical time slice as the authoritative "root current time"
     // for immediate continuation work (microtasks) spawned by resolving waits at this slice.
     this.lastProcessedTime = sliceTime;
@@ -1273,6 +1355,11 @@ export class TimeScheduler {
 
       if (ctx.isCanceled) {
         w.reject(new Error("aborted"));
+        continue;
+      }
+
+      if (this.zeroAdvanceGuardTripped) {
+        w.reject(zeroAdvanceStallError(t));
         continue;
       }
 
@@ -1330,6 +1417,11 @@ export class TimeScheduler {
 
       if (ctx.isCanceled) {
         w.reject(new Error("aborted"));
+        continue;
+      }
+
+      if (this.zeroAdvanceGuardTripped) {
+        w.reject(zeroAdvanceStallError(dueTime));
         continue;
       }
 
@@ -1447,6 +1539,14 @@ function barrierStoreKey(rootId: number, key: string): string {
   return `${rootId}\u0000${key}`;
 }
 
+/** Drop all barrier state belonging to a root tree (called on root cleanup). */
+function purgeBarriersForRoot(rootId: number): void {
+  const prefix = `${rootId}\u0000`;
+  for (const storeKey of barrierMap.keys()) {
+    if (storeKey.startsWith(prefix)) barrierMap.delete(storeKey);
+  }
+}
+
 function getBarrier(key: string, rootId: number): BarrierState {
   const storeKey = barrierStoreKey(rootId, key);
   const existing = barrierMap.get(storeKey);
@@ -1469,13 +1569,17 @@ export function startBarrier(key: string, ctx: TimeContext) {
   const rootId = ctx.rootContext!.id;
   const b = getBarrier(key, rootId);
 
-  // Resolve any stale in-progress cycle to avoid deadlocks.
-  if (b.inProgress) {
-    resolveBarrier(key, ctx);
+  // Starting a barrier NEVER releases waiters — release happens only via an
+  // explicit resolveBarrier call. If a cycle is already in progress (e.g. a
+  // producer module was stopped mid-cycle and relaunched), the new starter
+  // ADOPTS that cycle: parked waiters stay aligned and are released by the
+  // new starter's next resolveBarrier, instead of being force-released early
+  // and unaligned. A producer that wants release-on-restart semantics should
+  // call resolveBarrier explicitly at the top of its loop.
+  if (!b.inProgress) {
+    b.inProgress = true;
+    b.startTime = ctx.time;
   }
-
-  b.inProgress = true;
-  b.startTime = ctx.time;
 }
 
 export function resolveBarrier(key: string, ctx: TimeContext) {
@@ -1866,7 +1970,10 @@ export function createAndLaunchContext<T, C extends TimeContext>(
 
   if (!parentContext) {
     rootContexts.add(newContext);
-    const cleanupRoot = () => rootContexts.delete(newContext);
+    const cleanupRoot = () => {
+      rootContexts.delete(newContext);
+      purgeBarriersForRoot(newContext.id);
+    };
     promiseProxy.handleCancel(cleanupRoot);
     bp.finally(cleanupRoot);
   }
