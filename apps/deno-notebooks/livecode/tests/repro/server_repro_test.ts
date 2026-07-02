@@ -9,7 +9,12 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { join } from "jsr:@std/path@1";
 import { createLivecodeVisualizerServer } from "../../visualizer/server.ts";
-import type { AnalyzeSuccess } from "../../visualizer/protocol.ts";
+import type {
+  AnalyzeSuccess,
+  ProjectCurrentResponse,
+} from "../../visualizer/protocol.ts";
+
+const PROJECT_MANIFEST_FILENAME = "project.avtools-livecode.json";
 
 const FIXTURE_SOURCE = (marker: number) => `
 import type { TimeContext } from "@avtools/core-timing";
@@ -134,6 +139,56 @@ Deno.test({
         typeof body.error === "string" && body.error.length > 0,
         `expected JSON error body, got: ${bodyText}`,
       );
+    } finally {
+      await server.close();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "FIX B: /project/canvas persists piano-roll view layout to the manifest and survives reopen",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const sessionRoot = await Deno.makeTempDir({ prefix: "tcv-canvas-" });
+    const projectRoot = await Deno.makeTempDir({ prefix: "tcv-canvas-proj-" });
+    const server = await createLivecodeVisualizerServer({
+      port: 0,
+      sessionRoot,
+      logLevel: "info",
+    });
+    try {
+      await postJson(`${server.baseUrl}/project/create`, {
+        projectPath: projectRoot,
+        name: "canvas-repro",
+      });
+
+      const view = {
+        id: "shape:piano-roll-view-1",
+        rollName: "melody",
+        x: 820,
+        y: 120,
+        w: 560,
+        h: 360,
+      };
+      await postJson(`${server.baseUrl}/project/canvas`, {
+        canvas: { pianoRollViews: [view] },
+      });
+
+      const current = await (await fetch(`${server.baseUrl}/project/current`))
+        .json() as ProjectCurrentResponse;
+      assertEquals(current.project?.manifest.canvas?.pianoRollViews, [view]);
+
+      const manifestOnDisk = JSON.parse(
+        await Deno.readTextFile(join(projectRoot, PROJECT_MANIFEST_FILENAME)),
+      ) as { canvas?: { pianoRollViews?: unknown[] } };
+      assertEquals(manifestOnDisk.canvas?.pianoRollViews, [view]);
+
+      const reopened = await postJson(`${server.baseUrl}/project/open`, {
+        projectPath: projectRoot,
+      }) as ProjectCurrentResponse;
+      assertEquals(reopened.project?.manifest.canvas?.pianoRollViews, [view]);
     } finally {
       await server.close();
     }

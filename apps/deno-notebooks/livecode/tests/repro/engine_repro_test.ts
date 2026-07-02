@@ -318,6 +318,85 @@ Deno.test("tempo compaction preserves post-boundary beat mapping", () => {
 
 Deno.test({
   name:
+    "BUG E11 (fixed): long-lived branch progBeats stays continuous across tempo-history compaction",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const trap = trapUnhandledRejections();
+    try {
+      // Each sample pairs the long-lived branch's logical time with its progBeats.
+      // Tying beats to elapsed time makes the check robust to scheduler catch-up:
+      // beats can only accrue at the current tempo, so during the SLOW recording
+      // window a legitimate step satisfies deltaBeats <= (slowBpm/60) * deltaTime.
+      //
+      // The tempo profile is deliberately FAST-before-branch, SLOW-after: the
+      // branch's startTime lands in the fast region, so once history compaction
+      // merges that region into a single averaged (much slower) segment, the
+      // engine's OLD progBeats (which recomputed beatsAtTime(startTime) live)
+      // saw beatsAtTime(startTime) collapse downward, inflating progBeats by
+      // ~10x the physical beats for a step. The cached-startBeats fix freezes the
+      // exact pre-compaction origin, so progBeats tracks elapsed beats exactly.
+      const samples: Array<{ t: number; pb: number }> = [];
+      const fastBpm = 240;
+      const slowBpm = 20;
+      const branchStep = 0.025;
+
+      const handle = launch(async (ctx) => {
+        // FAST history before branching so startTime falls in the fast region.
+        for (let i = 0; i < 10; i++) {
+          ctx.setBpm(fastBpm);
+          await ctx.waitSec(0.025);
+        }
+
+        const branch = ctx.branch(async (c) => {
+          for (let i = 0; i < 40; i++) {
+            await c.waitSec(branchStep);
+            samples.push({ t: c.time, pb: c.progBeats });
+          }
+        }, "long-lived-voice");
+
+        // SLOW from here on, hammering setBpm to push the tempo history well past
+        // the 16-segment compaction threshold. This moves the compaction boundary
+        // past the branch's (fast-region) startTime mid-run.
+        for (let i = 0; i < 55; i++) {
+          ctx.setBpm(slowBpm);
+          await ctx.waitSec(0.018);
+        }
+
+        await branch.finally(() => {});
+      });
+
+      await handle;
+
+      assert(
+        samples.length >= 30,
+        `expected long-lived branch to record progBeats, got ${samples.length}`,
+      );
+      for (let i = 1; i < samples.length; i++) {
+        const deltaBeats = samples[i].pb - samples[i - 1].pb;
+        const deltaTime = samples[i].t - samples[i - 1].t;
+        assert(
+          deltaBeats >= -1e-9,
+          `progBeats must be non-decreasing, saw ${deltaBeats} at step ${i}`,
+        );
+        // The whole recording window runs at slowBpm; allow 3x headroom for any
+        // scheduler catch-up. The old compaction bug produced steps up to ~15x
+        // this bound.
+        const maxBeats = (slowBpm / 60) * Math.max(0, deltaTime) * 3 + 1e-6;
+        assert(
+          deltaBeats <= maxBeats,
+          `progBeats delta ${deltaBeats} at step ${i} exceeds what ${deltaTime}s ` +
+            `at bpm~${slowBpm} can produce (${maxBeats}) — compaction discontinuity`,
+        );
+      }
+    } finally {
+      trap.dispose();
+    }
+  },
+});
+
+Deno.test({
+  name:
     "BUG E7: scheduler beatPQs map leaks one entry per cancelled cloned-tempo branch",
   sanitizeOps: false,
   sanitizeResources: false,

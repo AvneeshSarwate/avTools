@@ -5,6 +5,7 @@ import {
   CallExpression,
   FunctionDeclaration,
   FunctionExpression,
+  ImportDeclaration,
   MethodDeclaration,
   Node,
   ParameterDeclaration,
@@ -129,8 +130,17 @@ export function analyzeAndTransformTimedModule(
     request.sourceText,
     { overwrite: true },
   );
-  const syntacticDiagnostics = project.getProgram().compilerObject
-    .getSyntacticDiagnostics(sourceFile.compilerNode);
+  // Read parse diagnostics straight off the parsed source file to avoid forcing
+  // full TS program construction on the hot (no-error) analyze path. Fall back
+  // to the program path if the internal array is unavailable so behavior never
+  // regresses.
+  const parseDiagnostics = (sourceFile.compilerNode as unknown as {
+    parseDiagnostics?: ts.DiagnosticWithLocation[];
+  }).parseDiagnostics;
+  const syntacticDiagnostics = parseDiagnostics ??
+    project.getProgram().compilerObject.getSyntacticDiagnostics(
+      sourceFile.compilerNode,
+    );
   if (syntacticDiagnostics.length > 0) {
     return failure(
       request,
@@ -638,8 +648,25 @@ function hasConflictingTopLevelBinding(
         declaration.getName() === name
       );
     }
+    if (Node.isImportDeclaration(statement)) {
+      return importDeclarationBindsName(statement, name);
+    }
     return false;
   });
+}
+
+function importDeclarationBindsName(
+  statement: ImportDeclaration,
+  name: string,
+): boolean {
+  // Default import: `import loop from "..."`
+  if (statement.getDefaultImport()?.getText() === name) return true;
+  // Namespace import: `import * as loop from "..."`
+  if (statement.getNamespaceImport()?.getText() === name) return true;
+  // Named imports incl. aliases: `import { loop }` / `import { x as loop }`
+  return statement.getNamedImports().some((named) =>
+    (named.getAliasNode() ?? named.getNameNode()).getText() === name
+  );
 }
 
 function clampOffset(value: number, max: number): number {

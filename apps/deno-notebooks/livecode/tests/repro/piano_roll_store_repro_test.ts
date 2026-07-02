@@ -43,6 +43,33 @@ Deno.test("BUG P1: stored notes alias caller-owned nested objects (mpePitch muta
   );
 });
 
+Deno.test("BUG P4 fixed: non-cloneable note metadata is stripped without throwing into livecode", () => {
+  const note: NoteDataInput = {
+    id: "fn-note",
+    pitch: 60,
+    position: 0,
+    duration: 1,
+    velocity: 90,
+    metadata: { fn: () => {} },
+  };
+
+  // Must not throw synchronously into caller-owned livecode timing code.
+  const stored = setPianoRoll("repro-noncloneable-metadata", { notes: [note] });
+  assert(stored);
+
+  const after = getPianoRoll("repro-noncloneable-metadata");
+  assert(after);
+  assertEquals(after.data.notes.length, 1);
+  assertEquals(after.data.notes[0].id, "fn-note");
+  assertEquals(after.data.notes[0].pitch, 60);
+
+  const storedMeta = after.data.notes[0].metadata;
+  assert(
+    !storedMeta || !("fn" in storedMeta),
+    "non-cloneable function metadata must not be present in the stored note",
+  );
+});
+
 Deno.test("BUG P2: writes ignore revisions entirely — concurrent UI/livecode writers silently clobber", () => {
   const first = setPianoRoll("repro-conflict", {
     notes: [{ pitch: 60, position: 0, duration: 1 }],

@@ -258,7 +258,7 @@ function resolvePath(path: string): string {
 async function cleanup(): Promise<void> {
   if (cleaningUp) return;
   cleaningUp = true;
-  await shutdownProxyBestEffort(proxy);
+  shutdownProxyBestEffort(proxy);
   try {
     await Deno.remove(workspaceDir, { recursive: true });
   } catch (error) {
@@ -268,17 +268,24 @@ async function cleanup(): Promise<void> {
   }
 }
 
-async function shutdownProxyBestEffort(target: unknown): Promise<void> {
-  if (!target || typeof target !== "object") return;
-  const methods = ["shutdown", "dispose", "close", "kill"] as const;
-  for (const method of methods) {
-    const candidate = (target as Record<string, unknown>)[method];
-    if (typeof candidate !== "function") continue;
-    try {
-      await candidate.call(target);
-    } catch (error) {
-      console.warn(`[livecode-lsp-proxy] proxy ${method} failed`, error);
-    }
-    return;
+function shutdownProxyBestEffort(target: LSProxy): void {
+  // Dispose the RPC connection to the language server process if available.
+  try {
+    target.procConn?.dispose?.();
+  } catch (error) {
+    console.warn("[livecode-lsp-proxy] procConn dispose failed", error);
+  }
+
+  // Definitively kill the spawned `deno lsp` child. LSProxy exposes the Node
+  // ChildProcess directly as `process`; without this the child is orphaned on
+  // SIGINT/SIGTERM.
+  const child =
+    (target as { process?: { kill: (signal?: string) => boolean } | null })
+      .process;
+  console.log("[livecode-lsp-proxy] killing deno lsp child process (SIGTERM)");
+  try {
+    child?.kill("SIGTERM");
+  } catch (error) {
+    console.warn("[livecode-lsp-proxy] child process kill failed", error);
   }
 }

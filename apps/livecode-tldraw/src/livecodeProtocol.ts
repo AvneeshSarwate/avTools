@@ -124,12 +124,24 @@ export interface ProjectModuleRecord {
   h?: number;
 }
 
+export interface ProjectCanvasPianoRollView {
+  id: string;
+  rollName: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface ProjectCanvasState {
+  pianoRollViews?: ProjectCanvasPianoRollView[];
+}
+
 export interface LivecodeProjectManifest {
   version: 1;
   name: string;
   modules: ProjectModuleRecord[];
-  canvas?: Record<string, unknown>;
-  pianoRollViews?: unknown[];
+  canvas?: ProjectCanvasState;
 }
 
 export interface ProjectModuleInput {

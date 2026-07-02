@@ -1,4 +1,5 @@
 import type {
+  MpePitchPoint,
   NoteData,
   NoteDataInput,
   PianoRollData,
@@ -57,7 +58,7 @@ export function setPianoRoll(
   options: SetPianoRollOptions = {},
 ): PianoRollObject {
   const normalizedName = normalizeName(name);
-  const nextData = normalizeData(data);
+  const nextData = normalizeData(data, normalizedName);
   const existing = records.get(normalizedName);
   const source = options.source ?? "server";
   const undoable = options.undoable ?? true;
@@ -222,11 +223,71 @@ function normalizeName(name: string): string {
   return normalized;
 }
 
-function normalizeData(data: PianoRollData): PianoRollData {
-  return structuredClone({
+// Must NEVER throw: this runs inside caller-owned livecode timing (the
+// in-process setPianoRoll path is not wrapped by the HTTP handler try/catch).
+// Note/point `metadata` is user-supplied and may hold non-cloneable values.
+function normalizeData(data: PianoRollData, rollName: string): PianoRollData {
+  const shaped: PianoRollData = {
     ...data,
     notes: data.notes.map((note, index) => normalizeNote(note, index)),
-  });
+  };
+
+  try {
+    return structuredClone(shaped);
+  } catch {
+    // structuredClone throws (e.g. DataCloneError) on functions/class
+    // instances; fall through to a JSON-based clone.
+  }
+
+  try {
+    const cloned = JSON.parse(JSON.stringify(shaped)) as PianoRollData;
+    console.warn(
+      `[piano-roll-store] "${rollName}" write: metadata was not ` +
+        "structured-cloneable; converted via JSON (non-cloneable values dropped).",
+    );
+    return cloned;
+  } catch {
+    // JSON clone can still throw on cycles/BigInt; rebuild with well-typed
+    // fields only, dropping metadata entirely.
+  }
+
+  console.warn(
+    `[piano-roll-store] "${rollName}" write: metadata could not be cloned; ` +
+      "rebuilt with well-typed fields only (metadata stripped).",
+  );
+  return rebuildSafeData(shaped);
+}
+
+// Last-resort clone that keeps only well-typed, always-serializable fields and
+// drops user-supplied metadata that broke both structuredClone and JSON clone.
+function rebuildSafeData(data: PianoRollData): PianoRollData {
+  const rebuilt: PianoRollData = {
+    notes: data.notes.map((note) => {
+      const safeNote: NoteData = {
+        id: (note as NoteData).id,
+        pitch: note.pitch,
+        position: note.position,
+        duration: note.duration,
+        velocity: (note as NoteData).velocity,
+      };
+      if (note.mpePitch) {
+        safeNote.mpePitch = {
+          points: note.mpePitch.points.map((point) => {
+            const safePoint: MpePitchPoint = {
+              time: point.time,
+              pitchOffset: point.pitchOffset,
+            };
+            if (point.rooted !== undefined) safePoint.rooted = point.rooted;
+            return safePoint;
+          }),
+        };
+      }
+      return safeNote;
+    }),
+  };
+  if (data.viewport) rebuilt.viewport = { ...data.viewport };
+  if (data.grid) rebuilt.grid = { ...data.grid };
+  return rebuilt;
 }
 
 function normalizeNote(note: NoteDataInput, index: number): NoteData {

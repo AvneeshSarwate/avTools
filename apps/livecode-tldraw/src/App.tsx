@@ -43,6 +43,7 @@ import {
   PianoRollShapeUtil,
 } from "./PianoRollShape";
 import { setRuntimeDebugRefs } from "./livecodeTldrawDebug";
+import { createReconnectingSocket } from "./reconnectingSocket";
 
 const shapeUtils = [LivecodeEditorShapeUtil, PianoRollShapeUtil];
 const TLDR_MIME_TYPE = "application/vnd.tldraw+json";
@@ -71,6 +72,7 @@ function LivecodeTldrawPage() {
   const canvasLoadedRef = useRef(false);
   const suppressStoreListenerRef = useRef(false);
   const layoutUpdateTimersRef = useRef(new Map<string, number>());
+  const canvasUpdateTimerRef = useRef<number | undefined>(undefined);
 
   useClientControlBridge(editor, runtime);
 
@@ -115,6 +117,35 @@ function LivecodeTldrawPage() {
     [runtime.serverBaseUrl],
   );
 
+  const schedulePianoRollCanvasUpdate = useCallback(() => {
+    if (!editor || !projectPath) return;
+    if (canvasUpdateTimerRef.current !== undefined) {
+      window.clearTimeout(canvasUpdateTimerRef.current);
+    }
+    canvasUpdateTimerRef.current = window.setTimeout(() => {
+      canvasUpdateTimerRef.current = undefined;
+      const pianoRollViews = editor
+        .getCurrentPageShapes()
+        .filter(isPianoRollShape)
+        .map((shape) => ({
+          id: shape.id,
+          rollName: shape.props.rollName,
+          x: shape.x,
+          y: shape.y,
+          w: shape.props.w,
+          h: shape.props.h,
+        }));
+      void postJson(`${runtime.serverBaseUrl}/project/canvas`, {
+        canvas: { pianoRollViews },
+      }).catch((error) => {
+        console.error(
+          "[livecode-tldraw] failed to persist piano-roll layout",
+          error,
+        );
+      });
+    }, 1_000);
+  }, [editor, projectPath, runtime.serverBaseUrl]);
+
   const loadTldrawFile = useCallback(
     async (file: File) => {
       if (!editor) return;
@@ -148,6 +179,8 @@ function LivecodeTldrawPage() {
               record.props.source,
               record.props.projectModulePath,
             );
+          } else if (isPianoRollShape(record)) {
+            schedulePianoRollCanvasUpdate();
           }
         }
 
@@ -177,12 +210,22 @@ function LivecodeTldrawPage() {
             ) {
               scheduleProjectModuleLayoutUpdate(after);
             }
+          } else if (isPianoRollShape(before) !== isPianoRollShape(after)) {
+            schedulePianoRollCanvasUpdate();
+          } else if (
+            isPianoRollShape(before) &&
+            isPianoRollShape(after) &&
+            hasPianoRollShapeChanged(before, after)
+          ) {
+            schedulePianoRollCanvasUpdate();
           }
         }
 
         for (const record of Object.values(entry.changes.removed)) {
           if (isLivecodeShape(record)) {
             unregisterModule(record.props.moduleId);
+          } else if (isPianoRollShape(record)) {
+            schedulePianoRollCanvasUpdate();
           }
         }
       },
@@ -195,11 +238,16 @@ function LivecodeTldrawPage() {
         window.clearTimeout(timer);
       }
       layoutUpdateTimersRef.current.clear();
+      if (canvasUpdateTimerRef.current !== undefined) {
+        window.clearTimeout(canvasUpdateTimerRef.current);
+        canvasUpdateTimerRef.current = undefined;
+      }
     };
   }, [
     editor,
     registerModule,
     scheduleProjectModuleLayoutUpdate,
+    schedulePianoRollCanvasUpdate,
     setModuleSource,
     syncLivecodeShapesToRuntime,
     unregisterModule,
@@ -413,23 +461,17 @@ function useClientControlBridge(
     );
     if (!normalizedServerBaseUrl) return;
 
-    let closed = false;
-    let reconnectTimer: number | null = null;
-    let socket: WebSocket | null = null;
     const pendingResults = new Map<string, ClientControlResultMessage>();
     const socketUrl = `${
       normalizedServerBaseUrl.replace(/^http/, "ws")
     }/client/control?clientId=${encodeURIComponent(clientIdRef.current)}`;
 
-    const connect = () => {
-      if (closed) return;
-      socket = new WebSocket(socketUrl);
-
-      socket.onopen = () => {
+    const controller = createReconnectingSocket({
+      makeUrl: () => socketUrl,
+      onOpen: (socket) => {
         flushClientControlResults(socket, pendingResults);
-      };
-
-      socket.onmessage = (event) => {
+      },
+      onMessage: (event) => {
         if (typeof event.data !== "string") return;
         let envelope: ClientControlEnvelope;
         try {
@@ -449,7 +491,7 @@ function useClientControlBridge(
           runtimeRef,
         )
           .then((result) => {
-            queueClientControlResult(socket, pendingResults, {
+            queueClientControlResult(controller.socket, pendingResults, {
               type: "clientCommandResult",
               commandId: envelope.commandId,
               ok: true,
@@ -457,32 +499,20 @@ function useClientControlBridge(
             });
           })
           .catch((error: unknown) => {
-            queueClientControlResult(socket, pendingResults, {
+            queueClientControlResult(controller.socket, pendingResults, {
               type: "clientCommandResult",
               commandId: envelope.commandId,
               ok: false,
               error: error instanceof Error ? error.message : String(error),
             });
           });
-      };
+      },
+    });
 
-      socket.onclose = () => {
-        if (closed) return;
-        reconnectTimer = window.setTimeout(connect, 1_000);
-      };
-      socket.onerror = () => {
-        socket?.close();
-      };
-    };
-
-    connect();
+    controller.connect();
 
     return () => {
-      closed = true;
-      if (reconnectTimer !== null) {
-        window.clearTimeout(reconnectTimer);
-      }
-      socket?.close();
+      controller.close();
     };
   }, [runtime.serverBaseUrl]);
 }
@@ -814,6 +844,17 @@ function hasShapeLayoutChanged(
     before.props.h !== after.props.h;
 }
 
+function hasPianoRollShapeChanged(
+  before: PianoRollShape,
+  after: PianoRollShape,
+) {
+  return before.x !== after.x ||
+    before.y !== after.y ||
+    before.props.w !== after.props.w ||
+    before.props.h !== after.props.h ||
+    before.props.rollName !== after.props.rollName;
+}
+
 function createLivecodeShape(
   editor: Editor,
   options: {
@@ -962,6 +1003,21 @@ async function loadProjectIntoCanvas(
       source: source.sourceText,
     });
   }
+
+  const pianoRollViews = project.project?.manifest.canvas?.pianoRollViews ?? [];
+  for (const view of pianoRollViews) {
+    const shapeId = view.id as PianoRollShape["id"];
+    if (editor.getShape(shapeId)) continue;
+    createPianoRollShape(editor, {
+      id: shapeId,
+      x: view.x,
+      y: view.y,
+      w: view.w,
+      h: view.h,
+      rollName: view.rollName,
+      title: `piano roll: ${view.rollName}`,
+    });
+  }
 }
 
 function fileUrlFromPath(path: string) {
@@ -1008,9 +1064,11 @@ function hasPianoRollShapes(editor: Editor) {
 
 function createPianoRollShape(
   editor: Editor,
-  options: Partial<PianoRollShape["props"]> & { x?: number; y?: number } = {},
+  options:
+    & Partial<PianoRollShape["props"]>
+    & { x?: number; y?: number; id?: PianoRollShape["id"] } = {},
 ) {
-  const id = createShapeId();
+  const id = options.id ?? createShapeId();
   const rollName = options.rollName ?? "melody";
   editor.createShape<PianoRollShape>({
     id,

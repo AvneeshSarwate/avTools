@@ -85,7 +85,6 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
   const roll = runtime.rolls[shape.props.rollName]
   const elementRef = useRef<PianoRollElement | null>(null)
   const lastAppliedRevRef = useRef<number | null>(null)
-  const lastOwnRevRef = useRef<number | null>(null)
   const originId = useMemo(() => `piano-roll-view-${shape.id}`, [shape.id])
 
   useEffect(() => {
@@ -104,7 +103,19 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
     const el = elementRef.current
     if (!el || !roll) return
     if (lastAppliedRevRef.current === roll.rev) return
-    if (roll.updatedBy === originId && roll.rev === lastOwnRevRef.current) {
+    // Suppress echoes of this view's own edits independently of HTTP-response
+    // timing: the websocket snapshot carrying the new rev can arrive before
+    // /piano-roll/set resolves, so we cannot key suppression on a recorded rev.
+    // The originating view already holds this state in its component, so it
+    // never needs its own echo re-applied — regardless of rev. Undo/redo use a
+    // distinct origin (see undoRoll/redoRoll below), so their results still
+    // apply here. Accepted divergence: server-side note normalization (assigned
+    // ids, velocity defaults) is not echoed back into the originating view; the
+    // next foreign-origin application syncs it.
+    // Initial application (lastAppliedRevRef.current === null) always runs, so a
+    // page reload restores the latest state even when updatedBy === originId
+    // (originId is persistent, derived from the shape id).
+    if (roll.updatedBy === originId && lastAppliedRevRef.current !== null) {
       lastAppliedRevRef.current = roll.rev
       return
     }
@@ -126,16 +137,10 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
       const data: PianoRollData = {
         notes: notesEntries.map(([, note]) => note),
       }
-      void runtime
-        .setRoll(shape.props.rollName, data, {
-          originId,
-          label: `Edit ${shape.props.rollName}`,
-        })
-        .then((updated) => {
-          if (!updated.conflict && updated.updatedBy === originId) {
-            lastOwnRevRef.current = updated.rev
-          }
-        })
+      void runtime.setRoll(shape.props.rollName, data, {
+        originId,
+        label: `Edit ${shape.props.rollName}`,
+      })
     }
 
     el.addEventListener('notes-update', handleNotesUpdate)
@@ -163,14 +168,16 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
           <button
             type="button"
             disabled={!roll?.canUndo}
-            onClick={() => void runtime.undoRoll(shape.props.rollName, originId)}
+            onClick={() =>
+              void runtime.undoRoll(shape.props.rollName, `${originId}:history`)}
           >
             Undo object
           </button>
           <button
             type="button"
             disabled={!roll?.canRedo}
-            onClick={() => void runtime.redoRoll(shape.props.rollName, originId)}
+            onClick={() =>
+              void runtime.redoRoll(shape.props.rollName, `${originId}:history`)}
           >
             Redo object
           </button>

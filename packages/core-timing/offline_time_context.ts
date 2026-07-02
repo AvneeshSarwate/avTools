@@ -703,6 +703,18 @@ export class TempoMap {
     return { bpmAtT, beatsAtT, segIndex };
   }
 
+  /**
+   * Bounds unbounded tempo-segment growth by merging all segments before a boundary
+   * into a single averaged constant-bpm segment. This preserves beatsAtTime exactly
+   * at t=0 and at t>=boundaryTime, but for times STRICTLY INSIDE the merged region
+   * beatsAtTime returns a linear approximation of the true (piecewise) beat count.
+   *
+   * Engine-internal queries never observe this approximation: contexts cache their
+   * startBeats at creation (see TimeContext.startBeats / createAndLaunchContext) and
+   * scheduler paths only ever query current/future times. Only direct user calls to
+   * tempo.beatsAtTime(historicT) may see approximated values, and only after more
+   * than MAX_HISTORICAL_SEGMENTS (16) tempo edits have accumulated.
+   */
   private compactHistoryBefore(time: number) {
     const boundaryIndex = this.segmentIndexAtTime(time);
     if (boundaryIndex <= TempoMap.MAX_HISTORICAL_SEGMENTS) return;
@@ -1573,6 +1585,11 @@ export abstract class TimeContext {
 
   public time: number;
   public startTime: number;
+  // Beat position captured at context creation (after tempo is wired). Cached here
+  // instead of recomputed via tempo.beatsAtTime(startTime) so that history compaction
+  // (which merges old segments into a single averaged segment) cannot retroactively
+  // shift a long-lived context's beat origin. See compactHistoryBefore.
+  public startBeats = 0;
   public isCanceled = false;
 
   public id: number;
@@ -1615,8 +1632,7 @@ export abstract class TimeContext {
   }
 
   public get progBeats(): number {
-    return this.tempo.beatsAtTime(this.time) -
-      this.tempo.beatsAtTime(this.startTime);
+    return this.tempo.beatsAtTime(this.time) - this.startBeats;
   }
 
   /** Deterministic random in [0,1). Use this instead of Math.random(). */
@@ -1832,6 +1848,12 @@ export function createAndLaunchContext<T, C extends TimeContext>(
     newContext.rngSeed = seedStr;
     newContext.rng = seedrandom(seedStr);
   }
+
+  // Cache the starting beat position now that the tempo map is wired (covers both
+  // the child branch above and the root-setup branch, and correctly handles a
+  // cloned tempo). Freezing this at creation makes progBeats immune to later
+  // history compaction approximating interior times of the merged region.
+  newContext.startBeats = newContext.tempo.beatsAtTime(newContext.time);
 
   const blockPromise = block(newContext);
 

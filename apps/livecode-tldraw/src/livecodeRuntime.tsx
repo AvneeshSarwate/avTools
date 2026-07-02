@@ -17,6 +17,10 @@ import {
   type LspStatus,
   retireLspConnection,
 } from "./denoLsp";
+import {
+  createReconnectingSocket,
+  type ReconnectingSocketController,
+} from "./reconnectingSocket";
 import type {
   ActiveWaitSnapshot,
   AnalyzeResponse,
@@ -70,6 +74,7 @@ interface ModuleRecord extends ModuleViewState {
   buildTimer: number | null;
   analyzeSequence: number;
   activeGeneratedRunId: string | null;
+  lastTerminalRun: { generatedRunId: string; updatedAtMs: number } | null;
   pendingAnalyze: {
     sourceText: string;
     serverBaseUrl: string;
@@ -143,14 +148,28 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
   >(null);
   const [modules, setModules] = useState<Record<string, ModuleViewState>>({});
   const modulesRef = useRef(new Map<string, ModuleRecord>());
-  const snapshotsSocketRef = useRef<WebSocket | null>(null);
-  const reconnectTimerRef = useRef<number | null>(null);
-  const reconnectBackoffMsRef = useRef(1_000);
-  const shouldReconnectRef = useRef(false);
+  const snapshotsControllerRef = useRef<ReconnectingSocketController | null>(
+    null,
+  );
   const connectRef = useRef<() => Promise<void>>(async () => {});
   const disconnectRef = useRef<() => void>(() => {});
   const pendingStopsRef = useRef<string[]>([]);
   const lspConnectionRef = useRef<DenoLspConnection | null>(null);
+  const snapshotOpenRef = useRef<(socket: WebSocket) => void>(() => {});
+  const snapshotMessageRef = useRef<(event: MessageEvent) => void>(() => {});
+  const snapshotCloseRef = useRef<() => void>(() => {});
+  const snapshotErrorRef = useRef<() => void>(() => {});
+
+  if (snapshotsControllerRef.current === null) {
+    snapshotsControllerRef.current = createReconnectingSocket({
+      makeUrl: () =>
+        `${serverBaseUrlRef.current.replace(/^http/, "ws")}/runtime/snapshots`,
+      onOpen: (socket) => snapshotOpenRef.current(socket),
+      onMessage: (event) => snapshotMessageRef.current(event),
+      onClose: () => snapshotCloseRef.current(),
+      onError: () => snapshotErrorRef.current(),
+    });
+  }
 
   const publishModule = useCallback((record: ModuleRecord) => {
     const view = toViewState(record);
@@ -179,24 +198,6 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     }
     publishAllModules();
   }, [publishAllModules]);
-
-  const clearReconnectTimer = useCallback(() => {
-    if (reconnectTimerRef.current === null) return;
-    window.clearTimeout(reconnectTimerRef.current);
-    reconnectTimerRef.current = null;
-  }, []);
-
-  const scheduleReconnect = useCallback(() => {
-    if (!shouldReconnectRef.current || reconnectTimerRef.current !== null) {
-      return;
-    }
-    const delayMs = reconnectBackoffMsRef.current;
-    reconnectBackoffMsRef.current = Math.min(delayMs * 2, 10_000);
-    reconnectTimerRef.current = window.setTimeout(() => {
-      reconnectTimerRef.current = null;
-      void connectRef.current();
-    }, delayMs);
-  }, []);
 
   const setServerBaseUrl = useCallback((next: string) => {
     const normalized = normalizeServerBaseUrl(next);
@@ -318,6 +319,12 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
         record.runStatus = run
           ? moduleRunStateToRunStatus(run.state)
           : "idle";
+        if (run && (run.state === "stopped" || run.state === "error")) {
+          record.lastTerminalRun = {
+            generatedRunId: run.generatedRunId,
+            updatedAtMs: run.updatedAtMs,
+          };
+        }
         if (run?.state === "error") {
           record.latestError = run.message ?? record.latestError;
         }
@@ -506,114 +513,82 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     [analyzeNow],
   );
 
-  const connect = useCallback(async () => {
-    shouldReconnectRef.current = true;
-    clearReconnectTimer();
-    setConnectionError(null);
-    setConnectionStatusRef("connecting");
-    const oldSocket = snapshotsSocketRef.current;
-    snapshotsSocketRef.current = null;
-    oldSocket?.close();
-
-    try {
-      const response = await fetch(`${serverBaseUrlRef.current}/health`);
-      if (!response.ok) {
-        throw new Error(
-          `/health failed with ${response.status}: ${await response.text()}`,
+  snapshotOpenRef.current = (socket) => {
+    setConnectionStatusRef("open");
+    void (async () => {
+      try {
+        // Health + LSP recovery run on EVERY socket open (not just manual
+        // connect) so an auto-reconnect after a server restart restores the
+        // LSP session and health state, matching the pre-refactor behavior
+        // where reconnects re-ran the full connect() path.
+        const response = await fetch(`${serverBaseUrlRef.current}/health`);
+        if (!response.ok) {
+          throw new Error(
+            `/health failed with ${response.status}: ${await response.text()}`,
+          );
+        }
+        const healthResponse = (await response.json()) as HealthResponse;
+        if (snapshotsControllerRef.current?.socket !== socket) return;
+        setHealth(healthResponse);
+        reconnectDenoLsp();
+        await rehydrateRuntimeState();
+        await flushPendingStops();
+        for (const record of modulesRef.current.values()) {
+          scheduleAnalyze(record, 0);
+        }
+      } catch (error) {
+        if (snapshotsControllerRef.current?.socket !== socket) return;
+        setConnectionError(
+          error instanceof Error ? error.message : String(error),
         );
       }
-      const healthResponse = (await response.json()) as HealthResponse;
-      setHealth(healthResponse);
-      reconnectDenoLsp();
+    })();
+  };
 
-      const socketUrl = `${
-        serverBaseUrlRef.current.replace(/^http/, "ws")
-      }/runtime/snapshots`;
-      const socket = new WebSocket(socketUrl);
-      snapshotsSocketRef.current = socket;
-
-      socket.onopen = () => {
-        if (snapshotsSocketRef.current !== socket) return;
-        setConnectionStatusRef("open");
-        reconnectBackoffMsRef.current = 1_000;
-        void (async () => {
-          try {
-            await rehydrateRuntimeState();
-            await flushPendingStops();
-            for (const record of modulesRef.current.values()) {
-              scheduleAnalyze(record, 0);
-            }
-          } catch (error) {
-            if (snapshotsSocketRef.current !== socket) return;
-            setConnectionError(
-              error instanceof Error ? error.message : String(error),
-            );
-          }
-        })();
-      };
-
-      socket.onmessage = (event) => {
-        if (snapshotsSocketRef.current !== socket) return;
-        const snapshot = JSON.parse(event.data as string) as ActiveWaitSnapshot;
-        const pianoRollLookups = snapshot.pianoRollLookups ?? {};
-        const moduleRuns = snapshot.moduleRuns ?? {};
-        for (const record of modulesRef.current.values()) {
-          record.activeIds = snapshot.modules[record.moduleId] ?? [];
-          record.pianoRollLookups = pianoRollLookups[record.moduleId] ?? {};
-          applyModuleRunSnapshot(record, moduleRuns[record.moduleId]);
-          record.lastSnapshotSeq = snapshot.seq;
-        }
-        publishAllModules();
-      };
-
-      socket.onerror = () => {
-        if (snapshotsSocketRef.current !== socket) return;
-        setConnectionError("runtime snapshot websocket failed");
-        setConnectionStatusRef("error");
-      };
-
-      socket.onclose = () => {
-        if (snapshotsSocketRef.current === socket) {
-          snapshotsSocketRef.current = null;
-          markModulesUnknown();
-          if (connectionStatusRef.current !== "closed") {
-            setConnectionStatusRef("closed");
-          }
-          scheduleReconnect();
-        }
-      };
-    } catch (error) {
-      setConnectionError(
-        error instanceof Error ? error.message : String(error),
-      );
-      setConnectionStatusRef("error");
-      markModulesUnknown();
-      scheduleReconnect();
+  snapshotMessageRef.current = (event) => {
+    const snapshot = JSON.parse(event.data as string) as ActiveWaitSnapshot;
+    const pianoRollLookups = snapshot.pianoRollLookups ?? {};
+    const moduleRuns = snapshot.moduleRuns ?? {};
+    for (const record of modulesRef.current.values()) {
+      record.activeIds = snapshot.modules[record.moduleId] ?? [];
+      record.pianoRollLookups = pianoRollLookups[record.moduleId] ?? {};
+      applyModuleRunSnapshot(record, moduleRuns[record.moduleId]);
+      record.lastSnapshotSeq = snapshot.seq;
     }
-  }, [
-    clearReconnectTimer,
-    flushPendingStops,
-    markModulesUnknown,
-    publishAllModules,
-    rehydrateRuntimeState,
-    reconnectDenoLsp,
-    scheduleAnalyze,
-    scheduleReconnect,
-    setConnectionStatusRef,
-  ]);
+    publishAllModules();
+  };
+
+  snapshotCloseRef.current = () => {
+    markModulesUnknown();
+    if (connectionStatusRef.current !== "closed") {
+      setConnectionStatusRef("closed");
+    }
+  };
+
+  snapshotErrorRef.current = () => {
+    setConnectionError("runtime snapshot websocket failed");
+    setConnectionStatusRef("error");
+  };
+
+  const connect = useCallback(async () => {
+    setConnectionError(null);
+    setConnectionStatusRef("connecting");
+    // Health check, LSP reconnect, and rehydrate all run in the controller's
+    // onOpen handler, so manual connects and automatic reconnects follow the
+    // identical recovery path. If the server is down the socket fails to open
+    // and the controller keeps retrying with backoff.
+    snapshotsControllerRef.current?.connect();
+  }, [setConnectionStatusRef]);
 
   useEffect(() => {
     connectRef.current = connect;
   }, [connect]);
 
   const disconnect = useCallback(() => {
-    shouldReconnectRef.current = false;
-    clearReconnectTimer();
+    snapshotsControllerRef.current?.close();
     setConnectionError(null);
     setProjectDiagnostics(null);
     setProjectDiagnosticsError(null);
-    snapshotsSocketRef.current?.close();
-    snapshotsSocketRef.current = null;
     const lspConnection = lspConnectionRef.current;
     lspConnectionRef.current = null;
     setLspClient(null);
@@ -623,7 +598,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     retireLspConnection(lspConnection);
     setConnectionStatusRef("closed");
     markModulesUnknown();
-  }, [clearReconnectTimer, markModulesUnknown, setConnectionStatusRef]);
+  }, [markModulesUnknown, setConnectionStatusRef]);
 
   useEffect(() => {
     if (connectionStatus !== "open") return;
@@ -636,13 +611,12 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
   }, [connectionStatus, fetchProjectDiagnostics]);
 
   useEffect(() => {
+    const controller = snapshotsControllerRef.current;
     return () => {
-      shouldReconnectRef.current = false;
-      clearReconnectTimer();
-      snapshotsSocketRef.current?.close();
+      controller?.close();
       retireLspConnection(lspConnectionRef.current);
     };
-  }, [clearReconnectTimer]);
+  }, []);
 
   const registerModule = useCallback(
     (moduleId: string, sourceText: string, projectModulePath?: string) => {
@@ -865,6 +839,7 @@ function makeModuleRecord(
     latestError: null,
     buildTimer: null,
     activeGeneratedRunId: null,
+    lastTerminalRun: null,
     analyzeSequence: 0,
     pendingAnalyze: null,
     latestBuild: null,
@@ -877,15 +852,24 @@ function applyModuleRunSnapshot(
   run: RuntimeModuleRunSnapshotEntry | undefined,
 ) {
   if (!run) return;
-  const matchesActiveRun = record.activeGeneratedRunId === run.generatedRunId;
   const isServerActive = run.state === "launching" || run.state === "running";
 
-  if (isServerActive && (matchesActiveRun || record.runStatus === "unknown")) {
+  if (isServerActive) {
+    const seenTerminal = record.lastTerminalRun !== null &&
+      record.lastTerminalRun.generatedRunId === run.generatedRunId &&
+      run.updatedAtMs <= record.lastTerminalRun.updatedAtMs;
+    if (seenTerminal) return;
     record.activeGeneratedRunId = run.generatedRunId;
     if (record.runStatus !== "stopping") record.runStatus = "running";
     return;
   }
 
+  record.lastTerminalRun = {
+    generatedRunId: run.generatedRunId,
+    updatedAtMs: run.updatedAtMs,
+  };
+
+  const matchesActiveRun = record.activeGeneratedRunId === run.generatedRunId;
   const mayApplyTerminalState = matchesActiveRun ||
     (record.runStatus === "unknown" && !record.activeGeneratedRunId);
   if (!mayApplyTerminalState) return;

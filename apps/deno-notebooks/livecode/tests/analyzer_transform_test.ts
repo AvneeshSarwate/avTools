@@ -72,6 +72,25 @@ export default async function(ctx: TimeContext) {
   assertStringIncludes(result.transformedCode, "export default runFunc");
 });
 
+Deno.test("analyzer flags default export name colliding with an import binding", () => {
+  const result = analyze(`
+import { loop } from "@avtools/core-timing";
+import type { TimeContext } from "@avtools/core-timing";
+
+export default async function loop(ctx: TimeContext) {
+  await ctx.waitSec(0.10);
+  await loop(ctx);
+}
+`);
+
+  assertEquals(result.type, "analyzeFailure");
+  if (result.type !== "analyzeFailure") return;
+  assertEquals(
+    result.diagnostics[0].code,
+    "TCV_DEFAULT_EXPORT_RENAME_COLLISION",
+  );
+});
+
 Deno.test("analyzer instruments root helper calls and local helper internals", () => {
   const result = analyze(`
 import type { TimeContext } from "@avtools/core-timing";

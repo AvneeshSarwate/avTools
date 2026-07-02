@@ -205,6 +205,7 @@ export async function createLivecodeVisualizerServer(
   const launchQueue: Array<(ctx: TimeContext) => Promise<void> | void> = [];
   let currentProject: ProjectState | null = null;
   let diagnosticsInFlight: Promise<ProjectShadowCheckResponse> | null = null;
+  let diagnosticsInFlightHash: string | null = null;
   let lastDiagnostics:
     | { projectSourceHash: string; response: ProjectShadowCheckResponse }
     | null = null;
@@ -510,6 +511,16 @@ export async function createLivecodeVisualizerServer(
     ) {
       const requestBody = await request.json() as RemoveProjectModuleRequest;
       return json(await removeProjectModule(requestBody));
+    }
+
+    if (request.method === "POST" && url.pathname === "/project/canvas") {
+      const requestBody = await request.json() as {
+        canvas: LivecodeProjectManifest["canvas"];
+      };
+      const state = requireCurrentProject();
+      state.manifest.canvas = requestBody.canvas;
+      await writeProjectManifest(state);
+      return json(await makeProjectCurrentResponse());
     }
 
     if (request.method === "GET" && url.pathname === "/piano-roll/snapshots") {
@@ -1209,8 +1220,22 @@ export async function createLivecodeVisualizerServer(
     if (lastDiagnostics?.projectSourceHash === projectSourceHash) {
       return lastDiagnostics.response;
     }
-    if (diagnosticsInFlight) return await diagnosticsInFlight;
+    // If a run is already in flight, only reuse it when it was started for the
+    // exact same source hash. Otherwise wait for the slot to free up (the run
+    // may already cover a newer hash by the time it finishes) before starting
+    // our own run keyed to the current hash. Bounded in practice: each
+    // iteration awaits a distinct in-flight run.
+    while (diagnosticsInFlight) {
+      if (diagnosticsInFlightHash === projectSourceHash) {
+        return await diagnosticsInFlight;
+      }
+      await diagnosticsInFlight.catch(() => {});
+      if (lastDiagnostics?.projectSourceHash === projectSourceHash) {
+        return lastDiagnostics.response;
+      }
+    }
 
+    diagnosticsInFlightHash = projectSourceHash;
     const promise = analyzeProjectShadow({
       projectRoot: currentProject.root,
       project: current.project,
@@ -1227,7 +1252,10 @@ export async function createLivecodeVisualizerServer(
     try {
       return await promise;
     } finally {
-      if (diagnosticsInFlight === promise) diagnosticsInFlight = null;
+      if (diagnosticsInFlight === promise) {
+        diagnosticsInFlight = null;
+        diagnosticsInFlightHash = null;
+      }
     }
   }
 
