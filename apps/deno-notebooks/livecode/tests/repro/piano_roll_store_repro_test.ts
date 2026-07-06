@@ -70,6 +70,47 @@ Deno.test("BUG P4 fixed: non-cloneable note metadata is stripped without throwin
   );
 });
 
+Deno.test("BUG P4 addendum: non-JSON-serializable metadata (circular, BigInt) must not throw either", () => {
+  // Circular metadata survives structuredClone but makes JSON.stringify throw,
+  // so the no-op-compare serialize must guard, not just the clone.
+  const circular: Record<string, unknown> = {};
+  circular.self = circular;
+  const circularNote: NoteDataInput = {
+    id: "circular-note",
+    pitch: 62,
+    position: 0,
+    duration: 1,
+    velocity: 90,
+    metadata: circular,
+  };
+  const storedCircular = setPianoRoll("repro-circular-metadata", {
+    notes: [circularNote],
+  });
+  assert(storedCircular);
+  assertEquals(storedCircular.data.notes[0].id, "circular-note");
+
+  // Repeat write: no-op detection is disabled for non-serializable data, so
+  // this must still not throw (it may bump rev; that is acceptable).
+  const repeat = setPianoRoll("repro-circular-metadata", {
+    notes: [circularNote],
+  });
+  assert(repeat);
+
+  const bigintNote: NoteDataInput = {
+    id: "bigint-note",
+    pitch: 64,
+    position: 0,
+    duration: 1,
+    velocity: 90,
+    metadata: { big: 1n },
+  };
+  const storedBigint = setPianoRoll("repro-bigint-metadata", {
+    notes: [bigintNote],
+  });
+  assert(storedBigint);
+  assertEquals(storedBigint.data.notes[0].id, "bigint-note");
+});
+
 Deno.test("BUG P2: writes ignore revisions entirely — concurrent UI/livecode writers silently clobber", () => {
   const first = setPianoRoll("repro-conflict", {
     notes: [{ pitch: 60, position: 0, duration: 1 }],

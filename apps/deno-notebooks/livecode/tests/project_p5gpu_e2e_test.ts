@@ -4,6 +4,7 @@ import { assert, assertEquals } from "jsr:@std/assert@1";
 import { join } from "jsr:@std/path@1";
 import { decodePNG } from "@img/png";
 import { createLivecodeVisualizerServer } from "../visualizer/server.ts";
+import { fetchJson, postJson, waitFor } from "./test_helpers.ts";
 import type {
   AnalyzeSuccess,
   ProjectStatusResponse,
@@ -260,26 +261,6 @@ async function launchAnalyzedModule(baseUrl: string, analyze: AnalyzeSuccess) {
   });
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`${response.status} ${await response.text()}`);
-  }
-  return await response.json();
-}
-
-async function postJson<T = unknown>(url: string, body: unknown): Promise<T> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    throw new Error(`${response.status} ${await response.text()}`);
-  }
-  return await response.json();
-}
-
 async function waitForRuntimeModule(
   baseUrl: string,
   moduleId: string,
@@ -319,19 +300,6 @@ async function waitForFile(path: string, label: string, timeoutMs: number) {
     label,
     timeoutMs,
   );
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  label: string,
-  timeoutMs: number,
-) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(`Timed out waiting for ${label}`);
 }
 
 function hasPixelNear(

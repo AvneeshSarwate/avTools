@@ -17,10 +17,7 @@ import {
   startBarrier,
   TempoMap,
 } from "@avtools/core-timing";
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+import { sleep } from "../test_helpers.ts";
 
 /**
  * Collects unhandledrejection events and prevents them from killing the

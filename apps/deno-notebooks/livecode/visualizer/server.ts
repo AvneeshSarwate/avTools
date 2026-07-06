@@ -11,6 +11,7 @@ import {
 import { pathToFileURL } from "node:url";
 import { panicMidi } from "../helpers/midi_helpers.ts";
 import { analyzeAndTransformTimedModule } from "./analyze_transform.ts";
+import { removePathBestEffort } from "./fs_utils.ts";
 import { createGeneratedRunId } from "./generated_run_id.ts";
 import type {
   ActiveWaitSnapshot,
@@ -115,9 +116,24 @@ interface ProjectState {
   manifestPath: string;
   manifest: LivecodeProjectManifest;
   hashes: Map<string, ProjectModuleHashes>;
+  // Per-module transform cache. Invariant: validity is decided by comparing the
+  // cached entry's `sourceHash` against the freshly computed disk hash at read
+  // time in materializeProjectRuntime — no manual invalidation is required on
+  // mutation paths. Entries are only removed when the module record itself goes
+  // away (removeProjectModule).
   materialized: Map<string, {
     sourceHash: string;
     result: AnalyzeResponse;
+  }>;
+  // Per-project source content cache keyed by absolute source path. Avoids
+  // re-reading + re-hashing every *.orig.ts on the idle diagnostics/status
+  // poll. Keyed by disk stat (mtime + size) so sanctioned out-of-band editor
+  // edits are still detected.
+  sourceContentCache: Map<string, {
+    mtimeMs: number;
+    size: number;
+    sourceText: string;
+    sourceHash: string;
   }>;
 }
 
@@ -187,7 +203,14 @@ export async function createLivecodeVisualizerServer(
   const lspLogsDir = join(logsDir, "lsp");
   const logPath = join(logsDir, "server.log");
 
-  await sweepOldLspWorkspaces(lspWorkspacesRoot);
+  // Fire-and-forget: stale-workspace removal must never delay the server
+  // starting to listen. Best-effort by design (see sweepOldLspWorkspaces).
+  void sweepOldLspWorkspaces(lspWorkspacesRoot).catch((error) => {
+    console.warn(
+      "[livecode-visualizer] LSP workspace sweep failed",
+      error,
+    );
+  });
   await Deno.mkdir(modulesDir, { recursive: true });
   await Deno.mkdir(generatedDir, { recursive: true });
   await Deno.mkdir(lspWorkspacesDir, { recursive: true });
@@ -845,6 +868,7 @@ export async function createLivecodeVisualizerServer(
       },
       hashes: new Map(),
       materialized: new Map(),
+      sourceContentCache: new Map(),
     };
 
     await Deno.mkdir(root, { recursive: true });
@@ -885,6 +909,7 @@ export async function createLivecodeVisualizerServer(
       manifest,
       hashes: new Map(),
       materialized: new Map(),
+      sourceContentCache: new Map(),
     };
     currentProject = state;
     for (const moduleRecord of state.manifest.modules) {
@@ -963,7 +988,8 @@ export async function createLivecodeVisualizerServer(
       editorHash: diskHash,
       lastLoadedHash: diskHash,
     });
-    state.materialized.delete(moduleRecord.id);
+    // No materialized.delete here: validity is a sourceHash comparison at read
+    // time (see ProjectState.materialized), so a stale entry can never be used.
     await materializeProjectRuntime(state);
     return await makeProjectStatusResponse();
   }
@@ -1373,20 +1399,87 @@ export async function createLivecodeVisualizerServer(
   async function readProjectSourceModules(state: ProjectState) {
     return await Promise.all(
       state.manifest.modules.map(async (moduleRecord) => {
-        const sourceText = await readProjectModuleSource(state, moduleRecord);
+        const absoluteSourcePath = projectAbsolutePath(
+          state,
+          moduleRecord.sourcePath,
+        );
+        const { sourceText, sourceHash } = await readCachedProjectSource(
+          state,
+          absoluteSourcePath,
+        );
         return {
           ...moduleRecord,
-          absoluteSourcePath: projectAbsolutePath(
-            state,
-            moduleRecord.sourcePath,
-          ),
+          absoluteSourcePath,
           sourceText,
-          sourceHash: await hashText(sourceText),
+          sourceHash,
           lastLoadedHash: state.hashes.get(moduleRecord.id)?.lastLoadedHash ??
             null,
         };
       }),
     );
+  }
+
+  // Reads + hashes a source file, reusing the cached text/hash when the file's
+  // stat (mtime + size) is unchanged. Always stats first, so sanctioned
+  // out-of-band editor edits to *.orig.ts are still picked up.
+  async function readCachedProjectSource(
+    state: ProjectState,
+    absoluteSourcePath: string,
+  ): Promise<{ sourceText: string; sourceHash: string }> {
+    let stat: Deno.FileInfo | null = null;
+    try {
+      stat = await Deno.stat(absoluteSourcePath);
+    } catch {
+      // Fall through to a direct read, which surfaces the real error (e.g.
+      // NotFound) exactly as the previous uncached path did.
+    }
+    const mtimeMs = stat?.mtime?.getTime();
+    const cached = state.sourceContentCache.get(absoluteSourcePath);
+    if (
+      cached && stat && mtimeMs !== undefined &&
+      cached.mtimeMs === mtimeMs && cached.size === stat.size
+    ) {
+      return { sourceText: cached.sourceText, sourceHash: cached.sourceHash };
+    }
+    const sourceText = await Deno.readTextFile(absoluteSourcePath);
+    const sourceHash = await hashText(sourceText);
+    if (stat && mtimeMs !== undefined) {
+      state.sourceContentCache.set(absoluteSourcePath, {
+        mtimeMs,
+        size: stat.size,
+        sourceText,
+        sourceHash,
+      });
+    } else {
+      // No reliable stat (e.g. mtime unavailable) — don't cache, so the next
+      // read re-checks disk rather than trusting a possibly-stale entry.
+      state.sourceContentCache.delete(absoluteSourcePath);
+    }
+    return { sourceText, sourceHash };
+  }
+
+  async function updateSourceContentCache(
+    state: ProjectState,
+    absoluteSourcePath: string,
+    sourceText: string,
+    sourceHash: string,
+  ): Promise<void> {
+    try {
+      const stat = await Deno.stat(absoluteSourcePath);
+      const mtimeMs = stat.mtime?.getTime();
+      if (mtimeMs !== undefined) {
+        state.sourceContentCache.set(absoluteSourcePath, {
+          mtimeMs,
+          size: stat.size,
+          sourceText,
+          sourceHash,
+        });
+        return;
+      }
+    } catch {
+      // ignore — fall through to invalidation
+    }
+    state.sourceContentCache.delete(absoluteSourcePath);
   }
 
   async function ensureProjectModuleSource(
@@ -1422,7 +1515,10 @@ export async function createLivecodeVisualizerServer(
       editorHash: sourceHash,
       lastLoadedHash: sourceHash,
     });
-    state.materialized.delete(moduleRecord.id);
+    // Keep the content cache in sync with what we just wrote so the next poll
+    // reuses it. No materialized.delete: that cache self-invalidates by
+    // sourceHash comparison at read time (see ProjectState.materialized).
+    await updateSourceContentCache(state, sourcePath, sourceText, sourceHash);
   }
 
   async function writeProjectManifest(state: ProjectState): Promise<void> {
@@ -1667,19 +1763,12 @@ export async function createLivecodeVisualizerServer(
   }
 
   async function removeGeneratedPreparedFile(run: PreparedRun): Promise<void> {
-    try {
-      const url = new URL(run.transformedModuleUri);
-      if (url.protocol !== "file:") return;
-      await Deno.remove(fromFileUrl(url));
-    } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) {
-        await log({
-          type: "preparedRunPruneFileError",
-          generatedRunId: run.generatedRunId,
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
+    const url = new URL(run.transformedModuleUri);
+    if (url.protocol !== "file:") return;
+    await removePathBestEffort(
+      fromFileUrl(url),
+      `prepared run ${run.generatedRunId}`,
+    );
   }
 
   async function launchModule(requestBody: LaunchModuleRequest) {
@@ -1824,11 +1913,22 @@ export async function createLivecodeVisualizerServer(
       return;
     }
     await runModuleStopFunc(active, reason);
+    await teardownActiveModule(active, reason);
+  }
+
+  // Shared per-module teardown tail used by both graceful stop and panic. The
+  // only difference between the two paths is that panic skips runModuleStopFunc
+  // and passes its own reason/log type; the snapshot payload is identical.
+  async function teardownActiveModule(
+    active: ActiveModule,
+    reason: string,
+    opts: { logType?: string } = {},
+  ) {
     active.handle.cancel();
-    activeModules.delete(moduleId);
-    clearModuleWaits(moduleId);
+    activeModules.delete(active.moduleId);
+    clearModuleWaits(active.moduleId);
     setModuleRunSnapshot({
-      moduleId,
+      moduleId: active.moduleId,
       generatedRunId: active.generatedRunId,
       state: "stopped",
       projectModulePath: active.projectModulePath,
@@ -1837,8 +1937,8 @@ export async function createLivecodeVisualizerServer(
       message: reason,
     });
     await log({
-      type: "moduleStopped",
-      moduleId,
+      type: opts.logType ?? "moduleStopped",
+      moduleId: active.moduleId,
       generatedRunId: active.generatedRunId,
       reason,
     });
@@ -1877,23 +1977,8 @@ export async function createLivecodeVisualizerServer(
 
   async function panicRuntime(reason: string) {
     for (const active of [...activeModules.values()]) {
-      active.handle.cancel();
-      activeModules.delete(active.moduleId);
-      clearModuleWaits(active.moduleId);
-      setModuleRunSnapshot({
-        moduleId: active.moduleId,
-        generatedRunId: active.generatedRunId,
-        state: "stopped",
-        projectModulePath: active.projectModulePath,
-        sourceHash: active.sourceHash,
-        projectSourceHash: active.projectSourceHash,
-        message: reason,
-      });
-      await log({
-        type: "modulePanicStopped",
-        moduleId: active.moduleId,
-        generatedRunId: active.generatedRunId,
-        reason,
+      await teardownActiveModule(active, reason, {
+        logType: "modulePanicStopped",
       });
     }
     panicMidi();
@@ -1938,7 +2023,7 @@ async function sweepOldLspWorkspaces(root: string): Promise<void> {
         const stat = await Deno.stat(path);
         const modifiedMs = stat.mtime?.getTime() ?? 0;
         if (modifiedMs > 0 && modifiedMs < cutoffMs) {
-          await Deno.remove(path, { recursive: true });
+          await removePathBestEffort(path, "LSP workspace");
         }
       } catch (error) {
         if (!(error instanceof Deno.errors.NotFound)) {

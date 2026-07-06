@@ -290,6 +290,23 @@ these principles point; if two principles conflict, stop and ask.
   E3 (`cancelSafe(value)` on the proxy), E9/E10 barrier semantics
   (start-never-releases / adopt; `purgeBarriersForRoot`), E8 zero-advance
   stall guard (`MAX_ZERO_ADVANCE_SLICES = 10_000`).
+- The eight known-but-unfixed cleanup items from the code review (2026-07-06):
+  shared `teardownActiveModule` used by both `stopModule` and `panicRuntime`;
+  `ProjectState.materialized` validity is now documented as a read-time
+  `sourceHash` comparison and the scattered manual `materialized.delete`
+  invalidations were removed; the diagnostics poll reuses a per-project
+  stat-keyed (mtime+size) `sourceContentCache` so idle polls stop re-reading
+  and re-hashing every `*.orig.ts` (out-of-band editor edits still detected
+  via the stat check); `clampMidi` lives once in `helpers/midi_math.ts`
+  (side-effect-free so it does not disturb piano_roll_helpers' deliberate
+  dynamic import of midi_helpers); the startup LSP-workspace sweep is
+  fire-and-forget; `setPianoRoll` no-ops with a single serialize against a
+  cached `lastDataJson` (with a `safeStringify` guard so circular/BigInt
+  metadata still never throws — regression test in
+  piano_roll_store_repro_test.ts "P4 addendum"); shared
+  `tests/test_helpers.ts` (postJson/fetchJson/sleep/waitFor) replaces the
+  copy-pasted test helpers; shared `visualizer/fs_utils.ts`
+  `removePathBestEffort` replaces the repeated remove-and-swallow idiom.
 
 **OPEN WORK (documented in-place in the phases below; consolidated here):**
 
@@ -305,18 +322,9 @@ these principles point; if two principles conflict, stop and ask.
 4. **All of Phase 5** (unified store, detector plugin API, MCP surface +
    auth token, shared protocol package, shadow-diagnostic position
    mapping). Each needs an owner checkpoint before starting.
-5. **Known-but-unfixed cleanup (from the code review; opportunistic, none
-   user-facing):** `panicRuntime` duplicates `stopModule`'s teardown tail
-   (extract a shared helper); `ProjectState.materialized` cache runs
-   parallel to `hashes` (desync risk if a new write path forgets to
-   invalidate both); the 2.5s diagnostics poll still re-reads + re-hashes
-   every project file from disk even when idle (derive the hash from
-   in-memory state); a third `clampMidi` copy in midi_helpers duplicates
-   piano_roll_helpers'; the startup LSP-workspace sweep runs serially
-   before the server listens; `setPianoRoll` double-clones + double-
-   serializes on the no-op path; test helpers (postJson/sleep/waitFor)
-   are copy-pasted across test files; the best-effort
-   `Deno.remove`-and-swallow idiom is repeated 4+ places.
+
+(The former item 5 — the eight known-but-unfixed cleanup items from the
+code review — was completed 2026-07-06; see the DONE inventory above.)
 
 ## Validation status of the findings
 

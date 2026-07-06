@@ -5,6 +5,7 @@ import {
   abletonNoteToPianoRollNote,
   pianoRollNoteToAbletonNote,
 } from "@avtools/music-types";
+import { clampMidi } from "./midi_math.ts";
 import {
   getPianoRoll,
   setPianoRoll,
@@ -198,8 +199,4 @@ function inferClipDuration(notes: AbletonNote[]): number {
     (duration, note) => Math.max(duration, note.position + note.duration),
     0,
   );
-}
-
-function clampMidi(value: number): number {
-  return Math.max(0, Math.min(127, Math.round(value)));
 }

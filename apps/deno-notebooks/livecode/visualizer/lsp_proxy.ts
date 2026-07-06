@@ -7,6 +7,7 @@ import {
   normalize,
   toFileUrl,
 } from "jsr:@std/path@1";
+import { removePathBestEffort } from "./fs_utils.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -259,13 +260,7 @@ async function cleanup(): Promise<void> {
   if (cleaningUp) return;
   cleaningUp = true;
   shutdownProxyBestEffort(proxy);
-  try {
-    await Deno.remove(workspaceDir, { recursive: true });
-  } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) {
-      console.warn("[livecode-lsp-proxy] failed to remove workspace", error);
-    }
-  }
+  await removePathBestEffort(workspaceDir, "lsp workspace");
 }
 
 function shutdownProxyBestEffort(target: LSProxy): void {

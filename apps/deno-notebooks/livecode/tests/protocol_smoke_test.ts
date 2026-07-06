@@ -1,5 +1,6 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { createLivecodeVisualizerServer } from "../visualizer/server.ts";
+import { fetchJson, postJson, waitFor } from "./test_helpers.ts";
 import type {
   ActiveWaitSnapshot,
   AnalyzeFailure,
@@ -273,26 +274,6 @@ Deno.test("server forwards agent commands to a connected tldraw client websocket
   }
 });
 
-async function fetchJson(url: string): Promise<Record<string, unknown>> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`${response.status} ${await response.text()}`);
-  }
-  return await response.json();
-}
-
-async function postJson<T = unknown>(url: string, body: unknown): Promise<T> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    throw new Error(`${response.status} ${await response.text()}`);
-  }
-  return await response.json();
-}
-
 async function waitForRuntimeModule(
   baseUrl: string,
   moduleId: string,
@@ -323,17 +304,4 @@ function fileExists(path: string): boolean {
     if (error instanceof Deno.errors.NotFound) return false;
     throw error;
   }
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  label: string,
-  timeoutMs = 1_000,
-) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error(`Timed out waiting for ${label}`);
 }

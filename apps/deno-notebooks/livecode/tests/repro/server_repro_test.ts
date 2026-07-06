@@ -9,6 +9,7 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { join } from "jsr:@std/path@1";
 import { createLivecodeVisualizerServer } from "../../visualizer/server.ts";
+import { postJson, sleep } from "../test_helpers.ts";
 import type {
   AnalyzeSuccess,
   ProjectCurrentResponse,
@@ -37,19 +38,6 @@ export default async function(ctx: TimeContext) {
   while (true) await ctx.waitSec(30);
 }
 `;
-
-async function postJson(url: string, body: unknown): Promise<unknown> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return await response.json();
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 Deno.test({
   name:

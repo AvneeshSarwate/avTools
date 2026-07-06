@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { join } from "jsr:@std/path@1";
 import { createLivecodeVisualizerServer } from "../visualizer/server.ts";
+import { fetchJson, postJson } from "./test_helpers.ts";
 import type {
   AnalyzeSuccess,
   ProjectShadowCheckResponse,
@@ -321,26 +322,6 @@ function requireShadowModule(
   );
   assert(moduleStatus, `expected shadow status for ${moduleId}`);
   return moduleStatus;
-}
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`${response.status} ${await response.text()}`);
-  }
-  return await response.json();
-}
-
-async function postJson<T = unknown>(url: string, body: unknown): Promise<T> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    throw new Error(`${response.status} ${await response.text()}`);
-  }
-  return await response.json();
 }
 
 async function waitForRuntimeModule(

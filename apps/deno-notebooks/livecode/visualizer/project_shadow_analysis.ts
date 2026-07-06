@@ -21,6 +21,7 @@ import type {
   VisualizerDiagnostic,
 } from "./protocol.ts";
 import { analyzeAndTransformTimedModule } from "./analyze_transform.ts";
+import { removePathBestEffort } from "./fs_utils.ts";
 import { createGeneratedRunId } from "./generated_run_id.ts";
 
 interface ProjectSourceModule extends ProjectModuleRecord {
@@ -71,13 +72,7 @@ export async function analyzeProjectShadow(
   try {
     return await analyzeProjectShadowInDirectory(request, shadowRoot);
   } finally {
-    try {
-      await Deno.remove(shadowRoot, { recursive: true });
-    } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) {
-        console.warn("[livecode-shadow] failed to remove shadow dir", error);
-      }
-    }
+    await removePathBestEffort(shadowRoot, "shadow dir");
   }
 }
 

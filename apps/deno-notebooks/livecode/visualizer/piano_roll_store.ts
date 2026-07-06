@@ -18,6 +18,13 @@ interface HistoryEntry {
 interface PianoRollRecord extends PianoRollObject {
   undoStack: HistoryEntry[];
   redoStack: HistoryEntry[];
+  // Cached JSON of the last SHAPED (pre-clone) data assigned to `data`. Lets
+  // setPianoRoll detect no-op writes with a single serialize + string compare
+  // instead of stringifying both sides on every call. Kept in sync wherever
+  // `data` is assigned (set / undo / redo / seed-via-set). Empty string when
+  // the data was not JSON-serializable (circular/BigInt metadata) — it can
+  // never match a real serialization, so no-op detection is simply disabled.
+  lastDataJson: string;
 }
 
 export interface SetPianoRollOptions {
@@ -58,7 +65,11 @@ export function setPianoRoll(
   options: SetPianoRollOptions = {},
 ): PianoRollObject {
   const normalizedName = normalizeName(name);
-  const nextData = normalizeData(data, normalizedName);
+  // Shape (assign note ids, default velocity) WITHOUT cloning, then serialize
+  // once for the no-op compare. The expensive never-throw clone only happens
+  // when the write actually proceeds.
+  const shaped = shapeData(data);
+  const shapedJson = safeStringify(shaped);
   const existing = records.get(normalizedName);
   const source = options.source ?? "server";
   const undoable = options.undoable ?? true;
@@ -70,9 +81,11 @@ export function setPianoRoll(
       return { ...toObject(existing), conflict: true };
     }
 
-    if (JSON.stringify(existing.data) === JSON.stringify(nextData)) {
+    if (shapedJson !== null && existing.lastDataJson === shapedJson) {
       return toObject(existing);
     }
+
+    const nextData = cloneShapedData(shaped, normalizedName);
 
     if (undoable) {
       pushHistory(existing.undoStack, {
@@ -86,6 +99,7 @@ export function setPianoRoll(
 
     existing.rev += 1;
     existing.data = nextData;
+    existing.lastDataJson = shapedJson ?? "";
     existing.updatedAt = Date.now();
     existing.updatedBy = options.originId ?? source;
     markDirty();
@@ -95,7 +109,8 @@ export function setPianoRoll(
   const record: PianoRollRecord = {
     name: normalizedName,
     rev: 1,
-    data: nextData,
+    data: cloneShapedData(shaped, normalizedName),
+    lastDataJson: shapedJson ?? "",
     updatedAt: Date.now(),
     updatedBy: options.originId ?? source,
     canUndo: false,
@@ -125,6 +140,7 @@ export function undoPianoRoll(
   });
   record.rev += 1;
   record.data = cloneData(previous.data);
+  record.lastDataJson = safeStringify(record.data) ?? "";
   record.updatedAt = Date.now();
   record.updatedBy = options.originId ?? "undo";
   markDirty();
@@ -148,6 +164,7 @@ export function redoPianoRoll(
   });
   record.rev += 1;
   record.data = cloneData(next.data);
+  record.lastDataJson = safeStringify(record.data) ?? "";
   record.updatedAt = Date.now();
   record.updatedBy = options.originId ?? "redo";
   markDirty();
@@ -223,15 +240,34 @@ function normalizeName(name: string): string {
   return normalized;
 }
 
-// Must NEVER throw: this runs inside caller-owned livecode timing (the
-// in-process setPianoRoll path is not wrapped by the HTTP handler try/catch).
-// Note/point `metadata` is user-supplied and may hold non-cloneable values.
-function normalizeData(data: PianoRollData, rollName: string): PianoRollData {
-  const shaped: PianoRollData = {
+// JSON.stringify that returns null instead of throwing (circular refs, BigInt
+// in user-supplied metadata). setPianoRoll must never throw into caller-owned
+// livecode timing, so a failed serialize just disables no-op detection.
+function safeStringify(data: PianoRollData): string | null {
+  try {
+    return JSON.stringify(data);
+  } catch {
+    return null;
+  }
+}
+
+// Shape incoming data (assign note ids, default velocity) without cloning, so
+// the no-op compare can serialize once before deciding whether a clone is even
+// needed. Note-id assignment happens here, before any equality check.
+function shapeData(data: PianoRollData): PianoRollData {
+  return {
     ...data,
     notes: data.notes.map((note, index) => normalizeNote(note, index)),
   };
+}
 
+// Must NEVER throw: this runs inside caller-owned livecode timing (the
+// in-process setPianoRoll path is not wrapped by the HTTP handler try/catch).
+// Note/point `metadata` is user-supplied and may hold non-cloneable values.
+function cloneShapedData(
+  shaped: PianoRollData,
+  rollName: string,
+): PianoRollData {
   try {
     return structuredClone(shaped);
   } catch {

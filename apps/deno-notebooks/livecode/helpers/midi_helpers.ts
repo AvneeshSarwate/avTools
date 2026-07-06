@@ -1,4 +1,5 @@
 import { MidiAccess, type PortInfo } from "../../midi/mod.ts";
+import { clampMidi } from "./midi_math.ts";
 
 export interface MidiOutputTransport {
   noteOn(channel: number, pitch: number, velocity: number): void;
@@ -276,10 +277,6 @@ function normalizeNote(
 
 function noteKey(deviceName: string, channel: number, pitch: number): string {
   return `${deviceName}:${channel}:${pitch}`;
-}
-
-function clampMidi(value: number, min = 0, max = 127): number {
-  return Math.max(min, Math.min(max, Math.round(value)));
 }
 
 function logMidiSendError(action: string, deviceName: string, error: unknown) {
