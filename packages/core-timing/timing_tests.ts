@@ -31,6 +31,10 @@
 //    semantics decided by the project owner, and the zero-advance stall
 //    guard. Several document INTENTIONAL semantics (marked "by design" /
 //    "owner decision") so future refactors don't silently change them.
+//    Also includes the tempo-modulation accuracy cases from the 2026-07
+//    rubato analysis: engine event times under high-fps setBpm/rampBpmTo
+//    modulation are checked against ANALYTIC ground truth computed outside
+//    the engine (see the tempo-modulation helpers section).
 
 /* ------------------------------------------------------------------------------------------------
  * Imports (change path as needed)
@@ -662,6 +666,73 @@ export function makeTimingTestCases(): TimingTestCase[] {
     },
 
     {
+      name: "tempo_modulation_60fps_staircase_parity",
+      description:
+        "The programmatic-rubato pattern: a 60fps control branch calls " +
+        "setBpm(curve(t)) every tick while a melody voice does chained " +
+        "beat-space wait(0.25) calls. Every note must land at identical " +
+        "logical times AND beat positions in realtime and offline mode — " +
+        "60 tempo edits per second must not introduce mode-dependent drift " +
+        "or reordering.",
+      bpm: 120, // == curve(0)
+      logicalDurationSec: 1.4,
+      run: async (root, log) => {
+        const curve = (t: number) => 120 + 60 * Math.sin(Math.PI * t);
+
+        root.branch(async (mod) => {
+          while (!mod.isCanceled && mod.time < 1.0) {
+            mod.setBpm(curve(mod.time));
+            await mod.waitSec(1 / 60);
+          }
+        }, "tempoModulator");
+
+        await root.branchWait(async (c) => {
+          for (let i = 0; i < 10; i++) {
+            await c.wait(0.25);
+            log(c, `note_${i}`, { value: c.tempo.beatsAtTime(c.time) });
+          }
+        }, "melody");
+
+        await root.waitSec(0.2); // outlive the modulator so the tree ends quiet
+        log(root, "done");
+      },
+    },
+
+    {
+      name: "tempo_modulation_ramp_chase_parity",
+      description:
+        "Smooth rubato via the ramp-chase idiom: every tick the modulator " +
+        "calls rampBpmTo(curve(t + dt), dt), making the tempo map a " +
+        "piecewise-LINEAR interpolant of the curve (~80x closer to the " +
+        "continuous ideal than the setBpm staircase — see improvements.md). " +
+        "Note times and beat positions must match exactly across realtime " +
+        "and offline.",
+      bpm: 120, // == curve(0)
+      logicalDurationSec: 1.4,
+      run: async (root, log) => {
+        const curve = (t: number) => 120 + 60 * Math.sin(Math.PI * t);
+        const dt = 1 / 60;
+
+        root.branch(async (mod) => {
+          while (!mod.isCanceled && mod.time < 1.0) {
+            mod.rampBpmTo(curve(mod.time + dt), dt);
+            await mod.waitSec(dt);
+          }
+        }, "tempoModulator");
+
+        await root.branchWait(async (c) => {
+          for (let i = 0; i < 10; i++) {
+            await c.wait(0.25);
+            log(c, `note_${i}`, { value: c.tempo.beatsAtTime(c.time) });
+          }
+        }, "melody");
+
+        await root.waitSec(0.2);
+        log(root, "done");
+      },
+    },
+
+    {
       name: "wait0_is_valid_sync_point",
       description:
         "OCCASIONAL wait(0) is a legal, deterministic re-entry point into the " +
@@ -972,6 +1043,161 @@ function trapUnhandledRejections() {
     dispose: () =>
       globalThis.removeEventListener("unhandledrejection", listener),
   };
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * Tempo-modulation helpers (analytic ground truth for the rubato invariant cases)
+ *
+ * These pin the 2026-07 tempo-modulation analysis: a high-fps control thread
+ * modulating tempo while melody threads do beat-space waits ("programmatic
+ * rubato"). Ground truth is computed OUTSIDE the engine so a retiming bug
+ * cannot hide by being self-consistent.
+ * ------------------------------------------------------------------------------------------------ */
+
+// The rubato curve used across the modulation cases: 120 +/- 60 bpm, 2s period.
+function rubatoBpm(t: number): number {
+  return 120 + 60 * Math.sin(Math.PI * t);
+}
+
+// Melody event times under the piecewise-constant tempo "staircase" produced by
+// calling setBpm(curve(tau_k)) at tick times tau_k (float-accumulated exactly
+// like the engine's waitSec(dt) loop). Mirrors engine semantics: the next
+// note's base beat position is re-read at each resolve time.
+function staircaseEventTimes(
+  fps: number,
+  curve: (t: number) => number,
+  noteBeats: number,
+  dur: number,
+): number[] {
+  const dt = 1 / fps;
+  const stamps: Array<{ t: number; bpm: number }> = [];
+  let tau = 0;
+  while (tau < dur) {
+    stamps.push({ t: tau, bpm: curve(tau) });
+    tau = tau + dt;
+  }
+  const beatsAt: number[] = [0];
+  for (let i = 1; i < stamps.length; i++) {
+    beatsAt.push(
+      beatsAt[i - 1] + (stamps[i].t - stamps[i - 1].t) * stamps[i - 1].bpm / 60,
+    );
+  }
+  const timeAtBeats = (b: number): number => {
+    let lo = 0;
+    while (lo + 1 < stamps.length && beatsAt[lo + 1] < b) lo++;
+    return stamps[lo].t + (b - beatsAt[lo]) * 60 / stamps[lo].bpm;
+  };
+  const beatsAtTime = (t: number): number => {
+    let lo = 0;
+    while (lo + 1 < stamps.length && stamps[lo + 1].t <= t) lo++;
+    return beatsAt[lo] + (t - stamps[lo].t) * stamps[lo].bpm / 60;
+  };
+
+  const events: number[] = [];
+  let target = noteBeats;
+  while (true) {
+    const t = timeAtBeats(target);
+    if (t > dur) break;
+    events.push(t);
+    target = beatsAtTime(t) + noteBeats;
+  }
+  return events;
+}
+
+// Time at which `targetBeats` accumulate under the staircase (for a single
+// long in-flight wait).
+function staircaseTimeAtBeats(
+  fps: number,
+  curve: (t: number) => number,
+  targetBeats: number,
+): number {
+  const dt = 1 / fps;
+  let tau = 0;
+  let beats = 0;
+  while (true) {
+    const bpm = curve(tau);
+    const next = beats + dt * bpm / 60;
+    if (next >= targetBeats) return tau + (targetBeats - beats) * 60 / bpm;
+    tau = tau + dt;
+    beats = next;
+  }
+}
+
+// Melody event times under the CONTINUOUS ideal curve (fine numeric integration).
+function continuousEventTimes(
+  curve: (t: number) => number,
+  noteBeats: number,
+  dur: number,
+): number[] {
+  const step = 1e-5;
+  const events: number[] = [];
+  let beats = 0;
+  let target = noteBeats;
+  let t = 0;
+  while (t < dur) {
+    const b2 = beats + step * curve(t + step / 2) / 60;
+    if (b2 >= target) {
+      events.push(t + ((target - beats) / (b2 - beats)) * step);
+      target += noteBeats;
+    }
+    beats = b2;
+    t += step;
+  }
+  return events;
+}
+
+type ModEvent = { t: number; beats: number };
+
+// Shared scenario driver (offline): a modulator branch ticking at `fps` calls
+// `applyTempo` each tick; `voices` melody branches do chained wait(noteBeats).
+// Each event records the beat position read IMMEDIATELY at resolve time — that
+// read is exact even under history compaction (the boundary trails current
+// time), whereas re-reading old times after the run could see approximations.
+async function runModulationScenario(opts: {
+  fps: number;
+  dur: number;
+  noteBeats: number;
+  voices: number;
+  applyTempo: (mod: TimeContext, dt: number) => void;
+}): Promise<ModEvent[][]> {
+  const { fps, dur, noteBeats, voices } = opts;
+  const dt = 1 / fps;
+  const out: ModEvent[][] = Array.from({ length: voices }, () => []);
+
+  const runner = new OfflineRunner(async (ctx) => {
+    ctx.branch(async (mod) => {
+      while (!mod.isCanceled && mod.time < dur) {
+        opts.applyTempo(mod, dt);
+        await mod.waitSec(dt);
+      }
+    }, "modulator");
+
+    await Promise.all(
+      out.map((events, v) =>
+        ctx.branchWait(async (c) => {
+          while (c.time < dur - 0.5) {
+            await c.wait(noteBeats);
+            events.push({ t: c.time, beats: c.tempo.beatsAtTime(c.time) });
+          }
+        }, `voice${v}`)
+      ),
+    );
+  }, { bpm: rubatoBpm(0), seed: "tempo-modulation" });
+
+  await runner.stepSec(dur + 1);
+  await runner.promise;
+  return out;
+}
+
+function maxBeatDeltaError(events: ModEvent[], noteBeats: number): number {
+  let m = 0;
+  for (let i = 1; i < events.length; i++) {
+    m = Math.max(
+      m,
+      Math.abs(events[i].beats - events[i - 1].beats - noteBeats),
+    );
+  }
+  return m;
 }
 
 export function makeInvariantTestCases(): InvariantTestCase[] {
@@ -1315,6 +1541,344 @@ export function makeInvariantTestCases(): InvariantTestCase[] {
               "compaction discontinuity",
           );
         }
+      },
+    },
+
+    /* ------------------ tempo-modulation accuracy (2026-07 rubato analysis) ------------------ */
+
+    {
+      name: "tempo_modulation_matches_analytic_staircase",
+      description:
+        "Programmatic-rubato correctness: a 60fps branch calling " +
+        "setBpm(curve(t)) every tick produces a piecewise-constant tempo " +
+        "staircase, and every chained wait(0.25) of a melody voice must " +
+        "resolve at EXACTLY the analytically computed staircase times. " +
+        "Repeated head-retiming of in-flight beat waits (60 edits/sec, " +
+        "~180 edits over the run) must not accumulate any error.",
+      fn: async () => {
+        const [voice] = await runModulationScenario({
+          fps: 60,
+          dur: 3,
+          noteBeats: 0.25,
+          voices: 1,
+          applyTempo: (mod) => mod.setBpm(rubatoBpm(mod.time)),
+        });
+        const truth = staircaseEventTimes(60, rubatoBpm, 0.25, 3);
+
+        assert(voice.length >= 15, `expected >=15 events, got ${voice.length}`);
+        for (let i = 0; i < voice.length; i++) {
+          assert(
+            truth[i] !== undefined && almostEq(voice[i].t, truth[i], 1e-9),
+            `event ${i}: engine=${voice[i].t} analytic=${truth[i]}`,
+          );
+        }
+      },
+    },
+
+    {
+      name: "tempo_modulation_keeps_parallel_voices_beat_locked",
+      description:
+        "Two melody voices sharing the modulated tempo map and playing the " +
+        "same wait(0.25) pattern must resolve at IDENTICAL logical times " +
+        "(same slice), and each voice's beat position must advance by " +
+        "exactly 0.25 per note — the cross-thread synchronization guarantee " +
+        "that makes rubato safe across parallel voices.",
+      fn: async () => {
+        const [a, b] = await runModulationScenario({
+          fps: 60,
+          dur: 3,
+          noteBeats: 0.25,
+          voices: 2,
+          applyTempo: (mod) => mod.setBpm(rubatoBpm(mod.time)),
+        });
+
+        assert(
+          a.length >= 15 && a.length === b.length,
+          `voice event counts differ: ${a.length} vs ${b.length}`,
+        );
+        for (let i = 0; i < a.length; i++) {
+          assert(
+            a[i].t === b[i].t,
+            `voices diverged at event ${i}: ${a[i].t} vs ${b[i].t}`,
+          );
+        }
+        assert(
+          maxBeatDeltaError(a, 0.25) < 1e-9,
+          `voice A beat integral drifted by ${maxBeatDeltaError(a, 0.25)}`,
+        );
+        assert(
+          maxBeatDeltaError(b, 0.25) < 1e-9,
+          `voice B beat integral drifted by ${maxBeatDeltaError(b, 0.25)}`,
+        );
+      },
+    },
+
+    {
+      name: "extreme_per_tick_tempo_jumps_keep_beat_integral_exact",
+      description:
+        "Worst-case modulation: setBpm alternates 30 <-> 300 bpm on EVERY " +
+        "60fps tick (a 10x jump 60 times per second). The beat integral of a " +
+        "melody voice must still advance by exactly 0.25 per note — retiming " +
+        "must be exact under discontinuous tempo, not just smooth curves.",
+      fn: async () => {
+        let flip = false;
+        const [voice] = await runModulationScenario({
+          fps: 60,
+          dur: 3,
+          noteBeats: 0.25,
+          voices: 1,
+          applyTempo: (mod) => {
+            mod.setBpm(flip ? 300 : 30);
+            flip = !flip;
+          },
+        });
+
+        assert(voice.length >= 12, `expected >=12 events, got ${voice.length}`);
+        assert(
+          maxBeatDeltaError(voice, 0.25) < 1e-9,
+          `beat integral drifted by ${maxBeatDeltaError(voice, 0.25)}`,
+        );
+      },
+    },
+
+    {
+      name: "rampBpmTo_retimes_inflight_beat_wait",
+      description:
+        "A beat wait in flight when rampBpmTo starts must resolve mid-ramp " +
+        "at the analytic quadratic solution: wait(4) at 240bpm, then " +
+        "rampBpmTo(480, 0.5) stamped at t=0.5 -> 2 beats remain, solved " +
+        "inside the accelerating ramp at t = 0.5 + (sqrt(3)-1)/2 ~= 0.866. " +
+        "Exercises TempoMap.timeAtBeats's quadratic root selection on a live " +
+        "ramp segment (previously untested).",
+      fn: async () => {
+        let resolvedAt = -1;
+        const runner = new OfflineRunner(async (ctx) => {
+          ctx.branch(async (ctl) => {
+            await ctl.waitSec(0.5);
+            ctx.rampBpmTo(480, 0.5);
+          }, "ctl");
+
+          await ctx.wait(4);
+          resolvedAt = ctx.time;
+        }, { bpm: 240, seed: "ramp-retime" });
+
+        await runner.stepSec(2);
+        await runner.promise;
+
+        const expected = 0.5 + (Math.sqrt(3) - 1) / 2;
+        assert(
+          almostEq(resolvedAt, expected, 1e-9),
+          `resolved=${resolvedAt} expected=${expected}`,
+        );
+      },
+    },
+
+    {
+      name: "rampBpmTo_chase_tracks_continuous_curve",
+      description:
+        "The smooth-rubato idiom (see improvements.md): each 60fps tick, " +
+        "rampBpmTo(curve(t + dt), dt) chases the curve, making the tempo map " +
+        "a piecewise-linear interpolant. Melody events must land within " +
+        "0.5ms of the CONTINUOUS ideal curve (the setBpm staircase at the " +
+        "same fps deviates ~8ms), with the beat integral still exact.",
+      fn: async () => {
+        const [voice] = await runModulationScenario({
+          fps: 60,
+          dur: 3,
+          noteBeats: 0.25,
+          voices: 1,
+          applyTempo: (mod, dt) => mod.rampBpmTo(rubatoBpm(mod.time + dt), dt),
+        });
+        const truth = continuousEventTimes(rubatoBpm, 0.25, 3);
+
+        assert(voice.length >= 15, `expected >=15 events, got ${voice.length}`);
+        let maxDev = 0;
+        for (let i = 0; i < voice.length && i < truth.length; i++) {
+          maxDev = Math.max(maxDev, Math.abs(voice[i].t - truth[i]));
+        }
+        assert(
+          maxDev < 5e-4,
+          `max deviation from continuous curve ${maxDev}s exceeds 0.5ms`,
+        );
+        assert(
+          maxBeatDeltaError(voice, 0.25) < 1e-9,
+          `beat integral drifted by ${maxBeatDeltaError(voice, 0.25)}`,
+        );
+      },
+    },
+
+    {
+      name: "long_beat_wait_exact_under_120fps_modulation_and_compaction",
+      description:
+        "A single long wait(8) (~4s) stays in flight while a 120fps " +
+        "modulator makes ~480 setBpm edits — so the wait is head-retimed " +
+        "hundreds of times AND tempo-history compaction sweeps far past its " +
+        "schedule time. It must resolve at the analytic staircase time " +
+        "(compaction only approximates times strictly inside the merged " +
+        "historic region; an in-flight waiter's due time never is), and the " +
+        "segment count must stay bounded.",
+      fn: async () => {
+        let resolvedAt = -1;
+        let segCount = -1;
+        const runner = new OfflineRunner(async (ctx) => {
+          ctx.branch(async (mod) => {
+            while (!mod.isCanceled && mod.time < 6) {
+              mod.setBpm(rubatoBpm(mod.time));
+              await mod.waitSec(1 / 120);
+            }
+          }, "modulator");
+
+          await ctx.branchWait(async (c) => {
+            await c.wait(8);
+            resolvedAt = c.time;
+            segCount = (c.tempo as unknown as { segs: unknown[] }).segs.length;
+          }, "longNote");
+        }, { bpm: rubatoBpm(0), seed: "long-wait" });
+
+        await runner.stepSec(7);
+        await runner.promise;
+
+        const truth = staircaseTimeAtBeats(120, rubatoBpm, 8);
+        assert(
+          almostEq(resolvedAt, truth, 1e-6),
+          `resolved=${resolvedAt} analytic=${truth}`,
+        );
+        assert(
+          segCount > 0 && segCount <= 20,
+          `expected bounded tempo segments under hammering, got ${segCount}`,
+        );
+      },
+    },
+
+    {
+      name: "cloned_tempo_modulated_cross_thread_stays_isolated",
+      description:
+        "Per-voice rubato: a modulator branch drives TWO cloned tempo maps " +
+        "from OUTSIDE those voices' threads (via captured ctx refs — the " +
+        "current idiom, see improvements.md) with different curves. Each " +
+        "cloned voice's beat integral stays exact, the two voices genuinely " +
+        "diverge, and a third voice on the ROOT tempo map keeps constant " +
+        "120bpm intervals — cloned-map edits must never leak across maps.",
+      fn: async () => {
+        const curveB = (t: number) => 90 + 30 * Math.sin(Math.PI * t / 0.75 + 1);
+        const DUR = 3;
+        const evA: ModEvent[] = [];
+        const evB: ModEvent[] = [];
+        const evRoot: number[] = [];
+
+        const runner = new OfflineRunner(async (ctx) => {
+          let ctxA: TimeContext | undefined;
+          let ctxB: TimeContext | undefined;
+
+          const a = ctx.branchWait(async (c) => {
+            ctxA = c; // captured for external modulation
+            while (c.time < DUR) {
+              await c.wait(0.25);
+              evA.push({ t: c.time, beats: c.tempo.beatsAtTime(c.time) });
+            }
+          }, "voiceA", { tempo: "cloned" });
+
+          const b = ctx.branchWait(async (c) => {
+            ctxB = c;
+            while (c.time < DUR) {
+              await c.wait(0.25);
+              evB.push({ t: c.time, beats: c.tempo.beatsAtTime(c.time) });
+            }
+          }, "voiceB", { tempo: "cloned" });
+
+          const r = ctx.branchWait(async (c) => {
+            while (c.time < DUR) {
+              await c.wait(0.25);
+              evRoot.push(c.time);
+            }
+          }, "voiceRoot");
+
+          ctx.branch(async (mod) => {
+            while (!mod.isCanceled && mod.time < DUR + 0.5) {
+              ctxA!.setBpm(rubatoBpm(mod.time));
+              ctxB!.setBpm(curveB(mod.time));
+              await mod.waitSec(1 / 60);
+            }
+          }, "modulator");
+
+          await Promise.all([a, b, r]);
+        }, { bpm: 120, seed: "cloned-modulation" });
+
+        await runner.stepSec(DUR + 1);
+        await runner.promise;
+
+        assert(
+          evA.length > 10 && maxBeatDeltaError(evA, 0.25) < 1e-9,
+          `voice A: ${evA.length} events, beat drift ${
+            maxBeatDeltaError(evA, 0.25)
+          }`,
+        );
+        assert(
+          evB.length > 10 && maxBeatDeltaError(evB, 0.25) < 1e-9,
+          `voice B: ${evB.length} events, beat drift ${
+            maxBeatDeltaError(evB, 0.25)
+          }`,
+        );
+
+        // root voice: constant 120bpm -> 0.25 beats == 0.125s per note, exactly
+        assert(evRoot.length > 10, `root voice events: ${evRoot.length}`);
+        for (let i = 1; i < evRoot.length; i++) {
+          assert(
+            almostEq(evRoot[i] - evRoot[i - 1], 0.125, 1e-9),
+            `root voice interval ${i} = ${
+              evRoot[i] - evRoot[i - 1]
+            }, expected 0.125 — cloned-map modulation leaked into root map`,
+          );
+        }
+
+        // sanity: the two modulated voices actually followed different curves
+        const diverged = evA.some(
+          (e, i) => evB[i] && Math.abs(e.t - evB[i].t) > 1e-3,
+        );
+        assert(diverged, "voices A and B never diverged — modulation inert?");
+      },
+    },
+
+    {
+      name: "tempomap_ramp_segment_roundtrip_and_midramp_truncation",
+      description:
+        "Pure TempoMap unit check for ramp segments (previously untested): " +
+        "timeAtBeats must invert beatsAtTime exactly through a linear ramp " +
+        "(quadratic solve), and a setBpm landing MID-ramp must truncate the " +
+        "ramp continuously — bpm and beats agree at the cut, with the new " +
+        "constant rate applying after.",
+      fn: async () => {
+        const tempo = new TempoMap(120);
+        tempo._rampToBpmAtTime(240, 2, 1); // ramp 120 -> 240 over [1, 3]
+
+        // round-trip through pre-ramp, ramp interior, and post-ramp segments
+        for (const t of [0.5, 1.25, 1.5, 2.0, 2.75, 3.5]) {
+          const b = tempo.beatsAtTime(t);
+          assert(
+            almostEq(tempo.timeAtBeats(b), t, 1e-9),
+            `roundtrip at t=${t}: timeAtBeats(beatsAtTime(t))=${
+              tempo.timeAtBeats(b)
+            }`,
+          );
+        }
+
+        // cut the ramp at its midpoint t=2 (interpolated bpm there is 180)
+        assert(
+          almostEq(tempo.bpmAtTime(2), 180, 1e-9),
+          `bpm mid-ramp = ${tempo.bpmAtTime(2)}, expected 180`,
+        );
+        const beatsAtCut = tempo.beatsAtTime(2);
+        tempo._setBpmAtTime(90, 2);
+        assert(
+          almostEq(tempo.beatsAtTime(2), beatsAtCut, 1e-9),
+          "beat continuity broke at mid-ramp cut",
+        );
+        assert(
+          almostEq(tempo.beatsAtTime(3) - beatsAtCut, 90 / 60, 1e-9),
+          `post-cut rate wrong: ${
+            tempo.beatsAtTime(3) - beatsAtCut
+          } beats over 1s, expected 1.5`,
+        );
       },
     },
 

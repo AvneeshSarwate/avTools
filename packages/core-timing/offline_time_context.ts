@@ -298,8 +298,10 @@
  *     but logical times (ctx.time) remain exact.
  *
  * - Performance:
- *   - Beat waiters retime efficiently (head-only). Many tempo changes per second are possible,
- *     but extremely high-rate tempo modulation may still be heavy; use user guidance or coarser updates.
+ *   - Beat waiters retime efficiently (head-only), and tempo history compacts to a bounded
+ *     segment count, so continuous high-rate tempo modulation (e.g. a 30-120fps control loop
+ *     calling setBpm/rampBpmTo every tick for rubato) is cheap: each edit costs one
+ *     O(log segments) head retime. Verified by the tempo_modulation_* cases in timing_tests.ts.
  *
  * - Root context tick rate determines branch launch latency:
  *   - A branch()'s child starts at root.mostRecentDescendentTime — the logical time of the last
@@ -860,7 +862,9 @@ export class TimeScheduler {
   public readonly mode: SchedulerMode;
 
   // Most recent logical time-slice processed by the scheduler.
-  // Used to deterministically stamp tempo writes that occur as immediate continuations of waits.
+  // Used by the zero-advance stall guard to detect consecutive slices at an
+  // unchanged logical time. (Tempo writes do NOT read this — setBpm/rampBpmTo
+  // stamp at root.mostRecentDescendentTime; see TimeContext.setBpm.)
   private lastProcessedTime: number = 0;
 
   // Zero-advance stall guard state (see MAX_ZERO_ADVANCE_SLICES). Counts
@@ -868,10 +872,6 @@ export class TimeScheduler {
   // waiters at that instant are rejected until logical time advances.
   private zeroAdvanceSliceCount = 0;
   private zeroAdvanceGuardTripped = false;
-
-  // True during the microtask phase immediately after processing a slice.
-  // Cleared via queueMicrotask() after promise continuations for that slice run.
-  private inTimesliceMicrotaskPhase: boolean = false;
 
   // Deterministic tie-break sequence for events scheduled in this root.
   private seqCounter = 0;
@@ -948,15 +948,6 @@ export class TimeScheduler {
     this.logicalAnchor = l;
     this.rate = r;
     this.scheduleNext();
-  }
-
-  public tempoWriteTime(): number {
-    // If setBpm() is called by a coroutine continuation resumed at logical time T,
-    // stamp the tempo change at exactly T. This avoids:
-    // - realtime stamping slightly after T due to setTimeout jitter
-    // - offline stamping at the advanceTo() target time
-    if (this.inTimesliceMicrotaskPhase) return this.lastProcessedTime;
-    return this.now();
   }
 
   /* ------------------------------- wait primitives ------------------------------- */
@@ -1309,10 +1300,7 @@ export class TimeScheduler {
       this.zeroAdvanceSliceCount = 0;
       this.zeroAdvanceGuardTripped = false;
     }
-    // Mark the current logical time slice as the authoritative "root current time"
-    // for immediate continuation work (microtasks) spawned by resolving waits at this slice.
     this.lastProcessedTime = sliceTime;
-    this.inTimesliceMicrotaskPhase = true;
 
     // Decide whether the next slice is from timePQ or tempoHeadPQ (re-check peeks).
     const timeHead = this.timePQ.peek();
@@ -1326,15 +1314,6 @@ export class TimeScheduler {
     } else {
       this.processBeatWaitersForTempoHead();
     }
-
-    // IMPORTANT: do NOT clear immediately. Clear after the promise continuations
-    // for this slice have had a chance to run.
-    queueMicrotask(() => {
-      // Only clear if nothing advanced lastProcessedTime in the meantime.
-      if (this.lastProcessedTime === sliceTime) {
-        this.inTimesliceMicrotaskPhase = false;
-      }
-    });
   }
 
   private processTimeWaitersAt(t: number) {
