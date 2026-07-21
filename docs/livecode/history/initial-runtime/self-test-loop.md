@@ -1,5 +1,8 @@
 # Self-Test Loop
 
+> Historical test plan for the earlier visualizer. Start at
+> `docs/livecode/README.md` for the current test matrix.
+
 ## Goal
 
 The coding agent should be able to verify the livecoding visualizer end to end

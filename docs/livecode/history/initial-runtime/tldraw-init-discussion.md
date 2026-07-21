@@ -1,3 +1,8 @@
+# Initial tldraw discussion
+
+> Historical design discussion. Start at `docs/livecode/README.md` for current
+> behavior and the curated principles.
+
 The tldraw discussion converged on:
 
 ### Why tldraw is still interesting

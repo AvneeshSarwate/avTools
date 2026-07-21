@@ -1,5 +1,8 @@
 # Livecode Stability Fix Plan (2026-07 review)
 
+> Historical audit and implementation plan. Paths and current-state claims are
+> preserved as written. Start at `docs/livecode/README.md`.
+
 This is a handoff implementation plan. It fixes defects found in a full review
 of the livecode system: the `core-timing` engine, the Deno visualizer server,
 the analyzer/shadow-diagnostics layer, the MIDI/piano-roll helpers, and the

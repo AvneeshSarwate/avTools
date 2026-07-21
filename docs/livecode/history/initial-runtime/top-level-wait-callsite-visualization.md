@@ -1,5 +1,8 @@
 # Top-Level Wait Callsite Visualization Plan
 
+> Historical implementation plan for the earlier visualizer. Start at
+> `docs/livecode/README.md` for current behavior.
+
 ## Context
 
 The initial design question was whether the runtime visualizer needed a full

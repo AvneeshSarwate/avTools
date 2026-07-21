@@ -1,5 +1,8 @@
 # Batched Runtime Editor Updates
 
+> Historical implementation plan for the earlier visualizer. Start at
+> `docs/livecode/README.md` for current behavior.
+
 ## Goal
 
 Runtime waits can start and finish at arbitrary times, and in musical or

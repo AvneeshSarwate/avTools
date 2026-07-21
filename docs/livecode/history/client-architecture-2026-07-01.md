@@ -1,0 +1,316 @@
+# Livecode Tldraw Architecture And File Index
+
+> Historical snapshot. This is not a current implementation contract. Start at
+> `docs/livecode/README.md`.
+
+This is the quick entrypoint for future agent chats about the React/tldraw
+livecoding canvas. Start here, then read
+`apps/deno-notebooks/livecode/architecture.md` for the Deno server/runtime side.
+
+## Agent Jumpstart
+
+`apps/livecode-tldraw` is a local-only React + tldraw client for the Deno
+livecode visualizer in `apps/deno-notebooks/livecode`.
+
+Core constraints:
+
+- tldraw owns the canvas, shape placement, resizing, and selection.
+- The Deno visualizer server owns analysis, generated module files, dynamic
+  execution, Deno LSP, active wait snapshots, and the shared piano-roll store.
+- Livecode source text is stored in `livecode-editor` shape props, then mirrored
+  into the React runtime state for debounced analysis and execution.
+- For project modules, `*.orig.ts` files are the canonical editable source and
+  `*.ts` files are transformed runtime output. Coding agents should edit
+  `*.orig.ts`; the server regenerates runtime files only on explicit project
+  write/analyze/reload actions.
+- The app treats disk changes as detectable state, not an instruction to run
+  code. Dependency warnings and shadow diagnostics are surfaced in the UI, but
+  launch/replacement remains user- or agent-explicit.
+- Piano-roll note data is not stored canonically in tldraw shape props. Shapes
+  are named views onto server-owned piano-roll objects, currently defaulting to
+  the `melody` roll.
+- The app intentionally does not pass a tldraw `persistenceKey`; current canvas
+  state is dev/test state, not migration-sensitive product data. Manual test
+  canvases can be saved/loaded as local `.tldr` files using tldraw's built-in
+  file JSON helpers, and checked-in fixtures live under `public/test-canvases`.
+- `@avtools/piano-roll` is aliased to the built bundle at
+  `webcomponents/piano-roll/dist/piano-roll.js`. When changing the Vue
+  piano-roll source in `apps/browser-projections/src/pianoRoll`, rebuild that
+  bundle before testing in this app.
+
+## Current Shape
+
+Run the Deno server:
+
+```sh
+cd apps/deno-notebooks
+deno run --unstable-webgpu --unstable-ffi --allow-all livecode/visualizer/main.ts --host localhost --port 7777 --log-level debug
+```
+
+Run the tldraw app:
+
+```sh
+cd apps/livecode-tldraw
+npm run dev
+```
+
+Open:
+
+```txt
+http://localhost:5173/
+```
+
+Load the checked-in piano-roll lookup manual test canvas:
+
+```txt
+http://localhost:5173/?tldr=/test-canvases/piano-roll-lookup.tldr
+```
+
+The server URL input defaults to:
+
+```txt
+http://localhost:7777
+```
+
+The app accepts the same override convention through the runtime provider:
+
+```txt
+http://localhost:5173/?serverBaseUrl=http://localhost:7777
+```
+
+## Runtime Flow
+
+1. `App.tsx` mounts `LivecodeRuntimeProvider`, then the tldraw canvas, then
+   `PianoRollRuntimeProvider` scoped to the current server URL.
+2. On first empty canvas mount, the app creates one `livecode-editor` shape and
+   one `piano-roll-view` shape named `melody`.
+3. `App.tsx` listens to the tldraw store. Added, removed, and updated
+   `livecode-editor` shapes register/unregister/update module records in
+   `livecodeRuntime.tsx`.
+4. `livecodeRuntime.tsx` connects to `/health`, `/lsp`, and
+   `/runtime/snapshots` when the user clicks Connect, then polls
+   `/project/diagnostics` while connected.
+5. Source edits update the tldraw shape prop and schedule `/runtime/analyze`
+   with a 100 ms debounce. Project module edits are written to the module's
+   `*.orig.ts` source through `/project/modules/write` before analysis.
+6. Run uses the latest matching prepared build if possible; otherwise it
+   analyzes immediately. For project modules it also refreshes
+   `/project/diagnostics` and blocks launch when project typechecking fails.
+   If diagnostics pass, it posts `/runtime/launch`. The server rejects replacing
+   an already running module unless the request explicitly sets
+   `replaceRunning: true`; the tldraw path keeps the no-surprise default.
+7. Runtime snapshots from `/runtime/snapshots` update the module record.
+   `LivecodeEditorShape.tsx` maps active callsite IDs through the manifest and
+   passes source ranges into CodeMirror for highlighting. The same snapshot
+   also carries `pianoRollLookups` (moduleId then callsiteId to resolved roll
+   name) and module run lifecycle states; `livecodeRuntime.tsx` uses the
+   lifecycle states to mark modules stopped/error even when a run completed
+   without active wait callsites. `LivecodeEditorShape.tsx` joins lookup data
+   with `pianoRollLookup` manifest entries (using the entry's `nameArgRange`
+   and `staticName` fallback) and passes them to CodeMirror as piano-roll
+   open-button decorations. The `openPianoRoll` callback focuses an existing
+   `piano-roll-view` for the same roll name, or creates one immediately to the
+   right of the code module and zooms the canvas to it.
+8. `pianoRollRuntime.tsx` independently opens `/piano-roll/snapshots` for the
+   current server URL. Server snapshots update named roll objects by revision.
+9. `PianoRollShape.tsx` mounts the `piano-roll-component`, applies server notes
+   into the component, and posts component edits back to `/piano-roll/set`.
+10. Livecode helper code can read, mutate, and play the same named rolls through
+    `piano-roll-helpers`, so piano-roll UI edits and running livecode share one
+    server-owned object.
+
+## File Index
+
+### Tldraw App
+
+- `src/App.tsx` owns top-level providers, the server toolbar, `.tldr` New /
+  Open / Save controls, shape utilities, default shape creation, checked-in
+  canvas loading via `?tldr=...`, and tldraw store-to-runtime registration.
+- `src/LivecodeEditorShape.tsx` defines the `livecode-editor` custom tldraw
+  shape, Run/Stop controls, status rows, dependency-change/dependency-issue
+  badges, CodeMirror mounting, diagnostics, and active wait range mapping.
+- `src/CodeMirrorEditor.tsx` owns the CodeMirror instance, Deno LSP extension,
+  diagnostics display, editor event shielding, active wait decorations, and
+  piano-roll lookup decorations. Piano-roll lookup decorations are driven by
+  manifest callsites of kind `pianoRollLookup` plus runtime-resolved roll names
+  from `/runtime/snapshots` (see the Deno-side transform/runtime), not by
+  scanning source text. Each decoration renders an inline `🎹 open <name>`
+  widget button after the roll-name argument; clicking it asks the host
+  `LivecodeEditorShape` to focus or create a matching `piano-roll-view` shape.
+- `src/PianoRollShape.tsx` defines the `piano-roll-view` shape. It is a named
+  view onto a server piano-roll object. The embedded piano-roll stage is fixed
+  at 640 x 320; tldraw resizing changes the outer scroll viewport, not the
+  internal note grid size.
+- `src/livecodeRuntime.tsx` is the React runtime store for livecode modules,
+  build state, run state, prepared builds, active snapshots, health, Deno LSP,
+  project diagnostics, and server connection state.
+- `src/pianoRollRuntime.tsx` is the React runtime store for named piano-roll
+  objects. It consumes `/piano-roll/snapshots` and writes `/piano-roll/set`,
+  `/piano-roll/undo`, and `/piano-roll/redo`.
+- `src/denoLsp.ts` bridges CodeMirror LSP to the Deno server `/lsp` WebSocket.
+- `src/livecodeProtocol.ts` mirrors the Deno runtime protocol types needed by
+  the browser app.
+- `src/pianoRollTypes.ts` mirrors the Deno piano-roll protocol types needed by
+  the browser app.
+- `src/defaultSource.ts` is the initial module source. It currently demonstrates
+  `getPianoRollClip`, transposition, `setPianoRollClip`, `playPianoRoll`, MIDI
+  playback, and live wait highlighting.
+- `src/livecodeTldrawDebug.ts` installs `window.__livecodeTldrawRuntimeDebug`,
+  a debug API for Playwright E2E tests: it exposes the live runtime module
+  states (manifest, pianoRollLookups, build/run status, source text), the
+  tldraw page shapes and selected shape ids, `.tldr` JSON export/load helpers,
+  and action methods (`setSource`, `runModule`, `stopModule`, `connect`,
+  `disconnect`, `selectShape`). It is installed from `App.tsx` once the tldraw
+  `Editor` and livecode runtime are mounted.
+- `src/styles.css` owns app, shape, CodeMirror, and piano-roll shape styling.
+- `vite.config.ts` aliases `@avtools/piano-roll` to the generated web component
+  bundle in `webcomponents/piano-roll/dist/piano-roll.js`.
+- `public/test-canvases/piano-roll-lookup.tldr` is a minimal checked-in manual
+  test canvas for the piano-roll lookup decoration flow. It contains one code
+  module with literal `getPianoRollClip("melody")` and
+  `setPianoRollClip("bass", ...)` calls and no piano-roll view, so connecting
+  to the server shows static lookup buttons and clicking one should create a
+  matching piano-roll shape.
+
+### Tests
+
+- `apps/livecode-tldraw/tests/livecodeTldraw.e2e.mjs` is a Playwright E2E
+  test (run with `npm run test:e2e` from `apps/livecode-tldraw`). It spawns the
+  Deno visualizer server and the tldraw Vite dev server, drives the real
+  browser page, and verifies the piano-roll lookup feature end to end:
+  - the analyze manifest records `pianoRollLookup` callsites with
+    `nameArgRange` and `staticName`,
+  - CodeMirror renders `🎹 open <name>?` widget decorations before the module
+    runs (static-name fallback),
+  - after running, runtime snapshots report resolved `pianoRollLookups` and the
+    widgets update to show the resolved name without `?`,
+  - lookup-only modules with no waits transition back to `stopped` via snapshot
+    run lifecycle data,
+  - clicking an open button creates a `piano-roll-view` shape for that roll,
+  - clicking again focuses/selects the existing shape instead of duplicating.
+  It requires `playwright` resolvable via `NODE_PATH` (the tldraw app does not
+  declare it as a dependency; the repo root and `apps/browser-projections`
+  installs both provide it) and Node >=20.
+
+### Deno Server And Helpers
+
+- `apps/deno-notebooks/livecode/architecture.md` is the Deno-side handoff doc.
+- `apps/deno-notebooks/livecode/visualizer/server.ts` exposes:
+  - `GET /health`
+  - `GET /lsp?session=...`
+  - `GET /project/status`
+  - `GET /project/diagnostics`
+  - `GET /project/modules/source`
+  - `POST /project/create`
+  - `POST /project/open`
+  - `POST /project/modules/add`
+  - `POST /project/modules/update`
+  - `POST /project/modules/remove`
+  - `POST /project/modules/reload`
+  - `POST /project/modules/write`
+  - `POST /runtime/analyze`
+  - `POST /runtime/launch`
+  - `POST /runtime/stop`
+  - `POST /runtime/stop-all`
+  - `GET /runtime/status`
+  - `GET /runtime/snapshots`
+  - `GET /piano-roll/snapshots`
+  - `GET /piano-roll/list`
+  - `POST /piano-roll/set`
+  - `POST /piano-roll/undo`
+  - `POST /piano-roll/redo`
+- `apps/deno-notebooks/livecode/visualizer/piano_roll_store.ts` is the
+  server-owned named piano-roll object store. It seeds `melody`, normalizes
+  notes, tracks revisions, and keeps per-object undo/redo history.
+- `apps/deno-notebooks/livecode/visualizer/project_shadow_analysis.ts` builds
+  the project import graph, writes transformed current source into a
+  session-owned shadow directory, runs Deno type checking there, and returns
+  non-mutating dependency diagnostics for `/project/diagnostics`.
+- `apps/deno-notebooks/livecode/helpers/piano_roll_helpers.ts` is the livecode
+  API for the same store. It converts between piano-roll data and `AbletonClip`,
+  exposes `getPianoRollClip` / `setPianoRollClip`, and `playPianoRoll`.
+- `apps/deno-notebooks/livecode/helpers/midi_helpers.ts` manages MIDI outputs
+  used by `playPianoRoll`. Output selection uses an explicit option,
+  `LIVECODE_MIDI_OUTPUT`, `IAC Driver Bus 1`, then the first available output.
+
+### Embedded Piano Roll
+
+- Source lives in `apps/browser-projections/src/pianoRoll`.
+- The custom element entrypoint is
+  `apps/browser-projections/src/pianoRoll/web-component.ts`.
+- The tldraw app imports the generated bundle
+  `webcomponents/piano-roll/dist/piano-roll.js`; this directory is ignored by
+  git but must be rebuilt locally after source edits.
+- The internal scrollbar drag controllers live in
+  `apps/browser-projections/src/pianoRoll/pianoRollScrollbars.ts`. They use
+  pointer capture plus capture-phase `window` listeners so scrollbar drags keep
+  working even when an embedding wrapper stops bubbling pointer events for
+  tldraw.
+
+## Event Boundaries
+
+Interactive content inside tldraw shapes must shield the canvas from starting
+shape drag/selection gestures.
+
+- CodeMirror stops pointer and keyboard events inside `CodeMirrorEditor.tsx`.
+- `LivecodeEditorShape.tsx` stops pointerdown on Run/Stop and footer controls.
+- `PianoRollShape.tsx` stops pointer events in the piano-roll body to protect
+  tldraw. Because of that, any embedded widget that tracks drags through global
+  bubbling listeners should use pointer capture or capture-phase listeners.
+- The piano-roll shape header remains outside the stopped body so the shape can
+  be dragged through the normal tldraw interaction model.
+
+## Verification Commands
+
+From `apps/livecode-tldraw`:
+
+```sh
+npm run type-check
+npm run build
+```
+
+After changing the piano-roll Vue source:
+
+```sh
+cd apps/browser-projections
+npm run buildPianoRoll
+```
+
+If Vite fails with `node:fs/promises` export errors, run with Node 20+ / Node
+22. Existing local sessions have used:
+
+```sh
+export PATH=/Users/avneeshsarwate/.nvm/versions/node/v22.20.0/bin:$PATH
+```
+
+From `apps/deno-notebooks`:
+
+```sh
+deno task test:livecode:unit
+deno task test:livecode:server
+deno task test:livecode:e2e
+deno test --allow-all livecode/tests/project_shadow_diagnostics_test.ts
+deno test --unstable-webgpu --unstable-ffi --allow-all livecode/tests/project_p5gpu_e2e_test.ts
+```
+
+Known broad-check caveat: `npm run type-check` in `apps/browser-projections`
+currently reports unrelated repo-wide TypeScript errors. Prefer the focused
+`apps/livecode-tldraw` type-check, `buildPianoRoll`, and the livecode Deno test
+tasks unless intentionally fixing the broader app.
+
+## Current Defaults
+
+The first created livecode module imports:
+
+```ts
+import {
+  getPianoRollClip,
+  playPianoRoll,
+  setPianoRollClip,
+} from "piano-roll-helpers";
+```
+
+It reads the `melody` roll, randomly transposes the phrase up or down five
+semitones, writes the transposed phrase back into the server store, plays it
+over MIDI, and waits briefly between iterations. This is intended to show both
+the ergonomic named piano-roll API and realtime callsite highlighting.

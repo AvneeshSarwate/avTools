@@ -1,5 +1,5 @@
 // Reproducing tests for core-timing engine defects found during the
-// 2026-07 stability review. See livecode/timeContextVisualizerPlans/stability-fix-plan.md.
+// 2026-07 stability review. See docs/livecode/history/stability-review-2026-07.md.
 //
 // IMPORTANT: these tests assert the CURRENT (buggy) behavior so they pass
 // against unmodified code and prove each defect is real. When a defect is

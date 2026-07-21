@@ -50,10 +50,17 @@ When you open the repo in VS Code, you’ll be prompted to install the recommend
 
 ## High‑Level Layout
 
+The interactive livecode environment has a dedicated documentation entrypoint:
+[`docs/livecode/README.md`](docs/livecode/README.md). It covers the React/tldraw
+client in `apps/livecode-tldraw`, the Deno server in
+`apps/deno-notebooks/livecode`, their wire protocols, design principles,
+testing, known risks, and historical documents.
+
 ```
 avTools/
 ├─ deno.json                 # Deno workspace + import map
 ├─ avtools.code-workspace    # Recommended VSCode multi‑root workspace
+├─ docs/livecode/            # Canonical livecode docs and agent entrypoint
 ├─ packages/                 # Shared, Deno‑first TS libraries
 │  ├─ core-timing/
 │  ├─ creative-algs/
@@ -64,7 +71,8 @@ avTools/
 │  └─ shader-fx/
 ├─ apps/
 │  ├─ browser-projections/   # Vue + Vite web app
-│  └─ deno-notebooks/        # Deno notebooks + Rust FFI libs
+│  ├─ livecode-tldraw/       # React/tldraw livecode client
+│  └─ deno-notebooks/        # Deno notebooks, livecode server, and Rust FFI libs
 ├─ tools/
 │  ├─ vite-shader-plugin/    # Vite shader codegen wrapper
 │  └─ shader-watch/          # Deno watcher for shader codegen
@@ -102,6 +110,11 @@ binary is running compiled.
 
 ## Architecture Notes
 
+- **Interactive livecode environment.** `apps/livecode-tldraw` is the active
+  spatial client; `apps/deno-notebooks/livecode` owns analysis, execution,
+  projects, snapshots, language-server proxying, and piano-roll state. Start at
+  [`docs/livecode/README.md`](docs/livecode/README.md), not the older Vue
+  visualizer plans.
 - **Deno workspace first.** The root `deno.json` defines all workspace members and the import map. Shared packages are Deno‑native and are referenced via `@avtools/*`.
 - **Browser app (Vue/Vite).** `apps/browser-projections` uses Vite and Vue. It aliases `@avtools/*` to the workspace packages so the browser app can import shared logic.
 - **Deno notebooks.** `apps/deno-notebooks` contains TypeScript notebooks and helpers. It also includes Rust FFI libraries:

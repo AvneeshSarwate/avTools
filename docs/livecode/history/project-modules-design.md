@@ -1,5 +1,8 @@
 # Project Modules And Intra-Canvas Imports
 
+> Historical design document. Implemented and aspirational behavior are mixed
+> here. Start at `docs/livecode/README.md` for the current model.
+
 This document tracks the project-in-tldraw line of work: code modules on a
 tldraw canvas should be able to import each other, persist as a local project,
 and run through the same visualization instrumentation used by single livecode

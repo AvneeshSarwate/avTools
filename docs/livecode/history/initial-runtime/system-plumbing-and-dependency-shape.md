@@ -1,5 +1,8 @@
 # System Plumbing And Dependency Shape
 
+> Historical implementation plan for the earlier visualizer. Start at
+> `docs/livecode/README.md` for current behavior.
+
 ## Purpose
 
 This document describes the basic system shape for the local Deno livecoding

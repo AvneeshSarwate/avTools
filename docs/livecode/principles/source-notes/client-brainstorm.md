@@ -1,3 +1,8 @@
+# Client brainstorm source note
+
+> Raw idea source preserved as written. This is neither a current contract nor
+> a curated principle. See `docs/livecode/principles/README.md`.
+
 ## static code analysis => visual node linking
 
 this could be another "big idea" to investigate, as big as the

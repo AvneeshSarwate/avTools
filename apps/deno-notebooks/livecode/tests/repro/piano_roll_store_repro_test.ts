@@ -1,5 +1,5 @@
 // Reproducing tests for piano_roll_store defects found during the 2026-07
-// stability review. See livecode/timeContextVisualizerPlans/stability-fix-plan.md.
+// stability review. See docs/livecode/history/stability-review-2026-07.md.
 //
 // Asserts CURRENT (buggy) behavior; flip the marked assertions after fixing.
 //

@@ -1,5 +1,8 @@
 # Feature: Piano-roll lookup decorations in tldraw code modules
 
+> Historical feature brief. This is preserved for rationale, not as a current
+> implementation contract. Start at `docs/livecode/README.md`.
+
 This is context for a code review session. The description below is what was
 asked of the implementing agent. The agent's job was to implement the feature
 across both the tldraw frontend (`apps/livecode-tldraw`) and the Deno

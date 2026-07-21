@@ -1,6 +1,6 @@
 // Reproducing test for the analyzer default-export rename defect found during
 // the 2026-07 stability review. See
-// livecode/timeContextVisualizerPlans/stability-fix-plan.md.
+// docs/livecode/history/stability-review-2026-07.md.
 //
 // Asserts CURRENT (buggy) behavior; flip the marked assertions after fixing.
 //
