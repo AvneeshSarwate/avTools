@@ -1,5 +1,17 @@
 # Livecode Principles and Mental Models
 
+## Documents in this directory
+
+- `principles.md` preserves the sharper product and architectural principles
+  identified by the project owner. Treat it as the primary principles document.
+- `architecture-questions.md` contains unresolved design questions. Its options
+  and recommendations are discussion material, not adopted decisions.
+- `source-notes/` contains preserved raw brainstorms.
+
+The remainder of this README is an earlier synthesis. Where its framing differs
+from `principles.md`, use `principles.md`; where an issue appears in
+`architecture-questions.md`, do not assume it has been decided.
+
 This document is normative design intent. It explains how to make judgement
 calls, not every detail of how the current implementation happens to work.
 Concrete behavior lives under `docs/livecode/current/`.
@@ -60,12 +72,40 @@ runtime files are not permission to launch or replace code. Run, stop, replace,
 panic, and any future restart operation are explicit actions. Replacement of an
 active module is opt-in through `replaceRunning: true`.
 
-### Visible unsupported behavior
+### Framework constraints and static-checking severity
 
-When the analyzer can detect a timed pattern it cannot represent accurately, it
-should return a positioned diagnostic rather than silently emit incomplete
-visualization. More generally, an error or warning is preferable to a no-op
-that looks successful.
+Instrumented livecode is intentionally a constrained TypeScript framework, in
+the same spirit as React's Rules of Hooks. The analyzer may prevent Run when a
+pattern would invalidate timing semantics, transformation correctness, source
+mapping, visualization truth, or another explicit framework guarantee.
+Sacrificing some language flexibility is permissible when it enables a more
+powerful and reliable visual environment.
+
+Every static finding must deliberately be classified as:
+
+- a **run-blocking framework error** tied to a documented guarantee;
+- a **warning-only architectural finding** that informs without governing
+  musical intent; or
+- an **explicit-consent lifecycle action** for replacement, restart, or other
+  consequential operations.
+
+Timing-library usage restrictions are an existing core instance. Future custom
+static checking for other libraries or important usage patterns may also be
+run-blocking when their integration guarantees depend on obeying those rules.
+Blocking is therefore not limited to ordinary TypeScript compiler failures.
+Each hard rule must be positioned, actionable, and explain the capability or
+semantic invariant it protects.
+
+Unsupported detectable behavior must never silently produce incomplete or
+misleading visualization. Warning-only findings must remain conspicuous, and a
+raw/uninstrumented fallback must not silently discard a framework contract the
+module opted into.
+
+Current qualification: the implementation does not yet expose this complete
+three-way taxonomy. Analyzer failures and project typecheck failures are hard
+gates in the normal client Run path, while dependency/staleness findings are
+informational badges. The intended split should become explicit as new
+detectors and library-specific checks are added.
 
 ### No blessed orchestrator
 

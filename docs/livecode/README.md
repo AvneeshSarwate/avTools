@@ -15,14 +15,16 @@ in this repository as equally current.
 For a new implementation or review session, read these files in order:
 
 1. `docs/livecode/principles/README.md`
-2. `docs/livecode/current/system-architecture.md`
-3. `docs/livecode/current/client.md`
-4. `docs/livecode/current/server.md`
-5. `docs/livecode/current/analyzer-and-generated-code.md`
-6. `docs/livecode/current/project-model.md`
-7. `docs/livecode/current/protocol.md`
-8. `docs/livecode/current/testing-and-operations.md`
-9. `docs/livecode/current/known-risks.md`
+2. `docs/livecode/principles/principles.md`
+3. `docs/livecode/principles/architecture-questions.md`
+4. `docs/livecode/current/system-architecture.md`
+5. `docs/livecode/current/client.md`
+6. `docs/livecode/current/server.md`
+7. `docs/livecode/current/analyzer-and-generated-code.md`
+8. `docs/livecode/current/project-model.md`
+9. `docs/livecode/current/protocol.md`
+10. `docs/livecode/current/testing-and-operations.md`
+11. `docs/livecode/current/known-risks.md`
 
 Then inspect the implementation files named by the relevant current-state doc.
 For cross-boundary changes, inspect both protocol copies and both callers; the
@@ -61,7 +63,9 @@ Any feature that changes a boundary must update the corresponding current docs:
 - client state, tldraw shape props, connection behavior, or event shielding:
   `current/client.md`.
 - transform scope, diagnostic, manifest entry, or generated import:
-  `current/analyzer-and-generated-code.md`.
+  `current/analyzer-and-generated-code.md`. A new diagnostic must also declare
+  whether it blocks Run, warns only, or requires explicit lifecycle consent,
+  and identify the framework guarantee behind any blocking rule.
 - project manifest, source/runtime file model, materialization, or staleness:
   `current/project-model.md`.
 - state ownership, process lifetime, or execution flow:
