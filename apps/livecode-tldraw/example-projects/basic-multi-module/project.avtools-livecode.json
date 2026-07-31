@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "name": "basic-multi-module",
+  "modules": [
+    {
+      "id": "modules/state.ts",
+      "path": "modules/state.ts",
+      "sourcePath": "modules/state.orig.ts",
+      "runtimePath": "modules/state.ts",
+      "kind": "runnable",
+      "title": "shared counter state",
+      "sourceVersion": 1,
+      "x": 80,
+      "y": 80,
+      "w": 520,
+      "h": 400
+    },
+    {
+      "id": "modules/increment.ts",
+      "path": "modules/increment.ts",
+      "sourcePath": "modules/increment.orig.ts",
+      "runtimePath": "modules/increment.ts",
+      "kind": "runnable",
+      "title": "increment once",
+      "sourceVersion": 1,
+      "x": 660,
+      "y": 80,
+      "w": 600,
+      "h": 440
+    },
+    {
+      "id": "modules/observer.ts",
+      "path": "modules/observer.ts",
+      "sourcePath": "modules/observer.orig.ts",
+      "runtimePath": "modules/observer.ts",
+      "kind": "runnable",
+      "title": "observe counter",
+      "sourceVersion": 1,
+      "x": 660,
+      "y": 580,
+      "w": 600,
+      "h": 480
+    }
+  ]
+}

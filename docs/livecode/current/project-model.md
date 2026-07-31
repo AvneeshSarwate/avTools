@@ -66,13 +66,55 @@ interface LivecodeProjectManifest {
 }
 ```
 
-All modules are normalized to kind `runnable`. When an ID is omitted, the
-normalized runtime path becomes the ID. Paths must be relative, remain
-lexically inside the project, and end in `.ts`; passing an `.orig.ts` path is
-normalized to its runtime `.ts` path.
+All modules are normalized to kind `runnable`. For `/project/create` and
+`/project/modules/add`, an omitted ID defaults to the normalized runtime path.
+A manifest written directly to disk must currently include `id`; the
+`/project/open` normalization path does not synthesize a missing one. Paths must
+be relative, remain lexically inside the project, and end in `.ts`; passing an
+`.orig.ts` path is normalized to its runtime `.ts` path.
 
 The server does not currently create or validate a project `deno.json`, nor
 does it migrate manifest versions.
+
+## Agent recipe: create a saved UI example
+
+Use the project format, not raw `.tldr`, when an agent needs to author multiple
+code modules as ordinary files and prescribe their initial canvas layout. The
+small copyable reference is
+`apps/livecode-tldraw/example-projects/basic-multi-module`.
+
+1. Create `apps/livecode-tldraw/example-projects/<name>/` with a
+   `project.avtools-livecode.json` and a `modules/` directory. Copy the basic
+   example's `modules/.gitignore` so materialized runtime files do not appear as
+   new source files in Git.
+2. Write only canonical `modules/*.orig.ts` sources. Do not author or edit the
+   derived `modules/*.ts` files; `/project/open` materializes them.
+3. Give every module a complete manifest record, including `id`, `path`,
+   `sourcePath`, `runtimePath`, `kind`, `title`, `sourceVersion`, and
+   `x`/`y`/`w`/`h`. Explicit layout prevents modules without coordinates from
+   being created on top of each other at the viewport center.
+4. Import another project module through its runtime path, such as
+   `import { state } from "./state.ts"`, never through `state.orig.ts`.
+5. Give every source a supported default async `TimeContext` function. A
+   data-only module may use a no-op root.
+6. Start the Deno server and Vite client, then open
+   `http://localhost:5173/?projectPath=<absolute-project-directory>`. An
+   absolute path avoids the server resolving a relative path against its own
+   working directory.
+7. After changing the manifest externally, reload the project/page. The open
+   client does not watch the manifest and rebuild the canvas automatically.
+
+On successful open, the server reads every `*.orig.ts`, writes transformed
+`*.ts` runtime files, and the client creates one code shape per manifest record
+at the saved coordinates. Source edits in those shapes write through to
+`*.orig.ts`; moving/resizing a project code shape writes layout back after a
+one-second debounce.
+
+This project format currently persists code-module layout and optional
+piano-roll-view layout only. It does not persist arbitrary tldraw shapes,
+piano-roll note data/history, active runs, or runtime snapshots. Standalone
+`.tldr` files preserve a tldraw document snapshot but are tldraw-owned,
+version-sensitive, and not the preferred agent-authored multi-file format.
 
 ## One current project
 
@@ -223,6 +265,11 @@ Named piano-roll notes and history are never stored in the project manifest;
 only view identity/name/layout is persisted.
 
 ## Checked-in example
+
+`apps/livecode-tldraw/example-projects/basic-multi-module` is the minimal,
+source-only, known-green template for agent-authored examples. It contains
+three modules with explicit layouts and deliberately omits generated `*.ts`
+files from version control so opening it exercises normal materialization.
 
 `apps/livecode-tldraw/example-projects/minimal-p5gpu` demonstrates the expected
 directory/import/layout shape and optional `stop()` cleanup. Its current
