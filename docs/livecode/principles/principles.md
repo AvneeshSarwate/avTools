@@ -24,7 +24,7 @@ The other ideas you’ve expressed are:
 
 - **Runtime activity and document state are separate systems.** High-frequency execution visualization should not mutate tldraw document state or require React/shape updates. [Tldraw discussion](../history/initial-runtime/tldraw-init-discussion.md)
 
-- **Agents and humans are peer operators.** Both should see the same state and use the same serializable, auditable actions. Anything semantically possible through the UI should ultimately be possible headlessly. [Stability review](../history/stability-review-2026-07.md)
+- **Agents and humans share one operational surface, but the agent is not a performer.** Both should see the same state and use the same serializable, auditable actions, and anything semantically possible through the UI should ultimately be possible headlessly. The coding agent's role is currently scoped to composition and experimentation speed — writing and wiring modules, operating the tool headlessly as a studio assistant. It is not a co-performer and is not responsible for musical decisions; agent-with-ears (rendering/evaluating musical output) is deliberately deferred. [Stability review](../history/stability-review-2026-07.md), [User-level goals](../../../apps/livecode-tldraw/user-level-project-goals.md)
 
 - **Normal files are a product boundary.** Source must remain ordinary filesystem code that agents and external editors can naturally read and write. The environment observes discrepancies between disk, editor, generated, and running state. [Project design](../history/project-modules-design.md)
 
@@ -37,6 +37,12 @@ The other ideas you’ve expressed are:
 - **The environment should be extensible to piece-specific semantics.** Custom monitors and idiosyncratic algorithms can themselves be part of a piece’s identity—not everything needs to become a generic built-in widget. [Runtime brainstorm](source-notes/runtime-brainstorm.md)
 
 - **GUI and procedural systems should reinforce each other.** Timeline editors, piano rolls, control signals, event-driven processes, and `TimeContext` loops should form something “more than the sum of its parts,” supporting both frame-time reads and event-triggered reactions. [Client brainstorm](source-notes/client-brainstorm.md)
+
+- **Compose privately; perform against stabilized material.** The intended workflow is two-phase: open-ended composition (where schema and data-shape churn belongs, and where agents are used freely) followed by re-posing artifacts into a performance setup — characteristically by building custom live UI over composed code modules. Performance runs with little or no schema change, so safety features are sized for “good enough in the moment,” not engineering-grade completeness. [User-level goals](../../../apps/livecode-tldraw/user-level-project-goals.md)
+
+- **Variations belong in the medium.** Exploring alternatives happens by making variant objects and storing them off in the canvas/stores themselves, not through version-control ceremony outside the system. Whole-project save/save-as is the file-level backstop; richer forking patterns are deliberately undecided. This implies duplicating an entity and copying content between entities should be cheap, generic operations. [User-level goals](../../../apps/livecode-tldraw/user-level-project-goals.md)
+
+- **UI components are two-tier and forkable in session.** Deliberately engineered base components (possibly compiled, reusable beyond this project) meet piece-specific needs through in-session vibe-modification or forking. Because core running state is server-side and the client is locally run, disposable chrome, forking and hot-reloading UI code mid-session without stopping sound is an intended capability, not an accident. Piece-local forks should travel with the piece. [User-level goals](../../../apps/livecode-tldraw/user-level-project-goals.md)
 
 ## Static-checking severity
 
@@ -63,6 +69,21 @@ framework contract a module opted into.
 
 Hard errors preserve framework soundness. Warnings preserve architectural
 legibility. Explicit actions preserve operator control.
+
+Two calibration notes from the project owner:
+
+- Blocking rules are deliberately incomplete. The timing-library rules catch
+  common state-mangling pitfalls rather than attempting exhaustive soundness,
+  and that is their intended scope. Everything above the blocking tier —
+  execution visualization, AST-aware helpers, IDE-like assistance — is best
+  effort on a code-first base: the tooling must never limit what plain
+  TypeScript can create.
+- Static checking is itself part of the HCI layer. Piece- or DSL-specific
+  checkers exist to make art-making smoother and less error-prone, so the
+  quality bar for any rule is its diagnostic: source-located, actionable, and
+  phrased in the domain's terms. If a blocking rule is ever observed to misfire
+  on legal code, adding an acknowledge-and-run-anyway override becomes required
+  work at that point.
 
 One important unresolved architecture question remains:
 
