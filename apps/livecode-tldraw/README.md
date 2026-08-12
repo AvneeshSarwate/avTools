@@ -12,5 +12,5 @@ For a short client-local file map, see [`architecture.md`](architecture.md).
 
 Product-design and workflow intent for the whole environment (intended flows,
 the coding agent's role, non-goals) lives in
-[`user-level-project-goals.md`](user-level-project-goals.md).
+[`../../docs/livecode/user-level-project-goals.md`](../../docs/livecode/user-level-project-goals.md).
 
