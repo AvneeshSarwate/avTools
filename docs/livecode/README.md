@@ -15,16 +15,17 @@ in this repository as equally current.
 For a new implementation or review session, read these files in order:
 
 1. `docs/livecode/principles/README.md`
-2. `docs/livecode/principles/principles.md`
-3. `docs/livecode/principles/architecture-questions.md`
-4. `docs/livecode/current/system-architecture.md`
-5. `docs/livecode/current/client.md`
-6. `docs/livecode/current/server.md`
-7. `docs/livecode/current/analyzer-and-generated-code.md`
-8. `docs/livecode/current/project-model.md`
-9. `docs/livecode/current/protocol.md`
-10. `docs/livecode/current/testing-and-operations.md`
-11. `docs/livecode/current/known-risks.md`
+2. `apps/livecode-tldraw/user-level-project-goals.md`
+3. `docs/livecode/principles/principles.md`
+4. `docs/livecode/principles/architecture-questions.md`
+5. `docs/livecode/current/system-architecture.md`
+6. `docs/livecode/current/client.md`
+7. `docs/livecode/current/server.md`
+8. `docs/livecode/current/analyzer-and-generated-code.md`
+9. `docs/livecode/current/project-model.md`
+10. `docs/livecode/current/protocol.md`
+11. `docs/livecode/current/testing-and-operations.md`
+12. `docs/livecode/current/known-risks.md`
 
 Then inspect the implementation files named by the relevant current-state doc.
 For cross-boundary changes, inspect both protocol copies and both callers; the
@@ -43,7 +44,8 @@ A useful prompt for a fresh chat is:
 | Location | Meaning |
 | --- | --- |
 | `docs/livecode/current/` | Concrete description of the checked-in code as of 2026-07-21. |
-| `docs/livecode/principles/` | Product goals, mental models, and architectural constraints. These guide judgement but may describe a destination the current code has not reached. |
+| `docs/livecode/principles/` | Architecture principles and mental models with strong HCI implications. These guide judgement when changing core systems but may describe a destination the current code has not reached. |
+| `apps/livecode-tldraw/user-level-project-goals.md` | Owner's product-design and workflow intent: intended user-facing flows, the coding agent's role, and explicit non-goals. Consult it for any user-facing change. |
 | `docs/livecode/principles/source-notes/` | Preserved owner brainstorms. They are inputs to the principles, not a current feature contract. |
 | `docs/livecode/history/` | Preserved plans, discussions, reviews, and feature briefs. Read these for rationale or archaeology, not to learn current routes or code shape. |
 | `apps/livecode-tldraw/architecture.md` | Short client-local handoff and file map. |
@@ -72,6 +74,8 @@ Any feature that changes a boundary must update the corresponding current docs:
   `current/system-architecture.md`.
 - test commands or coverage: `current/testing-and-operations.md`.
 - accepted invariant, tradeoff, or product direction: `principles/README.md`.
+- intended user workflow, product-design direction, agent role, or non-goal:
+  `apps/livecode-tldraw/user-level-project-goals.md`.
 - newly discovered unresolved hazard: `current/known-risks.md`.
 
 Historical documents should not be rewritten to look current. Move superseded
