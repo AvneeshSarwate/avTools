@@ -16,6 +16,8 @@ The other ideas you’ve expressed are:
 
 - **No baked-in module roles.** “Sketch,” “state,” “modifier,” “conductor,” and “initializer” are patterns of use, not privileged runtime types. The project graph is inferred from ordinary code. [Project design](../history/project-modules-design.md)
 
+- **No orchestrated execution order.** An extension of the no-blessed-orchestrator idea: evaluation order is expressed in ordinary code inside a module, and the platform never infers cross-module order — no dependency graph, cook order, or per-timeslice barriers. Cross-module reads of shared state are last-value by contract, with no same-tick coherence promise: same-deadline waits resolve by deterministic scheduler sequence, and module relaunch reshuffles that sequence, so order-sensitive signal composition (accumulators, slews, feedback chains) belongs inside one module, where code order governs. Shared logical time is the coherence mechanism — processes that derive values from the shared clock are phase-coherent by construction regardless of execution order, so prefer pure functions of logical time where possible.
+
 - **Imports carry types and stable tokens; stores carry live values.** Runtime coordination should not depend on object identity or a particular generated module instance. Named string keys survive module reloads. [Stability review](../history/stability-review-2026-07.md)
 
 - **Tldraw shapes are views, not entities.** Creating or deleting a shape creates or deletes a view onto underlying state. This also implies separate canvas undo/redo and domain-data undo/redo. [Client brainstorm](source-notes/client-brainstorm.md)
