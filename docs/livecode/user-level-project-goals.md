@@ -6,7 +6,7 @@ tool serves, the coding agent's role, and explicit non-goals. It deliberately
 stays at the "what this should feel like to use" level.
 
 Its counterpart is
-[`docs/livecode/principles/principles.md`](../../docs/livecode/principles/principles.md),
+[`docs/livecode/principles/principles.md`](principles/principles.md),
 which records architecture principles with strong HCI implications and the
 rules to follow when changing core systems. Consult this document when
 designing or changing user-facing behavior; consult the principles when
