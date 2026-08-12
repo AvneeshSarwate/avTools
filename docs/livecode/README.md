@@ -15,7 +15,7 @@ in this repository as equally current.
 For a new implementation or review session, read these files in order:
 
 1. `docs/livecode/principles/README.md`
-2. `apps/livecode-tldraw/user-level-project-goals.md`
+2. `docs/livecode/user-level-project-goals.md`
 3. `docs/livecode/principles/principles.md`
 4. `docs/livecode/principles/architecture-questions.md`
 5. `docs/livecode/current/system-architecture.md`
@@ -45,7 +45,7 @@ A useful prompt for a fresh chat is:
 | --- | --- |
 | `docs/livecode/current/` | Concrete description of the checked-in code as of 2026-07-21. |
 | `docs/livecode/principles/` | Architecture principles and mental models with strong HCI implications. These guide judgement when changing core systems but may describe a destination the current code has not reached. |
-| `apps/livecode-tldraw/user-level-project-goals.md` | Owner's product-design and workflow intent: intended user-facing flows, the coding agent's role, and explicit non-goals. Consult it for any user-facing change. |
+| `docs/livecode/user-level-project-goals.md` | Owner's product-design and workflow intent: intended user-facing flows, the coding agent's role, and explicit non-goals. Consult it for any user-facing change. |
 | `docs/livecode/principles/source-notes/` | Preserved owner brainstorms. They are inputs to the principles, not a current feature contract. |
 | `docs/livecode/history/` | Preserved plans, discussions, reviews, and feature briefs. Read these for rationale or archaeology, not to learn current routes or code shape. |
 | `apps/livecode-tldraw/architecture.md` | Short client-local handoff and file map. |
@@ -75,7 +75,7 @@ Any feature that changes a boundary must update the corresponding current docs:
 - test commands or coverage: `current/testing-and-operations.md`.
 - accepted invariant, tradeoff, or product direction: `principles/README.md`.
 - intended user workflow, product-design direction, agent role, or non-goal:
-  `apps/livecode-tldraw/user-level-project-goals.md`.
+  `docs/livecode/user-level-project-goals.md`.
 - newly discovered unresolved hazard: `current/known-risks.md`.
 
 Historical documents should not be rewritten to look current. Move superseded
