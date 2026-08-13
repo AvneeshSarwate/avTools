@@ -1,7 +1,8 @@
 # Current Project Model
 
 Status: checked against the server, tldraw client, project tests, and checked-in
-example on 2026-07-21; the canvas param-pane views were checked on 2026-08-13.
+example on 2026-07-21; the canvas param-pane views and the saved durable-entity
+data tree were checked on 2026-08-13.
 
 ## Durable file model
 
@@ -20,6 +21,12 @@ project/
     modifiers/
       color-loop.orig.ts
       color-loop.ts
+  data/                             # written only by an explicit /project/save
+    pianoRoll/
+      melody.json
+      kinaree%2Frects.json          # entity name "kinaree/rects"
+    params/
+      main.json
 ```
 
 Editor source imports runtime paths, not `.orig.ts` paths:
@@ -71,6 +78,11 @@ interface LivecodeProjectManifest {
       h: number;
     }>;
   };
+  data?: Array<{
+    type: string;        // durable entity type: "pianoRoll" | "params"
+    name: string;        // the true entity name
+    path: string;        // project-relative data file, ends in .json
+  }>;
 }
 ```
 
@@ -79,6 +91,11 @@ the manifest version. A view `id` is a tldraw shape id and is cast straight back
 into one on load, so a hand-authored manifest must use the `"shape:"` prefix
 (for example `"shape:params-main"`). An id without it is not a valid shape id
 and the view will not be created.
+
+`data` is optional and additive too, and is deliberately top-level rather than
+inside `canvas`, which `/project/canvas` whole-replaces. Unknown top-level
+manifest fields already round-trip, so an older server preserves a `data` list
+it does not understand and an older client simply never shows save UI.
 
 All modules are normalized to kind `runnable`. For `/project/create` and
 `/project/modules/add`, an omitted ID defaults to the normalized runtime path.
@@ -124,10 +141,10 @@ at the saved coordinates. Source edits in those shapes write through to
 `*.orig.ts`; moving/resizing a project code shape writes layout back after a
 one-second debounce.
 
-This project format currently persists code-module layout and optional
-piano-roll-view and param-pane layout only. It does not persist arbitrary tldraw
-shapes, piano-roll note data/history, params values, active runs, or runtime
-snapshots. Standalone
+This project format persists code modules, optional piano-roll-view and
+param-pane layout, and — through an explicit save only — durable entity values
+in the `data` tree described below. It does not persist arbitrary tldraw
+shapes, undo/redo history, active runs, or runtime snapshots. Standalone
 `.tldr` files preserve a tldraw document snapshot but are tldraw-owned,
 version-sensitive, and not the preferred agent-authored multi-file format.
 
@@ -193,9 +210,63 @@ current source transformed successfully.
   command separately fetches it and updates the shape.
 - **Remove:** removes only the manifest record and caches. It does not delete
   either file and does not stop a run with the same module ID.
-- **Save:** rewrites the in-memory manifest.
+- **Save:** rewrites the manifest, writes one JSON file per durable entity in
+  memory, rebuilds `manifest.data`, and writes the manifest again. It is the
+  only path that writes entity data.
 - **Canvas:** replaces the entire optional canvas object. The current client
   always sends both view arrays in one post for that reason.
+
+## Durable entity data
+
+Durable entities — named piano rolls and params entities — live in
+process-global server stores. A project save writes them to plain files; a
+project open reads them back. Nothing else does: code writes at any rate never
+touch disk, and there is no auto-save, save-on-shutdown, or write-through.
+
+One file per entity, at `data/<type>/<encoded-name>.json`. Entity names are
+routinely slash-containing, so the encoder percent-encodes every byte outside
+`[a-zA-Z0-9._-]`, `%` included: `kinaree/rects` becomes
+`kinaree%2Frects.json`. That is collision-free by construction and never needs
+decoding, because the manifest entry carries the true name — the manifest path
+is authoritative, and the filename is only a filename. Encoded names longer
+than 100 characters are truncated and given a short hash suffix, and two names
+that would collide case-insensitively (as they would on macOS) get a numeric
+suffix within the save that noticed. File formats are in `protocol.md`.
+
+Save semantics worth knowing before relying on them:
+
+- **A save captures the live store, not "this project's entities".** The stores
+  are process-global, so leftovers from a previously opened project, or a demo
+  roll seeded at server start, are captured too. This is the honest reading of
+  "save captures instantaneous values" and joins the global-project hazards in
+  `known-risks.md`.
+- **An untouched demo seed is excluded.** The `melody` seed is stamped at
+  creation, and a save skips it while it is still at revision 1 with that
+  stamp, so a project that never used it does not acquire a junk `melody.json`.
+  Any real write to it captures it from then on.
+- **Deleting an entity is a manifest-only remove.** The next save drops its
+  `data` entry and leaves the old file on disk, exactly like
+  `/project/modules/remove` leaving sources behind.
+- **Undo history is never serialized**, and a load clears the affected roll's
+  undo/redo stacks: opening a project adopts disk truth, so pre-load stacks
+  would undo into a state the file never contained.
+
+Open semantics:
+
+- **Open replaces listed entities' contents while modules may be running.**
+  That is the operator's explicit action — open means adopt disk truth — and it
+  matches reload semantics for module source. A params load mutates the live
+  value object in place, so a running module that kept a reference keeps
+  observing truth rather than silently diverging.
+- **A params entity is saved with its `meta`,** so a freshly opened project
+  renders correct panes before any module runs. A later `canvasParams`
+  declaration still wins through the normal reconcile.
+- **One bad entry never fails the open.** An invalid path, a missing file, an
+  unknown type, or a malformed payload is logged as `projectDataLoadSkipped`
+  and skipped; the rest of the project still opens. A failed open more
+  generally is non-transactional: entities already loaded stay loaded even if a
+  later step throws, which is the same partial-state exposure the global
+  project selection already has.
 
 ## Client edit behavior
 
@@ -276,8 +347,9 @@ Canvas-view persistence currently activates only when the page's initial URL has
 not update that captured URL-derived flag, so later piano-roll or param-pane
 layout edits are not posted. This is listed in `known-risks.md`.
 
-Named piano-roll notes and history, and params values, are never stored in the
-project manifest; only view identity/name/layout is persisted.
+The canvas arrays carry view identity, name, and layout only. Note data and
+params values reach disk through the separate `data` tree above, and only on an
+explicit save; undo/redo history never does.
 
 ## Checked-in example
 
