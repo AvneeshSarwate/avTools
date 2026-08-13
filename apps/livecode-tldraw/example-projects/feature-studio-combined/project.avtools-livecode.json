@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "name": "feature-studio-combined",
+  "modules": [
+    {
+      "id": "studio/performer",
+      "path": "modules/performer.ts",
+      "sourcePath": "modules/performer.orig.ts",
+      "runtimePath": "modules/performer.ts",
+      "kind": "runnable",
+      "title": "performer",
+      "sourceVersion": 1,
+      "x": 80,
+      "y": 80,
+      "w": 640,
+      "h": 680
+    },
+    {
+      "id": "studio/sparkle",
+      "path": "modules/sparkle.ts",
+      "sourcePath": "modules/sparkle.orig.ts",
+      "runtimePath": "modules/sparkle.ts",
+      "kind": "runnable",
+      "title": "sparkle variation",
+      "sourceVersion": 1,
+      "x": 80,
+      "y": 820,
+      "w": 640,
+      "h": 500
+    }
+  ],
+  "canvas": {
+    "pianoRollViews": [
+      {
+        "id": "shape:st-theme",
+        "rollName": "studio/theme",
+        "x": 780,
+        "y": 80,
+        "w": 660,
+        "h": 380
+      },
+      {
+        "id": "shape:st-theme-var",
+        "rollName": "studio/theme-var",
+        "x": 780,
+        "y": 500,
+        "w": 660,
+        "h": 380
+      }
+    ],
+    "paramPaneViews": [
+      {
+        "id": "shape:st-pane-mix",
+        "paramsName": "studio/mix",
+        "x": 1500,
+        "y": 80,
+        "w": 340,
+        "h": 460
+      }
+    ],
+    "scopeViews": [
+      {
+        "id": "shape:st-scope-playhead",
+        "sourceType": "signal",
+        "name": "studio/playhead",
+        "path": "",
+        "windowSec": 8,
+        "x": 1500,
+        "y": 600,
+        "w": 420,
+        "h": 260
+      },
+      {
+        "id": "shape:st-scope-level",
+        "sourceType": "params",
+        "name": "studio/mix",
+        "path": "monitor.level",
+        "windowSec": 8,
+        "x": 1500,
+        "y": 900,
+        "w": 420,
+        "h": 260
+      }
+    ]
+  },
+  "data": [
+    {
+      "type": "pianoRoll",
+      "name": "studio/theme",
+      "path": "data/pianoRoll/studio%2Ftheme.json"
+    },
+    {
+      "type": "params",
+      "name": "studio/mix",
+      "path": "data/params/studio%2Fmix.json"
+    }
+  ]
+}
