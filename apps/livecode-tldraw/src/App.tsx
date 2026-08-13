@@ -1203,7 +1203,11 @@ async function executeClientControlCommand(
 
   if (command.type === "runModule") {
     await ensureRuntimeOpen(runtimeRef);
-    await runtimeRef.current.runModule(shape.props.moduleId);
+    // Same explicit-consent flag the Replace button sends; absent, this is Run
+    // and the server refuses a module that is already running.
+    await runtimeRef.current.runModule(shape.props.moduleId, {
+      replaceRunning: command.replaceRunning,
+    });
     return makeClientControlState(editor, runtimeRef.current);
   }
 
