@@ -34,6 +34,40 @@ let page
 let serverProc
 let viteProc
 let firstModuleId = ''
+let serverBaseUrl = ''
+let paramPaneShapeId = ''
+
+// Fixtures for the params cases. They live here rather than beside those cases
+// because the run block below executes before later top-level declarations are
+// initialized.
+const PARAMS_ENTITY_NAME = 'e2e/params'
+const PARAMS_DECLARATION_SOURCE = `import type { TimeContext } from "@avtools/core-timing";
+import { canvasParams } from "canvas-params";
+
+export const params = canvasParams("${PARAMS_ENTITY_NAME}", { gain: 0.5 });
+
+export default async function(ctx: TimeContext) {
+  while (true) {
+    await ctx.waitSec(0.05);
+  }
+}
+`
+const PARAMS_CODE_WRITE_SOURCE = `import type { TimeContext } from "@avtools/core-timing";
+import { canvasParams } from "canvas-params";
+
+export const params = canvasParams("${PARAMS_ENTITY_NAME}", { gain: 0.5 });
+
+export default async function(ctx: TimeContext) {
+  let step = 0;
+  while (true) {
+    params.gain = (step % 5) / 10;
+    step += 1;
+    await ctx.waitSec(0.1);
+  }
+}
+`
+/** How tweakpane renders the values `PARAMS_CODE_WRITE_SOURCE` cycles through. */
+const CODE_WRITE_VALUES = ['0.00', '0.10', '0.20', '0.30', '0.40']
 
 function assert(value, message) {
   if (!value) throw new Error(message)
@@ -51,6 +85,7 @@ try {
   const serverReady = startDenoServer()
   const viteBaseUrl = await startVite()
   const serverInfo = await serverReady
+  serverBaseUrl = serverInfo.baseUrl
 
   browser = await launchBrowserWithRetry()
   page = await browser.newPage()
@@ -84,6 +119,10 @@ try {
   await runLookupOnlyModuleCompletesStoppedCase()
   await runOpenPianoRollCreatesShapeCase()
   await runOpenPianoRollFocusesExistingShapeCase()
+  await runParamPaneRendersDeclaredEntityCase()
+  await runParamPaneEditWritesThroughCase()
+  await runParamPaneShowsCodeWritesCase()
+  await runParamPaneRehydratesAfterReloadCase()
 
   console.log(
     JSON.stringify({
@@ -302,6 +341,161 @@ async function runOpenPianoRollFocusesExistingShapeCase() {
   )
 }
 
+/**
+ * A module declares `canvasParams` at module scope; after launch the server
+ * owns the entity and a pane created through the debug surface renders one
+ * tweakpane binding per declared field. The declaration also produces a
+ * `canvasParams` manifest entry, which the editor turns into a gutter button.
+ */
+async function runParamPaneRendersDeclaredEntityCase() {
+  await setSource(PARAMS_DECLARATION_SOURCE)
+  const manifest = await waitForManifest(firstModuleId, 2, 'params declaration manifest')
+  assertEqual(
+    manifest.callsites.map((c) => c.kind),
+    ['canvasParams', 'timeContextMethod'],
+    'params declaration callsite kinds'
+  )
+  assertEqual(
+    manifest.callsites[0].staticName,
+    PARAMS_ENTITY_NAME,
+    'declared params static name'
+  )
+  await waitForParamPaneButtons([PARAMS_ENTITY_NAME], 'params declaration widget')
+
+  await runModule(firstModuleId)
+  const entity = await waitForParamsEntity(
+    PARAMS_ENTITY_NAME,
+    (candidate) => candidate.values.gain === 0.5,
+    'declared params entity on the server'
+  )
+  assertEqual(entity.updatedBy, 'declare', 'declared params updatedBy')
+
+  paramPaneShapeId = await createParamPane(PARAMS_ENTITY_NAME)
+  assert(paramPaneShapeId, 'debug surface should return the new pane shape id')
+  const shapes = await getShapes()
+  const pane = shapes.find((s) => s.id === paramPaneShapeId)
+  assert(pane, 'a param-pane shape should exist after creating one')
+  assertEqual(pane.type, 'param-pane', 'created shape type')
+  assertEqual(pane.props.paramsName, PARAMS_ENTITY_NAME, 'created shape paramsName')
+
+  await waitForParamsBindingValue('gain', ['0.50'], 'declared gain binding renders')
+}
+
+/**
+ * Editing the tweakpane input is a GUI write: it reaches the live object
+ * through `/params/set`, so `/params/list` reports the new value, a bumped
+ * rev, and this pane as the origin.
+ */
+async function runParamPaneEditWritesThroughCase() {
+  const before = await fetchParamsEntity(PARAMS_ENTITY_NAME)
+  assert(before, 'params entity should exist before the GUI edit')
+
+  await setParamsBindingValue('gain', '0.75')
+
+  const after = await waitForParamsEntity(
+    PARAMS_ENTITY_NAME,
+    (candidate) => candidate.values.gain === 0.75,
+    'GUI edit applied to the server entity'
+  )
+  assert(
+    after.rev > before.rev,
+    `expected rev to advance past ${before.rev}, got ${after.rev}`
+  )
+  assertEqual(
+    after.updatedBy,
+    `param-pane-${paramPaneShapeId}`,
+    'GUI write records the editing pane as its origin'
+  )
+  await waitForParamsBindingValue('gain', ['0.75'], 'edited gain binding')
+}
+
+/**
+ * Code writes are plain property assignments, so only the server's sampler
+ * observes them. The pane is a conflated monitor: its readout must follow a
+ * running module with no client action at all.
+ */
+async function runParamPaneShowsCodeWritesCase() {
+  await stopModule(firstModuleId)
+  await waitForServerRunState(firstModuleId, false, 'module stopped before relaunch')
+
+  await setSource(PARAMS_CODE_WRITE_SOURCE)
+  await waitForManifest(firstModuleId, 2, 'params code-write manifest')
+  const before = await fetchParamsEntity(PARAMS_ENTITY_NAME)
+  assert(before, 'params entity should survive the relaunch')
+  // Re-declaring the same name reattaches rather than resetting: the GUI value
+  // is still there when the module starts writing.
+  assertEqual(before.values.gain, 0.75, 'reattached params value')
+
+  await runModule(firstModuleId)
+  const entity = await waitForParamsEntity(
+    PARAMS_ENTITY_NAME,
+    (candidate) => candidate.updatedBy === 'code' && candidate.rev > before.rev,
+    'sampler adopted the code writes'
+  )
+  assert(
+    CODE_WRITE_VALUES.includes(formatBindingValue(entity.values.gain)),
+    `code-written gain should be one of the cycled values, got ${entity.values.gain}`
+  )
+  await waitForParamsBindingValue(
+    'gain',
+    CODE_WRITE_VALUES,
+    'pane readout follows code writes'
+  )
+}
+
+/**
+ * Reloading mid-run drops the whole canvas (no tldraw persistenceKey), but the
+ * entity is server truth: a pane created after the reload rehydrates from the
+ * snapshot alone, and the still-running module has not produced a second
+ * entity for the same name.
+ */
+async function runParamPaneRehydratesAfterReloadCase() {
+  const runningModuleId = firstModuleId
+  const before = await fetchParamsEntity(PARAMS_ENTITY_NAME)
+  assert(before, 'params entity should exist before the reload')
+
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.locator('.livecode-shape').first().waitFor({ timeout: 20_000 })
+  await waitForPageValue(
+    () => Boolean(window.__livecodeTldrawRuntimeDebug),
+    'tldraw runtime debug hooks installed after reload',
+    10_000
+  )
+  await page.evaluate(() => window.__livecodeTldrawRuntimeDebug?.connect())
+  await waitForTldrawReady()
+  firstModuleId = await waitForFirstModuleId()
+
+  const shapesAfterReload = await getShapes()
+  assert(
+    !shapesAfterReload.some((s) => s.type === 'param-pane'),
+    'the transient canvas should not restore the pane by itself'
+  )
+
+  paramPaneShapeId = await createParamPane(PARAMS_ENTITY_NAME)
+  await waitForParamsBindingValue(
+    'gain',
+    CODE_WRITE_VALUES,
+    'pane rehydrates from the server snapshot after reload'
+  )
+
+  const snapshot = await fetchParamsList()
+  const names = Object.keys(snapshot.params)
+  assertEqual(
+    names.filter((name) => name === PARAMS_ENTITY_NAME).length,
+    1,
+    'the reload must not create a second entity for the same name'
+  )
+  const after = snapshot.params[PARAMS_ENTITY_NAME]
+  assert(
+    after.rev > before.rev,
+    `the module kept running across the reload: expected rev past ${before.rev}, got ${after.rev}`
+  )
+
+  // The pre-reload module is no longer registered in this browser session, so
+  // stop it through the server directly.
+  await stopModuleOverHttp(runningModuleId)
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -404,6 +598,134 @@ async function clickPianoRollButton(rollName) {
   if (!clicked) {
     throw new Error(`No piano roll open button matching "${rollName}" found`)
   }
+}
+
+async function waitForParamPaneButtons(expectedNames, label) {
+  await waitForPageValue(
+    (expectedNames) => {
+      const labels = Array.from(
+        document.querySelectorAll('.ltc-param-pane-open-btn')
+      ).map((b) => (b.textContent ?? '').replace(/^🎛\s*open\s*/, '').trim())
+      return expectedNames.every((name) => labels.includes(name)) ? labels : null
+    },
+    label,
+    10_000,
+    expectedNames
+  )
+}
+
+async function createParamPane(paramsName) {
+  return await page.evaluate(
+    (paramsName) =>
+      window.__livecodeTldrawRuntimeDebug?.createParamPane(paramsName) ?? null,
+    paramsName
+  )
+}
+
+/**
+ * One tweakpane binding row, located by its label. Rows are
+ * `.tp-lblv` with a `.tp-lblv_l` label and a `.tp-txtv_i` value input.
+ */
+function paramsBindingInput(label) {
+  return page
+    .locator('.param-pane-shape .tp-lblv', { hasText: label })
+    .locator('input.tp-txtv_i')
+}
+
+async function setParamsBindingValue(label, value) {
+  const input = paramsBindingInput(label)
+  await input.waitFor({ timeout: 10_000 })
+  await input.fill(value)
+  // Tweakpane commits a text binding on the input's change event.
+  await input.press('Enter')
+}
+
+async function waitForParamsBindingValue(label, expectedValues, waitLabel) {
+  return await waitForPageValue(
+    ({ label, expectedValues }) => {
+      const row = Array.from(
+        document.querySelectorAll('.param-pane-shape .tp-lblv')
+      ).find(
+        (candidate) =>
+          (candidate.querySelector('.tp-lblv_l')?.textContent ?? '').trim() === label
+      )
+      const input = row?.querySelector('input.tp-txtv_i')
+      const value = input ? input.value : null
+      return value !== null && expectedValues.includes(value) ? value : null
+    },
+    waitLabel,
+    15_000,
+    { label, expectedValues }
+  )
+}
+
+/** Mirrors tweakpane's default two-decimal formatting for these fixtures. */
+function formatBindingValue(value) {
+  return typeof value === 'number' ? value.toFixed(2) : String(value)
+}
+
+async function fetchParamsList() {
+  const response = await fetch(`${serverBaseUrl}/params/list`)
+  if (!response.ok) {
+    throw new Error(`/params/list failed with ${response.status}`)
+  }
+  return await response.json()
+}
+
+async function fetchParamsEntity(name) {
+  const snapshot = await fetchParamsList()
+  return snapshot.params[name] ?? null
+}
+
+async function waitForParamsEntity(name, predicate, label, timeoutMs = 20_000) {
+  const start = Date.now()
+  let last = null
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const entity = await fetchParamsEntity(name)
+      if (entity && predicate(entity)) return entity
+      last = entity
+    } catch (error) {
+      last = { error: error.message }
+    }
+    await sleep(100)
+  }
+  throw new Error(
+    `Timed out waiting for ${label} (last seen: ${JSON.stringify(last)})`
+  )
+}
+
+async function waitForServerRunState(moduleId, shouldBeActive, label, timeoutMs = 15_000) {
+  const start = Date.now()
+  let last = null
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const response = await fetch(`${serverBaseUrl}/runtime/status`)
+      if (response.ok) {
+        const status = await response.json()
+        last = status.activeModules.map((entry) => entry.moduleId)
+        if (last.includes(moduleId) === shouldBeActive) return last
+      }
+    } catch (error) {
+      last = { error: error.message }
+    }
+    await sleep(100)
+  }
+  throw new Error(
+    `Timed out waiting for ${label} (active modules: ${JSON.stringify(last)})`
+  )
+}
+
+async function stopModuleOverHttp(moduleId) {
+  const response = await fetch(`${serverBaseUrl}/runtime/stop`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ moduleId }),
+  })
+  if (!response.ok) {
+    throw new Error(`/runtime/stop failed with ${response.status}`)
+  }
+  await waitForServerRunState(moduleId, false, `${moduleId} stopped over HTTP`)
 }
 
 async function getShapes() {
