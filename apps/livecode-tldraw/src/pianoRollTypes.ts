@@ -60,3 +60,11 @@ export interface PianoRollSnapshot {
   timestampMs: number;
   rolls: Record<string, PianoRollObject>;
 }
+
+/** File format of a project's `data/pianoRoll/<encoded-name>.json`. */
+export interface SavedPianoRollEntity {
+  type: "pianoRoll";
+  name: string;
+  savedAt: string;
+  data: PianoRollData;
+}
