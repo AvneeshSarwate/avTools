@@ -114,6 +114,77 @@ carries undo, CAS, and E2E coverage. Full storage unification stays earmarked.
   overwrites the seed on load. The lingering-demo-roll-in-a-project-that-
   never-used-melody case joins the documented global-store caveats.
 
+## Post-review revisions (2026-08-13)
+
+A fresh-eyes review verified the plan's citations and stressed the seams. Its
+findings are integrated below as binding spec; the phase text is adjusted
+where they materially change it.
+
+**Owner-adjacent resolution (veto point):** save excludes a *pristine* demo
+roll — `seedDemoPianoRoll` stamps a distinctive origin (e.g.
+`updatedBy: "demo-seed"`), and serialize returns null for a roll still at
+`rev === 1` with that origin. Any real write captures it forever. Rationale:
+plain-files cleanliness (no junk `melody.json` in every project ever saved)
+and the accepted mental-investment pattern (auto-created artifacts decay;
+user-touched ones persist). Without this, lazy re-seeding makes every saved
+project permanently carry the demo seed.
+
+Binding fixes:
+
+1. **Delete must defeat lazy re-seeding.** `ensureDefaultPianoRoll` re-seeds
+   `"melody"` on every list/get/snapshot, so a deleted default resurrects
+   within 100 ms. The store keeps a per-process `deletedDefaults` set:
+   an explicit `deletePianoRoll` of a default name suppresses future
+   re-seeding (unit-tested).
+2. **E2E project-mode cases run AFTER all existing cases**, entered via a
+   fresh `page.goto` carrying both `serverBaseUrl` and `projectPath`; the
+   temp project seeds at least one module (project-mode renders no default
+   canvas, so the boot waits would otherwise hang); `firstModuleId` is
+   re-captured after navigation. Existing cases stay on the default canvas
+   and run first, unchanged.
+3. **TopBar selection mechanism**: selection-scoped buttons use tldraw's
+   reactive `useValue` over `editor.getOnlySelectedShape()` (TopBar already
+   receives the editor); no store.listen plumbing.
+4. **Unsaved pill source**: App polls `GET /project/status` on a ~2 s
+   interval, only while a `projectPath` is present (same gate as the
+   collector); the pill renders from the response's `data` section.
+5. **Dirty tracking covers deletions**: the status `data` section iterates
+   the union of live registry names and `savedEntityJson` keys; a
+   saved-but-absent entity reports as an unsaved deletion.
+6. **`savedEntityJson` is the store's compact cache string** (`lastValueJson`
+   / `lastDataJson`), captured at serialize time on save and after apply on
+   load — never the pretty-printed file bytes, so key-order and formatting
+   can never produce a false permanent "unsaved".
+7. **Save is point-in-time**: all entities serialize synchronously into
+   memory first; the awaited file writes happen afterwards.
+8. **pianoRoll serialize gets the same null-skip-and-report path as params**
+   for JSON-hostile metadata (the store's `lastDataJson === ""` case) —
+   a save never 500s mid-pass.
+9. **Params load is reconcile-grade**: depth-wise in-place mutation that
+   preserves nested object identity at every level (same discipline as
+   `reconcileValues`), and the entity's tombstones are cleared on load so
+   stale pre-load values can never resurrect into a re-declared field.
+10. **Load clears per-roll undo/redo stacks** ("open = adopt disk truth");
+    the earlier "undo stacks untouched" test wording was wrong and is
+    dropped.
+11. **The save UI inherits the known-risks P1 gating gap** (client-control
+    opens show no save button; debug `saveProject()` covers agents/e2e) —
+    documented in the known-risks update.
+12. **Entity revs are monotonic per name across delete/recreate** (a rev
+    floor in `entity_store`), so a recreated or re-loaded params entity can
+    never be silently echo-suppressed by a pane whose `localRev` outlives it.
+
+Plus the review's nits, all adopted: the `/params/set` 404 text loses
+"entities are declared by running code"; `createPianoRollShape` moves to
+`PianoRollShape.tsx` (exported, symmetric with `createParamPaneShape`); the
+"New piano roll" gesture is dual-mode (existing name → view only, new name →
+entity + view — which also makes the datalist correct); encoded filenames are
+length-capped (~100 chars + short hash suffix when truncated); the stale
+known-risks "not persisted" bullets are revised in the same change; the
+`savedEntityJson` key format assumes space-free typeIds (stated); a failed
+open leaving already-loaded entities behind joins the non-transactional-open
+documentation; the e2e path is `apps/livecode-tldraw/tests/livecodeTldraw.e2e.mjs`.
+
 ## Phase A — server: registry, CRUD, persistence
 
 New file `apps/deno-notebooks/livecode/visualizer/entity_registry.ts`:
