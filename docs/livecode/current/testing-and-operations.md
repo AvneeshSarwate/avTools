@@ -1,7 +1,8 @@
 # Current Testing and Operations
 
-Status: task definitions and test inventory checked on 2026-07-21. The final
-audit report records which commands were actually run in this review.
+Status: task definitions and test inventory checked on 2026-07-21, extended for
+the canvas-params slice on 2026-08-13. The final audit report records which
+commands were actually run in this review.
 
 ## Development startup
 
@@ -41,7 +42,7 @@ From `apps/deno-notebooks`:
 
 | Command | Current contents |
 | --- | --- |
-| `deno task test:livecode:unit` | Analyzer transform, runtime singleton, dynamic import, and MIDI helper tests. |
+| `deno task test:livecode:unit` | Analyzer transform, runtime singleton, dynamic import, MIDI helper, and params store tests. |
 | `deno task test:livecode:repro` | Core-timing, analyzer, server, and piano-roll regression tests created by the July stability review. Several test names/comments still say `BUG` although assertions now expect fixed behavior. |
 | `deno task test:livecode:server` | Runtime protocol/client-control, LSP bridge, CLI smoke, and default-source integration. |
 | `deno task test:livecode:p5gpu` | Temp-project p5gpu/shared-state snapshot proof; requires an available WebGPU adapter. |
@@ -119,8 +120,15 @@ tldraw E2E.
   runtime files;
 - prepared-run pruning, cached project materialization, panic timing, canvas
   persistence, MIDI panic, and core-timing stability regressions;
+- params store create/reattach/reconcile, tombstone restore, CAS conflict,
+  no-op detection, live-object identity, sampler drift adoption, read-only
+  forced snapshots, and JSON-simple validation;
 - tldraw piano-roll manifest/widget/static-vs-runtime name behavior and
   focus-or-create shape behavior;
+- the tldraw params round trip: declaration manifest and gutter widget, pane
+  bindings after launch, a GUI edit reaching `/params/list` with a bumped rev
+  and the pane's origin id, a running module's writes reaching the pane readout
+  with no client action, and pane rehydration from the snapshot after a reload;
 - a temp-project p5gpu snapshot and shared module state.
 
 ### Material gaps
@@ -134,6 +142,9 @@ There are no dedicated automated tests for:
   contracts;
 - piano-roll HTTP routes, WebSocket reconnection, undo/redo, and client echo
   suppression end to end;
+- params HTTP routes as independent server contracts: `/params/set`
+  compare-and-set, its 404 for an undeclared name, and `/params/list`. Params
+  coverage is currently the store unit test plus the browser E2E;
 - livecode runtime reconnect/backoff, browser reload rehydration, queued stops,
   and stale lifecycle ordering in the tldraw client;
 - URL-driven versus client-command project load behavior;
@@ -171,6 +182,10 @@ For release/performance work, supplement tests with:
 ## Environment caveats
 
 - The server intentionally uses `--allow-all` and unstable WebGPU/FFI flags.
+- Deno tests import `jsr:@std/assert@1`, and the server graph resolves several
+  `jsr:` and `npm:` specifiers. On a cold cache every Deno task therefore needs
+  network access to `jsr.io` and `registry.npmjs.org`; a sandbox that blocks
+  either one fails at module resolution rather than at an assertion.
 - `/health.runtimeCapabilities` reports whether Deno exposes WebGPU and
   `UnsafeWindowSurface`. A normal Deno test process may be healthy while unable
   to run windowed p5gpu.

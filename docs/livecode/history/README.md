@@ -35,6 +35,10 @@ chosen, and why tldraw was considered a spatial shell. The active client is now
 - `project-modules-design.md` is the original project-mode design. Parts are
   implemented, parts remain aspirational, and some state-sharing guidance is
   superseded by the principles document.
+- `canvas-params-plan-2026-08.md` is the implementation plan for the
+  `canvasParams` entity/tweakpane slice (first generic entity-store seam).
+  While the work is in flight it is the active plan; afterwards
+  `docs/livecode/current/` is the authority on what shipped.
 
 ## Stability review
 

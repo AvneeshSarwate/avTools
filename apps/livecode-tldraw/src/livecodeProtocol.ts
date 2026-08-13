@@ -12,7 +12,9 @@ export interface VisualizerDiagnostic extends SourceRange {
 export type WaitCallsiteKind =
   | "timeContextMethod"
   | "timeContextArgumentCall"
-  | "pianoRollLookup";
+  | "pianoRollLookup"
+  /** A `canvasParams(...)` declaration. Observed only; never instrumented. */
+  | "canvasParams";
 
 export interface WaitCallsiteManifestEntry {
   id: string;
@@ -133,8 +135,18 @@ export interface ProjectCanvasPianoRollView {
   h: number;
 }
 
+export interface ProjectCanvasParamPaneView {
+  id: string;
+  paramsName: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface ProjectCanvasState {
   pianoRollViews?: ProjectCanvasPianoRollView[];
+  paramPaneViews?: ProjectCanvasParamPaneView[];
 }
 
 export interface LivecodeProjectManifest {

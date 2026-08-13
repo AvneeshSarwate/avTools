@@ -1,7 +1,7 @@
 # Current Project Model
 
 Status: checked against the server, tldraw client, project tests, and checked-in
-example on 2026-07-21.
+example on 2026-07-21; the canvas param-pane views were checked on 2026-08-13.
 
 ## Durable file model
 
@@ -62,9 +62,23 @@ interface LivecodeProjectManifest {
       w: number;
       h: number;
     }>;
+    paramPaneViews?: Array<{
+      id: string;
+      paramsName: string;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+    }>;
   };
 }
 ```
+
+Both view arrays are optional and additive; adding `paramPaneViews` did not bump
+the manifest version. A view `id` is a tldraw shape id and is cast straight back
+into one on load, so a hand-authored manifest must use the `"shape:"` prefix
+(for example `"shape:params-main"`). An id without it is not a valid shape id
+and the view will not be created.
 
 All modules are normalized to kind `runnable`. For `/project/create` and
 `/project/modules/add`, an omitted ID defaults to the normalized runtime path.
@@ -111,8 +125,9 @@ at the saved coordinates. Source edits in those shapes write through to
 one-second debounce.
 
 This project format currently persists code-module layout and optional
-piano-roll-view layout only. It does not persist arbitrary tldraw shapes,
-piano-roll note data/history, active runs, or runtime snapshots. Standalone
+piano-roll-view and param-pane layout only. It does not persist arbitrary tldraw
+shapes, piano-roll note data/history, params values, active runs, or runtime
+snapshots. Standalone
 `.tldr` files preserve a tldraw document snapshot but are tldraw-owned,
 version-sensitive, and not the preferred agent-authored multi-file format.
 
@@ -180,7 +195,7 @@ current source transformed successfully.
   either file and does not stop a run with the same module ID.
 - **Save:** rewrites the in-memory manifest.
 - **Canvas:** replaces the entire optional canvas object. The current client
-  sends only its piano-roll-view array.
+  always sends both view arrays in one post for that reason.
 
 ## Client edit behavior
 
@@ -256,13 +271,13 @@ priority invariant gap in `known-risks.md`.
 Module x/y/w/h changes are debounced to `/project/modules/update` for any shape
 with a project module path.
 
-Piano-roll-view persistence currently activates only when the page's initial
-URL has `projectPath`. Opening a project later through the browser-control
-command does not update that captured URL-derived flag, so later piano-roll
+Canvas-view persistence currently activates only when the page's initial URL has
+`projectPath`. Opening a project later through the browser-control command does
+not update that captured URL-derived flag, so later piano-roll or param-pane
 layout edits are not posted. This is listed in `known-risks.md`.
 
-Named piano-roll notes and history are never stored in the project manifest;
-only view identity/name/layout is persisted.
+Named piano-roll notes and history, and params values, are never stored in the
+project manifest; only view identity/name/layout is persisted.
 
 ## Checked-in example
 

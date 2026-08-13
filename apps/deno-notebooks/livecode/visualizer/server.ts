@@ -41,12 +41,18 @@ import type {
   RuntimeModuleRunSnapshotEntry,
   RuntimeModuleStatus,
   RuntimeStateResponse,
+  SetParamsRequest,
   SetPianoRollRequest,
   StopModuleRequest,
   UpdateProjectModuleRequest,
   VisualizerManifestMessage,
   WriteProjectModuleRequest,
 } from "./protocol.ts";
+import {
+  makeParamsSnapshot,
+  sampleParamsSnapshot,
+  setParamsValues,
+} from "./params_store.ts";
 import {
   makePianoRollSnapshot,
   redoPianoRoll,
@@ -219,6 +225,7 @@ export async function createLivecodeVisualizerServer(
 
   const sockets = new Set<WebSocket>();
   const pianoRollSockets = new Set<WebSocket>();
+  const paramsSockets = new Set<WebSocket>();
   const clientControlSockets = new Map<string, ClientControlSocket>();
   const pendingClientCommands = new Map<string, PendingClientCommand>();
   const activeModules = new Map<string, ActiveModule>();
@@ -236,6 +243,7 @@ export async function createLivecodeVisualizerServer(
   let lastSnapshotJson = "";
   let snapshotTimer: number | undefined;
   let pianoRollSnapshotTimer: number | undefined;
+  let paramsSnapshotTimer: number | undefined;
   let closing = false;
 
   const log = async (entry: Record<string, unknown>) => {
@@ -355,6 +363,23 @@ export async function createLivecodeVisualizerServer(
       void log({
         type: "pianoRollSnapshot",
         rollCount: Object.keys(snapshot.rolls).length,
+      });
+    }
+  }, 100) as unknown as number;
+
+  // Params entities are written by plain property assignment in user code, so
+  // this tick both adopts that drift as store generations and broadcasts.
+  paramsSnapshotTimer = setInterval(() => {
+    const snapshot = sampleParamsSnapshot();
+    if (!snapshot) return;
+    const payload = JSON.stringify(snapshot);
+    for (const socket of paramsSockets) {
+      if (socket.readyState === WebSocket.OPEN) socket.send(payload);
+    }
+    if (options.logLevel === "debug") {
+      void log({
+        type: "paramsSnapshot",
+        paramsCount: Object.keys(snapshot.params).length,
       });
     }
   }, 100) as unknown as number;
@@ -588,6 +613,37 @@ export async function createLivecodeVisualizerServer(
       );
     }
 
+    if (request.method === "GET" && url.pathname === "/params/snapshots") {
+      const { socket, response } = Deno.upgradeWebSocket(request);
+      socket.onopen = () => {
+        paramsSockets.add(socket);
+        socket.send(JSON.stringify(makeParamsSnapshot()));
+      };
+      socket.onclose = () => paramsSockets.delete(socket);
+      socket.onerror = () => paramsSockets.delete(socket);
+      return response;
+    }
+
+    if (request.method === "GET" && url.pathname === "/params/list") {
+      return json(makeParamsSnapshot());
+    }
+
+    if (request.method === "POST" && url.pathname === "/params/set") {
+      const requestBody = await request.json() as SetParamsRequest;
+      const entity = setParamsValues(requestBody.name, requestBody.values, {
+        originId: requestBody.originId,
+        expectedRev: requestBody.expectedRev,
+      });
+      if (!entity) {
+        return json({
+          ok: false,
+          error:
+            `No params entity "${requestBody.name}"; entities are declared by running code`,
+        }, { status: 404 });
+      }
+      return json(entity);
+    }
+
     if (request.method === "GET" && url.pathname === "/lsp") {
       const session = url.searchParams.get("session");
       if (!session) {
@@ -674,8 +730,12 @@ export async function createLivecodeVisualizerServer(
       if (pianoRollSnapshotTimer !== undefined) {
         clearInterval(pianoRollSnapshotTimer);
       }
+      if (paramsSnapshotTimer !== undefined) {
+        clearInterval(paramsSnapshotTimer);
+      }
       for (const socket of sockets) socket.close();
       for (const socket of pianoRollSockets) socket.close();
+      for (const socket of paramsSockets) socket.close();
       for (const client of clientControlSockets.values()) {
         client.socket.close();
       }

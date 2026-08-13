@@ -1,6 +1,7 @@
 # Current Protocol and Cross-Boundary Contracts
 
-Status: checked against both protocol copies and route callers on 2026-07-21.
+Status: checked against both protocol copies and route callers on 2026-07-21;
+the params routes and types were checked on 2026-08-13.
 
 ## Source of types
 
@@ -15,6 +16,7 @@ The tldraw client manually mirrors subsets in:
 ```text
 apps/livecode-tldraw/src/livecodeProtocol.ts
 apps/livecode-tldraw/src/pianoRollTypes.ts
+apps/livecode-tldraw/src/paramsTypes.ts
 ```
 
 There is no shared generated package and no runtime schema validation. A
@@ -33,6 +35,9 @@ drift at compile time, so compare actual serialization and handling.
   timeout, disconnect, or browser-side failure.
 - `/piano-roll/set` can return a normal `PianoRollObject` with
   `conflict: true`; it is not an HTTP conflict.
+- `/params/set` can also return a normal `ParamsEntity` with `conflict: true`.
+  It returns status 404 with `{ ok: false, error }` for an unknown name,
+  because params entities are created by running code rather than by a write.
 
 The route catalog and side effects are in `server.md`.
 
@@ -184,6 +189,63 @@ to non-undoable.
 The piano-roll snapshot is always a full `rolls` map. The sequence advances
 only when a snapshot is created; normal broadcast snapshots are created when
 the dirty flag is set, while a new socket/list request forces one.
+
+## Params contract
+
+A params entity is identified by trimmed string `name` and contains:
+
+- monotonically increasing `rev` for observed value generations;
+- `values`: a point-in-time clone of the live object. Values are JSON-simple —
+  finite numbers, strings, booleans, and nested plain objects. Arrays are
+  rejected at declaration;
+- optional `meta`, keyed like the value tree, whose leaves carry
+  `label`/`min`/`max`/`step` for one binding;
+- `updatedAt` and `updatedBy`, where `updatedBy` is `declare`, `reconcile`,
+  `code` for a drift the sampler adopted, or a write's `originId` (`client`
+  when the caller omits one);
+- optional `unserializable: true` when the live value can no longer be
+  serialized, in which case `values` is the last good serialization;
+- optional `conflict` on a stale compare-and-set request.
+
+```ts
+interface SetParamsRequest {
+  name: string;
+  values: ParamsValues; // nested partial: only the leaves present are merged
+  originId?: string;
+  expectedRev?: number;
+}
+```
+
+`POST /params/set` deep-merges leaves into the live object in place. Panes
+never send `expectedRev`; compare-and-set is for agent and HTTP callers. A
+leaf that is not declared, has a different type, or is a non-finite number is
+ignored with a server-side warning rather than failing the request. No-op
+detection compares a fresh serialization of the pre-merge value, never the
+cached one, because code writes bypass the store and invalidate that cache.
+
+`/params/snapshots` sends a full `params` map:
+
+```ts
+interface ParamsSnapshot {
+  type: "paramsSnapshot";
+  seq: number;
+  timestampMs: number;
+  params: Record<string, ParamsEntity>;
+}
+```
+
+The sequence advances whenever a snapshot is created. Broadcast snapshots are
+created on a 100 ms tick when the store changed; `GET /params/list` and a new
+socket force one. Unlike the piano-roll equivalent, a forced params snapshot is
+read-only: it neither consumes the broadcast gate nor updates per-entity
+caches, so one client connecting cannot swallow a pending update for the
+others.
+
+The manifest kind `canvasParams` is part of this boundary: `WaitCallsiteKind`
+carries it in both protocol copies, and its entries use the same optional
+`nameArgRange`/`staticName` fields as `pianoRollLookup`. It is an observation
+only — no generated code, no runtime message, and no client action beyond the
+editor's open-pane widget. See `analyzer-and-generated-code.md`.
 
 ## Client-control contract
 

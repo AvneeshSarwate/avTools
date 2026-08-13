@@ -1,6 +1,7 @@
 # Current Deno Server Architecture
 
-Status: checked against `apps/deno-notebooks/livecode` on 2026-07-21.
+Status: checked against `apps/deno-notebooks/livecode` on 2026-07-21; the
+entity/params stores and their routes were checked on 2026-08-13.
 
 ## File map
 
@@ -17,12 +18,22 @@ Status: checked against `apps/deno-notebooks/livecode` on 2026-07-21.
   generated modules.
 - `visualizer/piano_roll_store.ts`: process-global named piano-roll records,
   revisions, dirty snapshots, and per-roll undo/redo.
+- `visualizer/entity_store.ts`: generic `(type, name)`-keyed records with
+  revisions, no-op caching, dirty/sequence bookkeeping, and never-throw
+  serialization. `piano_roll_store.ts` is deliberately not migrated onto it.
+- `visualizer/params_store.ts`: params entities as the first typed wrapper over
+  the entity store — declaration, recursive reconcile, leaf merges, and the
+  sampler that adopts code writes.
 - `visualizer/lsp_proxy.ts`: per-session proxy process that creates a synthetic
   workspace and runs `deno lsp -q`.
 - `visualizer/generated_run_id.ts`: generated-build ID creation.
 - `visualizer/fs_utils.ts`: never-throwing best-effort recursive cleanup.
 - `helpers/piano_roll_helpers.ts`: livecode-facing clip conversion, named store
   access, and `TimeContext`-scheduled playback.
+- `helpers/canvas_params.ts`: the `canvasParams(name, defaults, meta?)`
+  declaration helper. It is a thin typed delegate to `registerParams` and has
+  no server dependency, so a module using it also runs under a plain
+  `deno run`.
 - `helpers/midi_helpers.ts`: eager MIDI enumeration/open, safe send wrappers,
   sounding-note registry, and panic.
 - `helpers/midi_math.ts`: side-effect-free MIDI clamping.
@@ -34,7 +45,7 @@ Status: checked against `apps/deno-notebooks/livecode` on 2026-07-21.
 `createLivecodeVisualizerServer` creates one HTTP server and owns:
 
 - one session directory and log file;
-- sets of runtime and piano-roll snapshot sockets;
+- sets of runtime, piano-roll, and params snapshot sockets;
 - a map of browser control sockets and pending commands;
 - active modules and their `TimeContext` branch handles;
 - latest lifecycle snapshot per module;
@@ -44,9 +55,10 @@ Status: checked against `apps/deno-notebooks/livecode` on 2026-07-21.
 - cached/in-flight project diagnostics;
 - an LSP WebSocket process manager with at most four proxy processes.
 
-`visualizer/runtime.ts` and `piano_roll_store.ts` are Deno module singletons,
-not fields of this server object. They are shared by every generated module and
-would also be shared by multiple server objects in one isolate.
+`visualizer/runtime.ts`, `piano_roll_store.ts`, and `entity_store.ts` (with the
+params entities inside it) are Deno module singletons, not fields of this
+server object. They are shared by every generated module and would also be
+shared by multiple server objects in one isolate.
 
 ## Session directories
 
@@ -130,6 +142,14 @@ changes.
 | POST | `/piano-roll/set` | Normalize and set one roll, optionally checking `expectedRev` and recording undo history. |
 | POST | `/piano-roll/undo` | Undo one named object's history. |
 | POST | `/piano-roll/redo` | Redo one named object's history. |
+
+### Params
+
+| Method | Route | Behavior |
+| --- | --- | --- |
+| WS | `/params/snapshots` | Full named-entity snapshots on the 100 ms tick when the store changed; sends a read-only forced snapshot on open. |
+| GET | `/params/list` | Read-only forced snapshot, despite the route name. |
+| POST | `/params/set` | Deep-merge leaf values into one live entity, optionally checking `expectedRev`. Status 404 when the name has not been declared by running code. |
 
 ### LSP
 
@@ -244,3 +264,55 @@ MIDI devices are enumerated and opened when `midi_helpers.ts` is first imported.
 Send failures are logged rather than thrown. `panicMidi` silences tracked notes
 but does not close ports; `closeMidiDevices` exists for full teardown and is not
 called by the server shutdown path.
+
+## Entity store and params entities
+
+`entity_store.ts` owns identity, revisions, the no-op cache, the per-type dirty
+flag and snapshot sequence, and never-throw serialization. Per-type semantics
+live in the wrapper beside it. `params_store.ts` is the only wrapper today.
+
+`registerParams(name, defaults, meta?)` is create-or-reattach and returns the
+**live value object**:
+
+- absent: the defaults are structured-cloned into a new record at rev 1 with
+  `updatedBy: "declare"`;
+- present: the live object is reconciled in place, recursively, at every depth.
+  Existing values survive, new fields arrive at their default, a field whose
+  declared type changed takes the new default, and a dropped field's value is
+  kept in an in-memory tombstone so re-declaring it later restores the tweaked
+  value. A reconcile that changed anything bumps rev once with
+  `updatedBy: "reconcile"`. The declaration always replaces `meta`; a
+  meta-only change marks the type dirty without bumping rev, because rev counts
+  value generations and panes rebuild bindings from shape and meta.
+
+Object identity is the contract: the same object is returned to every
+declaration of one name and is mutated in place by HTTP writes, so a module
+that kept a reference across a relaunch keeps observing live truth. Declaration
+validates JSON-simple values and throws on anything else — including arrays,
+which have no tweakpane binding in v1. Throwing is acceptable there and only
+there, because declaration runs at module init rather than inside timing loops.
+
+Every 100 ms the params timer samples and broadcasts. Per entity per tick it
+safe-stringifies the live value, then:
+
+- on failure, sets `unserializable: true` once and warns, keeping the last good
+  serialization in snapshots instead of freezing the loop;
+- on success, clears that flag if it was set, and when the string differs from
+  the cached one **adopts the drift** as a store write: rev bumps,
+  `updatedBy` becomes `code`, and the cache is refreshed.
+
+Adoption is the whole mechanism behind plain property writes: user code never
+calls the store, so this sampler is where a code-authored generation is
+recorded, and it is what keeps rev a monotonic generation counter that client
+echo suppression can rely on. `NaN`/`Infinity` serialize to null and
+`undefined` drops the key, which reads as a shape change. A snapshot is
+broadcast only when the tick found something changed.
+
+`/params/set` merges leaves in place and detects no-ops against a fresh
+serialization of the pre-merge value rather than the cache, which a code write
+can have invalidated since the last tick. Forced snapshots for `/params/list`
+and socket open are read-only.
+
+Shutdown clears the params timer and closes the params socket set next to their
+piano-roll counterparts. Entities themselves are process-global and in memory
+only; they are neither persisted nor evicted (see `known-risks.md`).
