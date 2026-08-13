@@ -1,9 +1,14 @@
 import { assert, assertEquals, assertThrows } from "jsr:@std/assert@1";
 import {
   clearParamsStore,
+  createEmptyParams,
+  duplicateParams,
   getParams,
+  latestParamsJson,
+  loadParams,
   makeParamsSnapshot,
   registerParams,
+  removeParams,
   sampleParamsSnapshot,
   setParamsValues,
 } from "../visualizer/params_store.ts";
@@ -352,6 +357,153 @@ Deno.test("non-finite code writes serialize to null and drops read as shape chan
     false,
   );
   assertEquals(afterDelete?.params["test/lossy"].updatedBy, "code");
+});
+
+Deno.test("loadParams mutates the live object in place at every depth", () => {
+  clearParamsStore();
+  const live = registerParams("test/load", {
+    gain: 1,
+    strobe: { rate: 2, jitter: 0 },
+  });
+  const strobeRef = live.strobe;
+  live.gain = 9;
+
+  const loaded = loadParams("test/load", {
+    gain: 0.25,
+    strobe: { rate: 8 },
+    added: true,
+  });
+
+  assertEquals(loaded.rev, 2);
+  assertEquals(loaded.updatedBy, "load");
+  // A module that kept the reference (or a nested one) keeps observing truth.
+  assertEquals(live.gain, 0.25);
+  assert(live.strobe === strobeRef, "nested identity must survive a load");
+  assertEquals(live.strobe.rate, 8);
+  assertEquals("jitter" in live.strobe, false);
+  assertEquals((live as ParamsValues).added, true);
+
+  // Open is an explicit operator action, so the rev always advances: a pane
+  // whose localRev outlived the pre-load value must never echo-suppress it.
+  assertEquals(
+    loadParams("test/load", { gain: 0.25, strobe: { rate: 8 }, added: true })
+      .rev,
+    3,
+  );
+});
+
+Deno.test("loadParams creates an absent entity and the declaration still wins later", () => {
+  clearParamsStore();
+  const loaded = loadParams("test/load-new", { gain: 3 }, {
+    gain: { min: 0, max: 4 },
+  });
+  assertEquals(loaded.rev, 1);
+  assertEquals(loaded.updatedBy, "load");
+  assertEquals(getParams("test/load-new")?.values, { gain: 3 });
+  assertEquals(getParams("test/load-new")?.meta, { gain: { min: 0, max: 4 } });
+
+  const declared = registerParams("test/load-new", { gain: 1, extra: 2 });
+  assertEquals(declared.gain, 3, "the loaded value survives reconcile");
+  assertEquals(declared.extra, 2);
+});
+
+Deno.test("loadParams clears tombstones so a pre-load value cannot resurrect", () => {
+  clearParamsStore();
+  const live = registerParams("test/load-tombstone", { keep: 1, tweaked: 2 });
+  live.tweaked = 42;
+  registerParams("test/load-tombstone", { keep: 1 });
+
+  loadParams("test/load-tombstone", { keep: 5 });
+
+  const restored = registerParams("test/load-tombstone", {
+    keep: 1,
+    tweaked: 2,
+  });
+  assertEquals(restored.keep, 5);
+  assertEquals(restored.tweaked, 2, "the pre-load tombstone is gone");
+});
+
+Deno.test("loadParams rejects values that are not JSON-simple", () => {
+  clearParamsStore();
+  assertThrows(
+    () =>
+      loadParams(
+        "test/load-invalid",
+        { items: [1, 2] } as unknown as ParamsValues,
+      ),
+    Error,
+    "arrays are not supported",
+  );
+  assertEquals(getParams("test/load-invalid"), undefined);
+});
+
+Deno.test("removeParams drops the record and its tombstones", () => {
+  clearParamsStore();
+  const live = registerParams("test/remove", { keep: 1, tweaked: 2 });
+  live.tweaked = 42;
+  registerParams("test/remove", { keep: 1 });
+
+  assertEquals(removeParams("test/remove"), true);
+  assertEquals(getParams("test/remove"), undefined);
+  assertEquals(removeParams("test/remove"), false);
+
+  const fresh = registerParams("test/remove", { keep: 1, tweaked: 2 });
+  assertEquals(fresh.tweaked, 2, "a deleted entity keeps no editing history");
+});
+
+Deno.test("revs are monotonic per name across delete and recreate", () => {
+  clearParamsStore();
+  registerParams("test/revfloor", { gain: 1 });
+  setParamsValues("test/revfloor", { gain: 2 });
+  assertEquals(getParams("test/revfloor")?.rev, 2);
+
+  removeParams("test/revfloor");
+  assertEquals(createEmptyParams("test/revfloor").rev, 3);
+
+  removeParams("test/revfloor");
+  registerParams("test/revfloor", { gain: 1 });
+  assertEquals(getParams("test/revfloor")?.rev, 4);
+
+  removeParams("test/revfloor");
+  loadParams("test/revfloor", { gain: 7 });
+  assertEquals(getParams("test/revfloor")?.rev, 5);
+
+  // The floor is per name: an unrelated name still starts at 1.
+  assertEquals(createEmptyParams("test/revfloor-other").rev, 1);
+});
+
+Deno.test("duplicateParams deep-copies the live values under a new name", () => {
+  clearParamsStore();
+  const live = registerParams("test/dup", { gain: 1, strobe: { rate: 2 } });
+  live.strobe.rate = 9;
+
+  const copy = duplicateParams("test/dup", "test/dup-copy");
+  assertEquals(copy.rev, 1);
+  assertEquals(copy.updatedBy, "duplicate");
+  assertEquals(copy.values, { gain: 1, strobe: { rate: 9 } });
+
+  // Deep copy: writing one entity never touches the other.
+  const copyLive = registerParams("test/dup-copy", {
+    gain: 1,
+    strobe: { rate: 2 },
+  });
+  copyLive.strobe.rate = 100;
+  assertEquals(live.strobe.rate, 9);
+});
+
+Deno.test("latestParamsJson is a fresh serialization of the live value", () => {
+  clearParamsStore();
+  const live = registerParams("test/latest", { gain: 1 });
+  assertEquals(latestParamsJson("test/latest"), '{"gain":1}');
+
+  // A code write the sampler has not adopted yet is still what a save writes,
+  // so the saved-state compare can never latch a permanent false "unsaved".
+  live.gain = 2;
+  assertEquals(latestParamsJson("test/latest"), '{"gain":2}');
+
+  assertEquals(latestParamsJson("test/absent"), null);
+  (live as Record<string, unknown>).gain = 1n;
+  assertEquals(latestParamsJson("test/latest"), null);
 });
 
 Deno.test("meta comes from the declaration and a meta-only change broadcasts without a rev bump", () => {

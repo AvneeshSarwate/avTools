@@ -36,8 +36,14 @@ export interface SetPianoRollOptions {
 }
 
 const DEFAULT_ROLL_NAME = "melody";
+/** `updatedBy` of an untouched demo seed; project save skips such a roll. */
+export const DEMO_SEED_ORIGIN = "demo-seed";
 const MAX_HISTORY = 100;
 const records = new Map<string, PianoRollRecord>();
+// Names an operator explicitly deleted. `ensureDefaultPianoRoll` runs on every
+// list/get/snapshot, so without this a deleted default resurrects within one
+// snapshot tick. Per process, like the records themselves.
+const deletedDefaults = new Set<string>();
 let snapshotSeq = 0;
 let dirty = true;
 
@@ -48,7 +54,7 @@ export function listPianoRollNames(): string[] {
 
 export function getPianoRoll(name: string): PianoRollObject | undefined {
   ensureDefaultPianoRoll();
-  const record = records.get(name);
+  const record = records.get(normalizeName(name));
   return record ? toObject(record) : undefined;
 }
 
@@ -171,6 +177,46 @@ export function redoPianoRoll(
   return toObject(record);
 }
 
+/**
+ * Explicit operator deletion. A deleted name is remembered so the lazy default
+ * seeding cannot bring it back; only an explicit write recreates it.
+ */
+export function deletePianoRoll(name: string): boolean {
+  const normalizedName = normalizeName(name);
+  deletedDefaults.add(normalizedName);
+  const removed = records.delete(normalizedName);
+  if (removed) markDirty();
+  return removed;
+}
+
+/**
+ * Cached JSON of the last data written to one roll, for save/dirty compares.
+ * Empty string when that data was not serializable; undefined roll gives null.
+ */
+export function latestPianoRollJson(name: string): string | null {
+  const record = records.get(normalizeName(name));
+  return record ? record.lastDataJson : null;
+}
+
+/**
+ * Drop one roll's undo/redo history. Loading a project adopts disk truth, so
+ * the pre-load stacks would undo into a state the file never contained.
+ */
+export function clearPianoRollHistory(name: string): void {
+  const record = records.get(normalizeName(name));
+  if (!record) return;
+  record.undoStack = [];
+  record.redoStack = [];
+  markDirty();
+}
+
+/** Test seam: drops every roll, including the remembered deletions. */
+export function clearPianoRollStore(): void {
+  records.clear();
+  deletedDefaults.clear();
+  markDirty();
+}
+
 export function makePianoRollSnapshot(
   options: { force?: boolean } = {},
 ): PianoRollSnapshot | null {
@@ -184,9 +230,18 @@ export function makePianoRollSnapshot(
   };
 }
 
-export function seedDemoPianoRoll(name = DEFAULT_ROLL_NAME): PianoRollObject {
-  const existing = records.get(normalizeName(name));
+/**
+ * Seed the demo roll unless it already exists or was explicitly deleted.
+ * The write is stamped `demo-seed` so an untouched seed (still at rev 1) can be
+ * recognized and left out of project saves.
+ */
+export function seedDemoPianoRoll(
+  name = DEFAULT_ROLL_NAME,
+): PianoRollObject | undefined {
+  const normalizedName = normalizeName(name);
+  const existing = records.get(normalizedName);
   if (existing) return toObject(existing);
+  if (deletedDefaults.has(normalizedName)) return undefined;
   return setPianoRoll(
     name,
     {
@@ -222,7 +277,12 @@ export function seedDemoPianoRoll(name = DEFAULT_ROLL_NAME): PianoRollObject {
         },
       ],
     },
-    { label: "Seed demo", source: "server", undoable: false },
+    {
+      label: "Seed demo",
+      source: "server",
+      originId: DEMO_SEED_ORIGIN,
+      undoable: false,
+    },
   );
 }
 
