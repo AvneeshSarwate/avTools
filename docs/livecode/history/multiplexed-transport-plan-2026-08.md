@@ -246,3 +246,82 @@ tracked, else tell the owner it exists.
 - **SketchWrapper** keeps working via the shim but is NOT modernized; its
   local narrow types and unbounded debug array are noted in known-risks,
   not fixed here.
+
+## Post-review revisions (2026-08-13) — BINDING, override the sections above
+
+A fresh-eyes review verified the plan's premises and found the mechanisms
+below under- or mis-specified. Implementers treat these as spec.
+
+**Owner-adjacent resolution (veto point):** samplers ALWAYS run regardless
+of subscriptions — "unwatched costs nothing" is a TRANSPORT property only.
+Rationale: principles' "an unwatched run behaves identically to a watched
+one" mandates identical server work; code-write rev adoption, signal
+time-stamping, and HTTP list freshness must not depend on who is watching.
+Stated in D3 and protocol.md.
+
+1. **Deletions and meta-only changes need explicit tracking.**
+   `entity_store` gains per-type changed-name and deleted-name sets,
+   written by EVERY mutator including meta/ended/anchor/owner writes and
+   deletes; the sync timer consumes them once per tick. Serialize-compare
+   alone cannot see deletions or signal `ended` flips (a scope that never
+   learns `ended` silently freezes — principle violation).
+2. **Phase B computes changes ONCE per tick and fans out** both the old
+   full-snapshot payloads (all four legacy channels) and the new envelopes
+   — exactly one consumer per dirty gate. Independent old+new timers would
+   double-consume the gates and starve one side. The B-phase
+   `/runtime/snapshots` emission keeps FULL fidelity (modules, lookups,
+   activeModules, moduleRuns with `updatedAtMs`) for the un-migrated tldraw
+   client, not just the SketchWrapper subset.
+3. **The pianoRoll sync source is write-time change tracking** (revision 1's
+   sets), never a per-tick serialize of full note arrays; rolls have no
+   code-drift to adopt. Idle cost stays one boolean-equivalent.
+4. **`runToken` is minted at launch ACCEPT time** (stored on
+   `PendingLaunch`), not after import, so the `launching` run entity carries
+   it. The cancelled-launch publish guard re-keys to: same token AND current
+   snapshot state still `launching` (a bare token compare would let the
+   queued action clobber a stop's terminal). The stale-teardown guard keeps
+   its `activeModules` OBJECT-identity check unchanged; the branch-finally
+   guard is already token-keyed. Say which guard changes; only that one.
+5. **Client terminal-dedupe rule, specified:** the client remembers the
+   last ACTIVE token observed per module; a terminal whose token matches a
+   token observed active before the current claim's POST is suppressed; a
+   terminal with an unknown token applies when the module is unclaimed or
+   no active state for the claim was ever seen (conflated
+   launch+instant-error must apply). Add straddle and instant-failure cases
+   to the tests. The natural-completion e2e is RE-DERIVED for changed-only
+   delivery: its old mechanism (full-map re-delivery re-adopting the claim
+   on unrelated traffic) no longer exists.
+6. **`/runtime/state` joins the migration:** shape frozen (including
+   `updatedAtMs`) through Phase B; carries `runToken` per module by Phase C
+   so rehydration seeds token-keyed dedupe. D4's `updatedAt` rename lands
+   only where and when consumers have migrated.
+7. **Every subscribe message resets ALL listed types** (not just newly
+   added), so gap recovery = resubscribe the same set. Note in protocol.md
+   that per-socket seq gaps over TCP indicate server bugs, not transport
+   loss — nobody should build replay logic on them.
+8. **Connect gesture: a connect-armed flag.** The sync socket opens at
+   mount; the open-sequence (health → LSP → rehydrate → flush stops →
+   re-analyze) runs only when armed — at open if Connect was already
+   pressed, immediately at Connect if the socket is already open. Reopen
+   behavior defined for both armed states. The Connect UI reflects
+   armed-and-open, so pre-Connect the app does not render "connected" and
+   both e2es' connection-text assertions keep their meaning.
+9. **Phase B's gate includes BOTH e2es** (tldraw + Vue) in addition to the
+   Deno suites — B is the phase most able to break live clients.
+10. **Waits/lookups sources add per-entity serialized-value comparison on
+    top of dirty marks** — a steady wait loop re-marking the same callsite
+    set must not rebroadcast identical arrays every tick (today's global
+    JSON compare provides this silence and the natural-completion e2e
+    depends on it).
+
+Nits, adopted: piano-roll undo stacks in their side structure are dropped
+on entity delete (no inherited history on recreate); a client reset
+REPLACES the whole per-type map (absence = deleted) so entities deleted
+while disconnected do not survive reconnect; D1 wording — the untyped
+`/piano-roll/set` body is the CLIENT's inline copy (server side is typed),
+and livecode-tldraw's "first source alias" carries the qualifier that a
+dist-bundle alias already exists; Phase D adds `project-model.md` (saved
+file formats move into the package — maintenance-contract row) and
+known-risks' hand-mirroring closure reads "resolved for wire types, except
+SketchWrapper's deliberately-kept local copies"; demo-roll seeding stays at
+server construction so `snapshotAll()` is genuinely read-only.
