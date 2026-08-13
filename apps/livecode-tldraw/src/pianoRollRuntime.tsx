@@ -14,6 +14,7 @@ import type {
   PianoRollSnapshot,
 } from "./pianoRollTypes";
 import { createReconnectingSocket } from "./reconnectingSocket";
+import { postServerJson, serverWebSocketUrl } from "./serverRequests";
 
 export type PianoRollConnectionStatus =
   | "closed"
@@ -66,19 +67,8 @@ export function PianoRollRuntimeProvider({
   }, [serverBaseUrl]);
 
   const postJson = useCallback(
-    async <T,>(path: string, body: unknown): Promise<T> => {
-      const response = await fetch(`${serverBaseUrlRef.current}${path}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!response.ok) {
-        throw new Error(
-          `${path} failed with ${response.status}: ${await response.text()}`,
-        );
-      }
-      return (await response.json()) as T;
-    },
+    <T,>(path: string, body: unknown): Promise<T> =>
+      postServerJson<T>(serverBaseUrlRef.current, path, body),
     [],
   );
 
@@ -93,7 +83,7 @@ export function PianoRollRuntimeProvider({
 
   useEffect(() => {
     const controller = createReconnectingSocket({
-      makeUrl: () => `${serverBaseUrl.replace(/^http/, "ws")}/piano-roll/snapshots`,
+      makeUrl: () => serverWebSocketUrl(serverBaseUrl, "/piano-roll/snapshots"),
       onOpen: () => {
         setConnectionStatus("open");
       },

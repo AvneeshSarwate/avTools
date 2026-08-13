@@ -55,6 +55,16 @@ const PIANO_ROLL_LOOKUP_SOURCE_BASENAMES = new Set([
   "piano_roll_store.ts",
 ]);
 
+/**
+ * Canvas-params declarations. Unlike piano-roll access these are pure
+ * observation: the manifest records the callsite so the editor can offer a
+ * pane for the declared name, and the transform leaves the call untouched.
+ */
+const CANVAS_PARAMS_FUNCTIONS = new Set(["canvasParams"]);
+const CANVAS_PARAMS_IMPORT_ALIASES = new Set(["canvas-params"]);
+const CANVAS_PARAMS_SOURCE_SUFFIXES = ["/helpers/canvas_params.ts"];
+const CANVAS_PARAMS_SOURCE_BASENAMES = new Set(["canvas_params.ts"]);
+
 export interface AnalyzeAndTransformRequest {
   moduleId: string;
   sourceVersion: number;
@@ -104,7 +114,11 @@ interface InstrumentedCallsite extends InstrumentedCallsiteData {
   nameArg?: Node;
 }
 
-interface PianoRollLookupBindings {
+/**
+ * Local bindings of one recognized helper module, resolved to ts-morph
+ * symbols so a same-named local function or unrelated import is ignored.
+ */
+interface HelperImportBindings {
   named: Map<ts.Symbol, { importedName: string }>;
   namespaces: Map<ts.Symbol, { moduleSpecifier: string }>;
 }
@@ -173,16 +187,23 @@ export function analyzeAndTransformTimedModule(
   const instrumentedCalls = new Map<CallExpression, InstrumentedCallsiteData>();
   const processedBodies = new Set<Node>();
   const pianoRollLookupBindings = collectPianoRollLookupImports(sourceFile);
+  const canvasParamsBindings = collectCanvasParamsImports(sourceFile);
 
   for (const scope of collectVisualFunctionScopes(sourceFile)) {
     processVisualBody(scope);
   }
+  collectCanvasParamsCallsites();
 
+  let hasWrappedCallsite = false;
   for (const callsite of collectSortedInstrumentedCallsites()) {
     const call = callsite.call;
     const start = call.getStart();
     const end = call.getEnd();
-    if (callsite.kind === "pianoRollLookup" && callsite.nameArg) {
+    if (callsite.kind === "canvasParams") {
+      // Observation only: the manifest entry is the whole feature, so this
+      // kind deliberately emits no wrapper and no runtime import.
+    } else if (callsite.kind === "pianoRollLookup" && callsite.nameArg) {
+      hasWrappedCallsite = true;
       const argStart = callsite.nameArg.getStart();
       const argEnd = callsite.nameArg.getEnd();
       magic.prependLeft(
@@ -193,6 +214,7 @@ export function analyzeAndTransformTimedModule(
       );
       magic.appendRight(argEnd, ")");
     } else {
+      hasWrappedCallsite = true;
       magic.prependLeft(
         start,
         `__tcvVisualizedAwait(${JSON.stringify(request.moduleId)}, ${
@@ -243,7 +265,9 @@ export function analyzeAndTransformTimedModule(
     }
     magic.append("\nexport default runFunc;\n");
   }
-  if (manifestEntries.length > 0) {
+  // Keyed on wrapped callsites, not on the manifest: a module whose only
+  // manifest entries are `canvasParams` observations must import nothing.
+  if (hasWrappedCallsite) {
     magic.prepend(
       `import { visualizedAwait as __tcvVisualizedAwait, visualizedPianoRollLookup as __tcvPianoRollLookup } from ${
         JSON.stringify(runtimeImport)
@@ -449,25 +473,48 @@ export function analyzeAndTransformTimedModule(
   function resolvePianoRollLookupTarget(
     call: CallExpression,
   ): { importedName: string } | null {
-    const expr = call.getExpression();
-    if (Node.isIdentifier(expr)) {
-      const symbol = expr.getSymbol()?.compilerSymbol;
-      return symbol ? pianoRollLookupBindings.named.get(symbol) ?? null : null;
-    }
+    return resolveHelperCallTarget(
+      call,
+      pianoRollLookupBindings,
+      PIANO_ROLL_LOOKUP_FUNCTIONS,
+    );
+  }
 
-    if (Node.isPropertyAccessExpression(expr)) {
-      const importedName = expr.getName();
-      if (!PIANO_ROLL_LOOKUP_FUNCTIONS.has(importedName)) return null;
-      const receiver = expr.getExpression();
-      if (!Node.isIdentifier(receiver)) return null;
-      const namespaceSymbol = receiver.getSymbol()?.compilerSymbol;
-      return namespaceSymbol &&
-          pianoRollLookupBindings.namespaces.has(namespaceSymbol)
-        ? { importedName }
-        : null;
+  /**
+   * Params are normally declared at module scope, so this pass walks the whole
+   * file rather than the `TimeContext` scopes: a declaration inside a timed
+   * body, at top level, or inside any other function is equally real. It
+   * returns immediately for a module that does not import `canvas-params`, so
+   * detection costs nothing for every other module.
+   */
+  function collectCanvasParamsCallsites() {
+    if (
+      canvasParamsBindings.named.size === 0 &&
+      canvasParamsBindings.namespaces.size === 0
+    ) {
+      return;
     }
+    sourceFile.forEachDescendant((node) => {
+      if (Node.isCallExpression(node)) processCanvasParams(node);
+    });
+  }
 
-    return null;
+  function processCanvasParams(call: CallExpression) {
+    const target = resolveHelperCallTarget(
+      call,
+      canvasParamsBindings,
+      CANVAS_PARAMS_FUNCTIONS,
+    );
+    if (!target) return;
+
+    const nameArg = call.getArguments()[0];
+    if (!nameArg) return;
+    const staticName = extractStaticRollName(nameArg);
+    instrumentedCalls.set(call, {
+      kind: "canvasParams",
+      ...(staticName !== undefined ? { staticName } : {}),
+      nameArgRange: { from: nameArg.getStart(), to: nameArg.getEnd() },
+    });
   }
 
   function extractStaticRollName(node: Node): string | undefined {
@@ -742,16 +789,39 @@ function defaultIdFactory(): string {
  */
 function collectPianoRollLookupImports(
   sourceFile: SourceFile,
-): PianoRollLookupBindings {
+): HelperImportBindings {
+  return collectHelperImports(
+    sourceFile,
+    PIANO_ROLL_LOOKUP_FUNCTIONS,
+    isPianoRollLookupModuleSpecifier,
+  );
+}
+
+/** The same binding discipline for `canvasParams` declarations. */
+function collectCanvasParamsImports(
+  sourceFile: SourceFile,
+): HelperImportBindings {
+  return collectHelperImports(
+    sourceFile,
+    CANVAS_PARAMS_FUNCTIONS,
+    isCanvasParamsModuleSpecifier,
+  );
+}
+
+function collectHelperImports(
+  sourceFile: SourceFile,
+  functionNames: Set<string>,
+  isRecognizedSpecifier: (specifier: string) => boolean,
+): HelperImportBindings {
   const named = new Map<ts.Symbol, { importedName: string }>();
   const namespaces = new Map<ts.Symbol, { moduleSpecifier: string }>();
   for (const declaration of sourceFile.getImportDeclarations()) {
     const specifier = declaration.getModuleSpecifierValue();
-    if (!isPianoRollLookupModuleSpecifier(specifier)) continue;
+    if (!isRecognizedSpecifier(specifier)) continue;
 
     for (const clause of declaration.getNamedImports()) {
       const importedName = clause.getName();
-      if (!PIANO_ROLL_LOOKUP_FUNCTIONS.has(importedName)) continue;
+      if (!functionNames.has(importedName)) continue;
       const localName = clause.getAliasNode() ?? clause.getNameNode();
       const symbol = localName.getSymbol()?.compilerSymbol;
       if (symbol) named.set(symbol, { importedName });
@@ -766,17 +836,63 @@ function collectPianoRollLookupImports(
   return { named, namespaces };
 }
 
-function isPianoRollLookupModuleSpecifier(specifier: string): boolean {
-  const normalized = specifier.replaceAll("\\", "/");
-  if (PIANO_ROLL_LOOKUP_IMPORT_ALIASES.has(normalized)) return true;
-  if (
-    PIANO_ROLL_LOOKUP_SOURCE_SUFFIXES.some((suffix) =>
-      normalized.endsWith(suffix)
-    )
-  ) {
-    return true;
+/**
+ * Resolves a call to one of `functionNames` imported from a recognized module,
+ * through the local symbol for a named/aliased import or through a namespace
+ * import receiver. Re-export chains and arbitrary receiver expressions are not
+ * traced.
+ */
+function resolveHelperCallTarget(
+  call: CallExpression,
+  bindings: HelperImportBindings,
+  functionNames: Set<string>,
+): { importedName: string } | null {
+  const expr = call.getExpression();
+  if (Node.isIdentifier(expr)) {
+    const symbol = expr.getSymbol()?.compilerSymbol;
+    return symbol ? bindings.named.get(symbol) ?? null : null;
   }
-  return PIANO_ROLL_LOOKUP_SOURCE_BASENAMES.has(
-    normalized.replace(/^\.\//, ""),
+
+  if (Node.isPropertyAccessExpression(expr)) {
+    const importedName = expr.getName();
+    if (!functionNames.has(importedName)) return null;
+    const receiver = expr.getExpression();
+    if (!Node.isIdentifier(receiver)) return null;
+    const namespaceSymbol = receiver.getSymbol()?.compilerSymbol;
+    return namespaceSymbol && bindings.namespaces.has(namespaceSymbol)
+      ? { importedName }
+      : null;
+  }
+
+  return null;
+}
+
+function isPianoRollLookupModuleSpecifier(specifier: string): boolean {
+  return matchesHelperModuleSpecifier(
+    specifier,
+    PIANO_ROLL_LOOKUP_IMPORT_ALIASES,
+    PIANO_ROLL_LOOKUP_SOURCE_SUFFIXES,
+    PIANO_ROLL_LOOKUP_SOURCE_BASENAMES,
   );
+}
+
+function isCanvasParamsModuleSpecifier(specifier: string): boolean {
+  return matchesHelperModuleSpecifier(
+    specifier,
+    CANVAS_PARAMS_IMPORT_ALIASES,
+    CANVAS_PARAMS_SOURCE_SUFFIXES,
+    CANVAS_PARAMS_SOURCE_BASENAMES,
+  );
+}
+
+function matchesHelperModuleSpecifier(
+  specifier: string,
+  aliases: Set<string>,
+  sourceSuffixes: string[],
+  basenames: Set<string>,
+): boolean {
+  const normalized = specifier.replaceAll("\\", "/");
+  if (aliases.has(normalized)) return true;
+  if (sourceSuffixes.some((suffix) => normalized.endsWith(suffix))) return true;
+  return basenames.has(normalized.replace(/^\.\//, ""));
 }

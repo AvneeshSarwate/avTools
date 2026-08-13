@@ -1,6 +1,7 @@
 import { parseTldrawJsonFile, serializeTldrawJson, type Editor } from 'tldraw'
 import type { LivecodeRuntimeApi, ModuleViewState } from './livecodeRuntime'
 import type { VisualizerManifestMessage } from './livecodeProtocol'
+import { createParamPaneShape } from './ParamPaneShape'
 
 export interface TldrawRuntimeDebugModule {
   moduleId: string
@@ -37,6 +38,7 @@ export interface TldrawRuntimeDebug {
   getShapes(): TldrawRuntimeDebugShape[]
   selectShape(id: string): void
   getSelectedShapeIds(): string[]
+  createParamPane(paramsName: string): string | null
   exportTldrJson(): Promise<string>
   loadTldrJson(json: string): void
 }
@@ -114,6 +116,11 @@ function installDebugApi() {
     },
     getSelectedShapeIds() {
       return refs.editor?.getSelectedShapeIds().map(String) ?? []
+    },
+    createParamPane(paramsName) {
+      const editor = refs.editor
+      if (!editor) return null
+      return String(createParamPaneShape(editor, { paramsName }))
     },
     exportTldrJson() {
       const editor = refs.editor

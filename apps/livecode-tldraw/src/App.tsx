@@ -36,6 +36,13 @@ import {
   LivecodeRuntimeProvider,
   useLivecodeRuntime,
 } from "./livecodeRuntime";
+import { ParamsRuntimeProvider, useParamsRuntime } from "./paramsRuntime";
+import {
+  createParamPaneShape,
+  PARAM_PANE_SHAPE_TYPE,
+  type ParamPaneShape,
+  ParamPaneShapeUtil,
+} from "./ParamPaneShape";
 import { PianoRollRuntimeProvider } from "./pianoRollRuntime";
 import {
   PIANO_ROLL_SHAPE_TYPE,
@@ -45,7 +52,11 @@ import {
 import { setRuntimeDebugRefs } from "./livecodeTldrawDebug";
 import { createReconnectingSocket } from "./reconnectingSocket";
 
-const shapeUtils = [LivecodeEditorShapeUtil, PianoRollShapeUtil];
+const shapeUtils = [
+  LivecodeEditorShapeUtil,
+  PianoRollShapeUtil,
+  ParamPaneShapeUtil,
+];
 const TLDR_MIME_TYPE = "application/vnd.tldraw+json";
 
 export function App() {
@@ -117,15 +128,18 @@ function LivecodeTldrawPage() {
     [runtime.serverBaseUrl],
   );
 
-  const schedulePianoRollCanvasUpdate = useCallback(() => {
+  // One collector for every canvas view kind: `/project/canvas` replaces the
+  // whole canvas object, so a post that carried only one array would drop the
+  // other kind's layout.
+  const scheduleCanvasViewsUpdate = useCallback(() => {
     if (!editor || !projectPath) return;
     if (canvasUpdateTimerRef.current !== undefined) {
       window.clearTimeout(canvasUpdateTimerRef.current);
     }
     canvasUpdateTimerRef.current = window.setTimeout(() => {
       canvasUpdateTimerRef.current = undefined;
-      const pianoRollViews = editor
-        .getCurrentPageShapes()
+      const shapes = editor.getCurrentPageShapes();
+      const pianoRollViews = shapes
         .filter(isPianoRollShape)
         .map((shape) => ({
           id: shape.id,
@@ -135,11 +149,21 @@ function LivecodeTldrawPage() {
           w: shape.props.w,
           h: shape.props.h,
         }));
+      const paramPaneViews = shapes
+        .filter(isParamPaneShape)
+        .map((shape) => ({
+          id: shape.id,
+          paramsName: shape.props.paramsName,
+          x: shape.x,
+          y: shape.y,
+          w: shape.props.w,
+          h: shape.props.h,
+        }));
       void postJson(`${runtime.serverBaseUrl}/project/canvas`, {
-        canvas: { pianoRollViews },
+        canvas: { pianoRollViews, paramPaneViews },
       }).catch((error) => {
         console.error(
-          "[livecode-tldraw] failed to persist piano-roll layout",
+          "[livecode-tldraw] failed to persist canvas view layout",
           error,
         );
       });
@@ -179,8 +203,8 @@ function LivecodeTldrawPage() {
               record.props.source,
               record.props.projectModulePath,
             );
-          } else if (isPianoRollShape(record)) {
-            schedulePianoRollCanvasUpdate();
+          } else if (isCanvasViewShape(record)) {
+            scheduleCanvasViewsUpdate();
           }
         }
 
@@ -210,22 +234,16 @@ function LivecodeTldrawPage() {
             ) {
               scheduleProjectModuleLayoutUpdate(after);
             }
-          } else if (isPianoRollShape(before) !== isPianoRollShape(after)) {
-            schedulePianoRollCanvasUpdate();
-          } else if (
-            isPianoRollShape(before) &&
-            isPianoRollShape(after) &&
-            hasPianoRollShapeChanged(before, after)
-          ) {
-            schedulePianoRollCanvasUpdate();
+          } else if (hasCanvasViewShapeChanged(before, after)) {
+            scheduleCanvasViewsUpdate();
           }
         }
 
         for (const record of Object.values(entry.changes.removed)) {
           if (isLivecodeShape(record)) {
             unregisterModule(record.props.moduleId);
-          } else if (isPianoRollShape(record)) {
-            schedulePianoRollCanvasUpdate();
+          } else if (isCanvasViewShape(record)) {
+            scheduleCanvasViewsUpdate();
           }
         }
       },
@@ -246,8 +264,8 @@ function LivecodeTldrawPage() {
   }, [
     editor,
     registerModule,
+    scheduleCanvasViewsUpdate,
     scheduleProjectModuleLayoutUpdate,
-    schedulePianoRollCanvasUpdate,
     setModuleSource,
     syncLivecodeShapesToRuntime,
     unregisterModule,
@@ -294,20 +312,22 @@ function LivecodeTldrawPage() {
 
   return (
     <PianoRollRuntimeProvider serverBaseUrl={runtime.serverBaseUrl}>
-      <div className="app-shell">
-        <TopBar editor={editor} onOpenTldrawFile={loadTldrawFile} />
-        <div className="canvas-shell">
-          <Tldraw
-            shapeUtils={shapeUtils}
-            onMount={(mountedEditor) => {
-              setEditor(mountedEditor);
-              if (!projectPath && !canvasUrl && !hasLivecodeShapes(mountedEditor)) {
-                createDefaultLivecodeCanvas(mountedEditor);
-              }
-            }}
-          />
+      <ParamsRuntimeProvider serverBaseUrl={runtime.serverBaseUrl}>
+        <div className="app-shell">
+          <TopBar editor={editor} onOpenTldrawFile={loadTldrawFile} />
+          <div className="canvas-shell">
+            <Tldraw
+              shapeUtils={shapeUtils}
+              onMount={(mountedEditor) => {
+                setEditor(mountedEditor);
+                if (!projectPath && !canvasUrl && !hasLivecodeShapes(mountedEditor)) {
+                  createDefaultLivecodeCanvas(mountedEditor);
+                }
+              }}
+            />
+          </div>
         </div>
-      </div>
+      </ParamsRuntimeProvider>
     </PianoRollRuntimeProvider>
   );
 }
@@ -320,7 +340,15 @@ function TopBar({
   onOpenTldrawFile: (file: File) => Promise<void>;
 }) {
   const runtime = useLivecodeRuntime();
+  const paramsRuntime = useParamsRuntime();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // null while the inline params-name input is closed. Non-modal by design: the
+  // canvas stays interactive while it is open.
+  const [paramPaneDraft, setParamPaneDraft] = useState<string | null>(null);
+  const knownParamsNames = useMemo(
+    () => Object.keys(paramsRuntime.params).sort(),
+    [paramsRuntime.params],
+  );
   const moduleCount = useMemo(() => Object.keys(runtime.modules).length, [
     runtime.modules,
   ]);
@@ -406,6 +434,49 @@ function TopBar({
       >
         New module
       </button>
+      {paramPaneDraft === null
+        ? (
+          <button
+            type="button"
+            disabled={!editor}
+            onClick={() => setParamPaneDraft(knownParamsNames[0] ?? "")}
+          >
+            New params pane
+          </button>
+        )
+        : (
+          <form
+            className="topbar__group"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const paramsName = paramPaneDraft.trim();
+              if (!editor || !paramsName) return;
+              createParamPaneShape(editor, { paramsName });
+              setParamPaneDraft(null);
+            }}
+          >
+            <input
+              autoFocus
+              list="topbar-params-names"
+              placeholder="params name"
+              value={paramPaneDraft}
+              spellCheck={false}
+              onChange={(event) => setParamPaneDraft(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setParamPaneDraft(null);
+              }}
+            />
+            <datalist id="topbar-params-names">
+              {knownParamsNames.map((name) => <option key={name} value={name} />)}
+            </datalist>
+            <button type="submit" disabled={!editor || !paramPaneDraft.trim()}>
+              Add pane
+            </button>
+            <button type="button" onClick={() => setParamPaneDraft(null)}>
+              Cancel
+            </button>
+          </form>
+        )}
 
       <div className="topbar__status">
         <span
@@ -855,6 +926,36 @@ function hasPianoRollShapeChanged(
     before.props.rollName !== after.props.rollName;
 }
 
+function hasParamPaneShapeChanged(
+  before: ParamPaneShape,
+  after: ParamPaneShape,
+) {
+  return before.x !== after.x ||
+    before.y !== after.y ||
+    before.props.w !== after.props.w ||
+    before.props.h !== after.props.h ||
+    before.props.paramsName !== after.props.paramsName;
+}
+
+/** True for every shape kind persisted in `manifest.canvas`. */
+function isCanvasViewShape(record: unknown) {
+  return isPianoRollShape(record) || isParamPaneShape(record);
+}
+
+/**
+ * Whether one updated record changes what `/project/canvas` would carry. A
+ * record that became (or stopped being) a canvas view also counts.
+ */
+function hasCanvasViewShapeChanged(before: unknown, after: unknown) {
+  if (isPianoRollShape(before) && isPianoRollShape(after)) {
+    return hasPianoRollShapeChanged(before, after);
+  }
+  if (isParamPaneShape(before) && isParamPaneShape(after)) {
+    return hasParamPaneShapeChanged(before, after);
+  }
+  return isCanvasViewShape(before) || isCanvasViewShape(after);
+}
+
 function createLivecodeShape(
   editor: Editor,
   options: {
@@ -1018,6 +1119,21 @@ async function loadProjectIntoCanvas(
       title: `piano roll: ${view.rollName}`,
     });
   }
+
+  const paramPaneViews = project.project?.manifest.canvas?.paramPaneViews ?? [];
+  for (const view of paramPaneViews) {
+    const shapeId = view.id as ParamPaneShape["id"];
+    if (editor.getShape(shapeId)) continue;
+    createParamPaneShape(editor, {
+      id: shapeId,
+      x: view.x,
+      y: view.y,
+      w: view.w,
+      h: view.h,
+      paramsName: view.paramsName,
+      title: `params: ${view.paramsName}`,
+    });
+  }
 }
 
 function fileUrlFromPath(path: string) {
@@ -1055,6 +1171,15 @@ function isPianoRollShape(shape: unknown): shape is PianoRollShape {
       typeof shape === "object" &&
       "type" in shape &&
       (shape as { type?: unknown }).type === PIANO_ROLL_SHAPE_TYPE,
+  );
+}
+
+function isParamPaneShape(shape: unknown): shape is ParamPaneShape {
+  return Boolean(
+    shape &&
+      typeof shape === "object" &&
+      "type" in shape &&
+      (shape as { type?: unknown }).type === PARAM_PANE_SHAPE_TYPE,
   );
 }
 
