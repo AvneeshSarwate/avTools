@@ -12,7 +12,9 @@ export interface VisualizerDiagnostic extends SourceRange {
 export type WaitCallsiteKind =
   | "timeContextMethod"
   | "timeContextArgumentCall"
-  | "pianoRollLookup";
+  | "pianoRollLookup"
+  /** A `canvasParams(...)` declaration. Observed only; never instrumented. */
+  | "canvasParams";
 
 export interface WaitCallsiteManifestEntry {
   id: string;
