@@ -3,7 +3,8 @@
 Status: task definitions and test inventory checked on 2026-07-21, extended for
 the canvas-params slice, again for the entity-CRUD/persistence slice, again for
 the ephemeral signals slice, and again for the launch-lifecycle slice on
-2026-08-13. The final audit report records
+2026-08-13; the `serverReady` line's keys and the livecode-tldraw Deno config
+caveat were documented on 2026-08-13. The final audit report records
 which commands were actually run in this review.
 
 ## Development startup
@@ -25,7 +26,8 @@ npm run dev
 
 The server emits one JSON `serverReady` line containing host, selected port,
 base URL, session root, session ID, and log path. Tests use port `0` and parse
-this line.
+this line. Its keys are `type` (`"serverReady"`), `host`, `port`, `baseUrl`,
+`sessionRoot`, `sessionId`, and `logPath`.
 
 The default log is:
 
@@ -263,6 +265,10 @@ For release/performance work, supplement tests with:
   separate.
 - Broad `apps/browser-projections` TypeScript checking has unrelated failures;
   use focused livecode commands unless working on that app.
+- Deno scripts stored under `apps/livecode-tldraw` (for example beside the
+  checked-in example projects) need `--no-config` or an explicit `--config`:
+  config discovery finds that app's `package.json`, which is not a member of
+  the root `deno.json` workspace, and refuses to run.
 - Server session directories/logs persist after normal shutdown and can
   accumulate. Non-project generated files are pruned within a live server
   session, not across old sessions.

@@ -4,7 +4,9 @@ Status: checked against both protocol copies and route callers on 2026-07-21;
 the params routes and types, the entity CRUD routes, and the project data
 persistence types were checked on 2026-08-13; the signals routes and types were
 added and checked on 2026-08-13; `replaceRunning` and launch cancellation were
-checked on 2026-08-13.
+checked on 2026-08-13; the analyze-success, project-route, and runtime-ack
+body shapes plus the params graph meta fields were documented from source on
+2026-08-13.
 
 ## Source of types
 
@@ -35,6 +37,10 @@ drift at compile time, so compare actual serialization and handling.
   a route throws.
 - Unknown routes return plain text `Not found` with status 404.
 - `/runtime/launch` returns status 409 for synchronous launch refusal.
+- Mutating runtime routes (`/runtime/launch`, `/runtime/stop`,
+  `/runtime/stop-all`, `/runtime/panic`, `/runtime/restart-all`) acknowledge
+  success with `{ ok: true }`; the launch refusal body is
+  `{ ok: false, error }`.
 - `/client/command` can return HTTP 200 with `ok: false` for command selection,
   timeout, disconnect, or browser-side failure.
 - `/piano-roll/set` can return a normal `PianoRollObject` with
@@ -69,7 +75,27 @@ project source and ignores the need for `sourceText`. Otherwise `sourceText` is
 required.
 
 Success returns build identity, manifest, runtime URI, and optional project
-hash/path metadata. `transformedCode` is defined in the internal analyzer result
+hash/path metadata:
+
+```ts
+interface AnalyzeSuccess {
+  type: "analyzeSuccess";
+  moduleId: string;
+  sourceVersion: number;
+  generatedRunId: string;
+  manifest: VisualizerManifestMessage;
+  projectManifests?: VisualizerManifestMessage[];
+  transformedModuleUri: string;
+  transformedCode?: string;
+  sourceHash?: string;
+  projectSourceHash?: string;
+  projectModulePath?: string;
+  projectSourcePath?: string;
+  projectRuntimePath?: string;
+}
+```
+
+`transformedCode` is defined in the internal analyzer result
 but removed from HTTP success responses. Project success may also carry
 `projectManifests` for every successfully materialized module.
 
@@ -173,6 +199,25 @@ Project module locators accept optional `id` and `path`; ID wins when both
 match different records. Paths can refer to normalized `path`, `runtimePath`,
 or the corresponding source path depending on the operation.
 
+Request and response bodies are the `protocol.ts` interfaces:
+
+- `POST /project/create` takes `CreateProjectRequest`
+  (`{ projectPath?, name?, modules? }`) and `POST /project/open` takes
+  `OpenProjectRequest` (`{ projectPath }`). Both return
+  `ProjectCurrentResponse` — `{ ok: true, project }`, where `project` is
+  `{ root, manifestPath, manifest }` or `null`. `POST /project/canvas` also
+  returns it; its request body is `{ canvas }`, the manifest's whole optional
+  canvas object.
+- The `/project/modules/*` mutations take `AddProjectModuleRequest`,
+  `UpdateProjectModuleRequest`, `WriteProjectModuleRequest`,
+  `ReloadProjectModuleRequest`, and `RemoveProjectModuleRequest`, and all
+  return `ProjectStatusResponse`.
+- `GET /project/status` and `GET /project/events` return
+  `ProjectStatusResponse`. `GET /project/diagnostics` returns
+  `ProjectShadowCheckResponse`, whose `denoCheck` is
+  `{ success, code, output }`. `GET /project/modules/source` returns
+  `ProjectModuleSourceResponse` (`{ ok: true, module, sourceText }`).
+
 Project status fields have these meanings:
 
 - `diskHash`: current canonical source hash;
@@ -221,7 +266,9 @@ A params entity is identified by trimmed string `name` and contains:
   finite numbers, strings, booleans, and nested plain objects. Arrays are
   rejected at declaration;
 - optional `meta`, keyed like the value tree, whose leaves carry
-  `label`/`min`/`max`/`step` for one binding;
+  `label`/`min`/`max`/`step` for one binding, plus `graph`/`rows`:
+  `graph: true` opts a numeric leaf into the pane's readonly time-series row
+  and `rows` sets its height (see `client.md`);
 - `updatedAt` and `updatedBy`, where `updatedBy` is `declare`, `reconcile`,
   `code` for a drift the sampler adopted, or a write's `originId` (`client`
   when the caller omits one);
