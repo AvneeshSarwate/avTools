@@ -10,6 +10,7 @@ import {
 import {
   clearPianoRollStore,
   getPianoRoll,
+  makePianoRollSnapshot,
   setPianoRoll,
 } from "../visualizer/piano_roll_store.ts";
 import {
@@ -218,6 +219,22 @@ Deno.test("getPianoRoll normalizes its name like every other store entry point",
   });
   assertEquals(getPianoRoll("reg/spaced")?.name, "reg/spaced");
   assertEquals(getPianoRoll("  reg/spaced  ")?.name, "reg/spaced");
+});
+
+Deno.test("a forced snapshot does not swallow the pending broadcast", () => {
+  resetStores();
+  // Drain whatever the reset marked dirty, the way the broadcast tick does.
+  makePianoRollSnapshot();
+  pianoRolls.create("reg/broadcast");
+
+  // An HTTP list (or a socket that just opened) answers one caller only.
+  assert(makePianoRollSnapshot({ force: true })?.rolls["reg/broadcast"]);
+  const broadcast = makePianoRollSnapshot();
+  assert(
+    broadcast?.rolls["reg/broadcast"],
+    "the open views must still receive the new roll",
+  );
+  assertEquals(makePianoRollSnapshot(), null);
 });
 
 Deno.test("params create makes an empty entity and rejects an existing name", () => {
