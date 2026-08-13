@@ -1,7 +1,8 @@
 # Current Protocol and Cross-Boundary Contracts
 
 Status: checked against both protocol copies and route callers on 2026-07-21;
-the params routes and types were checked on 2026-08-13.
+the params routes and types, the entity CRUD routes, and the project data
+persistence types were checked on 2026-08-13.
 
 ## Source of types
 
@@ -36,8 +37,12 @@ drift at compile time, so compare actual serialization and handling.
 - `/piano-roll/set` can return a normal `PianoRollObject` with
   `conflict: true`; it is not an HTTP conflict.
 - `/params/set` can also return a normal `ParamsEntity` with `conflict: true`.
-  It returns status 404 with `{ ok: false, error }` for an unknown name,
-  because params entities are created by running code rather than by a write.
+  It returns status 404 with `{ ok: false, error }` for an unknown name: a
+  write never creates an entity. Declaration, `/entities/create`, and a project
+  load do.
+- `/entities/*` return status 400 for a missing type/name, 404 for an unknown
+  type or a missing entity, and 409 for a name that already exists, all with
+  `{ ok: false, error }`.
 
 The route catalog and side effects are in `server.md`.
 
@@ -188,7 +193,10 @@ to non-undoable.
 
 The piano-roll snapshot is always a full `rolls` map. The sequence advances
 only when a snapshot is created; normal broadcast snapshots are created when
-the dirty flag is set, while a new socket/list request forces one.
+the dirty flag is set, while a new socket/list request forces one. A forced
+snapshot is read-only with respect to that flag: only the broadcast tick
+clears it, so one caller listing rolls cannot swallow the generation the other
+open sockets are still waiting for.
 
 ## Params contract
 
@@ -236,16 +244,128 @@ interface ParamsSnapshot {
 
 The sequence advances whenever a snapshot is created. Broadcast snapshots are
 created on a 100 ms tick when the store changed; `GET /params/list` and a new
-socket force one. Unlike the piano-roll equivalent, a forced params snapshot is
-read-only: it neither consumes the broadcast gate nor updates per-entity
-caches, so one client connecting cannot swallow a pending update for the
-others.
+socket force one. A forced params snapshot is read-only: it neither consumes
+the broadcast gate nor updates per-entity caches, so one client connecting
+cannot swallow a pending update for the others. The piano-roll store now holds
+the same property.
 
 The manifest kind `canvasParams` is part of this boundary: `WaitCallsiteKind`
 carries it in both protocol copies, and its entries use the same optional
 `nameArgRange`/`staticName` fields as `pianoRollLookup`. It is an observation
 only — no generated code, no runtime message, and no client action beyond the
 editor's open-pane widget. See `analyzer-and-generated-code.md`.
+
+## Durable entity contract
+
+Piano rolls and params entities are the two registered **durable entity
+types**, addressed generically by `{ type, name }` where `type` is the wire id
+`"pianoRoll"` or `"params"`. Three routes act on any registered type:
+
+```ts
+interface EntityCreateRequest { type: string; name: string }
+interface EntityDeleteRequest { type: string; name: string }
+interface EntityDuplicateRequest {
+  type: string;
+  name: string;
+  targetName: string;
+}
+
+type EntityMutationResponse =
+  | { ok: true; entity: { type: string; name: string } }
+  | { ok: false; error: string };
+```
+
+`name` and `targetName` are trimmed. Create rejects an existing name, duplicate
+rejects a missing source or an existing target, and delete reports 404 for a
+name that was not there. The success body always describes the **affected**
+entity, so duplicate returns the target. These are ordinary serialized actions:
+an agent can call them with no browser attached.
+
+Per-type semantics are in `server.md`. Notably a created piano roll is an empty
+roll, a created params entity has no fields until a declaration or a load fills
+them, and a duplicated params entity copies values and meta but not tombstones.
+
+## Project data persistence contract
+
+The manifest gains an optional top-level list of saved entity files:
+
+```ts
+interface ProjectDataEntry {
+  type: string;   // entity type wire id
+  name: string;   // the true entity name
+  path: string;   // project-relative, ends in .json
+}
+```
+
+It is top-level rather than inside `canvas`, which `/project/canvas`
+whole-replaces. The entry carries the real name, so the percent-encoded
+filename never has to be decoded. Unknown top-level manifest fields already
+round-trip, so an older server or client simply ignores `data`.
+
+`POST /project/save` ignores its request body and returns the
+`/project/current` body plus per-entity results:
+
+```ts
+interface ProjectSaveResponse extends ProjectCurrentResponse {
+  data: Array<{
+    type: string;
+    name: string;
+    path: string;
+    ok: boolean;
+    error?: string;
+  }>;
+  skipped: Array<{ type: string; name: string; reason: string }>;
+}
+```
+
+`data` lists every entity the save attempted, in registry order; `skipped`
+lists the ones it deliberately did not write, with the operator-facing reason
+(a value that could not be serialized, or an unmodified auto-created entity
+such as an untouched demo roll). One failed or hostile entity never fails the
+whole save, and the response's manifest already contains the rebuilt `data`
+list. A save that wrote nothing into a project that never had a `data` key
+leaves the manifest without one rather than adding an empty list. Saving with
+no project open is status 400.
+
+`GET /project/status` always carries a warning-tier dirty section:
+
+```ts
+interface ProjectDataEntityStatus {
+  type: string;
+  name: string;
+  unsaved: boolean;
+}
+```
+
+It covers the union of live entities and the ones the last save or open
+recorded, so a saved-but-deleted entity appears with `unsaved: true`. An entity
+a save would skip anyway is not an unsaved change. Nothing auto-saves off the
+back of this; the client renders it as a count.
+
+Data files are human-readable JSON, two-space indented with a trailing
+newline, one per entity:
+
+```ts
+interface SavedPianoRollEntity {
+  type: "pianoRoll";
+  name: string;
+  savedAt: string;   // ISO timestamp of the serialize pass
+  data: PianoRollData;
+}
+
+interface SavedParamsEntity {
+  type: "params";
+  name: string;
+  savedAt: string;
+  values: ParamsValues;
+  meta?: ParamsMeta;
+}
+```
+
+Saved params carry `meta` so a freshly opened project renders correct panes
+before any module runs; a later `canvasParams` declaration still wins through
+the normal reconcile. Undo/redo history is never serialized. File layout and
+name encoding are in `project-model.md`.
 
 ## Client-control contract
 

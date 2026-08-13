@@ -53,8 +53,9 @@ Open `http://localhost:5173/`. Useful URL parameters are:
 | Prepared builds and manifests | Deno server memory plus generated/runtime files | Latest manifests exposed by `/runtime/state`; non-project builds are pruned to a small rolling set. |
 | Active module lifecycle | Deno server | `/runtime/state`, `/runtime/status`, and `/runtime/snapshots`. |
 | Active wait counts and resolved piano-roll lookup names | Process-global runtime singleton in `visualizer/runtime.ts` | Snapshots only; lookup values persist after completion until a later analyze clears that module. |
-| Named piano-roll objects and undo/redo | Process-global `piano_roll_store.ts` | In memory only; not persisted in the project manifest. |
-| Named params entities and their values | Process-global `entity_store.ts` through `params_store.ts`; the live value object is shared with the declaring module | In memory only; not persisted. Declaration reattaches and reconciles rather than resetting, so values survive a relaunch inside one server process. |
+| Named piano-roll objects | Process-global `piano_roll_store.ts` | In memory, and written to a project's `data/pianoRoll/*.json` by an explicit `/project/save`; `/project/open` loads them back before any module runs. |
+| Piano-roll undo/redo history | Process-global `piano_roll_store.ts` | In memory only. Never serialized, and cleared per roll on load, because open adopts disk truth. |
+| Named params entities and their values | Process-global `entity_store.ts` through `params_store.ts`; the live value object is shared with the declaring module | In memory, and saved/loaded with their `meta` like piano rolls, so an opened project renders panes before any module runs. Declaration reattaches and reconciles rather than resetting, so values also survive a relaunch inside one server process. |
 | Editor text in a shape | `livecode-editor.props.source` plus mirrored React runtime record | `.tldr` for transient canvases; project source is also written to `*.orig.ts`. |
 | LSP document mirror | One temp workspace per LSP proxy | Removed best-effort on shutdown; stale roots older than 24 hours are swept at server start. |
 
@@ -70,7 +71,8 @@ The client does not have one unified connection:
    checks `/health`, creates a new `/lsp` session, rehydrates `/runtime/state`,
    flushes queued stops, and immediately schedules analysis for every shape.
 2. `/piano-roll/snapshots` connects whenever `PianoRollRuntimeProvider` is
-   mounted, independent of the Connect button.
+   mounted, independent of the Connect button. Its forced on-open snapshot is
+   read-only with respect to the broadcast gate, as the params one is.
 3. `/params/snapshots` connects whenever `ParamsRuntimeProvider` is mounted,
    also independent of the Connect button. A param pane therefore shows server
    truth for a running module even while the runtime socket is closed, and its
