@@ -42,6 +42,7 @@
     "gifenc": "npm:gifenc@1.0.3/dist/gifenc.esm.js",
     "@avtools/core-timing": "../../packages/core-timing/mod.ts",
     "@avtools/creative-algs": "../../packages/creative-algs/mod.ts",
+    "@avtools/livecode-protocol": "../../packages/livecode-protocol/mod.ts",
     "@avtools/music-types": "../../packages/music-types/mod.ts",
     "@avtools/ui-bridge": "../../packages/ui-bridge/mod.ts",
     "@avtools/power2d": "../../packages/power2d/mod.ts",
