@@ -2,7 +2,8 @@
 
 Status: checked against `apps/livecode-tldraw` on 2026-07-21; the params
 runtime, param-pane shape, canvas-view persistence, and the topbar's entity and
-save actions were checked on 2026-08-13.
+save actions were checked on 2026-08-13; the signals runtime, playhead markers,
+graph rows, and the signal-scope shape were added and checked on 2026-08-13.
 
 ## Responsibilities
 
@@ -44,19 +45,31 @@ piano-roll note data or params values.
   requests.
 - `src/ParamPaneShape.tsx`: `param-pane` shape, its tweakpane bindings, and the
   exported `createParamPaneShape` view constructor.
+- `src/signalsRuntime.tsx`: named ephemeral-signal snapshot state. Read-only by
+  construction — there is no set route, so a provider with a setter would be
+  lying about the tier.
+- `src/SignalScopeShape.tsx`: `signal-scope` shape, its per-RAF ring buffer and
+  canvas polyline, the exported `createSignalScopeShape` view constructor, and
+  the debug reader for what one scope has accumulated.
 - `src/serverRequests.ts`: the WebSocket-URL, GET, and POST helpers shared by
   the two entity runtime providers, plus the entity CRUD, project save, and
   project status calls the topbar and the debug surface both use — one home, so
   those two cannot drift apart. `App.tsx` and `livecodeRuntime.tsx` keep their
   own full-URL variants.
-- `src/livecodeProtocol.ts`, `src/pianoRollTypes.ts`, and `src/paramsTypes.ts`:
-  manually mirrored Deno protocol types. They are not runtime validators.
+- `src/livecodeProtocol.ts`, `src/pianoRollTypes.ts`, `src/paramsTypes.ts`, and
+  `src/signalsTypes.ts`: manually mirrored Deno protocol types. They are not
+  runtime validators.
+- `src/custom-elements.d.ts`: the `<piano-roll-component>` JSX declaration and
+  the element's imperative interface, in one place so the ref type and the tag
+  type cannot drift apart.
 - `src/defaultSource.ts`: initial transient module example.
 - `src/livecodeTldrawDebug.ts`: tldraw/runtime E2E control API.
 - `tests/livecodeTldraw.e2e.mjs`: current tldraw browser E2E, focused on
   piano-roll lookup instrumentation, shape creation/focus, the params pane
-  round trip, and — in a project-mode block that runs last on its own canvas —
-  entity CRUD and project save/open persistence.
+  round trip, the signal tier (playhead markers from one and two modules,
+  scopes over a signal and over a param leaf, and a `meta.graph` row), and — in
+  a project-mode block that runs last on its own canvas — entity CRUD and
+  project save/open persistence.
 - `public/test-canvases/piano-roll-lookup.tldr`: checked-in manual canvas.
 - `example-projects/minimal-p5gpu`: checked-in project structure/example. Its
   current source intentionally or accidentally contains `sped` while consumers
@@ -65,10 +78,13 @@ piano-roll note data or params values.
 ## Provider and mount order
 
 `App` mounts `LivecodeRuntimeProvider`, then `LivecodeTldrawPage`. Once tldraw
-is available, the page wraps it in `PianoRollRuntimeProvider` and then
-`ParamsRuntimeProvider`, both using the current server URL. Both entity
-providers connect on mount, coalesce snapshots through
+is available, the page wraps it in `PianoRollRuntimeProvider`,
+`ParamsRuntimeProvider`, and `SignalsRuntimeProvider`, all using the current
+server URL. All three providers connect on mount, coalesce snapshots through
 `requestAnimationFrame`, and replace their whole entity map from each snapshot.
+The signals provider exposes `connectionStatus` for the same reason the others
+do, and its consumers act on it: a dropped signals socket is not the same as a
+signal that stopped moving.
 
 On a new transient canvas, `onMount` creates:
 
@@ -161,6 +177,60 @@ runs, the pane blurs the field and catches it up, so a committed field resumes
 following server truth instead of holding the monitor stale while it keeps
 focus.
 
+A numeric leaf whose meta carries `graph: true` also gets a **second, readonly
+binding** on the same draft key, added immediately after the editable one, with
+`{ readonly: true, view: "graph", min, max, rows }`. Bounds come from the
+field's own `min`/`max`; without them tweakpane falls back to its default range,
+so a declaration that wants a readable graph should declare bounds. The graph
+row is deliberately not a binding entry: it has no change handler, takes no part
+in the busy guard, and is never refreshed by the apply path, because a tweakpane
+monitor polls the draft object on its own interval (200 ms by default). The
+existing write and refresh machinery therefore needed no change at all — the
+history view is pure display over samples that were already arriving.
+
+### `signal-scope`
+
+Shape props contain:
+
+```ts
+{
+  w: number;
+  h: number;
+  sourceType: "signal" | "params";
+  name: string;
+  path: string;      // dot-joined field path; empty for whole values
+  windowSec: number;
+  title: string;
+}
+```
+
+A scope binds to a **value**, not to an entity: `sourceType` selects which
+provider to read, `name` the entity in it, and `path` one field inside that
+value. Monitors watch values regardless of class, so a scope over an ephemeral
+signal and one over a durable param leaf are the same mechanism; the class
+governs persistence, not watchability.
+
+Sampling is per-RAF latest-value: every animation frame the shape appends
+`{ t: now, value }` for its source and trims everything older than `windowSec`
+(with a hard cap of 4000 samples). There is no rev bookkeeping, so a constant
+value draws a continuous line rather than a gap, and transport conflation is
+accepted by design — a scope shows what arrived, at the rate the client saw it.
+The x-axis is arrival time in v1; the logical-time stamps the snapshot carries
+are shipped but unused.
+
+Everything per sample is imperative: the ring buffer is a ref, the polyline is
+drawn straight to a 2D canvas context, and nothing per frame touches React state
+or the tldraw document. The y-axis auto-scales to the window's own range,
+because signals declare no bounds and a fixed range would flatten most traces.
+
+v1 renders numbers only. A missing entity, a non-numeric value, or a path that
+does not resolve renders the waiting/unsupported placeholder instead of a
+trace. An **ended** source freezes the trace where the run left it and dims the
+title — a scope is a history view, so those samples stay worth looking at,
+unlike a playhead marker, which would misreport a stopped process as a playing
+one. A source whose socket is not open also stops appending, for the same
+reason.
+
 ## Tldraw store synchronization
 
 `App.tsx` listens to document changes from every source:
@@ -171,15 +241,19 @@ focus.
 - changing its source invalidates and debounces analysis;
 - moving/resizing a project module debounces `/project/modules/update` by one
   second;
-- adding/removing/moving/resizing/renaming a piano-roll or param-pane shape in
-  URL-driven project mode debounces `/project/canvas` by one second.
+- adding/removing/moving/resizing/rebinding a piano-roll, param-pane, or
+  signal-scope shape in URL-driven project mode debounces `/project/canvas` by
+  one second.
 
 One collector posts every canvas view kind together. `/project/canvas` replaces
-the whole canvas object, so each post carries both `pianoRollViews` and
-`paramPaneViews` read from the current page; a post that carried one array
-would drop the other kind's saved layout. Nothing is posted until a view shape
-event occurs, so a project that has never had one keeps a manifest with no
-`canvas` key.
+the whole canvas object, so each post carries `pianoRollViews`,
+`paramPaneViews`, and `scopeViews` read from the current page; a post that
+carried one array would drop the other kinds' saved layout. Nothing is posted
+until a view shape event occurs, so a project that has never had one keeps a
+manifest with no `canvas` key.
+
+A scope view persists only its binding — source type, name, path, window, and
+layout — never any of the samples it drew.
 
 Programmatic `.tldr` and URL-driven project loads suppress the per-record
 listener and perform one explicit synchronization pass afterward. The
@@ -261,6 +335,10 @@ the same way, focusing an existing `param-pane` for that name or creating one
 to the right of the code shape. There is no runtime name resolution for params,
 so a declaration whose name is not a string literal renders no widget at all.
 
+The `canvasSignal` kind renders **no gutter widget in v1**. The decoration
+builders filter by kind, so an unknown-to-them kind is skipped safely; scopes
+are created from the topbar or the debug surface instead.
+
 ## Piano-roll web component bridge
 
 The tldraw app imports `@avtools/piano-roll`, aliased by Vite to
@@ -279,6 +357,30 @@ Client edits post undoable writes. Livecode helper writes default to
 non-undoable. Undo/redo use a history-specific origin so their confirming
 snapshots are not suppressed by the originating shape.
 
+### Playhead markers
+
+The component's single live playhead is untouched. Beside it,
+`setPlayheadMarkers(markers)` renders **any number** of labeled lines,
+reconciled by id, which is what lets several processes play one melody at once
+and stay distinguishable. `getPlayheadMarkers()` reads back what is rendered.
+
+The shape feeds it from the signals provider. On each RAF-coalesced snapshot it
+selects every signal anchored `{ type: "pianoRoll", name: rollName }` that has
+not ended, and turns each into one marker:
+
+- a numeric value is the position;
+- an object with a numeric `position` uses that field;
+- anything else (strings, objects without a position, nulls, non-finite
+  numbers) renders **nothing** rather than guessing;
+- positions are quarter notes, the component's own unit, and `anchor.path` is
+  ignored in v1.
+
+Meaning stays in the process: the platform never knows why a position moves.
+Ended signals and a signals socket that is not open both render no markers at
+all — a line frozen where a stopped run left it reads as a playing one, which is
+exactly the "silently freezing" impression the ephemeral-entity principle
+forbids. Identical marker sets are not re-pushed, so an idle roll costs nothing.
+
 ## Event boundaries
 
 Interactive DOM inside shapes must not start tldraw gestures:
@@ -288,6 +390,7 @@ Interactive DOM inside shapes must not start tldraw gestures:
 - the piano-roll body stops pointer/touch/wheel and keydown capture;
 - the piano-roll header remains draggable through tldraw;
 - the param-pane body does the same, and its header remains draggable;
+- the scope body stops pointerdown and wheel; its header remains draggable;
 - piano-roll and params widget buttons stop pointerdown and click propagation.
 
 An embedded widget that relies on document/window bubbling during drag should
@@ -301,21 +404,33 @@ removed from undo history, and zoomed to their bounds.
 
 Project loading clears the current canvas, posts `/project/open`, fetches each
 module's source sequentially, creates module shapes, then restores persisted
-piano-roll views and param panes. Both restore paths reuse the persisted shape
-id and skip a view whose id already exists. URL-driven project loading connects
-afterward if needed.
+piano-roll views, param panes, and signal scopes. Every restore path reuses the
+persisted shape id and skips a view whose id already exists. URL-driven project
+loading connects afterward if needed.
 
 The UI toolbar has New/Open/Save for transient `.tldr` canvases, New module,
-New piano roll, and New params pane. Every name entry uses the same non-modal
-inline input — the canvas stays interactive while it is open, Escape closes it,
-and a datalist offers the names in the latest snapshot without restricting free
-text. A failed action leaves the input open with the server's message in the
-topbar rather than discarding what was typed.
+New piano roll, New params pane, and New scope. Every name entry uses the same
+non-modal inline input — the canvas stays interactive while it is open, Escape
+closes it, and a datalist offers the names in the latest snapshot without
+restricting free text. A failed action leaves the input open with the server's
+message in the topbar rather than discarding what was typed.
 
 New params pane creates a view only. **New piano roll is dual-mode**: a name
 the piano-roll snapshot already carries only creates another view, while a new
 name posts `/entities/create` first and then creates the view — the composite
 create-entity-plus-view gesture, with view-only reuse for the names that exist.
+
+**New scope** is view-only and never creates anything server-side: a signal is
+published by code or it is not, and a param leaf exists or it does not. Its
+datalist offers every live signal name plus every numeric param leaf as
+`params:<name>.<field>`, and that same syntax is what the input parses — a
+`params:` prefix binds a param leaf (first dot-separated segment is the entity
+name, the rest is the path), and anything else is a signal name, taken whole
+when the snapshot already knows it and split at its first dot otherwise, so a
+field of an object-valued signal can be bound before it is ever published.
+Ended signals stay in the list, suffixed `(ended)`, because a stopped run's
+last trace is still worth watching; the suffix is stripped back off when the
+input is submitted.
 
 Two more actions appear only while exactly one selected shape is a
 `piano-roll-view` or a `param-pane`, because that is when the entity being
@@ -352,12 +467,17 @@ URL or client-control command; the richer operations are server APIs.
 There are two distinct window APIs:
 
 - `window.__livecodeTldrawRuntimeDebug` exposes runtime modules, tldraw shapes,
-  selection, source setting, run/stop/connect, param-pane and piano-roll-view
-  creation, the three entity actions, `saveProject()`, and `.tldr`
-  serialization. The entity actions are thin wrappers over the same
-  `serverRequests.ts` calls the topbar uses, so agents and the E2E drive the
-  real path without the topbar DOM; a rejected action rejects with the server's
-  message.
+  selection, source setting, run/stop/connect, module / param-pane /
+  piano-roll-view / signal-scope creation, the three entity actions,
+  `saveProject()`, and `.tldr` serialization. The entity actions are thin
+  wrappers over the same `serverRequests.ts` calls the topbar uses, so agents
+  and the E2E drive the real path without the topbar DOM; a rejected action
+  rejects with the server's message. It also exposes two readers for state that
+  deliberately lives outside the tldraw store: `getPlayheadMarkers(rollName)` /
+  `getPlayheadMarkerViews()` read markers back out of the web component, and
+  `getScopeState(shapeId)` / `getScopeStates()` report what a scope's ring
+  buffer has accumulated (sample count, latest, min/max, distinct count, ended,
+  waiting).
 - `window.__livecodeTldrawDebug` is installed by CodeMirror and exposes document
   URIs/text, focus-by-offset, and direct completion requests.
 

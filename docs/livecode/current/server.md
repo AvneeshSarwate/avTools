@@ -2,7 +2,8 @@
 
 Status: checked against `apps/deno-notebooks/livecode` on 2026-07-21; the
 entity/params stores, their routes, the durable-entity registry, and project
-data persistence were checked on 2026-08-13.
+data persistence were checked on 2026-08-13; the signals store, its routes, and
+the root-clock accessor were added and checked on 2026-08-13.
 
 ## File map
 
@@ -27,6 +28,11 @@ data persistence were checked on 2026-08-13.
 - `visualizer/params_store.ts`: params entities as the first typed wrapper over
   the entity store — declaration, recursive reconcile, leaf merges, create /
   duplicate / remove / load, and the sampler that adopts code writes.
+- `visualizer/signals_store.ts`: ephemeral signals as the second typed wrapper
+  over the entity store — declaration returning a handle, sticky ending,
+  ownership stamping, per-module ending, and the sampler that adopts code
+  writes and stamps them with logical time. Deliberately **not** registered in
+  `entity_registry.ts`; that single omission is the whole ephemeral class.
 - `visualizer/entity_registry.ts`: one descriptor interface over both storage
   engines, so generic entity actions and project persistence never have to know
   which engine a name addresses. It also owns the entity-name-to-filename
@@ -41,6 +47,10 @@ data persistence were checked on 2026-08-13.
   declaration helper. It is a thin typed delegate to `registerParams` and has
   no server dependency, so a module using it also runs under a plain
   `deno run`.
+- `helpers/canvas_signals.ts`: the `signal(name, { anchor? })` declaration
+  helper, a thin typed delegate to `declareSignal`. Like `canvas_params.ts` it
+  has no server dependency, so a module using it also runs under a plain
+  `deno run` — where its signals simply have no owner and never auto-end.
 - `helpers/midi_helpers.ts`: eager MIDI enumeration/open, safe send wrappers,
   sounding-note registry, and panic.
 - `helpers/midi_math.ts`: side-effect-free MIDI clamping.
@@ -52,7 +62,7 @@ data persistence were checked on 2026-08-13.
 `createLivecodeVisualizerServer` creates one HTTP server and owns:
 
 - one session directory and log file;
-- sets of runtime, piano-roll, and params snapshot sockets;
+- sets of runtime, piano-roll, params, and signals snapshot sockets;
 - a map of browser control sockets and pending commands;
 - active modules and their `TimeContext` branch handles;
 - latest lifecycle snapshot per module;
@@ -166,6 +176,16 @@ changes.
 | WS | `/params/snapshots` | Full named-entity snapshots on the 100 ms tick when the store changed; sends a read-only forced snapshot on open. |
 | GET | `/params/list` | Read-only forced snapshot, despite the route name. |
 | POST | `/params/set` | Deep-merge leaf values into one live entity, optionally checking `expectedRev`. Status 404 for an unknown name; a write never creates an entity. |
+
+### Signals
+
+| Method | Route | Behavior |
+| --- | --- | --- |
+| WS | `/signals/snapshots` | Full ephemeral-signal snapshots on the 100 ms tick when the store changed; sends a read-only forced snapshot on open. |
+| GET | `/signals/list` | Read-only forced snapshot, despite the route name. |
+
+There is deliberately no `/signals/set`: signals are code-published only, so
+the tier has no write route to secure, rate-limit, or reconcile.
 
 ### LSP
 
@@ -351,10 +371,77 @@ also floored per name in `entity_store.ts`, so a recreated or re-loaded entity
 can never be silently echo-suppressed by a pane whose `localRev` outlived the
 old record.
 
-Shutdown clears the params timer and closes the params socket set next to their
-piano-roll counterparts. Entities themselves are process-global and in memory
-only; they are never evicted, and they reach disk only through an explicit
-project save (see below and `known-risks.md`).
+Shutdown clears the params and signals timers and closes both socket sets next
+to their piano-roll counterparts. Entities themselves are process-global and in
+memory only; they are never evicted, and durable ones reach disk only through an
+explicit project save (see below and `known-risks.md`). Signals never reach disk
+at all.
+
+## Ephemeral signals
+
+`signals_store.ts` is the second wrapper over `entity_store.ts` and the first
+entity type that is **not** registered in `entity_registry.ts`. That omission is
+the entire ephemeral class: `/project/save`, `/project/status` data rows,
+project open, and `/entities/*` all iterate `listDurableEntityTypes()`, so
+signals are invisible to persistence and to generic CRUD by construction rather
+than by a filter someone has to remember to keep in sync.
+
+`declareSignal(name, { anchor? })` is create-or-reattach and returns a **handle
+closed over the record**:
+
+- absent: a new record at `value: null` with `updatedBy: "declare"`;
+- present: the record survives (a handle another module still holds keeps
+  writing to live truth), the anchor is replaced, and `ended` is cleared. That
+  is a value-free change, so it marks the type dirty without bumping rev.
+
+`handle.set(value)` is a **pure field assignment** — no store lookup, no
+serialization, no dirty flag. Publishing an unwatched signal costs the same as a
+property write, which is what makes "unwatched ≡ watched" true rather than
+aspirational. A dirty flag here would also broadcast byte-identical snapshots
+under a loop that re-sets the same value.
+
+Every 100 ms the signals timer samples and broadcasts, exactly like the params
+sampler: safe-stringify each live value, set/clear `unserializable` with one
+warning per transition, and on a changed serialization adopt the drift as a
+store write (`rev` bumps, `updatedBy: "code"`). Adoption is also where the
+record is stamped with root-clock logical time. A snapshot is broadcast only
+when the tick found a change.
+
+Ending is sticky and lifecycle-driven:
+
+- `assignSignalOwner(name, moduleId)` is called by the analyzer-injected
+  `__tcvOwnedSignal` wrapper, so ownership is established by the run that
+  executed the declaration;
+- `endSignalsForModule(moduleId)` runs from the two cleanup sites that already
+  run `clearModuleWaits` — the launch branch's `finally` and
+  `teardownActiveModule` — so a graceful stop, a panic, and a module that
+  terminates on its own all end their signals rather than leaving a frozen
+  reading behind;
+- in the branch `finally` it is **inside** the `generatedRunId` guard, unlike
+  `clearModuleWaits`. A slow-dying old branch would otherwise mark the next
+  run's freshly redeclared signals ended after a `replaceRunning` or a
+  stop-then-relaunch, and unlike a wait count, `ended` sticks;
+- later writes keep updating `value` while `ended` stays set. Only a
+  redeclaration clears it. Nothing polices a user timer that outlived
+  cooperative cancellation; the contradiction is a surfaced finding.
+
+Nothing reachable from user timing — `set`, `end`, ownership stamping, the
+sampler — throws. Ended signals stay listed until their name is redeclared or
+the server restarts (see `known-risks.md`).
+
+## Root clock
+
+`runtime.ts` owns a module-level `setRootTimeContext(ctx)` /
+`sampleRootTime()`. The server's parent-loop launch registers its own
+`TimeContext` as the process root clock, and observation code reads logical time
+from it. Today the signals sampler is the only reader: it stamps each adopted
+value with `timeSec`/`beats`.
+
+`sampleRootTime` never throws and returns null when no context is registered or
+a reading is not finite, so a plain `deno run` of a module (or a sample taken
+before the parent loop starts) simply produces unstamped values. Stamps are
+quantized by the ~30 ms parent tick and the 100 ms sampler; `protocol.md` says
+so before anyone builds a musical x-axis on them.
 
 ## Durable entity registry
 
