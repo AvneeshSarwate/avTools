@@ -16,14 +16,15 @@ import {
   clearEntityRecords,
   cloneEntityValueForWire,
   commitEntityWrite,
-  consumeEntityTypeDirty,
+  consumeEntityTypeChanges,
   createEntityRecord,
   deleteEntityRecord,
+  type EntityChange,
   type EntityRecord,
   getEntityRecord,
   isEntityRevConflict,
   listEntityRecords,
-  markEntityTypeDirty,
+  markEntityRecordChanged,
   nextEntitySnapshotSeq,
   normalizeEntityName,
   safeStringifyEntityValue,
@@ -106,7 +107,7 @@ export function registerParams<T extends ParamsValues>(
       valueJson: safeStringifyEntityValue(existing.value),
     });
   } else if (metaChanged) {
-    markEntityTypeDirty(PARAMS_ENTITY_TYPE);
+    markEntityRecordChanged(existing);
   }
 
   return existing.value as T;
@@ -157,10 +158,18 @@ export function getParams(name: string): ParamsEntity | undefined {
 
 export function getAllParams(): Record<string, ParamsEntity> {
   return Object.fromEntries(
-    listEntityRecords<ParamsValues>(PARAMS_ENTITY_TYPE).map((
-      record,
-    ) => [record.name, toParamsEntity(record)]),
+    listParamsEntities().map((entity) => [entity.name, entity]),
   );
+}
+
+/**
+ * Point-in-time clones of every params entity, sorted by name. Read-only: this
+ * is what a `/sync` subscribe reset is built from, so it must never consume the
+ * broadcast gate or adopt drift.
+ */
+export function listParamsEntities(): ParamsEntity[] {
+  return listEntityRecords<ParamsValues>(PARAMS_ENTITY_TYPE)
+    .map(toParamsEntity);
 }
 
 export function listParamsNames(): string[] {
@@ -307,18 +316,20 @@ export function makeParamsSnapshot(): ParamsSnapshot {
 }
 
 /**
- * The broadcast tick: adopt code writes as store generations, then return a
- * snapshot when anything changed. Never throws — a value that cannot be
+ * The sampler half of the tick: adopt code writes as store generations. It runs
+ * on EVERY tick regardless of who is watching — "unwatched costs nothing" is a
+ * transport property, and rev has to stay a monotonic generation counter
+ * whether or not a pane is open. Never throws: a value that cannot be
  * serialized is flagged on its entity instead of freezing the loop.
  */
-export function sampleParamsSnapshot(): ParamsSnapshot | null {
+export function adoptParamsCodeWrites(): void {
   for (const record of listEntityRecords<ParamsValues>(PARAMS_ENTITY_TYPE)) {
     const json = safeStringifyEntityValue(record.value);
 
     if (json === null) {
       if (!record.unserializable) {
         record.unserializable = true;
-        markEntityTypeDirty(PARAMS_ENTITY_TYPE);
+        markEntityRecordChanged(record);
         console.warn(
           `[params-store] "${record.name}" value can no longer be serialized ` +
             "(cycle or BigInt written by code); snapshots keep the last good " +
@@ -330,7 +341,7 @@ export function sampleParamsSnapshot(): ParamsSnapshot | null {
 
     if (record.unserializable) {
       record.unserializable = false;
-      markEntityTypeDirty(PARAMS_ENTITY_TYPE);
+      markEntityRecordChanged(record);
       console.warn(
         `[params-store] "${record.name}" value is serializable again.`,
       );
@@ -341,9 +352,25 @@ export function sampleParamsSnapshot(): ParamsSnapshot | null {
     // is the only place a code-authored generation can be recorded.
     commitEntityWrite(record, { updatedBy: "code", valueJson: json });
   }
+}
 
-  if (!consumeEntityTypeDirty(PARAMS_ENTITY_TYPE)) return null;
-  return makeParamsSnapshot();
+/**
+ * The broadcast tick: adopt code writes, then drain this type's change gate and
+ * return one record per changed name (`entity: null` for a deleted one). Null
+ * when the tick found nothing, so an idle store sends nothing at all.
+ */
+export function sampleParamsChanges(): EntityChange<ParamsEntity>[] | null {
+  adoptParamsCodeWrites();
+  const changes = consumeEntityTypeChanges(PARAMS_ENTITY_TYPE);
+  if (!changes) return null;
+  const collected: EntityChange<ParamsEntity>[] = [];
+  for (const name of changes.changed) {
+    const record = getEntityRecord<ParamsValues>(PARAMS_ENTITY_TYPE, name);
+    // Defensive: a name can only be in `changed` while its record exists.
+    if (record) collected.push({ name, entity: toParamsEntity(record) });
+  }
+  for (const name of changes.deleted) collected.push({ name, entity: null });
+  return collected;
 }
 
 /** Test seam: drops every params entity and its tombstones. */

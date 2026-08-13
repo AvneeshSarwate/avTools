@@ -9,13 +9,32 @@ import {
   makeParamsSnapshot,
   registerParams,
   removeParams,
-  sampleParamsSnapshot,
+  sampleParamsChanges,
   setParamsValues,
 } from "../visualizer/params_store.ts";
-import type { ParamsValues } from "../visualizer/protocol.ts";
+import type { ParamsEntity, ParamsValues } from "../visualizer/protocol.ts";
+
+function resetParams(): void {
+  clearParamsStore();
+  // Drain the deletions the reset just recorded, the way a broadcast tick does.
+  sampleParamsChanges();
+}
+
+/**
+ * One broadcast tick's changed records keyed by name, so the assertions below
+ * read like the old full-snapshot ones. A name that is ABSENT here was not
+ * shipped at all; a name mapped to null was deleted.
+ */
+function sampledParams(): Record<string, ParamsEntity | null> | null {
+  const changes = sampleParamsChanges();
+  if (!changes) return null;
+  return Object.fromEntries(
+    changes.map((change) => [change.name, change.entity]),
+  );
+}
 
 Deno.test("registerParams creates an entity at rev 1 and returns a live clone of the defaults", () => {
-  clearParamsStore();
+  resetParams();
   const defaults = { gain: 0.5, label: "a", on: true, strobe: { rate: 2 } };
   const params = registerParams("test/create", defaults);
 
@@ -48,7 +67,7 @@ Deno.test("registerParams creates an entity at rev 1 and returns a live clone of
 });
 
 Deno.test("registerParams reattaches to the same live object across re-registration", () => {
-  clearParamsStore();
+  resetParams();
   const first = registerParams("test/identity", {
     gain: 1,
     strobe: { rate: 2 },
@@ -74,7 +93,7 @@ Deno.test("registerParams reattaches to the same live object across re-registrat
 });
 
 Deno.test("reconcile keeps existing values, adds new fields, and drops removed ones", () => {
-  clearParamsStore();
+  resetParams();
   const params = registerParams("test/reconcile", {
     keep: 1,
     strobe: { rate: 1, widthPercent: 10 },
@@ -100,14 +119,14 @@ Deno.test("reconcile keeps existing values, adds new fields, and drops removed o
 });
 
 Deno.test("reconcile does not bump rev when the declaration is unchanged", () => {
-  clearParamsStore();
+  resetParams();
   registerParams("test/stable", { gain: 1, strobe: { rate: 2 } });
   registerParams("test/stable", { gain: 1, strobe: { rate: 2 } });
   assertEquals(getParams("test/stable")?.rev, 1);
 });
 
 Deno.test("reconcile takes the new default when a declared type changed", () => {
-  clearParamsStore();
+  resetParams();
   const params = registerParams("test/typechange", { x: 1, y: 2 });
   params.x = 7;
   params.y = 8;
@@ -122,7 +141,7 @@ Deno.test("reconcile takes the new default when a declared type changed", () => 
 });
 
 Deno.test("a dropped field's value is restored when it is declared again with the same type", () => {
-  clearParamsStore();
+  resetParams();
   const params = registerParams("test/tombstone", {
     keep: 1,
     tweaked: 2,
@@ -148,7 +167,7 @@ Deno.test("a dropped field's value is restored when it is declared again with th
 });
 
 Deno.test("a tombstoned value is not restored into a field of a different type", () => {
-  clearParamsStore();
+  resetParams();
   const params = registerParams("test/tombstone-type", { level: 2 });
   params.level = 42;
   registerParams("test/tombstone-type", {});
@@ -157,7 +176,7 @@ Deno.test("a tombstoned value is not restored into a field of a different type",
 });
 
 Deno.test("registerParams rejects values that are not JSON-simple", () => {
-  clearParamsStore();
+  resetParams();
 
   assertThrows(
     () =>
@@ -197,7 +216,7 @@ Deno.test("registerParams rejects values that are not JSON-simple", () => {
 });
 
 Deno.test("setParamsValues merges nested leaf patches into the live object", () => {
-  clearParamsStore();
+  resetParams();
   const params = registerParams("test/set", {
     gain: 0.5,
     strobe: { rate: 1, widthPercent: 10 },
@@ -218,7 +237,7 @@ Deno.test("setParamsValues merges nested leaf patches into the live object", () 
 });
 
 Deno.test("setParamsValues ignores undeclared fields and type mismatches", () => {
-  clearParamsStore();
+  resetParams();
   const params = registerParams("test/set-invalid", { gain: 0.5 });
 
   const result = setParamsValues("test/set-invalid", {
@@ -232,12 +251,12 @@ Deno.test("setParamsValues ignores undeclared fields and type mismatches", () =>
 });
 
 Deno.test("setParamsValues never creates an entity", () => {
-  clearParamsStore();
+  resetParams();
   assertEquals(setParamsValues("test/absent", { gain: 1 }), undefined);
 });
 
 Deno.test("no-op detection compares against a fresh serialization, not the cache", () => {
-  clearParamsStore();
+  resetParams();
   const params = registerParams("test/noop", { gain: 0.5 });
 
   assertEquals(setParamsValues("test/noop", { gain: 0.5 })?.rev, 1);
@@ -256,7 +275,7 @@ Deno.test("no-op detection compares against a fresh serialization, not the cache
 });
 
 Deno.test("setParamsValues honours expectedRev as a compare-and-set", () => {
-  clearParamsStore();
+  resetParams();
   registerParams("test/cas", { gain: 1 });
 
   const conflict = setParamsValues("test/cas", { gain: 2 }, {
@@ -273,39 +292,43 @@ Deno.test("setParamsValues honours expectedRev as a compare-and-set", () => {
 });
 
 Deno.test("the sampler adopts code writes as store generations", () => {
-  clearParamsStore();
+  resetParams();
   const params = registerParams("test/sampler", { gain: 0.5 });
 
-  const created = sampleParamsSnapshot();
+  const created = sampledParams();
   assert(created);
-  assertEquals(created.params["test/sampler"].rev, 1);
-  assertEquals(sampleParamsSnapshot(), null, "an idle tick sends nothing");
+  assertEquals(created["test/sampler"]?.rev, 1);
+  assertEquals(sampledParams(), null, "an idle tick sends nothing");
 
   params.gain = 0.9;
-  const adopted = sampleParamsSnapshot();
+  const adopted = sampledParams();
   assert(adopted);
-  assertEquals(adopted.params["test/sampler"].rev, 2);
-  assertEquals(adopted.params["test/sampler"].updatedBy, "code");
-  assertEquals(adopted.params["test/sampler"].values.gain, 0.9);
-  assert(adopted.seq > created.seq);
-  assertEquals(sampleParamsSnapshot(), null, "drift is adopted exactly once");
+  assertEquals(adopted["test/sampler"]?.rev, 2);
+  assertEquals(adopted["test/sampler"]?.updatedBy, "code");
+  assertEquals(adopted["test/sampler"]?.values.gain, 0.9);
+  assertEquals(
+    Object.keys(adopted),
+    ["test/sampler"],
+    "a tick ships only the entities that changed",
+  );
+  assertEquals(sampledParams(), null, "drift is adopted exactly once");
 
   // A store-level write is already a generation; the sampler must not add one.
   setParamsValues("test/sampler", { gain: 0.1 }, { originId: "pane" });
-  const afterSet = sampleParamsSnapshot();
-  assertEquals(afterSet?.params["test/sampler"].rev, 3);
-  assertEquals(afterSet?.params["test/sampler"].updatedBy, "pane");
-  assertEquals(sampleParamsSnapshot(), null);
+  const afterSet = sampledParams();
+  assertEquals(afterSet?.["test/sampler"]?.rev, 3);
+  assertEquals(afterSet?.["test/sampler"]?.updatedBy, "pane");
+  assertEquals(sampledParams(), null);
 });
 
 Deno.test("a forced snapshot is read-only: it neither consumes the gate nor adopts drift", () => {
-  clearParamsStore();
+  resetParams();
   const params = registerParams("test/forced", { gain: 1 });
 
   const onOpen = makeParamsSnapshot();
   assertEquals(onOpen.params["test/forced"].rev, 1);
   assert(
-    sampleParamsSnapshot(),
+    sampledParams(),
     "a forced snapshot must not consume the pending broadcast",
   );
 
@@ -314,53 +337,53 @@ Deno.test("a forced snapshot is read-only: it neither consumes the gate nor adop
   assertEquals(duringDrift.params["test/forced"].values.gain, 2);
   assertEquals(duringDrift.params["test/forced"].rev, 1);
 
-  const adopted = sampleParamsSnapshot();
-  assertEquals(adopted?.params["test/forced"].rev, 2);
-  assertEquals(adopted?.params["test/forced"].updatedBy, "code");
+  const adopted = sampledParams();
+  assertEquals(adopted?.["test/forced"]?.rev, 2);
+  assertEquals(adopted?.["test/forced"]?.updatedBy, "code");
 });
 
 Deno.test("the sampler flags an unserializable value instead of throwing", () => {
-  clearParamsStore();
+  resetParams();
   const params = registerParams("test/unserializable", { gain: 1 });
-  sampleParamsSnapshot();
+  sampledParams();
 
   (params as Record<string, unknown>).gain = 10n;
-  const flagged = sampleParamsSnapshot();
-  assertEquals(flagged?.params["test/unserializable"].unserializable, true);
+  const flagged = sampledParams();
+  assertEquals(flagged?.["test/unserializable"]?.unserializable, true);
   assertEquals(
-    flagged?.params["test/unserializable"].values.gain,
+    flagged?.["test/unserializable"]?.values.gain,
     1,
-    "the snapshot keeps the last values that did serialize",
+    "the change keeps the last values that did serialize",
   );
 
   params.gain = 3;
-  const recovered = sampleParamsSnapshot();
+  const recovered = sampledParams();
   assertEquals(
-    recovered?.params["test/unserializable"].unserializable,
+    recovered?.["test/unserializable"]?.unserializable,
     undefined,
   );
-  assertEquals(recovered?.params["test/unserializable"].values.gain, 3);
+  assertEquals(recovered?.["test/unserializable"]?.values.gain, 3);
 });
 
 Deno.test("non-finite code writes serialize to null and drops read as shape changes", () => {
-  clearParamsStore();
+  resetParams();
   const params = registerParams("test/lossy", { gain: 1, extra: 2 });
-  sampleParamsSnapshot();
+  sampledParams();
 
   params.gain = Number.POSITIVE_INFINITY;
-  assertEquals(sampleParamsSnapshot()?.params["test/lossy"].values.gain, null);
+  assertEquals(sampledParams()?.["test/lossy"]?.values.gain, null);
 
   delete (params as Record<string, unknown>).extra;
-  const afterDelete = sampleParamsSnapshot();
+  const afterDelete = sampledParams();
   assertEquals(
-    "extra" in (afterDelete?.params["test/lossy"].values ?? {}),
+    "extra" in (afterDelete?.["test/lossy"]?.values ?? {}),
     false,
   );
-  assertEquals(afterDelete?.params["test/lossy"].updatedBy, "code");
+  assertEquals(afterDelete?.["test/lossy"]?.updatedBy, "code");
 });
 
 Deno.test("loadParams mutates the live object in place at every depth", () => {
-  clearParamsStore();
+  resetParams();
   const live = registerParams("test/load", {
     gain: 1,
     strobe: { rate: 2, jitter: 0 },
@@ -393,7 +416,7 @@ Deno.test("loadParams mutates the live object in place at every depth", () => {
 });
 
 Deno.test("loadParams creates an absent entity and the declaration still wins later", () => {
-  clearParamsStore();
+  resetParams();
   const loaded = loadParams("test/load-new", { gain: 3 }, {
     gain: { min: 0, max: 4 },
   });
@@ -408,7 +431,7 @@ Deno.test("loadParams creates an absent entity and the declaration still wins la
 });
 
 Deno.test("loadParams clears tombstones so a pre-load value cannot resurrect", () => {
-  clearParamsStore();
+  resetParams();
   const live = registerParams("test/load-tombstone", { keep: 1, tweaked: 2 });
   live.tweaked = 42;
   registerParams("test/load-tombstone", { keep: 1 });
@@ -424,7 +447,7 @@ Deno.test("loadParams clears tombstones so a pre-load value cannot resurrect", (
 });
 
 Deno.test("loadParams rejects values that are not JSON-simple", () => {
-  clearParamsStore();
+  resetParams();
   assertThrows(
     () =>
       loadParams(
@@ -438,7 +461,7 @@ Deno.test("loadParams rejects values that are not JSON-simple", () => {
 });
 
 Deno.test("removeParams drops the record and its tombstones", () => {
-  clearParamsStore();
+  resetParams();
   const live = registerParams("test/remove", { keep: 1, tweaked: 2 });
   live.tweaked = 42;
   registerParams("test/remove", { keep: 1 });
@@ -452,7 +475,7 @@ Deno.test("removeParams drops the record and its tombstones", () => {
 });
 
 Deno.test("revs are monotonic per name across delete and recreate", () => {
-  clearParamsStore();
+  resetParams();
   registerParams("test/revfloor", { gain: 1 });
   setParamsValues("test/revfloor", { gain: 2 });
   assertEquals(getParams("test/revfloor")?.rev, 2);
@@ -473,7 +496,7 @@ Deno.test("revs are monotonic per name across delete and recreate", () => {
 });
 
 Deno.test("duplicateParams deep-copies the live values under a new name", () => {
-  clearParamsStore();
+  resetParams();
   const live = registerParams("test/dup", { gain: 1, strobe: { rate: 2 } });
   live.strobe.rate = 9;
 
@@ -492,7 +515,7 @@ Deno.test("duplicateParams deep-copies the live values under a new name", () => 
 });
 
 Deno.test("latestParamsJson is a fresh serialization of the live value", () => {
-  clearParamsStore();
+  resetParams();
   const live = registerParams("test/latest", { gain: 1 });
   assertEquals(latestParamsJson("test/latest"), '{"gain":1}');
 
@@ -507,17 +530,34 @@ Deno.test("latestParamsJson is a fresh serialization of the live value", () => {
 });
 
 Deno.test("meta comes from the declaration and a meta-only change broadcasts without a rev bump", () => {
-  clearParamsStore();
+  resetParams();
   registerParams("test/meta", { gain: 1 }, {
     gain: { min: 0, max: 2, step: 0.1, label: "Gain" },
   });
-  const declared = sampleParamsSnapshot();
-  assertEquals(declared?.params["test/meta"].meta, {
+  const declared = sampledParams();
+  assertEquals(declared?.["test/meta"]?.meta, {
     gain: { min: 0, max: 2, step: 0.1, label: "Gain" },
   });
 
   registerParams("test/meta", { gain: 1 }, { gain: { min: 0, max: 4 } });
-  const updated = sampleParamsSnapshot();
-  assertEquals(updated?.params["test/meta"].meta, { gain: { min: 0, max: 4 } });
-  assertEquals(updated?.params["test/meta"].rev, 1);
+  const updated = sampledParams();
+  assertEquals(updated?.["test/meta"]?.meta, { gain: { min: 0, max: 4 } });
+  assertEquals(updated?.["test/meta"]?.rev, 1);
+});
+
+Deno.test("a removed entity ships as a deletion, which no serialize-compare could see", () => {
+  resetParams();
+  registerParams("test/deleted", { gain: 1 });
+  assert(sampledParams());
+
+  assertEquals(removeParams("test/deleted"), true);
+  const tick = sampledParams();
+  assert(tick, "a deletion is a change");
+  assertEquals(
+    "test/deleted" in tick,
+    true,
+    "the deleted name must be reported, not merely disappear",
+  );
+  assertEquals(tick["test/deleted"], null);
+  assertEquals(sampledParams(), null, "a deletion is reported exactly once");
 });
