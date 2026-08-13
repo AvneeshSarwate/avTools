@@ -858,7 +858,10 @@ async function runNaturalCompletionAfterEditCase() {
   await waitForServerRunState(firstModuleId, true, 'finite module running')
   // The running snapshot must reach the client before the edit, because that
   // snapshot is what re-asserts the active-run claim the edit has to drop. An
-  // active wait id is the visible half of the same message.
+  // active wait id is the visible half of the same message. The case also
+  // depends on runtime-snapshot silence between the edit and the terminal — a
+  // steady wait loop reports an unchanged payload, so nothing is sent — because
+  // any traffic in that window would re-adopt the claim and mask the old bug.
   await waitForPageValue(
     (moduleId) =>
       (window.__livecodeTldrawRuntimeDebug?.modules[moduleId]?.activeIds.length ?? 0) > 0,
