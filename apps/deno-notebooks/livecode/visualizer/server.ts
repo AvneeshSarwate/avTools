@@ -70,6 +70,7 @@ import {
   setParamsValues,
 } from "./params_store.ts";
 import {
+  collectPianoRollChanges,
   makePianoRollSnapshot,
   redoPianoRoll,
   seedDemoPianoRoll,
@@ -406,8 +407,8 @@ export async function createLivecodeVisualizerServer(
   registerBuiltinDurableEntityTypes();
   seedDemoPianoRoll();
   pianoRollSnapshotTimer = setInterval(() => {
+    if (!collectPianoRollChanges()) return;
     const snapshot = makePianoRollSnapshot();
-    if (!snapshot) return;
     const payload = JSON.stringify(snapshot);
     for (const socket of pianoRollSockets) {
       if (socket.readyState === WebSocket.OPEN) socket.send(payload);
