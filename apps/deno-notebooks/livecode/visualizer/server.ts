@@ -1980,7 +1980,17 @@ export async function createLivecodeVisualizerServer(
       return;
     }
     for (const socket of targets) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(payload);
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      try {
+        socket.send(payload);
+      } catch (error) {
+        // One socket that closed between the check and the send must not skip
+        // the other channels: they all share this tick now.
+        void log({
+          type: "snapshotSendFailed",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
