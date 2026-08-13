@@ -10,7 +10,7 @@
 //   1. `declareSignal` hands out a handle closed over the record. `set` is a
 //      PURE field assignment — no dirty flag, no serialization, no store call —
 //      so publishing an unwatched signal costs the same as a property write.
-//      `sampleSignalsSnapshot` discovers changes by serialize-compare per tick,
+//      `adoptSignalCodeWrites` discovers changes by serialize-compare per tick,
 //      exactly like the params sampler.
 //   2. Ending is sticky. A run ends its signals, and later writes keep landing
 //      in `value` while `ended` stays set until the name is redeclared. A
@@ -22,12 +22,13 @@
 import {
   clearEntityRecords,
   commitEntityWrite,
-  consumeEntityTypeDirty,
+  consumeEntityTypeChanges,
   createEntityRecord,
+  type EntityChange,
   type EntityRecord,
   getEntityRecord,
   listEntityRecords,
-  markEntityTypeDirty,
+  markEntityRecordChanged,
   nextEntitySnapshotSeq,
   normalizeEntityName,
   safeStringifyEntityValue,
@@ -85,7 +86,7 @@ export function declareSignal<T = unknown>(
     // without bumping rev (rev counts observed value generations).
     meta.anchor = options.anchor;
     delete meta.ended;
-    markEntityTypeDirty(SIGNAL_ENTITY_TYPE);
+    markEntityRecordChanged(existing);
     return makeSignalHandle<T>(existing);
   }
 
@@ -122,7 +123,7 @@ export function assignSignalOwner(name: string, moduleId: string): boolean {
   const meta = signalMeta(record);
   if (meta.ownerModuleId === moduleId) return true;
   meta.ownerModuleId = moduleId;
-  markEntityTypeDirty(SIGNAL_ENTITY_TYPE);
+  markEntityRecordChanged(record);
   return true;
 }
 
@@ -164,19 +165,20 @@ export function makeSignalsSnapshot(): SignalsSnapshot {
 }
 
 /**
- * The broadcast tick: adopt code writes as store generations and stamp them
- * with root-clock logical time, then return a snapshot when anything changed.
- * `set` is a plain assignment, so this serialize-compare is the only place a
- * published value becomes an observed generation. Never throws.
+ * The sampler half of the tick: adopt code writes as store generations and
+ * stamp them with root-clock logical time. `set` is a plain assignment, so this
+ * serialize-compare is the only place a published value becomes an observed
+ * generation — which is why it runs on EVERY tick whether or not anything is
+ * subscribed. Never throws.
  */
-export function sampleSignalsSnapshot(): SignalsSnapshot | null {
+export function adoptSignalCodeWrites(): void {
   for (const record of listEntityRecords<unknown>(SIGNAL_ENTITY_TYPE)) {
     const json = safeStringifyEntityValue(record.value);
 
     if (json === null) {
       if (!record.unserializable) {
         record.unserializable = true;
-        markEntityTypeDirty(SIGNAL_ENTITY_TYPE);
+        markEntityRecordChanged(record);
         console.warn(
           `[signals-store] "${record.name}" value can no longer be serialized ` +
             "(cycle, BigInt, or undefined published by code); snapshots keep " +
@@ -188,7 +190,7 @@ export function sampleSignalsSnapshot(): SignalsSnapshot | null {
 
     if (record.unserializable) {
       record.unserializable = false;
-      markEntityTypeDirty(SIGNAL_ENTITY_TYPE);
+      markEntityRecordChanged(record);
       console.warn(
         `[signals-store] "${record.name}" value is serializable again.`,
       );
@@ -198,9 +200,25 @@ export function sampleSignalsSnapshot(): SignalsSnapshot | null {
     stampLogicalTime(record);
     commitEntityWrite(record, { updatedBy: "code", valueJson: json });
   }
+}
 
-  if (!consumeEntityTypeDirty(SIGNAL_ENTITY_TYPE)) return null;
-  return makeSignalsSnapshot();
+/**
+ * The broadcast tick: adopt code writes, then drain this type's change gate and
+ * return one record per changed name (`entity: null` for a deleted one — how a
+ * scope learns its source is gone rather than silently freezing). Null when the
+ * tick found nothing.
+ */
+export function sampleSignalChanges(): EntityChange<SignalEntity>[] | null {
+  adoptSignalCodeWrites();
+  const changes = consumeEntityTypeChanges(SIGNAL_ENTITY_TYPE);
+  if (!changes) return null;
+  const collected: EntityChange<SignalEntity>[] = [];
+  for (const name of changes.changed) {
+    const record = getEntityRecord<unknown>(SIGNAL_ENTITY_TYPE, name);
+    if (record) collected.push({ name, entity: toSignalEntity(record) });
+  }
+  for (const name of changes.deleted) collected.push({ name, entity: null });
+  return collected;
 }
 
 /** Test seam: drops every signal. */
@@ -228,7 +246,7 @@ function endSignalRecord(record: EntityRecord<unknown>): boolean {
   const meta = signalMeta(record);
   if (meta.ended) return false;
   meta.ended = true;
-  markEntityTypeDirty(SIGNAL_ENTITY_TYPE);
+  markEntityRecordChanged(record);
   return true;
 }
 

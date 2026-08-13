@@ -1,9 +1,14 @@
 // Generic (type, name)-keyed entity records. This is the minimal shared seam
 // under typed entity stores: it owns identity, revisions, no-op caching,
-// dirty/seq bookkeeping and never-throw serialization, while per-type
+// change/seq bookkeeping and never-throw serialization, while per-type
 // semantics (validation, reconcile, wire shape) live in the type wrapper next
-// to it — `params_store.ts` today. `piano_roll_store.ts` is deliberately NOT
-// migrated onto this layer yet.
+// to it — `params_store.ts`, `signals_store.ts` and `piano_roll_store.ts`.
+//
+// The broadcast gate is a per-type set of CHANGED NAMES rather than one
+// boolean, because the sync transport ships per entity: a serialize-compare
+// over live values cannot see a deletion or a signal's `ended` flip, so every
+// mutator — value writes, meta writes, ended/anchor/owner flips, deletes —
+// records the name it touched and exactly one consumer drains the set per tick.
 //
 // Every write here must be safe to call from caller-owned livecode timing, so
 // nothing below throws except name normalization (used at registration time).
@@ -33,7 +38,12 @@ export interface EntityRecord<V = unknown> {
 
 interface EntityTypeStore {
   records: Map<string, EntityRecord>;
-  dirty: boolean;
+  /**
+   * Names touched since the last collect. Resolved against `records` at
+   * collect time, so a name created and deleted inside one tick reports as a
+   * deletion and one deleted then recreated reports as a change.
+   */
+  dirtyNames: Set<string>;
   snapshotSeq: number;
   /**
    * Highest rev ever reached by a now-deleted name. A recreated or re-loaded
@@ -42,6 +52,23 @@ interface EntityTypeStore {
    * silently echo-suppress the new one.
    */
   revFloors: Map<string, number>;
+}
+
+/**
+ * One entity's delivery on the sync transport: the whole entity, or `null`
+ * when it was deleted. Type wrappers return arrays of these from their tick.
+ */
+export interface EntityChange<E> {
+  name: string;
+  entity: E | null;
+}
+
+/** One tick's worth of per-name changes for one entity type. */
+export interface EntityChangeSet {
+  /** Names whose record exists and changed; sorted for stable delivery. */
+  changed: string[];
+  /** Names whose record is gone; sorted. */
+  deleted: string[];
 }
 
 const stores = new Map<string, EntityTypeStore>();
@@ -87,7 +114,7 @@ export function createEntityRecord<V>(
       safeStringifyEntityValue(value) ?? "",
   };
   store.records.set(name, record as EntityRecord);
-  store.dirty = true;
+  store.dirtyNames.add(name);
   return record;
 }
 
@@ -103,7 +130,9 @@ export function deleteEntityRecord(type: string, name: string): boolean {
         Math.max(record.rev, store.revFloors.get(key) ?? 0),
       );
     }
-    store.dirty = true;
+    // A deletion is invisible to any serialize-compare, so it only reaches
+    // watchers because the name is recorded here.
+    store.dirtyNames.add(key);
   }
   return removed;
 }
@@ -111,14 +140,14 @@ export function deleteEntityRecord(type: string, name: string): boolean {
 /** Test seam: a full reset of one type, rev floors included. */
 export function clearEntityRecords(type: string): void {
   const store = storeFor(type);
+  for (const name of store.records.keys()) store.dirtyNames.add(name);
   store.records.clear();
   store.revFloors.clear();
-  store.dirty = true;
 }
 
 /**
  * Record one applied generation of a value: bump `rev`, refresh the no-op
- * cache, and mark the type dirty so the next sampler tick broadcasts.
+ * cache, and record the name so the next broadcast tick ships it.
  */
 export function commitEntityWrite(
   record: EntityRecord,
@@ -130,7 +159,7 @@ export function commitEntityWrite(
   record.lastValueJson = options.valueJson === undefined
     ? safeStringifyEntityValue(record.value) ?? ""
     : options.valueJson ?? "";
-  storeFor(record.type).dirty = true;
+  storeFor(record.type).dirtyNames.add(record.name);
 }
 
 export function isEntityRevConflict(
@@ -140,16 +169,46 @@ export function isEntityRevConflict(
   return expectedRev !== undefined && record.rev !== expectedRev;
 }
 
-export function markEntityTypeDirty(type: string): void {
-  storeFor(type).dirty = true;
+/**
+ * Record a change that is not a value generation — a meta replacement, a
+ * signal's `ended`/anchor/owner flip, an `unserializable` transition. These
+ * never bump `rev`, so nothing but this call can make them reach a watcher.
+ */
+export function markEntityRecordChanged(record: EntityRecord): void {
+  storeFor(record.type).dirtyNames.add(record.name);
 }
 
-/** Reads and clears the broadcast gate for one type. */
-export function consumeEntityTypeDirty(type: string): boolean {
+/** Same, addressed by name — for callers that do not hold the record. */
+export function markEntityChanged(type: string, name: string): void {
+  storeFor(type).dirtyNames.add(name.trim());
+}
+
+/**
+ * Drains the broadcast gate for one type: the ONE consumer per tick. Returns
+ * null when nothing changed, so an idle type costs a set-size check. Forced
+ * snapshots (`/…/list`, socket open, a subscribe reset) never come through
+ * here — they must not swallow a generation other watchers are still owed.
+ */
+export function consumeEntityTypeChanges(
+  type: string,
+): EntityChangeSet | null {
   const store = storeFor(type);
-  const dirty = store.dirty;
-  store.dirty = false;
-  return dirty;
+  if (store.dirtyNames.size === 0) return null;
+  const changed: string[] = [];
+  const deleted: string[] = [];
+  for (const name of store.dirtyNames) {
+    if (store.records.has(name)) changed.push(name);
+    else deleted.push(name);
+  }
+  store.dirtyNames.clear();
+  changed.sort((a, b) => a.localeCompare(b));
+  deleted.sort((a, b) => a.localeCompare(b));
+  return { changed, deleted };
+}
+
+/** Read-only: whether a tick would find anything to ship. */
+export function hasPendingEntityChanges(type: string): boolean {
+  return storeFor(type).dirtyNames.size > 0;
 }
 
 export function nextEntitySnapshotSeq(type: string): number {
@@ -194,7 +253,7 @@ function storeFor(type: string): EntityTypeStore {
   if (existing) return existing;
   const created: EntityTypeStore = {
     records: new Map(),
-    dirty: true,
+    dirtyNames: new Set(),
     snapshotSeq: 0,
     revFloors: new Map(),
   };
