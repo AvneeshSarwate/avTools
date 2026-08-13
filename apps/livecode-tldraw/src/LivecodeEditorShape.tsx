@@ -5,7 +5,6 @@ import {
   RecordProps,
   T,
   TLShape,
-  createShapeId,
   useEditor,
 } from "tldraw";
 import {
@@ -23,6 +22,7 @@ import {
   type ParamPaneShape,
 } from "./ParamPaneShape";
 import {
+  createPianoRollShape,
   PIANO_ROLL_SHAPE_TYPE,
   type PianoRollShape,
 } from "./PianoRollShape";
@@ -175,25 +175,14 @@ function LivecodeEditorShapeComponent(
         editor.zoomToSelection();
         return;
       }
-      const id = createShapeId();
-      editor.createShape<PianoRollShape>({
-        id,
-        type: PIANO_ROLL_SHAPE_TYPE,
+      createPianoRollShape(editor, {
         x: shape.x + shape.props.w + 40,
         y: shape.y,
-        props: {
-          w: 560,
-          h: 360,
-          rollName,
-          title: `piano roll: ${rollName}`,
-          showControlPanel: true,
-          interactive: true,
-        },
+        rollName,
       });
-      editor.select(id);
       editor.zoomToSelection();
     },
-    [editor, shape.id, shape.x, shape.y, shape.props.w],
+    [editor, shape.x, shape.y, shape.props.w],
   );
 
   const openParamPane = useCallback(

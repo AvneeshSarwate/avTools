@@ -12,6 +12,7 @@ import {
   serializeTldrawJson,
   type Editor,
   Tldraw,
+  useValue,
 } from "tldraw";
 import { DEFAULT_LIVECODE_SOURCE } from "./defaultSource";
 import {
@@ -24,10 +25,12 @@ import type {
   ClientControlCommand,
   ClientControlEnvelope,
   ClientControlResultMessage,
+  DurableEntityRef,
   ProjectCurrentResponse,
   ProjectModuleLocator,
   ProjectModuleRecord,
   ProjectModuleSourceResponse,
+  ProjectSaveResponse,
   ProjectStatusResponse,
   RuntimeModuleStatus,
 } from "./livecodeProtocol";
@@ -43,14 +46,27 @@ import {
   type ParamPaneShape,
   ParamPaneShapeUtil,
 } from "./ParamPaneShape";
-import { PianoRollRuntimeProvider } from "./pianoRollRuntime";
 import {
+  PianoRollRuntimeProvider,
+  usePianoRollRuntime,
+} from "./pianoRollRuntime";
+import {
+  createPianoRollShape,
   PIANO_ROLL_SHAPE_TYPE,
   type PianoRollShape,
   PianoRollShapeUtil,
 } from "./PianoRollShape";
 import { setRuntimeDebugRefs } from "./livecodeTldrawDebug";
 import { createReconnectingSocket } from "./reconnectingSocket";
+import {
+  createEntity,
+  deleteEntity,
+  duplicateEntity,
+  fetchProjectStatus,
+  PARAMS_ENTITY_TYPE,
+  PIANO_ROLL_ENTITY_TYPE,
+  saveProject,
+} from "./serverRequests";
 
 const shapeUtils = [
   LivecodeEditorShapeUtil,
@@ -314,7 +330,11 @@ function LivecodeTldrawPage() {
     <PianoRollRuntimeProvider serverBaseUrl={runtime.serverBaseUrl}>
       <ParamsRuntimeProvider serverBaseUrl={runtime.serverBaseUrl}>
         <div className="app-shell">
-          <TopBar editor={editor} onOpenTldrawFile={loadTldrawFile} />
+          <TopBar
+            editor={editor}
+            projectPath={projectPath}
+            onOpenTldrawFile={loadTldrawFile}
+          />
           <div className="canvas-shell">
             <Tldraw
               shapeUtils={shapeUtils}
@@ -334,24 +354,68 @@ function LivecodeTldrawPage() {
 
 function TopBar({
   editor,
+  projectPath,
   onOpenTldrawFile,
 }: {
   editor: Editor | null;
+  projectPath: string | null;
   onOpenTldrawFile: (file: File) => Promise<void>;
 }) {
   const runtime = useLivecodeRuntime();
   const paramsRuntime = useParamsRuntime();
+  const pianoRollRuntime = usePianoRollRuntime();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // null while the inline params-name input is closed. Non-modal by design: the
-  // canvas stays interactive while it is open.
+  // canvas stays interactive while it is open. The piano-roll and duplicate
+  // drafts below follow the same pattern.
   const [paramPaneDraft, setParamPaneDraft] = useState<string | null>(null);
+  const [pianoRollDraft, setPianoRollDraft] = useState<string | null>(null);
+  const [duplicateDraft, setDuplicateDraft] = useState<string | null>(null);
+  // The name the delete button is armed for, so a selection change disarms it:
+  // a confirm can never land on an entity the operator was not looking at.
+  const [deleteArmedName, setDeleteArmedName] = useState<string | null>(null);
+  const [entityError, setEntityError] = useState<string | null>(null);
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const selection = useSelectedEntity(editor);
+  const unsavedCount = useUnsavedEntityCount(runtime.serverBaseUrl, projectPath);
   const knownParamsNames = useMemo(
     () => Object.keys(paramsRuntime.params).sort(),
     [paramsRuntime.params],
   );
+  const knownRollNames = useMemo(
+    () => Object.keys(pianoRollRuntime.rolls).sort(),
+    [pianoRollRuntime.rolls],
+  );
   const moduleCount = useMemo(() => Object.keys(runtime.modules).length, [
     runtime.modules,
   ]);
+  const selectionKey = selection ? `${selection.type} ${selection.name}` : "";
+
+  // Entity actions are ordinary serialized POSTs; a rejection is the server's
+  // wording, shown in the topbar rather than thrown away.
+  const runEntityAction = useCallback(async (action: () => Promise<void>) => {
+    setEntityError(null);
+    try {
+      await action();
+    } catch (error) {
+      console.error("[livecode-tldraw] entity action failed", error);
+      setEntityError(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
+
+  // A new selection is a new subject: never carry a prefilled duplicate name or
+  // an armed delete across it.
+  useEffect(() => {
+    setDuplicateDraft(null);
+    setDeleteArmedName(null);
+  }, [selectionKey]);
+
+  useEffect(() => {
+    if (deleteArmedName === null) return;
+    const timer = window.setTimeout(() => setDeleteArmedName(null), 4_000);
+    return () => window.clearTimeout(timer);
+  }, [deleteArmedName]);
+
   const dependencyIssueCount = runtime.projectDiagnostics?.modules.filter((
     moduleEntry,
   ) => moduleEntry.hasDependencyWarnings).length ?? 0;
@@ -434,6 +498,61 @@ function TopBar({
       >
         New module
       </button>
+      {pianoRollDraft === null
+        ? (
+          <button
+            type="button"
+            disabled={!editor}
+            onClick={() => setPianoRollDraft("")}
+          >
+            New piano roll
+          </button>
+        )
+        : (
+          <form
+            className="topbar__group"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const rollName = pianoRollDraft.trim();
+              if (!editor || !rollName) return;
+              void runEntityAction(async () => {
+                // Dual mode: a name the store already has only gets another
+                // view; a new name is the composite create-entity-plus-view
+                // gesture.
+                if (!knownRollNames.includes(rollName)) {
+                  await createEntity(
+                    runtime.serverBaseUrl,
+                    PIANO_ROLL_ENTITY_TYPE,
+                    rollName,
+                  );
+                }
+                createPianoRollShape(editor, { rollName });
+                setPianoRollDraft(null);
+              });
+            }}
+          >
+            <input
+              autoFocus
+              list="topbar-roll-names"
+              placeholder="piano roll name"
+              value={pianoRollDraft}
+              spellCheck={false}
+              onChange={(event) => setPianoRollDraft(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setPianoRollDraft(null);
+              }}
+            />
+            <datalist id="topbar-roll-names">
+              {knownRollNames.map((name) => <option key={name} value={name} />)}
+            </datalist>
+            <button type="submit" disabled={!editor || !pianoRollDraft.trim()}>
+              Add roll
+            </button>
+            <button type="button" onClick={() => setPianoRollDraft(null)}>
+              Cancel
+            </button>
+          </form>
+        )}
       {paramPaneDraft === null
         ? (
           <button
@@ -478,6 +597,119 @@ function TopBar({
           </form>
         )}
 
+      {/*
+        Entity actions are scoped to a single selected view: a shape is a view
+        of an entity, so the entity these act on is unambiguous only then.
+        Deleting the view stays the canvas gesture it always was.
+      */}
+      {selection && duplicateDraft === null
+        ? (
+          <button
+            type="button"
+            onClick={() => setDuplicateDraft(`${selection.name}-copy`)}
+          >
+            Duplicate entity
+          </button>
+        )
+        : null}
+      {selection && duplicateDraft !== null
+        ? (
+          <form
+            className="topbar__group"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const targetName = duplicateDraft.trim();
+              if (!editor || !targetName) return;
+              void runEntityAction(async () => {
+                await duplicateEntity(
+                  runtime.serverBaseUrl,
+                  selection.type,
+                  selection.name,
+                  targetName,
+                );
+                createAdjacentEntityView(editor, selection.type, targetName);
+                setDuplicateDraft(null);
+              });
+            }}
+          >
+            <input
+              autoFocus
+              placeholder={`copy of ${selection.name}`}
+              value={duplicateDraft}
+              spellCheck={false}
+              onChange={(event) => setDuplicateDraft(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setDuplicateDraft(null);
+              }}
+            />
+            <button type="submit" disabled={!editor || !duplicateDraft.trim()}>
+              Duplicate
+            </button>
+            <button type="button" onClick={() => setDuplicateDraft(null)}>
+              Cancel
+            </button>
+          </form>
+        )
+        : null}
+      {selection
+        ? (
+          <button
+            type="button"
+            onClick={() => {
+              // Two-step confirm; the arm expires on its own so a stray first
+              // click cannot leave a live delete waiting for a second one.
+              if (deleteArmedName !== selection.name) {
+                setDeleteArmedName(selection.name);
+                return;
+              }
+              setDeleteArmedName(null);
+              void runEntityAction(async () => {
+                await deleteEntity(
+                  runtime.serverBaseUrl,
+                  selection.type,
+                  selection.name,
+                );
+              });
+            }}
+          >
+            {deleteArmedName === selection.name
+              ? `Really delete ${selection.name}?`
+              : "Delete entity"}
+          </button>
+        )
+        : null}
+
+      {/* Explicit save, gated on an open project exactly like the collector. */}
+      {projectPath
+        ? (
+          <div className="topbar__group">
+            <button
+              type="button"
+              onClick={() => {
+                setSaveNotice(null);
+                void runEntityAction(async () => {
+                  setSaveNotice(describeProjectSave(
+                    await saveProject(runtime.serverBaseUrl),
+                  ));
+                });
+              }}
+            >
+              Save project
+            </button>
+            {unsavedCount === null ? null : (
+              <span
+                className={`status-pill status-pill--${
+                  unsavedCount > 0 ? "unsaved" : "saved"
+                }`}
+              >
+                {unsavedCount > 0 ? `${unsavedCount} unsaved` : "saved"}
+              </span>
+            )}
+            {saveNotice ? <span>{saveNotice}</span> : null}
+          </div>
+        )
+        : null}
+
       <div className="topbar__status">
         <span
           className={`status-pill status-pill--${runtime.connectionStatus}`}
@@ -504,9 +736,115 @@ function TopBar({
         {runtime.connectionError
           ? <span className="topbar__error">{runtime.connectionError}</span>
           : null}
+        {entityError
+          ? <span className="topbar__error">{entityError}</span>
+          : null}
       </div>
     </div>
   );
+}
+
+/**
+ * The durable entity the single selected view addresses, or null. Reactive
+ * through tldraw's own signals: `useValue` recomputes only when the selection
+ * (or the selected view's entity name) changes, and both halves are primitives
+ * so an unrelated shape edit never re-renders the topbar.
+ */
+function useSelectedEntity(editor: Editor | null): DurableEntityRef | null {
+  const type = useValue(
+    "selected entity type",
+    () => selectedEntityRef(editor)?.type ?? null,
+    [editor],
+  );
+  const name = useValue(
+    "selected entity name",
+    () => selectedEntityRef(editor)?.name ?? null,
+    [editor],
+  );
+  return type && name ? { type, name } : null;
+}
+
+function selectedEntityRef(editor: Editor | null): DurableEntityRef | null {
+  const shape = editor?.getOnlySelectedShape();
+  if (isPianoRollShape(shape)) {
+    return { type: PIANO_ROLL_ENTITY_TYPE, name: shape.props.rollName };
+  }
+  if (isParamPaneShape(shape)) {
+    return { type: PARAMS_ENTITY_TYPE, name: shape.props.paramsName };
+  }
+  return null;
+}
+
+/** A view of `name`, beside the selected one so the pair reads as a pair. */
+function createAdjacentEntityView(
+  editor: Editor,
+  entityType: string,
+  name: string,
+) {
+  const source = editor.getOnlySelectedShape();
+  const beside = isPianoRollShape(source) || isParamPaneShape(source)
+    ? { x: source.x + source.props.w + 40, y: source.y }
+    : {};
+  return entityType === PIANO_ROLL_ENTITY_TYPE
+    ? createPianoRollShape(editor, { ...beside, rollName: name })
+    : createParamPaneShape(editor, { ...beside, paramsName: name });
+}
+
+function describeProjectSave(result: ProjectSaveResponse): string {
+  const failed = result.data.filter((entry) => !entry.ok);
+  for (const entry of failed) {
+    console.error(
+      `[livecode-tldraw] ${entry.type} "${entry.name}" failed to save: ${entry.error}`,
+    );
+  }
+  for (const entry of result.skipped) {
+    console.warn(
+      `[livecode-tldraw] ${entry.type} "${entry.name}" skipped by save: ${entry.reason}`,
+    );
+  }
+  return [
+    `saved ${result.data.length - failed.length}`,
+    failed.length > 0 ? `${failed.length} failed` : null,
+    result.skipped.length > 0 ? `${result.skipped.length} skipped` : null,
+  ].filter((part) => part !== null).join(" | ");
+}
+
+/**
+ * Unsaved durable entities from `/project/status`, polled while a project is
+ * open (the same gate as the canvas collector). Purely informational: nothing
+ * here ever writes.
+ */
+function useUnsavedEntityCount(
+  serverBaseUrl: string,
+  projectPath: string | null,
+) {
+  const [unsavedCount, setUnsavedCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!projectPath) {
+      setUnsavedCount(null);
+      return;
+    }
+    let cancelled = false;
+    const poll = () => {
+      fetchProjectStatus(serverBaseUrl)
+        .then((status) => {
+          if (cancelled) return;
+          setUnsavedCount(status.data.filter((entry) => entry.unsaved).length);
+        })
+        .catch(() => {
+          if (!cancelled) setUnsavedCount(null);
+        });
+    };
+    poll();
+    const timer = window.setInterval(poll, 2_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [projectPath, serverBaseUrl]);
+
+  return unsavedCount;
 }
 
 function useClientControlBridge(
@@ -1187,28 +1525,3 @@ function hasPianoRollShapes(editor: Editor) {
   return editor.getCurrentPageShapes().some(isPianoRollShape);
 }
 
-function createPianoRollShape(
-  editor: Editor,
-  options:
-    & Partial<PianoRollShape["props"]>
-    & { x?: number; y?: number; id?: PianoRollShape["id"] } = {},
-) {
-  const id = options.id ?? createShapeId();
-  const rollName = options.rollName ?? "melody";
-  editor.createShape<PianoRollShape>({
-    id,
-    type: PIANO_ROLL_SHAPE_TYPE,
-    x: options.x ?? 820,
-    y: options.y ?? 120,
-    props: {
-      w: options.w ?? 560,
-      h: options.h ?? 360,
-      rollName,
-      title: options.title ?? `piano roll: ${rollName}`,
-      showControlPanel: options.showControlPanel ?? true,
-      interactive: options.interactive ?? true,
-    },
-  });
-  editor.select(id);
-  return id;
-}
