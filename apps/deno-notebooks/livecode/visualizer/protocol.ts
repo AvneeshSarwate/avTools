@@ -16,7 +16,9 @@ export interface VisualizerDiagnostic {
 export type WaitCallsiteKind =
   | "timeContextMethod"
   | "timeContextArgumentCall"
-  | "pianoRollLookup";
+  | "pianoRollLookup"
+  /** A `canvasParams(...)` declaration. Observed only; never instrumented. */
+  | "canvasParams";
 
 export interface WaitCallsiteManifestEntry {
   id: string;
@@ -26,14 +28,17 @@ export interface WaitCallsiteManifestEntry {
   kind: WaitCallsiteKind;
   displayName: string;
   /**
-   * For `pianoRollLookup` callsites: the source range of the roll-name
-   * argument expression, so the editor can place an inline widget after it.
+   * For `pianoRollLookup` and `canvasParams` callsites: the source range of
+   * the name argument expression, so the editor can place an inline widget
+   * after it.
    */
   nameArgRange?: SourceRange;
   /**
-   * For `pianoRollLookup` callsites: the static roll name when the name
-   * argument is a string literal (or a template literal without
-   * interpolation). Used as a fallback before the module runs.
+   * For `pianoRollLookup` and `canvasParams` callsites: the static name when
+   * the name argument is a string literal (or a template literal without
+   * interpolation). A piano-roll lookup uses it as a fallback before the
+   * module runs; a params declaration has no runtime resolution, so a
+   * non-literal name simply has no static name and no widget.
    */
   staticName?: string;
 }
