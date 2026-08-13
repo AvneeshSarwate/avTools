@@ -212,6 +212,10 @@ const PROJECT_MANIFEST_FILENAME = "project.avtools-livecode.json";
 const SOURCE_SUFFIX = ".orig.ts";
 const REPO_ROOT = fromFileUrl(new URL("../../../..", import.meta.url));
 const STOP_HOOK_TIMEOUT_MS = 2_000;
+// One shared cadence for every snapshot sampler/broadcast timer (runtime,
+// piano-roll, params, signals). Changed-only gating keeps the idle cost zero;
+// a single constant keeps the channels from drifting apart.
+const SNAPSHOT_TICK_MS = 33;
 const MAX_PREPARED_RUNS_PER_MODULE = 3;
 const DEFAULT_SESSION_ROOT = fromFileUrl(
   new URL("../../.avtools-livecode-sessions", import.meta.url),
@@ -397,7 +401,7 @@ export async function createLivecodeVisualizerServer(
         ),
       });
     }
-  }, 33) as unknown as number;
+  }, SNAPSHOT_TICK_MS) as unknown as number;
 
   registerBuiltinDurableEntityTypes();
   seedDemoPianoRoll();
@@ -414,7 +418,7 @@ export async function createLivecodeVisualizerServer(
         rollCount: Object.keys(snapshot.rolls).length,
       });
     }
-  }, 100) as unknown as number;
+  }, SNAPSHOT_TICK_MS) as unknown as number;
 
   // Params entities are written by plain property assignment in user code, so
   // this tick both adopts that drift as store generations and broadcasts.
@@ -431,7 +435,7 @@ export async function createLivecodeVisualizerServer(
         paramsCount: Object.keys(snapshot.params).length,
       });
     }
-  }, 100) as unknown as number;
+  }, SNAPSHOT_TICK_MS) as unknown as number;
 
   // Signals are published by plain `set` calls that never touch the store, so
   // this tick is where a published value becomes an observed generation. There
@@ -449,7 +453,7 @@ export async function createLivecodeVisualizerServer(
         signalCount: Object.keys(snapshot.signals).length,
       });
     }
-  }, 100) as unknown as number;
+  }, SNAPSHOT_TICK_MS) as unknown as number;
 
   const handler = async (request: Request): Promise<Response> => {
     try {
