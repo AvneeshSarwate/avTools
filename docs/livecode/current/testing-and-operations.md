@@ -1,9 +1,9 @@
 # Current Testing and Operations
 
 Status: task definitions and test inventory checked on 2026-07-21, extended for
-the canvas-params slice and again for the entity-CRUD/persistence slice on
-2026-08-13. The final audit report records which commands were actually run in
-this review.
+the canvas-params slice, again for the entity-CRUD/persistence slice, and again
+for the ephemeral signals slice on 2026-08-13. The final audit report records
+which commands were actually run in this review.
 
 ## Development startup
 
@@ -43,7 +43,7 @@ From `apps/deno-notebooks`:
 
 | Command | Current contents |
 | --- | --- |
-| `deno task test:livecode:unit` | Analyzer transform, runtime singleton, dynamic import, MIDI helper, params store, and durable-entity registry tests (`livecode/tests/entity_registry_test.ts`, which also covers name encoding and the piano-roll store's delete/save/load seams). 77 test cases at this revision. |
+| `deno task test:livecode:unit` | Analyzer transform, runtime singleton, dynamic import, MIDI helper, params store, durable-entity registry (`livecode/tests/entity_registry_test.ts`, which also covers name encoding and the piano-roll store's delete/save/load seams), and signals store (`livecode/tests/signals_store_test.ts`) tests. |
 | `deno task test:livecode:repro` | Core-timing, analyzer, server, and piano-roll regression tests created by the July stability review. Several test names/comments still say `BUG` although assertions now expect fixed behavior. |
 | `deno task test:livecode:server` | Runtime protocol/client-control, LSP bridge, CLI smoke, and default-source integration. |
 | `deno task test:livecode:p5gpu` | Temp-project p5gpu/shared-state snapshot proof; requires an available WebGPU adapter. |
@@ -78,7 +78,10 @@ npm run buildPianoRoll
 ```
 
 The tldraw app consumes the generated ignored bundle. A green tldraw build does
-not prove the source and bundle agree.
+not prove the source and bundle agree — and neither does a green type-check, so
+this is a prerequisite for client work and for the tldraw E2E after any change
+under `src/pianoRoll`. Anyone pulling a commit that touched the component must
+rebuild it locally; the bundle is gitignored on purpose.
 
 ## Recommended full verification
 
@@ -139,6 +142,13 @@ tldraw E2E.
   bindings after launch, a GUI edit reaching `/params/list` with a bumped rev
   and the pane's origin id, a running module's writes reaching the pane readout
   with no client action, and pane rehydration from the snapshot after a reload;
+- the tldraw signal tier: an anchored playhead signal driven by a module loop
+  producing a moving marker in the bound roll view and losing it when the module
+  stops (asserted as server `ended` first, missing marker second), two modules
+  publishing two markers on one melody through both accepted value shapes,
+  scopes over an ephemeral signal and over a durable param leaf both
+  accumulating changing traces in their ring buffers, and a `meta.graph` field
+  rendering its readonly graph row;
 - the tldraw project-mode block, which runs last on its own canvas: booting
   from a temp project created over HTTP, creating an entity plus its first view
   from the GUI surface, an explicit save asserted from Node against the real
@@ -146,7 +156,9 @@ tldraw E2E.
   section going from unsaved to clean across that save, `/project/open`
   reverting live edits to both entity types, a fresh param pane rendering
   bindings with no module running, and duplicate/delete including the surviving
-  view, the removed manifest entry, and the orphaned data file;
+  view, the removed manifest entry, and the orphaned data file, plus the proof
+  that a save writes no signal files and no `"signal"` manifest entries while
+  signals are still live in the store;
 - a temp-project p5gpu snapshot and shared module state.
 
 ### Material gaps
@@ -166,6 +178,11 @@ There are no dedicated automated tests for:
 - params HTTP routes as independent server contracts: `/params/set`
   compare-and-set, its 404 for an undeclared name, and `/params/list`. Params
   coverage is currently the store unit test plus the browser E2E;
+- signals HTTP/WebSocket routes as independent server contracts: `/signals/list`
+  and `/signals/snapshots` are exercised only through the store unit test and
+  the browser E2E. There is also no automated check that a dropped signals
+  socket clears markers, or that a scope dims and freezes on an ended source —
+  both are client-side behaviors the E2E currently reaches only indirectly;
 - livecode runtime reconnect/backoff, browser reload rehydration, queued stops,
   and stale lifecycle ordering in the tldraw client;
 - URL-driven versus client-command project load behavior;

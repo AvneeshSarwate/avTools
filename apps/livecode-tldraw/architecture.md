@@ -21,7 +21,9 @@ and the end-to-end topology and flows are in
 | CodeMirror, LSP bridge, wait decorations | `src/CodeMirrorEditor.tsx`, `src/denoLsp.ts` |
 | Piano-roll shape and server-store bridge | `src/PianoRollShape.tsx`, `src/pianoRollRuntime.tsx` |
 | Params pane shape and server-store bridge | `src/ParamPaneShape.tsx`, `src/paramsRuntime.tsx` |
-| Wire types | `src/livecodeProtocol.ts`, `src/pianoRollProtocol.ts`, `src/clientControlProtocol.ts`, `src/paramsTypes.ts` |
+| Signal scope shape and ephemeral-signal bridge | `src/SignalScopeShape.tsx`, `src/signalsRuntime.tsx` |
+| Wire types | `src/livecodeProtocol.ts`, `src/pianoRollTypes.ts`, `src/paramsTypes.ts`, `src/signalsTypes.ts` |
+| Piano-roll custom element typing | `src/custom-elements.d.ts` |
 | Socket behavior | `src/reconnectingSocket.ts`, `src/serverRequests.ts` |
 | Debug/test surfaces | `src/livecodeTldrawDebug.ts` plus APIs installed by `App.tsx` and `livecodeRuntime.tsx` |
 | Browser tests and fixtures | `tests/`, `public/test-canvases/` |
@@ -40,6 +42,11 @@ npm run test:e2e
 The E2E runner starts its own Deno server and Vite process, then drives Chromium.
 Its Node, Playwright, and browser requirements are described in
 [`../../docs/livecode/current/testing-and-operations.md`](../../docs/livecode/current/testing-and-operations.md).
+
+The piano-roll web component this client embeds is built from
+`apps/browser-projections` into a gitignored bundle. After pulling a change to
+`src/pianoRoll` there, run `npm run buildPianoRoll` in that app before `npm run
+dev` or `npm run test:e2e`.
 
 Do not add detailed architecture here. Update the matching canonical document
 under `docs/livecode/current/`, and update the principles or history trees only
