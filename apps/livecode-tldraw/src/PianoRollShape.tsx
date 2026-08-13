@@ -9,9 +9,15 @@ import {
   TLShape,
 } from 'tldraw'
 import '@avtools/piano-roll'
-import type { PianoRollComponentElement } from './custom-elements'
+import type {
+  PianoRollComponentElement,
+  PianoRollPlayheadMarker,
+} from './custom-elements'
 import type { NoteData, PianoRollData } from './pianoRollTypes'
 import { usePianoRollRuntime } from './pianoRollRuntime'
+import { useSignalsRuntime } from './signalsRuntime'
+import type { SignalEntity } from './signalsTypes'
+import { PIANO_ROLL_ENTITY_TYPE } from './serverRequests'
 
 export const PIANO_ROLL_SHAPE_TYPE = 'piano-roll-view'
 const DEFAULT_PIANO_ROLL_WIDTH = 560
@@ -37,6 +43,21 @@ export type PianoRollShape = TLShape<typeof PIANO_ROLL_SHAPE_TYPE>
 // The element's imperative surface lives beside its JSX declaration in
 // custom-elements.d.ts, so the ref type and the tag type cannot drift apart.
 type PianoRollElement = PianoRollComponentElement
+
+/** One roll view and the marker lines its element is currently rendering. */
+export interface PianoRollMarkerViewState {
+  shapeId: string
+  rollName: string
+  markers: PianoRollPlayheadMarker[]
+}
+
+// Markers live in the web component, not in React state or the tldraw store, so
+// the debug surface reads them back out of the element through this registry.
+const markerViewReaders = new Map<string, () => PianoRollMarkerViewState>()
+
+export function listPianoRollMarkerViews(): PianoRollMarkerViewState[] {
+  return Array.from(markerViewReaders.values(), (read) => read())
+}
 
 export class PianoRollShapeUtil extends BaseBoxShapeUtil<PianoRollShape> {
   static override type = PIANO_ROLL_SHAPE_TYPE
@@ -112,12 +133,85 @@ export function createPianoRollShape(
   return id
 }
 
+/**
+ * The marker feed's whole contract, in one place. A signal anchored at this
+ * roll renders a marker when its value is a number, or an object carrying a
+ * numeric `position` — both in quarter notes, the component's own unit. Every
+ * other shape (strings, objects without a position, nulls) renders nothing
+ * rather than guessing; the process decides what a position means, and the
+ * platform never inspects further. `anchor.path` is carried on the wire but
+ * ignored here in v1.
+ */
+function toPlayheadMarkers(
+  signals: Record<string, SignalEntity>,
+  rollName: string,
+): PianoRollPlayheadMarker[] {
+  const markers: PianoRollPlayheadMarker[] = []
+  for (const signal of Object.values(signals)) {
+    if (signal.ended) continue
+    if (signal.anchor?.type !== PIANO_ROLL_ENTITY_TYPE) continue
+    if (signal.anchor.name !== rollName) continue
+    const position = readMarkerPosition(signal.value)
+    if (position === null) continue
+    markers.push({ id: signal.name, position })
+  }
+  // Sorted so the pushed set has one canonical serialization per state.
+  return markers.sort((a, b) => a.id.localeCompare(b.id))
+}
+
+function readMarkerPosition(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (typeof value !== 'object' || value === null) return null
+  const position = (value as { position?: unknown }).position
+  return typeof position === 'number' && Number.isFinite(position)
+    ? position
+    : null
+}
+
 function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
   const runtime = usePianoRollRuntime()
+  const signalsRuntime = useSignalsRuntime()
   const roll = runtime.rolls[shape.props.rollName]
   const elementRef = useRef<PianoRollElement | null>(null)
   const lastAppliedRevRef = useRef<number | null>(null)
+  const lastMarkerKeyRef = useRef<string | null>(null)
   const originId = useMemo(() => `piano-roll-view-${shape.id}`, [shape.id])
+
+  // Every live signal anchored at this roll, as marker lines. Ended signals and
+  // a dropped signals socket both render as no markers at all: a marker frozen
+  // where a stopped process left it would read as a still-playing one.
+  const markers = useMemo(
+    () =>
+      signalsRuntime.connectionStatus === 'open'
+        ? toPlayheadMarkers(signalsRuntime.signals, shape.props.rollName)
+        : [],
+    [signalsRuntime.connectionStatus, signalsRuntime.signals, shape.props.rollName],
+  )
+
+  useEffect(() => {
+    const el = elementRef.current
+    if (!el) return
+    // The provider already coalesces snapshots to one per frame; this key skips
+    // the redraw a re-pushed identical marker set would otherwise cost.
+    const key = JSON.stringify(markers)
+    if (lastMarkerKeyRef.current === key) return
+    lastMarkerKeyRef.current = key
+    el.setPlayheadMarkers?.(markers)
+  }, [markers, roll])
+
+  useEffect(() => {
+    const shapeId = String(shape.id)
+    markerViewReaders.set(shapeId, () => ({
+      shapeId,
+      rollName: shape.props.rollName,
+      // Read back from the element rather than from `markers`: what the roll is
+      // rendering is the thing worth observing.
+      markers: elementRef.current?.getPlayheadMarkers?.() ?? [],
+    }))
+    return () => {
+      markerViewReaders.delete(shapeId)
+    }
+  }, [shape.id, shape.props.rollName])
 
   useEffect(() => {
     const el = elementRef.current

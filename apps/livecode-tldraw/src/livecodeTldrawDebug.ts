@@ -5,8 +5,19 @@ import type {
   ProjectSaveResponse,
   VisualizerManifestMessage,
 } from './livecodeProtocol'
+import { createLivecodeShape, createModuleId } from './LivecodeEditorShape'
 import { createParamPaneShape } from './ParamPaneShape'
-import { createPianoRollShape } from './PianoRollShape'
+import {
+  createPianoRollShape,
+  listPianoRollMarkerViews,
+} from './PianoRollShape'
+import {
+  createSignalScopeShape,
+  listSignalScopeDebug,
+  readSignalScopeDebug,
+  type SignalScopeDebugState,
+  type SignalScopeSourceType,
+} from './SignalScopeShape'
 import {
   createEntity,
   deleteEntity,
@@ -51,6 +62,18 @@ export interface TldrawRuntimeDebug {
   getSelectedShapeIds(): string[]
   createParamPane(paramsName: string): string | null
   createPianoRollView(rollName: string): string | null
+  /** A second (third, ...) module on the canvas; returns its module id. */
+  createModule(source?: string): string | null
+  createSignalScope(
+    sourceType: SignalScopeSourceType,
+    name: string,
+    options?: { path?: string; windowSec?: number }
+  ): string | null
+  /** What one scope has accumulated; scopes hold samples outside the store. */
+  getScopeState(shapeId: string): SignalScopeDebugState | null
+  getScopeStates(): SignalScopeDebugState[]
+  /** The marker lines the roll view for `rollName` is currently rendering. */
+  getPlayheadMarkers(rollName: string): Array<{ id: string; position: number }>
   createEntity(type: string, name: string): Promise<EntityMutationSuccess>
   duplicateEntity(
     type: string,
@@ -146,6 +169,41 @@ function installDebugApi() {
       const editor = refs.editor
       if (!editor) return null
       return String(createPianoRollShape(editor, { rollName }))
+    },
+    createModule(source) {
+      const editor = refs.editor
+      if (!editor) return null
+      const moduleId = createModuleId()
+      createLivecodeShape(editor, {
+        moduleId,
+        ...(source !== undefined ? { source } : {}),
+      })
+      return moduleId
+    },
+    createSignalScope(sourceType, name, options) {
+      const editor = refs.editor
+      if (!editor) return null
+      return String(
+        createSignalScopeShape(editor, {
+          sourceType,
+          name,
+          path: options?.path ?? '',
+          ...(options?.windowSec !== undefined
+            ? { windowSec: options.windowSec }
+            : {}),
+        })
+      )
+    },
+    getScopeState(shapeId) {
+      return readSignalScopeDebug(shapeId)
+    },
+    getScopeStates() {
+      return listSignalScopeDebug()
+    },
+    getPlayheadMarkers(rollName) {
+      return listPianoRollMarkerViews()
+        .filter((view) => view.rollName === rollName)
+        .flatMap((view) => view.markers)
     },
     // The generic entity actions and the explicit save, headless: agents and the
     // E2E drive these rather than the topbar DOM. A rejected action rejects.

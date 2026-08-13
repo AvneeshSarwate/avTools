@@ -14,7 +14,13 @@ export type WaitCallsiteKind =
   | "timeContextArgumentCall"
   | "pianoRollLookup"
   /** A `canvasParams(...)` declaration. Observed only; never instrumented. */
-  | "canvasParams";
+  | "canvasParams"
+  /**
+   * A `signal(...)` declaration. The whole call is wrapped so the runtime can
+   * attribute the signal to its module; the editor renders no widget for it,
+   * and kind-filtered client code simply skips it.
+   */
+  | "canvasSignal";
 
 export interface WaitCallsiteManifestEntry {
   id: string;
@@ -144,9 +150,28 @@ export interface ProjectCanvasParamPaneView {
   h: number;
 }
 
+/**
+ * A signal-scope view. Unlike the two above it names a binding rather than an
+ * entity: the source it watches may be ephemeral (a signal) or one leaf of a
+ * durable params entity, and nothing it draws is ever persisted.
+ */
+export interface ProjectCanvasScopeView {
+  id: string;
+  sourceType: "signal" | "params";
+  name: string;
+  /** Dot-joined field path into the bound value; empty for whole values. */
+  path: string;
+  windowSec: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface ProjectCanvasState {
   pianoRollViews?: ProjectCanvasPianoRollView[];
   paramPaneViews?: ProjectCanvasParamPaneView[];
+  scopeViews?: ProjectCanvasScopeView[];
 }
 
 /**
