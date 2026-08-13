@@ -36,6 +36,8 @@ import {
   LivecodeRuntimeProvider,
   useLivecodeRuntime,
 } from "./livecodeRuntime";
+import { ParamsRuntimeProvider, useParamsRuntime } from "./paramsRuntime";
+import { createParamPaneShape, ParamPaneShapeUtil } from "./ParamPaneShape";
 import { PianoRollRuntimeProvider } from "./pianoRollRuntime";
 import {
   PIANO_ROLL_SHAPE_TYPE,
@@ -45,7 +47,11 @@ import {
 import { setRuntimeDebugRefs } from "./livecodeTldrawDebug";
 import { createReconnectingSocket } from "./reconnectingSocket";
 
-const shapeUtils = [LivecodeEditorShapeUtil, PianoRollShapeUtil];
+const shapeUtils = [
+  LivecodeEditorShapeUtil,
+  PianoRollShapeUtil,
+  ParamPaneShapeUtil,
+];
 const TLDR_MIME_TYPE = "application/vnd.tldraw+json";
 
 export function App() {
@@ -294,20 +300,22 @@ function LivecodeTldrawPage() {
 
   return (
     <PianoRollRuntimeProvider serverBaseUrl={runtime.serverBaseUrl}>
-      <div className="app-shell">
-        <TopBar editor={editor} onOpenTldrawFile={loadTldrawFile} />
-        <div className="canvas-shell">
-          <Tldraw
-            shapeUtils={shapeUtils}
-            onMount={(mountedEditor) => {
-              setEditor(mountedEditor);
-              if (!projectPath && !canvasUrl && !hasLivecodeShapes(mountedEditor)) {
-                createDefaultLivecodeCanvas(mountedEditor);
-              }
-            }}
-          />
+      <ParamsRuntimeProvider serverBaseUrl={runtime.serverBaseUrl}>
+        <div className="app-shell">
+          <TopBar editor={editor} onOpenTldrawFile={loadTldrawFile} />
+          <div className="canvas-shell">
+            <Tldraw
+              shapeUtils={shapeUtils}
+              onMount={(mountedEditor) => {
+                setEditor(mountedEditor);
+                if (!projectPath && !canvasUrl && !hasLivecodeShapes(mountedEditor)) {
+                  createDefaultLivecodeCanvas(mountedEditor);
+                }
+              }}
+            />
+          </div>
         </div>
-      </div>
+      </ParamsRuntimeProvider>
     </PianoRollRuntimeProvider>
   );
 }
@@ -320,7 +328,15 @@ function TopBar({
   onOpenTldrawFile: (file: File) => Promise<void>;
 }) {
   const runtime = useLivecodeRuntime();
+  const paramsRuntime = useParamsRuntime();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // null while the inline params-name input is closed. Non-modal by design: the
+  // canvas stays interactive while it is open.
+  const [paramPaneDraft, setParamPaneDraft] = useState<string | null>(null);
+  const knownParamsNames = useMemo(
+    () => Object.keys(paramsRuntime.params).sort(),
+    [paramsRuntime.params],
+  );
   const moduleCount = useMemo(() => Object.keys(runtime.modules).length, [
     runtime.modules,
   ]);
@@ -406,6 +422,49 @@ function TopBar({
       >
         New module
       </button>
+      {paramPaneDraft === null
+        ? (
+          <button
+            type="button"
+            disabled={!editor}
+            onClick={() => setParamPaneDraft(knownParamsNames[0] ?? "")}
+          >
+            New params pane
+          </button>
+        )
+        : (
+          <form
+            className="topbar__group"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const paramsName = paramPaneDraft.trim();
+              if (!editor || !paramsName) return;
+              createParamPaneShape(editor, { paramsName });
+              setParamPaneDraft(null);
+            }}
+          >
+            <input
+              autoFocus
+              list="topbar-params-names"
+              placeholder="params name"
+              value={paramPaneDraft}
+              spellCheck={false}
+              onChange={(event) => setParamPaneDraft(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setParamPaneDraft(null);
+              }}
+            />
+            <datalist id="topbar-params-names">
+              {knownParamsNames.map((name) => <option key={name} value={name} />)}
+            </datalist>
+            <button type="submit" disabled={!editor || !paramPaneDraft.trim()}>
+              Add pane
+            </button>
+            <button type="button" onClick={() => setParamPaneDraft(null)}>
+              Cancel
+            </button>
+          </form>
+        )}
 
       <div className="topbar__status">
         <span
