@@ -1,7 +1,7 @@
 import { chromium } from 'playwright'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -36,6 +36,7 @@ let viteProc
 let firstModuleId = ''
 let serverBaseUrl = ''
 let paramPaneShapeId = ''
+let projectRoot = ''
 
 // Fixtures for the params cases. They live here rather than beside those cases
 // because the run block below executes before later top-level declarations are
@@ -68,6 +69,38 @@ export default async function(ctx: TimeContext) {
 `
 /** How tweakpane renders the values `PARAMS_CODE_WRITE_SOURCE` cycles through. */
 const CODE_WRITE_VALUES = ['0.00', '0.10', '0.20', '0.30', '0.40']
+
+// Fixtures for the project-mode cases, which run last on their own canvas.
+const PROJECT_MANIFEST_FILENAME = 'project.avtools-livecode.json'
+const PROJECT_MODULE_PATH = 'modules/main.ts'
+const PROJECT_PARAMS_NAME = 'e2e/project-params'
+const PROJECT_ROLL_NAME = 'e2e/roll'
+const PROJECT_ROLL_COPY_NAME = 'e2e/roll-copy'
+const PIANO_ROLL_ENTITY_TYPE = 'pianoRoll'
+const PARAMS_ENTITY_TYPE = 'params'
+/** Percent-encoded names: every byte outside `[a-zA-Z0-9._-]`, `/` included. */
+const PROJECT_ROLL_DATA_PATH = 'data/pianoRoll/e2e%2Froll.json'
+const PROJECT_PARAMS_DATA_PATH = 'data/params/e2e%2Fproject-params.json'
+const PROJECT_MODULE_SOURCE = `import type { TimeContext } from "@avtools/core-timing";
+import { canvasParams } from "canvas-params";
+
+export const params = canvasParams(
+  "${PROJECT_PARAMS_NAME}",
+  { gain: 0.5, depth: 3 },
+  { depth: { min: 0, max: 8, step: 1 } },
+);
+
+export default async function(ctx: TimeContext) {
+  while (true) {
+    await ctx.waitSec(0.05);
+  }
+}
+`
+const SAVED_ROLL_NOTES = [
+  { pitch: 64, position: 0, duration: 1 },
+  { pitch: 67, position: 1, duration: 0.5 },
+]
+const UNSAVED_ROLL_NOTES = [{ pitch: 72, position: 2, duration: 2 }]
 
 function assert(value, message) {
   if (!value) throw new Error(message)
@@ -124,6 +157,14 @@ try {
   await runParamPaneShowsCodeWritesCase()
   await runParamPaneRehydratesAfterReloadCase()
 
+  // Everything above runs on the transient default canvas. Project mode
+  // replaces it, so these cases come last and never disturb the ones before.
+  await enterProjectMode(viteBaseUrl)
+  await runProjectEntityCreateCase()
+  await runProjectSaveRoundTripCase()
+  await runProjectOpenRestoresSavedTruthCase()
+  await runProjectDuplicateAndDeleteCase()
+
   console.log(
     JSON.stringify({
       ok: true,
@@ -132,6 +173,7 @@ try {
       viteBaseUrl,
       moduleId: firstModuleId,
       sessionRoot,
+      projectRoot,
     })
   )
 } catch (error) {
@@ -496,9 +538,379 @@ async function runParamPaneRehydratesAfterReloadCase() {
   await stopModuleOverHttp(runningModuleId)
 }
 
+/**
+ * Entity creation as the GUI does it: the create action and the first view are
+ * one composite gesture, driven here through the debug surface rather than the
+ * topbar DOM.
+ */
+async function runProjectEntityCreateCase() {
+  const created = await createEntityViaDebug(
+    PIANO_ROLL_ENTITY_TYPE,
+    PROJECT_ROLL_NAME
+  )
+  assertEqual(
+    created.entity,
+    { type: PIANO_ROLL_ENTITY_TYPE, name: PROJECT_ROLL_NAME },
+    'created entity summary'
+  )
+
+  const snapshot = await fetchPianoRollList()
+  assert(
+    snapshot.rolls[PROJECT_ROLL_NAME],
+    `/piano-roll/list should carry "${PROJECT_ROLL_NAME}" after the create`
+  )
+  assertEqual(
+    snapshot.rolls[PROJECT_ROLL_NAME].data.notes,
+    [],
+    'a created roll starts empty'
+  )
+
+  const viewId = await createPianoRollView(PROJECT_ROLL_NAME)
+  assert(viewId, 'debug surface should return the new piano-roll-view shape id')
+  const view = (await getShapes()).find((s) => s.id === viewId)
+  assert(view, 'a piano-roll-view shape should exist after creating one')
+  assertEqual(view.props.rollName, PROJECT_ROLL_NAME, 'created view rollName')
+  // The view renders the entity rather than its waiting placeholder.
+  await waitForPageValue(
+    () =>
+      document.querySelectorAll('.piano-roll-shape__viewport').length === 1 &&
+      document.querySelectorAll('.piano-roll-shape__empty').length === 0,
+    'the created view renders its roll'
+  )
+}
+
+/**
+ * Explicit save writes the manifest `data` list plus one human-readable JSON
+ * file per durable entity. Asserted from Node against the real project tree,
+ * including the percent-encoded filenames slash-containing names produce.
+ */
+async function runProjectSaveRoundTripCase() {
+  await runModule(firstModuleId)
+  const declared = await waitForParamsEntity(
+    PROJECT_PARAMS_NAME,
+    (candidate) => candidate.values.gain === 0.5,
+    'the project module declared its params entity'
+  )
+  assertEqual(declared.updatedBy, 'declare', 'declared project params updatedBy')
+
+  await setPianoRollOverHttp(PROJECT_ROLL_NAME, SAVED_ROLL_NOTES)
+  assertEqual(
+    (await fetchDataStatus(PIANO_ROLL_ENTITY_TYPE, PROJECT_ROLL_NAME)).unsaved,
+    true,
+    'the edited roll reports unsaved before the save'
+  )
+
+  const result = await saveProjectViaDebug()
+  const savedRoll = result.data.find(
+    (entry) => entry.type === PIANO_ROLL_ENTITY_TYPE && entry.name === PROJECT_ROLL_NAME
+  )
+  const savedParams = result.data.find(
+    (entry) => entry.type === PARAMS_ENTITY_TYPE && entry.name === PROJECT_PARAMS_NAME
+  )
+  assert(savedRoll?.ok, `the roll should save: ${JSON.stringify(result)}`)
+  assert(savedParams?.ok, `the params should save: ${JSON.stringify(result)}`)
+  assertEqual(savedRoll.path, PROJECT_ROLL_DATA_PATH, 'encoded roll data path')
+  assertEqual(savedParams.path, PROJECT_PARAMS_DATA_PATH, 'encoded params data path')
+
+  const manifestData = readProjectManifest().data
+  assert(
+    manifestData.some(
+      (entry) =>
+        entry.type === PIANO_ROLL_ENTITY_TYPE &&
+        entry.name === PROJECT_ROLL_NAME &&
+        entry.path === PROJECT_ROLL_DATA_PATH
+    ),
+    `manifest data should list the roll: ${JSON.stringify(manifestData)}`
+  )
+  assert(
+    manifestData.some(
+      (entry) =>
+        entry.type === PARAMS_ENTITY_TYPE &&
+        entry.name === PROJECT_PARAMS_NAME &&
+        entry.path === PROJECT_PARAMS_DATA_PATH
+    ),
+    `manifest data should list the params entity: ${JSON.stringify(manifestData)}`
+  )
+
+  const rollFile = readProjectJson(PROJECT_ROLL_DATA_PATH)
+  assertEqual(rollFile.type, PIANO_ROLL_ENTITY_TYPE, 'saved roll file type')
+  assertEqual(rollFile.name, PROJECT_ROLL_NAME, 'saved roll file name')
+  assertEqual(
+    rollFile.data.notes.map((note) => [note.pitch, note.position, note.duration]),
+    SAVED_ROLL_NOTES.map((note) => [note.pitch, note.position, note.duration]),
+    'saved roll notes'
+  )
+
+  const paramsFile = readProjectJson(PROJECT_PARAMS_DATA_PATH)
+  assertEqual(paramsFile.type, PARAMS_ENTITY_TYPE, 'saved params file type')
+  assertEqual(paramsFile.values, { gain: 0.5, depth: 3 }, 'saved params values')
+  assertEqual(
+    paramsFile.meta,
+    { depth: { min: 0, max: 8, step: 1 } },
+    'saved params meta'
+  )
+
+  // What the unsaved pill reads: both entities go clean on the same save.
+  assertEqual(
+    (await fetchDataStatus(PIANO_ROLL_ENTITY_TYPE, PROJECT_ROLL_NAME)).unsaved,
+    false,
+    'the roll reports saved after the save'
+  )
+  assertEqual(
+    (await fetchDataStatus(PARAMS_ENTITY_TYPE, PROJECT_PARAMS_NAME)).unsaved,
+    false,
+    'the params entity reports saved after the save'
+  )
+}
+
+/**
+ * Open adopts disk truth: live values that were never saved are replaced by the
+ * saved ones. The payoff is the last assertion — a pane created with no module
+ * running renders real bindings, because the file carried `meta`.
+ */
+async function runProjectOpenRestoresSavedTruthCase() {
+  await stopModule(firstModuleId)
+  await waitForServerRunState(firstModuleId, false, 'project module stopped before the reopen')
+
+  await setPianoRollOverHttp(PROJECT_ROLL_NAME, UNSAVED_ROLL_NOTES)
+  await serverPostJson('/params/set', {
+    name: PROJECT_PARAMS_NAME,
+    values: { gain: 0.9 },
+  })
+  await waitForParamsEntity(
+    PROJECT_PARAMS_NAME,
+    (candidate) => candidate.values.gain === 0.9,
+    'the live param edit landed before the reopen'
+  )
+
+  await serverPostJson('/project/open', { projectPath: projectRoot })
+
+  const restoredRoll = (await fetchPianoRollList()).rolls[PROJECT_ROLL_NAME]
+  assertEqual(
+    restoredRoll.data.notes.map((note) => note.pitch),
+    SAVED_ROLL_NOTES.map((note) => note.pitch),
+    'open restores the saved roll over the live one'
+  )
+  const restoredParams = await fetchParamsEntity(PROJECT_PARAMS_NAME)
+  assertEqual(restoredParams.values.gain, 0.5, 'open restores the saved param value')
+  assertEqual(restoredParams.updatedBy, 'load', 'a loaded params entity records its origin')
+  assertEqual(
+    restoredParams.meta,
+    { depth: { min: 0, max: 8, step: 1 } },
+    'the loaded params entity carries its saved meta'
+  )
+
+  const activeModules = await fetchActiveModuleIds()
+  assertEqual(activeModules, [], 'no module is running for the pre-launch pane')
+  paramPaneShapeId = await createParamPane(PROJECT_PARAMS_NAME)
+  assert(paramPaneShapeId, 'debug surface should return the new pane shape id')
+  await waitForParamsBindingValue(
+    'gain',
+    ['0.50'],
+    'a fresh pane renders saved bindings with no module running'
+  )
+}
+
+/**
+ * Duplicate is the variations gesture and delete is its counterweight: the copy
+ * is live and saved, and deleting the entity leaves the view (a view is not the
+ * entity) plus the old data file (manifest-only remove) behind.
+ */
+async function runProjectDuplicateAndDeleteCase() {
+  const duplicated = await duplicateEntityViaDebug(
+    PIANO_ROLL_ENTITY_TYPE,
+    PROJECT_ROLL_NAME,
+    PROJECT_ROLL_COPY_NAME
+  )
+  assertEqual(
+    duplicated.entity,
+    { type: PIANO_ROLL_ENTITY_TYPE, name: PROJECT_ROLL_COPY_NAME },
+    'duplicate returns the new entity'
+  )
+
+  const rolls = (await fetchPianoRollList()).rolls
+  assert(rolls[PROJECT_ROLL_NAME], 'the source roll survives a duplicate')
+  assert(rolls[PROJECT_ROLL_COPY_NAME], 'the copy is live after a duplicate')
+  assertEqual(
+    rolls[PROJECT_ROLL_COPY_NAME].data.notes.map((note) => note.pitch),
+    rolls[PROJECT_ROLL_NAME].data.notes.map((note) => note.pitch),
+    'the copy carries the source notes'
+  )
+
+  const copyViewId = await createPianoRollView(PROJECT_ROLL_COPY_NAME)
+  assert(copyViewId, 'the copy should get its own view')
+
+  const saved = await saveProjectViaDebug()
+  const savedCopy = saved.data.find((entry) => entry.name === PROJECT_ROLL_COPY_NAME)
+  assert(savedCopy?.ok, `the copy should save: ${JSON.stringify(saved.data)}`)
+  assert(
+    existsSync(path.join(projectRoot, savedCopy.path)),
+    'the copy has a data file on disk'
+  )
+  assert(
+    readProjectManifest().data.some((entry) => entry.name === PROJECT_ROLL_COPY_NAME),
+    'the manifest lists the copy after the save'
+  )
+
+  await deleteEntityViaDebug(PIANO_ROLL_ENTITY_TYPE, PROJECT_ROLL_COPY_NAME)
+  assert(
+    !(await fetchPianoRollList()).rolls[PROJECT_ROLL_COPY_NAME],
+    'delete removes the entity from the store'
+  )
+  await waitForPageValue(
+    () => document.querySelectorAll('.piano-roll-shape__empty').length === 1,
+    'the deleted entity leaves its view showing the waiting placeholder'
+  )
+  assert(
+    (await getShapes()).some((shape) => shape.id === copyViewId),
+    'deleting an entity never deletes its views'
+  )
+
+  const resaved = await saveProjectViaDebug()
+  assert(
+    !resaved.data.some((entry) => entry.name === PROJECT_ROLL_COPY_NAME),
+    'the next save no longer writes the deleted entity'
+  )
+  assert(
+    !readProjectManifest().data.some((entry) => entry.name === PROJECT_ROLL_COPY_NAME),
+    'the manifest entry for the deleted entity is gone'
+  )
+  assert(
+    existsSync(path.join(projectRoot, savedCopy.path)),
+    'the orphaned data file is left on disk, like a removed module source'
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Project mode renders no default canvas, so the project has to carry a module
+ * before the boot waits below can resolve. The navigation replaces the canvas
+ * every earlier case ran on, which is why these cases come last.
+ */
+async function enterProjectMode(viteBaseUrl) {
+  projectRoot = path.join(sessionRoot, 'project-mode')
+  await serverPostJson('/project/create', {
+    projectPath: projectRoot,
+    name: 'tldraw-e2e-project',
+    modules: [
+      {
+        path: PROJECT_MODULE_PATH,
+        title: 'params module',
+        sourceText: PROJECT_MODULE_SOURCE,
+      },
+    ],
+  })
+
+  await page.goto(projectUrl(viteBaseUrl, serverBaseUrl, projectRoot), {
+    waitUntil: 'domcontentloaded',
+  })
+  await page.locator('.livecode-shape').first().waitFor({ timeout: 20_000 })
+  await waitForPageValue(
+    () => Boolean(window.__livecodeTldrawRuntimeDebug),
+    'tldraw runtime debug hooks installed in project mode',
+    10_000
+  )
+  await page.evaluate(() => window.__livecodeTldrawRuntimeDebug?.connect())
+  await waitForTldrawReady()
+  firstModuleId = await waitForFirstModuleId()
+  assertEqual(firstModuleId, PROJECT_MODULE_PATH, 'project module id after navigation')
+}
+
+function createEntityViaDebug(type, name) {
+  return page.evaluate(
+    ({ type, name }) => window.__livecodeTldrawRuntimeDebug?.createEntity(type, name),
+    { type, name }
+  )
+}
+
+function duplicateEntityViaDebug(type, sourceName, targetName) {
+  return page.evaluate(
+    ({ type, sourceName, targetName }) =>
+      window.__livecodeTldrawRuntimeDebug?.duplicateEntity(type, sourceName, targetName),
+    { type, sourceName, targetName }
+  )
+}
+
+function deleteEntityViaDebug(type, name) {
+  return page.evaluate(
+    ({ type, name }) => window.__livecodeTldrawRuntimeDebug?.deleteEntity(type, name),
+    { type, name }
+  )
+}
+
+function saveProjectViaDebug() {
+  return page.evaluate(() => window.__livecodeTldrawRuntimeDebug?.saveProject())
+}
+
+function createPianoRollView(rollName) {
+  return page.evaluate(
+    (rollName) =>
+      window.__livecodeTldrawRuntimeDebug?.createPianoRollView(rollName) ?? null,
+    rollName
+  )
+}
+
+function readProjectManifest() {
+  return readProjectJson(PROJECT_MANIFEST_FILENAME)
+}
+
+function readProjectJson(relativePath) {
+  return JSON.parse(readFileSync(path.join(projectRoot, relativePath), 'utf8'))
+}
+
+async function fetchDataStatus(type, name) {
+  const status = await serverGetJson('/project/status')
+  const entry = status.data.find(
+    (candidate) => candidate.type === type && candidate.name === name
+  )
+  if (!entry) {
+    throw new Error(
+      `No /project/status data row for ${type} "${name}": ${JSON.stringify(status.data)}`
+    )
+  }
+  return entry
+}
+
+async function fetchActiveModuleIds() {
+  const status = await serverGetJson('/runtime/status')
+  return status.activeModules.map((entry) => entry.moduleId)
+}
+
+function fetchPianoRollList() {
+  return serverGetJson('/piano-roll/list')
+}
+
+function setPianoRollOverHttp(name, notes) {
+  return serverPostJson('/piano-roll/set', {
+    name,
+    data: { notes },
+    source: 'client',
+    label: 'E2E edit',
+  })
+}
+
+async function serverGetJson(pathname) {
+  const response = await fetch(`${serverBaseUrl}${pathname}`)
+  if (!response.ok) {
+    throw new Error(`${pathname} failed with ${response.status}: ${await response.text()}`)
+  }
+  return await response.json()
+}
+
+async function serverPostJson(pathname, body) {
+  const response = await fetch(`${serverBaseUrl}${pathname}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    throw new Error(`${pathname} failed with ${response.status}: ${await response.text()}`)
+  }
+  return await response.json()
+}
 
 async function setSource(source) {
   await page.evaluate(({ moduleId, source }) => {
@@ -815,6 +1227,12 @@ function sleep(ms) {
 function tldrawUrl(viteBaseUrl, serverBaseUrl) {
   const url = new URL('/', viteBaseUrl)
   url.searchParams.set('serverBaseUrl', serverBaseUrl)
+  return url.href
+}
+
+function projectUrl(viteBaseUrl, serverBaseUrl, projectPath) {
+  const url = new URL(tldrawUrl(viteBaseUrl, serverBaseUrl))
+  url.searchParams.set('projectPath', projectPath)
   return url.href
 }
 
