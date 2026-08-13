@@ -146,9 +146,13 @@ mount always runs, later snapshots whose `updatedBy` is this pane's origin are
 skipped, and each binding also refuses a snapshot at or below the rev the
 server assigned to its own most recent write. A binding the user is actively
 editing — focused, under an active pointer gesture, or with a write in flight —
-is never refreshed; the pane catches it up when the gesture ends, which it
-observes through capture-phase `pointerup`/`pointercancel` listeners because the
-shape body stops bubbling.
+is never refreshed; the pane catches it up when the editing session ends, which
+it observes through capture-phase `pointerup`/`pointercancel` listeners because
+the shape body stops bubbling. Pressing Enter in a focused field ends a
+keyboard editing session the same way: after tweakpane's own commit handler
+runs, the pane blurs the field and catches it up, so a committed field resumes
+following server truth instead of holding the monitor stale while it keeps
+focus.
 
 ## Tldraw store synchronization
 
