@@ -16,3 +16,4 @@ export type * from "./project.ts";
 export type * from "./runtime.ts";
 export type * from "./saved_entities.ts";
 export type * from "./signals.ts";
+export type * from "./sync.ts";
