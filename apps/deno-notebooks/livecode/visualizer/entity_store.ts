@@ -206,11 +206,6 @@ export function consumeEntityTypeChanges(
   return { changed, deleted };
 }
 
-/** Read-only: whether a tick would find anything to ship. */
-export function hasPendingEntityChanges(type: string): boolean {
-  return storeFor(type).dirtyNames.size > 0;
-}
-
 export function nextEntitySnapshotSeq(type: string): number {
   const store = storeFor(type);
   store.snapshotSeq += 1;
