@@ -8,11 +8,20 @@ import {
   createShapeId,
   useEditor,
 } from "tldraw";
-import { CodeMirrorEditor, type PianoRollCallDecoration } from "./CodeMirrorEditor";
+import {
+  CodeMirrorEditor,
+  type ParamPaneCallDecoration,
+  type PianoRollCallDecoration,
+} from "./CodeMirrorEditor";
 import { DEFAULT_LIVECODE_SOURCE } from "./defaultSource";
 import { livecodeDocumentUri } from "./denoLsp";
 import type { SourceRange } from "./livecodeProtocol";
 import { useLivecodeRuntime } from "./livecodeRuntime";
+import {
+  createParamPaneShape,
+  PARAM_PANE_SHAPE_TYPE,
+  type ParamPaneShape,
+} from "./ParamPaneShape";
 import {
   PIANO_ROLL_SHAPE_TYPE,
   type PianoRollShape,
@@ -139,6 +148,22 @@ function LivecodeEditorShapeComponent(
     return out;
   }, [moduleState?.manifest, moduleState?.pianoRollLookups]);
 
+  // Params have no runtime name resolution, so only a static literal name
+  // produces a widget.
+  const paramPaneCallsites = useMemo<ParamPaneCallDecoration[]>(() => {
+    if (!moduleState?.manifest) return [];
+    const out: ParamPaneCallDecoration[] = [];
+    for (const callsite of moduleState.manifest.callsites) {
+      if (callsite.kind !== "canvasParams") continue;
+      if (!callsite.nameArgRange || callsite.staticName === undefined) continue;
+      out.push({
+        at: callsite.nameArgRange.to,
+        paramsName: callsite.staticName,
+      });
+    }
+    return out;
+  }, [moduleState?.manifest]);
+
   const openPianoRoll = useCallback(
     (rollName: string) => {
       const existing = editor
@@ -169,6 +194,28 @@ function LivecodeEditorShapeComponent(
       editor.zoomToSelection();
     },
     [editor, shape.id, shape.x, shape.y, shape.props.w],
+  );
+
+  const openParamPane = useCallback(
+    (paramsName: string) => {
+      const existing = editor
+        .getCurrentPageShapes()
+        .find((s): s is ParamPaneShape =>
+          s.type === PARAM_PANE_SHAPE_TYPE && s.props.paramsName === paramsName
+        );
+      if (existing) {
+        editor.select(existing.id);
+        editor.zoomToSelection();
+        return;
+      }
+      createParamPaneShape(editor, {
+        x: shape.x + shape.props.w + 40,
+        y: shape.y,
+        paramsName,
+      });
+      editor.zoomToSelection();
+    },
+    [editor, shape.x, shape.y, shape.props.w],
   );
 
   const diagnostics = moduleState?.diagnostics ?? [];
@@ -257,9 +304,11 @@ function LivecodeEditorShapeComponent(
           documentUri={documentUri}
           activeRanges={activeRanges}
           pianoRollCallsites={pianoRollCallsites}
+          paramPaneCallsites={paramPaneCallsites}
           lspClient={runtime.lspClient}
           readOnly={runtime.connectionStatus === "connecting"}
           onOpenPianoRoll={openPianoRoll}
+          onOpenParamPane={openParamPane}
           onChange={(next) => {
             setModuleSource(shape.props.moduleId, next);
             editor.updateShape({
