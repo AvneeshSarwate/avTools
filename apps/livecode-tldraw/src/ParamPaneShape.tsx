@@ -207,18 +207,34 @@ function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
   }, [handleLeafChange, structureKey])
 
   // The shape body stops bubbling, so gesture ends are observed in the capture
-  // phase. Releasing a control resumes refreshes and catches it up.
+  // phase. Releasing a control resumes refreshes and catches it up. Enter ends
+  // a keyboard editing session the same way: the blur is deferred one tick so
+  // tweakpane's own commit handler (and its in-flight write guard) runs first,
+  // otherwise a focused field would hold the monitor stale indefinitely.
   useEffect(() => {
     const endGesture = () => {
       if (!activeEntryRef.current) return
       activeEntryRef.current = null
       applyEntity(latestEntityRef.current)
     }
+    const endKeyboardEdit = (event: KeyboardEvent) => {
+      if (event.key !== 'Enter') return
+      const container = containerRef.current
+      const focused = document.activeElement
+      if (!container || !(focused instanceof HTMLElement)) return
+      if (!container.contains(focused)) return
+      setTimeout(() => {
+        focused.blur()
+        applyEntity(latestEntityRef.current)
+      }, 0)
+    }
     window.addEventListener('pointerup', endGesture, true)
     window.addEventListener('pointercancel', endGesture, true)
+    window.addEventListener('keydown', endKeyboardEdit, true)
     return () => {
       window.removeEventListener('pointerup', endGesture, true)
       window.removeEventListener('pointercancel', endGesture, true)
+      window.removeEventListener('keydown', endKeyboardEdit, true)
     }
   }, [applyEntity])
 
