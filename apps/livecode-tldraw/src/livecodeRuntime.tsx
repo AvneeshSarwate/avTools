@@ -26,6 +26,7 @@ import type {
   AnalyzeResponse,
   HealthResponse,
   HistoryEntry,
+  LaunchModuleRequest,
   PreparedBuild,
   PreparedFailure,
   ProjectShadowCheckResponse,
@@ -53,6 +54,11 @@ export type RunStatus =
   | "stopped"
   | "error"
   | "unknown";
+
+export interface RunModuleOptions {
+  /** Ask the server to stop this module's running run and start this one. */
+  replaceRunning?: boolean;
+}
 
 export interface ModuleViewState {
   moduleId: string;
@@ -105,7 +111,9 @@ export interface LivecodeRuntimeApi {
   ): void;
   unregisterModule(moduleId: string): void;
   setModuleSource(moduleId: string, sourceText: string): void;
-  runModule(moduleId: string): Promise<void>;
+  runModule(moduleId: string, options?: RunModuleOptions): Promise<void>;
+  /** Run over the module's own running run: `runModule` with explicit consent. */
+  replaceModule(moduleId: string): Promise<void>;
   stopModule(moduleId: string): Promise<void>;
 }
 
@@ -679,7 +687,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
   );
 
   const runModule = useCallback(
-    async (moduleId: string) => {
+    async (moduleId: string, options: RunModuleOptions = {}) => {
       const record = modulesRef.current.get(moduleId);
       if (!record) return;
       record.runStatus = "running";
@@ -715,6 +723,10 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
           }
         }
 
+        // Claiming the new run before posting is what keeps the terminal guard
+        // in `applyModuleRunSnapshot` sound during a replacement: the run being
+        // replaced reports its terminal with the previous ID, which no longer
+        // matches and is correctly ignored.
         record.activeGeneratedRunId = build.generatedRunId;
         await postJson("/runtime/launch", {
           moduleId: build.moduleId,
@@ -724,7 +736,8 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
           projectSourceHash: build.projectSourceHash,
           projectModulePath: build.projectModulePath,
           manifest: build.manifest,
-        });
+          ...(options.replaceRunning ? { replaceRunning: true } : {}),
+        } satisfies LaunchModuleRequest);
         record.runStatus = "running";
         record.latestError = null;
         publishModule(record);
@@ -738,6 +751,14 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       }
     },
     [ensureBuild, fetchProjectDiagnostics, postJson, publishModule],
+  );
+
+  // Replacement is an explicit gesture, never an implicit consequence of Run:
+  // the server refuses a launch over a running module unless this flag says the
+  // user asked for it.
+  const replaceModule = useCallback(
+    (moduleId: string) => runModule(moduleId, { replaceRunning: true }),
+    [runModule],
   );
 
   const stopModule = useCallback(
@@ -786,6 +807,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       unregisterModule,
       setModuleSource,
       runModule,
+      replaceModule,
       stopModule,
     }),
     [
@@ -807,6 +829,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       unregisterModule,
       setModuleSource,
       runModule,
+      replaceModule,
       stopModule,
     ],
   );
@@ -870,8 +893,15 @@ function applyModuleRunSnapshot(
   };
 
   const matchesActiveRun = record.activeGeneratedRunId === run.generatedRunId;
+  // With no active-run claim there is nothing to protect, so a terminal
+  // snapshot is server truth and applies. That case is ordinary: an edit calls
+  // `setModuleSource`, which nulls the claim, and a module edited while it ran
+  // would otherwise never see its own natural completion and stay `running`
+  // until a reload. The guard exists only to stop an OLD run's terminal from
+  // clobbering a NEWER client-initiated launch, which stays covered because
+  // `runModule` sets the new generated run ID before it posts.
   const mayApplyTerminalState = matchesActiveRun ||
-    (record.runStatus === "unknown" && !record.activeGeneratedRunId);
+    !record.activeGeneratedRunId;
   if (!mayApplyTerminalState) return;
 
   record.activeGeneratedRunId = null;
