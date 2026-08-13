@@ -8,7 +8,10 @@ import {
   useRef,
   useState,
 } from "react";
-import type { SignalEntity, SignalsSnapshot } from "./signalsTypes";
+import type {
+  SignalEntity,
+  SignalsSnapshot,
+} from "@avtools/livecode-protocol";
 import { createReconnectingSocket } from "./reconnectingSocket";
 import { serverWebSocketUrl } from "./serverRequests";
 

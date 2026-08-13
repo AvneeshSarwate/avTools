@@ -1,5 +1,5 @@
 import type React from 'react'
-import type { NoteData, NoteDataInput } from './pianoRollTypes'
+import type { NoteData, NoteDataInput } from '@avtools/livecode-protocol'
 
 declare module '@avtools/piano-roll'
 

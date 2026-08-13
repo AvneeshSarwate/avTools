@@ -12,7 +12,8 @@ import type {
   PianoRollData,
   PianoRollObject,
   PianoRollSnapshot,
-} from "./pianoRollTypes";
+  SetPianoRollRequest,
+} from "@avtools/livecode-protocol";
 import { createReconnectingSocket } from "./reconnectingSocket";
 import { postServerJson, serverWebSocketUrl } from "./serverRequests";
 
@@ -123,14 +124,15 @@ export function PianoRollRuntimeProvider({
       data: PianoRollData,
       options: { originId?: string; label?: string } = {},
     ) => {
-      return await postJson<PianoRollObject>("/piano-roll/set", {
+      const body: SetPianoRollRequest = {
         name,
         data,
         originId: options.originId,
         label: options.label ?? "Edit piano roll",
         source: "client",
         undoable: true,
-      });
+      };
+      return await postJson<PianoRollObject>("/piano-roll/set", body);
     },
     [postJson],
   );
