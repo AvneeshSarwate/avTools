@@ -9,7 +9,8 @@ import {
   TLShape,
 } from 'tldraw'
 import '@avtools/piano-roll'
-import type { NoteData, NoteDataInput, PianoRollData } from './pianoRollTypes'
+import type { PianoRollComponentElement } from './custom-elements'
+import type { NoteData, PianoRollData } from './pianoRollTypes'
 import { usePianoRollRuntime } from './pianoRollRuntime'
 
 export const PIANO_ROLL_SHAPE_TYPE = 'piano-roll-view'
@@ -33,15 +34,9 @@ declare module 'tldraw' {
 
 export type PianoRollShape = TLShape<typeof PIANO_ROLL_SHAPE_TYPE>
 
-interface PianoRollElement extends HTMLElement {
-  width?: number
-  height?: number
-  initialNotes?: Array<[string, NoteData]>
-  interactive?: boolean
-  showControlPanel?: boolean
-  setNotes?: (notes: NoteDataInput[]) => void
-  fitZoomToNotes?: () => void
-}
+// The element's imperative surface lives beside its JSX declaration in
+// custom-elements.d.ts, so the ref type and the tag type cannot drift apart.
+type PianoRollElement = PianoRollComponentElement
 
 export class PianoRollShapeUtil extends BaseBoxShapeUtil<PianoRollShape> {
   static override type = PIANO_ROLL_SHAPE_TYPE
