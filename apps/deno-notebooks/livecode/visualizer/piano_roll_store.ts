@@ -221,7 +221,11 @@ export function makePianoRollSnapshot(
   options: { force?: boolean } = {},
 ): PianoRollSnapshot | null {
   if (!options.force && !dirty) return null;
-  dirty = false;
+  // A forced snapshot answers exactly one caller (an HTTP list, or a socket
+  // that just opened). Only the broadcast tick may clear the flag: otherwise
+  // that one caller swallows the generation every other client is still
+  // waiting for, and a roll created over HTTP never reaches the open views.
+  if (!options.force) dirty = false;
   return {
     type: "pianoRollSnapshot",
     seq: ++snapshotSeq,
