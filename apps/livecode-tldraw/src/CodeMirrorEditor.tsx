@@ -12,6 +12,7 @@ import type { SourceRange } from './livecodeProtocol'
 
 const setWaitDecorationsEffect = StateEffect.define<SourceRange[]>()
 const setPianoRollDecorationsEffect = StateEffect.define<PianoRollCallDecoration[]>()
+const setParamPaneDecorationsEffect = StateEffect.define<ParamPaneCallDecoration[]>()
 const debugEditorViews = new Map<string, EditorView>()
 
 declare global {
@@ -36,7 +37,18 @@ export interface PianoRollCallDecoration {
   resolvedAtRuntime: boolean
 }
 
+export interface ParamPaneCallDecoration {
+  /** End offset of the params-name argument; the widget is placed after it. */
+  at: number
+  /**
+   * Declared params name. Always a static literal: params have no runtime
+   * name resolution, so a computed name gets no widget.
+   */
+  paramsName: string
+}
+
 export type OpenPianoRollCallback = (rollName: string) => void
+export type OpenParamPaneCallback = (paramsName: string) => void
 
 const waitLineDecoration = Decoration.line({
   attributes: { class: 'ltc-wait-line' },
@@ -127,11 +139,71 @@ class PianoRollOpenWidget extends WidgetType {
   }
 }
 
+const paramPaneDecorationField = StateField.define<DecorationSet>({
+  create() {
+    return Decoration.none
+  },
+  update(decorations, transaction) {
+    decorations = decorations.map(transaction.changes)
+    for (const effect of transaction.effects) {
+      if (!effect.is(setParamPaneDecorationsEffect)) continue
+      const adds: Range<Decoration>[] = effect.value.map((entry) => {
+        const at = clampPosition(transaction.state.doc.length, entry.at)
+        return Decoration.widget({
+          widget: new ParamPaneOpenWidget(entry.paramsName),
+          side: 1,
+        }).range(at)
+      })
+      decorations = Decoration.set(adds, true)
+    }
+    return decorations
+  },
+  provide: (field) => EditorView.decorations.from(field),
+})
+
+class ParamPaneOpenWidget extends WidgetType {
+  constructor(readonly paramsName: string) {
+    super()
+  }
+
+  override eq(other: ParamPaneOpenWidget) {
+    return other.paramsName === this.paramsName
+  }
+
+  override toDOM(view: EditorView) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'ltc-param-pane-open-btn'
+    button.textContent = `🎛 open ${this.paramsName}`
+    button.title = `Open a params pane for "${this.paramsName}"`
+    button.addEventListener('pointerdown', (event) => {
+      event.stopPropagation()
+    })
+    button.addEventListener('click', (event) => {
+      event.stopPropagation()
+      event.preventDefault()
+      view.focus()
+      dispatchParamPaneOpen(view, this.paramsName)
+    })
+    return button
+  }
+
+  override ignoreEvent() {
+    return true
+  }
+}
+
 const pianoRollOpenListeners = new Map<EditorView, OpenPianoRollCallback>()
+const paramPaneOpenListeners = new Map<EditorView, OpenParamPaneCallback>()
 
 function dispatchPianoRollOpen(view: EditorView, rollName: string) {
   const listener = pianoRollOpenListeners.get(view)
   listener?.(rollName)
+}
+
+function dispatchParamPaneOpen(view: EditorView, paramsName: string) {
+  const listener = paramPaneOpenListeners.get(view)
+  listener?.(paramsName)
 }
 
 const livecodeTheme = EditorView.theme({
@@ -174,6 +246,24 @@ const livecodeTheme = EditorView.theme({
   '.ltc-piano-roll-open-btn:hover': {
     background: 'rgba(37, 176, 141, 0.32)',
   },
+  '.ltc-param-pane-open-btn': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    margin: '0 4px',
+    border: '1px solid rgba(122, 137, 224, 0.45)',
+    borderRadius: '999px',
+    padding: '0 6px',
+    color: '#d7dcff',
+    background: 'rgba(122, 137, 224, 0.18)',
+    fontSize: '11px',
+    lineHeight: '18px',
+    cursor: 'pointer',
+    userSelect: 'none',
+    verticalAlign: 'middle',
+  },
+  '.ltc-param-pane-open-btn:hover': {
+    background: 'rgba(122, 137, 224, 0.32)',
+  },
 })
 
 interface CodeMirrorEditorProps {
@@ -181,10 +271,12 @@ interface CodeMirrorEditorProps {
   documentUri: string
   activeRanges: SourceRange[]
   pianoRollCallsites: PianoRollCallDecoration[]
+  paramPaneCallsites: ParamPaneCallDecoration[]
   lspClient: LSClient | null
   readOnly?: boolean
   onChange(next: string): void
   onOpenPianoRoll?: OpenPianoRollCallback
+  onOpenParamPane?: OpenParamPaneCallback
 }
 
 export function CodeMirrorEditor({
@@ -192,10 +284,12 @@ export function CodeMirrorEditor({
   documentUri,
   activeRanges,
   pianoRollCallsites,
+  paramPaneCallsites,
   lspClient,
   readOnly = false,
   onChange,
   onOpenPianoRoll,
+  onOpenParamPane,
 }: CodeMirrorEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -214,6 +308,7 @@ export function CodeMirrorEditor({
       livecodeTheme,
       waitDecorationField,
       pianoRollDecorationField,
+      paramPaneDecorationField,
       editableCompartmentRef.current.of(EditorView.editable.of(!readOnly)),
       lspCompartmentRef.current.of([]),
       EditorView.updateListener.of((update) => {
@@ -252,6 +347,7 @@ export function CodeMirrorEditor({
     return () => {
       debugEditorViews.delete(documentUri)
       pianoRollOpenListeners.delete(view)
+      paramPaneOpenListeners.delete(view)
       view.destroy()
       viewRef.current = null
     }
@@ -266,6 +362,16 @@ export function CodeMirrorEditor({
       pianoRollOpenListeners.delete(view)
     }
   }, [onOpenPianoRoll])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    if (onOpenParamPane) {
+      paramPaneOpenListeners.set(view, onOpenParamPane)
+    } else {
+      paramPaneOpenListeners.delete(view)
+    }
+  }, [onOpenParamPane])
 
   useEffect(() => {
     const view = viewRef.current
@@ -306,6 +412,14 @@ export function CodeMirrorEditor({
       effects: setPianoRollDecorationsEffect.of(pianoRollCallsites),
     })
   }, [pianoRollCallsites])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({
+      effects: setParamPaneDecorationsEffect.of(paramPaneCallsites),
+    })
+  }, [paramPaneCallsites])
 
   useEffect(() => {
     const view = viewRef.current

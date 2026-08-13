@@ -453,3 +453,134 @@ export default async function(ctx: TimeContext) {
     '__tcvVisualizedAwait("module-test", "id_1", ctx.waitSec(0.05))',
   );
 });
+
+Deno.test("analyzer records top-level canvasParams declarations without editing them", () => {
+  const result = analyze(`
+import type { TimeContext } from "@avtools/core-timing";
+import { canvasParams } from "canvas-params";
+
+export const params = canvasParams("kinaree/rects", {
+  launchRate: 10.5,
+  strobe: { rate: 0 },
+});
+
+export default async function(_ctx: TimeContext) {}
+`);
+
+  assertEquals(result.type, "analyzeSuccess");
+  if (result.type !== "analyzeSuccess") return;
+
+  assertEquals(result.manifest.callsites.length, 1);
+  const entry = result.manifest.callsites[0];
+  assertEquals(entry.kind, "canvasParams");
+  assertEquals(entry.displayName, "canvasParams");
+  assertEquals(entry.staticName, "kinaree/rects");
+  assert(entry.nameArgRange, "nameArgRange should be present");
+  if (!entry.nameArgRange) return;
+  assert(
+    entry.nameArgRange.from < entry.nameArgRange.to,
+    "nameArgRange should be ordered",
+  );
+
+  // No-edit path: the call is recorded, never wrapped, and a module whose only
+  // callsite is an observation imports no runtime helpers.
+  assertStringIncludes(
+    result.transformedCode,
+    'export const params = canvasParams("kinaree/rects", {',
+  );
+  assert(
+    !result.transformedCode.includes("__tcv"),
+    "canvasParams callsites must not be instrumented",
+  );
+  assert(
+    !result.transformedCode.includes("timeContextVisualizerRuntime.ts"),
+    "an observation-only module must not import the runtime helpers",
+  );
+});
+
+Deno.test("analyzer records canvasParams declared inside a TimeContext scope", () => {
+  const result = analyze(`
+import type { TimeContext } from "@avtools/core-timing";
+import { canvasParams } from "canvas-params";
+
+export default async function(ctx: TimeContext) {
+  const params = canvasParams("scoped/params", { gain: 0.5 });
+  await ctx.waitSec(params.gain);
+}
+`);
+
+  assertEquals(result.type, "analyzeSuccess");
+  if (result.type !== "analyzeSuccess") return;
+
+  assertEquals(result.manifest.callsites.map((c) => c.kind), [
+    "canvasParams",
+    "timeContextMethod",
+  ]);
+  assertEquals(result.manifest.callsites.map((c) => c.staticName), [
+    "scoped/params",
+    undefined,
+  ]);
+  assertStringIncludes(
+    result.transformedCode,
+    'const params = canvasParams("scoped/params", { gain: 0.5 })',
+  );
+  // The wait in the same module is still wrapped, and the wrapped callsite is
+  // what pulls in the runtime import.
+  assertStringIncludes(
+    result.transformedCode,
+    '__tcvVisualizedAwait("module-test", "id_2", ctx.waitSec(params.gain))',
+  );
+  assertStringIncludes(
+    result.transformedCode,
+    "visualizedAwait as __tcvVisualizedAwait",
+  );
+});
+
+Deno.test("analyzer ignores locally shadowed canvasParams imports", () => {
+  const result = analyze(`
+import type { TimeContext } from "@avtools/core-timing";
+import { canvasParams } from "canvas-params";
+
+export default async function(ctx: TimeContext) {
+  const canvasParams = (name: string) => ({ name });
+  const params = canvasParams("not-a-declaration");
+  await ctx.waitSec(0.05);
+}
+`);
+
+  assertEquals(result.type, "analyzeSuccess");
+  if (result.type !== "analyzeSuccess") return;
+  assertEquals(
+    result.manifest.callsites.filter((c) => c.kind === "canvasParams").length,
+    0,
+  );
+  assertStringIncludes(
+    result.transformedCode,
+    'const params = canvasParams("not-a-declaration")',
+  );
+});
+
+Deno.test("analyzer records a canvasParams declaration with a non-literal name", () => {
+  const result = analyze(`
+import type { TimeContext } from "@avtools/core-timing";
+import { canvasParams } from "canvas-params";
+
+const name = "dynamic/params";
+export const params = canvasParams(name, { gain: 0.5 });
+
+export default async function(_ctx: TimeContext) {}
+`);
+
+  assertEquals(result.type, "analyzeSuccess");
+  if (result.type !== "analyzeSuccess") return;
+
+  const entry = result.manifest.callsites.find((c) =>
+    c.kind === "canvasParams"
+  );
+  assert(entry, "expected a canvasParams callsite");
+  if (!entry) return;
+  // There is no runtime name resolution for params, so a non-literal name has
+  // no static name and the editor renders no widget for it.
+  assertEquals(entry.staticName, undefined);
+  assert(entry.nameArgRange, "nameArgRange should still be present");
+});

@@ -16,7 +16,9 @@ export interface VisualizerDiagnostic {
 export type WaitCallsiteKind =
   | "timeContextMethod"
   | "timeContextArgumentCall"
-  | "pianoRollLookup";
+  | "pianoRollLookup"
+  /** A `canvasParams(...)` declaration. Observed only; never instrumented. */
+  | "canvasParams";
 
 export interface WaitCallsiteManifestEntry {
   id: string;
@@ -26,14 +28,17 @@ export interface WaitCallsiteManifestEntry {
   kind: WaitCallsiteKind;
   displayName: string;
   /**
-   * For `pianoRollLookup` callsites: the source range of the roll-name
-   * argument expression, so the editor can place an inline widget after it.
+   * For `pianoRollLookup` and `canvasParams` callsites: the source range of
+   * the name argument expression, so the editor can place an inline widget
+   * after it.
    */
   nameArgRange?: SourceRange;
   /**
-   * For `pianoRollLookup` callsites: the static roll name when the name
-   * argument is a string literal (or a template literal without
-   * interpolation). Used as a fallback before the module runs.
+   * For `pianoRollLookup` and `canvasParams` callsites: the static name when
+   * the name argument is a string literal (or a template literal without
+   * interpolation). A piano-roll lookup uses it as a fallback before the
+   * module runs; a params declaration has no runtime resolution, so a
+   * non-literal name simply has no static name and no widget.
    */
   staticName?: string;
 }
@@ -171,8 +176,18 @@ export interface ProjectCanvasPianoRollView {
   h: number;
 }
 
+export interface ProjectCanvasParamPaneView {
+  id: string;
+  paramsName: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface ProjectCanvasState {
   pianoRollViews?: ProjectCanvasPianoRollView[];
+  paramPaneViews?: ProjectCanvasParamPaneView[];
 }
 
 export interface LivecodeProjectManifest {
@@ -460,4 +475,63 @@ export interface SetPianoRollRequest {
 export interface PianoRollHistoryRequest {
   name: string;
   originId?: string;
+}
+
+export type ParamsPrimitive = number | string | boolean;
+
+/**
+ * JSON-simple parameter values: finite numbers, strings, booleans and nested
+ * plain objects. Arrays are rejected at registration in v1 (tweakpane has no
+ * native array binding).
+ */
+export interface ParamsValues {
+  [key: string]: ParamsPrimitive | ParamsValues;
+}
+
+export interface ParamsFieldMeta {
+  label?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
+/** Meta tree keyed like the value tree; leaves refine one binding. */
+export interface ParamsMeta {
+  [key: string]: ParamsFieldMeta | ParamsMeta;
+}
+
+/**
+ * Declaration-site meta typed against a defaults object, so `canvasParams`
+ * callers get key completion and per-key checking.
+ */
+export type ParamsMetaFor<T extends ParamsValues> = {
+  [K in keyof T]?: T[K] extends ParamsValues ? ParamsMetaFor<T[K]>
+    : ParamsFieldMeta;
+};
+
+export interface ParamsEntity {
+  name: string;
+  rev: number;
+  values: ParamsValues;
+  meta?: ParamsMeta;
+  updatedAt: number;
+  updatedBy: string;
+  /** Set when the live value stopped being serializable; values are the last good ones. */
+  unserializable?: boolean;
+  conflict?: boolean;
+}
+
+export interface ParamsSnapshot {
+  type: "paramsSnapshot";
+  seq: number;
+  timestampMs: number;
+  params: Record<string, ParamsEntity>;
+}
+
+export interface SetParamsRequest {
+  name: string;
+  /** Nested partial: only the leaves present are merged into the live object. */
+  values: ParamsValues;
+  originId?: string;
+  expectedRev?: number;
 }
