@@ -400,7 +400,7 @@ export interface ProjectShadowCheckResponse {
 export type ClientControlCommand =
   | { type: "getState" }
   | { type: "openProject"; projectPath: string; connect?: boolean }
-  | ({ type: "runModule" } & ProjectModuleLocator)
+  | ({ type: "runModule"; replaceRunning?: boolean } & ProjectModuleLocator)
   | ({ type: "stopModule" } & ProjectModuleLocator)
   | { type: "stopAllModules" }
   | ({ type: "setModuleSource"; sourceText: string } & ProjectModuleLocator)
