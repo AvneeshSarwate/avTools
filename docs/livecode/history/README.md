@@ -57,3 +57,7 @@ chosen, and why tldraw was considered a spatial shell. The active client is now
   “BUG” wording after their assertions were flipped to the fixed behavior.
 
 Use `docs/livecode/README.md` for current reading order.
+- `multiplexed-transport-plan-2026-08.md` is the implementation plan for the
+  unified sync transport (one subscribed socket for all entity kinds, shared
+  protocol package, run/waits/lookups entities, piano-roll store migration,
+  legacy runtime-snapshot shim). Same status convention as above.
