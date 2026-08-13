@@ -20,9 +20,11 @@
     "codemirror": "^6.0.2",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
-    "tldraw": "^5.0.1"
+    "tldraw": "^5.0.1",
+    "tweakpane": "^4.0.5"
   },
   "devDependencies": {
+    "@tweakpane/core": "^2.0.5",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.0",
