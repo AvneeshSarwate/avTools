@@ -77,6 +77,11 @@ import {
   undoPianoRoll,
 } from "./piano_roll_store.ts";
 import {
+  endSignalsForModule,
+  makeSignalsSnapshot,
+  sampleSignalsSnapshot,
+} from "./signals_store.ts";
+import {
   analyzeProjectShadow,
   buildProjectImportGraph,
   collectTransitiveDependencies,
@@ -85,6 +90,7 @@ import {
   clearModulePianoRollLookups,
   clearModuleWaits,
   makeActiveWaitSnapshot,
+  setRootTimeContext,
 } from "./runtime.ts";
 
 interface BranchHandle {
@@ -247,6 +253,7 @@ export async function createLivecodeVisualizerServer(
   const sockets = new Set<WebSocket>();
   const pianoRollSockets = new Set<WebSocket>();
   const paramsSockets = new Set<WebSocket>();
+  const signalsSockets = new Set<WebSocket>();
   const clientControlSockets = new Map<string, ClientControlSocket>();
   const pendingClientCommands = new Map<string, PendingClientCommand>();
   const activeModules = new Map<string, ActiveModule>();
@@ -265,6 +272,7 @@ export async function createLivecodeVisualizerServer(
   let snapshotTimer: number | undefined;
   let pianoRollSnapshotTimer: number | undefined;
   let paramsSnapshotTimer: number | undefined;
+  let signalsSnapshotTimer: number | undefined;
   let closing = false;
 
   const log = async (entry: Record<string, unknown>) => {
@@ -295,6 +303,9 @@ export async function createLivecodeVisualizerServer(
 
   const parentHandle = launch(async (ctx) => {
     parentContext = ctx;
+    // The parent loop is the process's root clock. Observation code (the
+    // signals sampler today) stamps samples with its logical time.
+    setRootTimeContext(ctx);
     await log({ type: "parentLoopStarted" });
     while (!closing) {
       const queued = launchQueue.splice(0);
@@ -402,6 +413,24 @@ export async function createLivecodeVisualizerServer(
       void log({
         type: "paramsSnapshot",
         paramsCount: Object.keys(snapshot.params).length,
+      });
+    }
+  }, 100) as unknown as number;
+
+  // Signals are published by plain `set` calls that never touch the store, so
+  // this tick is where a published value becomes an observed generation. There
+  // is no set route: signals are code-published only.
+  signalsSnapshotTimer = setInterval(() => {
+    const snapshot = sampleSignalsSnapshot();
+    if (!snapshot) return;
+    const payload = JSON.stringify(snapshot);
+    for (const socket of signalsSockets) {
+      if (socket.readyState === WebSocket.OPEN) socket.send(payload);
+    }
+    if (options.logLevel === "debug") {
+      void log({
+        type: "signalsSnapshot",
+        signalCount: Object.keys(snapshot.signals).length,
       });
     }
   }, 100) as unknown as number;
@@ -731,6 +760,21 @@ export async function createLivecodeVisualizerServer(
       return json(entity);
     }
 
+    if (request.method === "GET" && url.pathname === "/signals/snapshots") {
+      const { socket, response } = Deno.upgradeWebSocket(request);
+      socket.onopen = () => {
+        signalsSockets.add(socket);
+        socket.send(JSON.stringify(makeSignalsSnapshot()));
+      };
+      socket.onclose = () => signalsSockets.delete(socket);
+      socket.onerror = () => signalsSockets.delete(socket);
+      return response;
+    }
+
+    if (request.method === "GET" && url.pathname === "/signals/list") {
+      return json(makeSignalsSnapshot());
+    }
+
     if (request.method === "GET" && url.pathname === "/lsp") {
       const session = url.searchParams.get("session");
       if (!session) {
@@ -820,9 +864,16 @@ export async function createLivecodeVisualizerServer(
       if (paramsSnapshotTimer !== undefined) {
         clearInterval(paramsSnapshotTimer);
       }
+      if (signalsSnapshotTimer !== undefined) {
+        clearInterval(signalsSnapshotTimer);
+      }
+      // The parent loop is about to be cancelled; a cancelled clock must not
+      // keep stamping samples with its frozen logical time.
+      setRootTimeContext(null);
       for (const socket of sockets) socket.close();
       for (const socket of pianoRollSockets) socket.close();
       for (const socket of paramsSockets) socket.close();
+      for (const socket of signalsSockets) socket.close();
       for (const client of clientControlSockets.values()) {
         client.socket.close();
       }
@@ -2244,6 +2295,10 @@ export async function createLivecodeVisualizerServer(
             const active = activeModules.get(requestBody.moduleId);
             if (active?.generatedRunId === requestBody.generatedRunId) {
               activeModules.delete(requestBody.moduleId);
+              // Guarded, unlike clearModuleWaits: `ended` sticks, so a slow-dying
+              // previous branch must not end the signals a replacement run has
+              // already redeclared.
+              endSignalsForModule(requestBody.moduleId);
               setModuleRunSnapshot({
                 ...runSnapshotBase,
                 state: reason === "error" ? "error" : "stopped",
@@ -2318,6 +2373,9 @@ export async function createLivecodeVisualizerServer(
     active.handle.cancel();
     activeModules.delete(active.moduleId);
     clearModuleWaits(active.moduleId);
+    // Ephemeral entities end with the run that published them rather than
+    // silently freezing, so stop and panic both end this module's signals.
+    endSignalsForModule(active.moduleId);
     setModuleRunSnapshot({
       moduleId: active.moduleId,
       generatedRunId: active.generatedRunId,
