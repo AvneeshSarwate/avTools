@@ -1,6 +1,7 @@
 # Current Analyzer and Generated Code
 
-Status: checked against `visualizer/analyze_transform.ts` on 2026-07-21.
+Status: checked against `visualizer/analyze_transform.ts` on 2026-07-21;
+canvas-params detection was checked on 2026-08-13.
 
 ## Purpose and boundary
 
@@ -146,6 +147,42 @@ unchanged. The manifest includes the full call range, the argument range, and a
 `staticName` only for string literals or template literals without
 interpolation.
 
+## Canvas-params detection
+
+`canvasParams` imported from the alias `canvas-params`, the repository source
+suffix `/helpers/canvas_params.ts`, or that bare basename is recognized through
+the same symbol-based binding discipline as piano-roll access: aliases and
+namespace imports match, a same-named local function or unrelated import does
+not.
+
+Two things differ from piano-roll detection:
+
+- **Scope.** Params are normally declared at module scope, so this pass walks
+  the whole source file rather than the `TimeContext` scopes. A declaration at
+  top level, inside a timed body, or inside any other function is recorded
+  identically. The pass returns immediately when the module has no
+  `canvas-params` import, so it costs nothing for every other module.
+- **No edit.** The transform never wraps these calls. The manifest entry is the
+  entire feature: there is no `__tcvPianoRollLookup` argument wrapper, no
+  `__tcvVisualizedAwait`, and no runtime state. The generated runtime import is
+  emitted only when at least one callsite is actually wrapped, so a module whose
+  only manifest entries are params declarations imports nothing.
+
+The first argument is the params name. The entry carries its range as
+`nameArgRange` and a `staticName` for a string literal or an uninterpolated
+template literal. There is no runtime name resolution for params, so a computed
+name has no `staticName`, and the editor deliberately renders no open-pane
+widget for it.
+
+Analysis-time materialization of the declared schema into the store is **not**
+implemented: a pane is empty until the module runs and declares the entity. That
+is deferred to the entity-serialization work, where a schema on disk makes
+pre-launch panes coherent.
+
+Multiple modules may declare the same params name. That is legal reattach
+behavior rather than an error, and the last declaration's shape and meta win.
+The analyzer does not currently surface it as a finding.
+
 ## Manifest contract
 
 Each entry contains:
@@ -159,12 +196,16 @@ Each entry contains:
   kind:
     | "timeContextMethod"
     | "timeContextArgumentCall"
-    | "pianoRollLookup";
+    | "pianoRollLookup"
+    | "canvasParams";
   displayName: string;
   nameArgRange?: { from: number; to: number };
   staticName?: string;
 }
 ```
+
+`nameArgRange` and `staticName` are used by both name-carrying kinds. The kind
+union is hand-mirrored in `apps/livecode-tldraw/src/livecodeProtocol.ts`.
 
 Default IDs are `crypto.randomUUID()`. They are stable only within the generated
 code + manifest pair. They are not deterministic across reanalysis, even when
@@ -189,7 +230,8 @@ The generated execution module exports `runFunc`:
 A conflicting top-level binding/import with the old function name blocks the
 transform rather than emitting invalid code.
 
-When at least one callsite is instrumented, one generated import aliases both
+When at least one callsite is actually wrapped — that is, excluding
+observation-only `canvasParams` entries — one generated import aliases both
 runtime helpers:
 
 ```ts
@@ -217,7 +259,9 @@ Project-mode Run in the tldraw client separately requires a successful shadow
 `apps/deno-notebooks/livecode/tests/analyzer_transform_test.ts` is the primary
 executable contract. It covers local helper internals, branch callbacks,
 unsupported awaits, syntax positions, recursive rename collision, piano-roll
-aliases/namespaces/shadowing, and nested lookups.
+aliases/namespaces/shadowing, nested lookups, and canvas-params detection at top
+level and inside a timed scope — including its no-edit output, its shadowed-local
+non-detection, and the missing `staticName` for a computed name.
 
 `runtime_counts_test.ts` covers wait counts and lookup recording.
 `dynamic_import_execution_test.ts` proves generated code imports the stable

@@ -20,8 +20,9 @@ and the end-to-end topology and flows are in
 | Livecode shape and utility | `src/LivecodeEditorShape.tsx` |
 | CodeMirror, LSP bridge, wait decorations | `src/CodeMirrorEditor.tsx`, `src/denoLsp.ts` |
 | Piano-roll shape and server-store bridge | `src/PianoRollShape.tsx`, `src/pianoRollRuntime.tsx` |
-| Wire types | `src/livecodeProtocol.ts`, `src/pianoRollProtocol.ts`, `src/clientControlProtocol.ts` |
-| Socket behavior | `src/reconnectingSocket.ts` |
+| Params pane shape and server-store bridge | `src/ParamPaneShape.tsx`, `src/paramsRuntime.tsx` |
+| Wire types | `src/livecodeProtocol.ts`, `src/pianoRollProtocol.ts`, `src/clientControlProtocol.ts`, `src/paramsTypes.ts` |
+| Socket behavior | `src/reconnectingSocket.ts`, `src/serverRequests.ts` |
 | Debug/test surfaces | `src/livecodeTldrawDebug.ts` plus APIs installed by `App.tsx` and `livecodeRuntime.tsx` |
 | Browser tests and fixtures | `tests/`, `public/test-canvases/` |
 
