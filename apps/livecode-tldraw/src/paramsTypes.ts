@@ -14,6 +14,14 @@ export interface ParamsFieldMeta {
   min?: number;
   max?: number;
   step?: number;
+  /**
+   * Opt in to a readonly time-series graph beside the editable binding for a
+   * numeric leaf. Bounds come from `min`/`max`; a graph without declared bounds
+   * falls back to the pane's default range.
+   */
+  graph?: boolean;
+  /** Graph height in rows. The pane's default applies when absent. */
+  rows?: number;
 }
 
 /** Meta tree keyed like the value tree; leaves refine one binding. */

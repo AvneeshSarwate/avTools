@@ -190,9 +190,29 @@ export interface ProjectCanvasParamPaneView {
   h: number;
 }
 
+/**
+ * A signal-scope view. Unlike the two above it names a binding rather than an
+ * entity: the source it watches may be ephemeral (a signal, which this project
+ * never saves) or one leaf of a durable params entity. Only the binding is
+ * persisted — never any of the samples the scope drew.
+ */
+export interface ProjectCanvasScopeView {
+  id: string;
+  sourceType: "signal" | "params";
+  name: string;
+  /** Dot-joined field path into the bound value; empty for whole values. */
+  path: string;
+  windowSec: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface ProjectCanvasState {
   pianoRollViews?: ProjectCanvasPianoRollView[];
   paramPaneViews?: ProjectCanvasParamPaneView[];
+  scopeViews?: ProjectCanvasScopeView[];
 }
 
 /**
