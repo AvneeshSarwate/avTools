@@ -1,8 +1,8 @@
 # Current Client Architecture
 
 Status: checked against `apps/livecode-tldraw` on 2026-07-21; the params
-runtime, param-pane shape, and canvas-view persistence were checked on
-2026-08-13.
+runtime, param-pane shape, canvas-view persistence, and the topbar's entity and
+save actions were checked on 2026-08-13.
 
 ## Responsibilities
 
@@ -38,20 +38,25 @@ piano-roll note data or params values.
   runtime snapshots, piano-roll snapshots, and client control.
 - `src/pianoRollRuntime.tsx`: named piano-roll snapshot state and set/undo/redo
   requests.
-- `src/PianoRollShape.tsx`: `piano-roll-view` shape and custom-element adapter.
+- `src/PianoRollShape.tsx`: `piano-roll-view` shape, custom-element adapter, and
+  the exported `createPianoRollShape` view constructor.
 - `src/paramsRuntime.tsx`: named params snapshot state and `/params/set`
   requests.
-- `src/ParamPaneShape.tsx`: `param-pane` shape and its tweakpane bindings.
-- `src/serverRequests.ts`: the WebSocket-URL and POST helpers shared by the two
-  entity runtime providers. `App.tsx` and `livecodeRuntime.tsx` keep their own
-  full-URL variants.
+- `src/ParamPaneShape.tsx`: `param-pane` shape, its tweakpane bindings, and the
+  exported `createParamPaneShape` view constructor.
+- `src/serverRequests.ts`: the WebSocket-URL, GET, and POST helpers shared by
+  the two entity runtime providers, plus the entity CRUD, project save, and
+  project status calls the topbar and the debug surface both use — one home, so
+  those two cannot drift apart. `App.tsx` and `livecodeRuntime.tsx` keep their
+  own full-URL variants.
 - `src/livecodeProtocol.ts`, `src/pianoRollTypes.ts`, and `src/paramsTypes.ts`:
   manually mirrored Deno protocol types. They are not runtime validators.
 - `src/defaultSource.ts`: initial transient module example.
 - `src/livecodeTldrawDebug.ts`: tldraw/runtime E2E control API.
 - `tests/livecodeTldraw.e2e.mjs`: current tldraw browser E2E, focused on
-  piano-roll lookup instrumentation, shape creation/focus, and the params pane
-  round trip.
+  piano-roll lookup instrumentation, shape creation/focus, the params pane
+  round trip, and — in a project-mode block that runs last on its own canvas —
+  entity CRUD and project save/open persistence.
 - `public/test-canvases/piano-roll-lookup.tldr`: checked-in manual canvas.
 - `example-projects/minimal-p5gpu`: checked-in project structure/example. Its
   current source intentionally or accidentally contains `sped` while consumers
@@ -128,9 +133,11 @@ Shape props contain:
 ```
 
 Values are deliberately absent. `paramsName` selects a server-owned params
-entity. Creating a pane never creates an entity: entities are declared by
-running code, so an unknown name renders a "waiting for `name`" placeholder
-listing the names in the latest snapshot.
+entity. Creating a pane never creates an entity — a declaration, an explicit
+entity action, or a project load does — so an unknown name renders a "waiting
+for `name`" placeholder listing the names in the latest snapshot. Deleting the
+entity behind a live pane returns it to that placeholder; the pane is a view
+and outlives what it views.
 
 The pane mounts one tweakpane `Pane` per shape and binds a copy of the entity's
 values, nesting objects as folders. Bindings are rebuilt only when the value
@@ -298,22 +305,59 @@ piano-roll views and param panes. Both restore paths reuse the persisted shape
 id and skip a view whose id already exists. URL-driven project loading connects
 afterward if needed.
 
-The UI toolbar has New/Open/Save for transient `.tldr` canvases, New module, and
-New params pane. The params entry opens a non-modal inline input — the canvas
-stays interactive — offering the names in the latest snapshot through a
-datalist while accepting free text, and creates the pane near the viewport
-center. The toolbar does not currently expose human controls for project
-create/open/save, module add/remove/reload, panic, stop-all, or restart-all.
-Project opening is by URL or client-control command; the richer operations are
-server APIs.
+The UI toolbar has New/Open/Save for transient `.tldr` canvases, New module,
+New piano roll, and New params pane. Every name entry uses the same non-modal
+inline input — the canvas stays interactive while it is open, Escape closes it,
+and a datalist offers the names in the latest snapshot without restricting free
+text. A failed action leaves the input open with the server's message in the
+topbar rather than discarding what was typed.
+
+New params pane creates a view only. **New piano roll is dual-mode**: a name
+the piano-roll snapshot already carries only creates another view, while a new
+name posts `/entities/create` first and then creates the view — the composite
+create-entity-plus-view gesture, with view-only reuse for the names that exist.
+
+Two more actions appear only while exactly one selected shape is a
+`piano-roll-view` or a `param-pane`, because that is when the entity being
+acted on is unambiguous. The selection is read reactively with tldraw's
+`useValue` over `editor.getOnlySelectedShape()`; both halves of the entity
+reference are primitives, so dragging an unrelated shape does not re-render the
+topbar.
+
+- **Duplicate entity** opens the inline input prefilled `<name>-copy`, posts
+  `/entities/duplicate`, and creates a view of the copy beside the source. The
+  new view becomes the selection, so the actions then address the copy.
+- **Delete entity** is a two-step confirm: the button rearms to
+  `Really delete <name>?`, disarms itself after about four seconds, and disarms
+  immediately if the selection changes, so a confirm can never land on an
+  entity the operator was not looking at. It posts `/entities/delete` and
+  leaves every view in place; a view returns to its waiting placeholder.
+
+**Save project** and the unsaved pill render only when the page URL carried a
+`projectPath` — the same gate as the canvas collector, and the same gap: a
+project opened later through client control shows neither (see
+`known-risks.md`). The button posts `/project/save` and reports the result as a
+short `saved N | M failed | K skipped` line, with the per-entity details on the
+console. The pill comes from a two-second `/project/status` poll that runs only
+while a `projectPath` is present, and shows how many entities that response
+reports as unsaved. It is purely informational; nothing in the client ever
+auto-saves.
+
+The toolbar still does not expose human controls for project create/open,
+module add/remove/reload, panic, stop-all, or restart-all. Project opening is by
+URL or client-control command; the richer operations are server APIs.
 
 ## Agent and test surfaces
 
 There are two distinct window APIs:
 
 - `window.__livecodeTldrawRuntimeDebug` exposes runtime modules, tldraw shapes,
-  selection, source setting, run/stop/connect, param-pane creation, and `.tldr`
-  serialization.
+  selection, source setting, run/stop/connect, param-pane and piano-roll-view
+  creation, the three entity actions, `saveProject()`, and `.tldr`
+  serialization. The entity actions are thin wrappers over the same
+  `serverRequests.ts` calls the topbar uses, so agents and the E2E drive the
+  real path without the topbar DOM; a rejected action rejects with the server's
+  message.
 - `window.__livecodeTldrawDebug` is installed by CodeMirror and exposes document
   URIs/text, focus-by-offset, and direct completion requests.
 

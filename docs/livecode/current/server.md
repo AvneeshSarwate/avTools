@@ -1,7 +1,8 @@
 # Current Deno Server Architecture
 
 Status: checked against `apps/deno-notebooks/livecode` on 2026-07-21; the
-entity/params stores and their routes were checked on 2026-08-13.
+entity/params stores, their routes, the durable-entity registry, and project
+data persistence were checked on 2026-08-13.
 
 ## File map
 
@@ -17,13 +18,19 @@ entity/params stores and their routes were checked on 2026-08-13.
 - `visualizer/runtime.ts`: process-global instrumentation state imported by
   generated modules.
 - `visualizer/piano_roll_store.ts`: process-global named piano-roll records,
-  revisions, dirty snapshots, and per-roll undo/redo.
+  revisions, dirty snapshots, per-roll undo/redo, deletion with a remembered
+  deleted-defaults set, and the cached JSON the saved-state compare reads.
 - `visualizer/entity_store.ts`: generic `(type, name)`-keyed records with
-  revisions, no-op caching, dirty/sequence bookkeeping, and never-throw
-  serialization. `piano_roll_store.ts` is deliberately not migrated onto it.
+  revisions, per-name monotonic revision floors, no-op caching, dirty/sequence
+  bookkeeping, and never-throw serialization. `piano_roll_store.ts` is
+  deliberately not migrated onto it.
 - `visualizer/params_store.ts`: params entities as the first typed wrapper over
-  the entity store — declaration, recursive reconcile, leaf merges, and the
-  sampler that adopts code writes.
+  the entity store — declaration, recursive reconcile, leaf merges, create /
+  duplicate / remove / load, and the sampler that adopts code writes.
+- `visualizer/entity_registry.ts`: one descriptor interface over both storage
+  engines, so generic entity actions and project persistence never have to know
+  which engine a name addresses. It also owns the entity-name-to-filename
+  encoding.
 - `visualizer/lsp_proxy.ts`: per-session proxy process that creates a synthetic
   workspace and runs `deno lsp -q`.
 - `visualizer/generated_run_id.ts`: generated-build ID creation.
@@ -51,7 +58,8 @@ entity/params stores and their routes were checked on 2026-08-13.
 - latest lifecycle snapshot per module;
 - prepared runs plus a per-module pruning index;
 - a FIFO launch-action array drained by one parent `TimeContext` loop;
-- one global current project for the server instance;
+- one global current project for the server instance, including the compact
+  entity JSON its last save or open recorded;
 - cached/in-flight project diagnostics;
 - an LSP WebSocket process manager with at most four proxy processes.
 
@@ -119,10 +127,10 @@ changes.
 | Method | Route | Behavior |
 | --- | --- | --- |
 | POST | `/project/create` | Create/select a project, optionally add modules, write the manifest, and materialize runtime files. |
-| POST | `/project/open` | Select a manifest/directory, read sources, initialize hashes, and materialize runtime files. |
-| POST | `/project/save` | Rewrite the current in-memory manifest. |
+| POST | `/project/open` | Select a manifest/directory, load every manifest `data` entity, read sources, initialize hashes, and materialize runtime files. |
+| POST | `/project/save` | Explicit save: rewrite the manifest, write one JSON file per durable entity in memory, rebuild `manifest.data`, and write the manifest again. Returns per-entity results and deliberate skips. |
 | GET | `/project/current` | Current global project selection and manifest, or `null`. |
-| GET | `/project/status` | Disk/editor/load/run hashes, staleness, dependency graph summaries, and active modules. |
+| GET | `/project/status` | Disk/editor/load/run hashes, staleness, dependency graph summaries, active modules, and the per-entity unsaved section. |
 | GET | `/project/diagnostics` | Cached, non-mutating shadow transform plus `deno check`. |
 | GET | `/project/events` | Currently returns the same one-shot JSON as `/project/status`; it is not SSE or a WebSocket. |
 | GET | `/project/modules/source?id=...&path=...` | Source text and normalized module record. |
@@ -133,12 +141,20 @@ changes.
 | POST | `/project/modules/remove` | Remove the manifest/cache record. It does not delete source/runtime files or stop an active module. |
 | POST | `/project/canvas` | Replace the manifest's canvas object; currently used for piano-roll-view layout. |
 
+### Durable entities
+
+| Method | Route | Behavior |
+| --- | --- | --- |
+| POST | `/entities/create` | Create one entity of a registered type. Status 409 when the name exists. |
+| POST | `/entities/duplicate` | Copy `name` to `targetName` within one type. Status 404 for a missing source, 409 for an existing target. |
+| POST | `/entities/delete` | Remove one entity from its store. Status 404 when it was not there. Views of it are untouched. |
+
 ### Piano roll
 
 | Method | Route | Behavior |
 | --- | --- | --- |
 | WS | `/piano-roll/snapshots` | Full named-roll snapshots when the store is dirty; force-sends current state on open. |
-| GET | `/piano-roll/list` | Force-created full snapshot, despite the route name. |
+| GET | `/piano-roll/list` | Force-created full snapshot, despite the route name. Forced snapshots are read-only with respect to the broadcast gate. |
 | POST | `/piano-roll/set` | Normalize and set one roll, optionally checking `expectedRev` and recording undo history. |
 | POST | `/piano-roll/undo` | Undo one named object's history. |
 | POST | `/piano-roll/redo` | Redo one named object's history. |
@@ -149,7 +165,7 @@ changes.
 | --- | --- | --- |
 | WS | `/params/snapshots` | Full named-entity snapshots on the 100 ms tick when the store changed; sends a read-only forced snapshot on open. |
 | GET | `/params/list` | Read-only forced snapshot, despite the route name. |
-| POST | `/params/set` | Deep-merge leaf values into one live entity, optionally checking `expectedRev`. Status 404 when the name has not been declared by running code. |
+| POST | `/params/set` | Deep-merge leaf values into one live entity, optionally checking `expectedRev`. Status 404 for an unknown name; a write never creates an entity. |
 
 ### LSP
 
@@ -255,10 +271,21 @@ Signal/finally cleanup disposes the RPC connection, sends SIGTERM to the real
 The piano-roll store seeds `melody`, normalizes IDs/velocity, deep-clones data,
 keeps at most 100 undo/redo entries per object, and avoids revision churn for
 JSON-equal writes. Non-cloneable metadata is dropped through guarded fallbacks
-rather than throwing into user timing code.
+rather than throwing into user timing code. Every entry point normalizes its
+name by trimming.
 
 `expectedRev` is optional. A mismatch returns the current object with
 `conflict: true`; callers that omit it retain last-write-wins behavior.
+
+The seed write is stamped `updatedBy: "demo-seed"`, which is how a save
+recognizes an untouched seed and leaves it out (any real write bumps rev past 1
+and captures it from then on). Seeding is also lazy — every list/get/snapshot
+re-ensures the default — so `deletePianoRoll` records a deleted default name in
+a per-process set that suppresses future re-seeding; otherwise a deleted
+`melody` would resurrect within one snapshot tick. `clearPianoRollHistory`
+drops one roll's undo/redo stacks, which a project load uses because opening a
+project adopts disk truth and the pre-load stacks would undo into a state the
+file never contained.
 
 MIDI devices are enumerated and opened when `midi_helpers.ts` is first imported.
 Send failures are logged rather than thrown. `panicMidi` silences tracked notes
@@ -313,6 +340,90 @@ serialization of the pre-merge value rather than the cache, which a code write
 can have invalidated since the last tick. Forced snapshots for `/params/list`
 and socket open are read-only.
 
+Around that core, `createEmptyParams`, `duplicateParams`, `removeParams`, and
+`loadParams` serve the generic entity actions. Duplicate deep-copies values and
+meta but deliberately not tombstones: a copy starts with no memory of fields
+its source once dropped. `loadParams` is reconcile-grade — it mutates any live
+object in place at every depth, preserving nested object identity, clears the
+entity's tombstones so a stale pre-load value cannot resurrect into a
+re-declared field, and always bumps rev with `updatedBy: "load"`. Revisions are
+also floored per name in `entity_store.ts`, so a recreated or re-loaded entity
+can never be silently echo-suppressed by a pane whose `localRev` outlived the
+old record.
+
 Shutdown clears the params timer and closes the params socket set next to their
 piano-roll counterparts. Entities themselves are process-global and in memory
-only; they are neither persisted nor evicted (see `known-risks.md`).
+only; they are never evicted, and they reach disk only through an explicit
+project save (see below and `known-risks.md`).
+
+## Durable entity registry
+
+`entity_registry.ts` gives every durable entity type one descriptor:
+
+```ts
+interface DurableEntityTypeDescriptor {
+  typeId: string;                                   // "pianoRoll" | "params"
+  listNames(): string[];
+  exists(name: string): boolean;
+  create(name: string): void;                       // rejects existing
+  duplicate(sourceName: string, targetName: string): void;
+  remove(name: string): boolean;
+  serialize(name: string): unknown | null;          // JSON-ready, null = skip
+  deserialize(name: string, data: unknown): void;   // validate + apply
+  latestJson(name: string): string | null;          // cached, for dirty check
+}
+```
+
+Both descriptors are registered at server construction. It is deliberately a
+facade, not a migration: each engine keeps its own proven implementation and
+only the interface divergence goes away. Type ids are assumed space-free
+because the saved-state map is keyed `"<type> <name>"`.
+
+Everything here runs at route or save/load time, never inside caller-owned
+livecode timing, so throwing on a bad name or a malformed saved file is the
+right shape; the HTTP layer turns those into `{ ok: false, error }`.
+
+`serialize` returns null to mean *skip this entity*, which is how a save stays
+non-fatal: a params value that no longer serializes, a piano roll whose
+metadata does not, and a pristine demo seed all return null and are reported in
+the response's `skipped` list instead of failing the pass.
+
+Entity names are established as slash-containing (`e2e/params`,
+`kinaree/rects`), so `encodeEntityName` percent-encodes every byte outside
+`[a-zA-Z0-9._-]`, `%` included. That is collision-free by construction and
+needs no decoder, since the manifest entry carries the true name. Encoded names
+longer than 100 characters are truncated (never mid-escape) and disambiguated
+with a short FNV-1a hash of the full name. `allocateEntityDataPath` then
+resolves case-insensitive collisions within one save with a numeric suffix,
+because macOS filesystems would otherwise let two names overwrite one file.
+
+## Project save and load of entity data
+
+`POST /project/save` is the only path that writes entity data; the
+write-through `writeProjectManifest` callers in the module and canvas routes
+never do.
+
+A save is point-in-time. Every registered type × every name serializes
+synchronously into memory first, so one save captures one coherent instant of
+the store, and only then do the awaited file writes happen. Each entity is
+written to `data/<type>/<encoded-name>.json` (recursive `mkdir`, two-space JSON
+with a trailing newline, matching the manifest precedent). The manifest is
+written before the data files and again afterwards with the entries that
+actually reached disk, so a crash mid-save can leave an orphan file but never a
+manifest entry pointing at a missing one. Each written entity's compact store
+JSON — not the pretty-printed file bytes — is recorded as its saved state, so
+key order and formatting can never produce a false permanent "unsaved".
+
+`openProject` loads that list immediately after it assigns `currentProject` and
+before materialization, so every durable entity exists before any module could
+run and read one. Each entry's path is validated with the `.json` variant of
+the project-relative path checker (relative, lexically inside the project, no
+NUL); a bad row is logged as `projectDataLoadSkipped` and skipped, because one
+missing or broken file must not fail the whole open. Loading writes with
+`undoable: false` and records the saved state per entity.
+
+Save captures every durable entity currently in memory, not only the ones this
+project introduced — the stores are process-global. Deleting an entity and
+saving removes its manifest entry but leaves the old file on disk, matching the
+manifest-only module-remove precedent. Both behaviors are covered in
+`project-model.md` and `known-risks.md`.
