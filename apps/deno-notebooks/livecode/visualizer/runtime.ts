@@ -1,8 +1,13 @@
+import type { TimeContext } from "@avtools/core-timing";
 import type { ActiveWaitSnapshot } from "./protocol.ts";
+// Cyclic by design and safe: `signals_store.ts` imports `sampleRootTime` from
+// here, and both sides only touch the other's bindings inside function bodies.
+import { assignSignalOwner } from "./signals_store.ts";
 
 const activeWaitCounts = new Map<string, Map<string, number>>();
 const pianoRollLookups = new Map<string, Map<string, string>>();
 let snapshotSeq = 0;
+let rootTimeContext: TimeContext | null = null;
 
 function getOrCreateModuleCounts(moduleId: string): Map<string, number> {
   let moduleCounts = activeWaitCounts.get(moduleId);
@@ -107,6 +112,59 @@ export function visualizedPianoRollLookup<T>(
     recordPianoRollLookup(moduleId, callsiteId, name);
   }
   return name;
+}
+
+export interface RootTimeSample {
+  timeSec: number;
+  beats: number;
+}
+
+/**
+ * The server registers its parent loop's context here so process-global
+ * observation code can stamp samples with logical time. Passing null (server
+ * shutdown) simply stops the stamping.
+ */
+export function setRootTimeContext(ctx: TimeContext | null): void {
+  rootTimeContext = ctx;
+}
+
+/**
+ * Current root-clock logical time, or null when no context is registered (a
+ * plain `deno run` of a module, or before the parent loop starts). Never
+ * throws: it is read from samplers that must not break their timer.
+ */
+export function sampleRootTime(): RootTimeSample | null {
+  const ctx = rootTimeContext;
+  if (!ctx) return null;
+  try {
+    const timeSec = ctx.time;
+    // `beats` reads the tempo map, which is wired during launch/branch setup.
+    const beats = ctx.beats;
+    if (!Number.isFinite(timeSec) || !Number.isFinite(beats)) return null;
+    return { timeSec, beats };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Transparent pass-through wrapper the transform puts around a whole
+ * `signal(...)` declaration. It attributes the declared signal to the module
+ * that ran the callsite — which is what lets the server end that module's
+ * signals when its run ends — and returns the handle unchanged, so the wrapped
+ * call behaves identically. An untransformed (headless) run simply produces
+ * unowned signals that never auto-end.
+ */
+export function visualizedOwnedSignal<T>(
+  moduleId: string,
+  _callsiteId: string,
+  handle: T,
+): T {
+  // Structural, like the piano-roll lookup wrapper: anything that is not a
+  // signal handle passes through untouched rather than failing a run.
+  const name = (handle as { name?: unknown } | null | undefined)?.name;
+  if (typeof name === "string") assignSignalOwner(name, moduleId);
+  return handle;
 }
 
 export function makeActiveWaitSnapshot(): ActiveWaitSnapshot {
