@@ -461,3 +461,62 @@ export interface PianoRollHistoryRequest {
   name: string;
   originId?: string;
 }
+
+export type ParamsPrimitive = number | string | boolean;
+
+/**
+ * JSON-simple parameter values: finite numbers, strings, booleans and nested
+ * plain objects. Arrays are rejected at registration in v1 (tweakpane has no
+ * native array binding).
+ */
+export interface ParamsValues {
+  [key: string]: ParamsPrimitive | ParamsValues;
+}
+
+export interface ParamsFieldMeta {
+  label?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
+/** Meta tree keyed like the value tree; leaves refine one binding. */
+export interface ParamsMeta {
+  [key: string]: ParamsFieldMeta | ParamsMeta;
+}
+
+/**
+ * Declaration-site meta typed against a defaults object, so `canvasParams`
+ * callers get key completion and per-key checking.
+ */
+export type ParamsMetaFor<T extends ParamsValues> = {
+  [K in keyof T]?: T[K] extends ParamsValues ? ParamsMetaFor<T[K]>
+    : ParamsFieldMeta;
+};
+
+export interface ParamsEntity {
+  name: string;
+  rev: number;
+  values: ParamsValues;
+  meta?: ParamsMeta;
+  updatedAt: number;
+  updatedBy: string;
+  /** Set when the live value stopped being serializable; values are the last good ones. */
+  unserializable?: boolean;
+  conflict?: boolean;
+}
+
+export interface ParamsSnapshot {
+  type: "paramsSnapshot";
+  seq: number;
+  timestampMs: number;
+  params: Record<string, ParamsEntity>;
+}
+
+export interface SetParamsRequest {
+  name: string;
+  /** Nested partial: only the leaves present are merged into the live object. */
+  values: ParamsValues;
+  originId?: string;
+  expectedRev?: number;
+}
