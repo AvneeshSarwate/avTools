@@ -39,6 +39,10 @@ chosen, and why tldraw was considered a spatial shell. The active client is now
   `canvasParams` entity/tweakpane slice (first generic entity-store seam).
   While the work is in flight it is the active plan; afterwards
   `docs/livecode/current/` is the authority on what shipped.
+- `entity-crud-persistence-plan-2026-08.md` is the implementation plan for
+  GUI entity creation/duplication/deletion and durable-entity persistence in
+  the project format (registry facade over the piano-roll and params stores).
+  Same status convention as above.
 
 ## Stability review
 
