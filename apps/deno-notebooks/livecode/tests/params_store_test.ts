@@ -44,7 +44,10 @@ Deno.test("registerParams creates an entity at rev 1 and returns a live clone of
 
 Deno.test("registerParams reattaches to the same live object across re-registration", () => {
   clearParamsStore();
-  const first = registerParams("test/identity", { gain: 1, strobe: { rate: 2 } });
+  const first = registerParams("test/identity", {
+    gain: 1,
+    strobe: { rate: 2 },
+  });
   const strobeRef = first.strobe;
   first.gain = 5;
   first.strobe.rate = 9;
@@ -175,7 +178,8 @@ Deno.test("registerParams rejects values that are not JSON-simple", () => {
     "must be a finite number",
   );
   assertThrows(
-    () => registerParams("test/invalid", { gain: null } as unknown as ParamsValues),
+    () =>
+      registerParams("test/invalid", { gain: null } as unknown as ParamsValues),
     Error,
     "received null",
   );
@@ -250,7 +254,9 @@ Deno.test("setParamsValues honours expectedRev as a compare-and-set", () => {
   clearParamsStore();
   registerParams("test/cas", { gain: 1 });
 
-  const conflict = setParamsValues("test/cas", { gain: 2 }, { expectedRev: 99 });
+  const conflict = setParamsValues("test/cas", { gain: 2 }, {
+    expectedRev: 99,
+  });
   assertEquals(conflict?.conflict, true);
   assertEquals(conflict?.rev, 1);
   assertEquals(getParams("test/cas")?.values.gain, 1);
@@ -324,7 +330,10 @@ Deno.test("the sampler flags an unserializable value instead of throwing", () =>
 
   params.gain = 3;
   const recovered = sampleParamsSnapshot();
-  assertEquals(recovered?.params["test/unserializable"].unserializable, undefined);
+  assertEquals(
+    recovered?.params["test/unserializable"].unserializable,
+    undefined,
+  );
   assertEquals(recovered?.params["test/unserializable"].values.gain, 3);
 });
 
@@ -338,7 +347,10 @@ Deno.test("non-finite code writes serialize to null and drops read as shape chan
 
   delete (params as Record<string, unknown>).extra;
   const afterDelete = sampleParamsSnapshot();
-  assertEquals("extra" in (afterDelete?.params["test/lossy"].values ?? {}), false);
+  assertEquals(
+    "extra" in (afterDelete?.params["test/lossy"].values ?? {}),
+    false,
+  );
   assertEquals(afterDelete?.params["test/lossy"].updatedBy, "code");
 });
 

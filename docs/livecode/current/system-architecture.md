@@ -1,6 +1,7 @@
 # Current System Architecture
 
-Status: checked against the implementation on 2026-07-21.
+Status: checked against the implementation on 2026-07-21; the params entity
+domain was checked on 2026-08-13.
 
 ## Runtime topology
 
@@ -9,7 +10,7 @@ Development uses two processes:
 ```text
 browser tab
   React + tldraw + CodeMirror
-       | HTTP and three WebSocket domains
+       | HTTP and four WebSocket domains
        v
 local Deno server
   analysis | project files | LSP proxy | runtime | shared stores
@@ -48,11 +49,12 @@ Open `http://localhost:5173/`. Useful URL parameters are:
 | Freeform canvas shapes and non-project layout | tldraw client | In-memory unless explicitly saved as `.tldr`; no `persistenceKey`. |
 | Project module source | Project `*.orig.ts` files | Written by the server during project edit analysis. |
 | Project runtime source | Project `*.ts` files | Materialized by the server transform; never hand-edit. |
-| Project module and piano-roll-view layout | `project.avtools-livecode.json` | Module layout through `/project/modules/update`; piano-roll views through `/project/canvas`. |
+| Project module, piano-roll-view, and param-pane layout | `project.avtools-livecode.json` | Module layout through `/project/modules/update`; both canvas view arrays through `/project/canvas`. |
 | Prepared builds and manifests | Deno server memory plus generated/runtime files | Latest manifests exposed by `/runtime/state`; non-project builds are pruned to a small rolling set. |
 | Active module lifecycle | Deno server | `/runtime/state`, `/runtime/status`, and `/runtime/snapshots`. |
 | Active wait counts and resolved piano-roll lookup names | Process-global runtime singleton in `visualizer/runtime.ts` | Snapshots only; lookup values persist after completion until a later analyze clears that module. |
 | Named piano-roll objects and undo/redo | Process-global `piano_roll_store.ts` | In memory only; not persisted in the project manifest. |
+| Named params entities and their values | Process-global `entity_store.ts` through `params_store.ts`; the live value object is shared with the declaring module | In memory only; not persisted. Declaration reattaches and reconciles rather than resetting, so values survive a relaunch inside one server process. |
 | Editor text in a shape | `livecode-editor.props.source` plus mirrored React runtime record | `.tldr` for transient canvases; project source is also written to `*.orig.ts`. |
 | LSP document mirror | One temp workspace per LSP proxy | Removed best-effort on shutdown; stale roots older than 24 hours are swept at server start. |
 
@@ -69,13 +71,18 @@ The client does not have one unified connection:
    flushes queued stops, and immediately schedules analysis for every shape.
 2. `/piano-roll/snapshots` connects whenever `PianoRollRuntimeProvider` is
    mounted, independent of the Connect button.
-3. `/client/control` connects whenever the tldraw page is mounted, also
+3. `/params/snapshots` connects whenever `ParamsRuntimeProvider` is mounted,
+   also independent of the Connect button. A param pane therefore shows server
+   truth for a running module even while the runtime socket is closed, and its
+   forced on-open snapshot is read-only so one client connecting cannot consume
+   a pending update for the others.
+4. `/client/control` connects whenever the tldraw page is mounted, also
    independent of the Connect button. It lets an HTTP caller ask the server to
    forward commands to this browser.
-4. `/lsp` is recreated after every runtime snapshot-socket open. It is not the
+5. `/lsp` is recreated after every runtime snapshot-socket open. It is not the
    execution or visualization channel.
 
-All three application WebSockets use the shared exponential-backoff helper in
+All four application WebSockets use the shared exponential-backoff helper in
 `apps/livecode-tldraw/src/reconnectingSocket.ts`. LSP connection lifecycle is
 managed by the VTLSP transport and explicitly retired when replaced.
 
