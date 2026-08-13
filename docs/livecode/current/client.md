@@ -1,6 +1,8 @@
 # Current Client Architecture
 
-Status: checked against `apps/livecode-tldraw` on 2026-07-21.
+Status: checked against `apps/livecode-tldraw` on 2026-07-21; the params
+runtime, param-pane shape, and canvas-view persistence were checked on
+2026-08-13.
 
 ## Responsibilities
 
@@ -15,7 +17,7 @@ web component inside custom tldraw shapes. It owns:
 - transient `.tldr` import/export.
 
 It does not execute user modules, own canonical run state, or canonically store
-piano-roll note data.
+piano-roll note data or params values.
 
 ## File map
 
@@ -37,12 +39,19 @@ piano-roll note data.
 - `src/pianoRollRuntime.tsx`: named piano-roll snapshot state and set/undo/redo
   requests.
 - `src/PianoRollShape.tsx`: `piano-roll-view` shape and custom-element adapter.
-- `src/livecodeProtocol.ts` and `src/pianoRollTypes.ts`: manually mirrored Deno
-  protocol types. They are not runtime validators.
+- `src/paramsRuntime.tsx`: named params snapshot state and `/params/set`
+  requests.
+- `src/ParamPaneShape.tsx`: `param-pane` shape and its tweakpane bindings.
+- `src/serverRequests.ts`: the WebSocket-URL and POST helpers shared by the two
+  entity runtime providers. `App.tsx` and `livecodeRuntime.tsx` keep their own
+  full-URL variants.
+- `src/livecodeProtocol.ts`, `src/pianoRollTypes.ts`, and `src/paramsTypes.ts`:
+  manually mirrored Deno protocol types. They are not runtime validators.
 - `src/defaultSource.ts`: initial transient module example.
 - `src/livecodeTldrawDebug.ts`: tldraw/runtime E2E control API.
 - `tests/livecodeTldraw.e2e.mjs`: current tldraw browser E2E, focused on
-  piano-roll lookup instrumentation and shape creation/focus.
+  piano-roll lookup instrumentation, shape creation/focus, and the params pane
+  round trip.
 - `public/test-canvases/piano-roll-lookup.tldr`: checked-in manual canvas.
 - `example-projects/minimal-p5gpu`: checked-in project structure/example. Its
   current source intentionally or accidentally contains `sped` while consumers
@@ -51,8 +60,10 @@ piano-roll note data.
 ## Provider and mount order
 
 `App` mounts `LivecodeRuntimeProvider`, then `LivecodeTldrawPage`. Once tldraw
-is available, the page wraps it in `PianoRollRuntimeProvider` using the current
-server URL.
+is available, the page wraps it in `PianoRollRuntimeProvider` and then
+`ParamsRuntimeProvider`, both using the current server URL. Both entity
+providers connect on mount, coalesce snapshots through
+`requestAnimationFrame`, and replace their whole entity map from each snapshot.
 
 On a new transient canvas, `onMount` creates:
 
@@ -103,6 +114,42 @@ Shape props contain viewport/presentation metadata:
 Notes are deliberately absent. `rollName` selects a server-owned piano-roll
 object. Multiple shapes may view the same object.
 
+### `param-pane`
+
+Shape props contain:
+
+```ts
+{
+  w: number;
+  h: number;
+  paramsName: string;
+  title: string;
+}
+```
+
+Values are deliberately absent. `paramsName` selects a server-owned params
+entity. Creating a pane never creates an entity: entities are declared by
+running code, so an unknown name renders a "waiting for `name`" placeholder
+listing the names in the latest snapshot.
+
+The pane mounts one tweakpane `Pane` per shape and binds a copy of the entity's
+values, nesting objects as folders. Bindings are rebuilt only when the value
+shape or the meta changes; a rev advance just refreshes values. A `null` leaf
+(what a non-finite code write serializes to) has no binding until a real value
+is sampled, and an `unserializable` entity shows a badge over the last good
+values.
+
+Edits post one minimal leaf patch to `/params/set` with
+`originId = "param-pane-" + shape.id` and never an `expectedRev`. Snapshots are
+applied with the piano-roll echo-suppression scheme: the first apply after
+mount always runs, later snapshots whose `updatedBy` is this pane's origin are
+skipped, and each binding also refuses a snapshot at or below the rev the
+server assigned to its own most recent write. A binding the user is actively
+editing — focused, under an active pointer gesture, or with a write in flight —
+is never refreshed; the pane catches it up when the gesture ends, which it
+observes through capture-phase `pointerup`/`pointercancel` listeners because the
+shape body stops bubbling.
+
 ## Tldraw store synchronization
 
 `App.tsx` listens to document changes from every source:
@@ -113,8 +160,15 @@ object. Multiple shapes may view the same object.
 - changing its source invalidates and debounces analysis;
 - moving/resizing a project module debounces `/project/modules/update` by one
   second;
-- adding/removing/moving/resizing/renaming a piano-roll shape in URL-driven
-  project mode debounces `/project/canvas` by one second.
+- adding/removing/moving/resizing/renaming a piano-roll or param-pane shape in
+  URL-driven project mode debounces `/project/canvas` by one second.
+
+One collector posts every canvas view kind together. `/project/canvas` replaces
+the whole canvas object, so each post carries both `pianoRollViews` and
+`paramPaneViews` read from the current page; a post that carried one array
+would drop the other kind's saved layout. Nothing is posted until a view shape
+event occurs, so a project that has never had one keeps a manifest with no
+`canvas` key.
 
 Programmatic `.tldr` and URL-driven project loads suppress the per-record
 listener and perform one explicit synchronization pass afterward. The
@@ -190,6 +244,12 @@ Piano-roll widgets are derived only from manifest entries with kind
 Clicking a widget selects and zooms to an existing piano-roll shape with the
 same name, or creates one immediately to the right of the code shape.
 
+Params widgets are derived from manifest entries with kind `canvasParams`, a
+`nameArgRange`, and a `staticName`. They render as `🎛 open <name>` and behave
+the same way, focusing an existing `param-pane` for that name or creating one
+to the right of the code shape. There is no runtime name resolution for params,
+so a declaration whose name is not a string literal renders no widget at all.
+
 ## Piano-roll web component bridge
 
 The tldraw app imports `@avtools/piano-roll`, aliased by Vite to
@@ -216,7 +276,8 @@ Interactive DOM inside shapes must not start tldraw gestures:
 - Run/Stop and footer controls stop pointerdown.
 - the piano-roll body stops pointer/touch/wheel and keydown capture;
 - the piano-roll header remains draggable through tldraw;
-- piano-roll lookup widget buttons stop pointerdown and click propagation.
+- the param-pane body does the same, and its header remains draggable;
+- piano-roll and params widget buttons stop pointerdown and click propagation.
 
 An embedded widget that relies on document/window bubbling during drag should
 use pointer capture or capture-phase global listeners, because the shape body
@@ -229,19 +290,26 @@ removed from undo history, and zoomed to their bounds.
 
 Project loading clears the current canvas, posts `/project/open`, fetches each
 module's source sequentially, creates module shapes, then restores persisted
-piano-roll views. URL-driven project loading connects afterward if needed.
+piano-roll views and param panes. Both restore paths reuse the persisted shape
+id and skip a view whose id already exists. URL-driven project loading connects
+afterward if needed.
 
-The UI toolbar has New/Open/Save for transient `.tldr` canvases and New module.
-It does not currently expose human controls for project create/open/save,
-module add/remove/reload, panic, stop-all, or restart-all. Project opening is by
-URL or client-control command; the richer operations are server APIs.
+The UI toolbar has New/Open/Save for transient `.tldr` canvases, New module, and
+New params pane. The params entry opens a non-modal inline input — the canvas
+stays interactive — offering the names in the latest snapshot through a
+datalist while accepting free text, and creates the pane near the viewport
+center. The toolbar does not currently expose human controls for project
+create/open/save, module add/remove/reload, panic, stop-all, or restart-all.
+Project opening is by URL or client-control command; the richer operations are
+server APIs.
 
 ## Agent and test surfaces
 
 There are two distinct window APIs:
 
 - `window.__livecodeTldrawRuntimeDebug` exposes runtime modules, tldraw shapes,
-  selection, source setting, run/stop/connect, and `.tldr` serialization.
+  selection, source setting, run/stop/connect, param-pane creation, and `.tldr`
+  serialization.
 - `window.__livecodeTldrawDebug` is installed by CodeMirror and exposes document
   URIs/text, focus-by-offset, and direct completion requests.
 

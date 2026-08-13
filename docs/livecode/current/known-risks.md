@@ -1,9 +1,9 @@
 # Current Known Risks and Invariant Gaps
 
-Status: code-inspection audit on 2026-07-21. These are unresolved unless a later
-entry says otherwise. Items marked “not regression-tested” are reasoned from
-the checked-in control flow and should receive a focused reproduction before a
-behavioral fix.
+Status: code-inspection audit on 2026-07-21, extended for the canvas-params
+slice on 2026-08-13. These are unresolved unless a later entry says otherwise.
+Items marked “not regression-tested” are reasoned from the checked-in control
+flow and should receive a focused reproduction before a behavioral fix.
 
 This file is required reading because several current names and older docs imply
 stronger guarantees than the implementation provides.
@@ -110,17 +110,20 @@ strategy.
 
 ## P1: destructive and incomplete project layout paths
 
-The client captures `projectPath` from the initial URL. Piano-roll canvas
-persistence is conditioned on that captured value. A project opened later via
-`/client/control` can display saved piano-roll views, but subsequent view
-layout/name changes are not posted to `/project/canvas`.
+The client captures `projectPath` from the initial URL. Canvas-view persistence
+is conditioned on that captured value, for both piano-roll views and param
+panes. A project opened later via `/client/control` can display saved views of
+either kind, but subsequent view layout/name changes are not posted to
+`/project/canvas`.
 
 Module layout persistence keys off each shape's `projectModulePath` and does
 work after command-driven open.
 
-The server replaces the entire `manifest.canvas` object on each call. Future
-canvas fields would be lost unless the client reads/merges them or the server
-offers granular actions.
+The server replaces the entire `manifest.canvas` object on each call. The client
+mitigates this for the two view kinds it owns by collecting both arrays into
+every post, but the underlying behavior is unchanged: a third canvas field, or a
+second writer, would still be lost unless the client reads/merges it or the
+server offers granular actions.
 
 ## P1: server safety is local-trust only
 
@@ -144,6 +147,10 @@ and direct identifier/namespace receivers.
 This is intentional first-pass scope and is now documented, but new detector
 features should not copy these hard-coded branches. The planned detector
 registry needs explicit match confidence and unsupported-pattern diagnostics.
+Canvas-params detection reuses the piano-roll binding and call-resolution
+helpers through a shared specifier/function table rather than a second copy of
+the branches, but the specifier list is still hard-coded and there is still no
+match-confidence concept.
 
 ## P2: shadow diagnostic attribution is lossy
 
@@ -175,10 +182,29 @@ maps/stores can grow with new identities over an hours-long process:
 - `moduleRunSnapshots` retains the latest entry for every module ID ever seen;
 - runtime piano-roll lookup maps persist until that module is analyzed again;
 - named piano-roll objects have no eviction/persistence lifecycle;
+- named params entities have none either, and their per-entity tombstone maps
+  retain the values of dropped fields indefinitely. A stopped module's entity
+  stays live, and its sampler tick keeps serializing that value every 100 ms;
 - old session directories/logs persist across process runs.
 
 This is unlikely to matter for small sets, but it is contrary to an unqualified
 “hours-long server has bounded state” claim.
+
+## P2: a forced piano-roll snapshot consumes the shared dirty flag
+
+`makePianoRollSnapshot({ force: true })` clears `dirty` unconditionally, and
+that call runs on every `/piano-roll/snapshots` socket open and every
+`/piano-roll/list` request. A forced snapshot for one caller therefore consumes
+the pending broadcast for all the others: the next 100 ms tick sees a clean
+store and sends nothing, so already-connected clients receive that generation
+only when something changes again.
+
+The window is one tick and every affected client is at most one revision
+behind, so this has not been observed as a user-visible fault. It was found by
+inspection while building the params store, which avoids it: forced params
+snapshots are read-only and touch neither the broadcast gate nor the per-entity
+caches. This is not regression-tested, and the fix would be to give the
+piano-roll store the same read-only forced path.
 
 ## P2: optimistic client states can obscure acceptance semantics
 
@@ -208,6 +234,10 @@ These behaviors are deliberate until a design changes them:
 - transient tldraw canvases are not automatically persistent;
 - dynamic import occurs only on explicit launch, never analysis;
 - piano-roll note state is in memory and server-owned, not project/canvas data;
+- params values are the same: server-owned, in memory, and not persisted, so a
+  server restart returns every entity to its declared defaults;
+- params changes have no undo; undo is reserved for operator actions, and
+  wiring GUI-edit undo through a generic action layer is deferred;
 - active callsite IDs are per-build random UUIDs, not stable across edits;
 - imported helper internals outside the edited project module are opaque;
 - a client can edit source while an older module version keeps running;
