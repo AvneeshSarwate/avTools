@@ -16,6 +16,7 @@ import {
   latestPianoRollJson,
   listPianoRollNames,
   PIANO_ROLL_ENTITY_TYPE,
+  pianoRollExists,
   setPianoRoll,
 } from "./piano_roll_store.ts";
 import {
@@ -89,9 +90,9 @@ export function listDurableEntityTypes(): DurableEntityTypeDescriptor[] {
 export const pianoRollEntityType: DurableEntityTypeDescriptor = {
   typeId: PIANO_ROLL_ENTITY_TYPE,
   listNames: () => listPianoRollNames(),
-  exists: (name) => getPianoRoll(name) !== undefined,
+  exists: (name) => pianoRollExists(name),
   create(name) {
-    if (getPianoRoll(name)) {
+    if (pianoRollExists(name)) {
       throw new Error(`Piano roll "${name}" already exists`);
     }
     setPianoRoll(name, { notes: [] }, {
@@ -104,7 +105,7 @@ export const pianoRollEntityType: DurableEntityTypeDescriptor = {
   duplicate(sourceName, targetName) {
     const source = getPianoRoll(sourceName);
     if (!source) throw new Error(`No piano roll "${sourceName}"`);
-    if (getPianoRoll(targetName)) {
+    if (pianoRollExists(targetName)) {
       throw new Error(`Piano roll "${targetName}" already exists`);
     }
     // getPianoRoll already returns a deep clone, so the copy shares nothing.
