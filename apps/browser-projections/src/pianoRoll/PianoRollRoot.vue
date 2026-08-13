@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue'
-import { createPianoRollState, type PianoRollState, type NoteData, type NoteDataInput } from './pianoRollState'
+import {
+  createPianoRollState,
+  type PianoRollState,
+  type NoteData,
+  type NoteDataInput,
+  type PlayheadMarker
+} from './pianoRollState'
 import { PianoRollWebSocketController, type UpdateSource } from './pianoRollWebSocket'
 import {
   initializeLayers,
@@ -10,6 +16,7 @@ import {
   renderResizeHandles,
   updateQueuePlayheadPosition,
   updateLivePlayheadPosition,
+  updatePlayheadMarkers,
   captureState,
   restoreState
 } from './pianoRollCore'
@@ -468,6 +475,7 @@ const stageManager = new StageManager({
   renderResizeHandles,
   updateQueuePlayheadPosition,
   updateLivePlayheadPosition,
+  updatePlayheadMarkers,
   handleCommandStackUpdate,
   syncUiCounters,
   enforceScrollBounds,
@@ -577,9 +585,36 @@ const getPlayStartPosition = (): number => {
   return state.queuePlayhead.position
 }
 
+/**
+ * Replace the set of labeled playhead markers, which is independent of the
+ * single live playhead above: any number of them can be shown at once (one per
+ * publisher). Entries without a finite numeric position are dropped rather than
+ * rendered at 0, and a later id wins over an earlier duplicate.
+ */
+const setPlayheadMarkers = (markers: PlayheadMarker[]) => {
+  const next = new Map<string, PlayheadMarker>()
+  for (const marker of Array.isArray(markers) ? markers : []) {
+    const id = typeof marker?.id === 'string' ? marker.id : ''
+    if (!id || !Number.isFinite(marker?.position)) continue
+    next.set(id, {
+      id,
+      position: Math.max(0, Math.min(marker.position, state.grid.maxLength)),
+      ...(typeof marker.color === 'string' ? { color: marker.color } : {})
+    })
+  }
+  state.playheadMarkers.markers = Array.from(next.values())
+  state.needsRedraw = true
+}
+
+/** What the roll is currently showing; hosts and tests read markers back here. */
+const getPlayheadMarkers = (): PlayheadMarker[] =>
+  state.playheadMarkers.markers.map((marker) => ({ ...marker }))
+
 defineExpose({
   setNotes,
   setLivePlayheadPosition,
+  setPlayheadMarkers,
+  getPlayheadMarkers,
   getPlayStartPosition,
   fitZoomToNotes
 })

@@ -25,6 +25,9 @@ const MPE_HANDLE_RADIUS = 4
 const MPE_HANDLE_FILL_DEFAULT = '#000000'
 const MPE_HANDLE_FILL_ROOTED = '#39d353'
 const MPE_HANDLE_FILL_SELECTED = '#ff8c00'
+// Default marker stroke: distinct from the queue (green) and live (orange)
+// playheads, so an externally published marker never reads as either of them.
+const PLAYHEAD_MARKER_COLOR = '#2f7fff'
 
 // ================= State Serialization =================
 
@@ -1010,6 +1013,65 @@ export function updateLivePlayheadPosition(state: PianoRollState) {
 
   state.livePlayhead.element.x(x)
   state.layers.overlay?.batchDraw()
+}
+
+/**
+ * The many-marker counterpart of updateLivePlayheadPosition: one labeled line
+ * per entry in `state.playheadMarkers.markers`, reconciled by id so a marker
+ * that disappears takes its line with it. Konva nodes are created and destroyed
+ * here only when the id set changes; a moving marker is a single x() write.
+ */
+export function updatePlayheadMarkers(state: PianoRollState) {
+  const overlayLayer = state.layers.overlay
+  if (!overlayLayer) return
+
+  const { markers, elements } = state.playheadMarkers
+  const { scrollX } = state.viewport
+  const pianoRollHeight = 128 * state.grid.noteHeight
+  const seen = new Set<string>()
+
+  markers.forEach((marker) => {
+    seen.add(marker.id)
+    const color = marker.color ?? PLAYHEAD_MARKER_COLOR
+    const x = marker.position * state.grid.quarterNoteWidth - scrollX
+
+    let entry = elements.get(marker.id)
+    if (!entry) {
+      const line = new Konva.Line({
+        points: [0, 0, 0, pianoRollHeight],
+        stroke: color,
+        strokeWidth: 2,
+        listening: false,
+        name: 'playhead-marker'
+      })
+      const label = new Konva.Text({
+        text: marker.id,
+        fontSize: 11,
+        fill: color,
+        listening: false,
+        name: 'playhead-marker-label'
+      })
+      overlayLayer.add(line)
+      overlayLayer.add(label)
+      entry = { line, label }
+      elements.set(marker.id, entry)
+    }
+
+    if (entry.line.stroke() !== color) entry.line.stroke(color)
+    if (entry.label.fill() !== color) entry.label.fill(color)
+    entry.line.x(x)
+    entry.label.x(x + 3)
+    entry.label.y(2)
+  })
+
+  for (const [id, entry] of elements) {
+    if (seen.has(id)) continue
+    entry.line.destroy()
+    entry.label.destroy()
+    elements.delete(id)
+  }
+
+  overlayLayer.batchDraw()
 }
 
 // ================= Interaction Handlers =================

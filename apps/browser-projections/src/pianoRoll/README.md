@@ -98,6 +98,10 @@ import '@/pianoRoll/web-component.ts'
 
 - `setNotes(notes: NoteDataInput[])`: Replace all notes with the provided list
 - `setLivePlayheadPosition(position: number)`: Update the live playhead (quarter notes)
+- `setPlayheadMarkers(markers: Array<{ id, position, color? }>)`: Replace the labeled
+  marker lines — any number of them, independent of the single live playhead
+  (positions in quarter notes)
+- `getPlayheadMarkers(): PlayheadMarker[]`: Read the markers currently rendered
 - `getPlayStartPosition(): number`: Read the current queue playhead (quarter notes)
 - `fitZoomToNotes()`: Zoom and scroll to fit all notes with minimum 4 beats × 12 pitches
 
