@@ -1,6 +1,8 @@
 import { useCallback, useMemo } from "react";
 import {
   BaseBoxShapeUtil,
+  createShapeId,
+  type Editor,
   HTMLContainer,
   RecordProps,
   T,
@@ -96,6 +98,49 @@ export class LivecodeEditorShapeUtil
 
 export function createModuleId() {
   return `module-${crypto.randomUUID()}`;
+}
+
+/**
+ * The one way a module shape is born, wherever the gesture comes from: the
+ * topbar, project open, the client-control bridge, or the debug surface. The
+ * store listener in App.tsx turns the new shape into a registered module.
+ */
+export function createLivecodeShape(
+  editor: Editor,
+  options: {
+    x?: number;
+    y?: number;
+    w?: number;
+    h?: number;
+    moduleId?: string;
+    projectModulePath?: string;
+    projectModuleKind?: "runnable";
+    projectSourceUri?: string;
+    title?: string;
+    source?: string;
+  } = {},
+) {
+  const id = createShapeId();
+  const moduleId = options.moduleId ?? createModuleId();
+  const center = editor.getViewportPageBounds().center;
+  editor.createShape<LivecodeEditorShape>({
+    id,
+    type: LIVECODE_EDITOR_SHAPE_TYPE,
+    x: options.x ?? center.x - 320,
+    y: options.y ?? center.y - 260,
+    props: {
+      w: options.w ?? 640,
+      h: options.h ?? 520,
+      moduleId,
+      projectModulePath: options.projectModulePath,
+      projectModuleKind: options.projectModuleKind,
+      projectSourceUri: options.projectSourceUri,
+      title: options.title ?? `module ${moduleId.slice(7, 15)}`,
+      source: options.source ?? DEFAULT_LIVECODE_SOURCE,
+    },
+  });
+  editor.select(id);
+  return id;
 }
 
 interface LivecodeEditorShapeComponentProps {

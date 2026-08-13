@@ -14,9 +14,8 @@ import {
   Tldraw,
   useValue,
 } from "tldraw";
-import { DEFAULT_LIVECODE_SOURCE } from "./defaultSource";
 import {
-  createModuleId,
+  createLivecodeShape,
   LIVECODE_EDITOR_SHAPE_TYPE,
   type LivecodeEditorShape,
   LivecodeEditorShapeUtil,
@@ -56,6 +55,18 @@ import {
   type PianoRollShape,
   PianoRollShapeUtil,
 } from "./PianoRollShape";
+import {
+  SignalsRuntimeProvider,
+  useSignalsRuntime,
+} from "./signalsRuntime";
+import {
+  createSignalScopeShape,
+  describeScopeSource,
+  SIGNAL_SCOPE_SHAPE_TYPE,
+  type SignalScopeShape,
+  SignalScopeShapeUtil,
+  type SignalScopeSourceType,
+} from "./SignalScopeShape";
 import { setRuntimeDebugRefs } from "./livecodeTldrawDebug";
 import { createReconnectingSocket } from "./reconnectingSocket";
 import {
@@ -72,6 +83,7 @@ const shapeUtils = [
   LivecodeEditorShapeUtil,
   PianoRollShapeUtil,
   ParamPaneShapeUtil,
+  SignalScopeShapeUtil,
 ];
 const TLDR_MIME_TYPE = "application/vnd.tldraw+json";
 
@@ -175,8 +187,23 @@ function LivecodeTldrawPage() {
           w: shape.props.w,
           h: shape.props.h,
         }));
+      // A scope is a view of a binding, not of an entity: what it persists is
+      // which source it watches, never any of the samples it drew.
+      const scopeViews = shapes
+        .filter(isSignalScopeShape)
+        .map((shape) => ({
+          id: shape.id,
+          sourceType: shape.props.sourceType,
+          name: shape.props.name,
+          path: shape.props.path,
+          windowSec: shape.props.windowSec,
+          x: shape.x,
+          y: shape.y,
+          w: shape.props.w,
+          h: shape.props.h,
+        }));
       void postJson(`${runtime.serverBaseUrl}/project/canvas`, {
-        canvas: { pianoRollViews, paramPaneViews },
+        canvas: { pianoRollViews, paramPaneViews, scopeViews },
       }).catch((error) => {
         console.error(
           "[livecode-tldraw] failed to persist canvas view layout",
@@ -329,24 +356,26 @@ function LivecodeTldrawPage() {
   return (
     <PianoRollRuntimeProvider serverBaseUrl={runtime.serverBaseUrl}>
       <ParamsRuntimeProvider serverBaseUrl={runtime.serverBaseUrl}>
-        <div className="app-shell">
-          <TopBar
-            editor={editor}
-            projectPath={projectPath}
-            onOpenTldrawFile={loadTldrawFile}
-          />
-          <div className="canvas-shell">
-            <Tldraw
-              shapeUtils={shapeUtils}
-              onMount={(mountedEditor) => {
-                setEditor(mountedEditor);
-                if (!projectPath && !canvasUrl && !hasLivecodeShapes(mountedEditor)) {
-                  createDefaultLivecodeCanvas(mountedEditor);
-                }
-              }}
+        <SignalsRuntimeProvider serverBaseUrl={runtime.serverBaseUrl}>
+          <div className="app-shell">
+            <TopBar
+              editor={editor}
+              projectPath={projectPath}
+              onOpenTldrawFile={loadTldrawFile}
             />
+            <div className="canvas-shell">
+              <Tldraw
+                shapeUtils={shapeUtils}
+                onMount={(mountedEditor) => {
+                  setEditor(mountedEditor);
+                  if (!projectPath && !canvasUrl && !hasLivecodeShapes(mountedEditor)) {
+                    createDefaultLivecodeCanvas(mountedEditor);
+                  }
+                }}
+              />
+            </div>
           </div>
-        </div>
+        </SignalsRuntimeProvider>
       </ParamsRuntimeProvider>
     </PianoRollRuntimeProvider>
   );
@@ -364,12 +393,14 @@ function TopBar({
   const runtime = useLivecodeRuntime();
   const paramsRuntime = useParamsRuntime();
   const pianoRollRuntime = usePianoRollRuntime();
+  const signalsRuntime = useSignalsRuntime();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // null while the inline params-name input is closed. Non-modal by design: the
-  // canvas stays interactive while it is open. The piano-roll and duplicate
-  // drafts below follow the same pattern.
+  // canvas stays interactive while it is open. The piano-roll, scope and
+  // duplicate drafts below follow the same pattern.
   const [paramPaneDraft, setParamPaneDraft] = useState<string | null>(null);
   const [pianoRollDraft, setPianoRollDraft] = useState<string | null>(null);
+  const [scopeDraft, setScopeDraft] = useState<string | null>(null);
   const [duplicateDraft, setDuplicateDraft] = useState<string | null>(null);
   // The name the delete button is armed for, so a selection change disarms it:
   // a confirm can never land on an entity the operator was not looking at.
@@ -385,6 +416,28 @@ function TopBar({
   const knownRollNames = useMemo(
     () => Object.keys(pianoRollRuntime.rolls).sort(),
     [pianoRollRuntime.rolls],
+  );
+  // Everything a scope can bind to, in the one syntax the input accepts: signal
+  // names as they are, param leaves as `params:<name>.<field>`. Ended signals
+  // stay listed — a stopped run's trace is still worth looking at — but say so.
+  const scopeSourceOptions = useMemo(
+    () => [
+      ...Object.values(signalsRuntime.signals)
+        .map((signal) => ({
+          value: signal.name,
+          label: signal.ended ? `${signal.name} (ended)` : signal.name,
+        }))
+        .sort((a, b) => a.value.localeCompare(b.value)),
+      ...Object.values(paramsRuntime.params)
+        .flatMap((entity) =>
+          listParamsLeafPaths(entity.values).map((leafPath) => ({
+            value: `${PARAMS_ENTITY_TYPE}:${entity.name}.${leafPath}`,
+            label: `${PARAMS_ENTITY_TYPE}:${entity.name}.${leafPath}`,
+          }))
+        )
+        .sort((a, b) => a.value.localeCompare(b.value)),
+    ],
+    [paramsRuntime.params, signalsRuntime.signals],
   );
   const moduleCount = useMemo(() => Object.keys(runtime.modules).length, [
     runtime.modules,
@@ -596,6 +649,63 @@ function TopBar({
             </button>
           </form>
         )}
+      {/*
+        A scope binds to a value, not to an entity: any live signal, or one
+        durable param leaf. There is nothing to create server-side — the source
+        either exists or the scope waits for it — so this gesture is view-only.
+      */}
+      {scopeDraft === null
+        ? (
+          <button
+            type="button"
+            disabled={!editor}
+            onClick={() => setScopeDraft("")}
+          >
+            New scope
+          </button>
+        )
+        : (
+          <form
+            className="topbar__group"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const source = parseScopeSource(
+                scopeDraft,
+                Object.keys(signalsRuntime.signals),
+              );
+              if (!editor || !source) return;
+              createSignalScopeShape(editor, source);
+              setScopeDraft(null);
+            }}
+          >
+            <input
+              autoFocus
+              list="topbar-scope-sources"
+              placeholder="signal name or params:name.field"
+              value={scopeDraft}
+              spellCheck={false}
+              onChange={(event) => setScopeDraft(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setScopeDraft(null);
+              }}
+            />
+            <datalist id="topbar-scope-sources">
+              {scopeSourceOptions.map((option) => (
+                <option
+                  key={option.value}
+                  value={option.value}
+                  label={option.label}
+                />
+              ))}
+            </datalist>
+            <button type="submit" disabled={!editor || !scopeDraft.trim()}>
+              Add scope
+            </button>
+            <button type="button" onClick={() => setScopeDraft(null)}>
+              Cancel
+            </button>
+          </form>
+        )}
 
       {/*
         Entity actions are scoped to a single selected view: a shape is a view
@@ -773,6 +883,55 @@ function selectedEntityRef(editor: Editor | null): DurableEntityRef | null {
     return { type: PARAMS_ENTITY_TYPE, name: shape.props.paramsName };
   }
   return null;
+}
+
+/**
+ * What the "New scope" input accepts, in one function so the datalist and the
+ * typed form agree: `params:<name>.<field...>` binds one durable param leaf,
+ * anything else is a signal name. A signal name that is already known is taken
+ * whole (names may contain dots); an unknown one splits at its first dot, so a
+ * field of an object-valued signal can be bound before it is published.
+ */
+function parseScopeSource(
+  text: string,
+  knownSignalNames: string[],
+): { sourceType: SignalScopeSourceType; name: string; path: string } | null {
+  // The datalist labels ended signals; accept the label back as the name.
+  const trimmed = text.trim().replace(/\s*\(ended\)$/, "");
+  if (!trimmed) return null;
+
+  const paramsPrefix = `${PARAMS_ENTITY_TYPE}:`;
+  if (trimmed.startsWith(paramsPrefix)) {
+    const [name, ...pathParts] = trimmed.slice(paramsPrefix.length).split(".");
+    if (!name) return null;
+    return { sourceType: "params", name, path: pathParts.join(".") };
+  }
+
+  const signalText = trimmed.startsWith("signal:")
+    ? trimmed.slice("signal:".length)
+    : trimmed;
+  if (!signalText) return null;
+  if (knownSignalNames.includes(signalText)) {
+    return { sourceType: "signal", name: signalText, path: "" };
+  }
+  const [name, ...pathParts] = signalText.split(".");
+  if (!name) return null;
+  return { sourceType: "signal", name, path: pathParts.join(".") };
+}
+
+/** Dot-joined paths of every numeric leaf, for the scope datalist. */
+function listParamsLeafPaths(values: unknown, prefix = ""): string[] {
+  if (typeof values !== "object" || values === null) return [];
+  const paths: string[] = [];
+  for (const [key, value] of Object.entries(values)) {
+    const leafPath = prefix ? `${prefix}.${key}` : key;
+    if (typeof value === "number") {
+      paths.push(leafPath);
+    } else if (typeof value === "object" && value !== null) {
+      paths.push(...listParamsLeafPaths(value, leafPath));
+    }
+  }
+  return paths;
 }
 
 /** A view of `name`, beside the selected one so the pair reads as a pair. */
@@ -1275,9 +1434,24 @@ function hasParamPaneShapeChanged(
     before.props.paramsName !== after.props.paramsName;
 }
 
+function hasSignalScopeShapeChanged(
+  before: SignalScopeShape,
+  after: SignalScopeShape,
+) {
+  return before.x !== after.x ||
+    before.y !== after.y ||
+    before.props.w !== after.props.w ||
+    before.props.h !== after.props.h ||
+    before.props.sourceType !== after.props.sourceType ||
+    before.props.name !== after.props.name ||
+    before.props.path !== after.props.path ||
+    before.props.windowSec !== after.props.windowSec;
+}
+
 /** True for every shape kind persisted in `manifest.canvas`. */
 function isCanvasViewShape(record: unknown) {
-  return isPianoRollShape(record) || isParamPaneShape(record);
+  return isPianoRollShape(record) || isParamPaneShape(record) ||
+    isSignalScopeShape(record);
 }
 
 /**
@@ -1291,45 +1465,10 @@ function hasCanvasViewShapeChanged(before: unknown, after: unknown) {
   if (isParamPaneShape(before) && isParamPaneShape(after)) {
     return hasParamPaneShapeChanged(before, after);
   }
+  if (isSignalScopeShape(before) && isSignalScopeShape(after)) {
+    return hasSignalScopeShapeChanged(before, after);
+  }
   return isCanvasViewShape(before) || isCanvasViewShape(after);
-}
-
-function createLivecodeShape(
-  editor: Editor,
-  options: {
-    x?: number;
-    y?: number;
-    w?: number;
-    h?: number;
-    moduleId?: string;
-    projectModulePath?: string;
-    projectModuleKind?: "runnable";
-    projectSourceUri?: string;
-    title?: string;
-    source?: string;
-  } = {},
-) {
-  const id = createShapeId();
-  const moduleId = options.moduleId ?? createModuleId();
-  const center = editor.getViewportPageBounds().center;
-  editor.createShape<LivecodeEditorShape>({
-    id,
-    type: LIVECODE_EDITOR_SHAPE_TYPE,
-    x: options.x ?? center.x - 320,
-    y: options.y ?? center.y - 260,
-    props: {
-      w: options.w ?? 640,
-      h: options.h ?? 520,
-      moduleId,
-      projectModulePath: options.projectModulePath,
-      projectModuleKind: options.projectModuleKind,
-      projectSourceUri: options.projectSourceUri,
-      title: options.title ?? `module ${moduleId.slice(7, 15)}`,
-      source: options.source ?? DEFAULT_LIVECODE_SOURCE,
-    },
-  });
-  editor.select(id);
-  return id;
 }
 
 function clearCurrentCanvas(editor: Editor) {
@@ -1472,6 +1611,24 @@ async function loadProjectIntoCanvas(
       title: `params: ${view.paramsName}`,
     });
   }
+
+  const scopeViews = project.project?.manifest.canvas?.scopeViews ?? [];
+  for (const view of scopeViews) {
+    const shapeId = view.id as SignalScopeShape["id"];
+    if (editor.getShape(shapeId)) continue;
+    createSignalScopeShape(editor, {
+      id: shapeId,
+      x: view.x,
+      y: view.y,
+      w: view.w,
+      h: view.h,
+      sourceType: view.sourceType,
+      name: view.name,
+      path: view.path,
+      windowSec: view.windowSec,
+      title: describeScopeSource(view.sourceType, view.name, view.path),
+    });
+  }
 }
 
 function fileUrlFromPath(path: string) {
@@ -1518,6 +1675,15 @@ function isParamPaneShape(shape: unknown): shape is ParamPaneShape {
       typeof shape === "object" &&
       "type" in shape &&
       (shape as { type?: unknown }).type === PARAM_PANE_SHAPE_TYPE,
+  );
+}
+
+function isSignalScopeShape(shape: unknown): shape is SignalScopeShape {
+  return Boolean(
+    shape &&
+      typeof shape === "object" &&
+      "type" in shape &&
+      (shape as { type?: unknown }).type === SIGNAL_SCOPE_SHAPE_TYPE,
   );
 }
 
