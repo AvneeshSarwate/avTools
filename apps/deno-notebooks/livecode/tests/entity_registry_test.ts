@@ -9,8 +9,10 @@ import {
 } from "../visualizer/entity_registry.ts";
 import {
   clearPianoRollStore,
+  collectPianoRollChanges,
   getPianoRoll,
   makePianoRollSnapshot,
+  seedDemoPianoRoll,
   setPianoRoll,
 } from "../visualizer/piano_roll_store.ts";
 import {
@@ -32,6 +34,13 @@ const params = getDurableEntityType("params")!;
 function resetStores(): void {
   clearPianoRollStore();
   clearParamsStore();
+  // Seeding is an explicit server-construction step now, not something a read
+  // path does lazily, so a reset reproduces construction rather than relying on
+  // the next list/get to conjure `melody` back.
+  seedDemoPianoRoll();
+  // Drain what the reset and the seed just recorded, the way a broadcast tick
+  // does, so the change assertions below start from a quiet store.
+  collectPianoRollChanges();
 }
 
 Deno.test("the registry exposes exactly the two built-in durable types", () => {
@@ -92,13 +101,17 @@ Deno.test("pianoRoll remove reports whether it removed anything", () => {
   assertEquals(pianoRolls.remove("reg/doomed"), false);
 });
 
-Deno.test("deleting the demo roll defeats lazy re-seeding", () => {
+Deno.test("deleting the demo roll is honest and defeats a later re-seed", () => {
   resetStores();
-  assert(pianoRolls.listNames().includes("melody"), "seeded lazily");
+  assert(pianoRolls.listNames().includes("melody"), "seeded at construction");
 
   assertEquals(pianoRolls.remove("melody"), true);
   assertEquals(pianoRolls.listNames().includes("melody"), false);
   assertEquals(getPianoRoll("melody"), undefined);
+  assertEquals(pianoRolls.exists("melody"), false);
+
+  // A second construction-time seeding pass must not resurrect it.
+  assertEquals(seedDemoPianoRoll(), undefined);
   assertEquals(pianoRolls.exists("melody"), false);
 
   // Only an explicit write brings the name back.
@@ -221,20 +234,42 @@ Deno.test("getPianoRoll normalizes its name like every other store entry point",
   assertEquals(getPianoRoll("  reg/spaced  ")?.name, "reg/spaced");
 });
 
-Deno.test("a forced snapshot does not swallow the pending broadcast", () => {
+Deno.test("a snapshot never swallows the pending broadcast", () => {
   resetStores();
-  // Drain whatever the reset marked dirty, the way the broadcast tick does.
-  makePianoRollSnapshot();
   pianoRolls.create("reg/broadcast");
 
-  // An HTTP list (or a socket that just opened) answers one caller only.
-  assert(makePianoRollSnapshot({ force: true })?.rolls["reg/broadcast"]);
-  const broadcast = makePianoRollSnapshot();
-  assert(
-    broadcast?.rolls["reg/broadcast"],
+  // An HTTP list (or a socket that just opened) answers one caller only, and
+  // every snapshot is read-only with respect to the change gate.
+  assert(makePianoRollSnapshot({ force: true }).rolls["reg/broadcast"]);
+  const broadcast = collectPianoRollChanges();
+  assertEquals(
+    broadcast?.map((change) => change.name),
+    ["reg/broadcast"],
     "the open views must still receive the new roll",
   );
-  assertEquals(makePianoRollSnapshot(), null);
+  assertEquals(collectPianoRollChanges(), null);
+});
+
+Deno.test("a deleted roll ships as a deletion and drops its undo history", () => {
+  resetStores();
+  setPianoRoll("reg/deleted", {
+    notes: [{ id: "one", pitch: 60, position: 0, duration: 1 }],
+  }, { source: "client" });
+  setPianoRoll("reg/deleted", {
+    notes: [{ id: "two", pitch: 62, position: 0, duration: 1 }],
+  }, { source: "client" });
+  assertEquals(getPianoRoll("reg/deleted")?.canUndo, true);
+  collectPianoRollChanges();
+
+  assertEquals(pianoRolls.remove("reg/deleted"), true);
+  const changes = collectPianoRollChanges();
+  assertEquals(changes, [{ name: "reg/deleted", entity: null }]);
+
+  // Recreating the name must not inherit stacks that undo into a state it
+  // never held.
+  pianoRolls.create("reg/deleted");
+  assertEquals(getPianoRoll("reg/deleted")?.canUndo, false);
+  assertEquals(getPianoRoll("reg/deleted")?.canRedo, false);
 });
 
 Deno.test("params create makes an empty entity and rejects an existing name", () => {
