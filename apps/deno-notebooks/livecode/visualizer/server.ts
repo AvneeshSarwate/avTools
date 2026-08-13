@@ -103,6 +103,10 @@ type ModuleStopFunc = () => void | Promise<void>;
 interface ActiveModule {
   moduleId: string;
   generatedRunId: string;
+  // Identity of this run, not of its build. `generatedRunId` is reused whenever
+  // a relaunch finds an unchanged prepared build, so it cannot tell an old run
+  // from the one that replaced it; this token can.
+  runToken: string;
   transformedModuleUri: string;
   handle: BranchHandle;
   stopFunc?: ModuleStopFunc;
@@ -128,6 +132,9 @@ interface PreparedRun {
 interface PendingLaunch {
   generatedRunId: string;
   cancelled: boolean;
+  // The `launching` entry this accepted request published, kept so a later
+  // cancellation can tell whether it still owns `moduleRuns`.
+  launchSnapshot: RuntimeModuleRunSnapshotEntry | null;
 }
 
 interface ClientControlSocket {
@@ -1807,11 +1814,14 @@ export async function createLivecodeVisualizerServer(
 
   function setModuleRunSnapshot(
     entry: Omit<RuntimeModuleRunSnapshotEntry, "updatedAtMs">,
-  ): void {
-    moduleRunSnapshots.set(entry.moduleId, {
+  ): RuntimeModuleRunSnapshotEntry {
+    const stored: RuntimeModuleRunSnapshotEntry = {
       ...entry,
       updatedAtMs: Date.now(),
-    });
+    };
+    moduleRunSnapshots.set(entry.moduleId, stored);
+    // Returned so a writer can later ask whether its entry is still the latest.
+    return stored;
   }
 
   function requireCurrentProject(): ProjectState {
@@ -2233,9 +2243,11 @@ export async function createLivecodeVisualizerServer(
     // A launch already accepted but not yet started is refused exactly like a
     // running one, so two rapid requests cannot both pass the safety check.
     // `replaceRunning` supersedes the queued run instead: its action still runs,
-    // sees `cancelled`, and returns before it can import anything.
+    // sees `cancelled`, and returns before it can import anything. A cancelled
+    // entry counts as absent: its action is already doomed, and refusing
+    // because of it would 409 the relaunch that follows a Stop.
     const supersededLaunch = pendingLaunches.get(requestBody.moduleId);
-    if (supersededLaunch) {
+    if (supersededLaunch && !supersededLaunch.cancelled) {
       if (!requestBody.replaceRunning) {
         throw new Error(
           `Module ${requestBody.moduleId} is already launching; stop it first or pass replaceRunning: true.`,
@@ -2256,9 +2268,20 @@ export async function createLivecodeVisualizerServer(
       await stopModule(requestBody.moduleId, "replaceBeforeLaunch");
     }
 
+    // The stop above suspends past the point where it empties `activeModules`
+    // — its teardown still awaits a log write — so another request can pass
+    // both checks in that window and register its own pending entry. The `set`
+    // below would then replace an uncancelled entry, orphaning an action that
+    // stop-all and panic can no longer see and that would still run user code.
+    // Anything holding the slot at this point is superseded by this request,
+    // which is the one the caller is waiting on.
+    const racedLaunch = pendingLaunches.get(requestBody.moduleId);
+    if (racedLaunch) racedLaunch.cancelled = true;
+
     const pendingLaunch: PendingLaunch = {
       generatedRunId: requestBody.generatedRunId,
       cancelled: false,
+      launchSnapshot: null,
     };
     pendingLaunches.set(requestBody.moduleId, pendingLaunch);
 
@@ -2271,7 +2294,10 @@ export async function createLivecodeVisualizerServer(
       projectSourceHash: prepared?.projectSourceHash ??
         requestBody.projectSourceHash,
     };
-    setModuleRunSnapshot({ ...runSnapshotBase, state: "launching" });
+    pendingLaunch.launchSnapshot = setModuleRunSnapshot({
+      ...runSnapshotBase,
+      state: "launching",
+    });
 
     launchQueue.push(async (ctx) => {
       try {
@@ -2279,11 +2305,11 @@ export async function createLivecodeVisualizerServer(
         // request and this turn is re-applied here rather than trusted from
         // request time.
         if (pendingLaunch.cancelled) {
-          setModuleRunSnapshot({
-            ...runSnapshotBase,
-            state: "stopped",
-            message: "launchCancelled",
-          });
+          publishCancelledLaunch(
+            requestBody.moduleId,
+            pendingLaunch,
+            "launchCancelled",
+          );
           await log({
             type: "launchCancelled",
             moduleId: requestBody.moduleId,
@@ -2332,11 +2358,11 @@ export async function createLivecodeVisualizerServer(
         // The import is the one long await inside this action, so a stop can
         // land while it is pending. Checked once more before any user code runs.
         if (pendingLaunch.cancelled) {
-          setModuleRunSnapshot({
-            ...runSnapshotBase,
-            state: "stopped",
-            message: "launchCancelled",
-          });
+          publishCancelledLaunch(
+            requestBody.moduleId,
+            pendingLaunch,
+            "launchCancelled",
+          );
           await log({
             type: "launchCancelled",
             moduleId: requestBody.moduleId,
@@ -2352,6 +2378,13 @@ export async function createLivecodeVisualizerServer(
             `Generated module ${moduleUrl} does not export runFunc/default`,
           );
         }
+
+        // This run's own identity. A relaunch reuses `generatedRunId` whenever
+        // the prepared build is unchanged — Replace without an edit does
+        // exactly that — so it cannot distinguish this run from the one it
+        // replaced, and a slow-dying older branch could otherwise retire the
+        // entry belonging to the run that is currently playing.
+        const runToken = crypto.randomUUID();
 
         const handle = ctx.branch(async (branchCtx) => {
           setModuleRunSnapshot({ ...runSnapshotBase, state: "running" });
@@ -2380,7 +2413,7 @@ export async function createLivecodeVisualizerServer(
           } finally {
             clearModuleWaits(requestBody.moduleId);
             const active = activeModules.get(requestBody.moduleId);
-            if (active?.generatedRunId === requestBody.generatedRunId) {
+            if (active?.runToken === runToken) {
               activeModules.delete(requestBody.moduleId);
               // Guarded, unlike clearModuleWaits: `ended` sticks, so a slow-dying
               // previous branch must not end the signals a replacement run has
@@ -2404,6 +2437,7 @@ export async function createLivecodeVisualizerServer(
         activeModules.set(requestBody.moduleId, {
           moduleId: requestBody.moduleId,
           generatedRunId: requestBody.generatedRunId,
+          runToken,
           transformedModuleUri: requestBody.transformedModuleUri,
           projectModulePath: runSnapshotBase.projectModulePath,
           sourceHash: runSnapshotBase.sourceHash,
@@ -2439,26 +2473,36 @@ export async function createLivecodeVisualizerServer(
     if (!parentContext) await log({ type: "launchQueuedBeforeParentReady" });
   }
 
+  // The terminal snapshot an accepted-then-cancelled launch owes its client —
+  // but only while the `launching` entry it published is still the latest one.
+  // If anything has written since (a successor's `launching`, or the stop that
+  // cancelled this launch), that writer owns `moduleRuns` and this write would
+  // clobber it. Object identity is the test rather than `generatedRunId`,
+  // because a relaunch of an unchanged build reuses the ID.
+  function publishCancelledLaunch(
+    moduleId: string,
+    pending: PendingLaunch,
+    message: string,
+  ): void {
+    const launchSnapshot = pending.launchSnapshot;
+    if (!launchSnapshot) return;
+    if (moduleRunSnapshots.get(moduleId) !== launchSnapshot) return;
+    setModuleRunSnapshot({
+      ...launchSnapshot,
+      state: "stopped",
+      message,
+    });
+  }
+
   // A queued launch has no branch to cancel and no active entry to tear down,
-  // so cancelling it is an intent flag plus the terminal snapshot the accepted
-  // request's `launching` entry still owes its client.
+  // so cancelling it is an intent flag plus that terminal snapshot.
   async function cancelPendingLaunch(
     moduleId: string,
     pending: PendingLaunch,
     reason: string,
   ): Promise<void> {
     pending.cancelled = true;
-    const previous = moduleRunSnapshots.get(moduleId);
-    const base = previous?.generatedRunId === pending.generatedRunId
-      ? previous
-      : {};
-    setModuleRunSnapshot({
-      ...base,
-      moduleId,
-      generatedRunId: pending.generatedRunId,
-      state: "stopped",
-      message: reason,
-    });
+    publishCancelledLaunch(moduleId, pending, reason);
     await log({
       type: "launchCancelled",
       moduleId,
@@ -2505,7 +2549,24 @@ export async function createLivecodeVisualizerServer(
     reason: string,
     opts: { logType?: string } = {},
   ) {
+    // Cancelling the branch is unconditional: this handle is the run the caller
+    // asked to stop, whatever has happened to the module slot since.
     active.handle.cancel();
+    // Everything below is slot-scoped, so it only applies while this record is
+    // still the module's active run. `stopModule` can await a `stop()` hook for
+    // up to two seconds, and a replacement can win the slot inside that window;
+    // deleting by key, ending signals, or writing a terminal snapshot then
+    // would retire the run that is currently playing. Object identity, not
+    // `generatedRunId`, because a relaunch of an unchanged build reuses the ID.
+    if (activeModules.get(active.moduleId) !== active) {
+      await log({
+        type: "supersededTeardown",
+        moduleId: active.moduleId,
+        generatedRunId: active.generatedRunId,
+        reason,
+      });
+      return;
+    }
     activeModules.delete(active.moduleId);
     clearModuleWaits(active.moduleId);
     // Ephemeral entities end with the run that published them rather than
