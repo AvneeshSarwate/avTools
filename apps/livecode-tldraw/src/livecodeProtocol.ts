@@ -133,8 +133,18 @@ export interface ProjectCanvasPianoRollView {
   h: number;
 }
 
+export interface ProjectCanvasParamPaneView {
+  id: string;
+  paramsName: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface ProjectCanvasState {
   pianoRollViews?: ProjectCanvasPianoRollView[];
+  paramPaneViews?: ProjectCanvasParamPaneView[];
 }
 
 export interface LivecodeProjectManifest {
