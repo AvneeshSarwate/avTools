@@ -66,7 +66,7 @@ import {
 } from "./entity_registry.ts";
 import {
   makeParamsSnapshot,
-  sampleParamsSnapshot,
+  sampleParamsChanges,
   setParamsValues,
 } from "./params_store.ts";
 import {
@@ -79,7 +79,7 @@ import {
 import {
   endSignalsForModule,
   makeSignalsSnapshot,
-  sampleSignalsSnapshot,
+  sampleSignalChanges,
 } from "./signals_store.ts";
 import {
   analyzeProjectShadow,
@@ -423,8 +423,8 @@ export async function createLivecodeVisualizerServer(
   // Params entities are written by plain property assignment in user code, so
   // this tick both adopts that drift as store generations and broadcasts.
   paramsSnapshotTimer = setInterval(() => {
-    const snapshot = sampleParamsSnapshot();
-    if (!snapshot) return;
+    if (!sampleParamsChanges()) return;
+    const snapshot = makeParamsSnapshot();
     const payload = JSON.stringify(snapshot);
     for (const socket of paramsSockets) {
       if (socket.readyState === WebSocket.OPEN) socket.send(payload);
@@ -441,8 +441,8 @@ export async function createLivecodeVisualizerServer(
   // this tick is where a published value becomes an observed generation. There
   // is no set route: signals are code-published only.
   signalsSnapshotTimer = setInterval(() => {
-    const snapshot = sampleSignalsSnapshot();
-    if (!snapshot) return;
+    if (!sampleSignalChanges()) return;
+    const snapshot = makeSignalsSnapshot();
     const payload = JSON.stringify(snapshot);
     for (const socket of signalsSockets) {
       if (socket.readyState === WebSocket.OPEN) socket.send(payload);
