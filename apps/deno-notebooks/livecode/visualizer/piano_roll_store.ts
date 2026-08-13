@@ -81,6 +81,11 @@ export function getPianoRoll(name: string): PianoRollObject | undefined {
   return record ? toObject(record) : undefined;
 }
 
+/** Existence without the deep clone `getPianoRoll` owes its callers. */
+export function pianoRollExists(name: string): boolean {
+  return recordFor(name) !== undefined;
+}
+
 /**
  * Point-in-time clones of every roll, sorted by name. Read-only: this is what a
  * `/sync` subscribe reset is built from, so it must not consume the gate.
