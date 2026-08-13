@@ -1,8 +1,9 @@
 # Current Testing and Operations
 
 Status: task definitions and test inventory checked on 2026-07-21, extended for
-the canvas-params slice, again for the entity-CRUD/persistence slice, and again
-for the ephemeral signals slice on 2026-08-13. The final audit report records
+the canvas-params slice, again for the entity-CRUD/persistence slice, again for
+the ephemeral signals slice, and again for the launch-lifecycle slice on
+2026-08-13. The final audit report records
 which commands were actually run in this review.
 
 ## Development startup
@@ -45,7 +46,7 @@ From `apps/deno-notebooks`:
 | --- | --- |
 | `deno task test:livecode:unit` | Analyzer transform, runtime singleton, dynamic import, MIDI helper, params store, durable-entity registry (`livecode/tests/entity_registry_test.ts`, which also covers name encoding and the piano-roll store's delete/save/load seams), and signals store (`livecode/tests/signals_store_test.ts`) tests. |
 | `deno task test:livecode:repro` | Core-timing, analyzer, server, and piano-roll regression tests created by the July stability review. Several test names/comments still say `BUG` although assertions now expect fixed behavior. |
-| `deno task test:livecode:server` | Runtime protocol/client-control, LSP bridge, CLI smoke, and default-source integration. |
+| `deno task test:livecode:server` | Runtime protocol/client-control, launch-queue races (`livecode/tests/launch_race_test.ts`), LSP bridge, CLI smoke, and default-source integration. |
 | `deno task test:livecode:p5gpu` | Temp-project p5gpu/shared-state snapshot proof; requires an available WebGPU adapter. |
 | `deno task test:livecode:e2e` | The older Vue `apps/browser-projections` livecode visualizer E2E, not the tldraw client. |
 | `deno task test:livecode` | Unit + server + old Vue E2E only. It is not the complete current-system suite. |
@@ -125,6 +126,14 @@ tldraw E2E.
 - transformed dynamic import with a real `TimeContext`;
 - health/analyze/launch/snapshot/stop, retained runtime manifest, module stop
   hook, lookup-only lifecycle completion, and basic client-command forwarding;
+- the launch queue's safety window, driven over HTTP against a real server:
+  two concurrent launches leaving exactly one active run and one execution of
+  user code, a stop before the queue drains and a stop during the module import
+  both preventing the run entirely, `replaceRunning` retiring the running run
+  and starting a new generated run ID, and panic cancelling a still-queued
+  launch. Its fixtures are launched by URI instead of prepared through
+  `/runtime/analyze`, which lets a fixture slow its own import with a top-level
+  await and makes the during-import window deterministic;
 - Deno LSP initialization, diagnostics, and import resolution for repository
   aliases;
 - project dependency graph/staleness/shadow diagnostics and non-mutation of
@@ -145,6 +154,13 @@ tldraw E2E.
   longer consumes the pending broadcast;
 - tldraw piano-roll manifest/widget/static-vs-runtime name behavior and
   focus-or-create shape behavior;
+- the tldraw run lifecycle: a finite module edited while it runs still reaching
+  `stopped` at its own end with no reload (the case waits for the running
+  snapshot to land before editing, because that snapshot is what re-asserts the
+  active-run claim the edit must drop — without the wait it passes against the
+  old guard by accident), and Replace clicked on the real header button leaving
+  a new generated run ID active, the replaced run's terminal in the server log,
+  and the button set still Replace/Stop;
 - the tldraw params round trip: declaration manifest and gutter widget, pane
   bindings after launch, a GUI edit reaching `/params/list` with a bumped rev
   and the pane's origin id, a running module's writes reaching the pane readout
@@ -172,7 +188,6 @@ tldraw E2E.
 
 There are no dedicated automated tests for:
 
-- immediate Stop/Panic while a launch is queued but not yet active;
 - project prepared-build identity after a later runtime-file overwrite;
 - `/runtime/restart-all` semantics or dependency cache reset;
 - project events/add/update/reload/remove route semantics as independent
@@ -190,8 +205,11 @@ There are no dedicated automated tests for:
   the browser E2E. There is also no automated check that a dropped signals
   socket clears markers, or that a scope dims and freezes on an ended source —
   both are client-side behaviors the E2E currently reaches only indirectly;
-- livecode runtime reconnect/backoff, browser reload rehydration, queued stops,
-  and stale lifecycle ordering in the tldraw client;
+- livecode runtime reconnect/backoff, browser reload rehydration, and queued
+  stops in the tldraw client. Stale lifecycle ordering now has one case each
+  way — a terminal that must apply after an edit, and a replaced run's terminal
+  that must not retire its replacement — but nothing covers the reconnect-time
+  orderings;
 - URL-driven versus client-command project load behavior;
 - project layout persistence after client-command opening;
 - more than one browser/control client or project-switch interactions;
