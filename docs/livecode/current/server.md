@@ -246,9 +246,13 @@ therefore never absent from both maps while it is startable.
 
 At request time a pending launch is treated exactly like a running one: refused
 unless `replaceRunning` is set, and marked cancelled by the request that
-supersedes it. An `activeModules` hit with `replaceRunning` still stops the old
-run at request time, so an explicit replacement silences it when the user asked
-rather than when the queue gets around to it.
+supersedes it. A pending entry that is already cancelled counts as absent, so a
+relaunch immediately after a Stop is not refused by the doomed action it is
+replacing. An `activeModules` hit with `replaceRunning` still stops the old run
+at request time, so an explicit replacement silences it when the user asked
+rather than when the queue gets around to it; that stop suspends past the point
+where it empties `activeModules`, so whatever holds the pending slot when it
+returns is cancelled before this request registers its own entry.
 
 The queued action then re-applies every decision taken since acceptance:
 
@@ -264,7 +268,26 @@ The queued action then re-applies every decision taken since acceptance:
 `stopModule` for a module that is not active cancels a pending launch, emits its
 terminal snapshot, and reports success. `stopAllModules` and `panicRuntime`
 cancel every pending entry first, so a panic cannot be followed by a queued
-launch starting.
+launch starting. A cancelled launch publishes that terminal only while the
+`launching` entry it wrote is still the latest one, so it cannot clobber a
+successor's.
+
+### Run identity versus build identity
+
+`generatedRunId` identifies a prepared build, not a run: the client reuses a
+matching prepared build, so Replace without an edit relaunches under the same
+ID. Two places therefore need a stronger identity than the ID:
+
+- each started run gets a `runToken`, stored on its `ActiveModule`. The branch's
+  terminal bookkeeping — removing itself, ending its signals, publishing its
+  terminal — happens only while the slot still holds that token, so a slow-dying
+  older branch cannot retire the run that replaced it;
+- `teardownActiveModule` always cancels the handle it was given, because that is
+  the run the caller asked to stop, but everything slot-scoped runs only while
+  `activeModules` still holds that exact record. `stopModule` captures the
+  record before awaiting a `stop()` hook for up to two seconds, and a
+  replacement can win the slot inside that window; the superseded teardown logs
+  `supersededTeardown` and returns.
 
 ## Runtime snapshots
 
