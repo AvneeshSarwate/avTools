@@ -34,9 +34,10 @@ apps/deno-notebooks/.avtools-livecode-sessions/logs/server.log
 ```
 
 Important structured entries include `serverReady`, `analyzeStart`,
-`analyzeSuccess`, `analyzeFailure`, `launchQueued`, `moduleImported`,
-`moduleStarted`, `moduleStopped`, `moduleError`, `snapshot`, LSP process events,
-client-control events, and handler errors.
+`analyzeSuccess`, `analyzeFailure`, `launchQueued`, `launchCancelled`,
+`supersededTeardown`, `moduleImported`, `moduleStarted`, `moduleStopped`,
+`moduleError`, `snapshot`, LSP process events, client-control events, and
+handler errors.
 
 ## Actual task matrix
 
