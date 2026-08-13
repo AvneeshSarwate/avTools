@@ -1,12 +1,15 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { createLivecodeVisualizerServer } from "../visualizer/server.ts";
-import { fetchJson, postJson, waitFor } from "./test_helpers.ts";
+import { fetchJson, postJson, SyncClient, waitFor } from "./test_helpers.ts";
 import type {
   ActiveWaitSnapshot,
   AnalyzeFailure,
   AnalyzeSuccess,
   ClientControlCommandResponse,
   ClientControlEnvelope,
+  ModuleLookupsEntity,
+  ModuleWaitsEntity,
+  RunEntity,
   RuntimeStateResponse,
 } from "../visualizer/protocol.ts";
 
@@ -17,19 +20,26 @@ Deno.test("server analyze, launch, snapshot, and stop protocol smoke", async () 
     sessionRoot,
     logLevel: "debug",
   });
-  const socket = new WebSocket(
+  // The runtime lifecycle now reaches clients over `/sync`. The legacy
+  // `/runtime/snapshots` socket stays open beside it purely to keep the
+  // deprecated shim honest: it must keep emitting its FULL envelope off the
+  // same tick for the clients that have not migrated.
+  const client = await SyncClient.open(server.baseUrl);
+  const legacySocket = new WebSocket(
     `${server.baseUrl.replace("http", "ws")}/runtime/snapshots`,
   );
   const snapshots: ActiveWaitSnapshot[] = [];
-  socket.onmessage = (event) => {
+  legacySocket.onmessage = (event) => {
     snapshots.push(JSON.parse(event.data));
   };
 
   try {
     await waitFor(
-      () => socket.readyState === WebSocket.OPEN,
-      "snapshot socket open",
+      () => legacySocket.readyState === WebSocket.OPEN,
+      "legacy snapshot socket open",
     );
+    await client.subscribe(["moduleWaits", "moduleLookups", "run"]);
+    const syncFrom = client.messages.length;
 
     const health = await fetchJson(`${server.baseUrl}/health`);
     assertEquals(health.ok, true);
@@ -76,13 +86,14 @@ export default async function(ctx: TimeContext) {
       generatedRunId: validAnalyze.generatedRunId,
     });
 
-    await waitFor(
-      () =>
-        snapshots.some((snapshot) =>
-          snapshot.modules["module-smoke"]?.includes(waitId)
-        ),
-      "active wait snapshot",
-      2_000,
+    await client.waitForChange(
+      syncFrom,
+      "moduleWaits",
+      (change) =>
+        change.name === "module-smoke" &&
+        (change.entity as ModuleWaitsEntity | null)?.callsiteIds
+            .includes(waitId) === true,
+      "active wait entity",
     );
 
     const runtimeState = await fetchJson(
@@ -92,20 +103,23 @@ export default async function(ctx: TimeContext) {
       moduleEntry.moduleId === "module-smoke"
     );
     assertEquals(activeModule?.manifest?.callsites[0]?.id, waitId);
+    // `/runtime/state` is frozen through this phase: the run token lives on the
+    // `run` entity, not on the legacy `moduleRuns` rows.
+    for (const entry of Object.values(runtimeState.moduleRuns)) {
+      assertEquals("runToken" in entry, false);
+      assertEquals(typeof entry.updatedAtMs, "number");
+    }
 
     await postJson(`${server.baseUrl}/runtime/stop`, {
       type: "stopModule",
       moduleId: "module-smoke",
     });
 
-    await waitFor(
-      () =>
-        snapshots.some((snapshot) =>
-          snapshot.seq > 1 &&
-          !snapshot.modules["module-smoke"]?.includes(waitId)
-        ),
-      "cleared wait snapshot",
-      2_000,
+    await client.waitForChange(
+      syncFrom,
+      "moduleWaits",
+      (change) => change.name === "module-smoke" && change.entity === null,
+      "cleared wait entity",
     );
 
     const lookupOnlyAnalyze = await postJson(
@@ -140,14 +154,40 @@ export default async function(ctx: TimeContext) {
       generatedRunId: lookupOnlyAnalyze.generatedRunId,
     });
 
+    await client.waitForChange(
+      syncFrom,
+      "moduleLookups",
+      (change) =>
+        change.name === "module-lookup-only" &&
+        (change.entity as ModuleLookupsEntity | null)
+            ?.lookups[lookupOnlyId] === "melody",
+      "lookup-only module lookup entity",
+    );
+    await client.waitForChange(
+      syncFrom,
+      "run",
+      (change) =>
+        change.name === "module-lookup-only" &&
+        (change.entity as RunEntity).state === "stopped",
+      "lookup-only module terminal run entity",
+    );
+    const lookupOnlyRun = client
+      .changesSince(syncFrom, "run")
+      .map((change) => change.entity as RunEntity)
+      .find((run) => run.moduleId === "module-lookup-only");
+    assert(lookupOnlyRun?.runToken, "a run entity carries its token");
+
+    // The legacy shim: the same tick still produces the FULL envelope the
+    // un-migrated tldraw client reads, all four sections included.
     await waitFor(
       () =>
         snapshots.some((snapshot) =>
           snapshot.pianoRollLookups?.["module-lookup-only"]?.[lookupOnlyId] ===
             "melody" &&
-          snapshot.moduleRuns?.["module-lookup-only"]?.state === "stopped"
+          snapshot.moduleRuns?.["module-lookup-only"]?.state === "stopped" &&
+          Array.isArray(snapshot.activeModules)
         ),
-      "lookup-only module stopped snapshot",
+      "lookup-only module stopped snapshot on the legacy shim",
       2_000,
     );
 
@@ -197,7 +237,8 @@ export default async function(ctx: TimeContext) {
     );
     assertEquals(await Deno.readTextFile(stopMarkerPath), "stopped");
   } finally {
-    socket.close();
+    legacySocket.close();
+    client.close();
     await server.close();
     await Deno.remove(sessionRoot, { recursive: true });
   }
