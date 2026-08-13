@@ -3,7 +3,8 @@
 Status: checked against `apps/livecode-tldraw` on 2026-07-21; the params
 runtime, param-pane shape, canvas-view persistence, and the topbar's entity and
 save actions were checked on 2026-08-13; the signals runtime, playhead markers,
-graph rows, and the signal-scope shape were added and checked on 2026-08-13.
+graph rows, and the signal-scope shape were added and checked on 2026-08-13; the
+Replace affordance and the terminal-snapshot guard were checked on 2026-08-13.
 
 ## Responsibilities
 
@@ -280,7 +281,9 @@ Each registered module has published view state plus private coordination:
 Edits clear the build, manifest, diagnostics, decorations, lookups, and active
 run correlation before scheduling a new analysis. This does not stop code that
 is already running on the server; the UI can therefore display edited source
-while an older run continues.
+while an older run continues. Dropping the run correlation is why a terminal
+snapshot applies with no active-run claim (see below): that older run still
+ends, and its end is still this module's.
 
 ## Analyze and Run behavior
 
@@ -294,12 +297,32 @@ for `/project/diagnostics` and refuses from the client when `deno check` is not
 successful.
 
 The client sets `runStatus` to `running` optimistically while preparing the
-build, before `/runtime/launch` has succeeded. The Run button is disabled in
-that state. Server lifecycle snapshots and `/runtime/state` later reconcile the
-record.
+build, before `/runtime/launch` has succeeded. Server lifecycle snapshots and
+`/runtime/state` later reconcile the record.
+
+`runModule(moduleId, options)` takes `{ replaceRunning }`, which it forwards to
+the launch body; `replaceModule(moduleId)` is that call with the flag set. While
+a module runs, its Run button reads **Replace** and calls it — replacement is an
+explicit gesture, and the flag is the server's consent check, so nothing else in
+the client ever sets it. Stop is unchanged and stays enabled.
 
 Stop sets `stopping`, posts `/runtime/stop`, and deliberately keeps the active
 generated run ID until the matching terminal snapshot arrives.
+
+### Applying terminal run snapshots
+
+A terminal lifecycle entry applies when it matches the record's active generated
+run ID, **or** when the record holds no active-run claim at all. The second case
+is ordinary rather than exceptional: an edit calls `setModuleSource`, which
+drops the claim, so a module edited while it ran would otherwise never see its
+own natural completion and would sit at `running` until a reload with nothing
+running on the server.
+
+The guard exists for one job only — an older run's terminal must not retire a
+newer client-initiated launch — and it still does it, because `runModule`
+claims the new generated run ID before it posts. That is also what makes
+Replace safe: the run being replaced reports its terminal under the previous ID,
+which no longer matches and is correctly ignored.
 
 ## LSP behavior
 
@@ -386,7 +409,8 @@ forbids. Identical marker sets are not re-pushed, so an idle roll costs nothing.
 Interactive DOM inside shapes must not start tldraw gestures:
 
 - CodeMirror stops pointer, touch, wheel, and keydown propagation.
-- Run/Stop and footer controls stop pointerdown.
+- the header action buttons (Run/Replace, Stop) and footer controls stop
+  pointerdown.
 - the piano-roll body stops pointer/touch/wheel and keydown capture;
 - the piano-roll header remains draggable through tldraw;
 - the param-pane body does the same, and its header remains draggable;
@@ -467,7 +491,7 @@ URL or client-control command; the richer operations are server APIs.
 There are two distinct window APIs:
 
 - `window.__livecodeTldrawRuntimeDebug` exposes runtime modules, tldraw shapes,
-  selection, source setting, run/stop/connect, module / param-pane /
+  selection, source setting, run/replace/stop/connect, module / param-pane /
   piano-roll-view / signal-scope creation, the three entity actions,
   `saveProject()`, and `.tldr` serialization. The entity actions are thin
   wrappers over the same `serverRequests.ts` calls the topbar uses, so agents

@@ -3,7 +3,8 @@
 Status: checked against both protocol copies and route callers on 2026-07-21;
 the params routes and types, the entity CRUD routes, and the project data
 persistence types were checked on 2026-08-13; the signals routes and types were
-added and checked on 2026-08-13.
+added and checked on 2026-08-13; `replaceRunning` and launch cancellation were
+checked on 2026-08-13.
 
 ## Source of types
 
@@ -97,12 +98,23 @@ The server does not require the ID/URI to match a remembered prepared run. If a
 matching prepared run exists, its project metadata/hash/manifest wins where the
 implementation consults it; the requested URI is still the imported URI.
 
+`replaceRunning` is the caller's explicit consent to end this module's current
+run. Without it, launching over a module that is already running — or over one
+whose launch is accepted but not yet started — fails with HTTP 409 and an
+`already running` / `already launching` message. With it, the running run is
+stopped at request time, a pending one is superseded, and the replacement
+decision is re-checked when the queued action runs. The tldraw client sets the
+flag only from the Replace button.
+
 A successful response means the action was appended to the parent loop's launch
 queue. Import/start success is reported later through lifecycle snapshots and
-logs.
+logs. A launch can still end without ever starting: a stop or panic that lands
+before the action runs cancels it, and the module's lifecycle entry goes
+`launching` → `stopped` with no `running` in between.
 
-Stop accepts `{ moduleId }`. Missing/inactive IDs are idempotent success.
-Stop-all, panic, and restart-all accept an ignored/empty JSON body.
+Stop accepts `{ moduleId }`. Missing/inactive IDs are idempotent success; an ID
+whose launch is still queued is cancelled rather than ignored. Stop-all, panic,
+and restart-all accept an ignored/empty JSON body.
 
 ## Runtime snapshots
 

@@ -3,7 +3,8 @@
 Status: checked against `apps/deno-notebooks/livecode` on 2026-07-21; the
 entity/params stores, their routes, the durable-entity registry, and project
 data persistence were checked on 2026-08-13; the signals store, its routes, and
-the root-clock accessor were added and checked on 2026-08-13.
+the root-clock accessor were added and checked on 2026-08-13; the pending-launch
+lifecycle was added and checked on 2026-08-13.
 
 ## File map
 
@@ -65,6 +66,8 @@ the root-clock accessor were added and checked on 2026-08-13.
 - sets of runtime, piano-roll, params, and signals snapshot sockets;
 - a map of browser control sockets and pending commands;
 - active modules and their `TimeContext` branch handles;
+- pending launches: one accepted-but-not-started run per module, with its
+  cancellation flag;
 - latest lifecycle snapshot per module;
 - prepared runs plus a per-module pruning index;
 - a FIFO launch-action array drained by one parent `TimeContext` loop;
@@ -123,10 +126,10 @@ changes.
 | Method | Route | Behavior |
 | --- | --- | --- |
 | POST | `/runtime/analyze` | Analyze/materialize a transient or current-project module and remember a prepared run. |
-| POST | `/runtime/launch` | Enqueue a dynamic import/branch. Reject an already active module unless `replaceRunning` is true. Successful HTTP response means queued, not necessarily imported or started. |
-| POST | `/runtime/stop` | Gracefully stop one currently active module; a missing module is treated as success. |
-| POST | `/runtime/stop-all` | Gracefully stop all currently active modules in parallel. |
-| POST | `/runtime/panic` | Immediately cancel active modules without stop hooks and panic MIDI. |
+| POST | `/runtime/launch` | Enqueue a dynamic import/branch. Reject a module that is already active *or* already launching unless `replaceRunning` is true. Successful HTTP response means queued, not necessarily imported or started. |
+| POST | `/runtime/stop` | Gracefully stop one currently active module, or cancel one still-queued launch; a missing module is treated as success. |
+| POST | `/runtime/stop-all` | Cancel every pending launch, then gracefully stop all currently active modules in parallel. |
+| POST | `/runtime/panic` | Cancel every pending launch, immediately cancel active modules without stop hooks, and panic MIDI. |
 | POST | `/runtime/restart-all` | Stop all active modules and rematerialize the current project. It does not relaunch the prior modules despite the route name. |
 | GET | `/runtime/status` | Compact list of active module build identities/hashes. |
 | GET | `/runtime/state` | Rehydration state: active modules with manifests, latest run lifecycle entries, and latest remembered prepared manifest per module. |
@@ -232,6 +235,36 @@ only if it is still the active run with the same generated ID.
 The HTTP launch response happens after enqueueing, before import. Import or
 top-level evaluation failures therefore arrive through logs/snapshots rather
 than the original HTTP response.
+
+### Pending launches
+
+Acceptance means queued, so the window between the response and the action's
+turn has its own identity: `pendingLaunches` maps a module ID to its
+`{ generatedRunId, cancelled }` entry, registered before the action is pushed
+and deleted only after ownership transfers to `activeModules`. A module is
+therefore never absent from both maps while it is startable.
+
+At request time a pending launch is treated exactly like a running one: refused
+unless `replaceRunning` is set, and marked cancelled by the request that
+supersedes it. An `activeModules` hit with `replaceRunning` still stops the old
+run at request time, so an explicit replacement silences it when the user asked
+rather than when the queue gets around to it.
+
+The queued action then re-applies every decision taken since acceptance:
+
+- **cancelled before start** — publish the terminal `stopped` entry the accepted
+  request's `launching` entry owed, log `launchCancelled`, and return;
+- **a run appeared meanwhile** — with `replaceRunning`, stop it again (a second
+  stop is idempotent); without it, log `launchAborted` and return *without*
+  writing any lifecycle snapshot, because the run that genuinely won owns
+  `moduleRuns` and its own snapshots keep clients converged;
+- **cancelled during the import** — the import is the action's one long await,
+  so the flag is checked once more after it resolves, before `ctx.branch`.
+
+`stopModule` for a module that is not active cancels a pending launch, emits its
+terminal snapshot, and reports success. `stopAllModules` and `panicRuntime`
+cancel every pending entry first, so a panic cannot be followed by a queued
+launch starting.
 
 ## Runtime snapshots
 
