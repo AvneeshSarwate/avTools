@@ -2,7 +2,8 @@
 
 Status: checked against the server, tldraw client, project tests, and checked-in
 example on 2026-07-21; the canvas param-pane views and the saved durable-entity
-data tree were checked on 2026-08-13.
+data tree were checked on 2026-08-13; the canvas scope views were added and
+checked on 2026-08-13.
 
 ## Durable file model
 
@@ -77,6 +78,17 @@ interface LivecodeProjectManifest {
       w: number;
       h: number;
     }>;
+    scopeViews?: Array<{
+      id: string;
+      sourceType: "signal" | "params";
+      name: string;
+      path: string;        // dot-joined field path; "" for whole values
+      windowSec: number;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+    }>;
   };
   data?: Array<{
     type: string;        // durable entity type: "pianoRoll" | "params"
@@ -86,8 +98,16 @@ interface LivecodeProjectManifest {
 }
 ```
 
-Both view arrays are optional and additive; adding `paramPaneViews` did not bump
-the manifest version. A view `id` is a tldraw shape id and is cast straight back
+All three view arrays are optional and additive; adding `paramPaneViews` and
+later `scopeViews` did not bump the manifest version. A scope view names a
+**binding**, not an entity: what is saved is which value it watches and how
+wide its window is, never any of the samples it drew. A scope may name a signal
+that no longer exists — signals are ephemeral, so a reopened project starts its
+scopes waiting until something publishes again, which is the correct behavior
+rather than a dangling reference. A client that predates `scopeViews` drops them
+on its next canvas post; see `known-risks.md`.
+
+A view `id` is a tldraw shape id and is cast straight back
 into one on load, so a hand-authored manifest must use the `"shape:"` prefix
 (for example `"shape:params-main"`). An id without it is not a valid shape id
 and the view will not be created.
@@ -222,6 +242,15 @@ Durable entities — named piano rolls and params entities — live in
 process-global server stores. A project save writes them to plain files; a
 project open reads them back. Nothing else does: code writes at any rate never
 touch disk, and there is no auto-save, save-on-shutdown, or write-through.
+
+**Ephemeral signals are excluded from all of this by construction.** They are an
+entity type in the same store, but they are deliberately not registered in
+`entity_registry.ts`, and save, status data rows, project open, and `/entities/*`
+all iterate the registered durable types. There is no signal filter to keep in
+sync anywhere in the save path: a `data/signal/` directory cannot appear, and a
+`data` entry of type `"signal"` cannot be written. The E2E asserts both after a
+save, with signals still live in the store at that moment so the assertion has
+something to prove.
 
 One file per entity, at `data/<type>/<encoded-name>.json`. Entity names are
 routinely slash-containing, so the encoder percent-encodes every byte outside

@@ -17,9 +17,12 @@ and analysis/code generation is documented in
 | --- | --- |
 | HTTP/WebSocket routes and process orchestration | `visualizer/server.ts` |
 | Static analysis and generated source | `visualizer/analyze_transform.ts` |
-| Prepared-module instrumentation and active wait tracking | `visualizer/runtime.ts` |
+| Prepared-module instrumentation, active wait tracking, signal ownership, and the process root clock | `visualizer/runtime.ts` |
 | Project import graph, shadow files, and diagnostics | `visualizer/project_shadow_analysis.ts` |
 | Piano-roll state and history | `visualizer/piano_roll_store.ts` |
+| Generic entity records, params entities, durable-type registry | `visualizer/entity_store.ts`, `visualizer/params_store.ts`, `visualizer/entity_registry.ts` |
+| Ephemeral signals (unregistered by design) and their sampler | `visualizer/signals_store.ts` |
+| User-facing declaration helpers | `helpers/canvas_params.ts`, `helpers/canvas_signals.ts` |
 | User-facing piano-roll conversion/playback | `helpers/piano_roll_helpers.ts` |
 | MIDI integration | `helpers/midi_helpers.ts`, `helpers/midi_math.ts` |
 | Deno language-server proxy | `visualizer/lsp_proxy.ts` |
