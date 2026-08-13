@@ -47,3 +47,16 @@ export interface SetParamsRequest {
   originId?: string;
   expectedRev?: number;
 }
+
+/**
+ * File format of a project's `data/params/<encoded-name>.json`. `meta` is saved
+ * so a freshly opened project renders correct panes before any module runs; a
+ * later `canvasParams` declaration still wins through the normal reconcile.
+ */
+export interface SavedParamsEntity {
+  type: "params";
+  name: string;
+  savedAt: string;
+  values: ParamsValues;
+  meta?: ParamsMeta;
+}

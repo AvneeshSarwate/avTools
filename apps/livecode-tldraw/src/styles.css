@@ -233,7 +233,8 @@ input {
 
 .status-pill--open,
 .status-pill--ready,
-.status-pill--running {
+.status-pill--running,
+.status-pill--saved {
   color: #c6f6e2;
   background: rgba(37, 176, 141, 0.22);
   border-color: rgba(37, 176, 141, 0.34);
@@ -250,6 +251,7 @@ input {
 .status-pill--analyzing,
 .status-pill--connecting,
 .status-pill--stopping,
+.status-pill--unsaved,
 .status-pill--unknown {
   color: #ffe7b8;
   background: rgba(190, 136, 35, 0.24);

@@ -1,7 +1,18 @@
 import { parseTldrawJsonFile, serializeTldrawJson, type Editor } from 'tldraw'
 import type { LivecodeRuntimeApi, ModuleViewState } from './livecodeRuntime'
-import type { VisualizerManifestMessage } from './livecodeProtocol'
+import type {
+  EntityMutationSuccess,
+  ProjectSaveResponse,
+  VisualizerManifestMessage,
+} from './livecodeProtocol'
 import { createParamPaneShape } from './ParamPaneShape'
+import { createPianoRollShape } from './PianoRollShape'
+import {
+  createEntity,
+  deleteEntity,
+  duplicateEntity,
+  saveProject,
+} from './serverRequests'
 
 export interface TldrawRuntimeDebugModule {
   moduleId: string
@@ -39,6 +50,15 @@ export interface TldrawRuntimeDebug {
   selectShape(id: string): void
   getSelectedShapeIds(): string[]
   createParamPane(paramsName: string): string | null
+  createPianoRollView(rollName: string): string | null
+  createEntity(type: string, name: string): Promise<EntityMutationSuccess>
+  duplicateEntity(
+    type: string,
+    sourceName: string,
+    targetName: string
+  ): Promise<EntityMutationSuccess>
+  deleteEntity(type: string, name: string): Promise<EntityMutationSuccess>
+  saveProject(): Promise<ProjectSaveResponse>
   exportTldrJson(): Promise<string>
   loadTldrJson(json: string): void
 }
@@ -122,6 +142,25 @@ function installDebugApi() {
       if (!editor) return null
       return String(createParamPaneShape(editor, { paramsName }))
     },
+    createPianoRollView(rollName) {
+      const editor = refs.editor
+      if (!editor) return null
+      return String(createPianoRollShape(editor, { rollName }))
+    },
+    // The generic entity actions and the explicit save, headless: agents and the
+    // E2E drive these rather than the topbar DOM. A rejected action rejects.
+    createEntity(type, name) {
+      return createEntity(requireServerBaseUrl(), type, name)
+    },
+    duplicateEntity(type, sourceName, targetName) {
+      return duplicateEntity(requireServerBaseUrl(), type, sourceName, targetName)
+    },
+    deleteEntity(type, name) {
+      return deleteEntity(requireServerBaseUrl(), type, name)
+    },
+    saveProject() {
+      return saveProject(requireServerBaseUrl())
+    },
     exportTldrJson() {
       const editor = refs.editor
       return editor ? serializeTldrawJson(editor) : Promise.resolve('')
@@ -135,6 +174,12 @@ function installDebugApi() {
       editor.clearHistory()
     },
   }
+}
+
+function requireServerBaseUrl(): string {
+  const serverBaseUrl = refs.runtime?.serverBaseUrl
+  if (!serverBaseUrl) throw new Error('No livecode runtime is mounted yet')
+  return serverBaseUrl
 }
 
 function snapshotModules(): Record<string, TldrawRuntimeDebugModule> {
