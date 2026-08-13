@@ -32,6 +32,7 @@
     "node-web-audio-api": "npm:node-web-audio-api",
     "pako": "npm:pako@2.1.0",
     "three": "npm:three@^0.178.0",
+    "canvas-params": "./livecode/helpers/canvas_params.ts",
     "midi-helpers": "./livecode/helpers/midi_helpers.ts",
     "piano-roll-helpers": "./livecode/helpers/piano_roll_helpers.ts",
     "piano-roll-store": "./livecode/visualizer/piano_roll_store.ts",
