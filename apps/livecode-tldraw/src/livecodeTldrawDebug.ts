@@ -10,6 +10,7 @@ import { createParamPaneShape } from './ParamPaneShape'
 import {
   createPianoRollShape,
   listPianoRollMarkerViews,
+  type PianoRollMarkerViewState,
 } from './PianoRollShape'
 import {
   createSignalScopeShape,
@@ -74,6 +75,8 @@ export interface TldrawRuntimeDebug {
   getScopeStates(): SignalScopeDebugState[]
   /** The marker lines the roll view for `rollName` is currently rendering. */
   getPlayheadMarkers(rollName: string): Array<{ id: string; position: number }>
+  /** Every mounted roll view and its markers, so "no view" is distinguishable. */
+  getPlayheadMarkerViews(): PianoRollMarkerViewState[]
   createEntity(type: string, name: string): Promise<EntityMutationSuccess>
   duplicateEntity(
     type: string,
@@ -204,6 +207,9 @@ function installDebugApi() {
       return listPianoRollMarkerViews()
         .filter((view) => view.rollName === rollName)
         .flatMap((view) => view.markers)
+    },
+    getPlayheadMarkerViews() {
+      return listPianoRollMarkerViews()
     },
     // The generic entity actions and the explicit save, headless: agents and the
     // E2E drive these rather than the topbar DOM. A rejected action rejects.
