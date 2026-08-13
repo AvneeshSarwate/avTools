@@ -887,6 +887,16 @@ function applyModuleRunSnapshot(
     return;
   }
 
+  // Mirror of the active-side dedupe. A terminal entry stays in `moduleRuns`
+  // for the life of the server, so every later snapshot re-delivers it; without
+  // this, a run started after it would be retired by its predecessor's terminal
+  // during the window where the record holds no claim yet (Run sets `running`
+  // optimistically, then awaits the build before claiming the new run ID).
+  const seenTerminal = record.lastTerminalRun !== null &&
+    record.lastTerminalRun.generatedRunId === run.generatedRunId &&
+    run.updatedAtMs <= record.lastTerminalRun.updatedAtMs;
+  if (seenTerminal) return;
+
   record.lastTerminalRun = {
     generatedRunId: run.generatedRunId,
     updatedAtMs: run.updatedAtMs,
