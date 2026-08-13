@@ -43,6 +43,10 @@ chosen, and why tldraw was considered a spatial shell. The active client is now
   GUI entity creation/duplication/deletion and durable-entity persistence in
   the project format (registry facade over the piano-roll and params stores).
   Same status convention as above.
+- `ephemeral-signals-plan-2026-08.md` is the implementation plan for the
+  ephemeral signal tier and its first consumers: piano-roll playhead markers,
+  param-pane graph monitors, and the signal-scope shape. Same status
+  convention as above.
 
 ## Stability review
 
