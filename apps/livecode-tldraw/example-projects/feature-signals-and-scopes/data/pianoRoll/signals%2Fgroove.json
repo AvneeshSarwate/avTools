@@ -1,0 +1,51 @@
+{
+  "type": "pianoRoll",
+  "name": "signals/groove",
+  "savedAt": "2026-08-13T00:00:00.000Z",
+  "data": {
+    "notes": [
+      {
+        "id": "groove-1",
+        "pitch": 48,
+        "position": 0,
+        "duration": 1,
+        "velocity": 100
+      },
+      {
+        "id": "groove-2",
+        "pitch": 55,
+        "position": 2,
+        "duration": 1,
+        "velocity": 90
+      },
+      {
+        "id": "groove-3",
+        "pitch": 52,
+        "position": 4,
+        "duration": 1,
+        "velocity": 95
+      },
+      {
+        "id": "groove-4",
+        "pitch": 55,
+        "position": 6,
+        "duration": 0.5,
+        "velocity": 90
+      },
+      {
+        "id": "groove-5",
+        "pitch": 58,
+        "position": 6.5,
+        "duration": 0.5,
+        "velocity": 85
+      },
+      {
+        "id": "groove-6",
+        "pitch": 60,
+        "position": 7,
+        "duration": 1,
+        "velocity": 105
+      }
+    ]
+  }
+}
