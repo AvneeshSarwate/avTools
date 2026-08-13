@@ -190,11 +190,24 @@ export interface ProjectCanvasState {
   paramPaneViews?: ProjectCanvasParamPaneView[];
 }
 
+/**
+ * One durable entity's saved JSON file. Deliberately top-level in the manifest
+ * rather than inside `canvas`, which `/project/canvas` whole-replaces. `path`
+ * is project-relative and ends in `.json`; the entry carries the true entity
+ * name, so the filename never has to be decoded.
+ */
+export interface ProjectDataEntry {
+  type: string;
+  name: string;
+  path: string;
+}
+
 export interface LivecodeProjectManifest {
   version: 1;
   name: string;
   modules: ProjectModuleRecord[];
   canvas?: ProjectCanvasState;
+  data?: ProjectDataEntry[];
 }
 
 export interface ProjectModuleInput {
@@ -286,12 +299,45 @@ export interface ProjectModuleStatus extends ProjectModuleRecord {
   changedDependencies: string[];
 }
 
+/**
+ * Informational, warning-tier dirty state for one durable entity. `unsaved`
+ * compares the store's cached latest JSON against what the last save/open
+ * recorded; a saved-but-absent entity reports as an unsaved deletion. Nothing
+ * ever auto-saves off the back of this.
+ */
+export interface ProjectDataEntityStatus {
+  type: string;
+  name: string;
+  unsaved: boolean;
+}
+
 export interface ProjectStatusResponse {
   ok: true;
   project: ProjectCurrentResponse["project"];
   modules: ProjectModuleStatus[];
   activeModules: RuntimeModuleStatus[];
   projectSourceHash: string | null;
+  data: ProjectDataEntityStatus[];
+}
+
+export interface ProjectSaveEntityResult {
+  type: string;
+  name: string;
+  path: string;
+  ok: boolean;
+  error?: string;
+}
+
+/** An entity save deliberately skipped, with the reason for the operator. */
+export interface ProjectSaveSkippedEntity {
+  type: string;
+  name: string;
+  reason: string;
+}
+
+export interface ProjectSaveResponse extends ProjectCurrentResponse {
+  data: ProjectSaveEntityResult[];
+  skipped: ProjectSaveSkippedEntity[];
 }
 
 export interface ProjectDependencyEdge {
@@ -534,4 +580,65 @@ export interface SetParamsRequest {
   values: ParamsValues;
   originId?: string;
   expectedRev?: number;
+}
+
+/** The affected entity of a generic CRUD action. */
+export interface DurableEntityRef {
+  type: string;
+  name: string;
+}
+
+export interface EntityCreateRequest {
+  type: string;
+  name: string;
+}
+
+export interface EntityDuplicateRequest {
+  type: string;
+  name: string;
+  targetName: string;
+}
+
+export interface EntityDeleteRequest {
+  type: string;
+  name: string;
+}
+
+export interface EntityMutationSuccess {
+  ok: true;
+  entity: DurableEntityRef;
+}
+
+export interface EntityMutationFailure {
+  ok: false;
+  error: string;
+}
+
+export type EntityMutationResponse =
+  | EntityMutationSuccess
+  | EntityMutationFailure;
+
+export type EntityCreateResponse = EntityMutationResponse;
+export type EntityDuplicateResponse = EntityMutationResponse;
+export type EntityDeleteResponse = EntityMutationResponse;
+
+/** File format of `data/pianoRoll/<encoded-name>.json`. */
+export interface SavedPianoRollEntity {
+  type: "pianoRoll";
+  name: string;
+  savedAt: string;
+  data: PianoRollData;
+}
+
+/**
+ * File format of `data/params/<encoded-name>.json`. `meta` is saved so a
+ * freshly opened project renders correct panes before any module runs; a later
+ * `canvasParams` declaration still wins through the normal reconcile.
+ */
+export interface SavedParamsEntity {
+  type: "params";
+  name: string;
+  savedAt: string;
+  values: ParamsValues;
+  meta?: ParamsMeta;
 }

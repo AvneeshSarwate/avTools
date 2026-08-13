@@ -18,6 +18,7 @@ import {
   commitEntityWrite,
   consumeEntityTypeDirty,
   createEntityRecord,
+  deleteEntityRecord,
   type EntityRecord,
   getEntityRecord,
   isEntityRevConflict,
@@ -169,6 +170,129 @@ export function listParamsNames(): string[] {
 }
 
 /**
+ * Canonical compact JSON of one entity's live value: exactly what a project
+ * save writes and what the saved-state compare comes back to. Serialized fresh
+ * rather than read from the no-op cache, so a code write the sampler has not
+ * adopted yet can never make a save and its recorded saved state disagree.
+ * Null when the entity is absent or its value cannot be serialized.
+ */
+export function latestParamsJson(name: string): string | null {
+  const record = getEntityRecord<ParamsValues>(PARAMS_ENTITY_TYPE, name.trim());
+  if (!record) return null;
+  return safeStringifyEntityValue(record.value);
+}
+
+/**
+ * Explicit operator creation of an empty entity. Legal but only useful once a
+ * declaration (or a future GUI schema editor) fills it in. Throws on an
+ * existing name: generic CRUD runs at route time, never inside timing loops.
+ */
+export function createEmptyParams(name: string): ParamsEntity {
+  const entityName = normalizeEntityName(PARAMS_ENTITY_TYPE, name);
+  if (getEntityRecord(PARAMS_ENTITY_TYPE, entityName)) {
+    throw new Error(`Params entity "${entityName}" already exists`);
+  }
+  const value: ParamsValues = {};
+  const record = createEntityRecord<ParamsValues>(
+    PARAMS_ENTITY_TYPE,
+    entityName,
+    value,
+    { updatedBy: "create", valueJson: safeStringifyEntityValue(value) },
+  );
+  return toParamsEntity(record);
+}
+
+/**
+ * The variations gesture: a deep copy of values and meta under a new name.
+ * Tombstones are deliberately NOT copied — they are the source's declaration
+ * history, not part of the entity's content.
+ */
+export function duplicateParams(
+  sourceName: string,
+  targetName: string,
+): ParamsEntity {
+  const source = normalizeEntityName(PARAMS_ENTITY_TYPE, sourceName);
+  const target = normalizeEntityName(PARAMS_ENTITY_TYPE, targetName);
+  const sourceRecord = getEntityRecord<ParamsValues>(
+    PARAMS_ENTITY_TYPE,
+    source,
+  );
+  if (!sourceRecord) throw new Error(`No params entity "${source}"`);
+  if (getEntityRecord(PARAMS_ENTITY_TYPE, target)) {
+    throw new Error(`Params entity "${target}" already exists`);
+  }
+
+  const value = cloneParamsValues(sourceRecord.value, target);
+  const record = createEntityRecord<ParamsValues>(
+    PARAMS_ENTITY_TYPE,
+    target,
+    value,
+    {
+      meta: sanitizeMeta(sourceRecord.meta as ParamsMeta | undefined, target),
+      updatedBy: "duplicate",
+      valueJson: safeStringifyEntityValue(value),
+    },
+  );
+  return toParamsEntity(record);
+}
+
+/** Explicit operator deletion: the record and its tombstones both go. */
+export function removeParams(name: string): boolean {
+  const entityName = normalizeEntityName(PARAMS_ENTITY_TYPE, name);
+  tombstones.delete(entityName);
+  return deleteEntityRecord(PARAMS_ENTITY_TYPE, entityName);
+}
+
+/**
+ * Adopt saved truth for one entity. Reconcile-grade: an existing entity is
+ * mutated IN PLACE at every depth, so a module holding the live object (or a
+ * nested object inside it) keeps observing truth. Rev always bumps, because
+ * open is an explicit operator action whose result panes must not
+ * echo-suppress. Throws on values that are not JSON-simple; loading runs at
+ * route time, not inside timing loops.
+ */
+export function loadParams(
+  name: string,
+  values: ParamsValues,
+  meta?: ParamsMeta,
+): ParamsEntity {
+  const entityName = normalizeEntityName(PARAMS_ENTITY_TYPE, name);
+  validateParamsValues(values, entityName);
+  const loadedMeta = sanitizeMeta(meta, entityName);
+  const existing = getEntityRecord<ParamsValues>(
+    PARAMS_ENTITY_TYPE,
+    entityName,
+  );
+  // A load replaces the whole value tree, so pre-load tombstones are stale by
+  // construction: without this, re-declaring a dropped field after a load would
+  // restore a value the saved file never contained.
+  tombstones.delete(entityName);
+
+  if (!existing) {
+    const value = structuredClone(values) as ParamsValues;
+    const record = createEntityRecord<ParamsValues>(
+      PARAMS_ENTITY_TYPE,
+      entityName,
+      value,
+      {
+        meta: loadedMeta,
+        updatedBy: "load",
+        valueJson: safeStringifyEntityValue(value),
+      },
+    );
+    return toParamsEntity(record);
+  }
+
+  applyLoadedValues(existing.value, values);
+  existing.meta = loadedMeta;
+  commitEntityWrite(existing, {
+    updatedBy: "load",
+    valueJson: safeStringifyEntityValue(existing.value),
+  });
+  return toParamsEntity(existing);
+}
+
+/**
  * Read-only point-in-time snapshot for `/params/list` and socket open. It must
  * not touch the broadcast gate or the per-entity caches, or one client
  * connecting would consume the pending update for every other client.
@@ -299,6 +423,53 @@ function reconcileValues(
   }
 
   return changed;
+}
+
+// Depth-wise in-place replacement for a load. Same identity discipline as
+// reconcileValues: a nested object that exists on both sides is mutated rather
+// than rebuilt, so a module holding `params.strobe` keeps observing truth.
+function applyLoadedValues(live: ParamsValues, loaded: ParamsValues): void {
+  for (const key of Object.keys(loaded)) {
+    const incoming = loaded[key];
+    const current = live[key];
+
+    if (isPlainObject(incoming)) {
+      const target = isPlainObject(current) ? current : {};
+      if (target !== current) live[key] = target;
+      applyLoadedValues(target, incoming);
+      continue;
+    }
+
+    live[key] = incoming;
+  }
+
+  for (const key of Object.keys(live)) {
+    if (!(key in loaded)) delete live[key];
+  }
+}
+
+// Must not throw: the live value can hold anything user code assigned to it.
+// Mirrors the piano-roll clone fallbacks — a duplicate of a broken value is
+// better than a failed gesture.
+function cloneParamsValues(
+  values: ParamsValues,
+  targetName: string,
+): ParamsValues {
+  try {
+    return structuredClone(values);
+  } catch {
+    // Functions/class instances written by code; fall through.
+  }
+  try {
+    return JSON.parse(JSON.stringify(values)) as ParamsValues;
+  } catch {
+    // Cycles or BigInt; fall through.
+  }
+  console.warn(
+    `[params-store] "${targetName}" duplicate: source values could not be ` +
+      "cloned; created empty.",
+  );
+  return {};
 }
 
 function mergeParamsPatch(
