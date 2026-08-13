@@ -33,6 +33,7 @@ and the end-to-end topology and flows are in
 From this directory:
 
 ```sh
+npm run setupLivecode   # one-shot local setup: installs + component bundles
 npm run dev
 npm run type-check
 npm run build
@@ -45,8 +46,10 @@ Its Node, Playwright, and browser requirements are described in
 
 The piano-roll web component this client embeds is built from
 `apps/browser-projections` into a gitignored bundle. After pulling a change to
-`src/pianoRoll` there, run `npm run buildPianoRoll` in that app before `npm run
-dev` or `npm run test:e2e`.
+`src/pianoRoll` there, run `npm run buildPianoRoll` in that app — or just
+`npm run setupLivecode` here, which performs every local install/build step
+(and is the place future component bundles get added) — before `npm run dev`
+or `npm run test:e2e`.
 
 Do not add detailed architecture here. Update the matching canonical document
 under `docs/livecode/current/`, and update the principles or history trees only

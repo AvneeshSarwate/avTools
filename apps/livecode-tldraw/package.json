@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "type-check": "tsc --noEmit",
-    "test:e2e": "node tests/livecodeTldraw.e2e.mjs"
+    "test:e2e": "node tests/livecodeTldraw.e2e.mjs",
+    "setupLivecode": "node scripts/setupLivecode.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.8.1",
