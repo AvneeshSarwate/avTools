@@ -99,19 +99,20 @@ ephemeral entities that exist to be watched — and its first three consumers:
   multiplexed-transport direction (ship-all changed-only is within
   good-enough at personal scale; noted in docs).
 - **Playhead rendering uses the component's existing playhead, extended to
-  many.** The sweep found `setLivePlayheadPosition(position /* quarter
-  notes */)` already on the element with an internal rendered line. Primary
-  path: extend the Vue component with an additive
-  `setPlayheadMarkers(markers: Array<{ id: string; position: number;
-  color?: string }>)` rendering N labeled lines (keep the existing
-  single-playhead method untouched for compatibility), rebuild via
-  `npm run buildPianoRoll`, commit the dist (it is committed today).
-  **Fallback license**: if the Konva/Vue internals resist N markers within
-  reasonable effort, ship v1 with the existing single playhead — the
-  roll view then renders the anchored signal with the lexicographically
-  first name and the docs say so — and record the N-marker extension as the
-  known gap. The e2e's two-markers case is written against the primary path
-  and downgraded with the fallback.
+  many — required, no fallback.** The sweep found
+  `setLivePlayheadPosition(position /* quarter notes */)` already on the
+  element with an internal rendered line. Extend the Vue component with an
+  additive `setPlayheadMarkers(markers: Array<{ id: string; position:
+  number; color?: string }>)` rendering N labeled lines (keep the existing
+  single-playhead method untouched for compatibility). Multiple playbacks
+  rendering as multiple markers is a stated deliverable of this slice; if
+  the Konva/Vue internals genuinely resist it, STOP and report rather than
+  shipping a silent single-marker downgrade. The dist at
+  `webcomponents/piano-roll/dist/piano-roll.js` is NOT committed — it is
+  gitignored (`**/dist/`) and locally built, per existing repo policy,
+  which this plan keeps: `npm run buildPianoRoll` (in
+  `apps/browser-projections`) is a documented prerequisite for client and
+  E2E work after any component change.
 - **Marker semantics in the shape**: `PianoRollShape` subscribes to the
   signals provider, filters signals anchored `{ type: "pianoRoll", name:
   rollName }` whose value contains a numeric `position` (quarter notes —
@@ -121,7 +122,8 @@ ephemeral entities that exist to be watched — and its first three consumers:
   dimmed if the component supports per-marker style cheaply). Meaning stays
   in the process: the platform never knows why a position moves.
 - **Param graphs (`meta.graph`)**: `ParamsFieldMeta` gains `graph?: boolean`
-  (+ optional `rows?: number`) in both protocol copies and `sanitizeMeta`.
+  (+ optional `rows?: number`) in both protocol copies (`sanitizeMeta` is a
+  JSON round-trip, not a whitelist — it needs no change).
   For a numeric leaf with `graph: true`, the pane adds a SECOND, readonly
   binding on the same draft key with `{ readonly: true, view: "graph",
   min, max, rows }` — tweakpane v4 core supports this (verified:
@@ -156,12 +158,77 @@ ephemeral entities that exist to be watched — and its first three consumers:
   exists; unification belongs to the planned single multiplexed transport,
   and the plan records that explicitly in the docs update.
 
+## Post-review revisions (2026-08-13)
+
+A fresh-eyes review verified the plan against the code. Its findings are
+binding spec; where they conflict with phase text, they win. The two
+decision-level outcomes are already folded into the bullets above (N-marker
+support is required with stop-and-report instead of a fallback license; the
+dist stays uncommitted per existing repo policy with `buildPianoRoll` as a
+documented prerequisite). The rest:
+
+1. **End-with-run goes INSIDE the `generatedRunId` guard** in the launch
+   branch's `finally` (the existing `active?.generatedRunId ===
+   requestBody.generatedRunId` check), plus in `teardownActiveModule`.
+   Copying `clearModuleWaits`'s unguarded placement would let a slow-dying
+   old branch mark the NEXT run's freshly redeclared signals ended after a
+   replaceRunning or stop-then-relaunch — and unlike waits, `ended` sticks.
+2. **The generated import prelude gains the third alias** —
+   `__tcvOwnedSignal` must appear in the emitted import text (it is one
+   hardcoded string today) and as a named export of `runtime.ts`;
+   participating in `hasWrappedCallsite` alone would produce a
+   ReferenceError at launch for signal-bearing modules.
+3. **`set()` on an ended record is sticky-ended**: values keep writing
+   (publishing stays near-free, nothing polices), the `ended` flag stays
+   until redeclare, and clients render the ended state regardless. This
+   covers both the two-declarers collision and a user timer surviving
+   cooperative cancellation; the moving-but-ended contradiction is exactly
+   a surfaced finding, per principles.
+4. **`set()` is a pure field assignment — it does NOT mark the type dirty.**
+   The sampler discovers changes by serialize-compare per tick exactly like
+   params; a set-driven dirty flag would broadcast byte-identical snapshots
+   under re-set-same-value loops. (This supersedes the design-decision
+   bullet's "assigns the record value and marks the type dirty.")
+5. **Scope ring buffers use per-RAF latest-value sampling**: each RAF tick
+   appends `{ t: now, value: latest }` for the bound source — no rev
+   bookkeeping, constant signals draw continuous traces, and transport
+   conflation is accepted per the plan's own framing.
+6. **The `meta.graph` binding is added directly and is never a
+   `BindingEntry`**: no change handler, no busy-guard participation, not
+   pushed to `entries` — tweakpane monitors poll the draft on their own
+   interval.
+7. **Ended-state rendering, one decision per consumer**: roll markers are
+   REMOVED when their signal ends (and cleared/dimmed when the signals
+   socket disconnects — a frozen marker is the "silently freezing"
+   impression the principle forbids); a scope on an ended source freezes
+   its trace and dims its title; the TopBar datalist lists ended names
+   suffixed "(ended)". The E2E asserts exactly these.
+8. **`SignalEntity` carries `unserializable?: boolean`** in both protocol
+   copies (params precedent).
+9. **The `canvasSignal` manifest kind ships with NO editor gutter widget in
+   v1** — client kind-filters skip unknown kinds safely; scope creation via
+   TopBar/debug covers the flow. Recorded in the analyzer doc.
+10. **Marker feed spec**: the roll ignores `anchor.path` in v1; only a
+    numeric value or an object with numeric `position` produces a marker
+    (quarter-note units); anything else renders nothing, documented.
+11. Correct template name: the whole-call wrap follows the **wait branch**
+    (`__tcvVisualizedAwait`) emission, not the pianoRollLookup
+    argument-wrap.
+12. Docs additions: logical-time stamps are quantized (~30 ms parent-loop
+    ticks, sampled at 100 ms adoption) — protocol.md says so before anyone
+    builds a musical x-axis; both `architecture.md` handoff file maps gain
+    the new files; the known-risks third-canvas-field prediction
+    (`scopeViews` on old clients' whole-replace collectors) is cited in the
+    doc update; the E2E's "no signal files after save" case gets a comment
+    noting it depends on transient-phase signals surviving into project
+    mode.
+
 ## Phase A — server, helper, analyzer, unit tests
 
 - `signals_store.ts` (new, params_store as template): `SIGNAL_ENTITY_TYPE =
   "signal"`; `declareSignal(name, { anchor? })` create-or-reattach (a
-  redeclared name clears `ended`, replaces anchor, keeps rev floor
-  monotonic via the existing entity_store floors); `setSignalValue(record
+  redeclared name clears `ended` and replaces the anchor; rev floors are
+  irrelevant here since no path deletes signal records); `setSignalValue(record
   handle path — via the returned handle closure, not a store lookup per
   set)`; `endSignal(name)`; `assignSignalOwner(name, moduleId)`;
   `endSignalsForModule(moduleId)`; `listSignals()`; `makeSignalsSnapshot()`
