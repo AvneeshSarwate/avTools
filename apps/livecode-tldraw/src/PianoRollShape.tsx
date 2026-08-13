@@ -13,10 +13,13 @@ import type {
   PianoRollComponentElement,
   PianoRollPlayheadMarker,
 } from './custom-elements'
-import type { NoteData, PianoRollData } from './pianoRollTypes'
+import type {
+  NoteData,
+  PianoRollData,
+  SignalEntity,
+} from '@avtools/livecode-protocol'
 import { usePianoRollRuntime } from './pianoRollRuntime'
 import { useSignalsRuntime } from './signalsRuntime'
-import type { SignalEntity } from './signalsTypes'
 import { PIANO_ROLL_ENTITY_TYPE } from './serverRequests'
 
 export const PIANO_ROLL_SHAPE_TYPE = 'piano-roll-view'

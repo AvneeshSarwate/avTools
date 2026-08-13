@@ -15,7 +15,7 @@ import type {
   ParamsMeta,
   ParamsPrimitive,
   ParamsValues,
-} from './paramsTypes'
+} from '@avtools/livecode-protocol'
 import { useParamsRuntime } from './paramsRuntime'
 
 export const PARAM_PANE_SHAPE_TYPE = 'param-pane'

@@ -12,7 +12,7 @@ import type {
   ParamsEntity,
   ParamsSnapshot,
   ParamsValues,
-} from "./paramsTypes";
+} from "@avtools/livecode-protocol";
 import { createReconnectingSocket } from "./reconnectingSocket";
 import { postServerJson, serverWebSocketUrl } from "./serverRequests";
 
