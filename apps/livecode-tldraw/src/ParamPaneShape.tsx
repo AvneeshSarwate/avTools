@@ -363,7 +363,38 @@ function buildBindings(
       }
     })
     entries.push(entry)
+
+    addGraphRow(
+      container,
+      target,
+      key,
+      value,
+      fieldMeta as ParamsFieldMeta | undefined,
+    )
   }
+}
+
+/**
+ * The opt-in history view for a numeric leaf: a second, readonly binding on the
+ * same draft key, added after the editable one. Deliberately NOT a BindingEntry
+ * — it has no change handler, never takes part in the busy guard, and is never
+ * refreshed by `applyEntity`, because a tweakpane monitor polls the draft on its
+ * own interval. Bounds come from the field's `min`/`max`; without them the pane
+ * falls back to tweakpane's default range, so declarations should carry bounds.
+ */
+function addGraphRow(
+  container: FolderApi,
+  target: ParamsValues,
+  key: string,
+  value: ParamsPrimitive | ParamsValues,
+  meta: ParamsFieldMeta | undefined,
+) {
+  if (!meta?.graph || typeof value !== 'number') return
+  const params: Record<string, unknown> = { readonly: true, view: 'graph' }
+  if (meta.min !== undefined) params.min = meta.min
+  if (meta.max !== undefined) params.max = meta.max
+  if (meta.rows !== undefined) params.rows = meta.rows
+  container.addBinding(target, key, params as BindingParams)
 }
 
 function toBindingParams(
