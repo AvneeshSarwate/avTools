@@ -372,3 +372,75 @@ input {
   color: #2c332f;
   font-size: 13px;
 }
+
+.param-pane-shape {
+  display: grid;
+  grid-template-rows: 52px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(236, 244, 239, 0.18);
+  border-radius: 8px;
+  color: #eef5f1;
+  background: #111412;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  pointer-events: all;
+}
+
+.param-pane-shape__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #171c19;
+  cursor: grab;
+}
+
+.param-pane-shape__title {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.param-pane-shape__title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.param-pane-shape__title span {
+  overflow: hidden;
+  color: #9ca8a2;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.param-pane-shape__badge {
+  flex: none;
+  border: 1px solid rgba(255, 128, 128, 0.42);
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: #ffb3a9;
+  background: rgba(255, 128, 128, 0.12);
+  font-size: 11px;
+}
+
+.param-pane-shape__body {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
+}
+
+.param-pane-shape__empty {
+  display: grid;
+  gap: 6px;
+  padding: 8px 2px;
+  color: #9ca8a2;
+  font-size: 12px;
+}
