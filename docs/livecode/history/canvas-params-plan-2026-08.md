@@ -60,9 +60,64 @@ Settled design rulings this plan implements (from the owner conversation):
   piano-roll experience shows unbuilt `webcomponents/*/dist` bundles are a
   first-run hazard. A plain npm dep avoids a build step and suits a pane that
   is pure browser UI.
-- Add to root `deno.json` imports: `"canvas-params":
-  "./apps/deno-notebooks/livecode/helpers/canvas_params.ts"` (pattern:
-  existing `"piano-roll-helpers"` alias).
+- Add `"canvas-params": "./apps/deno-notebooks/livecode/helpers/canvas_params.ts"`
+  (path adjusted per file) to the imports of BOTH `deno.json` files — root and
+  `apps/deno-notebooks/deno.json` — matching how `piano-roll-helpers` is
+  declared in both (workspace-member resolution + LSP proxy merge both maps).
+
+## Post-review revisions (2026-08-13)
+
+A fresh-eyes review verified the plan's citations against the code and found
+no owner-level issues. The following findings are integrated into the phases
+below; implementers should treat these as binding spec, since two of them
+invalidate a naive "copy the piano-roll scheme" reading:
+
+1. **Rev adoption for code writes (was: panes freeze).** Direct code writes
+   bypass the store API, so `rev`/`updatedBy` would never advance and the
+   piano-roll echo-suppression gates would skip every subsequent snapshot.
+   The 100 ms sampler therefore ADOPTS observed drift as a store-level write:
+   fresh-serialize each live value; when it differs from `lastValueJson`,
+   bump `rev`, set `updatedBy: "code"`, update the cache. `rev` is thereby a
+   monotonic counter of observed value generations and the piano-roll scheme
+   transfers soundly.
+2. **No-op detection against fresh state (was: GUI writes silently lost).**
+   `/params/set` must compare against a fresh serialization of the live
+   object, never the cached string — code writes invalidate the cache.
+3. **Mid-gesture refresh suppression.** The pane must not refresh a binding
+   the user is actively editing (focus/pointer window); other fields refresh
+   normally. Otherwise 10 Hz code-write snapshots yank sliders mid-drag.
+4. **Deep-merge leaf patches; panes never send `expectedRev`.** `/params/set`
+   values are nested partials merged recursively in place; CAS is reserved
+   for agent/HTTP callers (the piano-roll client also never sends it).
+5. **Sampler is never-throw and honest.** Safe-stringify in the sampler; a
+   value that fails to serialize marks the entity `unserializable: true` in
+   the snapshot (pane shows a conspicuous badge) instead of silently freezing
+   the broadcast loop. NaN/Infinity serialize to null (documented);
+   `undefined` assignment drops the key and reads as a shape change.
+6. **Reconcile is recursive, in place, default-wins on type mismatch, with
+   tombstones.** Reconcile recurses into nested objects, mutates the existing
+   live object at every depth (identity contract), replaces a field with the
+   new default when the declared type changed, sets `updatedBy: "reconcile"`,
+   and keeps dropped fields' values in an in-memory tombstone map so a
+   re-declared field (same type) restores its tweaked value across
+   comment-out/relaunch cycles.
+7. **`canvas-params` alias goes in BOTH `deno.json` files** (root and
+   `apps/deno-notebooks/deno.json`), matching the existing helper aliases.
+8. **Shutdown closes the params socket set**, not just the timer.
+9. **Phase 6's `kind: "canvasParams"` extends `WaitCallsiteKind` in BOTH
+   protocol copies, and the transform must take an explicit no-edit path**
+   for it (manifest entry only — no `__tcvPianoRollLookup` wrap).
+10. **E2E drives pane creation through the debug surface**
+    (`livecodeTldrawDebug`), which gains a create-param-pane method; the
+    TopBar entry uses a non-modal inline input, not `window.prompt`.
+
+Plus: on-open forced snapshots are read-only (must not update the broadcast
+gate or per-entity caches); HTTP/WS payloads are point-in-time clones (only
+`registerParams` hands out the live reference); arrays are rejected at
+registration in v1 (tweakpane has no native array binding); the client
+`postJson`/ws-url helper extraction covers the existing duplicated copies
+(pianoRollRuntime, livecodeRuntime, App) — at minimum the two providers share
+one module.
 
 ## Phase 1 — server: generic entity store with params as first type
 
@@ -91,26 +146,46 @@ New file `apps/deno-notebooks/livecode/visualizer/entity_store.ts`:
     object so prior module instances keep working. Bump rev when the
     reconcile changed anything.
   - Validate JSON-simple values (finite numbers, strings, booleans, plain
-    nested objects). Reject functions/class instances/BigInt at registration
-    with a thrown error naming the field (registration runs at module init,
-    not inside timing loops, so throwing is acceptable there and only there).
+    nested objects; arrays REJECTED in v1 — tweakpane has no native array
+    binding). Reject functions/class instances/BigInt at registration with a
+    thrown error naming the field (registration runs at module init, not
+    inside timing loops, so throwing is acceptable there and only there).
+  - Reconcile is RECURSIVE and IN PLACE at every depth (the live object's
+    identity is the contract — never rebuild it). A field present in both old
+    and new shapes but with a different declared type takes the new default
+    (binding/meta coherence wins). Dropped fields are deleted in place but
+    their values go to an in-memory per-entity tombstone map; a later
+    re-declaration of the same field with the same type restores the tweaked
+    value. Reconcile bumps rev once if anything changed, `updatedBy:
+    "reconcile"`.
 
 Server wiring in `visualizer/server.ts` (mirror the piano-roll block at
 549-589 and the socket set at 221):
 
 - `GET /params/list` → forced `ParamsSnapshot`.
-- `POST /params/set` → body `SetParamsRequest { name, values (full or
-  partial by key), originId?, expectedRev? }`; writes into the live object
-  in place, bumps rev, returns `ParamsEntity` (or `conflict: true`).
-- `WS /params/snapshots` → on open, send forced snapshot; broadcast loop
-  below.
-- Broadcast: a 100 ms interval (pattern of `pianoRollSnapshotTimer`,
-  server.ts:347-360) that builds the snapshot, `JSON.stringify`s it, and
-  broadcasts only when the string differs from the last sent (pattern of the
-  `/runtime/snapshots` `lastSnapshotJson` gate). This is what makes plain
-  unflagged code writes visible with zero cost at the write site: sampling,
-  not notification. Params objects are small; serialize-compare at 10 Hz is
-  negligible. Include timer in the shutdown path next to the existing timers.
+- `POST /params/set` → body `SetParamsRequest { name, values (nested partial
+  — leaf patches), originId?, expectedRev? }`; deep-merges leaves into the
+  live object in place, no-op-detects against a FRESH serialization of the
+  pre-merge live object (never the cached string — code writes invalidate
+  it), bumps rev, returns a point-in-time clone of `ParamsEntity` (or
+  `conflict: true` on CAS mismatch). Panes never send `expectedRev`; CAS is
+  for agent/HTTP callers.
+- `WS /params/snapshots` → on open, send a forced snapshot built read-only
+  (must NOT update the broadcast gate or per-entity caches, or one client's
+  connect would consume the pending update for all others).
+- Broadcast + drift adoption: a 100 ms interval (pattern of
+  `pianoRollSnapshotTimer`, server.ts:347-360). Per entity per tick:
+  safe-stringify the live value; on serialize failure set
+  `unserializable: true` on that entity (conspicuous, never a silent freeze
+  of the loop) and warn once per transition; on success, if the string
+  differs from `lastValueJson`, ADOPT the drift — bump `rev`, set
+  `updatedBy: "code"`, update the cache. Broadcast when any entity changed.
+  This is what makes plain unflagged code writes visible with zero cost at
+  the write site (sampling, not notification) while keeping `rev` a
+  monotonic generation counter so pane echo suppression stays sound.
+  NaN/Infinity serialize to null; `undefined` drops the key and reads as a
+  shape change. Include the timer AND the params socket set in the shutdown
+  path next to their piano-roll counterparts (server.ts:671-697).
 
 Deno unit tests (`apps/deno-notebooks/livecode/tests/params_store_test.ts`):
 create/reattach/reconcile semantics, CAS conflict, no-op detection, live
@@ -160,10 +235,15 @@ Server `visualizer/protocol.ts` and client additions:
     entity's `values` + `meta` (nested objects → folders, the hanoiShow
     visual convention); rebuilds bindings when the value **shape** or meta
     changes (compare key sets), refreshes binding values on rev change.
-  - edits → debounce-light `POST /params/set` with `originId =
-    "param-pane-" + shape.id`; apply snapshots with the exact echo-suppression
-    scheme from `PianoRollShape.tsx:102-127` (`updatedBy === originId` skip,
-    `lastAppliedRevRef`, rev-1 initial case).
+  - edits → minimal leaf patches via `POST /params/set` with `originId =
+    "param-pane-" + shape.id` and NO `expectedRev`; apply snapshots with the
+    echo-suppression scheme from `PianoRollShape.tsx:102-127`: initial apply
+    when `lastAppliedRevRef.current === null`, thereafter skip when
+    `updatedBy === originId` (recording the rev), refresh on rev advance.
+    Do NOT refresh a binding the user is actively editing (track
+    focus/pointer-down per binding; resume refresh after the gesture) so
+    10 Hz code-write snapshots cannot yank a slider mid-drag. Render an
+    `unserializable` badge when the snapshot flags it.
   - entity absent → placeholder listing available names from the latest
     snapshot ("waiting for `name`") — creating a pane never creates an
     entity (observed state is not an instruction; entities are declared by
@@ -172,9 +252,11 @@ Server `visualizer/protocol.ts` and client additions:
 - Register in `App.tsx:48` `shapeUtils`; mount `ParamsRuntimeProvider` next
   to `PianoRollRuntimeProvider` (App.tsx:296).
 - Creation UX: TopBar button "New params pane" (next to "New module",
-  App.tsx:360-368 area): prompts for/offers known entity names from the
-  latest params snapshot, free-text allowed, then creates the shape at a
-  sensible offset (pattern: `createPianoRollShape`, App.tsx:1065-1089).
+  App.tsx:400-408 area) using a NON-MODAL inline input (no `window.prompt`)
+  offering known entity names from the latest snapshot, free text allowed;
+  creates the shape at a sensible offset (pattern: `createPianoRollShape`,
+  App.tsx:1065-1089). Also expose a create-param-pane method on the
+  `livecodeTldrawDebug` surface — the e2e tests drive creation through it.
 
 ## Phase 5 — layout persistence
 
@@ -202,6 +284,12 @@ Pattern: the piano-roll detection tables and flow in
   collection pass over top-level statements).
 - Emit manifest entries `kind: "canvasParams"` with `staticName` when the
   first argument is a string literal (pattern: `extractStaticRollName`).
+  This kind extends `WaitCallsiteKind` in BOTH protocol copies (that mirror
+  is part of this phase's checklist, not phase 3's), and the transform takes
+  an explicit no-edit path for it: manifest entry only, no
+  `__tcvPianoRollLookup`/`__tcvVisualizedAwait` wrapping. Non-literal names
+  get no gutter widget in v1 (no runtime name-resolution wrapper) — state
+  this in the docs update.
 - Client: gutter widget "🎛 open <name>" mirroring the piano-roll open button
   (`CodeMirrorEditor.tsx:76-135`, `LivecodeEditorShape.tsx:117-172`), which
   focuses an existing pane for that name or creates one.
@@ -226,11 +314,17 @@ Pattern: the piano-roll detection tables and flow in
 - Documentation (maintenance contract): `current/protocol.md` (+ routes,
   + wire types), `current/server.md` (store, timer, routes),
   `current/client.md` (provider, shape, TopBar, persistence),
-  `current/project-model.md` (canvas.paramPaneViews),
+  `current/project-model.md` (canvas.paramPaneViews; note that hand-authored
+  view ids must be `"shape:"`-prefixed since persisted ids come from
+  `shape.id` and are cast straight back),
   `current/system-architecture.md` (state-ownership table row),
-  `current/known-risks.md` (canvas whole-replace note now covers two arrays;
-  add "params meta trusts declaration" note). Update
-  `history/README.md` link list with this plan.
+  `current/known-risks.md`: canvas whole-replace note now covers two arrays;
+  the `projectPath`-gating limitation covers both view arrays' persistence;
+  params entities join the P2 "long-process state is not fully bounded" list
+  (no eviction); note the latent piano-roll edge where the on-open forced
+  snapshot consumes the `dirty` flag for all sockets (observed during this
+  work; params avoids it by making forced snapshots read-only).
+  (`history/README.md` already links this plan — done.)
 
 ## Deferred / explicitly out of scope
 
