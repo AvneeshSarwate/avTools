@@ -1,7 +1,8 @@
 # Current Known Risks and Invariant Gaps
 
 Status: code-inspection audit on 2026-07-21, extended for the canvas-params
-slice on 2026-08-13. These are unresolved unless a later entry says otherwise.
+slice and again for the entity-CRUD/persistence slice on 2026-08-13. These are
+unresolved unless a later entry says otherwise.
 Items marked “not regression-tested” are reasoned from the checked-in control
 flow and should receive a focused reproduction before a behavioral fix.
 
@@ -84,6 +85,30 @@ path also bypasses the bulk-load store-listener suppression used by the
 URL-driven path, producing per-shape unregister/register side effects and
 analysis work.
 
+## P1: an explicit save captures the whole process-global entity store
+
+`POST /project/save` iterates every registered entity type and every name
+currently in memory. The stores are process-global and outlive a project
+switch, so a save can write files for entities the open project never used:
+leftovers from a previously opened project, entities an agent created for
+something else, and — once anything writes to it — the demo `melody` roll.
+Those files become manifest `data` entries, so the next open of that project
+loads them back.
+
+Two mitigations exist, and neither makes the capture project-scoped. An
+untouched demo seed is skipped, so a project that never used `melody` does not
+acquire a junk `melody.json`; and deleting an entity plus saving drops its
+manifest entry (leaving the file, per the manifest-only remove precedent). The
+real fix is the same one the rest of this family needs: project-scoped stores,
+or at least a project-scoped view over them.
+
+Data file writes are also non-atomic, exactly like every existing project
+write. A crash mid-save can leave a partial or missing data file; the manifest
+is written last with only the entries that reached disk, which limits the blast
+radius to an orphan file rather than a dangling entry. Save-time path
+allocation additionally disambiguates names that collide case-insensitively, so
+two entities cannot silently share one file on a case-insensitive filesystem.
+
 ## P1: project identity validation is incomplete
 
 The manifest is cast from JSON and normalized but not schema-validated.
@@ -115,6 +140,15 @@ is conditioned on that captured value, for both piano-roll views and param
 panes. A project opened later via `/client/control` can display saved views of
 either kind, but subsequent view layout/name changes are not posted to
 `/project/canvas`.
+
+The save UI inherits the same gate: the "Save project" button, the unsaved
+pill, and its `/project/status` poll all render only when the initial URL
+carried a `projectPath`. A human who opened the project through client control
+sees no way to save the entities they just edited. Agents and the E2E are
+unaffected — `window.__livecodeTldrawRuntimeDebug.saveProject()` and the raw
+`POST /project/save` do not consult that flag — so the gap is a human-facing
+one, and it disappears with whatever fix gives the client a live project
+selection instead of a captured URL value.
 
 Module layout persistence keys off each shape's `projectModulePath` and does
 work after command-driven open.
@@ -181,8 +215,10 @@ maps/stores can grow with new identities over an hours-long process:
 
 - `moduleRunSnapshots` retains the latest entry for every module ID ever seen;
 - runtime piano-roll lookup maps persist until that module is analyzed again;
-- named piano-roll objects have no eviction/persistence lifecycle;
-- named params entities have none either, and their per-entity tombstone maps
+- named piano-roll objects have no eviction lifecycle; an explicit project save
+  can persist them, but nothing ever removes one from memory except an explicit
+  delete;
+- named params entities are the same, and their per-entity tombstone maps
   retain the values of dropped fields indefinitely. A stopped module's entity
   stays live, and its sampler tick keeps serializing that value every 100 ms;
 - old session directories/logs persist across process runs.
@@ -190,21 +226,20 @@ maps/stores can grow with new identities over an hours-long process:
 This is unlikely to matter for small sets, but it is contrary to an unqualified
 “hours-long server has bounded state” claim.
 
-## P2: a forced piano-roll snapshot consumes the shared dirty flag
+## Resolved 2026-08-13: a forced piano-roll snapshot consumed the dirty flag
 
-`makePianoRollSnapshot({ force: true })` clears `dirty` unconditionally, and
-that call runs on every `/piano-roll/snapshots` socket open and every
-`/piano-roll/list` request. A forced snapshot for one caller therefore consumes
-the pending broadcast for all the others: the next 100 ms tick sees a clean
-store and sends nothing, so already-connected clients receive that generation
-only when something changes again.
+`makePianoRollSnapshot({ force: true })` used to clear `dirty` unconditionally,
+and that call runs on every `/piano-roll/snapshots` socket open and every
+`/piano-roll/list` request, so a forced snapshot for one caller consumed the
+pending broadcast for all the others.
 
-The window is one tick and every affected client is at most one revision
-behind, so this has not been observed as a user-visible fault. It was found by
-inspection while building the params store, which avoids it: forced params
-snapshots are read-only and touch neither the broadcast gate nor the per-entity
-caches. This is not regression-tested, and the fix would be to give the
-piano-roll store the same read-only forced path.
+It was predicted here as a one-tick, at-most-one-revision-behind nuisance. It
+was worse: creating a roll over HTTP and then listing it — an agent poll, or
+the new project-mode E2E — left every open view on its waiting placeholder
+indefinitely, because nothing wrote to the store again. Only the broadcast tick
+clears the flag now; a forced snapshot is read-only, matching the params store.
+Covered by a unit test in `livecode/tests/entity_registry_test.ts` and by the
+E2E's create-from-GUI case.
 
 ## P2: optimistic client states can obscure acceptance semantics
 
@@ -233,14 +268,26 @@ These behaviors are deliberate until a design changes them:
 
 - transient tldraw canvases are not automatically persistent;
 - dynamic import occurs only on explicit launch, never analysis;
-- piano-roll note state is in memory and server-owned, not project/canvas data;
-- params values are the same: server-owned, in memory, and not persisted, so a
-  server restart returns every entity to its declared defaults;
-- params changes have no undo; undo is reserved for operator actions, and
-  wiring GUI-edit undo through a generic action layer is deferred;
+- piano-roll note state and params values are server-owned and in memory;
+  writes at any rate never touch disk, and only an explicit `/project/save`
+  persists them. Nothing auto-saves, saves on shutdown, or saves on close, so
+  losing a server process loses whatever was not saved. The unsaved count in
+  the topbar is informational only;
+- entity **rename** is deliberately absent. Duplicate covers the variations
+  gesture; rename orphans the name literals in module source, which deserves
+  its own design beat;
+- an entity created empty (no declaration, no load) is legal but only useful
+  once a declaration fills it; there is no GUI schema editor for params;
+- params changes have no undo, and no undo history of any kind is serialized;
+  undo is reserved for operator actions, and wiring GUI-edit undo through a
+  generic action layer is deferred;
 - active callsite IDs are per-build random UUIDs, not stable across edits;
 - imported helper internals outside the edited project module are opaque;
 - a client can edit source while an older module version keeps running;
 - direct HTTP launch can bypass the tldraw project's diagnostic guard;
 - project remove is currently manifest-only (dangerous if assumed otherwise,
-  but documented as current behavior).
+  but documented as current behavior), and entity delete plus save follows the
+  same precedent: the manifest entry goes, the data file stays;
+- deleting a view never deletes the entity, and deleting an entity never
+  deletes its views: a shape is a view, and the two removals are separate,
+  separately confirmed choices.

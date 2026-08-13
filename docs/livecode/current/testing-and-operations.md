@@ -1,8 +1,9 @@
 # Current Testing and Operations
 
 Status: task definitions and test inventory checked on 2026-07-21, extended for
-the canvas-params slice on 2026-08-13. The final audit report records which
-commands were actually run in this review.
+the canvas-params slice and again for the entity-CRUD/persistence slice on
+2026-08-13. The final audit report records which commands were actually run in
+this review.
 
 ## Development startup
 
@@ -42,7 +43,7 @@ From `apps/deno-notebooks`:
 
 | Command | Current contents |
 | --- | --- |
-| `deno task test:livecode:unit` | Analyzer transform, runtime singleton, dynamic import, MIDI helper, and params store tests. |
+| `deno task test:livecode:unit` | Analyzer transform, runtime singleton, dynamic import, MIDI helper, params store, and durable-entity registry tests (`livecode/tests/entity_registry_test.ts`, which also covers name encoding and the piano-roll store's delete/save/load seams). 77 test cases at this revision. |
 | `deno task test:livecode:repro` | Core-timing, analyzer, server, and piano-roll regression tests created by the July stability review. Several test names/comments still say `BUG` although assertions now expect fixed behavior. |
 | `deno task test:livecode:server` | Runtime protocol/client-control, LSP bridge, CLI smoke, and default-source integration. |
 | `deno task test:livecode:p5gpu` | Temp-project p5gpu/shared-state snapshot proof; requires an available WebGPU adapter. |
@@ -123,12 +124,29 @@ tldraw E2E.
 - params store create/reattach/reconcile, tombstone restore, CAS conflict,
   no-op detection, live-object identity, sampler drift adoption, read-only
   forced snapshots, and JSON-simple validation;
+- durable-entity registry semantics per type: create rejects an existing name,
+  duplicate clones without tombstones, delete is reported honestly and defeats
+  lazy demo re-seeding, serialize/deserialize round-trips preserve note ids and
+  params values plus meta, a load mutates a held live reference in place and
+  clears its undo history, a pristine demo seed is excluded from save while a
+  written one is not, a JSON-hostile value is skipped rather than thrown, name
+  encoding is collision-free (slashes, `%`, unicode, length cap,
+  case-insensitive save-time collisions), and a forced piano-roll snapshot no
+  longer consumes the pending broadcast;
 - tldraw piano-roll manifest/widget/static-vs-runtime name behavior and
   focus-or-create shape behavior;
 - the tldraw params round trip: declaration manifest and gutter widget, pane
   bindings after launch, a GUI edit reaching `/params/list` with a bumped rev
   and the pane's origin id, a running module's writes reaching the pane readout
   with no client action, and pane rehydration from the snapshot after a reload;
+- the tldraw project-mode block, which runs last on its own canvas: booting
+  from a temp project created over HTTP, creating an entity plus its first view
+  from the GUI surface, an explicit save asserted from Node against the real
+  manifest `data` entries and both percent-encoded JSON files, the status
+  section going from unsaved to clean across that save, `/project/open`
+  reverting live edits to both entity types, a fresh param pane rendering
+  bindings with no module running, and duplicate/delete including the surviving
+  view, the removed manifest entry, and the orphaned data file;
 - a temp-project p5gpu snapshot and shared module state.
 
 ### Material gaps
@@ -138,8 +156,11 @@ There are no dedicated automated tests for:
 - immediate Stop/Panic while a launch is queued but not yet active;
 - project prepared-build identity after a later runtime-file overwrite;
 - `/runtime/restart-all` semantics or dependency cache reset;
-- project save/events/add/update/reload/remove route semantics as independent
-  contracts;
+- project events/add/update/reload/remove route semantics as independent
+  contracts. `/project/save` and `/entities/*` now have end-to-end coverage
+  through the browser, but not server-side contract tests of their own — their
+  error shapes (409 on an existing name, 404 on a missing one) and the
+  skipped/failed halves of a save response are untested;
 - piano-roll HTTP routes, WebSocket reconnection, undo/redo, and client echo
   suppression end to end;
 - params HTTP routes as independent server contracts: `/params/set`
@@ -156,8 +177,11 @@ There are no dedicated automated tests for:
 - documentation link/route/test-command consistency.
 
 The tldraw E2E is feature-specific; it is not a broad editor/runtime/reconnect
-smoke test. The old `self-test-loop.md` in history describes broader Vue E2E
-coverage that should not be attributed to the tldraw client.
+smoke test. Its project-mode block is also the only automated coverage of the
+URL-driven project boot path, and it deliberately runs after every
+default-canvas case because entering project mode replaces the canvas. The old
+`self-test-loop.md` in history describes broader Vue E2E coverage that should
+not be attributed to the tldraw client.
 
 ## Manual high-risk checks
 
