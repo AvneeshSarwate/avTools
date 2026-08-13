@@ -2,6 +2,7 @@ import { assert, assertEquals } from "jsr:@std/assert@1";
 import { fromFileUrl } from "jsr:@std/path@1";
 import { DEFAULT_LIVECODE_SOURCE } from "../../../browser-projections/src/sketches/livecodeVisualizer/defaultSource.ts";
 import { analyzeAndTransformTimedModule } from "../visualizer/analyze_transform.ts";
+import { seedDemoPianoRoll } from "../visualizer/piano_roll_store.ts";
 
 Deno.test("built-in editor source checks, analyzes, and initializes piano roll helpers", async () => {
   const tempDir = await Deno.makeTempDir({
@@ -65,6 +66,10 @@ Deno.test("built-in editor source checks, analyzes, and initializes piano roll h
     assertEquals(getPianoRollEntry.staticName, undefined);
     assert(getPianoRollEntry.nameArgRange, "expected nameArgRange");
 
+    // Seeding is a server-construction step rather than something a read path
+    // does lazily, so this test stands in for the server the default source
+    // normally runs under.
+    seedDemoPianoRoll();
     const pianoRollHelpers = await import("piano-roll-helpers") as {
       getPianoRollClip(name: string): { notes: unknown[] };
     };

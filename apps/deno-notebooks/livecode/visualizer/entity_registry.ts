@@ -1,9 +1,8 @@
 // One interface over every durable entity type, so generic CRUD actions and
 // project persistence do not have to know whether a name addresses a piano roll
-// or a params entity. It is deliberately a facade, not a migration:
-// `piano_roll_store.ts` keeps its own proven engine (undo, CAS, E2E coverage)
-// and `params_store.ts` keeps the entity-store one; only the interface
-// divergence goes away.
+// or a params entity. Both descriptors now front the same `entity_store.ts`
+// substrate, so this is a thin naming/validation layer rather than a bridge
+// between two engines.
 //
 // Everything here runs at route/registration time — never inside caller-owned
 // livecode timing — so throwing on a bad name or a malformed saved file is the
@@ -16,6 +15,7 @@ import {
   getPianoRoll,
   latestPianoRollJson,
   listPianoRollNames,
+  PIANO_ROLL_ENTITY_TYPE,
   setPianoRoll,
 } from "./piano_roll_store.ts";
 import {
@@ -58,7 +58,7 @@ export interface DurableEntityTypeDescriptor {
   latestJson(name: string): string | null;
 }
 
-export const PIANO_ROLL_ENTITY_TYPE = "pianoRoll";
+export { PIANO_ROLL_ENTITY_TYPE };
 
 /** Percent-encoding keeps `data/<type>/<name>.json` collision-free by name. */
 const FILE_NAME_SAFE_BYTE = /[a-zA-Z0-9._-]/;

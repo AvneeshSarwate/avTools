@@ -1,3 +1,32 @@
+// Piano rolls: the third typed wrapper over `entity_store.ts`, and the only
+// durable one whose value is written exclusively through this module's own API
+// (no live object is handed to user code, so there is no code drift to adopt).
+//
+// That is why its sync source is pure WRITE-TIME change tracking: every entry
+// point below records the name it touched, and an idle store costs one set-size
+// check rather than a per-tick serialize of every note array.
+//
+// What survives from the pre-migration engine, because each earns its keep:
+// per-roll undo/redo stacks (now a side structure, dropped with the entity),
+// compare-and-set via `expectedRev`, history labels, the never-throw clone
+// discipline for user-supplied metadata, and the demo-seed semantics that keep
+// an untouched `melody` out of project saves.
+
+import {
+  clearEntityRecords,
+  commitEntityWrite,
+  consumeEntityTypeChanges,
+  createEntityRecord,
+  deleteEntityRecord,
+  type EntityChange,
+  type EntityRecord,
+  getEntityRecord,
+  isEntityRevConflict,
+  listEntityRecords,
+  markEntityChanged,
+  nextEntitySnapshotSeq,
+  safeStringifyEntityValue,
+} from "./entity_store.ts";
 import type {
   MpePitchPoint,
   NoteData,
@@ -8,6 +37,8 @@ import type {
   PianoRollUpdateSource,
 } from "./protocol.ts";
 
+export const PIANO_ROLL_ENTITY_TYPE = "pianoRoll";
+
 interface HistoryEntry {
   label: string;
   data: PianoRollData;
@@ -15,16 +46,9 @@ interface HistoryEntry {
   timestampMs: number;
 }
 
-interface PianoRollRecord extends PianoRollObject {
+interface RollHistory {
   undoStack: HistoryEntry[];
   redoStack: HistoryEntry[];
-  // Cached JSON of the last SHAPED (pre-clone) data assigned to `data`. Lets
-  // setPianoRoll detect no-op writes with a single serialize + string compare
-  // instead of stringifying both sides on every call. Kept in sync wherever
-  // `data` is assigned (set / undo / redo / seed-via-set). Empty string when
-  // the data was not JSON-serializable (circular/BigInt metadata) — it can
-  // never match a real serialization, so no-op detection is simply disabled.
-  lastDataJson: string;
 }
 
 export interface SetPianoRollOptions {
@@ -39,30 +63,30 @@ const DEFAULT_ROLL_NAME = "melody";
 /** `updatedBy` of an untouched demo seed; project save skips such a roll. */
 export const DEMO_SEED_ORIGIN = "demo-seed";
 const MAX_HISTORY = 100;
-const records = new Map<string, PianoRollRecord>();
-// Names an operator explicitly deleted. `ensureDefaultPianoRoll` runs on every
-// list/get/snapshot, so without this a deleted default resurrects within one
-// snapshot tick. Per process, like the records themselves.
+// Editing history, keyed by entity name. Deliberately NOT part of the entity:
+// it is never serialized, and it is dropped when the entity is deleted so a
+// recreated name cannot undo into a state it never held.
+const histories = new Map<string, RollHistory>();
+// Names an operator explicitly deleted. Seeding is an explicit server-startup
+// action, but this still has to be remembered so a restart-era re-seed (or a
+// second server object in one isolate) cannot resurrect a deleted default.
 const deletedDefaults = new Set<string>();
-let snapshotSeq = 0;
-let dirty = true;
 
 export function listPianoRollNames(): string[] {
-  ensureDefaultPianoRoll();
-  return [...records.keys()].sort((a, b) => a.localeCompare(b));
+  return records().map((record) => record.name);
 }
 
 export function getPianoRoll(name: string): PianoRollObject | undefined {
-  ensureDefaultPianoRoll();
-  const record = records.get(normalizeName(name));
+  const record = recordFor(name);
   return record ? toObject(record) : undefined;
 }
 
-export function getAllPianoRolls(): Record<string, PianoRollObject> {
-  ensureDefaultPianoRoll();
-  return Object.fromEntries(
-    [...records.entries()].map(([name, record]) => [name, toObject(record)]),
-  );
+/**
+ * Point-in-time clones of every roll, sorted by name. Read-only: this is what a
+ * `/sync` subscribe reset is built from, so it must not consume the gate.
+ */
+export function listPianoRollObjects(): PianoRollObject[] {
+  return records().map(toObject);
 }
 
 export function setPianoRoll(
@@ -70,62 +94,57 @@ export function setPianoRoll(
   data: PianoRollData,
   options: SetPianoRollOptions = {},
 ): PianoRollObject {
-  const normalizedName = normalizeName(name);
+  const entityName = normalizeName(name);
   // Shape (assign note ids, default velocity) WITHOUT cloning, then serialize
   // once for the no-op compare. The expensive never-throw clone only happens
   // when the write actually proceeds.
   const shaped = shapeData(data);
-  const shapedJson = safeStringify(shaped);
-  const existing = records.get(normalizedName);
+  const shapedJson = safeStringifyEntityValue(shaped);
+  const existing = getEntityRecord<PianoRollData>(
+    PIANO_ROLL_ENTITY_TYPE,
+    entityName,
+  );
   const source = options.source ?? "server";
   const undoable = options.undoable ?? true;
 
   if (existing) {
-    if (
-      options.expectedRev !== undefined && existing.rev !== options.expectedRev
-    ) {
+    if (isEntityRevConflict(existing, options.expectedRev)) {
       return { ...toObject(existing), conflict: true };
     }
 
-    if (shapedJson !== null && existing.lastDataJson === shapedJson) {
+    if (shapedJson !== null && existing.lastValueJson === shapedJson) {
       return toObject(existing);
     }
 
-    const nextData = cloneShapedData(shaped, normalizedName);
+    const nextData = cloneShapedData(shaped, entityName);
 
     if (undoable) {
-      pushHistory(existing.undoStack, {
+      const history = historyFor(entityName);
+      pushHistory(history.undoStack, {
         label: options.label ?? "Set piano roll",
-        data: cloneData(existing.data),
+        data: cloneRollData(existing.value),
         source,
         timestampMs: Date.now(),
       });
-      existing.redoStack = [];
+      history.redoStack = [];
     }
 
-    existing.rev += 1;
-    existing.data = nextData;
-    existing.lastDataJson = shapedJson ?? "";
-    existing.updatedAt = Date.now();
-    existing.updatedBy = options.originId ?? source;
-    markDirty();
+    existing.value = nextData;
+    commitEntityWrite(existing, {
+      updatedBy: options.originId ?? source,
+      valueJson: shapedJson,
+    });
     return toObject(existing);
   }
 
-  const record: PianoRollRecord = {
-    name: normalizedName,
-    rev: 1,
-    data: cloneShapedData(shaped, normalizedName),
-    lastDataJson: shapedJson ?? "",
-    updatedAt: Date.now(),
-    updatedBy: options.originId ?? source,
-    canUndo: false,
-    canRedo: false,
-    undoStack: [],
-    redoStack: [],
-  };
-  records.set(normalizedName, record);
-  markDirty();
+  // Roll writes are upserts, unlike `/params/set`: module write-back through
+  // `setPianoRollClip` must not need a prior `/entities/create`.
+  const record = createEntityRecord<PianoRollData>(
+    PIANO_ROLL_ENTITY_TYPE,
+    entityName,
+    cloneShapedData(shaped, entityName),
+    { updatedBy: options.originId ?? source, valueJson: shapedJson },
+  );
   return toObject(record);
 }
 
@@ -133,23 +152,19 @@ export function undoPianoRoll(
   name: string,
   options: { originId?: string } = {},
 ): PianoRollObject | undefined {
-  ensureDefaultPianoRoll();
-  const record = records.get(normalizeName(name));
-  const previous = record?.undoStack.pop();
-  if (!record || !previous) return record ? toObject(record) : undefined;
+  const record = recordFor(name);
+  if (!record) return undefined;
+  const previous = histories.get(record.name)?.undoStack.pop();
+  if (!previous) return toObject(record);
 
-  pushHistory(record.redoStack, {
+  const history = historyFor(record.name);
+  pushHistory(history.redoStack, {
     label: "Redo piano roll",
-    data: cloneData(record.data),
+    data: cloneRollData(record.value),
     source: "undoRedo",
     timestampMs: Date.now(),
   });
-  record.rev += 1;
-  record.data = cloneData(previous.data);
-  record.lastDataJson = safeStringify(record.data) ?? "";
-  record.updatedAt = Date.now();
-  record.updatedBy = options.originId ?? "undo";
-  markDirty();
+  applyHistoryEntry(record, previous, options.originId ?? "undo");
   return toObject(record);
 }
 
@@ -157,36 +172,32 @@ export function redoPianoRoll(
   name: string,
   options: { originId?: string } = {},
 ): PianoRollObject | undefined {
-  ensureDefaultPianoRoll();
-  const record = records.get(normalizeName(name));
-  const next = record?.redoStack.pop();
-  if (!record || !next) return record ? toObject(record) : undefined;
+  const record = recordFor(name);
+  if (!record) return undefined;
+  const next = histories.get(record.name)?.redoStack.pop();
+  if (!next) return toObject(record);
 
-  pushHistory(record.undoStack, {
+  const history = historyFor(record.name);
+  pushHistory(history.undoStack, {
     label: "Undo piano roll",
-    data: cloneData(record.data),
+    data: cloneRollData(record.value),
     source: "undoRedo",
     timestampMs: Date.now(),
   });
-  record.rev += 1;
-  record.data = cloneData(next.data);
-  record.lastDataJson = safeStringify(record.data) ?? "";
-  record.updatedAt = Date.now();
-  record.updatedBy = options.originId ?? "redo";
-  markDirty();
+  applyHistoryEntry(record, next, options.originId ?? "redo");
   return toObject(record);
 }
 
 /**
- * Explicit operator deletion. A deleted name is remembered so the lazy default
- * seeding cannot bring it back; only an explicit write recreates it.
+ * Explicit operator deletion. A deleted name is remembered so a later demo
+ * seeding pass cannot bring it back, and its editing history goes with it:
+ * a recreated roll starts with no inherited undo stack.
  */
 export function deletePianoRoll(name: string): boolean {
-  const normalizedName = normalizeName(name);
-  deletedDefaults.add(normalizedName);
-  const removed = records.delete(normalizedName);
-  if (removed) markDirty();
-  return removed;
+  const entityName = normalizeName(name);
+  deletedDefaults.add(entityName);
+  histories.delete(entityName);
+  return deleteEntityRecord(PIANO_ROLL_ENTITY_TYPE, entityName);
 }
 
 /**
@@ -194,8 +205,8 @@ export function deletePianoRoll(name: string): boolean {
  * Empty string when that data was not serializable; undefined roll gives null.
  */
 export function latestPianoRollJson(name: string): string | null {
-  const record = records.get(normalizeName(name));
-  return record ? record.lastDataJson : null;
+  const record = recordFor(name);
+  return record ? record.lastValueJson : null;
 }
 
 /**
@@ -203,51 +214,77 @@ export function latestPianoRollJson(name: string): string | null {
  * the pre-load stacks would undo into a state the file never contained.
  */
 export function clearPianoRollHistory(name: string): void {
-  const record = records.get(normalizeName(name));
+  const record = recordFor(name);
   if (!record) return;
-  record.undoStack = [];
-  record.redoStack = [];
-  markDirty();
+  histories.delete(record.name);
+  // `canUndo`/`canRedo` are part of the wire object, so this is a real change
+  // even though no note moved.
+  markEntityChanged(PIANO_ROLL_ENTITY_TYPE, record.name);
 }
 
-/** Test seam: drops every roll, including the remembered deletions. */
+/** Test seam: drops every roll, its history, and the remembered deletions. */
 export function clearPianoRollStore(): void {
-  records.clear();
+  clearEntityRecords(PIANO_ROLL_ENTITY_TYPE);
+  histories.clear();
   deletedDefaults.clear();
-  markDirty();
 }
 
+/**
+ * Read-only point-in-time snapshot for `/piano-roll/list`, socket open, and the
+ * legacy full-snapshot broadcast. Like its params counterpart it never consumes
+ * the broadcast gate, so one client listing rolls cannot swallow the generation
+ * every other open view is still waiting for. `options.force` is accepted for
+ * call-site compatibility and has nothing left to switch on.
+ */
 export function makePianoRollSnapshot(
-  options: { force?: boolean } = {},
-): PianoRollSnapshot | null {
-  if (!options.force && !dirty) return null;
-  // A forced snapshot answers exactly one caller (an HTTP list, or a socket
-  // that just opened). Only the broadcast tick may clear the flag: otherwise
-  // that one caller swallows the generation every other client is still
-  // waiting for, and a roll created over HTTP never reaches the open views.
-  if (!options.force) dirty = false;
+  _options: { force?: boolean } = {},
+): PianoRollSnapshot {
   return {
     type: "pianoRollSnapshot",
-    seq: ++snapshotSeq,
+    seq: nextEntitySnapshotSeq(PIANO_ROLL_ENTITY_TYPE),
     timestampMs: Date.now(),
     rolls: getAllPianoRolls(),
   };
 }
 
 /**
- * Seed the demo roll unless it already exists or was explicitly deleted.
- * The write is stamped `demo-seed` so an untouched seed (still at rev 1) can be
- * recognized and left out of project saves.
+ * The broadcast tick: drain this type's change gate and return one record per
+ * changed name (`entity: null` for a deleted roll). There is no sampler half —
+ * nothing outside this module writes a roll, so there is no drift to adopt and
+ * an idle store never serializes a note array.
+ */
+export function collectPianoRollChanges():
+  | EntityChange<PianoRollObject>[]
+  | null {
+  const changes = consumeEntityTypeChanges(PIANO_ROLL_ENTITY_TYPE);
+  if (!changes) return null;
+  const collected: EntityChange<PianoRollObject>[] = [];
+  for (const name of changes.changed) {
+    const record = getEntityRecord<PianoRollData>(PIANO_ROLL_ENTITY_TYPE, name);
+    if (record) collected.push({ name, entity: toObject(record) });
+  }
+  for (const name of changes.deleted) collected.push({ name, entity: null });
+  return collected;
+}
+
+/**
+ * Seed the demo roll unless it already exists or was explicitly deleted. Called
+ * once at server construction — never lazily from a read path, so every
+ * snapshot builder stays genuinely read-only. The write is stamped `demo-seed`
+ * so an untouched seed (still at rev 1) can be left out of project saves.
  */
 export function seedDemoPianoRoll(
   name = DEFAULT_ROLL_NAME,
 ): PianoRollObject | undefined {
-  const normalizedName = normalizeName(name);
-  const existing = records.get(normalizedName);
+  const entityName = normalizeName(name);
+  const existing = getEntityRecord<PianoRollData>(
+    PIANO_ROLL_ENTITY_TYPE,
+    entityName,
+  );
   if (existing) return toObject(existing);
-  if (deletedDefaults.has(normalizedName)) return undefined;
+  if (deletedDefaults.has(entityName)) return undefined;
   return setPianoRoll(
-    name,
+    entityName,
     {
       notes: [
         {
@@ -290,29 +327,44 @@ export function seedDemoPianoRoll(
   );
 }
 
-export function markPianoRollStoreDirty(): void {
-  markDirty();
+function getAllPianoRolls(): Record<string, PianoRollObject> {
+  return Object.fromEntries(
+    listPianoRollObjects().map((roll) => [roll.name, roll]),
+  );
 }
 
-function ensureDefaultPianoRoll(): void {
-  seedDemoPianoRoll(DEFAULT_ROLL_NAME);
+function records(): EntityRecord<PianoRollData>[] {
+  return listEntityRecords<PianoRollData>(PIANO_ROLL_ENTITY_TYPE);
+}
+
+function recordFor(name: string): EntityRecord<PianoRollData> | undefined {
+  return getEntityRecord<PianoRollData>(PIANO_ROLL_ENTITY_TYPE, name.trim());
+}
+
+function historyFor(name: string): RollHistory {
+  const existing = histories.get(name);
+  if (existing) return existing;
+  const created: RollHistory = { undoStack: [], redoStack: [] };
+  histories.set(name, created);
+  return created;
+}
+
+function applyHistoryEntry(
+  record: EntityRecord<PianoRollData>,
+  entry: HistoryEntry,
+  updatedBy: string,
+): void {
+  record.value = cloneRollData(entry.data);
+  commitEntityWrite(record, {
+    updatedBy,
+    valueJson: safeStringifyEntityValue(record.value),
+  });
 }
 
 function normalizeName(name: string): string {
   const normalized = name.trim();
   if (!normalized) throw new Error("Piano roll name must not be empty");
   return normalized;
-}
-
-// JSON.stringify that returns null instead of throwing (circular refs, BigInt
-// in user-supplied metadata). setPianoRoll must never throw into caller-owned
-// livecode timing, so a failed serialize just disables no-op detection.
-function safeStringify(data: PianoRollData): string | null {
-  try {
-    return JSON.stringify(data);
-  } catch {
-    return null;
-  }
 }
 
 // Shape incoming data (assign note ids, default velocity) without cloning, so
@@ -401,27 +453,38 @@ function normalizeNote(note: NoteDataInput, index: number): NoteData {
   };
 }
 
-function cloneData(data: PianoRollData): PianoRollData {
-  return structuredClone(data);
+/**
+ * Stored data always came out of `cloneShapedData`, so `structuredClone` is
+ * safe here — but reads happen from caller-owned livecode timing, so the
+ * fallbacks stay rather than trusting that invariant.
+ */
+function cloneRollData(data: PianoRollData): PianoRollData {
+  try {
+    return structuredClone(data);
+  } catch {
+    // Fall through.
+  }
+  try {
+    return JSON.parse(JSON.stringify(data)) as PianoRollData;
+  } catch {
+    return rebuildSafeData(data);
+  }
 }
 
-function toObject(record: PianoRollRecord): PianoRollObject {
+function toObject(record: EntityRecord<PianoRollData>): PianoRollObject {
+  const history = histories.get(record.name);
   return {
     name: record.name,
     rev: record.rev,
-    data: cloneData(record.data),
+    data: cloneRollData(record.value),
     updatedAt: record.updatedAt,
     updatedBy: record.updatedBy,
-    canUndo: record.undoStack.length > 0,
-    canRedo: record.redoStack.length > 0,
+    canUndo: (history?.undoStack.length ?? 0) > 0,
+    canRedo: (history?.redoStack.length ?? 0) > 0,
   };
 }
 
 function pushHistory(stack: HistoryEntry[], entry: HistoryEntry): void {
   stack.push(entry);
   if (stack.length > MAX_HISTORY) stack.splice(0, stack.length - MAX_HISTORY);
-}
-
-function markDirty(): void {
-  dirty = true;
 }
