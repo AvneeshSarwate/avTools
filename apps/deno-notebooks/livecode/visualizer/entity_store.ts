@@ -35,6 +35,13 @@ interface EntityTypeStore {
   records: Map<string, EntityRecord>;
   dirty: boolean;
   snapshotSeq: number;
+  /**
+   * Highest rev ever reached by a now-deleted name. A recreated or re-loaded
+   * entity starts above it so revs stay monotonic per name across
+   * delete/recreate: a pane whose `localRev` outlived the old record can never
+   * silently echo-suppress the new one.
+   */
+  revFloors: Map<string, number>;
 }
 
 const stores = new Map<string, EntityTypeStore>();
@@ -71,7 +78,7 @@ export function createEntityRecord<V>(
   const record: EntityRecord<V> = {
     type,
     name,
-    rev: 1,
+    rev: (store.revFloors.get(name) ?? 0) + 1,
     value,
     meta: options.meta,
     updatedAt: Date.now(),
@@ -86,14 +93,26 @@ export function createEntityRecord<V>(
 
 export function deleteEntityRecord(type: string, name: string): boolean {
   const store = storeFor(type);
-  const removed = store.records.delete(name.trim());
-  if (removed) store.dirty = true;
+  const key = name.trim();
+  const record = store.records.get(key);
+  const removed = store.records.delete(key);
+  if (removed) {
+    if (record) {
+      store.revFloors.set(
+        key,
+        Math.max(record.rev, store.revFloors.get(key) ?? 0),
+      );
+    }
+    store.dirty = true;
+  }
   return removed;
 }
 
+/** Test seam: a full reset of one type, rev floors included. */
 export function clearEntityRecords(type: string): void {
   const store = storeFor(type);
   store.records.clear();
+  store.revFloors.clear();
   store.dirty = true;
 }
 
@@ -177,6 +196,7 @@ function storeFor(type: string): EntityTypeStore {
     records: new Map(),
     dirty: true,
     snapshotSeq: 0,
+    revFloors: new Map(),
   };
   stores.set(type, created);
   return created;
