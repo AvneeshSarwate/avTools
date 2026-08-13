@@ -6,6 +6,12 @@ import { assignSignalOwner } from "./signals_store.ts";
 
 const activeWaitCounts = new Map<string, Map<string, number>>();
 const pianoRollLookups = new Map<string, Map<string, string>>();
+// Module ids whose waits/lookups a mutator touched since the last collect.
+// These are hints, not truth: `enterWait` runs on every awaited callsite, so
+// the sync sources compare the resulting per-module value before shipping
+// anything. Marking is a Set.add on the hot path and nothing more.
+const dirtyWaitModules = new Set<string>();
+const dirtyLookupModules = new Set<string>();
 let snapshotSeq = 0;
 let rootTimeContext: TimeContext | null = null;
 
@@ -21,6 +27,7 @@ function getOrCreateModuleCounts(moduleId: string): Map<string, number> {
 export function enterWait(moduleId: string, id: string) {
   const moduleCounts = getOrCreateModuleCounts(moduleId);
   moduleCounts.set(id, (moduleCounts.get(id) ?? 0) + 1);
+  dirtyWaitModules.add(moduleId);
 }
 
 export function exitWait(moduleId: string, id: string) {
@@ -32,6 +39,7 @@ export function exitWait(moduleId: string, id: string) {
   else moduleCounts.set(id, next);
 
   if (moduleCounts.size === 0) activeWaitCounts.delete(moduleId);
+  dirtyWaitModules.add(moduleId);
 }
 
 export async function visualizedAwait<T>(
@@ -49,9 +57,13 @@ export async function visualizedAwait<T>(
 
 export function clearModuleWaits(moduleId: string) {
   activeWaitCounts.delete(moduleId);
+  dirtyWaitModules.add(moduleId);
 }
 
 export function clearAllWaits() {
+  for (const moduleId of activeWaitCounts.keys()) {
+    dirtyWaitModules.add(moduleId);
+  }
   activeWaitCounts.clear();
 }
 
@@ -62,6 +74,30 @@ export function getActiveWaitsByModule(): Record<string, string[]> {
       [...moduleCounts.keys()],
     ]),
   );
+}
+
+/** Module ids that currently have at least one active wait callsite. */
+export function listWaitModuleIds(): string[] {
+  return [...activeWaitCounts.keys()];
+}
+
+/**
+ * One module's active wait callsites, SORTED so a steady loop that re-enters
+ * the same set produces a byte-identical value and stays silent. Null when the
+ * module is awaiting nothing, which is how the entity is deleted.
+ */
+export function getModuleWaitCallsites(moduleId: string): string[] | null {
+  const moduleCounts = activeWaitCounts.get(moduleId);
+  if (!moduleCounts || moduleCounts.size === 0) return null;
+  return [...moduleCounts.keys()].sort((a, b) => a.localeCompare(b));
+}
+
+/** Drains the wait dirty hints. Exactly one consumer per tick. */
+export function consumeDirtyWaitModules(): string[] {
+  if (dirtyWaitModules.size === 0) return [];
+  const drained = [...dirtyWaitModules];
+  dirtyWaitModules.clear();
+  return drained;
 }
 
 export function recordPianoRollLookup(
@@ -75,13 +111,18 @@ export function recordPianoRollLookup(
     pianoRollLookups.set(moduleId, moduleLookups);
   }
   moduleLookups.set(callsiteId, name);
+  dirtyLookupModules.add(moduleId);
 }
 
 export function clearModulePianoRollLookups(moduleId: string): void {
   pianoRollLookups.delete(moduleId);
+  dirtyLookupModules.add(moduleId);
 }
 
 export function clearAllPianoRollLookups(): void {
+  for (const moduleId of pianoRollLookups.keys()) {
+    dirtyLookupModules.add(moduleId);
+  }
   pianoRollLookups.clear();
 }
 
@@ -95,6 +136,39 @@ export function getPianoRollLookupsByModule(): Record<
       Object.fromEntries(moduleLookups.entries()),
     ]),
   );
+}
+
+/** Module ids that have at least one recorded lookup. */
+export function listLookupModuleIds(): string[] {
+  return [...pianoRollLookups.keys()];
+}
+
+/**
+ * One module's callsiteId → resolved roll name map, or null when it has none.
+ * Keys are emitted in sorted order so an unchanged map serializes identically.
+ */
+export function getModuleLookups(
+  moduleId: string,
+): Record<string, string> | null {
+  const moduleLookups = pianoRollLookups.get(moduleId);
+  if (!moduleLookups || moduleLookups.size === 0) return null;
+  const sorted: Record<string, string> = {};
+  for (
+    const callsiteId of [...moduleLookups.keys()].sort((a, b) =>
+      a.localeCompare(b)
+    )
+  ) {
+    sorted[callsiteId] = moduleLookups.get(callsiteId) as string;
+  }
+  return sorted;
+}
+
+/** Drains the lookup dirty hints. Exactly one consumer per tick. */
+export function consumeDirtyLookupModules(): string[] {
+  if (dirtyLookupModules.size === 0) return [];
+  const drained = [...dirtyLookupModules];
+  dirtyLookupModules.clear();
+  return drained;
 }
 
 /**

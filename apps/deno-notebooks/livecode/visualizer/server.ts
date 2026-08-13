@@ -47,16 +47,31 @@ import type {
   ProjectStatusResponse,
   ReloadProjectModuleRequest,
   RemoveProjectModuleRequest,
+  RunEntity,
   RuntimeModuleRunSnapshotEntry,
   RuntimeModuleStatus,
   RuntimeStateResponse,
   SetParamsRequest,
   SetPianoRollRequest,
   StopModuleRequest,
+  SyncClientMessage,
+  SyncEntity,
+  SyncEntityChange,
+  SyncMessage,
   UpdateProjectModuleRequest,
   VisualizerManifestMessage,
   WriteProjectModuleRequest,
 } from "./protocol.ts";
+import {
+  createModuleLookupsSyncSource,
+  createModuleWaitsSyncSource,
+  createParamsSyncSource,
+  createPianoRollSyncSource,
+  createRunSyncSource,
+  createSignalsSyncSource,
+  type SyncCollectedChanges,
+  SyncSourceRegistry,
+} from "./sync_sources.ts";
 import {
   allocateEntityDataPath,
   type DurableEntityTypeDescriptor,
@@ -66,12 +81,12 @@ import {
 } from "./entity_registry.ts";
 import {
   makeParamsSnapshot,
-  sampleParamsChanges,
+  PARAMS_ENTITY_TYPE,
   setParamsValues,
 } from "./params_store.ts";
 import {
-  collectPianoRollChanges,
   makePianoRollSnapshot,
+  PIANO_ROLL_ENTITY_TYPE,
   redoPianoRoll,
   seedDemoPianoRoll,
   setPianoRoll,
@@ -80,7 +95,7 @@ import {
 import {
   endSignalsForModule,
   makeSignalsSnapshot,
-  sampleSignalChanges,
+  SIGNAL_ENTITY_TYPE,
 } from "./signals_store.ts";
 import {
   analyzeProjectShadow,
@@ -132,10 +147,25 @@ interface PreparedRun {
 // replacing launch, none of which can find it in `activeModules` yet.
 interface PendingLaunch {
   generatedRunId: string;
+  // Minted at ACCEPT time rather than after the import, so the `launching`
+  // entry this request publishes already carries the run's identity and a
+  // cancellation can tell whether that entry is still the one it owns.
+  runToken: string;
   cancelled: boolean;
-  // The `launching` entry this accepted request published, kept so a later
-  // cancellation can tell whether it still owns `moduleRuns`.
-  launchSnapshot: RuntimeModuleRunSnapshotEntry | null;
+}
+
+// What the server actually stores per module: the legacy wire entry plus the
+// run token. `runToken` is deliberately NOT on the legacy `moduleRuns` shape —
+// `/runtime/state` and `/runtime/snapshots` stay frozen through this phase and
+// the token reaches clients on the `run` entity instead.
+type ModuleRunRecord = RuntimeModuleRunSnapshotEntry & { runToken: string };
+
+interface SyncSocketState {
+  socket: WebSocket;
+  /** Type-level subscriptions; a subscribe message replaces the whole set. */
+  subscriptions: Set<string>;
+  /** Per-socket monotonic counter for gap detection. Never replayed. */
+  seq: number;
 }
 
 interface ClientControlSocket {
@@ -213,9 +243,9 @@ const PROJECT_MANIFEST_FILENAME = "project.avtools-livecode.json";
 const SOURCE_SUFFIX = ".orig.ts";
 const REPO_ROOT = fromFileUrl(new URL("../../../..", import.meta.url));
 const STOP_HOOK_TIMEOUT_MS = 2_000;
-// One shared cadence for every snapshot sampler/broadcast timer (runtime,
-// piano-roll, params, signals). Changed-only gating keeps the idle cost zero;
-// a single constant keeps the channels from drifting apart.
+// The cadence of the ONE broadcast timer, which samples every sync source and
+// then feeds both the `/sync` sockets and the four legacy channels from that
+// single collect. Changed-only gating keeps the idle cost at a set-size check.
 const SNAPSHOT_TICK_MS = 33;
 const MAX_PREPARED_RUNS_PER_MODULE = 3;
 const DEFAULT_SESSION_ROOT = fromFileUrl(
@@ -274,11 +304,14 @@ export async function createLivecodeVisualizerServer(
   const pianoRollSockets = new Set<WebSocket>();
   const paramsSockets = new Set<WebSocket>();
   const signalsSockets = new Set<WebSocket>();
+  const syncSockets = new Map<WebSocket, SyncSocketState>();
   const clientControlSockets = new Map<string, ClientControlSocket>();
   const pendingClientCommands = new Map<string, PendingClientCommand>();
   const activeModules = new Map<string, ActiveModule>();
   const pendingLaunches = new Map<string, PendingLaunch>();
-  const moduleRunSnapshots = new Map<string, RuntimeModuleRunSnapshotEntry>();
+  const moduleRunSnapshots = new Map<string, ModuleRunRecord>();
+  // Module ids whose run entry changed since the last collect.
+  const dirtyRunModules = new Set<string>();
   const preparedRuns = new Map<string, PreparedRun>();
   const preparedRunIdsByModule = new Map<string, string[]>();
   const launchQueue: Array<(ctx: TimeContext) => Promise<void> | void> = [];
@@ -290,10 +323,7 @@ export async function createLivecodeVisualizerServer(
     | null = null;
   let parentContext: TimeContext | null = null;
   let lastSnapshotJson = "";
-  let snapshotTimer: number | undefined;
-  let pianoRollSnapshotTimer: number | undefined;
-  let paramsSnapshotTimer: number | undefined;
-  let signalsSnapshotTimer: number | undefined;
+  let broadcastTimer: number | undefined;
   let closing = false;
 
   const log = async (entry: Record<string, unknown>) => {
@@ -380,78 +410,41 @@ export async function createLivecodeVisualizerServer(
     },
   });
 
-  snapshotTimer = setInterval(() => {
-    const snapshot = makeRuntimeSnapshot();
-    const snapshotJson = JSON.stringify(snapshot.modules) +
-      JSON.stringify(snapshot.pianoRollLookups ?? {}) +
-      JSON.stringify(snapshot.activeModules ?? []) +
-      JSON.stringify(snapshot.moduleRuns ?? {});
-    if (snapshotJson === lastSnapshotJson) return;
-    lastSnapshotJson = snapshotJson;
-    const payload = JSON.stringify(snapshot);
-    for (const socket of sockets) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(payload);
-    }
-    if (options.logLevel === "debug") {
-      void log({
-        type: "snapshot",
-        activeModuleCount: Object.keys(snapshot.modules).length,
-        activeCallsiteCount: Object.values(snapshot.modules).reduce(
-          (sum, ids) => sum + ids.length,
-          0,
-        ),
-      });
-    }
-  }, SNAPSHOT_TICK_MS) as unknown as number;
-
   registerBuiltinDurableEntityTypes();
+  // Construction, not a read path: `snapshotAll()` has to be genuinely
+  // read-only, so nothing may seed a roll on the way to answering a subscribe.
   seedDemoPianoRoll();
-  pianoRollSnapshotTimer = setInterval(() => {
-    if (!collectPianoRollChanges()) return;
-    const snapshot = makePianoRollSnapshot();
-    const payload = JSON.stringify(snapshot);
-    for (const socket of pianoRollSockets) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(payload);
-    }
-    if (options.logLevel === "debug") {
-      void log({
-        type: "pianoRollSnapshot",
-        rollCount: Object.keys(snapshot.rolls).length,
-      });
-    }
-  }, SNAPSHOT_TICK_MS) as unknown as number;
 
-  // Params entities are written by plain property assignment in user code, so
-  // this tick both adopts that drift as store generations and broadcasts.
-  paramsSnapshotTimer = setInterval(() => {
-    if (!sampleParamsChanges()) return;
-    const snapshot = makeParamsSnapshot();
-    const payload = JSON.stringify(snapshot);
-    for (const socket of paramsSockets) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(payload);
-    }
-    if (options.logLevel === "debug") {
-      void log({
-        type: "paramsSnapshot",
-        paramsCount: Object.keys(snapshot.params).length,
-      });
-    }
-  }, SNAPSHOT_TICK_MS) as unknown as number;
+  const syncSources = new SyncSourceRegistry();
+  syncSources.register(createPianoRollSyncSource());
+  syncSources.register(createParamsSyncSource());
+  syncSources.register(createSignalsSyncSource());
+  syncSources.register(createModuleWaitsSyncSource());
+  syncSources.register(createModuleLookupsSyncSource());
+  syncSources.register(createRunSyncSource({
+    listModuleIds: () => [...moduleRunSnapshots.keys()],
+    read: (moduleId) => runEntityFor(moduleId),
+    consumeDirty: () => {
+      if (dirtyRunModules.size === 0) return [];
+      const drained = [...dirtyRunModules];
+      dirtyRunModules.clear();
+      return drained;
+    },
+  }));
 
-  // Signals are published by plain `set` calls that never touch the store, so
-  // this tick is where a published value becomes an observed generation. There
-  // is no set route: signals are code-published only.
-  signalsSnapshotTimer = setInterval(() => {
-    if (!sampleSignalChanges()) return;
-    const snapshot = makeSignalsSnapshot();
-    const payload = JSON.stringify(snapshot);
-    for (const socket of signalsSockets) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(payload);
-    }
-    if (options.logLevel === "debug") {
+  // ONE timer. It collects from every source exactly once and then fans that
+  // one result out to the `/sync` sockets and to all four legacy channels;
+  // independent timers would each drain the gates and starve the other side.
+  broadcastTimer = setInterval(() => {
+    try {
+      const collected = syncSources.collectAll();
+      broadcastSyncChanges(collected);
+      broadcastLegacyEntitySnapshots(collected);
+      broadcastLegacyRuntimeSnapshot();
+    } catch (error) {
       void log({
-        type: "signalsSnapshot",
-        signalCount: Object.keys(snapshot.signals).length,
+        type: "broadcastTickError",
+        message: error instanceof Error ? error.message : String(error),
       });
     }
   }, SNAPSHOT_TICK_MS) as unknown as number;
@@ -814,6 +807,27 @@ export async function createLivecodeVisualizerServer(
       }
     }
 
+    if (request.method === "GET" && url.pathname === "/sync") {
+      const { socket, response } = Deno.upgradeWebSocket(request);
+      const state: SyncSocketState = {
+        socket,
+        subscriptions: new Set(),
+        seq: 0,
+      };
+      socket.onopen = () => {
+        // Nothing is sent until the client subscribes: an unwatched entity kind
+        // costs this socket nothing.
+        syncSockets.set(socket, state);
+      };
+      socket.onmessage = (event) => {
+        if (typeof event.data !== "string") return;
+        handleSyncClientMessage(state, event.data);
+      };
+      socket.onclose = () => syncSockets.delete(socket);
+      socket.onerror = () => syncSockets.delete(socket);
+      return response;
+    }
+
     if (request.method === "GET" && url.pathname === "/runtime/snapshots") {
       const { socket, response } = Deno.upgradeWebSocket(request);
       socket.onopen = () => {
@@ -878,16 +892,7 @@ export async function createLivecodeVisualizerServer(
     sessionRoot,
     close: async () => {
       closing = true;
-      if (snapshotTimer !== undefined) clearInterval(snapshotTimer);
-      if (pianoRollSnapshotTimer !== undefined) {
-        clearInterval(pianoRollSnapshotTimer);
-      }
-      if (paramsSnapshotTimer !== undefined) {
-        clearInterval(paramsSnapshotTimer);
-      }
-      if (signalsSnapshotTimer !== undefined) {
-        clearInterval(signalsSnapshotTimer);
-      }
+      if (broadcastTimer !== undefined) clearInterval(broadcastTimer);
       // The parent loop is about to be cancelled; a cancelled clock must not
       // keep stamping samples with its frozen logical time.
       setRootTimeContext(null);
@@ -895,6 +900,7 @@ export async function createLivecodeVisualizerServer(
       for (const socket of pianoRollSockets) socket.close();
       for (const socket of paramsSockets) socket.close();
       for (const socket of signalsSockets) socket.close();
+      for (const socket of syncSockets.keys()) socket.close();
       for (const client of clientControlSockets.values()) {
         client.socket.close();
       }
@@ -1801,7 +1807,7 @@ export async function createLivecodeVisualizerServer(
         projectSourceHash: active.projectSourceHash,
         manifest: active.manifest,
       })),
-      moduleRuns: Object.fromEntries(moduleRunSnapshots.entries()),
+      moduleRuns: legacyModuleRuns(),
       latestPreparedByModule,
     };
   }
@@ -1813,20 +1819,243 @@ export async function createLivecodeVisualizerServer(
       activeModules: [...activeModules.keys()].sort((a, b) =>
         a.localeCompare(b)
       ),
-      moduleRuns: Object.fromEntries(moduleRunSnapshots.entries()),
+      moduleRuns: legacyModuleRuns(),
     };
   }
 
+  /**
+   * The legacy `moduleRuns` map, with `runToken` stripped. `/runtime/state` and
+   * `/runtime/snapshots` are frozen shapes for the un-migrated clients; the
+   * token reaches subscribers on the `run` entity instead.
+   */
+  function legacyModuleRuns(): Record<string, RuntimeModuleRunSnapshotEntry> {
+    const entries: Record<string, RuntimeModuleRunSnapshotEntry> = {};
+    for (const [moduleId, record] of moduleRunSnapshots) {
+      const { runToken: _runToken, ...wire } = record;
+      entries[moduleId] = wire;
+    }
+    return entries;
+  }
+
+  /** One module's run as a sync entity. Null when it has never had a run. */
+  function runEntityFor(moduleId: string): RunEntity | null {
+    const record = moduleRunSnapshots.get(moduleId);
+    if (!record) return null;
+    const entity: RunEntity = {
+      moduleId: record.moduleId,
+      state: record.state,
+      generatedRunId: record.generatedRunId,
+      runToken: record.runToken,
+      updatedAt: record.updatedAtMs,
+    };
+    if (record.projectModulePath !== undefined) {
+      entity.projectModulePath = record.projectModulePath;
+    }
+    if (record.sourceHash !== undefined) entity.sourceHash = record.sourceHash;
+    if (record.projectSourceHash !== undefined) {
+      entity.projectSourceHash = record.projectSourceHash;
+    }
+    if (record.message !== undefined) entity.message = record.message;
+    return entity;
+  }
+
   function setModuleRunSnapshot(
-    entry: Omit<RuntimeModuleRunSnapshotEntry, "updatedAtMs">,
-  ): RuntimeModuleRunSnapshotEntry {
-    const stored: RuntimeModuleRunSnapshotEntry = {
+    entry: Omit<ModuleRunRecord, "updatedAtMs">,
+  ): ModuleRunRecord {
+    const stored: ModuleRunRecord = {
       ...entry,
       updatedAtMs: Date.now(),
     };
     moduleRunSnapshots.set(entry.moduleId, stored);
+    dirtyRunModules.add(entry.moduleId);
     // Returned so a writer can later ask whether its entry is still the latest.
     return stored;
+  }
+
+  // --- broadcast fan-out -------------------------------------------------
+  // Everything below reads ONE collected result. Nothing here drains a gate.
+
+  function broadcastSyncChanges(collected: SyncCollectedChanges): void {
+    if (collected.size === 0 || syncSockets.size === 0) return;
+    for (const state of syncSockets.values()) {
+      if (state.subscriptions.size === 0) continue;
+      const changes: SyncEntityChange[] = [];
+      for (const [entityType, entries] of collected) {
+        if (!state.subscriptions.has(entityType)) continue;
+        for (const entry of entries) {
+          changes.push({
+            entityType,
+            name: entry.name,
+            entity: entry.entity as SyncEntity | null,
+          });
+        }
+      }
+      if (changes.length === 0) continue;
+      sendSyncMessage(state, { changes });
+    }
+  }
+
+  /**
+   * The three entity sockets the un-migrated tldraw client still reads. They
+   * keep their full-snapshot payloads; only the gate that decides whether to
+   * send one moved into the shared collect above.
+   */
+  function broadcastLegacyEntitySnapshots(
+    collected: SyncCollectedChanges,
+  ): void {
+    if (collected.has(PIANO_ROLL_ENTITY_TYPE)) {
+      const snapshot = makePianoRollSnapshot();
+      sendSnapshotToSockets(pianoRollSockets, snapshot);
+      if (options.logLevel === "debug") {
+        void log({
+          type: "pianoRollSnapshot",
+          rollCount: Object.keys(snapshot.rolls).length,
+        });
+      }
+    }
+    if (collected.has(PARAMS_ENTITY_TYPE)) {
+      const snapshot = makeParamsSnapshot();
+      sendSnapshotToSockets(paramsSockets, snapshot);
+      if (options.logLevel === "debug") {
+        void log({
+          type: "paramsSnapshot",
+          paramsCount: Object.keys(snapshot.params).length,
+        });
+      }
+    }
+    if (collected.has(SIGNAL_ENTITY_TYPE)) {
+      const snapshot = makeSignalsSnapshot();
+      sendSnapshotToSockets(signalsSockets, snapshot);
+      if (options.logLevel === "debug") {
+        void log({
+          type: "signalsSnapshot",
+          signalCount: Object.keys(snapshot.signals).length,
+        });
+      }
+    }
+  }
+
+  /**
+   * `/runtime/snapshots` keeps FULL fidelity — modules, lookups, activeModules,
+   * and `moduleRuns` with `updatedAtMs` — because the tldraw client still reads
+   * all four sections from it and the Vue SketchWrapper reads `{seq, modules}`.
+   * Its gate stays the serialized whole-snapshot compare it has always been:
+   * that is a pure comparison, not a gate anything else consumes.
+   */
+  function broadcastLegacyRuntimeSnapshot(): void {
+    const snapshot = makeRuntimeSnapshot();
+    const snapshotJson = JSON.stringify(snapshot.modules) +
+      JSON.stringify(snapshot.pianoRollLookups ?? {}) +
+      JSON.stringify(snapshot.activeModules ?? []) +
+      JSON.stringify(snapshot.moduleRuns ?? {});
+    if (snapshotJson === lastSnapshotJson) return;
+    lastSnapshotJson = snapshotJson;
+    sendSnapshotToSockets(sockets, snapshot);
+    if (options.logLevel === "debug") {
+      void log({
+        type: "snapshot",
+        activeModuleCount: Object.keys(snapshot.modules).length,
+        activeCallsiteCount: Object.values(snapshot.modules).reduce(
+          (sum, ids) => sum + ids.length,
+          0,
+        ),
+      });
+    }
+  }
+
+  function sendSnapshotToSockets(
+    targets: Set<WebSocket>,
+    snapshot: unknown,
+  ): void {
+    if (targets.size === 0) return;
+    let payload: string;
+    try {
+      payload = JSON.stringify(snapshot);
+    } catch (error) {
+      // User-supplied metadata can be cyclic. One hostile entity must not take
+      // the shared broadcast tick down with it.
+      void log({
+        type: "snapshotSerializeFailed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+    for (const socket of targets) {
+      if (socket.readyState === WebSocket.OPEN) socket.send(payload);
+    }
+  }
+
+  /**
+   * A subscribe REPLACES the socket's set and resets EVERY listed type, so a
+   * client that detects a `seq` gap recovers by resubscribing the same set.
+   * There is no replay buffer; a gap over TCP means a server bug, not loss.
+   */
+  function handleSyncClientMessage(
+    state: SyncSocketState,
+    payload: string,
+  ): void {
+    let message: SyncClientMessage;
+    try {
+      message = JSON.parse(payload) as SyncClientMessage;
+    } catch (error) {
+      void log({
+        type: "syncMalformedMessage",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+    if (message?.type !== "subscribe") return;
+
+    const entityTypes = Array.isArray(message.entityTypes)
+      ? message.entityTypes.filter((entityType): entityType is string =>
+        typeof entityType === "string"
+      )
+      : [];
+    state.subscriptions = new Set(entityTypes);
+
+    const resets: Record<string, SyncEntity[]> = {};
+    for (const entityType of state.subscriptions) {
+      resets[entityType] = syncSources.snapshotAll(entityType) as SyncEntity[];
+    }
+    sendSyncMessage(state, { resets });
+  }
+
+  function sendSyncMessage(
+    state: SyncSocketState,
+    body: {
+      resets?: Record<string, SyncEntity[]>;
+      changes?: SyncEntityChange[];
+    },
+  ): void {
+    if (state.socket.readyState !== WebSocket.OPEN) return;
+    const message: SyncMessage = {
+      type: "sync",
+      seq: state.seq + 1,
+      timestampMs: Date.now(),
+      ...body,
+    };
+    let payload: string;
+    try {
+      payload = JSON.stringify(message);
+    } catch (error) {
+      // `seq` is only advanced by a message that actually went out, so a
+      // hostile entity cannot manufacture a gap the client would chase.
+      void log({
+        type: "syncSerializeFailed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+    try {
+      state.socket.send(payload);
+    } catch (error) {
+      void log({
+        type: "syncSendFailed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+    state.seq = message.seq;
   }
 
   function requireCurrentProject(): ProjectState {
@@ -2283,23 +2512,30 @@ export async function createLivecodeVisualizerServer(
     const racedLaunch = pendingLaunches.get(requestBody.moduleId);
     if (racedLaunch) racedLaunch.cancelled = true;
 
+    // This run's own identity, minted HERE rather than after the import so the
+    // `launching` entry already carries it. `generatedRunId` cannot stand in:
+    // a relaunch reuses it whenever the prepared build is unchanged — Replace
+    // without an edit does exactly that — so it cannot distinguish this run
+    // from the one it replaced.
+    const runToken = crypto.randomUUID();
     const pendingLaunch: PendingLaunch = {
       generatedRunId: requestBody.generatedRunId,
+      runToken,
       cancelled: false,
-      launchSnapshot: null,
     };
     pendingLaunches.set(requestBody.moduleId, pendingLaunch);
 
     const runSnapshotBase = {
       moduleId: requestBody.moduleId,
       generatedRunId: requestBody.generatedRunId,
+      runToken,
       projectModulePath: prepared?.projectModulePath ??
         requestBody.projectModulePath,
       sourceHash: prepared?.sourceHash ?? requestBody.sourceHash,
       projectSourceHash: prepared?.projectSourceHash ??
         requestBody.projectSourceHash,
     };
-    pendingLaunch.launchSnapshot = setModuleRunSnapshot({
+    setModuleRunSnapshot({
       ...runSnapshotBase,
       state: "launching",
     });
@@ -2383,13 +2619,6 @@ export async function createLivecodeVisualizerServer(
             `Generated module ${moduleUrl} does not export runFunc/default`,
           );
         }
-
-        // This run's own identity. A relaunch reuses `generatedRunId` whenever
-        // the prepared build is unchanged — Replace without an edit does
-        // exactly that — so it cannot distinguish this run from the one it
-        // replaced, and a slow-dying older branch could otherwise retire the
-        // entry belonging to the run that is currently playing.
-        const runToken = crypto.randomUUID();
 
         const handle = ctx.branch(async (branchCtx) => {
           setModuleRunSnapshot({ ...runSnapshotBase, state: "running" });
@@ -2481,19 +2710,25 @@ export async function createLivecodeVisualizerServer(
   // The terminal snapshot an accepted-then-cancelled launch owes its client —
   // but only while the `launching` entry it published is still the latest one.
   // If anything has written since (a successor's `launching`, or the stop that
-  // cancelled this launch), that writer owns `moduleRuns` and this write would
-  // clobber it. Object identity is the test rather than `generatedRunId`,
-  // because a relaunch of an unchanged build reuses the ID.
+  // cancelled this launch), that writer owns the run entry and this write would
+  // clobber it.
+  //
+  // Both halves of the test are load-bearing. The token rules out a successor's
+  // entry, which `generatedRunId` could not: a relaunch of an unchanged build
+  // reuses the ID. The state check rules out this launch's OWN terminal — a
+  // stop cancels the pending launch and publishes `stopped` under the same
+  // token, and the queued action then arrives and must not reopen it.
   function publishCancelledLaunch(
     moduleId: string,
     pending: PendingLaunch,
     message: string,
   ): void {
-    const launchSnapshot = pending.launchSnapshot;
-    if (!launchSnapshot) return;
-    if (moduleRunSnapshots.get(moduleId) !== launchSnapshot) return;
+    const current = moduleRunSnapshots.get(moduleId);
+    if (!current) return;
+    if (current.runToken !== pending.runToken) return;
+    if (current.state !== "launching") return;
     setModuleRunSnapshot({
-      ...launchSnapshot,
+      ...current,
       state: "stopped",
       message,
     });
@@ -2580,6 +2815,7 @@ export async function createLivecodeVisualizerServer(
     setModuleRunSnapshot({
       moduleId: active.moduleId,
       generatedRunId: active.generatedRunId,
+      runToken: active.runToken,
       state: "stopped",
       projectModulePath: active.projectModulePath,
       sourceHash: active.sourceHash,
