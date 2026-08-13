@@ -23,6 +23,17 @@ export type MpePitchData = {
   points: MpePitchPoint[]
 }
 
+/**
+ * One externally published playhead line. Unlike the single live playhead, any
+ * number of these can exist at once (one per playing process, for example), so
+ * each carries its own identity and is rendered with a label.
+ */
+export type PlayheadMarker = {
+  id: string
+  position: number  // in quarter notes
+  color?: string
+}
+
 // Input type for notes that may be missing id or velocity
 export type NoteDataInput = {
   id?: string
@@ -164,6 +175,13 @@ export interface PianoRollState {
     element?: Konva.Line
   }
 
+  // Named playhead markers (any number) - set from outside, one line each.
+  // `elements` is rebuilt from `markers` by updatePlayheadMarkers.
+  playheadMarkers: {
+    markers: PlayheadMarker[]
+    elements: Map<string, { line: Konva.Line; label: Konva.Text }>
+  }
+
   // Optional callback to notify external listeners when state changes outside command stack
   notifyExternalChange?: (source?: ExternalChangeSource) => void
 
@@ -280,6 +298,11 @@ export const createPianoRollState = (): PianoRollState => {
     livePlayhead: {
       position: 0,
       element: undefined
+    },
+
+    playheadMarkers: {
+      markers: [],
+      elements: new Map()
     },
 
     notifyExternalChange: undefined,
