@@ -122,6 +122,14 @@ interface PreparedRun {
   manifest: VisualizerManifestMessage;
 }
 
+// An accepted launch is queued, not started. This is the identity of that
+// window: it makes a not-yet-started run addressable by stop, panic, and a
+// replacing launch, none of which can find it in `activeModules` yet.
+interface PendingLaunch {
+  generatedRunId: string;
+  cancelled: boolean;
+}
+
 interface ClientControlSocket {
   clientId: string;
   socket: WebSocket;
@@ -257,6 +265,7 @@ export async function createLivecodeVisualizerServer(
   const clientControlSockets = new Map<string, ClientControlSocket>();
   const pendingClientCommands = new Map<string, PendingClientCommand>();
   const activeModules = new Map<string, ActiveModule>();
+  const pendingLaunches = new Map<string, PendingLaunch>();
   const moduleRunSnapshots = new Map<string, RuntimeModuleRunSnapshotEntry>();
   const preparedRuns = new Map<string, PreparedRun>();
   const preparedRunIdsByModule = new Map<string, string[]>();
@@ -2221,14 +2230,38 @@ export async function createLivecodeVisualizerServer(
       generatedRunId: requestBody.generatedRunId,
     });
 
+    // A launch already accepted but not yet started is refused exactly like a
+    // running one, so two rapid requests cannot both pass the safety check.
+    // `replaceRunning` supersedes the queued run instead: its action still runs,
+    // sees `cancelled`, and returns before it can import anything.
+    const supersededLaunch = pendingLaunches.get(requestBody.moduleId);
+    if (supersededLaunch) {
+      if (!requestBody.replaceRunning) {
+        throw new Error(
+          `Module ${requestBody.moduleId} is already launching; stop it first or pass replaceRunning: true.`,
+        );
+      }
+      supersededLaunch.cancelled = true;
+    }
+
     if (activeModules.has(requestBody.moduleId)) {
       if (!requestBody.replaceRunning) {
         throw new Error(
           `Module ${requestBody.moduleId} is already running; stop it first or pass replaceRunning: true.`,
         );
       }
+      // Request-time stop, so an explicit replacement silences the old run at
+      // the moment the user asked for it. The queued action stops again if a
+      // run appears in the meantime; a second stop is idempotent.
       await stopModule(requestBody.moduleId, "replaceBeforeLaunch");
     }
+
+    const pendingLaunch: PendingLaunch = {
+      generatedRunId: requestBody.generatedRunId,
+      cancelled: false,
+    };
+    pendingLaunches.set(requestBody.moduleId, pendingLaunch);
+
     const runSnapshotBase = {
       moduleId: requestBody.moduleId,
       generatedRunId: requestBody.generatedRunId,
@@ -2242,6 +2275,42 @@ export async function createLivecodeVisualizerServer(
 
     launchQueue.push(async (ctx) => {
       try {
+        // Acceptance means queued, so every safety decision taken between the
+        // request and this turn is re-applied here rather than trusted from
+        // request time.
+        if (pendingLaunch.cancelled) {
+          setModuleRunSnapshot({
+            ...runSnapshotBase,
+            state: "stopped",
+            message: "launchCancelled",
+          });
+          await log({
+            type: "launchCancelled",
+            moduleId: requestBody.moduleId,
+            generatedRunId: requestBody.generatedRunId,
+            reason: "cancelledBeforeStart",
+          });
+          return;
+        }
+
+        if (activeModules.has(requestBody.moduleId)) {
+          if (!requestBody.replaceRunning) {
+            // A run appeared between acceptance and execution and this launch
+            // never asked to replace it. It loses silently: any lifecycle
+            // snapshot written here would clobber `moduleRuns` for the run that
+            // is genuinely active, and that run's own snapshots keep clients
+            // converged.
+            await log({
+              type: "launchAborted",
+              moduleId: requestBody.moduleId,
+              generatedRunId: requestBody.generatedRunId,
+              reason: "moduleAlreadyRunning",
+            });
+            return;
+          }
+          await stopModule(requestBody.moduleId, "replaceBeforeLaunch");
+        }
+
         const moduleUrl = appendImportQuery(
           requestBody.transformedModuleUri,
           "launch",
@@ -2259,6 +2328,24 @@ export async function createLivecodeVisualizerServer(
           generatedRunId: requestBody.generatedRunId,
           durationMs: elapsedMs(importStartedAt),
         });
+
+        // The import is the one long await inside this action, so a stop can
+        // land while it is pending. Checked once more before any user code runs.
+        if (pendingLaunch.cancelled) {
+          setModuleRunSnapshot({
+            ...runSnapshotBase,
+            state: "stopped",
+            message: "launchCancelled",
+          });
+          await log({
+            type: "launchCancelled",
+            moduleId: requestBody.moduleId,
+            generatedRunId: requestBody.generatedRunId,
+            reason: "cancelledDuringImport",
+          });
+          return;
+        }
+
         const runFunc = mod.runFunc ?? mod.default;
         if (!runFunc) {
           throw new Error(
@@ -2338,16 +2425,64 @@ export async function createLivecodeVisualizerServer(
           generatedRunId: requestBody.generatedRunId,
           message,
         });
+      } finally {
+        // Ownership has already transferred to `activeModules` on the success
+        // path, so the module is never absent from both maps while startable.
+        // The identity check matters because a superseding request can have
+        // registered its own pending entry under this module ID by now.
+        if (pendingLaunches.get(requestBody.moduleId) === pendingLaunch) {
+          pendingLaunches.delete(requestBody.moduleId);
+        }
       }
     });
 
     if (!parentContext) await log({ type: "launchQueuedBeforeParentReady" });
   }
 
+  // A queued launch has no branch to cancel and no active entry to tear down,
+  // so cancelling it is an intent flag plus the terminal snapshot the accepted
+  // request's `launching` entry still owes its client.
+  async function cancelPendingLaunch(
+    moduleId: string,
+    pending: PendingLaunch,
+    reason: string,
+  ): Promise<void> {
+    pending.cancelled = true;
+    const previous = moduleRunSnapshots.get(moduleId);
+    const base = previous?.generatedRunId === pending.generatedRunId
+      ? previous
+      : {};
+    setModuleRunSnapshot({
+      ...base,
+      moduleId,
+      generatedRunId: pending.generatedRunId,
+      state: "stopped",
+      message: reason,
+    });
+    await log({
+      type: "launchCancelled",
+      moduleId,
+      generatedRunId: pending.generatedRunId,
+      reason,
+    });
+  }
+
+  async function cancelPendingLaunches(reason: string): Promise<void> {
+    for (const [moduleId, pending] of [...pendingLaunches]) {
+      if (pending.cancelled) continue;
+      await cancelPendingLaunch(moduleId, pending, reason);
+    }
+  }
+
   async function stopModule(moduleId: string, reason: string) {
     const active = activeModules.get(moduleId);
     if (!active) {
       clearModuleWaits(moduleId);
+      const pending = pendingLaunches.get(moduleId);
+      if (pending && !pending.cancelled) {
+        await cancelPendingLaunch(moduleId, pending, reason);
+        return;
+      }
       const previous = moduleRunSnapshots.get(moduleId);
       if (previous?.state === "launching" || previous?.state === "running") {
         setModuleRunSnapshot({
@@ -2419,12 +2554,15 @@ export async function createLivecodeVisualizerServer(
   }
 
   async function stopAllModules(reason: string) {
+    await cancelPendingLaunches(reason);
     await Promise.all(
       [...activeModules.keys()].map((moduleId) => stopModule(moduleId, reason)),
     );
   }
 
   async function panicRuntime(reason: string) {
+    // Queued launches first: panic must not let one start after it.
+    await cancelPendingLaunches(reason);
     for (const active of [...activeModules.values()]) {
       await teardownActiveModule(active, reason, {
         logType: "modulePanicStopped",
