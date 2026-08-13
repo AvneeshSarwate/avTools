@@ -1,7 +1,14 @@
 import { chromium } from 'playwright'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -34,6 +41,7 @@ let page
 let serverProc
 let viteProc
 let firstModuleId = ''
+let secondModuleId = ''
 let serverBaseUrl = ''
 let paramPaneShapeId = ''
 let projectRoot = ''
@@ -69,6 +77,66 @@ export default async function(ctx: TimeContext) {
 `
 /** How tweakpane renders the values `PARAMS_CODE_WRITE_SOURCE` cycles through. */
 const CODE_WRITE_VALUES = ['0.00', '0.10', '0.20', '0.30', '0.40']
+
+// Fixtures for the ephemeral-signal cases. A playhead is a signal anchored at a
+// roll: the module never knows a view exists, and the view never knows what the
+// position means.
+const SIGNAL_ROLL_NAME = 'melody'
+const PLAYHEAD_SIGNAL_NAME = 'e2e/playhead'
+const SECOND_PLAYHEAD_SIGNAL_NAME = 'e2e/playhead-2'
+const PLAYHEAD_SOURCE = `import type { TimeContext } from "@avtools/core-timing";
+import { signal } from "canvas-signals";
+
+export const playhead = signal("${PLAYHEAD_SIGNAL_NAME}", {
+  anchor: { type: "pianoRoll", name: "${SIGNAL_ROLL_NAME}" },
+});
+
+export default async function(ctx: TimeContext) {
+  let position = 0;
+  while (true) {
+    position = (position + 0.25) % 4;
+    playhead.set(position);
+    await ctx.waitSec(0.05);
+  }
+}
+`
+// The second publisher ships an object with a numeric `position`, the other
+// shape the marker feed accepts.
+const SECOND_PLAYHEAD_SOURCE = `import type { TimeContext } from "@avtools/core-timing";
+import { signal } from "canvas-signals";
+
+export const playhead = signal("${SECOND_PLAYHEAD_SIGNAL_NAME}", {
+  anchor: { type: "pianoRoll", name: "${SIGNAL_ROLL_NAME}" },
+});
+
+export default async function(ctx: TimeContext) {
+  let position = 2;
+  while (true) {
+    position = 2 + ((position + 0.5) % 2);
+    playhead.set({ position, voice: "b" });
+    await ctx.waitSec(0.05);
+  }
+}
+`
+const GRAPH_PARAMS_NAME = 'e2e/graph-params'
+const GRAPH_PARAMS_SOURCE = `import type { TimeContext } from "@avtools/core-timing";
+import { canvasParams } from "canvas-params";
+
+export const params = canvasParams(
+  "${GRAPH_PARAMS_NAME}",
+  { level: 0.5 },
+  { level: { min: 0, max: 1, graph: true, rows: 2 } },
+);
+
+export default async function(ctx: TimeContext) {
+  let step = 0;
+  while (true) {
+    params.level = (step % 5) / 4;
+    step += 1;
+    await ctx.waitSec(0.1);
+  }
+}
+`
 
 // Fixtures for the project-mode cases, which run last on their own canvas.
 const PROJECT_MANIFEST_FILENAME = 'project.avtools-livecode.json'
@@ -156,6 +224,10 @@ try {
   await runParamPaneEditWritesThroughCase()
   await runParamPaneShowsCodeWritesCase()
   await runParamPaneRehydratesAfterReloadCase()
+  await runPlayheadSignalMarkerCase()
+  await runTwoModulePlayheadMarkersCase()
+  await runSignalScopeAccumulatesCase()
+  await runParamGraphRowCase()
 
   // Everything above runs on the transient default canvas. Project mode
   // replaces it, so these cases come last and never disturb the ones before.
@@ -539,6 +611,198 @@ async function runParamPaneRehydratesAfterReloadCase() {
 }
 
 /**
+ * The playhead deliverable, end to end: a module declares a signal anchored at
+ * a roll and drives it from its own loop, and the bound view renders it as a
+ * moving marker. Stopping the module ends the signal, and the marker goes away
+ * rather than freezing where the run left it.
+ */
+async function runPlayheadSignalMarkerCase() {
+  await ensureRollView(SIGNAL_ROLL_NAME)
+  await setSource(PLAYHEAD_SOURCE)
+  const manifest = await waitForManifest(firstModuleId, 2, 'playhead signal manifest')
+  assertEqual(
+    manifest.callsites.map((c) => c.kind),
+    ['canvasSignal', 'timeContextMethod'],
+    'playhead declaration callsite kinds'
+  )
+  assertEqual(
+    manifest.callsites[0].staticName,
+    PLAYHEAD_SIGNAL_NAME,
+    'declared signal static name'
+  )
+
+  await runModule(firstModuleId)
+  const first = await waitForMarker(
+    SIGNAL_ROLL_NAME,
+    PLAYHEAD_SIGNAL_NAME,
+    'the anchored playhead renders a marker'
+  )
+  assert(
+    Number.isFinite(first.position),
+    `marker position should be numeric, got ${JSON.stringify(first)}`
+  )
+  await waitForPageValue(
+    ({ rollName, signalName, seen }) => {
+      const views = window.__livecodeTldrawRuntimeDebug?.getPlayheadMarkerViews() ?? []
+      const view = views.find((candidate) => candidate.rollName === rollName)
+      const marker = view?.markers.find((candidate) => candidate.id === signalName)
+      return marker && marker.position !== seen ? marker : null
+    },
+    'the marker position moves with the module loop',
+    15_000,
+    { rollName: SIGNAL_ROLL_NAME, signalName: PLAYHEAD_SIGNAL_NAME, seen: first.position }
+  )
+
+  await stopModule(firstModuleId)
+  await waitForServerRunState(firstModuleId, false, 'playhead module stopped')
+  // Ended is server truth first...
+  await waitForSignalEntity(
+    PLAYHEAD_SIGNAL_NAME,
+    (signal) => signal.ended === true,
+    'the stopped run ends its signal'
+  )
+  // ...and the removed marker is what the view does about it.
+  await waitForPageValue(
+    ({ rollName, signalName }) => {
+      const views = window.__livecodeTldrawRuntimeDebug?.getPlayheadMarkerViews() ?? []
+      const view = views.find((candidate) => candidate.rollName === rollName)
+      if (!view) return null
+      return view.markers.some((marker) => marker.id === signalName) ? null : true
+    },
+    'the ended signal drops its marker',
+    10_000,
+    { rollName: SIGNAL_ROLL_NAME, signalName: PLAYHEAD_SIGNAL_NAME }
+  )
+}
+
+/**
+ * Multiple playbacks of one melody render as multiple markers. The second
+ * module publishes an object with a numeric `position` rather than a bare
+ * number, so both accepted value shapes are covered.
+ */
+async function runTwoModulePlayheadMarkersCase() {
+  secondModuleId = await createModuleViaDebug()
+  assert(secondModuleId, 'the debug surface should return a new module id')
+  await setSourceFor(secondModuleId, SECOND_PLAYHEAD_SOURCE)
+  await waitForManifest(secondModuleId, 2, 'second playhead manifest')
+
+  // Re-running the first module redeclares its name, which clears `ended`.
+  await runModule(firstModuleId)
+  await runModule(secondModuleId)
+
+  const markers = await waitForPageValue(
+    ({ rollName, names }) => {
+      const views = window.__livecodeTldrawRuntimeDebug?.getPlayheadMarkerViews() ?? []
+      const view = views.find((candidate) => candidate.rollName === rollName)
+      if (!view) return null
+      const ids = view.markers.map((marker) => marker.id)
+      return names.every((name) => ids.includes(name)) ? view.markers : null
+    },
+    'two modules render two markers on one roll',
+    20_000,
+    {
+      rollName: SIGNAL_ROLL_NAME,
+      names: [PLAYHEAD_SIGNAL_NAME, SECOND_PLAYHEAD_SIGNAL_NAME],
+    }
+  )
+  assertEqual(markers.length, 2, 'exactly one marker per publishing module')
+  const objectValued = markers.find(
+    (marker) => marker.id === SECOND_PLAYHEAD_SIGNAL_NAME
+  )
+  assert(
+    objectValued.position >= 2 && objectValued.position <= 4,
+    `the object-valued signal's position should come from value.position, got ${objectValued.position}`
+  )
+}
+
+/**
+ * Scopes watch values regardless of class: one bound to an ephemeral signal and
+ * one bound to a durable param leaf are the same mechanism. Both accumulate
+ * client-side at RAF, which is what the ring-buffer assertions read.
+ */
+async function runSignalScopeAccumulatesCase() {
+  const signalScopeId = await createSignalScope('signal', PLAYHEAD_SIGNAL_NAME)
+  assert(signalScopeId, 'the debug surface should return the new scope shape id')
+  const signalScope = await waitForScopeState(
+    signalScopeId,
+    (state) => state.sampleCount > 10 && state.distinctCount > 1,
+    'the signal scope accumulates a changing trace'
+  )
+  assertEqual(signalScope.sourceType, 'signal', 'signal scope source type')
+  assert(
+    signalScope.waiting === false,
+    'a scope over a live numeric signal is not waiting'
+  )
+
+  // The same shape over a durable param field, fed by a module writing it. The
+  // second module is still publishing its playhead, and a launch over a running
+  // module is rejected, so stop it first exactly like the code-write case above.
+  await stopModule(secondModuleId)
+  await waitForServerRunState(secondModuleId, false, 'second module stopped before its param role')
+  await setSourceFor(secondModuleId, PARAMS_CODE_WRITE_SOURCE)
+  await waitForManifest(secondModuleId, 2, 'param-writing module manifest')
+  const beforeParams = await fetchParamsEntity(PARAMS_ENTITY_NAME)
+  await runModule(secondModuleId)
+  await waitForParamsEntity(
+    PARAMS_ENTITY_NAME,
+    // A rev floor, because an earlier case already left `updatedBy: "code"` on
+    // this entity: without it the wait would pass on stale truth.
+    (candidate) => candidate.updatedBy === 'code' && candidate.rev > beforeParams.rev,
+    'the second module is writing the params entity'
+  )
+
+  const paramsScopeId = await createSignalScope('params', PARAMS_ENTITY_NAME, {
+    path: 'gain',
+  })
+  const paramsScope = await waitForScopeState(
+    paramsScopeId,
+    (state) => state.sampleCount > 10 && state.distinctCount > 1,
+    'the params scope accumulates while a module writes the field'
+  )
+  assertEqual(paramsScope.sourceType, 'params', 'params scope source type')
+  assert(
+    paramsScope.min >= 0 && paramsScope.max <= 0.5,
+    `params scope should track the written 0..0.4 cycle, got ${paramsScope.min}..${paramsScope.max}`
+  )
+}
+
+/**
+ * `meta.graph` is display-only opt-in: a numeric leaf that declares it gets a
+ * second, readonly graph row beside its editable binding.
+ */
+async function runParamGraphRowCase() {
+  await stopModule(firstModuleId)
+  await waitForServerRunState(firstModuleId, false, 'playhead module stopped before the graph case')
+  await setSource(GRAPH_PARAMS_SOURCE)
+  await waitForManifest(firstModuleId, 2, 'graph params manifest')
+  await runModule(firstModuleId)
+  await waitForParamsEntity(
+    GRAPH_PARAMS_NAME,
+    (candidate) => typeof candidate.values.level === 'number',
+    'the graph-params entity is declared'
+  )
+
+  await createParamPane(GRAPH_PARAMS_NAME)
+  await waitForPageValue(
+    () => {
+      const panes = Array.from(document.querySelectorAll('.param-pane-shape'))
+      const withGraph = panes.filter(
+        (pane) => pane.querySelectorAll('.tp-grlv').length > 0
+      )
+      return withGraph.length > 0 ? withGraph.length : null
+    },
+    'the graph-declared field renders a graph row'
+  )
+
+  // Leave the transient phase with nothing running: the project cases below
+  // assert on an empty active-module list.
+  await stopModule(firstModuleId)
+  await stopModule(secondModuleId)
+  await waitForServerRunState(firstModuleId, false, 'graph module stopped')
+  await waitForServerRunState(secondModuleId, false, 'param-writing module stopped')
+}
+
+/**
  * Entity creation as the GUI does it: the create action and the first view are
  * one composite gesture, driven here through the debug surface rather than the
  * topbar DOM.
@@ -648,6 +912,35 @@ async function runProjectSaveRoundTripCase() {
     paramsFile.meta,
     { depth: { min: 0, max: 8, step: 1 } },
     'saved params meta'
+  )
+
+  // Ephemeral signals are excluded from persistence by construction (they are
+  // not a registered durable type), not by a filter in the save path. This
+  // assertion depends on the transient-phase signals above surviving into
+  // project mode — the signal store is process state, and navigating the
+  // browser to a project does not clear it, so `/signals/list` is still
+  // non-empty here (its entries are ended, which changes nothing about save).
+  const liveSignals = Object.keys((await fetchSignalsList()).signals)
+  assert(
+    liveSignals.length > 0,
+    'the transient-phase signals should still be listed, or this case proves nothing'
+  )
+  assert(
+    !result.data.some((entry) => entry.type === 'signal'),
+    `save must not write signal entities: ${JSON.stringify(result.data)}`
+  )
+  assert(
+    !manifestData.some((entry) => entry.type === 'signal'),
+    `the manifest data list must have no signal entries: ${JSON.stringify(manifestData)}`
+  )
+  assert(
+    !existsSync(path.join(projectRoot, 'data', 'signal')),
+    'no data/signal directory should exist after a save'
+  )
+  assertEqual(
+    readdirSync(path.join(projectRoot, 'data')).sort(),
+    [PARAMS_ENTITY_TYPE, PIANO_ROLL_ENTITY_TYPE].sort(),
+    'data/ holds exactly the durable entity types'
   )
 
   // What the unsaved pill reads: both entities go clean on the same save.
@@ -853,6 +1146,100 @@ function createPianoRollView(rollName) {
   )
 }
 
+function createModuleViaDebug(source) {
+  return page.evaluate(
+    (source) => window.__livecodeTldrawRuntimeDebug?.createModule(source) ?? null,
+    source
+  )
+}
+
+function createSignalScope(sourceType, name, options) {
+  return page.evaluate(
+    ({ sourceType, name, options }) =>
+      window.__livecodeTldrawRuntimeDebug?.createSignalScope(
+        sourceType,
+        name,
+        options
+      ) ?? null,
+    { sourceType, name, options }
+  )
+}
+
+/**
+ * A mounted roll view is what renders markers, so the marker cases make sure
+ * one exists rather than depending on whichever view an earlier case left.
+ */
+async function ensureRollView(rollName) {
+  const mounted = await page.evaluate(
+    (rollName) =>
+      (window.__livecodeTldrawRuntimeDebug?.getPlayheadMarkerViews() ?? []).some(
+        (view) => view.rollName === rollName
+      ),
+    rollName
+  )
+  if (!mounted) await createPianoRollView(rollName)
+  await waitForPageValue(
+    (rollName) =>
+      (window.__livecodeTldrawRuntimeDebug?.getPlayheadMarkerViews() ?? []).some(
+        (view) => view.rollName === rollName
+      ) || null,
+    `a mounted piano-roll view for "${rollName}"`,
+    10_000,
+    rollName
+  )
+}
+
+function waitForMarker(rollName, signalName, label, timeoutMs = 20_000) {
+  return waitForPageValue(
+    ({ rollName, signalName }) => {
+      const views = window.__livecodeTldrawRuntimeDebug?.getPlayheadMarkerViews() ?? []
+      const view = views.find((candidate) => candidate.rollName === rollName)
+      return view?.markers.find((marker) => marker.id === signalName) ?? null
+    },
+    label,
+    timeoutMs,
+    { rollName, signalName }
+  )
+}
+
+async function waitForScopeState(shapeId, predicate, label, timeoutMs = 20_000) {
+  const start = Date.now()
+  let last = null
+  while (Date.now() - start < timeoutMs) {
+    last = await page.evaluate(
+      (shapeId) => window.__livecodeTldrawRuntimeDebug?.getScopeState(shapeId) ?? null,
+      shapeId
+    )
+    if (last && predicate(last)) return last
+    await sleep(100)
+  }
+  throw new Error(
+    `Timed out waiting for ${label} (last seen: ${JSON.stringify(last)})`
+  )
+}
+
+function fetchSignalsList() {
+  return serverGetJson('/signals/list')
+}
+
+async function waitForSignalEntity(name, predicate, label, timeoutMs = 20_000) {
+  const start = Date.now()
+  let last = null
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const snapshot = await fetchSignalsList()
+      last = snapshot.signals[name] ?? null
+      if (last && predicate(last)) return last
+    } catch (error) {
+      last = { error: error.message }
+    }
+    await sleep(100)
+  }
+  throw new Error(
+    `Timed out waiting for ${label} (last seen: ${JSON.stringify(last)})`
+  )
+}
+
 function readProjectManifest() {
   return readProjectJson(PROJECT_MANIFEST_FILENAME)
 }
@@ -912,10 +1299,14 @@ async function serverPostJson(pathname, body) {
   return await response.json()
 }
 
-async function setSource(source) {
+function setSource(source) {
+  return setSourceFor(firstModuleId, source)
+}
+
+async function setSourceFor(moduleId, source) {
   await page.evaluate(({ moduleId, source }) => {
     window.__livecodeTldrawRuntimeDebug?.setSource(moduleId, source)
-  }, { moduleId: firstModuleId, source })
+  }, { moduleId, source })
   // Mirror the source into the tldraw shape prop so the shape re-renders.
   // setModuleSource updates the runtime record; the shape prop is updated
   // separately by the editor's onChange. For the test we drive via the debug
@@ -925,9 +1316,9 @@ async function setSource(source) {
     (expected) =>
       window.__livecodeTldrawRuntimeDebug?.modules[expected.moduleId]?.sourceText ===
       expected.source,
-    'source text applied to runtime',
+    `source text applied to runtime for ${moduleId}`,
     5_000,
-    { moduleId: firstModuleId, source }
+    { moduleId, source }
   )
 }
 
