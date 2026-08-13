@@ -12,6 +12,12 @@ export default defineConfig({
           import.meta.url,
         ),
       ),
+      // Raw-TS workspace package: the shared wire contract, compiled by Vite
+      // straight from source (the same mechanism browser-projections uses for
+      // @avtools/core-timing).
+      '@avtools/livecode-protocol': fileURLToPath(
+        new URL('../../packages/livecode-protocol/mod.ts', import.meta.url),
+      ),
     },
   },
 })
