@@ -1,7 +1,8 @@
 # Current Analyzer and Generated Code
 
 Status: checked against `visualizer/analyze_transform.ts` on 2026-07-21;
-canvas-params detection was checked on 2026-08-13.
+canvas-params detection was checked on 2026-08-13; canvas-signal detection and
+its ownership wrap were added and checked on 2026-08-13.
 
 ## Purpose and boundary
 
@@ -183,6 +184,55 @@ Multiple modules may declare the same params name. That is legal reattach
 behavior rather than an error, and the last declaration's shape and meta win.
 The analyzer does not currently surface it as a finding.
 
+## Canvas-signal detection
+
+`signal` imported from the alias `canvas-signals`, the repository source suffix
+`/helpers/canvas_signals.ts`, or that bare basename is recognized through the
+same symbol-based binding discipline, and collected by the same whole-file pass
+as `canvasParams` (a declaration at top level, inside a timed body, or inside
+any other function is recorded identically; the pass returns immediately when
+the module has no `canvas-signals` import).
+
+Unlike `canvasParams`, this kind **does** emit an edit — a whole-call wrap,
+following the wait branch rather than the piano-roll argument wrap:
+
+```ts
+// source
+const playhead = signal("melody-playhead", { anchor });
+// generated
+const playhead = __tcvOwnedSignal(
+  "<moduleId>", "<callsiteId>", signal("melody-playhead", { anchor }),
+);
+```
+
+`visualizedOwnedSignal` stamps the declared signal's record with the owning
+module and returns the handle unchanged. Three properties make this
+observation-grade rather than semantic:
+
+- it attributes, never changes what the code computes — the wrapped expression's
+  value and timing are identical;
+- it works at any callsite depth, including inside loops and conditionals,
+  because the wrap is on the call rather than on a declaration form;
+- anything that is not a signal handle passes through untouched, structurally,
+  so a same-named local helper cannot break a run.
+
+Ownership is what lets the server end a module's signals when its run ends. It
+degrades cleanly: an untransformed headless run (a plain `deno run`) produces
+unowned signals that simply never auto-end, and the module is otherwise
+complete.
+
+The first argument is the signal name, recorded as `nameArgRange` plus a
+`staticName` for a string literal or an uninterpolated template literal. There
+is no runtime name resolution, so a computed name has no `staticName` — and
+since v1 renders **no gutter widget for `canvasSignal` at all**, that limitation
+currently costs nothing: scopes are created from the topbar's "New scope" input
+or the debug surface. Client decoration builders filter by kind, so they skip
+this kind safely.
+
+Multiple modules may declare the same signal name. Like params that is legal
+reattach: the last declarer owns it (and therefore ends it), and the anchor is
+replaced. The analyzer does not surface it as a finding.
+
 ## Manifest contract
 
 Each entry contains:
@@ -197,15 +247,17 @@ Each entry contains:
     | "timeContextMethod"
     | "timeContextArgumentCall"
     | "pianoRollLookup"
-    | "canvasParams";
+    | "canvasParams"
+    | "canvasSignal";
   displayName: string;
   nameArgRange?: { from: number; to: number };
   staticName?: string;
 }
 ```
 
-`nameArgRange` and `staticName` are used by both name-carrying kinds. The kind
-union is hand-mirrored in `apps/livecode-tldraw/src/livecodeProtocol.ts`.
+`nameArgRange` and `staticName` are used by all three name-carrying kinds. The
+kind union is hand-mirrored in
+`apps/livecode-tldraw/src/livecodeProtocol.ts`.
 
 Default IDs are `crypto.randomUUID()`. They are stable only within the generated
 code + manifest pair. They are not deterministic across reanalysis, even when
@@ -231,18 +283,23 @@ A conflicting top-level binding/import with the old function name blocks the
 transform rather than emitting invalid code.
 
 When at least one callsite is actually wrapped — that is, excluding
-observation-only `canvasParams` entries — one generated import aliases both
-runtime helpers:
+observation-only `canvasParams` entries — one generated import aliases every
+runtime helper the wraps can name:
 
 ```ts
 import {
   visualizedAwait as __tcvVisualizedAwait,
   visualizedPianoRollLookup as __tcvPianoRollLookup,
+  visualizedOwnedSignal as __tcvOwnedSignal,
 } from "<stable runtime.ts URL>";
 ```
 
+It is one hardcoded string, so every alias a wrap can emit must appear in it:
+participating in the "has a wrapped callsite" test alone would leave a
+signal-bearing module with a `ReferenceError` at launch.
+
 The stable runtime URL is essential: every generated run must share the same
-process-global count and lookup maps.
+process-global count, lookup, and signal-ownership state.
 
 ## Typechecking boundary
 
@@ -261,7 +318,10 @@ executable contract. It covers local helper internals, branch callbacks,
 unsupported awaits, syntax positions, recursive rename collision, piano-roll
 aliases/namespaces/shadowing, nested lookups, and canvas-params detection at top
 level and inside a timed scope — including its no-edit output, its shadowed-local
-non-detection, and the missing `staticName` for a computed name.
+non-detection, and the missing `staticName` for a computed name. Canvas-signal
+detection is covered the same way, plus the whole-call wrap text, the emitted
+runtime import, and the fact that a signal-bearing module leaves `canvasParams`
+callsites untouched.
 
 `runtime_counts_test.ts` covers wait counts and lookup recording.
 `dynamic_import_execution_test.ts` proves generated code imports the stable

@@ -1,7 +1,8 @@
 # Current System Architecture
 
 Status: checked against the implementation on 2026-07-21; the params entity
-domain was checked on 2026-08-13.
+domain was checked on 2026-08-13; the ephemeral signal domain was added and
+checked on 2026-08-13.
 
 ## Runtime topology
 
@@ -10,7 +11,7 @@ Development uses two processes:
 ```text
 browser tab
   React + tldraw + CodeMirror
-       | HTTP and four WebSocket domains
+       | HTTP and five WebSocket domains
        v
 local Deno server
   analysis | project files | LSP proxy | runtime | shared stores
@@ -49,13 +50,15 @@ Open `http://localhost:5173/`. Useful URL parameters are:
 | Freeform canvas shapes and non-project layout | tldraw client | In-memory unless explicitly saved as `.tldr`; no `persistenceKey`. |
 | Project module source | Project `*.orig.ts` files | Written by the server during project edit analysis. |
 | Project runtime source | Project `*.ts` files | Materialized by the server transform; never hand-edit. |
-| Project module, piano-roll-view, and param-pane layout | `project.avtools-livecode.json` | Module layout through `/project/modules/update`; both canvas view arrays through `/project/canvas`. |
+| Project module, piano-roll-view, param-pane, and signal-scope layout | `project.avtools-livecode.json` | Module layout through `/project/modules/update`; all three canvas view arrays through `/project/canvas`. A scope persists its binding, never its samples. |
 | Prepared builds and manifests | Deno server memory plus generated/runtime files | Latest manifests exposed by `/runtime/state`; non-project builds are pruned to a small rolling set. |
 | Active module lifecycle | Deno server | `/runtime/state`, `/runtime/status`, and `/runtime/snapshots`. |
 | Active wait counts and resolved piano-roll lookup names | Process-global runtime singleton in `visualizer/runtime.ts` | Snapshots only; lookup values persist after completion until a later analyze clears that module. |
 | Named piano-roll objects | Process-global `piano_roll_store.ts` | In memory, and written to a project's `data/pianoRoll/*.json` by an explicit `/project/save`; `/project/open` loads them back before any module runs. |
 | Piano-roll undo/redo history | Process-global `piano_roll_store.ts` | In memory only. Never serialized, and cleared per roll on load, because open adopts disk truth. |
 | Named params entities and their values | Process-global `entity_store.ts` through `params_store.ts`; the live value object is shared with the declaring module | In memory, and saved/loaded with their `meta` like piano rolls, so an opened project renders panes before any module runs. Declaration reattaches and reconciles rather than resetting, so values also survive a relaunch inside one server process. |
+| Named ephemeral signals and their latest values | Process-global `entity_store.ts` through `signals_store.ts`; the value is written by the publishing module | Process-runtime truth, **never persisted**. Not registered as a durable type, so no save, status row, project load, or `/entities/*` action can see one. A reconnecting client recovers current values only — there is no history on the server — and a run's signals end with it. |
+| Scope sample history | The browser tab's `signal-scope` shape | Nothing. Ring buffers are per-shape, in-memory, and discarded on unmount or rebind; they are a view over shipped samples, not a record. |
 | Editor text in a shape | `livecode-editor.props.source` plus mirrored React runtime record | `.tldr` for transient canvases; project source is also written to `*.orig.ts`. |
 | LSP document mirror | One temp workspace per LSP proxy | Removed best-effort on shutdown; stale roots older than 24 hours are swept at server start. |
 
@@ -78,13 +81,17 @@ The client does not have one unified connection:
    truth for a running module even while the runtime socket is closed, and its
    forced on-open snapshot is read-only so one client connecting cannot consume
    a pending update for the others.
-4. `/client/control` connects whenever the tldraw page is mounted, also
+4. `/signals/snapshots` connects whenever `SignalsRuntimeProvider` is mounted,
+   also independent of the Connect button, and is read-only: there is no set
+   route. Its consumers treat a closed socket as "no readings", not as a
+   stopped signal — markers clear and scopes stop appending.
+5. `/client/control` connects whenever the tldraw page is mounted, also
    independent of the Connect button. It lets an HTTP caller ask the server to
    forward commands to this browser.
-5. `/lsp` is recreated after every runtime snapshot-socket open. It is not the
+6. `/lsp` is recreated after every runtime snapshot-socket open. It is not the
    execution or visualization channel.
 
-All four application WebSockets use the shared exponential-backoff helper in
+All five application WebSockets use the shared exponential-backoff helper in
 `apps/livecode-tldraw/src/reconnectingSocket.ts`. LSP connection lifecycle is
 managed by the VTLSP transport and explicitly retired when replaced.
 
@@ -130,6 +137,9 @@ imports, and emits a source-range manifest. At execution time:
   active count around the pending promise.
 - `visualizedPianoRollLookup(moduleId, callsiteId, name)` records a resolved
   string and returns it unchanged.
+- `visualizedOwnedSignal(moduleId, callsiteId, handle)` stamps the declared
+  signal's owner and returns the handle unchanged, which is what lets the run's
+  end also end its signals.
 - the server samples wait, lookup, active-module, and run-lifecycle state every
   33 ms and sends only when serialized state changes;
 - the React runtime copies the snapshot into per-module view state;
@@ -139,8 +149,8 @@ imports, and emits a source-range manifest. At execution time:
 
 The current tldraw client does not use `requestAnimationFrame` for livecode
 snapshots. The server's changed-only, roughly 30 Hz cadence is the batching
-mechanism. Piano-roll snapshots are separately coalesced through
-`requestAnimationFrame` in `pianoRollRuntime.tsx`.
+mechanism. Piano-roll, params, and signal snapshots are separately coalesced
+through `requestAnimationFrame` in their providers.
 
 ## Stop, cleanup, and panic
 
@@ -178,9 +188,12 @@ There is exactly one `currentProject` per server instance. Opening or creating a
 project changes that global server selection for every connected browser and
 HTTP caller. Project endpoints are not client-scoped.
 
-The runtime instrumentation map and piano-roll store are module-level Deno
-singletons, so two server instances created in the same Deno isolate would
-share them. The supported operational model is one server instance per process.
+The runtime instrumentation map, the piano-roll store, and the entity store
+(params and signals alike) are module-level Deno singletons, so two server
+instances created in the same Deno isolate would share them. The root-clock
+context in `runtime.ts` is a singleton for the same reason: the last server to
+start its parent loop would own it. The supported operational model is one
+server instance per process.
 
 ## Trust boundary
 

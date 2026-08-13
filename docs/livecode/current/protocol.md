@@ -2,7 +2,8 @@
 
 Status: checked against both protocol copies and route callers on 2026-07-21;
 the params routes and types, the entity CRUD routes, and the project data
-persistence types were checked on 2026-08-13.
+persistence types were checked on 2026-08-13; the signals routes and types were
+added and checked on 2026-08-13.
 
 ## Source of types
 
@@ -18,6 +19,7 @@ The tldraw client manually mirrors subsets in:
 apps/livecode-tldraw/src/livecodeProtocol.ts
 apps/livecode-tldraw/src/pianoRollTypes.ts
 apps/livecode-tldraw/src/paramsTypes.ts
+apps/livecode-tldraw/src/signalsTypes.ts
 ```
 
 There is no shared generated package and no runtime schema validation. A
@@ -254,6 +256,91 @@ carries it in both protocol copies, and its entries use the same optional
 `nameArgRange`/`staticName` fields as `pianoRollLookup`. It is an observation
 only — no generated code, no runtime message, and no client action beyond the
 editor's open-pane widget. See `analyzer-and-generated-code.md`.
+
+## Signals contract
+
+Signals are the **ephemeral** tier: named latest-value samples that running
+code publishes purely so monitors can watch them. They are never persisted,
+never undoable, and end with the run that published them.
+
+A signal is identified by trimmed string `name` and contains:
+
+```ts
+interface SignalAnchor {
+  type: string;    // entity type wire id, e.g. "pianoRoll" or "params"
+  name: string;
+  path?: string[]; // carried on the wire; no v1 consumer reads it
+}
+
+interface SignalEntity {
+  name: string;
+  value: unknown;  // user-shaped; null until the first set
+  anchor?: SignalAnchor;
+  ownerModuleId?: string;
+  ended?: boolean;
+  rev: number;
+  updatedAt: number;
+  updatedBy: string;
+  unserializable?: boolean;
+  timeSec?: number;
+  beats?: number;
+}
+```
+
+Differences from a params entity, all deliberate:
+
+- `value` is whatever the piece wants — a bare number, a string, an object.
+  There is no declared shape, no meta, and no field-level merge.
+- `anchor` is an entity reference, so a view can bind to a signal without the
+  producer knowing any view exists. `path` is carried for a future consumer;
+  the roll's marker feed ignores it today.
+- `ended` marks that the owning run stopped. It is **sticky**: later writes keep
+  updating `value` while `ended` stays set, and only a redeclaration of the name
+  clears it. A moving-but-ended signal is a surfaced finding, not something the
+  platform polices inside caller-owned timing.
+- `rev` counts observed value generations, as it does for params. A redeclare
+  changes the anchor and the ended flag without bumping it.
+- `updatedBy` is `declare` or `code`; there is no client origin, because there
+  is no client write.
+
+**There is no set route.** Signals are code-published only:
+
+| Route | Meaning |
+| --- | --- |
+| `GET /signals/list` | forced read-only snapshot |
+| `WS /signals/snapshots` | full snapshot on open, then changed-only ticks |
+
+```ts
+interface SignalsSnapshot {
+  type: "signalsSnapshot";
+  seq: number;
+  timestampMs: number;
+  signals: Record<string, SignalEntity>;
+}
+```
+
+The transport is the params pattern byte for byte: a 100 ms changed-only
+sampler tick, a full map per message, sequence numbers advancing whenever a
+snapshot is created, and a forced snapshot (list request or new socket) that
+neither consumes the broadcast gate nor touches per-entity caches. Every open
+socket receives every changed signal; subscription scoping is deferred to the
+planned multiplexed transport (see `known-risks.md`).
+
+`timeSec`/`beats` are the root clock's logical time **at the tick that adopted
+the value**, not at the moment code assigned it. They are quantized twice over
+— by the ~30 ms parent-loop tick that advances the root context and by the
+100 ms sampler — so they order samples musically rather than measuring them.
+Treat them as an ordering key with ~100 ms granularity; anyone building a
+musical x-axis on them must account for that before trusting spacing. They are
+absent entirely when no root context is registered (a plain `deno run` of a
+module, or before the parent loop starts).
+
+The manifest kind `canvasSignal` is part of this boundary: `WaitCallsiteKind`
+carries it in both protocol copies, with the same optional
+`nameArgRange`/`staticName` fields as `pianoRollLookup` and `canvasParams`.
+Unlike those two it does generate code — a whole-call ownership wrap — but it
+produces no editor widget in v1, and kind-filtered client code skips it safely.
+See `analyzer-and-generated-code.md`.
 
 ## Durable entity contract
 
