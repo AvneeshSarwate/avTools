@@ -24,16 +24,25 @@ import type {
   ClientControlRequest,
   ClientControlResultMessage,
   CreateProjectRequest,
+  EntityCreateRequest,
+  EntityDeleteRequest,
+  EntityDuplicateRequest,
+  EntityMutationSuccess,
   HealthResponse,
   LaunchModuleRequest,
   LivecodeProjectManifest,
   OpenProjectRequest,
   PianoRollHistoryRequest,
   ProjectCurrentResponse,
+  ProjectDataEntityStatus,
+  ProjectDataEntry,
   ProjectModuleInput,
   ProjectModuleRecord,
   ProjectModuleSourceResponse,
   ProjectModuleStatus,
+  ProjectSaveEntityResult,
+  ProjectSaveResponse,
+  ProjectSaveSkippedEntity,
   ProjectShadowCheckResponse,
   ProjectStatusResponse,
   ReloadProjectModuleRequest,
@@ -48,6 +57,13 @@ import type {
   VisualizerManifestMessage,
   WriteProjectModuleRequest,
 } from "./protocol.ts";
+import {
+  allocateEntityDataPath,
+  type DurableEntityTypeDescriptor,
+  getDurableEntityType,
+  listDurableEntityTypes,
+  registerBuiltinDurableEntityTypes,
+} from "./entity_registry.ts";
 import {
   makeParamsSnapshot,
   sampleParamsSnapshot,
@@ -141,6 +157,11 @@ interface ProjectState {
     sourceText: string;
     sourceHash: string;
   }>;
+  // Canonical compact JSON of every durable entity as of the last save or open,
+  // keyed `"<typeId> <name>"` (type ids are space-free). Purely informational:
+  // `/project/status` compares it against the store's current JSON so the
+  // client can show an unsaved count. Nothing ever auto-saves off it.
+  savedEntityJson: Map<string, string>;
 }
 
 interface ProjectMaterializeResult {
@@ -351,6 +372,7 @@ export async function createLivecodeVisualizerServer(
     }
   }, 33) as unknown as number;
 
+  registerBuiltinDurableEntityTypes();
   seedDemoPianoRoll();
   pianoRollSnapshotTimer = setInterval(() => {
     const snapshot = makePianoRollSnapshot();
@@ -497,8 +519,7 @@ export async function createLivecodeVisualizerServer(
       if (!currentProject) {
         return json({ ok: false, error: "No project open" }, { status: 400 });
       }
-      await writeProjectManifest(currentProject);
-      return json(await makeProjectCurrentResponse());
+      return json(await saveProject(currentProject));
     }
 
     if (request.method === "GET" && url.pathname === "/project/current") {
@@ -571,6 +592,73 @@ export async function createLivecodeVisualizerServer(
       return json(await makeProjectCurrentResponse());
     }
 
+    if (request.method === "POST" && url.pathname === "/entities/create") {
+      const requestBody = await request.json() as EntityCreateRequest;
+      const resolved = resolveEntityRequest(requestBody.type, requestBody.name);
+      if ("error" in resolved) return entityError(resolved);
+      const { descriptor, name } = resolved;
+      if (descriptor.exists(name)) {
+        return entityError({
+          error: `${descriptor.typeId} entity "${name}" already exists`,
+          status: 409,
+        });
+      }
+      descriptor.create(name);
+      await log({ type: "entityCreated", entityType: descriptor.typeId, name });
+      return json(entityMutationSuccess(descriptor.typeId, name));
+    }
+
+    if (request.method === "POST" && url.pathname === "/entities/duplicate") {
+      const requestBody = await request.json() as EntityDuplicateRequest;
+      const resolved = resolveEntityRequest(requestBody.type, requestBody.name);
+      if ("error" in resolved) return entityError(resolved);
+      const { descriptor, name } = resolved;
+      const targetName = typeof requestBody.targetName === "string"
+        ? requestBody.targetName.trim()
+        : "";
+      if (!targetName) {
+        return entityError({
+          error: "Entity targetName is required",
+          status: 400,
+        });
+      }
+      if (!descriptor.exists(name)) {
+        return entityError({
+          error: `No ${descriptor.typeId} entity "${name}"`,
+          status: 404,
+        });
+      }
+      if (descriptor.exists(targetName)) {
+        return entityError({
+          error: `${descriptor.typeId} entity "${targetName}" already exists`,
+          status: 409,
+        });
+      }
+      descriptor.duplicate(name, targetName);
+      await log({
+        type: "entityDuplicated",
+        entityType: descriptor.typeId,
+        name,
+        targetName,
+      });
+      return json(entityMutationSuccess(descriptor.typeId, targetName));
+    }
+
+    if (request.method === "POST" && url.pathname === "/entities/delete") {
+      const requestBody = await request.json() as EntityDeleteRequest;
+      const resolved = resolveEntityRequest(requestBody.type, requestBody.name);
+      if ("error" in resolved) return entityError(resolved);
+      const { descriptor, name } = resolved;
+      if (!descriptor.remove(name)) {
+        return entityError({
+          error: `No ${descriptor.typeId} entity "${name}"`,
+          status: 404,
+        });
+      }
+      await log({ type: "entityDeleted", entityType: descriptor.typeId, name });
+      return json(entityMutationSuccess(descriptor.typeId, name));
+    }
+
     if (request.method === "GET" && url.pathname === "/piano-roll/snapshots") {
       const { socket, response } = Deno.upgradeWebSocket(request);
       socket.onopen = () => {
@@ -637,8 +725,7 @@ export async function createLivecodeVisualizerServer(
       if (!entity) {
         return json({
           ok: false,
-          error:
-            `No params entity "${requestBody.name}"; entities are declared by running code`,
+          error: `No params entity "${requestBody.name}"`,
         }, { status: 404 });
       }
       return json(entity);
@@ -929,6 +1016,7 @@ export async function createLivecodeVisualizerServer(
       hashes: new Map(),
       materialized: new Map(),
       sourceContentCache: new Map(),
+      savedEntityJson: new Map(),
     };
 
     await Deno.mkdir(root, { recursive: true });
@@ -970,8 +1058,12 @@ export async function createLivecodeVisualizerServer(
       hashes: new Map(),
       materialized: new Map(),
       sourceContentCache: new Map(),
+      savedEntityJson: new Map(),
     };
     currentProject = state;
+    // Before materialization, so every durable entity exists before any module
+    // could run and read one.
+    await loadProjectEntityData(state);
     for (const moduleRecord of state.manifest.modules) {
       const sourceText = await readProjectModuleSource(state, moduleRecord);
       const diskHash = await hashText(sourceText);
@@ -987,8 +1079,245 @@ export async function createLivecodeVisualizerServer(
       type: "projectOpened",
       root,
       moduleCount: state.manifest.modules.length,
+      dataCount: state.savedEntityJson.size,
     });
     return await makeProjectCurrentResponse();
+  }
+
+  /**
+   * Explicit save: the manifest plus one human-readable JSON file per durable
+   * entity currently in memory. Every entity serializes synchronously first, so
+   * one save captures one coherent instant of the store; only then do the file
+   * writes happen. The manifest is written last with the entries that actually
+   * reached disk, so a crash mid-save can leave an orphan file but never a
+   * manifest entry pointing at a missing one.
+   */
+  async function saveProject(
+    state: ProjectState,
+  ): Promise<ProjectSaveResponse> {
+    const pending: Array<
+      { type: string; name: string; path: string; json: string; text: string }
+    > = [];
+    const skipped: ProjectSaveSkippedEntity[] = [];
+    const usedLowercasePaths = new Set<string>();
+
+    for (const descriptor of listDurableEntityTypes()) {
+      for (const name of descriptor.listNames()) {
+        try {
+          const payload = descriptor.serialize(name);
+          if (payload === null || payload === undefined) {
+            const latest = descriptor.latestJson(name);
+            skipped.push({
+              type: descriptor.typeId,
+              name,
+              reason: latest === null || latest === ""
+                ? "value could not be serialized"
+                : "unmodified auto-created entity",
+            });
+            continue;
+          }
+          pending.push({
+            type: descriptor.typeId,
+            name,
+            path: allocateEntityDataPath(
+              descriptor.typeId,
+              name,
+              usedLowercasePaths,
+            ),
+            json: descriptor.latestJson(name) ?? "",
+            text: `${JSON.stringify(payload, null, 2)}\n`,
+          });
+        } catch (error) {
+          // One hostile entity must not fail the whole save.
+          skipped.push({
+            type: descriptor.typeId,
+            name,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+
+    await writeProjectManifest(state);
+
+    const results: ProjectSaveEntityResult[] = [];
+    const savedEntries: ProjectDataEntry[] = [];
+    state.savedEntityJson.clear();
+    for (const entry of pending) {
+      const absolutePath = projectAbsolutePath(state, entry.path);
+      try {
+        await Deno.mkdir(dirname(absolutePath), { recursive: true });
+        await Deno.writeTextFile(absolutePath, entry.text);
+        savedEntries.push({
+          type: entry.type,
+          name: entry.name,
+          path: entry.path,
+        });
+        state.savedEntityJson.set(
+          entitySavedStateKey(entry.type, entry.name),
+          entry.json,
+        );
+        results.push({
+          type: entry.type,
+          name: entry.name,
+          path: entry.path,
+          ok: true,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        results.push({
+          type: entry.type,
+          name: entry.name,
+          path: entry.path,
+          ok: false,
+          error: message,
+        });
+        await log({
+          type: "projectDataWriteFailed",
+          entityType: entry.type,
+          name: entry.name,
+          path: entry.path,
+          message,
+        });
+      }
+    }
+
+    // Deleting an entity and saving removes its manifest entry but leaves the
+    // old file on disk, matching the manifest-only module-remove precedent.
+    if (savedEntries.length > 0 || state.manifest.data !== undefined) {
+      state.manifest.data = savedEntries;
+    }
+    await writeProjectManifest(state);
+    await log({
+      type: "projectSaved",
+      root: state.root,
+      dataCount: savedEntries.length,
+      skippedCount: skipped.length,
+    });
+
+    return { ...await makeProjectCurrentResponse(), data: results, skipped };
+  }
+
+  /**
+   * Rehydrate every manifest `data` entry through the registry. A bad row is
+   * logged and skipped: one missing or broken file must not fail the whole
+   * open, matching the rest of the project loader's posture.
+   */
+  async function loadProjectEntityData(state: ProjectState): Promise<void> {
+    state.savedEntityJson.clear();
+    const entries = state.manifest.data;
+    if (!Array.isArray(entries)) return;
+
+    for (const rawEntry of entries as Array<Partial<ProjectDataEntry> | null>) {
+      try {
+        const typeId = typeof rawEntry?.type === "string"
+          ? rawEntry.type.trim()
+          : "";
+        const name = typeof rawEntry?.name === "string"
+          ? rawEntry.name.trim()
+          : "";
+        if (!typeId || !name) {
+          throw new Error("Project data entries need a type and a name");
+        }
+        const descriptor = getDurableEntityType(typeId);
+        if (!descriptor) throw new Error(`Unknown entity type "${typeId}"`);
+        const relativePath = normalizeProjectDataPath(rawEntry?.path ?? "");
+        const text = await Deno.readTextFile(
+          projectAbsolutePath(state, relativePath),
+        );
+        descriptor.deserialize(name, JSON.parse(text));
+        const json = descriptor.latestJson(name);
+        if (json !== null) {
+          state.savedEntityJson.set(entitySavedStateKey(typeId, name), json);
+        }
+      } catch (error) {
+        await log({
+          type: "projectDataLoadSkipped",
+          entityType: rawEntry?.type,
+          name: rawEntry?.name,
+          path: rawEntry?.path,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  function entitySavedStateKey(typeId: string, name: string): string {
+    return `${typeId} ${name}`;
+  }
+
+  function resolveEntityRequest(
+    typeId: unknown,
+    name: unknown,
+  ):
+    | { descriptor: DurableEntityTypeDescriptor; name: string }
+    | { error: string; status: number } {
+    const requestedType = typeof typeId === "string" ? typeId.trim() : "";
+    const requestedName = typeof name === "string" ? name.trim() : "";
+    if (!requestedType) {
+      return { error: "Entity type is required", status: 400 };
+    }
+    if (!requestedName) {
+      return { error: "Entity name is required", status: 400 };
+    }
+    const descriptor = getDurableEntityType(requestedType);
+    if (!descriptor) {
+      return { error: `Unknown entity type "${requestedType}"`, status: 404 };
+    }
+    return { descriptor, name: requestedName };
+  }
+
+  function entityError(failure: { error: string; status: number }): Response {
+    return json({ ok: false, error: failure.error }, {
+      status: failure.status,
+    });
+  }
+
+  function entityMutationSuccess(
+    typeId: string,
+    name: string,
+  ): EntityMutationSuccess {
+    return { ok: true, entity: { type: typeId, name } };
+  }
+
+  /**
+   * Warning-tier dirty state over the union of live entities and the ones the
+   * last save/open recorded, so a saved-but-deleted entity reports as an
+   * unsaved deletion. An entity a save would skip anyway (an untouched
+   * auto-created one) is not an unsaved change.
+   */
+  function makeProjectDataStatus(
+    state: ProjectState,
+  ): ProjectDataEntityStatus[] {
+    const rows: ProjectDataEntityStatus[] = [];
+    const liveKeys = new Set<string>();
+
+    for (const descriptor of listDurableEntityTypes()) {
+      for (const name of descriptor.listNames()) {
+        const key = entitySavedStateKey(descriptor.typeId, name);
+        liveKeys.add(key);
+        const saved = state.savedEntityJson.get(key);
+        rows.push({
+          type: descriptor.typeId,
+          name,
+          unsaved: saved === undefined
+            ? descriptor.serialize(name) !== null
+            : descriptor.latestJson(name) !== saved,
+        });
+      }
+    }
+
+    for (const key of state.savedEntityJson.keys()) {
+      if (liveKeys.has(key)) continue;
+      const separator = key.indexOf(" ");
+      rows.push({
+        type: key.slice(0, separator),
+        name: key.slice(separator + 1),
+        unsaved: true,
+      });
+    }
+
+    return rows;
   }
 
   async function addProjectModule(
@@ -1197,6 +1526,7 @@ export async function createLivecodeVisualizerServer(
         modules: [],
         activeModules: listRuntimeStatus(),
         projectSourceHash: null,
+        data: [],
       };
     }
 
@@ -1274,6 +1604,7 @@ export async function createLivecodeVisualizerServer(
       modules: moduleStatuses,
       activeModules: listRuntimeStatus(),
       projectSourceHash,
+      data: makeProjectDataStatus(currentProject),
     };
   }
 
@@ -2117,21 +2448,34 @@ function sanitizeFilePart(value: string): string {
 }
 
 function normalizeProjectRelativePath(path: string): string {
+  return normalizeProjectPath(path, ".ts", "Project module");
+}
+
+/** Same relative/inside-project/no-NUL rules as modules, for data files. */
+function normalizeProjectDataPath(path: string): string {
+  return normalizeProjectPath(path, ".json", "Project data");
+}
+
+function normalizeProjectPath(
+  path: string,
+  suffix: string,
+  label: string,
+): string {
   if (!path || path.includes("\0")) {
-    throw new Error("Project module path is required");
+    throw new Error(`${label} path is required`);
   }
   if (path.startsWith("file:") || isAbsolute(path)) {
-    throw new Error("Project module paths must be relative");
+    throw new Error(`${label} paths must be relative`);
   }
   const normalized = normalize(path).replaceAll("\\", "/");
   if (
     normalized === "." || normalized === ".." ||
     normalized.startsWith("../")
   ) {
-    throw new Error("Project module paths must stay inside the project");
+    throw new Error(`${label} paths must stay inside the project`);
   }
-  if (!normalized.endsWith(".ts")) {
-    throw new Error("Project module paths must end in .ts");
+  if (!normalized.endsWith(suffix)) {
+    throw new Error(`${label} paths must end in ${suffix}`);
   }
   return normalized;
 }
