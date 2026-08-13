@@ -54,6 +54,8 @@ export interface TldrawRuntimeDebug {
   shapes: TldrawRuntimeDebugShape[]
   setSource(moduleId: string, source: string): void
   runModule(moduleId: string): Promise<void>
+  /** Run over the module's own running run, as the Replace button does. */
+  replaceModule(moduleId: string): Promise<void>
   stopModule(moduleId: string): Promise<void>
   connect(): Promise<void>
   disconnect(): void
@@ -141,6 +143,9 @@ function installDebugApi() {
     },
     runModule(moduleId) {
       return refs.runtime?.runModule(moduleId) ?? Promise.resolve()
+    },
+    replaceModule(moduleId) {
+      return refs.runtime?.replaceModule(moduleId) ?? Promise.resolve()
     },
     stopModule(moduleId) {
       return refs.runtime?.stopModule(moduleId) ?? Promise.resolve()

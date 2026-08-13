@@ -138,6 +138,47 @@ export default async function(ctx: TimeContext) {
 }
 `
 
+// Fixtures for the run-lifecycle cases. The finite module ends on its own,
+// which is the completion a stale `running` used to hide; the replace pair
+// never ends, so only an explicit Replace can retire the first run. Both edited
+// variants differ from their originals, because an identical source is a no-op
+// edit that would never drop the client's active-run claim.
+const FINITE_RUN_SOURCE = `import type { TimeContext } from "@avtools/core-timing";
+
+export default async function(ctx: TimeContext) {
+  for (let step = 0; step < 30; step++) {
+    await ctx.waitSec(0.1);
+  }
+}
+`
+const FINITE_RUN_EDITED_SOURCE = `import type { TimeContext } from "@avtools/core-timing";
+
+// Edited while the run above was still going.
+export default async function(ctx: TimeContext) {
+  for (let step = 0; step < 30; step++) {
+    await ctx.waitSec(0.1);
+  }
+}
+`
+const REPLACE_FIRST_SOURCE = `import type { TimeContext } from "@avtools/core-timing";
+
+export default async function(ctx: TimeContext) {
+  while (true) {
+    await ctx.waitSec(0.05);
+  }
+}
+`
+/** Two callsites, so the replacement demonstrably ran the edited source. */
+const REPLACE_SECOND_SOURCE = `import type { TimeContext } from "@avtools/core-timing";
+
+export default async function(ctx: TimeContext) {
+  while (true) {
+    await ctx.waitSec(0.05);
+    await ctx.waitSec(0.05);
+  }
+}
+`
+
 // Fixtures for the project-mode cases, which run last on their own canvas.
 const PROJECT_MANIFEST_FILENAME = 'project.avtools-livecode.json'
 const PROJECT_MODULE_PATH = 'modules/main.ts'
@@ -228,6 +269,8 @@ try {
   await runTwoModulePlayheadMarkersCase()
   await runSignalScopeAccumulatesCase()
   await runParamGraphRowCase()
+  await runNaturalCompletionAfterEditCase()
+  await runReplaceButtonCase()
 
   // Everything above runs on the transient default canvas. Project mode
   // replaces it, so these cases come last and never disturb the ones before.
@@ -794,12 +837,113 @@ async function runParamGraphRowCase() {
     'the graph-declared field renders a graph row'
   )
 
-  // Leave the transient phase with nothing running: the project cases below
-  // assert on an empty active-module list.
+  // The lifecycle cases below run one module at a time, so clear the canvas of
+  // running work first.
   await stopModule(firstModuleId)
   await stopModule(secondModuleId)
   await waitForServerRunState(firstModuleId, false, 'graph module stopped')
   await waitForServerRunState(secondModuleId, false, 'param-writing module stopped')
+}
+
+/**
+ * A module edited while it runs loses the client's active-run claim, and the
+ * run it was editing still ends on its own. That terminal is server truth and
+ * must land: before the guard was relaxed the module sat at `running` until a
+ * reload, with nothing running on the server.
+ */
+async function runNaturalCompletionAfterEditCase() {
+  await setSource(FINITE_RUN_SOURCE)
+  await waitForManifest(firstModuleId, 1, 'finite module manifest')
+  await runModule(firstModuleId)
+  await waitForServerRunState(firstModuleId, true, 'finite module running')
+  // The running snapshot must reach the client before the edit, because that
+  // snapshot is what re-asserts the active-run claim the edit has to drop. An
+  // active wait id is the visible half of the same message.
+  await waitForPageValue(
+    (moduleId) =>
+      (window.__livecodeTldrawRuntimeDebug?.modules[moduleId]?.activeIds.length ?? 0) > 0,
+    'the running snapshot reached the client before the edit',
+    15_000,
+    firstModuleId
+  )
+
+  // The edit lands mid-run; the server keeps running the older build.
+  await setSource(FINITE_RUN_EDITED_SOURCE)
+  await waitForPageValue(
+    (moduleId) =>
+      window.__livecodeTldrawRuntimeDebug?.modules[moduleId]?.runStatus === 'running',
+    'edited module still shows the older run as running',
+    5_000,
+    firstModuleId
+  )
+
+  await waitForServerRunState(firstModuleId, false, 'finite module reached its own end')
+  await waitForPageValue(
+    (moduleId) =>
+      window.__livecodeTldrawRuntimeDebug?.modules[moduleId]?.runStatus === 'stopped',
+    'edited-while-running module reaches stopped without a reload',
+    20_000,
+    firstModuleId
+  )
+}
+
+/**
+ * Replacement is an explicit gesture in the UI: while a module runs, its Run
+ * button becomes Replace, and clicking it stops the running run and launches
+ * the edited source under a new generated run ID.
+ */
+async function runReplaceButtonCase() {
+  await setSource(REPLACE_FIRST_SOURCE)
+  await waitForManifest(firstModuleId, 1, 'replace fixture manifest')
+  await runModule(firstModuleId)
+  const firstRunId = await waitForActiveRunId(
+    firstModuleId,
+    null,
+    'first run active before replacing'
+  )
+  await waitForModuleActionButtons(
+    firstModuleId,
+    ['Replace', 'Stop'],
+    'the Run button becomes Replace while the module runs'
+  )
+
+  await setSource(REPLACE_SECOND_SOURCE)
+  await waitForManifest(firstModuleId, 2, 'edited replace fixture manifest')
+  await clickModuleActionButton(firstModuleId, 'Replace')
+
+  const secondRunId = await waitForActiveRunId(
+    firstModuleId,
+    firstRunId,
+    'the replacement run is active under a new generated run id'
+  )
+  assert(
+    secondRunId !== firstRunId,
+    'the replacement must run under a new generated run id'
+  )
+  await waitForServerLogEntry(
+    (entry) =>
+      entry.type === 'moduleStopped' &&
+      entry.generatedRunId === firstRunId &&
+      entry.reason === 'replaceBeforeLaunch',
+    'the replaced run emitted its terminal'
+  )
+  // The replaced run's terminal carries the old id, so it must not retire the
+  // UI state of the run that just started.
+  await waitForModuleActionButtons(
+    firstModuleId,
+    ['Replace', 'Stop'],
+    'the button set stays Replace/Stop for the replacement run'
+  )
+
+  // Leave the transient phase with nothing running: the project cases below
+  // assert on an empty active-module list.
+  await stopModule(firstModuleId)
+  await waitForServerRunState(firstModuleId, false, 'replacement run stopped')
+  await waitForModuleActionButtons(
+    firstModuleId,
+    ['Run', 'Stop'],
+    'the button set returns to Run/Stop once nothing is running'
+  )
 }
 
 /**
@@ -1403,6 +1547,56 @@ async function clickPianoRollButton(rollName) {
   }
 }
 
+/**
+ * The header action buttons of one module's shape, located by the module id the
+ * header renders. Driving these is the point: Replace is a UI affordance, not
+ * just a runtime call.
+ */
+async function waitForModuleActionButtons(moduleId, expectedLabels, label) {
+  return await waitForPageValue(
+    ({ moduleId, expectedLabels }) => {
+      const shape = Array.from(document.querySelectorAll('.livecode-shape')).find(
+        (element) =>
+          Array.from(element.querySelectorAll('.livecode-shape__title span')).some(
+            (span) => (span.textContent ?? '').trim() === moduleId
+          )
+      )
+      if (!shape) return null
+      const labels = Array.from(
+        shape.querySelectorAll('.livecode-shape__actions button')
+      ).map((button) => (button.textContent ?? '').trim())
+      return JSON.stringify(labels) === JSON.stringify(expectedLabels) ? labels : null
+    },
+    label,
+    15_000,
+    { moduleId, expectedLabels }
+  )
+}
+
+async function clickModuleActionButton(moduleId, label) {
+  const clicked = await page.evaluate(
+    ({ moduleId, label }) => {
+      const shape = Array.from(document.querySelectorAll('.livecode-shape')).find(
+        (element) =>
+          Array.from(element.querySelectorAll('.livecode-shape__title span')).some(
+            (span) => (span.textContent ?? '').trim() === moduleId
+          )
+      )
+      if (!shape) return false
+      const button = Array.from(
+        shape.querySelectorAll('.livecode-shape__actions button')
+      ).find((candidate) => (candidate.textContent ?? '').trim() === label)
+      if (!button || button.disabled) return false
+      button.click()
+      return true
+    },
+    { moduleId, label }
+  )
+  if (!clicked) {
+    throw new Error(`No enabled "${label}" button for module ${moduleId}`)
+  }
+}
+
 async function waitForParamPaneButtons(expectedNames, label) {
   await waitForPageValue(
     (expectedNames) => {
@@ -1517,6 +1711,44 @@ async function waitForServerRunState(moduleId, shouldBeActive, label, timeoutMs 
   throw new Error(
     `Timed out waiting for ${label} (active modules: ${JSON.stringify(last)})`
   )
+}
+
+/**
+ * The generated run id the server currently has active for a module, once it
+ * differs from `previousRunId` (pass `null` for "any run").
+ */
+async function waitForActiveRunId(moduleId, previousRunId, label, timeoutMs = 15_000) {
+  const start = Date.now()
+  let last = null
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const status = await serverGetJson('/runtime/status')
+      const entry = status.activeModules.find(
+        (candidate) => candidate.moduleId === moduleId
+      )
+      last = entry?.generatedRunId ?? null
+      if (last && last !== previousRunId) return last
+    } catch (error) {
+      last = { error: error.message }
+    }
+    await sleep(100)
+  }
+  throw new Error(
+    `Timed out waiting for ${label} (generatedRunId: ${JSON.stringify(last)})`
+  )
+}
+
+/** A lifecycle entry from the Deno server's JSONL stdout log. */
+async function waitForServerLogEntry(predicate, label, timeoutMs = 15_000) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    for (const line of serverOutput.join('').split(/\r?\n/)) {
+      const parsed = parseJsonLogLine(line)
+      if (parsed && predicate(parsed)) return parsed
+    }
+    await sleep(100)
+  }
+  throw new Error(`Timed out waiting for ${label} in the server log`)
 }
 
 async function stopModuleOverHttp(moduleId) {

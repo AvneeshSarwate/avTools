@@ -265,6 +265,9 @@ function LivecodeEditorShapeComponent(
   const hasDependencyIssue = dependencyDiagnostics.length > 0;
   const buildStatus = moduleState?.buildStatus ?? "idle";
   const runStatus = moduleState?.runStatus ?? "idle";
+  // Run over a running module is a replacement, and the button says so rather
+  // than going dead: the flag it sends is the server's consent check.
+  const isRunning = runStatus === "running";
   const callsiteCount = moduleState?.manifest?.callsites.length ?? 0;
   return (
     <HTMLContainer
@@ -285,11 +288,13 @@ function LivecodeEditorShapeComponent(
         >
           <button
             type="button"
-            disabled={runtime.connectionStatus !== "open" ||
-              runStatus === "running"}
-            onClick={() => void runtime.runModule(shape.props.moduleId)}
+            disabled={runtime.connectionStatus !== "open"}
+            onClick={() =>
+              void (isRunning
+                ? runtime.replaceModule(shape.props.moduleId)
+                : runtime.runModule(shape.props.moduleId))}
           >
-            Run
+            {isRunning ? "Replace" : "Run"}
           </button>
           <button
             type="button"
