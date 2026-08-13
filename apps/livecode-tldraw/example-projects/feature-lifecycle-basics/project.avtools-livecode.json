@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "name": "feature-lifecycle-basics",
+  "modules": [
+    {
+      "id": "lifecycle/finite",
+      "path": "modules/finite.ts",
+      "sourcePath": "modules/finite.orig.ts",
+      "runtimePath": "modules/finite.ts",
+      "kind": "runnable",
+      "title": "finite (ends naturally)",
+      "sourceVersion": 1,
+      "x": 80,
+      "y": 80,
+      "w": 540,
+      "h": 420
+    },
+    {
+      "id": "lifecycle/steady",
+      "path": "modules/steady.ts",
+      "sourcePath": "modules/steady.orig.ts",
+      "runtimePath": "modules/steady.ts",
+      "kind": "runnable",
+      "title": "steady (Replace me)",
+      "sourceVersion": 1,
+      "x": 660,
+      "y": 80,
+      "w": 540,
+      "h": 500
+    },
+    {
+      "id": "lifecycle/cleanup",
+      "path": "modules/cleanup.ts",
+      "sourcePath": "modules/cleanup.orig.ts",
+      "runtimePath": "modules/cleanup.ts",
+      "kind": "runnable",
+      "title": "cleanup (stop hook)",
+      "sourceVersion": 1,
+      "x": 1240,
+      "y": 80,
+      "w": 540,
+      "h": 560
+    }
+  ],
+  "canvas": {
+    "paramPaneViews": [
+      {
+        "id": "shape:lc-pane-steady",
+        "paramsName": "lifecycle/steady",
+        "x": 660,
+        "y": 640,
+        "w": 320,
+        "h": 280
+      },
+      {
+        "id": "shape:lc-pane-cleanup",
+        "paramsName": "lifecycle/cleanup",
+        "x": 1240,
+        "y": 700,
+        "w": 320,
+        "h": 300
+      }
+    ]
+  }
+}

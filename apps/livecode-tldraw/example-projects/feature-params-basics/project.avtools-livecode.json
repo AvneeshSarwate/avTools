@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "name": "feature-params-basics",
+  "modules": [
+    {
+      "id": "params-basics/panel",
+      "path": "modules/panel.ts",
+      "sourcePath": "modules/panel.orig.ts",
+      "runtimePath": "modules/panel.ts",
+      "kind": "runnable",
+      "title": "panel declaration",
+      "sourceVersion": 1,
+      "x": 80,
+      "y": 80,
+      "w": 560,
+      "h": 560
+    },
+    {
+      "id": "params-basics/automation",
+      "path": "modules/automation.ts",
+      "sourcePath": "modules/automation.orig.ts",
+      "runtimePath": "modules/automation.ts",
+      "kind": "runnable",
+      "title": "automation writer",
+      "sourceVersion": 1,
+      "x": 700,
+      "y": 80,
+      "w": 560,
+      "h": 440
+    },
+    {
+      "id": "params-basics/reader",
+      "path": "modules/reader.ts",
+      "sourcePath": "modules/reader.orig.ts",
+      "runtimePath": "modules/reader.ts",
+      "kind": "runnable",
+      "title": "loop-rate reader",
+      "sourceVersion": 1,
+      "x": 700,
+      "y": 580,
+      "w": 560,
+      "h": 420
+    }
+  ],
+  "canvas": {
+    "paramPaneViews": [
+      {
+        "id": "shape:pb-pane-panel",
+        "paramsName": "params-basics/panel",
+        "x": 1320,
+        "y": 80,
+        "w": 340,
+        "h": 480
+      }
+    ],
+    "scopeViews": [
+      {
+        "id": "shape:pb-scope-derived",
+        "sourceType": "signal",
+        "name": "params-basics/derived",
+        "path": "",
+        "windowSec": 6,
+        "x": 1320,
+        "y": 620,
+        "w": 420,
+        "h": 260
+      }
+    ]
+  }
+}
