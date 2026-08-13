@@ -130,8 +130,9 @@ tldraw E2E.
   two concurrent launches leaving exactly one active run and one execution of
   user code, a stop before the queue drains and a stop during the module import
   both preventing the run entirely, `replaceRunning` retiring the running run
-  and starting a new generated run ID, and panic cancelling a still-queued
-  launch. Its fixtures are launched by URI instead of prepared through
+  and starting a new generated run ID, a launch superseded by `replaceRunning`
+  before it ever started, and panic cancelling a still-queued launch. Its
+  fixtures are launched by URI instead of prepared through
   `/runtime/analyze`, which lets a fixture slow its own import with a top-level
   await and makes the during-import window deterministic;
 - Deno LSP initialization, diagnostics, and import resolution for repository

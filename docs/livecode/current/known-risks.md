@@ -31,9 +31,31 @@ cancel every pending entry first. Ownership transfers to `activeModules` before
 the pending entry is deleted, so a module is never absent from both maps while
 it is startable.
 
+Two follow-up defects found in review, both from treating `generatedRunId` as a
+run identity when it is a *build* identity (an unchanged prepared build is
+relaunched under the same ID, which is what Replace without an edit does):
+
+- an `ActiveModule` now carries a per-run `runToken`, and the branch's terminal
+  bookkeeping guards on that instead. A slow-dying older branch could otherwise
+  delete the replacement's entry, end its signals, and publish a terminal for a
+  run still playing;
+- `teardownActiveModule` always cancels the handle it was given, but only
+  touches the module slot while that record is still the active run, by object
+  identity. A stop that awaited a two-second `stop()` hook could otherwise
+  retire the replacement that won meanwhile. The skipped case logs
+  `supersededTeardown`.
+
+Two smaller ones from the same review: the request-time stop suspends past the
+point where it empties `activeModules`, so a racing request could leave an
+orphaned uncancelled pending entry — any entry holding the slot is now cancelled
+immediately before the new one is registered — and a cancelled pending entry no
+longer refuses the next launch, nor publishes a terminal once something else has
+written to `moduleRuns`.
+
 Covered by `livecode/tests/launch_race_test.ts` (in `test:livecode:server`):
 concurrent launches, stop before the queue drains, stop during the import,
-replacement, and panic against a queued launch.
+replacement, a launch superseded before it started, and panic against a queued
+launch.
 
 Deliberately unchanged: the ID/URI validation gap and the mutable prepared
 identity described in the next entry. A launch is still accepted for an ID that
