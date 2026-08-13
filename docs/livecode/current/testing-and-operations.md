@@ -83,6 +83,13 @@ this is a prerequisite for client work and for the tldraw E2E after any change
 under `src/pianoRoll`. Anyone pulling a commit that touched the component must
 rebuild it locally; the bundle is gitignored on purpose.
 
+`npm run setupLivecode` (from `apps/livecode-tldraw`) is the one-shot wrapper
+for every such local step: both npm installs, the piano-roll bundle, a
+best-effort Deno dependency pre-cache, and best-effort builds of
+not-yet-integrated component bundles (tweakpane, animation editor). Required
+steps fail the run; optional ones warn and continue. New locally-built
+components should be added to `scripts/setupLivecode.mjs` as one step each.
+
 ## Recommended full verification
 
 There is not yet one task for all current behavior. Run this sequence when a
