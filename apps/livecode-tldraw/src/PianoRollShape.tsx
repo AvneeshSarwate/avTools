@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, type SyntheticEvent } from 'react'
-import { BaseBoxShapeUtil, HTMLContainer, RecordProps, T, TLShape } from 'tldraw'
+import {
+  BaseBoxShapeUtil,
+  createShapeId,
+  type Editor,
+  HTMLContainer,
+  RecordProps,
+  T,
+  TLShape,
+} from 'tldraw'
 import '@avtools/piano-roll'
 import type { NoteData, NoteDataInput, PianoRollData } from './pianoRollTypes'
 import { usePianoRollRuntime } from './pianoRollRuntime'
@@ -78,6 +86,35 @@ export class PianoRollShapeUtil extends BaseBoxShapeUtil<PianoRollShape> {
     path.rect(0, 0, shape.props.w, shape.props.h)
     return path
   }
+}
+
+export function createPianoRollShape(
+  editor: Editor,
+  options:
+    & Partial<PianoRollShape['props']>
+    & { x?: number; y?: number; id?: PianoRollShape['id'] } = {},
+) {
+  const id = options.id ?? createShapeId()
+  const rollName = options.rollName ?? 'melody'
+  const w = options.w ?? DEFAULT_PIANO_ROLL_WIDTH
+  const h = options.h ?? DEFAULT_PIANO_ROLL_HEIGHT
+  const center = editor.getViewportPageBounds().center
+  editor.createShape<PianoRollShape>({
+    id,
+    type: PIANO_ROLL_SHAPE_TYPE,
+    x: options.x ?? center.x - w / 2,
+    y: options.y ?? center.y - h / 2,
+    props: {
+      w,
+      h,
+      rollName,
+      title: options.title ?? `piano roll: ${rollName}`,
+      showControlPanel: options.showControlPanel ?? true,
+      interactive: options.interactive ?? true,
+    },
+  })
+  editor.select(id)
+  return id
 }
 
 function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
