@@ -2,36 +2,44 @@
 
 Status: code-inspection audit on 2026-07-21, extended for the canvas-params
 slice, again for the entity-CRUD/persistence slice, and again for the ephemeral
-signals slice on 2026-08-13. These are unresolved unless a later entry says
-otherwise.
+signals slice and the launch-lifecycle fix on 2026-08-13. These are unresolved
+unless a later entry says otherwise.
 Items marked “not regression-tested” are reasoned from the checked-in control
 flow and should receive a focused reproduction before a behavioral fix.
 
 This file is required reading because several current names and older docs imply
 stronger guarantees than the implementation provides.
 
-## P0: queued launches are outside active-module safety controls
+## Resolved 2026-08-13: queued launches are inside the safety controls
 
-Code path: `launchModule` in `visualizer/server.ts` checks
-`activeModules.has(moduleId)` before pushing an action into `launchQueue`.
-The queued action does not repeat the check.
+`launchModule` used to check `activeModules.has(moduleId)` before pushing an
+action into `launchQueue`, and the queued action never repeated the check. Two
+rapid launches could both pass it and both start, leaving the first branch with
+no addressable handle; and a Stop, stop-all, or panic arriving after HTTP
+acceptance but before the import created `activeModules` saw nothing to cancel,
+so the launch started afterward regardless.
 
-Consequences:
+What shipped: a `pendingLaunches` map is the identity of the window between
+acceptance and start. A pending launch is refused exactly like a running one, or
+marked cancelled when the new request carries `replaceRunning`. The queued
+action re-applies every decision taken since acceptance — cancelled before
+start, a run that appeared meanwhile (replaced with the flag, aborted silently
+without it), and cancelled again after the import await, which is the one long
+suspension in the action. Stop cancels a pending launch and emits the terminal
+snapshot the accepted request's `launching` entry owed; stop-all and panic
+cancel every pending entry first. Ownership transfers to `activeModules` before
+the pending entry is deleted, so a module is never absent from both maps while
+it is startable.
 
-- two rapid/concurrent launch requests can both pass the no-replacement check;
-- both branches can start, with the second overwriting the first entry in
-  `activeModules`;
-- the first branch then has no addressable handle for Stop/Panic and can keep
-  running until it ends itself;
-- Stop, stop-all, or panic after HTTP launch acceptance but before the queued
-  import creates `activeModules` sees nothing to cancel; the queued launch can
-  start afterward;
-- multi-client/agent callers can violate the documented no-surprise execution
-  invariant even if one tldraw Run button prevents double-clicks.
+Covered by `livecode/tests/launch_race_test.ts` (in `test:livecode:server`):
+concurrent launches, stop before the queue drains, stop during the import,
+replacement, and panic against a queued launch.
 
-This is not regression-tested. The queue needs an explicit pending state and
-launch generation/intent cancellation, with the replacement decision enforced
-at execution time as well as request time.
+Deliberately unchanged: the ID/URI validation gap and the mutable prepared
+identity described in the next entry. A launch is still accepted for an ID that
+was never prepared, and nothing here makes build identity a boundary — this
+entry is about *when* a launch is allowed to start, not about *what* it is
+allowed to import.
 
 ## P0: prepared project identity is not immutable
 

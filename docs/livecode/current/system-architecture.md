@@ -2,6 +2,7 @@
 
 Status: checked against the implementation on 2026-07-21; the params entity
 domain was checked on 2026-08-13; the ephemeral signal domain was added and
+checked on 2026-08-13; the launch-acceptance window and the Replace gesture were
 checked on 2026-08-13.
 
 ## Runtime topology
@@ -124,9 +125,16 @@ own Run action when `deno check` fails. This is a client guard; the raw server
 launch endpoint does not independently run project diagnostics.
 
 Launch is no-surprise: an active module is not replaced unless the request
-explicitly includes `replaceRunning: true`. The tldraw Run path does not set
-that flag, and its button is disabled while the client believes the module is
-running.
+explicitly includes `replaceRunning: true`. Run never sets it. The gesture that
+does is Replace — while a module runs, its Run button reads Replace, and that
+click is the explicit consent the flag encodes.
+
+Acceptance means queued, not started, so the server holds a pending-launch
+entry for the window between the HTTP response and the queued action's turn. A
+launch, stop, or panic arriving in that window is applied to the pending entry,
+and the queued action re-checks it before importing and again before starting:
+a second launch cannot slip past the replacement decision by being early, and a
+stop or panic cannot be outlived by a launch it never saw.
 
 ## Execution and observation flow
 
@@ -157,7 +165,9 @@ through `requestAnimationFrame` in their providers.
 A graceful module stop runs an optional exported `stop()` hook with a two-second
 timeout, then cancels the `TimeContext` branch, clears active waits, removes the
 active module, and publishes a terminal lifecycle snapshot. `stop-all` performs
-those graceful stops in parallel.
+those graceful stops in parallel. A module that is only queued has no branch to
+cancel, so stop, stop-all, and panic cancel its pending launch instead and
+publish the same terminal snapshot.
 
 `POST /runtime/panic` skips module stop hooks, cancels active branches, clears
 their wait state, marks them stopped, and calls `panicMidi()`. Server shutdown
