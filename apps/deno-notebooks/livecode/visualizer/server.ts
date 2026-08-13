@@ -323,7 +323,6 @@ export async function createLivecodeVisualizerServer(
     | null = null;
   let parentContext: TimeContext | null = null;
   let lastSnapshotJson = "";
-  let broadcastTimer: number | undefined;
   let closing = false;
 
   const log = async (entry: Record<string, unknown>) => {
@@ -435,7 +434,7 @@ export async function createLivecodeVisualizerServer(
   // ONE timer. It collects from every source exactly once and then fans that
   // one result out to the `/sync` sockets and to all four legacy channels;
   // independent timers would each drain the gates and starve the other side.
-  broadcastTimer = setInterval(() => {
+  const broadcastTimer = setInterval(() => {
     try {
       const collected = syncSources.collectAll();
       broadcastSyncChanges(collected);
@@ -892,7 +891,7 @@ export async function createLivecodeVisualizerServer(
     sessionRoot,
     close: async () => {
       closing = true;
-      if (broadcastTimer !== undefined) clearInterval(broadcastTimer);
+      clearInterval(broadcastTimer);
       // The parent loop is about to be cancelled; a cancelled clock must not
       // keep stamping samples with its frozen logical time.
       setRootTimeContext(null);
