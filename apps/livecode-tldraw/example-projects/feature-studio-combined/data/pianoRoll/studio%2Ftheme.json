@@ -1,0 +1,72 @@
+{
+  "type": "pianoRoll",
+  "name": "studio/theme",
+  "savedAt": "2026-08-13T00:00:00.000Z",
+  "data": {
+    "notes": [
+      {
+        "id": "theme-1",
+        "pitch": 60,
+        "position": 0,
+        "duration": 1,
+        "velocity": 100
+      },
+      {
+        "id": "theme-2",
+        "pitch": 64,
+        "position": 1,
+        "duration": 0.5,
+        "velocity": 92
+      },
+      {
+        "id": "theme-3",
+        "pitch": 67,
+        "position": 1.5,
+        "duration": 0.5,
+        "velocity": 88
+      },
+      {
+        "id": "theme-4",
+        "pitch": 72,
+        "position": 2,
+        "duration": 1,
+        "velocity": 104
+      },
+      {
+        "id": "theme-5",
+        "pitch": 71,
+        "position": 3,
+        "duration": 1,
+        "velocity": 90
+      },
+      {
+        "id": "theme-6",
+        "pitch": 67,
+        "position": 4,
+        "duration": 1.5,
+        "velocity": 95
+      },
+      {
+        "id": "theme-7",
+        "pitch": 64,
+        "position": 5.5,
+        "duration": 0.5,
+        "velocity": 85
+      },
+      {
+        "id": "theme-8",
+        "pitch": 62,
+        "position": 6,
+        "duration": 1,
+        "velocity": 90
+      },
+      {
+        "id": "theme-9",
+        "pitch": 60,
+        "position": 7,
+        "duration": 1,
+        "velocity": 100
+      }
+    ]
+  }
+}
