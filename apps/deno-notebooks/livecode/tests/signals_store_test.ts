@@ -8,7 +8,7 @@ import {
   endSignalsForModule,
   listSignals,
   makeSignalsSnapshot,
-  sampleSignalsSnapshot,
+  sampleSignalChanges,
   SIGNAL_ENTITY_TYPE,
 } from "../visualizer/signals_store.ts";
 import {
@@ -25,7 +25,21 @@ import type { SignalEntity } from "../visualizer/protocol.ts";
 
 function reset(): void {
   clearSignalsStore();
+  // Drain the deletions the reset just recorded, the way a broadcast tick does.
+  sampleSignalChanges();
   setRootTimeContext(null);
+}
+
+/**
+ * One broadcast tick's changed records keyed by name. A name that is ABSENT
+ * was not shipped at all; a name mapped to null was deleted.
+ */
+function sampled(): Record<string, SignalEntity | null> | null {
+  const changes = sampleSignalChanges();
+  if (!changes) return null;
+  return Object.fromEntries(
+    changes.map((change) => [change.name, change.entity]),
+  );
 }
 
 function findSignal(name: string): SignalEntity | undefined {
@@ -60,7 +74,7 @@ Deno.test("declareSignal reattaches, and a redeclaration clears ended and replac
     anchor: { type: "pianoRoll", name: "melody" },
   });
   first.set(4);
-  sampleSignalsSnapshot();
+  sampled();
   first.end();
   assertEquals(findSignal("test/reattach")?.ended, true);
 
@@ -81,14 +95,14 @@ Deno.test("declareSignal reattaches, and a redeclaration clears ended and replac
   // kept across a relaunch.
   first.set(9);
   second.set(11);
-  assertEquals(sampleSignalsSnapshot()?.signals["test/reattach"].value, 11);
+  assertEquals(sampled()?.["test/reattach"]?.value, 11);
 });
 
 Deno.test("set is a pure assignment: nothing is published until the sampler tick", () => {
   reset();
   const position = declareSignal<number>("test/pure");
-  assert(sampleSignalsSnapshot(), "the declaration itself is a change");
-  assertEquals(sampleSignalsSnapshot(), null, "an idle tick sends nothing");
+  assert(sampled(), "the declaration itself is a change");
+  assertEquals(sampled(), null, "an idle tick sends nothing");
 
   position.set(1);
   position.set(2);
@@ -99,52 +113,60 @@ Deno.test("set is a pure assignment: nothing is published until the sampler tick
     "writes bypass the store; rev only advances at adoption",
   );
 
-  const adopted = sampleSignalsSnapshot();
-  assertEquals(adopted?.signals["test/pure"].value, 3);
-  assertEquals(adopted?.signals["test/pure"].rev, 2);
-  assertEquals(adopted?.signals["test/pure"].updatedBy, "code");
+  const adopted = sampled();
+  assertEquals(adopted?.["test/pure"]?.value, 3);
+  assertEquals(adopted?.["test/pure"]?.rev, 2);
+  assertEquals(adopted?.["test/pure"]?.updatedBy, "code");
 
   // Re-setting a byte-identical value must not broadcast: a set-driven dirty
-  // flag would ship the same snapshot on every tick of a re-set loop.
+  // flag would ship the same record on every tick of a re-set loop.
   position.set(3);
-  assertEquals(sampleSignalsSnapshot(), null);
+  assertEquals(sampled(), null);
   position.set({ position: 3 } as unknown as number);
-  assert(sampleSignalsSnapshot(), "a real change is still adopted");
+  assert(sampled(), "a real change is still adopted");
 });
 
 Deno.test("the sampler ships only changed signals and stamps them with logical time", () => {
   reset();
   const a = declareSignal<number>("test/stamp-a");
   const b = declareSignal<number>("test/stamp-b");
-  sampleSignalsSnapshot();
+  sampled();
 
   setRootTimeContext(fakeRootContext(12.5, 25));
   a.set(1);
-  const first = sampleSignalsSnapshot();
-  assertEquals(first?.signals["test/stamp-a"].timeSec, 12.5);
-  assertEquals(first?.signals["test/stamp-a"].beats, 25);
+  const first = sampled();
+  assertEquals(first?.["test/stamp-a"]?.timeSec, 12.5);
+  assertEquals(first?.["test/stamp-a"]?.beats, 25);
   assertEquals(
-    first?.signals["test/stamp-b"].timeSec,
-    undefined,
-    "an unchanged signal is not restamped",
+    Object.keys(first ?? {}),
+    ["test/stamp-a"],
+    "an unchanged signal is neither restamped nor shipped",
   );
 
   setRootTimeContext(fakeRootContext(13.5, 27));
   b.set(2);
-  const second = sampleSignalsSnapshot();
-  assertEquals(second?.signals["test/stamp-a"].timeSec, 12.5);
-  assertEquals(second?.signals["test/stamp-b"].timeSec, 13.5);
-  assertEquals(second?.signals["test/stamp-b"].beats, 27);
-  assert(second && first && second.seq > first.seq);
+  const second = sampled();
+  assertEquals(
+    Object.keys(second ?? {}),
+    ["test/stamp-b"],
+    "only the signal that changed ships",
+  );
+  assertEquals(second?.["test/stamp-b"]?.timeSec, 13.5);
+  assertEquals(second?.["test/stamp-b"]?.beats, 27);
+  assertEquals(
+    findSignal("test/stamp-a")?.timeSec,
+    12.5,
+    "the unshipped signal keeps the stamp it already had",
+  );
 
   // No registered context: stamps are simply omitted.
   setRootTimeContext(null);
   assertEquals(sampleRootTime(), null);
   const fresh = declareSignal<number>("test/stamp-c");
   fresh.set(5);
-  const third = sampleSignalsSnapshot();
-  assertEquals(third?.signals["test/stamp-c"].timeSec, undefined);
-  assertEquals(third?.signals["test/stamp-c"].beats, undefined);
+  const third = sampled();
+  assertEquals(third?.["test/stamp-c"]?.timeSec, undefined);
+  assertEquals(third?.["test/stamp-c"]?.beats, undefined);
 });
 
 Deno.test("a forced snapshot is read-only: it neither consumes the gate nor adopts a value", () => {
@@ -155,7 +177,7 @@ Deno.test("a forced snapshot is read-only: it neither consumes the gate nor adop
   assertEquals(onOpen.signals["test/forced"].value, null);
   assertEquals(onOpen.signals["test/forced"].rev, 1);
   assert(
-    sampleSignalsSnapshot(),
+    sampled(),
     "a forced snapshot must not consume the pending broadcast",
   );
 
@@ -164,38 +186,38 @@ Deno.test("a forced snapshot is read-only: it neither consumes the gate nor adop
   assertEquals(duringDrift.signals["test/forced"].value, 7);
   assertEquals(duringDrift.signals["test/forced"].rev, 1);
 
-  const adopted = sampleSignalsSnapshot();
-  assertEquals(adopted?.signals["test/forced"].rev, 2);
-  assertEquals(adopted?.signals["test/forced"].updatedBy, "code");
+  const adopted = sampled();
+  assertEquals(adopted?.["test/forced"]?.rev, 2);
+  assertEquals(adopted?.["test/forced"]?.updatedBy, "code");
 });
 
 Deno.test("the sampler flags an unserializable value instead of throwing", () => {
   reset();
   const handle = declareSignal<unknown>("test/unserializable");
   handle.set({ position: 1 });
-  sampleSignalsSnapshot();
+  sampled();
 
   handle.set(10n);
-  const flagged = sampleSignalsSnapshot();
-  assertEquals(flagged?.signals["test/unserializable"].unserializable, true);
+  const flagged = sampled();
+  assertEquals(flagged?.["test/unserializable"]?.unserializable, true);
   assertEquals(
-    flagged?.signals["test/unserializable"].value,
+    flagged?.["test/unserializable"]?.value,
     { position: 1 },
-    "the snapshot keeps the last value that did serialize",
+    "the change keeps the last value that did serialize",
   );
 
   const cyclic: Record<string, unknown> = {};
   cyclic.self = cyclic;
   handle.set(cyclic);
-  assertEquals(sampleSignalsSnapshot(), null, "the flag is set exactly once");
+  assertEquals(sampled(), null, "the flag is set exactly once");
 
   handle.set({ position: 2 });
-  const recovered = sampleSignalsSnapshot();
+  const recovered = sampled();
   assertEquals(
-    recovered?.signals["test/unserializable"].unserializable,
+    recovered?.["test/unserializable"]?.unserializable,
     undefined,
   );
-  assertEquals(recovered?.signals["test/unserializable"].value, {
+  assertEquals(recovered?.["test/unserializable"]?.value, {
     position: 2,
   });
 });
@@ -204,21 +226,25 @@ Deno.test("ending is sticky: values keep writing and the flag stays until a rede
   reset();
   const handle = declareSignal<number>("test/sticky");
   handle.set(1);
-  sampleSignalsSnapshot();
+  sampled();
 
   handle.end();
-  const ended = sampleSignalsSnapshot();
-  assertEquals(ended?.signals["test/sticky"].ended, true);
-  assertEquals(ended?.signals["test/sticky"].rev, 2, "ending is not a value");
-  assertEquals(sampleSignalsSnapshot(), null, "ending twice is idempotent");
+  const ended = sampled();
+  assertEquals(
+    ended?.["test/sticky"]?.ended,
+    true,
+    "the ended flip must ship: no serialize-compare over values could see it",
+  );
+  assertEquals(ended?.["test/sticky"]?.rev, 2, "ending is not a value");
+  assertEquals(sampled(), null, "ending twice is idempotent");
   assertEquals(endSignal("test/sticky"), false);
 
   // A user timer that survived cooperative cancellation keeps publishing: the
   // moving-but-ended contradiction is surfaced, not policed.
   handle.set(2);
-  const moving = sampleSignalsSnapshot();
-  assertEquals(moving?.signals["test/sticky"].value, 2);
-  assertEquals(moving?.signals["test/sticky"].ended, true);
+  const moving = sampled();
+  assertEquals(moving?.["test/sticky"]?.value, 2);
+  assertEquals(moving?.["test/sticky"]?.ended, true);
 
   assertEquals(endSignal("test/never-declared"), false);
 });
@@ -233,25 +259,27 @@ Deno.test("endSignalsForModule ends exactly the signals that module owns", () =>
   assignSignalOwner("test/owned-b", "module-1");
   assignSignalOwner("test/other", "module-2");
   assertEquals(assignSignalOwner("test/absent", "module-1"), false);
-  sampleSignalsSnapshot();
+  sampled();
 
   assertEquals(endSignalsForModule("module-1"), 2);
-  const snapshot = sampleSignalsSnapshot();
-  assertEquals(snapshot?.signals["test/owned-a"].ended, true);
-  assertEquals(snapshot?.signals["test/owned-b"].ended, true);
-  assertEquals(snapshot?.signals["test/other"].ended, undefined);
-  assertEquals(snapshot?.signals["test/unowned"].ended, undefined);
+  const tick = sampled();
+  assertEquals(tick?.["test/owned-a"]?.ended, true);
+  assertEquals(tick?.["test/owned-b"]?.ended, true);
+  assertEquals(
+    Object.keys(tick ?? {}).sort(),
+    ["test/owned-a", "test/owned-b"],
+    "the two signals nobody ended are not shipped",
+  );
+  assertEquals(findSignal("test/other")?.ended, undefined);
+  assertEquals(findSignal("test/unowned")?.ended, undefined);
 
   assertEquals(endSignalsForModule("module-1"), 0);
-  assertEquals(sampleSignalsSnapshot(), null);
+  assertEquals(sampled(), null);
   assertEquals(endSignalsForModule("module-never-ran"), 0);
 
   // Redeclaring after the run ended is how the next run takes the name back.
   declareSignal("test/owned-a");
-  assertEquals(
-    sampleSignalsSnapshot()?.signals["test/owned-a"].ended,
-    undefined,
-  );
+  assertEquals(sampled()?.["test/owned-a"]?.ended, undefined);
 });
 
 Deno.test("__tcvOwnedSignal stamps ownership on the handle and returns it unchanged", () => {
@@ -264,9 +292,9 @@ Deno.test("__tcvOwnedSignal stamps ownership on the handle and returns it unchan
 
   assertEquals(findSignal("test/wrapped")?.ownerModuleId, "module-1");
   handle.set(3);
-  assertEquals(sampleSignalsSnapshot()?.signals["test/wrapped"].value, 3);
+  assertEquals(sampled()?.["test/wrapped"]?.value, 3);
   endSignalsForModule("module-1");
-  assertEquals(sampleSignalsSnapshot()?.signals["test/wrapped"].ended, true);
+  assertEquals(sampled()?.["test/wrapped"]?.ended, true);
 
   // A later run of another module re-owns the name through its own declaration.
   visualizedOwnedSignal(
@@ -291,7 +319,7 @@ Deno.test("signals are invisible to the durable entity registry", () => {
   reset();
   registerBuiltinDurableEntityTypes();
   declareSignal<number>("test/ephemeral").set(1);
-  sampleSignalsSnapshot();
+  sampled();
 
   // `/project/save`, `/project/status` data rows, project open, and
   // `/entities/*` all iterate the registry, so not registering the type is the
