@@ -87,7 +87,11 @@ misleading, and link it from `history/README.md`.
 The livecode environment also depends on code outside the two main directories:
 
 - `packages/core-timing`: `TimeContext`, logical-time scheduling, structured
-  concurrency, cancellation, barriers, tempo maps, and offline execution.
+  concurrency, cancellation, barriers, tempo maps, and offline execution. The
+  `TimeContext` API itself — `wait(beats)` versus `waitSec(seconds)`,
+  `branch`/`branchWait`, cancellation, and tempo changes — is documented in
+  the header comment of `packages/core-timing/offline_time_context.ts`;
+  `ctx.time` (logical seconds) and `ctx.beats` are the readable clock.
 - `apps/browser-projections/src/pianoRoll`: source for the embedded piano-roll
   custom element.
 - `webcomponents/piano-roll/dist/piano-roll.js`: locally built bundle consumed

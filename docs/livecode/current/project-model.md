@@ -3,7 +3,9 @@
 Status: checked against the server, tldraw client, project tests, and checked-in
 example on 2026-07-21; the canvas param-pane views and the saved durable-entity
 data tree were checked on 2026-08-13; the canvas scope views were added and
-checked on 2026-08-13.
+checked on 2026-08-13; the helper-alias recipe step, the module-facing helper
+API summary, and the stop-hook overlap note were added from source on
+2026-08-13.
 
 ## Durable file model
 
@@ -146,6 +148,11 @@ small copyable reference is
    being created on top of each other at the viewport center.
 4. Import another project module through its runtime path, such as
    `import { state } from "./state.ts"`, never through `state.orig.ts`.
+   Import livecode helpers through the repository root `deno.json` import-map
+   aliases — `canvas-params`, `canvas-signals`, `piano-roll-helpers`,
+   `piano-roll-store`, `midi-helpers` — which the shadow `deno check` and the
+   LSP workspace both resolve. A project inside the repository needs no
+   `deno.json` of its own.
 5. Give every source a supported default async `TimeContext` function. A
    data-only module may use a no-op root.
 6. Start the Deno server and Vite client, then open
@@ -191,6 +198,40 @@ export default async function (_ctx: TimeContext) {}
 
 A module may also export `stop()` for window/GPU/event cleanup. The server calls
 it on a graceful stop, replacement, stop-all, and server close, but not panic.
+The hook runs **before** the run's branch is cancelled, so module code is still
+executing while it runs: guard any state both sides write (a module-scope flag
+is enough). Sync and async hooks both work, within a two-second budget; a hook
+that throws or overruns is logged, not fatal.
+
+## Module-facing helper APIs
+
+The helpers a module imports through the root aliases (files listed in
+`server.md`) have these signatures, beyond the `canvasParams(name, defaults,
+meta?)` live-object and `signal(name, { anchor? })` handle contracts already
+described there:
+
+- From `piano-roll-store`: `getPianoRoll(name)` returns
+  `PianoRollObject | undefined`, and `setPianoRoll(name, data, options?)` is
+  an upsert — a missing name is created at rev 1 (see `server.md`).
+- From `piano-roll-helpers`:
+  - `getPianoRollClip(name)` returns an `AbletonClip`
+    (`@avtools/music-types`) and **throws** when the roll does not exist;
+    guard with `getPianoRoll` when absence is normal.
+  - `setPianoRollClip(name, clip, options?)` accepts an `AbletonClip`, a
+    `PianoRollData`, or a `PianoRollObject`, and defaults to
+    `source: "livecode"`, `originId: "livecode"`, `undoable: false`, with
+    optional `label` and `expectedRev`.
+  - `playPianoRoll(ctx, roll, options?)` schedules the roll's notes on the
+    given `TimeContext` and resolves at the clip's end. Options:
+    `secondsPerBeat` (default 0.25), `gate` (0.9), `velocity` (defaults to
+    each note's own), `channel` (0), `log` (true), and `output`/`outputName`.
+    Without an explicit output it resolves MIDI from the
+    `LIVECODE_MIDI_OUTPUT` env var, then the first device whose name contains
+    `IAC Driver Bus 1`, then the first available output — and advances
+    silently (one warning) when there is none. Await it directly with the
+    context as a direct argument so the analyzer can instrument it.
+
+Note positions and durations are quarter-note beats throughout.
 
 ## Materialization
 

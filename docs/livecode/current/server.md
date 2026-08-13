@@ -4,7 +4,8 @@ Status: checked against `apps/deno-notebooks/livecode` on 2026-07-21; the
 entity/params stores, their routes, the durable-entity registry, and project
 data persistence were checked on 2026-08-13; the signals store, its routes, and
 the root-clock accessor were added and checked on 2026-08-13; the pending-launch
-lifecycle was added and checked on 2026-08-13.
+lifecycle was added and checked on 2026-08-13; the piano-roll upsert semantics
+were documented on 2026-08-13.
 
 ## File map
 
@@ -168,7 +169,7 @@ changes.
 | --- | --- | --- |
 | WS | `/piano-roll/snapshots` | Full named-roll snapshots when the store is dirty; force-sends current state on open. |
 | GET | `/piano-roll/list` | Force-created full snapshot, despite the route name. Forced snapshots are read-only with respect to the broadcast gate. |
-| POST | `/piano-roll/set` | Normalize and set one roll, optionally checking `expectedRev` and recording undo history. |
+| POST | `/piano-roll/set` | Normalize and set one roll, optionally checking `expectedRev` and recording undo history. A missing name is created at rev 1: roll writes are upserts, unlike `/params/set`. |
 | POST | `/piano-roll/undo` | Undo one named object's history. |
 | POST | `/piano-roll/redo` | Redo one named object's history. |
 
@@ -348,7 +349,10 @@ The piano-roll store seeds `melody`, normalizes IDs/velocity, deep-clones data,
 keeps at most 100 undo/redo entries per object, and avoids revision churn for
 JSON-equal writes. Non-cloneable metadata is dropped through guarded fallbacks
 rather than throwing into user timing code. Every entry point normalizes its
-name by trimming.
+name by trimming. `setPianoRoll` is an upsert: a write to a missing name
+creates it at rev 1, so module write-back (`setPianoRollClip`) needs no prior
+`/entities/create` — the params store's write-never-creates rule deliberately
+does not apply here.
 
 `expectedRev` is optional. A mismatch returns the current object with
 `conflict: true`; callers that omit it retain last-write-wins behavior.
