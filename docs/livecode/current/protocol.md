@@ -486,7 +486,8 @@ are:
 - `addProjectModule`
 - `reloadProjectModule`
 - `setModuleSource`
-- `runModule`
+- `runModule`, which accepts `replaceRunning?: boolean` and forwards it to the
+  launch route as the same explicit consent the Replace button gives
 - `stopModule`
 - `stopAllModules`
 

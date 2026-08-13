@@ -311,11 +311,18 @@ generated run ID until the matching terminal snapshot arrives.
 
 ### Applying terminal run snapshots
 
-A terminal lifecycle entry applies when it matches the record's active generated
-run ID, **or** when the record holds no active-run claim at all. The second case
-is ordinary rather than exceptional: an edit calls `setModuleSource`, which
-drops the claim, so a module edited while it ran would otherwise never see its
-own natural completion and would sit at `running` until a reload with nothing
+A terminal lifecycle entry is first deduped exactly as an active one is: an
+entry whose generated run ID matches the last terminal this record saw, with no
+newer timestamp, is ignored. A terminal stays in `moduleRuns` for the life of
+the server, so every later snapshot re-delivers it, and without the dedupe it
+would retire the run started after it during the window where Run has set
+`running` optimistically but not yet claimed the new run ID.
+
+A new terminal then applies when it matches the record's active generated run
+ID, **or** when the record holds no active-run claim at all. The second case is
+ordinary rather than exceptional: an edit calls `setModuleSource`, which drops
+the claim, so a module edited while it ran would otherwise never see its own
+natural completion and would sit at `running` until a reload with nothing
 running on the server.
 
 The guard exists for one job only — an older run's terminal must not retire a
@@ -509,7 +516,8 @@ The production bundle installs them unconditionally; they are not gated by a
 test flag.
 
 The `/client/control` bridge supports `getState`, `openProject`,
-`addProjectModule`, `reloadProjectModule`, `setModuleSource`, `runModule`,
+`addProjectModule`, `reloadProjectModule`, `setModuleSource`, `runModule`
+(which takes the same `replaceRunning` option the Replace button uses),
 `stopModule`, and `stopAllModules`. Results that finish while the socket is
 closed are buffered by command ID and flushed on reconnect for the lifetime of
 that bridge effect.
