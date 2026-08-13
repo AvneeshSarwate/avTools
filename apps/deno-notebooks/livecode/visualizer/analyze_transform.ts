@@ -65,6 +65,18 @@ const CANVAS_PARAMS_IMPORT_ALIASES = new Set(["canvas-params"]);
 const CANVAS_PARAMS_SOURCE_SUFFIXES = ["/helpers/canvas_params.ts"];
 const CANVAS_PARAMS_SOURCE_BASENAMES = new Set(["canvas_params.ts"]);
 
+/**
+ * Ephemeral signal declarations. Discovered like canvas-params (whole file,
+ * any depth) but edited like a wait: the WHOLE call is wrapped so the runtime
+ * can attribute the returned handle to the module that ran the callsite, which
+ * is what lets the server end that module's signals when its run ends. The
+ * wrapper is observation-grade — it returns the handle unchanged.
+ */
+const CANVAS_SIGNAL_FUNCTIONS = new Set(["signal"]);
+const CANVAS_SIGNAL_IMPORT_ALIASES = new Set(["canvas-signals"]);
+const CANVAS_SIGNAL_SOURCE_SUFFIXES = ["/helpers/canvas_signals.ts"];
+const CANVAS_SIGNAL_SOURCE_BASENAMES = new Set(["canvas_signals.ts"]);
+
 export interface AnalyzeAndTransformRequest {
   moduleId: string;
   sourceVersion: number;
@@ -188,11 +200,13 @@ export function analyzeAndTransformTimedModule(
   const processedBodies = new Set<Node>();
   const pianoRollLookupBindings = collectPianoRollLookupImports(sourceFile);
   const canvasParamsBindings = collectCanvasParamsImports(sourceFile);
+  const canvasSignalBindings = collectCanvasSignalImports(sourceFile);
 
   for (const scope of collectVisualFunctionScopes(sourceFile)) {
     processVisualBody(scope);
   }
   collectCanvasParamsCallsites();
+  collectCanvasSignalCallsites();
 
   let hasWrappedCallsite = false;
   for (const callsite of collectSortedInstrumentedCallsites()) {
@@ -213,6 +227,17 @@ export function analyzeAndTransformTimedModule(
         }, `,
       );
       magic.appendRight(argEnd, ")");
+    } else if (callsite.kind === "canvasSignal") {
+      // Whole-call wrap, like a wait: the wrapper takes the declared handle and
+      // returns it unchanged, so the declaration keeps its exact meaning.
+      hasWrappedCallsite = true;
+      magic.prependLeft(
+        start,
+        `__tcvOwnedSignal(${JSON.stringify(request.moduleId)}, ${
+          JSON.stringify(callsite.id)
+        }, `,
+      );
+      magic.appendRight(end, ")");
     } else {
       hasWrappedCallsite = true;
       magic.prependLeft(
@@ -269,7 +294,7 @@ export function analyzeAndTransformTimedModule(
   // manifest entries are `canvasParams` observations must import nothing.
   if (hasWrappedCallsite) {
     magic.prepend(
-      `import { visualizedAwait as __tcvVisualizedAwait, visualizedPianoRollLookup as __tcvPianoRollLookup } from ${
+      `import { visualizedAwait as __tcvVisualizedAwait, visualizedPianoRollLookup as __tcvPianoRollLookup, visualizedOwnedSignal as __tcvOwnedSignal } from ${
         JSON.stringify(runtimeImport)
       };\n`,
     );
@@ -512,6 +537,41 @@ export function analyzeAndTransformTimedModule(
     const staticName = extractStaticRollName(nameArg);
     instrumentedCalls.set(call, {
       kind: "canvasParams",
+      ...(staticName !== undefined ? { staticName } : {}),
+      nameArgRange: { from: nameArg.getStart(), to: nameArg.getEnd() },
+    });
+  }
+
+  /**
+   * Signals are declared wherever the piece wants them — module scope, a timed
+   * body, or inside a loop — so this pass walks the whole file too, and returns
+   * immediately for a module that does not import `canvas-signals`.
+   */
+  function collectCanvasSignalCallsites() {
+    if (
+      canvasSignalBindings.named.size === 0 &&
+      canvasSignalBindings.namespaces.size === 0
+    ) {
+      return;
+    }
+    sourceFile.forEachDescendant((node) => {
+      if (Node.isCallExpression(node)) processCanvasSignal(node);
+    });
+  }
+
+  function processCanvasSignal(call: CallExpression) {
+    const target = resolveHelperCallTarget(
+      call,
+      canvasSignalBindings,
+      CANVAS_SIGNAL_FUNCTIONS,
+    );
+    if (!target) return;
+
+    const nameArg = call.getArguments()[0];
+    if (!nameArg) return;
+    const staticName = extractStaticRollName(nameArg);
+    instrumentedCalls.set(call, {
+      kind: "canvasSignal",
       ...(staticName !== undefined ? { staticName } : {}),
       nameArgRange: { from: nameArg.getStart(), to: nameArg.getEnd() },
     });
@@ -808,6 +868,17 @@ function collectCanvasParamsImports(
   );
 }
 
+/** And again for `signal(...)` declarations. */
+function collectCanvasSignalImports(
+  sourceFile: SourceFile,
+): HelperImportBindings {
+  return collectHelperImports(
+    sourceFile,
+    CANVAS_SIGNAL_FUNCTIONS,
+    isCanvasSignalModuleSpecifier,
+  );
+}
+
 function collectHelperImports(
   sourceFile: SourceFile,
   functionNames: Set<string>,
@@ -882,6 +953,15 @@ function isCanvasParamsModuleSpecifier(specifier: string): boolean {
     CANVAS_PARAMS_IMPORT_ALIASES,
     CANVAS_PARAMS_SOURCE_SUFFIXES,
     CANVAS_PARAMS_SOURCE_BASENAMES,
+  );
+}
+
+function isCanvasSignalModuleSpecifier(specifier: string): boolean {
+  return matchesHelperModuleSpecifier(
+    specifier,
+    CANVAS_SIGNAL_IMPORT_ALIASES,
+    CANVAS_SIGNAL_SOURCE_SUFFIXES,
+    CANVAS_SIGNAL_SOURCE_BASENAMES,
   );
 }
 

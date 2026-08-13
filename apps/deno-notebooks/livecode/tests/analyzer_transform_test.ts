@@ -584,3 +584,170 @@ export default async function(_ctx: TimeContext) {}
   assertEquals(entry.staticName, undefined);
   assert(entry.nameArgRange, "nameArgRange should still be present");
 });
+
+Deno.test("analyzer wraps a top-level signal declaration and emits the runtime import", () => {
+  const result = analyze(`
+import type { TimeContext } from "@avtools/core-timing";
+import { signal } from "canvas-signals";
+
+export const playhead = signal("kinaree/playhead", {
+  anchor: { type: "pianoRoll", name: "melody" },
+});
+
+export default async function(_ctx: TimeContext) {}
+`);
+
+  assertEquals(result.type, "analyzeSuccess");
+  if (result.type !== "analyzeSuccess") return;
+
+  assertEquals(result.manifest.callsites.length, 1);
+  const entry = result.manifest.callsites[0];
+  assertEquals(entry.kind, "canvasSignal");
+  assertEquals(entry.displayName, "signal");
+  assertEquals(entry.staticName, "kinaree/playhead");
+  assert(entry.nameArgRange, "nameArgRange should be present");
+  if (!entry.nameArgRange) return;
+  assert(
+    entry.nameArgRange.from < entry.nameArgRange.to,
+    "nameArgRange should be ordered",
+  );
+
+  // The whole call is wrapped, and the returned handle passes through
+  // untouched, so the declaration keeps its exact meaning.
+  assertStringIncludes(
+    result.transformedCode,
+    'export const playhead = __tcvOwnedSignal("module-test", "id_1", signal("kinaree/playhead", {\n  anchor: { type: "pianoRoll", name: "melody" },\n}))',
+  );
+  // A signal-bearing module must import the wrapper, or the generated code
+  // would ReferenceError at launch.
+  assertStringIncludes(
+    result.transformedCode,
+    "visualizedOwnedSignal as __tcvOwnedSignal",
+  );
+  assertStringIncludes(
+    result.transformedCode,
+    'from "./timeContextVisualizerRuntime.ts"',
+  );
+});
+
+Deno.test("analyzer wraps signals declared inside a timed body and imports every alias", () => {
+  const result = analyze(`
+import type { TimeContext } from "@avtools/core-timing";
+import { signal } from "canvas-signals";
+import { getPianoRollClip } from "piano-roll-helpers";
+
+export default async function(ctx: TimeContext) {
+  const clip = getPianoRollClip("melody");
+  for (const _note of clip) {
+    const step = signal("kinaree/step");
+    step.set(1);
+    await ctx.waitSec(0.1);
+  }
+}
+`);
+
+  assertEquals(result.type, "analyzeSuccess");
+  if (result.type !== "analyzeSuccess") return;
+
+  assertEquals(result.manifest.callsites.map((c) => c.kind), [
+    "pianoRollLookup",
+    "canvasSignal",
+    "timeContextMethod",
+  ]);
+  assertStringIncludes(
+    result.transformedCode,
+    'const step = __tcvOwnedSignal("module-test", "id_2", signal("kinaree/step"))',
+  );
+  assertStringIncludes(
+    result.transformedCode,
+    '__tcvVisualizedAwait("module-test", "id_3", ctx.waitSec(0.1))',
+  );
+  // One import line binds all three wrappers, so any wrapped callsite makes
+  // every alias resolvable.
+  assertStringIncludes(
+    result.transformedCode,
+    'import { visualizedAwait as __tcvVisualizedAwait, visualizedPianoRollLookup as __tcvPianoRollLookup, visualizedOwnedSignal as __tcvOwnedSignal } from "./timeContextVisualizerRuntime.ts";',
+  );
+});
+
+Deno.test("analyzer ignores locally shadowed signal imports", () => {
+  const result = analyze(`
+import type { TimeContext } from "@avtools/core-timing";
+import { signal } from "canvas-signals";
+
+export default async function(ctx: TimeContext) {
+  const signal = (name: string) => ({ name });
+  const local = signal("not-a-declaration");
+  await ctx.waitSec(0.05);
+}
+`);
+
+  assertEquals(result.type, "analyzeSuccess");
+  if (result.type !== "analyzeSuccess") return;
+  assertEquals(
+    result.manifest.callsites.filter((c) => c.kind === "canvasSignal").length,
+    0,
+  );
+  assertStringIncludes(
+    result.transformedCode,
+    'const local = signal("not-a-declaration")',
+  );
+});
+
+Deno.test("analyzer wraps a signal declaration with a non-literal name", () => {
+  const result = analyze(`
+import type { TimeContext } from "@avtools/core-timing";
+import { signal } from "canvas-signals";
+
+const name = "dynamic/signal";
+export const handle = signal(name);
+
+export default async function(_ctx: TimeContext) {}
+`);
+
+  assertEquals(result.type, "analyzeSuccess");
+  if (result.type !== "analyzeSuccess") return;
+
+  const entry = result.manifest.callsites.find((c) =>
+    c.kind === "canvasSignal"
+  );
+  assert(entry, "expected a canvasSignal callsite");
+  if (!entry) return;
+  // Ownership is resolved at runtime from the handle, so a computed name is
+  // wrapped exactly the same; only the editor affordance needs a static name.
+  assertEquals(entry.staticName, undefined);
+  assert(entry.nameArgRange, "nameArgRange should still be present");
+  assertStringIncludes(
+    result.transformedCode,
+    'export const handle = __tcvOwnedSignal("module-test", "id_1", signal(name))',
+  );
+});
+
+Deno.test("analyzer leaves canvasParams untouched in a module that also declares signals", () => {
+  const result = analyze(`
+import type { TimeContext } from "@avtools/core-timing";
+import { canvasParams } from "canvas-params";
+import { signal } from "canvas-signals";
+
+export const params = canvasParams("both/params", { gain: 0.5 });
+export const playhead = signal("both/playhead");
+
+export default async function(_ctx: TimeContext) {}
+`);
+
+  assertEquals(result.type, "analyzeSuccess");
+  if (result.type !== "analyzeSuccess") return;
+
+  assertEquals(result.manifest.callsites.map((c) => c.kind), [
+    "canvasParams",
+    "canvasSignal",
+  ]);
+  assertStringIncludes(
+    result.transformedCode,
+    'export const params = canvasParams("both/params", { gain: 0.5 })',
+  );
+  assertStringIncludes(
+    result.transformedCode,
+    'export const playhead = __tcvOwnedSignal("module-test", "id_2", signal("both/playhead"))',
+  );
+});
