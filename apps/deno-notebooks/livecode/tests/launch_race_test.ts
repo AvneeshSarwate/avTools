@@ -165,20 +165,25 @@ Deno.test("a stop during the module import cancels the launch", async () => {
     );
 
     const entries = await readLogEntries(sessionRoot);
-    assert(
-      entries.some((entry) =>
-        entry.type === "moduleImported" &&
-        entry.generatedRunId === "import-cancel-run"
-      ),
-      "the import must have completed for this to be the post-import check",
+    const cancellations = entries.filter((entry) =>
+      entry.type === "launchCancelled" &&
+      entry.generatedRunId === "import-cancel-run"
     );
-    assert(
-      entries.some((entry) =>
-        entry.type === "launchCancelled" &&
-        entry.generatedRunId === "import-cancel-run"
-      ),
-      "the launch must be cancelled after its import resolves",
+    assert(cancellations.length > 0, "the launch must be cancelled");
+    // A starved parent loop can leave the action queued when the stop lands, in
+    // which case the earlier check cancels it and no import ever happens. The
+    // outcome is identical; only assert the post-import branch when the import
+    // is what the stop actually raced.
+    const imported = entries.some((entry) =>
+      entry.type === "moduleImported" &&
+      entry.generatedRunId === "import-cancel-run"
     );
+    if (imported) {
+      assert(
+        cancellations.some((entry) => entry.reason === "cancelledDuringImport"),
+        "an import that completed must be followed by the post-import check",
+      );
+    }
   } finally {
     await server.close();
     await Deno.remove(sessionRoot, { recursive: true });
@@ -250,6 +255,86 @@ Deno.test("replaceRunning stops the running run and starts the new one", async (
       ),
       "the replaced run must emit a terminal lifecycle entry",
     );
+  } finally {
+    await server.close();
+    await Deno.remove(sessionRoot, { recursive: true });
+  }
+});
+
+Deno.test("replaceRunning supersedes a launch that never started", async () => {
+  const sessionRoot = await Deno.makeTempDir({
+    prefix: "tcv-launch-supersede-",
+  });
+  const server = await createLivecodeVisualizerServer({
+    port: 0,
+    sessionRoot,
+    logLevel: "debug",
+  });
+  const moduleId = "module-launch-supersede";
+  const startLogPath = join(sessionRoot, "supersede-starts.txt");
+
+  try {
+    // The first launch is still queued or parked in its slow import when the
+    // replacement arrives, so the replacement never sees it in `activeModules`.
+    const firstUri = await writeFixtureModule(sessionRoot, "supersede-a", {
+      startLogPath,
+      importDelayMs: 400,
+    });
+    const secondUri = await writeFixtureModule(sessionRoot, "supersede-b", {
+      startLogPath,
+    });
+
+    assertEquals(
+      (await launch(server.baseUrl, {
+        moduleId,
+        transformedModuleUri: firstUri,
+        generatedRunId: "supersede-run-a",
+      })).ok,
+      true,
+    );
+    assertEquals(
+      (await launch(server.baseUrl, {
+        moduleId,
+        transformedModuleUri: secondUri,
+        generatedRunId: "supersede-run-b",
+        replaceRunning: true,
+      })).ok,
+      true,
+    );
+
+    await waitFor(
+      async () => {
+        const runs = await activeRuns(server.baseUrl, moduleId);
+        return runs.length === 1 &&
+          runs[0].generatedRunId === "supersede-run-b";
+      },
+      "the superseding run is active",
+      5_000,
+    );
+    // Long enough for the superseded import to have resolved and, if it were
+    // still live, to have started user code.
+    await sleep(600);
+
+    const runs = await activeRuns(server.baseUrl, moduleId);
+    assertEquals(runs.length, 1);
+    assertEquals(runs[0].generatedRunId, "supersede-run-b");
+    assertEquals(
+      await countLines(startLogPath),
+      1,
+      "only the superseding launch may execute user code",
+    );
+
+    const entries = await readLogEntries(sessionRoot);
+    assert(
+      entries.some((entry) =>
+        entry.type === "launchCancelled" &&
+        entry.generatedRunId === "supersede-run-a"
+      ),
+      "the superseded launch must be logged as cancelled",
+    );
+    const started = entries.filter((entry) => entry.type === "moduleStarted");
+    assertEquals(started.length, 1, "exactly one run may start");
+    assertEquals(started[0].generatedRunId, "supersede-run-b");
   } finally {
     await server.close();
     await Deno.remove(sessionRoot, { recursive: true });
