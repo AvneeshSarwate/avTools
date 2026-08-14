@@ -16,13 +16,15 @@ and the end-to-end topology and flows are in
 | Area | Files |
 | --- | --- |
 | App shell, tldraw overrides, project load/save | `src/App.tsx` |
-| Runtime provider, analysis/run state, snapshots, project synchronization | `src/livecodeRuntime.tsx` |
+| The one `/sync` socket, per-kind contexts, typed hooks, HTTP writes | `src/syncRuntime.tsx` |
+| Runtime provider, analysis/run state, connect-armed sequence, project synchronization | `src/livecodeRuntime.tsx` |
+| Token-keyed terminal-run dedupe (pure, import-free; a Deno unit test loads this exact file) | `src/runDedupe.ts` |
 | Livecode shape and utility | `src/LivecodeEditorShape.tsx` |
 | CodeMirror, LSP bridge, wait decorations | `src/CodeMirrorEditor.tsx`, `src/denoLsp.ts` |
-| Piano-roll shape and server-store bridge | `src/PianoRollShape.tsx`, `src/pianoRollRuntime.tsx` |
-| Params pane shape and server-store bridge | `src/ParamPaneShape.tsx`, `src/paramsRuntime.tsx` |
-| Signal scope shape and ephemeral-signal bridge | `src/SignalScopeShape.tsx`, `src/signalsRuntime.tsx` |
-| Wire types | `src/livecodeProtocol.ts`, `src/pianoRollTypes.ts`, `src/paramsTypes.ts`, `src/signalsTypes.ts` |
+| Piano-roll shape | `src/PianoRollShape.tsx` |
+| Params pane shape | `src/ParamPaneShape.tsx` |
+| Signal scope shape | `src/SignalScopeShape.tsx` |
+| Wire types | `packages/livecode-protocol` (vite alias + tsconfig path); `src/livecodeProtocol.ts` re-exports it and adds client-local view models |
 | Piano-roll custom element typing | `src/custom-elements.d.ts` |
 | Socket behavior | `src/reconnectingSocket.ts`, `src/serverRequests.ts` |
 | Debug/test surfaces | `src/livecodeTldrawDebug.ts` plus APIs installed by `App.tsx` and `livecodeRuntime.tsx` |

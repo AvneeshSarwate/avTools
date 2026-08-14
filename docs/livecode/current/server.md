@@ -5,28 +5,39 @@ entity/params stores, their routes, the durable-entity registry, and project
 data persistence were checked on 2026-08-13; the signals store, its routes, and
 the root-clock accessor were added and checked on 2026-08-13; the pending-launch
 lifecycle was added and checked on 2026-08-13; the piano-roll upsert semantics
-were documented on 2026-08-13.
+were documented on 2026-08-13; the sync-source registry, the single broadcast
+timer, the run/waits/lookups entities, the piano-roll store migration, and the
+`/runtime/snapshots` shim were checked against `visualizer/server.ts`,
+`visualizer/sync_sources.ts`, and the four store modules on 2026-08-13.
 
 ## File map
 
 - `visualizer/main.ts`: CLI parsing, server creation, SIGINT/SIGTERM shutdown.
 - `visualizer/server.ts`: HTTP/WebSocket routing, session directories, project
-  state, prepared runs, launch queue, lifecycle snapshots, LSP server, client
-  command forwarding, and cleanup.
-- `visualizer/protocol.ts`: server-side TypeScript message shapes.
+  state, prepared runs, launch queue, run records, the one broadcast timer and
+  its fan-out, LSP server, client command forwarding, and cleanup.
+- `visualizer/protocol.ts`: a one-line re-export of
+  `@avtools/livecode-protocol`, so server imports keep reading as
+  `./protocol.ts`. It holds no types of its own; wire types go in the package,
+  server-only types in the module that owns them.
+- `visualizer/sync_sources.ts`: the `SyncSource` registry the broadcast timer
+  walks — one `collectChanges()`/`snapshotAll()` pair per entity kind, plus the
+  shared engine for the module-keyed ephemeral kinds.
 - `visualizer/analyze_transform.ts`: per-module parsing, diagnostics,
   instrumentation, manifest generation, and default-export normalization.
 - `visualizer/project_shadow_analysis.ts`: project import graph, temporary
   transformed shadow tree, `deno check`, and dependency diagnostics.
 - `visualizer/runtime.ts`: process-global instrumentation state imported by
-  generated modules.
-- `visualizer/piano_roll_store.ts`: process-global named piano-roll records,
-  revisions, dirty snapshots, per-roll undo/redo, deletion with a remembered
-  deleted-defaults set, and the cached JSON the saved-state compare reads.
+  generated modules, plus the per-module dirty hints its wait/lookup sync
+  sources drain.
+- `visualizer/piano_roll_store.ts`: named piano rolls as the third typed wrapper
+  over the entity store — per-roll undo/redo in a side structure,
+  compare-and-set, history labels, never-throw cloning, deletion with a
+  remembered deleted-defaults set, and demo seeding.
 - `visualizer/entity_store.ts`: generic `(type, name)`-keyed records with
-  revisions, per-name monotonic revision floors, no-op caching, dirty/sequence
-  bookkeeping, and never-throw serialization. `piano_roll_store.ts` is
-  deliberately not migrated onto it.
+  revisions, per-name monotonic revision floors, no-op caching, never-throw
+  serialization, and the per-type **changed-name set** that is the broadcast
+  gate. All three typed stores sit on it.
 - `visualizer/params_store.ts`: params entities as the first typed wrapper over
   the entity store — declaration, recursive reconcile, leaf merges, create /
   duplicate / remove / load, and the sampler that adopts code writes.
@@ -35,9 +46,9 @@ were documented on 2026-08-13.
   ownership stamping, per-module ending, and the sampler that adopts code
   writes and stamps them with logical time. Deliberately **not** registered in
   `entity_registry.ts`; that single omission is the whole ephemeral class.
-- `visualizer/entity_registry.ts`: one descriptor interface over both storage
-  engines, so generic entity actions and project persistence never have to know
-  which engine a name addresses. It also owns the entity-name-to-filename
+- `visualizer/entity_registry.ts`: one descriptor interface over every durable
+  entity type, so generic entity actions and project persistence never have to
+  know which type a name addresses. It also owns the entity-name-to-filename
   encoding.
 - `visualizer/lsp_proxy.ts`: per-session proxy process that creates a synthetic
   workspace and runs `deno lsp -q`.
@@ -64,12 +75,17 @@ were documented on 2026-08-13.
 `createLivecodeVisualizerServer` creates one HTTP server and owns:
 
 - one session directory and log file;
-- sets of runtime, piano-roll, params, and signals snapshot sockets;
+- `syncSockets`: a map from each open `/sync` socket to its state
+  (`{ socket, subscriptions, seq }`);
+- `sockets`: the deprecated `/runtime/snapshots` shim's socket set;
 - a map of browser control sockets and pending commands;
+- one `SyncSourceRegistry` and the one `setInterval` broadcast timer that walks
+  it;
 - active modules and their `TimeContext` branch handles;
 - pending launches: one accepted-but-not-started run per module, with its
-  cancellation flag;
-- latest lifecycle snapshot per module;
+  run token and cancellation flag;
+- `moduleRunSnapshots`: the latest run record per module, plus `dirtyRunModules`
+  — the module ids whose record changed since the last collect;
 - prepared runs plus a per-module pruning index;
 - a FIFO launch-action array drained by one parent `TimeContext` loop;
 - one global current project for the server instance, including the compact
@@ -77,10 +93,12 @@ were documented on 2026-08-13.
 - cached/in-flight project diagnostics;
 - an LSP WebSocket process manager with at most four proxy processes.
 
-`visualizer/runtime.ts`, `piano_roll_store.ts`, and `entity_store.ts` (with the
-params entities inside it) are Deno module singletons, not fields of this
+`visualizer/runtime.ts` and `entity_store.ts` (with the piano-roll, params, and
+signal entities inside it) are Deno module singletons, not fields of this
 server object. They are shared by every generated module and would also be
-shared by multiple server objects in one isolate.
+shared by multiple server objects in one isolate. Run records are the exception
+— they live on the server object, which is why the run sync source takes its
+accessors as constructor dependencies instead of importing a store.
 
 ## Session directories
 
@@ -133,8 +151,14 @@ changes.
 | POST | `/runtime/panic` | Cancel every pending launch, immediately cancel active modules without stop hooks, and panic MIDI. |
 | POST | `/runtime/restart-all` | Stop all active modules and rematerialize the current project. It does not relaunch the prior modules despite the route name. |
 | GET | `/runtime/status` | Compact list of active module build identities/hashes. |
-| GET | `/runtime/state` | Rehydration state: active modules with manifests, latest run lifecycle entries, and latest remembered prepared manifest per module. |
-| WS | `/runtime/snapshots` | Changed-only snapshots of active wait IDs, lookup names, active module IDs, and lifecycle state. Sends a full current snapshot on open. |
+| GET | `/runtime/state` | Rehydration state: active modules with manifests, latest run rows (each carrying `runToken`), and latest remembered prepared manifest per module. |
+| WS | `/runtime/snapshots` | **Deprecated shim.** Full-fidelity `ActiveWaitSnapshot` for the Vue SketchWrapper only: full snapshot on open, then whenever the serialized whole snapshot changes. Token-free rows. No subscribe message. |
+
+### Sync transport
+
+| Method | Route | Behavior |
+| --- | --- | --- |
+| WS | `/sync` | The one watched-state channel. Sends nothing until the client subscribes; a subscribe replaces the socket's type set and replies with `resets` for every listed type; afterwards the shared 33 ms tick sends only that socket's subscribed types' changed entities. |
 
 ### Project
 
@@ -167,8 +191,7 @@ changes.
 
 | Method | Route | Behavior |
 | --- | --- | --- |
-| WS | `/piano-roll/snapshots` | Full named-roll snapshots when the store is dirty; force-sends current state on open. |
-| GET | `/piano-roll/list` | Force-created full snapshot, despite the route name. Forced snapshots are read-only with respect to the broadcast gate. |
+| GET | `/piano-roll/list` | Full snapshot envelope, despite the route name. Read-only with respect to the broadcast gate. |
 | POST | `/piano-roll/set` | Normalize and set one roll, optionally checking `expectedRev` and recording undo history. A missing name is created at rev 1: roll writes are upserts, unlike `/params/set`. |
 | POST | `/piano-roll/undo` | Undo one named object's history. |
 | POST | `/piano-roll/redo` | Redo one named object's history. |
@@ -177,19 +200,21 @@ changes.
 
 | Method | Route | Behavior |
 | --- | --- | --- |
-| WS | `/params/snapshots` | Full named-entity snapshots on the 100 ms tick when the store changed; sends a read-only forced snapshot on open. |
-| GET | `/params/list` | Read-only forced snapshot, despite the route name. |
+| GET | `/params/list` | Read-only full snapshot, despite the route name. |
 | POST | `/params/set` | Deep-merge leaf values into one live entity, optionally checking `expectedRev`. Status 404 for an unknown name; a write never creates an entity. |
 
 ### Signals
 
 | Method | Route | Behavior |
 | --- | --- | --- |
-| WS | `/signals/snapshots` | Full ephemeral-signal snapshots on the 100 ms tick when the store changed; sends a read-only forced snapshot on open. |
-| GET | `/signals/list` | Read-only forced snapshot, despite the route name. |
+| GET | `/signals/list` | Read-only full snapshot, despite the route name. |
 
 There is deliberately no `/signals/set`: signals are code-published only, so
 the tier has no write route to secure, rate-limit, or reconcile.
+
+The three per-channel entity sockets — `/piano-roll/snapshots`,
+`/params/snapshots`, `/signals/snapshots` — are **deleted**. Every entity kind
+reaches watchers on `/sync`; the HTTP list routes are unchanged.
 
 ### LSP
 
@@ -230,8 +255,8 @@ awaits them sequentially. Each launch action:
 5. records the active module and its manifest/hash identity.
 
 The child marks itself running, awaits user code, converts non-cancellation
-errors to a lifecycle error entry/log, clears active waits, and removes itself
-only if it is still the active run with the same generated ID.
+errors to a run-record error entry/log, clears active waits, and removes itself
+only if it is still the active run under the same **run token**.
 
 The HTTP launch response happens after enqueueing, before import. Import or
 top-level evaluation failures therefore arrive through logs/snapshots rather
@@ -241,9 +266,14 @@ than the original HTTP response.
 
 Acceptance means queued, so the window between the response and the action's
 turn has its own identity: `pendingLaunches` maps a module ID to its
-`{ generatedRunId, cancelled }` entry, registered before the action is pushed
-and deleted only after ownership transfers to `activeModules`. A module is
-therefore never absent from both maps while it is startable.
+`{ generatedRunId, runToken, cancelled }` entry, registered before the action is
+pushed and deleted only after ownership transfers to `activeModules`. A module
+is therefore never absent from both maps while it is startable.
+
+The `runToken` is minted **at accept time**, on `PendingLaunch`, not after the
+import. That is what lets the `launching` run record this request publishes
+already carry the run's identity, and what lets a cancellation tell whether the
+record it is about to overwrite is still the one it owns.
 
 At request time a pending launch is treated exactly like a running one: refused
 unless `replaceRunning` is set, and marked cancelled by the request that
@@ -261,48 +291,196 @@ The queued action then re-applies every decision taken since acceptance:
   request's `launching` entry owed, log `launchCancelled`, and return;
 - **a run appeared meanwhile** — with `replaceRunning`, stop it again (a second
   stop is idempotent); without it, log `launchAborted` and return *without*
-  writing any lifecycle snapshot, because the run that genuinely won owns
-  `moduleRuns` and its own snapshots keep clients converged;
+  writing any run record, because the run that genuinely won owns that module's
+  record and its own entity changes keep clients converged;
 - **cancelled during the import** — the import is the action's one long await,
   so the flag is checked once more after it resolves, before `ctx.branch`.
 
 `stopModule` for a module that is not active cancels a pending launch, emits its
-terminal snapshot, and reports success. `stopAllModules` and `panicRuntime`
+terminal record, and reports success. `stopAllModules` and `panicRuntime`
 cancel every pending entry first, so a panic cannot be followed by a queued
-launch starting. A cancelled launch publishes that terminal only while the
-`launching` entry it wrote is still the latest one, so it cannot clobber a
-successor's.
+launch starting.
+
+`publishCancelledLaunch` is the one guard this slice re-keyed. It writes the
+terminal a cancelled launch owes only when **both** halves hold:
+
+```ts
+if (current.runToken !== pending.runToken) return;
+if (current.state !== "launching") return;
+```
+
+Both are load-bearing. The token rules out a *successor's* record, which
+`generatedRunId` could not: a relaunch of an unchanged build reuses the ID. The
+state check rules out this launch's OWN terminal — a stop cancels the pending
+launch and publishes `stopped` under the same token, and the queued action then
+arrives and must not reopen it. A bare token compare would let the queued action
+clobber a stop's terminal.
 
 ### Run identity versus build identity
 
 `generatedRunId` identifies a prepared build, not a run: the client reuses a
 matching prepared build, so Replace without an edit relaunches under the same
-ID. Two places therefore need a stronger identity than the ID:
+ID. Three places therefore need a stronger identity than the ID:
 
 - each started run gets a `runToken`, stored on its `ActiveModule`. The branch's
   terminal bookkeeping — removing itself, ending its signals, publishing its
   terminal — happens only while the slot still holds that token, so a slow-dying
   older branch cannot retire the run that replaced it;
+- `publishCancelledLaunch` uses the token-plus-state predicate above;
 - `teardownActiveModule` always cancels the handle it was given, because that is
   the run the caller asked to stop, but everything slot-scoped runs only while
-  `activeModules` still holds that exact record. `stopModule` captures the
-  record before awaiting a `stop()` hook for up to two seconds, and a
-  replacement can win the slot inside that window; the superseded teardown logs
-  `supersededTeardown` and returns.
+  `activeModules` still holds that exact record. This one keeps its **object
+  identity** check, unchanged: `stopModule` captures the record before awaiting a
+  `stop()` hook for up to two seconds, and a replacement can win the slot inside
+  that window; the superseded teardown logs `supersededTeardown` and returns.
 
-## Runtime snapshots
+The token is also on the wire. It reaches clients on the `run` entity and on
+`/runtime/state`'s rows, which is what lets a client dedupe terminals correctly
+during a replacement (see `client.md`). The deprecated `/runtime/snapshots`
+envelope keeps its token-free rows.
 
-Every 33 ms the server builds a snapshot from:
+### Run, waits, and lookups as entities
 
-- the runtime singleton's active wait counts;
-- the runtime singleton's last resolved piano-roll name per callsite;
-- sorted active module IDs;
-- the latest lifecycle entry per module.
+The three ephemeral runtime kinds are written and cleared at exactly the sites
+that already owned that state:
 
-The snapshot sequence increments even on ticks whose content is unchanged and
-not sent. Consumers must treat it as an ordering marker, not a contiguous event
-count. The diff is a concatenation of JSON serializations of the four state
-sections.
+| Kind | Written by | Cleared / deleted by |
+| --- | --- | --- |
+| `run` | `setModuleRunSnapshot` — every lifecycle write: `launching` at accept, `running` inside the branch, `stopped`/`error` in the branch's `finally`, the cancelled-launch terminal, and `teardownActiveModule` | never removed; a module's latest run record persists for the life of the server |
+| `moduleWaits` | `enterWait` / `exitWait`, from the instrumented `visualizedAwait` wrapper | `clearModuleWaits` in the branch `finally`, in `stopModule` for an inactive module, and in `teardownActiveModule`; a module with no active callsites deletes |
+| `moduleLookups` | `recordPianoRollLookup`, from the instrumented `visualizedPianoRollLookup` wrapper | `clearModulePianoRollLookups` at the start of each `/runtime/analyze` for that module, since new callsite ids invalidate the old names |
+
+`setModuleRunSnapshot` adds the module id to `dirtyRunModules`; the wait and
+lookup mutators add to their own dirty sets in `runtime.ts`. All three are hints
+only — the module-keyed source compares serialized values before shipping — so
+the marking itself stays a bare `Set.add` on a hot path.
+
+None of this changed the `visualizedAwait` / `visualizedPianoRollLookup`
+callsites or the generated-code contract. Only the transport of their state
+moved.
+
+## Sync sources and the one broadcast tick
+
+There is exactly **one** timer in the server, at `SNAPSHOT_TICK_MS = 33`, and
+exactly one walk over the sources per tick:
+
+```ts
+const broadcastTimer = setInterval(() => {
+  broadcastSyncChanges(syncSources.collectAll());
+  broadcastLegacyRuntimeSnapshot();
+}, SNAPSHOT_TICK_MS);
+```
+
+A thrown error inside the tick is caught and logged as `broadcastTickError`, so
+one hostile entity cannot kill the shared timer.
+
+### The `SyncSource` contract
+
+```ts
+interface SyncSource<E> {
+  readonly entityType: string;
+  /** Drains this kind's gate. Null when the tick found nothing to ship. */
+  collectChanges(): EntityChange<E>[] | null;
+  /** Read-only full state, for a subscribe reset. */
+  snapshotAll(): E[];
+}
+```
+
+The difference between the two methods is the whole discipline:
+
+- `collectChanges()` **drains** that kind's change gate, so it has exactly one
+  caller per tick. `SyncSourceRegistry.collectAll()` is it, and both the `/sync`
+  fan-out and the legacy shim read its result rather than draining anything a
+  second time. Two independent timers would double-consume the gates and starve
+  one side.
+- `snapshotAll()` is **strictly read-only**. It answers one `/sync` subscribe
+  and nothing else, so it must never consume a generation the open sockets are
+  still owed and must never seed, adopt, or stamp anything. (This is why demo
+  roll seeding moved to server construction: a read path must not create an
+  entity.)
+
+Six sources are registered at construction: `pianoRoll`, `params`, `signal`,
+`moduleWaits`, `moduleLookups`, `run`. An unregistered type named in a subscribe
+resets to an empty list rather than 404ing.
+
+### Change tracking is per name, not a boolean
+
+`entity_store.ts`'s gate is a per-type **set of changed names**, written by
+every mutator: value writes, meta writes, `ended`/anchor/owner flips,
+`unserializable` transitions, creates, and deletes. `consumeEntityTypeChanges`
+resolves that set against the live records at collect time and returns
+`{ changed, deleted }`, both sorted — so a name created and deleted inside one
+tick reports as a deletion, and one deleted then recreated reports as a change.
+
+A serialize-compare over live values could not do this job: it cannot see a
+deletion, and it cannot see a change that does not alter the value (a signal's
+`ended` flip, a params meta replacement). A scope that never learns `ended`
+silently freezes, which is a principle violation, not a nuisance.
+
+### Sampler split: adopt always, ship what changed
+
+The params and signals stores each expose two functions:
+
+- `adoptParamsCodeWrites()` / `adoptSignalCodeWrites()` — the sampler half.
+  Safe-stringify every live value, set/clear `unserializable` with one warning
+  per transition, and adopt a changed serialization as a store write
+  (`rev` bumps, `updatedBy: "code"`; the signals version also stamps root-clock
+  logical time).
+- `sampleParamsChanges()` / `sampleSignalChanges()` — the tick. Run the adopt
+  pass, then drain the gate and return one `EntityChange` per changed name,
+  `entity: null` for a deleted one.
+
+**The adopt pass runs on every tick regardless of subscriptions.** "Unwatched
+costs nothing" is a transport property; an unwatched run has to behave
+identically to a watched one, and `rev` has to stay a monotonic generation
+counter whether or not a pane is open.
+
+The `pianoRoll` source has no sampler half at all: nothing outside
+`piano_roll_store.ts` writes a roll, so there is no code drift to adopt, and
+`collectPianoRollChanges()` is pure write-time tracking. An idle store costs one
+set-size check rather than a per-tick serialize of every note array.
+
+### Module-keyed ephemeral sources
+
+`run`, `moduleWaits`, and `moduleLookups` share one engine
+(`createModuleKeyedSource`) because their mutators live on hot paths —
+`enterWait` runs at every awaited callsite — so marking dirty must be a bare
+`Set.add`. The real filter is in the source: it keeps the last serialized value
+per name and skips a name whose value is byte-identical. A steady wait loop
+re-entering the same callsite set therefore never rebroadcasts an identical
+array, which is the silence the natural-completion E2E depends on.
+
+`snapshotAll()` deliberately does not touch that cache: a read must not decide
+what a later tick ships.
+
+Deletion is how "nothing to report" is expressed. `getModuleWaitCallsites`
+returns null for a module awaiting nothing, `getModuleLookups` returns null for
+a module with no recorded lookups, and `runEntityFor` returns null for a module
+that has never run — each becomes `entity: null`. A name that never shipped
+anything is skipped entirely, so its absence is not announced as news.
+
+### Fan-out
+
+`broadcastSyncChanges` walks the collected map once per open socket, filters to
+that socket's subscriptions, and sends one envelope; a socket with no
+subscriptions or no matching changes gets nothing. `sendSyncMessage` advances
+that socket's `seq` **only after a successful send**, so a serialization failure
+(logged `syncSerializeFailed`) cannot manufacture a gap the client would chase.
+
+`broadcastLegacyRuntimeSnapshot` then builds the deprecated `ActiveWaitSnapshot`
+from the same singletons at full fidelity — `modules`, `pianoRollLookups`,
+sorted `activeModules`, and `moduleRuns` with `updatedAtMs` and **without**
+`runToken` — and compares the concatenated JSON of those four sections against
+the previous tick's. That comparison is pure: it is not a gate anything else
+consumes, so keeping it costs the sync path nothing.
+
+### Shutdown
+
+`close()` clears the one broadcast timer, unregisters the root time context
+(a cancelled clock must not keep stamping samples), closes the shim sockets, the
+`/sync` sockets, and the control sockets, fails every pending client command,
+stops all modules, panics MIDI, cancels the parent context, shuts down the LSP
+proxies, and shuts down the HTTP server.
 
 ## Project diagnostics
 
@@ -345,27 +523,46 @@ Signal/finally cleanup disposes the RPC connection, sends SIGTERM to the real
 
 ## Piano-roll and MIDI stores
 
-The piano-roll store seeds `melody`, normalizes IDs/velocity, deep-clones data,
-keeps at most 100 undo/redo entries per object, and avoids revision churn for
-JSON-equal writes. Non-cloneable metadata is dropped through guarded fallbacks
-rather than throwing into user timing code. Every entry point normalizes its
-name by trimming. `setPianoRoll` is an upsert: a write to a missing name
-creates it at rev 1, so module write-back (`setPianoRollClip`) needs no prior
-`/entities/create` — the params store's write-never-creates rule deliberately
-does not apply here.
+`piano_roll_store.ts` is the **third typed wrapper over `entity_store.ts`**. A
+roll is a `(type: "pianoRoll", name)` record whose value is its `PianoRollData`;
+identity, revisions, revision floors, the no-op cache, and the changed-name gate
+all come from the shared substrate, and the public function signatures are
+unchanged, so routes, helpers, the registry descriptor, and user modules
+importing `"piano-roll-store"` see the same API they always did.
 
-`expectedRev` is optional. A mismatch returns the current object with
-`conflict: true`; callers that omit it retain last-write-wins behavior.
+What the wrapper still owns, because each earns its keep:
 
-The seed write is stamped `updatedBy: "demo-seed"`, which is how a save
-recognizes an untouched seed and leaves it out (any real write bumps rev past 1
-and captures it from then on). Seeding is also lazy — every list/get/snapshot
-re-ensures the default — so `deletePianoRoll` records a deleted default name in
-a per-process set that suppresses future re-seeding; otherwise a deleted
-`melody` would resurrect within one snapshot tick. `clearPianoRollHistory`
-drops one roll's undo/redo stacks, which a project load uses because opening a
-project adopts disk truth and the pre-load stacks would undo into a state the
-file never contained.
+- **Undo/redo stacks in a side structure.** They are keyed by entity name in a
+  module-level `histories` map rather than living on the record, because they
+  are never serialized. `deletePianoRoll` drops the entry, so a recreated name
+  cannot undo into a state it never held. `clearPianoRollHistory` drops one
+  roll's stacks, which a project load uses because opening a project adopts disk
+  truth and the pre-load stacks would undo into a state the file never
+  contained. At most 100 entries per stack.
+- **Compare-and-set.** `expectedRev` is optional; a mismatch returns the current
+  object with `conflict: true`, and callers that omit it retain last-write-wins.
+- **Never-throw cloning.** Non-cloneable metadata is dropped through guarded
+  fallbacks rather than throwing into user timing code. Note IDs and velocity
+  are normalized, every entry point trims its name, and a JSON-equal write is a
+  no-op with no revision churn.
+- **Upsert semantics.** `setPianoRoll` on a missing name creates it at rev 1, so
+  module write-back (`setPianoRollClip`) needs no prior `/entities/create` — the
+  params store's write-never-creates rule deliberately does not apply here.
+- **Demo-seed semantics.** The seed write is stamped `updatedBy: "demo-seed"`,
+  which is how a save recognizes an untouched seed and leaves it out (any real
+  write bumps rev past 1 and captures it from then on). `deletePianoRoll`
+  records the name in a `deletedDefaults` set so it cannot be re-seeded.
+
+Seeding now happens **once, at server construction**, not lazily from read
+paths. That is a requirement of the transport, not a tidy-up: `snapshotAll()`
+answers a `/sync` subscribe and has to be genuinely read-only, so nothing may
+create an entity on the way to answering one.
+
+Two exports went away with the migration: `markPianoRollStoreDirty` (no in-tree
+caller once the gate became per-name) and `getAllPianoRolls` (now internal to
+the full-snapshot envelope `/piano-roll/list` returns). `pianoRollExists` was
+added, so the registry descriptor can answer existence without the deep clone
+`getPianoRoll` owes its callers.
 
 MIDI devices are enumerated and opened when `midi_helpers.ts` is first imported.
 Send failures are logged rather than thrown. `panicMidi` silences tracked notes
@@ -374,9 +571,10 @@ called by the server shutdown path.
 
 ## Entity store and params entities
 
-`entity_store.ts` owns identity, revisions, the no-op cache, the per-type dirty
-flag and snapshot sequence, and never-throw serialization. Per-type semantics
-live in the wrapper beside it. `params_store.ts` is the only wrapper today.
+`entity_store.ts` owns identity, revisions, the no-op cache, the per-type
+changed-name set and snapshot sequence, and never-throw serialization. Per-type
+semantics live in the wrappers beside it: `params_store.ts`, `signals_store.ts`,
+and `piano_roll_store.ts`.
 
 `registerParams(name, defaults, meta?)` is create-or-reattach and returns the
 **live value object**:
@@ -399,11 +597,11 @@ validates JSON-simple values and throws on anything else — including arrays,
 which have no tweakpane binding in v1. Throwing is acceptable there and only
 there, because declaration runs at module init rather than inside timing loops.
 
-Every 100 ms the params timer samples and broadcasts. Per entity per tick it
-safe-stringifies the live value, then:
+On every 33 ms tick `adoptParamsCodeWrites()` runs — whether or not anything is
+subscribed. Per entity it safe-stringifies the live value, then:
 
 - on failure, sets `unserializable: true` once and warns, keeping the last good
-  serialization in snapshots instead of freezing the loop;
+  serialization in payloads instead of freezing the loop;
 - on success, clears that flag if it was set, and when the string differs from
   the cached one **adopts the drift** as a store write: rev bumps,
   `updatedBy` becomes `code`, and the cache is refreshed.
@@ -412,13 +610,13 @@ Adoption is the whole mechanism behind plain property writes: user code never
 calls the store, so this sampler is where a code-authored generation is
 recorded, and it is what keeps rev a monotonic generation counter that client
 echo suppression can rely on. `NaN`/`Infinity` serialize to null and
-`undefined` drops the key, which reads as a shape change. A snapshot is
-broadcast only when the tick found something changed.
+`undefined` drops the key, which reads as a shape change. `sampleParamsChanges()`
+then drains the changed-name gate; an idle store returns null and sends nothing.
 
 `/params/set` merges leaves in place and detects no-ops against a fresh
 serialization of the pre-merge value rather than the cache, which a code write
-can have invalidated since the last tick. Forced snapshots for `/params/list`
-and socket open are read-only.
+can have invalidated since the last tick. `GET /params/list` builds its snapshot
+read-only.
 
 Around that core, `createEmptyParams`, `duplicateParams`, `removeParams`, and
 `loadParams` serve the generic entity actions. Duplicate deep-copies values and
@@ -431,9 +629,9 @@ also floored per name in `entity_store.ts`, so a recreated or re-loaded entity
 can never be silently echo-suppressed by a pane whose `localRev` outlived the
 old record.
 
-Shutdown clears the params and signals timers and closes both socket sets next
-to their piano-roll counterparts. Entities themselves are process-global and in
-memory only; they are never evicted, and durable ones reach disk only through an
+There is nothing per-type left to shut down: one timer covers every kind, and
+`close()` clears it once. Entities themselves are process-global and in memory
+only; they are never evicted, and durable ones reach disk only through an
 explicit project save (see below and `known-risks.md`). Signals never reach disk
 at all.
 
@@ -460,12 +658,13 @@ property write, which is what makes "unwatched ≡ watched" true rather than
 aspirational. A dirty flag here would also broadcast byte-identical snapshots
 under a loop that re-sets the same value.
 
-Every 100 ms the signals timer samples and broadcasts, exactly like the params
-sampler: safe-stringify each live value, set/clear `unserializable` with one
+On every 33 ms tick `adoptSignalCodeWrites()` runs, exactly like its params
+counterpart: safe-stringify each live value, set/clear `unserializable` with one
 warning per transition, and on a changed serialization adopt the drift as a
 store write (`rev` bumps, `updatedBy: "code"`). Adoption is also where the
-record is stamped with root-clock logical time. A snapshot is broadcast only
-when the tick found a change.
+record is stamped with root-clock logical time. It runs regardless of
+subscriptions — an unwatched signal must still become an observed generation.
+`sampleSignalChanges()` then drains the gate; an idle store sends nothing.
 
 Ending is sticky and lifecycle-driven:
 
@@ -500,8 +699,8 @@ value with `timeSec`/`beats`.
 `sampleRootTime` never throws and returns null when no context is registered or
 a reading is not finite, so a plain `deno run` of a module (or a sample taken
 before the parent loop starts) simply produces unstamped values. Stamps are
-quantized by the ~30 ms parent tick and the 100 ms sampler; `protocol.md` says
-so before anyone builds a musical x-axis on them.
+quantized by the ~30 ms parent tick and the 33 ms sampler tick; `protocol.md`
+says so before anyone builds a musical x-axis on them.
 
 ## Durable entity registry
 
@@ -521,10 +720,10 @@ interface DurableEntityTypeDescriptor {
 }
 ```
 
-Both descriptors are registered at server construction. It is deliberately a
-facade, not a migration: each engine keeps its own proven implementation and
-only the interface divergence goes away. Type ids are assumed space-free
-because the saved-state map is keyed `"<type> <name>"`.
+Both descriptors are registered at server construction. Now that the piano-roll
+store also sits on `entity_store.ts`, this is a thin naming/validation layer
+over one substrate rather than a facade bridging two engines. Type ids are
+assumed space-free because the saved-state map is keyed `"<type> <name>"`.
 
 Everything here runs at route or save/load time, never inside caller-owned
 livecode timing, so throwing on a bad name or a malformed saved file is the
