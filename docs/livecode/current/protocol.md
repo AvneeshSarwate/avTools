@@ -1,33 +1,179 @@
 # Current Protocol and Cross-Boundary Contracts
 
-Status: checked against both protocol copies and route callers on 2026-07-21;
+Status: checked against the then-separate protocol copies and route callers on
+2026-07-21;
 the params routes and types, the entity CRUD routes, and the project data
 persistence types were checked on 2026-08-13; the signals routes and types were
 added and checked on 2026-08-13; `replaceRunning` and launch cancellation were
 checked on 2026-08-13; the analyze-success, project-route, and runtime-ack
 body shapes plus the params graph meta fields were documented from source on
-2026-08-13.
+2026-08-13; the shared protocol package, the `/sync` transport, and the
+deprecated `/runtime/snapshots` shim were checked against
+`packages/livecode-protocol`, `visualizer/server.ts`, and
+`apps/livecode-tldraw/src/syncRuntime.tsx` on 2026-08-13.
 
 ## Source of types
 
-The server types live in:
+There is **one** source of wire types, a plain-TypeScript workspace package
+compiled from source by both consumers:
 
 ```text
-apps/deno-notebooks/livecode/visualizer/protocol.ts
+packages/livecode-protocol/
+  mod.ts              # type-only barrel; re-exports every module below
+  analysis.ts         # diagnostics, wait-callsite manifest, /runtime/analyze
+  client_control.ts   # /client/command and the /client/control envelopes
+  entities.ts         # generic /entities/* CRUD bodies
+  params.ts           # ParamsValues/ParamsMeta/ParamsEntity, /params/set
+  piano_roll.ts       # NoteData/PianoRollData/PianoRollObject, /piano-roll/set
+  project.ts          # manifest, module records, every /project/* body
+  runtime.ts          # launch/stop, run lifecycle, /health, /runtime/state
+  saved_entities.ts   # the durable data-file formats a project save writes
+  signals.ts          # SignalEntity and its anchor
+  sync.ts             # the /sync envelope and its entity-kind registry
 ```
 
-The tldraw client manually mirrors subsets in:
+Everything in it is type-only (`export type *`), so importing the package costs
+nothing at run time. Types that belong to only one side — server internals,
+client view models — deliberately do not live here.
 
-```text
-apps/livecode-tldraw/src/livecodeProtocol.ts
-apps/livecode-tldraw/src/pianoRollTypes.ts
-apps/livecode-tldraw/src/paramsTypes.ts
-apps/livecode-tldraw/src/signalsTypes.ts
+Consumption:
+
+- Deno resolves `@avtools/livecode-protocol` through the root `deno.json`
+  workspace entry and import map plus the relative map in
+  `apps/deno-notebooks/deno.json`.
+- `visualizer/protocol.ts` is now a one-line re-export of the package. It
+  survives only so server imports keep reading as `./protocol.ts`; it holds no
+  types of its own.
+- `apps/livecode-tldraw` resolves the package as **raw TypeScript** through a
+  `resolve.alias` in `vite.config.ts` and a matching `paths` entry plus
+  `allowImportingTsExtensions` in `tsconfig.json` — the mechanism
+  `apps/browser-projections` already uses for `@avtools/core-timing`. This is
+  the first *source* alias in that app; the `@avtools/piano-roll` alias next to
+  it points at a built dist bundle and predates it.
+- `apps/livecode-tldraw/src/livecodeProtocol.ts` re-exports the package and adds
+  only client-local view models (`HistoryEntry`, `PreparedBuild`,
+  `PreparedFailure`). The old hand-mirrored `pianoRollTypes.ts`,
+  `paramsTypes.ts`, and `signalsTypes.ts` are gone.
+
+One deliberate exception remains: `apps/browser-projections`' Vue SketchWrapper
+keeps its own narrower local copy of `ActiveWaitSnapshot`. That client is not
+modernized by this slice, and its shim is documented below.
+
+There is still no runtime schema validation — the types are compile-time
+documentation, and a cross-boundary change must still update serialization,
+handling, and tests. What can no longer happen is the two sides describing the
+same message differently.
+
+## The sync transport (`WS /sync`)
+
+One socket carries every watched entity kind, per entity, changed-only, scoped
+to what that socket subscribed to. It replaced four independent full-snapshot
+channels (`/runtime/snapshots` for the tldraw client, `/piano-roll/snapshots`,
+`/params/snapshots`, `/signals/snapshots`); the first survives as a deprecated
+shim for one un-migrated client and the other three are deleted.
+
+### Entity kinds
+
+| Wire id | Class | Entity name | Value |
+| --- | --- | --- | --- |
+| `pianoRoll` | durable | roll name | `PianoRollObject` |
+| `params` | durable | entity name | `ParamsEntity` |
+| `signal` | ephemeral | signal name | `SignalEntity` |
+| `run` | ephemeral | module id | `RunEntity` |
+| `moduleWaits` | ephemeral | module id | `ModuleWaitsEntity` |
+| `moduleLookups` | ephemeral | module id | `ModuleLookupsEntity` |
+
+Durable entities carry their name in a `name` field; the module-keyed ephemeral
+kinds carry `moduleId`. A client keys its per-type map on whichever is present.
+
+### Envelope
+
+From `packages/livecode-protocol/sync.ts`:
+
+```ts
+/** Client → server. Every subscribe REPLACES the socket's set. */
+interface SyncSubscribeMessage {
+  type: "subscribe";
+  entityTypes: string[];
+}
+
+interface SyncEntityChange<E = SyncEntity> {
+  entityType: string;
+  name: string;
+  /** `null` means the entity was deleted. */
+  entity: E | null;
+}
+
+interface SyncMessage<E = SyncEntity> {
+  type: "sync";
+  /** Per-socket monotonic message counter. Gap detection only; never replayed. */
+  seq: number;
+  timestampMs: number;
+  /**
+   * Full current state per entity type, sent in reply to a subscribe. A reset
+   * REPLACES the client's whole per-type map: absence means deleted, so
+   * entities removed while disconnected do not survive a reconnect.
+   */
+  resets?: Record<string, E[]>;
+  changes?: Array<SyncEntityChange<E>>;
+}
 ```
 
-There is no shared generated package and no runtime schema validation. A
-cross-boundary change must update both sides and tests. Optional fields can hide
-drift at compile time, so compare actual serialization and handling.
+`subscribe` is the only client→server message. Anything else, and any malformed
+JSON, is logged (`syncMalformedMessage`) and dropped rather than closing the
+socket.
+
+### Rules
+
+- **Subscribe replaces the set, and resets ALL listed types.** Not just newly
+  added ones — so gap recovery and reconnect recovery are the same action:
+  resubscribe the same set and take the fresh `resets`. A subscribe naming an
+  unregistered type resets it to an empty array rather than erroring.
+- **A reset replaces the whole per-type map.** Absence means deleted. An entity
+  removed while a client was disconnected therefore does not survive its
+  reconnect.
+- **Delivery is per entity and changed-only.** A changed entity ships whole;
+  there are no sub-entity diffs in v1, so editing one note re-sends that roll
+  and nothing else. Nothing is sent to a socket that subscribed to nothing, and
+  a tick with no changes for a socket's types sends that socket nothing at all.
+- **`entity: null` is a deletion**, and it is the only way a client learns one:
+  a serialize-compare over live values cannot see a record that is gone.
+- **`seq` is per socket, monotonic, and for gap DETECTION only.** It advances
+  only on a message that actually went out, so a serialization failure cannot
+  manufacture a phantom gap. There is no replay buffer and there never will be
+  one: this is a single TCP connection, so an observed gap means a **server
+  bug**, not transport loss. Do not build replay logic on it — the client's only
+  correct reaction is to resubscribe.
+- **Ticks coalesce.** The broadcast timer runs at 33 ms, so intermediate states
+  can be skipped entirely: a module that launches and fails inside one tick
+  ships one `run` entity in its terminal state and never a `launching` one.
+  Consumers must be correct over the states they actually receive, not over an
+  assumed sequence.
+- **`rev` is not a change key.** Several real changes ship with an unchanged
+  `rev` — a signal's `ended` flip, a params meta-only write, an
+  `unserializable` transition — because `rev` counts *value* generations.
+  Nothing on the receiving side may dedupe or order on it.
+- **Ordering within a message is stable**: changed names are sorted per type,
+  as are wait callsite ids and lookup keys, so an unchanged value serializes
+  identically tick after tick and stays silent.
+
+### Owner resolution: samplers always run
+
+"An unwatched entity costs nothing" is a **transport** property only. The
+server's samplers — the params and signals code-write adoption passes, the
+signal logical-time stamping, the run/wait/lookup bookkeeping — run on every
+tick regardless of whether any socket subscribed to them. The principle that an
+unwatched run behaves identically to a watched one requires identical server
+work; only the bytes on the wire are subscription-scoped. Concretely, `rev`
+stays a monotonic generation counter and `GET /params/list` stays current
+whether or not a pane is open.
+
+### Reads that are not the transport
+
+`GET /piano-roll/list`, `/params/list`, and `/signals/list` still answer with
+their full legacy snapshot envelopes, and a `/sync` subscribe reset is built by
+a separate read-only path. Neither ever drains the broadcast gate: one caller
+listing entities cannot swallow a generation the open sockets are still owed.
 
 ## HTTP conventions
 
@@ -133,18 +279,73 @@ decision is re-checked when the queued action runs. The tldraw client sets the
 flag only from the Replace button.
 
 A successful response means the action was appended to the parent loop's launch
-queue. Import/start success is reported later through lifecycle snapshots and
-logs. A launch can still end without ever starting: a stop or panic that lands
-before the action runs cancels it, and the module's lifecycle entry goes
-`launching` → `stopped` with no `running` in between.
+queue. Import/start success is reported later through `run` entities and logs. A
+launch can still end without ever starting: a stop or panic that lands before the
+action runs cancels it, and the module's run entity goes `launching` → `stopped`
+with no `running` in between. Because ticks coalesce, a watcher may see only the
+terminal.
 
 Stop accepts `{ moduleId }`. Missing/inactive IDs are idempotent success; an ID
 whose launch is still queued is cancelled rather than ignored. Stop-all, panic,
 and restart-all accept an ignored/empty JSON body.
 
-## Runtime snapshots
+## Run, waits, and lookups as sync entities
 
-`/runtime/snapshots` sends:
+Runtime observation state is carried by three entity kinds on `/sync`, all keyed
+by module id.
+
+```ts
+interface RunEntity {
+  moduleId: string;
+  state: "launching" | "running" | "stopped" | "error";
+  generatedRunId: string;
+  runToken: string;
+  updatedAt: number;
+  projectModulePath?: string;
+  sourceHash?: string;
+  projectSourceHash?: string;
+  message?: string;
+}
+
+interface ModuleWaitsEntity {
+  moduleId: string;
+  /** Sorted ids of the callsites this module is currently awaiting. */
+  callsiteIds: string[];
+}
+
+interface ModuleLookupsEntity {
+  moduleId: string;
+  /** callsiteId → the roll name that callsite last resolved to. */
+  lookups: Record<string, string>;
+}
+```
+
+`RunEntity` replaces the legacy snapshot's `moduleRuns` **and** `activeModules`
+fields: there is exactly one run entity per module id, and the active-module
+list is derived client-side from `state` (`launching` or `running` is active).
+A terminal run entity stays live until that module runs again.
+
+**`runToken` is the identity of the RUN**, minted server-side when a launch is
+accepted. `generatedRunId` identifies a prepared *build* and is reused whenever
+a relaunch finds an unchanged one — which is exactly what Replace-without-an-edit
+does — so it cannot distinguish a run from the run that replaced it. A client
+deduping terminal states must key on the token; see `client.md` for the rule.
+
+`callsiteIds` is the current active set, not an event delta, and ids are unique
+in it even when the internal wait count is greater than one. `lookups` is the
+last string observed at each instrumented callsite; it survives the run that
+produced it and is cleared for a module at the start of a new analysis.
+
+Both ephemeral kinds **delete rather than empty**: a module with no active waits
+ships `entity: null` for `moduleWaits`, not an entity with an empty array. A
+client therefore learns "this module is awaiting nothing" by the name leaving
+its map.
+
+## Legacy shim: `WS /runtime/snapshots`
+
+Deprecated, and kept for exactly one consumer: the Vue SketchWrapper in
+`apps/browser-projections`, which this slice does not modernize. It sends the
+unchanged envelope, at full fidelity:
 
 ```ts
 interface ActiveWaitSnapshot {
@@ -158,24 +359,22 @@ interface ActiveWaitSnapshot {
 }
 ```
 
-`modules` is the current active set, not an event delta. IDs are unique in each
-array even when the internal count is greater than one.
+Differences from `/sync`, all deliberate:
 
-`pianoRollLookups` is the last string observed at each instrumented callsite.
-It can remain after a module stops and is cleared for a module at the start of a
-new analysis.
+- there is no subscribe message. A full snapshot is sent on open, then only
+  when the serialized whole snapshot changes;
+- its `seq` comes from the runtime singleton's own counter, which advances every
+  time a snapshot is *built* — including on ticks whose content turned out to be
+  unchanged and was not sent. Treat it as an ordering marker, not a contiguous
+  count. (`/sync`'s per-socket `seq` is the opposite: gap-free by construction.)
+- its `moduleRuns` rows are **token-free**. `RuntimeModuleRunSnapshotEntry` has
+  no `runToken`, and the server strips it when building this envelope. That
+  asymmetry is the point: the shim's remaining consumer must not grow a
+  dependency on an identity introduced for a client it does not share code with,
+  and freezing this envelope is what makes the shim cheap to keep and cheap to
+  eventually delete.
 
-Lifecycle entries have `launching`, `running`, `stopped`, or `error`, one latest
-entry per module, and include `generatedRunId` plus optional project/hash/message
-metadata. They remain after termination and are required to update modules that
-finish without an active wait.
-
-`activeModules` is explicit server truth and can differ temporarily from a
-client's optimistic run status.
-
-The server sends an initial full snapshot and then only changed serialized
-state. Sequence numbers can skip because the server increments before deciding
-whether a tick changed.
+Nothing in the tldraw client reads this route.
 
 ## Runtime rehydration
 
@@ -183,12 +382,26 @@ whether a tick changed.
 
 - every active module with runtime URI, hashes, project path, and retained
   manifest (possibly null for a client-supplied launch);
-- the latest lifecycle entry per module;
+- the latest run row per module;
 - the newest still-retained prepared build per module, reduced to ID, optional
   source hash, and manifest.
 
-It does not return current active wait IDs or lookup names; the snapshot socket
-provides those. It also does not return source text.
+Its run rows are `RuntimeStateModuleRun` — the legacy
+`RuntimeModuleRunSnapshotEntry` (including `updatedAtMs`) **plus `runToken`**:
+
+```ts
+interface RuntimeStateModuleRun extends RuntimeModuleRunSnapshotEntry {
+  runToken: string;
+}
+```
+
+Rehydration is where a client that has watched nothing go active — after a
+reload, a reconnect, or a first Connect — seeds the token-keyed terminal dedupe
+it will apply to every later `run` entity. That is the whole reason this route
+carries the token while the `/runtime/snapshots` shim does not.
+
+It does not return current active wait IDs or lookup names; the `moduleWaits`
+and `moduleLookups` entities carry those. It also does not return source text.
 
 `GET /runtime/status` is a smaller active-module list used by client-control
 state reporting and tests.
@@ -250,12 +463,13 @@ A piano-roll object is identified by trimmed string `name` and contains:
 default to undoable. `setPianoRollClip` uses `source: "livecode"` and defaults
 to non-undoable.
 
-The piano-roll snapshot is always a full `rolls` map. The sequence advances
-only when a snapshot is created; normal broadcast snapshots are created when
-the dirty flag is set, while a new socket/list request forces one. A forced
-snapshot is read-only with respect to that flag: only the broadcast tick
-clears it, so one caller listing rolls cannot swallow the generation the other
-open sockets are still waiting for.
+Rolls reach watchers as `pianoRoll` entities on `/sync`: only the edited roll
+ships, not the store. `GET /piano-roll/list` still answers with the full
+`PianoRollSnapshot` envelope (`{ type, seq, timestampMs, rolls }`) for HTTP and
+agent callers; it is read-only with respect to the broadcast gate, so one caller
+listing rolls cannot swallow the generation the open sockets are still owed.
+That envelope's `seq` advances whenever a snapshot is built and is unrelated to
+a `/sync` socket's `seq`.
 
 ## Params contract
 
@@ -292,7 +506,9 @@ ignored with a server-side warning rather than failing the request. No-op
 detection compares a fresh serialization of the pre-merge value, never the
 cached one, because code writes bypass the store and invalidate that cache.
 
-`/params/snapshots` sends a full `params` map:
+Params entities reach watchers as `params` entities on `/sync`, one changed
+entity at a time on the shared 33 ms tick. `GET /params/list` still answers with
+the full snapshot envelope:
 
 ```ts
 interface ParamsSnapshot {
@@ -303,15 +519,17 @@ interface ParamsSnapshot {
 }
 ```
 
-The sequence advances whenever a snapshot is created. Broadcast snapshots are
-created on a 100 ms tick when the store changed; `GET /params/list` and a new
-socket force one. A forced params snapshot is read-only: it neither consumes
-the broadcast gate nor updates per-entity caches, so one client connecting
-cannot swallow a pending update for the others. The piano-roll store now holds
-the same property.
+That read is read-only: it neither consumes the broadcast gate nor updates
+per-entity caches, so one caller listing params cannot swallow a pending update
+for the open sockets. The piano-roll and signals stores hold the same property.
+
+A meta-only write and an `unserializable` transition are real changes that ship
+with an **unchanged `rev`**, because `rev` counts value generations. The
+transport ships them because every mutator records the name it touched, not
+because anything compares serialized values.
 
 The manifest kind `canvasParams` is part of this boundary: `WaitCallsiteKind`
-carries it in both protocol copies, and its entries use the same optional
+carries it in the shared package, and its entries use the same optional
 `nameArgRange`/`staticName` fields as `pianoRollLookup`. It is an observation
 only — no generated code, no runtime message, and no client action beyond the
 editor's open-pane widget. See `analyzer-and-generated-code.md`.
@@ -367,7 +585,9 @@ Differences from a params entity, all deliberate:
 | Route | Meaning |
 | --- | --- |
 | `GET /signals/list` | forced read-only snapshot |
-| `WS /signals/snapshots` | full snapshot on open, then changed-only ticks |
+| `WS /sync` (`signal` kind) | per-signal, changed-only, subscription-scoped |
+
+`GET /signals/list` answers with the full envelope:
 
 ```ts
 interface SignalsSnapshot {
@@ -378,24 +598,27 @@ interface SignalsSnapshot {
 }
 ```
 
-The transport is the params pattern byte for byte: a 100 ms changed-only
-sampler tick, a full map per message, sequence numbers advancing whenever a
-snapshot is created, and a forced snapshot (list request or new socket) that
-neither consumes the broadcast gate nor touches per-entity caches. Every open
-socket receives every changed signal; subscription scoping is deferred to the
-planned multiplexed transport (see `known-risks.md`).
+Watching is now the `signal` kind on `/sync`, so a canvas that subscribes gets
+only the signals that changed, and a client that never subscribes pays nothing
+on the wire. The sampler still runs every tick regardless — see the owner
+resolution above.
+
+A signal's sticky `ended` flip does **not** bump `rev`, so it is one of the
+changes that would be invisible to any serialize-compare. It reaches watchers
+because the store records the touched name; a scope that never learned `ended`
+would silently freeze, which the ephemeral-entity principle forbids.
 
 `timeSec`/`beats` are the root clock's logical time **at the tick that adopted
 the value**, not at the moment code assigned it. They are quantized twice over
 — by the ~30 ms parent-loop tick that advances the root context and by the
-100 ms sampler — so they order samples musically rather than measuring them.
-Treat them as an ordering key with ~100 ms granularity; anyone building a
+33 ms sampler tick — so they order samples musically rather than measuring them.
+Treat them as an ordering key with tick-level granularity; anyone building a
 musical x-axis on them must account for that before trusting spacing. They are
 absent entirely when no root context is registered (a plain `deno run` of a
 module, or before the parent loop starts).
 
 The manifest kind `canvasSignal` is part of this boundary: `WaitCallsiteKind`
-carries it in both protocol copies, with the same optional
+carries it in the shared package, with the same optional
 `nameArgRange`/`staticName` fields as `pianoRollLookup` and `canvasParams`.
 Unlike those two it does generate code — a whole-call ownership wrap — but it
 produces no editor widget in v1, and kind-filtered client code skips it safely.
@@ -489,7 +712,8 @@ a save would skip anyway is not an unsaved change. Nothing auto-saves off the
 back of this; the client renders it as a count.
 
 Data files are human-readable JSON, two-space indented with a trailing
-newline, one per entity:
+newline, one per entity. Their formats are declared in
+`packages/livecode-protocol/saved_entities.ts`:
 
 ```ts
 interface SavedPianoRollEntity {
@@ -563,9 +787,15 @@ Runtime diagnostics and Deno LSP diagnostics are independent:
 
 When changing a boundary:
 
-1. update `visualizer/protocol.ts`;
-2. update the relevant client mirror;
-3. update server serialization and client handling;
-4. add a server protocol test;
-5. add a tldraw E2E when visible/reconnect behavior changes;
-6. update this document and the route table in `server.md`.
+1. change the type in `packages/livecode-protocol` — there is no second copy to
+   update, and adding a wire type anywhere else re-creates the drift the
+   package removed;
+2. update server serialization and client handling; both compile against the
+   package, so a mismatch is a type error rather than a runtime surprise;
+3. add a server test — `sync_transport_test.ts` for transport behavior,
+   `protocol_smoke_test.ts` for the route-level contract and the legacy shim;
+4. add a tldraw E2E when visible/reconnect behavior changes;
+5. update this document and the route table in `server.md`.
+
+For a whole new entity kind, follow `adding-an-entity-kind.md`, which walks the
+same list end to end.
