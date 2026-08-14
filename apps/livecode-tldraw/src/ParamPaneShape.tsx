@@ -16,7 +16,7 @@ import type {
   ParamsPrimitive,
   ParamsValues,
 } from '@avtools/livecode-protocol'
-import { useParamsRuntime } from './paramsRuntime'
+import { useParamsSync } from './syncRuntime'
 
 export const PARAM_PANE_SHAPE_TYPE = 'param-pane'
 const DEFAULT_PARAM_PANE_WIDTH = 320
@@ -119,7 +119,7 @@ export function createParamPaneShape(
 }
 
 function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
-  const runtime = useParamsRuntime()
+  const runtime = useParamsSync()
   const entity = runtime.params[shape.props.paramsName]
   const containerRef = useRef<HTMLDivElement | null>(null)
   const paneRef = useRef<Pane | null>(null)

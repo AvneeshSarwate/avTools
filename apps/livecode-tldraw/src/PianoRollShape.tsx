@@ -18,8 +18,7 @@ import type {
   PianoRollData,
   SignalEntity,
 } from '@avtools/livecode-protocol'
-import { usePianoRollRuntime } from './pianoRollRuntime'
-import { useSignalsRuntime } from './signalsRuntime'
+import { usePianoRollsSync, useSignalsSync } from './syncRuntime'
 import { PIANO_ROLL_ENTITY_TYPE } from './serverRequests'
 
 export const PIANO_ROLL_SHAPE_TYPE = 'piano-roll-view'
@@ -172,8 +171,8 @@ function readMarkerPosition(value: unknown): number | null {
 }
 
 function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
-  const runtime = usePianoRollRuntime()
-  const signalsRuntime = useSignalsRuntime()
+  const runtime = usePianoRollsSync()
+  const signalsRuntime = useSignalsSync()
   const roll = runtime.rolls[shape.props.rollName]
   const elementRef = useRef<PianoRollElement | null>(null)
   const lastAppliedRevRef = useRef<number | null>(null)
