@@ -103,10 +103,11 @@ export default async function(ctx: TimeContext) {
       moduleEntry.moduleId === "module-smoke"
     );
     assertEquals(activeModule?.manifest?.callsites[0]?.id, waitId);
-    // `/runtime/state` is frozen through this phase: the run token lives on the
-    // `run` entity, not on the legacy `moduleRuns` rows.
+    // `/runtime/state` carries the run token now — rehydration is where a
+    // reconnecting client seeds the token memory its terminal dedupe keys on —
+    // while keeping `updatedAtMs`, the name every legacy surface uses.
     for (const entry of Object.values(runtimeState.moduleRuns)) {
-      assertEquals("runToken" in entry, false);
+      assertEquals(typeof entry.runToken, "string");
       assertEquals(typeof entry.updatedAtMs, "number");
     }
 
@@ -177,8 +178,8 @@ export default async function(ctx: TimeContext) {
       .find((run) => run.moduleId === "module-lookup-only");
     assert(lookupOnlyRun?.runToken, "a run entity carries its token");
 
-    // The legacy shim: the same tick still produces the FULL envelope the
-    // un-migrated tldraw client reads, all four sections included.
+    // The legacy shim: the same tick still produces the FULL envelope, all four
+    // sections included, for the Vue client this slice does not modernize.
     await waitFor(
       () =>
         snapshots.some((snapshot) =>
@@ -190,6 +191,14 @@ export default async function(ctx: TimeContext) {
       "lookup-only module stopped snapshot on the legacy shim",
       2_000,
     );
+    // And its rows stay token-FREE: the shim's shape is frozen, so the token
+    // reaches clients only on the `run` entity and on `/runtime/state`.
+    for (const snapshot of snapshots) {
+      for (const entry of Object.values(snapshot.moduleRuns ?? {})) {
+        assertEquals("runToken" in entry, false);
+        assertEquals(typeof entry.updatedAtMs, "number");
+      }
+    }
 
     const stopMarkerPath = `${sessionRoot}/stop-hook.txt`;
     const stopAnalyze = await postJson(`${server.baseUrl}/runtime/analyze`, {

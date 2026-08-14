@@ -270,6 +270,7 @@ try {
   await runSignalScopeAccumulatesCase()
   await runParamGraphRowCase()
   await runNaturalCompletionAfterEditCase()
+  await runInstantFailureCase()
   await runReplaceButtonCase()
 
   // Everything above runs on the transient default canvas. Project mode
@@ -852,22 +853,23 @@ async function runParamGraphRowCase() {
  * reload, with nothing running on the server.
  */
 async function runNaturalCompletionAfterEditCase() {
+  // This module has run before in earlier cases, so its record still holds the
+  // previous run's token. Every wait below is relative to that token.
+  const previousRunToken = await readClientRunToken(firstModuleId)
   await setSource(FINITE_RUN_SOURCE)
   await waitForManifest(firstModuleId, 1, 'finite module manifest')
   await runModule(firstModuleId)
   await waitForServerRunState(firstModuleId, true, 'finite module running')
-  // The running snapshot must reach the client before the edit, because that
-  // snapshot is what re-asserts the active-run claim the edit has to drop. An
-  // active wait id is the visible half of the same message. The case also
-  // depends on runtime-snapshot silence between the edit and the terminal — a
-  // steady wait loop reports an unchanged payload, so nothing is sent — because
-  // any traffic in that window would re-adopt the claim and mask the old bug.
-  await waitForPageValue(
-    (moduleId) =>
-      (window.__livecodeTldrawRuntimeDebug?.modules[moduleId]?.activeIds.length ?? 0) > 0,
-    'the running snapshot reached the client before the edit',
-    15_000,
-    firstModuleId
+  // Re-derived for changed-only delivery. The old mechanism was the full
+  // moduleRuns map being re-delivered on unrelated traffic, which re-adopted
+  // the claim; there is no such re-delivery now. What matters instead is the
+  // run entity's own `running` change reaching this client, because that is
+  // where it learns the run TOKEN whose terminal it must later accept.
+  const runToken = await waitForClientRunToken(
+    firstModuleId,
+    previousRunToken,
+    'running',
+    'the running run entity reached the client before the edit'
   )
 
   // The edit lands mid-run; the server keeps running the older build.
@@ -881,12 +883,51 @@ async function runNaturalCompletionAfterEditCase() {
   )
 
   await waitForServerRunState(firstModuleId, false, 'finite module reached its own end')
+  // The stopped state has to arrive on the run entity change itself, carrying
+  // the same token: nothing else ships in this window, and a suppressed
+  // terminal would leave the module at `running` until a reload.
   await waitForPageValue(
-    (moduleId) =>
-      window.__livecodeTldrawRuntimeDebug?.modules[moduleId]?.runStatus === 'stopped',
-    'edited-while-running module reaches stopped without a reload',
+    ({ moduleId, runToken }) => {
+      const state = window.__livecodeTldrawRuntimeDebug?.modules[moduleId]
+      return state?.runStatus === 'stopped' && state?.runToken === runToken
+    },
+    'the edited-while-running module reaches stopped from its own run entity',
     20_000,
-    firstModuleId
+    { moduleId: firstModuleId, runToken }
+  )
+}
+
+/**
+ * A module that throws the instant it starts. Its `launching`, `running`, and
+ * `error` writes can land inside one 33 ms broadcast tick, in which case the
+ * ONLY run entity this client ever sees is a terminal under a token it never
+ * watched go active. That terminal must apply — swallowing it would leave the
+ * module reading `running` with nothing running.
+ */
+async function runInstantFailureCase() {
+  const previousRunToken = await readClientRunToken(firstModuleId)
+  await setSource(`import type { TimeContext } from "@avtools/core-timing";
+
+export default async function(ctx: TimeContext) {
+  void ctx;
+  throw new Error("e2e instant failure");
+}
+`)
+  await waitForManifest(firstModuleId, 0, 'instant-failure manifest')
+  await runModule(firstModuleId)
+  const state = await waitForPageValue(
+    ({ moduleId, previousRunToken }) => {
+      const module = window.__livecodeTldrawRuntimeDebug?.modules[moduleId]
+      if (!module?.runToken || module.runToken === previousRunToken) return null
+      return module.runStatus === 'error' ? module : null
+    },
+    'an immediately-throwing module reaches error in the client',
+    20_000,
+    { moduleId: firstModuleId, previousRunToken }
+  )
+  assert(
+    (state.latestError ?? '').includes('e2e instant failure'),
+    `the run entity's message reaches the client: ${state.latestError}`
   )
 }
 
@@ -896,6 +937,7 @@ async function runNaturalCompletionAfterEditCase() {
  * the edited source under a new generated run ID.
  */
 async function runReplaceButtonCase() {
+  const previousRunToken = await readClientRunToken(firstModuleId)
   await setSource(REPLACE_FIRST_SOURCE)
   await waitForManifest(firstModuleId, 1, 'replace fixture manifest')
   await runModule(firstModuleId)
@@ -903,6 +945,14 @@ async function runReplaceButtonCase() {
     firstModuleId,
     null,
     'first run active before replacing'
+  )
+  // The token the client watched go active. This is the straddle case's whole
+  // subject: this run's terminal lands while the replacement is still starting.
+  const firstRunToken = await waitForClientRunToken(
+    firstModuleId,
+    previousRunToken,
+    'running',
+    'the first run entity reached the client'
   )
   await waitForModuleActionButtons(
     firstModuleId,
@@ -930,8 +980,27 @@ async function runReplaceButtonCase() {
       entry.reason === 'replaceBeforeLaunch',
     'the replaced run emitted its terminal'
   )
-  // The replaced run's terminal carries the old id, so it must not retire the
-  // UI state of the run that just started.
+  // The straddle: the replaced run's terminal is a real entity change on the
+  // socket, and it arrives while the replacement is still launching. It was
+  // observed active BEFORE this claim's POST, so it must be suppressed — the
+  // client has to end up on the replacement's own token, still running.
+  const secondRunToken = await waitForClientRunToken(
+    firstModuleId,
+    firstRunToken,
+    'running',
+    'the client follows the replacement run, not the replaced run terminal'
+  )
+  // And it stays there: a late terminal for the replaced run must not retire it.
+  await sleep(500)
+  const straddled = await page.evaluate(
+    (moduleId) => window.__livecodeTldrawRuntimeDebug?.modules[moduleId] ?? null,
+    firstModuleId
+  )
+  assertEqual(
+    [straddled?.runStatus, straddled?.runToken],
+    ['running', secondRunToken],
+    'the replaced run terminal never retires its replacement'
+  )
   await waitForModuleActionButtons(
     firstModuleId,
     ['Replace', 'Stop'],
@@ -1738,6 +1807,40 @@ async function waitForActiveRunId(moduleId, previousRunId, label, timeoutMs = 15
   }
   throw new Error(
     `Timed out waiting for ${label} (generatedRunId: ${JSON.stringify(last)})`
+  )
+}
+
+/**
+ * The run token of the last run entity the client APPLIED for a module. A
+ * module keeps the previous run's token until a newer one lands, so every wait
+ * on a token has to be relative to the one already there.
+ */
+function readClientRunToken(moduleId) {
+  return page.evaluate(
+    (moduleId) =>
+      window.__livecodeTldrawRuntimeDebug?.modules[moduleId]?.runToken ?? null,
+    moduleId
+  )
+}
+
+/** Wait until the client is following a run entity newer than `previousToken`. */
+async function waitForClientRunToken(
+  moduleId,
+  previousToken,
+  expectedStatus,
+  label,
+  timeoutMs = 15_000
+) {
+  return await waitForPageValue(
+    ({ moduleId, previousToken, expectedStatus }) => {
+      const state = window.__livecodeTldrawRuntimeDebug?.modules[moduleId]
+      if (!state?.runToken || state.runToken === previousToken) return null
+      if (expectedStatus && state.runStatus !== expectedStatus) return null
+      return state.runToken
+    },
+    label,
+    timeoutMs,
+    { moduleId, previousToken, expectedStatus }
   )
 }
 
