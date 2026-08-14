@@ -12,6 +12,21 @@ the time they were written.
 - `server-architecture-2026-07-01.md` is the server handoff that preceded the
   audit; it mixes still-useful details with obsolete Vue-era behavior.
 
+## Principles-tree archaeology
+
+The `docs/livecode/principles/` directory was dissolved on 2026-08-14;
+`docs/livecode/principles.md` is the surviving primary document.
+
+- `principles-synthesis-2026-07.md` is the earlier synthesis that was that
+  directory's README. Its still-current unique content was folded into
+  `principles.md`; its "Current qualification" notes describe July 2026 state.
+- `architecture-questions.md` preserves the state-ownership debate (direct
+  imports of live values versus tokens/types with store-carried values).
+  Decided: the token/store direction, adopted in `principles.md` and
+  implemented by the named-entity tier.
+- `source-notes/` contains the preserved owner brainstorms
+  (`client-brainstorm.md`, `runtime-brainstorm.md`) that fed the principles.
+
 ## Initial runtime design
 
 `initial-runtime/` contains the design work for the original Vue/CodeMirror

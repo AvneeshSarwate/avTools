@@ -1,7 +1,15 @@
 # Architecture questions
 
-Status: open. The following state-ownership discussion is preserved for the
-project owner to consider; it is not an adopted architectural decision.
+Status: decided; moved to history on 2026-08-14. The token/store direction won:
+`docs/livecode/principles.md` adopts "imports carry types and stable tokens;
+stores carry live values," and the named-entity tier (piano rolls, params,
+signals) implements it — with one synthesis this file's two-column debate did
+not anticipate: declarations return a live object or handle for
+plain-assignment ergonomics while the store owns identity and lifetime by name.
+The generic store for arbitrary module-shared values remains unbuilt; project
+modules still share mutable values through Deno's import cache (see the
+dependency-reload entry in `current/known-risks.md`). The discussion below is
+the preserved rationale.
 
 ## Should imports carry live values or types and tokens?
 

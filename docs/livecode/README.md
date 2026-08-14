@@ -14,18 +14,16 @@ in this repository as equally current.
 
 For a new implementation or review session, read these files in order:
 
-1. `docs/livecode/principles/README.md`
-2. `docs/livecode/user-level-project-goals.md`
-3. `docs/livecode/principles/principles.md`
-4. `docs/livecode/principles/architecture-questions.md`
-5. `docs/livecode/current/system-architecture.md`
-6. `docs/livecode/current/client.md`
-7. `docs/livecode/current/server.md`
-8. `docs/livecode/current/analyzer-and-generated-code.md`
-9. `docs/livecode/current/project-model.md`
-10. `docs/livecode/current/protocol.md`
-11. `docs/livecode/current/testing-and-operations.md`
-12. `docs/livecode/current/known-risks.md`
+1. `docs/livecode/user-level-project-goals.md`
+2. `docs/livecode/principles.md`
+3. `docs/livecode/current/system-architecture.md`
+4. `docs/livecode/current/client.md`
+5. `docs/livecode/current/server.md`
+6. `docs/livecode/current/analyzer-and-generated-code.md`
+7. `docs/livecode/current/project-model.md`
+8. `docs/livecode/current/protocol.md`
+9. `docs/livecode/current/testing-and-operations.md`
+10. `docs/livecode/current/known-risks.md`
 
 `docs/livecode/current/adding-an-entity-kind.md` is a recipe rather than a
 description; read it when the task is adding a new watched entity kind, not as
@@ -40,18 +38,18 @@ A useful prompt for a fresh chat is:
 
 > Read `docs/livecode/README.md` and every document in its fresh-session
 > bootstrap list. Treat `docs/livecode/current/` as implementation truth,
-> `docs/livecode/principles/` as design intent, and `docs/livecode/history/` as
-> non-normative context. Then inspect the named source files before proposing
-> changes.
+> `docs/livecode/principles.md` and `docs/livecode/user-level-project-goals.md`
+> as design intent, and `docs/livecode/history/` as non-normative context. Then
+> inspect the named source files before proposing changes.
 
 ## Authority and status
 
 | Location | Meaning |
 | --- | --- |
 | `docs/livecode/current/` | Concrete description of the checked-in code as of 2026-08-13. Each file's status line records what was checked when. |
-| `docs/livecode/principles/` | Architecture principles and mental models with strong HCI implications. These guide judgement when changing core systems but may describe a destination the current code has not reached. |
+| `docs/livecode/principles.md` | Architecture principles and mental models with strong HCI implications. These guide judgement when changing core systems but may describe a destination the current code has not reached. |
 | `docs/livecode/user-level-project-goals.md` | Owner's product-design and workflow intent: intended user-facing flows, the coding agent's role, and explicit non-goals. Consult it for any user-facing change. |
-| `docs/livecode/principles/source-notes/` | Preserved owner brainstorms. They are inputs to the principles, not a current feature contract. |
+| `docs/livecode/history/source-notes/` | Preserved owner brainstorms. They are inputs to the principles, not a current feature contract. |
 | `docs/livecode/history/` | Preserved plans, discussions, reviews, and feature briefs. Read these for rationale or archaeology, not to learn current routes or code shape. |
 | `apps/livecode-tldraw/architecture.md` | Short client-local handoff and file map. |
 | `apps/deno-notebooks/livecode/architecture.md` | Short server-local handoff and file map. |
@@ -78,7 +76,8 @@ Any feature that changes a boundary must update the corresponding current docs:
 - state ownership, process lifetime, or execution flow:
   `current/system-architecture.md`.
 - test commands or coverage: `current/testing-and-operations.md`.
-- accepted invariant, tradeoff, or product direction: `principles/README.md`.
+- accepted invariant, tradeoff, or product direction:
+  `docs/livecode/principles.md`.
 - intended user workflow, product-design direction, agent role, or non-goal:
   `docs/livecode/user-level-project-goals.md`.
 - newly discovered unresolved hazard: `current/known-risks.md`.
