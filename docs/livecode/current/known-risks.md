@@ -1,12 +1,13 @@
 # Current Known Risks and Invariant Gaps
 
-Status: code-inspection audit on 2026-07-21, extended for the canvas-params
-slice, again for the entity-CRUD/persistence slice, again for the ephemeral
-signals slice and the launch-lifecycle fix, and again for the multiplexed sync
-transport on 2026-08-13. These are unresolved unless a later entry says
-otherwise.
-Items marked “not regression-tested” are reasoned from the checked-in control
-flow and should receive a focused reproduction before a behavioral fix.
+Status: code-inspection audit, current as of 2026-08-13; first audited
+2026-07-21.
+
+How to read this file: open entries are graded `P0`–`P2` and are unresolved;
+`Resolved <date>` entries are kept in place because their rationale still
+constrains changes. Items marked “not regression-tested” are reasoned from the
+checked-in control flow and should receive a focused reproduction before a
+behavioral fix.
 
 This file is required reading because several current names and older docs imply
 stronger guarantees than the implementation provides.

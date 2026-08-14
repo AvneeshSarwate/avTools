@@ -48,7 +48,7 @@ A useful prompt for a fresh chat is:
 
 | Location | Meaning |
 | --- | --- |
-| `docs/livecode/current/` | Concrete description of the checked-in code as of 2026-07-21, extended for the canvas-params, entity-CRUD/persistence, ephemeral-signals, launch-lifecycle, and multiplexed-sync-transport slices on 2026-08-13. Each file's status line records what was checked when. |
+| `docs/livecode/current/` | Concrete description of the checked-in code as of 2026-08-13. Each file's status line records what was checked when. |
 | `docs/livecode/principles/` | Architecture principles and mental models with strong HCI implications. These guide judgement when changing core systems but may describe a destination the current code has not reached. |
 | `docs/livecode/user-level-project-goals.md` | Owner's product-design and workflow intent: intended user-facing flows, the coding agent's role, and explicit non-goals. Consult it for any user-facing change. |
 | `docs/livecode/principles/source-notes/` | Preserved owner brainstorms. They are inputs to the principles, not a current feature contract. |

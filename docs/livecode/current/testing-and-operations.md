@@ -1,13 +1,8 @@
 # Current Testing and Operations
 
-Status: task definitions and test inventory checked on 2026-07-21, extended for
-the canvas-params slice, again for the entity-CRUD/persistence slice, again for
-the ephemeral signals slice, and again for the launch-lifecycle slice on
-2026-08-13; the `serverReady` line's keys and the livecode-tldraw Deno config
-caveat were documented on 2026-08-13; the task matrix was re-read from
-`apps/deno-notebooks/deno.json` and the suite counts re-run on 2026-08-13 after
-the multiplexed sync transport landed (105 unit, 21 server). The final audit
-report records which commands were actually run in this review.
+Status: task matrix re-read from `apps/deno-notebooks/deno.json` and suite
+counts re-run on 2026-08-13, after the multiplexed sync transport landed
+(105 unit, 21 server); first audited 2026-07-21.
 
 ## Development startup
 
