@@ -1,8 +1,8 @@
-// Shared server-request helpers for the entity runtime providers
-// (pianoRollRuntime, paramsRuntime) and for the generic durable-entity actions
-// the TopBar and the debug surface both drive. App.tsx and livecodeRuntime.tsx
-// keep their own full-URL variants; those have a different signature and error
-// text.
+// Shared server-request helpers for the sync provider's write paths (piano-roll
+// set/undo/redo, params set — writes stay ordinary HTTP; only watching moved to
+// the socket) and for the generic durable-entity actions the TopBar and the
+// debug surface both drive. App.tsx and livecodeRuntime.tsx keep their own
+// full-URL variants; those have a different signature and error text.
 
 import type {
   EntityMutationSuccess,
