@@ -1,7 +1,13 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { join, toFileUrl } from "jsr:@std/path@1";
 import { createLivecodeVisualizerServer } from "../visualizer/server.ts";
-import { postJson, sleep, SyncClient, waitFor } from "./test_helpers.ts";
+import {
+  fetchJson,
+  postJson,
+  sleep,
+  SyncClient,
+  waitFor,
+} from "./test_helpers.ts";
 import {
   clearAllPianoRollLookups,
   clearAllWaits,
@@ -28,10 +34,10 @@ import type {
 } from "../visualizer/protocol.ts";
 
 // The multiplexed transport, driven over a real socket against a real server.
-// Everything asserted here is a contract the Phase-C client will build on:
-// resets replace a per-type map, changes ship per entity, `entity: null` means
-// deleted, `seq` is per socket, and the un-migrated legacy channels keep
-// getting their full snapshots off the SAME tick.
+// Everything asserted here is the contract the client builds on: resets replace
+// a per-type map, changes ship per entity, `entity: null` means deleted, `seq`
+// is per socket, and the deprecated `/runtime/snapshots` shim keeps getting its
+// full envelope off the SAME tick.
 
 async function withServer(
   prefix: string,
@@ -323,79 +329,114 @@ Deno.test("a cancelled launch publishes exactly one terminal run entity", async 
   });
 });
 
-Deno.test("one tick feeds a sync socket and the legacy channels without starving either", async () => {
+Deno.test("the entity channels are gone and their HTTP lists still answer in full", async () => {
+  await withServer("tcv-sync-retired-", async ({ baseUrl }) => {
+    // The three per-kind snapshot sockets were deleted with the client that
+    // read them. Everything watched now arrives on `/sync`; a full current
+    // picture is still one HTTP list away, which is what the E2E's polling
+    // helpers and the feature-project verifier use.
+    for (const path of ["/piano-roll", "/params", "/signals"]) {
+      const response = await fetch(`${baseUrl}${path}/snapshots`, {
+        headers: { upgrade: "websocket", connection: "Upgrade" },
+      });
+      await response.body?.cancel();
+      assertEquals(response.status, 404, `${path}/snapshots is retired`);
+    }
+
+    await postJson(`${baseUrl}/piano-roll/set`, {
+      name: "sync/retired",
+      data: { notes: [{ id: "n1", pitch: 62, position: 0, duration: 1 }] },
+    });
+    await postJson(`${baseUrl}/entities/create`, {
+      type: "params",
+      name: "sync/retired-params",
+    });
+
+    const rolls = await fetchJson<PianoRollSnapshot>(
+      `${baseUrl}/piano-roll/list`,
+    );
+    assert(rolls.rolls["sync/retired"], "the roll list is still a full snapshot");
+    const params = await fetchJson<{ params: Record<string, ParamsEntity> }>(
+      `${baseUrl}/params/list`,
+    );
+    assert(params.params["sync/retired-params"], "the params list is full too");
+  });
+});
+
+Deno.test("one tick feeds the sync sockets and the legacy runtime shim without starving either", async () => {
   await withServer("tcv-sync-fanout-", async ({ baseUrl }) => {
     const client = await SyncClient.open(baseUrl);
-    const legacyRolls = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/piano-roll/snapshots`,
+    const legacyRuntime = new WebSocket(
+      `${baseUrl.replace("http", "ws")}/runtime/snapshots`,
     );
-    const rollSnapshots: PianoRollSnapshot[] = [];
-    legacyRolls.onmessage = (event) => {
-      rollSnapshots.push(JSON.parse(event.data as string) as PianoRollSnapshot);
-    };
-    const legacyParams = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/params/snapshots`,
-    );
-    const paramsSnapshots: Array<{ params: Record<string, ParamsEntity> }> = [];
-    legacyParams.onmessage = (event) => {
-      paramsSnapshots.push(JSON.parse(event.data as string));
+    const snapshots: ActiveWaitSnapshot[] = [];
+    legacyRuntime.onmessage = (event) => {
+      snapshots.push(JSON.parse(event.data as string) as ActiveWaitSnapshot);
     };
 
     try {
       await waitFor(
-        () =>
-          legacyRolls.readyState === WebSocket.OPEN &&
-          legacyParams.readyState === WebSocket.OPEN,
-        "legacy sockets open",
+        () => legacyRuntime.readyState === WebSocket.OPEN,
+        "legacy runtime socket open",
         5_000,
       );
-      await client.subscribe(["pianoRoll", "params"]);
+      await client.subscribe(["run"]);
       const before = client.messages.length;
-      const rollsBefore = rollSnapshots.length;
-      const paramsBefore = paramsSnapshots.length;
+      const snapshotsBefore = snapshots.length;
 
-      await postJson(`${baseUrl}/piano-roll/set`, {
-        name: "sync/fanout",
-        data: { notes: [{ id: "n1", pitch: 62, position: 0, duration: 1 }] },
-      });
-      await postJson(`${baseUrl}/entities/create`, {
-        type: "params",
-        name: "sync/fanout-params",
-      });
+      const analysis = await postJson<AnalyzeSuccess>(
+        `${baseUrl}/runtime/analyze`,
+        {
+          moduleId: "module-sync-fanout",
+          sourceVersion: 1,
+          sourceUri: "module-sync-fanout.ts",
+          sourceText: `
+import type { TimeContext } from "@avtools/core-timing";
 
-      // Both transports must see both writes off the same collect. A second
-      // independent timer would drain one gate and leave the other side dark.
-      await client.waitForChange(
-        before,
-        "pianoRoll",
-        (change) => change.name === "sync/fanout",
-        "the roll on /sync",
+export default async function (ctx: TimeContext) {
+  await ctx.waitSec(30);
+}
+`,
+        },
       );
+      assertEquals(analysis.type, "analyzeSuccess");
+      await postJson(`${baseUrl}/runtime/launch`, {
+        moduleId: analysis.moduleId,
+        transformedModuleUri: analysis.transformedModuleUri,
+        generatedRunId: analysis.generatedRunId,
+      });
+
+      // `collectAll` DRAINS the change gates, so it may be called exactly once
+      // per tick; the shim derives its envelope from the same sources through
+      // its own pure compare. A second collect would starve one side.
       await client.waitForChange(
         before,
-        "params",
-        (change) => change.name === "sync/fanout-params",
-        "the params entity on /sync",
+        "run",
+        (change) =>
+          change.name === analysis.moduleId &&
+          runOf(change).state === "running",
+        "the running run entity on /sync",
       );
       await waitFor(
         () =>
-          rollSnapshots.slice(rollsBefore).some((snapshot) =>
-            snapshot.rolls["sync/fanout"] !== undefined
+          snapshots.slice(snapshotsBefore).some((snapshot) =>
+            snapshot.moduleRuns?.[analysis.moduleId]?.state === "running"
           ),
-        "the roll on the legacy piano-roll socket",
+        "the running module on the legacy runtime shim",
         5_000,
       );
-      await waitFor(
-        () =>
-          paramsSnapshots.slice(paramsBefore).some((snapshot) =>
-            snapshot.params["sync/fanout-params"] !== undefined
-          ),
-        "the params entity on the legacy params socket",
-        5_000,
-      );
+
+      // The shim's rows stay token-FREE: it is a frozen shape for a client this
+      // slice deliberately did not modernize.
+      const shimRun = snapshots[snapshots.length - 1]
+        .moduleRuns?.[analysis.moduleId];
+      assertEquals("runToken" in (shimRun ?? {}), false);
+
+      await postJson(`${baseUrl}/runtime/stop`, {
+        moduleId: analysis.moduleId,
+      });
     } finally {
-      legacyRolls.close();
-      legacyParams.close();
+      legacyRuntime.close();
       client.close();
     }
   });
