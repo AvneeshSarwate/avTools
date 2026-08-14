@@ -12,8 +12,10 @@ import {
   collectPianoRollChanges,
   getPianoRoll,
   makePianoRollSnapshot,
+  redoPianoRoll,
   seedDemoPianoRoll,
   setPianoRoll,
+  undoPianoRoll,
 } from "../visualizer/piano_roll_store.ts";
 import {
   clearParamsStore,
@@ -270,6 +272,61 @@ Deno.test("a deleted roll ships as a deletion and drops its undo history", () =>
   pianoRolls.create("reg/deleted");
   assertEquals(getPianoRoll("reg/deleted")?.canUndo, false);
   assertEquals(getPianoRoll("reg/deleted")?.canRedo, false);
+});
+
+Deno.test("undo and redo walk one roll's history and every step is a generation", () => {
+  resetStores();
+  const first = setPianoRoll("reg/history-walk", {
+    notes: [{ id: "one", pitch: 60, position: 0, duration: 1 }],
+  }, { source: "client" });
+  assertEquals(first.canUndo, false, "the creating write pushes no history");
+
+  const second = setPianoRoll("reg/history-walk", {
+    notes: [{ id: "two", pitch: 62, position: 0, duration: 1 }],
+  }, { source: "client", label: "Second" });
+  assertEquals(second.canUndo, true);
+  assertEquals(second.canRedo, false);
+
+  const undone = undoPianoRoll("reg/history-walk");
+  assertEquals(undone?.data.notes[0].id, "one");
+  assertEquals(undone?.updatedBy, "undo");
+  assertEquals(undone?.canUndo, false);
+  assertEquals(undone?.canRedo, true);
+  assert(undone && undone.rev > second.rev, "an undo is a new generation");
+
+  const redone = redoPianoRoll("reg/history-walk", { originId: "pane" });
+  assertEquals(redone?.data.notes[0].id, "two");
+  assertEquals(redone?.updatedBy, "pane", "an originId wins over the default");
+  assertEquals(redone?.canUndo, true);
+  assertEquals(redone?.canRedo, false);
+
+  // A fresh write clears the redo stack, and a non-undoable write records none.
+  undoPianoRoll("reg/history-walk");
+  assertEquals(getPianoRoll("reg/history-walk")?.canRedo, true);
+  setPianoRoll("reg/history-walk", {
+    notes: [{ id: "three", pitch: 64, position: 0, duration: 1 }],
+  }, { source: "client" });
+  assertEquals(getPianoRoll("reg/history-walk")?.canRedo, false);
+  setPianoRoll("reg/history-walk", {
+    notes: [{ id: "four", pitch: 65, position: 0, duration: 1 }],
+  }, { source: "livecode", undoable: false });
+  const afterQuiet = undoPianoRoll("reg/history-walk");
+  assertEquals(
+    afterQuiet?.data.notes[0].id,
+    "one",
+    "a non-undoable write records no step, so undo reaches the one before it",
+  );
+});
+
+Deno.test("undo and redo are no-ops without history and undefined without a roll", () => {
+  resetStores();
+  assertEquals(undoPianoRoll("reg/history-absent"), undefined);
+  assertEquals(redoPianoRoll("reg/history-absent"), undefined);
+
+  const created = setPianoRoll("reg/history-empty", { notes: [] });
+  const undone = undoPianoRoll("reg/history-empty");
+  assertEquals(undone?.rev, created.rev, "nothing to undo is not a generation");
+  assertEquals(redoPianoRoll("reg/history-empty")?.rev, created.rev);
 });
 
 Deno.test("params create makes an empty entity and rejects an existing name", () => {
