@@ -8,8 +8,7 @@ import {
   T,
   TLShape,
 } from 'tldraw'
-import { useParamsRuntime } from './paramsRuntime'
-import { useSignalsRuntime } from './signalsRuntime'
+import { useParamsSync, useSignalsSync } from './syncRuntime'
 
 export const SIGNAL_SCOPE_SHAPE_TYPE = 'signal-scope'
 const DEFAULT_SCOPE_WIDTH = 280
@@ -166,8 +165,8 @@ interface ScopeSample {
 }
 
 function SignalScopeShapeComponent({ shape }: { shape: SignalScopeShape }) {
-  const signalsRuntime = useSignalsRuntime()
-  const paramsRuntime = useParamsRuntime()
+  const signalsRuntime = useSignalsSync()
+  const paramsRuntime = useParamsSync()
   const { sourceType, name, path, windowSec } = shape.props
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const samplesRef = useRef<ScopeSample[]>([])
@@ -297,7 +296,7 @@ function SignalScopeShapeComponent({ shape }: { shape: SignalScopeShape }) {
 }
 
 function readSignalSource(
-  runtime: ReturnType<typeof useSignalsRuntime>,
+  runtime: ReturnType<typeof useSignalsSync>,
   name: string,
   pathSegments: string[],
 ): ScopeReading {
@@ -311,7 +310,7 @@ function readSignalSource(
 }
 
 function readParamsSource(
-  runtime: ReturnType<typeof useParamsRuntime>,
+  runtime: ReturnType<typeof useParamsSync>,
   name: string,
   pathSegments: string[],
 ): ScopeReading {

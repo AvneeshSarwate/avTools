@@ -37,6 +37,12 @@ export interface TldrawRuntimeDebugModule {
   pianoRollLookups: Record<string, string>
   activeIds: string[]
   latestError: string | null
+  /**
+   * The run token of the last run entity this module actually applied. A
+   * terminal the dedupe suppressed never sets it, so a test can tell "the run I
+   * watched ended" from "an older run's terminal leaked through".
+   */
+  runToken: string | null
 }
 
 export interface TldrawRuntimeDebugShape {
@@ -272,6 +278,7 @@ function toDebugModule(state: ModuleViewState): TldrawRuntimeDebugModule {
     pianoRollLookups: state.pianoRollLookups,
     activeIds: state.activeIds,
     latestError: state.latestError,
+    runToken: state.runToken,
   }
 }
 
