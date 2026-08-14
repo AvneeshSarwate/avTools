@@ -1,14 +1,8 @@
 # Current Deno Server Architecture
 
-Status: checked against `apps/deno-notebooks/livecode` on 2026-07-21; the
-entity/params stores, their routes, the durable-entity registry, and project
-data persistence were checked on 2026-08-13; the signals store, its routes, and
-the root-clock accessor were added and checked on 2026-08-13; the pending-launch
-lifecycle was added and checked on 2026-08-13; the piano-roll upsert semantics
-were documented on 2026-08-13; the sync-source registry, the single broadcast
-timer, the run/waits/lookups entities, the piano-roll store migration, and the
-`/runtime/snapshots` shim were checked against `visualizer/server.ts`,
-`visualizer/sync_sources.ts`, and the four store modules on 2026-08-13.
+Status: checked against `apps/deno-notebooks/livecode` — most recently
+`visualizer/server.ts`, `visualizer/sync_sources.ts`, and the four store
+modules — as of 2026-08-13; first audited 2026-07-21.
 
 ## File map
 

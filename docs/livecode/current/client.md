@@ -1,13 +1,8 @@
 # Current Client Architecture
 
-Status: checked against `apps/livecode-tldraw` on 2026-07-21; the params
-runtime, param-pane shape, canvas-view persistence, and the topbar's entity and
-save actions were checked on 2026-08-13; the signals runtime, playhead markers,
-graph rows, and the signal-scope shape were added and checked on 2026-08-13; the
-Replace affordance and the terminal-run guard were checked on 2026-08-13; the
-sync provider, its typed hooks, the connect-armed state machine, and the
-token-keyed run dedupe were checked against `src/syncRuntime.tsx`,
-`src/livecodeRuntime.tsx`, and `src/runDedupe.ts` on 2026-08-13.
+Status: checked against `apps/livecode-tldraw` — most recently
+`src/syncRuntime.tsx`, `src/livecodeRuntime.tsx`, and `src/runDedupe.ts` — as of
+2026-08-13; first audited 2026-07-21.
 
 ## Responsibilities
 
@@ -240,9 +235,8 @@ Values are deliberately absent. `paramsName` selects a server-owned params
 entity. Creating a pane never creates an entity — a declaration, an explicit
 entity action, or a project load does — so an unknown name renders a "waiting
 for `name`" placeholder listing the names the params map currently holds.
-Deleting the
-entity behind a live pane returns it to that placeholder; the pane is a view
-and outlives what it views.
+Deleting the entity behind a live pane returns it to that placeholder; the pane
+is a view and outlives what it views.
 
 The pane mounts one tweakpane `Pane` per shape and binds a copy of the entity's
 values, nesting objects as folders. Bindings are rebuilt only when the value
