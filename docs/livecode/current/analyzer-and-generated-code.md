@@ -2,7 +2,8 @@
 
 Status: checked against `visualizer/analyze_transform.ts` on 2026-07-21;
 canvas-params detection was checked on 2026-08-13; canvas-signal detection and
-its ownership wrap were added and checked on 2026-08-13.
+its ownership wrap were added and checked on 2026-08-13; the manifest types'
+move into `packages/livecode-protocol/analysis.ts` was checked on 2026-08-13.
 
 ## Purpose and boundary
 
@@ -256,8 +257,9 @@ Each entry contains:
 ```
 
 `nameArgRange` and `staticName` are used by all three name-carrying kinds. The
-kind union is hand-mirrored in
-`apps/livecode-tldraw/src/livecodeProtocol.ts`.
+kind union is no longer mirrored: it is declared once in
+`packages/livecode-protocol/analysis.ts`, which both the server and the tldraw
+client compile against.
 
 Default IDs are `crypto.randomUUID()`. They are stable only within the generated
 code + manifest pair. They are not deterministic across reanalysis, even when

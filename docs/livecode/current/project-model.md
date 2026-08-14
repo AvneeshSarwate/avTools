@@ -5,7 +5,8 @@ example on 2026-07-21; the canvas param-pane views and the saved durable-entity
 data tree were checked on 2026-08-13; the canvas scope views were added and
 checked on 2026-08-13; the helper-alias recipe step, the module-facing helper
 API summary, and the stop-hook overlap note were added from source on
-2026-08-13.
+2026-08-13; the saved-entity file formats' move into
+`packages/livecode-protocol` was checked on 2026-08-13.
 
 ## Durable file model
 
@@ -301,7 +302,14 @@ decoding, because the manifest entry carries the true name — the manifest path
 is authoritative, and the filename is only a filename. Encoded names longer
 than 100 characters are truncated and given a short hash suffix, and two names
 that would collide case-insensitively (as they would on macOS) get a numeric
-suffix within the save that noticed. File formats are in `protocol.md`.
+suffix within the save that noticed.
+
+The saved file formats — `SavedPianoRollEntity` and `SavedParamsEntity` — are
+declared in `packages/livecode-protocol/saved_entities.ts`, the same shared
+package that holds the wire types, and are documented in `protocol.md`. A new
+durable entity type adds its saved form there and nowhere else; the server
+imports them through `visualizer/protocol.ts` and any client that reads a
+project's `data` tree compiles against the same declarations.
 
 Save semantics worth knowing before relying on them:
 

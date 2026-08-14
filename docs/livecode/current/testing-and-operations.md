@@ -4,8 +4,10 @@ Status: task definitions and test inventory checked on 2026-07-21, extended for
 the canvas-params slice, again for the entity-CRUD/persistence slice, again for
 the ephemeral signals slice, and again for the launch-lifecycle slice on
 2026-08-13; the `serverReady` line's keys and the livecode-tldraw Deno config
-caveat were documented on 2026-08-13. The final audit report records
-which commands were actually run in this review.
+caveat were documented on 2026-08-13; the task matrix was re-read from
+`apps/deno-notebooks/deno.json` and the suite counts re-run on 2026-08-13 after
+the multiplexed sync transport landed (105 unit, 21 server). The final audit
+report records which commands were actually run in this review.
 
 ## Development startup
 
@@ -37,22 +39,50 @@ apps/deno-notebooks/.avtools-livecode-sessions/logs/server.log
 
 Important structured entries include `serverReady`, `analyzeStart`,
 `analyzeSuccess`, `analyzeFailure`, `launchQueued`, `launchCancelled`,
-`supersededTeardown`, `moduleImported`, `moduleStarted`, `moduleStopped`,
-`moduleError`, `snapshot`, LSP process events, client-control events, and
-handler errors.
+`launchAborted`, `supersededTeardown`, `moduleImported`, `moduleStarted`,
+`moduleStopped`, `moduleError`, `snapshot` (debug log level only, from the
+legacy shim), LSP process events, client-control events, and handler errors.
+
+Transport-specific entries worth knowing when a client stops updating:
+`broadcastTickError` (the one 33 ms timer threw and was caught, so the tick was
+skipped rather than the timer dying), `syncMalformedMessage` (a client sent
+something that is not a subscribe), `syncSerializeFailed` / `syncSendFailed`
+(one `/sync` socket's message did not go out; its `seq` deliberately does not
+advance), and `snapshotSerializeFailed` / `snapshotSendFailed` for the legacy
+shim.
 
 ## Actual task matrix
 
 From `apps/deno-notebooks`:
 
-| Command | Current contents |
+| Command | Current contents (files, in task order) |
 | --- | --- |
-| `deno task test:livecode:unit` | Analyzer transform, runtime singleton, dynamic import, MIDI helper, params store, durable-entity registry (`livecode/tests/entity_registry_test.ts`, which also covers name encoding and the piano-roll store's delete/save/load seams), and signals store (`livecode/tests/signals_store_test.ts`) tests. |
-| `deno task test:livecode:repro` | Core-timing, analyzer, server, and piano-roll regression tests created by the July stability review. Several test names/comments still say `BUG` although assertions now expect fixed behavior. |
-| `deno task test:livecode:server` | Runtime protocol/client-control, launch-queue races (`livecode/tests/launch_race_test.ts`), LSP bridge, CLI smoke, and default-source integration. |
-| `deno task test:livecode:p5gpu` | Temp-project p5gpu/shared-state snapshot proof; requires an available WebGPU adapter. |
-| `deno task test:livecode:e2e` | The older Vue `apps/browser-projections` livecode visualizer E2E, not the tldraw client. |
+| `deno task test:livecode:unit` | `analyzer_transform_test.ts`, `runtime_counts_test.ts`, `dynamic_import_execution_test.ts`, `midi_helpers_test.ts`, `params_store_test.ts`, `entity_registry_test.ts` (also covers name encoding and the piano-roll store's delete/save/load seams), `signals_store_test.ts`, `run_dedupe_test.ts`. **105 tests.** |
+| `deno task test:livecode:repro` | Core-timing, analyzer, server, and piano-roll regression tests created by the July stability review (`livecode/tests/repro/`). Several test names/comments still say `BUG` although assertions now expect fixed behavior. |
+| `deno task test:livecode:server` | `protocol_smoke_test.ts`, `sync_transport_test.ts`, `launch_race_test.ts`, `lsp_smoke_test.ts`, `server_smoke_test.ts`, `default_source_integration_test.ts`. **21 tests.** |
+| `deno task test:livecode:p5gpu` | `project_p5gpu_e2e_test.ts` — temp-project p5gpu/shared-state proof; requires an available WebGPU adapter. |
+| `deno task test:livecode:e2e` | Delegates to `apps/browser-projections`' `test:livecode:e2e`: the older Vue livecode visualizer E2E, not the tldraw client. It is now also the only automated coverage of the deprecated `/runtime/snapshots` shim from a real client. |
 | `deno task test:livecode` | Unit + server + old Vue E2E only. It is not the complete current-system suite. |
+
+### `run_dedupe_test.ts` imports across apps, on purpose
+
+It is the one Deno test that imports from `apps/livecode-tldraw`:
+
+```ts
+import { ... } from "../../../livecode-tldraw/src/runDedupe.ts";
+```
+
+The rule it covers lives in the client because only the client knows what *it*
+claimed, but the orderings that break it are **transport** orderings — a
+superseded run's terminal straddling a replacement, a launch conflated with an
+instant error inside one 33 ms tick — and neither is reproducible on demand
+through a browser. `runDedupe.ts` is therefore a pure module with no imports at
+all, precisely so a Deno unit test and the Vite bundle can both load the exact
+same file with no build step, no duplicate, and no mock. The browser E2E covers
+the user-visible outcomes on top of it.
+
+If that file ever acquires an import, this test breaks loudly rather than
+silently testing a copy — which is the intended failure mode.
 
 Additional Deno project test, not included in those aggregate tasks:
 
@@ -127,8 +157,10 @@ tldraw E2E.
   branch callbacks, and piano-roll import binding behavior;
 - runtime wait counts and lookup recording/clearing;
 - transformed dynamic import with a real `TimeContext`;
-- health/analyze/launch/snapshot/stop, retained runtime manifest, module stop
-  hook, lookup-only lifecycle completion, and basic client-command forwarding;
+- health/analyze/launch/stop over HTTP with the run and wait state read back
+  from `/sync`, retained runtime manifest, module stop hook, lookup-only run
+  completion, the legacy shim's envelope pinned (including that its rows carry
+  no `runToken`), and basic client-command forwarding;
 - the launch queue's safety window, driven over HTTP against a real server:
   two concurrent launches leaving exactly one active run and one execution of
   user code, a stop before the queue drains and a stop during the module import
@@ -146,7 +178,26 @@ tldraw E2E.
   persistence, MIDI panic, and core-timing stability regressions;
 - params store create/reattach/reconcile, tombstone restore, CAS conflict,
   no-op detection, live-object identity, sampler drift adoption, read-only
-  forced snapshots, and JSON-simple validation;
+  snapshot builders, and JSON-simple validation;
+- the sync transport, over a real server socket
+  (`livecode/tests/sync_transport_test.ts`): a subscribe resetting every listed
+  type and replacing the previous set, per-entity changes with a deletion
+  shipping as a `null` entity, `seq` being per-socket monotonic and gap-free,
+  run entities carrying the launch token with a supersede never republishing the
+  old one, a cancelled launch publishing exactly one terminal run entity, the
+  three entity sockets being gone while their HTTP lists still answer in full,
+  one tick feeding the sync sockets and the legacy shim without starving either,
+  a params meta-only change and a signal's `ended` flip both reaching
+  subscribers (neither of which a value compare could see), waits and lookups
+  agreeing across both transports, and the module-keyed sources staying silent
+  when a re-marked set serializes identically;
+- the client's terminal-run rule (`livecode/tests/run_dedupe_test.ts`, in the
+  unit suite): a run's own terminal applying after it was watched active, an
+  edit dropping the claim without forgetting the run, the straddle, the
+  instant-failure conflation, a stranger's terminal suppressed under a
+  seen-active claim, a terminal as server truth with no claim at all, both
+  rehydration seeding directions, and a superseded run not being re-adopted when
+  it reports itself active;
 - durable-entity registry semantics per type: create rejects an existing name,
   duplicate clones without tombstones, delete is reported honestly and defeats
   lazy demo re-seeding, serialize/deserialize round-trips preserve note ids and
@@ -158,17 +209,22 @@ tldraw E2E.
   longer consumes the pending broadcast;
 - tldraw piano-roll manifest/widget/static-vs-runtime name behavior and
   focus-or-create shape behavior;
-- the tldraw run lifecycle: a finite module edited while it runs still reaching
-  `stopped` at its own end with no reload (the case waits for the running
-  snapshot to land before editing, because that snapshot is what re-asserts the
-  active-run claim the edit must drop — without the wait it passes against the
-  old guard by accident), and Replace clicked on the real header button leaving
-  a new generated run ID active, the replaced run's terminal in the server log,
-  and the button set still Replace/Stop;
+- the tldraw run lifecycle, re-derived for changed-only delivery: a finite
+  module edited while it runs still reaching `stopped` at its own end with no
+  reload (the case waits for the `running` run entity to reach the client,
+  because that is where it learns the token whose terminal it must later accept
+  — the old mechanism, a full `moduleRuns` map re-delivered on unrelated
+  traffic, no longer exists); a module that throws on its first line still
+  reaching `error`, which is the instant-failure conflation seen from the
+  browser; and Replace clicked on the real header button leaving a new generated
+  run ID active, the replaced run's terminal in the server log, the client
+  following the replacement's token rather than the replaced run's terminal (the
+  straddle), and the button set still Replace/Stop;
 - the tldraw params round trip: declaration manifest and gutter widget, pane
   bindings after launch, a GUI edit reaching `/params/list` with a bumped rev
   and the pane's origin id, a running module's writes reaching the pane readout
-  with no client action, and pane rehydration from the snapshot after a reload;
+  with no client action, and pane rehydration from the sync socket's subscribe
+  reset after a reload;
 - the tldraw signal tier: an anchored playhead signal driven by a module loop
   producing a moving marker in the bound roll view and losing it when the module
   stops (asserted as server `ended` first, missing marker second), two modules
@@ -204,11 +260,12 @@ There are no dedicated automated tests for:
 - params HTTP routes as independent server contracts: `/params/set`
   compare-and-set, its 404 for an undeclared name, and `/params/list`. Params
   coverage is currently the store unit test plus the browser E2E;
-- signals HTTP/WebSocket routes as independent server contracts: `/signals/list`
-  and `/signals/snapshots` are exercised only through the store unit test and
-  the browser E2E. There is also no automated check that a dropped signals
-  socket clears markers, or that a scope dims and freezes on an ended source —
-  both are client-side behaviors the E2E currently reaches only indirectly;
+- `/signals/list` as an independent server contract; it is exercised only
+  through the store unit test and the browser E2E. (The `signal` kind's transport
+  behavior *is* covered, in `sync_transport_test.ts`.) There is also no
+  automated check that a dropped sync socket clears playhead markers, or that a
+  scope dims and freezes on an ended source — both are client-side behaviors the
+  E2E currently reaches only indirectly;
 - livecode runtime reconnect/backoff, browser reload rehydration, and queued
   stops in the tldraw client. Stale lifecycle ordering now has one case each
   way — a terminal that must apply after an edit, and a replaced run's terminal
@@ -218,7 +275,10 @@ There are no dedicated automated tests for:
 - project layout persistence after client-command opening;
 - more than one browser/control client or project-switch interactions;
 - external-project Deno LSP relative-import resolution;
-- parity/drift between the Deno and client protocol type copies;
+- the client's own reconnect/resubscribe path against a server restart: the
+  server-side transport tests drive `/sync` directly, and no automated case
+  covers `syncRuntime.tsx` re-subscribing and replacing its maps after a real
+  disconnect;
 - the checked-in `example-projects/minimal-p5gpu` source itself;
 - documentation link/route/test-command consistency.
 
@@ -235,8 +295,9 @@ For release/performance work, supplement tests with:
 
 1. run a long-wait module, hard-reload the tab, reconnect, confirm the exact run
    and manifest rehydrate, then stop it;
-2. kill and restart the server, confirm runtime/piano/control sockets recover
-   and the LSP becomes ready again;
+2. kill and restart the server, confirm the sync and control sockets recover,
+   every entity map repopulates from the resubscribe, and the LSP becomes ready
+   again;
 3. delete a module shape while disconnected, reconnect, and confirm its old run
    is stopped;
 4. start multiple modules with hung `stop()` hooks and confirm stop-all remains
