@@ -495,28 +495,43 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
 
   const ensureBuild = useCallback(
     async (record: ModuleRecord): Promise<PreparedBuild | null> => {
-      if (
-        record.latestBuild &&
-        record.latestBuild.sourceText === record.sourceText &&
-        record.latestBuild.serverBaseUrl === serverBaseUrlRef.current
-      ) {
-        return record.latestBuild;
-      }
+      // A superseded analysis resolves null even though the analysis that
+      // superseded it is about to succeed, so a Run pressed mid-reanalysis
+      // must keep following the freshest build/pending pair rather than
+      // treating that null as a failure. Null is terminal only when nothing
+      // newer is in flight or already landed.
+      for (let attempt = 0; attempt < 10; attempt++) {
+        if (
+          record.latestBuild &&
+          record.latestBuild.sourceText === record.sourceText &&
+          record.latestBuild.serverBaseUrl === serverBaseUrlRef.current
+        ) {
+          return record.latestBuild;
+        }
 
-      if (
-        record.pendingAnalyze &&
-        record.pendingAnalyze.sourceText === record.sourceText &&
-        record.pendingAnalyze.serverBaseUrl === serverBaseUrlRef.current
-      ) {
-        return await record.pendingAnalyze.promise;
-      }
+        let result: PreparedBuild | null;
+        if (
+          record.pendingAnalyze &&
+          record.pendingAnalyze.sourceText === record.sourceText &&
+          record.pendingAnalyze.serverBaseUrl === serverBaseUrlRef.current
+        ) {
+          result = await record.pendingAnalyze.promise;
+        } else {
+          if (record.buildTimer !== null) {
+            window.clearTimeout(record.buildTimer);
+            record.buildTimer = null;
+          }
+          result = await analyzeNow(record, record.sourceText);
+        }
+        if (result) return result;
 
-      if (record.buildTimer !== null) {
-        window.clearTimeout(record.buildTimer);
-        record.buildTimer = null;
+        const superseded = record.pendingAnalyze !== null ||
+          (record.latestBuild !== null &&
+            record.latestBuild.sourceText === record.sourceText &&
+            record.latestBuild.serverBaseUrl === serverBaseUrlRef.current);
+        if (!superseded) return null;
       }
-
-      return await analyzeNow(record, record.sourceText);
+      return null;
     },
     [analyzeNow],
   );
