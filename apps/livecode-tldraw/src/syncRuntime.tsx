@@ -1,0 +1,613 @@
+// The one client socket for watched state: `/sync`, multiplexed over every
+// entity kind, changed-only, subscription-scoped.
+//
+// Three providers and the livecode runtime's own snapshot socket used to be four
+// sockets carrying four full-store snapshots. This is one socket, one subscribe,
+// one RAF-coalesced flush, and per-entity delivery — the edited roll ships, not
+// the store.
+//
+// Two contracts worth stating here, because the whole file is shaped by them:
+//
+//   A RESET REPLACES the whole per-type map. Absence means deleted, so an entity
+//   removed while this client was disconnected does not survive the reconnect.
+//
+//   `seq` is a per-socket counter for gap DETECTION only. There is no replay
+//   buffer: a gap (which over TCP means a server bug, not loss) and a reconnect
+//   are recovered the same way — resubscribe, take fresh resets.
+//
+// Each entity kind gets its OWN React context. One context carrying all six maps
+// would re-render every param pane and roll view on every signal tick; these
+// slices only re-render what actually changed.
+
+import {
+  type Context,
+  createContext,
+  type PropsWithChildren,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type {
+  ModuleLookupsEntity,
+  ModuleWaitsEntity,
+  ParamsEntity,
+  ParamsValues,
+  PianoRollData,
+  PianoRollObject,
+  RunEntity,
+  SetPianoRollRequest,
+  SignalEntity,
+  SyncMessage,
+  SyncSubscribeMessage,
+} from "@avtools/livecode-protocol";
+import {
+  createReconnectingSocket,
+  type ReconnectingSocketController,
+} from "./reconnectingSocket";
+import { postServerJson, serverWebSocketUrl } from "./serverRequests";
+
+export type SyncConnectionStatus = "closed" | "connecting" | "open" | "error";
+
+/**
+ * Every kind this client watches. One subscribe carries the whole list, and a
+ * subscribe REPLACES the socket's set — so this is also the gap-recovery
+ * message, resent verbatim.
+ */
+export const SYNC_ENTITY_TYPES = [
+  "pianoRoll",
+  "params",
+  "signal",
+  "run",
+  "moduleWaits",
+  "moduleLookups",
+] as const;
+
+/**
+ * One entity kind's current state, plus the `seq` of the message that last
+ * touched it. Per-slice rather than global so a component showing a sequence
+ * number re-renders on its OWN traffic, the way the four channels behaved.
+ */
+export interface SyncSlice<E> {
+  entities: Record<string, E>;
+  latestSeq: number | null;
+}
+
+export interface SyncConnection {
+  connectionStatus: SyncConnectionStatus;
+  connectionError: string | null;
+  /** The `seq` of the newest message on this socket, whatever it carried. */
+  latestSeq: number | null;
+}
+
+export interface SyncActions {
+  serverBaseUrl: string;
+  setServerBaseUrl(next: string): void;
+  setRoll(
+    name: string,
+    data: PianoRollData,
+    options?: { originId?: string; label?: string },
+  ): Promise<PianoRollObject>;
+  undoRoll(name: string, originId?: string): Promise<void>;
+  redoRoll(name: string, originId?: string): Promise<void>;
+  setParams(
+    name: string,
+    values: ParamsValues,
+    options?: { originId?: string },
+  ): Promise<ParamsEntity>;
+}
+
+/**
+ * Socket-lifecycle edges, delivered imperatively rather than through React
+ * state. The livecode runtime hangs its open-sequence (health → LSP → rehydrate
+ * → flush pending stops → re-analyze) off these, and that sequence must run once
+ * per real socket open: a close and reopen batched into one React commit would
+ * collapse into no state change at all and skip the recovery.
+ */
+export interface SyncLifecycle {
+  isOpen(): boolean;
+  addListener(listener: SyncLifecycleListener): () => void;
+}
+
+export interface SyncLifecycleListener {
+  onOpen?: () => void;
+  onClose?: () => void;
+  onError?: (message: string) => void;
+}
+
+const emptySlice = <E,>(): SyncSlice<E> => ({ entities: {}, latestSeq: null });
+
+const PianoRollsContext = createContext<SyncSlice<PianoRollObject>>(
+  emptySlice(),
+);
+const ParamsContext = createContext<SyncSlice<ParamsEntity>>(emptySlice());
+const SignalsContext = createContext<SyncSlice<SignalEntity>>(emptySlice());
+const RunsContext = createContext<SyncSlice<RunEntity>>(emptySlice());
+const ModuleWaitsContext = createContext<SyncSlice<ModuleWaitsEntity>>(
+  emptySlice(),
+);
+const ModuleLookupsContext = createContext<SyncSlice<ModuleLookupsEntity>>(
+  emptySlice(),
+);
+const SyncConnectionContext = createContext<SyncConnection | null>(null);
+const SyncActionsContext = createContext<SyncActions | null>(null);
+const SyncLifecycleContext = createContext<SyncLifecycle | null>(null);
+
+/** Active-ness is derived client-side now; the transport has no active list. */
+export function isRunActive(run: RunEntity): boolean {
+  return run.state === "launching" || run.state === "running";
+}
+
+export function useSyncConnection(): SyncConnection {
+  return useRequiredContext(SyncConnectionContext, "useSyncConnection");
+}
+
+export function useSyncActions(): SyncActions {
+  return useRequiredContext(SyncActionsContext, "useSyncActions");
+}
+
+export function useSyncLifecycle(): SyncLifecycle {
+  return useRequiredContext(SyncLifecycleContext, "useSyncLifecycle");
+}
+
+export interface PianoRollsSyncApi {
+  connectionStatus: SyncConnectionStatus;
+  connectionError: string | null;
+  rolls: Record<string, PianoRollObject>;
+  latestSeq: number | null;
+  setRoll: SyncActions["setRoll"];
+  undoRoll: SyncActions["undoRoll"];
+  redoRoll: SyncActions["redoRoll"];
+}
+
+export function usePianoRollsSync(): PianoRollsSyncApi {
+  const slice = useContext(PianoRollsContext);
+  const { connectionStatus, connectionError } = useSyncConnection();
+  const { setRoll, undoRoll, redoRoll } = useSyncActions();
+  return useMemo(
+    () => ({
+      connectionStatus,
+      connectionError,
+      rolls: slice.entities,
+      latestSeq: slice.latestSeq,
+      setRoll,
+      undoRoll,
+      redoRoll,
+    }),
+    [connectionError, connectionStatus, redoRoll, setRoll, slice, undoRoll],
+  );
+}
+
+export interface ParamsSyncApi {
+  connectionStatus: SyncConnectionStatus;
+  connectionError: string | null;
+  params: Record<string, ParamsEntity>;
+  latestSeq: number | null;
+  setParams: SyncActions["setParams"];
+}
+
+export function useParamsSync(): ParamsSyncApi {
+  const slice = useContext(ParamsContext);
+  const { connectionStatus, connectionError } = useSyncConnection();
+  const { setParams } = useSyncActions();
+  return useMemo(
+    () => ({
+      connectionStatus,
+      connectionError,
+      params: slice.entities,
+      latestSeq: slice.latestSeq,
+      setParams,
+    }),
+    [connectionError, connectionStatus, setParams, slice],
+  );
+}
+
+export interface SignalsSyncApi {
+  connectionStatus: SyncConnectionStatus;
+  connectionError: string | null;
+  signals: Record<string, SignalEntity>;
+  latestSeq: number | null;
+}
+
+/** Read-only by construction: signals are published by running code. */
+export function useSignalsSync(): SignalsSyncApi {
+  const slice = useContext(SignalsContext);
+  const { connectionStatus, connectionError } = useSyncConnection();
+  return useMemo(
+    () => ({
+      connectionStatus,
+      connectionError,
+      signals: slice.entities,
+      latestSeq: slice.latestSeq,
+    }),
+    [connectionError, connectionStatus, slice],
+  );
+}
+
+export interface RunsSyncApi {
+  runs: Record<string, RunEntity>;
+  latestSeq: number | null;
+}
+
+export function useRunsSync(): RunsSyncApi {
+  const slice = useContext(RunsContext);
+  return useMemo(
+    () => ({ runs: slice.entities, latestSeq: slice.latestSeq }),
+    [slice],
+  );
+}
+
+export interface ModuleVizSyncApi {
+  /** moduleId → the callsites that module is currently awaiting. */
+  moduleWaits: Record<string, ModuleWaitsEntity>;
+  /** moduleId → callsiteId → the roll name that callsite last resolved to. */
+  moduleLookups: Record<string, ModuleLookupsEntity>;
+  latestSeq: number | null;
+}
+
+/** The editor decorations: active waits and resolved piano-roll lookups. */
+export function useModuleVizSync(): ModuleVizSyncApi {
+  const waits = useContext(ModuleWaitsContext);
+  const lookups = useContext(ModuleLookupsContext);
+  return useMemo(
+    () => ({
+      moduleWaits: waits.entities,
+      moduleLookups: lookups.entities,
+      latestSeq: maxSeq(waits.latestSeq, lookups.latestSeq),
+    }),
+    [lookups, waits],
+  );
+}
+
+export function maxSeq(a: number | null, b: number | null): number | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return Math.max(a, b);
+}
+
+interface SyncState {
+  pianoRoll: SyncSlice<PianoRollObject>;
+  params: SyncSlice<ParamsEntity>;
+  signal: SyncSlice<SignalEntity>;
+  run: SyncSlice<RunEntity>;
+  moduleWaits: SyncSlice<ModuleWaitsEntity>;
+  moduleLookups: SyncSlice<ModuleLookupsEntity>;
+}
+
+type SyncEntityTypeKey = keyof SyncState;
+
+/** Every entity carries its own name; this is the only shape assumption made. */
+interface NamedEntity {
+  name?: string;
+  moduleId?: string;
+}
+
+function emptySyncState(): SyncState {
+  return {
+    pianoRoll: emptySlice(),
+    params: emptySlice(),
+    signal: emptySlice(),
+    run: emptySlice(),
+    moduleWaits: emptySlice(),
+    moduleLookups: emptySlice(),
+  };
+}
+
+export function SyncRuntimeProvider({ children }: PropsWithChildren) {
+  const initialServerUrl =
+    new URLSearchParams(window.location.search).get("serverBaseUrl") ??
+      "http://localhost:7777";
+
+  const [serverBaseUrl, setServerBaseUrlState] = useState(initialServerUrl);
+  const serverBaseUrlRef = useRef(initialServerUrl);
+  const [connectionStatus, setConnectionStatus] = useState<
+    SyncConnectionStatus
+  >("connecting");
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [latestSeq, setLatestSeq] = useState<number | null>(null);
+  const [state, setState] = useState<SyncState>(emptySyncState);
+
+  // The authoritative maps live in a ref and are mutated as messages land; React
+  // state is a per-frame projection of them. Nothing downstream needs to see two
+  // messages from the same frame separately.
+  const pendingRef = useRef<SyncState>(emptySyncState());
+  const dirtyTypesRef = useRef(new Set<SyncEntityTypeKey>());
+  const rafRef = useRef<number | null>(null);
+  const lastSeqRef = useRef<number | null>(null);
+  const controllerRef = useRef<ReconnectingSocketController | null>(null);
+  const listenersRef = useRef(new Set<SyncLifecycleListener>());
+  const openRef = useRef(false);
+
+  const flush = useCallback(() => {
+    rafRef.current = null;
+    const dirty = dirtyTypesRef.current;
+    if (dirty.size === 0) return;
+    const changed: Partial<SyncState> = {};
+    for (const entityType of dirty) {
+      changed[entityType] = pendingRef.current[entityType] as never;
+    }
+    dirty.clear();
+    setState((current) => ({ ...current, ...changed }));
+    setLatestSeq(lastSeqRef.current);
+  }, []);
+
+  const scheduleFlush = useCallback(() => {
+    if (rafRef.current !== null) return;
+    rafRef.current = window.requestAnimationFrame(flush);
+  }, [flush]);
+
+  const subscribe = useCallback((socket: WebSocket) => {
+    if (socket.readyState !== WebSocket.OPEN) return;
+    const message: SyncSubscribeMessage = {
+      type: "subscribe",
+      entityTypes: [...SYNC_ENTITY_TYPES],
+    };
+    socket.send(JSON.stringify(message));
+  }, []);
+
+  const applyMessage = useCallback(
+    (message: SyncMessage, socket: WebSocket) => {
+      const previousSeq = lastSeqRef.current;
+      lastSeqRef.current = message.seq;
+
+      if (message.resets) {
+        for (const [entityType, entities] of Object.entries(message.resets)) {
+          if (!isSyncEntityType(entityType)) continue;
+          // A reset REPLACES: absence is deletion, so rebuilding the map from
+          // scratch is the point, not an optimization.
+          const next: Record<string, unknown> = {};
+          for (const entity of entities) {
+            next[entityName(entity as NamedEntity)] = entity;
+          }
+          pendingRef.current[entityType] = {
+            entities: next,
+            latestSeq: message.seq,
+          } as never;
+          dirtyTypesRef.current.add(entityType);
+        }
+      }
+
+      if (message.changes && message.changes.length > 0) {
+        const touched = new Map<SyncEntityTypeKey, Record<string, unknown>>();
+        for (const change of message.changes) {
+          if (!isSyncEntityType(change.entityType)) continue;
+          let entities = touched.get(change.entityType);
+          if (!entities) {
+            entities = {
+              ...pendingRef.current[change.entityType].entities,
+            } as Record<string, unknown>;
+            touched.set(change.entityType, entities);
+          }
+          if (change.entity === null) {
+            delete entities[change.name];
+          } else {
+            // The whole entity ships on every change. `rev` is NOT a change key
+            // — a signal's `ended` flip and a params meta-only write both
+            // arrive with an unchanged rev — so nothing may dedupe on one.
+            entities[change.name] = change.entity;
+          }
+        }
+        for (const [entityType, entities] of touched) {
+          pendingRef.current[entityType] = {
+            entities,
+            latestSeq: message.seq,
+          } as never;
+          dirtyTypesRef.current.add(entityType);
+        }
+      }
+
+      scheduleFlush();
+
+      // Gap detection last, so this message's own content still lands: the
+      // resubscribe's resets replace it wholesale a moment later anyway.
+      if (previousSeq !== null && message.seq !== previousSeq + 1) {
+        subscribe(socket);
+      }
+    },
+    [scheduleFlush, subscribe],
+  );
+
+  if (controllerRef.current === null) {
+    controllerRef.current = createReconnectingSocket({
+      makeUrl: () => serverWebSocketUrl(serverBaseUrlRef.current, "/sync"),
+      onOpen: (socket) => {
+        openRef.current = true;
+        // A fresh socket has no subscriptions and is owed nothing, so the
+        // resubscribe is also the full rehydration this client needs.
+        lastSeqRef.current = null;
+        subscribe(socket);
+        setConnectionStatus("open");
+        setConnectionError(null);
+        for (const listener of [...listenersRef.current]) listener.onOpen?.();
+      },
+      onMessage: (event, socket) => {
+        let message: SyncMessage;
+        try {
+          message = JSON.parse(event.data as string) as SyncMessage;
+        } catch (error) {
+          console.error("[livecode-tldraw] malformed sync message", error);
+          return;
+        }
+        if (message.type !== "sync") return;
+        applyMessage(message, socket);
+      },
+      onClose: () => {
+        openRef.current = false;
+        setConnectionStatus((current) =>
+          current === "error" ? current : "closed"
+        );
+        for (const listener of [...listenersRef.current]) listener.onClose?.();
+      },
+      onError: () => {
+        openRef.current = false;
+        const message = "sync websocket failed";
+        setConnectionError(message);
+        setConnectionStatus("error");
+        for (const listener of [...listenersRef.current]) {
+          listener.onError?.(message);
+        }
+      },
+    });
+  }
+
+  // Connects at MOUNT, not at Connect: piano-roll, params, and signals data has
+  // always flowed without pressing Connect, and this socket carries them. What
+  // Connect governs (LSP, health, rehydration, analysis) is armed separately in
+  // livecodeRuntime.
+  useEffect(() => {
+    const controller = controllerRef.current;
+    setConnectionStatus("connecting");
+    controller?.connect();
+    return () => {
+      controller?.close();
+      // A deliberate close does not run the socket's own `onclose` path (the
+      // controller has already disowned it), so the open flag is cleared here
+      // or `isOpen()` would keep reporting a socket that is gone.
+      openRef.current = false;
+      if (rafRef.current !== null) window.cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    };
+  }, [serverBaseUrl]);
+
+  const setServerBaseUrl = useCallback((next: string) => {
+    const normalized = next.trim().replace(/\/+$/, "");
+    if (serverBaseUrlRef.current === normalized) return;
+    serverBaseUrlRef.current = normalized;
+    // A different server is a different world: drop every map rather than let
+    // the old server's entities linger until the new one's resets land.
+    pendingRef.current = emptySyncState();
+    dirtyTypesRef.current.clear();
+    lastSeqRef.current = null;
+    setState(emptySyncState());
+    setLatestSeq(null);
+    setServerBaseUrlState(normalized);
+  }, []);
+
+  const setRoll = useCallback(
+    async (
+      name: string,
+      data: PianoRollData,
+      options: { originId?: string; label?: string } = {},
+    ) => {
+      const body: SetPianoRollRequest = {
+        name,
+        data,
+        originId: options.originId,
+        label: options.label ?? "Edit piano roll",
+        source: "client",
+        undoable: true,
+      };
+      return await postServerJson<PianoRollObject>(
+        serverBaseUrlRef.current,
+        "/piano-roll/set",
+        body,
+      );
+    },
+    [],
+  );
+
+  const undoRoll = useCallback(async (name: string, originId?: string) => {
+    await postServerJson(serverBaseUrlRef.current, "/piano-roll/undo", {
+      name,
+      originId,
+    });
+  }, []);
+
+  const redoRoll = useCallback(async (name: string, originId?: string) => {
+    await postServerJson(serverBaseUrlRef.current, "/piano-roll/redo", {
+      name,
+      originId,
+    });
+  }, []);
+
+  // Panes send nested leaf patches and never an expectedRev: compare-and-set is
+  // reserved for agent/HTTP callers.
+  const setParams = useCallback(
+    async (
+      name: string,
+      values: ParamsValues,
+      options: { originId?: string } = {},
+    ) => {
+      return await postServerJson<ParamsEntity>(
+        serverBaseUrlRef.current,
+        "/params/set",
+        { name, values, originId: options.originId },
+      );
+    },
+    [],
+  );
+
+  const lifecycleRef = useRef<SyncLifecycle | null>(null);
+  if (lifecycleRef.current === null) {
+    lifecycleRef.current = {
+      isOpen: () => openRef.current,
+      addListener: (listener) => {
+        listenersRef.current.add(listener);
+        return () => {
+          listenersRef.current.delete(listener);
+        };
+      },
+    };
+  }
+
+  const connection = useMemo<SyncConnection>(
+    () => ({ connectionStatus, connectionError, latestSeq }),
+    [connectionError, connectionStatus, latestSeq],
+  );
+
+  const actions = useMemo<SyncActions>(
+    () => ({
+      serverBaseUrl,
+      setServerBaseUrl,
+      setRoll,
+      undoRoll,
+      redoRoll,
+      setParams,
+    }),
+    [redoRoll, serverBaseUrl, setParams, setRoll, setServerBaseUrl, undoRoll],
+  );
+
+  return (
+    <SyncLifecycleContext.Provider value={lifecycleRef.current}>
+      <SyncActionsContext.Provider value={actions}>
+        <SyncConnectionContext.Provider value={connection}>
+          <PianoRollsContext.Provider value={state.pianoRoll}>
+            <ParamsContext.Provider value={state.params}>
+              <SignalsContext.Provider value={state.signal}>
+                <RunsContext.Provider value={state.run}>
+                  <ModuleWaitsContext.Provider value={state.moduleWaits}>
+                    <ModuleLookupsContext.Provider value={state.moduleLookups}>
+                      {children}
+                    </ModuleLookupsContext.Provider>
+                  </ModuleWaitsContext.Provider>
+                </RunsContext.Provider>
+              </SignalsContext.Provider>
+            </ParamsContext.Provider>
+          </PianoRollsContext.Provider>
+        </SyncConnectionContext.Provider>
+      </SyncActionsContext.Provider>
+    </SyncLifecycleContext.Provider>
+  );
+}
+
+function isSyncEntityType(value: string): value is SyncEntityTypeKey {
+  return (SYNC_ENTITY_TYPES as readonly string[]).includes(value);
+}
+
+/** Durable entities key on `name`; the module-keyed ephemeral kinds on `moduleId`. */
+function entityName(entity: NamedEntity): string {
+  return entity.name ?? entity.moduleId ?? "";
+}
+
+function useRequiredContext<T>(
+  context: Context<T | null>,
+  hookName: string,
+): T {
+  const value = useContext(context);
+  if (!value) {
+    throw new Error(`${hookName} must be used inside SyncRuntimeProvider`);
+  }
+  return value;
+}
