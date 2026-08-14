@@ -38,7 +38,6 @@ import {
   LivecodeRuntimeProvider,
   useLivecodeRuntime,
 } from "./livecodeRuntime";
-import { ParamsRuntimeProvider, useParamsRuntime } from "./paramsRuntime";
 import {
   createParamPaneShape,
   PARAM_PANE_SHAPE_TYPE,
@@ -46,19 +45,17 @@ import {
   ParamPaneShapeUtil,
 } from "./ParamPaneShape";
 import {
-  PianoRollRuntimeProvider,
-  usePianoRollRuntime,
-} from "./pianoRollRuntime";
-import {
   createPianoRollShape,
   PIANO_ROLL_SHAPE_TYPE,
   type PianoRollShape,
   PianoRollShapeUtil,
 } from "./PianoRollShape";
 import {
-  SignalsRuntimeProvider,
-  useSignalsRuntime,
-} from "./signalsRuntime";
+  SyncRuntimeProvider,
+  useParamsSync,
+  usePianoRollsSync,
+  useSignalsSync,
+} from "./syncRuntime";
 import {
   createSignalScopeShape,
   describeScopeSource,
@@ -88,10 +85,15 @@ const shapeUtils = [
 const TLDR_MIME_TYPE = "application/vnd.tldraw+json";
 
 export function App() {
+  // The sync provider is outermost because everything else reads from it: the
+  // entity shapes take their maps from it directly, and the livecode runtime
+  // takes runs/waits/lookups plus its socket lifecycle from it.
   return (
-    <LivecodeRuntimeProvider>
-      <LivecodeTldrawPage />
-    </LivecodeRuntimeProvider>
+    <SyncRuntimeProvider>
+      <LivecodeRuntimeProvider>
+        <LivecodeTldrawPage />
+      </LivecodeRuntimeProvider>
+    </SyncRuntimeProvider>
   );
 }
 
@@ -354,30 +356,24 @@ function LivecodeTldrawPage() {
   }, [editor, projectPath, runtime, syncLivecodeShapesToRuntime]);
 
   return (
-    <PianoRollRuntimeProvider serverBaseUrl={runtime.serverBaseUrl}>
-      <ParamsRuntimeProvider serverBaseUrl={runtime.serverBaseUrl}>
-        <SignalsRuntimeProvider serverBaseUrl={runtime.serverBaseUrl}>
-          <div className="app-shell">
-            <TopBar
-              editor={editor}
-              projectPath={projectPath}
-              onOpenTldrawFile={loadTldrawFile}
-            />
-            <div className="canvas-shell">
-              <Tldraw
-                shapeUtils={shapeUtils}
-                onMount={(mountedEditor) => {
-                  setEditor(mountedEditor);
-                  if (!projectPath && !canvasUrl && !hasLivecodeShapes(mountedEditor)) {
-                    createDefaultLivecodeCanvas(mountedEditor);
-                  }
-                }}
-              />
-            </div>
-          </div>
-        </SignalsRuntimeProvider>
-      </ParamsRuntimeProvider>
-    </PianoRollRuntimeProvider>
+    <div className="app-shell">
+      <TopBar
+        editor={editor}
+        projectPath={projectPath}
+        onOpenTldrawFile={loadTldrawFile}
+      />
+      <div className="canvas-shell">
+        <Tldraw
+          shapeUtils={shapeUtils}
+          onMount={(mountedEditor) => {
+            setEditor(mountedEditor);
+            if (!projectPath && !canvasUrl && !hasLivecodeShapes(mountedEditor)) {
+              createDefaultLivecodeCanvas(mountedEditor);
+            }
+          }}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -391,9 +387,9 @@ function TopBar({
   onOpenTldrawFile: (file: File) => Promise<void>;
 }) {
   const runtime = useLivecodeRuntime();
-  const paramsRuntime = useParamsRuntime();
-  const pianoRollRuntime = usePianoRollRuntime();
-  const signalsRuntime = useSignalsRuntime();
+  const paramsRuntime = useParamsSync();
+  const pianoRollRuntime = usePianoRollsSync();
+  const signalsRuntime = useSignalsSync();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // null while the inline params-name input is closed. Non-modal by design: the
   // canvas stays interactive while it is open. The piano-roll, scope and

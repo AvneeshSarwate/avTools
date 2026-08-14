@@ -17,12 +17,7 @@ import {
   type LspStatus,
   retireLspConnection,
 } from "./denoLsp";
-import {
-  createReconnectingSocket,
-  type ReconnectingSocketController,
-} from "./reconnectingSocket";
 import type {
-  ActiveWaitSnapshot,
   AnalyzeResponse,
   HealthResponse,
   HistoryEntry,
@@ -30,11 +25,29 @@ import type {
   PreparedBuild,
   PreparedFailure,
   ProjectShadowCheckResponse,
-  RuntimeModuleRunSnapshotEntry,
+  RunEntity,
+  RuntimeModuleRunState,
   RuntimeStateResponse,
   VisualizerDiagnostic,
   VisualizerManifestMessage,
 } from "./livecodeProtocol";
+import {
+  claimRun,
+  createRunDedupeMemory,
+  isActiveRunState,
+  observeActiveRun,
+  releaseRunClaim,
+  type RunDedupeMemory,
+  seedRehydratedRun,
+  shouldApplyTerminalRun,
+} from "./runDedupe";
+import {
+  maxSeq,
+  useModuleVizSync,
+  useRunsSync,
+  useSyncActions,
+  useSyncLifecycle,
+} from "./syncRuntime";
 
 const BUILD_DEBOUNCE_MS = 100;
 const PROJECT_DIAGNOSTICS_POLL_MS = 2_500;
@@ -74,13 +87,18 @@ export interface ModuleViewState {
   pianoRollLookups: Record<string, string>;
   lastSnapshotSeq: number | null;
   latestError: string | null;
+  /**
+   * The token of the last run entity this record actually APPLIED. A suppressed
+   * terminal never sets it, which is how a test tells "the run I watched ended"
+   * from "some older run's terminal leaked through".
+   */
+  runToken: string | null;
 }
 
 interface ModuleRecord extends ModuleViewState {
   buildTimer: number | null;
   analyzeSequence: number;
-  activeGeneratedRunId: string | null;
-  lastTerminalRun: { generatedRunId: string; updatedAtMs: number } | null;
+  runDedupe: RunDedupeMemory;
   pendingAnalyze: {
     sourceText: string;
     serverBaseUrl: string;
@@ -130,12 +148,23 @@ export function useLivecodeRuntime() {
 }
 
 export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
-  const initialServerUrl =
-    new URLSearchParams(window.location.search).get("serverBaseUrl") ??
-      "http://localhost:7777";
+  // The server URL and the socket now belong to the sync provider above this
+  // one; this provider re-exposes them so every consumer's API is unchanged.
+  const syncActions = useSyncActions();
+  const syncLifecycle = useSyncLifecycle();
+  const { runs, latestSeq: runsSeq } = useRunsSync();
+  const { moduleWaits, moduleLookups, latestSeq: vizSeq } = useModuleVizSync();
+  const serverBaseUrl = syncActions.serverBaseUrl;
 
-  const [serverBaseUrl, setServerBaseUrlState] = useState(initialServerUrl);
-  const serverBaseUrlRef = useRef(initialServerUrl);
+  const serverBaseUrlRef = useRef(serverBaseUrl);
+  serverBaseUrlRef.current = serverBaseUrl;
+  // Connect is a gesture, and the sync socket is not: the socket opens at mount
+  // so entity data flows, while everything Connect actually governs (health,
+  // LSP, rehydration, analysis scheduling) waits until this flag is armed. The
+  // open-sequence runs at socket-open if already armed, and immediately at
+  // Connect if the socket is already open.
+  const [armed, setArmed] = useState(false);
+  const armedRef = useRef(false);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>(
     "closed",
   );
@@ -156,28 +185,16 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
   >(null);
   const [modules, setModules] = useState<Record<string, ModuleViewState>>({});
   const modulesRef = useRef(new Map<string, ModuleRecord>());
-  const snapshotsControllerRef = useRef<ReconnectingSocketController | null>(
-    null,
-  );
   const connectRef = useRef<() => Promise<void>>(async () => {});
   const disconnectRef = useRef<() => void>(() => {});
   const pendingStopsRef = useRef<string[]>([]);
   const lspConnectionRef = useRef<DenoLspConnection | null>(null);
-  const snapshotOpenRef = useRef<(socket: WebSocket) => void>(() => {});
-  const snapshotMessageRef = useRef<(event: MessageEvent) => void>(() => {});
-  const snapshotCloseRef = useRef<() => void>(() => {});
-  const snapshotErrorRef = useRef<() => void>(() => {});
-
-  if (snapshotsControllerRef.current === null) {
-    snapshotsControllerRef.current = createReconnectingSocket({
-      makeUrl: () =>
-        `${serverBaseUrlRef.current.replace(/^http/, "ws")}/runtime/snapshots`,
-      onOpen: (socket) => snapshotOpenRef.current(socket),
-      onMessage: (event) => snapshotMessageRef.current(event),
-      onClose: () => snapshotCloseRef.current(),
-      onError: () => snapshotErrorRef.current(),
-    });
-  }
+  const syncOpenRef = useRef<() => void>(() => {});
+  const syncCloseRef = useRef<() => void>(() => {});
+  const syncErrorRef = useRef<(message: string) => void>(() => {});
+  // Bumped by every open-sequence start and by disconnect, so a slow health
+  // response cannot land on a session that has since been superseded.
+  const openSequenceRef = useRef(0);
 
   const publishModule = useCallback((record: ModuleRecord) => {
     const view = toViewState(record);
@@ -212,12 +229,13 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     if (serverBaseUrlRef.current === normalized) return;
     const reconnectAfterChange = connectionStatusRef.current !== "closed";
     disconnectRef.current();
-    serverBaseUrlRef.current = normalized;
-    setServerBaseUrlState(normalized);
+    // The sync provider owns the URL and its socket, so it is what actually
+    // re-points; this side only has to re-arm if it was armed before.
+    syncActions.setServerBaseUrl(normalized);
     if (reconnectAfterChange) {
       window.setTimeout(() => void connectRef.current(), 0);
     }
-  }, []);
+  }, [syncActions]);
 
   const reconnectDenoLsp = useCallback(() => {
     const oldConnection = lspConnectionRef.current;
@@ -316,23 +334,24 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       const active = activeByModule.get(record.moduleId);
       const run = state.moduleRuns[record.moduleId];
       const latestPrepared = state.latestPreparedByModule[record.moduleId];
+      // `/runtime/state` carries the run token precisely so this seeds the
+      // token memory: after a reload the client has watched nothing go active,
+      // and without the seed the running run's own terminal would look like a
+      // stranger's when the next Replace stakes a claim over it.
+      if (run) {
+        seedRehydratedRun(record.runDedupe, run);
+        record.runToken = run.runToken;
+      }
       if (active) {
         record.runStatus = "running";
-        record.activeGeneratedRunId = active.generatedRunId;
         record.manifest = active.manifest ?? record.manifest;
         record.latestError = null;
       } else {
-        record.activeGeneratedRunId = null;
+        releaseRunClaim(record.runDedupe);
         record.activeIds = [];
         record.runStatus = run
           ? moduleRunStateToRunStatus(run.state)
           : "idle";
-        if (run && (run.state === "stopped" || run.state === "error")) {
-          record.lastTerminalRun = {
-            generatedRunId: run.generatedRunId,
-            updatedAtMs: run.updatedAtMs,
-          };
-        }
         if (run?.state === "error") {
           record.latestError = run.message ?? record.latestError;
         }
@@ -536,14 +555,18 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     [analyzeNow],
   );
 
-  snapshotOpenRef.current = (socket) => {
+  /**
+   * The open-sequence, unchanged in content and moved onto the sync socket:
+   * health → LSP reconnect → `/runtime/state` rehydration → flush pending stops
+   * → re-analyze every record. It runs on EVERY armed socket open, not just a
+   * manual connect, so an auto-reconnect after a server restart restores the
+   * LSP session and the run state exactly as the first connect did.
+   */
+  const runOpenSequence = useCallback(() => {
+    const openSequenceId = ++openSequenceRef.current;
     setConnectionStatusRef("open");
     void (async () => {
       try {
-        // Health + LSP recovery run on EVERY socket open (not just manual
-        // connect) so an auto-reconnect after a server restart restores the
-        // LSP session and health state, matching the pre-refactor behavior
-        // where reconnects re-ran the full connect() path.
         const response = await fetch(`${serverBaseUrlRef.current}/health`);
         if (!response.ok) {
           throw new Error(
@@ -551,7 +574,9 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
           );
         }
         const healthResponse = (await response.json()) as HealthResponse;
-        if (snapshotsControllerRef.current?.socket !== socket) return;
+        // A newer open (or a disconnect) supersedes this one; the socket
+        // identity check this replaces did the same job.
+        if (openSequenceRef.current !== openSequenceId) return;
         setHealth(healthResponse);
         reconnectDenoLsp();
         await rehydrateRuntimeState();
@@ -560,55 +585,76 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
           scheduleAnalyze(record, 0);
         }
       } catch (error) {
-        if (snapshotsControllerRef.current?.socket !== socket) return;
+        if (openSequenceRef.current !== openSequenceId) return;
         setConnectionError(
           error instanceof Error ? error.message : String(error),
         );
       }
     })();
+  }, [
+    flushPendingStops,
+    reconnectDenoLsp,
+    rehydrateRuntimeState,
+    scheduleAnalyze,
+    setConnectionStatusRef,
+  ]);
+
+  // Armed + open is what the Connect UI reflects, so pre-Connect the app never
+  // renders "connected" even though the sync socket is already carrying rolls,
+  // params, and signals.
+  syncOpenRef.current = () => {
+    if (!armedRef.current) return;
+    runOpenSequence();
   };
 
-  snapshotMessageRef.current = (event) => {
-    const snapshot = JSON.parse(event.data as string) as ActiveWaitSnapshot;
-    const pianoRollLookups = snapshot.pianoRollLookups ?? {};
-    const moduleRuns = snapshot.moduleRuns ?? {};
-    for (const record of modulesRef.current.values()) {
-      record.activeIds = snapshot.modules[record.moduleId] ?? [];
-      record.pianoRollLookups = pianoRollLookups[record.moduleId] ?? {};
-      applyModuleRunSnapshot(record, moduleRuns[record.moduleId]);
-      record.lastSnapshotSeq = snapshot.seq;
-    }
-    publishAllModules();
-  };
-
-  snapshotCloseRef.current = () => {
+  syncCloseRef.current = () => {
+    if (!armedRef.current) return;
     markModulesUnknown();
-    if (connectionStatusRef.current !== "closed") {
-      setConnectionStatusRef("closed");
+    // The controller is already retrying with backoff, and an armed client is
+    // still trying to be connected: "connecting" is what that is.
+    if (connectionStatusRef.current !== "connecting") {
+      setConnectionStatusRef("connecting");
     }
   };
 
-  snapshotErrorRef.current = () => {
-    setConnectionError("runtime snapshot websocket failed");
+  syncErrorRef.current = (message) => {
+    if (!armedRef.current) return;
+    setConnectionError(message);
     setConnectionStatusRef("error");
   };
 
+  useEffect(() => {
+    return syncLifecycle.addListener({
+      onOpen: () => syncOpenRef.current(),
+      onClose: () => syncCloseRef.current(),
+      onError: (message) => syncErrorRef.current(message),
+    });
+  }, [syncLifecycle]);
+
   const connect = useCallback(async () => {
     setConnectionError(null);
+    armedRef.current = true;
+    setArmed(true);
+    if (syncLifecycle.isOpen()) {
+      // Armed after the socket already opened: the open edge is never coming
+      // back on its own, so the sequence runs right now.
+      runOpenSequence();
+      return;
+    }
     setConnectionStatusRef("connecting");
-    // Health check, LSP reconnect, and rehydrate all run in the controller's
-    // onOpen handler, so manual connects and automatic reconnects follow the
-    // identical recovery path. If the server is down the socket fails to open
-    // and the controller keeps retrying with backoff.
-    snapshotsControllerRef.current?.connect();
-  }, [setConnectionStatusRef]);
+  }, [runOpenSequence, setConnectionStatusRef, syncLifecycle]);
 
   useEffect(() => {
     connectRef.current = connect;
   }, [connect]);
 
   const disconnect = useCallback(() => {
-    snapshotsControllerRef.current?.close();
+    // The sync socket stays open — it is the transport for rolls, params, and
+    // signals, which were never gated on Connect. Disarming is what stops the
+    // runtime domain: no open-sequence, no run/wait state applied.
+    armedRef.current = false;
+    setArmed(false);
+    openSequenceRef.current += 1;
     setConnectionError(null);
     setProjectDiagnostics(null);
     setProjectDiagnosticsError(null);
@@ -623,6 +669,31 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     markModulesUnknown();
   }, [markModulesUnknown, setConnectionStatusRef]);
 
+  // Runs, waits, and lookups arrive per entity and changed-only. Everything the
+  // legacy snapshot handler did per message happens here per delivered batch,
+  // gated on the Connect arming: a disarmed client reports "unknown", and
+  // letting server truth quietly overwrite that would make Disconnect a lie.
+  useEffect(() => {
+    if (!armed || connectionStatusRef.current !== "open") return;
+    const seq = maxSeq(runsSeq, vizSeq);
+    for (const record of modulesRef.current.values()) {
+      record.activeIds = moduleWaits[record.moduleId]?.callsiteIds ?? [];
+      record.pianoRollLookups = moduleLookups[record.moduleId]?.lookups ?? {};
+      applyRunEntity(record, runs[record.moduleId]);
+      record.lastSnapshotSeq = seq;
+    }
+    publishAllModules();
+  }, [
+    armed,
+    connectionStatus,
+    moduleLookups,
+    moduleWaits,
+    publishAllModules,
+    runs,
+    runsSeq,
+    vizSeq,
+  ]);
+
   useEffect(() => {
     if (connectionStatus !== "open") return;
     void fetchProjectDiagnostics();
@@ -634,11 +705,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
   }, [connectionStatus, fetchProjectDiagnostics]);
 
   useEffect(() => {
-    const controller = snapshotsControllerRef.current;
-    return () => {
-      controller?.close();
-      retireLspConnection(lspConnectionRef.current);
-    };
+    return () => retireLspConnection(lspConnectionRef.current);
   }, []);
 
   const registerModule = useCallback(
@@ -695,7 +762,10 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       record.diagnostics = [];
       record.activeIds = [];
       record.pianoRollLookups = {};
-      record.activeGeneratedRunId = null;
+      // An edit means the running build is no longer what this module is, so
+      // the claim on it drops. The TOKEN memory does not: that run is still
+      // going and its own terminal still has to be accepted when it lands.
+      releaseRunClaim(record.runDedupe);
       scheduleAnalyze(record);
     },
     [scheduleAnalyze],
@@ -738,11 +808,11 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
           }
         }
 
-        // Claiming the new run before posting is what keeps the terminal guard
-        // in `applyModuleRunSnapshot` sound during a replacement: the run being
-        // replaced reports its terminal with the previous ID, which no longer
-        // matches and is correctly ignored.
-        record.activeGeneratedRunId = build.generatedRunId;
+        // Claiming BEFORE the post is what makes the terminal rule sound during
+        // a replacement: every run token watched go active up to this instant
+        // belongs to the run being replaced, and its terminal — which arrives
+        // while the replacement is still launching — can never retire this one.
+        claimRun(record.runDedupe);
         await postJson("/runtime/launch", {
           moduleId: build.moduleId,
           transformedModuleUri: build.transformedModuleUri,
@@ -758,7 +828,8 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
         publishModule(record);
       } catch (error) {
         record.runStatus = "error";
-        record.activeGeneratedRunId = null;
+        // The launch never took, so there is no claim to protect.
+        releaseRunClaim(record.runDedupe);
         record.latestError = error instanceof Error
           ? error.message
           : String(error);
@@ -875,9 +946,9 @@ function makeModuleRecord(
     pianoRollLookups: {},
     lastSnapshotSeq: null,
     latestError: null,
+    runToken: null,
     buildTimer: null,
-    activeGeneratedRunId: null,
-    lastTerminalRun: null,
+    runDedupe: createRunDedupeMemory(),
     analyzeSequence: 0,
     pendingAnalyze: null,
     latestBuild: null,
@@ -885,51 +956,25 @@ function makeModuleRecord(
   };
 }
 
-function applyModuleRunSnapshot(
-  record: ModuleRecord,
-  run: RuntimeModuleRunSnapshotEntry | undefined,
-) {
+/**
+ * One module's run entity, applied whole. `rev`-style dedupe is impossible here
+ * and unnecessary: the transport only ships an entity that actually changed, and
+ * re-applying an unchanged one is idempotent under the token rule below.
+ */
+function applyRunEntity(record: ModuleRecord, run: RunEntity | undefined) {
   if (!run) return;
-  const isServerActive = run.state === "launching" || run.state === "running";
 
-  if (isServerActive) {
-    const seenTerminal = record.lastTerminalRun !== null &&
-      record.lastTerminalRun.generatedRunId === run.generatedRunId &&
-      run.updatedAtMs <= record.lastTerminalRun.updatedAtMs;
-    if (seenTerminal) return;
-    record.activeGeneratedRunId = run.generatedRunId;
+  if (isActiveRunState(run.state)) {
+    observeActiveRun(record.runDedupe, run);
+    record.runToken = run.runToken;
     if (record.runStatus !== "stopping") record.runStatus = "running";
     return;
   }
 
-  // Mirror of the active-side dedupe. A terminal entry stays in `moduleRuns`
-  // for the life of the server, so every later snapshot re-delivers it; without
-  // this, a run started after it would be retired by its predecessor's terminal
-  // during the window where the record holds no claim yet (Run sets `running`
-  // optimistically, then awaits the build before claiming the new run ID).
-  const seenTerminal = record.lastTerminalRun !== null &&
-    record.lastTerminalRun.generatedRunId === run.generatedRunId &&
-    run.updatedAtMs <= record.lastTerminalRun.updatedAtMs;
-  if (seenTerminal) return;
+  if (!shouldApplyTerminalRun(record.runDedupe, run)) return;
 
-  record.lastTerminalRun = {
-    generatedRunId: run.generatedRunId,
-    updatedAtMs: run.updatedAtMs,
-  };
-
-  const matchesActiveRun = record.activeGeneratedRunId === run.generatedRunId;
-  // With no active-run claim there is nothing to protect, so a terminal
-  // snapshot is server truth and applies. That case is ordinary: an edit calls
-  // `setModuleSource`, which nulls the claim, and a module edited while it ran
-  // would otherwise never see its own natural completion and stay `running`
-  // until a reload. The guard exists only to stop an OLD run's terminal from
-  // clobbering a NEWER client-initiated launch, which stays covered because
-  // `runModule` sets the new generated run ID before it posts.
-  const mayApplyTerminalState = matchesActiveRun ||
-    !record.activeGeneratedRunId;
-  if (!mayApplyTerminalState) return;
-
-  record.activeGeneratedRunId = null;
+  record.runToken = run.runToken;
+  releaseRunClaim(record.runDedupe);
   record.activeIds = [];
   if (run.state === "error") {
     record.runStatus = "error";
@@ -939,9 +984,7 @@ function applyModuleRunSnapshot(
   }
 }
 
-function moduleRunStateToRunStatus(
-  state: RuntimeModuleRunSnapshotEntry["state"],
-): RunStatus {
+function moduleRunStateToRunStatus(state: RuntimeModuleRunState): RunStatus {
   if (state === "launching" || state === "running") return "unknown";
   return state;
 }
@@ -961,6 +1004,7 @@ function toViewState(record: ModuleRecord): ModuleViewState {
     pianoRollLookups: record.pianoRollLookups,
     lastSnapshotSeq: record.lastSnapshotSeq,
     latestError: record.latestError,
+    runToken: record.runToken,
   };
 }
 
