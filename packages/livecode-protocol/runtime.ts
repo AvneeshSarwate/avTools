@@ -130,6 +130,16 @@ export interface RuntimeModuleStatus {
   projectSourceHash?: string;
 }
 
+/**
+ * `/runtime/state`'s run rows: the legacy row plus the run token, so a client
+ * rehydrating after a reload or a reconnect seeds the token-keyed terminal
+ * dedupe it will apply to every later `run` entity. The legacy
+ * `/runtime/snapshots` shim deliberately keeps the token-FREE row above.
+ */
+export interface RuntimeStateModuleRun extends RuntimeModuleRunSnapshotEntry {
+  runToken: string;
+}
+
 export interface RuntimeStateResponse {
   ok: true;
   activeModules: Array<
@@ -137,7 +147,7 @@ export interface RuntimeStateResponse {
       manifest: VisualizerManifestMessage | null;
     }
   >;
-  moduleRuns: Record<string, RuntimeModuleRunSnapshotEntry>;
+  moduleRuns: Record<string, RuntimeStateModuleRun>;
   latestPreparedByModule: Record<string, {
     generatedRunId: string;
     sourceHash?: string;
