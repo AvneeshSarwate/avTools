@@ -27,9 +27,14 @@ For a new implementation or review session, read these files in order:
 11. `docs/livecode/current/testing-and-operations.md`
 12. `docs/livecode/current/known-risks.md`
 
+`docs/livecode/current/adding-an-entity-kind.md` is a recipe rather than a
+description; read it when the task is adding a new watched entity kind, not as
+part of the bootstrap.
+
 Then inspect the implementation files named by the relevant current-state doc.
-For cross-boundary changes, inspect both protocol copies and both callers; the
-protocol is currently hand-mirrored rather than generated.
+For a cross-boundary change, the wire types live once, in
+`packages/livecode-protocol`; inspect that module and both callers. There is
+still no runtime validation, so compare actual serialization and handling.
 
 A useful prompt for a fresh chat is:
 
@@ -43,7 +48,7 @@ A useful prompt for a fresh chat is:
 
 | Location | Meaning |
 | --- | --- |
-| `docs/livecode/current/` | Concrete description of the checked-in code as of 2026-07-21, extended for the canvas-params and entity-CRUD/persistence slices on 2026-08-13. Each file's status line records what was checked when. |
+| `docs/livecode/current/` | Concrete description of the checked-in code as of 2026-07-21, extended for the canvas-params, entity-CRUD/persistence, ephemeral-signals, launch-lifecycle, and multiplexed-sync-transport slices on 2026-08-13. Each file's status line records what was checked when. |
 | `docs/livecode/principles/` | Architecture principles and mental models with strong HCI implications. These guide judgement when changing core systems but may describe a destination the current code has not reached. |
 | `docs/livecode/user-level-project-goals.md` | Owner's product-design and workflow intent: intended user-facing flows, the coding agent's role, and explicit non-goals. Consult it for any user-facing change. |
 | `docs/livecode/principles/source-notes/` | Preserved owner brainstorms. They are inputs to the principles, not a current feature contract. |
@@ -77,6 +82,8 @@ Any feature that changes a boundary must update the corresponding current docs:
 - intended user workflow, product-design direction, agent role, or non-goal:
   `docs/livecode/user-level-project-goals.md`.
 - newly discovered unresolved hazard: `current/known-risks.md`.
+- a new watched entity kind: follow `current/adding-an-entity-kind.md`, which
+  names every layer and the docs each one obliges.
 
 Historical documents should not be rewritten to look current. Move superseded
 material into `history/`, add a short status note if its old wording is
@@ -86,6 +93,10 @@ misleading, and link it from `history/README.md`.
 
 The livecode environment also depends on code outside the two main directories:
 
+- `packages/livecode-protocol`: the shared wire contract. Type-only, consumed by
+  the Deno server through the workspace import map and by the tldraw client as
+  raw TypeScript through a vite alias and a tsconfig path. It is part of the
+  livecode system, not an external dependency: a boundary change starts here.
 - `packages/core-timing`: `TimeContext`, logical-time scheduling, structured
   concurrency, cancellation, barriers, tempo maps, and offline execution. The
   `TimeContext` API itself — `wait(beats)` versus `waitSec(seconds)`,

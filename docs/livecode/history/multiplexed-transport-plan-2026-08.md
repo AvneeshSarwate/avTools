@@ -5,6 +5,15 @@ channels into one subscribed, sequenced sync transport, and absorbs the six
 items previous slices explicitly deferred into it. When complete, this file
 remains history; `docs/livecode/current/` documents what shipped.
 
+Note added 2026-08-13, after all four phases landed: read this file for
+rationale only. Two pieces of its prose no longer describe anything. Phase B's
+dual-transport state was transitional and is gone — the three entity sockets are
+deleted and only the `/runtime/snapshots` shim remains beside `/sync`. And
+revision 8 leaves one edge unstated that the implementation had to decide: an
+armed client whose socket closes reports `connecting`, not `closed`, because the
+reconnecting controller is already retrying with backoff. `current/client.md`
+and `current/protocol.md` are the contract.
+
 ## Goal and absorbed deferrals
 
 One socket carries every watched entity kind, per-entity, changed-only,
