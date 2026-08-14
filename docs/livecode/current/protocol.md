@@ -1,16 +1,8 @@
 # Current Protocol and Cross-Boundary Contracts
 
-Status: checked against the then-separate protocol copies and route callers on
-2026-07-21;
-the params routes and types, the entity CRUD routes, and the project data
-persistence types were checked on 2026-08-13; the signals routes and types were
-added and checked on 2026-08-13; `replaceRunning` and launch cancellation were
-checked on 2026-08-13; the analyze-success, project-route, and runtime-ack
-body shapes plus the params graph meta fields were documented from source on
-2026-08-13; the shared protocol package, the `/sync` transport, and the
-deprecated `/runtime/snapshots` shim were checked against
-`packages/livecode-protocol`, `visualizer/server.ts`, and
-`apps/livecode-tldraw/src/syncRuntime.tsx` on 2026-08-13.
+Status: checked against `packages/livecode-protocol`, `visualizer/server.ts`,
+and `apps/livecode-tldraw/src/syncRuntime.tsx` as of 2026-08-13; first audited
+2026-07-21 against the then-separate hand-mirrored protocol copies.
 
 ## Source of types
 

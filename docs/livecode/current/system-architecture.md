@@ -1,10 +1,7 @@
 # Current System Architecture
 
-Status: checked against the implementation on 2026-07-21; the params entity
-domain was checked on 2026-08-13; the ephemeral signal domain was added and
-checked on 2026-08-13; the launch-acceptance window and the Replace gesture were
-checked on 2026-08-13; the multiplexed `/sync` transport, the connect-armed
-gesture, and the reduced connection domains were checked on 2026-08-13.
+Status: describes the checked-in code as of 2026-08-13, through the multiplexed
+`/sync` transport slice; first audited 2026-07-21.
 
 ## Runtime topology
 
@@ -13,7 +10,7 @@ Development uses two processes:
 ```text
 browser tab
   React + tldraw + CodeMirror
-       | HTTP and three WebSocket domains
+       | HTTP + WebSockets (sync, client-control, lsp)
        v
 local Deno server
   analysis | project files | LSP proxy | runtime | shared stores

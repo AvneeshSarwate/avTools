@@ -1,9 +1,9 @@
 # Current Analyzer and Generated Code
 
-Status: checked against `visualizer/analyze_transform.ts` on 2026-07-21;
-canvas-params detection was checked on 2026-08-13; canvas-signal detection and
-its ownership wrap were added and checked on 2026-08-13; the manifest types'
-move into `packages/livecode-protocol/analysis.ts` was checked on 2026-08-13.
+Status: checked against `visualizer/analyze_transform.ts` — most recently
+canvas-signal detection and the manifest types' move into
+`packages/livecode-protocol/analysis.ts` — as of 2026-08-13; first audited
+2026-07-21.
 
 ## Purpose and boundary
 
