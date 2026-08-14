@@ -1,5 +1,15 @@
 # Livecode Principles and Mental Models
 
+Status: superseded synthesis, moved to history on 2026-08-14. This was the
+`principles/` directory README. The primary principles document is
+`docs/livecode/principles.md`, which absorbed this file's still-current unique
+content: the four-plane mental model, the logical-time principle, the
+static-checking current-state qualification, and the unshipped remainder of
+its direction-of-travel list. The directory index below and the "Current
+qualification" notes describe July 2026 state; several direction-of-travel
+items (the multiplexed transport, the shared protocol package, much of the
+unified entity store) have since shipped.
+
 ## Documents in this directory
 
 - `principles.md` preserves the sharper product and architectural principles
