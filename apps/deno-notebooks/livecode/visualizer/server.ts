@@ -50,6 +50,7 @@ import type {
   RunEntity,
   RuntimeModuleRunSnapshotEntry,
   RuntimeModuleStatus,
+  RuntimeStateModuleRun,
   RuntimeStateResponse,
   SetParamsRequest,
   SetPianoRollRequest,
@@ -79,24 +80,15 @@ import {
   listDurableEntityTypes,
   registerBuiltinDurableEntityTypes,
 } from "./entity_registry.ts";
-import {
-  makeParamsSnapshot,
-  PARAMS_ENTITY_TYPE,
-  setParamsValues,
-} from "./params_store.ts";
+import { makeParamsSnapshot, setParamsValues } from "./params_store.ts";
 import {
   makePianoRollSnapshot,
-  PIANO_ROLL_ENTITY_TYPE,
   redoPianoRoll,
   seedDemoPianoRoll,
   setPianoRoll,
   undoPianoRoll,
 } from "./piano_roll_store.ts";
-import {
-  endSignalsForModule,
-  makeSignalsSnapshot,
-  SIGNAL_ENTITY_TYPE,
-} from "./signals_store.ts";
+import { endSignalsForModule, makeSignalsSnapshot } from "./signals_store.ts";
 import {
   analyzeProjectShadow,
   buildProjectImportGraph,
@@ -154,11 +146,10 @@ interface PendingLaunch {
   cancelled: boolean;
 }
 
-// What the server actually stores per module: the legacy wire entry plus the
-// run token. `runToken` is deliberately NOT on the legacy `moduleRuns` shape —
-// `/runtime/state` and `/runtime/snapshots` stay frozen through this phase and
-// the token reaches clients on the `run` entity instead.
-type ModuleRunRecord = RuntimeModuleRunSnapshotEntry & { runToken: string };
+// What the server actually stores per module. This is exactly `/runtime/state`'s
+// row: the legacy entry plus the run token. The deprecated `/runtime/snapshots`
+// envelope keeps its token-FREE rows (see `legacyModuleRuns`).
+type ModuleRunRecord = RuntimeStateModuleRun;
 
 interface SyncSocketState {
   socket: WebSocket;
@@ -244,8 +235,8 @@ const SOURCE_SUFFIX = ".orig.ts";
 const REPO_ROOT = fromFileUrl(new URL("../../../..", import.meta.url));
 const STOP_HOOK_TIMEOUT_MS = 2_000;
 // The cadence of the ONE broadcast timer, which samples every sync source and
-// then feeds both the `/sync` sockets and the four legacy channels from that
-// single collect. Changed-only gating keeps the idle cost at a set-size check.
+// feeds the `/sync` sockets plus the deprecated `/runtime/snapshots` shim from
+// that single collect. Changed-only gating keeps the idle cost at a set check.
 const SNAPSHOT_TICK_MS = 33;
 const MAX_PREPARED_RUNS_PER_MODULE = 3;
 const DEFAULT_SESSION_ROOT = fromFileUrl(
@@ -300,10 +291,9 @@ export async function createLivecodeVisualizerServer(
   await Deno.mkdir(logsDir, { recursive: true });
   await Deno.mkdir(lspLogsDir, { recursive: true });
 
+  // The deprecated `/runtime/snapshots` shim's sockets. Every entity kind now
+  // reaches clients on `/sync`; this set exists only for the Vue SketchWrapper.
   const sockets = new Set<WebSocket>();
-  const pianoRollSockets = new Set<WebSocket>();
-  const paramsSockets = new Set<WebSocket>();
-  const signalsSockets = new Set<WebSocket>();
   const syncSockets = new Map<WebSocket, SyncSocketState>();
   const clientControlSockets = new Map<string, ClientControlSocket>();
   const pendingClientCommands = new Map<string, PendingClientCommand>();
@@ -431,14 +421,13 @@ export async function createLivecodeVisualizerServer(
     },
   }));
 
-  // ONE timer. It collects from every source exactly once and then fans that
-  // one result out to the `/sync` sockets and to all four legacy channels;
-  // independent timers would each drain the gates and starve the other side.
+  // ONE timer, and one walk over every source per tick. `collectAll` drains the
+  // change gates, so it must be called exactly once here; the deprecated
+  // `/runtime/snapshots` shim derives its envelope from the same sources
+  // afterwards through its own pure whole-snapshot compare.
   const broadcastTimer = setInterval(() => {
     try {
-      const collected = syncSources.collectAll();
-      broadcastSyncChanges(collected);
-      broadcastLegacyEntitySnapshots(collected);
+      broadcastSyncChanges(syncSources.collectAll());
       broadcastLegacyRuntimeSnapshot();
     } catch (error) {
       void log({
@@ -701,17 +690,6 @@ export async function createLivecodeVisualizerServer(
       return json(entityMutationSuccess(descriptor.typeId, name));
     }
 
-    if (request.method === "GET" && url.pathname === "/piano-roll/snapshots") {
-      const { socket, response } = Deno.upgradeWebSocket(request);
-      socket.onopen = () => {
-        pianoRollSockets.add(socket);
-        socket.send(JSON.stringify(makePianoRollSnapshot({ force: true })));
-      };
-      socket.onclose = () => pianoRollSockets.delete(socket);
-      socket.onerror = () => pianoRollSockets.delete(socket);
-      return response;
-    }
-
     if (request.method === "GET" && url.pathname === "/piano-roll/list") {
       return json(makePianoRollSnapshot({ force: true }));
     }
@@ -743,17 +721,6 @@ export async function createLivecodeVisualizerServer(
       );
     }
 
-    if (request.method === "GET" && url.pathname === "/params/snapshots") {
-      const { socket, response } = Deno.upgradeWebSocket(request);
-      socket.onopen = () => {
-        paramsSockets.add(socket);
-        socket.send(JSON.stringify(makeParamsSnapshot()));
-      };
-      socket.onclose = () => paramsSockets.delete(socket);
-      socket.onerror = () => paramsSockets.delete(socket);
-      return response;
-    }
-
     if (request.method === "GET" && url.pathname === "/params/list") {
       return json(makeParamsSnapshot());
     }
@@ -771,17 +738,6 @@ export async function createLivecodeVisualizerServer(
         }, { status: 404 });
       }
       return json(entity);
-    }
-
-    if (request.method === "GET" && url.pathname === "/signals/snapshots") {
-      const { socket, response } = Deno.upgradeWebSocket(request);
-      socket.onopen = () => {
-        signalsSockets.add(socket);
-        socket.send(JSON.stringify(makeSignalsSnapshot()));
-      };
-      socket.onclose = () => signalsSockets.delete(socket);
-      socket.onerror = () => signalsSockets.delete(socket);
-      return response;
     }
 
     if (request.method === "GET" && url.pathname === "/signals/list") {
@@ -896,9 +852,6 @@ export async function createLivecodeVisualizerServer(
       // keep stamping samples with its frozen logical time.
       setRootTimeContext(null);
       for (const socket of sockets) socket.close();
-      for (const socket of pianoRollSockets) socket.close();
-      for (const socket of paramsSockets) socket.close();
-      for (const socket of signalsSockets) socket.close();
       for (const socket of syncSockets.keys()) socket.close();
       for (const client of clientControlSockets.values()) {
         client.socket.close();
@@ -1806,7 +1759,9 @@ export async function createLivecodeVisualizerServer(
         projectSourceHash: active.projectSourceHash,
         manifest: active.manifest,
       })),
-      moduleRuns: legacyModuleRuns(),
+      // `/runtime/state` carries the run token: rehydration is where a client
+      // seeds the token memory its terminal dedupe keys on.
+      moduleRuns: Object.fromEntries(moduleRunSnapshots),
       latestPreparedByModule,
     };
   }
@@ -1823,9 +1778,10 @@ export async function createLivecodeVisualizerServer(
   }
 
   /**
-   * The legacy `moduleRuns` map, with `runToken` stripped. `/runtime/state` and
-   * `/runtime/snapshots` are frozen shapes for the un-migrated clients; the
-   * token reaches subscribers on the `run` entity instead.
+   * The deprecated `/runtime/snapshots` shim's `moduleRuns` map, with
+   * `runToken` stripped. That envelope stays frozen for the client that never
+   * migrated; the token reaches subscribers on the `run` entity, and
+   * `/runtime/state` — which only migrated clients read — carries it too.
    */
   function legacyModuleRuns(): Record<string, RuntimeModuleRunSnapshotEntry> {
     const entries: Record<string, RuntimeModuleRunSnapshotEntry> = {};
@@ -1895,51 +1851,12 @@ export async function createLivecodeVisualizerServer(
   }
 
   /**
-   * The three entity sockets the un-migrated tldraw client still reads. They
-   * keep their full-snapshot payloads; only the gate that decides whether to
-   * send one moved into the shared collect above.
-   */
-  function broadcastLegacyEntitySnapshots(
-    collected: SyncCollectedChanges,
-  ): void {
-    if (collected.has(PIANO_ROLL_ENTITY_TYPE)) {
-      const snapshot = makePianoRollSnapshot();
-      sendSnapshotToSockets(pianoRollSockets, snapshot);
-      if (options.logLevel === "debug") {
-        void log({
-          type: "pianoRollSnapshot",
-          rollCount: Object.keys(snapshot.rolls).length,
-        });
-      }
-    }
-    if (collected.has(PARAMS_ENTITY_TYPE)) {
-      const snapshot = makeParamsSnapshot();
-      sendSnapshotToSockets(paramsSockets, snapshot);
-      if (options.logLevel === "debug") {
-        void log({
-          type: "paramsSnapshot",
-          paramsCount: Object.keys(snapshot.params).length,
-        });
-      }
-    }
-    if (collected.has(SIGNAL_ENTITY_TYPE)) {
-      const snapshot = makeSignalsSnapshot();
-      sendSnapshotToSockets(signalsSockets, snapshot);
-      if (options.logLevel === "debug") {
-        void log({
-          type: "signalsSnapshot",
-          signalCount: Object.keys(snapshot.signals).length,
-        });
-      }
-    }
-  }
-
-  /**
    * `/runtime/snapshots` keeps FULL fidelity — modules, lookups, activeModules,
-   * and `moduleRuns` with `updatedAtMs` — because the tldraw client still reads
-   * all four sections from it and the Vue SketchWrapper reads `{seq, modules}`.
-   * Its gate stays the serialized whole-snapshot compare it has always been:
-   * that is a pure comparison, not a gate anything else consumes.
+   * and `moduleRuns` with `updatedAtMs` — because the Vue SketchWrapper reads
+   * `{seq, modules}` from it and nothing else may narrow a shipped shape out
+   * from under a client this slice does not modernize. Its gate stays the
+   * serialized whole-snapshot compare it has always been: that is a pure
+   * comparison, not a gate anything else consumes.
    */
   function broadcastLegacyRuntimeSnapshot(): void {
     const snapshot = makeRuntimeSnapshot();
