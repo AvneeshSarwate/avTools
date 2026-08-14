@@ -1,12 +1,8 @@
 # Current Project Model
 
 Status: checked against the server, tldraw client, project tests, and checked-in
-example on 2026-07-21; the canvas param-pane views and the saved durable-entity
-data tree were checked on 2026-08-13; the canvas scope views were added and
-checked on 2026-08-13; the helper-alias recipe step, the module-facing helper
-API summary, and the stop-hook overlap note were added from source on
-2026-08-13; the saved-entity file formats' move into
-`packages/livecode-protocol` was checked on 2026-08-13.
+example — most recently the saved-entity file formats' move into
+`packages/livecode-protocol` — as of 2026-08-13; first audited 2026-07-21.
 
 ## Durable file model
 
