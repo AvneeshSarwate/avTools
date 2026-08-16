@@ -1,0 +1,15 @@
+{
+  "name": "@avtools/midi",
+  "version": "0.0.0",
+  "exports": {
+    ".": "./mod.ts",
+    "./browser": "./browser.ts",
+    "./native": "./native.ts"
+  },
+  "tasks": {
+    "test": "deno test --allow-read --allow-env tests/output_test.ts tests/browser_backend_test.ts"
+  },
+  "imports": {
+    "@midival/core": "npm:@midival/core@~0.1.3"
+  }
+}
