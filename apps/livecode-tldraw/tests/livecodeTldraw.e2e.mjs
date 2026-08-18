@@ -37,12 +37,17 @@ const headless = process.env.PW_HEADLESS !== '0'
 // as soon as their condition holds, so a scale >1 does not slow a green run.
 const timeoutScale = Number(process.env.LIVECODE_E2E_TIMEOUT_SCALE || '1') || 1
 const scaled = (ms) => Math.round(ms * timeoutScale)
+// LIVECODE_E2E_ENGINE=remote runs the whole suite against a server with no
+// engine of its own: a browser engine tab is opened before any case and every
+// runtime/entity op forwards to it. The client code under test is identical.
+const engineMode = process.env.LIVECODE_E2E_ENGINE === 'remote' ? 'remote' : 'local'
 
 const serverOutput = []
 const viteOutput = []
 const browserOutput = []
 let browser
 let page
+let enginePage
 let serverProc
 let viteProc
 let firstModuleId = ''
@@ -235,6 +240,26 @@ try {
   serverBaseUrl = serverInfo.baseUrl
 
   browser = await launchBrowserWithRetry()
+  if (engineMode === 'remote') {
+    enginePage = await browser.newPage()
+    enginePage.on('pageerror', (error) => {
+      browserOutput.push(`[engine:pageerror] ${error.stack ?? error.message}`)
+    })
+    await enginePage.goto(`${serverInfo.baseUrl}/engine/`, {
+      timeout: scaled(60_000),
+    })
+    // Attached = the tab's engine answers entity reads over HTTP.
+    const attachDeadline = Date.now() + scaled(30_000)
+    for (;;) {
+      const response = await fetch(`${serverInfo.baseUrl}/piano-roll/list`)
+        .catch(() => null)
+      if (response?.ok) break
+      if (Date.now() > attachDeadline) {
+        throw new Error('browser engine never attached to /engine/uplink')
+      }
+      await sleep(200)
+    }
+  }
   page = await browser.newPage()
   page.on('console', (message) => {
     if (message.type() === 'error') {
@@ -1988,6 +2013,8 @@ function startDenoServer() {
         sessionRoot,
         '--log-level',
         'debug',
+        '--engine',
+        engineMode,
       ],
       {
         cwd: denoNotebookRoot,
@@ -2023,7 +2050,15 @@ async function launchBrowserWithRetry(attempts = 5) {
   let lastError
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await chromium.launch({ headless, executablePath })
+      return await chromium.launch({
+        headless,
+        executablePath,
+        args: [
+          '--disable-background-timer-throttling',
+          '--disable-renderer-backgrounding',
+          '--disable-backgrounding-occluded-windows',
+        ],
+      })
     } catch (error) {
       lastError = error
       if (attempt === attempts) break

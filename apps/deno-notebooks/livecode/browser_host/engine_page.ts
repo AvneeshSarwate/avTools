@@ -79,6 +79,7 @@ function snapshotAllTypes(): Record<string, SyncEntity[]> {
 const engine: LivecodeEngine = createLivecodeEngine({
   log: (entry) => {
     console.log("[livecode-engine]", JSON.stringify(entry));
+    sendUplink({ type: "engineLog", entry });
   },
   onSyncTick: (collected) => {
     if (collected.size === 0) return;
