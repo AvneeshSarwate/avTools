@@ -96,6 +96,14 @@ The livecode environment also depends on code outside the two main directories:
   the Deno server through the workspace import map and by the tldraw client as
   raw TypeScript through a vite alias and a tsconfig path. It is part of the
   livecode system, not an external dependency: a boundary change starts here.
+- `packages/livecode-engine`: the execution plane — entity stores, sync
+  sources, runtime instrumentation, and the module launch/stop/panic lifecycle
+  — extracted from the server as portable TypeScript with injected
+  capabilities, kept browser-typecheckable by
+  `livecode/tests/browser_target_check_test.ts`. The server hosts one engine
+  instance; the moved modules keep one-line re-export shims at their old
+  `visualizer/` paths. See `current/server.md` and
+  `history/browser-engine-plan-2026-08.md`.
 - `packages/core-timing`: `TimeContext`, logical-time scheduling, structured
   concurrency, cancellation, barriers, tempo maps, and offline execution. The
   `TimeContext` API itself — `wait(beats)` versus `waitSec(seconds)`,

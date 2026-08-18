@@ -1,4 +1,3 @@
-import { launch, type TimeContext } from "@avtools/core-timing";
 import { LSWSServer } from "@valtown/ls-ws-server";
 import {
   basename,
@@ -64,31 +63,24 @@ import type {
   WriteProjectModuleRequest,
 } from "./protocol.ts";
 import {
-  createModuleLookupsSyncSource,
-  createModuleWaitsSyncSource,
-  createParamsSyncSource,
-  createPianoRollSyncSource,
-  createRunSyncSource,
-  createSignalsSyncSource,
-  type SyncCollectedChanges,
-  SyncSourceRegistry,
-} from "./sync_sources.ts";
+  createLivecodeEngine,
+  type LivecodeEngine,
+} from "@avtools/livecode-engine";
+import type { SyncCollectedChanges } from "./sync_sources.ts";
 import {
   allocateEntityDataPath,
   type DurableEntityTypeDescriptor,
   getDurableEntityType,
   listDurableEntityTypes,
-  registerBuiltinDurableEntityTypes,
 } from "./entity_registry.ts";
 import { makeParamsSnapshot, setParamsValues } from "./params_store.ts";
 import {
   makePianoRollSnapshot,
   redoPianoRoll,
-  seedDemoPianoRoll,
   setPianoRoll,
   undoPianoRoll,
 } from "./piano_roll_store.ts";
-import { endSignalsForModule, makeSignalsSnapshot } from "./signals_store.ts";
+import { makeSignalsSnapshot } from "./signals_store.ts";
 import {
   analyzeProjectShadow,
   buildProjectImportGraph,
@@ -96,33 +88,8 @@ import {
 } from "./project_shadow_analysis.ts";
 import {
   clearModulePianoRollLookups,
-  clearModuleWaits,
   makeActiveWaitSnapshot,
-  setRootTimeContext,
 } from "./runtime.ts";
-
-interface BranchHandle {
-  cancel: () => void;
-  finally: (f: () => void) => Promise<unknown>;
-}
-
-type ModuleStopFunc = () => void | Promise<void>;
-
-interface ActiveModule {
-  moduleId: string;
-  generatedRunId: string;
-  // Identity of this run, not of its build. `generatedRunId` is reused whenever
-  // a relaunch finds an unchanged prepared build, so it cannot tell an old run
-  // from the one that replaced it; this token can.
-  runToken: string;
-  transformedModuleUri: string;
-  handle: BranchHandle;
-  stopFunc?: ModuleStopFunc;
-  projectModulePath?: string;
-  sourceHash?: string;
-  projectSourceHash?: string;
-  manifest: VisualizerManifestMessage | null;
-}
 
 interface PreparedRun {
   moduleId: string;
@@ -133,23 +100,6 @@ interface PreparedRun {
   projectSourceHash?: string;
   manifest: VisualizerManifestMessage;
 }
-
-// An accepted launch is queued, not started. This is the identity of that
-// window: it makes a not-yet-started run addressable by stop, panic, and a
-// replacing launch, none of which can find it in `activeModules` yet.
-interface PendingLaunch {
-  generatedRunId: string;
-  // Minted at ACCEPT time rather than after the import, so the `launching`
-  // entry this request publishes already carries the run's identity and a
-  // cancellation can tell whether that entry is still the one it owns.
-  runToken: string;
-  cancelled: boolean;
-}
-
-// What the server actually stores per module. This is exactly `/runtime/state`'s
-// row: the legacy entry plus the run token. The deprecated `/runtime/snapshots`
-// envelope keeps its token-FREE rows (see `legacyModuleRuns`).
-type ModuleRunRecord = RuntimeStateModuleRun;
 
 interface SyncSocketState {
   socket: WebSocket;
@@ -233,11 +183,6 @@ const SERVER_VERSION = "0.1.0";
 const PROJECT_MANIFEST_FILENAME = "project.avtools-livecode.json";
 const SOURCE_SUFFIX = ".orig.ts";
 const REPO_ROOT = fromFileUrl(new URL("../../../..", import.meta.url));
-const STOP_HOOK_TIMEOUT_MS = 2_000;
-// The cadence of the ONE broadcast timer, which samples every sync source and
-// feeds the `/sync` sockets plus the deprecated `/runtime/snapshots` shim from
-// that single collect. Changed-only gating keeps the idle cost at a set check.
-const SNAPSHOT_TICK_MS = 33;
 const MAX_PREPARED_RUNS_PER_MODULE = 3;
 const DEFAULT_SESSION_ROOT = fromFileUrl(
   new URL("../../.avtools-livecode-sessions", import.meta.url),
@@ -297,21 +242,14 @@ export async function createLivecodeVisualizerServer(
   const syncSockets = new Map<WebSocket, SyncSocketState>();
   const clientControlSockets = new Map<string, ClientControlSocket>();
   const pendingClientCommands = new Map<string, PendingClientCommand>();
-  const activeModules = new Map<string, ActiveModule>();
-  const pendingLaunches = new Map<string, PendingLaunch>();
-  const moduleRunSnapshots = new Map<string, ModuleRunRecord>();
-  // Module ids whose run entry changed since the last collect.
-  const dirtyRunModules = new Set<string>();
   const preparedRuns = new Map<string, PreparedRun>();
   const preparedRunIdsByModule = new Map<string, string[]>();
-  const launchQueue: Array<(ctx: TimeContext) => Promise<void> | void> = [];
   let currentProject: ProjectState | null = null;
   let diagnosticsInFlight: Promise<ProjectShadowCheckResponse> | null = null;
   let diagnosticsInFlightHash: string | null = null;
   let lastDiagnostics:
     | { projectSourceHash: string; response: ProjectShadowCheckResponse }
     | null = null;
-  let parentContext: TimeContext | null = null;
   let lastSnapshotJson = "";
   let closing = false;
 
@@ -341,27 +279,17 @@ export async function createLivecodeVisualizerServer(
     });
   }
 
-  const parentHandle = launch(async (ctx) => {
-    parentContext = ctx;
-    // The parent loop is the process's root clock. Observation code (the
-    // signals sampler today) stamps samples with its logical time.
-    setRootTimeContext(ctx);
-    await log({ type: "parentLoopStarted" });
-    while (!closing) {
-      const queued = launchQueue.splice(0);
-      for (const action of queued) {
-        await action(ctx);
-      }
-      try {
-        await ctx.waitSec(0.03);
-      } catch (error) {
-        if (closing || isAbortError(error)) break;
-        throw error;
-      }
-    }
-  }, { bpm: 60, debugName: "livecode-visualizer-parent" });
-  parentHandle.catch(() => {
-    // Expected when the server shuts down.
+  // The execution plane: parent loop, launch queue, run records, entity
+  // stores' sync sources, and the one broadcast tick. The server is its Deno
+  // host — it injects MIDI panic and receives each tick's collected changes to
+  // fan out to its own transports.
+  const engine: LivecodeEngine = createLivecodeEngine({
+    log,
+    panicMidi,
+    onSyncTick: (collected) => {
+      broadcastSyncChanges(collected);
+      broadcastLegacyRuntimeSnapshot();
+    },
   });
 
   if (!Deno.env.get("CRASH_LOG_LINE_COUNT")) {
@@ -399,44 +327,6 @@ export async function createLivecodeVisualizerServer(
     },
   });
 
-  registerBuiltinDurableEntityTypes();
-  // Construction, not a read path: `snapshotAll()` has to be genuinely
-  // read-only, so nothing may seed a roll on the way to answering a subscribe.
-  seedDemoPianoRoll();
-
-  const syncSources = new SyncSourceRegistry();
-  syncSources.register(createPianoRollSyncSource());
-  syncSources.register(createParamsSyncSource());
-  syncSources.register(createSignalsSyncSource());
-  syncSources.register(createModuleWaitsSyncSource());
-  syncSources.register(createModuleLookupsSyncSource());
-  syncSources.register(createRunSyncSource({
-    listModuleIds: () => [...moduleRunSnapshots.keys()],
-    read: (moduleId) => runEntityFor(moduleId),
-    consumeDirty: () => {
-      if (dirtyRunModules.size === 0) return [];
-      const drained = [...dirtyRunModules];
-      dirtyRunModules.clear();
-      return drained;
-    },
-  }));
-
-  // ONE timer, and one walk over every source per tick. `collectAll` drains the
-  // change gates, so it must be called exactly once here; the deprecated
-  // `/runtime/snapshots` shim derives its envelope from the same sources
-  // afterwards through its own pure whole-snapshot compare.
-  const broadcastTimer = setInterval(() => {
-    try {
-      broadcastSyncChanges(syncSources.collectAll());
-      broadcastLegacyRuntimeSnapshot();
-    } catch (error) {
-      void log({
-        type: "broadcastTickError",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }, SNAPSHOT_TICK_MS) as unknown as number;
-
   const handler = async (request: Request): Promise<Response> => {
     try {
       return await routeRequest(request);
@@ -463,7 +353,7 @@ export async function createLivecodeVisualizerServer(
         ok: true,
         serverVersion: SERVER_VERSION,
         sessionRoot,
-        activeModules: [...activeModules.keys()],
+        activeModules: engine.activeModuleIds(),
         runtimeCapabilities,
       };
       return json(response);
@@ -508,7 +398,7 @@ export async function createLivecodeVisualizerServer(
 
     if (request.method === "POST" && url.pathname === "/runtime/stop") {
       const requestBody = await request.json() as StopModuleRequest;
-      await stopModule(requestBody.moduleId, "stopRequest");
+      await engine.stopModule(requestBody.moduleId, "stopRequest");
       return json({ ok: true });
     }
 
@@ -521,17 +411,17 @@ export async function createLivecodeVisualizerServer(
     }
 
     if (request.method === "POST" && url.pathname === "/runtime/stop-all") {
-      await stopAllModules("stopAllRequest");
+      await engine.stopAllModules("stopAllRequest");
       return json({ ok: true });
     }
 
     if (request.method === "POST" && url.pathname === "/runtime/panic") {
-      await panicRuntime("panic");
+      await engine.panicRuntime("panic");
       return json({ ok: true });
     }
 
     if (request.method === "POST" && url.pathname === "/runtime/restart-all") {
-      await stopAllModules("restartAllRequest");
+      await engine.stopAllModules("restartAllRequest");
       if (currentProject) await materializeProjectRuntime(currentProject);
       return json({ ok: true, activeModules: listRuntimeStatus() });
     }
@@ -847,10 +737,6 @@ export async function createLivecodeVisualizerServer(
     sessionRoot,
     close: async () => {
       closing = true;
-      clearInterval(broadcastTimer);
-      // The parent loop is about to be cancelled; a cancelled clock must not
-      // keep stamping samples with its frozen logical time.
-      setRootTimeContext(null);
       for (const socket of sockets) socket.close();
       for (const socket of syncSockets.keys()) socket.close();
       for (const client of clientControlSockets.values()) {
@@ -866,9 +752,9 @@ export async function createLivecodeVisualizerServer(
         });
       }
       pendingClientCommands.clear();
-      await stopAllModules("serverClose");
-      panicMidi();
-      parentHandle.cancel();
+      // Clears the broadcast timer, unregisters the root clock, stops all
+      // modules, panics MIDI, and cancels the parent loop.
+      await engine.close();
       await lspWsServer.shutdown();
       await server.shutdown();
     },
@@ -1585,7 +1471,7 @@ export async function createLivecodeVisualizerServer(
     for (const moduleRecord of sourceModules) {
       const diskHash = diskHashes.get(moduleRecord.id) ?? null;
       const hashState = currentProject.hashes.get(moduleRecord.id);
-      const active = activeModules.get(moduleRecord.id);
+      const active = engine.getActiveModuleInfo(moduleRecord.id);
       const editorHash = hashState?.editorHash ?? null;
       const lastLoadedHash = hashState?.lastLoadedHash ?? null;
       const dependencies = sortedIds(
@@ -1722,7 +1608,7 @@ export async function createLivecodeVisualizerServer(
   }
 
   function listRuntimeStatus(): RuntimeModuleStatus[] {
-    return [...activeModules.values()].map((active) => ({
+    return engine.activeModulesSnapshot().map((active) => ({
       moduleId: active.moduleId,
       generatedRunId: active.generatedRunId,
       transformedModuleUri: active.transformedModuleUri,
@@ -1750,7 +1636,7 @@ export async function createLivecodeVisualizerServer(
 
     return {
       ok: true,
-      activeModules: [...activeModules.values()].map((active) => ({
+      activeModules: engine.activeModulesSnapshot().map((active) => ({
         moduleId: active.moduleId,
         generatedRunId: active.generatedRunId,
         transformedModuleUri: active.transformedModuleUri,
@@ -1761,7 +1647,7 @@ export async function createLivecodeVisualizerServer(
       })),
       // `/runtime/state` carries the run token: rehydration is where a client
       // seeds the token memory its terminal dedupe keys on.
-      moduleRuns: Object.fromEntries(moduleRunSnapshots),
+      moduleRuns: engine.moduleRunRecords(),
       latestPreparedByModule,
     };
   }
@@ -1770,61 +1656,13 @@ export async function createLivecodeVisualizerServer(
     const snapshot = makeActiveWaitSnapshot();
     return {
       ...snapshot,
-      activeModules: [...activeModules.keys()].sort((a, b) =>
+      activeModules: engine.activeModuleIds().sort((a, b) =>
         a.localeCompare(b)
       ),
-      moduleRuns: legacyModuleRuns(),
+      // The deprecated shim's rows stay token-free; see the engine's
+      // `legacyModuleRuns` for the rationale.
+      moduleRuns: engine.legacyModuleRuns(),
     };
-  }
-
-  /**
-   * The deprecated `/runtime/snapshots` shim's `moduleRuns` map, with
-   * `runToken` stripped. That envelope stays frozen for the client that never
-   * migrated; the token reaches subscribers on the `run` entity, and
-   * `/runtime/state` — which only migrated clients read — carries it too.
-   */
-  function legacyModuleRuns(): Record<string, RuntimeModuleRunSnapshotEntry> {
-    const entries: Record<string, RuntimeModuleRunSnapshotEntry> = {};
-    for (const [moduleId, record] of moduleRunSnapshots) {
-      const { runToken: _runToken, ...wire } = record;
-      entries[moduleId] = wire;
-    }
-    return entries;
-  }
-
-  /** One module's run as a sync entity. Null when it has never had a run. */
-  function runEntityFor(moduleId: string): RunEntity | null {
-    const record = moduleRunSnapshots.get(moduleId);
-    if (!record) return null;
-    const entity: RunEntity = {
-      moduleId: record.moduleId,
-      state: record.state,
-      generatedRunId: record.generatedRunId,
-      runToken: record.runToken,
-      updatedAt: record.updatedAtMs,
-    };
-    if (record.projectModulePath !== undefined) {
-      entity.projectModulePath = record.projectModulePath;
-    }
-    if (record.sourceHash !== undefined) entity.sourceHash = record.sourceHash;
-    if (record.projectSourceHash !== undefined) {
-      entity.projectSourceHash = record.projectSourceHash;
-    }
-    if (record.message !== undefined) entity.message = record.message;
-    return entity;
-  }
-
-  function setModuleRunSnapshot(
-    entry: Omit<ModuleRunRecord, "updatedAtMs">,
-  ): ModuleRunRecord {
-    const stored: ModuleRunRecord = {
-      ...entry,
-      updatedAtMs: Date.now(),
-    };
-    moduleRunSnapshots.set(entry.moduleId, stored);
-    dirtyRunModules.add(entry.moduleId);
-    // Returned so a writer can later ask whether its entry is still the latest.
-    return stored;
   }
 
   // --- broadcast fan-out -------------------------------------------------
@@ -1941,7 +1779,9 @@ export async function createLivecodeVisualizerServer(
 
     const resets: Record<string, SyncEntity[]> = {};
     for (const entityType of state.subscriptions) {
-      resets[entityType] = syncSources.snapshotAll(entityType) as SyncEntity[];
+      resets[entityType] = engine.syncSources.snapshotAll(
+        entityType,
+      ) as SyncEntity[];
     }
     sendSyncMessage(state, { resets });
   }
@@ -2364,7 +2204,9 @@ export async function createLivecodeVisualizerServer(
     ids.push(run.generatedRunId);
 
     while (ids.length > MAX_PREPARED_RUNS_PER_MODULE) {
-      const prunableIndex = ids.findIndex((id) => !isGeneratedRunActive(id));
+      const prunableIndex = ids.findIndex((id) =>
+        !engine.isGeneratedRunActive(id)
+      );
       if (prunableIndex < 0) break;
       const [oldestId] = ids.splice(prunableIndex, 1);
       const oldRun = preparedRuns.get(oldestId);
@@ -2377,12 +2219,6 @@ export async function createLivecodeVisualizerServer(
     preparedRunIdsByModule.set(run.moduleId, ids);
   }
 
-  function isGeneratedRunActive(generatedRunId: string): boolean {
-    return [...activeModules.values()].some((active) =>
-      active.generatedRunId === generatedRunId
-    );
-  }
-
   async function removeGeneratedPreparedFile(run: PreparedRun): Promise<void> {
     const url = new URL(run.transformedModuleUri);
     if (url.protocol !== "file:") return;
@@ -2393,410 +2229,12 @@ export async function createLivecodeVisualizerServer(
   }
 
   async function launchModule(requestBody: LaunchModuleRequest) {
-    const prepared = preparedRuns.get(requestBody.generatedRunId);
-    await log({
-      type: "launchQueued",
-      moduleId: requestBody.moduleId,
-      generatedRunId: requestBody.generatedRunId,
-    });
-
-    // A launch already accepted but not yet started is refused exactly like a
-    // running one, so two rapid requests cannot both pass the safety check.
-    // `replaceRunning` supersedes the queued run instead: its action still runs,
-    // sees `cancelled`, and returns before it can import anything. A cancelled
-    // entry counts as absent: its action is already doomed, and refusing
-    // because of it would 409 the relaunch that follows a Stop.
-    const supersededLaunch = pendingLaunches.get(requestBody.moduleId);
-    if (supersededLaunch && !supersededLaunch.cancelled) {
-      if (!requestBody.replaceRunning) {
-        throw new Error(
-          `Module ${requestBody.moduleId} is already launching; stop it first or pass replaceRunning: true.`,
-        );
-      }
-      supersededLaunch.cancelled = true;
-    }
-
-    if (activeModules.has(requestBody.moduleId)) {
-      if (!requestBody.replaceRunning) {
-        throw new Error(
-          `Module ${requestBody.moduleId} is already running; stop it first or pass replaceRunning: true.`,
-        );
-      }
-      // Request-time stop, so an explicit replacement silences the old run at
-      // the moment the user asked for it. The queued action stops again if a
-      // run appears in the meantime; a second stop is idempotent.
-      await stopModule(requestBody.moduleId, "replaceBeforeLaunch");
-    }
-
-    // The stop above suspends past the point where it empties `activeModules`
-    // — its teardown still awaits a log write — so another request can pass
-    // both checks in that window and register its own pending entry. The `set`
-    // below would then replace an uncancelled entry, orphaning an action that
-    // stop-all and panic can no longer see and that would still run user code.
-    // Anything holding the slot at this point is superseded by this request,
-    // which is the one the caller is waiting on.
-    const racedLaunch = pendingLaunches.get(requestBody.moduleId);
-    if (racedLaunch) racedLaunch.cancelled = true;
-
-    // This run's own identity, minted HERE rather than after the import so the
-    // `launching` entry already carries it. `generatedRunId` cannot stand in:
-    // a relaunch reuses it whenever the prepared build is unchanged — Replace
-    // without an edit does exactly that — so it cannot distinguish this run
-    // from the one it replaced.
-    const runToken = crypto.randomUUID();
-    const pendingLaunch: PendingLaunch = {
-      generatedRunId: requestBody.generatedRunId,
-      runToken,
-      cancelled: false,
-    };
-    pendingLaunches.set(requestBody.moduleId, pendingLaunch);
-
-    const runSnapshotBase = {
-      moduleId: requestBody.moduleId,
-      generatedRunId: requestBody.generatedRunId,
-      runToken,
-      projectModulePath: prepared?.projectModulePath ??
-        requestBody.projectModulePath,
-      sourceHash: prepared?.sourceHash ?? requestBody.sourceHash,
-      projectSourceHash: prepared?.projectSourceHash ??
-        requestBody.projectSourceHash,
-    };
-    setModuleRunSnapshot({
-      ...runSnapshotBase,
-      state: "launching",
-    });
-
-    launchQueue.push(async (ctx) => {
-      try {
-        // Acceptance means queued, so every safety decision taken between the
-        // request and this turn is re-applied here rather than trusted from
-        // request time.
-        if (pendingLaunch.cancelled) {
-          publishCancelledLaunch(
-            requestBody.moduleId,
-            pendingLaunch,
-            "launchCancelled",
-          );
-          await log({
-            type: "launchCancelled",
-            moduleId: requestBody.moduleId,
-            generatedRunId: requestBody.generatedRunId,
-            reason: "cancelledBeforeStart",
-          });
-          return;
-        }
-
-        if (activeModules.has(requestBody.moduleId)) {
-          if (!requestBody.replaceRunning) {
-            // A run appeared between acceptance and execution and this launch
-            // never asked to replace it. It loses silently: any lifecycle
-            // snapshot written here would clobber `moduleRuns` for the run that
-            // is genuinely active, and that run's own snapshots keep clients
-            // converged.
-            await log({
-              type: "launchAborted",
-              moduleId: requestBody.moduleId,
-              generatedRunId: requestBody.generatedRunId,
-              reason: "moduleAlreadyRunning",
-            });
-            return;
-          }
-          await stopModule(requestBody.moduleId, "replaceBeforeLaunch");
-        }
-
-        const moduleUrl = appendImportQuery(
-          requestBody.transformedModuleUri,
-          "launch",
-          crypto.randomUUID(),
-        );
-        const importStartedAt = performance.now();
-        const mod = await import(moduleUrl) as {
-          runFunc?: (ctx: TimeContext) => Promise<void>;
-          default?: (ctx: TimeContext) => Promise<void>;
-          stop?: ModuleStopFunc;
-        };
-        await log({
-          type: "moduleImported",
-          moduleId: requestBody.moduleId,
-          generatedRunId: requestBody.generatedRunId,
-          durationMs: elapsedMs(importStartedAt),
-        });
-
-        // The import is the one long await inside this action, so a stop can
-        // land while it is pending. Checked once more before any user code runs.
-        if (pendingLaunch.cancelled) {
-          publishCancelledLaunch(
-            requestBody.moduleId,
-            pendingLaunch,
-            "launchCancelled",
-          );
-          await log({
-            type: "launchCancelled",
-            moduleId: requestBody.moduleId,
-            generatedRunId: requestBody.generatedRunId,
-            reason: "cancelledDuringImport",
-          });
-          return;
-        }
-
-        const runFunc = mod.runFunc ?? mod.default;
-        if (!runFunc) {
-          throw new Error(
-            `Generated module ${moduleUrl} does not export runFunc/default`,
-          );
-        }
-
-        const handle = ctx.branch(async (branchCtx) => {
-          setModuleRunSnapshot({ ...runSnapshotBase, state: "running" });
-          await log({
-            type: "moduleStarted",
-            moduleId: requestBody.moduleId,
-            generatedRunId: requestBody.generatedRunId,
-          });
-          let reason = "completed";
-          let errorMessage: string | undefined;
-          try {
-            await runFunc(branchCtx);
-          } catch (error) {
-            reason = isAbortError(error) ? "cancelled" : "error";
-            if (reason === "error") {
-              errorMessage = error instanceof Error
-                ? error.message
-                : String(error);
-              await log({
-                type: "moduleError",
-                moduleId: requestBody.moduleId,
-                generatedRunId: requestBody.generatedRunId,
-                message: errorMessage,
-              });
-            }
-          } finally {
-            clearModuleWaits(requestBody.moduleId);
-            const active = activeModules.get(requestBody.moduleId);
-            if (active?.runToken === runToken) {
-              activeModules.delete(requestBody.moduleId);
-              // Guarded, unlike clearModuleWaits: `ended` sticks, so a slow-dying
-              // previous branch must not end the signals a replacement run has
-              // already redeclared.
-              endSignalsForModule(requestBody.moduleId);
-              setModuleRunSnapshot({
-                ...runSnapshotBase,
-                state: reason === "error" ? "error" : "stopped",
-                ...(errorMessage ? { message: errorMessage } : {}),
-              });
-              await log({
-                type: "moduleStopped",
-                moduleId: requestBody.moduleId,
-                generatedRunId: requestBody.generatedRunId,
-                reason,
-              });
-            }
-          }
-        }, requestBody.moduleId);
-
-        activeModules.set(requestBody.moduleId, {
-          moduleId: requestBody.moduleId,
-          generatedRunId: requestBody.generatedRunId,
-          runToken,
-          transformedModuleUri: requestBody.transformedModuleUri,
-          projectModulePath: runSnapshotBase.projectModulePath,
-          sourceHash: runSnapshotBase.sourceHash,
-          projectSourceHash: runSnapshotBase.projectSourceHash,
-          manifest: prepared?.manifest ?? requestBody.manifest ?? null,
-          handle,
-          stopFunc: typeof mod.stop === "function" ? mod.stop : undefined,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        setModuleRunSnapshot({
-          ...runSnapshotBase,
-          state: "error",
-          message,
-        });
-        await log({
-          type: "moduleError",
-          moduleId: requestBody.moduleId,
-          generatedRunId: requestBody.generatedRunId,
-          message,
-        });
-      } finally {
-        // Ownership has already transferred to `activeModules` on the success
-        // path, so the module is never absent from both maps while startable.
-        // The identity check matters because a superseding request can have
-        // registered its own pending entry under this module ID by now.
-        if (pendingLaunches.get(requestBody.moduleId) === pendingLaunch) {
-          pendingLaunches.delete(requestBody.moduleId);
-        }
-      }
-    });
-
-    if (!parentContext) await log({ type: "launchQueuedBeforeParentReady" });
-  }
-
-  // The terminal snapshot an accepted-then-cancelled launch owes its client —
-  // but only while the `launching` entry it published is still the latest one.
-  // If anything has written since (a successor's `launching`, or the stop that
-  // cancelled this launch), that writer owns the run entry and this write would
-  // clobber it.
-  //
-  // Both halves of the test are load-bearing. The token rules out a successor's
-  // entry, which `generatedRunId` could not: a relaunch of an unchanged build
-  // reuses the ID. The state check rules out this launch's OWN terminal — a
-  // stop cancels the pending launch and publishes `stopped` under the same
-  // token, and the queued action then arrives and must not reopen it.
-  function publishCancelledLaunch(
-    moduleId: string,
-    pending: PendingLaunch,
-    message: string,
-  ): void {
-    const current = moduleRunSnapshots.get(moduleId);
-    if (!current) return;
-    if (current.runToken !== pending.runToken) return;
-    if (current.state !== "launching") return;
-    setModuleRunSnapshot({
-      ...current,
-      state: "stopped",
-      message,
-    });
-  }
-
-  // A queued launch has no branch to cancel and no active entry to tear down,
-  // so cancelling it is an intent flag plus that terminal snapshot.
-  async function cancelPendingLaunch(
-    moduleId: string,
-    pending: PendingLaunch,
-    reason: string,
-  ): Promise<void> {
-    pending.cancelled = true;
-    publishCancelledLaunch(moduleId, pending, reason);
-    await log({
-      type: "launchCancelled",
-      moduleId,
-      generatedRunId: pending.generatedRunId,
-      reason,
-    });
-  }
-
-  async function cancelPendingLaunches(reason: string): Promise<void> {
-    for (const [moduleId, pending] of [...pendingLaunches]) {
-      if (pending.cancelled) continue;
-      await cancelPendingLaunch(moduleId, pending, reason);
-    }
-  }
-
-  async function stopModule(moduleId: string, reason: string) {
-    const active = activeModules.get(moduleId);
-    if (!active) {
-      clearModuleWaits(moduleId);
-      const pending = pendingLaunches.get(moduleId);
-      if (pending && !pending.cancelled) {
-        await cancelPendingLaunch(moduleId, pending, reason);
-        return;
-      }
-      const previous = moduleRunSnapshots.get(moduleId);
-      if (previous?.state === "launching" || previous?.state === "running") {
-        setModuleRunSnapshot({
-          ...previous,
-          state: "stopped",
-          message: reason,
-        });
-      }
-      return;
-    }
-    await runModuleStopFunc(active, reason);
-    await teardownActiveModule(active, reason);
-  }
-
-  // Shared per-module teardown tail used by both graceful stop and panic. The
-  // only difference between the two paths is that panic skips runModuleStopFunc
-  // and passes its own reason/log type; the snapshot payload is identical.
-  async function teardownActiveModule(
-    active: ActiveModule,
-    reason: string,
-    opts: { logType?: string } = {},
-  ) {
-    // Cancelling the branch is unconditional: this handle is the run the caller
-    // asked to stop, whatever has happened to the module slot since.
-    active.handle.cancel();
-    // Everything below is slot-scoped, so it only applies while this record is
-    // still the module's active run. `stopModule` can await a `stop()` hook for
-    // up to two seconds, and a replacement can win the slot inside that window;
-    // deleting by key, ending signals, or writing a terminal snapshot then
-    // would retire the run that is currently playing. Object identity, not
-    // `generatedRunId`, because a relaunch of an unchanged build reuses the ID.
-    if (activeModules.get(active.moduleId) !== active) {
-      await log({
-        type: "supersededTeardown",
-        moduleId: active.moduleId,
-        generatedRunId: active.generatedRunId,
-        reason,
-      });
-      return;
-    }
-    activeModules.delete(active.moduleId);
-    clearModuleWaits(active.moduleId);
-    // Ephemeral entities end with the run that published them rather than
-    // silently freezing, so stop and panic both end this module's signals.
-    endSignalsForModule(active.moduleId);
-    setModuleRunSnapshot({
-      moduleId: active.moduleId,
-      generatedRunId: active.generatedRunId,
-      runToken: active.runToken,
-      state: "stopped",
-      projectModulePath: active.projectModulePath,
-      sourceHash: active.sourceHash,
-      projectSourceHash: active.projectSourceHash,
-      message: reason,
-    });
-    await log({
-      type: opts.logType ?? "moduleStopped",
-      moduleId: active.moduleId,
-      generatedRunId: active.generatedRunId,
-      reason,
-    });
-  }
-
-  async function runModuleStopFunc(active: ActiveModule, reason: string) {
-    if (!active.stopFunc) return;
-    try {
-      await withTimeout(
-        Promise.resolve(active.stopFunc()),
-        STOP_HOOK_TIMEOUT_MS,
-        `module ${active.moduleId} stop() timed out after ${STOP_HOOK_TIMEOUT_MS}ms`,
-      );
-      await log({
-        type: "moduleStopHookCompleted",
-        moduleId: active.moduleId,
-        generatedRunId: active.generatedRunId,
-        reason,
-      });
-    } catch (error) {
-      await log({
-        type: "moduleStopHookError",
-        moduleId: active.moduleId,
-        generatedRunId: active.generatedRunId,
-        reason,
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  async function stopAllModules(reason: string) {
-    await cancelPendingLaunches(reason);
-    await Promise.all(
-      [...activeModules.keys()].map((moduleId) => stopModule(moduleId, reason)),
+    // The engine owns the whole accept/queue/replace discipline; the server
+    // contributes only its prepared-run bookkeeping's build metadata.
+    await engine.launchModule(
+      requestBody,
+      preparedRuns.get(requestBody.generatedRunId),
     );
-  }
-
-  async function panicRuntime(reason: string) {
-    // Queued launches first: panic must not let one start after it.
-    await cancelPendingLaunches(reason);
-    for (const active of [...activeModules.values()]) {
-      await teardownActiveModule(active, reason, {
-        logType: "modulePanicStopped",
-      });
-    }
-    panicMidi();
   }
 }
 
@@ -2928,13 +2366,6 @@ function moduleIdFromPath(runtimePath: string): string {
   return normalizeProjectRuntimePath(runtimePath);
 }
 
-function appendImportQuery(uri: string, key: string, value: string): string {
-  const separator = uri.includes("?") ? "&" : "?";
-  return `${uri}${separator}${encodeURIComponent(key)}=${
-    encodeURIComponent(value)
-  }`;
-}
-
 async function hashText(text: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -2962,27 +2393,4 @@ function elapsedMs(startedAt: number): number {
 
 function sortedIds(values: Set<string> | undefined): string[] {
   return [...values ?? []].sort();
-}
-
-async function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  message: string,
-): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error &&
-    /aborted|context canceled/i.test(error.message);
 }

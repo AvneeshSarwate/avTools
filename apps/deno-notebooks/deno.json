@@ -42,6 +42,8 @@
     "gifenc": "npm:gifenc@1.0.3/dist/gifenc.esm.js",
     "@avtools/core-timing": "../../packages/core-timing/mod.ts",
     "@avtools/creative-algs": "../../packages/creative-algs/mod.ts",
+    "@avtools/livecode-engine": "../../packages/livecode-engine/mod.ts",
+    "@avtools/livecode-engine/": "../../packages/livecode-engine/",
     "@avtools/livecode-protocol": "../../packages/livecode-protocol/mod.ts",
     "@avtools/midi": "../../packages/midi/mod.ts",
     "@avtools/midi/browser": "../../packages/midi/browser.ts",
