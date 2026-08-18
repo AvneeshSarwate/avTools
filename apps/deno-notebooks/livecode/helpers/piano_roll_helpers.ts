@@ -10,7 +10,7 @@ import {
   getPianoRoll,
   setPianoRoll,
   type SetPianoRollOptions,
-} from "../visualizer/piano_roll_store.ts";
+} from "@avtools/livecode-engine/piano_roll_store.ts";
 import type {
   NoteDataInput,
   PianoRollData,

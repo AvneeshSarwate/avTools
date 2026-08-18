@@ -5,14 +5,14 @@ import { analyzeAndTransformTimedModule } from "../visualizer/analyze_transform.
 import {
   clearAllWaits,
   getActiveWaitsByModule,
-} from "../visualizer/runtime.ts";
+} from "@avtools/livecode-engine/runtime.ts";
 
 Deno.test("generated module imports and reports active wait ids", async () => {
   clearAllWaits();
   const tempDir = await Deno.makeTempDir({ prefix: "tcv-dynamic-import-" });
   try {
     const runtimeUrl =
-      new URL("../visualizer/runtime.ts", import.meta.url).href;
+      new URL("../../../../packages/livecode-engine/runtime.ts", import.meta.url).href;
     const sourceText = `
 import type { TimeContext } from "@avtools/core-timing";
 

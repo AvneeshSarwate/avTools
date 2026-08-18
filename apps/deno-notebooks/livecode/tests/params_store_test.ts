@@ -11,7 +11,7 @@ import {
   removeParams,
   sampleParamsChanges,
   setParamsValues,
-} from "../visualizer/params_store.ts";
+} from "@avtools/livecode-engine/params_store.ts";
 import type { ParamsEntity, ParamsValues } from "../visualizer/protocol.ts";
 
 function resetParams(): void {

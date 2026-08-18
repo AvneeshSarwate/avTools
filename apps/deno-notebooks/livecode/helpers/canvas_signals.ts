@@ -2,7 +2,7 @@ import {
   declareSignal,
   type DeclareSignalOptions,
   type SignalHandle,
-} from "../visualizer/signals_store.ts";
+} from "@avtools/livecode-engine/signals_store.ts";
 import type { SignalAnchor } from "../visualizer/protocol.ts";
 
 export type { DeclareSignalOptions, SignalAnchor, SignalHandle };
