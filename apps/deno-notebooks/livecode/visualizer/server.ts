@@ -11,7 +11,7 @@ import { pathToFileURL } from "node:url";
 import { panicMidi } from "../helpers/midi_helpers.ts";
 import { analyzeAndTransformTimedModule } from "./analyze_transform.ts";
 import { removePathBestEffort } from "./fs_utils.ts";
-import { createGeneratedRunId } from "./generated_run_id.ts";
+import { createGeneratedRunId } from "@avtools/livecode-engine/generated_run_id.ts";
 import type {
   ActiveWaitSnapshot,
   AddProjectModuleRequest,
@@ -66,21 +66,21 @@ import {
   createLivecodeEngine,
   type LivecodeEngine,
 } from "@avtools/livecode-engine";
-import type { SyncCollectedChanges } from "./sync_sources.ts";
+import type { SyncCollectedChanges } from "@avtools/livecode-engine/sync_sources.ts";
 import {
   allocateEntityDataPath,
   type DurableEntityTypeDescriptor,
   getDurableEntityType,
   listDurableEntityTypes,
-} from "./entity_registry.ts";
-import { makeParamsSnapshot, setParamsValues } from "./params_store.ts";
+} from "@avtools/livecode-engine/entity_registry.ts";
+import { makeParamsSnapshot, setParamsValues } from "@avtools/livecode-engine/params_store.ts";
 import {
   makePianoRollSnapshot,
   redoPianoRoll,
   setPianoRoll,
   undoPianoRoll,
-} from "./piano_roll_store.ts";
-import { makeSignalsSnapshot } from "./signals_store.ts";
+} from "@avtools/livecode-engine/piano_roll_store.ts";
+import { makeSignalsSnapshot } from "@avtools/livecode-engine/signals_store.ts";
 import {
   analyzeProjectShadow,
   buildProjectImportGraph,
@@ -89,7 +89,7 @@ import {
 import {
   clearModulePianoRollLookups,
   makeActiveWaitSnapshot,
-} from "./runtime.ts";
+} from "@avtools/livecode-engine/runtime.ts";
 
 interface PreparedRun {
   moduleId: string;
@@ -1356,7 +1356,7 @@ export async function createLivecodeVisualizerServer(
     state: ProjectState,
   ): Promise<ProjectMaterializeResult> {
     const generatedRunId = createGeneratedRunId();
-    const runtimeUrl = new URL("./runtime.ts", import.meta.url).href;
+    const runtimeUrl = new URL("../../../../packages/livecode-engine/runtime.ts", import.meta.url).href;
     const results = new Map<string, AnalyzeResponse>();
     const sourceHashes = new Map<string, string>();
     const sourceTexts = new Map<string, string>();
@@ -1576,7 +1576,7 @@ export async function createLivecodeVisualizerServer(
       shadowRoot: shadowDir,
       repoRoot: REPO_ROOT,
       denoConfigPath: join(REPO_ROOT, "deno.json"),
-      runtimeImport: new URL("./runtime.ts", import.meta.url).href,
+      runtimeImport: new URL("../../../../packages/livecode-engine/runtime.ts", import.meta.url).href,
     }).then((response) => {
       lastDiagnostics = { projectSourceHash, response };
       return response;
@@ -2146,7 +2146,7 @@ export async function createLivecodeVisualizerServer(
     const generatedPath = join(generatedDir, `${generatedRunId}.ts`);
     await Deno.writeTextFile(modulePath, requestBody.sourceText);
 
-    const runtimeUrl = new URL("./runtime.ts", import.meta.url).href;
+    const runtimeUrl = new URL("../../../../packages/livecode-engine/runtime.ts", import.meta.url).href;
     const result = analyzeAndTransformTimedModule({
       moduleId: requestBody.moduleId,
       sourceVersion: requestBody.sourceVersion,

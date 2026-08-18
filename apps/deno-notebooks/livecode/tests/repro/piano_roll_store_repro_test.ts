@@ -10,7 +10,7 @@ import { assert, assertEquals } from "jsr:@std/assert@1";
 import {
   getPianoRoll,
   setPianoRoll,
-} from "../../visualizer/piano_roll_store.ts";
+} from "@avtools/livecode-engine/piano_roll_store.ts";
 import type { NoteDataInput } from "../../visualizer/protocol.ts";
 
 Deno.test("BUG P1: stored notes alias caller-owned nested objects (mpePitch mutates store silently)", () => {

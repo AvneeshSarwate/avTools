@@ -16,11 +16,11 @@ import {
   enterWait,
   exitWait,
   recordPianoRollLookup,
-} from "../visualizer/runtime.ts";
+} from "@avtools/livecode-engine/runtime.ts";
 import {
   createModuleLookupsSyncSource,
   createModuleWaitsSyncSource,
-} from "../visualizer/sync_sources.ts";
+} from "@avtools/livecode-engine/sync_sources.ts";
 import type {
   ActiveWaitSnapshot,
   AnalyzeSuccess,

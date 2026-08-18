@@ -21,7 +21,7 @@ import type {
   WaitCallsiteKind,
   WaitCallsiteManifestEntry,
 } from "./protocol.ts";
-import { createGeneratedRunId } from "./generated_run_id.ts";
+import { createGeneratedRunId } from "@avtools/livecode-engine/generated_run_id.ts";
 
 const TIME_CONTEXT_METHODS = new Set([
   "wait",
@@ -48,7 +48,7 @@ const PIANO_ROLL_LOOKUP_IMPORT_ALIASES = new Set([
 ]);
 const PIANO_ROLL_LOOKUP_SOURCE_SUFFIXES = [
   "/helpers/piano_roll_helpers.ts",
-  "/visualizer/piano_roll_store.ts",
+  "/livecode-engine/piano_roll_store.ts",
 ];
 const PIANO_ROLL_LOOKUP_SOURCE_BASENAMES = new Set([
   "piano_roll_helpers.ts",

@@ -6,7 +6,7 @@ import {
   getDurableEntityType,
   listDurableEntityTypes,
   registerBuiltinDurableEntityTypes,
-} from "../visualizer/entity_registry.ts";
+} from "@avtools/livecode-engine/entity_registry.ts";
 import {
   clearPianoRollStore,
   collectPianoRollChanges,
@@ -16,12 +16,12 @@ import {
   seedDemoPianoRoll,
   setPianoRoll,
   undoPianoRoll,
-} from "../visualizer/piano_roll_store.ts";
+} from "@avtools/livecode-engine/piano_roll_store.ts";
 import {
   clearParamsStore,
   getParams,
   registerParams,
-} from "../visualizer/params_store.ts";
+} from "@avtools/livecode-engine/params_store.ts";
 import type {
   NoteDataInput,
   SavedParamsEntity,

@@ -22,7 +22,7 @@ import type {
 } from "./protocol.ts";
 import { analyzeAndTransformTimedModule } from "./analyze_transform.ts";
 import { removePathBestEffort } from "./fs_utils.ts";
-import { createGeneratedRunId } from "./generated_run_id.ts";
+import { createGeneratedRunId } from "@avtools/livecode-engine/generated_run_id.ts";
 
 interface ProjectSourceModule extends ProjectModuleRecord {
   absoluteSourcePath: string;
