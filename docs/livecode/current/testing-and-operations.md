@@ -104,6 +104,11 @@ detach/re-attach:
 node livecode/tests/remote_engine.e2e.mjs
 ```
 
+The tldraw E2E itself also runs against a remote engine:
+`LIVECODE_E2E_ENGINE=remote` starts its server with `--engine remote` and
+opens an engine tab before any case runs. The whole suite passes in both
+modes; the client under test is identical.
+
 From `apps/livecode-tldraw`:
 
 ```sh

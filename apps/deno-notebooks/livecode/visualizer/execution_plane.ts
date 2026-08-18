@@ -151,6 +151,10 @@ export function createRemoteExecutionPlane(
       options.onEngineResets(message.resets ?? {});
       return;
     }
+    if (message.type === "engineLog") {
+      void options.log(message.entry ?? {});
+      return;
+    }
     if (message.type === "engineSync") {
       if (Array.isArray(message.changes) && message.changes.length > 0) {
         options.onSyncChanges(message.changes);
