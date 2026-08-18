@@ -498,7 +498,15 @@ edit changing a running module, entity CRUD with status codes, stop and panic
 semantics, and detach/re-attach resets. The visualizer shims from phase 1
 were subsequently removed — everything imports the package directly.
 
-The acceptance proof: **the complete tldraw client E2E passes unchanged in
+**Stage 2 is implemented and E2E-tested too**: `--ui-dist` serves the built
+tldraw client at the server origin, and the client's `sync=broadcast`
+transport (a `SyncPort` seam in `syncRuntime.tsx`) reads the engine tab's
+BroadcastChannel sync host directly, so the 33 ms observation loop never
+crosses the network — exactly the WAN-egress split the Cloudflare topology
+needs. The full tldraw E2E passes in this served/broadcast topology
+(`LIVECODE_E2E_UI=served`).
+
+The stage-1 acceptance proof: **the complete tldraw client E2E passes unchanged in
 remote mode** (`LIVECODE_E2E_ENGINE=remote`, which starts the server with
 `--engine remote` and opens an engine tab before any case) — run lifecycle
 including Replace and the straddle, params and signal tiers, and the full

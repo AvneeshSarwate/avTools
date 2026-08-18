@@ -40,14 +40,23 @@ broadcast timer. The package is portable TypeScript with injected capabilities
   stripping so relative project imports keep their stable URLs. The
   deprecated `/runtime/snapshots` shim is local-mode-only.
 
+With `--ui-dist <path>` the server also serves a **built tldraw client** at
+its own origin (static fallback after every API route). Combined with the
+remote engine this puts UI tabs and the engine tab on one origin, which is
+what enables the client's `sync=broadcast` transport: the UI reads the engine
+tab's BroadcastChannel sync host directly — the 33 ms hot path never touches
+the network — while writes, analysis, project, and LSP stay HTTP/WS against
+the same origin. The full tldraw E2E passes in this topology
+(`LIVECODE_E2E_UI=served`), in the relayed remote topology, and locally.
+
 The server keeps everything host-specific either way — HTTP/WS transports,
 project files, analysis, prepared-run bookkeeping, LSP, MIDI backend.
 
-Every moved module keeps a **one-line re-export shim at its old
-`visualizer/` path** (the `protocol.ts` precedent), so existing imports, the
-`piano-roll-store` alias, tests, and — critically — generated code's stable
-`visualizer/runtime.ts` URL all resolve unchanged, and the runtime singletons
-stay one-per-isolate.
+There are no re-export shims at the old `visualizer/` paths: helpers, the
+server, tests, the `piano-roll-store` alias, and the generated-code runtime
+URL (`packages/livecode-engine/runtime.ts` by file URL locally,
+`/engine/runtime.js` for a browser engine) all point at the package
+directly.
 
 ## File map
 
@@ -62,45 +71,44 @@ stay one-per-isolate.
   `@avtools/livecode-protocol`, so server imports keep reading as
   `./protocol.ts`. It holds no types of its own; wire types go in the package,
   server-only types in the module that owns them.
-- `packages/livecode-engine/sync_sources.ts` (shimmed at
-  `visualizer/sync_sources.ts`): the `SyncSource` registry the broadcast timer
+- `packages/livecode-engine/sync_sources.ts`: the `SyncSource` registry the broadcast timer
   walks — one `collectChanges()`/`snapshotAll()` pair per entity kind, plus the
   shared engine for the module-keyed ephemeral kinds.
 - `visualizer/analyze_transform.ts`: per-module parsing, diagnostics,
   instrumentation, manifest generation, and default-export normalization.
 - `visualizer/project_shadow_analysis.ts`: project import graph, temporary
   transformed shadow tree, `deno check`, and dependency diagnostics.
-- `packages/livecode-engine/runtime.ts` (shimmed at `visualizer/runtime.ts`,
-  which is the URL generated code imports): process-global instrumentation
+- `packages/livecode-engine/runtime.ts` (the module generated code imports
+  for its instrumentation helpers): process-global instrumentation
   state imported by generated modules, plus the per-module dirty hints its
   wait/lookup sync sources drain.
-- `packages/livecode-engine/piano_roll_store.ts` (shimmed at
-  `visualizer/piano_roll_store.ts`, the `piano-roll-store` alias target): named
+- `packages/livecode-engine/piano_roll_store.ts` (the `piano-roll-store` alias target): named
   piano rolls as the third typed wrapper over the entity store — per-roll
   undo/redo in a side structure, compare-and-set, history labels, never-throw
   cloning, deletion with a remembered deleted-defaults set, and demo seeding.
-- `packages/livecode-engine/entity_store.ts` (shimmed): generic
+- `packages/livecode-engine/entity_store.ts`: generic
   `(type, name)`-keyed records with revisions, per-name monotonic revision
   floors, no-op caching, never-throw serialization, and the per-type
   **changed-name set** that is the broadcast gate. All three typed stores sit
   on it.
-- `packages/livecode-engine/params_store.ts` (shimmed): params entities as the
+- `packages/livecode-engine/params_store.ts`: params entities as the
   first typed wrapper over the entity store — declaration, recursive
   reconcile, leaf merges, create / duplicate / remove / load, and the sampler
   that adopts code writes.
-- `packages/livecode-engine/signals_store.ts` (shimmed): ephemeral signals as
+- `packages/livecode-engine/signals_store.ts`: ephemeral signals as
   the second typed wrapper over the entity store — declaration returning a
   handle, sticky ending, ownership stamping, per-module ending, and the
   sampler that adopts code writes and stamps them with logical time.
   Deliberately **not** registered in `entity_registry.ts`; that single
   omission is the whole ephemeral class.
-- `packages/livecode-engine/entity_registry.ts` (shimmed): one descriptor
+- `packages/livecode-engine/entity_registry.ts`: one descriptor
   interface over every durable entity type, so generic entity actions and
   project persistence never have to know which type a name addresses. It also
   owns the entity-name-to-filename encoding.
 - `visualizer/lsp_proxy.ts`: per-session proxy process that creates a synthetic
   workspace and runs `deno lsp -q`.
-- `visualizer/generated_run_id.ts`: generated-build ID creation.
+- `packages/livecode-engine/generated_run_id.ts`: generated-build ID
+  creation.
 - `visualizer/fs_utils.ts`: never-throwing best-effort recursive cleanup.
 - `helpers/piano_roll_helpers.ts`: livecode-facing clip conversion, named store
   access, and `TimeContext`-scheduled playback.
@@ -112,8 +120,10 @@ stay one-per-isolate.
   helper, a thin typed delegate to `declareSignal`. Like `canvas_params.ts` it
   has no server dependency, so a module using it also runs under a plain
   `deno run` — where its signals simply have no owner and never auto-end.
-- `helpers/midi_helpers.ts`: eager MIDI enumeration/open, safe send wrappers,
-  sounding-note registry, and panic.
+- `helpers/midi_helpers.ts`: the livecode MIDI surface over the isomorphic
+  `@avtools/midi` package — lazy idempotent `initMidi()` (run eagerly at
+  import only on the native backend; browser hosts call it from a user
+  gesture), safe send wrappers, sounding-note registry, and panic.
 - `helpers/midi_math.ts`: side-effect-free MIDI clamping.
 - `tests/`: unit, protocol, LSP, project, p5gpu, repro/regression, and CLI
   tests. See `testing-and-operations.md` for the actual task matrix.

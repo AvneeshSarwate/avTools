@@ -106,8 +106,11 @@ node livecode/tests/remote_engine.e2e.mjs
 
 The tldraw E2E itself also runs against a remote engine:
 `LIVECODE_E2E_ENGINE=remote` starts its server with `--engine remote` and
-opens an engine tab before any case runs. The whole suite passes in both
-modes; the client under test is identical.
+opens an engine tab before any case runs. Adding `LIVECODE_E2E_UI=served`
+(requires remote and a prior `npm run build`) skips Vite entirely: the server
+serves `dist/` at its own origin and the page uses the `sync=broadcast`
+transport, reading the engine tab's BroadcastChannel directly. The whole
+suite passes in all three modes; the client under test is identical.
 
 From `apps/livecode-tldraw`:
 

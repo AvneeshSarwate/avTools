@@ -295,6 +295,32 @@ function emptySyncState(): SyncState {
   };
 }
 
+/**
+ * How this page receives watched state. "ws" is the default `/sync` socket;
+ * "broadcast" (URL param `sync=broadcast`) reads the engine tab's
+ * BroadcastChannel sync host on the same origin — stage 2 of
+ * docs/livecode/history/browser-engine-plan-2026-08.md — and never opens the
+ * socket. Writes and every other route stay HTTP against `serverBaseUrl`.
+ */
+const SYNC_TRANSPORT: "ws" | "broadcast" =
+  new URLSearchParams(window.location.search).get("sync") === "broadcast"
+    ? "broadcast"
+    : "ws";
+const SYNC_BROADCAST_CHANNEL = "livecode-sync";
+
+/** The one thing a transport must offer the subscribe/apply path. */
+interface SyncPort {
+  isOpen(): boolean;
+  sendMessage(message: SyncSubscribeMessage): void;
+}
+
+function webSocketPort(socket: WebSocket): SyncPort {
+  return {
+    isOpen: () => socket.readyState === WebSocket.OPEN,
+    sendMessage: (message) => socket.send(JSON.stringify(message)),
+  };
+}
+
 export function SyncRuntimeProvider({ children }: PropsWithChildren) {
   const initialServerUrl =
     new URLSearchParams(window.location.search).get("serverBaseUrl") ??
@@ -338,17 +364,16 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
     rafRef.current = window.requestAnimationFrame(flush);
   }, [flush]);
 
-  const subscribe = useCallback((socket: WebSocket) => {
-    if (socket.readyState !== WebSocket.OPEN) return;
-    const message: SyncSubscribeMessage = {
+  const subscribe = useCallback((port: SyncPort) => {
+    if (!port.isOpen()) return;
+    port.sendMessage({
       type: "subscribe",
       entityTypes: [...SYNC_ENTITY_TYPES],
-    };
-    socket.send(JSON.stringify(message));
+    });
   }, []);
 
   const applyMessage = useCallback(
-    (message: SyncMessage, socket: WebSocket) => {
+    (message: SyncMessage, port: SyncPort) => {
       const previousSeq = lastSeqRef.current;
       lastSeqRef.current = message.seq;
 
@@ -403,12 +428,56 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
       // Gap detection last, so this message's own content still lands: the
       // resubscribe's resets replace it wholesale a moment later anyway.
       if (previousSeq !== null && message.seq !== previousSeq + 1) {
-        subscribe(socket);
+        subscribe(port);
+      } else if (previousSeq === null && !message.resets) {
+        // Joining a broadcast mid-stream: the first thing heard can be plain
+        // changes (or another tab's reply), so ask for our own resets. A
+        // fresh WebSocket never hits this — its first message answers our
+        // subscribe and carries resets.
+        subscribe(port);
       }
     },
     [scheduleFlush, subscribe],
   );
 
+  const createBroadcastController =
+    useCallback((): ReconnectingSocketController => {
+      let channel: BroadcastChannel | null = null;
+      return {
+        socket: null,
+        connect: () => {
+          if (channel) return;
+          const active = new BroadcastChannel(SYNC_BROADCAST_CHANNEL);
+          channel = active;
+          const port: SyncPort = {
+            isOpen: () => channel === active,
+            sendMessage: (message) => active.postMessage(message),
+          };
+          active.onmessage = (event) => {
+            const message = event.data as SyncMessage | undefined;
+            if (message?.type !== "sync") return;
+            applyMessage(message, port);
+          };
+          // A channel has no open handshake: it is "open" the moment it
+          // exists, and it never closes on its own. Engine restarts surface
+          // as a seq regression, which the gap path answers by resubscribing.
+          openRef.current = true;
+          lastSeqRef.current = null;
+          subscribe(port);
+          setConnectionStatus("open");
+          setConnectionError(null);
+          for (const listener of [...listenersRef.current]) listener.onOpen?.();
+        },
+        close: () => {
+          channel?.close();
+          channel = null;
+        },
+      };
+    }, [applyMessage, subscribe]);
+
+  if (controllerRef.current === null && SYNC_TRANSPORT === "broadcast") {
+    controllerRef.current = createBroadcastController();
+  }
   if (controllerRef.current === null) {
     controllerRef.current = createReconnectingSocket({
       makeUrl: () => serverWebSocketUrl(serverBaseUrlRef.current, "/sync"),
@@ -417,7 +486,7 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
         // A fresh socket has no subscriptions and is owed nothing, so the
         // resubscribe is also the full rehydration this client needs.
         lastSeqRef.current = null;
-        subscribe(socket);
+        subscribe(webSocketPort(socket));
         setConnectionStatus("open");
         setConnectionError(null);
         for (const listener of [...listenersRef.current]) listener.onOpen?.();
@@ -431,7 +500,7 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
           return;
         }
         if (message.type !== "sync") return;
-        applyMessage(message, socket);
+        applyMessage(message, webSocketPort(socket));
       },
       onClose: () => {
         openRef.current = false;
