@@ -1,49 +1,79 @@
 # Current Deno Server Architecture
 
-Status: checked against `apps/deno-notebooks/livecode` — most recently
-`visualizer/server.ts`, `visualizer/sync_sources.ts`, and the four store
-modules — as of 2026-08-13; first audited 2026-07-21.
+Status: checked against `apps/deno-notebooks/livecode` and
+`packages/livecode-engine` — most recently the execution-plane extraction into
+that package — as of 2026-08-18; first audited 2026-07-21.
+
+## The engine package split
+
+The execution plane lives in `packages/livecode-engine` (the first slice of
+`docs/livecode/history/browser-engine-plan-2026-08.md`): the entity stores,
+sync sources, runtime instrumentation singletons, and
+`engine.ts`'s `createLivecodeEngine` — the parent `TimeContext` loop, launch
+queue, pending-launch window, active modules, run records, and the one
+broadcast timer. The package is portable TypeScript with injected capabilities
+(`importModule`, `panicMidi`, the per-tick `onSyncTick` sink) and is gated by
+`browser_target_check_test.ts` to stay typecheckable under a browser lib.
+
+`visualizer/server.ts` is its Deno host: it constructs one engine, forwards
+runtime routes to it, and keeps everything host-specific — HTTP/WS transports,
+project files, analysis, prepared-run bookkeeping, LSP, MIDI backend.
+
+Every moved module keeps a **one-line re-export shim at its old
+`visualizer/` path** (the `protocol.ts` precedent), so existing imports, the
+`piano-roll-store` alias, tests, and — critically — generated code's stable
+`visualizer/runtime.ts` URL all resolve unchanged, and the runtime singletons
+stay one-per-isolate.
 
 ## File map
 
 - `visualizer/main.ts`: CLI parsing, server creation, SIGINT/SIGTERM shutdown.
 - `visualizer/server.ts`: HTTP/WebSocket routing, session directories, project
-  state, prepared runs, launch queue, run records, the one broadcast timer and
-  its fan-out, LSP server, client command forwarding, and cleanup.
+  state, prepared runs, the engine instance and its tick fan-out, LSP server,
+  client command forwarding, and cleanup.
+- `packages/livecode-engine/engine.ts`: `createLivecodeEngine` — launch queue,
+  pending launches, active-module lifecycle, run records, parent loop, root
+  clock registration, sync-source registry, and the one broadcast timer.
 - `visualizer/protocol.ts`: a one-line re-export of
   `@avtools/livecode-protocol`, so server imports keep reading as
   `./protocol.ts`. It holds no types of its own; wire types go in the package,
   server-only types in the module that owns them.
-- `visualizer/sync_sources.ts`: the `SyncSource` registry the broadcast timer
+- `packages/livecode-engine/sync_sources.ts` (shimmed at
+  `visualizer/sync_sources.ts`): the `SyncSource` registry the broadcast timer
   walks — one `collectChanges()`/`snapshotAll()` pair per entity kind, plus the
   shared engine for the module-keyed ephemeral kinds.
 - `visualizer/analyze_transform.ts`: per-module parsing, diagnostics,
   instrumentation, manifest generation, and default-export normalization.
 - `visualizer/project_shadow_analysis.ts`: project import graph, temporary
   transformed shadow tree, `deno check`, and dependency diagnostics.
-- `visualizer/runtime.ts`: process-global instrumentation state imported by
-  generated modules, plus the per-module dirty hints its wait/lookup sync
-  sources drain.
-- `visualizer/piano_roll_store.ts`: named piano rolls as the third typed wrapper
-  over the entity store — per-roll undo/redo in a side structure,
-  compare-and-set, history labels, never-throw cloning, deletion with a
-  remembered deleted-defaults set, and demo seeding.
-- `visualizer/entity_store.ts`: generic `(type, name)`-keyed records with
-  revisions, per-name monotonic revision floors, no-op caching, never-throw
-  serialization, and the per-type **changed-name set** that is the broadcast
-  gate. All three typed stores sit on it.
-- `visualizer/params_store.ts`: params entities as the first typed wrapper over
-  the entity store — declaration, recursive reconcile, leaf merges, create /
-  duplicate / remove / load, and the sampler that adopts code writes.
-- `visualizer/signals_store.ts`: ephemeral signals as the second typed wrapper
-  over the entity store — declaration returning a handle, sticky ending,
-  ownership stamping, per-module ending, and the sampler that adopts code
-  writes and stamps them with logical time. Deliberately **not** registered in
-  `entity_registry.ts`; that single omission is the whole ephemeral class.
-- `visualizer/entity_registry.ts`: one descriptor interface over every durable
-  entity type, so generic entity actions and project persistence never have to
-  know which type a name addresses. It also owns the entity-name-to-filename
-  encoding.
+- `packages/livecode-engine/runtime.ts` (shimmed at `visualizer/runtime.ts`,
+  which is the URL generated code imports): process-global instrumentation
+  state imported by generated modules, plus the per-module dirty hints its
+  wait/lookup sync sources drain.
+- `packages/livecode-engine/piano_roll_store.ts` (shimmed at
+  `visualizer/piano_roll_store.ts`, the `piano-roll-store` alias target): named
+  piano rolls as the third typed wrapper over the entity store — per-roll
+  undo/redo in a side structure, compare-and-set, history labels, never-throw
+  cloning, deletion with a remembered deleted-defaults set, and demo seeding.
+- `packages/livecode-engine/entity_store.ts` (shimmed): generic
+  `(type, name)`-keyed records with revisions, per-name monotonic revision
+  floors, no-op caching, never-throw serialization, and the per-type
+  **changed-name set** that is the broadcast gate. All three typed stores sit
+  on it.
+- `packages/livecode-engine/params_store.ts` (shimmed): params entities as the
+  first typed wrapper over the entity store — declaration, recursive
+  reconcile, leaf merges, create / duplicate / remove / load, and the sampler
+  that adopts code writes.
+- `packages/livecode-engine/signals_store.ts` (shimmed): ephemeral signals as
+  the second typed wrapper over the entity store — declaration returning a
+  handle, sticky ending, ownership stamping, per-module ending, and the
+  sampler that adopts code writes and stamps them with logical time.
+  Deliberately **not** registered in `entity_registry.ts`; that single
+  omission is the whole ephemeral class.
+- `packages/livecode-engine/entity_registry.ts` (shimmed): one descriptor
+  interface over every durable entity type, so generic entity actions and
+  project persistence never have to know which type a name addresses. It also
+  owns the entity-name-to-filename encoding.
 - `visualizer/lsp_proxy.ts`: per-session proxy process that creates a synthetic
   workspace and runs `deno lsp -q`.
 - `visualizer/generated_run_id.ts`: generated-build ID creation.
@@ -73,26 +103,27 @@ modules — as of 2026-08-13; first audited 2026-07-21.
   (`{ socket, subscriptions, seq }`);
 - `sockets`: the deprecated `/runtime/snapshots` shim's socket set;
 - a map of browser control sockets and pending commands;
-- one `SyncSourceRegistry` and the one `setInterval` broadcast timer that walks
-  it;
-- active modules and their `TimeContext` branch handles;
-- pending launches: one accepted-but-not-started run per module, with its
-  run token and cancellation flag;
-- `moduleRunSnapshots`: the latest run record per module, plus `dirtyRunModules`
-  — the module ids whose record changed since the last collect;
-- prepared runs plus a per-module pruning index;
-- a FIFO launch-action array drained by one parent `TimeContext` loop;
+- one **engine instance** (`createLivecodeEngine`), which itself owns the
+  `SyncSourceRegistry`, the one broadcast timer, active modules and their
+  `TimeContext` branch handles, pending launches (one
+  accepted-but-not-started run per module, with its run token and
+  cancellation flag), `moduleRunSnapshots` plus `dirtyRunModules`, and the
+  FIFO launch-action array drained by one parent `TimeContext` loop;
+- prepared runs plus a per-module pruning index (build metadata is
+  coordination-plane state; the launch route passes the matching prepared
+  entry into `engine.launchModule`);
 - one global current project for the server instance, including the compact
   entity JSON its last save or open recorded;
 - cached/in-flight project diagnostics;
 - an LSP WebSocket process manager with at most four proxy processes.
 
-`visualizer/runtime.ts` and `entity_store.ts` (with the piano-roll, params, and
-signal entities inside it) are Deno module singletons, not fields of this
-server object. They are shared by every generated module and would also be
-shared by multiple server objects in one isolate. Run records are the exception
-— they live on the server object, which is why the run sync source takes its
-accessors as constructor dependencies instead of importing a store.
+`runtime.ts` and `entity_store.ts` (with the piano-roll, params, and signal
+entities inside it) are module singletons in the engine package, not fields of
+the server or engine object. They are shared by every generated module and
+would also be shared by multiple server objects in one isolate. Run records are
+the exception — they live on the engine object created per server, which is
+why the run sync source takes its accessors as constructor dependencies
+instead of importing a store.
 
 ## Session directories
 
@@ -355,14 +386,23 @@ moved.
 
 ## Sync sources and the one broadcast tick
 
-There is exactly **one** timer in the server, at `SNAPSHOT_TICK_MS = 33`, and
-exactly one walk over the sources per tick:
+There is exactly **one** timer per engine, at 33 ms, and exactly one walk over
+the sources per tick. The timer lives in `createLivecodeEngine`; the host's
+sink receives the single collect and fans it out:
 
 ```ts
+// engine.ts
 const broadcastTimer = setInterval(() => {
-  broadcastSyncChanges(syncSources.collectAll());
+  try {
+    deps.onSyncTick(syncSources.collectAll());
+  } catch (error) { /* logged as broadcastTickError */ }
+}, deps.snapshotTickMs ?? 33);
+
+// server.ts, the Deno host's sink
+onSyncTick: (collected) => {
+  broadcastSyncChanges(collected);
   broadcastLegacyRuntimeSnapshot();
-}, SNAPSHOT_TICK_MS);
+},
 ```
 
 A thrown error inside the tick is caught and logged as `broadcastTickError`, so
@@ -470,11 +510,12 @@ consumes, so keeping it costs the sync path nothing.
 
 ### Shutdown
 
-`close()` clears the one broadcast timer, unregisters the root time context
-(a cancelled clock must not keep stamping samples), closes the shim sockets, the
-`/sync` sockets, and the control sockets, fails every pending client command,
-stops all modules, panics MIDI, cancels the parent context, shuts down the LSP
-proxies, and shuts down the HTTP server.
+`close()` closes the shim sockets, the `/sync` sockets, and the control
+sockets, fails every pending client command, then calls `engine.close()` —
+which clears the one broadcast timer, unregisters the root time context (a
+cancelled clock must not keep stamping samples), stops all modules, panics
+MIDI, and cancels the parent context — and finally shuts down the LSP proxies
+and the HTTP server.
 
 ## Project diagnostics
 
