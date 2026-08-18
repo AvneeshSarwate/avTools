@@ -5,6 +5,8 @@
 // full-URL variants; those have a different signature and error text.
 
 import type {
+  EngineEntityActionResult,
+  EngineOp,
   EntityMutationSuccess,
   ProjectSaveResponse,
   ProjectStatusResponse,
@@ -13,6 +15,71 @@ import type {
 /** Wire ids of the registered durable entity types. */
 export const PIANO_ROLL_ENTITY_TYPE = "pianoRoll";
 export const PARAMS_ENTITY_TYPE = "params";
+
+/**
+ * "broadcast" routes entity/roll/params actions over the engine tab's
+ * BroadcastChannel (URL param `actions=broadcast`) instead of HTTP — the
+ * serverless baked topology, where there is no server to POST to. Everything
+ * else (analysis, project, LSP) is server-only and simply absent there.
+ */
+export const ACTIONS_TRANSPORT: "http" | "broadcast" =
+  new URLSearchParams(window.location.search).get("actions") === "broadcast"
+    ? "broadcast"
+    : "http";
+const ACTIONS_CHANNEL = "livecode-actions";
+const ACTION_TIMEOUT_MS = 10_000;
+
+/** One request/response round trip on the actions channel. The engine host
+ * answers with the same `engineResult` envelope the server uplink uses. */
+export function broadcastEngineAction(op: EngineOp): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const channel = new BroadcastChannel(ACTIONS_CHANNEL);
+    const requestId = crypto.randomUUID();
+    const timer = window.setTimeout(() => {
+      channel.close();
+      reject(
+        new Error(
+          `engine action ${op.kind} timed out (is the engine tab open?)`,
+        ),
+      );
+    }, ACTION_TIMEOUT_MS);
+    channel.onmessage = (event) => {
+      const message = event.data as
+        | { type?: string; requestId?: string; ok?: boolean; body?: unknown; error?: string }
+        | undefined;
+      if (message?.type !== "engineResult" || message.requestId !== requestId) {
+        return;
+      }
+      window.clearTimeout(timer);
+      channel.close();
+      if (message.ok) resolve(message.body);
+      else reject(new Error(message.error ?? "engine action failed"));
+    };
+    channel.postMessage({ type: "engineRequest", requestId, op });
+  });
+}
+
+/** Perform one engine action over the configured transport. */
+export async function engineAction<T>(
+  op: EngineOp,
+  serverBaseUrl: string,
+  httpPath: string,
+  httpBody: unknown,
+): Promise<T> {
+  if (ACTIONS_TRANSPORT === "broadcast") {
+    return await broadcastEngineAction(op) as T;
+  }
+  return await postServerJson<T>(serverBaseUrl, httpPath, httpBody);
+}
+
+function entityActionResult(
+  result: EngineEntityActionResult,
+): EntityMutationSuccess {
+  if (!result.ok || !result.entity) {
+    throw new Error(result.error ?? "entity action failed");
+  }
+  return { ok: true, entity: result.entity };
+}
 
 export function serverWebSocketUrl(
   serverBaseUrl: string,
@@ -56,37 +123,61 @@ export async function postServerJson<T>(
 // error }` body, so the throw above already carries the server's wording;
 // callers surface it rather than re-deriving one.
 
-export function createEntity(
+export async function createEntity(
   serverBaseUrl: string,
   type: string,
   name: string,
 ): Promise<EntityMutationSuccess> {
-  return postServerJson<EntityMutationSuccess>(
+  if (ACTIONS_TRANSPORT === "broadcast") {
+    return entityActionResult(
+      await broadcastEngineAction({
+        kind: "entityCreate",
+        request: { type, name },
+      }) as EngineEntityActionResult,
+    );
+  }
+  return await postServerJson<EntityMutationSuccess>(
     serverBaseUrl,
     "/entities/create",
     { type, name },
   );
 }
 
-export function duplicateEntity(
+export async function duplicateEntity(
   serverBaseUrl: string,
   type: string,
   name: string,
   targetName: string,
 ): Promise<EntityMutationSuccess> {
-  return postServerJson<EntityMutationSuccess>(
+  if (ACTIONS_TRANSPORT === "broadcast") {
+    return entityActionResult(
+      await broadcastEngineAction({
+        kind: "entityDuplicate",
+        request: { type, name, targetName },
+      }) as EngineEntityActionResult,
+    );
+  }
+  return await postServerJson<EntityMutationSuccess>(
     serverBaseUrl,
     "/entities/duplicate",
     { type, name, targetName },
   );
 }
 
-export function deleteEntity(
+export async function deleteEntity(
   serverBaseUrl: string,
   type: string,
   name: string,
 ): Promise<EntityMutationSuccess> {
-  return postServerJson<EntityMutationSuccess>(
+  if (ACTIONS_TRANSPORT === "broadcast") {
+    return entityActionResult(
+      await broadcastEngineAction({
+        kind: "entityDelete",
+        request: { type, name },
+      }) as EngineEntityActionResult,
+    );
+  }
+  return await postServerJson<EntityMutationSuccess>(
     serverBaseUrl,
     "/entities/delete",
     { type, name },

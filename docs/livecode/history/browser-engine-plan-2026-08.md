@@ -498,6 +498,25 @@ edit changing a running module, entity CRUD with status codes, stop and panic
 semantics, and detach/re-attach resets. The visualizer shims from phase 1
 were subsequently removed — everything imports the package directly.
 
+**Setup A (the bake) is implemented and E2E-tested.**
+`livecode/browser_host/bake_project.ts` turns a project into a fully static
+artifact: the engine host assets, every module analyzer-transformed and
+type-stripped with relative `.ts` specifiers rewritten to `.js` (AST
+positions, not text patterns), the project's durable-entity data tree as
+seeds, and a copied UI dist — with `baked.json` telling the engine tab to
+load the seeds and auto-launch every module at boot. The UI opens with
+`?serverBaseUrl=none&sync=broadcast&actions=broadcast`: watching arrives on
+the BroadcastChannel sync host, and writes (roll edits, undo/redo, params,
+entity CRUD) round-trip on a broadcast actions channel carrying the same
+`EngineOp` envelope — no server process exists anywhere.
+`livecode/tests/baked_project.e2e.mjs` proves it against a dumb static file
+server: seeds and write-backs visible in the UI, an owned signal advancing,
+entity create/delete over the actions channel, and a params write changing
+the running module. Not yet in the bake: project-shaped UI (code shapes and
+saved canvas views come from server project routes today — a baked UI starts
+from the default canvas), and saves (export-only per decision 5; nothing
+implements export yet).
+
 **Stage 2 is implemented and E2E-tested too**: `--ui-dist` serves the built
 tldraw client at the server origin, and the client's `sync=broadcast`
 transport (a `SyncPort` seam in `syncRuntime.tsx`) reads the engine tab's

@@ -108,6 +108,13 @@ URL. The transport has two implementations behind one small `SyncPort` seam
   message without resets) resubscribes for its own resets. Entity writes and
   every other route stay HTTP against `serverBaseUrl` in both transports.
 
+Writes have their own transport axis: `actions=broadcast` routes the
+entity/roll/params actions (and the topbar's generic entity CRUD) over the
+engine tab's broadcast actions channel as `EngineOp` requests instead of
+HTTP — the serverless baked topology, where `serverBaseUrl=none` also
+disables the client-control bridge. Without the param, writes stay HTTP even
+when watching is broadcast.
+
 In ws mode the provider owns one reconnecting `/sync` socket. On open it clears its sequence memory and sends one subscribe naming every
 kind this client watches:
 
