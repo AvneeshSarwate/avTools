@@ -1023,7 +1023,8 @@ function useClientControlBridge(
       /\/+$/,
       "",
     );
-    if (!normalizedServerBaseUrl) return;
+    // "none" is the serverless baked topology: no control bridge to open.
+    if (!normalizedServerBaseUrl || normalizedServerBaseUrl === "none") return;
 
     const pendingResults = new Map<string, ClientControlResultMessage>();
     const socketUrl = `${

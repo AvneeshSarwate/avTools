@@ -105,6 +105,16 @@ directly.
   interface over every durable entity type, so generic entity actions and
   project persistence never have to know which type a name addresses. It also
   owns the entity-name-to-filename encoding.
+- `livecode/browser_host/`: the browser engine host — `engine_page.ts` (the
+  engine tab: BroadcastChannel sync host, broadcast actions channel, server
+  uplink client, baked boot), `build_host_assets.ts` (one code-split
+  `deno bundle` of the page plus per-alias helper bundles sharing chunks),
+  `bake_project.ts` (the Setup A static bake), and `build_slice.ts` (the
+  standalone slice fixture build).
+- `visualizer/execution_plane.ts`: the local/remote plane seam described
+  above.
+- `visualizer/browser_check_config.ts`: the browser-lib typecheck config
+  writer shared by the target-aware shadow check and its gate test.
 - `visualizer/lsp_proxy.ts`: per-session proxy process that creates a synthetic
   workspace and runs `deno lsp -q`.
 - `packages/livecode-engine/generated_run_id.ts`: generated-build ID
