@@ -187,8 +187,14 @@ async function resolveMidiOutput(
 }
 
 function readMidiOutputEnv(): string | undefined {
+  // Probed through globalThis rather than referenced bare, so this module
+  // typechecks under a browser-target lib (where the `Deno` global does not
+  // exist) and simply reads no env there.
+  const denoEnv = (globalThis as {
+    Deno?: { env?: { get?: (key: string) => string | undefined } };
+  }).Deno?.env;
   try {
-    return Deno.env.get("LIVECODE_MIDI_OUTPUT") ?? undefined;
+    return denoEnv?.get?.("LIVECODE_MIDI_OUTPUT") ?? undefined;
   } catch {
     return undefined;
   }

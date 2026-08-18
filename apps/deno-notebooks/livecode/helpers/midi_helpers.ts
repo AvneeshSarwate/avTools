@@ -1,5 +1,20 @@
-import { MidiAccess, type PortInfo } from "../../midi/mod.ts";
+import {
+  detectMidiBackend,
+  type MidiAccess,
+  openMidiAccess,
+} from "@avtools/midi";
 import { clampMidi } from "./midi_math.ts";
+
+/**
+ * Port identity as this module exposes it. Structurally compatible with both
+ * the package's `MidiPortInfo` and the bare `{ id, name }` rows the old FFI
+ * bridge returned, so existing callers and tests keep working.
+ */
+export interface LivecodePortInfo {
+  readonly id: string;
+  readonly name: string;
+  readonly manufacturer?: string | null;
+}
 
 export interface MidiOutputTransport {
   noteOn(channel: number, pitch: number, velocity: number): void;
@@ -13,7 +28,7 @@ export interface MidiOutputTransport {
 
 export interface LivecodeMidiOutput {
   readonly name: string;
-  readonly port: PortInfo;
+  readonly port: LivecodePortInfo;
   noteOn(channel: number, pitch: number, velocity?: number): void;
   noteOff(channel: number, pitch: number, velocity?: number): void;
   cc(channel: number, controller: number, value: number): void;
@@ -27,7 +42,7 @@ class LivecodeMidiOutputImpl implements LivecodeMidiOutput {
   readonly name: string;
 
   constructor(
-    readonly port: PortInfo,
+    readonly port: LivecodePortInfo,
     private readonly output: MidiOutputTransport,
   ) {
     this.name = port.name;
@@ -108,8 +123,9 @@ class LivecodeMidiOutputImpl implements LivecodeMidiOutput {
   }
 }
 
-const access = openMidiAccess();
-const outputPorts = access ? safeListOutputs(access) : [];
+let access: MidiAccess | null = null;
+let outputPorts: LivecodePortInfo[] = [];
+let initPromise: Promise<void> | null = null;
 const openedOutputs = new Map<string, LivecodeMidiOutput>();
 const midiDevicesByName = Object.create(null) as Record<
   string,
@@ -120,19 +136,45 @@ const soundingNotes = new Map<
   { device: LivecodeMidiOutput; channel: number; pitch: number }
 >();
 
-for (const port of outputPorts) {
-  try {
-    const output = new LivecodeMidiOutputImpl(
-      port,
-      access!.openOutput(port.id),
-    );
-    registerOpenedOutput(output);
-  } catch (error) {
-    console.warn(
-      `[midi-helpers] failed to open MIDI output "${port.name}"`,
-      error,
-    );
-  }
+/**
+ * Open MIDI access and every output port. Idempotent; concurrent callers share
+ * one pass. Failure degrades to "no devices" with one warning rather than
+ * throwing into caller code, matching the old eager-open behavior.
+ *
+ * On the native (Deno FFI) backend this runs eagerly at module import, below,
+ * so existing modules that address `midiDevices` synchronously keep working —
+ * including under a plain `deno run`. In a browser, Web MIDI is
+ * permission-prompted, so nothing may open at import time: call `initMidi()`
+ * from a user gesture before using devices.
+ */
+export function initMidi(): Promise<void> {
+  initPromise ??= (async () => {
+    try {
+      access = await openMidiAccess();
+    } catch (error) {
+      console.warn("[midi-helpers] MIDI unavailable", error);
+      access = null;
+      outputPorts = [];
+      return;
+    }
+    outputPorts = safeListOutputs(access);
+    for (const port of outputPorts) {
+      try {
+        const transport = await access.openOutput(port.id);
+        registerOpenedOutput(new LivecodeMidiOutputImpl(port, transport));
+      } catch (error) {
+        console.warn(
+          `[midi-helpers] failed to open MIDI output "${port.name}"`,
+          error,
+        );
+      }
+    }
+  })();
+  return initPromise;
+}
+
+if (detectMidiBackend() === "native") {
+  await initMidi();
 }
 
 export const midiDevices = new Proxy(midiDevicesByName, {
@@ -151,7 +193,7 @@ export const midiDevices = new Proxy(midiDevicesByName, {
   },
 }) as Record<string, LivecodeMidiOutput>;
 
-export function listMidiDevices(): PortInfo[] {
+export function listMidiDevices(): LivecodePortInfo[] {
   return [...outputPorts];
 }
 
@@ -162,10 +204,13 @@ export function getMidiDevice(name: string): LivecodeMidiOutput {
       .join(
         ", ",
       );
+    const hint = initPromise
+      ? ""
+      : " (MIDI is not initialized; browser hosts must call initMidi() from a user gesture first)";
     throw new Error(
       `MIDI output not found: "${name}". Available outputs: ${
         available || "none"
-      }`,
+      }${hint}`,
     );
   }
   return output;
@@ -221,10 +266,15 @@ export function closeMidiDevices() {
   } catch (error) {
     console.warn("[midi-helpers] failed to close MIDI access", error);
   }
+  access = null;
+  outputPorts = [];
+  // A later initMidi() may open fresh access (Web MIDI can be re-requested;
+  // the native bridge reopens its library handle).
+  initPromise = null;
 }
 
 export function __testingRegisterMidiOutput(
-  port: PortInfo,
+  port: LivecodePortInfo,
   output: MidiOutputTransport,
 ): () => void {
   const device = new LivecodeMidiOutputImpl(port, output);
@@ -242,16 +292,7 @@ export function __testingSoundingNoteCount(): number {
   return soundingNotes.size;
 }
 
-function openMidiAccess(): MidiAccess | null {
-  try {
-    return MidiAccess.open();
-  } catch (error) {
-    console.warn("[midi-helpers] MIDI unavailable", error);
-    return null;
-  }
-}
-
-function safeListOutputs(midiAccess: MidiAccess): PortInfo[] {
+function safeListOutputs(midiAccess: MidiAccess): LivecodePortInfo[] {
   try {
     return midiAccess.listOutputs();
   } catch (error) {
