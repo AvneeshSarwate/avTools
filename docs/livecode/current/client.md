@@ -95,8 +95,20 @@ canvas state across reloads.
 
 ## Sync provider
 
-`SyncRuntimeProvider` owns one reconnecting `/sync` socket and the server base
-URL. On open it clears its sequence memory and sends one subscribe naming every
+`SyncRuntimeProvider` owns the watched-state transport and the server base
+URL. The transport has two implementations behind one small `SyncPort` seam
+(`isOpen`/`sendMessage`), chosen by the `sync` URL param:
+
+- **ws** (default): the reconnecting `/sync` socket described below.
+- **broadcast** (`?sync=broadcast`): the engine tab's BroadcastChannel sync
+  host on the same origin — the stage-2 topology where the server serves the
+  built client (`--ui-dist`) next to `/engine/`. The channel is "open" the
+  moment it exists; an engine restart surfaces as a seq regression, which the
+  existing gap path answers by resubscribing, and a mid-stream join (first
+  message without resets) resubscribes for its own resets. Entity writes and
+  every other route stay HTTP against `serverBaseUrl` in both transports.
+
+In ws mode the provider owns one reconnecting `/sync` socket. On open it clears its sequence memory and sends one subscribe naming every
 kind this client watches:
 
 ```ts

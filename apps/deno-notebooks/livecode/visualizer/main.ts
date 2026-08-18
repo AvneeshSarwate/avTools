@@ -13,6 +13,8 @@ const server = await createLivecodeVisualizerServer({
   // --engine remote: no engine in this process; a browser tab opens /engine/
   // and attaches over /engine/uplink.
   engineMode: args.engine === "remote" ? "remote" : "local",
+  // --ui-dist <path>: serve a built tldraw client at this origin.
+  uiDist: args["ui-dist"],
 });
 
 let closing = false;
