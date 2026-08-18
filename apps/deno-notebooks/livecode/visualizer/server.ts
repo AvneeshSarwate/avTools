@@ -177,6 +177,13 @@ export interface LivecodeVisualizerServerOptions {
    * it, while analysis, project files, and LSP stay here.
    */
   engineMode?: "local" | "remote";
+  /**
+   * A built tldraw client (its vite `dist/`) to serve at this origin. With a
+   * remote engine this puts UI tabs and the engine tab on ONE origin, which
+   * is what lets the client's `sync=broadcast` transport read the engine's
+   * BroadcastChannel directly instead of the relayed `/sync` socket.
+   */
+  uiDist?: string;
 }
 
 export interface LivecodeVisualizerServer {
@@ -374,6 +381,20 @@ export async function createLivecodeVisualizerServer(
       });
     },
   });
+
+  const uiDist = options.uiDist ? resolvePath(options.uiDist) : null;
+  const UI_MIME: Record<string, string> = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+    ".map": "application/json",
+    ".woff2": "font/woff2",
+    ".tldr": "application/json; charset=utf-8",
+  };
 
   const handler = async (request: Request): Promise<Response> => {
     try {
@@ -822,6 +843,21 @@ export async function createLivecodeVisualizerServer(
           });
         }
         return await serveTranspiledModule(filePath);
+      }
+    }
+
+    // Static UI fallback: everything the API routes above did not claim.
+    if (uiDist && request.method === "GET") {
+      const relative = url.pathname === "/"
+        ? "index.html"
+        : decodeURIComponent(url.pathname.slice(1));
+      const filePath = join(uiDist, normalize(relative));
+      if (!relative.includes("..") && filePath.startsWith(uiDist)) {
+        const extension = filePath.slice(filePath.lastIndexOf("."));
+        return await serveStaticFile(
+          filePath,
+          UI_MIME[extension] ?? "application/octet-stream",
+        );
       }
     }
 

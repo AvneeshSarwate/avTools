@@ -41,6 +41,16 @@ const scaled = (ms) => Math.round(ms * timeoutScale)
 // engine of its own: a browser engine tab is opened before any case and every
 // runtime/entity op forwards to it. The client code under test is identical.
 const engineMode = process.env.LIVECODE_E2E_ENGINE === 'remote' ? 'remote' : 'local'
+// LIVECODE_E2E_UI=served skips Vite entirely: the server serves the BUILT
+// client (dist/) at its own origin and the page uses the sync=broadcast
+// transport, reading the engine tab's BroadcastChannel directly — stage 2 of
+// the browser-engine plan. Requires the remote engine (same origin, same
+// browser) and a prior `npm run build`.
+const uiMode = process.env.LIVECODE_E2E_UI === 'served' ? 'served' : 'vite'
+if (uiMode === 'served' && engineMode !== 'remote') {
+  throw new Error('LIVECODE_E2E_UI=served requires LIVECODE_E2E_ENGINE=remote')
+}
+const uiDistDir = path.join(tldrawAppRoot, 'dist')
 
 const serverOutput = []
 const viteOutput = []
@@ -234,14 +244,23 @@ function assertEqual(actual, expected, label) {
 try {
   mkdirSync(sessionRoot, { recursive: true })
 
+  if (uiMode === 'served' && !existsSync(path.join(uiDistDir, 'index.html'))) {
+    throw new Error(
+      `LIVECODE_E2E_UI=served needs a built client: run npm run build (missing ${uiDistDir}/index.html)`
+    )
+  }
   const serverReady = startDenoServer()
-  const viteBaseUrl = await startVite()
+  const vitePromise = uiMode === 'served' ? null : startVite()
   const serverInfo = await serverReady
   serverBaseUrl = serverInfo.baseUrl
+  const viteBaseUrl = vitePromise ? await vitePromise : `${serverBaseUrl}/`
 
   browser = await launchBrowserWithRetry()
+  // One context for every page: BroadcastChannel (the served-UI sync
+  // transport) only connects same-origin pages within a single context.
+  const browserContext = await browser.newContext()
   if (engineMode === 'remote') {
-    enginePage = await browser.newPage()
+    enginePage = await browserContext.newPage()
     enginePage.on('pageerror', (error) => {
       browserOutput.push(`[engine:pageerror] ${error.stack ?? error.message}`)
     })
@@ -260,7 +279,7 @@ try {
       await sleep(200)
     }
   }
-  page = await browser.newPage()
+  page = await browserContext.newPage()
   page.on('console', (message) => {
     if (message.type() === 'error') {
       browserOutput.push(`[browser:${message.type()}] ${message.text()}`)
@@ -1986,6 +2005,7 @@ function sleep(ms) {
 function tldrawUrl(viteBaseUrl, serverBaseUrl) {
   const url = new URL('/', viteBaseUrl)
   url.searchParams.set('serverBaseUrl', serverBaseUrl)
+  if (uiMode === 'served') url.searchParams.set('sync', 'broadcast')
   return url.href
 }
 
@@ -2015,6 +2035,7 @@ function startDenoServer() {
         'debug',
         '--engine',
         engineMode,
+        ...(uiMode === 'served' ? ['--ui-dist', uiDistDir] : []),
       ],
       {
         cwd: denoNotebookRoot,
