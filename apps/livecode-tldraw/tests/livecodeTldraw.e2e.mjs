@@ -32,6 +32,11 @@ const sessionRoot = path.join(
   `tldraw-e2e-${Date.now()}-${Math.random().toString(16).slice(2)}`
 )
 const headless = process.env.PW_HEADLESS !== '0'
+// Scales every wait timeout for slow environments (cold cloud sandboxes take
+// ~16s for the first analyze while ts-morph loads). Polling waits still return
+// as soon as their condition holds, so a scale >1 does not slow a green run.
+const timeoutScale = Number(process.env.LIVECODE_E2E_TIMEOUT_SCALE || '1') || 1
+const scaled = (ms) => Math.round(ms * timeoutScale)
 
 const serverOutput = []
 const viteOutput = []
@@ -243,7 +248,7 @@ try {
   await page.goto(tldrawUrl(viteBaseUrl, serverInfo.baseUrl), {
     waitUntil: 'domcontentloaded',
   })
-  await page.locator('.livecode-shape').first().waitFor({ timeout: 20_000 })
+  await page.locator('.livecode-shape').first().waitFor({ timeout: scaled(20_000) })
   await waitForPageValue(
     () => Boolean(window.__livecodeTldrawRuntimeDebug),
     'tldraw runtime debug hooks installed',
@@ -410,7 +415,7 @@ export default async function(ctx: TimeContext) {
     (moduleId) =>
       window.__livecodeTldrawRuntimeDebug?.modules[moduleId]?.runStatus === 'stopped',
     'lookup-only module stopped after completion',
-    15_000,
+    scaled(15_000),
     firstModuleId
   )
 }
@@ -474,7 +479,7 @@ async function runOpenPianoRollFocusesExistingShapeCase() {
   await waitForPageValue(
     (id) => window.__livecodeTldrawRuntimeDebug?.getSelectedShapeIds().includes(id),
     'livecode shape selected before focus test',
-    5_000,
+    scaled(5_000),
     livecodeShape.id
   )
 
@@ -494,7 +499,7 @@ async function runOpenPianoRollFocusesExistingShapeCase() {
   await waitForPageValue(
     (id) => window.__livecodeTldrawRuntimeDebug?.getSelectedShapeIds().includes(id),
     'existing piano-roll-view selected after focusing',
-    5_000,
+    scaled(5_000),
     existingHarmony[0].id
   )
 }
@@ -613,7 +618,7 @@ async function runParamPaneRehydratesAfterReloadCase() {
   assert(before, 'params entity should exist before the reload')
 
   await page.reload({ waitUntil: 'domcontentloaded' })
-  await page.locator('.livecode-shape').first().waitFor({ timeout: 20_000 })
+  await page.locator('.livecode-shape').first().waitFor({ timeout: scaled(20_000) })
   await waitForPageValue(
     () => Boolean(window.__livecodeTldrawRuntimeDebug),
     'tldraw runtime debug hooks installed after reload',
@@ -693,7 +698,7 @@ async function runPlayheadSignalMarkerCase() {
       return marker && marker.position !== seen ? marker : null
     },
     'the marker position moves with the module loop',
-    15_000,
+    scaled(15_000),
     { rollName: SIGNAL_ROLL_NAME, signalName: PLAYHEAD_SIGNAL_NAME, seen: first.position }
   )
 
@@ -743,7 +748,7 @@ async function runTwoModulePlayheadMarkersCase() {
       return names.every((name) => ids.includes(name)) ? view.markers : null
     },
     'two modules render two markers on one roll',
-    20_000,
+    scaled(20_000),
     {
       rollName: SIGNAL_ROLL_NAME,
       names: [PLAYHEAD_SIGNAL_NAME, SECOND_PLAYHEAD_SIGNAL_NAME],
@@ -878,7 +883,7 @@ async function runNaturalCompletionAfterEditCase() {
     (moduleId) =>
       window.__livecodeTldrawRuntimeDebug?.modules[moduleId]?.runStatus === 'running',
     'edited module still shows the older run as running',
-    5_000,
+    scaled(5_000),
     firstModuleId
   )
 
@@ -892,7 +897,7 @@ async function runNaturalCompletionAfterEditCase() {
       return state?.runStatus === 'stopped' && state?.runToken === runToken
     },
     'the edited-while-running module reaches stopped from its own run entity',
-    20_000,
+    scaled(20_000),
     { moduleId: firstModuleId, runToken }
   )
 }
@@ -922,7 +927,7 @@ export default async function(ctx: TimeContext) {
       return module.runStatus === 'error' ? module : null
     },
     'an immediately-throwing module reaches error in the client',
-    20_000,
+    scaled(20_000),
     { moduleId: firstModuleId, previousRunToken }
   )
   assert(
@@ -1316,7 +1321,7 @@ async function enterProjectMode(viteBaseUrl) {
   await page.goto(projectUrl(viteBaseUrl, serverBaseUrl, projectRoot), {
     waitUntil: 'domcontentloaded',
   })
-  await page.locator('.livecode-shape').first().waitFor({ timeout: 20_000 })
+  await page.locator('.livecode-shape').first().waitFor({ timeout: scaled(20_000) })
   await waitForPageValue(
     () => Boolean(window.__livecodeTldrawRuntimeDebug),
     'tldraw runtime debug hooks installed in project mode',
@@ -1405,7 +1410,7 @@ async function ensureRollView(rollName) {
   )
 }
 
-function waitForMarker(rollName, signalName, label, timeoutMs = 20_000) {
+function waitForMarker(rollName, signalName, label, timeoutMs = scaled(20_000)) {
   return waitForPageValue(
     ({ rollName, signalName }) => {
       const views = window.__livecodeTldrawRuntimeDebug?.getPlayheadMarkerViews() ?? []
@@ -1418,7 +1423,7 @@ function waitForMarker(rollName, signalName, label, timeoutMs = 20_000) {
   )
 }
 
-async function waitForScopeState(shapeId, predicate, label, timeoutMs = 20_000) {
+async function waitForScopeState(shapeId, predicate, label, timeoutMs = scaled(20_000)) {
   const start = Date.now()
   let last = null
   while (Date.now() - start < timeoutMs) {
@@ -1438,7 +1443,7 @@ function fetchSignalsList() {
   return serverGetJson('/signals/list')
 }
 
-async function waitForSignalEntity(name, predicate, label, timeoutMs = 20_000) {
+async function waitForSignalEntity(name, predicate, label, timeoutMs = scaled(20_000)) {
   const start = Date.now()
   let last = null
   while (Date.now() - start < timeoutMs) {
@@ -1533,7 +1538,7 @@ async function setSourceFor(moduleId, source) {
       window.__livecodeTldrawRuntimeDebug?.modules[expected.moduleId]?.sourceText ===
       expected.source,
     `source text applied to runtime for ${moduleId}`,
-    5_000,
+    scaled(5_000),
     { moduleId, source }
   )
 }
@@ -1559,7 +1564,7 @@ async function waitForManifest(moduleId, expectedCount, label) {
       return manifest
     },
     label,
-    15_000,
+    scaled(15_000),
     { moduleId, expectedCount }
   )
 }
@@ -1580,7 +1585,7 @@ async function waitForResolvedLookups(moduleId, expectedNames, label) {
       return null
     },
     label,
-    15_000,
+    scaled(15_000),
     { moduleId, expectedNames }
   )
 }
@@ -1640,7 +1645,7 @@ async function waitForModuleActionButtons(moduleId, expectedLabels, label) {
       return JSON.stringify(labels) === JSON.stringify(expectedLabels) ? labels : null
     },
     label,
-    15_000,
+    scaled(15_000),
     { moduleId, expectedLabels }
   )
 }
@@ -1723,7 +1728,7 @@ async function waitForParamsBindingValue(label, expectedValues, waitLabel) {
       return value !== null && expectedValues.includes(value) ? value : null
     },
     waitLabel,
-    15_000,
+    scaled(15_000),
     { label, expectedValues }
   )
 }
@@ -1746,7 +1751,7 @@ async function fetchParamsEntity(name) {
   return snapshot.params[name] ?? null
 }
 
-async function waitForParamsEntity(name, predicate, label, timeoutMs = 20_000) {
+async function waitForParamsEntity(name, predicate, label, timeoutMs = scaled(20_000)) {
   const start = Date.now()
   let last = null
   while (Date.now() - start < timeoutMs) {
@@ -1764,7 +1769,7 @@ async function waitForParamsEntity(name, predicate, label, timeoutMs = 20_000) {
   )
 }
 
-async function waitForServerRunState(moduleId, shouldBeActive, label, timeoutMs = 15_000) {
+async function waitForServerRunState(moduleId, shouldBeActive, label, timeoutMs = scaled(15_000)) {
   const start = Date.now()
   let last = null
   while (Date.now() - start < timeoutMs) {
@@ -1789,7 +1794,7 @@ async function waitForServerRunState(moduleId, shouldBeActive, label, timeoutMs 
  * The generated run id the server currently has active for a module, once it
  * differs from `previousRunId` (pass `null` for "any run").
  */
-async function waitForActiveRunId(moduleId, previousRunId, label, timeoutMs = 15_000) {
+async function waitForActiveRunId(moduleId, previousRunId, label, timeoutMs = scaled(15_000)) {
   const start = Date.now()
   let last = null
   while (Date.now() - start < timeoutMs) {
@@ -1829,7 +1834,7 @@ async function waitForClientRunToken(
   previousToken,
   expectedStatus,
   label,
-  timeoutMs = 15_000
+  timeoutMs = scaled(15_000)
 ) {
   return await waitForPageValue(
     ({ moduleId, previousToken, expectedStatus }) => {
@@ -1845,7 +1850,7 @@ async function waitForClientRunToken(
 }
 
 /** A lifecycle entry from the Deno server's JSONL stdout log. */
-async function waitForServerLogEntry(predicate, label, timeoutMs = 15_000) {
+async function waitForServerLogEntry(predicate, label, timeoutMs = scaled(15_000)) {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
     for (const line of serverOutput.join('').split(/\r?\n/)) {
@@ -1910,7 +1915,7 @@ async function deletePianoRollShapes() {
           (s) => s.type === 'piano-roll-view'
         ).length === 0,
       'piano-roll-view shapes deleted',
-      5_000
+      scaled(5_000)
     )
   }
 }
@@ -1922,7 +1927,7 @@ async function waitForFirstModuleId() {
       return ids.length > 0 ? ids[0] : null
     },
     'first livecode module id',
-    20_000
+    scaled(20_000)
   )
 }
 
@@ -1930,11 +1935,11 @@ async function waitForTldrawReady() {
   await waitForPageValue(
     () => window.__livecodeTldrawRuntimeDebug?.connectionStatus === 'open',
     'runtime connected to server',
-    30_000
+    scaled(30_000)
   )
 }
 
-async function waitForPageValue(predicate, label, timeoutMs = 5_000, arg) {
+async function waitForPageValue(predicate, label, timeoutMs = scaled(5_000), arg) {
   const start = Date.now()
   let lastError
   while (Date.now() - start < timeoutMs) {
@@ -2012,10 +2017,13 @@ function startDenoServer() {
 }
 
 async function launchBrowserWithRetry(attempts = 5) {
+  // PW_CHROMIUM_PATH points at a system Chromium when the Playwright-managed
+  // download is absent (e.g. cloud sandboxes that pre-install a browser).
+  const executablePath = process.env.PW_CHROMIUM_PATH || undefined
   let lastError
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await chromium.launch({ headless })
+      return await chromium.launch({ headless, executablePath })
     } catch (error) {
       lastError = error
       if (attempt === attempts) break
@@ -2054,7 +2062,7 @@ async function startVite() {
   return viteBaseUrl
 }
 
-async function waitForHttp(url, label, timeoutMs = 30_000) {
+async function waitForHttp(url, label, timeoutMs = scaled(30_000)) {
   const start = Date.now()
   let lastError
   while (Date.now() - start < timeoutMs) {
