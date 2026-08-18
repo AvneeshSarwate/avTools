@@ -470,6 +470,14 @@ manifest" engine boot path, not a second system.
 
 ## Phasing
 
+Status 2026-08-18: **phase 1 is implemented** — `packages/livecode-engine`
+exists with `createLivecodeEngine`, the eight store/runtime modules moved with
+re-export shims at their old `visualizer/` paths, `midi_helpers` sits on
+`@avtools/midi` with lazy gesture-gated browser init, and
+`browser_target_check_test.ts` gates the portable graph. All suites plus the
+tldraw browser E2E pass against the extraction. `current/server.md` describes
+the resulting shape.
+
 1. **Engine extraction (no behavior change).** Carve
    `packages/livecode-engine` out of `visualizer/server.ts` +
    `runtime.ts`/stores/sync-sources with injected capabilities; Deno host

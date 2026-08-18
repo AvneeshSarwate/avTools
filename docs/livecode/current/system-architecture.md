@@ -208,14 +208,17 @@ There is exactly one `currentProject` per server instance. Opening or creating a
 project changes that global server selection for every connected browser and
 HTTP caller. Project endpoints are not client-scoped.
 
-The runtime instrumentation map and the entity store (piano rolls, params, and
-signals alike) are module-level Deno singletons, so two server instances created
-in the same Deno isolate would share them. The root-clock context in
-`runtime.ts` is a singleton for the same reason: the last server to start its
-parent loop would own it. Run records are the exception — they live on the
-server object, which is why the run sync source is constructed with accessors
-rather than importing a store. The supported operational model is one server
-instance per process.
+The execution plane now lives in `packages/livecode-engine` (see `server.md`):
+the server constructs one `createLivecodeEngine` instance and hosts it behind
+its transports, with the moved store/runtime modules re-exported at their old
+`visualizer/` paths. The runtime instrumentation map and the entity store
+(piano rolls, params, and signals alike) are module-level singletons in that
+package, so two server instances created in the same isolate would share them.
+The root-clock context in `runtime.ts` is a singleton for the same reason: the
+last engine to start its parent loop would own it. Run records are the
+exception — they live on the per-server engine object, which is why the run
+sync source is constructed with accessors rather than importing a store. The
+supported operational model is one server instance per process.
 
 ## Trust boundary
 
