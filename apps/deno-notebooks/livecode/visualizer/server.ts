@@ -89,6 +89,7 @@ import {
   makeActiveWaitSnapshot,
 } from "@avtools/livecode-engine/runtime.ts";
 import { buildBrowserHostAssets } from "../browser_host/build_host_assets.ts";
+import { writeBrowserCheckConfig } from "./browser_check_config.ts";
 import { ts as typescript } from "npm:ts-morph@23.0.0";
 
 interface PreparedRun {
@@ -255,7 +256,7 @@ export async function createLivecodeVisualizerServer(
   let diagnosticsInFlight: Promise<ProjectShadowCheckResponse> | null = null;
   let diagnosticsInFlightHash: string | null = null;
   let lastDiagnostics:
-    | { projectSourceHash: string; response: ProjectShadowCheckResponse }
+    | { diagnosticsKey: string; response: ProjectShadowCheckResponse }
     | null = null;
   let lastSnapshotJson = "";
   let closing = false;
@@ -1740,7 +1741,16 @@ export async function createLivecodeVisualizerServer(
       ]),
     );
     const projectSourceHash = await projectSourceHashFromHashes(sourceHashes);
-    if (lastDiagnostics?.projectSourceHash === projectSourceHash) {
+    // The Run gate checks against the world the modules will execute in: a
+    // browser-target project (manifest `engineTarget`, defaulting to the
+    // server's engine mode) typechecks under the browser lib, where DOM
+    // globals are legal and a reachable `Deno.*` is the type error it would
+    // be at runtime. The target is part of the cache key so a retargeted
+    // project cannot reuse the other world's verdict.
+    const engineTarget = currentProject.manifest.engineTarget ??
+      (engineMode === "remote" ? "browser" : "deno");
+    const diagnosticsKey = `${engineTarget}:${projectSourceHash}`;
+    if (lastDiagnostics?.diagnosticsKey === diagnosticsKey) {
       return lastDiagnostics.response;
     }
     // If a run is already in flight, only reuse it when it was started for the
@@ -1749,26 +1759,29 @@ export async function createLivecodeVisualizerServer(
     // our own run keyed to the current hash. Bounded in practice: each
     // iteration awaits a distinct in-flight run.
     while (diagnosticsInFlight) {
-      if (diagnosticsInFlightHash === projectSourceHash) {
+      if (diagnosticsInFlightHash === diagnosticsKey) {
         return await diagnosticsInFlight;
       }
       await diagnosticsInFlight.catch(() => {});
-      if (lastDiagnostics?.projectSourceHash === projectSourceHash) {
+      if (lastDiagnostics?.diagnosticsKey === diagnosticsKey) {
         return lastDiagnostics.response;
       }
     }
 
-    diagnosticsInFlightHash = projectSourceHash;
+    diagnosticsInFlightHash = diagnosticsKey;
+    const denoConfigPath = engineTarget === "browser"
+      ? await writeBrowserCheckConfig(REPO_ROOT, sessionDir)
+      : join(REPO_ROOT, "deno.json");
     const promise = analyzeProjectShadow({
       projectRoot: currentProject.root,
       project: current.project,
       modules: sourceModules,
       shadowRoot: shadowDir,
       repoRoot: REPO_ROOT,
-      denoConfigPath: join(REPO_ROOT, "deno.json"),
+      denoConfigPath,
       runtimeImport: new URL("../../../../packages/livecode-engine/runtime.ts", import.meta.url).href,
     }).then((response) => {
-      lastDiagnostics = { projectSourceHash, response };
+      lastDiagnostics = { diagnosticsKey, response };
       return response;
     });
     diagnosticsInFlight = promise;

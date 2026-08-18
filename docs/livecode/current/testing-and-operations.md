@@ -2,7 +2,7 @@
 
 Status: task matrix re-read from `apps/deno-notebooks/deno.json` and suite
 counts re-run on 2026-08-18, after the engine-package extraction and the
-browser-target check landed (105 unit, 24 server); first audited 2026-07-21.
+browser-target check landed (105 unit, 26 server); first audited 2026-07-21.
 
 ## Development startup
 
@@ -54,7 +54,7 @@ From `apps/deno-notebooks`:
 | --- | --- |
 | `deno task test:livecode:unit` | `analyzer_transform_test.ts`, `runtime_counts_test.ts`, `dynamic_import_execution_test.ts`, `midi_helpers_test.ts`, `params_store_test.ts`, `entity_registry_test.ts` (also covers name encoding and the piano-roll store's delete/save/load seams), `signals_store_test.ts`, `run_dedupe_test.ts`. **105 tests.** |
 | `deno task test:livecode:repro` | Core-timing, analyzer, server, and piano-roll regression tests created by the July stability review (`livecode/tests/repro/`). Several test names/comments still say `BUG` although assertions now expect fixed behavior. |
-| `deno task test:livecode:server` | `protocol_smoke_test.ts`, `sync_transport_test.ts`, `launch_race_test.ts`, `lsp_smoke_test.ts`, `server_smoke_test.ts`, `default_source_integration_test.ts`, `browser_target_check_test.ts` (the portable helper graph must typecheck under a browser lib — `deno check` with `lib: ["esnext", "dom", ...]` over the alias targets, plus a negative control proving the config rejects bare `Deno` globals). **24 tests.** |
+| `deno task test:livecode:server` | `protocol_smoke_test.ts`, `sync_transport_test.ts`, `launch_race_test.ts`, `lsp_smoke_test.ts`, `server_smoke_test.ts`, `default_source_integration_test.ts`, `browser_target_check_test.ts` (the portable helper graph must typecheck under a browser lib — `deno check` with `lib: ["esnext", "dom", ...]` over the alias targets, plus a negative control proving the config rejects bare `Deno` globals), `browser_target_project_test.ts` (the shadow check follows the manifest `engineTarget` in both directions, and a remote-mode server defaults untargeted projects to the browser lib). **26 tests.** |
 | `deno task test:livecode:p5gpu` | `project_p5gpu_e2e_test.ts` — temp-project p5gpu/shared-state proof; requires an available WebGPU adapter. |
 | `deno task test:livecode:e2e` | Delegates to `apps/browser-projections`' `test:livecode:e2e`: the older Vue livecode visualizer E2E, not the tldraw client. It is now also the only automated coverage of the deprecated `/runtime/snapshots` shim from a real client. |
 | `deno task test:livecode` | Unit + server + old Vue E2E only. It is not the complete current-system suite. |
