@@ -3,6 +3,7 @@
   "workspace": [
     "./packages/core-timing",
     "./packages/creative-algs",
+    "./packages/livecode-engine",
     "./packages/livecode-protocol",
     "./packages/midi",
     "./packages/music-types",
@@ -20,6 +21,8 @@
     "@std/random": "jsr:@std/random@^0.1.4",
     "@avtools/core-timing": "./packages/core-timing/mod.ts",
     "@avtools/creative-algs": "./packages/creative-algs/mod.ts",
+    "@avtools/livecode-engine": "./packages/livecode-engine/mod.ts",
+    "@avtools/livecode-engine/": "./packages/livecode-engine/",
     "@avtools/livecode-protocol": "./packages/livecode-protocol/mod.ts",
     "@avtools/midi": "./packages/midi/mod.ts",
     "@avtools/midi/browser": "./packages/midi/browser.ts",
