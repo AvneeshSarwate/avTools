@@ -85,6 +85,15 @@ Additional Deno project test, not included in those aggregate tasks:
 deno test --allow-all livecode/tests/project_shadow_diagnostics_test.ts
 ```
 
+The browser-engine vertical slice has its own Playwright E2E, run from
+`apps/deno-notebooks` (same `PW_CHROMIUM_PATH` convention as the tldraw E2E;
+it builds its own assets via `livecode/browser_host/build_slice.ts` and serves
+them from a temp dir):
+
+```sh
+node livecode/tests/browser_engine_slice.e2e.mjs
+```
+
 From `apps/livecode-tldraw`:
 
 ```sh
