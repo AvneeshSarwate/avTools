@@ -79,6 +79,15 @@ export interface ProjectDataEntry {
 export interface LivecodeProjectManifest {
   version: 1;
   name: string;
+  /**
+   * Which world this project's modules execute in, which is also the world
+   * they are typechecked against: "browser" runs the shadow `deno check`
+   * under a browser lib (DOM globals legal, `Deno.*` a type error), "deno"
+   * under the default Deno lib. Absent means "follow the server's engine
+   * mode" — a `--engine remote` server materializes for the browser, so its
+   * projects check against browser truth by default.
+   */
+  engineTarget?: "deno" | "browser";
   modules: ProjectModuleRecord[];
   canvas?: ProjectCanvasState;
   data?: ProjectDataEntry[];

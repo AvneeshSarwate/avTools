@@ -47,6 +47,11 @@ must edit only `*.orig.ts`; `*.ts` is derived output.
 interface LivecodeProjectManifest {
   version: 1;
   name: string;
+  // "browser" shadow-typechecks modules under a browser lib (DOM globals
+  // legal, Deno.* a type error); "deno" under the default lib. Absent means
+  // "follow the server's engine mode": a --engine remote server defaults its
+  // projects to the browser target.
+  engineTarget?: "deno" | "browser";
   modules: Array<{
     id: string;
     path: string;          // normalized runtime path

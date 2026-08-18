@@ -561,7 +561,14 @@ The five open questions this note originally carried are decided:
 2. **Throttling: cheap path only.** Silent `AudioContext` plus
    keep-both-tabs-visible discipline (single-operator tool). The
    Worker-backed time-source idea is parked in `next-stuff-brainstorm.md`.
-3. **Target-aware typechecking: build it.** Good typechecking is a core
+3. **Target-aware typechecking: build it.** *Built:* the manifest
+   `engineTarget` field drives the shadow check's lib (browser target =
+   browser lib; absent = follow the server's engine mode, so remote-mode
+   projects default to browser truth), with the target folded into the
+   diagnostics cache key; covered by `browser_target_project_test.ts`. The
+   LSP workspace's lib is not yet target-aware — proxies build their config
+   at process start, before a project is open — so editor diagnostics can
+   disagree with the Run gate on host globals until that seam moves. Good typechecking is a core
    principle, and the investigation above showed the mechanism is one config
    knob plus mechanical cleanup of the portable helper graph — well under the
    "extremely complicated" bar that would have justified living with the
