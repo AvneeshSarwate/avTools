@@ -1,10 +1,12 @@
 # Browser-Engine Support Plan (2026-08)
 
-Status: design note / investigation, per the principles-doc rule that
-architecture-sized work starts as a design note in `history/` and confirms the
-contract before implementation. Nothing in this document is implemented except
-where explicitly noted (`packages/midi` exists). Written 2026-08-18 against the
-2026-08-13 current-state docs.
+Status: design note, written 2026-08-18 against the 2026-08-13 current-state
+docs; per the principles-doc rule, architecture-sized work starts as a design
+note in `history/`. Implementation has since landed through phase 1 and
+Setup B stage 1 — see the status paragraphs at the top of "Phasing" for what
+shipped and where; `docs/livecode/current/` is the authority on the code as
+built. The audit sections below describe the pre-implementation state they
+investigated.
 
 ## Goal
 
@@ -495,6 +497,15 @@ and signal observation, module piano-roll write-back read over HTTP, a params
 edit changing a running module, entity CRUD with status codes, stop and panic
 semantics, and detach/re-attach resets. The visualizer shims from phase 1
 were subsequently removed — everything imports the package directly.
+
+The acceptance proof: **the complete tldraw client E2E passes unchanged in
+remote mode** (`LIVECODE_E2E_ENGINE=remote`, which starts the server with
+`--engine remote` and opens an engine tab before any case) — run lifecycle
+including Replace and the straddle, params and signal tiers, and the full
+project-mode block with save/open, all against execution in a browser tab.
+The engine host forwards its structured log entries up the uplink
+(`engineLog`), so the server log stays the one greppable lifecycle record in
+both modes.
 
 A **vertical slice of phases 2–3 also exists**:
 `livecode/browser_host/` holds the browser engine host page and

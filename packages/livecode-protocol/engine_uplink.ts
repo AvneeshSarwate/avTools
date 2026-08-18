@@ -124,4 +124,13 @@ export type EngineUplinkClientMessage =
     ok: boolean;
     body?: unknown;
     error?: string;
+  }
+  | {
+    /**
+     * One structured engine log entry, forwarded so the server's log stays
+     * the one place lifecycle truth is greppable — for humans, the agent,
+     * and the E2E's log assertions — regardless of where execution happens.
+     */
+    type: "engineLog";
+    entry: Record<string, unknown>;
   };

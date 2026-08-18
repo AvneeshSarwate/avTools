@@ -28,6 +28,15 @@ deno run --unstable-webgpu --unstable-ffi --allow-all \
   --host localhost --port 7777 --log-level debug
 ```
 
+Adding `--engine remote` selects the second topology from
+`docs/livecode/history/browser-engine-plan-2026-08.md`: the server runs no
+engine of its own — open `http://localhost:7777/engine/` in a browser tab and
+execution (module imports, the `TimeContext` loop, the entity stores, the
+33 ms tick) happens there, forwarded over `WS /engine/uplink`, while
+analysis, project files, and LSP stay in the server. The tldraw client is
+unchanged in either mode. See `current/server.md` for the execution-plane
+split and the remote-mode routes.
+
 Start the client from `apps/livecode-tldraw`:
 
 ```sh
