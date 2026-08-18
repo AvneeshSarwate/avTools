@@ -46,10 +46,7 @@ import type {
   ProjectStatusResponse,
   ReloadProjectModuleRequest,
   RemoveProjectModuleRequest,
-  RunEntity,
-  RuntimeModuleRunSnapshotEntry,
   RuntimeModuleStatus,
-  RuntimeStateModuleRun,
   RuntimeStateResponse,
   SetParamsRequest,
   SetPianoRollRequest,
@@ -62,25 +59,26 @@ import type {
   VisualizerManifestMessage,
   WriteProjectModuleRequest,
 } from "./protocol.ts";
+import type {
+  EngineEntityActionResult,
+  EngineEntityCapture,
+  EngineEntityLoadEntry,
+  EngineEntityLoadResult,
+  EngineEntitySaveState,
+  ParamsEntity,
+  ParamsSnapshot,
+  PianoRollObject,
+  PianoRollSnapshot,
+  SignalsSnapshot,
+} from "./protocol.ts";
 import {
-  createLivecodeEngine,
-  type LivecodeEngine,
-} from "@avtools/livecode-engine";
+  createLocalExecutionPlane,
+  createRemoteExecutionPlane,
+  type ExecutionPlane,
+  type RemoteExecutionPlane,
+} from "./execution_plane.ts";
 import type { SyncCollectedChanges } from "@avtools/livecode-engine/sync_sources.ts";
-import {
-  allocateEntityDataPath,
-  type DurableEntityTypeDescriptor,
-  getDurableEntityType,
-  listDurableEntityTypes,
-} from "@avtools/livecode-engine/entity_registry.ts";
-import { makeParamsSnapshot, setParamsValues } from "@avtools/livecode-engine/params_store.ts";
-import {
-  makePianoRollSnapshot,
-  redoPianoRoll,
-  setPianoRoll,
-  undoPianoRoll,
-} from "@avtools/livecode-engine/piano_roll_store.ts";
-import { makeSignalsSnapshot } from "@avtools/livecode-engine/signals_store.ts";
+import { allocateEntityDataPath } from "@avtools/livecode-engine/entity_registry.ts";
 import {
   analyzeProjectShadow,
   buildProjectImportGraph,
@@ -90,6 +88,8 @@ import {
   clearModulePianoRollLookups,
   makeActiveWaitSnapshot,
 } from "@avtools/livecode-engine/runtime.ts";
+import { buildBrowserHostAssets } from "../browser_host/build_host_assets.ts";
+import { ts as typescript } from "npm:ts-morph@23.0.0";
 
 interface PreparedRun {
   moduleId: string;
@@ -169,6 +169,13 @@ export interface LivecodeVisualizerServerOptions {
   port?: number;
   sessionRoot?: string;
   logLevel?: "debug" | "info";
+  /**
+   * Where execution happens. "local" (default) owns an engine in this
+   * process. "remote" runs no engine at all: a browser tab opens `/engine/`,
+   * attaches over `/engine/uplink`, and every runtime/entity op forwards to
+   * it, while analysis, project files, and LSP stay here.
+   */
+  engineMode?: "local" | "remote";
 }
 
 export interface LivecodeVisualizerServer {
@@ -253,6 +260,16 @@ export async function createLivecodeVisualizerServer(
   let lastSnapshotJson = "";
   let closing = false;
 
+  // Generated code's instrumentation import. Local engines import the package
+  // source by file URL; a browser engine imports the served runtime bundle.
+  const engineRuntimeImport = () =>
+    engineMode === "remote"
+      ? "/engine/runtime.js"
+      : new URL(
+        "../../../../packages/livecode-engine/runtime.ts",
+        import.meta.url,
+      ).href;
+
   const log = async (entry: Record<string, unknown>) => {
     const line = JSON.stringify({
       timestamp: new Date().toISOString(),
@@ -279,18 +296,48 @@ export async function createLivecodeVisualizerServer(
     });
   }
 
-  // The execution plane: parent loop, launch queue, run records, entity
-  // stores' sync sources, and the one broadcast tick. The server is its Deno
-  // host — it injects MIDI panic and receives each tick's collected changes to
-  // fan out to its own transports.
-  const engine: LivecodeEngine = createLivecodeEngine({
-    log,
-    panicMidi,
-    onSyncTick: (collected) => {
-      broadcastSyncChanges(collected);
-      broadcastLegacyRuntimeSnapshot();
-    },
-  });
+  // The execution plane. Local mode owns an engine in this process and feeds
+  // the fan-out from its broadcast tick; remote mode forwards ops to a
+  // browser-tab engine over /engine/uplink and relays its sync feed into the
+  // same fan-out. Routes only ever see the plane.
+  const engineMode = options.engineMode ?? "local";
+  const remotePlane: RemoteExecutionPlane | null = engineMode === "remote"
+    ? createRemoteExecutionPlane({
+      log,
+      onSyncChanges: (changes) => broadcastSyncChangeList(changes),
+      onEngineResets: (resets) => broadcastSyncResets(resets),
+    })
+    : null;
+  const localPlane = engineMode === "local"
+    ? createLocalExecutionPlane({
+      log,
+      panicMidi,
+      onSyncTick: (collected) => {
+        broadcastSyncChanges(collected);
+        broadcastLegacyRuntimeSnapshot();
+      },
+    })
+    : null;
+  const plane: ExecutionPlane = (localPlane ?? remotePlane)!;
+
+  // Remote mode serves the engine host page and browser-built module assets;
+  // built lazily at first request so local-mode startup pays nothing.
+  const browserHostDir = join(sessionDir, "browser-host");
+  let browserHostBuild: Promise<void> | null = null;
+  const ensureBrowserHostAssets = (): Promise<void> => {
+    if (!browserHostBuild) {
+      browserHostBuild = buildBrowserHostAssets({ outDir: browserHostDir })
+        .then(() => {
+          void log({ type: "browserHostAssetsBuilt", outDir: browserHostDir });
+        });
+    }
+    return browserHostBuild;
+  };
+  // Serve-time TS -> JS transpile cache for browser-imported module files.
+  const transpileCache = new Map<
+    string,
+    { mtimeMs: number; size: number; js: string }
+  >();
 
   if (!Deno.env.get("CRASH_LOG_LINE_COUNT")) {
     Deno.env.set("CRASH_LOG_LINE_COUNT", "40");
@@ -353,7 +400,7 @@ export async function createLivecodeVisualizerServer(
         ok: true,
         serverVersion: SERVER_VERSION,
         sessionRoot,
-        activeModules: engine.activeModuleIds(),
+        activeModules: await activeModuleIdsSafe(),
         runtimeCapabilities,
       };
       return json(response);
@@ -398,32 +445,36 @@ export async function createLivecodeVisualizerServer(
 
     if (request.method === "POST" && url.pathname === "/runtime/stop") {
       const requestBody = await request.json() as StopModuleRequest;
-      await engine.stopModule(requestBody.moduleId, "stopRequest");
+      await plane.execute({
+        kind: "stop",
+        moduleId: requestBody.moduleId,
+        reason: "stopRequest",
+      });
       return json({ ok: true });
     }
 
     if (request.method === "GET" && url.pathname === "/runtime/status") {
-      return json({ ok: true, activeModules: listRuntimeStatus() });
+      return json({ ok: true, activeModules: await listRuntimeStatus() });
     }
 
     if (request.method === "GET" && url.pathname === "/runtime/state") {
-      return json(makeRuntimeStateResponse());
+      return json(await makeRuntimeStateResponse());
     }
 
     if (request.method === "POST" && url.pathname === "/runtime/stop-all") {
-      await engine.stopAllModules("stopAllRequest");
+      await plane.execute({ kind: "stopAll", reason: "stopAllRequest" });
       return json({ ok: true });
     }
 
     if (request.method === "POST" && url.pathname === "/runtime/panic") {
-      await engine.panicRuntime("panic");
+      await plane.execute({ kind: "panic", reason: "panic" });
       return json({ ok: true });
     }
 
     if (request.method === "POST" && url.pathname === "/runtime/restart-all") {
-      await engine.stopAllModules("restartAllRequest");
+      await plane.execute({ kind: "stopAll", reason: "restartAllRequest" });
       if (currentProject) await materializeProjectRuntime(currentProject);
-      return json({ ok: true, activeModules: listRuntimeStatus() });
+      return json({ ok: true, activeModules: await listRuntimeStatus() });
     }
 
     if (request.method === "POST" && url.pathname === "/project/create") {
@@ -515,112 +566,85 @@ export async function createLivecodeVisualizerServer(
 
     if (request.method === "POST" && url.pathname === "/entities/create") {
       const requestBody = await request.json() as EntityCreateRequest;
-      const resolved = resolveEntityRequest(requestBody.type, requestBody.name);
-      if ("error" in resolved) return entityError(resolved);
-      const { descriptor, name } = resolved;
-      if (descriptor.exists(name)) {
-        return entityError({
-          error: `${descriptor.typeId} entity "${name}" already exists`,
-          status: 409,
-        });
-      }
-      descriptor.create(name);
-      await log({ type: "entityCreated", entityType: descriptor.typeId, name });
-      return json(entityMutationSuccess(descriptor.typeId, name));
+      return await entityActionResponse(
+        await plane.execute({
+          kind: "entityCreate",
+          request: requestBody,
+        }) as EngineEntityActionResult,
+        "entityCreated",
+      );
     }
 
     if (request.method === "POST" && url.pathname === "/entities/duplicate") {
       const requestBody = await request.json() as EntityDuplicateRequest;
-      const resolved = resolveEntityRequest(requestBody.type, requestBody.name);
-      if ("error" in resolved) return entityError(resolved);
-      const { descriptor, name } = resolved;
-      const targetName = typeof requestBody.targetName === "string"
-        ? requestBody.targetName.trim()
-        : "";
-      if (!targetName) {
-        return entityError({
-          error: "Entity targetName is required",
-          status: 400,
-        });
-      }
-      if (!descriptor.exists(name)) {
-        return entityError({
-          error: `No ${descriptor.typeId} entity "${name}"`,
-          status: 404,
-        });
-      }
-      if (descriptor.exists(targetName)) {
-        return entityError({
-          error: `${descriptor.typeId} entity "${targetName}" already exists`,
-          status: 409,
-        });
-      }
-      descriptor.duplicate(name, targetName);
-      await log({
-        type: "entityDuplicated",
-        entityType: descriptor.typeId,
-        name,
-        targetName,
-      });
-      return json(entityMutationSuccess(descriptor.typeId, targetName));
+      return await entityActionResponse(
+        await plane.execute({
+          kind: "entityDuplicate",
+          request: requestBody,
+        }) as EngineEntityActionResult,
+        "entityDuplicated",
+      );
     }
 
     if (request.method === "POST" && url.pathname === "/entities/delete") {
       const requestBody = await request.json() as EntityDeleteRequest;
-      const resolved = resolveEntityRequest(requestBody.type, requestBody.name);
-      if ("error" in resolved) return entityError(resolved);
-      const { descriptor, name } = resolved;
-      if (!descriptor.remove(name)) {
-        return entityError({
-          error: `No ${descriptor.typeId} entity "${name}"`,
-          status: 404,
-        });
-      }
-      await log({ type: "entityDeleted", entityType: descriptor.typeId, name });
-      return json(entityMutationSuccess(descriptor.typeId, name));
+      return await entityActionResponse(
+        await plane.execute({
+          kind: "entityDelete",
+          request: requestBody,
+        }) as EngineEntityActionResult,
+        "entityDeleted",
+      );
     }
 
     if (request.method === "GET" && url.pathname === "/piano-roll/list") {
-      return json(makePianoRollSnapshot({ force: true }));
+      return json(
+        await plane.execute({ kind: "pianoRollList" }) as PianoRollSnapshot,
+      );
     }
 
     if (request.method === "POST" && url.pathname === "/piano-roll/set") {
       const requestBody = await request.json() as SetPianoRollRequest;
-      return json(setPianoRoll(requestBody.name, requestBody.data, {
-        label: requestBody.label,
-        source: requestBody.source ?? "client",
-        originId: requestBody.originId,
-        undoable: requestBody.undoable,
-        expectedRev: requestBody.expectedRev,
-      }));
+      return json(
+        await plane.execute({
+          kind: "pianoRollSet",
+          request: requestBody,
+        }) as PianoRollObject,
+      );
     }
 
     if (request.method === "POST" && url.pathname === "/piano-roll/undo") {
       const requestBody = await request.json() as PianoRollHistoryRequest;
-      return json(
-        undoPianoRoll(requestBody.name, { originId: requestBody.originId }) ??
-          { ok: false },
-      );
+      const result = await plane.execute({
+        kind: "pianoRollHistory",
+        action: "undo",
+        request: requestBody,
+      }) as PianoRollObject | null;
+      return json(result ?? { ok: false });
     }
 
     if (request.method === "POST" && url.pathname === "/piano-roll/redo") {
       const requestBody = await request.json() as PianoRollHistoryRequest;
-      return json(
-        redoPianoRoll(requestBody.name, { originId: requestBody.originId }) ??
-          { ok: false },
-      );
+      const result = await plane.execute({
+        kind: "pianoRollHistory",
+        action: "redo",
+        request: requestBody,
+      }) as PianoRollObject | null;
+      return json(result ?? { ok: false });
     }
 
     if (request.method === "GET" && url.pathname === "/params/list") {
-      return json(makeParamsSnapshot());
+      return json(
+        await plane.execute({ kind: "paramsList" }) as ParamsSnapshot,
+      );
     }
 
     if (request.method === "POST" && url.pathname === "/params/set") {
       const requestBody = await request.json() as SetParamsRequest;
-      const entity = setParamsValues(requestBody.name, requestBody.values, {
-        originId: requestBody.originId,
-        expectedRev: requestBody.expectedRev,
-      });
+      const entity = await plane.execute({
+        kind: "paramsSet",
+        request: requestBody,
+      }) as ParamsEntity | null;
       if (!entity) {
         return json({
           ok: false,
@@ -631,7 +655,9 @@ export async function createLivecodeVisualizerServer(
     }
 
     if (request.method === "GET" && url.pathname === "/signals/list") {
-      return json(makeSignalsSnapshot());
+      return json(
+        await plane.execute({ kind: "signalsList" }) as SignalsSnapshot,
+      );
     }
 
     if (request.method === "GET" && url.pathname === "/lsp") {
@@ -666,7 +692,7 @@ export async function createLivecodeVisualizerServer(
       };
       socket.onmessage = (event) => {
         if (typeof event.data !== "string") return;
-        handleSyncClientMessage(state, event.data);
+        void handleSyncClientMessage(state, event.data);
       };
       socket.onclose = () => syncSockets.delete(socket);
       socket.onerror = () => syncSockets.delete(socket);
@@ -713,8 +739,152 @@ export async function createLivecodeVisualizerServer(
       return response;
     }
 
+    // --- remote engine mode: host page, uplink, and browser module assets ---
+    if (remotePlane) {
+      if (request.method === "GET" && url.pathname === "/engine/uplink") {
+        const { socket, response } = Deno.upgradeWebSocket(request);
+        remotePlane.attachEngineSocket(socket);
+        await log({ type: "engineUplinkAccepted" });
+        return response;
+      }
+
+      if (
+        request.method === "GET" &&
+        (url.pathname === "/engine" || url.pathname === "/engine/")
+      ) {
+        await ensureBrowserHostAssets();
+        return await serveStaticFile(
+          join(browserHostDir, "engine.html"),
+          "text/html; charset=utf-8",
+        );
+      }
+
+      if (request.method === "GET" && url.pathname.startsWith("/engine/")) {
+        await ensureBrowserHostAssets();
+        const relative = url.pathname.slice("/engine/".length);
+        const filePath = join(browserHostDir, normalize(relative));
+        if (relative.includes("..") || !filePath.startsWith(browserHostDir)) {
+          return new Response("Not found", {
+            status: 404,
+            headers: CORS_HEADERS,
+          });
+        }
+        const contentType = filePath.endsWith(".html")
+          ? "text/html; charset=utf-8"
+          : filePath.endsWith(".js")
+          ? "text/javascript; charset=utf-8"
+          : "application/octet-stream";
+        return await serveStaticFile(filePath, contentType);
+      }
+
+      if (
+        request.method === "GET" &&
+        url.pathname.startsWith("/engine-assets/generated/")
+      ) {
+        const relative = decodeURIComponent(
+          url.pathname.slice("/engine-assets/generated/".length),
+        );
+        const filePath = join(generatedDir, normalize(relative));
+        if (
+          relative.includes("..") || !filePath.startsWith(generatedDir) ||
+          !filePath.endsWith(".ts")
+        ) {
+          return new Response("Not found", {
+            status: 404,
+            headers: CORS_HEADERS,
+          });
+        }
+        return await serveTranspiledModule(filePath);
+      }
+
+      if (
+        request.method === "GET" &&
+        url.pathname.startsWith("/engine-assets/project/")
+      ) {
+        if (!currentProject) {
+          return new Response("No project open", {
+            status: 404,
+            headers: CORS_HEADERS,
+          });
+        }
+        const relative = decodeURIComponent(
+          url.pathname.slice("/engine-assets/project/".length),
+        );
+        const filePath = join(currentProject.root, normalize(relative));
+        if (
+          relative.includes("..") || !filePath.startsWith(currentProject.root) ||
+          !filePath.endsWith(".ts")
+        ) {
+          return new Response("Not found", {
+            status: 404,
+            headers: CORS_HEADERS,
+          });
+        }
+        return await serveTranspiledModule(filePath);
+      }
+    }
+
     return new Response("Not found", { status: 404, headers: CORS_HEADERS });
   };
+
+  async function serveStaticFile(
+    filePath: string,
+    contentType: string,
+  ): Promise<Response> {
+    try {
+      const body = await Deno.readFile(filePath);
+      return new Response(body, {
+        headers: { "content-type": contentType, ...CORS_HEADERS },
+      });
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) {
+        return new Response("Not found", { status: 404, headers: CORS_HEADERS });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Serve a materialized/generated `.ts` module as browser JS: type stripping
+   * only, cached by mtime+size, specifiers untouched — the browser resolves
+   * a relative `./state.ts` back through this route, so stable dependency
+   * URLs keep the same module-instance retention Deno's cache gives local
+   * runs. The entry's `?launch=` query naturally busts the browser cache.
+   */
+  async function serveTranspiledModule(filePath: string): Promise<Response> {
+    let stat: Deno.FileInfo;
+    try {
+      stat = await Deno.stat(filePath);
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) {
+        return new Response("Not found", { status: 404, headers: CORS_HEADERS });
+      }
+      throw error;
+    }
+    const cached = transpileCache.get(filePath);
+    const mtimeMs = stat.mtime?.getTime() ?? 0;
+    let js: string;
+    if (cached && cached.mtimeMs === mtimeMs && cached.size === stat.size) {
+      js = cached.js;
+    } else {
+      const source = await Deno.readTextFile(filePath);
+      js = typescript.transpileModule(source, {
+        compilerOptions: {
+          target: typescript.ScriptTarget.ES2022,
+          module: typescript.ModuleKind.ESNext,
+          useDefineForClassFields: true,
+        },
+      }).outputText;
+      transpileCache.set(filePath, { mtimeMs, size: stat.size, js });
+    }
+    return new Response(js, {
+      headers: {
+        "content-type": "text/javascript; charset=utf-8",
+        "cache-control": "no-store",
+        ...CORS_HEADERS,
+      },
+    });
+  }
 
   const server = Deno.serve({ hostname: host, port }, handler);
   const addr = server.addr as Deno.NetAddr;
@@ -752,9 +922,10 @@ export async function createLivecodeVisualizerServer(
         });
       }
       pendingClientCommands.clear();
-      // Clears the broadcast timer, unregisters the root clock, stops all
-      // modules, panics MIDI, and cancels the parent loop.
-      await engine.close();
+      // Local: clears the broadcast timer, unregisters the root clock, stops
+      // all modules, panics MIDI, and cancels the parent loop. Remote: closes
+      // the uplink socket and fails its pending ops.
+      await plane.close();
       await lspWsServer.shutdown();
       await server.shutdown();
     },
@@ -1017,41 +1188,35 @@ export async function createLivecodeVisualizerServer(
     const skipped: ProjectSaveSkippedEntity[] = [];
     const usedLowercasePaths = new Set<string>();
 
-    for (const descriptor of listDurableEntityTypes()) {
-      for (const name of descriptor.listNames()) {
-        try {
-          const payload = descriptor.serialize(name);
-          if (payload === null || payload === undefined) {
-            const latest = descriptor.latestJson(name);
-            skipped.push({
-              type: descriptor.typeId,
-              name,
-              reason: latest === null || latest === ""
-                ? "value could not be serialized"
-                : "unmodified auto-created entity",
-            });
-            continue;
-          }
-          pending.push({
-            type: descriptor.typeId,
-            name,
-            path: allocateEntityDataPath(
-              descriptor.typeId,
-              name,
-              usedLowercasePaths,
-            ),
-            json: descriptor.latestJson(name) ?? "",
-            text: `${JSON.stringify(payload, null, 2)}\n`,
-          });
-        } catch (error) {
-          // One hostile entity must not fail the whole save.
-          skipped.push({
-            type: descriptor.typeId,
-            name,
-            reason: error instanceof Error ? error.message : String(error),
-          });
-        }
+    // One point-in-time capture of every durable entity, taken by the engine
+    // (local or in the browser tab), so a save stays coherent regardless of
+    // where execution happens.
+    const capture = await plane.execute({
+      kind: "captureEntities",
+    }) as EngineEntityCapture[];
+    for (const row of capture) {
+      if (row.error !== undefined) {
+        // One hostile entity must not fail the whole save.
+        skipped.push({ type: row.type, name: row.name, reason: row.error });
+        continue;
       }
+      if (row.payload === null || row.payload === undefined) {
+        skipped.push({
+          type: row.type,
+          name: row.name,
+          reason: row.latestJson === null || row.latestJson === ""
+            ? "value could not be serialized"
+            : "unmodified auto-created entity",
+        });
+        continue;
+      }
+      pending.push({
+        type: row.type,
+        name: row.name,
+        path: allocateEntityDataPath(row.type, row.name, usedLowercasePaths),
+        json: row.latestJson ?? "",
+        text: `${JSON.stringify(row.payload, null, 2)}\n`,
+      });
     }
 
     await writeProjectManifest(state);
@@ -1124,6 +1289,7 @@ export async function createLivecodeVisualizerServer(
     const entries = state.manifest.data;
     if (!Array.isArray(entries)) return;
 
+    const loadable: EngineEntityLoadEntry[] = [];
     for (const rawEntry of entries as Array<Partial<ProjectDataEntry> | null>) {
       try {
         const typeId = typeof rawEntry?.type === "string"
@@ -1135,17 +1301,11 @@ export async function createLivecodeVisualizerServer(
         if (!typeId || !name) {
           throw new Error("Project data entries need a type and a name");
         }
-        const descriptor = getDurableEntityType(typeId);
-        if (!descriptor) throw new Error(`Unknown entity type "${typeId}"`);
         const relativePath = normalizeProjectDataPath(rawEntry?.path ?? "");
         const text = await Deno.readTextFile(
           projectAbsolutePath(state, relativePath),
         );
-        descriptor.deserialize(name, JSON.parse(text));
-        const json = descriptor.latestJson(name);
-        if (json !== null) {
-          state.savedEntityJson.set(entitySavedStateKey(typeId, name), json);
-        }
+        loadable.push({ type: typeId, name, data: JSON.parse(text) });
       } catch (error) {
         await log({
           type: "projectDataLoadSkipped",
@@ -1156,44 +1316,63 @@ export async function createLivecodeVisualizerServer(
         });
       }
     }
+    if (loadable.length === 0) return;
+
+    let results: EngineEntityLoadResult[];
+    try {
+      results = await plane.execute({
+        kind: "loadEntities",
+        entries: loadable,
+      }) as EngineEntityLoadResult[];
+    } catch (error) {
+      // Remote mode with no engine attached: the open still succeeds; the
+      // entities load when an engine is present at the next open.
+      await log({
+        type: "projectDataLoadSkipped",
+        message: error instanceof Error ? error.message : String(error),
+        entryCount: loadable.length,
+      });
+      return;
+    }
+    for (const result of results) {
+      if (result.ok) {
+        if (result.latestJson !== null && result.latestJson !== undefined) {
+          state.savedEntityJson.set(
+            entitySavedStateKey(result.type, result.name),
+            result.latestJson,
+          );
+        }
+      } else {
+        await log({
+          type: "projectDataLoadSkipped",
+          entityType: result.type,
+          name: result.name,
+          message: result.error,
+        });
+      }
+    }
   }
 
   function entitySavedStateKey(typeId: string, name: string): string {
     return `${typeId} ${name}`;
   }
 
-  function resolveEntityRequest(
-    typeId: unknown,
-    name: unknown,
-  ):
-    | { descriptor: DurableEntityTypeDescriptor; name: string }
-    | { error: string; status: number } {
-    const requestedType = typeof typeId === "string" ? typeId.trim() : "";
-    const requestedName = typeof name === "string" ? name.trim() : "";
-    if (!requestedType) {
-      return { error: "Entity type is required", status: 400 };
+  async function entityActionResponse(
+    result: EngineEntityActionResult,
+    logType: string,
+  ): Promise<Response> {
+    if (!result.ok || !result.entity) {
+      return json({ ok: false, error: result.error ?? "entity action failed" }, {
+        status: result.status ?? 500,
+      });
     }
-    if (!requestedName) {
-      return { error: "Entity name is required", status: 400 };
-    }
-    const descriptor = getDurableEntityType(requestedType);
-    if (!descriptor) {
-      return { error: `Unknown entity type "${requestedType}"`, status: 404 };
-    }
-    return { descriptor, name: requestedName };
-  }
-
-  function entityError(failure: { error: string; status: number }): Response {
-    return json({ ok: false, error: failure.error }, {
-      status: failure.status,
+    await log({
+      type: logType,
+      entityType: result.entity.type,
+      name: result.entity.name,
     });
-  }
-
-  function entityMutationSuccess(
-    typeId: string,
-    name: string,
-  ): EntityMutationSuccess {
-    return { ok: true, entity: { type: typeId, name } };
+    const success: EntityMutationSuccess = { ok: true, entity: result.entity };
+    return json(success);
   }
 
   /**
@@ -1202,25 +1381,32 @@ export async function createLivecodeVisualizerServer(
    * unsaved deletion. An entity a save would skip anyway (an untouched
    * auto-created one) is not an unsaved change.
    */
-  function makeProjectDataStatus(
+  async function makeProjectDataStatus(
     state: ProjectState,
-  ): ProjectDataEntityStatus[] {
+  ): Promise<ProjectDataEntityStatus[]> {
     const rows: ProjectDataEntityStatus[] = [];
     const liveKeys = new Set<string>();
 
-    for (const descriptor of listDurableEntityTypes()) {
-      for (const name of descriptor.listNames()) {
-        const key = entitySavedStateKey(descriptor.typeId, name);
-        liveKeys.add(key);
-        const saved = state.savedEntityJson.get(key);
-        rows.push({
-          type: descriptor.typeId,
-          name,
-          unsaved: saved === undefined
-            ? descriptor.serialize(name) !== null
-            : descriptor.latestJson(name) !== saved,
-        });
-      }
+    let live: EngineEntitySaveState[];
+    try {
+      live = await plane.execute({
+        kind: "entitySaveState",
+      }) as EngineEntitySaveState[];
+    } catch {
+      // No engine attached: no live entities to report on.
+      live = [];
+    }
+    for (const row of live) {
+      const key = entitySavedStateKey(row.type, row.name);
+      liveKeys.add(key);
+      const saved = state.savedEntityJson.get(key);
+      rows.push({
+        type: row.type,
+        name: row.name,
+        unsaved: saved === undefined
+          ? row.wouldSave
+          : row.latestJson !== saved,
+      });
     }
 
     for (const key of state.savedEntityJson.keys()) {
@@ -1356,7 +1542,7 @@ export async function createLivecodeVisualizerServer(
     state: ProjectState,
   ): Promise<ProjectMaterializeResult> {
     const generatedRunId = createGeneratedRunId();
-    const runtimeUrl = new URL("../../../../packages/livecode-engine/runtime.ts", import.meta.url).href;
+    const runtimeUrl = engineRuntimeImport();
     const results = new Map<string, AnalyzeResponse>();
     const sourceHashes = new Map<string, string>();
     const sourceTexts = new Map<string, string>();
@@ -1440,7 +1626,7 @@ export async function createLivecodeVisualizerServer(
         ok: true,
         project: null,
         modules: [],
-        activeModules: listRuntimeStatus(),
+        activeModules: await listRuntimeStatusSafe(),
         projectSourceHash: null,
         data: [],
       };
@@ -1468,10 +1654,14 @@ export async function createLivecodeVisualizerServer(
         .map((moduleRecord) => moduleRecord.id),
     );
 
+    const runtimeRows = await listRuntimeStatusSafe();
+    const activeByModule = new Map(
+      runtimeRows.map((row) => [row.moduleId, row]),
+    );
     for (const moduleRecord of sourceModules) {
       const diskHash = diskHashes.get(moduleRecord.id) ?? null;
       const hashState = currentProject.hashes.get(moduleRecord.id);
-      const active = engine.getActiveModuleInfo(moduleRecord.id);
+      const active = activeByModule.get(moduleRecord.id);
       const editorHash = hashState?.editorHash ?? null;
       const lastLoadedHash = hashState?.lastLoadedHash ?? null;
       const dependencies = sortedIds(
@@ -1518,9 +1708,9 @@ export async function createLivecodeVisualizerServer(
       ok: true,
       project: current.project,
       modules: moduleStatuses,
-      activeModules: listRuntimeStatus(),
+      activeModules: runtimeRows,
       projectSourceHash,
-      data: makeProjectDataStatus(currentProject),
+      data: await makeProjectDataStatus(currentProject),
     };
   }
 
@@ -1607,18 +1797,30 @@ export async function createLivecodeVisualizerServer(
     };
   }
 
-  function listRuntimeStatus(): RuntimeModuleStatus[] {
-    return engine.activeModulesSnapshot().map((active) => ({
-      moduleId: active.moduleId,
-      generatedRunId: active.generatedRunId,
-      transformedModuleUri: active.transformedModuleUri,
-      projectModulePath: active.projectModulePath,
-      sourceHash: active.sourceHash,
-      projectSourceHash: active.projectSourceHash,
-    }));
+  async function listRuntimeStatus(): Promise<RuntimeModuleStatus[]> {
+    return await plane.execute({
+      kind: "runtimeStatus",
+    }) as RuntimeModuleStatus[];
   }
 
-  function makeRuntimeStateResponse(): RuntimeStateResponse {
+  /** Status reads that must not fail routes when no engine is attached. */
+  async function listRuntimeStatusSafe(): Promise<RuntimeModuleStatus[]> {
+    try {
+      return await listRuntimeStatus();
+    } catch {
+      return [];
+    }
+  }
+
+  async function activeModuleIdsSafe(): Promise<string[]> {
+    try {
+      return await plane.execute({ kind: "activeModuleIds" }) as string[];
+    } catch {
+      return [];
+    }
+  }
+
+  async function makeRuntimeStateResponse(): Promise<RuntimeStateResponse> {
     const latestPreparedByModule:
       RuntimeStateResponse["latestPreparedByModule"] = {};
     for (const [moduleId, ids] of preparedRunIdsByModule) {
@@ -1634,25 +1836,18 @@ export async function createLivecodeVisualizerServer(
       }
     }
 
-    return {
-      ok: true,
-      activeModules: engine.activeModulesSnapshot().map((active) => ({
-        moduleId: active.moduleId,
-        generatedRunId: active.generatedRunId,
-        transformedModuleUri: active.transformedModuleUri,
-        projectModulePath: active.projectModulePath,
-        sourceHash: active.sourceHash,
-        projectSourceHash: active.projectSourceHash,
-        manifest: active.manifest,
-      })),
-      // `/runtime/state` carries the run token: rehydration is where a client
-      // seeds the token memory its terminal dedupe keys on.
-      moduleRuns: engine.moduleRunRecords(),
-      latestPreparedByModule,
-    };
+    // `/runtime/state` carries the run token: rehydration is where a client
+    // seeds the token memory its terminal dedupe keys on.
+    const state = await plane.execute({ kind: "runtimeState" }) as Omit<
+      RuntimeStateResponse,
+      "ok" | "latestPreparedByModule"
+    >;
+    return { ok: true, ...state, latestPreparedByModule };
   }
 
+  /** Local-mode only: the deprecated shim reads this process's engine. */
   function makeRuntimeSnapshot(): ActiveWaitSnapshot {
+    const engine = requireLocalEngine();
     const snapshot = makeActiveWaitSnapshot();
     return {
       ...snapshot,
@@ -1665,26 +1860,64 @@ export async function createLivecodeVisualizerServer(
     };
   }
 
+  function requireLocalEngine() {
+    if (!localPlane) {
+      throw new Error("only available with a local engine");
+    }
+    return localPlane.engine;
+  }
+
   // --- broadcast fan-out -------------------------------------------------
   // Everything below reads ONE collected result. Nothing here drains a gate.
 
   function broadcastSyncChanges(collected: SyncCollectedChanges): void {
     if (collected.size === 0 || syncSockets.size === 0) return;
+    const changes: SyncEntityChange[] = [];
+    for (const [entityType, entries] of collected) {
+      for (const entry of entries) {
+        changes.push({
+          entityType,
+          name: entry.name,
+          entity: entry.entity as SyncEntity | null,
+        });
+      }
+    }
+    broadcastSyncChangeList(changes);
+  }
+
+  /** Fan one flat change list out per socket, filtered to its subscriptions. */
+  function broadcastSyncChangeList(changes: SyncEntityChange[]): void {
+    if (changes.length === 0 || syncSockets.size === 0) return;
     for (const state of syncSockets.values()) {
       if (state.subscriptions.size === 0) continue;
-      const changes: SyncEntityChange[] = [];
-      for (const [entityType, entries] of collected) {
-        if (!state.subscriptions.has(entityType)) continue;
-        for (const entry of entries) {
-          changes.push({
-            entityType,
-            name: entry.name,
-            entity: entry.entity as SyncEntity | null,
-          });
+      const filtered = changes.filter((change) =>
+        state.subscriptions.has(change.entityType)
+      );
+      if (filtered.length === 0) continue;
+      sendSyncMessage(state, { changes: filtered });
+    }
+  }
+
+  /**
+   * Push full per-type resets to every subscribed socket — the remote plane's
+   * engine attach/detach relay. A reset replaces the client's whole per-type
+   * map, so this is how watchers converge on a newly attached engine's world
+   * (or on emptiness when the engine tab went away).
+   */
+  function broadcastSyncResets(resets: Record<string, SyncEntity[]>): void {
+    if (syncSockets.size === 0) return;
+    for (const state of syncSockets.values()) {
+      if (state.subscriptions.size === 0) continue;
+      const filtered: Record<string, SyncEntity[]> = {};
+      let any = false;
+      for (const entityType of state.subscriptions) {
+        if (entityType in resets) {
+          filtered[entityType] = resets[entityType];
+          any = true;
         }
       }
-      if (changes.length === 0) continue;
-      sendSyncMessage(state, { changes });
+      if (!any) continue;
+      sendSyncMessage(state, { resets: filtered });
     }
   }
 
@@ -1754,10 +1987,10 @@ export async function createLivecodeVisualizerServer(
    * client that detects a `seq` gap recovers by resubscribing the same set.
    * There is no replay buffer; a gap over TCP means a server bug, not loss.
    */
-  function handleSyncClientMessage(
+  async function handleSyncClientMessage(
     state: SyncSocketState,
     payload: string,
-  ): void {
+  ): Promise<void> {
     let message: SyncClientMessage;
     try {
       message = JSON.parse(payload) as SyncClientMessage;
@@ -1777,11 +2010,24 @@ export async function createLivecodeVisualizerServer(
       : [];
     state.subscriptions = new Set(entityTypes);
 
-    const resets: Record<string, SyncEntity[]> = {};
-    for (const entityType of state.subscriptions) {
-      resets[entityType] = engine.syncSources.snapshotAll(
-        entityType,
-      ) as SyncEntity[];
+    // An interleaved tick change for a just-subscribed type is harmless: the
+    // reset that lands afterwards replaces the whole per-type map with newer
+    // state. Per-socket seq stays monotonic because sends are synchronous.
+    let resets: Record<string, SyncEntity[]>;
+    try {
+      resets = await plane.execute({
+        kind: "snapshotAll",
+        entityTypes: [...state.subscriptions],
+      }) as Record<string, SyncEntity[]>;
+    } catch (error) {
+      // Remote mode with no engine attached: the watched world is empty, and
+      // an empty reset per requested type says exactly that.
+      resets = {};
+      for (const entityType of state.subscriptions) resets[entityType] = [];
+      void log({
+        type: "syncSubscribeResetUnavailable",
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
     sendSyncMessage(state, { resets });
   }
@@ -2081,9 +2327,11 @@ export async function createLivecodeVisualizerServer(
         return result;
       }
 
-      const transformedModuleUri = pathToFileURL(
-        projectAbsolutePath(currentProject, projectModule.runtimePath),
-      ).href;
+      const transformedModuleUri = engineMode === "remote"
+        ? `/engine-assets/project/${projectModule.runtimePath}`
+        : pathToFileURL(
+          projectAbsolutePath(currentProject, projectModule.runtimePath),
+        ).href;
       const sourceHash = materialized.sourceHashes.get(projectModule.id);
       await rememberPreparedRun({
         moduleId: projectModule.id,
@@ -2146,7 +2394,7 @@ export async function createLivecodeVisualizerServer(
     const generatedPath = join(generatedDir, `${generatedRunId}.ts`);
     await Deno.writeTextFile(modulePath, requestBody.sourceText);
 
-    const runtimeUrl = new URL("../../../../packages/livecode-engine/runtime.ts", import.meta.url).href;
+    const runtimeUrl = engineRuntimeImport();
     const result = analyzeAndTransformTimedModule({
       moduleId: requestBody.moduleId,
       sourceVersion: requestBody.sourceVersion,
@@ -2169,7 +2417,9 @@ export async function createLivecodeVisualizerServer(
     }
 
     await Deno.writeTextFile(generatedPath, result.transformedCode);
-    const transformedModuleUri = pathToFileURL(generatedPath).href;
+    const transformedModuleUri = engineMode === "remote"
+      ? `/engine-assets/generated/${basename(generatedPath)}`
+      : pathToFileURL(generatedPath).href;
     const sourceHash = await hashText(requestBody.sourceText);
     await rememberPreparedRun({
       moduleId: requestBody.moduleId,
@@ -2203,10 +2453,11 @@ export async function createLivecodeVisualizerServer(
       .filter((id) => preparedRuns.has(id) && id !== run.generatedRunId);
     ids.push(run.generatedRunId);
 
+    const activeRunIds = new Set(
+      (await listRuntimeStatusSafe()).map((row) => row.generatedRunId),
+    );
     while (ids.length > MAX_PREPARED_RUNS_PER_MODULE) {
-      const prunableIndex = ids.findIndex((id) =>
-        !engine.isGeneratedRunActive(id)
-      );
+      const prunableIndex = ids.findIndex((id) => !activeRunIds.has(id));
       if (prunableIndex < 0) break;
       const [oldestId] = ids.splice(prunableIndex, 1);
       const oldRun = preparedRuns.get(oldestId);
@@ -2220,8 +2471,8 @@ export async function createLivecodeVisualizerServer(
   }
 
   async function removeGeneratedPreparedFile(run: PreparedRun): Promise<void> {
+    if (!run.transformedModuleUri.startsWith("file:")) return;
     const url = new URL(run.transformedModuleUri);
-    if (url.protocol !== "file:") return;
     await removePathBestEffort(
       fromFileUrl(url),
       `prepared run ${run.generatedRunId}`,
@@ -2231,10 +2482,11 @@ export async function createLivecodeVisualizerServer(
   async function launchModule(requestBody: LaunchModuleRequest) {
     // The engine owns the whole accept/queue/replace discipline; the server
     // contributes only its prepared-run bookkeeping's build metadata.
-    await engine.launchModule(
-      requestBody,
-      preparedRuns.get(requestBody.generatedRunId),
-    );
+    await plane.execute({
+      kind: "launch",
+      request: requestBody,
+      prepared: preparedRuns.get(requestBody.generatedRunId),
+    });
   }
 }
 

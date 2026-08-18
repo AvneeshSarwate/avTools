@@ -729,6 +729,26 @@ before any module runs; a later `canvasParams` declaration still wins through
 the normal reconcile. Undo/redo history is never serialized. File layout and
 name encoding are in `project-model.md`.
 
+## Engine uplink contract (remote engine mode)
+
+`packages/livecode-protocol/engine_uplink.ts` declares the wire contract
+between a coordination server started with `--engine remote` and the browser
+engine host tab attached on `WS /engine/uplink`:
+
+- `EngineOp` is the whole execution-plane op surface — launch/stop/stop-all/
+  panic, runtime status/state, piano-roll/params/signals reads and writes,
+  generic entity CRUD, the project save capture (`captureEntities`),
+  `entitySaveState`, `loadEntities`, and `snapshotAll`. The server's routes
+  execute the same ops in local mode via `executeEngineOp`, so both modes are
+  one implementation.
+- Engine -> server: `engineHello` (engine kind plus full per-type resets),
+  `engineSync` (one tick's changed entities, relayed to `/sync`), and
+  `engineResult` (op replies). Server -> engine: `engineRequest`.
+- Failure semantics ride the same shapes as HTTP: an op that throws
+  engine-side becomes `engineResult { ok: false, error }` and the route
+  answers as it would have locally (launch refusals stay 409); entity CRUD
+  returns `EngineEntityActionResult` with its own `status`.
+
 ## Client-control contract
 
 An HTTP caller sends:

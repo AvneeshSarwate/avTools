@@ -15,8 +15,32 @@ broadcast timer. The package is portable TypeScript with injected capabilities
 (`importModule`, `panicMidi`, the per-tick `onSyncTick` sink) and is gated by
 `browser_target_check_test.ts` to stay typecheckable under a browser lib.
 
-`visualizer/server.ts` is its Deno host: it constructs one engine, forwards
-runtime routes to it, and keeps everything host-specific — HTTP/WS transports,
+`visualizer/server.ts` is its Deno host, and it hosts execution through an
+**execution plane** (`visualizer/execution_plane.ts`): one op surface
+(`EngineOp` in the protocol package, executed by the package's
+`executeEngineOp`) behind two implementations selected by the server's
+`engineMode`:
+
+- **local** (default): the plane owns an engine in this process and executes
+  ops directly — today's behavior, byte-for-byte on the wire.
+- **remote** (`--engine remote`): the server runs **no engine at all**. A
+  browser tab opens `GET /engine/` (the engine host page, built lazily by
+  `browser_host/build_host_assets.ts` into the session directory), attaches
+  over the `WS /engine/uplink`, announces itself with full entity resets, and
+  from then on every runtime/entity op forwards to the tab while its 33 ms
+  sync feed relays back into the server's `/sync` fan-out. Reads forward too,
+  so every HTTP answer is point-in-time engine truth; with no tab attached,
+  runtime/entity routes answer with an explicit "No engine attached" error,
+  and `/sync` subscribers get empty resets. An engine detach pushes empty
+  resets (the watched world is gone); a re-attach pushes its hello resets.
+  Analysis, project files, prepared runs, and LSP stay server-side; analyze
+  and materialization emit `runtimeImport: "/engine/runtime.js"` and
+  browser-served module URIs (`/engine-assets/generated/<id>.ts`,
+  `/engine-assets/project/<runtimePath>`), transpile-served with type
+  stripping so relative project imports keep their stable URLs. The
+  deprecated `/runtime/snapshots` shim is local-mode-only.
+
+The server keeps everything host-specific either way — HTTP/WS transports,
 project files, analysis, prepared-run bookkeeping, LSP, MIDI backend.
 
 Every moved module keeps a **one-line re-export shim at its old
@@ -240,6 +264,15 @@ the tier has no write route to secure, rate-limit, or reconcile.
 The three per-channel entity sockets — `/piano-roll/snapshots`,
 `/params/snapshots`, `/signals/snapshots` — are **deleted**. Every entity kind
 reaches watchers on `/sync`; the HTTP list routes are unchanged.
+
+### Remote engine mode only
+
+| Method | Route | Behavior |
+| --- | --- | --- |
+| WS | `/engine/uplink` | The engine host tab's attach point. A new socket replaces the previous engine (same rule as `/client/control`). Carries `engineHello` resets, per-tick `engineSync` changes, and `engineRequest`/`engineResult` op forwarding — see `packages/livecode-protocol/engine_uplink.ts`. |
+| GET | `/engine/`, `/engine/<asset>` | The engine host page and its code-split bundles, built lazily into the session directory on first request. |
+| GET | `/engine-assets/generated/<file>.ts` | A transient generated module, type-stripped to browser JS at serve time. |
+| GET | `/engine-assets/project/<runtimePath>` | A materialized project runtime file, served the same way; relative imports resolve back through this route at stable URLs. |
 
 ### LSP
 

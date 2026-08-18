@@ -1,43 +1,33 @@
 /// <reference lib="dom" />
-// Browser engine host page (phase-2 vertical slice of
-// docs/livecode/history/browser-engine-plan-2026-08.md).
+// The browser engine host page (docs/livecode/history/browser-engine-plan-2026-08.md).
 //
-// This module is bundled for the browser (`deno bundle --platform browser`,
-// see build_slice.ts) and served next to two tiny re-export stubs:
+// Bundled by build_host_assets.ts alongside per-alias helper bundles that
+// share its module instances via code splitting. The page runs the engine and
+// speaks two transports:
 //
-//   runtime.js         -> re-exports the instrumentation helpers from this
-//                         bundle, so generated code's `./runtime.js` import
-//                         shares the engine's runtime singletons;
-//   canvas_signals.js  -> re-exports `signal` for the page import map, so a
-//                         module's bare `canvas-signals` import resolves.
+//  - the local BroadcastChannel sync host, carrying the real `SyncMessage`
+//    envelope to same-origin observer tabs (subscribe answered with resets);
+//  - the `/engine/uplink` WebSocket to the coordination server that served
+//    this page: it announces itself with full resets, ships every tick's
+//    changes, and executes forwarded `EngineOp`s with the same
+//    `executeEngineOp` the server's local mode uses.
 //
-// The sync host here is deliberately minimal: one BroadcastChannel carrying
-// the real `SyncMessage` envelope, broadcast to every listening tab, with a
-// `subscribe` message answered by full `resets`. Per-tab subscription scoping
-// and seq-per-subscriber arrive with the real transport work; the envelope on
-// the wire is already the one from `@avtools/livecode-protocol`.
+// Served statically with no server (the baked setup, the slice E2E) the
+// uplink simply keeps retrying in the background and everything local works.
 
 import {
   createLivecodeEngine,
+  executeEngineOp,
   type LivecodeEngine,
 } from "@avtools/livecode-engine";
 import type {
+  EngineUplinkClientMessage,
+  EngineUplinkServerMessage,
   SyncEntity,
   SyncEntityChange,
   SyncMessage,
   SyncSubscribeMessage,
 } from "@avtools/livecode-protocol";
-
-// Re-exported for runtime.js: generated code imports these three by alias.
-export {
-  visualizedAwait,
-  visualizedOwnedSignal,
-  visualizedPianoRollLookup,
-} from "@avtools/livecode-engine";
-// Re-exported for canvas_signals.js (the `canvas-signals` import-map target).
-export { signal } from "canvas-signals";
-// Re-exported for canvas_params.js (the `canvas-params` import-map target).
-export { canvasParams } from "canvas-params";
 
 const SYNC_CHANNEL_NAME = "livecode-sync";
 const ENTITY_TYPES = [
@@ -48,11 +38,13 @@ const ENTITY_TYPES = [
   "moduleWaits",
   "moduleLookups",
 ];
+const UPLINK_RETRY_MS = 2_000;
 
 const channel = new BroadcastChannel(SYNC_CHANNEL_NAME);
 let seq = 0;
+let uplink: WebSocket | null = null;
 
-function send(body: {
+function sendLocal(body: {
   resets?: Record<string, SyncEntity[]>;
   changes?: SyncEntityChange[];
 }): void {
@@ -63,6 +55,25 @@ function send(body: {
     ...body,
   };
   channel.postMessage(message);
+}
+
+function sendUplink(message: EngineUplinkClientMessage): void {
+  if (!uplink || uplink.readyState !== WebSocket.OPEN) return;
+  try {
+    uplink.send(JSON.stringify(message));
+  } catch (error) {
+    console.warn("[livecode-engine] uplink send failed", error);
+  }
+}
+
+function snapshotAllTypes(): Record<string, SyncEntity[]> {
+  const resets: Record<string, SyncEntity[]> = {};
+  for (const entityType of ENTITY_TYPES) {
+    resets[entityType] = engine.syncSources.snapshotAll(
+      entityType,
+    ) as SyncEntity[];
+  }
+  return resets;
 }
 
 const engine: LivecodeEngine = createLivecodeEngine({
@@ -81,10 +92,13 @@ const engine: LivecodeEngine = createLivecodeEngine({
         });
       }
     }
-    if (changes.length > 0) send({ changes });
+    if (changes.length === 0) return;
+    sendLocal({ changes });
+    sendUplink({ type: "engineSync", changes });
   },
 });
 
+// Local observer tabs: a subscribe is answered with full resets.
 channel.onmessage = (event) => {
   const message = event.data as SyncSubscribeMessage | undefined;
   if (message?.type !== "subscribe") return;
@@ -99,10 +113,70 @@ channel.onmessage = (event) => {
       entityType,
     ) as SyncEntity[];
   }
-  send({ resets });
+  sendLocal({ resets });
 };
 
-// The page-level harness the slice E2E (and later the real UI/uplink) drives.
+// The server uplink: reconnect forever; a served page without a server (or a
+// server restart) just keeps retrying in the background.
+function connectUplink(): void {
+  const url = new URL("/engine/uplink", location.href);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  let socket: WebSocket;
+  try {
+    socket = new WebSocket(url.href);
+  } catch {
+    setTimeout(connectUplink, UPLINK_RETRY_MS);
+    return;
+  }
+  socket.onopen = () => {
+    uplink = socket;
+    console.log("[livecode-engine] uplink connected");
+    sendUplink({
+      type: "engineHello",
+      engineKind: "browser",
+      resets: snapshotAllTypes(),
+    });
+  };
+  socket.onmessage = (event) => {
+    if (typeof event.data !== "string") return;
+    let message: EngineUplinkServerMessage;
+    try {
+      message = JSON.parse(event.data) as EngineUplinkServerMessage;
+    } catch {
+      return;
+    }
+    if (message?.type !== "engineRequest") return;
+    void (async () => {
+      try {
+        const body = await executeEngineOp(engine, message.op);
+        sendUplink({
+          type: "engineResult",
+          requestId: message.requestId,
+          ok: true,
+          body,
+        });
+      } catch (error) {
+        sendUplink({
+          type: "engineResult",
+          requestId: message.requestId,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+  };
+  const retry = () => {
+    if (uplink === socket) uplink = null;
+    setTimeout(connectUplink, UPLINK_RETRY_MS);
+  };
+  socket.onclose = retry;
+  socket.onerror = () => {
+    // onclose follows; avoid double-scheduling.
+  };
+}
+connectUplink();
+
+// The page-level harness the slice E2E (and manual debugging) drives.
 (globalThis as Record<string, unknown>).__livecodeBrowserEngine = {
   engine,
   launch: (request: {

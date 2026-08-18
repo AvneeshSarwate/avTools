@@ -478,6 +478,24 @@ re-export shims at their old `visualizer/` paths, `midi_helpers` sits on
 tldraw browser E2E pass against the extraction. `current/server.md` describes
 the resulting shape.
 
+**Stage 1 of Setup B (the uplink + relay) is implemented and E2E-tested.**
+`packages/livecode-protocol/engine_uplink.ts` carries the op contract;
+`packages/livecode-engine/host_ops.ts` (`executeEngineOp`) is the one
+implementation both modes share; `visualizer/execution_plane.ts` holds the
+local plane (an in-process engine) and the remote plane (op forwarding over
+`WS /engine/uplink`, sync relay, attach/detach resets — no mirror: every read
+forwards for point-in-time truth, with the decimated mirror kept as the
+recorded cloud-egress optimization). `--engine remote` serves the engine host
+page (code-split `deno bundle` with per-alias helper bundles sharing chunks,
+so module imports hit the engine's own singletons) and transpile-serves
+generated/project module files at stable URLs.
+`livecode/tests/remote_engine.e2e.mjs` drives the whole agent HTTP surface
+plus a `/sync` watcher against a headless engine tab — analyze, launch, wait
+and signal observation, module piano-roll write-back read over HTTP, a params
+edit changing a running module, entity CRUD with status codes, stop and panic
+semantics, and detach/re-attach resets. The visualizer shims from phase 1
+were subsequently removed — everything imports the package directly.
+
 A **vertical slice of phases 2–3 also exists**:
 `livecode/browser_host/` holds the browser engine host page and
 `build_slice.ts` (analyzer transform with `runtimeImport: "./runtime.js"`,
