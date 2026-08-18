@@ -10,7 +10,7 @@
     "test:p5:browser:text": "P5GPU_MAX_PHASE=6 P5GPU_NAME_FILTER='text-' deno run --unstable-webgpu --unstable-ffi --allow-ffi --allow-read --allow-env --allow-write --allow-run --allow-net libraryIntegrationTetsts/p5_browser_comparison_tests.ts",
     "test:livecode:unit": "deno test --allow-env --allow-sys --allow-read --allow-write livecode/tests/analyzer_transform_test.ts livecode/tests/runtime_counts_test.ts livecode/tests/dynamic_import_execution_test.ts livecode/tests/midi_helpers_test.ts livecode/tests/params_store_test.ts livecode/tests/entity_registry_test.ts livecode/tests/signals_store_test.ts livecode/tests/run_dedupe_test.ts",
     "test:livecode:repro": "deno test --allow-all livecode/tests/repro/",
-    "test:livecode:server": "deno test --allow-all livecode/tests/protocol_smoke_test.ts livecode/tests/sync_transport_test.ts livecode/tests/launch_race_test.ts livecode/tests/lsp_smoke_test.ts livecode/tests/server_smoke_test.ts livecode/tests/default_source_integration_test.ts livecode/tests/browser_target_check_test.ts",
+    "test:livecode:server": "deno test --allow-all livecode/tests/protocol_smoke_test.ts livecode/tests/sync_transport_test.ts livecode/tests/launch_race_test.ts livecode/tests/lsp_smoke_test.ts livecode/tests/server_smoke_test.ts livecode/tests/default_source_integration_test.ts livecode/tests/browser_target_check_test.ts livecode/tests/browser_target_project_test.ts",
     "test:livecode:p5gpu": "deno test --unstable-webgpu --unstable-ffi --allow-all livecode/tests/project_p5gpu_e2e_test.ts",
     "test:livecode:e2e": "cd ../browser-projections && npm run test:livecode:e2e",
     "test:livecode": "deno task test:livecode:unit && deno task test:livecode:server && deno task test:livecode:e2e",

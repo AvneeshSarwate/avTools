@@ -1,5 +1,6 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { fromFileUrl, isAbsolute, join, resolve } from "jsr:@std/path@1";
+import { fromFileUrl, isAbsolute, join } from "jsr:@std/path@1";
+import { writeBrowserCheckConfig } from "../visualizer/browser_check_config.ts";
 
 // The portable helper graph — everything a browser-target module may import
 // through the livecode aliases — must typecheck under a browser lib, where the
@@ -21,36 +22,8 @@ const PORTABLE_ENTRYPOINTS = [
   "packages/livecode-engine/runtime.ts",
 ];
 
-const BROWSER_LIB = ["esnext", "dom", "dom.iterable", "dom.asynciterable"];
-
-async function writeBrowserCheckConfig(dir: string): Promise<string> {
-  const rootConfig = JSON.parse(
-    await Deno.readTextFile(join(REPO_ROOT, "deno.json")),
-  ) as { imports?: Record<string, string> };
-  const imports: Record<string, string> = {};
-  for (const [key, value] of Object.entries(rootConfig.imports ?? {})) {
-    imports[key] = value.startsWith("./") || value.startsWith("../")
-      ? resolve(REPO_ROOT, value) + (value.endsWith("/") ? "/" : "")
-      : value;
-  }
-  const configPath = join(dir, "deno.json");
-  await Deno.writeTextFile(
-    configPath,
-    JSON.stringify(
-      {
-        compilerOptions: { lib: BROWSER_LIB },
-        imports,
-        // byonm: npm specifiers resolve from the repository's existing
-        // node_modules (found by walking up from the checked files), so the
-        // temp-dir config needs no install step of its own.
-        nodeModulesDir: "manual",
-        lock: false,
-      },
-      null,
-      2,
-    ) + "\n",
-  );
-  return configPath;
+async function writeConfig(dir: string): Promise<string> {
+  return await writeBrowserCheckConfig(REPO_ROOT, dir);
 }
 
 async function runDenoCheck(
@@ -74,7 +47,7 @@ async function runDenoCheck(
 Deno.test("portable helper graph typechecks under a browser-target lib", async () => {
   const dir = await Deno.makeTempDir({ prefix: "browser-target-check-" });
   try {
-    const configPath = await writeBrowserCheckConfig(dir);
+    const configPath = await writeConfig(dir);
     const files = PORTABLE_ENTRYPOINTS.map((entry) =>
       isAbsolute(entry) ? entry : join(REPO_ROOT, entry)
     );
@@ -92,7 +65,7 @@ Deno.test("portable helper graph typechecks under a browser-target lib", async (
 Deno.test("the browser-target config actually rejects Deno globals", async () => {
   const dir = await Deno.makeTempDir({ prefix: "browser-target-check-" });
   try {
-    const configPath = await writeBrowserCheckConfig(dir);
+    const configPath = await writeConfig(dir);
     const probePath = join(dir, "uses_deno_global.ts");
     await Deno.writeTextFile(
       probePath,
@@ -114,7 +87,7 @@ Deno.test("the browser-target config actually rejects Deno globals", async () =>
 Deno.test("browser check config absolutizes relative import-map entries", async () => {
   const dir = await Deno.makeTempDir({ prefix: "browser-target-check-" });
   try {
-    const configPath = await writeBrowserCheckConfig(dir);
+    const configPath = await writeConfig(dir);
     const config = JSON.parse(await Deno.readTextFile(configPath)) as {
       imports: Record<string, string>;
     };
