@@ -68,6 +68,11 @@ chosen, and why tldraw was considered a spatial shell. The active client is now
   legacy runtime-snapshot shim). Same status convention as above. All four
   phases landed on 2026-08-13; the file carries a note listing the two places
   its prose no longer matches what shipped.
+- `browser-engine-plan-2026-08.md` is the design note for running the engine
+  in a browser tab: the engine/coordination split of the server, the
+  BroadcastChannel UI plane and server uplink, module delivery to a browser,
+  the Cloudflare remote-dev deployment, and the baked static setup. Design
+  note only — nothing in it is implemented except `packages/midi`.
 
 ## Stability review
 
