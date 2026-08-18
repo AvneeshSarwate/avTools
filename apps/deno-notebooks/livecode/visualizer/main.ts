@@ -10,6 +10,9 @@ const server = await createLivecodeVisualizerServer({
   port: args.port ? Number(args.port) : 0,
   sessionRoot: args["session-root"],
   logLevel: args["log-level"] === "debug" ? "debug" : "info",
+  // --engine remote: no engine in this process; a browser tab opens /engine/
+  // and attaches over /engine/uplink.
+  engineMode: args.engine === "remote" ? "remote" : "local",
 });
 
 let closing = false;

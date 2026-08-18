@@ -94,6 +94,16 @@ them from a temp dir):
 node livecode/tests/browser_engine_slice.e2e.mjs
 ```
 
+The remote engine mode has its own E2E (same conventions), which starts a
+`--engine remote` server, attaches a headless engine tab, and drives the whole
+agent HTTP surface plus a `/sync` watcher against it — including module
+write-back, params edits, entity CRUD, stop/panic semantics, and
+detach/re-attach:
+
+```sh
+node livecode/tests/remote_engine.e2e.mjs
+```
+
 From `apps/livecode-tldraw`:
 
 ```sh
