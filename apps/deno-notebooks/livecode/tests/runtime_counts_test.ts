@@ -10,7 +10,7 @@ import {
   makeActiveWaitSnapshot,
   visualizedAwait,
   visualizedPianoRollLookup,
-} from "../visualizer/runtime.ts";
+} from "@avtools/livecode-engine/runtime.ts";
 
 Deno.test("runtime count map keeps ids active until count reaches zero", () => {
   clearAllWaits();

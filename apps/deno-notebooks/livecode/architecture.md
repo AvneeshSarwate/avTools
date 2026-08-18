@@ -15,14 +15,15 @@ and analysis/code generation is documented in
 
 | Area | Files |
 | --- | --- |
-| HTTP/WebSocket routes, run records, the one broadcast timer and its fan-out | `visualizer/server.ts` |
-| Sync source registry: what that timer walks, one entry per entity kind | `visualizer/sync_sources.ts` |
+| HTTP/WebSocket routes, the engine instance and its tick fan-out | `visualizer/server.ts` |
+| Execution plane: launch queue, run records, the one broadcast timer, stores, sync sources | `packages/livecode-engine` (repo root) |
+| Sync source registry: what that timer walks, one entry per entity kind | `packages/livecode-engine/sync_sources.ts` |
 | Static analysis and generated source | `visualizer/analyze_transform.ts` |
-| Prepared-module instrumentation, active wait tracking, signal ownership, and the process root clock | `visualizer/runtime.ts` |
+| Prepared-module instrumentation, active wait tracking, signal ownership, and the process root clock | `packages/livecode-engine/runtime.ts` |
 | Project import graph, shadow files, and diagnostics | `visualizer/project_shadow_analysis.ts` |
-| Generic entity records and the per-type changed-name gate | `visualizer/entity_store.ts` |
-| Typed stores over it: params, ephemeral signals (unregistered by design), piano rolls | `visualizer/params_store.ts`, `visualizer/signals_store.ts`, `visualizer/piano_roll_store.ts` |
-| Durable-type registry and entity-name file encoding | `visualizer/entity_registry.ts` |
+| Generic entity records and the per-type changed-name gate | `packages/livecode-engine/entity_store.ts` |
+| Typed stores over it: params, ephemeral signals (unregistered by design), piano rolls | `packages/livecode-engine/params_store.ts`, `signals_store.ts`, `piano_roll_store.ts` |
+| Durable-type registry and entity-name file encoding | `packages/livecode-engine/entity_registry.ts` |
 | User-facing declaration helpers | `helpers/canvas_params.ts`, `helpers/canvas_signals.ts` |
 | User-facing piano-roll conversion/playback | `helpers/piano_roll_helpers.ts` |
 | MIDI integration | `helpers/midi_helpers.ts`, `helpers/midi_math.ts` |

@@ -45,6 +45,7 @@ await Deno.mkdir(outDir, { recursive: true });
 const sourceText = await Deno.readTextFile(modulePath);
 const analysis = analyzeAndTransformTimedModule({
   moduleId,
+  sourceVersion: 1,
   sourceUri: `file://${modulePath}`,
   sourceText,
   runtimeImport: "./runtime.js",

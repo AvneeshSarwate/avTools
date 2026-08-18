@@ -10,17 +10,17 @@ import {
   makeSignalsSnapshot,
   sampleSignalChanges,
   SIGNAL_ENTITY_TYPE,
-} from "../visualizer/signals_store.ts";
+} from "@avtools/livecode-engine/signals_store.ts";
 import {
   sampleRootTime,
   setRootTimeContext,
   visualizedOwnedSignal,
-} from "../visualizer/runtime.ts";
+} from "@avtools/livecode-engine/runtime.ts";
 import {
   getDurableEntityType,
   listDurableEntityTypes,
   registerBuiltinDurableEntityTypes,
-} from "../visualizer/entity_registry.ts";
+} from "@avtools/livecode-engine/entity_registry.ts";
 import type { SignalEntity } from "../visualizer/protocol.ts";
 
 function reset(): void {

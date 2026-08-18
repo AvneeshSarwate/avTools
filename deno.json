@@ -54,7 +54,7 @@
     "canvas-signals": "./apps/deno-notebooks/livecode/helpers/canvas_signals.ts",
     "midi-helpers": "./apps/deno-notebooks/livecode/helpers/midi_helpers.ts",
     "piano-roll-helpers": "./apps/deno-notebooks/livecode/helpers/piano_roll_helpers.ts",
-    "piano-roll-store": "./apps/deno-notebooks/livecode/visualizer/piano_roll_store.ts",
+    "piano-roll-store": "./packages/livecode-engine/piano_roll_store.ts",
     "seedrandom": "npm:seedrandom@^3.0.5",
     "wgsl_reflect": "npm:wgsl_reflect@^1.2.3"
   }
