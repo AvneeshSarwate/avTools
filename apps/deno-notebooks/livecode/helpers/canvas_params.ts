@@ -1,4 +1,4 @@
-import { registerParams } from "../visualizer/params_store.ts";
+import { registerParams } from "@avtools/livecode-engine/params_store.ts";
 import type {
   ParamsFieldMeta,
   ParamsMeta,

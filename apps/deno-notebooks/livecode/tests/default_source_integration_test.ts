@@ -2,7 +2,7 @@ import { assert, assertEquals } from "jsr:@std/assert@1";
 import { fromFileUrl } from "jsr:@std/path@1";
 import { DEFAULT_LIVECODE_SOURCE } from "../../../browser-projections/src/sketches/livecodeVisualizer/defaultSource.ts";
 import { analyzeAndTransformTimedModule } from "../visualizer/analyze_transform.ts";
-import { seedDemoPianoRoll } from "../visualizer/piano_roll_store.ts";
+import { seedDemoPianoRoll } from "@avtools/livecode-engine/piano_roll_store.ts";
 
 Deno.test("built-in editor source checks, analyzes, and initializes piano roll helpers", async () => {
   const tempDir = await Deno.makeTempDir({
@@ -38,7 +38,7 @@ Deno.test("built-in editor source checks, analyzes, and initializes piano roll h
       sourceUri: sourcePath,
       sourceText: DEFAULT_LIVECODE_SOURCE,
       generatedRunId: "default-source-run",
-      runtimeImport: "../visualizer/runtime.ts",
+      runtimeImport: new URL("../../../../packages/livecode-engine/runtime.ts", import.meta.url).href,
       idFactory: ({ index }) => `default_source_wait_${index + 1}`,
     });
 
