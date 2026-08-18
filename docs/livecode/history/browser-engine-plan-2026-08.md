@@ -478,6 +478,23 @@ re-export shims at their old `visualizer/` paths, `midi_helpers` sits on
 tldraw browser E2E pass against the extraction. `current/server.md` describes
 the resulting shape.
 
+A **vertical slice of phases 2–3 also exists**:
+`livecode/browser_host/` holds the browser engine host page and
+`build_slice.ts` (analyzer transform with `runtimeImport: "./runtime.js"`,
+type-strip via ts-morph's own TypeScript, `deno bundle --platform browser`
+for the engine host, and the runtime/canvas-helper re-export stubs that keep
+the singletons shared). `livecode/tests/browser_engine_slice.e2e.mjs` proves
+the whole chain in headless Chromium: an instrumented module launches in the
+engine tab, and an observer tab receives — over the BroadcastChannel sync
+host carrying the real `SyncMessage` envelope — the subscribe resets
+(including the construction-seeded demo roll), the tokened `running` run
+entity, the active wait callsite, the owner-stamped heartbeat signal with
+strictly advancing revs, and on stop the terminal run entity, the waits
+deletion, and the sticky signal `ended`. What the slice deliberately leaves
+out: per-tab subscription scoping, the server uplink/relay, project-mode
+module trees (relative-import rewriting), and the client transport
+abstraction.
+
 1. **Engine extraction (no behavior change).** Carve
    `packages/livecode-engine` out of `visualizer/server.ts` +
    `runtime.ts`/stores/sync-sources with injected capabilities; Deno host
