@@ -13,3 +13,4 @@ export * from "./piano_roll_store.ts";
 export * from "./sync_sources.ts";
 export * from "./runtime.ts";
 export * from "./generated_run_id.ts";
+export * from "./host_ops.ts";

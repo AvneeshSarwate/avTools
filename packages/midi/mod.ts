@@ -1,4 +1,4 @@
-import type { MidiAccess, MidiBackend } from "./api.ts";
+import { detectMidiBackend, type MidiAccess, type MidiBackend } from "./api.ts";
 
 export * from "./api.ts";
 
@@ -7,15 +7,6 @@ export interface AutoMidiAccessOptions {
   backend?: MidiBackend | "auto";
   /** Native bridge override. Ignored by the browser backend. */
   libPath?: string;
-}
-
-export function detectMidiBackend(): MidiBackend {
-  const candidate = globalThis as typeof globalThis & {
-    navigator?: { requestMIDIAccess?: unknown };
-  };
-  return typeof candidate.navigator?.requestMIDIAccess === "function"
-    ? "browser"
-    : "native";
 }
 
 export async function openMidiAccess(
