@@ -200,13 +200,18 @@ If no engine is attached, forwarded routes answer with an explicit
 "no engine connected" error — the same operational shape as "server not
 running" today.
 
-**Why not route everything through the server?** A useful staging option, and
-it also enables a UI tab on a *different* machine than the engine (a tablet
-control surface). But the steady-state 30 Hz observation loop should not cross
-the WAN when both tabs share a machine: BroadcastChannel keeps the hot path
-local, keeps cloud egress near zero, and keeps scope/playhead latency at
-local-frame timescales. Stage 1 below ships the relay first because it needs no
-new client transport; Stage 2 adds the BroadcastChannel fast path.
+**The relay path is a kept mode, not scaffolding (decided 2026-08-18).**
+Routing sync through the server is both the staging step *and* a permanent
+topology: a UI tab on a different machine than the engine — concretely, an
+iPad control surface on the LAN while the coordination server runs on the
+laptop and the engine in the laptop's browser, a live-performance setup with
+no cloud involved at all. BroadcastChannel exists because the steady-state
+30 Hz observation loop should not cross the WAN when both tabs share a
+machine: it keeps the hot path local, cloud egress near zero, and
+scope/playhead latency at local-frame timescales. So the client keeps both
+transports — BroadcastChannel when a local engine is present, relay
+otherwise — and Stage 1 ships the relay first because it needs no new client
+transport.
 
 ### Module delivery to a browser engine
 
@@ -252,10 +257,44 @@ server grows a **browser build step** after materialization:
    same as per-process today.
 
 Analysis, diagnostics, shadow `deno check`, and LSP do not move: they already
-run against `*.orig.ts` on the server and are engine-agnostic. `deno check`
-keeps typechecking against Deno's view of the graph; a per-target
-`compilerOptions.lib` question (DOM vs Deno globals) is real but deferrable —
-user modules that stick to the helper APIs typecheck identically.
+run against `*.orig.ts` on the server and are engine-agnostic.
+
+### Target-aware typechecking (verified 2026-08-18, Deno 2.9.5)
+
+Good typechecking is a core principle, so the Run gate should check against
+the world the module will actually execute in. The mechanism is cheap, and the
+three load-bearing behaviors were verified by experiment:
+
+1. **One config knob flips the type world.** `deno check` with
+   `compilerOptions.lib: ["esnext", "dom", "dom.iterable",
+   "dom.asynciterable"]` makes `Deno.*` a type error
+   (`TS2304 Cannot find name 'Deno'`) and DOM globals legal; the default lib
+   is the exact reverse. So a browser-target project checks against browser
+   truth by giving the shadow tree a generated config with the
+   target-appropriate `lib` — the import-map merge logic this needs already
+   exists in the LSP proxy's synthetic-workspace builder.
+2. **WebGPU needs nothing extra.** `navigator.gpu` / `GPUDevice` already
+   typecheck under the plain `dom` lib in current Deno.
+3. **Dynamic imports behave exactly as needed.** A *string-literal*
+   `import("./x.ts")` is followed into the checked graph, but a
+   *variable-specifier* dynamic import is not — which is precisely the
+   pattern `@avtools/midi/mod.ts` already uses to keep the FFI backend out of
+   browser bundles, and it keeps it out of browser-target typechecks for
+   free.
+
+The knob is fed by a project-level target declaration (a manifest field,
+`engineTarget: "deno" | "browser"`), and the same `lib` override goes into the
+LSP proxy's workspace config so editor diagnostics agree with the Run gate.
+
+What (3) also reveals is the real work item: the **portable helper graph must
+be browser-lib-clean**, because any reachable `Deno.` reference — even a
+runtime-guarded one — is a type error under browser lib. Concretely:
+`piano_roll_helpers.ts`'s try/catch-guarded `Deno.env.get` needs a
+`globalThis`-probed form, and its string-literal lazy
+`import("./midi_helpers.ts")` currently drags the whole FFI-typed MIDI graph
+into the check — fixed by the already-planned rebase onto `@avtools/midi`,
+whose backend split was designed for exactly this. Both are mechanical, and
+both belong to phase 1.
 
 An engine advertises what it is: `/health`'s `runtimeCapabilities` (already on
 the wire) gains `engineKind: "deno" | "browser"` plus capability flags (midi,
@@ -294,10 +333,11 @@ a warning-tier finding, not a block, per the static-checking severity taxonomy.
      the seam already exists, and it keeps the engine itself on the main
      thread where Web MIDI lives;
   3. operator guidance: keep the engine tab in its own visible window.
-  The plan is (1) + (3) first and measure; (2) is the escalation if
-  measurement demands it. Whatever the choice, the engine should *watch its
-  own tick* and publish a warning entity when ticks stretch (a "the platform
-  never fails silently" obligation).
+  **Decided 2026-08-18: ship (1) + (3) only** — single-operator tool, the
+  operator keeps both tabs visible. The Worker time-source idea is recorded
+  in `next-stuff-brainstorm.md` as useful-but-not-needed. Whatever happens
+  later, the engine should *watch its own tick* and publish a warning entity
+  when ticks stretch (a "the platform never fails silently" obligation).
 - **Persistence** — the engine tab holds execution truth in memory exactly as
   the Deno process does today. Closing the tab is killing the engine, with
   the same consequences (unsaved entity edits lost) — mitigated by the same
@@ -392,10 +432,12 @@ Everything Setup A needs is a strict subset of B's components:
   UI simply omits editors);
 - BroadcastChannel between the two tabs is the *same* transport as Stage 2 of
   Setup B, unchanged;
-- saves degrade to export/download (or OPFS) since there is no writable
-  project directory — acceptable for a performance artifact, and the
+- saves degrade to export/download since there is no writable project
+  directory — acceptable for a performance artifact, and the
   compose-privately/perform-publicly split in `user-level-project-goals.md`
   says exactly this: performance runs against stabilized material.
+  **Decided 2026-08-18: export-only is v1**; OPFS-backed local persistence is
+  a welcome convenience later and does not need to be robust.
 
 Building B-then-A means the bake is mostly a build script plus a "static
 manifest" engine boot path, not a second system.
@@ -432,18 +474,23 @@ manifest" engine boot path, not a second system.
    `packages/livecode-engine` out of `visualizer/server.ts` +
    `runtime.ts`/stores/sync-sources with injected capabilities; Deno host
    keeps every route and test green. Rebase `midi_helpers.ts` onto
-   `@avtools/midi`. This phase is worth doing even if the browser engine
-   stalled: it makes the run-record/store coupling explicit.
+   `@avtools/midi` and make the portable helper graph browser-lib-clean
+   (`globalThis`-probed `Deno.env` access, variable-specifier lazy imports)
+   so it survives a browser-target typecheck. This phase is worth doing even
+   if the browser engine stalled: it makes the run-record/store coupling
+   explicit.
 2. **Uplink + relay (Setup B, stage 1).** Add the `/engine/uplink` socket, the
    action-forwarding + mirror machinery, and the browser build step for
    transient modules. Browser engine page runs transient modules; UI still
    talks only to the server (sync relayed). Everything works end-to-end with
-   zero client-transport changes.
+   zero client-transport changes — and this relayed mode is kept afterwards
+   as the second-machine-UI topology.
 3. **BroadcastChannel plane (Setup B, stage 2).** `LivecodeTransport`
-   abstraction in the client; engine tab serves sync + actions locally;
-   server keeps files/analysis/LSP and the agent surface. Project mode in the
-   browser engine (materialized modules browser-built and served at stable
-   URLs).
+   abstraction in the client; engine tab serves sync + actions locally when
+   present; server keeps files/analysis/LSP and the agent surface. Project
+   mode in the browser engine (materialized modules browser-built and served
+   at stable URLs), with the `engineTarget` manifest field driving the
+   target-aware shadow-check and LSP `lib` configuration.
 4. **Cloudflare packaging.** Dockerfile (Deno + repo + agent), Sandbox-SDK
    Worker with static assets and DO routing, Access policies, git/R2
    persistence discipline, SIGTERM handling, `sleepAfter` tuning. Deliverable:
@@ -451,18 +498,21 @@ manifest" engine boot path, not a second system.
    workflow runs with local browser sound.
 5. **Bake (Setup A).** Bake command + static engine boot + read-only UI mode.
 
-## Open questions for the owner
+## Decisions (owner, 2026-08-18)
 
-1. **Mirror staleness contract.** Is ~2–5 Hz (plus synchronous snapshot on
-   save) acceptable for agent HTTP reads, or should agent reads always
-   round-trip to the engine for point-in-time truth?
-2. **Throttling mitigation.** Comfortable shipping the silent-`AudioContext`
-   exemption + visible-window guidance first, before any worker-ization of
-   the loop?
-3. **Typecheck target.** Should shadow `deno check` gain a browser-target lib
-   configuration per project, or stay Deno-flavored with capability warnings?
-4. **Multi-machine UI.** Is the tablet-on-another-machine case (UI relayed via
-   server rather than BroadcastChannel) worth keeping first-class, or is
-   same-machine the only supported topology for now?
-5. **Baked-mode saves.** Export/download only, or OPFS-backed local project
-   state?
+The five open questions this note originally carried are decided:
+
+1. **Mirror staleness: accepted.** Agent HTTP reads answer from the decimated
+   mirror; `/project/save` keeps its synchronous point-in-time snapshot.
+2. **Throttling: cheap path only.** Silent `AudioContext` plus
+   keep-both-tabs-visible discipline (single-operator tool). The
+   Worker-backed time-source idea is parked in `next-stuff-brainstorm.md`.
+3. **Target-aware typechecking: build it.** Good typechecking is a core
+   principle, and the investigation above showed the mechanism is one config
+   knob plus mechanical cleanup of the portable helper graph — well under the
+   "extremely complicated" bar that would have justified living with the
+   mismatch.
+4. **Second-machine UI: kept.** The relay is a permanent supported topology,
+   not scaffolding — notably iPad-on-LAN control with a laptop-local server
+   for live performance.
+5. **Baked saves: export-only v1**, OPFS as a later convenience feature.
