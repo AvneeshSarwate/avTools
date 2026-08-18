@@ -104,6 +104,16 @@ detach/re-attach:
 node livecode/tests/remote_engine.e2e.mjs
 ```
 
+The baked (serverless) topology has one too: it bakes a temp project with
+`livecode/browser_host/bake_project.ts` (requires a built tldraw client),
+serves the output from a dumb static file server, and drives the engine tab
+plus the real UI purely over BroadcastChannel — including entity CRUD and a
+params write on the broadcast actions channel:
+
+```sh
+node livecode/tests/baked_project.e2e.mjs
+```
+
 The tldraw E2E itself also runs against a remote engine:
 `LIVECODE_E2E_ENGINE=remote` starts its server with `--engine remote` and
 opens an engine tab before any case runs. Adding `LIVECODE_E2E_UI=served`

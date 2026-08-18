@@ -21,6 +21,7 @@ import {
   type LivecodeEngine,
 } from "@avtools/livecode-engine";
 import type {
+  EngineEntityLoadEntry,
   EngineUplinkClientMessage,
   EngineUplinkServerMessage,
   SyncEntity,
@@ -116,6 +117,80 @@ channel.onmessage = (event) => {
   }
   sendLocal({ resets });
 };
+
+// The actions channel: same-origin UI tabs post the uplink's
+// `engineRequest` envelope here when there is no server to POST to (the
+// serverless baked topology, `actions=broadcast`). Always listening is
+// harmless in the served topology — nothing posts there.
+const actionsChannel = new BroadcastChannel("livecode-actions");
+actionsChannel.onmessage = (event) => {
+  const message = event.data as EngineUplinkServerMessage | undefined;
+  if (message?.type !== "engineRequest") return;
+  void (async () => {
+    try {
+      const body = await executeEngineOp(engine, message.op);
+      actionsChannel.postMessage({
+        type: "engineResult",
+        requestId: message.requestId,
+        ok: true,
+        body,
+      });
+    } catch (error) {
+      actionsChannel.postMessage({
+        type: "engineResult",
+        requestId: message.requestId,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  })();
+};
+
+// Baked boot: a static bake places baked.json next to this page — durable
+// entity seeds plus the prebuilt module list, auto-launched because a baked
+// artifact IS the performance setup. Absent (404) means the dynamic
+// topologies, where launches arrive over the uplink or harness instead.
+interface BakedManifest {
+  modules?: Array<{
+    moduleId: string;
+    entry: string;
+    generatedRunId: string;
+    title?: string;
+  }>;
+  data?: EngineEntityLoadEntry[];
+}
+
+void (async () => {
+  let baked: BakedManifest;
+  try {
+    const response = await fetch("./baked.json");
+    if (!response.ok) return;
+    baked = await response.json() as BakedManifest;
+  } catch {
+    return;
+  }
+  try {
+    if (baked.data && baked.data.length > 0) {
+      await executeEngineOp(engine, {
+        kind: "loadEntities",
+        entries: baked.data,
+      });
+    }
+    for (const bakedModule of baked.modules ?? []) {
+      await engine.launchModule({
+        moduleId: bakedModule.moduleId,
+        // Resolved against the page URL so a bake hosted under any subpath
+        // works; the engine's import() would otherwise resolve relative to
+        // whichever bundle chunk it lives in.
+        transformedModuleUri: new URL(bakedModule.entry, location.href).href,
+        generatedRunId: bakedModule.generatedRunId,
+      });
+    }
+    console.log("[livecode-engine] baked boot complete");
+  } catch (error) {
+    console.warn("[livecode-engine] baked boot failed", error);
+  }
+})();
 
 // The server uplink: reconnect forever; a served page without a server (or a
 // server restart) just keeps retrying in the background.

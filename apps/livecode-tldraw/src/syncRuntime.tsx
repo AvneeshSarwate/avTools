@@ -47,7 +47,7 @@ import {
   createReconnectingSocket,
   type ReconnectingSocketController,
 } from "./reconnectingSocket";
-import { postServerJson, serverWebSocketUrl } from "./serverRequests";
+import { engineAction, serverWebSocketUrl } from "./serverRequests";
 
 export type SyncConnectionStatus = "closed" | "connecting" | "open" | "error";
 
@@ -568,7 +568,8 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
         source: "client",
         undoable: true,
       };
-      return await postServerJson<PianoRollObject>(
+      return await engineAction<PianoRollObject>(
+        { kind: "pianoRollSet", request: body },
         serverBaseUrlRef.current,
         "/piano-roll/set",
         body,
@@ -578,17 +579,21 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
   );
 
   const undoRoll = useCallback(async (name: string, originId?: string) => {
-    await postServerJson(serverBaseUrlRef.current, "/piano-roll/undo", {
-      name,
-      originId,
-    });
+    await engineAction(
+      { kind: "pianoRollHistory", action: "undo", request: { name, originId } },
+      serverBaseUrlRef.current,
+      "/piano-roll/undo",
+      { name, originId },
+    );
   }, []);
 
   const redoRoll = useCallback(async (name: string, originId?: string) => {
-    await postServerJson(serverBaseUrlRef.current, "/piano-roll/redo", {
-      name,
-      originId,
-    });
+    await engineAction(
+      { kind: "pianoRollHistory", action: "redo", request: { name, originId } },
+      serverBaseUrlRef.current,
+      "/piano-roll/redo",
+      { name, originId },
+    );
   }, []);
 
   // Panes send nested leaf patches and never an expectedRev: compare-and-set is
@@ -599,14 +604,35 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
       values: ParamsValues,
       options: { originId?: string } = {},
     ) => {
-      return await postServerJson<ParamsEntity>(
+      const entity = await engineAction<ParamsEntity | null>(
+        {
+          kind: "paramsSet",
+          request: { name, values, originId: options.originId },
+        },
         serverBaseUrlRef.current,
         "/params/set",
         { name, values, originId: options.originId },
       );
+      if (!entity) throw new Error(`No params entity "${name}"`);
+      return entity;
     },
     [],
   );
+
+  // A tiny window hook so tests and agents can read the live sync maps
+  // without a server round trip — the only entity reader that exists in the
+  // serverless baked topology.
+  useEffect(() => {
+    (window as unknown as Record<string, unknown>).__livecodeSyncDebug = {
+      getEntities: (entityType: SyncEntityTypeKey) => ({
+        ...pendingRef.current[entityType]?.entities,
+      }),
+      latestSeq: () => lastSeqRef.current,
+    };
+    return () => {
+      delete (window as unknown as Record<string, unknown>).__livecodeSyncDebug;
+    };
+  }, []);
 
   const lifecycleRef = useRef<SyncLifecycle | null>(null);
   if (lifecycleRef.current === null) {
