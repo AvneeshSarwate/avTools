@@ -1,5 +1,15 @@
 export type MidiBackend = "browser" | "native";
 
+/** Pure host detection: Web MIDI present means browser backend. */
+export function detectMidiBackend(): MidiBackend {
+  const candidate = globalThis as typeof globalThis & {
+    navigator?: { requestMIDIAccess?: unknown };
+  };
+  return typeof candidate.navigator?.requestMIDIAccess === "function"
+    ? "browser"
+    : "native";
+}
+
 export interface MidiPortInfo {
   readonly id: string;
   readonly name: string;

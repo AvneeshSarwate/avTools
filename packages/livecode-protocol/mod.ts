@@ -9,6 +9,7 @@
 
 export type * from "./analysis.ts";
 export type * from "./client_control.ts";
+export type * from "./engine_uplink.ts";
 export type * from "./entities.ts";
 export type * from "./params.ts";
 export type * from "./piano_roll.ts";
