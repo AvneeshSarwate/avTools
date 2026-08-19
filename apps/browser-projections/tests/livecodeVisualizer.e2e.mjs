@@ -702,7 +702,12 @@ async function launchBrowserWithRetry(attempts = 5) {
   let lastError
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await chromium.launch({ headless })
+      return await chromium.launch({
+        headless,
+        // Same convention as the tldraw E2E: point at a system Chromium when
+        // the pinned Playwright browser download is absent (cloud sandboxes).
+        executablePath: process.env.PW_CHROMIUM_PATH || undefined,
+      })
     } catch (error) {
       lastError = error
       if (attempt === attempts) break
