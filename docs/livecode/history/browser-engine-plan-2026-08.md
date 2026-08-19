@@ -357,6 +357,11 @@ same rule on the uplink (a new uplink socket replaces the old one, exactly like
 
 ## Running it on Cloudflare
 
+> Deployment/operations design for this half now lives in
+> `cloudflare-remote-dev-plan-2026-08.md` (written 2026-08-19, after the
+> application layer shipped); the sections below are the original platform
+> investigation.
+
 The coordination plane needs a filesystem and subprocesses (`deno lsp`,
 `deno check`, esbuild, git, the coding agent), so plain Workers are out and a
 **container** is the unit. Cloudflare's current platform fits well:

@@ -75,6 +75,11 @@ chosen, and why tldraw was considered a spatial shell. The active client is now
   Implemented through Setup A and Setup B stages 1-2 (see the status
   paragraphs inside it); only the Cloudflare packaging and the decimated
   uplink mirror remain design-note-only.
+- `cloudflare-remote-dev-plan-2026-08.md` is the deployment/operations design
+  for that remaining Cloudflare half: the Worker + container + Access + R2
+  topology, the walk-up-from-any-laptop sign-in ritual, the Claude Code
+  Remote Control server in the container, credential/lifecycle handling, and
+  verified cost figures. Design note only — nothing in it is implemented.
 
 ## Stability review
 
