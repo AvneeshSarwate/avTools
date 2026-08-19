@@ -20,6 +20,10 @@ const PORTABLE_ENTRYPOINTS = [
   // The generated-code runtime import target: every browser-built module
   // imports it, so it must be part of the browser-clean graph.
   "packages/livecode-engine/runtime.ts",
+  // The whole engine package: the browser host executes all of it (engine,
+  // host_ops, sync sources, registry), and `deno bundle` does not typecheck —
+  // this gate is the only thing keeping a stray host global out.
+  "packages/livecode-engine/mod.ts",
 ];
 
 async function writeConfig(dir: string): Promise<string> {

@@ -196,7 +196,12 @@ only, having no set route is the design, not an omission.
 
 In `syncRuntime.tsx`, four small edits:
 
-1. add the wire id to `SYNC_ENTITY_TYPES`;
+1. add the wire id to `SYNC_ENTITY_TYPES` — which lives in the protocol
+   package (`packages/livecode-protocol/sync.ts`) as the one canonical list.
+   The remote plane's detach resets use the same constant, and the engine
+   page derives its hello/subscribe lists from its own sync-source registry,
+   so registering the source (step 3) covers every engine-side list
+   automatically;
 2. add a slice to `SyncState` and to `emptySyncState()`;
 3. add a `createContext<SyncSlice<MarkerEntity>>(emptySlice())` and wrap it into
    the provider tree;

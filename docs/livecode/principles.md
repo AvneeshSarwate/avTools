@@ -31,7 +31,7 @@ destination the current code has not reached; concrete behavior lives in
 
 - **Visualization data is signals, not events.** Ephemeral streams carry latest-value samples with user-defined shapes; there is no platform event tier. Consolidation that matters for an honest display — occurrence lists when several things happen between updates, min/max decimation of fast signals — is piece logic, published by the process as just another value. Intermediate values die server-side under conflating transport, so consolidation could not live anywhere else anyway.
 
-- **Deno executes; the browser is disposable chrome.** Music and visuals should survive a browser reload. Anything performance-critical must be recoverable from server truth, and client inference cannot substitute for that truth. [Stability review](history/stability-review-2026-07.md)
+- **The engine executes; UI tabs are disposable chrome.** User code runs in the engine plane — the Deno server process in local mode, or the one designated browser engine tab in the remote and baked topologies. UI tabs must survive reload with nothing lost: anything performance-critical is recoverable from engine truth, and client inference cannot substitute for that truth. The engine tab is not chrome — closing it is killing the engine, exactly like killing the Deno process. (Deliberate restatement 2026-08: this principle originally read "Deno executes"; the browser-engine work moved the boundary from a host to a role.) [Stability review](history/stability-review-2026-07.md), [Browser-engine plan](history/browser-engine-plan-2026-08.md)
 
 - **Runtime activity and document state are separate systems.** High-frequency execution visualization should not mutate tldraw document state or require React/shape updates. [Tldraw discussion](history/initial-runtime/tldraw-init-discussion.md)
 
@@ -75,7 +75,8 @@ Think of the environment as four cooperating planes:
 4. **Domain state:** server-side stores own named musical/visual entities.
    Shapes are views onto those entities, not their canonical storage.
 
-The browser is control and visualization chrome. User code executes in Deno.
+Browser UI tabs are control and visualization chrome. User code executes in
+the engine plane — the Deno process, or the designated browser engine tab.
 Runtime activity should not be encoded into tldraw shape props.
 
 ## Static-checking severity

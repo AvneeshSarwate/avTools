@@ -118,7 +118,19 @@ export interface HealthResponse {
   serverVersion: string;
   sessionRoot: string;
   activeModules: string[];
+  /**
+   * The SERVER process's capabilities. In remote engine mode execution
+   * happens in a browser tab, so check `engine` to know which world the
+   * capabilities describe.
+   */
   runtimeCapabilities: RuntimeCapabilityStatus;
+  /** Which execution plane serves this server, and whether it is live. */
+  engine: {
+    mode: "local" | "remote";
+    /** From the engine's hello; null while no remote engine is attached. */
+    kind: "deno" | "browser" | null;
+    attached: boolean;
+  };
 }
 
 export interface RuntimeModuleStatus {

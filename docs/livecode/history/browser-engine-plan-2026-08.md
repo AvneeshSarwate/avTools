@@ -526,6 +526,24 @@ file of the same `{type, name, data}` rows `baked.json` carries. Both are
 asserted in the baked E2E (shape titles, contenteditable=false, the manifest
 piano-roll view, and the parsed download's rows).
 
+**The operational safeguards decided above are implemented** (2026-08-19,
+after a fresh-eyes review caught them missing): the engine page wires
+`panicMidi` from the shared midi-helpers singleton into the engine (panic
+parity with the Deno host), takes the one-engine-per-origin
+`navigator.locks` exclusive lock — a second tab renders "already running"
+with a takeover button, and a stolen engine panics, closes its channels, and
+stops reconnecting (covered by the baked E2E) — and defends timing with a
+silent `AudioContext` keepalive plus a timer watchdog logging
+`engineTickStretch` locally and over the uplink. `/health` now reports
+`engine: { mode, kind, attached }` per the engine-advertisement sketch (the
+per-capability flags and analyzer warnings remain future). The deprecated
+`/runtime/snapshots` shim 404s in remote mode instead of throwing. The
+watched-entity-kind list is canonical in the protocol package
+(`SYNC_ENTITY_TYPES`), with the engine page deriving its lists from its own
+sync-source registry. The narrow browser module-delivery surface (helper
+aliases + relative imports, versus the full import map the Run gate checks)
+is recorded in `current/known-risks.md` rather than fixed.
+
 **Stage 2 is implemented and E2E-tested too**: `--ui-dist` serves the built
 tldraw client at the server origin, and the client's `sync=broadcast`
 transport (a `SyncPort` seam in `syncRuntime.tsx`) reads the engine tab's
