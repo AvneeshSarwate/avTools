@@ -71,8 +71,10 @@ chosen, and why tldraw was considered a spatial shell. The active client is now
 - `browser-engine-plan-2026-08.md` is the design note for running the engine
   in a browser tab: the engine/coordination split of the server, the
   BroadcastChannel UI plane and server uplink, module delivery to a browser,
-  the Cloudflare remote-dev deployment, and the baked static setup. Design
-  note only — nothing in it is implemented except `packages/midi`.
+  the Cloudflare remote-dev deployment, and the baked static setup.
+  Implemented through Setup A and Setup B stages 1-2 (see the status
+  paragraphs inside it); only the Cloudflare packaging and the decimated
+  uplink mirror remain design-note-only.
 
 ## Stability review
 

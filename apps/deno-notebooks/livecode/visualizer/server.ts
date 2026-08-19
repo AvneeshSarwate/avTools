@@ -8,7 +8,6 @@ import {
   normalize,
 } from "jsr:@std/path@1";
 import { pathToFileURL } from "node:url";
-import { panicMidi } from "../helpers/midi_helpers.ts";
 import { analyzeAndTransformTimedModule } from "./analyze_transform.ts";
 import { removePathBestEffort } from "./fs_utils.ts";
 import { createGeneratedRunId } from "@avtools/livecode-engine/generated_run_id.ts";
@@ -316,10 +315,13 @@ export async function createLivecodeVisualizerServer(
       onEngineResets: (resets) => broadcastSyncResets(resets),
     })
     : null;
+  // MIDI is an execution-plane capability: only a local (in-process) engine
+  // should touch native ports. The lazy import keeps a remote coordination
+  // server from eagerly opening every MIDI output it will never play.
   const localPlane = engineMode === "local"
     ? createLocalExecutionPlane({
       log,
-      panicMidi,
+      panicMidi: (await import("../helpers/midi_helpers.ts")).panicMidi,
       onSyncTick: (collected) => {
         broadcastSyncChanges(collected);
         broadcastLegacyRuntimeSnapshot();
@@ -334,10 +336,17 @@ export async function createLivecodeVisualizerServer(
   let browserHostBuild: Promise<void> | null = null;
   const ensureBrowserHostAssets = (): Promise<void> => {
     if (!browserHostBuild) {
-      browserHostBuild = buildBrowserHostAssets({ outDir: browserHostDir })
+      const build = buildBrowserHostAssets({ outDir: browserHostDir })
         .then(() => {
           void log({ type: "browserHostAssetsBuilt", outDir: browserHostDir });
+        })
+        .catch((error) => {
+          // Never cache a failed build: the next request retries instead of
+          // serving this one transient failure until restart.
+          if (browserHostBuild === build) browserHostBuild = null;
+          throw error;
         });
+      browserHostBuild = build;
     }
     return browserHostBuild;
   };
@@ -442,6 +451,11 @@ export async function createLivecodeVisualizerServer(
         sessionRoot,
         activeModules: await activeModuleIdsSafe(),
         runtimeCapabilities,
+        engine: {
+          mode: engineMode,
+          kind: localPlane ? "deno" : remotePlane?.engineKind() ?? null,
+          attached: localPlane ? true : remotePlane?.hasEngine() ?? false,
+        },
       };
       return json(response);
     }
@@ -740,6 +754,14 @@ export async function createLivecodeVisualizerServer(
     }
 
     if (request.method === "GET" && url.pathname === "/runtime/snapshots") {
+      // Local-mode-only for real: the snapshot reads the in-process engine,
+      // and throwing inside socket handlers is not an acceptable answer.
+      if (!localPlane) {
+        return json({
+          ok: false,
+          error: "The deprecated /runtime/snapshots shim is local-mode-only",
+        }, { status: 404 });
+      }
       const { socket, response } = Deno.upgradeWebSocket(request);
       socket.onopen = () => {
         sockets.add(socket);
@@ -2538,12 +2560,18 @@ export async function createLivecodeVisualizerServer(
   }
 
   async function removeGeneratedPreparedFile(run: PreparedRun): Promise<void> {
-    if (!run.transformedModuleUri.startsWith("file:")) return;
-    const url = new URL(run.transformedModuleUri);
-    await removePathBestEffort(
-      fromFileUrl(url),
-      `prepared run ${run.generatedRunId}`,
-    );
+    // Local engines import file: URLs; a remote engine imports the served
+    // /engine-assets/generated/ URL for the same file under generatedDir —
+    // both prune to the same on-disk file.
+    const uri = run.transformedModuleUri;
+    const remotePrefix = "/engine-assets/generated/";
+    const path = uri.startsWith("file:")
+      ? fromFileUrl(new URL(uri))
+      : uri.startsWith(remotePrefix)
+      ? join(generatedDir, uri.slice(remotePrefix.length))
+      : null;
+    if (!path) return;
+    await removePathBestEffort(path, `prepared run ${run.generatedRunId}`);
   }
 
   async function launchModule(requestBody: LaunchModuleRequest) {

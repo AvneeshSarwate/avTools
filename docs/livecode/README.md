@@ -100,9 +100,10 @@ The livecode environment also depends on code outside the two main directories:
   sources, runtime instrumentation, and the module launch/stop/panic lifecycle
   — extracted from the server as portable TypeScript with injected
   capabilities, kept browser-typecheckable by
-  `livecode/tests/browser_target_check_test.ts`. The server hosts one engine
-  instance; the moved modules keep one-line re-export shims at their old
-  `visualizer/` paths. See `current/server.md` and
+  `livecode/tests/browser_target_check_test.ts` (the whole package is one of
+  its gate entrypoints). The server hosts one engine instance in local mode;
+  everything imports the package directly — the old `visualizer/` paths are
+  gone. See `current/server.md` and
   `history/browser-engine-plan-2026-08.md`.
 - `packages/core-timing`: `TimeContext`, logical-time scheduling, structured
   concurrency, cancellation, barriers, tempo maps, and offline execution. The
