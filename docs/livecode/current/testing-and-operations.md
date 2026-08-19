@@ -110,8 +110,9 @@ The baked (serverless) topology has one too: it bakes a temp project with
 serves the output from a dumb static file server, and drives the engine tab
 plus the real UI purely over BroadcastChannel — including entity CRUD and a
 params write on the broadcast actions channel, the project-shaped UI boot
-(read-only code shapes at manifest positions plus manifest canvas views), and
-the Export data download round-trip:
+(read-only code shapes at manifest positions plus manifest canvas views), the
+Export data download round-trip, and the one-engine-per-origin lock (second
+tab blocked, takeover steals the lock and shuts the old engine down):
 
 ```sh
 node livecode/tests/baked_project.e2e.mjs

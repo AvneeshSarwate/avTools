@@ -24,13 +24,16 @@ import type { SignalEntity } from "./signals.ts";
  * Entity kinds the sync transport carries. Subscriptions are type-level in v1;
  * per-name scoping is deferred and the envelope already admits it.
  */
-export type SyncEntityTypeId =
-  | "pianoRoll"
-  | "params"
-  | "signal"
-  | "run"
-  | "moduleWaits"
-  | "moduleLookups";
+export const SYNC_ENTITY_TYPES = [
+  "pianoRoll",
+  "params",
+  "signal",
+  "run",
+  "moduleWaits",
+  "moduleLookups",
+] as const;
+
+export type SyncEntityTypeId = (typeof SYNC_ENTITY_TYPES)[number];
 
 /** The payload each entity kind ships. Keyed by the wire type id. */
 export interface SyncEntityByType {

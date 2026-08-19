@@ -133,9 +133,9 @@ In ws mode the provider owns one reconnecting `/sync` socket. On open it clears 
 kind this client watches:
 
 ```ts
-const SYNC_ENTITY_TYPES = [
-  "pianoRoll", "params", "signal", "run", "moduleWaits", "moduleLookups",
-] as const;
+// The protocol package's canonical list (packages/livecode-protocol/sync.ts),
+// re-exported by syncRuntime; the remote plane's resets use the same constant.
+SYNC_ENTITY_TYPES = ["pianoRoll", "params", "signal", "run", "moduleWaits", "moduleLookups"]
 ```
 
 A fresh socket has no subscriptions and is owed nothing, so that one message is

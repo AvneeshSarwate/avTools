@@ -20,6 +20,7 @@ import {
   executeEngineOp,
   type LivecodeEngine,
 } from "@avtools/livecode-engine";
+import { SYNC_ENTITY_TYPES } from "@avtools/livecode-protocol";
 
 export type ExecutionPlaneKind = "local" | "remote";
 
@@ -81,6 +82,8 @@ export interface RemoteExecutionPlane extends ExecutionPlane {
   /** Adopt a freshly upgraded `/engine/uplink` socket; replaces any previous. */
   attachEngineSocket(socket: WebSocket): void;
   hasEngine(): boolean;
+  /** From the attached engine's hello; null while no engine is attached. */
+  engineKind(): "deno" | "browser" | null;
 }
 
 interface PendingEngineRequest {
@@ -90,14 +93,6 @@ interface PendingEngineRequest {
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
-const ENTITY_TYPES = [
-  "pianoRoll",
-  "params",
-  "signal",
-  "run",
-  "moduleWaits",
-  "moduleLookups",
-];
 
 export function createRemoteExecutionPlane(
   options: RemoteExecutionPlaneOptions,
@@ -105,6 +100,7 @@ export function createRemoteExecutionPlane(
   const timeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const pending = new Map<string, PendingEngineRequest>();
   let currentSocket: WebSocket | null = null;
+  let attachedEngineKind: "deno" | "browser" | null = null;
   let closing = false;
 
   function failAllPending(reason: string): void {
@@ -116,7 +112,7 @@ export function createRemoteExecutionPlane(
   }
 
   function emptyResets(): Record<string, SyncEntity[]> {
-    return Object.fromEntries(ENTITY_TYPES.map((entityType) => [
+    return Object.fromEntries(SYNC_ENTITY_TYPES.map((entityType) => [
       entityType,
       [] as SyncEntity[],
     ]));
@@ -125,6 +121,7 @@ export function createRemoteExecutionPlane(
   function detach(socket: WebSocket, reason: string): void {
     if (currentSocket !== socket) return;
     currentSocket = null;
+    attachedEngineKind = null;
     failAllPending(`engine detached (${reason})`);
     void options.log({ type: "engineDetached", reason });
     if (!closing) options.onEngineResets(emptyResets());
@@ -144,6 +141,7 @@ export function createRemoteExecutionPlane(
     if (socket !== currentSocket) return;
 
     if (message.type === "engineHello") {
+      attachedEngineKind = message.engineKind === "deno" ? "deno" : "browser";
       void options.log({
         type: "engineAttached",
         engineKind: message.engineKind,
@@ -174,6 +172,7 @@ export function createRemoteExecutionPlane(
   return {
     kind: "remote",
     hasEngine: () => currentSocket !== null,
+    engineKind: () => attachedEngineKind,
     attachEngineSocket: (socket) => {
       const previous = currentSocket;
       currentSocket = socket;
@@ -224,6 +223,7 @@ export function createRemoteExecutionPlane(
       failAllPending("server closing");
       currentSocket?.close();
       currentSocket = null;
+      attachedEngineKind = null;
       return Promise.resolve();
     },
   };

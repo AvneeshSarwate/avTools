@@ -1,7 +1,7 @@
 # Current Known Risks and Invariant Gaps
 
-Status: code-inspection audit, current as of 2026-08-13; first audited
-2026-07-21.
+Status: code-inspection audit, current as of 2026-08-13; browser-engine
+entries added 2026-08-19; first audited 2026-07-21.
 
 How to read this file: open entries are graded `P0`–`P2` and are unresolved;
 `Resolved <date>` entries are kept in place because their rationale still
@@ -431,6 +431,68 @@ the example for a working smoke fixture.
 `deno task test:livecode` omits the tldraw E2E, project shadow test, repro suite,
 and p5gpu test, and its E2E target is the older Vue client. Do not call that
 single task a complete verification pass.
+
+## P1: background-tab throttling can stretch browser-engine timing
+
+A hidden/occluded engine tab gets its timers clamped by Chrome (1 s, worse
+under intensive throttling), which would wreck the ~33 ms tick and musical
+timing. Mitigations shipped per the plan's decision: a silent `AudioContext`
+keepalive in the engine page (exempts the tab from intensive throttling;
+autoplay policy may hold it suspended until a gesture lands on the tab), a
+timer watchdog that logs `engineTickStretch` locally and over the uplink
+whenever the main-thread clock stretches past 250 ms, and operator discipline
+(keep the engine tab visible). The warning is log-tier, not a UI surface, and
+every E2E launches Chromium with throttling disabled, so this path is
+reasoned-not-regression-tested. The Worker time-source upgrade is recorded in
+`next-stuff-brainstorm.md`.
+
+## P2: Web MIDI is window-scoped, permission-gated, and gesture-dependent
+
+In a browser engine, MIDI outputs exist only after `initMidi()` succeeds,
+which requires the Web MIDI permission and — under autoplay-style policies — a
+user gesture in the engine tab. Until then instrumented modules see no
+devices (send helpers degrade to no-ops) and `panicMidi` has nothing to
+flush. Chrome is the reliable target; Safari has no Web MIDI. The panic hook
+itself is wired identically on both engines; headless E2Es cannot exercise
+real MIDI ports, so device-level behavior is manually verified only.
+
+## P2: single-engine enforcement has explicit takeover semantics
+
+One engine per origin is enforced by a `navigator.locks` exclusive lock in
+the engine page: a second tab renders "already running" with a takeover
+button; taking over steals the lock, and the losing tab panics its runtime
+(MIDI flush included), closes its channels, and stops reconnecting. The
+server-side uplink keeps the independent newest-socket-wins replacement rule.
+Web Locks are per browser profile, so two engine tabs in DIFFERENT browsers
+(or machines) are not lock-arbitrated: each reconnect replaces the other on
+the uplink every ~2 s. Don't do that; the lock protects the supported
+one-browser topologies.
+Takeover is deliberately destructive — the old tab's execution state dies
+with it, exactly like killing a Deno engine process. Covered by the baked
+E2E's lock section. Browsers without Web Locks run unguarded.
+
+## P2: the broadcast sync transport cannot detect a dead engine tab
+
+Over `?sync=broadcast` the channel is "open" the moment it exists, and an
+idle engine legitimately sends nothing, so a closed engine tab is
+indistinguishable from a quiet one — the UI keeps rendering the last-known
+world with no error. The uplink relay path answers this with detach
+empty-resets; the broadcast path has no equivalent (a heartbeat would need
+its own protocol). Accepted for the single-operator topologies where the
+operator closed the tab themselves.
+
+## P1: the browser module-delivery surface is narrower than the Run gate
+
+A browser engine can import exactly: the five helper aliases bundled by
+`build_host_assets.ts` (`piano-roll-helpers`, `midi-helpers`,
+`canvas-params`, `canvas-signals`, `piano-roll-store`), the generated
+runtime, and relative project files. The browser-target shadow check resolves
+the WHOLE repo import map, so a module importing anything else (e.g.
+`@avtools/shader-fx`, npm packages) typechecks green and then fails at
+launch in the tab with a bare-specifier/fetch import error rather than a
+source-located diagnostic. Closing the gap means either bundling more aliases
+into the host assets or narrowing the browser-check import map to the served
+surface; until then the gate over-promises for non-alias imports.
 
 ## Accepted limitations versus bugs
 

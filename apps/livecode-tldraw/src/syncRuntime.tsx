@@ -43,6 +43,7 @@ import type {
   SyncMessage,
   SyncSubscribeMessage,
 } from "@avtools/livecode-protocol";
+import { SYNC_ENTITY_TYPES } from "@avtools/livecode-protocol";
 import {
   createReconnectingSocket,
   type ReconnectingSocketController,
@@ -52,18 +53,12 @@ import { engineAction, serverWebSocketUrl } from "./serverRequests";
 export type SyncConnectionStatus = "closed" | "connecting" | "open" | "error";
 
 /**
- * Every kind this client watches. One subscribe carries the whole list, and a
- * subscribe REPLACES the socket's set — so this is also the gap-recovery
- * message, resent verbatim.
+ * Every kind this client watches — the protocol package's canonical list,
+ * shared with the engine's hello/detach resets. One subscribe carries the
+ * whole list, and a subscribe REPLACES the socket's set — so this is also the
+ * gap-recovery message, resent verbatim.
  */
-export const SYNC_ENTITY_TYPES = [
-  "pianoRoll",
-  "params",
-  "signal",
-  "run",
-  "moduleWaits",
-  "moduleLookups",
-] as const;
+export { SYNC_ENTITY_TYPES };
 
 /**
  * One entity kind's current state, plus the `seq` of the message that last

@@ -18,3 +18,6 @@ export type * from "./runtime.ts";
 export type * from "./saved_entities.ts";
 export type * from "./signals.ts";
 export type * from "./sync.ts";
+// The one value export: the canonical watched-entity-kind list every side
+// (client subscribe, remote-plane hello/detach resets) shares.
+export { SYNC_ENTITY_TYPES } from "./sync.ts";
