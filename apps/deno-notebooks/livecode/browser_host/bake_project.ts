@@ -33,6 +33,8 @@ import {
 import { analyzeAndTransformTimedModule } from "../visualizer/analyze_transform.ts";
 import { buildBrowserHostAssets } from "./build_host_assets.ts";
 import type {
+  BakedProjectFile,
+  BakedProjectModule,
   EngineEntityLoadEntry,
   LivecodeProjectManifest,
 } from "@avtools/livecode-protocol";
@@ -125,13 +127,9 @@ export async function bakeProject(options: BakeProjectOptions): Promise<{
 
   // Modules: transform each canonical source with a runtime import computed
   // relative to its own baked location, type-strip, rewrite relative
-  // specifiers, and write the `.js` tree.
-  const bakedModules: Array<{
-    moduleId: string;
-    entry: string;
-    generatedRunId: string;
-    title?: string;
-  }> = [];
+  // specifiers, and write the `.js` tree. The canonical source rides along so
+  // the UI can render the project's code shapes read-only.
+  const bakedModules: BakedProjectModule[] = [];
   for (const moduleRecord of manifest.modules) {
     const sourceText = await Deno.readTextFile(
       join(projectRoot, moduleRecord.sourcePath),
@@ -174,6 +172,7 @@ export async function bakeProject(options: BakeProjectOptions): Promise<{
       entry: `./project/${jsPath}`,
       generatedRunId: analysis.generatedRunId,
       title: moduleRecord.title,
+      sourceText,
     });
   }
 
@@ -186,10 +185,15 @@ export async function bakeProject(options: BakeProjectOptions): Promise<{
     data.push({ type: entry.type, name: entry.name, data: saved });
   }
 
+  const bakedFile: BakedProjectFile = {
+    name: manifest.name,
+    manifest,
+    modules: bakedModules,
+    data,
+  };
   await Deno.writeTextFile(
     join(engineDir, "baked.json"),
-    JSON.stringify({ name: manifest.name, modules: bakedModules, data }, null, 2) +
-      "\n",
+    JSON.stringify(bakedFile, null, 2) + "\n",
   );
 
   if (options.uiDist) {

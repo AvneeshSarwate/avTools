@@ -21,10 +21,12 @@ import {
   LivecodeEditorShapeUtil,
 } from "./LivecodeEditorShape";
 import type {
+  BakedProjectFile,
   ClientControlCommand,
   ClientControlEnvelope,
   ClientControlResultMessage,
   DurableEntityRef,
+  ProjectCanvasState,
   ProjectCurrentResponse,
   ProjectModuleLocator,
   ProjectModuleRecord,
@@ -67,6 +69,7 @@ import {
 import { setRuntimeDebugRefs } from "./livecodeTldrawDebug";
 import { createReconnectingSocket } from "./reconnectingSocket";
 import {
+  captureBakedEntities,
   createEntity,
   deleteEntity,
   duplicateEntity,
@@ -109,8 +112,12 @@ function LivecodeTldrawPage() {
     const params = new URLSearchParams(window.location.search);
     return params.get("tldr") ?? params.get("canvas") ?? params.get("canvasUrl");
   }, []);
+  // `serverBaseUrl=none` is the serverless baked topology: the project shape
+  // comes from the bake's static baked.json instead of project routes.
+  const bakedMode = isBakedServerBaseUrl(runtime.serverBaseUrl);
   const projectLoadedRef = useRef(false);
   const canvasLoadedRef = useRef(false);
+  const bakedLoadedRef = useRef(false);
   const suppressStoreListenerRef = useRef(false);
   const layoutUpdateTimersRef = useRef(new Map<string, number>());
   const canvasUpdateTimerRef = useRef<number | undefined>(undefined);
@@ -355,6 +362,27 @@ function LivecodeTldrawPage() {
     })();
   }, [editor, projectPath, runtime, syncLivecodeShapesToRuntime]);
 
+  useEffect(() => {
+    if (!editor || !bakedMode || projectPath || canvasUrl) return;
+    if (bakedLoadedRef.current) return;
+    bakedLoadedRef.current = true;
+
+    void (async () => {
+      suppressStoreListenerRef.current = true;
+      try {
+        await loadBakedProjectIntoCanvas(editor);
+      } catch (error) {
+        // A bake always ships baked.json; missing means this is a plain
+        // serverless page, which still deserves a canvas to look at.
+        console.error("[livecode-tldraw] failed to load baked project", error);
+        if (!hasLivecodeShapes(editor)) createDefaultLivecodeCanvas(editor);
+      } finally {
+        suppressStoreListenerRef.current = false;
+        syncLivecodeShapesToRuntime();
+      }
+    })();
+  }, [bakedMode, canvasUrl, editor, projectPath, syncLivecodeShapesToRuntime]);
+
   return (
     <div className="app-shell">
       <TopBar
@@ -367,7 +395,10 @@ function LivecodeTldrawPage() {
           shapeUtils={shapeUtils}
           onMount={(mountedEditor) => {
             setEditor(mountedEditor);
-            if (!projectPath && !canvasUrl && !hasLivecodeShapes(mountedEditor)) {
+            if (
+              !projectPath && !canvasUrl && !bakedMode &&
+              !hasLivecodeShapes(mountedEditor)
+            ) {
               createDefaultLivecodeCanvas(mountedEditor);
             }
           }}
@@ -782,6 +813,27 @@ function TopBar({
               ? `Really delete ${selection.name}?`
               : "Delete entity"}
           </button>
+        )
+        : null}
+
+      {/* The baked topology's save: no project routes exist, so "save" is an
+          export — one JSON download of the entities the engine tab holds. */}
+      {isBakedServerBaseUrl(runtime.serverBaseUrl)
+        ? (
+          <div className="topbar__group">
+            <button
+              type="button"
+              onClick={() => {
+                setSaveNotice(null);
+                void runEntityAction(async () => {
+                  setSaveNotice(await exportBakedDataFile());
+                });
+              }}
+            >
+              Export data
+            </button>
+            {saveNotice ? <span>{saveNotice}</span> : null}
+          </div>
         )
         : null}
 
@@ -1495,12 +1547,48 @@ function createDefaultLivecodeCanvas(editor: Editor) {
 
 async function saveTldrawCanvas(editor: Editor) {
   const json = await serializeTldrawJson(editor);
-  const blob = new Blob([json], { type: TLDR_MIME_TYPE });
+  downloadTextFile(
+    `livecode-tldraw-${new Date().toISOString().slice(0, 10)}.tldr`,
+    json,
+    TLDR_MIME_TYPE,
+  );
+}
+
+/** True when `serverBaseUrl=none` — the serverless baked topology. */
+function isBakedServerBaseUrl(serverBaseUrl: string): boolean {
+  return serverBaseUrl.trim().replace(/\/+$/, "") === "none";
+}
+
+/**
+ * The baked topology's save, export-only by decision: one JSON download of the
+ * durable entities the engine tab holds, as the same `{type, name, data}` rows
+ * baked.json carries, so a future bake or import can consume it directly.
+ * Returns the notice text for the topbar.
+ */
+async function exportBakedDataFile(): Promise<string> {
+  const { entities, skippedCount } = await captureBakedEntities();
+  const json = JSON.stringify(
+    { exportedAt: new Date().toISOString(), data: entities },
+    null,
+    2,
+  ) + "\n";
+  downloadTextFile(
+    `livecode-data-${new Date().toISOString().slice(0, 19).replaceAll(":", "-")}.json`,
+    json,
+    "application/json",
+  );
+  const noun = entities.length === 1 ? "entity" : "entities";
+  const skippedNote = skippedCount > 0 ? ` (${skippedCount} skipped)` : "";
+  return `exported ${entities.length} ${noun}${skippedNote}`;
+}
+
+function downloadTextFile(filename: string, text: string, mimeType: string) {
+  const blob = new Blob([text], { type: mimeType });
   const url = URL.createObjectURL(blob);
   try {
     const link = document.createElement("a");
     link.href = url;
-    link.download = `livecode-tldraw-${new Date().toISOString().slice(0, 10)}.tldr`;
+    link.download = filename;
     link.click();
   } finally {
     URL.revokeObjectURL(url);
@@ -1583,8 +1671,51 @@ async function loadProjectIntoCanvas(
     });
   }
 
-  const pianoRollViews = project.project?.manifest.canvas?.pianoRollViews ?? [];
-  for (const view of pianoRollViews) {
+  createCanvasViewShapes(editor, project.project?.manifest.canvas);
+}
+
+/**
+ * The serverless project-shaped boot (Setup A): manifest layout and module
+ * sources come from the bake's static baked.json instead of project routes.
+ * Code shapes are read-only — a bake's code is display, not editable source —
+ * and carry no projectModulePath, so nothing ever tries to persist layout or
+ * writes for them.
+ */
+async function loadBakedProjectIntoCanvas(editor: Editor) {
+  const baked = await fetchJson<BakedProjectFile>(
+    new URL("engine/baked.json", window.location.href).href,
+  );
+  const currentShapes = editor.getCurrentPageShapes();
+  if (currentShapes.length > 0) {
+    editor.deleteShapes(currentShapes.map((shape) => shape.id));
+  }
+
+  const sourceByModuleId = new Map(
+    baked.modules.map((entry) => [entry.moduleId, entry.sourceText]),
+  );
+  for (const moduleRecord of baked.manifest.modules) {
+    createLivecodeShape(editor, {
+      x: moduleRecord.x,
+      y: moduleRecord.y,
+      w: moduleRecord.w,
+      h: moduleRecord.h,
+      moduleId: moduleRecord.id,
+      projectModuleKind: moduleRecord.kind,
+      title: moduleRecord.title,
+      source: sourceByModuleId.get(moduleRecord.id) ?? "",
+      readOnly: true,
+    });
+  }
+
+  createCanvasViewShapes(editor, baked.manifest.canvas);
+}
+
+/** The canvas-view shapes a manifest describes, skipping ones already born. */
+function createCanvasViewShapes(
+  editor: Editor,
+  canvas: ProjectCanvasState | undefined,
+) {
+  for (const view of canvas?.pianoRollViews ?? []) {
     const shapeId = view.id as PianoRollShape["id"];
     if (editor.getShape(shapeId)) continue;
     createPianoRollShape(editor, {
@@ -1598,8 +1729,7 @@ async function loadProjectIntoCanvas(
     });
   }
 
-  const paramPaneViews = project.project?.manifest.canvas?.paramPaneViews ?? [];
-  for (const view of paramPaneViews) {
+  for (const view of canvas?.paramPaneViews ?? []) {
     const shapeId = view.id as ParamPaneShape["id"];
     if (editor.getShape(shapeId)) continue;
     createParamPaneShape(editor, {
@@ -1613,8 +1743,7 @@ async function loadProjectIntoCanvas(
     });
   }
 
-  const scopeViews = project.project?.manifest.canvas?.scopeViews ?? [];
-  for (const view of scopeViews) {
+  for (const view of canvas?.scopeViews ?? []) {
     const shapeId = view.id as SignalScopeShape["id"];
     if (editor.getShape(shapeId)) continue;
     createSignalScopeShape(editor, {

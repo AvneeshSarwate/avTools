@@ -6,6 +6,8 @@
 
 import type {
   EngineEntityActionResult,
+  EngineEntityCapture,
+  EngineEntityLoadEntry,
   EngineOp,
   EntityMutationSuccess,
   ProjectSaveResponse,
@@ -57,6 +59,25 @@ export function broadcastEngineAction(op: EngineOp): Promise<unknown> {
     };
     channel.postMessage({ type: "engineRequest", requestId, op });
   });
+}
+
+/**
+ * The baked topology's save: capture every durable entity the engine tab holds
+ * right now, over the broadcast actions channel, as the same `{type, name,
+ * data}` rows baked.json carries. Rows the registry declines to serialize come
+ * back with a null payload; they are counted, not exported.
+ */
+export async function captureBakedEntities(): Promise<{
+  entities: EngineEntityLoadEntry[];
+  skippedCount: number;
+}> {
+  const rows = await broadcastEngineAction({
+    kind: "captureEntities",
+  }) as EngineEntityCapture[];
+  const entities = rows
+    .filter((row) => row.payload !== null)
+    .map((row) => ({ type: row.type, name: row.name, data: row.payload }));
+  return { entities, skippedCount: rows.length - entities.length };
 }
 
 /** Perform one engine action over the configured transport. */
