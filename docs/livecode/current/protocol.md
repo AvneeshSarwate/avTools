@@ -749,6 +749,12 @@ engine host tab attached on `WS /engine/uplink`:
   answers as it would have locally (launch refusals stay 409); entity CRUD
   returns `EngineEntityActionResult` with its own `status`.
 
+The same file declares `BakedProjectFile`, the shape of a bake's
+`engine/baked.json`: durable-entity seeds (`EngineEntityLoadEntry[]`) and the
+prebuilt module launch list for the engine tab, plus the full project manifest
+and per-module `sourceText` for the UI tab's project-shaped read-only boot.
+Both tabs of a served bake read the one file.
+
 ## Client-control contract
 
 An HTTP caller sends:

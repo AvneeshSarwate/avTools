@@ -11,7 +11,11 @@
 //     an advancing owned signal;
 //   - UI actions round-trip over the broadcast actions channel with no HTTP:
 //     entity create shows up in the sync maps, delete removes it, and a
-//     params write changes the running module's output.
+//     params write changes the running module's output;
+//   - the UI boots project-shaped from baked.json: one read-only code shape
+//     per module at its manifest position, plus the manifest's canvas views;
+//   - the Export data button captures the engine tab's durable entities over
+//     the actions channel and downloads them as {type, name, data} rows.
 //
 // Run from apps/deno-notebooks:  node livecode/tests/baked_project.e2e.mjs
 
@@ -124,6 +128,10 @@ writeFileSync(
         kind: 'runnable',
         title: 'state',
         sourceVersion: 1,
+        x: 40,
+        y: 40,
+        w: 480,
+        h: 320,
       },
       {
         id: 'modules/main.ts',
@@ -133,8 +141,24 @@ writeFileSync(
         kind: 'runnable',
         title: 'main',
         sourceVersion: 1,
+        x: 560,
+        y: 40,
+        w: 560,
+        h: 460,
       },
     ],
+    canvas: {
+      pianoRollViews: [
+        {
+          id: 'shape:baked-seeded-roll',
+          rollName: 'baked/seeded',
+          x: 40,
+          y: 420,
+          w: 420,
+          h: 260,
+        },
+      ],
+    },
     data: [
       { type: 'pianoRoll', name: 'baked/seeded', path: 'data/pianoRoll/seeded.json' },
     ],
@@ -237,6 +261,57 @@ try {
   await waitUntil(
     () => uiPage.evaluate(() => Boolean(globalThis.__livecodeSyncDebug)),
     'sync debug hook',
+  )
+
+  // Project-shaped boot: one read-only code shape per baked module, titled
+  // from the manifest, plus the manifest's canvas views — with no server.
+  const shapeTitles = await waitUntil(
+    () =>
+      uiPage.evaluate(() => {
+        const titles = [...document.querySelectorAll(
+          '.livecode-shape .livecode-shape__title strong',
+        )].map((node) => node.textContent)
+        return titles.length === 2 ? titles.sort() : null
+      }),
+    'two baked code shapes on the canvas',
+  )
+  if (shapeTitles.join(',') !== 'main,state') {
+    fail(`baked code shape titles wrong: ${JSON.stringify(shapeTitles)}`)
+  }
+  const editorStates = await waitUntil(
+    () =>
+      uiPage.evaluate(() => {
+        const editors = [...document.querySelectorAll(
+          '.livecode-shape .cm-content',
+        )]
+        if (editors.length !== 2) return null
+        return editors.map((node) => ({
+          editable: node.getAttribute('contenteditable'),
+          hasSource: (node.textContent ?? '').length > 0,
+        }))
+      }),
+    'both baked code editors rendered',
+  )
+  for (const state of editorStates) {
+    if (state.editable !== 'false' || !state.hasSource) {
+      fail(`baked code shape not read-only: ${JSON.stringify(editorStates)}`)
+    }
+  }
+  const bakedSource = await uiPage.evaluate(() =>
+    [...document.querySelectorAll('.livecode-shape .cm-content')]
+      .map((node) => node.textContent ?? '')
+      .join('\n'))
+  if (!bakedSource.includes('canvasParams("baked/params"')) {
+    fail('baked main module source not rendered in its code shape')
+  }
+  await waitUntil(
+    () =>
+      uiPage.evaluate(() =>
+        document.querySelectorAll('.piano-roll-shape').length === 1
+          ? true
+          : null
+      ),
+    'manifest canvas piano-roll view on the canvas',
   )
 
   const rollNames = await waitUntil(
@@ -355,6 +430,40 @@ try {
           : null
       }, before),
     'signal reflects the broadcast params write',
+  )
+
+  // Export data: the baked "save" — the button captures the engine tab's
+  // durable entities over the actions channel and downloads them as the same
+  // {type, name, data} rows baked.json carries.
+  const [download] = await Promise.all([
+    uiPage.waitForEvent('download', { timeout: scaled(30_000) }),
+    uiPage.click('button:has-text("Export data")'),
+  ])
+  const exported = JSON.parse(readFileSync(await download.path(), 'utf8'))
+  const exportedKeys = (exported.data ?? [])
+    .map((row) => `${row.type}:${row.name}`)
+    .sort()
+  for (const expected of ['pianoRoll:baked/seeded', 'pianoRoll:baked/roll', 'params:baked/params']) {
+    if (!exportedKeys.includes(expected)) {
+      fail(`export missing ${expected}: ${JSON.stringify(exportedKeys)}`)
+    }
+  }
+  const exportedSeeded = exported.data.find(
+    (row) => row.type === 'pianoRoll' && row.name === 'baked/seeded',
+  )
+  if (!JSON.stringify(exportedSeeded.data).includes('"s1"')) {
+    fail(`exported seeded roll lost its note: ${JSON.stringify(exportedSeeded)}`)
+  }
+  await waitUntil(
+    () =>
+      uiPage.evaluate(() =>
+        [...document.querySelectorAll('.topbar__group span')].some((node) =>
+          (node.textContent ?? '').startsWith('exported ')
+        )
+          ? true
+          : null
+      ),
+    'export notice in the topbar',
   )
 
   if (engineErrors.length > 0) fail(`engine page errors: ${engineErrors}`)

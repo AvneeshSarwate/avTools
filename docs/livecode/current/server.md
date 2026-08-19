@@ -116,7 +116,8 @@ directly.
 - `visualizer/browser_check_config.ts`: the browser-lib typecheck config
   writer shared by the target-aware shadow check and its gate test.
 - `visualizer/lsp_proxy.ts`: per-session proxy process that creates a synthetic
-  workspace and runs `deno lsp -q`.
+  workspace and runs `deno lsp -q`; its workspace config follows the published
+  engine target (see "LSP proxy" below).
 - `packages/livecode-engine/generated_run_id.ts`: generated-build ID
   creation.
 - `visualizer/fs_utils.ts`: never-throwing best-effort recursive cleanup.
@@ -191,6 +192,9 @@ LSP workspaces live outside the repository:
 ```text
 $TMPDIR/avtools-livecode-lsp-workspaces/<server-session-id>/<proxy-uuid>/
 ```
+
+The session level also holds `engine-target.json`, the server-published
+effective engine target every proxy of that session reads and watches.
 
 Non-project generated files are retained only for the most recent three
 prepared runs per module, except that an active run is not pruned. Session
@@ -595,10 +599,27 @@ set.
 
 ## LSP proxy
 
-The proxy builds a synthetic workspace `deno.json` by merging and absolutizing
+The proxy builds a synthetic workspace config by merging and absolutizing
 imports from the root and `apps/deno-notebooks` configs. It symlinks the repo
 root into the same absolute-looking location below the workspace so repository
 file URIs remain resolvable.
+
+The config is engine-target-aware, so editor diagnostics agree with the Run
+gate about which globals exist. The server publishes the effective target
+(manifest `engineTarget`, defaulting from the engine mode — the same
+`effectiveEngineTarget()` the shadow check uses) to
+`<lsp-workspaces>/<session>/engine-target.json` at startup and on every project
+create/open; the proxy reads it whenever it writes the workspace config, and a
+browser target gets `compilerOptions.lib` set to the shared
+`BROWSER_CHECK_LIB`. The active config uses a target-specific filename
+(`deno.json` vs `deno.browser.json`, only one exists at a time) because
+`deno lsp` reloads config when the `deno.config` *setting value* changes on a
+configuration pull, not when the same file's contents change. A non-recursive
+watch on the target file catches live flips (a browser-target project opening
+after the proxy spawned): the proxy rewrites the config and sends
+`workspace/didChangeConfiguration` to the LS child over `procConn` —
+`LSProxy.sendNotification*` send to the editor client despite their doc
+comments — and the next configuration pull returns the new path.
 
 Repo-backed open documents are not written through that symlink; Deno LSP owns
 their in-memory buffer. Other virtual documents are written into the temp
@@ -606,8 +627,9 @@ workspace. The proxy adds document versions to diagnostics when Deno omits
 them, answers workspace configuration requests, and converts URIs in both
 directions.
 
-Signal/finally cleanup disposes the RPC connection, sends SIGTERM to the real
-`deno lsp` child, and removes the proxy workspace best-effort.
+Signal/finally cleanup closes the target watcher, disposes the RPC connection,
+sends SIGTERM to the real `deno lsp` child, and removes the proxy workspace
+best-effort.
 
 ## Piano-roll and MIDI stores
 

@@ -115,6 +115,20 @@ HTTP — the serverless baked topology, where `serverBaseUrl=none` also
 disables the client-control bridge. Without the param, writes stay HTTP even
 when watching is broadcast.
 
+`serverBaseUrl=none` also changes the boot: instead of the default transient
+canvas, the app fetches `engine/baked.json` (relative to the page, the same
+file the engine tab boots from) and builds the project-shaped canvas from it —
+one code shape per manifest module at its saved position, rendered from the
+baked `sourceText` with the shape-level `readOnly` prop set (a bake's code is
+display, not editable source), plus the manifest's canvas views via the same
+`createCanvasViewShapes` the project boot uses. The shapes carry no
+`projectModulePath`, so no layout or write persistence ever fires; live
+overlays still arrive from the sync feed. If the fetch fails the app falls
+back to the default canvas. The topbar swaps "Save project" for **Export
+data** — decision 5's export-only save: `captureEntities` over the actions
+channel, downloaded as one JSON file of the same `{type, name, data}` rows
+`baked.json` carries.
+
 In ws mode the provider owns one reconnecting `/sync` socket. On open it clears its sequence memory and sends one subscribe naming every
 kind this client watches:
 

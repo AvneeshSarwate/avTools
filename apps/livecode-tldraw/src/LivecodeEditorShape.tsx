@@ -42,6 +42,8 @@ declare module "tldraw" {
       projectSourceUri?: string;
       title: string;
       source: string;
+      /** Baked modules: the code is display-only, per the bake's contract. */
+      readOnly?: boolean;
     };
   }
 }
@@ -60,6 +62,7 @@ export class LivecodeEditorShapeUtil
     projectSourceUri: T.string.optional(),
     title: T.string,
     source: T.string,
+    readOnly: T.boolean.optional(),
   };
 
   override canScroll(): boolean {
@@ -118,6 +121,7 @@ export function createLivecodeShape(
     projectSourceUri?: string;
     title?: string;
     source?: string;
+    readOnly?: boolean;
   } = {},
 ) {
   const id = createShapeId();
@@ -137,6 +141,7 @@ export function createLivecodeShape(
       projectSourceUri: options.projectSourceUri,
       title: options.title ?? `module ${moduleId.slice(7, 15)}`,
       source: options.source ?? DEFAULT_LIVECODE_SOURCE,
+      readOnly: options.readOnly,
     },
   });
   editor.select(id);
@@ -345,7 +350,8 @@ function LivecodeEditorShapeComponent(
           pianoRollCallsites={pianoRollCallsites}
           paramPaneCallsites={paramPaneCallsites}
           lspClient={runtime.lspClient}
-          readOnly={runtime.connectionStatus === "connecting"}
+          readOnly={shape.props.readOnly === true ||
+            runtime.connectionStatus === "connecting"}
           onOpenPianoRoll={openPianoRoll}
           onOpenParamPane={openParamPane}
           onChange={(next) => {
