@@ -74,6 +74,15 @@ Open `http://localhost:5173/`. Useful URL parameters are:
 tldraw document. Project layout is persisted server-side, while a transient
 canvas remains explicit `.tldr` file state.
 
+Topology note: rows naming the "Deno server" or a process-global store as
+owner describe the ENGINE plane. In remote engine mode that plane is the
+browser engine tab — the stores and runtime singletons live in the tab's
+bundle, the server forwards ops and relays the sync feed, and "in memory"
+means the tab's memory (closing it is killing the engine). In the baked
+topology the same holds with no server at all. File-backed rows (project
+source, manifest, saved entity data) stay with the coordination server,
+which is the only side with a filesystem.
+
 ## Connection domains
 
 Four domains, three of them used by the tldraw client:
@@ -218,9 +227,9 @@ project changes that global server selection for every connected browser and
 HTTP caller. Project endpoints are not client-scoped.
 
 The execution plane now lives in `packages/livecode-engine` (see `server.md`):
-the server constructs one `createLivecodeEngine` instance and hosts it behind
-its transports, with the moved store/runtime modules re-exported at their old
-`visualizer/` paths. The runtime instrumentation map and the entity store
+in local mode the server constructs one `createLivecodeEngine` instance and
+hosts it behind its transports; everything imports the package directly (the
+old `visualizer/` paths are gone). The runtime instrumentation map and the entity store
 (piano rolls, params, and signals alike) are module-level singletons in that
 package, so two server instances created in the same isolate would share them.
 The root-clock context in `runtime.ts` is a singleton for the same reason: the

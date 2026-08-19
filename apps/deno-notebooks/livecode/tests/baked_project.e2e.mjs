@@ -466,7 +466,47 @@ try {
     'export notice in the topbar',
   )
 
+  // --- one engine per origin ------------------------------------------------
+  // A second engine tab must be blocked by the Web Lock; explicit takeover
+  // steals the lock, boots the bake in the new tab, and shuts the old one
+  // down (panic + channels closed).
+  const enginePage2 = await context.newPage()
+  const engine2Errors = []
+  enginePage2.on('pageerror', (error) => engine2Errors.push(String(error)))
+  await enginePage2.goto(`${origin}/engine/engine.html`)
+  await waitUntil(
+    () =>
+      enginePage2.evaluate(() =>
+        globalThis.__livecodeEngineLock?.state() === 'blocked' ? true : null
+      ),
+    'second engine tab blocked by the engine lock',
+  )
+  const blockedHasEngine = await enginePage2.evaluate(() =>
+    Boolean(globalThis.__livecodeBrowserEngine))
+  if (blockedHasEngine) fail('blocked tab must not start an engine')
+  await enginePage2.click('button.livecode-engine-takeover')
+  await waitUntil(
+    () =>
+      enginePage2.evaluate(() =>
+        globalThis.__livecodeEngineLock?.state() === 'engine' &&
+          globalThis.__livecodeBrowserEngine?.activeModuleIds().includes(
+            'modules/main.ts',
+          )
+          ? true
+          : null
+      ),
+    'takeover tab becomes the engine and boots the bake',
+  )
+  await waitUntil(
+    () =>
+      enginePage.evaluate(() =>
+        globalThis.__livecodeEngineLock?.state() === 'takenOver' ? true : null
+      ),
+    'original engine tab shut down after takeover',
+  )
+
   if (engineErrors.length > 0) fail(`engine page errors: ${engineErrors}`)
+  if (engine2Errors.length > 0) fail(`takeover engine page errors: ${engine2Errors}`)
   if (uiErrors.length > 0) fail(`ui page errors: ${uiErrors}`)
 
   console.log(JSON.stringify({

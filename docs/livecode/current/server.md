@@ -38,7 +38,8 @@ broadcast timer. The package is portable TypeScript with injected capabilities
   browser-served module URIs (`/engine-assets/generated/<id>.ts`,
   `/engine-assets/project/<runtimePath>`), transpile-served with type
   stripping so relative project imports keep their stable URLs. The
-  deprecated `/runtime/snapshots` shim is local-mode-only.
+  deprecated `/runtime/snapshots` shim is local-mode-only and answers 404 in
+  remote mode.
 
 With `--ui-dist <path>` the server also serves a **built tldraw client** at
 its own origin (static fallback after every API route). Combined with the
@@ -107,7 +108,11 @@ directly.
   owns the entity-name-to-filename encoding.
 - `livecode/browser_host/`: the browser engine host — `engine_page.ts` (the
   engine tab: BroadcastChannel sync host, broadcast actions channel, server
-  uplink client, baked boot), `build_host_assets.ts` (one code-split
+  uplink client, baked boot; plus its operational duties — the
+  one-engine-per-origin Web Lock with takeover, `panicMidi` wired into the
+  engine, the silent-AudioContext throttling keepalive, and the
+  timer-stretch watchdog logging `engineTickStretch` locally and over the
+  uplink), `build_host_assets.ts` (one code-split
   `deno bundle` of the page plus per-alias helper bundles sharing chunks),
   `bake_project.ts` (the Setup A static bake), and `build_slice.ts` (the
   standalone slice fixture build).
@@ -208,7 +213,7 @@ changes.
 
 | Method | Route | Behavior |
 | --- | --- | --- |
-| GET | `/health` | Version, session root, active module IDs, and runtime capability flags. |
+| GET | `/health` | Version, session root, active module IDs, runtime capability flags (the SERVER process's — see `engine`), and `engine` (`mode`, attached engine's `kind` from its hello, `attached`). |
 | GET | `/client/clients` | Connected tldraw control clients. |
 | POST | `/client/command` | Forward one command to a selected/first client and await its result with a bounded timeout. A command-level failure is returned in a JSON body; it is not necessarily an HTTP error. |
 | WS | `/client/control?clientId=...` | Browser command channel. A new socket with the same ID replaces the old one. |
@@ -225,7 +230,7 @@ changes.
 | POST | `/runtime/restart-all` | Stop all active modules and rematerialize the current project. It does not relaunch the prior modules despite the route name. |
 | GET | `/runtime/status` | Compact list of active module build identities/hashes. |
 | GET | `/runtime/state` | Rehydration state: active modules with manifests, latest run rows (each carrying `runToken`), and latest remembered prepared manifest per module. |
-| WS | `/runtime/snapshots` | **Deprecated shim.** Full-fidelity `ActiveWaitSnapshot` for the Vue SketchWrapper only: full snapshot on open, then whenever the serialized whole snapshot changes. Token-free rows. No subscribe message. |
+| WS | `/runtime/snapshots` | **Deprecated shim, local mode only (404 in remote mode).** Full-fidelity `ActiveWaitSnapshot` for the Vue SketchWrapper only: full snapshot on open, then whenever the serialized whole snapshot changes. Token-free rows. No subscribe message. |
 
 ### Sync transport
 
