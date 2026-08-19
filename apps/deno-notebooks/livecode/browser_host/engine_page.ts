@@ -21,7 +21,7 @@ import {
   type LivecodeEngine,
 } from "@avtools/livecode-engine";
 import type {
-  EngineEntityLoadEntry,
+  BakedProjectFile,
   EngineUplinkClientMessage,
   EngineUplinkServerMessage,
   SyncEntity,
@@ -149,34 +149,26 @@ actionsChannel.onmessage = (event) => {
 // Baked boot: a static bake places baked.json next to this page — durable
 // entity seeds plus the prebuilt module list, auto-launched because a baked
 // artifact IS the performance setup. Absent (404) means the dynamic
-// topologies, where launches arrive over the uplink or harness instead.
-interface BakedManifest {
-  modules?: Array<{
-    moduleId: string;
-    entry: string;
-    generatedRunId: string;
-    title?: string;
-  }>;
-  data?: EngineEntityLoadEntry[];
-}
-
+// topologies, where launches arrive over the uplink or harness instead. The
+// file's manifest/sourceText fields are for the UI tab; this page ignores
+// them.
 void (async () => {
-  let baked: BakedManifest;
+  let baked: BakedProjectFile;
   try {
     const response = await fetch("./baked.json");
     if (!response.ok) return;
-    baked = await response.json() as BakedManifest;
+    baked = await response.json() as BakedProjectFile;
   } catch {
     return;
   }
   try {
-    if (baked.data && baked.data.length > 0) {
+    if (baked.data.length > 0) {
       await executeEngineOp(engine, {
         kind: "loadEntities",
         entries: baked.data,
       });
     }
-    for (const bakedModule of baked.modules ?? []) {
+    for (const bakedModule of baked.modules) {
       await engine.launchModule({
         moduleId: bakedModule.moduleId,
         // Resolved against the page URL so a bake hosted under any subpath

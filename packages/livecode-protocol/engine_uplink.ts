@@ -17,6 +17,7 @@ import type {
   EntityDuplicateRequest,
 } from "./entities.ts";
 import type { VisualizerManifestMessage } from "./analysis.ts";
+import type { LivecodeProjectManifest } from "./project.ts";
 import type { SyncEntity, SyncEntityChange } from "./sync.ts";
 
 /** Build metadata the server's prepared-run bookkeeping adds to a launch. */
@@ -31,6 +32,32 @@ export interface EngineEntityLoadEntry {
   type: string;
   name: string;
   data: unknown;
+}
+
+/**
+ * One module of a baked artifact: the prebuilt entry the engine tab launches,
+ * plus the canonical source the UI renders read-only.
+ */
+export interface BakedProjectModule {
+  moduleId: string;
+  /** Relative to baked.json's own location. */
+  entry: string;
+  generatedRunId: string;
+  title?: string;
+  sourceText: string;
+}
+
+/**
+ * `engine/baked.json` — everything a bake's static output needs at boot: the
+ * durable-entity seeds and launch list for the engine tab, and the project
+ * manifest (layout, canvas views) plus module sources for the project-shaped
+ * read-only UI.
+ */
+export interface BakedProjectFile {
+  name: string;
+  manifest: LivecodeProjectManifest;
+  modules: BakedProjectModule[];
+  data: EngineEntityLoadEntry[];
 }
 
 export type EngineOp =

@@ -350,6 +350,22 @@ export async function createLivecodeVisualizerServer(
   if (!Deno.env.get("CRASH_LOG_LINE_COUNT")) {
     Deno.env.set("CRASH_LOG_LINE_COUNT", "40");
   }
+  // The world the current project's modules execute in. The shadow check and
+  // the editor's LSP both key off this, so the Run gate and editor diagnostics
+  // can never disagree about which globals exist.
+  const effectiveEngineTarget = (): "deno" | "browser" =>
+    currentProject?.manifest.engineTarget ??
+      (engineMode === "remote" ? "browser" : "deno");
+  // LSP proxies live in their own processes; they learn the target from this
+  // file (read at config-write time, watched for live flips on project open).
+  const lspEngineTargetPath = join(lspWorkspacesDir, "engine-target.json");
+  const publishLspEngineTarget = async () => {
+    await Deno.writeTextFile(
+      lspEngineTargetPath,
+      JSON.stringify({ target: effectiveEngineTarget() }) + "\n",
+    );
+  };
+  await publishLspEngineTarget();
   const lspWsServer = new LSWSServer({
     lsCommand: Deno.execPath(),
     lsArgs: [
@@ -360,6 +376,8 @@ export async function createLivecodeVisualizerServer(
       REPO_ROOT,
       "--workspace-root",
       lspWorkspacesDir,
+      "--engine-target-file",
+      lspEngineTargetPath,
     ],
     maxProcs: 4,
     shutdownAfter: 60 * 30,
@@ -1155,6 +1173,7 @@ export async function createLivecodeVisualizerServer(
     if (state.manifest.modules.length > 0) {
       await materializeProjectRuntime(state);
     }
+    await publishLspEngineTarget();
     await log({
       type: "projectCreated",
       root,
@@ -1199,6 +1218,7 @@ export async function createLivecodeVisualizerServer(
     if (state.manifest.modules.length > 0) {
       await materializeProjectRuntime(state);
     }
+    await publishLspEngineTarget();
     await log({
       type: "projectOpened",
       root,
@@ -1778,13 +1798,11 @@ export async function createLivecodeVisualizerServer(
     );
     const projectSourceHash = await projectSourceHashFromHashes(sourceHashes);
     // The Run gate checks against the world the modules will execute in: a
-    // browser-target project (manifest `engineTarget`, defaulting to the
-    // server's engine mode) typechecks under the browser lib, where DOM
+    // browser-target project typechecks under the browser lib, where DOM
     // globals are legal and a reachable `Deno.*` is the type error it would
     // be at runtime. The target is part of the cache key so a retargeted
     // project cannot reuse the other world's verdict.
-    const engineTarget = currentProject.manifest.engineTarget ??
-      (engineMode === "remote" ? "browser" : "deno");
+    const engineTarget = effectiveEngineTarget();
     const diagnosticsKey = `${engineTarget}:${projectSourceHash}`;
     if (lastDiagnostics?.diagnosticsKey === diagnosticsKey) {
       return lastDiagnostics.response;
