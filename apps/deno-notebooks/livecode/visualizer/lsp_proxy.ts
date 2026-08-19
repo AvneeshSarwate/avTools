@@ -7,6 +7,7 @@ import {
   normalize,
   toFileUrl,
 } from "jsr:@std/path@1";
+import { BROWSER_CHECK_LIB } from "./browser_check_config.ts";
 import { removePathBestEffort } from "./fs_utils.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -20,7 +21,17 @@ const workspaceRoot = resolvePath(
     await Deno.makeTempDir({ prefix: "avtools-lsp-workspaces-" }),
 );
 const workspaceDir = join(workspaceRoot, crypto.randomUUID());
+// The engine target the server publishes for the current project (see
+// `publishLspEngineTarget` in server.ts). Editor diagnostics follow it so they
+// agree with the Run gate about which globals exist.
+const engineTargetFile = args["engine-target-file"];
 const documentVersions = new Map<string, number>();
+let lastAppliedEngineTarget: "deno" | "browser" | null = null;
+// The workspace config the LS should use right now. Target-specific filenames,
+// because `deno lsp` re-reads config when the `deno.config` SETTING changes on
+// a didChangeConfiguration pull — not when the same file's contents change.
+let activeConfigPath = join(workspaceDir, "deno.json");
+let engineTargetWatcher: Deno.FsWatcher | null = null;
 let cleaningUp = false;
 
 await Deno.mkdir(workspaceDir, { recursive: true });
@@ -115,6 +126,7 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
 
 try {
   await proxy.listen();
+  void watchEngineTarget();
   await new Promise(() => {
     // Keep this proxy process alive until the parent LSP server terminates it.
   });
@@ -165,7 +177,7 @@ function denoConfigurationForItem(item: unknown): unknown {
   if (section === "deno") return denoWorkspaceSettings();
   if (section === "deno.enable") return true;
   if (section === "deno.lint") return true;
-  if (section === "deno.config") return join(workspaceDir, "deno.json");
+  if (section === "deno.config") return activeConfigPath;
   return null;
 }
 
@@ -173,8 +185,20 @@ function denoWorkspaceSettings(): JsonRecord {
   return {
     enable: true,
     lint: true,
-    config: join(workspaceDir, "deno.json"),
+    config: activeConfigPath,
   };
+}
+
+async function readEngineTarget(): Promise<"deno" | "browser"> {
+  if (!engineTargetFile) return "deno";
+  try {
+    const parsed = JSON.parse(await Deno.readTextFile(engineTargetFile)) as {
+      target?: unknown;
+    };
+    return parsed.target === "browser" ? "browser" : "deno";
+  } catch {
+    return "deno";
+  }
 }
 
 async function writeWorkspaceDenoConfig(targetDir: string, rootDir: string) {
@@ -185,10 +209,77 @@ async function writeWorkspaceDenoConfig(targetDir: string, rootDir: string) {
     ...await readNormalizedImports(notebookConfigPath),
   };
 
+  const engineTarget = await readEngineTarget();
+  lastAppliedEngineTarget = engineTarget;
+  const configName = engineTarget === "browser"
+    ? "deno.browser.json"
+    : "deno.json";
+  const staleName = engineTarget === "browser"
+    ? "deno.json"
+    : "deno.browser.json";
   await Deno.writeTextFile(
-    join(targetDir, "deno.json"),
-    JSON.stringify({ nodeModulesDir: "auto", imports }, null, 2),
+    join(targetDir, configName),
+    JSON.stringify(
+      {
+        nodeModulesDir: "auto",
+        imports,
+        ...(engineTarget === "browser"
+          ? { compilerOptions: { lib: BROWSER_CHECK_LIB } }
+          : {}),
+      },
+      null,
+      2,
+    ),
   );
+  // Only the active world's config exists, so `deno lsp` can never discover
+  // the other one on its own.
+  try {
+    await Deno.remove(join(targetDir, staleName));
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+  activeConfigPath = join(targetDir, configName);
+}
+
+/**
+ * Follow live engine-target flips (a browser-target project opening after this
+ * proxy spawned): rewrite the workspace config and nudge `deno lsp` to re-pull
+ * configuration, which re-reads the config file and re-diagnoses open docs.
+ */
+async function reapplyEngineTargetIfChanged(): Promise<void> {
+  if (await readEngineTarget() === lastAppliedEngineTarget) return;
+  await writeWorkspaceDenoConfig(workspaceDir, repoRoot);
+  try {
+    // The next workspace/configuration pull returns the new config path, and a
+    // changed `deno.config` setting makes deno lsp reload for real. Must go
+    // over procConn: LSProxy's sendNotification* send to the editor client
+    // despite their doc comments.
+    proxy.procConn?.sendNotification("workspace/didChangeConfiguration", {
+      settings: {},
+    });
+  } catch (error) {
+    console.warn("[livecode-lsp-proxy] engine-target notify failed", error);
+  }
+}
+
+async function watchEngineTarget(): Promise<void> {
+  if (!engineTargetFile) return;
+  // Non-recursive: the parent dir also holds every proxy's workspace tree, and
+  // a recursive watch would fire on each document write.
+  const watcher = Deno.watchFs(dirname(engineTargetFile), { recursive: false });
+  engineTargetWatcher = watcher;
+  // Cover a flip that landed between config write and watch start.
+  await reapplyEngineTargetIfChanged();
+  const targetPath = normalize(engineTargetFile);
+  try {
+    for await (const event of watcher) {
+      if (cleaningUp) break;
+      if (!event.paths.some((path) => normalize(path) === targetPath)) continue;
+      await reapplyEngineTargetIfChanged();
+    }
+  } catch (error) {
+    console.warn("[livecode-lsp-proxy] engine-target watch failed", error);
+  }
 }
 
 async function readNormalizedImports(
@@ -259,6 +350,11 @@ function resolvePath(path: string): string {
 async function cleanup(): Promise<void> {
   if (cleaningUp) return;
   cleaningUp = true;
+  try {
+    engineTargetWatcher?.close();
+  } catch {
+    // Already closed.
+  }
   shutdownProxyBestEffort(proxy);
   await removePathBestEffort(workspaceDir, "lsp workspace");
 }

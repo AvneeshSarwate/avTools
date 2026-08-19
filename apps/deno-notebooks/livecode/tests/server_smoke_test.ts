@@ -54,13 +54,27 @@ interface ServerReadyLine {
   sessionRoot: string;
 }
 
+// `deno test` type-checks every test root as one program, so when a dom-lib
+// test (project_p5gpu_e2e_test.ts) lands in the batch, dom's TextDecoderStream
+// (BufferSource writable) clashes with deno's pipeThrough signature. The cast
+// pins the shape both worlds agree the value actually has.
+function textDecoderPipe(): {
+  readable: ReadableStream<string>;
+  writable: WritableStream<Uint8Array>;
+} {
+  return new TextDecoderStream() as unknown as {
+    readable: ReadableStream<string>;
+    writable: WritableStream<Uint8Array>;
+  };
+}
+
 async function waitForServerReady(
   stream: ReadableStream<Uint8Array>,
   lines: string[],
   stderrLines: string[],
 ): Promise<ServerReadyLine> {
   const deadline = Date.now() + 20_000;
-  const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
+  const reader = stream.pipeThrough(textDecoderPipe()).getReader();
   let buffer = "";
   let pendingRead = reader.read();
   while (Date.now() < deadline) {
@@ -99,7 +113,7 @@ async function collectLines(
   stream: ReadableStream<Uint8Array>,
   lines: string[],
 ) {
-  const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
+  const reader = stream.pipeThrough(textDecoderPipe()).getReader();
   let buffer = "";
   while (true) {
     const result = await reader.read();

@@ -512,10 +512,19 @@ entity CRUD) round-trip on a broadcast actions channel carrying the same
 `livecode/tests/baked_project.e2e.mjs` proves it against a dumb static file
 server: seeds and write-backs visible in the UI, an owned signal advancing,
 entity create/delete over the actions channel, and a params write changing
-the running module. Not yet in the bake: project-shaped UI (code shapes and
-saved canvas views come from server project routes today — a baked UI starts
-from the default canvas), and saves (export-only per decision 5; nothing
-implements export yet).
+the running module.
+
+**The bake's UI is project-shaped and saves via export.** `baked.json` is the
+shared `BakedProjectFile`: beside the seeds and launch list it carries the
+full manifest and each module's canonical source, so a `serverBaseUrl=none`
+client boots the project's canvas from it — read-only code shapes (a
+shape-level `readOnly` prop; a bake's code is display, not editable source) at
+their manifest positions plus the manifest's canvas views, no server routes
+involved. Saves are decision 5's export-only v1: the topbar's Export data
+button runs `captureEntities` over the actions channel and downloads one JSON
+file of the same `{type, name, data}` rows `baked.json` carries. Both are
+asserted in the baked E2E (shape titles, contenteditable=false, the manifest
+piano-roll view, and the parsed download's rows).
 
 **Stage 2 is implemented and E2E-tested too**: `--ui-dist` serves the built
 tldraw client at the server origin, and the client's `sync=broadcast`
@@ -588,18 +597,22 @@ The five open questions this note originally carried are decided:
 2. **Throttling: cheap path only.** Silent `AudioContext` plus
    keep-both-tabs-visible discipline (single-operator tool). The
    Worker-backed time-source idea is parked in `next-stuff-brainstorm.md`.
-3. **Target-aware typechecking: build it.** *Built:* the manifest
-   `engineTarget` field drives the shadow check's lib (browser target =
-   browser lib; absent = follow the server's engine mode, so remote-mode
-   projects default to browser truth), with the target folded into the
-   diagnostics cache key; covered by `browser_target_project_test.ts`. The
-   LSP workspace's lib is not yet target-aware — proxies build their config
-   at process start, before a project is open — so editor diagnostics can
-   disagree with the Run gate on host globals until that seam moves. Good typechecking is a core
-   principle, and the investigation above showed the mechanism is one config
-   knob plus mechanical cleanup of the portable helper graph — well under the
-   "extremely complicated" bar that would have justified living with the
-   mismatch.
+3. **Target-aware typechecking: build it.** *Built, both halves:* the
+   manifest `engineTarget` field drives the shadow check's lib (browser
+   target = browser lib; absent = follow the server's engine mode, so
+   remote-mode projects default to browser truth), with the target folded
+   into the diagnostics cache key; covered by
+   `browser_target_project_test.ts`. The LSP workspace follows the same
+   target: the server publishes `effectiveEngineTarget()` to an
+   `engine-target.json` the proxies read and watch, browser targets get
+   `BROWSER_CHECK_LIB` in a target-named config file, and a live flip
+   reaches an already-running `deno lsp` as a `deno.config` setting change
+   (see `current/server.md`, "LSP proxy"); covered by
+   `lsp_engine_target_test.ts`, including the mid-session flip. Good
+   typechecking is a core principle, and the investigation above showed the
+   mechanism is one config knob plus mechanical cleanup of the portable
+   helper graph — well under the "extremely complicated" bar that would
+   have justified living with the mismatch.
 4. **Second-machine UI: kept.** The relay is a permanent supported topology,
    not scaffolding — notably iPad-on-LAN control with a laptop-local server
    for live performance.
