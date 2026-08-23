@@ -1,8 +1,7 @@
 # Current Deno Server Architecture
 
 Status: checked against `apps/deno-notebooks/livecode` and
-`packages/livecode-engine` — most recently the execution-plane extraction into
-that package — as of 2026-08-18; first audited 2026-07-21.
+`packages/livecode-engine` as of 2026-08-23; first audited 2026-07-21.
 
 ## The engine package split
 
@@ -37,9 +36,7 @@ broadcast timer. The package is portable TypeScript with injected capabilities
   and materialization emit `runtimeImport: "/engine/runtime.js"` and
   browser-served module URIs (`/engine-assets/generated/<id>.ts`,
   `/engine-assets/project/<runtimePath>`), transpile-served with type
-  stripping so relative project imports keep their stable URLs. The
-  deprecated `/runtime/snapshots` shim is local-mode-only and answers 404 in
-  remote mode.
+  stripping so relative project imports keep their stable URLs.
 
 With `--ui-dist <path>` the server also serves a **built tldraw client** at
 its own origin (static fallback after every API route). Combined with the
@@ -85,11 +82,11 @@ directly.
   wait/lookup sync sources drain.
 - `packages/livecode-engine/piano_roll_store.ts` (the `piano-roll-store` alias target): named
   piano rolls as the third typed wrapper over the entity store — per-roll
-  undo/redo in a side structure, compare-and-set, history labels, never-throw
-  cloning, deletion with a remembered deleted-defaults set, and demo seeding.
+  undo/redo in a side structure, compare-and-set, history labels, validated
+  writes, deletion with a remembered deleted-defaults set, and demo seeding.
 - `packages/livecode-engine/entity_store.ts`: generic
   `(type, name)`-keyed records with revisions, per-name monotonic revision
-  floors, no-op caching, never-throw serialization, and the per-type
+  floors, no-op caching, strict JSON validation, and the per-type
   **changed-name set** that is the broadcast gate. All three typed stores sit
   on it.
 - `packages/livecode-engine/params_store.ts`: params entities as the
@@ -155,7 +152,6 @@ directly.
 - one session directory and log file;
 - `syncSockets`: a map from each open `/sync` socket to its state
   (`{ socket, subscriptions, seq }`);
-- `sockets`: the deprecated `/runtime/snapshots` shim's socket set;
 - a map of browser control sockets and pending commands;
 - one **engine instance** (`createLivecodeEngine`), which itself owns the
   `SyncSourceRegistry`, the one broadcast timer, active modules and their
@@ -227,14 +223,13 @@ changes.
 | Method | Route | Behavior |
 | --- | --- | --- |
 | POST | `/runtime/analyze` | Analyze/materialize a transient or current-project module and remember a prepared run. |
-| POST | `/runtime/launch` | Enqueue a dynamic import/branch. Reject a module that is already active *or* already launching unless `replaceRunning` is true. Successful HTTP response means queued, not necessarily imported or started. |
+| POST | `/runtime/launch` | Enqueue a dynamic import/branch. Reject a module that is already active *or* already launching unless `replaceRunning` is true. Returns `{ ok: true, runToken }` for the accepted queued run. |
 | POST | `/runtime/stop` | Gracefully stop one currently active module, or cancel one still-queued launch; a missing module is treated as success. |
 | POST | `/runtime/stop-all` | Cancel every pending launch, then gracefully stop all currently active modules in parallel. |
 | POST | `/runtime/panic` | Cancel every pending launch, immediately cancel active modules without stop hooks, and panic MIDI. |
 | POST | `/runtime/restart-all` | Stop all active modules and rematerialize the current project. It does not relaunch the prior modules despite the route name. |
 | GET | `/runtime/status` | Compact list of active module build identities/hashes. |
 | GET | `/runtime/state` | Rehydration state: active modules with manifests, latest run rows (each carrying `runToken`), and latest remembered prepared manifest per module. |
-| WS | `/runtime/snapshots` | **Deprecated shim, local mode only (404 in remote mode).** Full-fidelity `ActiveWaitSnapshot` for the Vue SketchWrapper only: full snapshot on open, then whenever the serialized whole snapshot changes. Token-free rows. No subscribe message. |
 
 ### Sync transport
 
@@ -425,10 +420,9 @@ ID. Three places therefore need a stronger identity than the ID:
   `stop()` hook for up to two seconds, and a replacement can win the slot inside
   that window; the superseded teardown logs `supersededTeardown` and returns.
 
-The token is also on the wire. It reaches clients on the `run` entity and on
-`/runtime/state`'s rows, which is what lets a client dedupe terminals correctly
-during a replacement (see `client.md`). The deprecated `/runtime/snapshots`
-envelope keeps its token-free rows.
+The token reaches clients in the launch acknowledgement, on the `run` entity,
+and on `/runtime/state` rows. The client correlates those explicit identities
+rather than inferring ownership from observation timing.
 
 ### Run, waits, and lookups as entities
 
@@ -462,13 +456,10 @@ const broadcastTimer = setInterval(() => {
   try {
     deps.onSyncTick(syncSources.collectAll());
   } catch (error) { /* logged as broadcastTickError */ }
-}, deps.snapshotTickMs ?? 33);
+}, deps.syncTickMs ?? 33);
 
 // server.ts, the Deno host's sink
-onSyncTick: (collected) => {
-  broadcastSyncChanges(collected);
-  broadcastLegacyRuntimeSnapshot();
-},
+onSyncTick: broadcastSyncChanges,
 ```
 
 A thrown error inside the tick is caught and logged as `broadcastTickError`, so
@@ -489,10 +480,8 @@ interface SyncSource<E> {
 The difference between the two methods is the whole discipline:
 
 - `collectChanges()` **drains** that kind's change gate, so it has exactly one
-  caller per tick. `SyncSourceRegistry.collectAll()` is it, and both the `/sync`
-  fan-out and the legacy shim read its result rather than draining anything a
-  second time. Two independent timers would double-consume the gates and starve
-  one side.
+  caller per tick: `SyncSourceRegistry.collectAll()`. A second collector would
+  consume generations before the transport could deliver them.
 - `snapshotAll()` is **strictly read-only**. It answers one `/sync` subscribe
   and nothing else, so it must never consume a generation the open sockets are
   still owed and must never seed, adopt, or stamp anything. (This is why demo
@@ -567,17 +556,10 @@ subscriptions or no matching changes gets nothing. `sendSyncMessage` advances
 that socket's `seq` **only after a successful send**, so a serialization failure
 (logged `syncSerializeFailed`) cannot manufacture a gap the client would chase.
 
-`broadcastLegacyRuntimeSnapshot` then builds the deprecated `ActiveWaitSnapshot`
-from the same singletons at full fidelity — `modules`, `pianoRollLookups`,
-sorted `activeModules`, and `moduleRuns` with `updatedAtMs` and **without**
-`runToken` — and compares the concatenated JSON of those four sections against
-the previous tick's. That comparison is pure: it is not a gate anything else
-consumes, so keeping it costs the sync path nothing.
-
 ### Shutdown
 
-`close()` closes the shim sockets, the `/sync` sockets, and the control
-sockets, fails every pending client command, then calls `engine.close()` —
+`close()` closes the `/sync` and control sockets, fails every pending client
+command, then calls `engine.close()` —
 which clears the one broadcast timer, unregisters the root time context (a
 cancelled clock must not keep stamping samples), stops all modules, panics
 MIDI, and cancels the parent context — and finally shuts down the LSP proxies
@@ -663,10 +645,10 @@ What the wrapper still owns, because each earns its keep:
   contained. At most 100 entries per stack.
 - **Compare-and-set.** `expectedRev` is optional; a mismatch returns the current
   object with `conflict: true`, and callers that omit it retain last-write-wins.
-- **Never-throw cloning.** Non-cloneable metadata is dropped through guarded
-  fallbacks rather than throwing into user timing code. Note IDs and velocity
-  are normalized, every entry point trims its name, and a JSON-equal write is a
-  no-op with no revision churn.
+- **Validated writes.** Note IDs and velocity are normalized, then the complete
+  value is checked for strict JSON representability before state or history is
+  touched. Invalid writes return an explicit rejection; a JSON-equal valid
+  write is a no-op with no revision churn.
 - **Upsert semantics.** `setPianoRoll` on a missing name creates it at rev 1, so
   module write-back (`setPianoRollClip`) needs no prior `/entities/create` — the
   params store's write-never-creates rule deliberately does not apply here.
@@ -694,9 +676,9 @@ called by the server shutdown path.
 ## Entity store and params entities
 
 `entity_store.ts` owns identity, revisions, the no-op cache, the per-type
-changed-name set and snapshot sequence, and never-throw serialization. Per-type
-semantics live in the wrappers beside it: `params_store.ts`, `signals_store.ts`,
-and `piano_roll_store.ts`.
+changed-name set, snapshot sequence, and strict JSON validation. Per-type
+semantics live in `params_store.ts`, `signals_store.ts`, and
+`piano_roll_store.ts`.
 
 `registerParams(name, defaults, meta?)` is create-or-reattach and returns the
 **live value object**:
@@ -722,8 +704,8 @@ there, because declaration runs at module init rather than inside timing loops.
 On every 33 ms tick `adoptParamsCodeWrites()` runs — whether or not anything is
 subscribed. Per entity it safe-stringifies the live value, then:
 
-- on failure, sets `unserializable: true` once and warns, keeping the last good
-  serialization in payloads instead of freezing the loop;
+- on failure, sets `unserializable: true` and publishes a null wire value; the
+  last good serialization is never presented as current state;
 - on success, clears that flag if it was set, and when the string differs from
   the cached one **adopts the drift** as a store write: rev bumps,
   `updatedBy` becomes `code`, and the cache is refreshed.
@@ -731,9 +713,10 @@ subscribed. Per entity it safe-stringifies the live value, then:
 Adoption is the whole mechanism behind plain property writes: user code never
 calls the store, so this sampler is where a code-authored generation is
 recorded, and it is what keeps rev a monotonic generation counter that client
-echo suppression can rely on. `NaN`/`Infinity` serialize to null and
-`undefined` drops the key, which reads as a shape change. `sampleParamsChanges()`
-then drains the changed-name gate; an idle store returns null and sends nothing.
+echo suppression can rely on. Non-finite numbers, `undefined`, functions,
+symbols, BigInt, cycles, sparse arrays, and non-plain objects make the whole
+wire value unavailable. `sampleParamsChanges()` then drains the changed-name
+gate; an idle store returns null and sends nothing.
 
 `/params/set` merges leaves in place and detects no-ops against a fresh
 serialization of the pre-merge value rather than the cache, which a code write
@@ -836,7 +819,7 @@ interface DurableEntityTypeDescriptor {
   create(name: string): void;                       // rejects existing
   duplicate(sourceName: string, targetName: string): void;
   remove(name: string): boolean;
-  serialize(name: string): unknown | null;          // JSON-ready, null = skip
+  serialize(name: string): unknown | null;          // null only for deliberate omission
   deserialize(name: string, data: unknown): void;   // validate + apply
   latestJson(name: string): string | null;          // cached, for dirty check
 }
@@ -851,10 +834,9 @@ Everything here runs at route or save/load time, never inside caller-owned
 livecode timing, so throwing on a bad name or a malformed saved file is the
 right shape; the HTTP layer turns those into `{ ok: false, error }`.
 
-`serialize` returns null to mean *skip this entity*, which is how a save stays
-non-fatal: a params value that no longer serializes, a piano roll whose
-metadata does not, and a pristine demo seed all return null and are reported in
-the response's `skipped` list instead of failing the pass.
+`serialize` returns null only for deliberately omitted state, currently the
+pristine demo roll. An entity whose current value cannot serialize raises a
+capture error and aborts save/export before files are written.
 
 Entity names are established as slash-containing (`e2e/params`,
 `kinaree/rects`), so `encodeEntityName` percent-encodes every byte outside
@@ -872,8 +854,8 @@ write-through `writeProjectManifest` callers in the module and canvas routes
 never do.
 
 A save is point-in-time. Every registered type × every name serializes
-synchronously into memory first, so one save captures one coherent instant of
-the store, and only then do the awaited file writes happen. Each entity is
+synchronously into memory first. Any capture error aborts before the manifest
+or entity files are touched. Only then do the awaited writes happen. Each entity is
 written to `data/<type>/<encoded-name>.json` (recursive `mkdir`, two-space JSON
 with a trailing newline, matching the manifest precedent). The manifest is
 written before the data files and again afterwards with the entries that

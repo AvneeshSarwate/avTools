@@ -21,6 +21,7 @@
 
 import {
   clearEntityRecords,
+  cloneEntityValueForWire,
   commitEntityWrite,
   consumeEntityTypeChanges,
   createEntityRecord,
@@ -31,7 +32,7 @@ import {
   markEntityRecordChanged,
   nextEntitySnapshotSeq,
   normalizeEntityName,
-  safeStringifyEntityValue,
+  serializeEntityValue,
 } from "./entity_store.ts";
 import { sampleRootTime } from "./runtime.ts";
 import type {
@@ -173,32 +174,34 @@ export function makeSignalsSnapshot(): SignalsSnapshot {
  */
 export function adoptSignalCodeWrites(): void {
   for (const record of listEntityRecords<unknown>(SIGNAL_ENTITY_TYPE)) {
-    const json = safeStringifyEntityValue(record.value);
+    const serialized = serializeEntityValue(record.value);
 
-    if (json === null) {
+    if (!serialized.ok) {
       if (!record.unserializable) {
         record.unserializable = true;
         markEntityRecordChanged(record);
         console.warn(
-          `[signals-store] "${record.name}" value can no longer be serialized ` +
-            "(cycle, BigInt, or undefined published by code); snapshots keep " +
-            "the last good value and flag the signal.",
+          `[signals-store] "${record.name}" value is unavailable to views: ` +
+            serialized.error,
         );
       }
       continue;
     }
 
     if (record.unserializable) {
-      record.unserializable = false;
+      delete record.unserializable;
       markEntityRecordChanged(record);
       console.warn(
         `[signals-store] "${record.name}" value is serializable again.`,
       );
     }
 
-    if (json === record.lastValueJson) continue;
+    if (serialized.json === record.lastValueJson) continue;
     stampLogicalTime(record);
-    commitEntityWrite(record, { updatedBy: "code", valueJson: json });
+    commitEntityWrite(record, {
+      updatedBy: "code",
+      valueJson: serialized.json,
+    });
   }
 }
 
@@ -274,9 +277,10 @@ function signalMeta(record: EntityRecord<unknown>): SignalRecordMeta {
 
 function toSignalEntity(record: EntityRecord<unknown>): SignalEntity {
   const meta = signalMeta(record);
+  const wireValue = cloneEntityValueForWire(record);
   const entity: SignalEntity = {
     name: record.name,
-    value: cloneSignalValueForWire(record),
+    value: wireValue.ok ? wireValue.value : null,
     rev: record.rev,
     updatedAt: record.updatedAt,
     updatedBy: record.updatedBy,
@@ -284,37 +288,14 @@ function toSignalEntity(record: EntityRecord<unknown>): SignalEntity {
   if (meta.anchor) entity.anchor = cloneAnchor(meta.anchor);
   if (meta.ownerModuleId) entity.ownerModuleId = meta.ownerModuleId;
   if (meta.ended) entity.ended = true;
-  if (record.unserializable) entity.unserializable = true;
+  if (!wireValue.ok) entity.unserializable = true;
   if (meta.timeSec !== undefined) entity.timeSec = meta.timeSec;
   if (meta.beats !== undefined) entity.beats = meta.beats;
   return entity;
 }
 
-/**
- * A signal's value is user-shaped, so unlike a params tree it can legitimately
- * be a bare number or string. `cloneEntityValueForWire` is object-shaped in
- * spirit but works for any JSON value; this wrapper only exists to keep the
- * "last good value" fallback and the never-throw contract explicit.
- */
-function cloneSignalValueForWire(record: EntityRecord<unknown>): unknown {
-  try {
-    const json = JSON.stringify(record.value);
-    if (json !== undefined) return JSON.parse(json);
-  } catch {
-    // Cyclic or BigInt-bearing value published by user code; fall through.
-  }
-  try {
-    if (record.lastValueJson) return JSON.parse(record.lastValueJson);
-  } catch {
-    // The cache is written by this module, so this should be unreachable.
-  }
-  return null;
-}
-
 function cloneAnchor(anchor: SignalAnchor): SignalAnchor {
   const clone: SignalAnchor = { type: anchor.type, name: anchor.name };
-  // Guarded rather than truthy-checked: the anchor comes from user code and
-  // this runs inside the never-throw sampler path.
   if (Array.isArray(anchor.path)) clone.path = [...anchor.path];
   return clone;
 }

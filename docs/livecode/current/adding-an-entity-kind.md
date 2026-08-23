@@ -168,14 +168,13 @@ Then add a `DurableEntityTypeDescriptor` in `entity_registry.ts` and register it
 in `registerBuiltinDurableEntityTypes()`. The descriptor is the type id plus
 eight small functions; the two with non-obvious contracts are:
 
-- `serialize(name)` returns **null to mean "skip this entity"**. That is how a
-  save stays non-fatal: a value that no longer serializes, or a pristine
-  auto-created default, returns null and is reported in the response's `skipped`
-  list instead of failing the pass.
+- `serialize(name)` returns null only for a deliberate omission such as a
+  pristine auto-created default. A current value that cannot serialize must
+  surface an error and abort save/export before files are written.
 - `latestJson(name)` is the canonical compact JSON used for the unsaved-changes
-  compare — null when the entity is absent, the empty string when its value could
-  not be serialized. Return the store's cached JSON, never a re-pretty-printed
-  file, or an unchanged entity will read as permanently unsaved.
+  compare — null when the entity is absent. Return the store's cached JSON,
+  never a re-pretty-printed file. Unavailable current state is an explicit
+  status/error, not an empty-string sentinel.
 
 You get `/entities/create`, `/entities/duplicate`, `/entities/delete`,
 `/project/save`, `/project/open`, and the `/project/status` unsaved rows from
@@ -242,7 +241,7 @@ things every consumer of live entity state gets wrong at least once:
 | Layer | Where | What |
 | --- | --- | --- |
 | Store semantics | a new `livecode/tests/<kind>_store_test.ts` in `test:livecode:unit` | create/reattach, no-op detection, whatever adoption or reconcile the kind has, and that a read path did not consume the gate |
-| Durable registry | `livecode/tests/entity_registry_test.ts` | create rejects an existing name, duplicate, delete, serialize/deserialize round trip, and a hostile value being skipped rather than thrown |
+| Durable registry | `livecode/tests/entity_registry_test.ts` | create rejects an existing name, duplicate, delete, serialize/deserialize round trip, and invalid values fail without fabricating or replacing state |
 | Transport | `livecode/tests/sync_transport_test.ts` | subscribe reset includes the kind, a change ships per entity, a delete ships as `entity: null`, and any change that does not bump `rev` still arrives |
 | Route contract | `livecode/tests/protocol_smoke_test.ts` | only if you added routes |
 | Browser | `apps/livecode-tldraw/tests/livecodeTldraw.e2e.mjs` | the user-visible round trip, and — for a durable kind — that a save writes the file and an open reverts a live edit |

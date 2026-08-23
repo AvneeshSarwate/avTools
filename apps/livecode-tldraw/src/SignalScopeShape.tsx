@@ -157,6 +157,7 @@ interface ScopeReading {
   ended: boolean
   /** The source's socket is open. */
   live: boolean
+  unserializable: boolean
 }
 
 interface ScopeSample {
@@ -175,6 +176,7 @@ function SignalScopeShapeComponent({ shape }: { shape: SignalScopeShape }) {
     present: false,
     ended: false,
     live: false,
+    unserializable: false,
   })
   const windowSecRef = useRef(windowSec)
   const pathSegments = useMemo(
@@ -258,6 +260,8 @@ function SignalScopeShapeComponent({ shape }: { shape: SignalScopeShape }) {
     ? 'disconnected'
     : !reading.present
     ? 'waiting'
+    : reading.unserializable
+    ? 'value unavailable'
     : reading.value === null
     ? 'not numeric'
     : formatScopeValue(reading.value)
@@ -284,7 +288,9 @@ function SignalScopeShapeComponent({ shape }: { shape: SignalScopeShape }) {
         {reading.value === null && samplesRef.current.length === 0
           ? (
             <div className="signal-scope-shape__empty">
-              {reading.present
+              {reading.unserializable
+                ? <>The current value from <code>{name || '(unbound)'}</code> cannot be represented.</>
+                : reading.present
                 ? <>Waiting for a number from <code>{name || '(unbound)'}</code>: v1 scopes plot numeric values only.</>
                 : <>Waiting for <code>{name || '(unbound)'}</code>.</>}
             </div>
@@ -306,6 +312,7 @@ function readSignalSource(
     present: Boolean(entity),
     ended: Boolean(entity?.ended),
     live: runtime.connectionStatus === 'open',
+    unserializable: Boolean(entity?.unserializable),
   }
 }
 
@@ -321,6 +328,7 @@ function readParamsSource(
     present: Boolean(entity),
     ended: false,
     live: runtime.connectionStatus === 'open',
+    unserializable: Boolean(entity?.unserializable),
   }
 }
 

@@ -7,7 +7,7 @@ import {
   enterWait,
   exitWait,
   getActiveWaitsByModule,
-  makeActiveWaitSnapshot,
+  getPianoRollLookupsByModule,
   visualizedAwait,
   visualizedPianoRollLookup,
 } from "@avtools/livecode-engine/runtime.ts";
@@ -81,8 +81,7 @@ Deno.test("visualizedPianoRollLookup records resolved names and returns value", 
   clearAllWaits();
   const value = visualizedPianoRollLookup("module-a", "roll-id-1", "melody");
   assertEquals(value, "melody");
-  const snapshot = makeActiveWaitSnapshot();
-  assertEquals(snapshot.pianoRollLookups, {
+  assertEquals(getPianoRollLookupsByModule(), {
     "module-a": { "roll-id-1": "melody" },
   });
 });
@@ -91,8 +90,7 @@ Deno.test("visualizedPianoRollLookup updates overwrite previous names", () => {
   clearAllWaits();
   visualizedPianoRollLookup("module-a", "roll-id-1", "melody");
   visualizedPianoRollLookup("module-a", "roll-id-1", "bass");
-  const snapshot = makeActiveWaitSnapshot();
-  assertEquals(snapshot.pianoRollLookups, {
+  assertEquals(getPianoRollLookupsByModule(), {
     "module-a": { "roll-id-1": "bass" },
   });
 });
@@ -103,7 +101,6 @@ Deno.test("clearModulePianoRollLookups clears only piano roll lookups", () => {
   visualizedPianoRollLookup("module-a", "roll-id-1", "melody");
   enterWait("module-a", "wait-id-1");
   clearModulePianoRollLookups("module-a");
-  const snapshot = makeActiveWaitSnapshot();
-  assertEquals(snapshot.modules, { "module-a": ["wait-id-1"] });
-  assertEquals(snapshot.pianoRollLookups, {});
+  assertEquals(getActiveWaitsByModule(), { "module-a": ["wait-id-1"] });
+  assertEquals(getPianoRollLookupsByModule(), {});
 });

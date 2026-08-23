@@ -1,16 +1,5 @@
-// Piano rolls: the third typed wrapper over `entity_store.ts`, and the only
-// durable one whose value is written exclusively through this module's own API
-// (no live object is handed to user code, so there is no code drift to adopt).
-//
-// That is why its sync source is pure WRITE-TIME change tracking: every entry
-// point below records the name it touched, and an idle store costs one set-size
-// check rather than a per-tick serialize of every note array.
-//
-// What survives from the pre-migration engine, because each earns its keep:
-// per-roll undo/redo stacks (now a side structure, dropped with the entity),
-// compare-and-set via `expectedRev`, history labels, the never-throw clone
-// discipline for user-supplied metadata, and the demo-seed semantics that keep
-// an untouched `melody` out of project saves.
+// Piano-roll values are written only through this module, so change tracking
+// happens at write time rather than by sampling the store each tick.
 
 import {
   clearEntityRecords,
@@ -26,13 +15,14 @@ import {
   markEntityChanged,
   nextEntitySnapshotSeq,
   safeStringifyEntityValue,
+  serializeEntityValue,
 } from "./entity_store.ts";
 import type {
-  MpePitchPoint,
   NoteData,
   NoteDataInput,
   PianoRollData,
   PianoRollObject,
+  PianoRollSetResult,
   PianoRollSnapshot,
   PianoRollUpdateSource,
 } from "@avtools/livecode-protocol";
@@ -98,30 +88,34 @@ export function setPianoRoll(
   name: string,
   data: PianoRollData,
   options: SetPianoRollOptions = {},
-): PianoRollObject {
+): PianoRollSetResult {
   const entityName = normalizeName(name);
-  // Shape (assign note ids, default velocity) WITHOUT cloning, then serialize
-  // once for the no-op compare. The expensive never-throw clone only happens
-  // when the write actually proceeds.
   const shaped = shapeData(data);
-  const shapedJson = safeStringifyEntityValue(shaped);
+  const serialized = serializeEntityValue(shaped);
   const existing = getEntityRecord<PianoRollData>(
     PIANO_ROLL_ENTITY_TYPE,
     entityName,
   );
+  if (!serialized.ok) {
+    return {
+      ok: false,
+      error: `Piano roll "${entityName}" was not changed: ${serialized.error}`,
+      ...(existing ? { current: toObject(existing) } : {}),
+    };
+  }
+  const shapedJson = serialized.json;
+  const nextData = JSON.parse(shapedJson) as PianoRollData;
   const source = options.source ?? "server";
   const undoable = options.undoable ?? true;
 
   if (existing) {
     if (isEntityRevConflict(existing, options.expectedRev)) {
-      return { ...toObject(existing), conflict: true };
+      return { ok: true, roll: { ...toObject(existing), conflict: true } };
     }
 
-    if (shapedJson !== null && existing.lastValueJson === shapedJson) {
-      return toObject(existing);
+    if (existing.lastValueJson === shapedJson) {
+      return { ok: true, roll: toObject(existing) };
     }
-
-    const nextData = cloneShapedData(shaped, entityName);
 
     if (undoable) {
       const history = historyFor(entityName);
@@ -139,7 +133,7 @@ export function setPianoRoll(
       updatedBy: options.originId ?? source,
       valueJson: shapedJson,
     });
-    return toObject(existing);
+    return { ok: true, roll: toObject(existing) };
   }
 
   // Roll writes are upserts, unlike `/params/set`: module write-back through
@@ -147,10 +141,10 @@ export function setPianoRoll(
   const record = createEntityRecord<PianoRollData>(
     PIANO_ROLL_ENTITY_TYPE,
     entityName,
-    cloneShapedData(shaped, entityName),
+    nextData,
     { updatedBy: options.originId ?? source, valueJson: shapedJson },
   );
-  return toObject(record);
+  return { ok: true, roll: toObject(record) };
 }
 
 export function undoPianoRoll(
@@ -207,7 +201,6 @@ export function deletePianoRoll(name: string): boolean {
 
 /**
  * Cached JSON of the last data written to one roll, for save/dirty compares.
- * Empty string when that data was not serializable; undefined roll gives null.
  */
 export function latestPianoRollJson(name: string): string | null {
   const record = recordFor(name);
@@ -234,16 +227,8 @@ export function clearPianoRollStore(): void {
   deletedDefaults.clear();
 }
 
-/**
- * Read-only point-in-time snapshot for `/piano-roll/list`, socket open, and the
- * legacy full-snapshot broadcast. Like its params counterpart it never consumes
- * the broadcast gate, so one client listing rolls cannot swallow the generation
- * every other open view is still waiting for. `options.force` is accepted for
- * call-site compatibility and has nothing left to switch on.
- */
-export function makePianoRollSnapshot(
-  _options: { force?: boolean } = {},
-): PianoRollSnapshot {
+/** Read-only point-in-time snapshot for list requests and sync resets. */
+export function makePianoRollSnapshot(): PianoRollSnapshot {
   return {
     type: "pianoRollSnapshot",
     seq: nextEntitySnapshotSeq(PIANO_ROLL_ENTITY_TYPE),
@@ -288,7 +273,7 @@ export function seedDemoPianoRoll(
   );
   if (existing) return toObject(existing);
   if (deletedDefaults.has(entityName)) return undefined;
-  return setPianoRoll(
+  const result = setPianoRoll(
     entityName,
     {
       notes: [
@@ -330,6 +315,8 @@ export function seedDemoPianoRoll(
       undoable: false,
     },
   );
+  if (!result.ok) throw new Error(result.error);
+  return result.roll;
 }
 
 function getAllPianoRolls(): Record<string, PianoRollObject> {
@@ -372,108 +359,31 @@ function normalizeName(name: string): string {
   return normalized;
 }
 
-// Shape incoming data (assign note ids, default velocity) without cloning, so
-// the no-op compare can serialize once before deciding whether a clone is even
-// needed. Note-id assignment happens here, before any equality check.
 function shapeData(data: PianoRollData): PianoRollData {
-  return {
-    ...data,
+  const shaped: PianoRollData = {
     notes: data.notes.map((note, index) => normalizeNote(note, index)),
   };
-}
-
-// Must NEVER throw: this runs inside caller-owned livecode timing (the
-// in-process setPianoRoll path is not wrapped by the HTTP handler try/catch).
-// Note/point `metadata` is user-supplied and may hold non-cloneable values.
-function cloneShapedData(
-  shaped: PianoRollData,
-  rollName: string,
-): PianoRollData {
-  try {
-    return structuredClone(shaped);
-  } catch {
-    // structuredClone throws (e.g. DataCloneError) on functions/class
-    // instances; fall through to a JSON-based clone.
-  }
-
-  try {
-    const cloned = JSON.parse(JSON.stringify(shaped)) as PianoRollData;
-    console.warn(
-      `[piano-roll-store] "${rollName}" write: metadata was not ` +
-        "structured-cloneable; converted via JSON (non-cloneable values dropped).",
-    );
-    return cloned;
-  } catch {
-    // JSON clone can still throw on cycles/BigInt; rebuild with well-typed
-    // fields only, dropping metadata entirely.
-  }
-
-  console.warn(
-    `[piano-roll-store] "${rollName}" write: metadata could not be cloned; ` +
-      "rebuilt with well-typed fields only (metadata stripped).",
-  );
-  return rebuildSafeData(shaped);
-}
-
-// Last-resort clone that keeps only well-typed, always-serializable fields and
-// drops user-supplied metadata that broke both structuredClone and JSON clone.
-function rebuildSafeData(data: PianoRollData): PianoRollData {
-  const rebuilt: PianoRollData = {
-    notes: data.notes.map((note) => {
-      const safeNote: NoteData = {
-        id: (note as NoteData).id,
-        pitch: note.pitch,
-        position: note.position,
-        duration: note.duration,
-        velocity: (note as NoteData).velocity,
-      };
-      if (note.mpePitch) {
-        safeNote.mpePitch = {
-          points: note.mpePitch.points.map((point) => {
-            const safePoint: MpePitchPoint = {
-              time: point.time,
-              pitchOffset: point.pitchOffset,
-            };
-            if (point.rooted !== undefined) safePoint.rooted = point.rooted;
-            return safePoint;
-          }),
-        };
-      }
-      return safeNote;
-    }),
-  };
-  if (data.viewport) rebuilt.viewport = { ...data.viewport };
-  if (data.grid) rebuilt.grid = { ...data.grid };
-  return rebuilt;
+  if (data.viewport !== undefined) shaped.viewport = data.viewport;
+  if (data.grid !== undefined) shaped.grid = data.grid;
+  return shaped;
 }
 
 function normalizeNote(note: NoteDataInput, index: number): NoteData {
   const id = note.id && note.id.length > 0
     ? note.id
     : `note_${Date.now()}_${index}`;
-  return {
+  const normalized = {
     ...note,
     id,
     velocity: note.velocity ?? 100,
   };
+  if (normalized.mpePitch === undefined) delete normalized.mpePitch;
+  if (normalized.metadata === undefined) delete normalized.metadata;
+  return normalized;
 }
 
-/**
- * Stored data always came out of `cloneShapedData`, so `structuredClone` is
- * safe here — but reads happen from caller-owned livecode timing, so the
- * fallbacks stay rather than trusting that invariant.
- */
 function cloneRollData(data: PianoRollData): PianoRollData {
-  try {
-    return structuredClone(data);
-  } catch {
-    // Fall through.
-  }
-  try {
-    return JSON.parse(JSON.stringify(data)) as PianoRollData;
-  } catch {
-    return rebuildSafeData(data);
-  }
+  return structuredClone(data);
 }
 
 function toObject(record: EntityRecord<PianoRollData>): PianoRollObject {

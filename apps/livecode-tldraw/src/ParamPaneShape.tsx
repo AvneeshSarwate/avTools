@@ -144,13 +144,13 @@ function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
   const structureKey = useMemo(
     () =>
       entity
-        ? `${describeStructure(entity.values)}|${JSON.stringify(entity.meta ?? {})}`
+        ? `${entity.values === null ? 'unavailable' : describeStructure(entity.values)}|${JSON.stringify(entity.meta ?? {})}`
         : '',
     [entity],
   )
 
   const applyEntity = useCallback((next: ParamsEntity | null) => {
-    if (!next) return
+    if (!next?.values) return
     for (const entry of entriesRef.current) {
       if (isEntryBusy(entry, activeEntryRef.current)) continue
       // A generation this pane produced (or an older one) must never be written
@@ -185,7 +185,7 @@ function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
   useEffect(() => {
     const container = containerRef.current
     const current = latestEntityRef.current
-    if (!container || !current) return
+    if (!container || !current?.values) return
 
     const draft = JSON.parse(JSON.stringify(current.values)) as ParamsValues
     const entries: BindingEntry[] = []
@@ -274,8 +274,11 @@ function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
           </span>
         </div>
         {entity?.unserializable ? (
-          <span className="param-pane-shape__badge" title="Code wrote a value that cannot be serialized; showing the last good values.">
-            unserializable
+          <span
+            className="entity-error-badge"
+            title="Code wrote a value that cannot be represented in the editor."
+          >
+            value unavailable
           </span>
         ) : null}
       </div>
@@ -296,7 +299,12 @@ function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
         onWheel={stopCanvasEvent}
       >
         <div ref={containerRef} className="param-pane-shape__pane" />
-        {entity ? null : (
+        {entity?.values === null ? (
+          <div className="param-pane-shape__empty">
+            The current value cannot be represented in the editor. Fix the value
+            in code to restore these controls.
+          </div>
+        ) : entity ? null : (
           <div className="param-pane-shape__empty">
             Waiting for <code>{paramsName}</code>: declare it with{' '}
             <code>canvasParams(...)</code> in a running module.

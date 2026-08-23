@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type SyntheticEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react'
 import {
   BaseBoxShapeUtil,
   createShapeId,
@@ -150,7 +150,7 @@ function toPlayheadMarkers(
 ): PianoRollPlayheadMarker[] {
   const markers: PianoRollPlayheadMarker[] = []
   for (const signal of Object.values(signals)) {
-    if (signal.ended) continue
+    if (signal.ended || signal.unserializable) continue
     if (signal.anchor?.type !== PIANO_ROLL_ENTITY_TYPE) continue
     if (signal.anchor.name !== rollName) continue
     const position = readMarkerPosition(signal.value)
@@ -177,6 +177,7 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
   const elementRef = useRef<PianoRollElement | null>(null)
   const lastAppliedRevRef = useRef<number | null>(null)
   const lastMarkerKeyRef = useRef<string | null>(null)
+  const [writeError, setWriteError] = useState<string | null>(null)
   const originId = useMemo(() => `piano-roll-view-${shape.id}`, [shape.id])
 
   // Every live signal anchored at this roll, as marker lines. Ended signals and
@@ -265,10 +266,22 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
       const data: PianoRollData = {
         notes: notesEntries.map(([, note]) => note),
       }
-      void runtime.setRoll(shape.props.rollName, data, {
-        originId,
-        label: `Edit ${shape.props.rollName}`,
-      })
+      void runtime
+        .setRoll(shape.props.rollName, data, {
+          originId,
+          label: `Edit ${shape.props.rollName}`,
+        })
+        .then((result) => {
+          if (result.ok) {
+            setWriteError(null)
+            return
+          }
+          setWriteError(result.error)
+          if (result.current) el.setNotes?.(result.current.data.notes)
+        })
+        .catch((error: unknown) => {
+          setWriteError(error instanceof Error ? error.message : String(error))
+        })
     }
 
     el.addEventListener('notes-update', handleNotesUpdate)
@@ -292,6 +305,11 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
             {runtime.latestSeq ?? '-'}
           </span>
         </div>
+        {writeError ? (
+          <span className="entity-error-badge" title={writeError}>
+            write rejected
+          </span>
+        ) : null}
         <div className="piano-roll-shape__actions" onPointerDown={stopCanvasEvent}>
           <button
             type="button"

@@ -1,18 +1,3 @@
-// Generic (type, name)-keyed entity records. This is the minimal shared seam
-// under typed entity stores: it owns identity, revisions, no-op caching,
-// change/seq bookkeeping and never-throw serialization, while per-type
-// semantics (validation, reconcile, wire shape) live in the type wrapper next
-// to it — `params_store.ts`, `signals_store.ts` and `piano_roll_store.ts`.
-//
-// The broadcast gate is a per-type set of CHANGED NAMES rather than one
-// boolean, because the sync transport ships per entity: a serialize-compare
-// over live values cannot see a deletion or a signal's `ended` flip, so every
-// mutator — value writes, meta writes, ended/anchor/owner flips, deletes —
-// records the name it touched and exactly one consumer drains the set per tick.
-//
-// Every write here must be safe to call from caller-owned livecode timing, so
-// nothing below throws except name normalization (used at registration time).
-
 export interface EntityRecord<V = unknown> {
   readonly type: string;
   readonly name: string;
@@ -25,15 +10,10 @@ export interface EntityRecord<V = unknown> {
   meta?: unknown;
   updatedAt: number;
   updatedBy: string;
-  /** True while the live value cannot be serialized (cycle/BigInt from code). */
+  /** True while the live value cannot be represented on the JSON wire. */
   unserializable?: boolean;
-  /**
-   * Cached JSON of the last observed `value`. Lets a write or a sampler tick
-   * decide with one serialize + string compare. Empty string when the value was
-   * not serializable — it can never match a real serialization, so no-op
-   * detection is simply disabled.
-   */
-  lastValueJson: string;
+  /** Cached JSON of the last serializable observed value, for no-op detection. */
+  lastValueJson: string | null;
 }
 
 interface EntityTypeStore {
@@ -70,6 +50,14 @@ export interface EntityChangeSet {
   /** Names whose record is gone; sorted. */
   deleted: string[];
 }
+
+export type EntitySerializationResult =
+  | { ok: true; json: string }
+  | { ok: false; error: string };
+
+export type EntityWireValue<V> =
+  | { ok: true; value: V }
+  | { ok: false; error: string };
 
 const stores = new Map<string, EntityTypeStore>();
 
@@ -111,7 +99,7 @@ export function createEntityRecord<V>(
     updatedAt: Date.now(),
     updatedBy: options.updatedBy ?? "server",
     lastValueJson: options.valueJson ??
-      safeStringifyEntityValue(value) ?? "",
+      safeStringifyEntityValue(value),
   };
   store.records.set(name, record as EntityRecord);
   store.dirtyNames.add(name);
@@ -157,8 +145,8 @@ export function commitEntityWrite(
   record.updatedAt = Date.now();
   record.updatedBy = options.updatedBy;
   record.lastValueJson = options.valueJson === undefined
-    ? safeStringifyEntityValue(record.value) ?? ""
-    : options.valueJson ?? "";
+    ? safeStringifyEntityValue(record.value)
+    : options.valueJson;
   storeFor(record.type).dirtyNames.add(record.name);
 }
 
@@ -178,17 +166,11 @@ export function markEntityRecordChanged(record: EntityRecord): void {
   storeFor(record.type).dirtyNames.add(record.name);
 }
 
-/** Same, addressed by name — for callers that do not hold the record. */
 export function markEntityChanged(type: string, name: string): void {
   storeFor(type).dirtyNames.add(name.trim());
 }
 
-/**
- * Drains the broadcast gate for one type: the ONE consumer per tick. Returns
- * null when nothing changed, so an idle type costs a set-size check. Forced
- * snapshots (`/…/list`, socket open, a subscribe reset) never come through
- * here — they must not swallow a generation other watchers are still owed.
- */
+/** Drains one entity type's change gate; snapshots never call this. */
 export function consumeEntityTypeChanges(
   type: string,
 ): EntityChangeSet | null {
@@ -212,35 +194,83 @@ export function nextEntitySnapshotSeq(type: string): number {
   return store.snapshotSeq;
 }
 
-/** JSON.stringify that returns null instead of throwing (cycles, BigInt). */
-export function safeStringifyEntityValue(value: unknown): string | null {
+export function serializeEntityValue(
+  value: unknown,
+): EntitySerializationResult {
   try {
-    return JSON.stringify(value) ?? null;
-  } catch {
-    return null;
+    validateJsonValue(value, "$", new Set());
+    const json = JSON.stringify(value);
+    return json === undefined
+      ? { ok: false, error: "value is undefined" }
+      : { ok: true, json };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
-/**
- * Point-in-time, JSON-safe clone of a record's current value for an HTTP/WS
- * payload. Prefers a fresh round trip of the live value (so a forced snapshot
- * is current without adopting anything), and falls back to the last
- * successfully serialized value when code has since written something that
- * cannot be serialized. Never throws and never mutates the record.
- */
-export function cloneEntityValueForWire<V>(record: EntityRecord<V>): V | null {
-  try {
-    const json = JSON.stringify(record.value);
-    if (json !== undefined) return JSON.parse(json) as V;
-  } catch {
-    // Cyclic or BigInt-bearing value written by user code; fall through.
+export function safeStringifyEntityValue(value: unknown): string | null {
+  const serialized = serializeEntityValue(value);
+  return serialized.ok ? serialized.json : null;
+}
+
+export function cloneEntityValueForWire<V>(
+  record: EntityRecord<V>,
+): EntityWireValue<V> {
+  const serialized = serializeEntityValue(record.value);
+  return serialized.ok
+    ? { ok: true, value: JSON.parse(serialized.json) as V }
+    : serialized;
+}
+
+function validateJsonValue(
+  value: unknown,
+  path: string,
+  ancestors: Set<object>,
+): void {
+  if (
+    value === null || typeof value === "string" || typeof value === "boolean"
+  ) {
+    return;
   }
-  try {
-    if (record.lastValueJson) return JSON.parse(record.lastValueJson) as V;
-  } catch {
-    // Cache was written by this module, so this should be unreachable.
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error(`${path} is not a finite number`);
+    }
+    return;
   }
-  return null;
+  if (typeof value !== "object") {
+    throw new Error(`${path} has unsupported type ${typeof value}`);
+  }
+  if (ancestors.has(value)) {
+    throw new Error(`${path} contains a circular reference`);
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  if (
+    !Array.isArray(value) && prototype !== Object.prototype &&
+    prototype !== null
+  ) {
+    throw new Error(`${path} is not a plain JSON object`);
+  }
+  if (Object.getOwnPropertySymbols(value).length > 0) {
+    throw new Error(`${path} has symbol-keyed data`);
+  }
+
+  ancestors.add(value);
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      if (!(index in value)) throw new Error(`${path}[${index}] is missing`);
+      validateJsonValue(value[index], `${path}[${index}]`, ancestors);
+    }
+  } else {
+    for (const [key, child] of Object.entries(value)) {
+      validateJsonValue(child, `${path}.${key}`, ancestors);
+    }
+  }
+  ancestors.delete(value);
 }
 
 function storeFor(type: string): EntityTypeStore {

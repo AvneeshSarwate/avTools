@@ -47,10 +47,6 @@ Consumption:
   `PreparedFailure`). The old hand-mirrored `pianoRollTypes.ts`,
   `paramsTypes.ts`, and `signalsTypes.ts` are gone.
 
-One deliberate exception remains: `apps/browser-projections`' Vue SketchWrapper
-keeps its own narrower local copy of `ActiveWaitSnapshot`. That client is not
-modernized by this slice, and its shim is documented below.
-
 There is still no runtime schema validation — the types are compile-time
 documentation, and a cross-boundary change must still update serialization,
 handling, and tests. What can no longer happen is the two sides describing the
@@ -59,10 +55,8 @@ same message differently.
 ## The sync transport (`WS /sync`)
 
 One socket carries every watched entity kind, per entity, changed-only, scoped
-to what that socket subscribed to. It replaced four independent full-snapshot
-channels (`/runtime/snapshots` for the tldraw client, `/piano-roll/snapshots`,
-`/params/snapshots`, `/signals/snapshots`); the first survives as a deprecated
-shim for one un-migrated client and the other three are deleted.
+to what that socket subscribed to. It replaced the four independent
+full-snapshot channels; all four are deleted.
 
 ### Entity kinds
 
@@ -162,8 +156,8 @@ whether or not a pane is open.
 
 ### Reads that are not the transport
 
-`GET /piano-roll/list`, `/params/list`, and `/signals/list` still answer with
-their full legacy snapshot envelopes, and a `/sync` subscribe reset is built by
+`GET /piano-roll/list`, `/params/list`, and `/signals/list` answer with
+full snapshot envelopes, and a `/sync` subscribe reset is built by
 a separate read-only path. Neither ever drains the broadcast gate: one caller
 listing entities cannot swallow a generation the open sockets are still owed.
 
@@ -175,14 +169,15 @@ listing entities cannot swallow a generation the open sockets are still owed.
   a route throws.
 - Unknown routes return plain text `Not found` with status 404.
 - `/runtime/launch` returns status 409 for synchronous launch refusal.
-- Mutating runtime routes (`/runtime/launch`, `/runtime/stop`,
-  `/runtime/stop-all`, `/runtime/panic`, `/runtime/restart-all`) acknowledge
-  success with `{ ok: true }`; the launch refusal body is
+- `/runtime/launch` acknowledges with `{ ok: true, runToken }`. Other mutating
+  runtime routes acknowledge with `{ ok: true }`; a launch refusal returns
   `{ ok: false, error }`.
 - `/client/command` can return HTTP 200 with `ok: false` for command selection,
   timeout, disconnect, or browser-side failure.
-- `/piano-roll/set` can return a normal `PianoRollObject` with
-  `conflict: true`; it is not an HTTP conflict.
+- `/piano-roll/set` returns `{ ok: true, roll }` or
+  `{ ok: false, error, current? }`. A compare-and-set conflict is a successful
+  result whose `roll.conflict` is true; invalid data is rejected without
+  changing the current roll.
 - `/params/set` can also return a normal `ParamsEntity` with `conflict: true`.
   It returns status 404 with `{ ok: false, error }` for an unknown name: a
   write never creates an entity. Declaration, `/entities/create`, and a project
@@ -270,12 +265,13 @@ stopped at request time, a pending one is superseded, and the replacement
 decision is re-checked when the queued action runs. The tldraw client sets the
 flag only from the Replace button.
 
-A successful response means the action was appended to the parent loop's launch
-queue. Import/start success is reported later through `run` entities and logs. A
-launch can still end without ever starting: a stop or panic that lands before the
-action runs cancels it, and the module's run entity goes `launching` → `stopped`
-with no `running` in between. Because ticks coalesce, a watcher may see only the
-terminal.
+A successful response is `{ ok: true, runToken }`: the action was appended to
+the parent loop's launch queue and the token is the identity of that accepted
+run. Import/start success is reported later through `run` entities and logs. A
+launch can still end without ever starting: a stop or panic that lands before
+the action runs cancels it, and the module's run entity goes `launching` →
+`stopped` with no `running` in between. Because ticks coalesce, a watcher may
+see only the terminal.
 
 Stop accepts `{ moduleId }`. Missing/inactive IDs are idempotent success; an ID
 whose launch is still queued is cancelled rather than ignored. Stop-all, panic,
@@ -312,7 +308,7 @@ interface ModuleLookupsEntity {
 }
 ```
 
-`RunEntity` replaces the legacy snapshot's `moduleRuns` **and** `activeModules`
+`RunEntity` replaces the old snapshot's `moduleRuns` **and** `activeModules`
 fields: there is exactly one run entity per module id, and the active-module
 list is derived client-side from `state` (`launching` or `running` is active).
 A terminal run entity stays live until that module runs again.
@@ -333,41 +329,6 @@ ships `entity: null` for `moduleWaits`, not an entity with an empty array. A
 client therefore learns "this module is awaiting nothing" by the name leaving
 its map.
 
-## Legacy shim: `WS /runtime/snapshots`
-
-Deprecated, and kept for exactly one consumer: the Vue SketchWrapper in
-`apps/browser-projections`, which this slice does not modernize. It sends the
-unchanged envelope, at full fidelity:
-
-```ts
-interface ActiveWaitSnapshot {
-  type: "activeWaitSnapshot";
-  seq: number;
-  timestampMs: number;
-  modules: Record<string, string[]>;
-  pianoRollLookups?: Record<string, Record<string, string>>;
-  activeModules?: string[];
-  moduleRuns?: Record<string, RuntimeModuleRunSnapshotEntry>;
-}
-```
-
-Differences from `/sync`, all deliberate:
-
-- there is no subscribe message. A full snapshot is sent on open, then only
-  when the serialized whole snapshot changes;
-- its `seq` comes from the runtime singleton's own counter, which advances every
-  time a snapshot is *built* — including on ticks whose content turned out to be
-  unchanged and was not sent. Treat it as an ordering marker, not a contiguous
-  count. (`/sync`'s per-socket `seq` is the opposite: gap-free by construction.)
-- its `moduleRuns` rows are **token-free**. `RuntimeModuleRunSnapshotEntry` has
-  no `runToken`, and the server strips it when building this envelope. That
-  asymmetry is the point: the shim's remaining consumer must not grow a
-  dependency on an identity introduced for a client it does not share code with,
-  and freezing this envelope is what makes the shim cheap to keep and cheap to
-  eventually delete.
-
-Nothing in the tldraw client reads this route.
-
 ## Runtime rehydration
 
 `GET /runtime/state` returns:
@@ -378,19 +339,21 @@ Nothing in the tldraw client reads this route.
 - the newest still-retained prepared build per module, reduced to ID, optional
   source hash, and manifest.
 
-Its run rows are `RuntimeStateModuleRun` — the legacy
-`RuntimeModuleRunSnapshotEntry` (including `updatedAtMs`) **plus `runToken`**:
+Its run rows are `RuntimeStateModuleRun`, including `updatedAtMs` and
+`runToken`:
 
 ```ts
-interface RuntimeStateModuleRun extends RuntimeModuleRunSnapshotEntry {
+interface RuntimeStateModuleRun {
+  moduleId: string;
+  generatedRunId: string;
+  state: RuntimeModuleRunState;
+  updatedAtMs: number;
   runToken: string;
 }
 ```
 
-Rehydration is where a client that has watched nothing go active — after a
-reload, a reconnect, or a first Connect — seeds the token-keyed terminal dedupe
-it will apply to every later `run` entity. That is the whole reason this route
-carries the token while the `/runtime/snapshots` shim does not.
+After a reload, reconnect, or first Connect, rehydration restores current run
+truth without client-side inference.
 
 It does not return current active wait IDs or lookup names; the `moduleWaits`
 and `moduleLookups` entities carry those. It also does not return source text.
@@ -453,7 +416,11 @@ A piano-roll object is identified by trimmed string `name` and contains:
 `POST /piano-roll/set` accepts optional `source`, `originId`, `label`,
 `undoable`, and `expectedRev`. Client UI writes use `source: "client"` and
 default to undoable. `setPianoRollClip` uses `source: "livecode"` and defaults
-to non-undoable.
+to non-undoable. The store validates the complete shaped value before changing
+data, revision, history, or its change gate. Invalid JSON values such as
+functions, cycles, BigInt, and non-finite numbers return the rejected result
+described above; an existing roll is included as `current` so an editor can
+restore engine truth.
 
 Rolls reach watchers as `pianoRoll` entities on `/sync`: only the edited roll
 ships, not the store. `GET /piano-roll/list` still answers with the full
@@ -468,7 +435,8 @@ a `/sync` socket's `seq`.
 A params entity is identified by trimmed string `name` and contains:
 
 - monotonically increasing `rev` for observed value generations;
-- `values`: a point-in-time clone of the live object. Values are JSON-simple —
+- `values`: a point-in-time clone of the live object, or `null` when the current
+  live value is unavailable on the wire. Values are JSON-simple —
   finite numbers, strings, booleans, and nested plain objects. Arrays are
   rejected at declaration;
 - optional `meta`, keyed like the value tree, whose leaves carry
@@ -479,7 +447,7 @@ A params entity is identified by trimmed string `name` and contains:
   `code` for a drift the sampler adopted, or a write's `originId` (`client`
   when the caller omits one);
 - optional `unserializable: true` when the live value can no longer be
-  serialized, in which case `values` is the last good serialization;
+  serialized, in which case `values` is `null` rather than cached data;
 - optional `conflict` on a stale compare-and-set request.
 
 ```ts
@@ -543,7 +511,7 @@ interface SignalAnchor {
 
 interface SignalEntity {
   name: string;
-  value: unknown;  // user-shaped; null until the first set
+  value: unknown | null;  // null until first set or while unavailable on wire
   anchor?: SignalAnchor;
   ownerModuleId?: string;
   ended?: boolean;
@@ -559,7 +527,9 @@ interface SignalEntity {
 Differences from a params entity, all deliberate:
 
 - `value` is whatever the piece wants — a bare number, a string, an object.
-  There is no declared shape, no meta, and no field-level merge.
+  There is no declared shape, no meta, and no field-level merge. If its current
+  value is not valid JSON, the wire value is null and `unserializable` is true;
+  a prior sample is never substituted.
 - `anchor` is an entity reference, so a view can bind to a signal without the
   producer knowing any view exists. `path` is carried for a future consumer;
   the roll's marker feed ignores it today.
@@ -679,14 +649,13 @@ interface ProjectSaveResponse extends ProjectCurrentResponse {
 }
 ```
 
-`data` lists every entity the save attempted, in registry order; `skipped`
-lists the ones it deliberately did not write, with the operator-facing reason
-(a value that could not be serialized, or an unmodified auto-created entity
-such as an untouched demo roll). One failed or hostile entity never fails the
-whole save, and the response's manifest already contains the rebuilt `data`
-list. A save that wrote nothing into a project that never had a `data` key
-leaves the manifest without one rather than adding an empty list. Saving with
-no project open is status 400.
+Before any file write, the engine captures every durable entity. If any current
+value cannot serialize, the save aborts with status 500 and leaves the manifest
+unchanged. `skipped` is reserved for deliberately absent state, currently an
+untouched auto-created demo roll. `data` reports subsequent per-file writes in
+registry order; filesystem failures remain visible per row. A save that wrote
+nothing into a project that never had a `data` key leaves the manifest without
+one rather than adding an empty list. Saving with no project open is status 400.
 
 `GET /project/status` always carries a warning-tier dirty section:
 
@@ -810,8 +779,8 @@ When changing a boundary:
    package removed;
 2. update server serialization and client handling; both compile against the
    package, so a mismatch is a type error rather than a runtime surprise;
-3. add a server test — `sync_transport_test.ts` for transport behavior,
-   `protocol_smoke_test.ts` for the route-level contract and the legacy shim;
+3. add a server test — `sync_transport_test.ts` for transport behavior and
+   `protocol_smoke_test.ts` for route-level contracts;
 4. add a tldraw E2E when visible/reconnect behavior changes;
 5. update this document and the route table in `server.md`.
 

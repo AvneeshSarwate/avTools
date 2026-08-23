@@ -95,6 +95,16 @@ export default async function(ctx: TimeContext) {
   }
 }
 `
+const PARAMS_UNAVAILABLE_SOURCE = `import type { TimeContext } from "@avtools/core-timing";
+import { canvasParams } from "canvas-params";
+
+export const params = canvasParams("${PARAMS_ENTITY_NAME}", { gain: 0.5 });
+
+export default async function(ctx: TimeContext) {
+  (params as { gain: unknown }).gain = 1n;
+  await ctx.waitSec(0.5);
+}
+`
 /** How tweakpane renders the values `PARAMS_CODE_WRITE_SOURCE` cycles through. */
 const CODE_WRITE_VALUES = ['0.00', '0.10', '0.20', '0.30', '0.40']
 
@@ -314,6 +324,7 @@ try {
   await runParamPaneEditWritesThroughCase()
   await runParamPaneShowsCodeWritesCase()
   await runParamPaneRehydratesAfterReloadCase()
+  await runParamPaneShowsUnavailableValueCase()
   await runPlayheadSignalMarkerCase()
   await runTwoModulePlayheadMarkersCase()
   await runSignalScopeAccumulatesCase()
@@ -701,6 +712,36 @@ async function runParamPaneRehydratesAfterReloadCase() {
   // The pre-reload module is no longer registered in this browser session, so
   // stop it through the server directly.
   await stopModuleOverHttp(runningModuleId)
+}
+
+async function runParamPaneShowsUnavailableValueCase() {
+  await setSource(PARAMS_UNAVAILABLE_SOURCE)
+  await waitForManifest(firstModuleId, 2, 'unavailable params manifest')
+  await runModule(firstModuleId)
+
+  await waitForParamsEntity(
+    PARAMS_ENTITY_NAME,
+    (candidate) => candidate.values === null && candidate.unserializable === true,
+    'unavailable params entity on the server'
+  )
+  await page
+    .locator('.param-pane-shape .entity-error-badge', { hasText: 'value unavailable' })
+    .waitFor({ timeout: scaled(10_000) })
+  await page
+    .locator('.param-pane-shape__empty', { hasText: 'cannot be represented' })
+    .waitFor({ timeout: scaled(10_000) })
+
+  await waitForServerRunState(firstModuleId, false, 'invalid-value module completed')
+  await setSource(PARAMS_DECLARATION_SOURCE)
+  await waitForManifest(firstModuleId, 2, 'restored params manifest')
+  await runModule(firstModuleId)
+  await waitForParamsEntity(
+    PARAMS_ENTITY_NAME,
+    (candidate) => candidate.values?.gain === 0.5 && !candidate.unserializable,
+    'params entity restored by declaration'
+  )
+  await waitForParamsBindingValue('gain', ['0.50'], 'params controls restored')
+  await stopModule(firstModuleId)
 }
 
 /**
