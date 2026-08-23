@@ -1,20 +1,6 @@
-// The sync source registry: what the ONE broadcast timer walks.
-//
-// A source is the only thing an entity kind has to provide to reach the wire.
-// Two methods, and the difference between them is the whole discipline:
-//
-//   `collectChanges()` DRAINS that kind's change gate. Exactly one caller per
-//   tick — the broadcast timer — so the legacy full-snapshot channels are fed
-//   from the same collected result rather than draining the gate a second time
-//   and starving the other side.
-//
-//   `snapshotAll()` is strictly READ-ONLY. It answers one `/sync` subscribe
-//   (and nothing else), so it must never consume a generation the open sockets
-//   are still owed and must never seed, adopt, or stamp anything.
-//
-// Samplers inside `collectChanges()` run on every tick regardless of who is
-// subscribed: "unwatched costs nothing" is a transport property, and an
-// unwatched run has to behave identically to a watched one.
+// `collectChanges()` is the only consumer of a source's change gate;
+// `snapshotAll()` is read-only. Samplers run every tick regardless of current
+// subscriptions so observation cannot change engine behavior.
 
 import { type EntityChange, safeStringifyEntityValue } from "./entity_store.ts";
 import {

@@ -22,8 +22,8 @@ import {
   createModuleWaitsSyncSource,
 } from "@avtools/livecode-engine/sync_sources.ts";
 import type {
-  ActiveWaitSnapshot,
   AnalyzeSuccess,
+  ModuleLookupsEntity,
   ModuleWaitsEntity,
   ParamsEntity,
   PianoRollObject,
@@ -36,8 +36,7 @@ import type {
 // The multiplexed transport, driven over a real socket against a real server.
 // Everything asserted here is the contract the client builds on: resets replace
 // a per-type map, changes ship per entity, `entity: null` means deleted, `seq`
-// is per socket, and the deprecated `/runtime/snapshots` shim keeps getting its
-// full envelope off the SAME tick.
+// is per socket.
 
 async function withServer(
   prefix: string,
@@ -166,7 +165,12 @@ Deno.test("seq is per socket, monotonic, and gap-free", async () => {
         await postJson(`${baseUrl}/piano-roll/set`, {
           name: "sync/seq",
           data: {
-            notes: [{ id: `n${index}`, pitch: 60 + index, position: 0, duration: 1 }],
+            notes: [{
+              id: `n${index}`,
+              pitch: 60 + index,
+              position: 0,
+              duration: 1,
+            }],
           },
         });
         await sleep(80);
@@ -197,9 +201,13 @@ Deno.test("run entities carry the launch token, and a supersede never republishe
       await client.subscribe(["run"]);
       const before = client.messages.length;
 
-      const slowUri = await writeFixtureModule(sessionRoot, "sync-supersede-a", {
-        importDelayMs: 400,
-      });
+      const slowUri = await writeFixtureModule(
+        sessionRoot,
+        "sync-supersede-a",
+        {
+          importDelayMs: 400,
+        },
+      );
       // The replacement is slow to import too, so the moment where the
       // superseded action reaches the publish guard is a window this test can
       // actually observe rather than one collapsed into the same 33 ms tick as
@@ -355,90 +363,14 @@ Deno.test("the entity channels are gone and their HTTP lists still answer in ful
     const rolls = await fetchJson<PianoRollSnapshot>(
       `${baseUrl}/piano-roll/list`,
     );
-    assert(rolls.rolls["sync/retired"], "the roll list is still a full snapshot");
+    assert(
+      rolls.rolls["sync/retired"],
+      "the roll list is still a full snapshot",
+    );
     const params = await fetchJson<{ params: Record<string, ParamsEntity> }>(
       `${baseUrl}/params/list`,
     );
     assert(params.params["sync/retired-params"], "the params list is full too");
-  });
-});
-
-Deno.test("one tick feeds the sync sockets and the legacy runtime shim without starving either", async () => {
-  await withServer("tcv-sync-fanout-", async ({ baseUrl }) => {
-    const client = await SyncClient.open(baseUrl);
-    const legacyRuntime = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/runtime/snapshots`,
-    );
-    const snapshots: ActiveWaitSnapshot[] = [];
-    legacyRuntime.onmessage = (event) => {
-      snapshots.push(JSON.parse(event.data as string) as ActiveWaitSnapshot);
-    };
-
-    try {
-      await waitFor(
-        () => legacyRuntime.readyState === WebSocket.OPEN,
-        "legacy runtime socket open",
-        5_000,
-      );
-      await client.subscribe(["run"]);
-      const before = client.messages.length;
-      const snapshotsBefore = snapshots.length;
-
-      const analysis = await postJson<AnalyzeSuccess>(
-        `${baseUrl}/runtime/analyze`,
-        {
-          moduleId: "module-sync-fanout",
-          sourceVersion: 1,
-          sourceUri: "module-sync-fanout.ts",
-          sourceText: `
-import type { TimeContext } from "@avtools/core-timing";
-
-export default async function (ctx: TimeContext) {
-  await ctx.waitSec(30);
-}
-`,
-        },
-      );
-      assertEquals(analysis.type, "analyzeSuccess");
-      await postJson(`${baseUrl}/runtime/launch`, {
-        moduleId: analysis.moduleId,
-        transformedModuleUri: analysis.transformedModuleUri,
-        generatedRunId: analysis.generatedRunId,
-      });
-
-      // `collectAll` DRAINS the change gates, so it may be called exactly once
-      // per tick; the shim derives its envelope from the same sources through
-      // its own pure compare. A second collect would starve one side.
-      await client.waitForChange(
-        before,
-        "run",
-        (change) =>
-          change.name === analysis.moduleId &&
-          runOf(change).state === "running",
-        "the running run entity on /sync",
-      );
-      await waitFor(
-        () =>
-          snapshots.slice(snapshotsBefore).some((snapshot) =>
-            snapshot.moduleRuns?.[analysis.moduleId]?.state === "running"
-          ),
-        "the running module on the legacy runtime shim",
-        5_000,
-      );
-
-      // The shim's rows stay token-FREE: it is a frozen shape for a client this
-      // slice deliberately did not modernize.
-      const shimRun = snapshots[snapshots.length - 1]
-        .moduleRuns?.[analysis.moduleId];
-      assertEquals("runToken" in (shimRun ?? {}), false);
-
-      await postJson(`${baseUrl}/runtime/stop`, {
-        moduleId: analysis.moduleId,
-      });
-    } finally {
-      legacyRuntime.close();
-      client.close();
-    }
   });
 });
 
@@ -489,7 +421,7 @@ export default async function (ctx: TimeContext) {
           change.name === "sync/meta" &&
           (change.entity as ParamsEntity).meta?.gain !== undefined &&
           ((change.entity as ParamsEntity).meta
-            ?.gain as { max?: number }).max === 4,
+              ?.gain as { max?: number }).max === 4,
         "the redeclared meta",
       );
 
@@ -528,23 +460,11 @@ export default async function (ctx: TimeContext) {
   });
 });
 
-Deno.test("module waits and lookups reach both transports and agree", async () => {
+Deno.test("module waits and lookups reach sync subscribers", async () => {
   await withServer("tcv-sync-waits-", async ({ baseUrl }) => {
     const client = await SyncClient.open(baseUrl);
-    const legacyRuntime = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/runtime/snapshots`,
-    );
-    const snapshots: ActiveWaitSnapshot[] = [];
-    legacyRuntime.onmessage = (event) => {
-      snapshots.push(JSON.parse(event.data as string) as ActiveWaitSnapshot);
-    };
 
     try {
-      await waitFor(
-        () => legacyRuntime.readyState === WebSocket.OPEN,
-        "legacy runtime socket open",
-        5_000,
-      );
       await client.subscribe(["moduleWaits", "moduleLookups"]);
       const before = client.messages.length;
 
@@ -589,22 +509,13 @@ export default async function (ctx: TimeContext) {
       await client.waitForChange(
         before,
         "moduleLookups",
-        (change) => change.name === analysis.moduleId,
+        (change) =>
+          change.name === analysis.moduleId &&
+          (change.entity as ModuleLookupsEntity | null)?.lookups[
+              lookupCallsite.id
+            ] === "melody",
         "the recorded lookup on /sync",
       );
-      await waitFor(
-        () =>
-          snapshots.some((snapshot) =>
-            snapshot.modules[analysis.moduleId]?.includes(waitCallsite.id) ===
-              true
-          ),
-        "the parked wait on the legacy runtime socket",
-        5_000,
-      );
-
-      // Parity: the entity is the same per-module shape the legacy envelope
-      // carries, which is what makes the Phase-C swap an import change.
-      const latestSnapshot = snapshots[snapshots.length - 1];
       const latestWaits = client
         .changesSince(before, "moduleWaits")
         .filter((change) => change.name === analysis.moduleId)
@@ -612,12 +523,15 @@ export default async function (ctx: TimeContext) {
         .filter((entity): entity is ModuleWaitsEntity => entity !== null);
       assertEquals(
         latestWaits[latestWaits.length - 1].callsiteIds,
-        [...(latestSnapshot.modules[analysis.moduleId] ?? [])].sort(),
+        [waitCallsite.id],
       );
+      const latestLookups = client
+        .changesSince(before, "moduleLookups")
+        .filter((change) => change.name === analysis.moduleId)
+        .map((change) => change.entity as ModuleLookupsEntity | null)
+        .filter((entity): entity is ModuleLookupsEntity => entity !== null);
       assertEquals(
-        latestSnapshot.pianoRollLookups?.[analysis.moduleId]?.[
-          lookupCallsite.id
-        ],
+        latestLookups[latestLookups.length - 1].lookups[lookupCallsite.id],
         "melody",
       );
 
@@ -637,12 +551,10 @@ export default async function (ctx: TimeContext) {
       await client.waitForChange(
         before,
         "moduleWaits",
-        (change) =>
-          change.name === analysis.moduleId && change.entity === null,
+        (change) => change.name === analysis.moduleId && change.entity === null,
         "the cleared waits as a deletion",
       );
     } finally {
-      legacyRuntime.close();
       client.close();
     }
   });

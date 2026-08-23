@@ -1,7 +1,7 @@
 # Current Known Risks and Invariant Gaps
 
-Status: code-inspection audit, current as of 2026-08-13; browser-engine
-entries added 2026-08-19; first audited 2026-07-21.
+Status: code-inspection audit, current as of 2026-08-23; first audited
+2026-07-21.
 
 How to read this file: open entries are graded `P0`–`P2` and are unresolved;
 `Resolved <date>` entries are kept in place because their rationale still
@@ -30,13 +30,8 @@ were fixed en passant: `HealthResponse.runtimeCapabilities` was optional on one
 side and required on the other, and the client's inline `/piano-roll/set` body
 became the typed `SetPianoRollRequest`.
 
-**Resolved for wire types, except SketchWrapper's deliberately-kept local
-copies.** `apps/browser-projections`' Vue client still declares its own narrower
-`ActiveWaitSnapshot` (`{ type, seq, timestampMs, modules }`) and reads the
-deprecated `/runtime/snapshots` shim. That is intentional: the shim's envelope is
-frozen, so the narrow copy cannot drift into a disagreement, and modernizing that
-client was explicitly out of scope. It is the one place where "there is one
-source of wire types" needs a qualifier.
+The old Vue livecode client and its private snapshot type were removed on
+2026-08-23. Current livecode wire types now have one source.
 
 ## Resolved 2026-08-13: the reused-`generatedRunId` status flicker
 
@@ -47,16 +42,14 @@ replaced run's terminal could be mistaken for the replacement's, and a module
 could flicker through a wrong status for a snapshot.
 
 What shipped: `runToken`, minted server-side when a launch is **accepted** and
-carried on the `run` entity and on `/runtime/state`'s rows. The client's rule
-(`runDedupe.ts`) remembers which tokens it watched go active before and since its
-current claim, and suppresses only a terminal belonging to a superseded run. The
-old `lastTerminalRun { generatedRunId, updatedAtMs }` heuristic is gone.
+returned in the launch acknowledgement as well as carried on `run` entities and
+`/runtime/state` rows. The client holds a crossing terminal until the HTTP
+response identifies the accepted run, then accepts only the matching token. The
+observation-based `runDedupe.ts` heuristic is gone.
 
-Covered by `run_dedupe_test.ts` (nine ordering cases, including the straddle and
-the instant-failure conflation, both constructed exactly) and by tldraw E2E cases
-that produce the straddle through the real Replace button and drive a module that
-throws on its first line. The browser cannot guarantee the single-tick
-conflation, which is why the unit test carries that one.
+Covered by `run_correlation_test.ts`, the protocol launch-acknowledgement check,
+the launch-race and sync suites, and the replacement/instant-failure browser
+outcomes.
 
 ## Resolved 2026-08-13: queued launches are inside the safety controls
 
@@ -311,8 +304,8 @@ What shipped: `GET /sync`, one socket carrying every entity kind, per entity,
 changed-only, scoped to the types that socket subscribed to; one
 `SyncSourceRegistry` and one 33 ms timer that collects changes exactly once and
 fans them out; per-name change tracking in `entity_store.ts` so deletions and
-meta-only changes are visible at all. The three entity sockets are deleted;
-`/runtime/snapshots` survives only as the SketchWrapper shim.
+meta-only changes are visible at all. All four old snapshot sockets are
+deleted.
 
 Two bounds from the old entry survive the change and are still accepted:
 
@@ -329,8 +322,8 @@ moved onto the entity tier: they rode `/runtime/snapshots` fused with lifecycle
 truth that reconnect rehydration depended on, and splitting the wait half alone
 would have spread one module's state across two sockets. That blocker dissolved
 when runs became entities too — `run`, `moduleWaits`, and `moduleLookups` now
-travel together on `/sync` — and the two-client concern is handled by the frozen
-shim rather than by a second migration.
+travel together on `/sync`. The old Vue client and compatibility shim were
+removed after the migration.
 
 ## P2: sync subscriptions are type-level only
 
@@ -353,15 +346,6 @@ win over per-store snapshots and it is enough today, but nothing below the
 entity is diffed, so a very large roll edited at gesture rate is the shape of
 workload that would expose it. Note-level or leaf-level patches are a deliberate
 future optimization, not a defect.
-
-## P2: SketchWrapper's debug snapshot array is unbounded
-
-`apps/browser-projections`' livecode SketchWrapper pushes **every**
-`/runtime/snapshots` message it receives into `debugState.receivedSnapshots` and
-only ever clears it from the debug `reset()` helper. A long session on that page
-accumulates one object per changed tick forever. It is a debug surface in a
-client this slice deliberately did not modernize, so it is recorded rather than
-fixed; the tldraw client has no equivalent array.
 
 ## P2: long-process state is not fully bounded
 
@@ -422,15 +406,13 @@ server-confirmed `running` consistently.
 modules, which can report `serverRunning: false` when server truth is simply
 unavailable.
 
-## P2: checked-in example and aggregate test commands are misleading
+## P2: checked-in p5gpu example is misleading
 
 The checked-in minimal p5gpu project has a `sped`/`speed` mismatch, while the
 automated p5gpu test builds a separate temp project. A fresh agent can mistake
-the example for a working smoke fixture.
-
-`deno task test:livecode` omits the tldraw E2E, project shadow test, repro suite,
-and p5gpu test, and its E2E target is the older Vue client. Do not call that
-single task a complete verification pass.
+the example for a working smoke fixture. The aggregate-task gap was resolved by
+the fast and full tasks added on 2026-08-23; p5gpu remains separate because it
+is platform-dependent.
 
 ## P1: background-tab throttling can stretch browser-engine timing
 

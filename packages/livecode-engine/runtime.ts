@@ -1,5 +1,4 @@
 import type { TimeContext } from "@avtools/core-timing";
-import type { ActiveWaitSnapshot } from "@avtools/livecode-protocol";
 // Cyclic by design and safe: `signals_store.ts` imports `sampleRootTime` from
 // here, and both sides only touch the other's bindings inside function bodies.
 import { assignSignalOwner } from "./signals_store.ts";
@@ -12,7 +11,6 @@ const pianoRollLookups = new Map<string, Map<string, string>>();
 // anything. Marking is a Set.add on the hot path and nothing more.
 const dirtyWaitModules = new Set<string>();
 const dirtyLookupModules = new Set<string>();
-let snapshotSeq = 0;
 let rootTimeContext: TimeContext | null = null;
 
 function getOrCreateModuleCounts(moduleId: string): Map<string, number> {
@@ -239,14 +237,4 @@ export function visualizedOwnedSignal<T>(
   const name = (handle as { name?: unknown } | null | undefined)?.name;
   if (typeof name === "string") assignSignalOwner(name, moduleId);
   return handle;
-}
-
-export function makeActiveWaitSnapshot(): ActiveWaitSnapshot {
-  return {
-    type: "activeWaitSnapshot",
-    seq: ++snapshotSeq,
-    timestampMs: Date.now(),
-    modules: getActiveWaitsByModule(),
-    pianoRollLookups: getPianoRollLookupsByModule(),
-  };
 }

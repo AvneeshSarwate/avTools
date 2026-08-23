@@ -1,7 +1,7 @@
 # Current System Architecture
 
-Status: describes the checked-in code as of 2026-08-13, through the multiplexed
-`/sync` transport slice; first audited 2026-07-21.
+Status: describes the checked-in code as of 2026-08-23; first audited
+2026-07-21.
 
 ## Runtime topology
 
@@ -60,7 +60,7 @@ Open `http://localhost:5173/`. Useful URL parameters are:
 | Project runtime source | Project `*.ts` files | Materialized by the server transform; never hand-edit. |
 | Project module, piano-roll-view, param-pane, and signal-scope layout | `project.avtools-livecode.json` | Module layout through `/project/modules/update`; all three canvas view arrays through `/project/canvas`. A scope persists its binding, never its samples. |
 | Prepared builds and manifests | Deno server memory plus generated/runtime files | Latest manifests exposed by `/runtime/state`; non-project builds are pruned to a small rolling set. |
-| Active module lifecycle | Deno server (`moduleRunSnapshots`, on the server object) | `run` entities on `/sync`, plus `/runtime/state` and `/runtime/status`. Each row carries a `runToken` that identifies the run rather than its build. |
+| Active module lifecycle | Engine (`moduleRunSnapshots`) | `run` entities on `/sync`, plus `/runtime/state` and `/runtime/status`. Each row carries a `runToken` that identifies the run rather than its build. |
 | Active wait counts and resolved piano-roll lookup names | Process-global runtime singleton in `visualizer/runtime.ts` | `moduleWaits` / `moduleLookups` entities on `/sync` only; lookup values persist after completion until a later analyze clears that module. |
 | Named piano-roll objects | Process-global `entity_store.ts` through `piano_roll_store.ts` | In memory, and written to a project's `data/pianoRoll/*.json` by an explicit `/project/save`; `/project/open` loads them back before any module runs. |
 | Piano-roll undo/redo history | A side map in `piano_roll_store.ts`, keyed by entity name | In memory only. Never serialized, dropped when the entity is deleted, and cleared per roll on load, because open adopts disk truth. |
@@ -85,7 +85,7 @@ which is the only side with a filesystem.
 
 ## Connection domains
 
-Four domains, three of them used by the tldraw client:
+Three connection domains:
 
 1. **Sync** — `/sync`, one socket for every watched entity kind: piano rolls,
    params, signals, runs, module waits, and module lookups. It connects when
@@ -97,10 +97,6 @@ Four domains, three of them used by the tldraw client:
    to forward commands to this browser.
 3. **LSP** — `/lsp`, recreated by every armed sync-socket open. It is not the
    execution or visualization channel.
-4. **Legacy shim** — `/runtime/snapshots`, deprecated, read only by the Vue
-   SketchWrapper in `apps/browser-projections`. The tldraw client never opens
-   it.
-
 The **Connect button is a separate axis from the socket**. `/sync` opens at
 mount because entity data has always flowed without pressing Connect; what
 Connect arms is the runtime domain — the `/health` check, the LSP session,
@@ -126,8 +122,8 @@ managed by the VTLSP transport and explicitly retired when replaced.
    an immutable generated file, remembers a prepared run, and returns a
    manifest.
 5. Run reuses the current matching prepared build, or analyzes immediately.
-6. `POST /runtime/launch` queues a dynamic import and `TimeContext` branch on
-   the server's long-lived parent loop.
+6. `POST /runtime/launch` queues a dynamic import and `TimeContext` branch and
+   returns the engine-minted `runToken` for that accepted launch.
 
 ### Project module
 
@@ -165,9 +161,8 @@ imports, and emits a source-range manifest. At execution time:
 - `visualizedOwnedSignal(moduleId, callsiteId, handle)` stamps the declared
   signal's owner and returns the handle unchanged, which is what lets the run's
   end also end its signals.
-- one server timer at 33 ms walks every sync source, collects the changes once,
-  and fans them out to each `/sync` socket filtered to its subscriptions and to
-  the legacy shim;
+- one engine timer at 33 ms walks every sync source, collects the changes once,
+  and fans them out to each `/sync` socket filtered to its subscriptions;
 - the sync provider applies the changes into per-kind maps and flushes them into
   React state once per animation frame;
 - the React runtime copies runs, waits, and lookups into per-module view state;
@@ -216,9 +211,8 @@ an entity deleted while the client was away does not survive the reconnect.
 
 Terminal run entities are correlated by **run token**, not by `generatedRunId`,
 which identifies a build and is reused when a relaunch finds an unchanged one.
-Step 3 is where a freshly reloaded client seeds that token memory; without the
-seed, the running run's own terminal would look like a stranger's the next time
-Replace staked a claim over it.
+The launch response identifies the accepted run explicitly; rehydration reads
+the same identity from `/runtime/state`.
 
 ## Project and process scope
 

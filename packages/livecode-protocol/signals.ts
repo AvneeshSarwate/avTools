@@ -36,7 +36,7 @@ export interface SignalEntity {
   rev: number;
   updatedAt: number;
   updatedBy: string;
-  /** Set when the live value stopped being serializable; `value` is the last good one. */
+  /** Set when the current live value is unavailable and `value` is null. */
   unserializable?: boolean;
   /**
    * Root-clock logical time at the tick that adopted this value. Quantized by

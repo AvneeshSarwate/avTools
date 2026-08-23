@@ -1,9 +1,7 @@
 # Current Testing and Operations
 
-Status: task matrix re-read from `apps/deno-notebooks/deno.json` and suite
-counts re-run on 2026-08-18, after the engine-package extraction, the
-browser-target check, and the target-aware LSP test landed (105 unit, 27
-server); first audited 2026-07-21.
+Status: task matrix re-read from `apps/deno-notebooks/deno.json` on
+2026-08-23; first audited 2026-07-21.
 
 ## Development startup
 
@@ -36,16 +34,15 @@ apps/deno-notebooks/.avtools-livecode-sessions/logs/server.log
 Important structured entries include `serverReady`, `analyzeStart`,
 `analyzeSuccess`, `analyzeFailure`, `launchQueued`, `launchCancelled`,
 `launchAborted`, `supersededTeardown`, `moduleImported`, `moduleStarted`,
-`moduleStopped`, `moduleError`, `snapshot` (debug log level only, from the
-legacy shim), LSP process events, client-control events, and handler errors.
+`moduleStopped`, `moduleError`, LSP process events, client-control events, and
+handler errors.
 
 Transport-specific entries worth knowing when a client stops updating:
 `broadcastTickError` (the one 33 ms timer threw and was caught, so the tick was
 skipped rather than the timer dying), `syncMalformedMessage` (a client sent
 something that is not a subscribe), `syncSerializeFailed` / `syncSendFailed`
 (one `/sync` socket's message did not go out; its `seq` deliberately does not
-advance), and `snapshotSerializeFailed` / `snapshotSendFailed` for the legacy
-shim.
+advance).
 
 ## Actual task matrix
 
@@ -53,38 +50,30 @@ From `apps/deno-notebooks`:
 
 | Command | Current contents (files, in task order) |
 | --- | --- |
-| `deno task test:livecode:unit` | `analyzer_transform_test.ts`, `runtime_counts_test.ts`, `dynamic_import_execution_test.ts`, `midi_helpers_test.ts`, `params_store_test.ts`, `entity_registry_test.ts` (also covers name encoding and the piano-roll store's delete/save/load seams), `signals_store_test.ts`, `run_dedupe_test.ts`. **105 tests.** |
+| `deno task test:livecode:unit` | Analyzer, runtime instrumentation, dynamic import, MIDI, params, durable registry/piano-roll, signals, and launch-correlation unit suites. |
 | `deno task test:livecode:repro` | Core-timing, analyzer, server, and piano-roll regression tests created by the July stability review (`livecode/tests/repro/`). Several test names/comments still say `BUG` although assertions now expect fixed behavior. |
-| `deno task test:livecode:server` | `protocol_smoke_test.ts`, `sync_transport_test.ts`, `launch_race_test.ts`, `lsp_smoke_test.ts`, `server_smoke_test.ts`, `default_source_integration_test.ts`, `browser_target_check_test.ts` (the portable helper graph must typecheck under a browser lib — `deno check` with `lib: ["esnext", "dom", ...]` over the alias targets, plus a negative control proving the config rejects bare `Deno` globals), `browser_target_project_test.ts` (the shadow check follows the manifest `engineTarget` in both directions, and a remote-mode server defaults untargeted projects to the browser lib), `lsp_engine_target_test.ts` (editor diagnostics follow the engine target, including the live flip when a browser-target project opens against an already-connected LSP session). **27 tests.** Shared LSP-over-WS test plumbing lives in `lsp_test_client.ts`. |
+| `deno task test:livecode:server` | Protocol, sync transport, launch races, LSP, server/project behavior, default source, browser-target checks, and project-shadow diagnostics. |
 | `deno task test:livecode:p5gpu` | `project_p5gpu_e2e_test.ts` — temp-project p5gpu/shared-state proof; requires an available WebGPU adapter. |
-| `deno task test:livecode:e2e` | Delegates to `apps/browser-projections`' `test:livecode:e2e`: the older Vue livecode visualizer E2E, not the tldraw client. It is now also the only automated coverage of the deprecated `/runtime/snapshots` shim from a real client. |
-| `deno task test:livecode` | Unit + server + old Vue E2E only. It is not the complete current-system suite. |
+| `deno task test:livecode:client` | Current tldraw client type-check and production build. |
+| `deno task test:livecode:e2e` | Current tldraw Playwright E2E. |
+| `deno task test:livecode:topologies` | Browser-engine slice, remote-engine, and baked-project E2Es. |
+| `deno task test:livecode:fast` | Unit + repro + server + client checks. |
+| `deno task test:livecode:full` | Fast gate + current tldraw E2E + all three topology E2Es. |
+| `deno task test:livecode` | Alias for the fast gate. |
 
-### `run_dedupe_test.ts` imports across apps, on purpose
+### `run_correlation_test.ts` imports across apps, on purpose
 
 It is the one Deno test that imports from `apps/livecode-tldraw`:
 
 ```ts
-import { ... } from "../../../livecode-tldraw/src/runDedupe.ts";
+import { ... } from "../../../livecode-tldraw/src/runCorrelation.ts";
 ```
 
-The rule it covers lives in the client because only the client knows what *it*
-claimed, but the orderings that break it are **transport** orderings — a
-superseded run's terminal straddling a replacement, a launch conflated with an
-instant error inside one 33 ms tick — and neither is reproducible on demand
-through a browser. `runDedupe.ts` is therefore a pure module with no imports at
-all, precisely so a Deno unit test and the Vite bundle can both load the exact
-same file with no build step, no duplicate, and no mock. The browser E2E covers
-the user-visible outcomes on top of it.
-
-If that file ever acquires an import, this test breaks loudly rather than
-silently testing a copy — which is the intended failure mode.
-
-Additional Deno project test, not included in those aggregate tasks:
-
-```sh
-deno test --allow-all livecode/tests/project_shadow_diagnostics_test.ts
-```
+It covers the small client-side join between the launch acknowledgement and
+the changed-only sync feed. Engine race behavior remains in the server suites;
+the browser E2E covers the user-visible replacement and instant-failure
+outcomes. The project-shadow diagnostics suite is included in the server and
+fast gates.
 
 The browser-engine vertical slice has its own Playwright E2E, run from
 `apps/deno-notebooks` (same `PW_CHROMIUM_PATH` convention as the tldraw E2E;
@@ -171,28 +160,15 @@ components should be added to `scripts/setupLivecode.mjs` as one step each.
 
 ## Recommended full verification
 
-There is not yet one task for all current behavior. Run this sequence when a
-cross-boundary feature changes the system:
+Run the full current-system gate after a cross-boundary change:
 
 ```sh
 cd apps/deno-notebooks
-deno task test:livecode:unit
-deno task test:livecode:repro
-deno task test:livecode:server
-deno test --allow-all livecode/tests/project_shadow_diagnostics_test.ts
-
-cd ../livecode-tldraw
-npm run type-check
-npm run build
-npm run test:e2e
+deno task test:livecode:full
 ```
 
 Run `deno task test:livecode:p5gpu` when project execution, import caching,
 graphics initialization, window cleanup, or shared project state changes.
-
-Run the older Vue E2E only when changing the still-supported Vue visualizer or
-shared server behavior it uniquely exercises. It should not substitute for the
-tldraw E2E.
 
 ## Current coverage map
 
@@ -203,9 +179,9 @@ tldraw E2E.
 - runtime wait counts and lookup recording/clearing;
 - transformed dynamic import with a real `TimeContext`;
 - health/analyze/launch/stop over HTTP with the run and wait state read back
-  from `/sync`, retained runtime manifest, module stop hook, lookup-only run
-  completion, the legacy shim's envelope pinned (including that its rows carry
-  no `runToken`), and basic client-command forwarding;
+  from `/sync`, an explicit launch token acknowledgement, retained runtime
+  manifest, module stop hook, lookup-only run completion, and basic
+  client-command forwarding;
 - the launch queue's safety window, driven over HTTP against a real server:
   two concurrent launches leaving exactly one active run and one execution of
   user code, a stop before the queue drains and a stop during the module import
@@ -230,25 +206,21 @@ tldraw E2E.
   shipping as a `null` entity, `seq` being per-socket monotonic and gap-free,
   run entities carrying the launch token with a supersede never republishing the
   old one, a cancelled launch publishing exactly one terminal run entity, the
-  three entity sockets being gone while their HTTP lists still answer in full,
-  one tick feeding the sync sockets and the legacy shim without starving either,
+  retired snapshot sockets being gone while the HTTP lists still answer in full,
   a params meta-only change and a signal's `ended` flip both reaching
   subscribers (neither of which a value compare could see), waits and lookups
-  agreeing across both transports, and the module-keyed sources staying silent
+  arriving through the same transport, and the module-keyed sources staying silent
   when a re-marked set serializes identically;
-- the client's terminal-run rule (`livecode/tests/run_dedupe_test.ts`, in the
-  unit suite): a run's own terminal applying after it was watched active, an
-  edit dropping the claim without forgetting the run, the straddle, the
-  instant-failure conflation, a stranger's terminal suppressed under a
-  seen-active claim, a terminal as server truth with no claim at all, both
-  rehydration seeding directions, and a superseded run not being re-adopted when
-  it reports itself active;
+- the client's launch correlation (`livecode/tests/run_correlation_test.ts`): a
+  crossing terminal is held until the HTTP acknowledgement identifies the
+  accepted token, while server truth applies directly outside a local launch;
 - durable-entity registry semantics per type: create rejects an existing name,
   duplicate clones without tombstones, delete is reported honestly and defeats
   lazy demo re-seeding, serialize/deserialize round-trips preserve note ids and
   params values plus meta, a load mutates a held live reference in place and
   clears its undo history, a pristine demo seed is excluded from save while a
-  written one is not, a JSON-hostile value is skipped rather than thrown, name
+  written one is not, invalid current values are rejected or made explicitly
+  unavailable and abort project save before writes, name
   encoding is collision-free (slashes, `%`, unicode, length cap,
   case-insensitive save-time collisions), and a forced piano-roll snapshot no
   longer consumes the pending broadcast;
@@ -256,10 +228,7 @@ tldraw E2E.
   focus-or-create shape behavior;
 - the tldraw run lifecycle, re-derived for changed-only delivery: a finite
   module edited while it runs still reaching `stopped` at its own end with no
-  reload (the case waits for the `running` run entity to reach the client,
-  because that is where it learns the token whose terminal it must later accept
-  — the old mechanism, a full `moduleRuns` map re-delivered on unrelated
-  traffic, no longer exists); a module that throws on its first line still
+  reload; a module that throws on its first line still
   reaching `error`, which is the instant-failure conflation seen from the
   browser; and Replace clicked on the real header button leaving a new generated
   run ID active, the replaced run's terminal in the server log, the client
@@ -268,8 +237,9 @@ tldraw E2E.
 - the tldraw params round trip: declaration manifest and gutter widget, pane
   bindings after launch, a GUI edit reaching `/params/list` with a bumped rev
   and the pane's origin id, a running module's writes reaching the pane readout
-  with no client action, and pane rehydration from the sync socket's subscribe
-  reset after a reload;
+  with no client action, pane rehydration from the sync socket's subscribe reset
+  after a reload, and an invalid code write replacing the controls with a
+  visible unavailable state until a valid declaration restores them;
 - the tldraw signal tier: an anchored playhead signal driven by a module loop
   producing a moving marker in the bound roll view and losing it when the module
   stops (asserted as server `ended` first, missing marker second), two modules
@@ -352,7 +322,7 @@ For release/performance work, supplement tests with:
    materialized bytes, existing module instances, and explicit launch state;
 7. open a project outside the repository and verify LSP imports, because the
    current proxy mirror is repository-oriented;
-8. inspect `server.log`, generated code, manifests, and runtime snapshots when
+8. inspect `server.log`, generated code, manifests, and `/sync` state when
    behavior disagrees with the UI.
 
 ## Environment caveats

@@ -60,6 +60,10 @@ export interface PianoRollObject {
   conflict?: boolean;
 }
 
+export type PianoRollSetResult =
+  | { ok: true; roll: PianoRollObject }
+  | { ok: false; error: string; current?: PianoRollObject };
+
 export interface PianoRollSnapshot {
   type: "pianoRollSnapshot";
   seq: number;

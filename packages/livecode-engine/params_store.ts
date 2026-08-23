@@ -28,6 +28,7 @@ import {
   nextEntitySnapshotSeq,
   normalizeEntityName,
   safeStringifyEntityValue,
+  serializeEntityValue,
 } from "./entity_store.ts";
 import type {
   ParamsEntity,
@@ -62,7 +63,7 @@ export function registerParams<T extends ParamsValues>(
 ): T {
   const entityName = normalizeEntityName(PARAMS_ENTITY_TYPE, name);
   validateParamsValues(defaults, entityName);
-  const declaredMeta = sanitizeMeta(meta, entityName);
+  const declaredMeta = cloneParamsMeta(meta, entityName);
   const existing = getEntityRecord<ParamsValues>(
     PARAMS_ENTITY_TYPE,
     entityName,
@@ -231,13 +232,16 @@ export function duplicateParams(
     throw new Error(`Params entity "${target}" already exists`);
   }
 
-  const value = cloneParamsValues(sourceRecord.value, target);
+  const value = cloneParamsValues(sourceRecord.value, source);
   const record = createEntityRecord<ParamsValues>(
     PARAMS_ENTITY_TYPE,
     target,
     value,
     {
-      meta: sanitizeMeta(sourceRecord.meta as ParamsMeta | undefined, target),
+      meta: cloneParamsMeta(
+        sourceRecord.meta as ParamsMeta | undefined,
+        source,
+      ),
       updatedBy: "duplicate",
       valueJson: safeStringifyEntityValue(value),
     },
@@ -267,7 +271,7 @@ export function loadParams(
 ): ParamsEntity {
   const entityName = normalizeEntityName(PARAMS_ENTITY_TYPE, name);
   validateParamsValues(values, entityName);
-  const loadedMeta = sanitizeMeta(meta, entityName);
+  const loadedMeta = cloneParamsMeta(meta, entityName);
   const existing = getEntityRecord<ParamsValues>(
     PARAMS_ENTITY_TYPE,
     entityName,
@@ -324,29 +328,29 @@ export function makeParamsSnapshot(): ParamsSnapshot {
  */
 export function adoptParamsCodeWrites(): void {
   for (const record of listEntityRecords<ParamsValues>(PARAMS_ENTITY_TYPE)) {
-    const json = safeStringifyEntityValue(record.value);
+    const serialized = serializeEntityValue(record.value);
 
-    if (json === null) {
+    if (!serialized.ok) {
       if (!record.unserializable) {
         record.unserializable = true;
         markEntityRecordChanged(record);
         console.warn(
-          `[params-store] "${record.name}" value can no longer be serialized ` +
-            "(cycle or BigInt written by code); snapshots keep the last good " +
-            "values and flag the entity.",
+          `[params-store] "${record.name}" value is unavailable to views: ` +
+            serialized.error,
         );
       }
       continue;
     }
 
     if (record.unserializable) {
-      record.unserializable = false;
+      delete record.unserializable;
       markEntityRecordChanged(record);
       console.warn(
         `[params-store] "${record.name}" value is serializable again.`,
       );
     }
 
+    const json = serialized.json;
     if (json === record.lastValueJson) continue;
     // Adopt the drift: plain property writes never reach the store API, so this
     // is the only place a code-authored generation can be recorded.
@@ -380,16 +384,17 @@ export function clearParamsStore(): void {
 }
 
 function toParamsEntity(record: EntityRecord<ParamsValues>): ParamsEntity {
+  const wireValue = cloneEntityValueForWire(record);
   const entity: ParamsEntity = {
     name: record.name,
     rev: record.rev,
-    values: cloneEntityValueForWire(record) ?? {},
+    values: wireValue.ok ? wireValue.value : null,
     updatedAt: record.updatedAt,
     updatedBy: record.updatedBy,
   };
   const meta = record.meta as ParamsMeta | undefined;
   if (meta) entity.meta = JSON.parse(JSON.stringify(meta)) as ParamsMeta;
-  if (record.unserializable) entity.unserializable = true;
+  if (!wireValue.ok) entity.unserializable = true;
   return entity;
 }
 
@@ -475,28 +480,17 @@ function applyLoadedValues(live: ParamsValues, loaded: ParamsValues): void {
   }
 }
 
-// Must not throw: the live value can hold anything user code assigned to it.
-// Mirrors the piano-roll clone fallbacks — a duplicate of a broken value is
-// better than a failed gesture.
 function cloneParamsValues(
   values: ParamsValues,
-  targetName: string,
+  sourceName: string,
 ): ParamsValues {
-  try {
-    return structuredClone(values);
-  } catch {
-    // Functions/class instances written by code; fall through.
+  const serialized = serializeEntityValue(values);
+  if (!serialized.ok) {
+    throw new Error(
+      `Cannot duplicate params "${sourceName}": ${serialized.error}`,
+    );
   }
-  try {
-    return JSON.parse(JSON.stringify(values)) as ParamsValues;
-  } catch {
-    // Cycles or BigInt; fall through.
-  }
-  console.warn(
-    `[params-store] "${targetName}" duplicate: source values could not be ` +
-      "cloned; created empty.",
-  );
-  return {};
+  return JSON.parse(serialized.json) as ParamsValues;
 }
 
 function mergeParamsPatch(
@@ -600,22 +594,18 @@ function validateParamsValues(
   seen.delete(values);
 }
 
-// Meta is refinement only and must stay JSON-sendable; a meta that cannot be
-// serialized is dropped with a warning rather than failing the declaration.
-function sanitizeMeta(
+function cloneParamsMeta(
   meta: ParamsMeta | undefined,
   entityName: string,
 ): ParamsMeta | undefined {
   if (meta === undefined) return undefined;
-  try {
-    return JSON.parse(JSON.stringify(meta)) as ParamsMeta;
-  } catch {
-    console.warn(
-      `[params-store] "${entityName}" declaration: meta could not be ` +
-        "serialized and was dropped.",
+  const serialized = serializeEntityValue(meta);
+  if (!serialized.ok) {
+    throw new Error(
+      `canvasParams("${entityName}"): meta is not serializable: ${serialized.error}`,
     );
-    return undefined;
   }
+  return JSON.parse(serialized.json) as ParamsMeta;
 }
 
 function metaEquals(

@@ -55,8 +55,7 @@ export const sketchNames = [
   'newPianoRollTest',
   'animationEditorDemo',
   'perfPaneDemo',
-  'hapSamplerPlayer',
-  'livecodeVisualizer'
+  'hapSamplerPlayer'
 ]
 
 const sketchRoutes = sketchNames.map((name) => {

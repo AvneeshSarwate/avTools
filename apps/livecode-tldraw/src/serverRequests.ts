@@ -64,8 +64,8 @@ export function broadcastEngineAction(op: EngineOp): Promise<unknown> {
 /**
  * The baked topology's save: capture every durable entity the engine tab holds
  * right now, over the broadcast actions channel, as the same `{type, name,
- * data}` rows baked.json carries. Rows the registry declines to serialize come
- * back with a null payload; they are counted, not exported.
+ * data}` rows baked.json carries. Deliberately omitted rows such as the
+ * pristine demo roll are counted but not exported; capture errors abort.
  */
 export async function captureBakedEntities(): Promise<{
   entities: EngineEntityLoadEntry[];
@@ -74,6 +74,15 @@ export async function captureBakedEntities(): Promise<{
   const rows = await broadcastEngineAction({
     kind: "captureEntities",
   }) as EngineEntityCapture[];
+  const failed = rows.filter((row) => row.error !== undefined);
+  if (failed.length > 0) {
+    throw new Error(
+      `Entity export aborted: ${
+        failed.map((row) => `${row.type} "${row.name}": ${row.error}`)
+          .join("; ")
+      }`,
+    );
+  }
   const entities = rows
     .filter((row) => row.payload !== null)
     .map((row) => ({ type: row.type, name: row.name, data: row.payload }));

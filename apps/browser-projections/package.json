@@ -15,7 +15,6 @@
     "build": "vite build",
     "build-only": "vite build",
     "type-check": "vue-tsc --noEmit -p tsconfig.app.json --composite false",
-    "test:livecode:e2e": "node tests/livecodeVisualizer.e2e.mjs",
     "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix --ignore-path .gitignore",
     "format": "prettier --write src/",
     "alsParsing": "npx ts-node node_src/alsParsing.ts",

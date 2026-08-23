@@ -1,7 +1,4 @@
-/**
- * Runtime wire types: launch/stop bodies, run lifecycle records, the
- * `/runtime/snapshots` envelope, `/health`, and `/runtime/state`.
- */
+/** Runtime wire types for launch, lifecycle, health, and rehydration. */
 
 import type { VisualizerManifestMessage } from "./analysis.ts";
 
@@ -16,6 +13,11 @@ export interface LaunchModuleRequest {
   replaceRunning?: boolean;
 }
 
+export interface LaunchModuleResponse {
+  ok: true;
+  runToken: string;
+}
+
 export interface StopModuleRequest {
   moduleId: string;
 }
@@ -26,21 +28,8 @@ export type RuntimeModuleRunState =
   | "stopped"
   | "error";
 
-export interface RuntimeModuleRunSnapshotEntry {
-  moduleId: string;
-  generatedRunId: string;
-  state: RuntimeModuleRunState;
-  updatedAtMs: number;
-  projectModulePath?: string;
-  sourceHash?: string;
-  projectSourceHash?: string;
-  message?: string;
-}
-
 /**
- * One module's latest run, as an entity on the sync transport, keyed by
- * `moduleId`. This is the per-entity form of the legacy snapshot's
- * `moduleRuns` + `activeModules` fields: the active-module list derives from
+ * One module's latest run, keyed by `moduleId`. Active modules derive from
  * `state` client-side.
  */
 export interface RunEntity {
@@ -86,26 +75,6 @@ export interface ModuleLookupsEntity {
   lookups: Record<string, string>;
 }
 
-export interface ActiveWaitSnapshot {
-  type: "activeWaitSnapshot";
-  seq: number;
-  timestampMs: number;
-  modules: Record<string, string[]>;
-  /**
-   * Runtime-resolved piano-roll lookup names, keyed by moduleId then
-   * callsiteId. Populated by instrumented `__tcvPianoRollLookup` wrappers
-   * in generated modules. Absent/empty until a module runs.
-   */
-  pianoRollLookups?: Record<string, Record<string, string>>;
-  /** Active module ids according to the server runtime. */
-  activeModules?: string[];
-  /**
-   * Latest run lifecycle state by module id. This lets clients mark a module
-   * stopped/error even when it has no active wait callsites at completion.
-   */
-  moduleRuns?: Record<string, RuntimeModuleRunSnapshotEntry>;
-}
-
 export interface RuntimeCapabilityStatus {
   webgpu: boolean;
   unsafeWindowSurface: boolean;
@@ -142,14 +111,17 @@ export interface RuntimeModuleStatus {
   projectSourceHash?: string;
 }
 
-/**
- * `/runtime/state`'s run rows: the legacy row plus the run token, so a client
- * rehydrating after a reload or a reconnect seeds the token-keyed terminal
- * dedupe it will apply to every later `run` entity. The legacy
- * `/runtime/snapshots` shim deliberately keeps the token-FREE row above.
- */
-export interface RuntimeStateModuleRun extends RuntimeModuleRunSnapshotEntry {
+/** A run row returned by `/runtime/state`. */
+export interface RuntimeStateModuleRun {
+  moduleId: string;
+  generatedRunId: string;
+  state: RuntimeModuleRunState;
+  updatedAtMs: number;
   runToken: string;
+  projectModulePath?: string;
+  sourceHash?: string;
+  projectSourceHash?: string;
+  message?: string;
 }
 
 export interface RuntimeStateResponse {
