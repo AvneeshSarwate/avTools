@@ -31,8 +31,10 @@ let lastAppliedEngineTarget: "deno" | "browser" | null = null;
 // because `deno lsp` re-reads config when the `deno.config` SETTING changes on
 // a didChangeConfiguration pull — not when the same file's contents change.
 let activeConfigPath = join(workspaceDir, "deno.json");
-let engineTargetWatcher: Deno.FsWatcher | null = null;
+let engineTargetPollTimer: ReturnType<typeof setInterval> | null = null;
 let cleaningUp = false;
+
+const ENGINE_TARGET_POLL_MS = 1_000;
 
 await Deno.mkdir(workspaceDir, { recursive: true });
 await ensureRepoRootMirror(workspaceDir, repoRoot);
@@ -126,7 +128,7 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
 
 try {
   await proxy.listen();
-  void watchEngineTarget();
+  watchEngineTarget();
   await new Promise(() => {
     // Keep this proxy process alive until the parent LSP server terminates it.
   });
@@ -262,24 +264,18 @@ async function reapplyEngineTargetIfChanged(): Promise<void> {
   }
 }
 
-async function watchEngineTarget(): Promise<void> {
+function watchEngineTarget(): void {
   if (!engineTargetFile) return;
-  // Non-recursive: the parent dir also holds every proxy's workspace tree, and
-  // a recursive watch would fire on each document write.
-  const watcher = Deno.watchFs(dirname(engineTargetFile), { recursive: false });
-  engineTargetWatcher = watcher;
-  // Cover a flip that landed between config write and watch start.
-  await reapplyEngineTargetIfChanged();
-  const targetPath = normalize(engineTargetFile);
-  try {
-    for await (const event of watcher) {
-      if (cleaningUp) break;
-      if (!event.paths.some((path) => normalize(path) === targetPath)) continue;
-      await reapplyEngineTargetIfChanged();
-    }
-  } catch (error) {
-    console.warn("[livecode-lsp-proxy] engine-target watch failed", error);
-  }
+  // A poll, not Deno.watchFs: fs-event paths are not symlink-stable across
+  // platforms (macOS reports /private/var/... for a /var/... TMPDIR watch,
+  // so an equality filter never matches), and a flip is a rare, latency-
+  // tolerant event. Reading ~40 bytes a second is cheaper than being wrong.
+  engineTargetPollTimer = setInterval(() => {
+    if (cleaningUp) return;
+    void reapplyEngineTargetIfChanged().catch((error) => {
+      console.warn("[livecode-lsp-proxy] engine-target poll failed", error);
+    });
+  }, ENGINE_TARGET_POLL_MS);
 }
 
 async function readNormalizedImports(
@@ -350,11 +346,7 @@ function resolvePath(path: string): string {
 async function cleanup(): Promise<void> {
   if (cleaningUp) return;
   cleaningUp = true;
-  try {
-    engineTargetWatcher?.close();
-  } catch {
-    // Already closed.
-  }
+  if (engineTargetPollTimer !== null) clearInterval(engineTargetPollTimer);
   shutdownProxyBestEffort(proxy);
   await removePathBestEffort(workspaceDir, "lsp workspace");
 }

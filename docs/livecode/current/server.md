@@ -119,7 +119,11 @@ directly.
 - `visualizer/execution_plane.ts`: the local/remote plane seam described
   above.
 - `visualizer/browser_check_config.ts`: the browser-lib typecheck config
-  writer shared by the target-aware shadow check and its gate test.
+  writer shared by the target-aware shadow check and its gate test. The
+  config lives in OS temp, never a repo-local session dir — `deno check` and
+  `deno bundle` (2.8.x) reject a `--config` physically inside a workspace
+  tree that is not a member (2.9.x is laxer, which hid this in cloud
+  sandboxes); `build_host_assets.ts` places its bundle config the same way.
 - `visualizer/lsp_proxy.ts`: per-session proxy process that creates a synthetic
   workspace and runs `deno lsp -q`; its workspace config follows the published
   engine target (see "LSP proxy" below).
@@ -619,9 +623,12 @@ browser target gets `compilerOptions.lib` set to the shared
 `BROWSER_CHECK_LIB`. The active config uses a target-specific filename
 (`deno.json` vs `deno.browser.json`, only one exists at a time) because
 `deno lsp` reloads config when the `deno.config` *setting value* changes on a
-configuration pull, not when the same file's contents change. A non-recursive
-watch on the target file catches live flips (a browser-target project opening
-after the proxy spawned): the proxy rewrites the config and sends
+configuration pull, not when the same file's contents change. A 1 s poll on the
+target file catches live flips (a browser-target project opening after the
+proxy spawned) — a poll rather than `Deno.watchFs` because fs-event paths are
+not symlink-stable across platforms (macOS reports `/private/var/...` for a
+`/var/...` TMPDIR watch, defeating path-equality filters): the proxy rewrites
+the config and sends
 `workspace/didChangeConfiguration` to the LS child over `procConn` —
 `LSProxy.sendNotification*` send to the editor client despite their doc
 comments — and the next configuration pull returns the new path.
@@ -632,7 +639,7 @@ workspace. The proxy adds document versions to diagnostics when Deno omits
 them, answers workspace configuration requests, and converts URIs in both
 directions.
 
-Signal/finally cleanup closes the target watcher, disposes the RPC connection,
+Signal/finally cleanup stops the target poll, disposes the RPC connection,
 sends SIGTERM to the real `deno lsp` child, and removes the proxy workspace
 best-effort.
 

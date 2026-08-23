@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { join } from "jsr:@std/path@1";
+import { fromFileUrl, join } from "jsr:@std/path@1";
 import { createLivecodeVisualizerServer } from "../visualizer/server.ts";
 
 // The Run gate is target-aware: a project whose manifest declares
@@ -69,10 +69,23 @@ async function checkProject(
   return { success: body.denoCheck.success, output: body.denoCheck.output };
 }
 
+
+// Repo-local like the real server's default sessionRoot — deliberately NOT OS
+// temp: deno 2.8's "config must be a workspace member" rule only bites for
+// paths inside the repo tree, and these tests must fail if the browser check
+// config ever moves back into the session dir.
+async function makeRepoLocalSessionRoot(prefix: string): Promise<string> {
+  const parent = fromFileUrl(
+    new URL("../../.avtools-livecode-sessions", import.meta.url),
+  );
+  await Deno.mkdir(parent, { recursive: true });
+  return await Deno.makeTempDir({ dir: parent, prefix });
+}
+
 Deno.test("shadow check follows the manifest engineTarget", async () => {
-  const sessionRoot = await Deno.makeTempDir({
-    prefix: "browser-target-project-",
-  });
+  const sessionRoot = await makeRepoLocalSessionRoot(
+    "browser-target-project-",
+  );
   const server = await createLivecodeVisualizerServer({
     host: "127.0.0.1",
     port: 0,
@@ -126,9 +139,9 @@ Deno.test("shadow check follows the manifest engineTarget", async () => {
 });
 
 Deno.test("a remote-mode server defaults projects to the browser target", async () => {
-  const sessionRoot = await Deno.makeTempDir({
-    prefix: "browser-target-remote-",
-  });
+  const sessionRoot = await makeRepoLocalSessionRoot(
+    "browser-target-remote-",
+  );
   // No engine tab is needed: diagnostics are entirely server-side.
   const server = await createLivecodeVisualizerServer({
     host: "127.0.0.1",
