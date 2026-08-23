@@ -26,8 +26,8 @@ const PORTABLE_ENTRYPOINTS = [
   "packages/livecode-engine/mod.ts",
 ];
 
-async function writeConfig(dir: string): Promise<string> {
-  return await writeBrowserCheckConfig(REPO_ROOT, dir);
+async function writeConfig(): Promise<string> {
+  return await writeBrowserCheckConfig(REPO_ROOT);
 }
 
 async function runDenoCheck(
@@ -49,27 +49,22 @@ async function runDenoCheck(
 }
 
 Deno.test("portable helper graph typechecks under a browser-target lib", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "browser-target-check-" });
-  try {
-    const configPath = await writeConfig(dir);
-    const files = PORTABLE_ENTRYPOINTS.map((entry) =>
-      isAbsolute(entry) ? entry : join(REPO_ROOT, entry)
-    );
-    const { code, output } = await runDenoCheck(configPath, files);
-    assertEquals(
-      code,
-      0,
-      `browser-target deno check failed:\n${output}`,
-    );
-  } finally {
-    await Deno.remove(dir, { recursive: true }).catch(() => {});
-  }
+  const configPath = await writeConfig();
+  const files = PORTABLE_ENTRYPOINTS.map((entry) =>
+    isAbsolute(entry) ? entry : join(REPO_ROOT, entry)
+  );
+  const { code, output } = await runDenoCheck(configPath, files);
+  assertEquals(
+    code,
+    0,
+    `browser-target deno check failed:\n${output}`,
+  );
 });
 
 Deno.test("the browser-target config actually rejects Deno globals", async () => {
   const dir = await Deno.makeTempDir({ prefix: "browser-target-check-" });
   try {
-    const configPath = await writeConfig(dir);
+    const configPath = await writeConfig();
     const probePath = join(dir, "uses_deno_global.ts");
     await Deno.writeTextFile(
       probePath,
@@ -89,30 +84,25 @@ Deno.test("the browser-target config actually rejects Deno globals", async () =>
 // Keep the helper honest: the config writer must absolutize relative imports,
 // or the temp-dir config would silently resolve aliases against the wrong root.
 Deno.test("browser check config absolutizes relative import-map entries", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "browser-target-check-" });
-  try {
-    const configPath = await writeConfig(dir);
-    const config = JSON.parse(await Deno.readTextFile(configPath)) as {
-      imports: Record<string, string>;
-    };
-    const pianoRollStore = config.imports["piano-roll-store"];
-    assert(pianoRollStore !== undefined, "piano-roll-store alias missing");
-    assert(isAbsolute(pianoRollStore), "alias was not absolutized");
-    const trailing = Object.entries(config.imports).filter(([, value]) =>
-      value.startsWith("/")
-    );
-    assert(trailing.length > 0);
-    // A directory mapping must keep its trailing slash to stay a valid prefix
-    // mapping after absolutization.
-    for (const [key, value] of Object.entries(config.imports)) {
-      if (key.endsWith("/") && isAbsolute(value)) {
-        assert(
-          value.endsWith("/"),
-          `directory mapping ${key} lost its trailing slash: ${value}`,
-        );
-      }
+  const configPath = await writeConfig();
+  const config = JSON.parse(await Deno.readTextFile(configPath)) as {
+    imports: Record<string, string>;
+  };
+  const pianoRollStore = config.imports["piano-roll-store"];
+  assert(pianoRollStore !== undefined, "piano-roll-store alias missing");
+  assert(isAbsolute(pianoRollStore), "alias was not absolutized");
+  const trailing = Object.entries(config.imports).filter(([, value]) =>
+    value.startsWith("/")
+  );
+  assert(trailing.length > 0);
+  // A directory mapping must keep its trailing slash to stay a valid prefix
+  // mapping after absolutization.
+  for (const [key, value] of Object.entries(config.imports)) {
+    if (key.endsWith("/") && isAbsolute(value)) {
+      assert(
+        value.endsWith("/"),
+        `directory mapping ${key} lost its trailing slash: ${value}`,
+      );
     }
-  } finally {
-    await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
 });

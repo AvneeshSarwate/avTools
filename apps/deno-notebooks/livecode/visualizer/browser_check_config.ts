@@ -15,14 +15,21 @@ export const BROWSER_CHECK_LIB = [
   "dom.asynciterable",
 ];
 
+// One OS-temp home for the config, created lazily and reused for the process
+// lifetime. OS temp rather than a session dir because `deno check` (2.8.x)
+// rejects a --config that sits physically inside a workspace tree without
+// being a member — a repo-local session dir fails where /tmp works (2.9.x is
+// laxer, which hid this in cloud sandboxes). Every path inside the config is
+// absolute, so its location carries no meaning.
+let configDir: string | null = null;
+
 /**
- * Write a browser-lib deno config into `dir` and return its path. npm
- * specifiers resolve byonm from the repository's node_modules (found by
- * walking up from the checked files), so no install step is involved.
+ * Write the browser-lib deno config and return its path. npm specifiers
+ * resolve byonm from the repository's node_modules (found by walking up from
+ * the checked files), so no install step is involved.
  */
 export async function writeBrowserCheckConfig(
   repoRoot: string,
-  dir: string,
 ): Promise<string> {
   const rootConfig = JSON.parse(
     await Deno.readTextFile(join(repoRoot, "deno.json")),
@@ -33,7 +40,8 @@ export async function writeBrowserCheckConfig(
       ? resolve(repoRoot, value) + (value.endsWith("/") ? "/" : "")
       : value;
   }
-  const configPath = join(dir, "deno.json");
+  configDir ??= await Deno.makeTempDir({ prefix: "livecode-browser-check-" });
+  const configPath = join(configDir, "deno.json");
   await Deno.writeTextFile(
     configPath,
     JSON.stringify(

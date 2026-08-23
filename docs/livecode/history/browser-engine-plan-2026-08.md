@@ -627,7 +627,7 @@ The five open questions this note originally carried are decided:
    into the diagnostics cache key; covered by
    `browser_target_project_test.ts`. The LSP workspace follows the same
    target: the server publishes `effectiveEngineTarget()` to an
-   `engine-target.json` the proxies read and watch, browser targets get
+   `engine-target.json` the proxies read and poll, browser targets get
    `BROWSER_CHECK_LIB` in a target-named config file, and a live flip
    reaches an already-running `deno lsp` as a `deno.config` setting change
    (see `current/server.md`, "LSP proxy"); covered by
