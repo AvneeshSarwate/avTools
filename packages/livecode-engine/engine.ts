@@ -1,8 +1,8 @@
 import { launch, type TimeContext } from "@avtools/core-timing";
 import type {
   LaunchModuleRequest,
+  LaunchModuleResponse,
   RunEntity,
-  RuntimeModuleRunSnapshotEntry,
   RuntimeStateModuleRun,
   VisualizerManifestMessage,
 } from "@avtools/livecode-protocol";
@@ -101,7 +101,7 @@ export interface LivecodeEngineDeps {
   panicMidi?: () => void;
   /** Seed the demo piano roll at construction (default true). */
   seedDemoRoll?: boolean;
-  snapshotTickMs?: number;
+  syncTickMs?: number;
   stopHookTimeoutMs?: number;
 }
 
@@ -115,7 +115,7 @@ export interface LivecodeEngine {
   launchModule(
     request: LaunchModuleRequest,
     prepared?: PreparedLaunchMetadata,
-  ): Promise<void>;
+  ): Promise<LaunchModuleResponse>;
   stopModule(moduleId: string, reason: string): Promise<void>;
   stopAllModules(reason: string): Promise<void>;
   panicRuntime(reason: string): Promise<void>;
@@ -124,12 +124,10 @@ export interface LivecodeEngine {
   getActiveModuleInfo(moduleId: string): EngineActiveModuleInfo | undefined;
   isGeneratedRunActive(generatedRunId: string): boolean;
   moduleRunRecords(): Record<string, ModuleRunRecord>;
-  /** The deprecated `/runtime/snapshots` shim's token-free run rows. */
-  legacyModuleRuns(): Record<string, RuntimeModuleRunSnapshotEntry>;
   close(): Promise<void>;
 }
 
-const DEFAULT_SNAPSHOT_TICK_MS = 33;
+const DEFAULT_SYNC_TICK_MS = 33;
 const DEFAULT_STOP_HOOK_TIMEOUT_MS = 2_000;
 
 export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
@@ -192,9 +190,7 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
     },
   }));
 
-  // ONE timer, and one walk over every source per tick. `collectAll` drains the
-  // change gates, so it must be called exactly once here; the host's sink reads
-  // that single collect for every transport it feeds.
+  // `collectAll` drains change gates and therefore has one caller.
   const broadcastTimer = setInterval(() => {
     try {
       deps.onSyncTick(syncSources.collectAll());
@@ -204,7 +200,7 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
         message: error instanceof Error ? error.message : String(error),
       });
     }
-  }, deps.snapshotTickMs ?? DEFAULT_SNAPSHOT_TICK_MS);
+  }, deps.syncTickMs ?? DEFAULT_SYNC_TICK_MS);
 
   /** One module's run as a sync entity. Null when it has never had a run. */
   function runEntityFor(moduleId: string): RunEntity | null {
@@ -241,19 +237,10 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
     return stored;
   }
 
-  function legacyModuleRuns(): Record<string, RuntimeModuleRunSnapshotEntry> {
-    const entries: Record<string, RuntimeModuleRunSnapshotEntry> = {};
-    for (const [moduleId, record] of moduleRunSnapshots) {
-      const { runToken: _runToken, ...wire } = record;
-      entries[moduleId] = wire;
-    }
-    return entries;
-  }
-
   async function launchModule(
     requestBody: LaunchModuleRequest,
     prepared?: PreparedLaunchMetadata,
-  ) {
+  ): Promise<LaunchModuleResponse> {
     await log({
       type: "launchQueued",
       moduleId: requestBody.moduleId,
@@ -491,6 +478,7 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
     });
 
     if (!parentContext) await log({ type: "launchQueuedBeforeParentReady" });
+    return { ok: true, runToken };
   }
 
   // The terminal snapshot an accepted-then-cancelled launch owes its client —
@@ -689,7 +677,6 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
         active.generatedRunId === generatedRunId
       ),
     moduleRunRecords: () => Object.fromEntries(moduleRunSnapshots),
-    legacyModuleRuns,
     close: async () => {
       closing = true;
       clearInterval(broadcastTimer);

@@ -420,7 +420,7 @@ input {
   white-space: nowrap;
 }
 
-.param-pane-shape__badge {
+.entity-error-badge {
   flex: none;
   border: 1px solid rgba(255, 128, 128, 0.42);
   border-radius: 999px;

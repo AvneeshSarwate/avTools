@@ -46,11 +46,12 @@ export type ParamsMetaFor<T extends ParamsValues> = {
 export interface ParamsEntity {
   name: string;
   rev: number;
-  values: ParamsValues;
+  /** Null when the current live value cannot be represented on the wire. */
+  values: ParamsValues | null;
   meta?: ParamsMeta;
   updatedAt: number;
   updatedBy: string;
-  /** Set when the live value stopped being serializable; values are the last good ones. */
+  /** Set when `values` is unavailable because the live value is not serializable. */
   unserializable?: boolean;
   conflict?: boolean;
 }

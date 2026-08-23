@@ -2,42 +2,27 @@ import { assert, assertEquals } from "jsr:@std/assert@1";
 import { createLivecodeVisualizerServer } from "../visualizer/server.ts";
 import { fetchJson, postJson, SyncClient, waitFor } from "./test_helpers.ts";
 import type {
-  ActiveWaitSnapshot,
   AnalyzeFailure,
   AnalyzeSuccess,
   ClientControlCommandResponse,
   ClientControlEnvelope,
+  LaunchModuleResponse,
   ModuleLookupsEntity,
   ModuleWaitsEntity,
   RunEntity,
   RuntimeStateResponse,
 } from "../visualizer/protocol.ts";
 
-Deno.test("server analyze, launch, snapshot, and stop protocol smoke", async () => {
+Deno.test("server analyze, launch, sync, and stop protocol smoke", async () => {
   const sessionRoot = await Deno.makeTempDir({ prefix: "tcv-server-smoke-" });
   const server = await createLivecodeVisualizerServer({
     port: 0,
     sessionRoot,
     logLevel: "debug",
   });
-  // The runtime lifecycle now reaches clients over `/sync`. The legacy
-  // `/runtime/snapshots` socket stays open beside it purely to keep the
-  // deprecated shim honest: it must keep emitting its FULL envelope off the
-  // same tick for the clients that have not migrated.
   const client = await SyncClient.open(server.baseUrl);
-  const legacySocket = new WebSocket(
-    `${server.baseUrl.replace("http", "ws")}/runtime/snapshots`,
-  );
-  const snapshots: ActiveWaitSnapshot[] = [];
-  legacySocket.onmessage = (event) => {
-    snapshots.push(JSON.parse(event.data));
-  };
 
   try {
-    await waitFor(
-      () => legacySocket.readyState === WebSocket.OPEN,
-      "legacy snapshot socket open",
-    );
     await client.subscribe(["moduleWaits", "moduleLookups", "run"]);
     const syncFrom = client.messages.length;
 
@@ -78,13 +63,18 @@ export default async function(ctx: TimeContext) {
     assertEquals(invalidAnalyze.type, "analyzeFailure");
     assertEquals(invalidAnalyze.diagnostics[0].code, "TCV_UNSUPPORTED_AWAIT");
 
-    await postJson(`${server.baseUrl}/runtime/launch`, {
-      type: "launchModule",
-      moduleId: validAnalyze.moduleId,
-      sourceVersion: validAnalyze.sourceVersion,
-      transformedModuleUri: validAnalyze.transformedModuleUri,
-      generatedRunId: validAnalyze.generatedRunId,
-    });
+    const launch = await postJson<LaunchModuleResponse>(
+      `${server.baseUrl}/runtime/launch`,
+      {
+        type: "launchModule",
+        moduleId: validAnalyze.moduleId,
+        sourceVersion: validAnalyze.sourceVersion,
+        transformedModuleUri: validAnalyze.transformedModuleUri,
+        generatedRunId: validAnalyze.generatedRunId,
+      },
+    );
+    assertEquals(launch.ok, true);
+    assertEquals(typeof launch.runToken, "string");
 
     await client.waitForChange(
       syncFrom,
@@ -110,6 +100,10 @@ export default async function(ctx: TimeContext) {
       assertEquals(typeof entry.runToken, "string");
       assertEquals(typeof entry.updatedAtMs, "number");
     }
+    assertEquals(
+      runtimeState.moduleRuns[validAnalyze.moduleId]?.runToken,
+      launch.runToken,
+    );
 
     await postJson(`${server.baseUrl}/runtime/stop`, {
       type: "stopModule",
@@ -178,28 +172,6 @@ export default async function(ctx: TimeContext) {
       .find((run) => run.moduleId === "module-lookup-only");
     assert(lookupOnlyRun?.runToken, "a run entity carries its token");
 
-    // The legacy shim: the same tick still produces the FULL envelope, all four
-    // sections included, for the Vue client this slice does not modernize.
-    await waitFor(
-      () =>
-        snapshots.some((snapshot) =>
-          snapshot.pianoRollLookups?.["module-lookup-only"]?.[lookupOnlyId] ===
-            "melody" &&
-          snapshot.moduleRuns?.["module-lookup-only"]?.state === "stopped" &&
-          Array.isArray(snapshot.activeModules)
-        ),
-      "lookup-only module stopped snapshot on the legacy shim",
-      2_000,
-    );
-    // And its rows stay token-FREE: the shim's shape is frozen, so the token
-    // reaches clients only on the `run` entity and on `/runtime/state`.
-    for (const snapshot of snapshots) {
-      for (const entry of Object.values(snapshot.moduleRuns ?? {})) {
-        assertEquals("runToken" in entry, false);
-        assertEquals(typeof entry.updatedAtMs, "number");
-      }
-    }
-
     const stopMarkerPath = `${sessionRoot}/stop-hook.txt`;
     const stopAnalyze = await postJson(`${server.baseUrl}/runtime/analyze`, {
       moduleId: "module-stop-hook",
@@ -246,7 +218,6 @@ export default async function(ctx: TimeContext) {
     );
     assertEquals(await Deno.readTextFile(stopMarkerPath), "stopped");
   } finally {
-    legacySocket.close();
     client.close();
     await server.close();
     await Deno.remove(sessionRoot, { recursive: true });

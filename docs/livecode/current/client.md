@@ -1,8 +1,8 @@
 # Current Client Architecture
 
 Status: checked against `apps/livecode-tldraw` — most recently
-`src/syncRuntime.tsx`, `src/livecodeRuntime.tsx`, and `src/runDedupe.ts` — as of
-2026-08-13; first audited 2026-07-21.
+`src/syncRuntime.tsx`, `src/livecodeRuntime.tsx`, and `src/runCorrelation.ts` —
+as of 2026-08-23; first audited 2026-07-21.
 
 ## Responsibilities
 
@@ -33,9 +33,8 @@ piano-roll note data or params values.
   `/runtime/state` rehydration, Deno LSP lifetime, and project-diagnostics
   polling. It owns no socket of its own; it consumes runs/waits/lookups and
   socket lifecycle edges from the sync provider.
-- `src/runDedupe.ts`: the token-keyed terminal-run rule, as a pure module with
-  **no imports** — the browser bundle and a Deno unit test both load this exact
-  file.
+- `src/runCorrelation.ts`: the small state machine joining a launch HTTP
+  acknowledgement to `run` entities carrying the same token.
 - `src/LivecodeEditorShape.tsx`: `livecode-editor` shape, status UI,
   diagnostics, manifest-to-range joins, and focus-or-create piano-roll actions.
 - `src/CodeMirrorEditor.tsx`: CodeMirror construction, Deno LSP extensions,
@@ -273,10 +272,10 @@ is a view and outlives what it views.
 
 The pane mounts one tweakpane `Pane` per shape and binds a copy of the entity's
 values, nesting objects as folders. Bindings are rebuilt only when the value
-shape or the meta changes; a rev advance just refreshes values. A `null` leaf
-(what a non-finite code write serializes to) has no binding until a real value
-is sampled, and an `unserializable` entity shows a badge over the last good
-values.
+shape or the meta changes; a rev advance just refreshes values. When the live
+value cannot be represented on the wire, `values` is null and the pane removes
+its controls and shows an explicit unavailable state. It never renders cached
+values as current engine truth.
 
 Edits post one minimal leaf patch to `/params/set` with
 `originId = "param-pane-" + shape.id` and never an `expectedRev`. Server
@@ -391,18 +390,15 @@ Each registered module has published view state plus private coordination:
 - the latest 50 successful build-history entries;
 - active wait IDs, resolved piano-roll lookup names, and the sync sequence that
   last touched them;
-- `runToken`: the token of the last run entity this record actually **applied**.
-  A suppressed terminal never sets it, which is how a test tells "the run I
-  watched ended" from "some older run's terminal leaked through";
-- a private `RunDedupeMemory` (see below);
+- `runToken`: the engine identity of the run currently represented by the
+  record;
+- a private `RunCorrelation` for a launch crossing HTTP and `/sync`;
 - current prepared build/failure and in-flight analyze promise.
 
-Edits clear the build, manifest, diagnostics, decorations, and lookups, and
-release the run claim, before scheduling a new analysis. This does not stop code
-that is already running on the server; the UI can therefore display edited
-source while an older run continues. Releasing the claim deliberately keeps the
-token memory: that run is still going, and its own terminal still has to be
-accepted when it lands.
+Edits clear the build, manifest, diagnostics, decorations, and lookups before
+scheduling a new analysis. This does not stop code that is already running on
+the server; the UI can therefore display edited source while an older run
+continues.
 
 ## Analyze and Run behavior
 
@@ -428,60 +424,23 @@ the client ever sets it. Stop is unchanged and stays enabled.
 Stop sets `stopping`, posts `/runtime/stop`, and waits for the matching terminal
 run entity.
 
-### Applying run entities: the token-keyed dedupe
+### Applying run entities: launch correlation
 
-Run entities arrive per module, changed-only. Two runs of one module can be in
-flight at once from this client's point of view — the run being replaced reports
-its terminal while the replacement is still `launching` — and applying that
-terminal would retire a run that is genuinely alive. `runDedupe.ts` is the rule.
+Run entities arrive per module, changed-only. Immediately before posting a
+launch, the client marks that request pending. A terminal from the previous run
+is held while the request crosses HTTP. The successful launch response returns
+the accepted `runToken`; from that point, only a run entity carrying that token
+may complete the launch transition. The runtime reapplies the latest run map
+after receiving the acknowledgement, which covers an instant failure that
+arrived over `/sync` before the HTTP response.
 
-It keys on `runToken`, the identity of the RUN, because `generatedRunId`
-identifies a prepared *build* and is reused whenever a relaunch finds an
-unchanged one. The client never learns its own launch's token from the POST — it
-learns tokens only by watching run entities go active — so the memory is two
-token sets plus a flag:
-
-- `activeRunTokens`: tokens watched go active **since** the current claim's POST;
-- `supersededRunTokens`: tokens watched go active **before** it;
-- `claimActive`: true from a launch POST until a terminal applies or the claim is
-  dropped.
-
-The transitions:
-
-- `claimRun(memory)` runs **immediately before** posting `/runtime/launch`.
-  Everything watched active up to that instant moves to superseded.
-- `observeActiveRun` records a `launching`/`running` entity — but ignores one
-  whose token is already superseded, since the run winding down still reports
-  itself active for a tick or two.
-- `releaseRunClaim` drops the claim without a terminal (an edit, or a launch
-  that never reached the server). Token memory survives.
-- `seedRehydratedRun` seeds from `/runtime/state`: an active run goes to
-  `activeRunTokens`, an already-terminal one to `supersededRunTokens`.
-
-And the rule itself, for every `stopped`/`error` entity that arrives:
-
-1. superseded token → **suppress**. That run is the one being replaced.
-2. observed-active token → **apply**. This is the claim's own outcome.
-3. unknown token → apply **iff** there is no claim, or the claim has never been
-   seen active. The second half is the instant-failure case: tick coalescing
-   means a launch and an immediate throw can land inside one 33 ms tick, and the
-   only entity that ever ships is a terminal under a token this client never saw
-   active. Swallowing it would leave the module reading `running` forever.
-
-Both token sets are insertion-ordered LRUs capped at 64 entries; a token old
-enough to fall out has long since delivered its terminal.
-
-An applied terminal sets `record.runToken` and releases the claim; a suppressed
-one changes nothing. Active entities set `runToken` too, except that a record in
-`stopping` keeps that status rather than flipping back to `running`.
-
-Two orderings matter, and both are pinned in `run_dedupe_test.ts` where they can
-be constructed exactly. On top of that, the **straddle** — a replaced run's
-terminal arriving while its replacement launches — is asserted in the browser
-E2E, because the real Replace button produces it naturally and reliably. The
-**instant failure** has a browser case too, but only for its outcome: whether a
-launch and a throw actually land inside one tick is a timing coin flip, so the
-unit test is the one that proves the rule.
+`generatedRunId` remains a prepared-build identity and may be reused. The
+engine-minted `runToken` is the only run identity. A rejected HTTP launch clears
+the pending correlation and surfaces its error. Rehydration takes current run
+truth directly from `/runtime/state` because no local launch is crossing the
+two transports at that point. The pure transition cases live in
+`run_correlation_test.ts`; engine and transport race suites cover replacement,
+cancellation, and superseded-run ordering.
 
 ## Connection: the connect-armed state machine
 

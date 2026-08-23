@@ -12,7 +12,11 @@ import {
   sampleParamsChanges,
   setParamsValues,
 } from "@avtools/livecode-engine/params_store.ts";
-import type { ParamsEntity, ParamsValues } from "../visualizer/protocol.ts";
+import type {
+  ParamsEntity,
+  ParamsMeta,
+  ParamsValues,
+} from "../visualizer/protocol.ts";
 
 function resetParams(): void {
   clearParamsStore();
@@ -62,7 +66,7 @@ Deno.test("registerParams creates an entity at rev 1 and returns a live clone of
   // The returned object IS the store's value: a plain property write shows up
   // in a point-in-time read immediately, before the sampler adopts it as a rev.
   params.gain = 0.75;
-  assertEquals(getParams("test/create")?.values.gain, 0.75);
+  assertEquals(getParams("test/create")?.values?.gain, 0.75);
   assertEquals(getParams("test/create")?.rev, 1);
 });
 
@@ -283,12 +287,12 @@ Deno.test("setParamsValues honours expectedRev as a compare-and-set", () => {
   });
   assertEquals(conflict?.conflict, true);
   assertEquals(conflict?.rev, 1);
-  assertEquals(getParams("test/cas")?.values.gain, 1);
+  assertEquals(getParams("test/cas")?.values?.gain, 1);
 
   const applied = setParamsValues("test/cas", { gain: 2 }, { expectedRev: 1 });
   assertEquals(applied?.conflict, undefined);
   assertEquals(applied?.rev, 2);
-  assertEquals(getParams("test/cas")?.values.gain, 2);
+  assertEquals(getParams("test/cas")?.values?.gain, 2);
 });
 
 Deno.test("the sampler adopts code writes as store generations", () => {
@@ -305,7 +309,7 @@ Deno.test("the sampler adopts code writes as store generations", () => {
   assert(adopted);
   assertEquals(adopted["test/sampler"]?.rev, 2);
   assertEquals(adopted["test/sampler"]?.updatedBy, "code");
-  assertEquals(adopted["test/sampler"]?.values.gain, 0.9);
+  assertEquals(adopted["test/sampler"]?.values?.gain, 0.9);
   assertEquals(
     Object.keys(adopted),
     ["test/sampler"],
@@ -334,7 +338,7 @@ Deno.test("a forced snapshot is read-only: it neither consumes the gate nor adop
 
   params.gain = 2;
   const duringDrift = makeParamsSnapshot();
-  assertEquals(duringDrift.params["test/forced"].values.gain, 2);
+  assertEquals(duringDrift.params["test/forced"].values?.gain, 2);
   assertEquals(duringDrift.params["test/forced"].rev, 1);
 
   const adopted = sampledParams();
@@ -348,13 +352,12 @@ Deno.test("the sampler flags an unserializable value instead of throwing", () =>
   sampledParams();
 
   (params as Record<string, unknown>).gain = 10n;
+  const beforeSampler = makeParamsSnapshot().params["test/unserializable"];
+  assertEquals(beforeSampler.unserializable, true);
+  assertEquals(beforeSampler.values, null);
   const flagged = sampledParams();
   assertEquals(flagged?.["test/unserializable"]?.unserializable, true);
-  assertEquals(
-    flagged?.["test/unserializable"]?.values.gain,
-    1,
-    "the change keeps the last values that did serialize",
-  );
+  assertEquals(flagged?.["test/unserializable"]?.values, null);
 
   params.gain = 3;
   const recovered = sampledParams();
@@ -362,24 +365,22 @@ Deno.test("the sampler flags an unserializable value instead of throwing", () =>
     recovered?.["test/unserializable"]?.unserializable,
     undefined,
   );
-  assertEquals(recovered?.["test/unserializable"]?.values.gain, 3);
+  assertEquals(recovered?.["test/unserializable"]?.values?.gain, 3);
 });
 
-Deno.test("non-finite code writes serialize to null and drops read as shape changes", () => {
+Deno.test("non-finite code writes make the current value unavailable", () => {
   resetParams();
   const params = registerParams("test/lossy", { gain: 1, extra: 2 });
   sampledParams();
 
   params.gain = Number.POSITIVE_INFINITY;
-  assertEquals(sampledParams()?.["test/lossy"]?.values.gain, null);
+  const unavailable = sampledParams()?.["test/lossy"];
+  assertEquals(unavailable?.unserializable, true);
+  assertEquals(unavailable?.values, null);
 
   delete (params as Record<string, unknown>).extra;
   const afterDelete = sampledParams();
-  assertEquals(
-    "extra" in (afterDelete?.["test/lossy"]?.values ?? {}),
-    false,
-  );
-  assertEquals(afterDelete?.["test/lossy"]?.updatedBy, "code");
+  assertEquals(afterDelete, null, "the unavailable state is reported once");
 });
 
 Deno.test("loadParams mutates the live object in place at every depth", () => {
@@ -512,6 +513,33 @@ Deno.test("duplicateParams deep-copies the live values under a new name", () => 
   });
   copyLive.strobe.rate = 100;
   assertEquals(live.strobe.rate, 9);
+});
+
+Deno.test("duplicateParams rejects an unavailable source without creating a target", () => {
+  resetParams();
+  const live = registerParams("test/dup-invalid", { gain: 1 });
+  (live as Record<string, unknown>).gain = 10n;
+
+  assertThrows(
+    () => duplicateParams("test/dup-invalid", "test/dup-invalid-copy"),
+    Error,
+    "Cannot duplicate params",
+  );
+  assertEquals(getParams("test/dup-invalid-copy"), undefined);
+});
+
+Deno.test("invalid params metadata fails the declaration instead of disappearing", () => {
+  resetParams();
+  const invalidMeta = {
+    gain: { label: 10n },
+  } as unknown as ParamsMeta;
+
+  assertThrows(
+    () => registerParams("test/meta-invalid", { gain: 1 }, invalidMeta),
+    Error,
+    "meta is not serializable",
+  );
+  assertEquals(getParams("test/meta-invalid"), undefined);
 });
 
 Deno.test("latestParamsJson is a fresh serialization of the live value", () => {

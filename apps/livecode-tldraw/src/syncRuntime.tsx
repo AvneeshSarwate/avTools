@@ -1,23 +1,5 @@
-// The one client socket for watched state: `/sync`, multiplexed over every
-// entity kind, changed-only, subscription-scoped.
-//
-// Three providers and the livecode runtime's own snapshot socket used to be four
-// sockets carrying four full-store snapshots. This is one socket, one subscribe,
-// one RAF-coalesced flush, and per-entity delivery — the edited roll ships, not
-// the store.
-//
-// Two contracts worth stating here, because the whole file is shaped by them:
-//
-//   A RESET REPLACES the whole per-type map. Absence means deleted, so an entity
-//   removed while this client was disconnected does not survive the reconnect.
-//
-//   `seq` is a per-socket counter for gap DETECTION only. There is no replay
-//   buffer: a gap (which over TCP means a server bug, not loss) and a reconnect
-//   are recovered the same way — resubscribe, take fresh resets.
-//
-// Each entity kind gets its OWN React context. One context carrying all six maps
-// would re-render every param pane and roll view on every signal tick; these
-// slices only re-render what actually changed.
+// Resets replace a per-type map, and a sequence gap recovers by resubscribing.
+// Separate React contexts keep high-frequency entity kinds isolated.
 
 import {
   type Context,
@@ -37,6 +19,7 @@ import type {
   ParamsValues,
   PianoRollData,
   PianoRollObject,
+  PianoRollSetResult,
   RunEntity,
   SetPianoRollRequest,
   SignalEntity,
@@ -84,7 +67,7 @@ export interface SyncActions {
     name: string,
     data: PianoRollData,
     options?: { originId?: string; label?: string },
-  ): Promise<PianoRollObject>;
+  ): Promise<PianoRollSetResult>;
   undoRoll(name: string, originId?: string): Promise<void>;
   redoRoll(name: string, originId?: string): Promise<void>;
   setParams(
@@ -563,7 +546,7 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
         source: "client",
         undoable: true,
       };
-      return await engineAction<PianoRollObject>(
+      return await engineAction<PianoRollSetResult>(
         { kind: "pianoRollSet", request: body },
         serverBaseUrlRef.current,
         "/piano-roll/set",

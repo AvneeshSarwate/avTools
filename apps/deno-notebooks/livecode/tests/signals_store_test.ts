@@ -198,13 +198,12 @@ Deno.test("the sampler flags an unserializable value instead of throwing", () =>
   sampled();
 
   handle.set(10n);
+  const beforeSampler = makeSignalsSnapshot().signals["test/unserializable"];
+  assertEquals(beforeSampler.unserializable, true);
+  assertEquals(beforeSampler.value, null);
   const flagged = sampled();
   assertEquals(flagged?.["test/unserializable"]?.unserializable, true);
-  assertEquals(
-    flagged?.["test/unserializable"]?.value,
-    { position: 1 },
-    "the change keeps the last value that did serialize",
-  );
+  assertEquals(flagged?.["test/unserializable"]?.value, null);
 
   const cyclic: Record<string, unknown> = {};
   cyclic.self = cyclic;
