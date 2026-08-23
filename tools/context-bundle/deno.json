@@ -1,0 +1,7 @@
+{
+  "name": "context-bundle",
+  "version": "0.0.0",
+  "tasks": {
+    "bundle": "deno run --allow-read --allow-run=git --allow-write --allow-net=registry.npmjs.org --allow-env bundle.ts"
+  }
+}
