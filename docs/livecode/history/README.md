@@ -81,6 +81,18 @@ chosen, and why tldraw was considered a spatial shell. The active client is now
   Remote Control server in the container, credential/lifecycle handling, and
   verified cost figures. Design note only — nothing in it is implemented.
 
+## Documentation audits
+
+- `doc-audit.md` is the 2026-08 review of `docs/livecode/current/` against the
+  goal that the bootstrap set stay cheap enough to read in full at the start of
+  every session. It identifies four restatement patterns — file maps,
+  exhaustive catalogs, transcribed TypeScript types, and resolved-issue
+  archaeology — measures each in tokens, and proposes per-document targets
+  cutting the set from ~54K to ~30K. It also argues that the README's
+  maintenance contract, by asking for completeness, is what regenerates the
+  restatement. Proposal only: nothing in it has been applied, so its token
+  counts and section sizes describe `current/` as of commit `699cac7`.
+
 ## Stability review
 
 - `stability-review-2026-07.md` preserves the large July 2026 audit and
