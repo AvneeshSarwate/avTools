@@ -44,7 +44,7 @@ const IMPORT_MAP_HTML = `<script type="importmap">
 }
 </script>`;
 
-async function writeBundleConfig(dir: string): Promise<string> {
+async function writeBundleConfig(): Promise<string> {
   const rootConfig = JSON.parse(
     await Deno.readTextFile(join(REPO_ROOT, "deno.json")),
   ) as { imports?: Record<string, string> };
@@ -56,7 +56,14 @@ async function writeBundleConfig(dir: string): Promise<string> {
   }
   // The browser bundle must never see the FFI backend.
   imports["@avtools/midi"] = join(REPO_ROOT, "packages/midi/browser.ts");
-  const configPath = join(dir, "deno.json");
+  // OS temp, never inside the repo: `deno bundle` (2.8.x) rejects a --config
+  // that sits physically inside a workspace tree without being a member, so a
+  // config in the server's repo-local session dir fails where one in /tmp
+  // works. All paths in the config are absolute, so location is meaningless.
+  const configPath = join(
+    await Deno.makeTempDir({ prefix: "livecode-bundle-config-" }),
+    "deno.json",
+  );
   await Deno.writeTextFile(
     configPath,
     JSON.stringify(
@@ -79,7 +86,7 @@ export async function buildBrowserHostAssets(
   const entriesDir = join(outDir, "entries");
   await Deno.mkdir(entriesDir, { recursive: true });
 
-  const configPath = await writeBundleConfig(entriesDir);
+  const configPath = await writeBundleConfig();
   const entryPaths: string[] = [];
   for (const [name, source] of Object.entries(ALIAS_ENTRIES)) {
     const entryPath = join(entriesDir, `${name}.ts`);

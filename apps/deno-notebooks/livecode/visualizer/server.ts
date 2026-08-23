@@ -1846,7 +1846,7 @@ export async function createLivecodeVisualizerServer(
 
     diagnosticsInFlightHash = diagnosticsKey;
     const denoConfigPath = engineTarget === "browser"
-      ? await writeBrowserCheckConfig(REPO_ROOT, sessionDir)
+      ? await writeBrowserCheckConfig(REPO_ROOT)
       : join(REPO_ROOT, "deno.json");
     const promise = analyzeProjectShadow({
       projectRoot: currentProject.root,
