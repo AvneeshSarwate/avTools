@@ -15,6 +15,7 @@ import type {
   NoteDataInput,
   PianoRollData,
   PianoRollObject,
+  PianoRollSetResult,
 } from "../visualizer/protocol.ts";
 
 export interface PianoRollNoteOutput {
@@ -52,7 +53,7 @@ export function setPianoRollClip(
   name: string,
   clip: PianoRollLike,
   options: SetPianoRollClipOptions = {},
-): PianoRollObject {
+): PianoRollSetResult {
   return setPianoRoll(name, pianoRollLikeToData(clip), {
     label: options.label ?? `Set ${name}`,
     source: options.source ?? "livecode",

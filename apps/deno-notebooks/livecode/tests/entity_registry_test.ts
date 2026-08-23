@@ -136,7 +136,7 @@ Deno.test("a pristine demo seed is excluded from save; any real write captures i
   assertEquals(saved.data.notes[0].id, "edited");
 });
 
-Deno.test("a roll whose data cannot be serialized is skipped, not thrown on", () => {
+Deno.test("a roll write rejects unserializable data without creating an entity", () => {
   resetStores();
   const circular: Record<string, unknown> = {};
   circular.self = circular;
@@ -147,10 +147,34 @@ Deno.test("a roll whose data cannot be serialized is skipped, not thrown on", ()
     duration: 1,
     metadata: circular,
   };
-  setPianoRoll("reg/hostile", { notes: [note] });
+  const result = setPianoRoll("reg/hostile", { notes: [note] });
 
-  assertEquals(pianoRolls.latestJson("reg/hostile"), "");
-  assertEquals(pianoRolls.serialize("reg/hostile"), null);
+  assertEquals(result.ok, false);
+  assertEquals(getPianoRoll("reg/hostile"), undefined);
+});
+
+Deno.test("a rejected roll update leaves value, revision, history, and change state intact", () => {
+  resetStores();
+  const created = setPianoRoll("reg/stable", {
+    notes: [{ id: "valid", pitch: 60, position: 0, duration: 1 }],
+  }, { source: "client" });
+  assert(created.ok);
+  collectPianoRollChanges();
+
+  const result = setPianoRoll("reg/stable", {
+    notes: [{
+      id: "invalid",
+      pitch: 72,
+      position: 0,
+      duration: 1,
+      metadata: { value: 1n },
+    }],
+  }, { source: "client" });
+
+  if (result.ok) throw new Error("expected the update to be rejected");
+  assertEquals(result.current, created.roll);
+  assertEquals(getPianoRoll("reg/stable"), created.roll);
+  assertEquals(collectPianoRollChanges(), null);
 });
 
 Deno.test("pianoRoll round-trips through serialize/deserialize", () => {
@@ -242,7 +266,7 @@ Deno.test("a snapshot never swallows the pending broadcast", () => {
 
   // An HTTP list (or a socket that just opened) answers one caller only, and
   // every snapshot is read-only with respect to the change gate.
-  assert(makePianoRollSnapshot({ force: true }).rolls["reg/broadcast"]);
+  assert(makePianoRollSnapshot().rolls["reg/broadcast"]);
   const broadcast = collectPianoRollChanges();
   assertEquals(
     broadcast?.map((change) => change.name),
@@ -279,20 +303,29 @@ Deno.test("undo and redo walk one roll's history and every step is a generation"
   const first = setPianoRoll("reg/history-walk", {
     notes: [{ id: "one", pitch: 60, position: 0, duration: 1 }],
   }, { source: "client" });
-  assertEquals(first.canUndo, false, "the creating write pushes no history");
+  assert(first.ok);
+  assertEquals(
+    first.roll.canUndo,
+    false,
+    "the creating write pushes no history",
+  );
 
   const second = setPianoRoll("reg/history-walk", {
     notes: [{ id: "two", pitch: 62, position: 0, duration: 1 }],
   }, { source: "client", label: "Second" });
-  assertEquals(second.canUndo, true);
-  assertEquals(second.canRedo, false);
+  assert(second.ok);
+  assertEquals(second.roll.canUndo, true);
+  assertEquals(second.roll.canRedo, false);
 
   const undone = undoPianoRoll("reg/history-walk");
   assertEquals(undone?.data.notes[0].id, "one");
   assertEquals(undone?.updatedBy, "undo");
   assertEquals(undone?.canUndo, false);
   assertEquals(undone?.canRedo, true);
-  assert(undone && undone.rev > second.rev, "an undo is a new generation");
+  assert(
+    undone && undone.rev > second.roll.rev,
+    "an undo is a new generation",
+  );
 
   const redone = redoPianoRoll("reg/history-walk", { originId: "pane" });
   assertEquals(redone?.data.notes[0].id, "two");
@@ -324,9 +357,14 @@ Deno.test("undo and redo are no-ops without history and undefined without a roll
   assertEquals(redoPianoRoll("reg/history-absent"), undefined);
 
   const created = setPianoRoll("reg/history-empty", { notes: [] });
+  assert(created.ok);
   const undone = undoPianoRoll("reg/history-empty");
-  assertEquals(undone?.rev, created.rev, "nothing to undo is not a generation");
-  assertEquals(redoPianoRoll("reg/history-empty")?.rev, created.rev);
+  assertEquals(
+    undone?.rev,
+    created.roll.rev,
+    "nothing to undo is not a generation",
+  );
+  assertEquals(redoPianoRoll("reg/history-empty")?.rev, created.roll.rev);
 });
 
 Deno.test("params create makes an empty entity and rejects an existing name", () => {
@@ -429,17 +467,17 @@ Deno.test("params round-trip preserves values and meta", () => {
   );
 });
 
-Deno.test("params serialize skips a value that cannot be serialized", () => {
+Deno.test("params serialization fails for an unavailable live value", () => {
   resetStores();
   const live = registerParams("reg/params-hostile", { gain: 1 });
   (live as Record<string, unknown>).gain = 10n;
 
-  assertEquals(params.serialize("reg/params-hostile"), null);
-  assertEquals(
-    params.latestJson("reg/params-hostile"),
-    "",
-    "an existing but unserializable entity is the empty string, not null",
+  assertThrows(
+    () => params.serialize("reg/params-hostile"),
+    Error,
+    "cannot be serialized",
   );
+  assertEquals(params.latestJson("reg/params-hostile"), null);
   assertEquals(params.latestJson("reg/params-absent"), null);
 });
 

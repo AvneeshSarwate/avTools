@@ -12,7 +12,6 @@ import { analyzeAndTransformTimedModule } from "./analyze_transform.ts";
 import { removePathBestEffort } from "./fs_utils.ts";
 import { createGeneratedRunId } from "@avtools/livecode-engine/generated_run_id.ts";
 import type {
-  ActiveWaitSnapshot,
   AddProjectModuleRequest,
   AnalyzeRequest,
   AnalyzeResponse,
@@ -28,6 +27,7 @@ import type {
   EntityMutationSuccess,
   HealthResponse,
   LaunchModuleRequest,
+  LaunchModuleResponse,
   LivecodeProjectManifest,
   OpenProjectRequest,
   PianoRollHistoryRequest,
@@ -67,6 +67,7 @@ import type {
   ParamsEntity,
   ParamsSnapshot,
   PianoRollObject,
+  PianoRollSetResult,
   PianoRollSnapshot,
   SignalsSnapshot,
 } from "./protocol.ts";
@@ -85,7 +86,6 @@ import {
 } from "./project_shadow_analysis.ts";
 import {
   clearModulePianoRollLookups,
-  makeActiveWaitSnapshot,
 } from "@avtools/livecode-engine/runtime.ts";
 import { buildBrowserHostAssets } from "../browser_host/build_host_assets.ts";
 import { writeBrowserCheckConfig } from "./browser_check_config.ts";
@@ -250,9 +250,6 @@ export async function createLivecodeVisualizerServer(
   await Deno.mkdir(logsDir, { recursive: true });
   await Deno.mkdir(lspLogsDir, { recursive: true });
 
-  // The deprecated `/runtime/snapshots` shim's sockets. Every entity kind now
-  // reaches clients on `/sync`; this set exists only for the Vue SketchWrapper.
-  const sockets = new Set<WebSocket>();
   const syncSockets = new Map<WebSocket, SyncSocketState>();
   const clientControlSockets = new Map<string, ClientControlSocket>();
   const pendingClientCommands = new Map<string, PendingClientCommand>();
@@ -264,18 +261,15 @@ export async function createLivecodeVisualizerServer(
   let lastDiagnostics:
     | { diagnosticsKey: string; response: ProjectShadowCheckResponse }
     | null = null;
-  let lastSnapshotJson = "";
   let closing = false;
 
   // Generated code's instrumentation import. Local engines import the package
   // source by file URL; a browser engine imports the served runtime bundle.
   const engineRuntimeImport = () =>
-    engineMode === "remote"
-      ? "/engine/runtime.js"
-      : new URL(
-        "../../../../packages/livecode-engine/runtime.ts",
-        import.meta.url,
-      ).href;
+    engineMode === "remote" ? "/engine/runtime.js" : new URL(
+      "../../../../packages/livecode-engine/runtime.ts",
+      import.meta.url,
+    ).href;
 
   const log = async (entry: Record<string, unknown>) => {
     const line = JSON.stringify({
@@ -322,10 +316,7 @@ export async function createLivecodeVisualizerServer(
     ? createLocalExecutionPlane({
       log,
       panicMidi: (await import("../helpers/midi_helpers.ts")).panicMidi,
-      onSyncTick: (collected) => {
-        broadcastSyncChanges(collected);
-        broadcastLegacyRuntimeSnapshot();
-      },
+      onSyncTick: broadcastSyncChanges,
     })
     : null;
   const plane: ExecutionPlane = (localPlane ?? remotePlane)!;
@@ -484,8 +475,7 @@ export async function createLivecodeVisualizerServer(
     if (request.method === "POST" && url.pathname === "/runtime/launch") {
       const requestBody = await request.json() as LaunchModuleRequest;
       try {
-        await launchModule(requestBody);
-        return json({ ok: true });
+        return json(await launchModule(requestBody));
       } catch (error) {
         return json(
           {
@@ -663,7 +653,7 @@ export async function createLivecodeVisualizerServer(
         await plane.execute({
           kind: "pianoRollSet",
           request: requestBody,
-        }) as PianoRollObject,
+        }) as PianoRollSetResult,
       );
     }
 
@@ -750,27 +740,6 @@ export async function createLivecodeVisualizerServer(
       };
       socket.onclose = () => syncSockets.delete(socket);
       socket.onerror = () => syncSockets.delete(socket);
-      return response;
-    }
-
-    if (request.method === "GET" && url.pathname === "/runtime/snapshots") {
-      // Local-mode-only for real: the snapshot reads the in-process engine,
-      // and throwing inside socket handlers is not an acceptable answer.
-      if (!localPlane) {
-        return json({
-          ok: false,
-          error: "The deprecated /runtime/snapshots shim is local-mode-only",
-        }, { status: 404 });
-      }
-      const { socket, response } = Deno.upgradeWebSocket(request);
-      socket.onopen = () => {
-        sockets.add(socket);
-        socket.send(
-          JSON.stringify(makeRuntimeSnapshot() satisfies ActiveWaitSnapshot),
-        );
-      };
-      socket.onclose = () => sockets.delete(socket);
-      socket.onerror = () => sockets.delete(socket);
       return response;
     }
 
@@ -874,7 +843,8 @@ export async function createLivecodeVisualizerServer(
         );
         const filePath = join(currentProject.root, normalize(relative));
         if (
-          relative.includes("..") || !filePath.startsWith(currentProject.root) ||
+          relative.includes("..") ||
+          !filePath.startsWith(currentProject.root) ||
           !filePath.endsWith(".ts")
         ) {
           return new Response("Not found", {
@@ -915,7 +885,10 @@ export async function createLivecodeVisualizerServer(
       });
     } catch (error) {
       if (error instanceof Deno.errors.NotFound) {
-        return new Response("Not found", { status: 404, headers: CORS_HEADERS });
+        return new Response("Not found", {
+          status: 404,
+          headers: CORS_HEADERS,
+        });
       }
       throw error;
     }
@@ -934,7 +907,10 @@ export async function createLivecodeVisualizerServer(
       stat = await Deno.stat(filePath);
     } catch (error) {
       if (error instanceof Deno.errors.NotFound) {
-        return new Response("Not found", { status: 404, headers: CORS_HEADERS });
+        return new Response("Not found", {
+          status: 404,
+          headers: CORS_HEADERS,
+        });
       }
       throw error;
     }
@@ -984,7 +960,6 @@ export async function createLivecodeVisualizerServer(
     sessionRoot,
     close: async () => {
       closing = true;
-      for (const socket of sockets) socket.close();
       for (const socket of syncSockets.keys()) socket.close();
       for (const client of clientControlSockets.values()) {
         client.socket.close();
@@ -1273,27 +1248,34 @@ export async function createLivecodeVisualizerServer(
     const capture = await plane.execute({
       kind: "captureEntities",
     }) as EngineEntityCapture[];
+    const captureErrors = capture.filter((row) => row.error !== undefined);
+    if (captureErrors.length > 0) {
+      throw new Error(
+        `Project save aborted: ${
+          captureErrors.map((row) => `${row.type} "${row.name}": ${row.error}`)
+            .join("; ")
+        }`,
+      );
+    }
     for (const row of capture) {
-      if (row.error !== undefined) {
-        // One hostile entity must not fail the whole save.
-        skipped.push({ type: row.type, name: row.name, reason: row.error });
-        continue;
-      }
       if (row.payload === null || row.payload === undefined) {
         skipped.push({
           type: row.type,
           name: row.name,
-          reason: row.latestJson === null || row.latestJson === ""
-            ? "value could not be serialized"
-            : "unmodified auto-created entity",
+          reason: "unmodified auto-created entity",
         });
         continue;
+      }
+      if (row.latestJson === null) {
+        throw new Error(
+          `Project save aborted: ${row.type} "${row.name}" has no serializable state`,
+        );
       }
       pending.push({
         type: row.type,
         name: row.name,
         path: allocateEntityDataPath(row.type, row.name, usedLowercasePaths),
-        json: row.latestJson ?? "",
+        json: row.latestJson,
         text: `${JSON.stringify(row.payload, null, 2)}\n`,
       });
     }
@@ -1441,9 +1423,12 @@ export async function createLivecodeVisualizerServer(
     logType: string,
   ): Promise<Response> {
     if (!result.ok || !result.entity) {
-      return json({ ok: false, error: result.error ?? "entity action failed" }, {
-        status: result.status ?? 500,
-      });
+      return json(
+        { ok: false, error: result.error ?? "entity action failed" },
+        {
+          status: result.status ?? 500,
+        },
+      );
     }
     await log({
       type: logType,
@@ -1482,9 +1467,9 @@ export async function createLivecodeVisualizerServer(
       rows.push({
         type: row.type,
         name: row.name,
-        unsaved: saved === undefined
-          ? row.wouldSave
-          : row.latestJson !== saved,
+        unsaved: row.error !== undefined ||
+          (saved === undefined ? row.wouldSave : row.latestJson !== saved),
+        ...(row.error ? { error: row.error } : {}),
       });
     }
 
@@ -1855,7 +1840,10 @@ export async function createLivecodeVisualizerServer(
       shadowRoot: shadowDir,
       repoRoot: REPO_ROOT,
       denoConfigPath,
-      runtimeImport: new URL("../../../../packages/livecode-engine/runtime.ts", import.meta.url).href,
+      runtimeImport: new URL(
+        "../../../../packages/livecode-engine/runtime.ts",
+        import.meta.url,
+      ).href,
     }).then((response) => {
       lastDiagnostics = { diagnosticsKey, response };
       return response;
@@ -1925,39 +1913,12 @@ export async function createLivecodeVisualizerServer(
       }
     }
 
-    // `/runtime/state` carries the run token: rehydration is where a client
-    // seeds the token memory its terminal dedupe keys on.
     const state = await plane.execute({ kind: "runtimeState" }) as Omit<
       RuntimeStateResponse,
       "ok" | "latestPreparedByModule"
     >;
     return { ok: true, ...state, latestPreparedByModule };
   }
-
-  /** Local-mode only: the deprecated shim reads this process's engine. */
-  function makeRuntimeSnapshot(): ActiveWaitSnapshot {
-    const engine = requireLocalEngine();
-    const snapshot = makeActiveWaitSnapshot();
-    return {
-      ...snapshot,
-      activeModules: engine.activeModuleIds().sort((a, b) =>
-        a.localeCompare(b)
-      ),
-      // The deprecated shim's rows stay token-free; see the engine's
-      // `legacyModuleRuns` for the rationale.
-      moduleRuns: engine.legacyModuleRuns(),
-    };
-  }
-
-  function requireLocalEngine() {
-    if (!localPlane) {
-      throw new Error("only available with a local engine");
-    }
-    return localPlane.engine;
-  }
-
-  // --- broadcast fan-out -------------------------------------------------
-  // Everything below reads ONE collected result. Nothing here drains a gate.
 
   function broadcastSyncChanges(collected: SyncCollectedChanges): void {
     if (collected.size === 0 || syncSockets.size === 0) return;
@@ -2007,67 +1968,6 @@ export async function createLivecodeVisualizerServer(
       }
       if (!any) continue;
       sendSyncMessage(state, { resets: filtered });
-    }
-  }
-
-  /**
-   * `/runtime/snapshots` keeps FULL fidelity — modules, lookups, activeModules,
-   * and `moduleRuns` with `updatedAtMs` — because the Vue SketchWrapper reads
-   * `{seq, modules}` from it and nothing else may narrow a shipped shape out
-   * from under a client this slice does not modernize. Its gate stays the
-   * serialized whole-snapshot compare it has always been: that is a pure
-   * comparison, not a gate anything else consumes.
-   */
-  function broadcastLegacyRuntimeSnapshot(): void {
-    const snapshot = makeRuntimeSnapshot();
-    const snapshotJson = JSON.stringify(snapshot.modules) +
-      JSON.stringify(snapshot.pianoRollLookups ?? {}) +
-      JSON.stringify(snapshot.activeModules ?? []) +
-      JSON.stringify(snapshot.moduleRuns ?? {});
-    if (snapshotJson === lastSnapshotJson) return;
-    lastSnapshotJson = snapshotJson;
-    sendSnapshotToSockets(sockets, snapshot);
-    if (options.logLevel === "debug") {
-      void log({
-        type: "snapshot",
-        activeModuleCount: Object.keys(snapshot.modules).length,
-        activeCallsiteCount: Object.values(snapshot.modules).reduce(
-          (sum, ids) => sum + ids.length,
-          0,
-        ),
-      });
-    }
-  }
-
-  function sendSnapshotToSockets(
-    targets: Set<WebSocket>,
-    snapshot: unknown,
-  ): void {
-    if (targets.size === 0) return;
-    let payload: string;
-    try {
-      payload = JSON.stringify(snapshot);
-    } catch (error) {
-      // User-supplied metadata can be cyclic. One hostile entity must not take
-      // the shared broadcast tick down with it.
-      void log({
-        type: "snapshotSerializeFailed",
-        message: error instanceof Error ? error.message : String(error),
-      });
-      return;
-    }
-    for (const socket of targets) {
-      if (socket.readyState !== WebSocket.OPEN) continue;
-      try {
-        socket.send(payload);
-      } catch (error) {
-        // One socket that closed between the check and the send must not skip
-        // the other channels: they all share this tick now.
-        void log({
-          type: "snapshotSendFailed",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
     }
   }
 
@@ -2574,14 +2474,16 @@ export async function createLivecodeVisualizerServer(
     await removePathBestEffort(path, `prepared run ${run.generatedRunId}`);
   }
 
-  async function launchModule(requestBody: LaunchModuleRequest) {
+  async function launchModule(
+    requestBody: LaunchModuleRequest,
+  ): Promise<LaunchModuleResponse> {
     // The engine owns the whole accept/queue/replace discipline; the server
     // contributes only its prepared-run bookkeeping's build metadata.
-    await plane.execute({
+    return await plane.execute({
       kind: "launch",
       request: requestBody,
       prepared: preparedRuns.get(requestBody.generatedRunId),
-    });
+    }) as LaunchModuleResponse;
   }
 }
 

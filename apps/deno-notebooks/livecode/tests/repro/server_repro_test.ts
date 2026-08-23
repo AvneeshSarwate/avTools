@@ -10,6 +10,10 @@ import { assert, assertEquals } from "jsr:@std/assert@1";
 import { join } from "jsr:@std/path@1";
 import { createLivecodeVisualizerServer } from "../../visualizer/server.ts";
 import { postJson, sleep } from "../test_helpers.ts";
+import {
+  clearParamsStore,
+  registerParams,
+} from "@avtools/livecode-engine/params_store.ts";
 import type {
   AnalyzeSuccess,
   ProjectCurrentResponse,
@@ -178,6 +182,49 @@ Deno.test({
       }) as ProjectCurrentResponse;
       assertEquals(reopened.project?.manifest.canvas?.pianoRollViews, [view]);
     } finally {
+      await server.close();
+    }
+  },
+});
+
+Deno.test({
+  name: "project save aborts before writing when an entity cannot serialize",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const sessionRoot = await Deno.makeTempDir({ prefix: "tcv-save-invalid-" });
+    const projectRoot = await Deno.makeTempDir({
+      prefix: "tcv-save-invalid-proj-",
+    });
+    const manifestPath = join(projectRoot, PROJECT_MANIFEST_FILENAME);
+    const server = await createLivecodeVisualizerServer({
+      port: 0,
+      sessionRoot,
+      logLevel: "info",
+    });
+    try {
+      await postJson(`${server.baseUrl}/project/create`, {
+        projectPath: projectRoot,
+        name: "save-invalid",
+      });
+      const manifestBefore = await Deno.readTextFile(manifestPath);
+
+      const values = registerParams("save/invalid", { gain: 1 });
+      (values as Record<string, unknown>).gain = 1n;
+
+      const response = await fetch(`${server.baseUrl}/project/save`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      const body = await response.json() as { ok?: boolean; error?: string };
+
+      assertEquals(response.status, 500);
+      assertEquals(body.ok, false);
+      assert(body.error?.includes("Project save aborted"));
+      assertEquals(await Deno.readTextFile(manifestPath), manifestBefore);
+    } finally {
+      clearParamsStore();
       await server.close();
     }
   },

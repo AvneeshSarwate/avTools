@@ -33,6 +33,8 @@ import type {
   ParamsMeta,
   ParamsValues,
   PianoRollData,
+  PianoRollObject,
+  PianoRollSetResult,
   SavedParamsEntity,
   SavedPianoRollEntity,
 } from "@avtools/livecode-protocol";
@@ -95,12 +97,12 @@ export const pianoRollEntityType: DurableEntityTypeDescriptor = {
     if (pianoRollExists(name)) {
       throw new Error(`Piano roll "${name}" already exists`);
     }
-    setPianoRoll(name, { notes: [] }, {
+    requirePianoRollSet(setPianoRoll(name, { notes: [] }, {
       label: "Create piano roll",
       source: "server",
       originId: "create",
       undoable: false,
-    });
+    }));
   },
   duplicate(sourceName, targetName) {
     const source = getPianoRoll(sourceName);
@@ -109,12 +111,12 @@ export const pianoRollEntityType: DurableEntityTypeDescriptor = {
       throw new Error(`Piano roll "${targetName}" already exists`);
     }
     // getPianoRoll already returns a deep clone, so the copy shares nothing.
-    setPianoRoll(targetName, source.data, {
+    requirePianoRollSet(setPianoRoll(targetName, source.data, {
       label: "Duplicate piano roll",
       source: "server",
       originId: "duplicate",
       undoable: false,
-    });
+    }));
   },
   remove: (name) => deletePianoRoll(name),
   serialize(name) {
@@ -124,13 +126,6 @@ export const pianoRollEntityType: DurableEntityTypeDescriptor = {
     // put a junk melody.json in every project ever saved. Any real write bumps
     // rev past 1 and captures it forever after.
     if (roll.rev === 1 && roll.updatedBy === DEMO_SEED_ORIGIN) return null;
-    if (latestPianoRollJson(name) === "") {
-      console.warn(
-        `[entity-registry] piano roll "${name}" holds metadata that cannot be ` +
-          "serialized; skipped by save.",
-      );
-      return null;
-    }
     const saved: SavedPianoRollEntity = {
       type: PIANO_ROLL_ENTITY_TYPE,
       name: roll.name,
@@ -158,11 +153,13 @@ export const pianoRollEntityType: DurableEntityTypeDescriptor = {
         }
       }
     }
-    setPianoRoll(name, rollData as unknown as PianoRollData, {
-      label: "Load project",
-      source: "server",
-      undoable: false,
-    });
+    requirePianoRollSet(
+      setPianoRoll(name, rollData as unknown as PianoRollData, {
+        label: "Load project",
+        source: "server",
+        undoable: false,
+      }),
+    );
     // Open adopts disk truth, so the pre-load stacks would undo into a state
     // the saved file never contained.
     clearPianoRollHistory(name);
@@ -188,11 +185,7 @@ export const paramsEntityType: DurableEntityTypeDescriptor = {
     const entity = getParams(name);
     if (!entity) return null;
     if (json === null) {
-      console.warn(
-        `[entity-registry] params "${name}" value cannot be serialized ` +
-          "(cycle or BigInt written by code); skipped by save.",
-      );
-      return null;
+      throw new Error(`Params "${name}" cannot be serialized`);
     }
     const saved: SavedParamsEntity = {
       type: PARAMS_ENTITY_TYPE,
@@ -219,12 +212,13 @@ export const paramsEntityType: DurableEntityTypeDescriptor = {
       meta as ParamsMeta | undefined,
     );
   },
-  latestJson: (name) => {
-    const json = latestParamsJson(name);
-    if (json !== null) return json;
-    return getParams(name) ? "" : null;
-  },
+  latestJson: (name) => latestParamsJson(name),
 };
+
+function requirePianoRollSet(result: PianoRollSetResult): PianoRollObject {
+  if (!result.ok) throw new Error(result.error);
+  return result.roll;
+}
 
 /** Called at server construction. Safe to call more than once. */
 export function registerBuiltinDurableEntityTypes(): void {

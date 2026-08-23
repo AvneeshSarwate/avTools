@@ -168,6 +168,7 @@ export interface ProjectDataEntityStatus {
   type: string;
   name: string;
   unsaved: boolean;
+  error?: string;
 }
 
 export interface ProjectStatusResponse {

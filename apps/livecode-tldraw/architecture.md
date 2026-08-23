@@ -18,7 +18,7 @@ and the end-to-end topology and flows are in
 | App shell, tldraw overrides, project load/save | `src/App.tsx` |
 | The one `/sync` socket, per-kind contexts, typed hooks, HTTP writes | `src/syncRuntime.tsx` |
 | Runtime provider, analysis/run state, connect-armed sequence, project synchronization | `src/livecodeRuntime.tsx` |
-| Token-keyed terminal-run dedupe (pure, import-free; a Deno unit test loads this exact file) | `src/runDedupe.ts` |
+| Launch acknowledgement/run-token correlation | `src/runCorrelation.ts` |
 | Livecode shape and utility | `src/LivecodeEditorShape.tsx` |
 | CodeMirror, LSP bridge, wait decorations | `src/CodeMirrorEditor.tsx`, `src/denoLsp.ts` |
 | Piano-roll shape | `src/PianoRollShape.tsx` |

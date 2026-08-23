@@ -61,7 +61,11 @@ export interface BakedProjectFile {
 }
 
 export type EngineOp =
-  | { kind: "launch"; request: LaunchModuleRequest; prepared?: EnginePreparedLaunch }
+  | {
+    kind: "launch";
+    request: LaunchModuleRequest;
+    prepared?: EnginePreparedLaunch;
+  }
   | { kind: "stop"; moduleId: string; reason: string }
   | { kind: "stopAll"; reason: string }
   | { kind: "panic"; reason: string }
@@ -105,6 +109,7 @@ export interface EngineEntitySaveState {
   latestJson: string | null;
   /** Whether a save would write this entity at all. */
   wouldSave: boolean;
+  error?: string;
 }
 
 export interface EngineEntityLoadResult {

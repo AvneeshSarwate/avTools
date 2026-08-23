@@ -1,6 +1,6 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { fromFileUrl } from "jsr:@std/path@1";
-import { DEFAULT_LIVECODE_SOURCE } from "../../../browser-projections/src/sketches/livecodeVisualizer/defaultSource.ts";
+import { DEFAULT_LIVECODE_SOURCE } from "../../../livecode-tldraw/src/defaultSource.ts";
 import { createLivecodeVisualizerServer } from "../visualizer/server.ts";
 import {
   lspCompletionItems,

@@ -18,7 +18,6 @@ import type { SyncCollectedChanges } from "@avtools/livecode-engine/sync_sources
 import {
   createLivecodeEngine,
   executeEngineOp,
-  type LivecodeEngine,
 } from "@avtools/livecode-engine";
 import { SYNC_ENTITY_TYPES } from "@avtools/livecode-protocol";
 
@@ -41,8 +40,6 @@ export interface LocalExecutionPlaneOptions {
 
 export interface LocalExecutionPlane extends ExecutionPlane {
   readonly kind: "local";
-  /** Direct engine access for the local-only legacy snapshot shim. */
-  readonly engine: LivecodeEngine;
 }
 
 export function createLocalExecutionPlane(
@@ -55,7 +52,6 @@ export function createLocalExecutionPlane(
   });
   return {
     kind: "local",
-    engine,
     execute: (op) => executeEngineOp(engine, op),
     close: () => engine.close(),
   };

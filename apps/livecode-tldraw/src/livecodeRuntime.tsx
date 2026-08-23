@@ -22,6 +22,7 @@ import type {
   HealthResponse,
   HistoryEntry,
   LaunchModuleRequest,
+  LaunchModuleResponse,
   PreparedBuild,
   PreparedFailure,
   ProjectShadowCheckResponse,
@@ -32,15 +33,13 @@ import type {
   VisualizerManifestMessage,
 } from "./livecodeProtocol";
 import {
-  claimRun,
-  createRunDedupeMemory,
-  isActiveRunState,
-  observeActiveRun,
-  releaseRunClaim,
-  type RunDedupeMemory,
-  seedRehydratedRun,
-  shouldApplyTerminalRun,
-} from "./runDedupe";
+  acknowledgeRunLaunch,
+  beginRunLaunch,
+  createRunCorrelation,
+  rejectRunLaunch,
+  type RunCorrelation,
+  shouldApplyRun,
+} from "./runCorrelation";
 import {
   maxSeq,
   useModuleVizSync,
@@ -87,18 +86,14 @@ export interface ModuleViewState {
   pianoRollLookups: Record<string, string>;
   lastSnapshotSeq: number | null;
   latestError: string | null;
-  /**
-   * The token of the last run entity this record actually APPLIED. A suppressed
-   * terminal never sets it, which is how a test tells "the run I watched ended"
-   * from "some older run's terminal leaked through".
-   */
+  /** The engine-minted identity of the run currently represented here. */
   runToken: string | null;
 }
 
 interface ModuleRecord extends ModuleViewState {
   buildTimer: number | null;
   analyzeSequence: number;
-  runDedupe: RunDedupeMemory;
+  runCorrelation: RunCorrelation;
   pendingAnalyze: {
     sourceText: string;
     serverBaseUrl: string;
@@ -155,6 +150,8 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
   const { runs, latestSeq: runsSeq } = useRunsSync();
   const { moduleWaits, moduleLookups, latestSeq: vizSeq } = useModuleVizSync();
   const serverBaseUrl = syncActions.serverBaseUrl;
+  const runsRef = useRef(runs);
+  runsRef.current = runs;
 
   const serverBaseUrlRef = useRef(serverBaseUrl);
   serverBaseUrlRef.current = serverBaseUrl;
@@ -334,12 +331,8 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       const active = activeByModule.get(record.moduleId);
       const run = state.moduleRuns[record.moduleId];
       const latestPrepared = state.latestPreparedByModule[record.moduleId];
-      // `/runtime/state` carries the run token precisely so this seeds the
-      // token memory: after a reload the client has watched nothing go active,
-      // and without the seed the running run's own terminal would look like a
-      // stranger's when the next Replace stakes a claim over it.
+      rejectRunLaunch(record.runCorrelation);
       if (run) {
-        seedRehydratedRun(record.runDedupe, run);
         record.runToken = run.runToken;
       }
       if (active) {
@@ -347,7 +340,6 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
         record.manifest = active.manifest ?? record.manifest;
         record.latestError = null;
       } else {
-        releaseRunClaim(record.runDedupe);
         record.activeIds = [];
         record.runStatus = run
           ? moduleRunStateToRunStatus(run.state)
@@ -762,10 +754,6 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       record.diagnostics = [];
       record.activeIds = [];
       record.pianoRollLookups = {};
-      // An edit means the running build is no longer what this module is, so
-      // the claim on it drops. The TOKEN memory does not: that run is still
-      // going and its own terminal still has to be accepted when it lands.
-      releaseRunClaim(record.runDedupe);
       scheduleAnalyze(record);
     },
     [scheduleAnalyze],
@@ -808,12 +796,8 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
           }
         }
 
-        // Claiming BEFORE the post is what makes the terminal rule sound during
-        // a replacement: every run token watched go active up to this instant
-        // belongs to the run being replaced, and its terminal — which arrives
-        // while the replacement is still launching — can never retire this one.
-        claimRun(record.runDedupe);
-        await postJson("/runtime/launch", {
+        beginRunLaunch(record.runCorrelation);
+        const launch = await postJson<LaunchModuleResponse>("/runtime/launch", {
           moduleId: build.moduleId,
           transformedModuleUri: build.transformedModuleUri,
           generatedRunId: build.generatedRunId,
@@ -823,13 +807,15 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
           manifest: build.manifest,
           ...(options.replaceRunning ? { replaceRunning: true } : {}),
         } satisfies LaunchModuleRequest);
+        acknowledgeRunLaunch(record.runCorrelation, launch.runToken);
+        record.runToken = launch.runToken;
         record.runStatus = "running";
         record.latestError = null;
+        applyRunEntity(record, runsRef.current[record.moduleId]);
         publishModule(record);
       } catch (error) {
         record.runStatus = "error";
-        // The launch never took, so there is no claim to protect.
-        releaseRunClaim(record.runDedupe);
+        rejectRunLaunch(record.runCorrelation);
         record.latestError = error instanceof Error
           ? error.message
           : String(error);
@@ -948,7 +934,7 @@ function makeModuleRecord(
     latestError: null,
     runToken: null,
     buildTimer: null,
-    runDedupe: createRunDedupeMemory(),
+    runCorrelation: createRunCorrelation(),
     analyzeSequence: 0,
     pendingAnalyze: null,
     latestBuild: null,
@@ -956,25 +942,17 @@ function makeModuleRecord(
   };
 }
 
-/**
- * One module's run entity, applied whole. `rev`-style dedupe is impossible here
- * and unnecessary: the transport only ships an entity that actually changed, and
- * re-applying an unchanged one is idempotent under the token rule below.
- */
 function applyRunEntity(record: ModuleRecord, run: RunEntity | undefined) {
   if (!run) return;
+  if (!shouldApplyRun(record.runCorrelation, run)) return;
 
-  if (isActiveRunState(run.state)) {
-    observeActiveRun(record.runDedupe, run);
+  if (run.state === "launching" || run.state === "running") {
     record.runToken = run.runToken;
     if (record.runStatus !== "stopping") record.runStatus = "running";
     return;
   }
 
-  if (!shouldApplyTerminalRun(record.runDedupe, run)) return;
-
   record.runToken = run.runToken;
-  releaseRunClaim(record.runDedupe);
   record.activeIds = [];
   if (run.state === "error") {
     record.runStatus = "error";

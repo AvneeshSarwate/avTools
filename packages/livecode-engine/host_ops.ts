@@ -31,7 +31,10 @@ function resolveEntityRequest(
   typeId: unknown,
   name: unknown,
 ):
-  | { descriptor: ReturnType<typeof listDurableEntityTypes>[number]; name: string }
+  | {
+    descriptor: ReturnType<typeof listDurableEntityTypes>[number];
+    name: string;
+  }
   | { error: string; status: number } {
   const requestedType = typeof typeId === "string" ? typeId.trim() : "";
   const requestedName = typeof name === "string" ? name.trim() : "";
@@ -61,7 +64,6 @@ function captureEntities(): EngineEntityCapture[] {
           latestJson: descriptor.latestJson(name),
         });
       } catch (error) {
-        // One hostile entity must not fail the whole capture.
         rows.push({
           type: descriptor.typeId,
           name,
@@ -79,12 +81,22 @@ function entitySaveState(): EngineEntitySaveState[] {
   const rows: EngineEntitySaveState[] = [];
   for (const descriptor of listDurableEntityTypes()) {
     for (const name of descriptor.listNames()) {
-      rows.push({
-        type: descriptor.typeId,
-        name,
-        latestJson: descriptor.latestJson(name),
-        wouldSave: descriptor.serialize(name) !== null,
-      });
+      try {
+        rows.push({
+          type: descriptor.typeId,
+          name,
+          latestJson: descriptor.latestJson(name),
+          wouldSave: descriptor.serialize(name) !== null,
+        });
+      } catch (error) {
+        rows.push({
+          type: descriptor.typeId,
+          name,
+          latestJson: null,
+          wouldSave: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
   return rows;
@@ -128,8 +140,7 @@ export async function executeEngineOp(
 ): Promise<unknown> {
   switch (op.kind) {
     case "launch":
-      await engine.launchModule(op.request, op.prepared ?? undefined);
-      return { ok: true };
+      return await engine.launchModule(op.request, op.prepared ?? undefined);
     case "stop":
       await engine.stopModule(op.moduleId, op.reason);
       return { ok: true };
@@ -168,7 +179,7 @@ export async function executeEngineOp(
         moduleRuns: engine.moduleRunRecords(),
       };
     case "pianoRollList":
-      return makePianoRollSnapshot({ force: true });
+      return makePianoRollSnapshot();
     case "pianoRollSet":
       return setPianoRoll(op.request.name, op.request.data, {
         label: op.request.label,
@@ -239,7 +250,15 @@ export async function executeEngineOp(
           status: 409,
         } satisfies EngineEntityActionResult;
       }
-      descriptor.duplicate(name, targetName);
+      try {
+        descriptor.duplicate(name, targetName);
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+          status: 422,
+        } satisfies EngineEntityActionResult;
+      }
       return {
         ok: true,
         entity: { type: descriptor.typeId, name: targetName },
