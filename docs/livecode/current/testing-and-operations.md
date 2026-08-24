@@ -244,9 +244,14 @@ graphics initialization, window cleanup, or shared project state changes.
   encoding is collision-free (slashes, `%`, unicode, length cap,
   case-insensitive save-time collisions), and a forced piano-roll snapshot no
   longer consumes the pending broadcast;
-- tldraw piano-roll manifest/widget/static-vs-runtime name behavior and
-  focus-or-create shape behavior;
-- the tldraw run lifecycle, re-derived for changed-only delivery: a finite
+- responsive topbar bounds at desktop, tablet, and narrow window widths;
+- tldraw emoji-only entity widgets before name arguments, piano-roll
+  static-vs-runtime name behavior, focus-or-create behavior, and signal-widget
+  creation of a monitor scope; new piano-roll views also assert that the
+  rendered component fits the default shape without initial clipping;
+- the tldraw run lifecycle, including an engine-owned execution count that
+  advances for a completed one-shot but not a cancelled launch, and re-derived
+  for changed-only delivery: a finite
   module edited while it runs still reaching `stopped` at its own end with no
   reload; a module that throws on its first line still
   reaching `error`, which is the instant-failure conflation seen from the
@@ -254,7 +259,7 @@ graphics initialization, window cleanup, or shared project state changes.
   run ID active, the replaced run's terminal in the server log, the client
   following the replacement's token rather than the replaced run's terminal (the
   straddle), and the button set still Replace/Stop;
-- the tldraw params round trip: declaration manifest and gutter widget, pane
+- the tldraw params round trip: declaration manifest and inline widget, pane
   bindings after launch, a GUI edit reaching `/params/list` with a bumped rev
   and the pane's origin id, a running module's writes reaching the pane readout
   with no client action, pane rehydration from the sync socket's subscribe reset

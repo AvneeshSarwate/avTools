@@ -1,9 +1,9 @@
 
 need some kind of library/viewer for seeing entites that have been programatically created but don't have a UI on the canvas yet (or a browse view to just scroll through or something
 
+is there a need to add a system for events/handlers or pubsub between modules, or does it naturally fall out without need for extra structure (probably doesn't need a new thing?) 
 
 need some visualized notion of order in the canvas - it does exist and is pretty important? but is it actually true that nothing "fully breaks" if you run things out of order (eg, only module crashes) - should order be manual annotation in the UI? if you run headlessly, you probably need some proper startup order
-
 
 how would implementing something like midi-mapping for parameters via the GUI work?
 - UI creates a binding that actually gets instantiated and persists in the server? 

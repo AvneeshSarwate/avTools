@@ -478,286 +478,311 @@ function TopBar({
       className="topbar"
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <div className="topbar__group topbar__group--server">
-        <label htmlFor="server-url">Server</label>
-        <input
-          id="server-url"
-          value={runtime.serverBaseUrl}
-          onChange={(event) =>
-            runtime.setServerBaseUrl(event.currentTarget.value)}
-          spellCheck={false}
-        />
-        <button
-          type="button"
-          disabled={runtime.connectionStatus === "connecting"}
-          onClick={() =>
-            runtime.connectionStatus === "open"
-              ? runtime.disconnect()
-              : void runtime.connect()}
-        >
-          {runtime.connectionStatus === "open" ? "Disconnect" : "Connect"}
-        </button>
-      </div>
+      <strong className="topbar__brand">Livecode</strong>
 
-      <button
-        type="button"
-        disabled={!editor}
-        onClick={() => {
-          if (editor) createDefaultLivecodeCanvas(editor);
-        }}
-      >
-        New canvas
-      </button>
-      <button
-        type="button"
-        disabled={!editor}
-        onClick={() => fileInputRef.current?.click()}
-      >
-        Open .tldr
-      </button>
-      <button
-        type="button"
-        disabled={!editor}
-        onClick={() => {
-          if (editor) void saveTldrawCanvas(editor);
-        }}
-      >
-        Save .tldr
-      </button>
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".tldr,application/json"
-        style={{ display: "none" }}
-        onChange={(event) => {
-          const file = event.currentTarget.files?.[0];
-          event.currentTarget.value = "";
-          if (editor && file) {
-            void onOpenTldrawFile(file).catch((error) => {
-              console.error(
-                "[livecode-tldraw] failed to open .tldr file",
-                error,
-              );
-            });
-          }
-        }}
-      />
-      <button
-        type="button"
-        disabled={!editor}
-        onClick={() => {
-          if (editor) createLivecodeShape(editor);
-        }}
-      >
-        New module
-      </button>
-      <EntityViewCreator
-        editor={editor}
-        buttonLabel="New piano roll"
-        submitLabel="Add roll"
-        placeholder="piano roll name"
-        datalistId="topbar-roll-names"
-        knownNames={knownRollNames}
-        onAdd={(name) =>
-          runEntityAction(async () => {
-            if (!knownRollNames.includes(name)) {
-              await createEntity(
-                runtime.serverBaseUrl,
-                PIANO_ROLL_ENTITY_TYPE,
-                name,
-              );
-            }
-            if (editor) createEntityView(editor, PIANO_ROLL_ENTITY_TYPE, name);
-          })}
-      />
-      <EntityViewCreator
-        editor={editor}
-        buttonLabel="New params pane"
-        submitLabel="Add pane"
-        placeholder="params name"
-        datalistId="topbar-params-names"
-        knownNames={knownParamsNames}
-        initialName={knownParamsNames[0] ?? ""}
-        onAdd={async (name) => {
-          if (!editor) return false;
-          createEntityView(editor, PARAMS_ENTITY_TYPE, name);
-          return true;
-        }}
-      />
-      <EntityViewCreator
-        editor={editor}
-        buttonLabel="New animation"
-        submitLabel="Add animation"
-        placeholder="animation name"
-        datalistId="topbar-animation-names"
-        knownNames={knownAnimationNames}
-        onAdd={(name) =>
-          runEntityAction(async () => {
-            if (!knownAnimationNames.includes(name)) {
-              await createEntity(
-                runtime.serverBaseUrl,
-                ANIMATION_TIMELINE_ENTITY_TYPE,
-                name,
-              );
-            }
-            if (editor) {
-              createEntityView(editor, ANIMATION_TIMELINE_ENTITY_TYPE, name);
-            }
-          })}
-      />
-      {
-        /*
-        A scope binds to a value, not to an entity: any live signal, or one
-        durable param leaf. There is nothing to create server-side — the source
-        either exists or the scope waits for it — so this gesture is view-only.
-      */
-      }
-      {scopeDraft === null
-        ? (
-          <button
-            type="button"
-            disabled={!editor}
-            onClick={() => setScopeDraft("")}
-          >
-            New scope
-          </button>
-        )
-        : (
-          <form
-            className="topbar__group"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const source = parseScopeSource(
-                scopeDraft,
-                Object.keys(signalsRuntime.signals),
-              );
-              if (!editor || !source) return;
-              createSignalScopeShape(editor, source);
-              setScopeDraft(null);
-            }}
-          >
+      <div className="topbar__actions">
+        <details className="topbar__menu" name="livecode-topbar-menu">
+          <summary>Server</summary>
+          <div className="topbar__panel">
+            <label htmlFor="server-url">Server URL</label>
             <input
-              autoFocus
-              list="topbar-scope-sources"
-              placeholder="signal name or params:name.field"
-              value={scopeDraft}
+              id="server-url"
+              value={runtime.serverBaseUrl}
+              onChange={(event) =>
+                runtime.setServerBaseUrl(event.currentTarget.value)}
               spellCheck={false}
-              onChange={(event) => setScopeDraft(event.currentTarget.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setScopeDraft(null);
-              }}
             />
-            <datalist id="topbar-scope-sources">
-              {scopeSourceOptions.map((option) => (
-                <option
-                  key={option.value}
-                  value={option.value}
-                  label={option.label}
-                />
-              ))}
-            </datalist>
-            <button type="submit" disabled={!editor || !scopeDraft.trim()}>
-              Add scope
-            </button>
-            <button type="button" onClick={() => setScopeDraft(null)}>
-              Cancel
-            </button>
-          </form>
-        )}
-
-      {
-        /*
-        Entity actions are scoped to a single selected view: a shape is a view
-        of an entity, so the entity these act on is unambiguous only then.
-        Deleting the view stays the canvas gesture it always was.
-      */
-      }
-      {selection && duplicateDraft === null
-        ? (
-          <button
-            type="button"
-            onClick={() => setDuplicateDraft(`${selection.name}-copy`)}
-          >
-            Duplicate entity
-          </button>
-        )
-        : null}
-      {selection && duplicateDraft !== null
-        ? (
-          <form
-            className="topbar__group"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const targetName = duplicateDraft.trim();
-              if (!editor || !targetName) return;
-              void runEntityAction(async () => {
-                await duplicateEntity(
-                  runtime.serverBaseUrl,
-                  selection.type,
-                  selection.name,
-                  targetName,
-                );
-                createAdjacentEntityView(editor, selection.type, targetName);
-                setDuplicateDraft(null);
-              });
-            }}
-          >
-            <input
-              autoFocus
-              placeholder={`copy of ${selection.name}`}
-              value={duplicateDraft}
-              spellCheck={false}
-              onChange={(event) => setDuplicateDraft(event.currentTarget.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setDuplicateDraft(null);
-              }}
-            />
-            <button type="submit" disabled={!editor || !duplicateDraft.trim()}>
-              Duplicate
-            </button>
-            <button type="button" onClick={() => setDuplicateDraft(null)}>
-              Cancel
-            </button>
-          </form>
-        )
-        : null}
-      {selection
-        ? (
-          <button
-            type="button"
-            onClick={() => {
-              // Two-step confirm; the arm expires on its own so a stray first
-              // click cannot leave a live delete waiting for a second one.
-              if (deleteArmedName !== selection.name) {
-                setDeleteArmedName(selection.name);
-                return;
-              }
-              setDeleteArmedName(null);
-              void runEntityAction(async () => {
-                await deleteEntity(
-                  runtime.serverBaseUrl,
-                  selection.type,
-                  selection.name,
-                );
-              });
-            }}
-          >
-            {deleteArmedName === selection.name
-              ? `Really delete ${selection.name}?`
-              : "Delete entity"}
-          </button>
-        )
-        : null}
-
-      {
-        /* The baked topology's save: no project routes exist, so "save" is an
-          export — one JSON download of the entities the engine tab holds. */
-      }
-      {isBakedServerBaseUrl(runtime.serverBaseUrl)
-        ? (
-          <div className="topbar__group">
             <button
               type="button"
+              disabled={runtime.connectionStatus === "connecting"}
+              onClick={() =>
+                runtime.connectionStatus === "open"
+                  ? runtime.disconnect()
+                  : void runtime.connect()}
+            >
+              {runtime.connectionStatus === "open" ? "Disconnect" : "Connect"}
+            </button>
+          </div>
+        </details>
+
+        <details className="topbar__menu" name="livecode-topbar-menu">
+          <summary>Canvas</summary>
+          <div className="topbar__panel topbar__panel--stack">
+            <button
+              type="button"
+              disabled={!editor}
+              onClick={() => {
+                if (editor) createDefaultLivecodeCanvas(editor);
+              }}
+            >
+              New canvas
+            </button>
+            <button
+              type="button"
+              disabled={!editor}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              Open .tldr
+            </button>
+            <button
+              type="button"
+              disabled={!editor}
+              onClick={() => {
+                if (editor) void saveTldrawCanvas(editor);
+              }}
+            >
+              Save .tldr
+            </button>
+          </div>
+        </details>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".tldr,application/json"
+          style={{ display: "none" }}
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (editor && file) {
+              void onOpenTldrawFile(file).catch((error) => {
+                console.error(
+                  "[livecode-tldraw] failed to open .tldr file",
+                  error,
+                );
+              });
+            }
+          }}
+        />
+
+        <details className="topbar__menu" name="livecode-topbar-menu">
+          <summary>Add</summary>
+          <div className="topbar__panel topbar__panel--stack">
+            <button
+              type="button"
+              disabled={!editor}
+              onClick={() => {
+                if (editor) createLivecodeShape(editor);
+              }}
+            >
+              New module
+            </button>
+            <EntityViewCreator
+              editor={editor}
+              buttonLabel="New piano roll"
+              submitLabel="Add roll"
+              placeholder="piano roll name"
+              datalistId="topbar-roll-names"
+              knownNames={knownRollNames}
+              onAdd={(name) =>
+                runEntityAction(async () => {
+                  if (!knownRollNames.includes(name)) {
+                    await createEntity(
+                      runtime.serverBaseUrl,
+                      PIANO_ROLL_ENTITY_TYPE,
+                      name,
+                    );
+                  }
+                  if (editor) {
+                    createEntityView(editor, PIANO_ROLL_ENTITY_TYPE, name);
+                  }
+                })}
+            />
+            <EntityViewCreator
+              editor={editor}
+              buttonLabel="New params pane"
+              submitLabel="Add pane"
+              placeholder="params name"
+              datalistId="topbar-params-names"
+              knownNames={knownParamsNames}
+              initialName={knownParamsNames[0] ?? ""}
+              onAdd={async (name) => {
+                if (!editor) return false;
+                createEntityView(editor, PARAMS_ENTITY_TYPE, name);
+                return true;
+              }}
+            />
+            <EntityViewCreator
+              editor={editor}
+              buttonLabel="New animation"
+              submitLabel="Add animation"
+              placeholder="animation name"
+              datalistId="topbar-animation-names"
+              knownNames={knownAnimationNames}
+              onAdd={(name) =>
+                runEntityAction(async () => {
+                  if (!knownAnimationNames.includes(name)) {
+                    await createEntity(
+                      runtime.serverBaseUrl,
+                      ANIMATION_TIMELINE_ENTITY_TYPE,
+                      name,
+                    );
+                  }
+                  if (editor) {
+                    createEntityView(
+                      editor,
+                      ANIMATION_TIMELINE_ENTITY_TYPE,
+                      name,
+                    );
+                  }
+                })}
+            />
+            {scopeDraft === null
+              ? (
+                <button
+                  type="button"
+                  disabled={!editor}
+                  onClick={() => setScopeDraft("")}
+                >
+                  New scope
+                </button>
+              )
+              : (
+                <form
+                  className="topbar__group"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const source = parseScopeSource(
+                      scopeDraft,
+                      Object.keys(signalsRuntime.signals),
+                    );
+                    if (!editor || !source) return;
+                    createSignalScopeShape(editor, source);
+                    setScopeDraft(null);
+                  }}
+                >
+                  <input
+                    autoFocus
+                    list="topbar-scope-sources"
+                    placeholder="signal name or params:name.field"
+                    value={scopeDraft}
+                    spellCheck={false}
+                    onChange={(event) =>
+                      setScopeDraft(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") setScopeDraft(null);
+                    }}
+                  />
+                  <datalist id="topbar-scope-sources">
+                    {scopeSourceOptions.map((option) => (
+                      <option
+                        key={option.value}
+                        value={option.value}
+                        label={option.label}
+                      />
+                    ))}
+                  </datalist>
+                  <button
+                    type="submit"
+                    disabled={!editor || !scopeDraft.trim()}
+                  >
+                    Add scope
+                  </button>
+                  <button type="button" onClick={() => setScopeDraft(null)}>
+                    Cancel
+                  </button>
+                </form>
+              )}
+          </div>
+        </details>
+
+        {selection
+          ? (
+            <details className="topbar__menu" name="livecode-topbar-menu">
+              <summary>Entity</summary>
+              <div className="topbar__panel topbar__panel--stack">
+                <span className="topbar__selection-name">
+                  {selection.type}: {selection.name}
+                </span>
+                {duplicateDraft === null
+                  ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDuplicateDraft(`${selection.name}-copy`)}
+                    >
+                      Duplicate entity
+                    </button>
+                  )
+                  : (
+                    <form
+                      className="topbar__group"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        const targetName = duplicateDraft.trim();
+                        if (!editor || !targetName) return;
+                        void runEntityAction(async () => {
+                          await duplicateEntity(
+                            runtime.serverBaseUrl,
+                            selection.type,
+                            selection.name,
+                            targetName,
+                          );
+                          createAdjacentEntityView(
+                            editor,
+                            selection.type,
+                            targetName,
+                          );
+                          setDuplicateDraft(null);
+                        });
+                      }}
+                    >
+                      <input
+                        autoFocus
+                        placeholder={`copy of ${selection.name}`}
+                        value={duplicateDraft}
+                        spellCheck={false}
+                        onChange={(event) =>
+                          setDuplicateDraft(event.currentTarget.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") setDuplicateDraft(null);
+                        }}
+                      />
+                      <button
+                        type="submit"
+                        disabled={!editor || !duplicateDraft.trim()}
+                      >
+                        Duplicate
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDuplicateDraft(null)}
+                      >
+                        Cancel
+                      </button>
+                    </form>
+                  )}
+                <button
+                  type="button"
+                  className="topbar__danger"
+                  onClick={() => {
+                    if (deleteArmedName !== selection.name) {
+                      setDeleteArmedName(selection.name);
+                      return;
+                    }
+                    setDeleteArmedName(null);
+                    void runEntityAction(async () => {
+                      await deleteEntity(
+                        runtime.serverBaseUrl,
+                        selection.type,
+                        selection.name,
+                      );
+                    });
+                  }}
+                >
+                  {deleteArmedName === selection.name
+                    ? `Really delete ${selection.name}?`
+                    : "Delete entity"}
+                </button>
+              </div>
+            </details>
+          )
+          : null}
+
+        {isBakedServerBaseUrl(runtime.serverBaseUrl)
+          ? (
+            <button
+              type="button"
+              className="topbar__primary"
               onClick={() => {
                 setSaveNotice(null);
                 void runEntityAction(async () => {
@@ -767,43 +792,44 @@ function TopBar({
             >
               Export data
             </button>
-            {saveNotice ? <span>{saveNotice}</span> : null}
-          </div>
-        )
-        : null}
+          )
+          : null}
 
-      {/* Explicit save, gated on an open project exactly like the collector. */}
-      {projectPath
-        ? (
-          <div className="topbar__group">
-            <button
-              type="button"
-              disabled={!editor}
-              onClick={() => {
-                setSaveNotice(null);
-                void runEntityAction(async () => {
-                  if (!editor) throw new Error("No canvas is mounted yet");
-                  setSaveNotice(describeProjectSave(
-                    await saveProjectWithCanvas(editor, runtime.serverBaseUrl),
-                  ));
-                });
-              }}
-            >
-              Save project
-            </button>
-            {unsavedCount === null ? null : (
-              <span
-                className={`status-pill status-pill--${
-                  unsavedCount > 0 ? "unsaved" : "saved"
-                }`}
+        {projectPath
+          ? (
+            <div className="topbar__save">
+              <button
+                type="button"
+                className="topbar__primary"
+                disabled={!editor}
+                onClick={() => {
+                  setSaveNotice(null);
+                  void runEntityAction(async () => {
+                    if (!editor) throw new Error("No canvas is mounted yet");
+                    setSaveNotice(describeProjectSave(
+                      await saveProjectWithCanvas(
+                        editor,
+                        runtime.serverBaseUrl,
+                      ),
+                    ));
+                  });
+                }}
               >
-                {unsavedCount > 0 ? `${unsavedCount} unsaved` : "saved"}
-              </span>
-            )}
-            {saveNotice ? <span>{saveNotice}</span> : null}
-          </div>
-        )
-        : null}
+                Save project
+              </button>
+              {unsavedCount === null ? null : (
+                <span
+                  className={`status-pill status-pill--${
+                    unsavedCount > 0 ? "unsaved" : "saved"
+                  }`}
+                >
+                  {unsavedCount > 0 ? `${unsavedCount} unsaved` : "saved"}
+                </span>
+              )}
+            </div>
+          )
+          : null}
+      </div>
 
       <div className="topbar__status">
         <span
@@ -814,7 +840,7 @@ function TopBar({
         <span className={`status-pill status-pill--${runtime.lspStatus}`}>
           lsp: {runtime.lspStatus}
         </span>
-        <span>{moduleCount} modules</span>
+        <span className="topbar__secondary-status">{moduleCount} modules</span>
         {changedDependencyCount > 0
           ? <span>{changedDependencyCount} dependency updates</span>
           : null}
@@ -837,6 +863,9 @@ function TopBar({
           : null}
         {entityError
           ? <span className="topbar__error">{entityError}</span>
+          : null}
+        {saveNotice
+          ? <span className="topbar__notice">{saveNotice}</span>
           : null}
       </div>
     </div>

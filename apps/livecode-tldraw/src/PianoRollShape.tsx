@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react'
+import {
+  type SyntheticEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import {
   BaseBoxShapeUtil,
   createShapeId,
@@ -22,10 +28,21 @@ import { usePianoRollsSync, useSignalsSync } from './syncRuntime'
 import { PIANO_ROLL_ENTITY_TYPE } from './serverRequests'
 
 export const PIANO_ROLL_SHAPE_TYPE = 'piano-roll-view'
-const DEFAULT_PIANO_ROLL_WIDTH = 560
-const DEFAULT_PIANO_ROLL_HEIGHT = 360
+// The Vue component's default stage contract; the browser E2E asserts the
+// rendered Konva container so these values cannot silently drift apart.
 const PIANO_ROLL_STAGE_WIDTH = 640
-const PIANO_ROLL_STAGE_HEIGHT = 320
+const PIANO_ROLL_STAGE_HEIGHT = 360
+const PIANO_ROLL_EMBED_WIDTH = PIANO_ROLL_STAGE_WIDTH + 42
+const PIANO_ROLL_EMBED_MIN_HEIGHT = PIANO_ROLL_STAGE_HEIGHT + 76
+// At the default host width, the component's controls and scrollbars add 127px.
+const PIANO_ROLL_EMBED_NATURAL_HEIGHT = PIANO_ROLL_STAGE_HEIGHT + 127
+const SHAPE_BORDER = 2
+const BODY_PADDING = 16
+const HEADER_HEIGHT = 52
+const DEFAULT_PIANO_ROLL_WIDTH =
+  PIANO_ROLL_EMBED_WIDTH + BODY_PADDING + SHAPE_BORDER
+const DEFAULT_PIANO_ROLL_HEIGHT =
+  PIANO_ROLL_EMBED_NATURAL_HEIGHT + HEADER_HEIGHT + BODY_PADDING + SHAPE_BORDER
 
 declare module 'tldraw' {
   export interface TLGlobalShapePropsMap {
@@ -108,9 +125,11 @@ export class PianoRollShapeUtil extends BaseBoxShapeUtil<PianoRollShape> {
 
 export function createPianoRollShape(
   editor: Editor,
-  options:
-    & Partial<PianoRollShape['props']>
-    & { x?: number; y?: number; id?: PianoRollShape['id'] } = {},
+  options: Partial<PianoRollShape['props']> & {
+    x?: number
+    y?: number
+    id?: PianoRollShape['id']
+  } = {},
 ) {
   const id = options.id ?? createShapeId()
   const rollName = options.rollName ?? 'melody'
@@ -188,7 +207,11 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
       signalsRuntime.connectionStatus === 'open'
         ? toPlayheadMarkers(signalsRuntime.signals, shape.props.rollName)
         : [],
-    [signalsRuntime.connectionStatus, signalsRuntime.signals, shape.props.rollName],
+    [
+      signalsRuntime.connectionStatus,
+      signalsRuntime.signals,
+      shape.props.rollName,
+    ],
   )
 
   useEffect(() => {
@@ -223,10 +246,7 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
     el.height = PIANO_ROLL_STAGE_HEIGHT
     el.interactive = shape.props.interactive
     el.showControlPanel = shape.props.showControlPanel
-  }, [
-    shape.props.interactive,
-    shape.props.showControlPanel,
-  ])
+  }, [shape.props.interactive, shape.props.showControlPanel])
 
   useEffect(() => {
     const el = elementRef.current
@@ -310,12 +330,16 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
             write rejected
           </span>
         ) : null}
-        <div className="piano-roll-shape__actions" onPointerDown={stopCanvasEvent}>
+        <div
+          className="piano-roll-shape__actions"
+          onPointerDown={stopCanvasEvent}
+        >
           <button
             type="button"
             disabled={!roll?.canUndo}
             onClick={() =>
-              void runtime.undoRoll(shape.props.rollName, `${originId}:history`)}
+              void runtime.undoRoll(shape.props.rollName, `${originId}:history`)
+            }
           >
             Undo object
           </button>
@@ -323,7 +347,8 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
             type="button"
             disabled={!roll?.canRedo}
             onClick={() =>
-              void runtime.redoRoll(shape.props.rollName, `${originId}:history`)}
+              void runtime.redoRoll(shape.props.rollName, `${originId}:history`)
+            }
           >
             Redo object
           </button>
@@ -340,19 +365,24 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
         onWheel={stopCanvasEvent}
       >
         {roll ? (
-          <div className="piano-roll-shape__viewport">
+          <div
+            className="piano-roll-shape__viewport"
+            style={{ width: PIANO_ROLL_EMBED_WIDTH }}
+          >
             <piano-roll-component
               ref={elementRef}
               style={{
-                width: PIANO_ROLL_STAGE_WIDTH + 42,
-                minHeight: PIANO_ROLL_STAGE_HEIGHT + 76,
+                width: PIANO_ROLL_EMBED_WIDTH,
+                minHeight: PIANO_ROLL_EMBED_MIN_HEIGHT,
               }}
             />
           </div>
         ) : (
           <div className="piano-roll-shape__empty">
             Waiting for <code>{shape.props.rollName}</code> from the server...
-            {runtime.connectionError ? <span>{runtime.connectionError}</span> : null}
+            {runtime.connectionError ? (
+              <span>{runtime.connectionError}</span>
+            ) : null}
           </div>
         )}
       </div>

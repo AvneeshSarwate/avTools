@@ -124,6 +124,7 @@ Deno.test("a stop before the queue drains cancels the launch", async () => {
     const run = await moduleRun(server.baseUrl, moduleId);
     assertEquals(run?.generatedRunId, "cancel-run");
     assertEquals(run?.state, "stopped");
+    assertEquals(run?.executionCount, 0);
   } finally {
     await server.close();
     await Deno.remove(sessionRoot, { recursive: true });
@@ -242,6 +243,11 @@ Deno.test("replaceRunning stops the running run and starts the new one", async (
     assertEquals(runs.length, 1, "a replacement may not leave two runs active");
     assertEquals(await countLines(startLogPath), 2, "both runs executed once");
     assertEquals(await countLines(stopLogPath), 1, "the first run's stop hook");
+    assertEquals(
+      (await moduleRun(server.baseUrl, moduleId))?.executionCount,
+      2,
+      "the engine counts entries into user code across replacement",
+    );
 
     // The replaced run's terminal is only the latest `moduleRuns` entry until
     // the replacement overwrites it, so the lifecycle log is what can be
@@ -457,7 +463,9 @@ async function activeRuns(
 }
 
 async function moduleRun(baseUrl: string, moduleId: string) {
-  const state = await fetchJson<RuntimeStateResponse>(`${baseUrl}/runtime/state`);
+  const state = await fetchJson<RuntimeStateResponse>(
+    `${baseUrl}/runtime/state`,
+  );
   return state.moduleRuns[moduleId];
 }
 
