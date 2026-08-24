@@ -39,6 +39,15 @@ export interface ProjectCanvasParamPaneView {
   h: number;
 }
 
+export interface ProjectCanvasAnimationEditorView {
+  id: string;
+  animationName: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 /**
  * A signal-scope view. Unlike the two above it names a binding rather than an
  * entity: the source it watches may be ephemeral (a signal, which this project
@@ -61,6 +70,7 @@ export interface ProjectCanvasScopeView {
 export interface ProjectCanvasState {
   pianoRollViews?: ProjectCanvasPianoRollView[];
   paramPaneViews?: ProjectCanvasParamPaneView[];
+  animationEditorViews?: ProjectCanvasAnimationEditorView[];
   scopeViews?: ProjectCanvasScopeView[];
 }
 

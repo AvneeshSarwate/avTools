@@ -139,7 +139,7 @@ Deno.test({
 
 Deno.test({
   name:
-    "FIX B: /project/canvas persists piano-roll view layout to the manifest and survives reopen",
+    "FIX B: /project/canvas persists registered view layouts and survives reopen",
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
@@ -164,23 +164,51 @@ Deno.test({
         w: 560,
         h: 360,
       };
+      const animationView = {
+        id: "shape:animation-editor-view-1",
+        animationName: "intro",
+        x: 820,
+        y: 520,
+        w: 720,
+        h: 440,
+      };
       await postJson(`${server.baseUrl}/project/canvas`, {
-        canvas: { pianoRollViews: [view] },
+        canvas: {
+          pianoRollViews: [view],
+          animationEditorViews: [animationView],
+        },
       });
 
       const current = await (await fetch(`${server.baseUrl}/project/current`))
         .json() as ProjectCurrentResponse;
       assertEquals(current.project?.manifest.canvas?.pianoRollViews, [view]);
+      assertEquals(
+        current.project?.manifest.canvas?.animationEditorViews,
+        [animationView],
+      );
 
       const manifestOnDisk = JSON.parse(
         await Deno.readTextFile(join(projectRoot, PROJECT_MANIFEST_FILENAME)),
-      ) as { canvas?: { pianoRollViews?: unknown[] } };
+      ) as {
+        canvas?: {
+          pianoRollViews?: unknown[];
+          animationEditorViews?: unknown[];
+        };
+      };
       assertEquals(manifestOnDisk.canvas?.pianoRollViews, [view]);
+      assertEquals(
+        manifestOnDisk.canvas?.animationEditorViews,
+        [animationView],
+      );
 
       const reopened = await postJson(`${server.baseUrl}/project/open`, {
         projectPath: projectRoot,
       }) as ProjectCurrentResponse;
       assertEquals(reopened.project?.manifest.canvas?.pianoRollViews, [view]);
+      assertEquals(
+        reopened.project?.manifest.canvas?.animationEditorViews,
+        [animationView],
+      );
     } finally {
       await server.close();
     }

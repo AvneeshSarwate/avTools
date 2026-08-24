@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "name": "feature-animation-timeline",
+  "modules": [
+    {
+      "id": "animation-fixture/sampler",
+      "path": "modules/sampler.ts",
+      "sourcePath": "modules/sampler.orig.ts",
+      "runtimePath": "modules/sampler.ts",
+      "kind": "runnable",
+      "title": "timeline sampler",
+      "sourceVersion": 1,
+      "x": 80,
+      "y": 80,
+      "w": 560,
+      "h": 440
+    }
+  ],
+  "canvas": {
+    "animationEditorViews": [
+      {
+        "id": "shape:animation-fixture-editor",
+        "animationName": "animation-fixture/timeline",
+        "x": 700,
+        "y": 80,
+        "w": 760,
+        "h": 440
+      }
+    ],
+    "scopeViews": [
+      {
+        "id": "shape:animation-fixture-gain-scope",
+        "sourceType": "signal",
+        "name": "animation-fixture/gain",
+        "path": "",
+        "windowSec": 8,
+        "x": 700,
+        "y": 580,
+        "w": 760,
+        "h": 260
+      }
+    ]
+  },
+  "data": [
+    {
+      "type": "animationTimeline",
+      "name": "animation-fixture/timeline",
+      "path": "data/animationTimeline/animation-fixture%2Ftimeline.json"
+    }
+  ]
+}

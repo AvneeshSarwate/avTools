@@ -2,12 +2,12 @@
  * `@avtools/livecode-protocol` — the single source of the livecode wire
  * contract, consumed by the Deno visualizer server and by the browser clients.
  *
- * Everything here is type-only: there is no runtime code, so importing this
- * package costs nothing at run time. Types that describe only one side of the
- * wire (server internals, client view models) deliberately do NOT live here.
+ * `SYNC_ENTITY_TYPES` is the sole runtime value; every other export is a wire
+ * type. Server internals and client view models deliberately do not live here.
  */
 
 export type * from "./analysis.ts";
+export type * from "./animation_timeline.ts";
 export type * from "./client_control.ts";
 export type * from "./engine_uplink.ts";
 export type * from "./entities.ts";
@@ -18,6 +18,4 @@ export type * from "./runtime.ts";
 export type * from "./saved_entities.ts";
 export type * from "./signals.ts";
 export type * from "./sync.ts";
-// The one value export: the canonical watched-entity-kind list every side
-// (client subscribe, remote-plane hello/detach resets) shares.
 export { SYNC_ENTITY_TYPES } from "./sync.ts";

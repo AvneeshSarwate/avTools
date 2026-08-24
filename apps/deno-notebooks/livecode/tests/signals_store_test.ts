@@ -19,8 +19,9 @@ import {
 import {
   getDurableEntityType,
   listDurableEntityTypes,
-  registerBuiltinDurableEntityTypes,
 } from "@avtools/livecode-engine/entity_registry.ts";
+import { registerBuiltinEntityKinds } from "@avtools/livecode-engine/entity_kinds.ts";
+import { SyncSourceRegistry } from "@avtools/livecode-engine/sync_sources.ts";
 import type { SignalEntity } from "../visualizer/protocol.ts";
 
 function reset(): void {
@@ -316,7 +317,7 @@ Deno.test("__tcvOwnedSignal stamps ownership on the handle and returns it unchan
 
 Deno.test("signals are invisible to the durable entity registry", () => {
   reset();
-  registerBuiltinDurableEntityTypes();
+  registerBuiltinEntityKinds(new SyncSourceRegistry());
   declareSignal<number>("test/ephemeral").set(1);
   sampled();
 
@@ -325,7 +326,7 @@ Deno.test("signals are invisible to the durable entity registry", () => {
   // whole ephemeral guarantee: no filter anywhere has to remember signals.
   assertEquals(
     listDurableEntityTypes().map((descriptor) => descriptor.typeId),
-    ["params", "pianoRoll"],
+    ["animationTimeline", "params", "pianoRoll"],
   );
   assertEquals(getDurableEntityType(SIGNAL_ENTITY_TYPE), undefined);
   for (const descriptor of listDurableEntityTypes()) {

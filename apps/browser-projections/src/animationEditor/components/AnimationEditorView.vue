@@ -9,7 +9,12 @@ import TrackList from './TrackList.vue'
 import Playhead from './Playhead.vue'
 import EditModeView from './EditModeView.vue'
 import ToastContainer from './ToastContainer.vue'
-import { AnimationEditorWebSocketController, coreToTrackData, type TrackData } from '../animationEditorWebSocket'
+import {
+  AnimationEditorWebSocketController,
+  coreToTrackData,
+  type AnimationTimelineValue,
+  type TrackData,
+} from '../animationEditorWebSocket'
 
 const MIN_SIDEBAR_WIDTH = 120
 const MAX_SIDEBAR_WIDTH = 500
@@ -43,6 +48,10 @@ const props = withDefaults(defineProps<{
 }>(), {
   interactive: true
 })
+
+const emit = defineEmits<{
+  'timeline-change': [value: AnimationTimelineValue]
+}>()
 
 // WebSocket-overridable config
 const wsConfig = reactive({
@@ -157,32 +166,28 @@ const filteredTrackIds = computed(() => {
 // TimeRibbon spacer width follows the draggable sidebar in both modes
 const ribbonSpacerWidth = computed(() => sidebarWidth.value)
 
-// Helper: Convert TrackData from WebSocket to TrackDef for Core
-function trackDataToCoreTracks(tracks: TrackData[], trackOrder: string[]) {
-  // Clear existing tracks
+function applyTracks(tracks: TrackData[], trackOrder: string[]) {
   for (const id of [...core.orderedTrackIds]) {
     core.deleteTrack(id)
   }
 
-  // Add tracks in order
   for (const trackId of trackOrder) {
     const trackData = tracks.find(t => t.id === trackId)
     if (!trackData) continue
 
-    // Create track definition (without callbacks - those are on Deno side)
     const def: TrackDef = {
       id: trackData.id,
       name: trackData.name,
       fieldType: trackData.fieldType,
       data: trackData.elementData.map(elem => {
         if (trackData.fieldType === 'number') {
-          const e = elem as { time: number; value: number }
+          const e = elem as NumberElement
           return { id: e.id, time: e.time, element: e.value }
         } else if (trackData.fieldType === 'enum') {
-          const e = elem as { time: number; value: string }
+          const e = elem as EnumElement
           return { id: e.id, time: e.time, element: e.value }
         } else {
-          const e = elem as { time: number; value: { funcName: string; args: unknown[] } }
+          const e = elem as FuncElementData
           return { id: e.id, time: e.time, element: e.value }
         }
       }),
@@ -194,12 +199,19 @@ function trackDataToCoreTracks(tracks: TrackData[], trackOrder: string[]) {
     core.addTrack(def)
   }
 
-  // Update reactive state
   trackIds.value = [...core.orderedTrackIds]
   applyConfiguredDuration(wsConfig.duration, { suppressWsState: true })
   markTrackSignature()
   markStateSignature()
   scheduler.invalidate()
+}
+
+function setTimeline(value: AnimationTimelineValue) {
+  applyTracks(value.tracks, value.trackOrder)
+}
+
+function getTimeline(): AnimationTimelineValue {
+  return getTrackPayload()
 }
 
 function getTrackExtent(): number {
@@ -316,8 +328,7 @@ onMounted(() => {
     wsController.value = new AnimationEditorWebSocketController(props.wsAddress)
     wsController.value.setHandlers({
       onSetTracks: (tracks, trackOrder) => {
-        trackDataToCoreTracks(tracks, trackOrder)
-        // Don't echo back to sender
+        applyTracks(tracks, trackOrder)
       },
       onScrubToTime: (time) => {
         scrubToTime(time, { suppressWsState: true })
@@ -358,6 +369,7 @@ watch(trackDataVersion, () => {
 
   lastTrackSignature = signature
   sendTracksUpdate('tracks', payload)
+  emit('timeline-change', payload)
 }, { flush: 'post' })
 
 watch(
@@ -379,6 +391,7 @@ onUnmounted(() => {
 })
 
 function toggleMode() {
+  if (!effectiveInteractive.value) return
   mode.value = mode.value === 'view' ? 'edit' : 'view'
   // Refresh track IDs when switching back to view mode
   if (mode.value === 'view') {
@@ -471,6 +484,8 @@ defineExpose({
   scrubToTime,
   jumpToTime,
   setWindowRange,
+  setTimeline,
+  getTimeline,
   core,
   mode,
 })
@@ -485,7 +500,12 @@ defineExpose({
   >
     <!-- Control header: mode toggle + mode-specific controls -->
     <div class="control-header" data-region="control-header">
-      <button class="mode-toggle" data-testid="mode-toggle" @click="toggleMode">
+      <button
+        class="mode-toggle"
+        data-testid="mode-toggle"
+        :disabled="!effectiveInteractive"
+        @click="toggleMode"
+      >
         {{ mode === 'view' ? 'Switch to Edit Mode' : 'Switch to View Mode' }}
       </button>
       <span class="mode-label">{{ mode === 'view' ? 'View Mode' : 'Edit Mode' }}</span>

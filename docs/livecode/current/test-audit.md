@@ -137,7 +137,7 @@ run acknowledgement application, project-open state replacement, and pending
 stop flushing. The E2E should remain an outer smoke test, not the only test of
 those state machines.
 
-### 4. Consolidating mechanical entity-kind plumbing: domain contracts are good; extension seams are not tested
+### 4. Resolved 2026-08-23: mechanical entity-kind seams have contract coverage
 
 Per-kind store behavior is covered well, and sync tests verify resets, changes,
 deletions, metadata-only changes, ended signals, and module-keyed ephemeral
@@ -145,19 +145,18 @@ sources. The registry suite also verifies create/duplicate/delete and durable
 serialization. These are useful behavioral anchors when moving mechanical
 registration data.
 
-What is absent is a small fake entity kind proving that registration alone
-wires the intended generic layers. One registry test currently asserts exactly
-the two built-in durable types, which will fail on any legitimate new type and
-encourages editing a closed-world expectation. Client reducers, contexts,
-project canvas codecs, and server action switches are tested only through the
-real built-ins, so a refactor could leave a supposedly generic seam that still
-requires hidden switch edits.
+`entity_registry_test.ts` now materializes a minimal fake
+`EntityKindRegistration` and proves that one type ID supplies matching sync and
+durability artifacts. `canvas_view_registry_test.ts` does the same for canvas
+collection, change dispatch, and entity references. The built-in durable list
+now includes the third type, `animationTimeline`, and its concrete tests cover
+CRUD, serialization, sync reset/change/delete, project persistence, and the
+custom-element round trip.
 
-**Verdict:** preserve the per-domain tests, but add a conformance/contract test
-for the proposed declarative seam before consolidating it. The test should
-register a minimal fake type and prove only the mechanical behaviors promised
-by that seam. Do not force piano-roll history, params reconciliation, and
-signal lifetime through one generic behavioral test.
+**Verdict:** the mechanical seams are covered without pretending domain
+semantics are uniform. New kinds still need their own store and browser behavior
+tests; piano-roll history, params reconciliation, animation evaluation, and
+signal lifetime remain concrete contracts.
 
 ### 5. Removing deprecated compatibility paths: existing tests should not block removal
 

@@ -41,6 +41,11 @@ const TrackDataSchema = z.object({
 
 export type TrackData = z.infer<typeof TrackDataSchema>
 
+export interface AnimationTimelineValue {
+  tracks: TrackData[]
+  trackOrder: string[]
+}
+
 // ============================================================================
 // Incoming Message Schemas (from Deno to component)
 // ============================================================================
@@ -329,7 +334,7 @@ export class AnimationEditorWebSocketController {
 export function coreToTrackData(
   tracksById: Map<string, { id: string; def: { name: string; fieldType: TrackType; enumOptions?: string[] }; elementData: TrackElement[]; low: number; high: number }>,
   orderedTrackIds: string[]
-): { tracks: TrackData[]; trackOrder: string[] } {
+): AnimationTimelineValue {
   const tracks: TrackData[] = []
 
   for (const id of orderedTrackIds) {
@@ -358,5 +363,5 @@ export function coreToTrackData(
     })
   }
 
-  return { tracks, trackOrder: orderedTrackIds }
+  return { tracks, trackOrder: [...orderedTrackIds] }
 }

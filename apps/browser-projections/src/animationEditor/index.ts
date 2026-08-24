@@ -20,7 +20,7 @@ export { useToast } from './useToast'
 
 // WebSocket
 export { AnimationEditorWebSocketController, coreToTrackData } from './animationEditorWebSocket'
-export type { TrackData, UpdateSource } from './animationEditorWebSocket'
+export type { AnimationTimelineValue, TrackData, UpdateSource } from './animationEditorWebSocket'
 
 // Main component
 export { default as AnimationEditorView } from './components/AnimationEditorView.vue'

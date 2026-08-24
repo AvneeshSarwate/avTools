@@ -6,6 +6,7 @@
 
 import type { PianoRollData } from "./piano_roll.ts";
 import type { ParamsMeta, ParamsValues } from "./params.ts";
+import type { AnimationTimelineData } from "./animation_timeline.ts";
 
 /** File format of `data/pianoRoll/<encoded-name>.json`. */
 export interface SavedPianoRollEntity {
@@ -26,4 +27,11 @@ export interface SavedParamsEntity {
   savedAt: string;
   values: ParamsValues;
   meta?: ParamsMeta;
+}
+
+export interface SavedAnimationTimelineEntity {
+  type: "animationTimeline";
+  name: string;
+  savedAt: string;
+  data: AnimationTimelineData;
 }
