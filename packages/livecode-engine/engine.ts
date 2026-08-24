@@ -41,6 +41,7 @@ interface ActiveModule {
   // a relaunch finds an unchanged prepared build, so it cannot tell an old run
   // from the one that replaced it; this token can.
   runToken: string;
+  executionCount: number;
   transformedModuleUri: string;
   handle: BranchHandle;
   stopFunc?: ModuleStopFunc;
@@ -205,6 +206,7 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
       state: record.state,
       generatedRunId: record.generatedRunId,
       runToken: record.runToken,
+      executionCount: record.executionCount,
       updatedAt: record.updatedAtMs,
     };
     if (record.projectModulePath !== undefined) {
@@ -285,6 +287,8 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
     // without an edit does exactly that — so it cannot distinguish this run
     // from the one it replaced.
     const runToken = crypto.randomUUID();
+    const previousExecutionCount =
+      moduleRunSnapshots.get(requestBody.moduleId)?.executionCount ?? 0;
     const pendingLaunch: PendingLaunch = {
       generatedRunId: requestBody.generatedRunId,
       runToken,
@@ -301,6 +305,7 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
       sourceHash: prepared?.sourceHash ?? requestBody.sourceHash,
       projectSourceHash: prepared?.projectSourceHash ??
         requestBody.projectSourceHash,
+      executionCount: previousExecutionCount,
     };
     setModuleRunSnapshot({
       ...runSnapshotBase,
@@ -387,8 +392,12 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
           );
         }
 
+        const startedRunSnapshotBase = {
+          ...runSnapshotBase,
+          executionCount: previousExecutionCount + 1,
+        };
         const handle = ctx.branch(async (branchCtx) => {
-          setModuleRunSnapshot({ ...runSnapshotBase, state: "running" });
+          setModuleRunSnapshot({ ...startedRunSnapshotBase, state: "running" });
           await log({
             type: "moduleStarted",
             moduleId: requestBody.moduleId,
@@ -421,7 +430,7 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
               // already redeclared.
               endSignalsForModule(requestBody.moduleId);
               setModuleRunSnapshot({
-                ...runSnapshotBase,
+                ...startedRunSnapshotBase,
                 state: reason === "error" ? "error" : "stopped",
                 ...(errorMessage ? { message: errorMessage } : {}),
               });
@@ -439,6 +448,7 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
           moduleId: requestBody.moduleId,
           generatedRunId: requestBody.generatedRunId,
           runToken,
+          executionCount: startedRunSnapshotBase.executionCount,
           transformedModuleUri: requestBody.transformedModuleUri,
           projectModulePath: runSnapshotBase.projectModulePath,
           sourceHash: runSnapshotBase.sourceHash,
@@ -584,6 +594,7 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
       moduleId: active.moduleId,
       generatedRunId: active.generatedRunId,
       runToken: active.runToken,
+      executionCount: active.executionCount,
       state: "stopped",
       projectModulePath: active.projectModulePath,
       sourceHash: active.sourceHash,

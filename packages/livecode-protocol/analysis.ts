@@ -26,8 +26,7 @@ export type WaitCallsiteKind =
   | "canvasParams"
   /**
    * A `signal(...)` declaration. The whole call is wrapped so the runtime can
-   * attribute the signal to its module; the editor renders no widget for it,
-   * and kind-filtered client code simply skips it.
+   * attribute the signal to its module.
    */
   | "canvasSignal";
 
@@ -41,7 +40,7 @@ export interface WaitCallsiteManifestEntry {
   /**
    * For the name-carrying kinds (`pianoRollLookup`, `canvasParams`,
    * `canvasSignal`): the source range of the name argument expression, so the
-   * editor can place an inline widget after it.
+   * editor can place an inline widget beside the declaration.
    */
   nameArgRange?: SourceRange;
   /**

@@ -422,6 +422,8 @@ Each registered module has published view state plus private coordination:
   last touched them;
 - `runToken`: the engine identity of the run currently represented by the
   record;
+- `executionCount`: the number of times the module has entered user code in the
+  current engine process;
 - a private `RunCorrelation` for a launch crossing HTTP and `/sync`;
 - current prepared build/failure and in-flight analyze promise.
 
@@ -540,25 +542,24 @@ use their real source file URL.
 Wait decorations are derived by joining `moduleState.activeIds` to manifest
 entries and applying a line class plus an exact-range mark.
 
-Piano-roll widgets are derived only from manifest entries with kind
-`pianoRollLookup` and a `nameArgRange`:
+Entity widgets are one generic emoji-only CodeMirror decoration placed before
+the name argument, immediately after the call's opening parenthesis in ordinary
+single-line declarations. The entity name and action remain available through
+the button's tooltip and accessible label.
 
-- runtime-resolved names render as `🎹 open <name>`;
-- a static literal fallback renders as `🎹 open <name>?`;
-- unresolved nonliteral names render no button until executed.
+- Piano-roll lookups render `🎹`. Runtime-resolved names are authoritative; a
+  static literal fallback is marked tentative in its tooltip until the module
+  runs. An unresolved nonliteral name renders no button until executed.
+- Params declarations with a static name render `🎛️`.
+- Signal declarations with a static name render `📈`.
 
-Clicking a widget selects and zooms to an existing piano-roll shape with the
-same name, or creates one immediately to the right of the code shape.
+Clicking a durable-entity widget selects and zooms to an existing registered
+entity view with the same type/name, or creates one immediately to the right of
+the code shape through the canvas-view registry.
 
-Params widgets are derived from manifest entries with kind `canvasParams`, a
-`nameArgRange`, and a `staticName`. They render as `🎛 open <name>` and behave
-the same way, focusing an existing `param-pane` for that name or creating one
-to the right of the code shape. There is no runtime name resolution for params,
-so a declaration whose name is not a string literal renders no widget at all.
-
-The `canvasSignal` kind renders **no gutter widget in v1**. The decoration
-builders filter by kind, so an unknown-to-them kind is skipped safely; scopes
-are created from the topbar or the debug surface instead.
+Clicking a signal widget selects an existing whole-signal scope or creates one
+to the right. Params and signals have no runtime name-resolution stream, so a
+computed declaration name has no widget.
 
 ## Piano-roll web component bridge
 
@@ -566,8 +567,11 @@ The tldraw app imports `@avtools/piano-roll`, aliased by Vite to
 `webcomponents/piano-roll/dist/piano-roll.js`. Rebuild that bundle after
 changing `apps/browser-projections/src/pianoRoll`.
 
-The internal stage is fixed at 640 by 320. tldraw resizing changes the outer
-scroll viewport rather than the note-grid coordinate system.
+The internal stage uses the Vue component's 640 by 360 default. A new tldraw
+shape defaults to the stage's full component footprint plus the shape header
+and body padding, so it does not initially clip its editor. Deliberately
+resizing it smaller changes the outer scroll viewport rather than the note-grid
+coordinate system.
 
 The sync provider's `rolls` map is server truth. A shape applies foreign-origin
 note updates to the custom element and suppresses its own echoes. Initial mount
@@ -627,7 +631,7 @@ Interactive DOM inside shapes must not start tldraw gestures:
 - the param-pane body does the same, and its header remains draggable;
 - the animation-editor body stops pointer/touch/wheel and keydown capture;
 - the scope body stops pointerdown and wheel; its header remains draggable;
-- piano-roll and params widget buttons stop pointerdown and click propagation.
+- entity widget buttons stop pointerdown and click propagation.
 
 An embedded widget that relies on document/window bubbling during drag should
 use pointer capture or capture-phase global listeners, because the shape body
@@ -644,12 +648,18 @@ registered canvas view, including animation editors. Every restore path reuses
 the persisted shape id and skips a view whose id already exists. URL-driven
 project loading connects afterward if needed.
 
-The UI toolbar has New/Open/Save for transient `.tldr` canvases, New module,
-New piano roll, New params pane, New animation, and New scope. Every name entry uses the same
-non-modal inline input — the canvas stays interactive while it is open, Escape
-closes it, and a datalist offers the names the relevant sync map holds without
-restricting free text. A failed action leaves the input open with the server's
-message in the topbar rather than discarding what was typed.
+The responsive topbar groups infrequent actions into **Server**, **Canvas**,
+**Add**, and selection-dependent **Entity** menus. Save project (or baked Export
+data), connection state, LSP state, and errors remain visible in the bar. At
+narrow widths actions wrap and secondary status text drops out rather than
+running beyond the window.
+
+The Add menu contains New module, New piano roll, New params pane, New
+animation, and New scope. Every name entry uses the same non-modal inline input
+— the canvas stays interactive while it is open, Escape closes it, and a
+datalist offers the names the relevant sync map holds without restricting free
+text. A failed action leaves the input open with the server's message in the
+topbar rather than discarding what was typed.
 
 New params pane creates a view only. **New piano roll is dual-mode**: a name
 the piano-roll sync map already carries only creates another view, while a new
@@ -672,7 +682,7 @@ Ended signals stay in the list, suffixed `(ended)`, because a stopped run's
 last trace is still worth watching; the suffix is stripped back off when the
 input is submitted.
 
-Two more actions appear only while exactly one selected shape has a registered
+The Entity menu appears only while exactly one selected shape has a registered
 durable entity reference, because that is when the entity being acted on is
 unambiguous. The selection is read reactively with tldraw's
 `useValue` over `editor.getOnlySelectedShape()`; both halves of the entity

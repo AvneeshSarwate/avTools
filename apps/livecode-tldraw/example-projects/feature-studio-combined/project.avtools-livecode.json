@@ -9,7 +9,7 @@
       "runtimePath": "modules/performer.ts",
       "kind": "runnable",
       "title": "performer",
-      "sourceVersion": 1,
+      "sourceVersion": 2,
       "x": 80,
       "y": 80,
       "w": 640,
@@ -22,7 +22,7 @@
       "runtimePath": "modules/sparkle.ts",
       "kind": "runnable",
       "title": "sparkle variation",
-      "sourceVersion": 1,
+      "sourceVersion": 2,
       "x": 80,
       "y": 820,
       "w": 640,
@@ -34,18 +34,18 @@
       {
         "id": "shape:st-theme",
         "rollName": "studio/theme",
-        "x": 780,
-        "y": 80,
-        "w": 660,
-        "h": 380
+        "x": 753.4355012482254,
+        "y": -172.17449583746952,
+        "w": 700,
+        "h": 606.3565852081924
       },
       {
         "id": "shape:st-theme-var",
         "rollName": "studio/theme-var",
         "x": 780,
         "y": 500,
-        "w": 660,
-        "h": 380
+        "w": 700,
+        "h": 557
       }
     ],
     "paramPaneViews": [
@@ -58,6 +58,7 @@
         "h": 460
       }
     ],
+    "animationEditorViews": [],
     "scopeViews": [
       {
         "id": "shape:st-scope-playhead",
