@@ -8,9 +8,9 @@ import {
 } from "react";
 import {
   createShapeId,
+  type Editor,
   parseTldrawJsonFile,
   serializeTldrawJson,
-  type Editor,
   Tldraw,
   useValue,
 } from "tldraw";
@@ -26,7 +26,6 @@ import type {
   ClientControlEnvelope,
   ClientControlResultMessage,
   DurableEntityRef,
-  ProjectCanvasState,
   ProjectCurrentResponse,
   ProjectModuleLocator,
   ProjectModuleRecord,
@@ -41,31 +40,28 @@ import {
   useLivecodeRuntime,
 } from "./livecodeRuntime";
 import {
-  createParamPaneShape,
-  PARAM_PANE_SHAPE_TYPE,
-  type ParamPaneShape,
-  ParamPaneShapeUtil,
-} from "./ParamPaneShape";
-import {
-  createPianoRollShape,
-  PIANO_ROLL_SHAPE_TYPE,
-  type PianoRollShape,
-  PianoRollShapeUtil,
-} from "./PianoRollShape";
-import {
   SyncRuntimeProvider,
+  useAnimationTimelinesSync,
   useParamsSync,
   usePianoRollsSync,
   useSignalsSync,
 } from "./syncRuntime";
 import {
   createSignalScopeShape,
-  describeScopeSource,
-  SIGNAL_SCOPE_SHAPE_TYPE,
-  type SignalScopeShape,
-  SignalScopeShapeUtil,
   type SignalScopeSourceType,
 } from "./SignalScopeShape";
+import {
+  CANVAS_VIEW_SHAPE_UTILS,
+  collectCanvasViews,
+  createAdjacentEntityView,
+  createEntityView,
+  entityRefForCanvasView,
+  hasCanvasViewShapeChanged,
+  isCanvasViewShape,
+  restoreCanvasViews,
+  saveProjectWithCanvas,
+} from "./canvasViews";
+import { ANIMATION_TIMELINE_ENTITY_TYPE } from "./AnimationEditorShape";
 import { setRuntimeDebugRefs } from "./livecodeTldrawDebug";
 import { createReconnectingSocket } from "./reconnectingSocket";
 import {
@@ -76,14 +72,11 @@ import {
   fetchProjectStatus,
   PARAMS_ENTITY_TYPE,
   PIANO_ROLL_ENTITY_TYPE,
-  saveProject,
 } from "./serverRequests";
 
 const shapeUtils = [
   LivecodeEditorShapeUtil,
-  PianoRollShapeUtil,
-  ParamPaneShapeUtil,
-  SignalScopeShapeUtil,
+  ...CANVAS_VIEW_SHAPE_UTILS,
 ];
 const TLDR_MIME_TYPE = "application/vnd.tldraw+json";
 
@@ -110,7 +103,8 @@ function LivecodeTldrawPage() {
   );
   const canvasUrl = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get("tldr") ?? params.get("canvas") ?? params.get("canvasUrl");
+    return params.get("tldr") ?? params.get("canvas") ??
+      params.get("canvasUrl");
   }, []);
   // `serverBaseUrl=none` is the serverless baked topology: the project shape
   // comes from the bake's static baked.json instead of project routes.
@@ -157,7 +151,10 @@ function LivecodeTldrawPage() {
             h: shape.props.h,
           },
         ).catch((error) => {
-          console.error("[livecode-tldraw] failed to persist module layout", error);
+          console.error(
+            "[livecode-tldraw] failed to persist module layout",
+            error,
+          );
         });
       }, 1_000);
       layoutUpdateTimersRef.current.set(shape.props.moduleId, timer);
@@ -176,43 +173,8 @@ function LivecodeTldrawPage() {
     canvasUpdateTimerRef.current = window.setTimeout(() => {
       canvasUpdateTimerRef.current = undefined;
       const shapes = editor.getCurrentPageShapes();
-      const pianoRollViews = shapes
-        .filter(isPianoRollShape)
-        .map((shape) => ({
-          id: shape.id,
-          rollName: shape.props.rollName,
-          x: shape.x,
-          y: shape.y,
-          w: shape.props.w,
-          h: shape.props.h,
-        }));
-      const paramPaneViews = shapes
-        .filter(isParamPaneShape)
-        .map((shape) => ({
-          id: shape.id,
-          paramsName: shape.props.paramsName,
-          x: shape.x,
-          y: shape.y,
-          w: shape.props.w,
-          h: shape.props.h,
-        }));
-      // A scope is a view of a binding, not of an entity: what it persists is
-      // which source it watches, never any of the samples it drew.
-      const scopeViews = shapes
-        .filter(isSignalScopeShape)
-        .map((shape) => ({
-          id: shape.id,
-          sourceType: shape.props.sourceType,
-          name: shape.props.name,
-          path: shape.props.path,
-          windowSec: shape.props.windowSec,
-          x: shape.x,
-          y: shape.y,
-          w: shape.props.w,
-          h: shape.props.h,
-        }));
       void postJson(`${runtime.serverBaseUrl}/project/canvas`, {
-        canvas: { pianoRollViews, paramPaneViews, scopeViews },
+        canvas: collectCanvasViews(shapes),
       }).catch((error) => {
         console.error(
           "[livecode-tldraw] failed to persist canvas view layout",
@@ -302,17 +264,7 @@ function LivecodeTldrawPage() {
       { source: "all", scope: "document" },
     );
 
-    return () => {
-      unsubscribe();
-      for (const timer of layoutUpdateTimersRef.current.values()) {
-        window.clearTimeout(timer);
-      }
-      layoutUpdateTimersRef.current.clear();
-      if (canvasUpdateTimerRef.current !== undefined) {
-        window.clearTimeout(canvasUpdateTimerRef.current);
-        canvasUpdateTimerRef.current = undefined;
-      }
-    };
+    return unsubscribe;
   }, [
     editor,
     registerModule,
@@ -322,6 +274,19 @@ function LivecodeTldrawPage() {
     syncLivecodeShapesToRuntime,
     unregisterModule,
   ]);
+
+  useEffect(() => {
+    return () => {
+      for (const timer of layoutUpdateTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      layoutUpdateTimersRef.current.clear();
+      if (canvasUpdateTimerRef.current !== undefined) {
+        window.clearTimeout(canvasUpdateTimerRef.current);
+        canvasUpdateTimerRef.current = undefined;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!editor || !canvasUrl || projectPath || canvasLoadedRef.current) return;
@@ -420,13 +385,9 @@ function TopBar({
   const runtime = useLivecodeRuntime();
   const paramsRuntime = useParamsSync();
   const pianoRollRuntime = usePianoRollsSync();
+  const animationRuntime = useAnimationTimelinesSync();
   const signalsRuntime = useSignalsSync();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  // null while the inline params-name input is closed. Non-modal by design: the
-  // canvas stays interactive while it is open. The piano-roll, scope and
-  // duplicate drafts below follow the same pattern.
-  const [paramPaneDraft, setParamPaneDraft] = useState<string | null>(null);
-  const [pianoRollDraft, setPianoRollDraft] = useState<string | null>(null);
   const [scopeDraft, setScopeDraft] = useState<string | null>(null);
   const [duplicateDraft, setDuplicateDraft] = useState<string | null>(null);
   // The name the delete button is armed for, so a selection change disarms it:
@@ -435,7 +396,10 @@ function TopBar({
   const [entityError, setEntityError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const selection = useSelectedEntity(editor);
-  const unsavedCount = useUnsavedEntityCount(runtime.serverBaseUrl, projectPath);
+  const unsavedCount = useUnsavedEntityCount(
+    runtime.serverBaseUrl,
+    projectPath,
+  );
   const knownParamsNames = useMemo(
     () => Object.keys(paramsRuntime.params).sort(),
     [paramsRuntime.params],
@@ -443,6 +407,10 @@ function TopBar({
   const knownRollNames = useMemo(
     () => Object.keys(pianoRollRuntime.rolls).sort(),
     [pianoRollRuntime.rolls],
+  );
+  const knownAnimationNames = useMemo(
+    () => Object.keys(animationRuntime.timelines).sort(),
+    [animationRuntime.timelines],
   );
   // Everything a scope can bind to, in the one syntax the input accepts: signal
   // names as they are, param leaves as `params:<name>.<field>`. Ended signals
@@ -477,9 +445,11 @@ function TopBar({
     setEntityError(null);
     try {
       await action();
+      return true;
     } catch (error) {
       console.error("[livecode-tldraw] entity action failed", error);
       setEntityError(error instanceof Error ? error.message : String(error));
+      return false;
     }
   }, []);
 
@@ -564,7 +534,10 @@ function TopBar({
           event.currentTarget.value = "";
           if (editor && file) {
             void onOpenTldrawFile(file).catch((error) => {
-              console.error("[livecode-tldraw] failed to open .tldr file", error);
+              console.error(
+                "[livecode-tldraw] failed to open .tldr file",
+                error,
+              );
             });
           }
         }}
@@ -578,109 +551,67 @@ function TopBar({
       >
         New module
       </button>
-      {pianoRollDraft === null
-        ? (
-          <button
-            type="button"
-            disabled={!editor}
-            onClick={() => setPianoRollDraft("")}
-          >
-            New piano roll
-          </button>
-        )
-        : (
-          <form
-            className="topbar__group"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const rollName = pianoRollDraft.trim();
-              if (!editor || !rollName) return;
-              void runEntityAction(async () => {
-                // Dual mode: a name the store already has only gets another
-                // view; a new name is the composite create-entity-plus-view
-                // gesture.
-                if (!knownRollNames.includes(rollName)) {
-                  await createEntity(
-                    runtime.serverBaseUrl,
-                    PIANO_ROLL_ENTITY_TYPE,
-                    rollName,
-                  );
-                }
-                createPianoRollShape(editor, { rollName });
-                setPianoRollDraft(null);
-              });
-            }}
-          >
-            <input
-              autoFocus
-              list="topbar-roll-names"
-              placeholder="piano roll name"
-              value={pianoRollDraft}
-              spellCheck={false}
-              onChange={(event) => setPianoRollDraft(event.currentTarget.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setPianoRollDraft(null);
-              }}
-            />
-            <datalist id="topbar-roll-names">
-              {knownRollNames.map((name) => <option key={name} value={name} />)}
-            </datalist>
-            <button type="submit" disabled={!editor || !pianoRollDraft.trim()}>
-              Add roll
-            </button>
-            <button type="button" onClick={() => setPianoRollDraft(null)}>
-              Cancel
-            </button>
-          </form>
-        )}
-      {paramPaneDraft === null
-        ? (
-          <button
-            type="button"
-            disabled={!editor}
-            onClick={() => setParamPaneDraft(knownParamsNames[0] ?? "")}
-          >
-            New params pane
-          </button>
-        )
-        : (
-          <form
-            className="topbar__group"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const paramsName = paramPaneDraft.trim();
-              if (!editor || !paramsName) return;
-              createParamPaneShape(editor, { paramsName });
-              setParamPaneDraft(null);
-            }}
-          >
-            <input
-              autoFocus
-              list="topbar-params-names"
-              placeholder="params name"
-              value={paramPaneDraft}
-              spellCheck={false}
-              onChange={(event) => setParamPaneDraft(event.currentTarget.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setParamPaneDraft(null);
-              }}
-            />
-            <datalist id="topbar-params-names">
-              {knownParamsNames.map((name) => <option key={name} value={name} />)}
-            </datalist>
-            <button type="submit" disabled={!editor || !paramPaneDraft.trim()}>
-              Add pane
-            </button>
-            <button type="button" onClick={() => setParamPaneDraft(null)}>
-              Cancel
-            </button>
-          </form>
-        )}
-      {/*
+      <EntityViewCreator
+        editor={editor}
+        buttonLabel="New piano roll"
+        submitLabel="Add roll"
+        placeholder="piano roll name"
+        datalistId="topbar-roll-names"
+        knownNames={knownRollNames}
+        onAdd={(name) =>
+          runEntityAction(async () => {
+            if (!knownRollNames.includes(name)) {
+              await createEntity(
+                runtime.serverBaseUrl,
+                PIANO_ROLL_ENTITY_TYPE,
+                name,
+              );
+            }
+            if (editor) createEntityView(editor, PIANO_ROLL_ENTITY_TYPE, name);
+          })}
+      />
+      <EntityViewCreator
+        editor={editor}
+        buttonLabel="New params pane"
+        submitLabel="Add pane"
+        placeholder="params name"
+        datalistId="topbar-params-names"
+        knownNames={knownParamsNames}
+        initialName={knownParamsNames[0] ?? ""}
+        onAdd={async (name) => {
+          if (!editor) return false;
+          createEntityView(editor, PARAMS_ENTITY_TYPE, name);
+          return true;
+        }}
+      />
+      <EntityViewCreator
+        editor={editor}
+        buttonLabel="New animation"
+        submitLabel="Add animation"
+        placeholder="animation name"
+        datalistId="topbar-animation-names"
+        knownNames={knownAnimationNames}
+        onAdd={(name) =>
+          runEntityAction(async () => {
+            if (!knownAnimationNames.includes(name)) {
+              await createEntity(
+                runtime.serverBaseUrl,
+                ANIMATION_TIMELINE_ENTITY_TYPE,
+                name,
+              );
+            }
+            if (editor) {
+              createEntityView(editor, ANIMATION_TIMELINE_ENTITY_TYPE, name);
+            }
+          })}
+      />
+      {
+        /*
         A scope binds to a value, not to an entity: any live signal, or one
         durable param leaf. There is nothing to create server-side — the source
         either exists or the scope waits for it — so this gesture is view-only.
-      */}
+      */
+      }
       {scopeDraft === null
         ? (
           <button
@@ -734,11 +665,13 @@ function TopBar({
           </form>
         )}
 
-      {/*
+      {
+        /*
         Entity actions are scoped to a single selected view: a shape is a view
         of an entity, so the entity these act on is unambiguous only then.
         Deleting the view stays the canvas gesture it always was.
-      */}
+      */
+      }
       {selection && duplicateDraft === null
         ? (
           <button
@@ -816,8 +749,10 @@ function TopBar({
         )
         : null}
 
-      {/* The baked topology's save: no project routes exist, so "save" is an
-          export — one JSON download of the entities the engine tab holds. */}
+      {
+        /* The baked topology's save: no project routes exist, so "save" is an
+          export — one JSON download of the entities the engine tab holds. */
+      }
       {isBakedServerBaseUrl(runtime.serverBaseUrl)
         ? (
           <div className="topbar__group">
@@ -843,11 +778,13 @@ function TopBar({
           <div className="topbar__group">
             <button
               type="button"
+              disabled={!editor}
               onClick={() => {
                 setSaveNotice(null);
                 void runEntityAction(async () => {
+                  if (!editor) throw new Error("No canvas is mounted yet");
                   setSaveNotice(describeProjectSave(
-                    await saveProject(runtime.serverBaseUrl),
+                    await saveProjectWithCanvas(editor, runtime.serverBaseUrl),
                   ));
                 });
               }}
@@ -882,7 +819,11 @@ function TopBar({
           ? <span>{changedDependencyCount} dependency updates</span>
           : null}
         {dependencyIssueCount > 0
-          ? <span className="topbar__error">{dependencyIssueCount} dependency issues</span>
+          ? (
+            <span className="topbar__error">
+              {dependencyIssueCount} dependency issues
+            </span>
+          )
           : null}
         {runtime.projectDiagnosticsError
           ? (
@@ -899,6 +840,76 @@ function TopBar({
           : null}
       </div>
     </div>
+  );
+}
+
+function EntityViewCreator({
+  editor,
+  buttonLabel,
+  submitLabel,
+  placeholder,
+  datalistId,
+  knownNames,
+  initialName = "",
+  onAdd,
+}: {
+  editor: Editor | null;
+  buttonLabel: string;
+  submitLabel: string;
+  placeholder: string;
+  datalistId: string;
+  knownNames: string[];
+  initialName?: string;
+  onAdd(name: string): Promise<boolean>;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  if (draft === null) {
+    return (
+      <button
+        type="button"
+        disabled={!editor}
+        onClick={() => setDraft(initialName)}
+      >
+        {buttonLabel}
+      </button>
+    );
+  }
+
+  return (
+    <form
+      className="topbar__group"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const name = draft.trim();
+        if (!editor || !name || submitting) return;
+        setSubmitting(true);
+        void onAdd(name).then((ok) => {
+          if (ok) setDraft(null);
+        }).finally(() => setSubmitting(false));
+      }}
+    >
+      <input
+        autoFocus
+        list={datalistId}
+        placeholder={placeholder}
+        value={draft}
+        spellCheck={false}
+        onChange={(event) => setDraft(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setDraft(null);
+        }}
+      />
+      <datalist id={datalistId}>
+        {knownNames.map((name) => <option key={name} value={name} />)}
+      </datalist>
+      <button type="submit" disabled={!editor || !draft.trim() || submitting}>
+        {submitLabel}
+      </button>
+      <button type="button" onClick={() => setDraft(null)}>
+        Cancel
+      </button>
+    </form>
   );
 }
 
@@ -923,14 +934,7 @@ function useSelectedEntity(editor: Editor | null): DurableEntityRef | null {
 }
 
 function selectedEntityRef(editor: Editor | null): DurableEntityRef | null {
-  const shape = editor?.getOnlySelectedShape();
-  if (isPianoRollShape(shape)) {
-    return { type: PIANO_ROLL_ENTITY_TYPE, name: shape.props.rollName };
-  }
-  if (isParamPaneShape(shape)) {
-    return { type: PARAMS_ENTITY_TYPE, name: shape.props.paramsName };
-  }
-  return null;
+  return entityRefForCanvasView(editor?.getOnlySelectedShape());
 }
 
 /**
@@ -980,21 +984,6 @@ function listParamsLeafPaths(values: unknown, prefix = ""): string[] {
     }
   }
   return paths;
-}
-
-/** A view of `name`, beside the selected one so the pair reads as a pair. */
-function createAdjacentEntityView(
-  editor: Editor,
-  entityType: string,
-  name: string,
-) {
-  const source = editor.getOnlySelectedShape();
-  const beside = isPianoRollShape(source) || isParamPaneShape(source)
-    ? { x: source.x + source.props.w + 40, y: source.y }
-    : {};
-  return entityType === PIANO_ROLL_ENTITY_TYPE
-    ? createPianoRollShape(editor, { ...beside, rollName: name })
-    : createParamPaneShape(editor, { ...beside, paramsName: name });
 }
 
 function describeProjectSave(result: ProjectSaveResponse): string {
@@ -1370,9 +1359,10 @@ async function makeClientControlState(
         ) ?? null,
       };
     }),
-    dependencyIssueCount: projectDiagnostics?.modules.filter((moduleEntry) =>
-      moduleEntry.hasDependencyWarnings
-    ).length ?? 0,
+    dependencyIssueCount:
+      projectDiagnostics?.modules.filter((moduleEntry) =>
+        moduleEntry.hasDependencyWarnings
+      ).length ?? 0,
     projectDiagnosticsError: runtime.projectDiagnosticsError,
   };
 }
@@ -1465,65 +1455,6 @@ function hasShapeLayoutChanged(
     before.props.h !== after.props.h;
 }
 
-function hasPianoRollShapeChanged(
-  before: PianoRollShape,
-  after: PianoRollShape,
-) {
-  return before.x !== after.x ||
-    before.y !== after.y ||
-    before.props.w !== after.props.w ||
-    before.props.h !== after.props.h ||
-    before.props.rollName !== after.props.rollName;
-}
-
-function hasParamPaneShapeChanged(
-  before: ParamPaneShape,
-  after: ParamPaneShape,
-) {
-  return before.x !== after.x ||
-    before.y !== after.y ||
-    before.props.w !== after.props.w ||
-    before.props.h !== after.props.h ||
-    before.props.paramsName !== after.props.paramsName;
-}
-
-function hasSignalScopeShapeChanged(
-  before: SignalScopeShape,
-  after: SignalScopeShape,
-) {
-  return before.x !== after.x ||
-    before.y !== after.y ||
-    before.props.w !== after.props.w ||
-    before.props.h !== after.props.h ||
-    before.props.sourceType !== after.props.sourceType ||
-    before.props.name !== after.props.name ||
-    before.props.path !== after.props.path ||
-    before.props.windowSec !== after.props.windowSec;
-}
-
-/** True for every shape kind persisted in `manifest.canvas`. */
-function isCanvasViewShape(record: unknown) {
-  return isPianoRollShape(record) || isParamPaneShape(record) ||
-    isSignalScopeShape(record);
-}
-
-/**
- * Whether one updated record changes what `/project/canvas` would carry. A
- * record that became (or stopped being) a canvas view also counts.
- */
-function hasCanvasViewShapeChanged(before: unknown, after: unknown) {
-  if (isPianoRollShape(before) && isPianoRollShape(after)) {
-    return hasPianoRollShapeChanged(before, after);
-  }
-  if (isParamPaneShape(before) && isParamPaneShape(after)) {
-    return hasParamPaneShapeChanged(before, after);
-  }
-  if (isSignalScopeShape(before) && isSignalScopeShape(after)) {
-    return hasSignalScopeShapeChanged(before, after);
-  }
-  return isCanvasViewShape(before) || isCanvasViewShape(after);
-}
-
 function clearCurrentCanvas(editor: Editor) {
   const shapes = editor.getCurrentPageShapes();
   if (shapes.length > 0) editor.deleteShapes(shapes.map((shape) => shape.id));
@@ -1536,10 +1467,9 @@ function createDefaultLivecodeCanvas(editor: Editor) {
     y: 120,
     title: "module 1",
   });
-  createPianoRollShape(editor, {
+  createEntityView(editor, PIANO_ROLL_ENTITY_TYPE, "melody", {
     x: 820,
     y: 120,
-    rollName: "melody",
   });
   editor.select(moduleId);
   editor.zoomToSelection();
@@ -1573,7 +1503,9 @@ async function exportBakedDataFile(): Promise<string> {
     2,
   ) + "\n";
   downloadTextFile(
-    `livecode-data-${new Date().toISOString().slice(0, 19).replaceAll(":", "-")}.json`,
+    `livecode-data-${
+      new Date().toISOString().slice(0, 19).replaceAll(":", "-")
+    }.json`,
     json,
     "application/json",
   );
@@ -1603,7 +1535,9 @@ async function loadTldrawCanvasFromUrl(editor: Editor, url: string) {
   const resolvedUrl = new URL(url, window.location.href).href;
   const response = await fetch(resolvedUrl);
   if (!response.ok) {
-    throw new Error(`${resolvedUrl} failed with ${response.status}: ${await response.text()}`);
+    throw new Error(
+      `${resolvedUrl} failed with ${response.status}: ${await response.text()}`,
+    );
   }
   await loadTldrawCanvasJson(editor, await response.text(), resolvedUrl);
 }
@@ -1671,7 +1605,7 @@ async function loadProjectIntoCanvas(
     });
   }
 
-  createCanvasViewShapes(editor, project.project?.manifest.canvas);
+  restoreCanvasViews(editor, project.project?.manifest.canvas);
 }
 
 /**
@@ -1707,58 +1641,7 @@ async function loadBakedProjectIntoCanvas(editor: Editor) {
     });
   }
 
-  createCanvasViewShapes(editor, baked.manifest.canvas);
-}
-
-/** The canvas-view shapes a manifest describes, skipping ones already born. */
-function createCanvasViewShapes(
-  editor: Editor,
-  canvas: ProjectCanvasState | undefined,
-) {
-  for (const view of canvas?.pianoRollViews ?? []) {
-    const shapeId = view.id as PianoRollShape["id"];
-    if (editor.getShape(shapeId)) continue;
-    createPianoRollShape(editor, {
-      id: shapeId,
-      x: view.x,
-      y: view.y,
-      w: view.w,
-      h: view.h,
-      rollName: view.rollName,
-      title: `piano roll: ${view.rollName}`,
-    });
-  }
-
-  for (const view of canvas?.paramPaneViews ?? []) {
-    const shapeId = view.id as ParamPaneShape["id"];
-    if (editor.getShape(shapeId)) continue;
-    createParamPaneShape(editor, {
-      id: shapeId,
-      x: view.x,
-      y: view.y,
-      w: view.w,
-      h: view.h,
-      paramsName: view.paramsName,
-      title: `params: ${view.paramsName}`,
-    });
-  }
-
-  for (const view of canvas?.scopeViews ?? []) {
-    const shapeId = view.id as SignalScopeShape["id"];
-    if (editor.getShape(shapeId)) continue;
-    createSignalScopeShape(editor, {
-      id: shapeId,
-      x: view.x,
-      y: view.y,
-      w: view.w,
-      h: view.h,
-      sourceType: view.sourceType,
-      name: view.name,
-      path: view.path,
-      windowSec: view.windowSec,
-      title: describeScopeSource(view.sourceType, view.name, view.path),
-    });
-  }
+  restoreCanvasViews(editor, baked.manifest.canvas);
 }
 
 function fileUrlFromPath(path: string) {
@@ -1789,35 +1672,3 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   }
   return (await response.json()) as T;
 }
-
-function isPianoRollShape(shape: unknown): shape is PianoRollShape {
-  return Boolean(
-    shape &&
-      typeof shape === "object" &&
-      "type" in shape &&
-      (shape as { type?: unknown }).type === PIANO_ROLL_SHAPE_TYPE,
-  );
-}
-
-function isParamPaneShape(shape: unknown): shape is ParamPaneShape {
-  return Boolean(
-    shape &&
-      typeof shape === "object" &&
-      "type" in shape &&
-      (shape as { type?: unknown }).type === PARAM_PANE_SHAPE_TYPE,
-  );
-}
-
-function isSignalScopeShape(shape: unknown): shape is SignalScopeShape {
-  return Boolean(
-    shape &&
-      typeof shape === "object" &&
-      "type" in shape &&
-      (shape as { type?: unknown }).type === SIGNAL_SCOPE_SHAPE_TYPE,
-  );
-}
-
-function hasPianoRollShapes(editor: Editor) {
-  return editor.getCurrentPageShapes().some(isPianoRollShape);
-}
-

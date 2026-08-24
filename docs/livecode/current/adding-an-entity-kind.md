@@ -1,266 +1,157 @@
 # Recipe: Adding an Entity Kind
 
-Status: written against the shape the multiplexed sync transport left behind,
-checked against `packages/livecode-protocol`, `visualizer/sync_sources.ts`,
-`visualizer/entity_store.ts`, `visualizer/entity_registry.ts`, and
-`apps/livecode-tldraw/src/syncRuntime.tsx` on 2026-08-13.
+Status: checked against the entity-kind and canvas-view registries on
+2026-08-23.
 
-This is the honest end-to-end list for adding a new **entity kind** — a new
-named thing the server owns and clients watch. It is a recipe, not a
-description: `server.md`, `client.md`, and `protocol.md` describe what exists,
-and this file says what to touch and in what order.
+This is the end-to-end list for a new named thing owned by the engine and
+watched by clients. The registries consolidate mechanical wiring; they do not
+make domain behavior generic. Piano-roll history, params reconciliation,
+animation evaluation, and signal lifetime remain in their own stores.
 
-An entity kind is worth adding when there is state with a **name**, an owner on
-the server, and at least one view that wants to watch it change. If the state is
-per-module rather than per-name, look at `moduleWaits`/`moduleLookups` first —
-they are the module-keyed pattern and it is cheaper.
-
-## Step 0: decide the class first
+## 1. Choose the lifetime
 
 | Question | Durable | Ephemeral |
 | --- | --- | --- |
-| Survives a project save/open? | yes | no |
-| Appears in `/entities/*` CRUD? | yes | no |
-| Has undo? | maybe (rolls do, params do not) | no |
-| Written by HTTP? | usually | code-published only |
+| Included in project save/open? | yes | no |
+| Available through `/entities/*` CRUD? | yes | no |
+| May have domain-specific undo or reconciliation? | yes | yes |
 
-**The class is expressed as one omission.** A durable type is registered in
-`entity_registry.ts`; an ephemeral one is not. `/project/save`,
-`/project/status`'s data rows, `/project/open`, and every `/entities/*` route
-iterate `listDurableEntityTypes()`, so an unregistered type is invisible to
-persistence and generic CRUD **by construction** rather than by a filter someone
-has to remember to keep in sync. Do not add a filter; add or omit a descriptor.
+Durability is the presence of `durable` on an `EntityKindRegistration`.
+Persistence, status rows, project load, and generic CRUD iterate durable
+descriptors. Do not add per-type filters to those paths.
 
-Signals are the worked example of ephemeral; params and piano rolls of durable.
+Signals are the named ephemeral example. Runs, waits, and lookups are also
+ephemeral, but are registered separately because their state belongs to an
+engine instance or the runtime rather than a store-backed named entity.
 
-## Step 1: the wire types, in the shared package
+## 2. Define the shared contract
 
-The snippets below use `marker` / `Marker` as a stand-in kind.
+Create a module under `packages/livecode-protocol`, export it from `mod.ts`, and
+add the entity to both `SYNC_ENTITY_TYPES` and `SyncEntityByType` in `sync.ts`.
+For a durable type, add its saved-file interface to `saved_entities.ts`. If it
+has a canvas view, add the view record to `ProjectCanvasState` in `project.ts`.
 
-Create `packages/livecode-protocol/marker.ts` with the entity interface and any
-request/response bodies, then export it from `mod.ts`:
+Use one stable, space-free type ID. The same ID names sync messages, the engine
+registration, generic CRUD, saved-state keys, and `data/<type>/` directories.
 
-```ts
-export type * from "./marker.ts";
-```
+## 3. Implement domain storage
 
-Everything in the package is type-only; do not add runtime code.
+A store-backed kind normally wraps `entity_store.ts`. Its store owns:
 
-Then register the kind on the transport, in `sync.ts`:
+- validation and normalization;
+- create, get, list, duplicate, and delete semantics;
+- revisions and no-op behavior;
+- snapshot and changed-name collection;
+- any domain operations such as roll undo or animation sampling.
 
-```ts
-export type SyncEntityTypeId =
-  | "pianoRoll" | "params" | "signal" | "run" | "moduleWaits" | "moduleLookups"
-  | "marker";                    // add here
+Every mutation must mark the affected name, while snapshot reads must not drain
+the change gate. If caller code mutates a live object directly, adopt that drift
+on every engine tick even when nobody subscribes. Keep hot, caller-owned timing
+paths non-throwing; declaration, routes, and save/load boundaries may reject bad
+input.
 
-export interface SyncEntityByType {
-  // ...
-  marker: MarkerEntity;          // and here
-}
-```
+## 4. Register the engine kind once
 
-Pick the wire id carefully: it is the entity type id everywhere — subscribe
-messages, `resets` keys, `entityType` on a change, the `data/<type>/` directory
-of a save, and the `"<type> <name>"` saved-state key. **It must not contain a
-space.**
-
-Decide the name field. Durable entities carry `name`; the module-keyed ephemeral
-kinds carry `moduleId`. The client reads `entity.name ?? entity.moduleId`, so a
-third convention means editing `entityName()` in `syncRuntime.tsx`.
-
-## Step 2: server storage
-
-### The common case: a typed wrapper over `entity_store.ts`
-
-Copy the shape of `params_store.ts` (or `piano_roll_store.ts`, or
-`signals_store.ts` — they are three variations of one pattern). The substrate
-gives you identity, `rev`, per-name revision floors, the no-op cache, never-throw
-serialization, and the change gate. You write the per-type semantics: validation,
-declaration/reconcile, the wire projection.
-
-Three rules the substrate enforces and your wrapper must respect:
-
-1. **Every mutator records the name it touched.** `commitEntityWrite` does it for
-   value generations; `markEntityRecordChanged` / `markEntityChanged` for changes
-   that do not bump `rev` (meta replacement, a flag flip, an `unserializable`
-   transition); `createEntityRecord` and `deleteEntityRecord` do it themselves. A
-   change that skips this is invisible to every watcher — a serialize-compare
-   cannot see a deletion or a value-free flip.
-2. **Nothing throws from a path reachable inside caller-owned timing.** Throwing
-   is fine at declaration and at route/registration time, and nowhere else.
-3. **Read paths are read-only.** A snapshot builder must not consume the gate,
-   refresh a cache, seed a default, or stamp anything. If your kind wants a
-   seeded default, seed it once at server construction, the way
-   `seedDemoPianoRoll()` is called.
-
-Expose two functions for the transport:
+Add one entry to `BUILTIN_ENTITY_KINDS` in
+`packages/livecode-engine/entity_kinds.ts`:
 
 ```ts
-/** Point-in-time clones, sorted by name. Read-only. */
-export function listMarkers(): MarkerEntity[];
-
-/** The tick: adopt any code drift, then drain the gate. Null when idle. */
-export function sampleMarkerChanges(): EntityChange<MarkerEntity>[] | null;
-```
-
-If user code holds a live object and writes to it by plain assignment, you need
-an **adopt pass** like `adoptParamsCodeWrites()` — a serialize-compare that turns
-drift into a store generation. Split it out as its own exported function and call
-it from the sample function, because it must run on every tick regardless of
-subscriptions. If nothing outside your store writes the value (piano rolls), skip
-the adopt pass entirely: write-time tracking is enough and costs one set-size
-check when idle.
-
-### The other case: state that already lives somewhere else
-
-Runs live on the server object, and waits/lookups live in `runtime.ts`'s
-process-global maps. Neither is an `entity_store.ts` record. For that shape, use
-`createModuleKeyedSource` in `sync_sources.ts` (or write an equivalent): mark a
-dirty hint on the hot path, and let the source do a per-entity serialized
-compare before shipping, so a hot loop re-marking an unchanged value stays
-silent.
-
-## Step 3: register a sync source
-
-Add a factory to `sync_sources.ts`:
-
-```ts
-export function createMarkerSyncSource(): SyncSource<unknown> {
-  return {
-    entityType: MARKER_ENTITY_TYPE,
-    collectChanges: () => sampleMarkerChanges(),
+{
+  typeId: MARKER_ENTITY_TYPE,
+  sync: {
+    collectChanges: () => collectMarkerChanges(),
     snapshotAll: () => listMarkers(),
-  };
+  },
+  durable: markerEntityType, // omit for an ephemeral kind
 }
 ```
 
-and register it in `createLivecodeVisualizerServer`, next to the others:
+`registerEntityKinds` materializes the sync source and, when present, the
+durable descriptor from that one type ID. A durable behavior still supplies
+its own create/duplicate/remove/serialize/deserialize/latestJson functions in
+`entity_registry.ts`.
 
-```ts
-syncSources.register(createMarkerSyncSource());
-```
+The engine timer already walks every registered sync source. Do not add a
+socket, timer, broadcast block, or second type list. Runtime-only sources such
+as `run`, `moduleWaits`, and `moduleLookups` remain explicit engine wiring
+because they need per-engine accessors.
 
-That is the entire server-side transport wiring. There is no socket to open, no
-timer to add, no broadcast block to copy, and no shutdown hook: the one timer
-already walks the registry.
+## 5. Add domain operations explicitly
 
-Two invariants to re-read before you finish this step:
+The registry covers observation and generic durability, not mutation semantics.
+If the kind needs its own write operation, add its typed request/result, engine
+op, host-op case, and HTTP route. Use compare-and-set when concurrent editors
+can overwrite a whole entity. A code-published type may correctly have no write
+route.
 
-- `collectChanges()` **drains** — exactly one caller per tick, which is
-  `collectAll()`. If anything else calls it, one consumer starves the other.
-- `snapshotAll()` **never drains** — it answers a subscribe reset and nothing
-  else.
+Keep this explicit switch small. Do not invent a universal patch language to
+hide meaningful differences between a roll edit, a params merge, and an
+animation timeline replacement.
 
-## Step 4 (durable only): registry descriptor and persistence
+## 6. Add the client slice
 
-Add the saved file format to `packages/livecode-protocol/saved_entities.ts`:
+In `syncRuntime.tsx`, add a typed slice, context, provider entry, reducer case,
+and consumer hook. Per-kind contexts are intentional: frequent signal traffic
+must not rerender every durable editor. Add domain write actions only when the
+kind has them.
 
-```ts
-export interface SavedMarkerEntity {
-  type: "marker";
-  name: string;
-  savedAt: string;
-  // ...whatever the type needs to be reconstructed
-}
-```
+A view must handle an absent entity. Deleting an entity does not delete its
+views, and reconnect resets replace the complete per-kind map.
 
-Then add a `DurableEntityTypeDescriptor` in `entity_registry.ts` and register it
-in `registerBuiltinDurableEntityTypes()`. The descriptor is the type id plus
-eight small functions; the two with non-obvious contracts are:
+## 7. Register a canvas view, if there is one
 
-- `serialize(name)` returns null only for a deliberate omission such as a
-  pristine auto-created default. A current value that cannot serialize must
-  surface an error and abort save/export before files are written.
-- `latestJson(name)` is the canonical compact JSON used for the unsaved-changes
-  compare — null when the entity is absent. Return the store's cached JSON,
-  never a re-pretty-printed file. Unavailable current state is an explicit
-  status/error, not an empty-string sentinel.
+Create the tldraw shape and add one codec to `CANVAS_VIEW_CODECS` in
+`canvasViews.ts`. A codec provides:
 
-You get `/entities/create`, `/entities/duplicate`, `/entities/delete`,
-`/project/save`, `/project/open`, and the `/project/status` unsaved rows from
-this step alone; none of those routes learn your type's name.
+- the shape util and shape guard;
+- project collection and restoration;
+- persisted-change detection;
+- for entity-backed views, the entity reference and view constructor.
 
-## Step 5: routes, if it takes writes
+That entry drives tldraw shape registration, project canvas collection and
+restore, selection-to-entity actions, adjacent duplicate views, default/topbar
+creation, and the test/debug creation surface. Keep the shape props to identity,
+layout, and presentation; durable domain data belongs in the engine entity.
 
-Only if the kind is written over HTTP. Follow the existing shapes: a set route
-takes an optional `expectedRev` and answers a stale one with the current entity
-plus `conflict: true` rather than an HTTP error; a list route builds a read-only
-full snapshot. Add the request body type to your package module, not inline at
-the call site.
+`/project/canvas` replaces the whole canvas object, so the collector always
+posts every registered view kind together. Explicit project save flushes that
+current projection before saving entity files.
 
-There is deliberately no write route for signals. If your kind is code-published
-only, having no set route is the design, not an omission.
+## 8. Test the seams and the domain
 
-## Step 6: client context and typed hook
+| Layer | Required evidence |
+| --- | --- |
+| Store | validation, create/reattach, no-op/revision behavior, domain evaluation, atomic rejection |
+| Entity-kind registry | a fake registration materializes matching sync and durability artifacts |
+| Durable registry | generic CRUD and serialize/deserialize round trip |
+| Sync | reset, changed entity, and `entity: null` deletion over the real socket |
+| Canvas registry | collect, restore dispatch, change detection, and entity reference |
+| Browser | mounted view, server-to-component apply, component-to-engine write, save file, and saved-truth restore |
 
-In `syncRuntime.tsx`, four small edits:
+Add focused unit files to `test:livecode:unit`; route and sync cases belong in
+the server task. Keep domain tests concrete rather than forcing unlike entity
+kinds through one behavioral base class.
 
-1. add the wire id to `SYNC_ENTITY_TYPES` — which lives in the protocol
-   package (`packages/livecode-protocol/sync.ts`) as the one canonical list.
-   The remote plane's detach resets use the same constant, and the engine
-   page derives its hello/subscribe lists from its own sync-source registry,
-   so registering the source (step 3) covers every engine-side list
-   automatically;
-2. add a slice to `SyncState` and to `emptySyncState()`;
-3. add a `createContext<SyncSlice<MarkerEntity>>(emptySlice())` and wrap it into
-   the provider tree;
-4. export a typed hook returning the consumer-facing shape.
+## 9. Save a shared feature fixture
 
-**Add a context, not a field on an existing context value.** The per-kind split
-is what stops a signal tick from re-rendering every param pane, and it is the
-reason a new kind is cheap. A hook that needs two kinds composes two contexts —
-`useModuleVizSync()` is the worked example.
+Add a checked-in project under `apps/livecode-tldraw/example-projects/` for a
+new user-visible feature. It should contain canonical `*.orig.ts` source, the
+smallest useful manifest/canvas layout, representative durable `data/`, and a
+README with expected state and a manual edit/save/reopen checklist.
 
-Give the hook the shape its consumers actually want, not the transport's shape.
-`usePianoRollsSync()` returns `{ rolls, latestSeq, connectionStatus, ... }`
-because that is what the roll shape reads; the slice is an implementation detail.
+An automated end-to-end test must open that same project. Copy it to a temporary
+directory before tests that save, delete, or rewrite layout; do not reconstruct
+its entity payloads in the test or mutate the checked-in project. Focused unit
+fixtures still own invalid inputs and edge cases. The long-lived project owns a
+coherent workflow a person can open and recognize.
 
-Writes do **not** go through the socket. Add them as HTTP calls in
-`serverRequests.ts` and expose them on `SyncActions`, alongside
-`setRoll`/`setParams`.
+`feature-animation-timeline` is the reference: the browser E2E copies it,
+asserts its restored entity/editor/scope, and then performs destructive cases
+only on the copy. `verify-feature-projects.ts` also opens the canonical project
+headlessly.
 
-## Step 7: consumer wiring
+## 10. Update the current docs
 
-A tldraw shape (`PianoRollShape`, `ParamPaneShape`, `SignalScopeShape` are the
-three templates), a topbar action, or a decoration in `CodeMirrorEditor`. Four
-things every consumer of live entity state gets wrong at least once:
-
-- **an entity can be absent.** A view outlives what it views: creating a pane
-  never creates an entity, and deleting an entity leaves its views on a waiting
-  placeholder. Render the placeholder, do not crash.
-- **`connectionStatus` is not the same as "the value stopped changing".** A
-  closed socket means "no readings", and consumers must say so — a playhead
-  frozen where a dead socket left it reads as a playing one.
-- **`rev` is not a change key.** Use it for echo suppression of your *own*
-  writes, never to decide whether something changed.
-- **ticks coalesce.** A value that changed twice inside one 33 ms tick arrives
-  once. Be correct over the states you receive, not over an assumed sequence.
-
-## Step 8: tests, one per layer
-
-| Layer | Where | What |
-| --- | --- | --- |
-| Store semantics | a new `livecode/tests/<kind>_store_test.ts` in `test:livecode:unit` | create/reattach, no-op detection, whatever adoption or reconcile the kind has, and that a read path did not consume the gate |
-| Durable registry | `livecode/tests/entity_registry_test.ts` | create rejects an existing name, duplicate, delete, serialize/deserialize round trip, and invalid values fail without fabricating or replacing state |
-| Transport | `livecode/tests/sync_transport_test.ts` | subscribe reset includes the kind, a change ships per entity, a delete ships as `entity: null`, and any change that does not bump `rev` still arrives |
-| Route contract | `livecode/tests/protocol_smoke_test.ts` | only if you added routes |
-| Browser | `apps/livecode-tldraw/tests/livecodeTldraw.e2e.mjs` | the user-visible round trip, and — for a durable kind — that a save writes the file and an open reverts a live edit |
-
-Add the new unit test file to `test:livecode:unit` in
-`apps/deno-notebooks/deno.json`; the server task already runs the transport and
-smoke suites.
-
-## Step 9: documentation
-
-The maintenance contract in `docs/livecode/README.md` applies. Concretely, a new
-entity kind touches: `protocol.md` (the kinds table and the type), `server.md`
-(the file map, the source list, and any route rows), `client.md` (the hook table
-and the shape), `system-architecture.md` (a state-ownership row), and — if
-durable — `project-model.md`.
-
-## What you should not have had to do
-
-If the recipe above made you copy a broadcast block, add a timer, open a socket,
-write a per-channel reconnect handler, or mirror a type into a second file, stop:
-the transport slice exists to make all five unnecessary, and doing one of them
-means the seam is in the wrong place.
+Update `protocol.md`, `server.md`, `client.md`, `system-architecture.md`, and,
+for durable or canvas-backed kinds, `project-model.md`. The maintenance contract
+in `docs/livecode/README.md` still applies.

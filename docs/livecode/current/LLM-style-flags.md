@@ -131,30 +131,29 @@ transport/session lifecycle).
 
 ## Medium-confidence flags
 
-### 4. Entity-kind generalization stops halfway, so abstractions coexist with repeated end-to-end plumbing
+### 4. Resolved 2026-08-23: entity-kind generalization stopped halfway
 
-There is a generic entity store, an entity registry, a sync-source registry,
-shared protocol modules, and a detailed 267-line recipe for adding an entity
-kind. Despite those abstractions, each type still needs custom store wrappers,
-snapshot and change collection, protocol unions, sync-source factories,
-server action switches/routes, client contexts/hooks, canvas persistence
-arrays, shape guards, and save/load handling. `syncRuntime.tsx` has six contexts
-and largely parallel reducers/providers; `App.tsx` separately collects and
-recreates each view type; `sync_sources.ts` manually registers factory
-functions per kind.
+The animation timeline integration supplied the concrete third durable type
+needed to separate mechanical registration from real domain differences.
 
-Some repetition is intentional and healthy: piano rolls, params, and signals
-have materially different mutation and lifetime semantics, and the principles
-reject a second generic patch-cable model. The flag is the combination of
-generic infrastructure and remaining mechanical cross-layer enumeration. It
-offers neither the simplicity of explicit bespoke features nor a single
-declarative extension seam.
+What shipped:
 
-**Why flag it:** the long addition recipe is a useful warning sign that a small
-feature can require many synchronized edits that an LLM will happily produce
-without noticing drift. Consolidate only truly mechanical facts (type ID,
-wire decoder/handler, sync adapter, persistence/view codec); do not force the
-different domain semantics into a universal base class.
+- `entity_kinds.ts` now joins one type ID to its sync behavior and optional
+  durable behavior. The engine registers store-backed built-ins from that list;
+  run/wait/lookup sources remain explicit because they need engine-local state.
+- `canvasViews.ts` now registers each view's shape util, project codec, change
+  detector, entity reference, and constructor. `App.tsx`, project restore,
+  adjacent duplication, the toolbar, and the debug surface use that registry
+  instead of parallel per-shape switches.
+- conformance tests exercise both registries with fake codecs/registrations,
+  while animation store and browser tests cover the real third implementation.
+- the addition recipe is shorter and names the remaining explicit work:
+  protocol typing, per-kind React context, and domain mutation operations.
+
+The retained explicit pieces are deliberate. Piano-roll undo, params merging,
+animation sampling/function hits, signal ownership, and per-kind React contexts
+encode different semantics or render-frequency boundaries. They were not
+collapsed into a universal entity base class or patch protocol.
 
 ### 5. Deprecated compatibility paths remain live inside the hottest core modules
 
@@ -240,8 +239,8 @@ one authoritative place with short references from code.
    framework" rewrite.
 4. Inventory the deprecated snapshot consumer and either retire it or move all
    compatibility translation behind one adapter.
-5. Use the next entity-kind addition to identify the genuinely mechanical
-   registry metadata; do not preemptively generalize domain-specific stores.
+5. Keep future entity kinds on the two established registries without
+   generalizing their domain-specific stores or mutation semantics.
 6. Trim redundant comments as touched code is simplified, after the important
    invariants have a single authoritative home.
 

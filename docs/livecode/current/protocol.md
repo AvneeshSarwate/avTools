@@ -1,7 +1,7 @@
 # Current Protocol and Cross-Boundary Contracts
 
 Status: checked against `packages/livecode-protocol`, `visualizer/server.ts`,
-and `apps/livecode-tldraw/src/syncRuntime.tsx` as of 2026-08-13; first audited
+and `apps/livecode-tldraw/src/syncRuntime.tsx` as of 2026-08-23; first audited
 2026-07-21 against the then-separate hand-mirrored protocol copies.
 
 ## Source of types
@@ -13,6 +13,7 @@ compiled from source by both consumers:
 packages/livecode-protocol/
   mod.ts              # type-only barrel; re-exports every module below
   analysis.ts         # diagnostics, wait-callsite manifest, /runtime/analyze
+  animation_timeline.ts # timeline entity/data, evaluation results, set contract
   client_control.ts   # /client/command and the /client/control envelopes
   entities.ts         # generic /entities/* CRUD bodies
   params.ts           # ParamsValues/ParamsMeta/ParamsEntity, /params/set
@@ -24,9 +25,9 @@ packages/livecode-protocol/
   sync.ts             # the /sync envelope and its entity-kind registry
 ```
 
-Everything in it is type-only (`export type *`), so importing the package costs
-nothing at run time. Types that belong to only one side — server internals,
-client view models — deliberately do not live here.
+The package is type-only except for `SYNC_ENTITY_TYPES`, the canonical watched
+kind list shared by the client and remote engine plane. Types that belong to
+only one side — server internals and client view models — do not live here.
 
 Consumption:
 
@@ -64,6 +65,7 @@ full-snapshot channels; all four are deleted.
 | --- | --- | --- | --- |
 | `pianoRoll` | durable | roll name | `PianoRollObject` |
 | `params` | durable | entity name | `ParamsEntity` |
+| `animationTimeline` | durable | timeline name | `AnimationTimelineEntity` |
 | `signal` | ephemeral | signal name | `SignalEntity` |
 | `run` | ephemeral | module id | `RunEntity` |
 | `moduleWaits` | ephemeral | module id | `ModuleWaitsEntity` |
@@ -182,6 +184,9 @@ listing entities cannot swallow a generation the open sockets are still owed.
   It returns status 404 with `{ ok: false, error }` for an unknown name: a
   write never creates an entity. Declaration, `/entities/create`, and a project
   load do.
+- `/animation-timeline/set` returns `{ ok: true, timeline }` or
+  `{ ok: false, error, current? }`. It replaces an existing whole timeline and
+  accepts `expectedRev`; it never creates one implicitly.
 - `/entities/*` return status 400 for a missing type/name, 404 for an unknown
   type or a missing entity, and 409 for a name that already exists, all with
   `{ ok: false, error }`.
@@ -494,6 +499,39 @@ carries it in the shared package, and its entries use the same optional
 only — no generated code, no runtime message, and no client action beyond the
 editor's open-pane widget. See `analyzer-and-generated-code.md`.
 
+## Animation timeline contract
+
+An `animationTimeline` is a durable named entity whose data is exactly
+`{ tracks, trackOrder }`. Tracks have stable IDs and names and are discriminated
+as `number`, `enum`, or `func`; elements also retain stable IDs. Number tracks
+carry low/high bounds, enum tracks may carry their options, and function
+elements carry `{ funcName, args }`.
+
+The store validates the complete JSON-safe value before replacing anything,
+sorts elements by time, and requires `trackOrder` to contain every track ID
+exactly once. Track IDs/names and element IDs within a track must be unique;
+times are finite and nonnegative. A rejected value leaves data and revision
+unchanged.
+
+```ts
+interface SetAnimationTimelineRequest {
+  name: string;
+  data: AnimationTimelineData;
+  originId?: string;
+  expectedRev?: number;
+}
+```
+
+The livecode helper returns a handle over canonical engine state. `sample(t)`
+linearly interpolates number tracks and steps enum tracks; `functionHits(a, b)`
+returns function elements in the forward interval `(a, b]`. Callbacks are not
+stored. Playback position, editor mode, duration/window, and callback functions
+belong to the caller or view and are not saved or synced.
+
+The tldraw component replaces the whole timeline with compare-and-set rather
+than introducing a generic sub-entity patch protocol. Accepted server truth is
+the only durable result.
+
 ## Signals contract
 
 Signals are the **ephemeral** tier: named latest-value samples that running
@@ -588,9 +626,9 @@ See `analyzer-and-generated-code.md`.
 
 ## Durable entity contract
 
-Piano rolls and params entities are the two registered **durable entity
-types**, addressed generically by `{ type, name }` where `type` is the wire id
-`"pianoRoll"` or `"params"`. Three routes act on any registered type:
+Piano rolls, params, and animation timelines are the three registered
+**durable entity types**, addressed generically by `{ type, name }`. Three
+routes act on any registered type:
 
 ```ts
 interface EntityCreateRequest { type: string; name: string }
@@ -614,7 +652,8 @@ an agent can call them with no browser attached.
 
 Per-type semantics are in `server.md`. Notably a created piano roll is an empty
 roll, a created params entity has no fields until a declaration or a load fills
-them, and a duplicated params entity copies values and meta but not tombstones.
+them, and a created animation timeline has empty track/order arrays. A
+duplicated params entity copies values and meta but not tombstones.
 
 ## Project data persistence contract
 
@@ -691,6 +730,13 @@ interface SavedParamsEntity {
   values: ParamsValues;
   meta?: ParamsMeta;
 }
+
+interface SavedAnimationTimelineEntity {
+  type: "animationTimeline";
+  name: string;
+  savedAt: string;
+  data: AnimationTimelineData;
+}
 ```
 
 Saved params carry `meta` so a freshly opened project renders correct panes
@@ -705,7 +751,7 @@ between a coordination server started with `--engine remote` and the browser
 engine host tab attached on `WS /engine/uplink`:
 
 - `EngineOp` is the whole execution-plane op surface — launch/stop/stop-all/
-  panic, runtime status/state, piano-roll/params/signals reads and writes,
+  panic, runtime status/state, piano-roll/params/animation/signals operations,
   generic entity CRUD, the project save capture (`captureEntities`),
   `entitySaveState`, `loadEntities`, and `snapshotAll`. The server's routes
   execute the same ops in local mode via `executeEngineOp`, so both modes are

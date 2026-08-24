@@ -52,6 +52,7 @@
     "earcut": "npm:earcut@^3.0.0",
     "canvas-params": "./apps/deno-notebooks/livecode/helpers/canvas_params.ts",
     "canvas-signals": "./apps/deno-notebooks/livecode/helpers/canvas_signals.ts",
+    "animation-timeline": "./apps/deno-notebooks/livecode/helpers/animation_timeline.ts",
     "midi-helpers": "./apps/deno-notebooks/livecode/helpers/midi_helpers.ts",
     "piano-roll-helpers": "./apps/deno-notebooks/livecode/helpers/piano_roll_helpers.ts",
     "piano-roll-store": "./packages/livecode-engine/piano_roll_store.ts",

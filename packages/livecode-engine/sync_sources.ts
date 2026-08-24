@@ -4,21 +4,6 @@
 
 import { type EntityChange, safeStringifyEntityValue } from "./entity_store.ts";
 import {
-  collectPianoRollChanges,
-  listPianoRollObjects,
-  PIANO_ROLL_ENTITY_TYPE,
-} from "./piano_roll_store.ts";
-import {
-  listParamsEntities,
-  PARAMS_ENTITY_TYPE,
-  sampleParamsChanges,
-} from "./params_store.ts";
-import {
-  listSignals,
-  sampleSignalChanges,
-  SIGNAL_ENTITY_TYPE,
-} from "./signals_store.ts";
-import {
   consumeDirtyLookupModules,
   consumeDirtyWaitModules,
   getModuleLookups,
@@ -81,30 +66,6 @@ export class SyncSourceRegistry {
   snapshotAll(entityType: string): unknown[] {
     return this.#sources.get(entityType)?.snapshotAll() ?? [];
   }
-}
-
-export function createPianoRollSyncSource(): SyncSource<unknown> {
-  return {
-    entityType: PIANO_ROLL_ENTITY_TYPE,
-    collectChanges: () => collectPianoRollChanges(),
-    snapshotAll: () => listPianoRollObjects(),
-  };
-}
-
-export function createParamsSyncSource(): SyncSource<unknown> {
-  return {
-    entityType: PARAMS_ENTITY_TYPE,
-    collectChanges: () => sampleParamsChanges(),
-    snapshotAll: () => listParamsEntities(),
-  };
-}
-
-export function createSignalsSyncSource(): SyncSource<unknown> {
-  return {
-    entityType: SIGNAL_ENTITY_TYPE,
-    collectChanges: () => sampleSignalChanges(),
-    snapshotAll: () => listSignals(),
-  };
 }
 
 export function createModuleWaitsSyncSource(): SyncSource<unknown> {

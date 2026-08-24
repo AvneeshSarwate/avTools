@@ -5,8 +5,12 @@ import {
   entityDataPath,
   getDurableEntityType,
   listDurableEntityTypes,
-  registerBuiltinDurableEntityTypes,
 } from "@avtools/livecode-engine/entity_registry.ts";
+import {
+  materializeEntityKind,
+  registerBuiltinEntityKinds,
+} from "@avtools/livecode-engine/entity_kinds.ts";
+import { SyncSourceRegistry } from "@avtools/livecode-engine/sync_sources.ts";
 import {
   clearPianoRollStore,
   collectPianoRollChanges,
@@ -22,20 +26,28 @@ import {
   getParams,
   registerParams,
 } from "@avtools/livecode-engine/params_store.ts";
+import {
+  clearAnimationTimelineStore,
+  getAnimationTimeline,
+  setAnimationTimeline,
+} from "@avtools/livecode-engine/animation_timeline_store.ts";
 import type {
   NoteDataInput,
+  SavedAnimationTimelineEntity,
   SavedParamsEntity,
   SavedPianoRollEntity,
 } from "../visualizer/protocol.ts";
 
-registerBuiltinDurableEntityTypes();
+registerBuiltinEntityKinds(new SyncSourceRegistry());
 
 const pianoRolls = getDurableEntityType("pianoRoll")!;
 const params = getDurableEntityType("params")!;
+const animations = getDurableEntityType("animationTimeline")!;
 
 function resetStores(): void {
   clearPianoRollStore();
   clearParamsStore();
+  clearAnimationTimelineStore();
   // Seeding is an explicit server-construction step now, not something a read
   // path does lazily, so a reset reproduces construction rather than relying on
   // the next list/get to conjure `melody` back.
@@ -45,12 +57,88 @@ function resetStores(): void {
   collectPianoRollChanges();
 }
 
-Deno.test("the registry exposes exactly the two built-in durable types", () => {
+Deno.test("the registry exposes the built-in durable types", () => {
   assertEquals(
     listDurableEntityTypes().map((descriptor) => descriptor.typeId),
-    ["params", "pianoRoll"],
+    ["animationTimeline", "params", "pianoRoll"],
   );
   assertEquals(getDurableEntityType("nope"), undefined);
+});
+
+Deno.test("one entity-kind registration materializes sync and durability", () => {
+  const durable = {
+    listNames: () => ["one"],
+    exists: (name: string) => name === "one",
+    create: (_name: string) => {},
+    duplicate: (_source: string, _target: string) => {},
+    remove: (_name: string) => true,
+    serialize: (name: string) => ({ name }),
+    deserialize: (_name: string, _data: unknown) => {},
+    latestJson: (name: string) => JSON.stringify({ name }),
+  };
+  const artifacts = materializeEntityKind({
+    typeId: "testKind",
+    sync: {
+      collectChanges: () => [{ name: "one", entity: { name: "one" } }],
+      snapshotAll: () => [{ name: "one" }],
+    },
+    durable,
+  });
+
+  assertEquals(artifacts.syncSource.entityType, "testKind");
+  assertEquals(artifacts.syncSource.snapshotAll(), [{ name: "one" }]);
+  assertEquals(artifacts.durableDescriptor?.typeId, "testKind");
+  assertEquals(artifacts.durableDescriptor?.serialize("one"), { name: "one" });
+});
+
+Deno.test("animationTimeline registry CRUD and persistence round-trip", () => {
+  resetStores();
+  animations.create("reg/animation");
+  assertEquals(getAnimationTimeline("reg/animation")?.data, {
+    tracks: [],
+    trackOrder: [],
+  });
+  const written = setAnimationTimeline("reg/animation", {
+    tracks: [{
+      id: "gain",
+      name: "gain",
+      fieldType: "number",
+      low: 0,
+      high: 1,
+      elementData: [
+        { id: "end", time: 1, value: 1 },
+        { id: "start", time: 0, value: 0 },
+      ],
+    }],
+    trackOrder: ["gain"],
+  });
+  assert(written.ok);
+
+  animations.duplicate("reg/animation", "reg/animation-copy");
+  assertEquals(
+    getAnimationTimeline("reg/animation-copy")?.data,
+    getAnimationTimeline("reg/animation")?.data,
+  );
+
+  const saved = animations.serialize(
+    "reg/animation",
+  ) as SavedAnimationTimelineEntity;
+  assertEquals(saved.type, "animationTimeline");
+  animations.deserialize("reg/animation-loaded", saved);
+  assertEquals(
+    animations.latestJson("reg/animation-loaded"),
+    animations.latestJson("reg/animation"),
+  );
+  assertThrows(
+    () =>
+      animations.deserialize("reg/invalid-animation", {
+        data: { tracks: [], trackOrder: ["missing"] },
+      }),
+    Error,
+    "trackOrder",
+  );
+  assertEquals(animations.remove("reg/animation-copy"), true);
+  assertEquals(animations.remove("reg/animation-copy"), false);
 });
 
 Deno.test("pianoRoll create makes an empty roll and rejects an existing name", () => {

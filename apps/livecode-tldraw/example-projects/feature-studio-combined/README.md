@@ -8,9 +8,9 @@ entries, so opening restores a roll and a pre-launch param pane with meta),
 the full edit → save → mutate → re-open → verify-restored loop, an anchored
 playhead signal, code-driven params reads at loop rate, a `graph: true`
 monitor field written by code, a finite variation writer, an observable
-`stop()` hook, and canvas layout persistence across **all** view kinds the
-manifest supports (module shapes, piano-roll views, a param pane, and both
-scope source types: an ephemeral signal and a durable params leaf).
+`stop()` hook, and canvas layout persistence for its module shapes, piano-roll
+views, param pane, and both scope source types: an ephemeral signal and a
+durable params leaf.
 
 Entity names deliberately contain a slash (`studio/theme`, `studio/mix`) so
 the percent-encoded data filenames (`studio%2Ftheme.json`) exercise the
@@ -95,10 +95,10 @@ http://localhost:5173/?projectPath=<absolute path to this directory>
     entity** (prefilled `studio/theme-copy`): a view of the copy appears with
     the same notes. Delete the copy entity afterwards (two-step confirm);
     its view stays as a placeholder until you delete the shape too.
-16. **Layout persistence, all kinds.** Move a module shape, a roll view, the
-    pane, and a scope; wait a second; reload the page. Everything comes back
-    where you put it (module records and all three canvas view arrays in the
-    manifest). `git checkout` to discard.
+16. **Layout persistence.** Move a module shape, a roll view, the pane, and a
+    scope; wait a second; reload the page. Everything comes back where you put
+    it (module records and all three canvas view arrays in the manifest).
+    `git checkout` to discard.
 
 ## Expected-state notes
 

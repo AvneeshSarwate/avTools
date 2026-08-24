@@ -23,6 +23,7 @@ import {
 } from "@avtools/livecode-engine/sync_sources.ts";
 import type {
   AnalyzeSuccess,
+  AnimationTimelineEntity,
   ModuleLookupsEntity,
   ModuleWaitsEntity,
   ParamsEntity,
@@ -148,6 +149,74 @@ Deno.test("changes ship per entity and a deletion ships as a null entity", async
         "pianoRoll",
         (change) => change.name === "sync/edited" && change.entity === null,
         "the deletion",
+      );
+    } finally {
+      client.close();
+    }
+  });
+});
+
+Deno.test("animation timelines reset, change, and delete on the shared transport", async () => {
+  await withServer("tcv-sync-animation-", async ({ baseUrl }) => {
+    await postJson(`${baseUrl}/entities/create`, {
+      type: "animationTimeline",
+      name: "sync/animation",
+    });
+    await postJson(`${baseUrl}/animation-timeline/set`, {
+      name: "sync/animation",
+      data: {
+        tracks: [{
+          id: "gain",
+          name: "gain",
+          fieldType: "number",
+          low: 0,
+          high: 1,
+          elementData: [{ id: "start", time: 0, value: 0 }],
+        }],
+        trackOrder: ["gain"],
+      },
+    });
+
+    const client = await SyncClient.open(baseUrl);
+    try {
+      const reset = await client.subscribe(["animationTimeline"]);
+      const initial = (
+        reset.resets?.animationTimeline as AnimationTimelineEntity[]
+      )[0];
+      assertEquals(initial.name, "sync/animation");
+      assertEquals(initial.data.trackOrder, ["gain"]);
+
+      const before = client.messages.length;
+      await postJson(`${baseUrl}/animation-timeline/set`, {
+        name: "sync/animation",
+        expectedRev: initial.rev,
+        data: {
+          tracks: [{
+            ...initial.data.tracks[0],
+            elementData: [{ id: "end", time: 1, value: 1 }],
+          }],
+          trackOrder: ["gain"],
+        },
+      });
+      await client.waitForChange(
+        before,
+        "animationTimeline",
+        (change) =>
+          (change.entity as AnimationTimelineEntity | null)?.rev ===
+            initial.rev + 1,
+        "the animation edit",
+      );
+
+      const beforeDelete = client.messages.length;
+      await postJson(`${baseUrl}/entities/delete`, {
+        type: "animationTimeline",
+        name: "sync/animation",
+      });
+      await client.waitForChange(
+        beforeDelete,
+        "animationTimeline",
+        (change) => change.name === "sync/animation" && change.entity === null,
+        "the animation deletion",
       );
     } finally {
       client.close();

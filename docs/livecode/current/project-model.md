@@ -1,8 +1,8 @@
 # Current Project Model
 
 Status: checked against the server, tldraw client, project tests, and checked-in
-example — most recently the saved-entity file formats' move into
-`packages/livecode-protocol` — as of 2026-08-13; first audited 2026-07-21.
+example — most recently the animation timeline integration — as of 2026-08-23;
+first audited 2026-07-21.
 
 ## Durable file model
 
@@ -27,6 +27,8 @@ project/
       kinaree%2Frects.json          # entity name "kinaree/rects"
     params/
       main.json
+    animationTimeline/
+      scene.json
 ```
 
 Editor source imports runtime paths, not `.orig.ts` paths:
@@ -82,6 +84,14 @@ interface LivecodeProjectManifest {
       w: number;
       h: number;
     }>;
+    animationEditorViews?: Array<{
+      id: string;
+      animationName: string;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+    }>;
     scopeViews?: Array<{
       id: string;
       sourceType: "signal" | "params";
@@ -95,15 +105,15 @@ interface LivecodeProjectManifest {
     }>;
   };
   data?: Array<{
-    type: string;        // durable entity type: "pianoRoll" | "params"
+    type: string;        // e.g. "pianoRoll" | "params" | "animationTimeline"
     name: string;        // the true entity name
     path: string;        // project-relative data file, ends in .json
   }>;
 }
 ```
 
-All three view arrays are optional and additive; adding `paramPaneViews` and
-later `scopeViews` did not bump the manifest version. A scope view names a
+All four view arrays are optional and additive; adding them did not bump the
+manifest version. A scope view names a
 **binding**, not an entity: what is saved is which value it watches and how
 wide its window is, never any of the samples it drew. A scope may name a signal
 that no longer exists — signals are ephemeral, so a reopened project starts its
@@ -151,9 +161,9 @@ small copyable reference is
 4. Import another project module through its runtime path, such as
    `import { state } from "./state.ts"`, never through `state.orig.ts`.
    Import livecode helpers through the repository root `deno.json` import-map
-   aliases — `canvas-params`, `canvas-signals`, `piano-roll-helpers`,
-   `piano-roll-store`, `midi-helpers` — which the shadow `deno check` and the
-   LSP workspace both resolve. A project inside the repository needs no
+   aliases — `canvas-params`, `canvas-signals`, `animation-timeline`,
+   `piano-roll-helpers`, `piano-roll-store`, `midi-helpers` — which the shadow
+   `deno check` and the LSP workspace both resolve. A project inside the repository needs no
    `deno.json` of its own.
 5. Give every source a supported default async `TimeContext` function. A
    data-only module may use a no-op root.
@@ -163,6 +173,11 @@ small copyable reference is
    working directory.
 7. After changing the manifest externally, reload the project/page. The open
    client does not watch the manifest and rebuild the canvas automatically.
+8. For a new user-visible feature, keep this project as a checked-in
+   `feature-*` fixture with a manual README, and make an end-to-end test consume
+   the same directory. Destructive automation copies it to a temporary
+   directory first; it must not duplicate the fixture's saved payloads inside
+   the test or rewrite the canonical project.
 
 On successful open, the server reads every `*.orig.ts`, writes transformed
 `*.ts` runtime files, and the client creates one code shape per manifest record
@@ -170,8 +185,8 @@ at the saved coordinates. Source edits in those shapes write through to
 `*.orig.ts`; moving/resizing a project code shape writes layout back after a
 one-second debounce.
 
-This project format persists code modules, optional piano-roll-view and
-param-pane layout, and — through an explicit save only — durable entity values
+This project format persists code modules, registered canvas-view layouts, and
+— through an explicit save only — durable entity values
 in the `data` tree described below. It does not persist arbitrary tldraw
 shapes, undo/redo history, active runs, or runtime snapshots. Standalone
 `.tldr` files preserve a tldraw document snapshot but are tldraw-owned,
@@ -277,14 +292,15 @@ current source transformed successfully.
   memory, rebuilds `manifest.data`, and writes the manifest again. It is the
   only path that writes entity data.
 - **Canvas:** replaces the entire optional canvas object. The current client
-  always sends both view arrays in one post for that reason.
+  collects every registered view array in one post for that reason.
 
 ## Durable entity data
 
-Durable entities — named piano rolls and params entities — live in
-process-global server stores. A project save writes them to plain files; a
-project open reads them back. Nothing else does: code writes at any rate never
-touch disk, and there is no auto-save, save-on-shutdown, or write-through.
+Durable entities — named piano rolls, params entities, and animation timelines
+— live in process-global engine stores. A project save writes them to plain
+files; a project open reads them back. Nothing else does: code writes at any
+rate never touch disk, and there is no auto-save, save-on-shutdown, or
+write-through.
 
 **Ephemeral signals are excluded from all of this by construction.** They are an
 entity type in the same store, but they are deliberately not registered in
@@ -305,10 +321,11 @@ than 100 characters are truncated and given a short hash suffix, and two names
 that would collide case-insensitively (as they would on macOS) get a numeric
 suffix within the save that noticed.
 
-The saved file formats — `SavedPianoRollEntity` and `SavedParamsEntity` — are
-declared in `packages/livecode-protocol/saved_entities.ts`, the same shared
-package that holds the wire types, and are documented in `protocol.md`. A new
-durable entity type adds its saved form there and nowhere else; the server
+The saved file formats — `SavedPianoRollEntity`, `SavedParamsEntity`, and
+`SavedAnimationTimelineEntity` — are declared in
+`packages/livecode-protocol/saved_entities.ts`, the same shared package that
+holds the wire types, and are documented in `protocol.md`. A new durable entity
+type adds its saved form there and nowhere else; the server
 imports them through `visualizer/protocol.ts` and any client that reads a
 project's `data` tree compiles against the same declarations.
 
@@ -436,6 +453,14 @@ explicit save; undo/redo history never does.
 source-only, known-green template for agent-authored examples. It contains
 three modules with explicit layouts and deliberately omits generated `*.ts`
 files from version control so opening it exercises normal materialization.
+
+`apps/livecode-tldraw/example-projects/feature-animation-timeline` is the
+reference for a long-lived manual/E2E fixture. It includes representative
+durable data and saved views, has a manual verification checklist, is opened by
+the headless feature verifier, and is copied by the Playwright E2E before
+save/reopen mutations. New features should follow this ownership model: one
+recognizable project is the source of truth for both automated and manual
+verification, while unit tests keep synthetic edge-case inputs.
 
 `apps/livecode-tldraw/example-projects/minimal-p5gpu` demonstrates the expected
 directory/import/layout shape and optional `stop()` cleanup. Its current

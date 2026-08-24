@@ -69,9 +69,11 @@ directly.
   `@avtools/livecode-protocol`, so server imports keep reading as
   `./protocol.ts`. It holds no types of its own; wire types go in the package,
   server-only types in the module that owns them.
-- `packages/livecode-engine/sync_sources.ts`: the `SyncSource` registry the broadcast timer
-  walks — one `collectChanges()`/`snapshotAll()` pair per entity kind, plus the
-  shared engine for the module-keyed ephemeral kinds.
+- `packages/livecode-engine/sync_sources.ts`: the `SyncSource` registry the
+  broadcast timer walks — one `collectChanges()`/`snapshotAll()` pair per kind.
+- `packages/livecode-engine/entity_kinds.ts`: the built-in store-backed kind
+  registrations; one type ID materializes sync behavior and optional
+  durability. Engine-local run/wait/lookup sources are registered separately.
 - `visualizer/analyze_transform.ts`: per-module parsing, diagnostics,
   instrumentation, manifest generation, and default-export normalization.
 - `visualizer/project_shadow_analysis.ts`: project import graph, temporary
@@ -87,7 +89,7 @@ directly.
 - `packages/livecode-engine/entity_store.ts`: generic
   `(type, name)`-keyed records with revisions, per-name monotonic revision
   floors, no-op caching, strict JSON validation, and the per-type
-  **changed-name set** that is the broadcast gate. All three typed stores sit
+  **changed-name set** that is the broadcast gate. All four typed stores sit
   on it.
 - `packages/livecode-engine/params_store.ts`: params entities as the
   first typed wrapper over the entity store — declaration, recursive
@@ -99,6 +101,9 @@ directly.
   sampler that adopts code writes and stamps them with logical time.
   Deliberately **not** registered in `entity_registry.ts`; that single
   omission is the whole ephemeral class.
+- `packages/livecode-engine/animation_timeline_store.ts`: durable animation
+  timelines, whole-value compare-and-set, normalization, interpolation, and
+  forward-interval function-hit evaluation.
 - `packages/livecode-engine/entity_registry.ts`: one descriptor
   interface over every durable entity type, so generic entity actions and
   project persistence never have to know which type a name addresses. It also
@@ -167,7 +172,7 @@ directly.
 - cached/in-flight project diagnostics;
 - an LSP WebSocket process manager with at most four proxy processes.
 
-`runtime.ts` and `entity_store.ts` (with the piano-roll, params, and signal
+`runtime.ts` and `entity_store.ts` (with the piano-roll, params, animation, and signal
 entities inside it) are module singletons in the engine package, not fields of
 the server or engine object. They are shared by every generated module and
 would also be shared by multiple server objects in one isolate. Run records are
@@ -254,7 +259,7 @@ changes.
 | POST | `/project/modules/write` | Write canonical source, advance/set source version, write the manifest, and materialize. |
 | POST | `/project/modules/reload` | Adopt the current disk source hash as editor/loaded state and materialize. |
 | POST | `/project/modules/remove` | Remove the manifest/cache record. It does not delete source/runtime files or stop an active module. |
-| POST | `/project/canvas` | Replace the manifest's canvas object; currently used for piano-roll-view layout. |
+| POST | `/project/canvas` | Replace the manifest's canvas object with all registered view arrays. |
 
 ### Durable entities
 
@@ -279,6 +284,12 @@ changes.
 | --- | --- | --- |
 | GET | `/params/list` | Read-only full snapshot, despite the route name. |
 | POST | `/params/set` | Deep-merge leaf values into one live entity, optionally checking `expectedRev`. Status 404 for an unknown name; a write never creates an entity. |
+
+### Animation timeline
+
+| Method | Route | Behavior |
+| --- | --- | --- |
+| POST | `/animation-timeline/set` | Validate and replace one existing timeline, optionally checking `expectedRev`. Returns accepted timeline truth or a rejection with the current entity. |
 
 ### Signals
 
@@ -488,8 +499,10 @@ The difference between the two methods is the whole discipline:
   roll seeding moved to server construction: a read path must not create an
   entity.)
 
-Six sources are registered at construction: `pianoRoll`, `params`, `signal`,
-`moduleWaits`, `moduleLookups`, `run`. An unregistered type named in a subscribe
+Seven sources are registered at construction: `pianoRoll`, `params`,
+`animationTimeline`, `signal`, `moduleWaits`, `moduleLookups`, and `run`. The
+first four come from `BUILTIN_ENTITY_KINDS`; the engine adds its local sources.
+An unregistered type named in a subscribe
 resets to an empty list rather than 404ing.
 
 ### Change tracking is per name, not a boolean
@@ -813,7 +826,7 @@ says so before anyone builds a musical x-axis on them.
 
 ```ts
 interface DurableEntityTypeDescriptor {
-  typeId: string;                                   // "pianoRoll" | "params"
+  typeId: string;
   listNames(): string[];
   exists(name: string): boolean;
   create(name: string): void;                       // rejects existing
@@ -825,7 +838,8 @@ interface DurableEntityTypeDescriptor {
 }
 ```
 
-Both descriptors are registered at server construction. Now that the piano-roll
+All three descriptors are registered with their sync sources at engine
+construction. Now that the piano-roll
 store also sits on `entity_store.ts`, this is a thin naming/validation layer
 over one substrate rather than a facade bridging two engines. Type ids are
 assumed space-free because the saved-state map is keyed `"<type> <name>"`.
