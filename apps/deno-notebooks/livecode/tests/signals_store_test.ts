@@ -62,33 +62,48 @@ Deno.test("declareSignal creates a signal at rev 1 with a null value", () => {
   assertEquals(entity.rev, 1);
   assertEquals(entity.updatedBy, "declare");
   assertEquals(entity.value, null);
-  assertEquals(entity.anchor, undefined);
+  assertEquals(entity.anchors, []);
   assertEquals(entity.ended, undefined);
   assertEquals(entity.ownerModuleId, undefined);
 
   assertThrows(() => declareSignal("   "), Error, "must not be empty");
 });
 
-Deno.test("declareSignal reattaches, and a redeclaration clears ended and replaces the anchor", () => {
+Deno.test("signal anchors are a mutable idempotent set", () => {
   reset();
-  const first = declareSignal<number>("test/reattach", {
-    anchor: { type: "pianoRoll", name: "melody" },
-  });
+  const handle = declareSignal<number>("test/anchors");
+  const melody = { type: "pianoRoll", name: "melody" };
+  const bass = { type: "pianoRoll", name: "bass", path: ["notes"] };
+
+  sampled();
+  handle.addAnchor(melody);
+  assertEquals(sampled()?.["test/anchors"]?.anchors, [melody]);
+  handle.addAnchor(melody);
+  assertEquals(sampled(), null, "adding the same anchor is a no-op");
+  handle.addAnchor(bass);
+  assertEquals(sampled()?.["test/anchors"]?.anchors, [melody, bass]);
+  assertEquals(findSignal("test/anchors")?.rev, 1, "anchors are not values");
+
+  handle.removeAnchor({ type: "pianoRoll", name: "absent" });
+  assertEquals(sampled(), null, "removing a missing anchor is a no-op");
+  handle.removeAnchor(melody);
+  handle.removeAnchor(melody);
+  assertEquals(sampled()?.["test/anchors"]?.anchors, [bass]);
+});
+
+Deno.test("declareSignal reattaches, clearing ended and the prior run's anchors", () => {
+  reset();
+  const first = declareSignal<number>("test/reattach");
+  first.addAnchor({ type: "pianoRoll", name: "melody" });
   first.set(4);
   sampled();
   first.end();
   assertEquals(findSignal("test/reattach")?.ended, true);
 
-  const second = declareSignal<number>("test/reattach", {
-    anchor: { type: "pianoRoll", name: "bass", path: ["notes"] },
-  });
+  const second = declareSignal<number>("test/reattach");
   const reattached = findSignal("test/reattach");
   assertEquals(reattached?.ended, undefined, "redeclare clears ended");
-  assertEquals(reattached?.anchor, {
-    type: "pianoRoll",
-    name: "bass",
-    path: ["notes"],
-  });
+  assertEquals(reattached?.anchors, [], "redeclare starts a fresh anchor set");
   assertEquals(reattached?.value, 4, "the live value survives a redeclare");
   assertEquals(reattached?.rev, 2, "a redeclare is not a value generation");
 

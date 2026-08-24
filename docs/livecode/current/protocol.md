@@ -21,7 +21,7 @@ packages/livecode-protocol/
   project.ts          # manifest, module records, every /project/* body
   runtime.ts          # launch/stop, run lifecycle, /health, /runtime/state
   saved_entities.ts   # the durable data-file formats a project save writes
-  signals.ts          # SignalEntity and its anchor
+  signals.ts          # SignalEntity and its anchors
   sync.ts             # the /sync envelope and its entity-kind registry
 ```
 
@@ -557,7 +557,7 @@ interface SignalAnchor {
 interface SignalEntity {
   name: string;
   value: unknown | null;  // null until first set or while unavailable on wire
-  anchor?: SignalAnchor;
+  anchors: SignalAnchor[];
   ownerModuleId?: string;
   ended?: boolean;
   rev: number;
@@ -575,15 +575,17 @@ Differences from a params entity, all deliberate:
   There is no declared shape, no meta, and no field-level merge. If its current
   value is not valid JSON, the wire value is null and `unserializable` is true;
   a prior sample is never substituted.
-- `anchor` is an entity reference, so a view can bind to a signal without the
-  producer knowing any view exists. `path` is carried for a future consumer;
-  the roll's marker feed ignores it today.
+- `anchors` is a set of entity references, so one signal can feed several views
+  without the producer knowing whether those views exist. `addAnchor` and
+  `removeAnchor` mutate it after declaration; duplicate adds and missing removes
+  are no-ops. Identity is `{ type, name, path }`. `path` is carried for a future
+  consumer; the playhead feeds ignore it today.
 - `ended` marks that the owning run stopped. It is **sticky**: later writes keep
   updating `value` while `ended` stays set, and only a redeclaration of the name
   clears it. A moving-but-ended signal is a surfaced finding, not something the
   platform polices inside caller-owned timing.
-- `rev` counts observed value generations, as it does for params. A redeclare
-  changes the anchor and the ended flag without bumping it.
+- `rev` counts observed value generations, as it does for params. Anchor changes
+  and redeclaration do not bump it.
 - `updatedBy` is `declare` or `code`; there is no client origin, because there
   is no client write.
 

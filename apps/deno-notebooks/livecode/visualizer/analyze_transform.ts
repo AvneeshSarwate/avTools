@@ -65,6 +65,17 @@ const CANVAS_PARAMS_IMPORT_ALIASES = new Set(["canvas-params"]);
 const CANVAS_PARAMS_SOURCE_SUFFIXES = ["/helpers/canvas_params.ts"];
 const CANVAS_PARAMS_SOURCE_BASENAMES = new Set(["canvas_params.ts"]);
 
+const ANIMATION_TIMELINE_FUNCTIONS = new Set(["animationTimeline"]);
+const ANIMATION_TIMELINE_IMPORT_ALIASES = new Set(["animation-timeline"]);
+const ANIMATION_TIMELINE_SOURCE_SUFFIXES = [
+  "/helpers/animation_timeline.ts",
+  "/livecode-engine/animation_timeline_store.ts",
+];
+const ANIMATION_TIMELINE_SOURCE_BASENAMES = new Set([
+  "animation_timeline.ts",
+  "animation_timeline_store.ts",
+]);
+
 /**
  * Ephemeral signal declarations. Discovered like canvas-params (whole file,
  * any depth) but edited like a wait: the WHOLE call is wrapped so the runtime
@@ -200,20 +211,37 @@ export function analyzeAndTransformTimedModule(
   const processedBodies = new Set<Node>();
   const pianoRollLookupBindings = collectPianoRollLookupImports(sourceFile);
   const canvasParamsBindings = collectCanvasParamsImports(sourceFile);
+  const animationTimelineBindings = collectAnimationTimelineImports(sourceFile);
   const canvasSignalBindings = collectCanvasSignalImports(sourceFile);
 
   for (const scope of collectVisualFunctionScopes(sourceFile)) {
     processVisualBody(scope);
   }
-  collectCanvasParamsCallsites();
-  collectCanvasSignalCallsites();
+  collectNamedHelperCallsites(
+    canvasParamsBindings,
+    CANVAS_PARAMS_FUNCTIONS,
+    "canvasParams",
+  );
+  collectNamedHelperCallsites(
+    animationTimelineBindings,
+    ANIMATION_TIMELINE_FUNCTIONS,
+    "animationTimeline",
+  );
+  collectNamedHelperCallsites(
+    canvasSignalBindings,
+    CANVAS_SIGNAL_FUNCTIONS,
+    "canvasSignal",
+  );
 
   let hasWrappedCallsite = false;
   for (const callsite of collectSortedInstrumentedCallsites()) {
     const call = callsite.call;
     const start = call.getStart();
     const end = call.getEnd();
-    if (callsite.kind === "canvasParams") {
+    if (
+      callsite.kind === "canvasParams" ||
+      callsite.kind === "animationTimeline"
+    ) {
       // Observation only: the manifest entry is the whole feature, so this
       // kind deliberately emits no wrapper and no runtime import.
     } else if (callsite.kind === "pianoRollLookup" && callsite.nameArg) {
@@ -290,8 +318,8 @@ export function analyzeAndTransformTimedModule(
     }
     magic.append("\nexport default runFunc;\n");
   }
-  // Keyed on wrapped callsites, not on the manifest: a module whose only
-  // manifest entries are `canvasParams` observations must import nothing.
+  // Keyed on wrapped callsites, not on the manifest: observation-only entity
+  // declarations must not pull runtime instrumentation into the module.
   if (hasWrappedCallsite) {
     magic.prepend(
       `import { visualizedAwait as __tcvVisualizedAwait, visualizedPianoRollLookup as __tcvPianoRollLookup, visualizedOwnedSignal as __tcvOwnedSignal } from ${
@@ -483,7 +511,7 @@ export function analyzeAndTransformTimedModule(
     const args = call.getArguments();
     const nameArg = args[0];
     if (!nameArg) return;
-    const staticName = extractStaticRollName(nameArg);
+    const staticName = extractStaticEntityName(nameArg);
     const nameArgRange = {
       from: nameArg.getStart(),
       to: nameArg.getEnd(),
@@ -505,79 +533,27 @@ export function analyzeAndTransformTimedModule(
     );
   }
 
-  /**
-   * Params are normally declared at module scope, so this pass walks the whole
-   * file rather than the `TimeContext` scopes: a declaration inside a timed
-   * body, at top level, or inside any other function is equally real. It
-   * returns immediately for a module that does not import `canvas-params`, so
-   * detection costs nothing for every other module.
-   */
-  function collectCanvasParamsCallsites() {
-    if (
-      canvasParamsBindings.named.size === 0 &&
-      canvasParamsBindings.namespaces.size === 0
-    ) {
-      return;
-    }
+  function collectNamedHelperCallsites(
+    bindings: HelperImportBindings,
+    functionNames: Set<string>,
+    kind: "canvasParams" | "animationTimeline" | "canvasSignal",
+  ) {
+    if (bindings.named.size === 0 && bindings.namespaces.size === 0) return;
     sourceFile.forEachDescendant((node) => {
-      if (Node.isCallExpression(node)) processCanvasParams(node);
+      if (!Node.isCallExpression(node)) return;
+      if (!resolveHelperCallTarget(node, bindings, functionNames)) return;
+      const nameArg = node.getArguments()[0];
+      if (!nameArg) return;
+      const staticName = extractStaticEntityName(nameArg);
+      instrumentedCalls.set(node, {
+        kind,
+        ...(staticName !== undefined ? { staticName } : {}),
+        nameArgRange: { from: nameArg.getStart(), to: nameArg.getEnd() },
+      });
     });
   }
 
-  function processCanvasParams(call: CallExpression) {
-    const target = resolveHelperCallTarget(
-      call,
-      canvasParamsBindings,
-      CANVAS_PARAMS_FUNCTIONS,
-    );
-    if (!target) return;
-
-    const nameArg = call.getArguments()[0];
-    if (!nameArg) return;
-    const staticName = extractStaticRollName(nameArg);
-    instrumentedCalls.set(call, {
-      kind: "canvasParams",
-      ...(staticName !== undefined ? { staticName } : {}),
-      nameArgRange: { from: nameArg.getStart(), to: nameArg.getEnd() },
-    });
-  }
-
-  /**
-   * Signals are declared wherever the piece wants them — module scope, a timed
-   * body, or inside a loop — so this pass walks the whole file too, and returns
-   * immediately for a module that does not import `canvas-signals`.
-   */
-  function collectCanvasSignalCallsites() {
-    if (
-      canvasSignalBindings.named.size === 0 &&
-      canvasSignalBindings.namespaces.size === 0
-    ) {
-      return;
-    }
-    sourceFile.forEachDescendant((node) => {
-      if (Node.isCallExpression(node)) processCanvasSignal(node);
-    });
-  }
-
-  function processCanvasSignal(call: CallExpression) {
-    const target = resolveHelperCallTarget(
-      call,
-      canvasSignalBindings,
-      CANVAS_SIGNAL_FUNCTIONS,
-    );
-    if (!target) return;
-
-    const nameArg = call.getArguments()[0];
-    if (!nameArg) return;
-    const staticName = extractStaticRollName(nameArg);
-    instrumentedCalls.set(call, {
-      kind: "canvasSignal",
-      ...(staticName !== undefined ? { staticName } : {}),
-      nameArgRange: { from: nameArg.getStart(), to: nameArg.getEnd() },
-    });
-  }
-
-  function extractStaticRollName(node: Node): string | undefined {
+  function extractStaticEntityName(node: Node): string | undefined {
     if (Node.isStringLiteral(node)) return node.getLiteralValue();
     if (Node.isNoSubstitutionTemplateLiteral(node)) {
       return node.getLiteralValue();
@@ -868,6 +844,16 @@ function collectCanvasParamsImports(
   );
 }
 
+function collectAnimationTimelineImports(
+  sourceFile: SourceFile,
+): HelperImportBindings {
+  return collectHelperImports(
+    sourceFile,
+    ANIMATION_TIMELINE_FUNCTIONS,
+    isAnimationTimelineModuleSpecifier,
+  );
+}
+
 /** And again for `signal(...)` declarations. */
 function collectCanvasSignalImports(
   sourceFile: SourceFile,
@@ -953,6 +939,15 @@ function isCanvasParamsModuleSpecifier(specifier: string): boolean {
     CANVAS_PARAMS_IMPORT_ALIASES,
     CANVAS_PARAMS_SOURCE_SUFFIXES,
     CANVAS_PARAMS_SOURCE_BASENAMES,
+  );
+}
+
+function isAnimationTimelineModuleSpecifier(specifier: string): boolean {
+  return matchesHelperModuleSpecifier(
+    specifier,
+    ANIMATION_TIMELINE_IMPORT_ALIASES,
+    ANIMATION_TIMELINE_SOURCE_SUFFIXES,
+    ANIMATION_TIMELINE_SOURCE_BASENAMES,
   );
 }
 

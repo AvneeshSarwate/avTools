@@ -463,9 +463,8 @@ import { signal } from "canvas-signals";
 
 export default async function (ctx: TimeContext) {
   canvasParams("sync/meta", { gain: 1 }, { gain: { min: 0, max: 2 } });
-  const marker = signal<number>("sync/meta-marker", {
-    anchor: { type: "pianoRoll", name: "melody" },
-  });
+  const marker = signal<number>("sync/meta-marker");
+  marker.addAnchor({ type: "pianoRoll", name: "melody" });
   marker.set(1);
   await ctx.waitSec(0.2);
   // Same values, new meta: rev must not move, and the change must still ship.

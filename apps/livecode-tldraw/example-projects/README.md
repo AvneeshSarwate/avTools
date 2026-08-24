@@ -30,8 +30,8 @@ layout churn you did not mean to keep.
 | `minimal-p5gpu` | **Deliberately-broken diagnostics fixture** (`sped`/`speed` mismatch). It exists to show failing project diagnostics; do not "fix" it and do not use it as a smoke test. |
 | `feature-params-basics` | `canvasParams` slice: nested groups, meta bounds/labels, a `graph: true` field, code-driven automation writes, loop-rate reads, `/params/set`. |
 | `feature-piano-roll-flows` | Piano-roll slice: module write-back (`setPianoRollClip`), live playback (`playPianoRoll`), multiple views of one roll, entity CRUD via topbar and HTTP. |
-| `feature-animation-timeline` | Durable animation slice **with checked-in `data/`**: number/enum/function tracks, restored editor view, loop-rate sampling into a saved scope, whole-timeline CAS, and save/reopen. This is also the browser E2E's project fixture. |
-| `feature-signals-and-scopes` | Ephemeral-signal slice: anchored playhead, two playheads on one melody (both marker value shapes), numeric signal + scopes, sticky `ended`, one restored data-file roll. |
+| `feature-animation-timeline` | Durable animation slice **with checked-in `data/`**: number/enum/function tracks, restored editor view, signal playhead, loop-rate sampling into a saved scope, whole-timeline CAS, and save/reopen. This is also the browser E2E's project fixture. |
+| `feature-signals-and-scopes` | Ephemeral-signal slice: one playhead sent to two restored rolls, two playheads on one melody (both marker value shapes), numeric signal + scopes, and sticky `ended`. |
 | `feature-lifecycle-basics` | Lifecycle slice: natural completion, Replace-while-running with state continuity, observable `stop()` hook, 409 without replacement consent. |
 | `feature-studio-combined` | Richer combined project **with checked-in `data/`**: pre-launch restored pane (values + meta) and roll, edit→save→mutate→re-open loop, playhead + graph field, and both scope source types. |
 
@@ -54,7 +54,9 @@ layout churn you did not mean to keep.
 | Checked-in `data/` restored on open | | | x (timeline) | x (roll) | | x (roll + params w/ meta) |
 | Save → mutate → re-open → verify checklist | | | x | | | x |
 | Playhead signal anchored to a roll | | | | x | | x |
+| One signal sent to multiple anchors | | | | x | | |
 | Two playheads against one melody | | | | x | | |
+| Playhead signal anchored to an animation editor | | | x | | | |
 | Plain numeric signal for a scope | x | | x | x | | |
 | Scope views persisted in canvas (signal / params leaf) | x (signal) | | x (signal) | x (signal) | | x (both) |
 | Finite module ending naturally | x (no-op root) | x (seed/echo) | | | x | x (sparkle) |

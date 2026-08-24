@@ -17,6 +17,7 @@ import type {
 /** Wire ids of the registered durable entity types. */
 export const PIANO_ROLL_ENTITY_TYPE = "pianoRoll";
 export const PARAMS_ENTITY_TYPE = "params";
+export const ANIMATION_TIMELINE_ENTITY_TYPE = "animationTimeline";
 
 /**
  * "broadcast" routes entity/roll/params actions over the engine tab's

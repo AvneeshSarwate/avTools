@@ -9,7 +9,7 @@
       "runtimePath": "modules/sampler.ts",
       "kind": "runnable",
       "title": "timeline sampler",
-      "sourceVersion": 1,
+      "sourceVersion": 2,
       "x": 80,
       "y": 80,
       "w": 560,
@@ -17,14 +17,16 @@
     }
   ],
   "canvas": {
+    "pianoRollViews": [],
+    "paramPaneViews": [],
     "animationEditorViews": [
       {
         "id": "shape:animation-fixture-editor",
         "animationName": "animation-fixture/timeline",
         "x": 700,
         "y": 80,
-        "w": 760,
-        "h": 440
+        "w": 620.2434160044525,
+        "h": 417.34265654342835
       }
     ],
     "scopeViews": [

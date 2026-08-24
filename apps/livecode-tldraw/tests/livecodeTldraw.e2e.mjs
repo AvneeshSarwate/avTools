@@ -118,14 +118,15 @@ const CODE_WRITE_VALUES = ['0.00', '0.10', '0.20', '0.30', '0.40']
 // roll: the module never knows a view exists, and the view never knows what the
 // position means.
 const SIGNAL_ROLL_NAME = 'melody'
+const SECOND_SIGNAL_ROLL_NAME = 'melody-mirror'
 const PLAYHEAD_SIGNAL_NAME = 'e2e/playhead'
 const SECOND_PLAYHEAD_SIGNAL_NAME = 'e2e/playhead-2'
 const PLAYHEAD_SOURCE = `import type { TimeContext } from "@avtools/core-timing";
 import { signal } from "canvas-signals";
 
-export const playhead = signal("${PLAYHEAD_SIGNAL_NAME}", {
-  anchor: { type: "pianoRoll", name: "${SIGNAL_ROLL_NAME}" },
-});
+export const playhead = signal("${PLAYHEAD_SIGNAL_NAME}");
+playhead.addAnchor({ type: "pianoRoll", name: "${SIGNAL_ROLL_NAME}" });
+playhead.addAnchor({ type: "pianoRoll", name: "${SECOND_SIGNAL_ROLL_NAME}" });
 
 export default async function(ctx: TimeContext) {
   let position = 0;
@@ -141,9 +142,8 @@ export default async function(ctx: TimeContext) {
 const SECOND_PLAYHEAD_SOURCE = `import type { TimeContext } from "@avtools/core-timing";
 import { signal } from "canvas-signals";
 
-export const playhead = signal("${SECOND_PLAYHEAD_SIGNAL_NAME}", {
-  anchor: { type: "pianoRoll", name: "${SIGNAL_ROLL_NAME}" },
-});
+export const playhead = signal("${SECOND_PLAYHEAD_SIGNAL_NAME}");
+playhead.addAnchor({ type: "pianoRoll", name: "${SIGNAL_ROLL_NAME}" });
 
 export default async function(ctx: TimeContext) {
   let position = 2;
@@ -245,6 +245,7 @@ const FIXTURE_ANIMATION_DATA = JSON.parse(
 const FIXTURE_ANIMATION_VIEW_ID = fixtureAnimationView.id
 const FIXTURE_GAIN_SCOPE_ID = fixtureGainScope.id
 const FIXTURE_GAIN_SIGNAL_NAME = fixtureGainScope.name
+const FIXTURE_PLAYHEAD_SIGNAL_NAME = 'animation-fixture/playhead'
 const PROJECT_PARAMS_NAME = 'e2e/project-params'
 const PROJECT_PARAMS_MODULE_ID = 'e2e/project-params-module'
 const PROJECT_PARAMS_MODULE_PATH = 'modules/e2e-project-params.ts'
@@ -916,6 +917,8 @@ async function runParamPaneShowsUnavailableValueCase() {
  */
 async function runPlayheadSignalMarkerCase() {
   await ensureRollView(SIGNAL_ROLL_NAME)
+  await createEntityViaDebug(PIANO_ROLL_ENTITY_TYPE, SECOND_SIGNAL_ROLL_NAME)
+  await ensureRollView(SECOND_SIGNAL_ROLL_NAME)
   await setSource(PLAYHEAD_SOURCE)
   const manifest = await waitForManifest(firstModuleId, 2, 'playhead signal manifest')
   assertEqual(
@@ -956,6 +959,11 @@ async function runPlayheadSignalMarkerCase() {
     PLAYHEAD_SIGNAL_NAME,
     'the anchored playhead renders a marker'
   )
+  await waitForMarker(
+    SECOND_SIGNAL_ROLL_NAME,
+    PLAYHEAD_SIGNAL_NAME,
+    'one signal renders against its second anchor'
+  )
   assert(
     Number.isFinite(first.position),
     `marker position should be numeric, got ${JSON.stringify(first)}`
@@ -991,6 +999,17 @@ async function runPlayheadSignalMarkerCase() {
     'the ended signal drops its marker',
     10_000,
     { rollName: SIGNAL_ROLL_NAME, signalName: PLAYHEAD_SIGNAL_NAME }
+  )
+  await waitForPageValue(
+    ({ rollName, signalName }) => {
+      const views = window.__livecodeTldrawRuntimeDebug?.getPlayheadMarkerViews() ?? []
+      const view = views.find((candidate) => candidate.rollName === rollName)
+      if (!view) return null
+      return view.markers.some((marker) => marker.id === signalName) ? null : true
+    },
+    'the ended signal drops its second anchored marker',
+    10_000,
+    { rollName: SECOND_SIGNAL_ROLL_NAME, signalName: PLAYHEAD_SIGNAL_NAME }
   )
 }
 
@@ -1322,6 +1341,40 @@ async function runCheckedInAnimationFixtureCase() {
     'the checked-in gain scope keeps its shape id'
   )
 
+  const manifest = await waitForManifest(
+    FIXTURE_MODULE_ID,
+    4,
+    'fixture animation declaration manifest'
+  )
+  const animationCallsite = manifest.callsites.find(
+    (callsite) => callsite.kind === 'animationTimeline'
+  )
+  assert(animationCallsite, 'the animation timeline declaration has a callsite')
+  assertEqual(
+    animationCallsite.staticName,
+    FIXTURE_ANIMATION_NAME,
+    'animation timeline callsite static name'
+  )
+  await waitForEntityButtons('animationTimeline', [FIXTURE_ANIMATION_NAME], {
+    label: 'animation timeline declaration widget',
+  })
+  await clickEntityButton('animationTimeline', FIXTURE_ANIMATION_NAME)
+  await waitForPageValue(
+    (id) => window.__livecodeTldrawRuntimeDebug?.getSelectedShapeIds().includes(id),
+    'the animation emoji focuses its existing editor',
+    scaled(10_000),
+    FIXTURE_ANIMATION_VIEW_ID
+  )
+  assertEqual(
+    (await getShapes()).filter(
+      (shape) =>
+        shape.type === 'animation-editor-view' &&
+        shape.props.animationName === FIXTURE_ANIMATION_NAME
+    ).length,
+    1,
+    'the animation emoji does not duplicate an existing editor'
+  )
+
   await runModule(FIXTURE_MODULE_ID)
   await waitForServerRunState(
     FIXTURE_MODULE_ID,
@@ -1338,6 +1391,29 @@ async function runCheckedInAnimationFixtureCase() {
     (signal) => signal.value !== first.value,
     'fixture sampler follows the timeline curve'
   )
+  await waitForSignalEntity(
+    FIXTURE_PLAYHEAD_SIGNAL_NAME,
+    (signal) =>
+      typeof signal.value === 'number' &&
+      signal.anchors.some(
+        (anchor) =>
+          anchor.type === ANIMATION_TIMELINE_ENTITY_TYPE &&
+          anchor.name === FIXTURE_ANIMATION_NAME
+      ),
+    'fixture sampler publishes its animation playhead'
+  )
+  await waitForAnimationPlayheadMarker(
+    FIXTURE_ANIMATION_NAME,
+    FIXTURE_PLAYHEAD_SIGNAL_NAME,
+    'the animation editor renders the sampled phase'
+  )
+  await setAnimationEditorMode(FIXTURE_ANIMATION_NAME, 'edit')
+  await waitForAnimationPlayheadMarker(
+    FIXTURE_ANIMATION_NAME,
+    FIXTURE_PLAYHEAD_SIGNAL_NAME,
+    'the animation editor keeps the sampled phase in edit mode'
+  )
+  await setAnimationEditorMode(FIXTURE_ANIMATION_NAME, 'view')
   await waitForScopeState(
     FIXTURE_GAIN_SCOPE_ID,
     (state) => state.sampleCount > 10 && state.distinctCount > 1,
@@ -1348,6 +1424,27 @@ async function runCheckedInAnimationFixtureCase() {
     FIXTURE_MODULE_ID,
     false,
     'fixture sampler module stopped'
+  )
+  await waitForPageValue(
+    ({ animationName, signalName }) => {
+      const editor = Array.from(
+        document.querySelectorAll('animation-editor-component')
+      ).find((candidate) => candidate.dataset.animationName === animationName)
+      if (!editor) return null
+      const hasPublishedMarker = editor
+        .getPlayheadMarkers?.()
+        .some((marker) => marker.id === signalName)
+      const hasRenderedMarker = Array.from(
+        editor.shadowRoot?.querySelectorAll('[data-component="PlayheadMarker"]') ?? []
+      ).some((marker) => marker.dataset.markerId === signalName)
+      return hasPublishedMarker || hasRenderedMarker ? null : true
+    },
+    'the ended animation signal drops its marker',
+    scaled(10_000),
+    {
+      animationName: FIXTURE_ANIMATION_NAME,
+      signalName: FIXTURE_PLAYHEAD_SIGNAL_NAME,
+    }
   )
 }
 
@@ -1872,6 +1969,51 @@ function waitForMarker(rollName, signalName, label, timeoutMs = scaled(20_000)) 
   )
 }
 
+function waitForAnimationPlayheadMarker(
+  animationName,
+  signalName,
+  label,
+  timeoutMs = scaled(20_000)
+) {
+  return waitForPageValue(
+    ({ animationName, signalName }) => {
+      const editor = Array.from(
+        document.querySelectorAll('animation-editor-component')
+      ).find((candidate) => candidate.dataset.animationName === animationName)
+      const marker = editor
+        ?.getPlayheadMarkers?.()
+        .find((candidate) => candidate.id === signalName)
+      if (!marker) return null
+      const rendered = Array.from(
+        editor.shadowRoot?.querySelectorAll('[data-component="PlayheadMarker"]') ?? []
+      ).some((candidate) => candidate.dataset.markerId === signalName)
+      return rendered ? marker : null
+    },
+    label,
+    timeoutMs,
+    { animationName, signalName }
+  )
+}
+
+function setAnimationEditorMode(animationName, mode) {
+  return waitForPageValue(
+    ({ animationName, mode }) => {
+      const editor = Array.from(
+        document.querySelectorAll('animation-editor-component')
+      ).find((candidate) => candidate.dataset.animationName === animationName)
+      const root = editor?.shadowRoot
+      const label = root?.querySelector('.mode-label')?.textContent?.trim()
+      const expected = mode === 'edit' ? 'Edit Mode' : 'View Mode'
+      if (label === expected) return true
+      root?.querySelector('[data-testid="mode-toggle"]')?.click()
+      return null
+    },
+    `animation editor enters ${mode} mode`,
+    scaled(10_000),
+    { animationName, mode }
+  )
+}
+
 async function waitForScopeState(shapeId, predicate, label, timeoutMs = scaled(20_000)) {
   const start = Date.now()
   let last = null
@@ -2061,7 +2203,12 @@ async function waitForEntityButtons(
 ) {
   await waitForPageValue(
     ({ entityType, expectedNames, tentative }) => {
-      const emoji = { pianoRoll: '🎹', params: '🎛️', signal: '📈' }[entityType]
+      const emoji = {
+        pianoRoll: '🎹',
+        params: '🎛️',
+        animationTimeline: '▶️',
+        signal: '📈',
+      }[entityType]
       const buttons = Array.from(
         document.querySelectorAll('.ltc-entity-open-btn')
       ).filter((button) => button.dataset.entityType === entityType)
