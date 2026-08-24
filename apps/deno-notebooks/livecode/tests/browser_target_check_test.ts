@@ -14,6 +14,7 @@ const REPO_ROOT = fromFileUrl(new URL("../../../..", import.meta.url));
 const PORTABLE_ENTRYPOINTS = [
   "apps/deno-notebooks/livecode/helpers/canvas_params.ts",
   "apps/deno-notebooks/livecode/helpers/canvas_signals.ts",
+  "apps/deno-notebooks/livecode/helpers/animation_timeline.ts",
   "apps/deno-notebooks/livecode/helpers/piano_roll_helpers.ts",
   "apps/deno-notebooks/livecode/helpers/midi_helpers.ts",
   "packages/livecode-engine/piano_roll_store.ts",
@@ -91,6 +92,9 @@ Deno.test("browser check config absolutizes relative import-map entries", async 
   const pianoRollStore = config.imports["piano-roll-store"];
   assert(pianoRollStore !== undefined, "piano-roll-store alias missing");
   assert(isAbsolute(pianoRollStore), "alias was not absolutized");
+  const animationTimeline = config.imports["animation-timeline"];
+  assert(animationTimeline !== undefined, "animation-timeline alias missing");
+  assert(isAbsolute(animationTimeline), "alias was not absolutized");
   const trailing = Object.entries(config.imports).filter(([, value]) =>
     value.startsWith("/")
   );

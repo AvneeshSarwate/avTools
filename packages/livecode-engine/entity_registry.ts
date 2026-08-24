@@ -1,13 +1,3 @@
-// One interface over every durable entity type, so generic CRUD actions and
-// project persistence do not have to know whether a name addresses a piano roll
-// or a params entity. Both descriptors now front the same `entity_store.ts`
-// substrate, so this is a thin naming/validation layer rather than a bridge
-// between two engines.
-//
-// Everything here runs at route/registration time — never inside caller-owned
-// livecode timing — so throwing on a bad name or a malformed saved file is the
-// right shape. The HTTP layer turns those into `{ ok: false, error }`.
-
 import {
   clearPianoRollHistory,
   deletePianoRoll,
@@ -29,12 +19,24 @@ import {
   PARAMS_ENTITY_TYPE,
   removeParams,
 } from "./params_store.ts";
+import {
+  ANIMATION_TIMELINE_ENTITY_TYPE,
+  createEmptyAnimationTimeline,
+  duplicateAnimationTimeline,
+  getAnimationTimeline,
+  latestAnimationTimelineJson,
+  listAnimationTimelineNames,
+  loadAnimationTimeline,
+  removeAnimationTimeline,
+} from "./animation_timeline_store.ts";
 import type {
+  AnimationTimelineData,
   ParamsMeta,
   ParamsValues,
   PianoRollData,
   PianoRollObject,
   PianoRollSetResult,
+  SavedAnimationTimelineEntity,
   SavedParamsEntity,
   SavedPianoRollEntity,
 } from "@avtools/livecode-protocol";
@@ -60,6 +62,11 @@ export interface DurableEntityTypeDescriptor {
    */
   latestJson(name: string): string | null;
 }
+
+export type DurableEntityTypeBehavior = Omit<
+  DurableEntityTypeDescriptor,
+  "typeId"
+>;
 
 export { PIANO_ROLL_ENTITY_TYPE };
 
@@ -89,8 +96,7 @@ export function listDurableEntityTypes(): DurableEntityTypeDescriptor[] {
     .sort((a, b) => a.typeId.localeCompare(b.typeId));
 }
 
-export const pianoRollEntityType: DurableEntityTypeDescriptor = {
-  typeId: PIANO_ROLL_ENTITY_TYPE,
+export const pianoRollEntityType: DurableEntityTypeBehavior = {
   listNames: () => listPianoRollNames(),
   exists: (name) => pianoRollExists(name),
   create(name) {
@@ -167,8 +173,7 @@ export const pianoRollEntityType: DurableEntityTypeDescriptor = {
   latestJson: (name) => latestPianoRollJson(name),
 };
 
-export const paramsEntityType: DurableEntityTypeDescriptor = {
-  typeId: PARAMS_ENTITY_TYPE,
+export const paramsEntityType: DurableEntityTypeBehavior = {
   listNames: () => listParamsNames(),
   exists: (name) => getParams(name) !== undefined,
   create(name) {
@@ -220,11 +225,36 @@ function requirePianoRollSet(result: PianoRollSetResult): PianoRollObject {
   return result.roll;
 }
 
-/** Called at server construction. Safe to call more than once. */
-export function registerBuiltinDurableEntityTypes(): void {
-  registerDurableEntityType(pianoRollEntityType);
-  registerDurableEntityType(paramsEntityType);
-}
+export const animationTimelineEntityType: DurableEntityTypeBehavior = {
+  listNames: () => listAnimationTimelineNames(),
+  exists: (name) => getAnimationTimeline(name) !== undefined,
+  create: (name) => {
+    createEmptyAnimationTimeline(name);
+  },
+  duplicate: (sourceName, targetName) => {
+    duplicateAnimationTimeline(sourceName, targetName);
+  },
+  remove: (name) => removeAnimationTimeline(name),
+  serialize(name) {
+    const entity = getAnimationTimeline(name);
+    if (!entity) return null;
+    const saved: SavedAnimationTimelineEntity = {
+      type: ANIMATION_TIMELINE_ENTITY_TYPE,
+      name: entity.name,
+      savedAt: new Date().toISOString(),
+      data: entity.data,
+    };
+    return saved;
+  },
+  deserialize(name, data) {
+    const saved = requireJsonObject(
+      data,
+      `Saved animation timeline "${name}"`,
+    );
+    loadAnimationTimeline(name, saved.data as AnimationTimelineData);
+  },
+  latestJson: (name) => latestAnimationTimelineJson(name),
+};
 
 /**
  * Entity name to file name. Every byte outside `[a-zA-Z0-9._-]` — `%` included

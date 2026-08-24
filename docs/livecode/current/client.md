@@ -6,8 +6,8 @@ as of 2026-08-23; first audited 2026-07-21.
 
 ## Responsibilities
 
-The client is a local React application embedding CodeMirror and the piano-roll
-web component inside custom tldraw shapes. It owns:
+The client is a local React application embedding CodeMirror, piano-roll, and
+animation-editor components inside custom tldraw shapes. It owns:
 
 - canvas interaction and shape layout;
 - editor buffers and visual decorations;
@@ -17,7 +17,7 @@ web component inside custom tldraw shapes. It owns:
 - transient `.tldr` import/export.
 
 It does not execute user modules, own canonical run state, or canonically store
-piano-roll note data or params values.
+piano-roll, params, or animation data.
 
 ## File map
 
@@ -47,27 +47,31 @@ piano-roll note data or params values.
   the exported `createPianoRollShape` view constructor.
 - `src/ParamPaneShape.tsx`: `param-pane` shape, its tweakpane bindings, and the
   exported `createParamPaneShape` view constructor.
+- `src/AnimationEditorShape.tsx`: `animation-editor-view` shape and the direct
+  custom-element adapter for a named `animationTimeline` entity.
 - `src/SignalScopeShape.tsx`: `signal-scope` shape, its per-RAF ring buffer and
   canvas polyline, the exported `createSignalScopeShape` view constructor, and
   the debug reader for what one scope has accumulated.
+- `src/canvasViewRegistry.ts`: pure dispatch over canvas-view codecs.
+- `src/canvasViews.ts`: registered shape utils, project codecs, entity
+  references, constructors, and the save-time canvas flush.
 - `src/serverRequests.ts`: the WebSocket-URL, GET, and POST helpers the sync
   provider's write paths use, plus the entity CRUD, project save, and project
-  status calls the topbar and the debug surface both use — one home, so those
-  two cannot drift apart. `App.tsx` and `livecodeRuntime.tsx` keep their own
-  full-URL variants.
+  status calls. The topbar and debug surface share `saveProjectWithCanvas` for
+  the higher-level flush-then-save gesture. `App.tsx` and
+  `livecodeRuntime.tsx` keep their own full-URL variants.
 - `src/livecodeProtocol.ts`: a re-export of `@avtools/livecode-protocol` plus
   the three client-local view models (`HistoryEntry`, `PreparedBuild`,
   `PreparedFailure`). The wire types are no longer mirrored here; they are
   compiled from the shared package by a vite alias and a tsconfig path. Still
   not runtime validators.
-- `src/custom-elements.d.ts`: the `<piano-roll-component>` JSX declaration and
-  the element's imperative interface, in one place so the ref type and the tag
-  type cannot drift apart.
+- `src/custom-elements.d.ts`: JSX declarations and imperative interfaces for
+  `<piano-roll-component>` and `<animation-editor-component>`.
 - `src/defaultSource.ts`: initial transient module example.
 - `src/livecodeTldrawDebug.ts`: tldraw/runtime E2E control API.
 - `tests/livecodeTldraw.e2e.mjs`: current tldraw browser E2E, focused on
-  piano-roll lookup instrumentation, shape creation/focus, the params pane
-  round trip, the signal tier (playhead markers from one and two modules,
+  piano-roll lookup instrumentation, shape creation/focus, params and animation
+  round trips, the signal tier (playhead markers from one and two modules,
   scopes over a signal and over a param leaf, and a `meta.graph` row), and — in
   a project-mode block that runs last on its own canvas — entity CRUD and
   project save/open persistence.
@@ -108,9 +112,9 @@ URL. The transport has two implementations behind one small `SyncPort` seam
   every other route stay HTTP against `serverBaseUrl` in both transports.
 
 Writes have their own transport axis: `actions=broadcast` routes the
-entity/roll/params actions (and the topbar's generic entity CRUD) over the
-engine tab's broadcast actions channel as `EngineOp` requests instead of
-HTTP — the serverless baked topology, where `serverBaseUrl=none` also
+entity/roll/params/animation actions (and the topbar's generic entity CRUD)
+over the engine tab's broadcast actions channel as `EngineOp` requests instead
+of HTTP — the serverless baked topology, where `serverBaseUrl=none` also
 disables the client-control bridge. Without the param, writes stay HTTP even
 when watching is broadcast.
 
@@ -120,7 +124,7 @@ file the engine tab boots from) and builds the project-shaped canvas from it —
 one code shape per manifest module at its saved position, rendered from the
 baked `sourceText` with the shape-level `readOnly` prop set (a bake's code is
 display, not editable source), plus the manifest's canvas views via the same
-`createCanvasViewShapes` the project boot uses. The shapes carry no
+registered restore path the project boot uses. The shapes carry no
 `projectModulePath`, so no layout or write persistence ever fires; live
 overlays still arrive from the sync feed. If the fetch fails the app falls
 back to the default canvas. The topbar swaps "Save project" for **Export
@@ -128,23 +132,28 @@ data** — decision 5's export-only save: `captureEntities` over the actions
 channel, downloaded as one JSON file of the same `{type, name, data}` rows
 `baked.json` carries.
 
-In ws mode the provider owns one reconnecting `/sync` socket. On open it clears its sequence memory and sends one subscribe naming every
-kind this client watches:
+In ws mode the provider owns one reconnecting `/sync` socket. On open it clears
+its sequence memory and sends one subscribe naming every kind this client
+watches:
 
 ```ts
 // The protocol package's canonical list (packages/livecode-protocol/sync.ts),
 // re-exported by syncRuntime; the remote plane's resets use the same constant.
-SYNC_ENTITY_TYPES = ["pianoRoll", "params", "signal", "run", "moduleWaits", "moduleLookups"]
+SYNC_ENTITY_TYPES = [
+  "pianoRoll", "params", "animationTimeline", "signal",
+  "run", "moduleWaits", "moduleLookups",
+]
 ```
 
 A fresh socket has no subscriptions and is owed nothing, so that one message is
 also the client's full rehydration.
 
 **One React context per entity kind.** `PianoRollsContext`, `ParamsContext`,
-`SignalsContext`, `RunsContext`, `ModuleWaitsContext`, `ModuleLookupsContext`,
-plus three cross-cutting ones (`SyncConnectionContext`, `SyncActionsContext`,
-`SyncLifecycleContext`). One context carrying all six maps would re-render every
-param pane and roll view on every signal tick. This is a load-bearing shape, not
+`AnimationTimelinesContext`, `SignalsContext`, `RunsContext`,
+`ModuleWaitsContext`, `ModuleLookupsContext`, plus three cross-cutting ones
+(`SyncConnectionContext`, `SyncActionsContext`, `SyncLifecycleContext`). One
+context carrying all seven maps would re-render every durable editor on every
+signal tick. This is a load-bearing shape, not
 a style choice: **a future entity kind adds a context, not a field on a shared
 value.**
 
@@ -181,11 +190,12 @@ server is a different world.
 | --- | --- |
 | `usePianoRollsSync()` | `{ connectionStatus, connectionError, rolls, latestSeq, setRoll, undoRoll, redoRoll }` |
 | `useParamsSync()` | `{ connectionStatus, connectionError, params, latestSeq, setParams }` |
+| `useAnimationTimelinesSync()` | `{ connectionStatus, connectionError, timelines, latestSeq, setTimeline }` |
 | `useSignalsSync()` | `{ connectionStatus, connectionError, signals, latestSeq }` |
 | `useRunsSync()` | `{ runs, latestSeq }` |
 | `useModuleVizSync()` | `{ moduleWaits, moduleLookups, latestSeq }` |
 | `useSyncConnection()` | `{ connectionStatus, connectionError, latestSeq }` |
-| `useSyncActions()` | `{ serverBaseUrl, setServerBaseUrl, setRoll, undoRoll, redoRoll, setParams }` |
+| `useSyncActions()` | `{ serverBaseUrl, setServerBaseUrl, setRoll, undoRoll, redoRoll, setParams, setAnimationTimeline }` |
 | `useSyncLifecycle()` | `{ isOpen(), addListener(...) }` |
 
 `rolls`, `params`, and `signals` keep the exact consumer-facing shapes the three
@@ -199,10 +209,11 @@ values.
 `isRunActive(run)` derives active-ness client-side from `run.state` — the
 transport has no active-module list.
 
-**Writes did not move.** `setRoll`, `undoRoll`, `redoRoll`, and `setParams` are
-ordinary HTTP POSTs through `serverRequests.ts` (`/piano-roll/set`, `/undo`,
-`/redo`, `/params/set`). Only *watching* moved to the socket. `setRoll` sends a
-typed `SetPianoRollRequest`; panes still never send an `expectedRev`.
+**Writes did not move.** Roll, params, and animation writes are ordinary HTTP
+POSTs (or engine ops in the broadcast-actions topology). Only *watching* uses
+the sync feed. Animation editors replace one normalized timeline with an
+`expectedRev`; a serialized client queue prevents rapid local edits from racing
+each other.
 
 `SyncLifecycle` delivers socket open/close/error edges **imperatively**, not
 through React state, because the livecode runtime's open sequence must run once
@@ -303,6 +314,27 @@ monitor polls the draft object on its own interval (200 ms by default). The
 existing write and refresh machinery therefore needed no change at all — the
 history view is pure display over samples that were already arriving.
 
+### `animation-editor-view`
+
+Shape props contain layout/presentation metadata only:
+
+```ts
+{
+  w: number;
+  h: number;
+  animationName: string;
+  title: string;
+  interactive: boolean;
+}
+```
+
+`animationName` selects an engine-owned `animationTimeline`. The component owns
+playhead, duration/window, mode, and callback behavior as local runtime/view
+state; only `{ tracks, trackOrder }` is durable. Engine sync calls the custom
+element's `setTimeline`. Its `timeline-change` event replaces the whole entity
+through compare-and-set, and accepted or conflicting server truth is applied
+back to the component. The shape renders a waiting state after entity deletion.
+
 ### `signal-scope`
 
 Shape props contain:
@@ -356,16 +388,14 @@ reason.
 - changing its source invalidates and debounces analysis;
 - moving/resizing a project module debounces `/project/modules/update` by one
   second;
-- adding/removing/moving/resizing/rebinding a piano-roll, param-pane, or
-  signal-scope shape in URL-driven project mode debounces `/project/canvas` by
-  one second.
+- adding/removing/moving/resizing/rebinding any registered canvas-view shape in
+  URL-driven project mode debounces `/project/canvas` by one second.
 
-One collector posts every canvas view kind together. `/project/canvas` replaces
-the whole canvas object, so each post carries `pianoRollViews`,
-`paramPaneViews`, and `scopeViews` read from the current page; a post that
-carried one array would drop the other kinds' saved layout. Nothing is posted
-until a view shape event occurs, so a project that has never had one keeps a
-manifest with no `canvas` key.
+`CANVAS_VIEW_CODECS` supplies shape registration, collection, restoration,
+persisted-change detection, entity references, and constructors. One collector
+posts every codec's view kind together because `/project/canvas` replaces the
+whole canvas object. Explicit Save posts the current projection before
+`/project/save`, so a pending layout debounce cannot omit a new view.
 
 A scope view persists only its binding — source type, name, path, window, and
 layout — never any of the samples it drew.
@@ -572,6 +602,19 @@ all — a line frozen where a stopped run left it reads as a playing one, which 
 exactly the "silently freezing" impression the ephemeral-entity principle
 forbids. Identical marker sets are not re-pushed, so an idle roll costs nothing.
 
+## Animation-editor web component bridge
+
+Vite aliases `@avtools/animation-editor` to the required gitignored bundle at
+`webcomponents/animation-editor/dist/animation-editor.js`; `setupLivecode`
+builds and verifies it alongside the piano-roll bundle.
+
+The component now has a transport-neutral whole-timeline API:
+`setTimeline({ tracks, trackOrder })`, `getTimeline()`, and a
+`timeline-change` DOM event. Its older optional private-WebSocket controller is
+still available to standalone consumers, but the tldraw shape never opens one.
+Direct server applies mark the component's signatures before invalidation, so
+they do not echo as user edits. Track and element IDs are preserved.
+
 ## Event boundaries
 
 Interactive DOM inside shapes must not start tldraw gestures:
@@ -582,6 +625,7 @@ Interactive DOM inside shapes must not start tldraw gestures:
 - the piano-roll body stops pointer/touch/wheel and keydown capture;
 - the piano-roll header remains draggable through tldraw;
 - the param-pane body does the same, and its header remains draggable;
+- the animation-editor body stops pointer/touch/wheel and keydown capture;
 - the scope body stops pointerdown and wheel; its header remains draggable;
 - piano-roll and params widget buttons stop pointerdown and click propagation.
 
@@ -595,13 +639,13 @@ stops bubbling events.
 removed from undo history, and zoomed to their bounds.
 
 Project loading clears the current canvas, posts `/project/open`, fetches each
-module's source sequentially, creates module shapes, then restores persisted
-piano-roll views, param panes, and signal scopes. Every restore path reuses the
-persisted shape id and skips a view whose id already exists. URL-driven project
-loading connects afterward if needed.
+module's source sequentially, creates module shapes, then restores every
+registered canvas view, including animation editors. Every restore path reuses
+the persisted shape id and skips a view whose id already exists. URL-driven
+project loading connects afterward if needed.
 
 The UI toolbar has New/Open/Save for transient `.tldr` canvases, New module,
-New piano roll, New params pane, and New scope. Every name entry uses the same
+New piano roll, New params pane, New animation, and New scope. Every name entry uses the same
 non-modal inline input — the canvas stays interactive while it is open, Escape
 closes it, and a datalist offers the names the relevant sync map holds without
 restricting free text. A failed action leaves the input open with the server's
@@ -611,6 +655,10 @@ New params pane creates a view only. **New piano roll is dual-mode**: a name
 the piano-roll sync map already carries only creates another view, while a new
 name posts `/entities/create` first and then creates the view — the composite
 create-entity-plus-view gesture, with view-only reuse for the names that exist.
+
+**New animation** uses the same composite gesture for an
+`animationTimeline`: reuse an existing entity or create an empty one, then add
+its registered view.
 
 **New scope** is view-only and never creates anything server-side: a signal is
 published by code or it is not, and a param leaf exists or it does not. Its
@@ -624,9 +672,9 @@ Ended signals stay in the list, suffixed `(ended)`, because a stopped run's
 last trace is still worth watching; the suffix is stripped back off when the
 input is submitted.
 
-Two more actions appear only while exactly one selected shape is a
-`piano-roll-view` or a `param-pane`, because that is when the entity being
-acted on is unambiguous. The selection is read reactively with tldraw's
+Two more actions appear only while exactly one selected shape has a registered
+durable entity reference, because that is when the entity being acted on is
+unambiguous. The selection is read reactively with tldraw's
 `useValue` over `editor.getOnlySelectedShape()`; both halves of the entity
 reference are primitives, so dragging an unrelated shape does not re-render the
 topbar.
@@ -643,9 +691,10 @@ topbar.
 **Save project** and the unsaved pill render only when the page URL carried a
 `projectPath` — the same gate as the canvas collector, and the same gap: a
 project opened later through client control shows neither (see
-`known-risks.md`). The button posts `/project/save` and reports the result as a
-short `saved N | M failed | K skipped` line, with the per-entity details on the
-console. The pill comes from a two-second `/project/status` poll that runs only
+`known-risks.md`). The button posts the current registered canvas projection,
+then `/project/save`, and reports a short `saved N | M failed | K skipped`
+line, with per-entity details on the console.
+The pill comes from a two-second `/project/status` poll that runs only
 while a `projectPath` is present, and shows how many entities that response
 reports as unsaved. It is purely informational; nothing in the client ever
 auto-saves.
@@ -659,8 +708,8 @@ URL or client-control command; the richer operations are server APIs.
 There are two distinct window APIs:
 
 - `window.__livecodeTldrawRuntimeDebug` exposes runtime modules, tldraw shapes,
-  selection, source setting, run/replace/stop/connect, module / param-pane /
-  piano-roll-view / signal-scope creation, the three entity actions,
+  selection, source setting, run/replace/stop/connect, generic registered
+  entity-view creation, module/signal-scope creation, the three entity actions,
   `saveProject()`, and `.tldr` serialization. The entity actions are thin
   wrappers over the same `serverRequests.ts` calls the topbar uses, so agents
   and the E2E drive the real path without the topbar DOM; a rejected action

@@ -26,10 +26,12 @@ const REPO_ROOT = resolve(HERE, "../../../..");
 const ALIAS_ENTRIES: Record<string, string> = {
   "canvas_signals": 'export { signal } from "canvas-signals";\n',
   "canvas_params": 'export { canvasParams } from "canvas-params";\n',
+  "animation_timeline": 'export * from "animation-timeline";\n',
   "piano_roll_helpers": 'export * from "piano-roll-helpers";\n',
   "piano_roll_store": 'export * from "piano-roll-store";\n',
   "midi_helpers": 'export * from "midi-helpers";\n',
-  "runtime": 'export {\n  visualizedAwait,\n  visualizedOwnedSignal,\n  visualizedPianoRollLookup,\n} from "@avtools/livecode-engine/runtime.ts";\n',
+  "runtime":
+    'export {\n  visualizedAwait,\n  visualizedOwnedSignal,\n  visualizedPianoRollLookup,\n} from "@avtools/livecode-engine/runtime.ts";\n',
 };
 
 const IMPORT_MAP_HTML = `<script type="importmap">
@@ -37,6 +39,7 @@ const IMPORT_MAP_HTML = `<script type="importmap">
   "imports": {
     "canvas-signals": "./canvas_signals.js",
     "canvas-params": "./canvas_params.js",
+    "animation-timeline": "./animation_timeline.js",
     "piano-roll-helpers": "./piano_roll_helpers.js",
     "piano-roll-store": "./piano_roll_store.js",
     "midi-helpers": "./midi_helpers.js"

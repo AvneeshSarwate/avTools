@@ -13,6 +13,9 @@ import {
   useState,
 } from "react";
 import type {
+  AnimationTimelineData,
+  AnimationTimelineEntity,
+  AnimationTimelineSetResult,
   ModuleLookupsEntity,
   ModuleWaitsEntity,
   ParamsEntity,
@@ -21,6 +24,7 @@ import type {
   PianoRollObject,
   PianoRollSetResult,
   RunEntity,
+  SetAnimationTimelineRequest,
   SetPianoRollRequest,
   SignalEntity,
   SyncMessage,
@@ -75,6 +79,11 @@ export interface SyncActions {
     values: ParamsValues,
     options?: { originId?: string },
   ): Promise<ParamsEntity>;
+  setAnimationTimeline(
+    name: string,
+    data: AnimationTimelineData,
+    options?: { originId?: string; expectedRev?: number },
+  ): Promise<AnimationTimelineSetResult>;
 }
 
 /**
@@ -101,6 +110,9 @@ const PianoRollsContext = createContext<SyncSlice<PianoRollObject>>(
   emptySlice(),
 );
 const ParamsContext = createContext<SyncSlice<ParamsEntity>>(emptySlice());
+const AnimationTimelinesContext = createContext<
+  SyncSlice<AnimationTimelineEntity>
+>(emptySlice());
 const SignalsContext = createContext<SyncSlice<SignalEntity>>(emptySlice());
 const RunsContext = createContext<SyncSlice<RunEntity>>(emptySlice());
 const ModuleWaitsContext = createContext<SyncSlice<ModuleWaitsEntity>>(
@@ -182,6 +194,30 @@ export function useParamsSync(): ParamsSyncApi {
   );
 }
 
+export interface AnimationTimelinesSyncApi {
+  connectionStatus: SyncConnectionStatus;
+  connectionError: string | null;
+  timelines: Record<string, AnimationTimelineEntity>;
+  latestSeq: number | null;
+  setTimeline: SyncActions["setAnimationTimeline"];
+}
+
+export function useAnimationTimelinesSync(): AnimationTimelinesSyncApi {
+  const slice = useContext(AnimationTimelinesContext);
+  const { connectionStatus, connectionError } = useSyncConnection();
+  const { setAnimationTimeline } = useSyncActions();
+  return useMemo(
+    () => ({
+      connectionStatus,
+      connectionError,
+      timelines: slice.entities,
+      latestSeq: slice.latestSeq,
+      setTimeline: setAnimationTimeline,
+    }),
+    [connectionError, connectionStatus, setAnimationTimeline, slice],
+  );
+}
+
 export interface SignalsSyncApi {
   connectionStatus: SyncConnectionStatus;
   connectionError: string | null;
@@ -248,6 +284,7 @@ export function maxSeq(a: number | null, b: number | null): number | null {
 interface SyncState {
   pianoRoll: SyncSlice<PianoRollObject>;
   params: SyncSlice<ParamsEntity>;
+  animationTimeline: SyncSlice<AnimationTimelineEntity>;
   signal: SyncSlice<SignalEntity>;
   run: SyncSlice<RunEntity>;
   moduleWaits: SyncSlice<ModuleWaitsEntity>;
@@ -266,6 +303,7 @@ function emptySyncState(): SyncState {
   return {
     pianoRoll: emptySlice(),
     params: emptySlice(),
+    animationTimeline: emptySlice(),
     signal: emptySlice(),
     run: emptySlice(),
     moduleWaits: emptySlice(),
@@ -418,8 +456,8 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
     [scheduleFlush, subscribe],
   );
 
-  const createBroadcastController =
-    useCallback((): ReconnectingSocketController => {
+  const createBroadcastController = useCallback(
+    (): ReconnectingSocketController => {
       let channel: BroadcastChannel | null = null;
       return {
         socket: null,
@@ -451,7 +489,9 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
           channel = null;
         },
       };
-    }, [applyMessage, subscribe]);
+    },
+    [applyMessage, subscribe],
+  );
 
   if (controllerRef.current === null && SYNC_TRANSPORT === "broadcast") {
     controllerRef.current = createBroadcastController();
@@ -597,6 +637,28 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
     [],
   );
 
+  const setAnimationTimeline = useCallback(
+    async (
+      name: string,
+      data: AnimationTimelineData,
+      options: { originId?: string; expectedRev?: number } = {},
+    ) => {
+      const body: SetAnimationTimelineRequest = {
+        name,
+        data,
+        originId: options.originId,
+        expectedRev: options.expectedRev,
+      };
+      return await engineAction<AnimationTimelineSetResult>(
+        { kind: "animationTimelineSet", request: body },
+        serverBaseUrlRef.current,
+        "/animation-timeline/set",
+        body,
+      );
+    },
+    [],
+  );
+
   // A tiny window hook so tests and agents can read the live sync maps
   // without a server round trip — the only entity reader that exists in the
   // serverless baked topology.
@@ -638,8 +700,17 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
       undoRoll,
       redoRoll,
       setParams,
+      setAnimationTimeline,
     }),
-    [redoRoll, serverBaseUrl, setParams, setRoll, setServerBaseUrl, undoRoll],
+    [
+      redoRoll,
+      serverBaseUrl,
+      setAnimationTimeline,
+      setParams,
+      setRoll,
+      setServerBaseUrl,
+      undoRoll,
+    ],
   );
 
   return (
@@ -648,15 +719,21 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
         <SyncConnectionContext.Provider value={connection}>
           <PianoRollsContext.Provider value={state.pianoRoll}>
             <ParamsContext.Provider value={state.params}>
-              <SignalsContext.Provider value={state.signal}>
-                <RunsContext.Provider value={state.run}>
-                  <ModuleWaitsContext.Provider value={state.moduleWaits}>
-                    <ModuleLookupsContext.Provider value={state.moduleLookups}>
-                      {children}
-                    </ModuleLookupsContext.Provider>
-                  </ModuleWaitsContext.Provider>
-                </RunsContext.Provider>
-              </SignalsContext.Provider>
+              <AnimationTimelinesContext.Provider
+                value={state.animationTimeline}
+              >
+                <SignalsContext.Provider value={state.signal}>
+                  <RunsContext.Provider value={state.run}>
+                    <ModuleWaitsContext.Provider value={state.moduleWaits}>
+                      <ModuleLookupsContext.Provider
+                        value={state.moduleLookups}
+                      >
+                        {children}
+                      </ModuleLookupsContext.Provider>
+                    </ModuleWaitsContext.Provider>
+                  </RunsContext.Provider>
+                </SignalsContext.Provider>
+              </AnimationTimelinesContext.Provider>
             </ParamsContext.Provider>
           </PianoRollsContext.Provider>
         </SyncConnectionContext.Provider>

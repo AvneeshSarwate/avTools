@@ -6,6 +6,7 @@ The goal is **not** to make code look less AI-generated for cosmetic reasons. Th
 - useless or redundant comments that can be easily inferred from code
 - local hacks to catch issues that should be addressed higher up at an architectural level
 - pedanticness about edge or overly defensive use that are not actually relevant to the context of use of the system 
+- lots of vestigal files and comments that are no longer needed as LLMs don't always delete things as necessary
 
 ## 1. Establish scope before touching anything
 

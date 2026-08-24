@@ -47,6 +47,7 @@ import type {
   RemoveProjectModuleRequest,
   RuntimeModuleStatus,
   RuntimeStateResponse,
+  SetAnimationTimelineRequest,
   SetParamsRequest,
   SetPianoRollRequest,
   StopModuleRequest,
@@ -59,6 +60,7 @@ import type {
   WriteProjectModuleRequest,
 } from "./protocol.ts";
 import type {
+  AnimationTimelineSetResult,
   EngineEntityActionResult,
   EngineEntityCapture,
   EngineEntityLoadEntry,
@@ -696,6 +698,19 @@ export async function createLivecodeVisualizerServer(
         }, { status: 404 });
       }
       return json(entity);
+    }
+
+    if (
+      request.method === "POST" &&
+      url.pathname === "/animation-timeline/set"
+    ) {
+      const requestBody = await request.json() as SetAnimationTimelineRequest;
+      return json(
+        await plane.execute({
+          kind: "animationTimelineSet",
+          request: requestBody,
+        }) as AnimationTimelineSetResult,
+      );
     }
 
     if (request.method === "GET" && url.pathname === "/signals/list") {
