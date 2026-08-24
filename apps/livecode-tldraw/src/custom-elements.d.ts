@@ -8,13 +8,14 @@ import type {
 declare module "@avtools/piano-roll";
 declare module "@avtools/animation-editor";
 
-/** One labeled playhead line on the roll; the component renders N of them. */
-export interface PianoRollPlayheadMarker {
+/** One labeled playhead line in a component's native position unit. */
+export interface PlayheadMarker {
   id: string;
-  /** Quarter notes, the component's own unit. */
   position: number;
   color?: string;
 }
+
+export type PianoRollPlayheadMarker = PlayheadMarker;
 
 /**
  * The imperative surface `<piano-roll-component>` exposes. Every member is
@@ -28,8 +29,8 @@ export interface PianoRollComponentElement extends HTMLElement {
   interactive?: boolean;
   showControlPanel?: boolean;
   setNotes?: (notes: NoteDataInput[]) => void;
-  setPlayheadMarkers?: (markers: PianoRollPlayheadMarker[]) => void;
-  getPlayheadMarkers?: () => PianoRollPlayheadMarker[];
+  setPlayheadMarkers?: (markers: PlayheadMarker[]) => void;
+  getPlayheadMarkers?: () => PlayheadMarker[];
   fitZoomToNotes?: () => void;
 }
 
@@ -37,6 +38,8 @@ export interface AnimationEditorComponentElement extends HTMLElement {
   interactive?: boolean;
   setTimeline?: (value: AnimationTimelineData) => void;
   getTimeline?: () => AnimationTimelineData;
+  setPlayheadMarkers?: (markers: PlayheadMarker[]) => void;
+  getPlayheadMarkers?: () => PlayheadMarker[];
 }
 
 declare module "react" {

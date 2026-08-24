@@ -1,11 +1,10 @@
 import {
   declareSignal,
-  type DeclareSignalOptions,
   type SignalHandle,
 } from "@avtools/livecode-engine/signals_store.ts";
 import type { SignalAnchor } from "../visualizer/protocol.ts";
 
-export type { DeclareSignalOptions, SignalAnchor, SignalHandle };
+export type { SignalAnchor, SignalHandle };
 
 /**
  * Declare an ephemeral signal: a named latest-value sample published purely so
@@ -16,9 +15,8 @@ export type { DeclareSignalOptions, SignalAnchor, SignalHandle };
  * costs the same as a watched one. The value can be any JSON-serializable
  * shape; give it whatever meaning the piece needs.
  *
- * `anchor` points the signal at an entity a view already renders (for example
- * `{ type: "pianoRoll", name: "melody" }` for a playhead), so a view can bind
- * to it without this code knowing the view exists.
+ * `addAnchor` points the signal at entities views already render, so one runtime
+ * value can appear in several views without this code knowing those views exist.
  *
  * Signals are never persisted or undoable, nothing else may read them to make
  * decisions, and they end with the run that published them: the analyzer
@@ -27,7 +25,6 @@ export type { DeclareSignalOptions, SignalAnchor, SignalHandle };
  */
 export function signal<T = unknown>(
   name: string,
-  opts?: DeclareSignalOptions,
 ): SignalHandle<T> {
-  return declareSignal<T>(name, opts);
+  return declareSignal<T>(name);
 }

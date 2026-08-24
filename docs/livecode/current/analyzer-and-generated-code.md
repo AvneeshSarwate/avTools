@@ -185,6 +185,14 @@ Multiple modules may declare the same params name. That is legal reattach
 behavior rather than an error, and the last declaration's shape and meta win.
 The analyzer does not currently surface it as a finding.
 
+## Animation-timeline detection
+
+`animationTimeline` from `animation-timeline`, its helper source, or the engine
+store source uses the same whole-file, symbol-resolved, observation-only path as
+`canvasParams`. Its first argument provides `nameArgRange` and, when literal,
+`staticName`; the transform leaves the declaration untouched. The client uses
+that manifest entry for the animation-editor entity widget.
+
 ## Canvas-signal detection
 
 `signal` imported from the alias `canvas-signals`, the repository source suffix
@@ -199,11 +207,13 @@ following the wait branch rather than the piano-roll argument wrap:
 
 ```ts
 // source
-const playhead = signal("melody-playhead", { anchor });
+const playhead = signal("melody-playhead");
+playhead.addAnchor({ type: "pianoRoll", name: "melody" });
 // generated
 const playhead = __tcvOwnedSignal(
-  "<moduleId>", "<callsiteId>", signal("melody-playhead", { anchor }),
+  "<moduleId>", "<callsiteId>", signal("melody-playhead"),
 );
+playhead.addAnchor({ type: "pianoRoll", name: "melody" });
 ```
 
 `visualizedOwnedSignal` stamps the declared signal's record with the owning
@@ -229,8 +239,8 @@ inline widget. A static declaration renders a `📈` widget that focuses or
 creates a whole-signal scope.
 
 Multiple modules may declare the same signal name. Like params that is legal
-reattach: the last declarer owns it (and therefore ends it), and the anchor is
-replaced. The analyzer does not surface it as a finding.
+reattach: the last declarer owns it (and therefore ends it), and starts a fresh
+anchor set. The analyzer does not surface it as a finding.
 
 ## Manifest contract
 
@@ -247,6 +257,7 @@ Each entry contains:
     | "timeContextArgumentCall"
     | "pianoRollLookup"
     | "canvasParams"
+    | "animationTimeline"
     | "canvasSignal";
   displayName: string;
   nameArgRange?: { from: number; to: number };
@@ -254,7 +265,7 @@ Each entry contains:
 }
 ```
 
-`nameArgRange` and `staticName` are used by all three name-carrying kinds. The
+`nameArgRange` and `staticName` are used by all four name-carrying kinds. The
 kind union is no longer mirrored: it is declared once in
 `packages/livecode-protocol/analysis.ts`, which both the server and the tldraw
 client compile against.
@@ -282,9 +293,9 @@ The generated execution module exports `runFunc`:
 A conflicting top-level binding/import with the old function name blocks the
 transform rather than emitting invalid code.
 
-When at least one callsite is actually wrapped — that is, excluding
-observation-only `canvasParams` entries — one generated import aliases every
-runtime helper the wraps can name:
+When at least one callsite is actually wrapped — excluding observation-only
+`canvasParams` and `animationTimeline` entries — one generated import aliases
+every runtime helper the wraps can name:
 
 ```ts
 import {
@@ -318,10 +329,10 @@ executable contract. It covers local helper internals, branch callbacks,
 unsupported awaits, syntax positions, recursive rename collision, piano-roll
 aliases/namespaces/shadowing, nested lookups, and canvas-params detection at top
 level and inside a timed scope — including its no-edit output, its shadowed-local
-non-detection, and the missing `staticName` for a computed name. Canvas-signal
-detection is covered the same way, plus the whole-call wrap text, the emitted
-runtime import, and the fact that a signal-bearing module leaves `canvasParams`
-callsites untouched.
+non-detection, and the missing `staticName` for a computed name. It also covers
+observation-only animation-timeline declarations. Canvas-signal detection adds
+the whole-call wrap text, emitted runtime import, and coexistence with
+observation-only declarations.
 
 `runtime_counts_test.ts` covers wait counts and lookup recording.
 `dynamic_import_execution_test.ts` proves generated code imports the stable

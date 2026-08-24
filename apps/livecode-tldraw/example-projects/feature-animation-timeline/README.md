@@ -2,8 +2,9 @@
 
 A long-lived fixture for the durable animation timeline and its tldraw view.
 The checked-in data contains number, enum, and function tracks. The sampler
-module reads the number track at 30 Hz and publishes `animation-fixture/gain`
-to the saved scope view.
+reads the number track at 30 Hz, publishes `animation-fixture/gain` to the saved
+scope, and sends `animation-fixture/playhead` to the animation editor as a
+signal-backed playhead.
 
 The Playwright E2E copies this directory into its temporary session, verifies
 the restored entity and editor, then uses the copy for edit, save, mutate, and
@@ -35,13 +36,17 @@ http://localhost:5173/?projectPath=<absolute path to this directory>
 1. Before running the module, the animation editor shows `gain`, `scene`, and
    `cue` in that order. `gain` has four keyframes; the other tracks contain
    enum changes and function cues.
-2. Run **timeline sampler**. The gain scope starts moving through the saved
-   curve.
-3. Edit a gain keyframe. The scope follows the edited curve on the next pass,
+2. In **timeline sampler**, click the `▶️` just inside `animationTimeline(`.
+   It selects and zooms to the existing `animation-fixture/timeline` editor.
+3. Run **timeline sampler**. The gain scope starts moving through the saved
+   curve and the labeled `animation-fixture/playhead` marker moves across the
+   animation editor. It remains visible after switching to Edit Mode.
+4. Edit a gain keyframe. The scope follows the edited curve on the next pass,
    and the topbar reports the timeline as unsaved.
-4. Click **Save project**, make another edit without saving, then reload the
+5. Click **Save project**, make another edit without saving, then reload the
    same URL. The saved edit returns and the later edit disappears.
-5. Add or reorder a track, save, and reload to check stable track/element IDs
+6. Stop **timeline sampler**. Its playhead marker disappears instead of freezing.
+7. Add or reorder a track, save, and reload to check stable track/element IDs
    and `trackOrder` persistence.
 
 Manual saves intentionally modify the checked-in data file and its `savedAt`.

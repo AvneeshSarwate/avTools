@@ -4,16 +4,14 @@ import { signal } from "canvas-signals";
 const LOOP_BEATS = 8;
 
 /**
- * Publishes a bare-number playhead position (quarter notes) anchored to the
- * `signals/groove` roll: every bound roll view renders one labeled marker per
- * live anchored signal. Declaring inside the root re-clears a previous run's
- * `ended` flag on relaunch; stopping this module ends the signal and removes
- * the marker.
+ * Publishes a bare-number playhead position (quarter notes) to two rolls. Each
+ * bound view renders the same labeled marker; stopping this module removes it
+ * from both.
  */
 export default async function (ctx: TimeContext) {
-  const playhead = signal<number>("signals/walker", {
-    anchor: { type: "pianoRoll", name: "signals/groove" },
-  });
+  const playhead = signal<number>("signals/walker");
+  playhead.addAnchor({ type: "pianoRoll", name: "signals/groove" });
+  playhead.addAnchor({ type: "pianoRoll", name: "signals/groove-mirror" });
   const stepBeats = 1 / 8;
   let beat = 0;
   while (true) {

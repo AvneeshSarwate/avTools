@@ -1,46 +1,46 @@
 {
   "type": "pianoRoll",
-  "name": "signals/groove",
+  "name": "signals/groove-mirror",
   "savedAt": "2026-08-24T13:28:13.522Z",
   "data": {
     "notes": [
       {
-        "id": "groove-1",
+        "id": "mirror-1",
         "pitch": 48,
         "position": 0,
         "duration": 1,
         "velocity": 100
       },
       {
-        "id": "groove-2",
+        "id": "mirror-2",
         "pitch": 55,
         "position": 2,
         "duration": 1,
         "velocity": 90
       },
       {
-        "id": "groove-3",
+        "id": "mirror-3",
         "pitch": 52,
         "position": 4,
         "duration": 1,
         "velocity": 95
       },
       {
-        "id": "groove-4",
+        "id": "mirror-4",
         "pitch": 55,
         "position": 6,
         "duration": 0.5,
         "velocity": 90
       },
       {
-        "id": "groove-5",
+        "id": "mirror-5",
         "pitch": 58,
         "position": 6.5,
         "duration": 0.5,
         "velocity": 85
       },
       {
-        "id": "groove-6",
+        "id": "mirror-6",
         "pitch": 60,
         "position": 7,
         "duration": 1,

@@ -9,7 +9,7 @@
       "runtimePath": "modules/walker.ts",
       "kind": "runnable",
       "title": "playhead walker",
-      "sourceVersion": 1,
+      "sourceVersion": 2,
       "x": 80,
       "y": 80,
       "w": 560,
@@ -22,7 +22,7 @@
       "runtimePath": "modules/strider.ts",
       "kind": "runnable",
       "title": "reverse strider",
-      "sourceVersion": 1,
+      "sourceVersion": 2,
       "x": 80,
       "y": 640,
       "w": 560,
@@ -35,7 +35,7 @@
       "runtimePath": "modules/lfo.ts",
       "kind": "runnable",
       "title": "numeric lfo",
-      "sourceVersion": 1,
+      "sourceVersion": 2,
       "x": 80,
       "y": 1200,
       "w": 560,
@@ -51,8 +51,18 @@
         "y": 80,
         "w": 700,
         "h": 557
+      },
+      {
+        "id": "shape:sig-groove-mirror",
+        "rollName": "signals/groove-mirror",
+        "x": 1450,
+        "y": 80,
+        "w": 700,
+        "h": 557
       }
     ],
+    "paramPaneViews": [],
+    "animationEditorViews": [],
     "scopeViews": [
       {
         "id": "shape:sig-scope-lfo",
@@ -60,8 +70,8 @@
         "name": "signals/lfo",
         "path": "",
         "windowSec": 6,
-        "x": 700,
-        "y": 520,
+        "x": 698.4813549518094,
+        "y": 749.3320297773121,
         "w": 420,
         "h": 260
       },
@@ -71,8 +81,8 @@
         "name": "signals/walker",
         "path": "",
         "windowSec": 6,
-        "x": 1160,
-        "y": 520,
+        "x": 1194.5796585973044,
+        "y": 750.7841648233921,
         "w": 420,
         "h": 260
       }
@@ -83,6 +93,11 @@
       "type": "pianoRoll",
       "name": "signals/groove",
       "path": "data/pianoRoll/signals%2Fgroove.json"
+    },
+    {
+      "type": "pianoRoll",
+      "name": "signals/groove-mirror",
+      "path": "data/pianoRoll/signals%2Fgroove-mirror.json"
     }
   ]
 }

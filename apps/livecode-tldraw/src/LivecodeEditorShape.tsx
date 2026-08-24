@@ -16,7 +16,7 @@ import {
 } from "./CodeMirrorEditor";
 import { DEFAULT_LIVECODE_SOURCE } from "./defaultSource";
 import { livecodeDocumentUri } from "./denoLsp";
-import type { SourceRange } from "./livecodeProtocol";
+import type { SourceRange, WaitCallsiteKind } from "./livecodeProtocol";
 import { useLivecodeRuntime } from "./livecodeRuntime";
 import { createEntityView, entityRefForCanvasView } from "./canvasViews";
 import {
@@ -24,9 +24,21 @@ import {
   SIGNAL_SCOPE_SHAPE_TYPE,
   type SignalScopeShape,
 } from "./SignalScopeShape";
-import { PARAMS_ENTITY_TYPE, PIANO_ROLL_ENTITY_TYPE } from "./serverRequests";
+import {
+  ANIMATION_TIMELINE_ENTITY_TYPE,
+  PARAMS_ENTITY_TYPE,
+  PIANO_ROLL_ENTITY_TYPE,
+} from "./serverRequests";
 
 export const LIVECODE_EDITOR_SHAPE_TYPE = "livecode-editor";
+
+const DECLARATION_ENTITY_TYPES: Partial<
+  Record<WaitCallsiteKind, EntityCallDecorationType>
+> = {
+  canvasParams: PARAMS_ENTITY_TYPE,
+  animationTimeline: ANIMATION_TIMELINE_ENTITY_TYPE,
+  canvasSignal: "signal",
+};
 
 declare module "tldraw" {
   export interface TLGlobalShapePropsMap {
@@ -192,20 +204,12 @@ function LivecodeEditorShapeComponent(
             tentative: true,
           });
         }
-      } else if (
-        callsite.kind === "canvasParams" && callsite.staticName !== undefined
-      ) {
+      } else {
+        const entityType = DECLARATION_ENTITY_TYPES[callsite.kind];
+        if (!entityType || callsite.staticName === undefined) continue;
         out.push({
           at: callsite.nameArgRange.from,
-          entityType: PARAMS_ENTITY_TYPE,
-          entityName: callsite.staticName,
-        });
-      } else if (
-        callsite.kind === "canvasSignal" && callsite.staticName !== undefined
-      ) {
-        out.push({
-          at: callsite.nameArgRange.from,
-          entityType: "signal",
+          entityType,
           entityName: callsite.staticName,
         });
       }
