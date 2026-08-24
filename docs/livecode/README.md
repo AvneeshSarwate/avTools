@@ -1,18 +1,16 @@
 # Interactive Livecode Environment
 
-This is the canonical documentation entrypoint for the interactive programming
-environment implemented by:
+This is the canonical entrypoint for the live programming system implemented by
+`apps/livecode-tldraw`, `apps/deno-notebooks/livecode`,
+`packages/livecode-engine`, and `packages/livecode-protocol`.
 
-- `apps/livecode-tldraw`: React, tldraw, and CodeMirror client.
-- `apps/deno-notebooks/livecode`: Deno analysis, execution, LSP, project, and
-  piano-roll server.
-
-The documentation is organized by authority. Do not treat every Markdown file
-in this repository as equally current.
+These docs are a map of boundaries and non-obvious constraints. They are not an
+API catalog. Source and tests remain the authority for details visible directly
+in code.
 
 ## Fresh-session bootstrap
 
-For a new implementation or review session, read these files in order:
+Read these in order:
 
 1. `docs/livecode/user-level-project-goals.md`
 2. `docs/livecode/principles.md`
@@ -25,98 +23,72 @@ For a new implementation or review session, read these files in order:
 9. `docs/livecode/current/testing-and-operations.md`
 10. `docs/livecode/current/known-risks.md`
 
-`docs/livecode/current/adding-an-entity-kind.md` is a recipe rather than a
-description; read it when the task is adding a new watched entity kind, not as
-part of the bootstrap.
+`current/adding-an-entity-kind.md` is an on-demand recipe, not bootstrap
+reading.
 
-Then inspect the implementation files named by the relevant current-state doc.
-For a cross-boundary change, the wire types live once, in
-`packages/livecode-protocol`; inspect that module and both callers. There is
-still no runtime validation, so compare actual serialization and handling.
+After the bootstrap, inspect the source files linked by the document nearest to
+your change. For a cross-boundary change, begin in `packages/livecode-protocol`
+and follow both consumers; the shared types are compile-time contracts, not
+runtime validation.
 
-A useful prompt for a fresh chat is:
+## Authority
 
-> Read `docs/livecode/README.md` and every document in its fresh-session
-> bootstrap list. Treat `docs/livecode/current/` as implementation truth,
-> `docs/livecode/principles.md` and `docs/livecode/user-level-project-goals.md`
-> as design intent, and `docs/livecode/history/` as non-normative context. Then
-> inspect the named source files before proposing changes.
-
-## Authority and status
-
-| Location | Meaning |
+| Location | Role |
 | --- | --- |
-| `docs/livecode/current/` | Concrete description of the checked-in code as of 2026-08-13. Each file's status line records what was checked when. |
-| `docs/livecode/principles.md` | Architecture principles and mental models with strong HCI implications. These guide judgement when changing core systems but may describe a destination the current code has not reached. |
-| `docs/livecode/user-level-project-goals.md` | Owner's product-design and workflow intent: intended user-facing flows, the coding agent's role, and explicit non-goals. Consult it for any user-facing change. |
-| `docs/livecode/history/source-notes/` | Preserved owner brainstorms. They are inputs to the principles, not a current feature contract. |
-| `docs/livecode/history/` | Preserved plans, discussions, reviews, and feature briefs. Read these for rationale or archaeology, not to learn current routes or code shape. |
-| `apps/livecode-tldraw/architecture.md` | Short client-local handoff and file map. |
-| `apps/deno-notebooks/livecode/architecture.md` | Short server-local handoff and file map. |
+| `docs/livecode/current/` | Checked-in architecture, traps, and unresolved risks. |
+| `docs/livecode/principles.md` | Design principles; some describe a destination rather than current code. |
+| `docs/livecode/user-level-project-goals.md` | Intended workflows, the coding agent's role, and product non-goals. |
+| `docs/livecode/history/` | Plans, audits, and superseded snapshots. Never implementation truth. |
+| `apps/livecode-tldraw/architecture.md` | Short client-local file and command index. |
+| `apps/deno-notebooks/livecode/architecture.md` | Short server-local file and command index. |
 
-If current code and a current-state document disagree, code and executable tests
-win. Update the document in the same change. If current code and a principle
-disagree, do not silently choose one: identify whether the task is preserving
-current behavior or moving toward the principle.
+If code and a current document disagree, code and executable tests win; repair
+the doc. If code and a principle disagree, state whether the change preserves
+current behavior or deliberately moves toward the principle.
 
-## Documentation maintenance contract
+The verbose pre-edit set is preserved at
+`docs/livecode/history/doc-snapshot-2026-08-24/`.
 
-Any feature that changes a boundary must update the corresponding current docs:
+## Documentation maintenance rule
 
-- HTTP or WebSocket route, payload, or lifecycle: `current/protocol.md` and
-  `current/server.md`.
-- client state, tldraw shape props, connection behavior, or event shielding:
-  `current/client.md`.
-- transform scope, diagnostic, manifest entry, or generated import:
-  `current/analyzer-and-generated-code.md`. A new diagnostic must also declare
-  whether it blocks Run, warns only, or requires explicit lifecycle consent,
-  and identify the framework guarantee behind any blocking rule.
-- project manifest, source/runtime file model, materialization, or staleness:
-  `current/project-model.md`.
-- state ownership, process lifetime, or execution flow:
-  `current/system-architecture.md`.
-- test commands or coverage: `current/testing-and-operations.md`.
-- accepted invariant, tradeoff, or product direction:
-  `docs/livecode/principles.md`.
-- intended user workflow, product-design direction, agent role, or non-goal:
-  `docs/livecode/user-level-project-goals.md`.
-- newly discovered unresolved hazard: `current/known-risks.md`.
-- a new watched entity kind: follow `current/adding-an-entity-kind.md`, which
-  names every layer and the docs each one obliges.
+Update a current document when a change introduces or removes something a
+reader is unlikely to infer while working in one module:
 
-Historical documents should not be rewritten to look current. Move superseded
-material into `history/`, add a short status note if its old wording is
-misleading, and link it from `history/README.md`.
+- a cross-module dependency, ordering rule, or ownership boundary;
+- a deliberately asymmetric behavior or misleading name;
+- a lifecycle, persistence, security, or recovery constraint;
+- an architectural extension point or an accepted limitation;
+- a test/operation command whose scope is surprising.
 
-## Scope boundaries
+Do not transcribe route tables, TypeScript interfaces, file trees, or test
+assertions. Link the owning source instead. If a section can be regenerated by
+searching symbols or route strings, it probably does not belong here. Move
+resolved investigations and implementation narratives to `history/`; keep only
+the invariant they established.
 
-The livecode environment also depends on code outside the two main directories:
+Boundary ownership:
 
-- `packages/livecode-protocol`: the shared wire contract. Type-only, consumed by
-  the Deno server through the workspace import map and by the tldraw client as
-  raw TypeScript through a vite alias and a tsconfig path. It is part of the
-  livecode system, not an external dependency: a boundary change starts here.
-- `packages/livecode-engine`: the execution plane — entity stores, sync
-  sources, runtime instrumentation, and the module launch/stop/panic lifecycle
-  — extracted from the server as portable TypeScript with injected
-  capabilities, kept browser-typecheckable by
-  `livecode/tests/browser_target_check_test.ts` (the whole package is one of
-  its gate entrypoints). The server hosts one engine instance in local mode;
-  everything imports the package directly — the old `visualizer/` paths are
-  gone. See `current/server.md` and
-  `history/browser-engine-plan-2026-08.md`.
-- `packages/core-timing`: `TimeContext`, logical-time scheduling, structured
-  concurrency, cancellation, barriers, tempo maps, and offline execution. The
-  `TimeContext` API itself — `wait(beats)` versus `waitSec(seconds)`,
-  `branch`/`branchWait`, cancellation, and tempo changes — is documented in
-  the header comment of `packages/core-timing/offline_time_context.ts`;
-  `ctx.time` (logical seconds) and `ctx.beats` are the readable clock.
-- `apps/browser-projections/src/pianoRoll`: source for the embedded piano-roll
-  custom element.
-- `webcomponents/piano-roll/dist/piano-roll.js`: locally built bundle consumed
-  by the tldraw app.
-- graphics, window, MIDI, and shared `@avtools/*` packages imported by user
-  modules.
+- topology and state ownership: `current/system-architecture.md`;
+- client state, canvas views, connection behavior, and event shielding:
+  `current/client.md`;
+- engine/host separation and server lifecycle: `current/server.md`;
+- transform scope and generated-code assumptions:
+  `current/analyzer-and-generated-code.md`;
+- project source/runtime/persistence model: `current/project-model.md`;
+- wire semantics and deliberately asymmetric operations: `current/protocol.md`;
+- commands and high-risk verification: `current/testing-and-operations.md`;
+- unresolved hazards: `current/known-risks.md`.
 
-Those dependencies have their own behavior and tests. The livecode docs explain
-the integration boundary, not their complete internal architecture.
+## System scope outside the two apps
+
+- `packages/livecode-protocol` is the one shared wire-type source.
+- `packages/livecode-engine` is the portable execution plane: lifecycle,
+  stores, sync sources, and runtime instrumentation.
+- `packages/core-timing` owns `TimeContext`, logical time, cancellation, and
+  structured concurrency. Its API contract is in
+  `packages/core-timing/offline_time_context.ts`.
+- `apps/browser-projections/src/pianoRoll` and the built
+  `webcomponents/piano-roll/dist/piano-roll.js` supply the piano-roll element.
+- User modules also import graphics, window, MIDI, and other `@avtools/*`
+  packages. The livecode docs describe their integration boundary, not their
+  internals.
