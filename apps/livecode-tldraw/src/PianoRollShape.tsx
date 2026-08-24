@@ -22,10 +22,10 @@ import type {
 import type {
   NoteData,
   PianoRollData,
-  SignalEntity,
 } from '@avtools/livecode-protocol'
 import { usePianoRollsSync, useSignalsSync } from './syncRuntime'
 import { PIANO_ROLL_ENTITY_TYPE } from './serverRequests'
+import { signalPlayheadMarkers } from './signalPlayheadMarkers'
 
 export const PIANO_ROLL_SHAPE_TYPE = 'piano-roll-view'
 // The Vue component's default stage contract; the browser E2E asserts the
@@ -154,41 +154,6 @@ export function createPianoRollShape(
   return id
 }
 
-/**
- * The marker feed's whole contract, in one place. A signal anchored at this
- * roll renders a marker when its value is a number, or an object carrying a
- * numeric `position` — both in quarter notes, the component's own unit. Every
- * other shape (strings, objects without a position, nulls) renders nothing
- * rather than guessing; the process decides what a position means, and the
- * platform never inspects further. `anchor.path` is carried on the wire but
- * ignored here in v1.
- */
-function toPlayheadMarkers(
-  signals: Record<string, SignalEntity>,
-  rollName: string,
-): PianoRollPlayheadMarker[] {
-  const markers: PianoRollPlayheadMarker[] = []
-  for (const signal of Object.values(signals)) {
-    if (signal.ended || signal.unserializable) continue
-    if (signal.anchor?.type !== PIANO_ROLL_ENTITY_TYPE) continue
-    if (signal.anchor.name !== rollName) continue
-    const position = readMarkerPosition(signal.value)
-    if (position === null) continue
-    markers.push({ id: signal.name, position })
-  }
-  // Sorted so the pushed set has one canonical serialization per state.
-  return markers.sort((a, b) => a.id.localeCompare(b.id))
-}
-
-function readMarkerPosition(value: unknown): number | null {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null
-  if (typeof value !== 'object' || value === null) return null
-  const position = (value as { position?: unknown }).position
-  return typeof position === 'number' && Number.isFinite(position)
-    ? position
-    : null
-}
-
 function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
   const runtime = usePianoRollsSync()
   const signalsRuntime = useSignalsSync()
@@ -205,7 +170,11 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
   const markers = useMemo(
     () =>
       signalsRuntime.connectionStatus === 'open'
-        ? toPlayheadMarkers(signalsRuntime.signals, shape.props.rollName)
+        ? signalPlayheadMarkers(
+          signalsRuntime.signals,
+          PIANO_ROLL_ENTITY_TYPE,
+          shape.props.rollName,
+        )
         : [],
     [
       signalsRuntime.connectionStatus,

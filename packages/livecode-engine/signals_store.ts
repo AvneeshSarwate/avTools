@@ -16,8 +16,8 @@
 //      in `value` while `ended` stays set until the name is redeclared. A
 //      moving-but-ended signal is a surfaced finding, not something to police
 //      inside caller-owned timing.
-//   3. Nothing reachable from user timing (`set`, `end`, ownership stamping,
-//      the sampler) throws.
+//   3. Nothing reachable from user timing (`set`, anchor changes, `end`,
+//      ownership stamping, the sampler) throws.
 
 import {
   clearEntityRecords,
@@ -43,17 +43,15 @@ import type {
 
 export const SIGNAL_ENTITY_TYPE = "signal";
 
-export interface DeclareSignalOptions {
-  anchor?: SignalAnchor;
-}
-
 /**
- * What `signal(name)` hands back. `set` and `end` are closures over the record,
- * so publishing never costs a store lookup.
+ * What `signal(name)` hands back. Its methods close over the record, so
+ * publishing never costs a store lookup.
  */
 export interface SignalHandle<T = unknown> {
   readonly name: string;
   set(value: T): void;
+  addAnchor(anchor: SignalAnchor): void;
+  removeAnchor(anchor: SignalAnchor): void;
   end(): void;
 }
 
@@ -62,7 +60,7 @@ export interface SignalHandle<T = unknown> {
  * Stored in `EntityRecord.meta`, which the generic store treats as opaque.
  */
 interface SignalRecordMeta {
-  anchor?: SignalAnchor;
+  anchors: SignalAnchor[];
   ownerModuleId?: string;
   ended?: boolean;
   timeSec?: number;
@@ -70,28 +68,23 @@ interface SignalRecordMeta {
 }
 
 /**
- * Create-or-reattach. A redeclared name keeps its record (so a handle another
- * module still holds keeps writing to live truth), clears `ended`, and takes
- * the new anchor. Throws only on an empty name.
+ * Create-or-reattach. A redeclared name keeps its record and value, clears its
+ * prior run's anchors and `ended` state, and starts a new anchor set.
  */
 export function declareSignal<T = unknown>(
   name: string,
-  options: DeclareSignalOptions = {},
 ): SignalHandle<T> {
   const entityName = normalizeEntityName(SIGNAL_ENTITY_TYPE, name);
   const existing = getEntityRecord<unknown>(SIGNAL_ENTITY_TYPE, entityName);
   if (existing) {
     const meta = signalMeta(existing);
-    // Redeclaring is how an ended name comes back to life, and how a second run
-    // rebinds it: both are value-free changes, so the type is marked dirty
-    // without bumping rev (rev counts observed value generations).
-    meta.anchor = options.anchor;
+    meta.anchors = [];
     delete meta.ended;
     markEntityRecordChanged(existing);
     return makeSignalHandle<T>(existing);
   }
 
-  const meta: SignalRecordMeta = { anchor: options.anchor };
+  const meta: SignalRecordMeta = { anchors: [] };
   // `null` rather than `undefined`: an undefined value does not serialize, and
   // a freshly declared signal is not an unserializable one.
   const record = createEntityRecord<unknown>(
@@ -239,6 +232,23 @@ function makeSignalHandle<T>(record: EntityRecord<unknown>): SignalHandle<T> {
     set(value: T) {
       record.value = value;
     },
+    addAnchor(anchor) {
+      const meta = signalMeta(record);
+      if (meta.anchors.some((existing) => anchorsEqual(existing, anchor))) {
+        return;
+      }
+      meta.anchors.push(cloneAnchor(anchor));
+      markEntityRecordChanged(record);
+    },
+    removeAnchor(anchor) {
+      const meta = signalMeta(record);
+      const index = meta.anchors.findIndex((existing) =>
+        anchorsEqual(existing, anchor)
+      );
+      if (index === -1) return;
+      meta.anchors.splice(index, 1);
+      markEntityRecordChanged(record);
+    },
     end() {
       endSignalRecord(record);
     },
@@ -270,7 +280,7 @@ function stampLogicalTime(record: EntityRecord<unknown>): void {
 function signalMeta(record: EntityRecord<unknown>): SignalRecordMeta {
   const existing = record.meta as SignalRecordMeta | undefined;
   if (existing) return existing;
-  const created: SignalRecordMeta = {};
+  const created: SignalRecordMeta = { anchors: [] };
   record.meta = created;
   return created;
 }
@@ -281,11 +291,11 @@ function toSignalEntity(record: EntityRecord<unknown>): SignalEntity {
   const entity: SignalEntity = {
     name: record.name,
     value: wireValue.ok ? wireValue.value : null,
+    anchors: meta.anchors.map(cloneAnchor),
     rev: record.rev,
     updatedAt: record.updatedAt,
     updatedBy: record.updatedBy,
   };
-  if (meta.anchor) entity.anchor = cloneAnchor(meta.anchor);
   if (meta.ownerModuleId) entity.ownerModuleId = meta.ownerModuleId;
   if (meta.ended) entity.ended = true;
   if (!wireValue.ok) entity.unserializable = true;
@@ -298,4 +308,12 @@ function cloneAnchor(anchor: SignalAnchor): SignalAnchor {
   const clone: SignalAnchor = { type: anchor.type, name: anchor.name };
   if (Array.isArray(anchor.path)) clone.path = [...anchor.path];
   return clone;
+}
+
+function anchorsEqual(a: SignalAnchor, b: SignalAnchor): boolean {
+  if (a.type !== b.type || a.name !== b.name) return false;
+  const aPath = a.path ?? [];
+  const bPath = b.path ?? [];
+  return aPath.length === bPath.length &&
+    aPath.every((part, index) => part === bPath[index]);
 }

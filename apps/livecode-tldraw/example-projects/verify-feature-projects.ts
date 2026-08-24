@@ -459,6 +459,18 @@ async function verifyAnimationTimeline(): Promise<void> {
       return signal?.value !== gain.value ? signal : false;
     },
   );
+  await waitUntil(
+    "sampler publishes a playhead anchored to its animation timeline",
+    async () => {
+      const signal = await signalEntity("animation-fixture/playhead");
+      return typeof signal?.value === "number" &&
+          signal.anchors.some((anchor: any) =>
+            anchor.type === "animationTimeline" && anchor.name === name
+          )
+        ? signal
+        : false;
+    },
+  );
 
   const edited = structuredClone(timeline.data);
   const gainTrack = edited.tracks.find((track: any) =>
@@ -526,6 +538,13 @@ async function verifySignalsAndScopes(): Promise<void> {
     },
   );
   assert(groove.data.notes[0].pitch === 48, "restored groove keeps its notes");
+  await waitUntil(
+    "signals/groove-mirror roll restored from its checked-in data file",
+    async () => {
+      const current = await roll("signals/groove-mirror");
+      return current?.data?.notes?.length === 6 ? current : false;
+    },
+  );
 
   for (const id of ["signals/walker", "signals/strider", "signals/lfo"]) {
     await launchModule(id);
@@ -533,12 +552,17 @@ async function verifySignalsAndScopes(): Promise<void> {
   }
 
   const walker = await waitUntil(
-    "walker publishes a numeric playhead anchored to signals/groove",
+    "walker publishes one numeric playhead with both roll anchors",
     async () => {
       const sig = await signalEntity("signals/walker");
       return sig && typeof sig.value === "number" &&
-          sig.anchor?.type === "pianoRoll" &&
-          sig.anchor?.name === "signals/groove"
+          sig.anchors.some((anchor: any) =>
+            anchor.type === "pianoRoll" && anchor.name === "signals/groove"
+          ) &&
+          sig.anchors.some((anchor: any) =>
+            anchor.type === "pianoRoll" &&
+            anchor.name === "signals/groove-mirror"
+          )
         ? sig
         : false;
     },
@@ -548,8 +572,9 @@ async function verifySignalsAndScopes(): Promise<void> {
     async () => {
       const sig = await signalEntity("signals/strider");
       return sig && typeof sig.value?.position === "number" &&
-          sig.anchor?.type === "pianoRoll" &&
-          sig.anchor?.name === "signals/groove"
+          sig.anchors.some((anchor: any) =>
+            anchor.type === "pianoRoll" && anchor.name === "signals/groove"
+          )
         ? sig
         : false;
     },
@@ -558,7 +583,7 @@ async function verifySignalsAndScopes(): Promise<void> {
     "lfo publishes a plain numeric signal with no anchor",
     async () => {
       const sig = await signalEntity("signals/lfo");
-      return sig && typeof sig.value === "number" && sig.anchor === undefined
+      return sig && typeof sig.value === "number" && sig.anchors.length === 0
         ? sig
         : false;
     },
@@ -589,7 +614,7 @@ async function verifySignalsAndScopes(): Promise<void> {
     );
   }
   projectSummaries.push(
-    "feature-signals-and-scopes: restored roll, two playheads on one melody (both value shapes), scope-ready lfo, sticky ended",
+    "feature-signals-and-scopes: multi-anchor playhead across two rolls, two markers on one melody, scope-ready lfo, sticky ended",
   );
 }
 
@@ -703,8 +728,9 @@ async function verifyStudioCombined(): Promise<void> {
     async () => {
       const sig = await signalEntity("studio/playhead");
       return sig && typeof sig.value === "number" &&
-          sig.anchor?.type === "pianoRoll" &&
-          sig.anchor?.name === "studio/theme"
+          sig.anchors.some((anchor: any) =>
+            anchor.type === "pianoRoll" && anchor.name === "studio/theme"
+          )
         ? sig
         : false;
     },

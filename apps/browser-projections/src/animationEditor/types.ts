@@ -8,6 +8,12 @@
 
 export type TrackType = 'number' | 'enum' | 'func'
 
+export type PlayheadMarker = {
+  id: string
+  position: number
+  color?: string
+}
+
 export type FuncElement = {
   funcName: string
   args: unknown[]

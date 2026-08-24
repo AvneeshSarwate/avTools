@@ -24,6 +24,8 @@ export type WaitCallsiteKind =
   | "pianoRollLookup"
   /** A `canvasParams(...)` declaration. Observed only; never instrumented. */
   | "canvasParams"
+  /** An `animationTimeline(...)` declaration. Observed only; never instrumented. */
+  | "animationTimeline"
   /**
    * A `signal(...)` declaration. The whole call is wrapped so the runtime can
    * attribute the signal to its module.
@@ -39,16 +41,15 @@ export interface WaitCallsiteManifestEntry {
   displayName: string;
   /**
    * For the name-carrying kinds (`pianoRollLookup`, `canvasParams`,
-   * `canvasSignal`): the source range of the name argument expression, so the
-   * editor can place an inline widget beside the declaration.
+   * `animationTimeline`, `canvasSignal`): the source range of the name argument
+   * expression, so the editor can place an inline widget beside the declaration.
    */
   nameArgRange?: SourceRange;
   /**
    * For the name-carrying kinds: the static name when the name argument is a
    * string literal (or a template literal without interpolation). A piano-roll
-   * lookup uses it as a fallback before the module runs; params and signal
-   * declarations have no runtime name resolution, so a non-literal name simply
-   * has no static name and no widget.
+   * lookup uses it as a fallback before the module runs; declarations have no
+   * runtime name resolution, so a non-literal name has no static name or widget.
    */
   staticName?: string;
 }

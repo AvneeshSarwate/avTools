@@ -224,8 +224,8 @@ that throws or overruns is logged, not fatal.
 
 The helpers a module imports through the root aliases (files listed in
 `server.md`) have these signatures, beyond the `canvasParams(name, defaults,
-meta?)` live-object and `signal(name, { anchor? })` handle contracts already
-described there:
+meta?)` live-object and `signal(name)` handle with `addAnchor`/`removeAnchor`
+already described there:
 
 - From `piano-roll-store`: `getPianoRoll(name)` returns
   `PianoRollObject | undefined`, and `setPianoRoll(name, data, options?)` is

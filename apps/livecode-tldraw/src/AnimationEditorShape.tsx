@@ -20,10 +20,12 @@ import type {
   AnimationTimelineEntity,
 } from "@avtools/livecode-protocol";
 import type { AnimationEditorComponentElement } from "./custom-elements";
-import { useAnimationTimelinesSync } from "./syncRuntime";
+import { ANIMATION_TIMELINE_ENTITY_TYPE } from "./serverRequests";
+import { signalPlayheadMarkers } from "./signalPlayheadMarkers";
+import { useAnimationTimelinesSync, useSignalsSync } from "./syncRuntime";
 
 export const ANIMATION_EDITOR_SHAPE_TYPE = "animation-editor-view";
-export const ANIMATION_TIMELINE_ENTITY_TYPE = "animationTimeline";
+export { ANIMATION_TIMELINE_ENTITY_TYPE };
 const DEFAULT_WIDTH = 720;
 const DEFAULT_HEIGHT = 440;
 
@@ -119,6 +121,7 @@ function AnimationEditorShapeComponent({
   shape: AnimationEditorShape;
 }) {
   const runtime = useAnimationTimelinesSync();
+  const signalsRuntime = useSignalsSync();
   const timeline = runtime.timelines[shape.props.animationName];
   const hasTimeline = timeline !== undefined;
   const setTimeline = runtime.setTimeline;
@@ -127,15 +130,40 @@ function AnimationEditorShapeComponent({
     timeline ?? null,
   );
   const writeQueueRef = useRef(Promise.resolve());
+  const lastMarkerKeyRef = useRef<string | null>(null);
   const [writeError, setWriteError] = useState<string | null>(null);
   const originId = useMemo(() => `animation-editor-view-${shape.id}`, [
     shape.id,
   ]);
+  const markers = useMemo(
+    () =>
+      signalsRuntime.connectionStatus === "open"
+        ? signalPlayheadMarkers(
+          signalsRuntime.signals,
+          ANIMATION_TIMELINE_ENTITY_TYPE,
+          shape.props.animationName,
+        )
+        : [],
+    [
+      signalsRuntime.connectionStatus,
+      signalsRuntime.signals,
+      shape.props.animationName,
+    ],
+  );
 
   useEffect(() => {
     latestEntityRef.current = timeline ?? null;
     if (timeline) elementRef.current?.setTimeline?.(timeline.data);
   }, [timeline]);
+
+  useEffect(() => {
+    const element = elementRef.current;
+    if (!element) return;
+    const key = JSON.stringify(markers);
+    if (lastMarkerKeyRef.current === key) return;
+    lastMarkerKeyRef.current = key;
+    element.setPlayheadMarkers?.(markers);
+  }, [markers, timeline]);
 
   useEffect(() => {
     const element = elementRef.current;

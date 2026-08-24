@@ -1,6 +1,8 @@
 
 need some kind of library/viewer for seeing entites that have been programatically created but don't have a UI on the canvas yet (or a browse view to just scroll through or something
 
+for engine running in the browser with graphics libs, are there any tests for that wrt assigning canvases and outputs? probably need some extra "engine side UI" for when things run in the browser
+
 is there a need to add a system for events/handlers or pubsub between modules, or does it naturally fall out without need for extra structure (probably doesn't need a new thing?) 
 
 need some visualized notion of order in the canvas - it does exist and is pretty important? but is it actually true that nothing "fully breaks" if you run things out of order (eg, only module crashes) - should order be manual annotation in the UI? if you run headlessly, you probably need some proper startup order
@@ -15,3 +17,9 @@ think of how to "bake" a project into something where the engine side can run in
 - design note for this (both baked and remote-dev variants) is in docs/livecode/history/browser-engine-plan-2026-08.md
 
 browser-engine timing hardening: a Worker-backed time source for core-timing - browsers throttle main-thread timers in background tabs, and worker timers escape the clamp. core-timing already takes an injected setTimeout (`opts.setTimeout`), so a dedicated worker that fires deadlines and postMessages back could slot in without touching the scheduler. not needed for v1 (silent AudioContext + keeping the engine tab visible is enough for a single operator), but useful if browser-engine timing ever needs to survive backgrounding
+
+
+
+small things
+- should browser component internal canvas also stretch to fit tldraw shape component like animation editor?
+- should UI state like scroll/zoom of piano roll and animation editor get persisted to doc?

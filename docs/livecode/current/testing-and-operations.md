@@ -265,18 +265,19 @@ graphics initialization, window cleanup, or shared project state changes.
   with no client action, pane rehydration from the sync socket's subscribe reset
   after a reload, and an invalid code write replacing the controls with a
   visible unavailable state until a valid declaration restores them;
-- the tldraw signal tier: an anchored playhead signal driven by a module loop
-  producing a moving marker in the bound roll view and losing it when the module
-  stops (asserted as server `ended` first, missing marker second), two modules
+- the tldraw signal tier: one playhead signal driven by a module loop producing
+  moving markers through two piano-roll anchors and losing both when the module
+  stops (asserted as server `ended` first, missing markers second), two modules
   publishing two markers on one melody through both accepted value shapes,
   scopes over an ephemeral signal and over a durable param leaf both
   accumulating changing traces in their ring buffers, and a `meta.graph` field
   rendering its readonly graph row;
 - the tldraw project-mode block, which runs last on its own canvas: booting
   from a temporary copy of `feature-animation-timeline`, verifying its restored
-  timeline/editor/scope and live sampler, then augmenting that copy for the
-  broader entity cases; creating entities plus views from the GUI surface; an
-  explicit save asserted from Node against real manifest entries and
+  timeline/editor/scope, the animation declaration widget focusing that editor,
+  the live sampler, and signal-backed animation playhead, then augmenting that
+  copy for the broader entity cases; creating entities plus views from the GUI
+  surface; an explicit save asserted from Node against real manifest entries and
   percent-encoded roll, params, and animation files; unsaved-to-clean status;
   `/project/open` restoring saved truth; pre-launch params rendering; and
   duplicate/delete behavior, plus proof that live signals never enter project

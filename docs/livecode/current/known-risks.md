@@ -515,4 +515,6 @@ These behaviors are deliberate until a design changes them:
   value that changed twice inside one 33 ms tick appears once;
 - scopes render numbers only in v1, and a playhead marker is drawn only for a
   numeric value or an object with a numeric `position`. Any other shape renders
-  the placeholder, or nothing, rather than a guess.
+  the placeholder, or nothing, rather than a guess. Piano-roll anchors interpret
+  positions as quarter notes; animation-timeline anchors interpret them as
+  seconds. A signal sent to both kinds must deliberately use compatible units.
