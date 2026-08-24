@@ -1,18 +1,29 @@
 import { indentWithTab } from '@codemirror/commands'
 import { javascript } from '@codemirror/lang-javascript'
 import { lintGutter } from '@codemirror/lint'
-import { Compartment, StateEffect, StateField, type Extension, type Range } from '@codemirror/state'
+import {
+  Compartment,
+  type Extension,
+  type Range,
+  StateEffect,
+  StateField,
+} from '@codemirror/state'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { Decoration, EditorView, WidgetType, keymap, type DecorationSet } from '@codemirror/view'
-import { LSCore, type LSClient } from '@valtown/codemirror-ls'
+import {
+  Decoration,
+  type DecorationSet,
+  EditorView,
+  keymap,
+  WidgetType,
+} from '@codemirror/view'
+import { type LSClient, LSCore } from '@valtown/codemirror-ls'
 import { basicSetup } from 'codemirror'
 import { useEffect, useMemo, useRef } from 'react'
 import { createDenoLspExtensions } from './denoLsp'
 import type { SourceRange } from './livecodeProtocol'
 
 const setWaitDecorationsEffect = StateEffect.define<SourceRange[]>()
-const setPianoRollDecorationsEffect = StateEffect.define<PianoRollCallDecoration[]>()
-const setParamPaneDecorationsEffect = StateEffect.define<ParamPaneCallDecoration[]>()
+const setEntityDecorationsEffect = StateEffect.define<EntityCallDecoration[]>()
 const debugEditorViews = new Map<string, EditorView>()
 
 declare global {
@@ -25,30 +36,27 @@ interface LivecodeTldrawDebug {
   getDocumentUris(): string[]
   getDocumentText(documentUri: string): string
   focusDocumentAtOffset(documentUri: string, offset: number): void
-  requestCompletionAtOffset(documentUri: string, offset: number): Promise<string[]>
+  requestCompletionAtOffset(
+    documentUri: string,
+    offset: number,
+  ): Promise<string[]>
 }
 
-export interface PianoRollCallDecoration {
-  /** End offset of the roll-name argument; the widget is placed after it. */
+export type EntityCallDecorationType = 'pianoRoll' | 'params' | 'signal'
+
+export interface EntityCallDecoration {
+  /** Start offset of the name argument; the widget is placed before it. */
   at: number
-  /** Resolved roll name (runtime value) or static literal fallback. */
-  rollName: string
-  /** True when the name came from runtime data, not just a static literal. */
-  resolvedAtRuntime: boolean
+  entityType: EntityCallDecorationType
+  entityName: string
+  /** A piano-roll lookup whose literal has not yet been confirmed by a run. */
+  tentative?: boolean
 }
 
-export interface ParamPaneCallDecoration {
-  /** End offset of the params-name argument; the widget is placed after it. */
-  at: number
-  /**
-   * Declared params name. Always a static literal: params have no runtime
-   * name resolution, so a computed name gets no widget.
-   */
-  paramsName: string
-}
-
-export type OpenPianoRollCallback = (rollName: string) => void
-export type OpenParamPaneCallback = (paramsName: string) => void
+export type OpenEntityCallback = (
+  entityType: EntityCallDecorationType,
+  entityName: string,
+) => void
 
 const waitLineDecoration = Decoration.line({
   attributes: { class: 'ltc-wait-line' },
@@ -67,9 +75,15 @@ const waitDecorationField = StateField.define<DecorationSet>({
       if (!effect.is(setWaitDecorationsEffect)) continue
       const adds = effect.value.flatMap((range) => {
         const from = clampPosition(transaction.state.doc.length, range.from)
-        const to = clampPosition(transaction.state.doc.length, Math.max(range.to, from + 1))
+        const to = clampPosition(
+          transaction.state.doc.length,
+          Math.max(range.to, from + 1),
+        )
         const line = transaction.state.doc.lineAt(from)
-        return [waitLineDecoration.range(line.from), waitMarkDecoration.range(from, to)]
+        return [
+          waitLineDecoration.range(line.from),
+          waitMarkDecoration.range(from, to),
+        ]
       })
       decorations = Decoration.set(adds, true)
     }
@@ -78,19 +92,19 @@ const waitDecorationField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 })
 
-const pianoRollDecorationField = StateField.define<DecorationSet>({
+const entityDecorationField = StateField.define<DecorationSet>({
   create() {
     return Decoration.none
   },
   update(decorations, transaction) {
     decorations = decorations.map(transaction.changes)
     for (const effect of transaction.effects) {
-      if (!effect.is(setPianoRollDecorationsEffect)) continue
+      if (!effect.is(setEntityDecorationsEffect)) continue
       const adds: Range<Decoration>[] = effect.value.map((entry) => {
         const at = clampPosition(transaction.state.doc.length, entry.at)
         return Decoration.widget({
-          widget: new PianoRollOpenWidget(entry.rollName, entry.resolvedAtRuntime),
-          side: 1,
+          widget: new EntityOpenWidget(entry),
+          side: -1,
         }).range(at)
       })
       decorations = Decoration.set(adds, true)
@@ -100,28 +114,54 @@ const pianoRollDecorationField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 })
 
-class PianoRollOpenWidget extends WidgetType {
-  constructor(
-    readonly rollName: string,
-    readonly resolvedAtRuntime: boolean,
-  ) {
+const ENTITY_DECORATION_PRESENTATION: Record<
+  EntityCallDecorationType,
+  { emoji: string; label: string; className: string }
+> = {
+  pianoRoll: {
+    emoji: '🎹',
+    label: 'piano roll',
+    className: 'ltc-entity-open-btn--piano-roll',
+  },
+  params: {
+    emoji: '🎛️',
+    label: 'params pane',
+    className: 'ltc-entity-open-btn--params',
+  },
+  signal: {
+    emoji: '📈',
+    label: 'signal monitor',
+    className: 'ltc-entity-open-btn--signal',
+  },
+}
+
+class EntityOpenWidget extends WidgetType {
+  constructor(readonly entry: EntityCallDecoration) {
     super()
   }
 
-  override eq(other: PianoRollOpenWidget) {
-    return other.rollName === this.rollName &&
-      other.resolvedAtRuntime === this.resolvedAtRuntime
+  override eq(other: EntityOpenWidget) {
+    return (
+      other.entry.at === this.entry.at &&
+      other.entry.entityType === this.entry.entityType &&
+      other.entry.entityName === this.entry.entityName &&
+      other.entry.tentative === this.entry.tentative
+    )
   }
 
   override toDOM(view: EditorView) {
+    const presentation = ENTITY_DECORATION_PRESENTATION[this.entry.entityType]
     const button = document.createElement('button')
     button.type = 'button'
-    button.className = 'ltc-piano-roll-open-btn'
-    const label = this.resolvedAtRuntime ? this.rollName : `${this.rollName}?`
-    button.textContent = `🎹 open ${label}`
-    button.title = this.resolvedAtRuntime
-      ? `Open a piano roll view for "${this.rollName}"`
-      : `Open a piano roll view for "${this.rollName}" (static name; run the module to confirm)`
+    button.className = `ltc-entity-open-btn ${presentation.className}`
+    button.dataset.entityType = this.entry.entityType
+    button.dataset.entityName = this.entry.entityName
+    button.textContent = presentation.emoji
+    const action = `Open ${presentation.label} for "${this.entry.entityName}"`
+    button.title = this.entry.tentative
+      ? `${action} (static name; run the module to confirm)`
+      : action
+    button.setAttribute('aria-label', action)
     button.addEventListener('pointerdown', (event) => {
       event.stopPropagation()
     })
@@ -129,7 +169,10 @@ class PianoRollOpenWidget extends WidgetType {
       event.stopPropagation()
       event.preventDefault()
       view.focus()
-      dispatchPianoRollOpen(view, this.rollName)
+      entityOpenListeners.get(view)?.(
+        this.entry.entityType,
+        this.entry.entityName,
+      )
     })
     return button
   }
@@ -139,72 +182,7 @@ class PianoRollOpenWidget extends WidgetType {
   }
 }
 
-const paramPaneDecorationField = StateField.define<DecorationSet>({
-  create() {
-    return Decoration.none
-  },
-  update(decorations, transaction) {
-    decorations = decorations.map(transaction.changes)
-    for (const effect of transaction.effects) {
-      if (!effect.is(setParamPaneDecorationsEffect)) continue
-      const adds: Range<Decoration>[] = effect.value.map((entry) => {
-        const at = clampPosition(transaction.state.doc.length, entry.at)
-        return Decoration.widget({
-          widget: new ParamPaneOpenWidget(entry.paramsName),
-          side: 1,
-        }).range(at)
-      })
-      decorations = Decoration.set(adds, true)
-    }
-    return decorations
-  },
-  provide: (field) => EditorView.decorations.from(field),
-})
-
-class ParamPaneOpenWidget extends WidgetType {
-  constructor(readonly paramsName: string) {
-    super()
-  }
-
-  override eq(other: ParamPaneOpenWidget) {
-    return other.paramsName === this.paramsName
-  }
-
-  override toDOM(view: EditorView) {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.className = 'ltc-param-pane-open-btn'
-    button.textContent = `🎛 open ${this.paramsName}`
-    button.title = `Open a params pane for "${this.paramsName}"`
-    button.addEventListener('pointerdown', (event) => {
-      event.stopPropagation()
-    })
-    button.addEventListener('click', (event) => {
-      event.stopPropagation()
-      event.preventDefault()
-      view.focus()
-      dispatchParamPaneOpen(view, this.paramsName)
-    })
-    return button
-  }
-
-  override ignoreEvent() {
-    return true
-  }
-}
-
-const pianoRollOpenListeners = new Map<EditorView, OpenPianoRollCallback>()
-const paramPaneOpenListeners = new Map<EditorView, OpenParamPaneCallback>()
-
-function dispatchPianoRollOpen(view: EditorView, rollName: string) {
-  const listener = pianoRollOpenListeners.get(view)
-  listener?.(rollName)
-}
-
-function dispatchParamPaneOpen(view: EditorView, paramsName: string) {
-  const listener = paramPaneOpenListeners.get(view)
-  listener?.(paramsName)
-}
+const entityOpenListeners = new Map<EditorView, OpenEntityCallback>()
 
 const livecodeTheme = EditorView.theme({
   '&': {
@@ -228,41 +206,31 @@ const livecodeTheme = EditorView.theme({
     backgroundColor: 'rgba(37, 176, 141, 0.28)',
     borderBottom: '1px solid rgba(37, 176, 141, 0.85)',
   },
-  '.ltc-piano-roll-open-btn': {
+  '.ltc-entity-open-btn': {
     display: 'inline-flex',
     alignItems: 'center',
-    margin: '0 4px',
-    border: '1px solid rgba(37, 176, 141, 0.45)',
-    borderRadius: '999px',
-    padding: '0 6px',
-    color: '#c6f6e2',
-    background: 'rgba(37, 176, 141, 0.18)',
-    fontSize: '11px',
-    lineHeight: '18px',
+    justifyContent: 'center',
+    width: '18px',
+    height: '18px',
+    margin: '0 1px',
+    border: '0',
+    borderRadius: '4px',
+    padding: '0',
+    background: 'transparent',
+    fontSize: '13px',
+    lineHeight: '1',
     cursor: 'pointer',
     userSelect: 'none',
     verticalAlign: 'middle',
   },
-  '.ltc-piano-roll-open-btn:hover': {
+  '.ltc-entity-open-btn--piano-roll:hover': {
     background: 'rgba(37, 176, 141, 0.32)',
   },
-  '.ltc-param-pane-open-btn': {
-    display: 'inline-flex',
-    alignItems: 'center',
-    margin: '0 4px',
-    border: '1px solid rgba(122, 137, 224, 0.45)',
-    borderRadius: '999px',
-    padding: '0 6px',
-    color: '#d7dcff',
-    background: 'rgba(122, 137, 224, 0.18)',
-    fontSize: '11px',
-    lineHeight: '18px',
-    cursor: 'pointer',
-    userSelect: 'none',
-    verticalAlign: 'middle',
-  },
-  '.ltc-param-pane-open-btn:hover': {
+  '.ltc-entity-open-btn--params:hover': {
     background: 'rgba(122, 137, 224, 0.32)',
+  },
+  '.ltc-entity-open-btn--signal:hover': {
+    background: 'rgba(223, 113, 184, 0.28)',
   },
 })
 
@@ -270,26 +238,22 @@ interface CodeMirrorEditorProps {
   value: string
   documentUri: string
   activeRanges: SourceRange[]
-  pianoRollCallsites: PianoRollCallDecoration[]
-  paramPaneCallsites: ParamPaneCallDecoration[]
+  entityCallsites: EntityCallDecoration[]
   lspClient: LSClient | null
   readOnly?: boolean
   onChange(next: string): void
-  onOpenPianoRoll?: OpenPianoRollCallback
-  onOpenParamPane?: OpenParamPaneCallback
+  onOpenEntity?: OpenEntityCallback
 }
 
 export function CodeMirrorEditor({
   value,
   documentUri,
   activeRanges,
-  pianoRollCallsites,
-  paramPaneCallsites,
+  entityCallsites,
   lspClient,
   readOnly = false,
   onChange,
-  onOpenPianoRoll,
-  onOpenParamPane,
+  onOpenEntity,
 }: CodeMirrorEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -307,8 +271,7 @@ export function CodeMirrorEditor({
       lintGutter(),
       livecodeTheme,
       waitDecorationField,
-      pianoRollDecorationField,
-      paramPaneDecorationField,
+      entityDecorationField,
       editableCompartmentRef.current.of(EditorView.editable.of(!readOnly)),
       lspCompartmentRef.current.of([]),
       EditorView.updateListener.of((update) => {
@@ -346,8 +309,7 @@ export function CodeMirrorEditor({
     debugEditorViews.set(documentUri, view)
     return () => {
       debugEditorViews.delete(documentUri)
-      pianoRollOpenListeners.delete(view)
-      paramPaneOpenListeners.delete(view)
+      entityOpenListeners.delete(view)
       view.destroy()
       viewRef.current = null
     }
@@ -356,22 +318,12 @@ export function CodeMirrorEditor({
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
-    if (onOpenPianoRoll) {
-      pianoRollOpenListeners.set(view, onOpenPianoRoll)
+    if (onOpenEntity) {
+      entityOpenListeners.set(view, onOpenEntity)
     } else {
-      pianoRollOpenListeners.delete(view)
+      entityOpenListeners.delete(view)
     }
-  }, [onOpenPianoRoll])
-
-  useEffect(() => {
-    const view = viewRef.current
-    if (!view) return
-    if (onOpenParamPane) {
-      paramPaneOpenListeners.set(view, onOpenParamPane)
-    } else {
-      paramPaneOpenListeners.delete(view)
-    }
-  }, [onOpenParamPane])
+  }, [onOpenEntity])
 
   useEffect(() => {
     const view = viewRef.current
@@ -409,23 +361,17 @@ export function CodeMirrorEditor({
     const view = viewRef.current
     if (!view) return
     view.dispatch({
-      effects: setPianoRollDecorationsEffect.of(pianoRollCallsites),
+      effects: setEntityDecorationsEffect.of(entityCallsites),
     })
-  }, [pianoRollCallsites])
+  }, [entityCallsites])
 
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
     view.dispatch({
-      effects: setParamPaneDecorationsEffect.of(paramPaneCallsites),
-    })
-  }, [paramPaneCallsites])
-
-  useEffect(() => {
-    const view = viewRef.current
-    if (!view) return
-    view.dispatch({
-      effects: editableCompartmentRef.current.reconfigure(EditorView.editable.of(!readOnly)),
+      effects: editableCompartmentRef.current.reconfigure(
+        EditorView.editable.of(!readOnly),
+      ),
     })
   }, [readOnly])
 
@@ -461,7 +407,10 @@ function ensureDebugApi() {
       view.dispatch({ selection: { anchor: safeOffset } })
       await lspCore.syncChanges()
       const position = lspPositionAtOffset(view.state.doc, safeOffset)
-      const previousCharacter = view.state.doc.sliceString(Math.max(0, safeOffset - 1), safeOffset)
+      const previousCharacter = view.state.doc.sliceString(
+        Math.max(0, safeOffset - 1),
+        safeOffset,
+      )
       const result = await lspCore.requestWithLock('textDocument/completion', {
         textDocument: { uri: lspCore.documentUri },
         position,
@@ -477,7 +426,9 @@ function ensureDebugApi() {
 
 function getDebugEditorView(documentUri: string) {
   const view = debugEditorViews.get(documentUri)
-  if (!view) throw new Error(`No CodeMirror document registered for ${documentUri}`)
+  if (!view) {
+    throw new Error(`No CodeMirror document registered for ${documentUri}`)
+  }
   return view
 }
 
@@ -492,7 +443,9 @@ function lspPositionAtOffset(doc: EditorView['state']['doc'], offset: number) {
 function lspCompletionLabels(result: unknown): string[] {
   const items = Array.isArray(result)
     ? result
-    : result && typeof result === 'object' && Array.isArray((result as { items?: unknown }).items)
+    : result &&
+        typeof result === 'object' &&
+        Array.isArray((result as { items?: unknown }).items)
       ? (result as { items: unknown[] }).items
       : []
   return items

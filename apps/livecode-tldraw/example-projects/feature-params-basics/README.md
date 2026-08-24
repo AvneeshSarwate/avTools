@@ -45,9 +45,9 @@ http://localhost:5173/?projectPath=<absolute path to this directory>
 5. **Toggle `mix.muted`.** The graph row freezes at its last value (the
    writer stops writing) and the scope trace pins to exactly 0 (the reader
    reads the flag at loop rate).
-6. **Gutter widget.** In the `panel declaration` shape, click the
-   `🎛 open params-basics/panel` widget: it selects/zooms the existing pane
-   (or creates one if you deleted it).
+6. **Entity widget.** In the `panel declaration` shape, click the `🎛️` just
+   inside `canvasParams(`. Its tooltip names `params-basics/panel`, and it
+   selects/zooms the existing pane (or creates one if you deleted it).
 7. **Stop both modules.** The derived signal ends: the scope dims its title
    and freezes the trace (a history view). The pane keeps showing the last
    values — the entity outlives the runs.

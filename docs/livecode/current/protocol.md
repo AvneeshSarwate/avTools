@@ -293,6 +293,7 @@ interface RunEntity {
   state: "launching" | "running" | "stopped" | "error";
   generatedRunId: string;
   runToken: string;
+  executionCount: number;
   updatedAt: number;
   projectModulePath?: string;
   sourceHash?: string;
@@ -317,6 +318,12 @@ interface ModuleLookupsEntity {
 fields: there is exactly one run entity per module id, and the active-module
 list is derived client-side from `state` (`launching` or `running` is active).
 A terminal run entity stays live until that module runs again.
+
+`executionCount` is process-local engine truth. It increments when the module
+actually enters user code, not when a launch is merely accepted, so a cancelled
+queued launch or an import failure does not advance it. The terminal entity
+retains the count, which lets a one-shot module show that it executed after it
+has already returned. Restarting the engine resets the count.
 
 **`runToken` is the identity of the RUN**, minted server-side when a launch is
 accepted. `generatedRunId` identifies a prepared *build* and is reused whenever

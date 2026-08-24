@@ -30,8 +30,9 @@ http://localhost:5173/?projectPath=<absolute path to this directory>
    entities appear at first run).
 2. **Natural completion.** Run `finite (ends naturally)`: the wait highlight
    steps through four half-second beats (console logs `beat n/4`), then the
-   status returns to stopped on its own after ~2 s. No Stop click. Run it
-   again — every run is a fresh pass.
+   status returns to stopped on its own after ~2 s. No Stop click. Its header
+   reads `runs: 1`; run it again and verify `runs: 2` — every run is a fresh
+   pass.
 3. **Run `steady (Replace me)`.** The `lifecycle/steady` pane appears:
    `heartbeat` counts up four times a second and `lastLaunch` shows this
    run's timestamp.
@@ -42,6 +43,7 @@ http://localhost:5173/?projectPath=<absolute path to this directory>
    - it **continues from where it was** rather than resetting (the entity
      reattaches; values survive replacement),
    - `lastLaunch` re-stamps (the new run announced itself),
+   - the module's `runs` count increments for the replacement,
    - Stop was never pressed, and the other modules were untouched.
 5. **No-surprise launch (agent surface).** While steady runs, a raw launch
    without consent is refused:

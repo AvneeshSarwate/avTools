@@ -261,7 +261,7 @@ export interface ModuleVizSyncApi {
   latestSeq: number | null;
 }
 
-/** The editor decorations: active waits and resolved piano-roll lookups. */
+/** Runtime observation state consumed by the editor's inline decorations. */
 export function useModuleVizSync(): ModuleVizSyncApi {
   const waits = useContext(ModuleWaitsContext);
   const lookups = useContext(ModuleLookupsContext);

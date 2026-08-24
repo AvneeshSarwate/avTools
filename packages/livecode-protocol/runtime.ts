@@ -44,6 +44,8 @@ export interface RunEntity {
    * it. Terminal dedupe keys on this token instead.
    */
   runToken: string;
+  /** Number of times this module has entered user code in this engine process. */
+  executionCount: number;
   updatedAt: number;
   projectModulePath?: string;
   sourceHash?: string;
@@ -118,6 +120,8 @@ export interface RuntimeStateModuleRun {
   state: RuntimeModuleRunState;
   updatedAtMs: number;
   runToken: string;
+  /** Number of times this module has entered user code in this engine process. */
+  executionCount: number;
   projectModulePath?: string;
   sourceHash?: string;
   projectSourceHash?: string;

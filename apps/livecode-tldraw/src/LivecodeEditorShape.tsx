@@ -11,23 +11,20 @@ import {
 } from "tldraw";
 import {
   CodeMirrorEditor,
-  type ParamPaneCallDecoration,
-  type PianoRollCallDecoration,
+  type EntityCallDecoration,
+  type EntityCallDecorationType,
 } from "./CodeMirrorEditor";
 import { DEFAULT_LIVECODE_SOURCE } from "./defaultSource";
 import { livecodeDocumentUri } from "./denoLsp";
 import type { SourceRange } from "./livecodeProtocol";
 import { useLivecodeRuntime } from "./livecodeRuntime";
+import { createEntityView, entityRefForCanvasView } from "./canvasViews";
 import {
-  createParamPaneShape,
-  PARAM_PANE_SHAPE_TYPE,
-  type ParamPaneShape,
-} from "./ParamPaneShape";
-import {
-  createPianoRollShape,
-  PIANO_ROLL_SHAPE_TYPE,
-  type PianoRollShape,
-} from "./PianoRollShape";
+  createSignalScopeShape,
+  SIGNAL_SCOPE_SHAPE_TYPE,
+  type SignalScopeShape,
+} from "./SignalScopeShape";
+import { PARAMS_ENTITY_TYPE, PIANO_ROLL_ENTITY_TYPE } from "./serverRequests";
 
 export const LIVECODE_EDITOR_SHAPE_TYPE = "livecode-editor";
 
@@ -173,84 +170,89 @@ function LivecodeEditorShapeComponent(
       .map((callsite) => callsite.range);
   }, [moduleState?.activeIds, moduleState?.manifest]);
 
-  const pianoRollCallsites = useMemo<PianoRollCallDecoration[]>(() => {
+  const entityCallsites = useMemo<EntityCallDecoration[]>(() => {
     if (!moduleState?.manifest) return [];
     const lookups = moduleState.pianoRollLookups ?? {};
-    const out: PianoRollCallDecoration[] = [];
+    const out: EntityCallDecoration[] = [];
     for (const callsite of moduleState.manifest.callsites) {
-      if (callsite.kind !== "pianoRollLookup") continue;
       if (!callsite.nameArgRange) continue;
-      const resolved = lookups[callsite.id];
-      if (resolved !== undefined) {
+      if (callsite.kind === "pianoRollLookup") {
+        const resolved = lookups[callsite.id];
+        if (resolved !== undefined) {
+          out.push({
+            at: callsite.nameArgRange.from,
+            entityType: PIANO_ROLL_ENTITY_TYPE,
+            entityName: resolved,
+          });
+        } else if (callsite.staticName !== undefined) {
+          out.push({
+            at: callsite.nameArgRange.from,
+            entityType: PIANO_ROLL_ENTITY_TYPE,
+            entityName: callsite.staticName,
+            tentative: true,
+          });
+        }
+      } else if (
+        callsite.kind === "canvasParams" && callsite.staticName !== undefined
+      ) {
         out.push({
-          at: callsite.nameArgRange.to,
-          rollName: resolved,
-          resolvedAtRuntime: true,
+          at: callsite.nameArgRange.from,
+          entityType: PARAMS_ENTITY_TYPE,
+          entityName: callsite.staticName,
         });
-      } else if (callsite.staticName !== undefined) {
+      } else if (
+        callsite.kind === "canvasSignal" && callsite.staticName !== undefined
+      ) {
         out.push({
-          at: callsite.nameArgRange.to,
-          rollName: callsite.staticName,
-          resolvedAtRuntime: false,
+          at: callsite.nameArgRange.from,
+          entityType: "signal",
+          entityName: callsite.staticName,
         });
       }
     }
     return out;
   }, [moduleState?.manifest, moduleState?.pianoRollLookups]);
 
-  // Params have no runtime name resolution, so only a static literal name
-  // produces a widget.
-  const paramPaneCallsites = useMemo<ParamPaneCallDecoration[]>(() => {
-    if (!moduleState?.manifest) return [];
-    const out: ParamPaneCallDecoration[] = [];
-    for (const callsite of moduleState.manifest.callsites) {
-      if (callsite.kind !== "canvasParams") continue;
-      if (!callsite.nameArgRange || callsite.staticName === undefined) continue;
-      out.push({
-        at: callsite.nameArgRange.to,
-        paramsName: callsite.staticName,
-      });
-    }
-    return out;
-  }, [moduleState?.manifest]);
+  const openEntity = useCallback(
+    (entityType: EntityCallDecorationType, entityName: string) => {
+      if (entityType === "signal") {
+        const existing = editor
+          .getCurrentPageShapes()
+          .find((candidate): candidate is SignalScopeShape =>
+            candidate.type === SIGNAL_SCOPE_SHAPE_TYPE &&
+            candidate.props.sourceType === "signal" &&
+            candidate.props.name === entityName &&
+            candidate.props.path === ""
+          );
+        if (existing) {
+          editor.select(existing.id);
+          editor.zoomToSelection();
+          return;
+        }
+        createSignalScopeShape(editor, {
+          x: shape.x + shape.props.w + 40,
+          y: shape.y,
+          sourceType: "signal",
+          name: entityName,
+        });
+        editor.zoomToSelection();
+        return;
+      }
 
-  const openPianoRoll = useCallback(
-    (rollName: string) => {
       const existing = editor
         .getCurrentPageShapes()
-        .find((s): s is PianoRollShape =>
-          s.type === PIANO_ROLL_SHAPE_TYPE && s.props.rollName === rollName);
+        .find((candidate) => {
+          const ref = entityRefForCanvasView(candidate);
+          return ref?.type === entityType && ref.name === entityName;
+        });
       if (existing) {
         editor.select(existing.id);
         editor.zoomToSelection();
         return;
       }
-      createPianoRollShape(editor, {
+      createEntityView(editor, entityType, entityName, {
         x: shape.x + shape.props.w + 40,
         y: shape.y,
-        rollName,
-      });
-      editor.zoomToSelection();
-    },
-    [editor, shape.x, shape.y, shape.props.w],
-  );
-
-  const openParamPane = useCallback(
-    (paramsName: string) => {
-      const existing = editor
-        .getCurrentPageShapes()
-        .find((s): s is ParamPaneShape =>
-          s.type === PARAM_PANE_SHAPE_TYPE && s.props.paramsName === paramsName
-        );
-      if (existing) {
-        editor.select(existing.id);
-        editor.zoomToSelection();
-        return;
-      }
-      createParamPaneShape(editor, {
-        x: shape.x + shape.props.w + 40,
-        y: shape.y,
-        paramsName,
       });
       editor.zoomToSelection();
     },
@@ -319,13 +321,16 @@ function LivecodeEditorShapeComponent(
         <span className={`status-pill status-pill--${runStatus}`}>
           run: {runStatus}
         </span>
+        <span>runs: {moduleState?.executionCount ?? 0}</span>
         <span className={`status-pill status-pill--${runtime.lspStatus}`}>
           lsp: {runtime.lspStatus}
         </span>
         <span>{callsiteCount} callsites</span>
         <span>{moduleState?.activeIds.length ?? 0} active</span>
         <span>{lspDiagnostics.length} lsp diagnostics</span>
-        {dependencies.length > 0 ? <span>{dependencies.length} deps</span> : null}
+        {dependencies.length > 0
+          ? <span>{dependencies.length} deps</span>
+          : null}
         {changedDependencies.length > 0 || hasDependencyIssue
           ? (
             <span
@@ -347,13 +352,11 @@ function LivecodeEditorShapeComponent(
           value={shape.props.source}
           documentUri={documentUri}
           activeRanges={activeRanges}
-          pianoRollCallsites={pianoRollCallsites}
-          paramPaneCallsites={paramPaneCallsites}
+          entityCallsites={entityCallsites}
           lspClient={runtime.lspClient}
           readOnly={shape.props.readOnly === true ||
             runtime.connectionStatus === "connecting"}
-          onOpenPianoRoll={openPianoRoll}
-          onOpenParamPane={openParamPane}
+          onOpenEntity={openEntity}
           onChange={(next) => {
             setModuleSource(shape.props.moduleId, next);
             editor.updateShape({

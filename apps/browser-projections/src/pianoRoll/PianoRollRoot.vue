@@ -757,6 +757,8 @@ defineExpose({
 <style scoped>
 .piano-roll-root {
   display: flex;
+  width: 100%;
+  box-sizing: border-box;
   flex-direction: column;
   align-items: center;
   padding: 8px 10px;

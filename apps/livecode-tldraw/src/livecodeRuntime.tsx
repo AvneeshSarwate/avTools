@@ -11,8 +11,8 @@ import {
 import type { LSClient } from "@valtown/codemirror-ls";
 import {
   createDenoLspConnection,
-  livecodeDocumentUri,
   type DenoLspConnection,
+  livecodeDocumentUri,
   type LspDiagnosticSummary,
   type LspStatus,
   retireLspConnection,
@@ -88,6 +88,8 @@ export interface ModuleViewState {
   latestError: string | null;
   /** The engine-minted identity of the run currently represented here. */
   runToken: string | null;
+  /** Number of times this module has entered user code in this engine process. */
+  executionCount: number;
 }
 
 interface ModuleRecord extends ModuleViewState {
@@ -334,6 +336,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       rejectRunLaunch(record.runCorrelation);
       if (run) {
         record.runToken = run.runToken;
+        record.executionCount = run.executionCount;
       }
       if (active) {
         record.runStatus = "running";
@@ -341,9 +344,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
         record.latestError = null;
       } else {
         record.activeIds = [];
-        record.runStatus = run
-          ? moduleRunStateToRunStatus(run.state)
-          : "idle";
+        record.runStatus = run ? moduleRunStateToRunStatus(run.state) : "idle";
         if (run?.state === "error") {
           record.latestError = run.message ?? record.latestError;
         }
@@ -797,16 +798,19 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
         }
 
         beginRunLaunch(record.runCorrelation);
-        const launch = await postJson<LaunchModuleResponse>("/runtime/launch", {
-          moduleId: build.moduleId,
-          transformedModuleUri: build.transformedModuleUri,
-          generatedRunId: build.generatedRunId,
-          sourceHash: build.sourceHash,
-          projectSourceHash: build.projectSourceHash,
-          projectModulePath: build.projectModulePath,
-          manifest: build.manifest,
-          ...(options.replaceRunning ? { replaceRunning: true } : {}),
-        } satisfies LaunchModuleRequest);
+        const launch = await postJson<LaunchModuleResponse>(
+          "/runtime/launch",
+          {
+            moduleId: build.moduleId,
+            transformedModuleUri: build.transformedModuleUri,
+            generatedRunId: build.generatedRunId,
+            sourceHash: build.sourceHash,
+            projectSourceHash: build.projectSourceHash,
+            projectModulePath: build.projectModulePath,
+            manifest: build.manifest,
+            ...(options.replaceRunning ? { replaceRunning: true } : {}),
+          } satisfies LaunchModuleRequest,
+        );
         acknowledgeRunLaunch(record.runCorrelation, launch.runToken);
         record.runToken = launch.runToken;
         record.runStatus = "running";
@@ -933,6 +937,7 @@ function makeModuleRecord(
     lastSnapshotSeq: null,
     latestError: null,
     runToken: null,
+    executionCount: 0,
     buildTimer: null,
     runCorrelation: createRunCorrelation(),
     analyzeSequence: 0,
@@ -946,6 +951,7 @@ function applyRunEntity(record: ModuleRecord, run: RunEntity | undefined) {
   if (!run) return;
   if (!shouldApplyRun(record.runCorrelation, run)) return;
 
+  record.executionCount = run.executionCount;
   if (run.state === "launching" || run.state === "running") {
     record.runToken = run.runToken;
     if (record.runStatus !== "stopping") record.runStatus = "running";
@@ -983,6 +989,7 @@ function toViewState(record: ModuleRecord): ModuleViewState {
     lastSnapshotSeq: record.lastSnapshotSeq,
     latestError: record.latestError,
     runToken: record.runToken,
+    executionCount: record.executionCount,
   };
 }
 
