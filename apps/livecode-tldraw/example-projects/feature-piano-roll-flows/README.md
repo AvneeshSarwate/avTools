@@ -40,20 +40,23 @@ http://localhost:5173/?projectPath=<absolute path to this directory>
    env var on the server) you hear the loop at 0.25 s/beat; without MIDI it
    advances silently. Edit loop notes while it plays: the change lands at the
    next pass. Stop cleanly ends any sounding note.
-6. **Gutter widgets.** Each `🎹 open rolls/…` widget selects/zooms the
-   matching view, or creates one beside the code shape.
+6. **Entity widgets.** Each `🎹` just inside a piano-roll helper call selects
+   or zooms to the named roll in its tooltip, or creates one beside the code
+   shape. Each restored or newly created view is 700 by 557 around the Vue
+   component's unscaled 640 by 360 internal canvas, with no initial clipping.
 7. **Replace while running.** With the player running, change
    `secondsPerBeat: 0.25` to `0.125` in its source. The Run button now reads
    **Replace**; click it. The tempo doubles at the swap and the other modules
    are untouched.
-8. **Entity CRUD from the topbar.** Select exactly one `rolls/loop` view:
+8. **Entity CRUD from the topbar.** Select exactly one `rolls/loop` view and
+   open **Entity**:
    - **Duplicate entity** (prefilled `rolls/loop-copy`): a new view of the
      copy appears beside the source with the same notes.
    - **Delete entity** on the copy: the button rearms to
      `Really delete rolls/loop-copy?`; confirm. The copy's view stays and
      returns to its waiting placeholder — views outlive entities.
-   - **New piano roll** with a brand-new name creates the entity plus a view;
-     with an existing name it only adds another view (dual-mode).
+   - **Add → New piano roll** with a brand-new name creates the entity plus a
+     view; with an existing name it only adds another view (dual-mode).
 9. **Entity CRUD over HTTP (agent surface).**
 
    ```sh

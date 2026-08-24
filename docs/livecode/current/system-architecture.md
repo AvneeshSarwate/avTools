@@ -168,7 +168,7 @@ imports, and emits a source-range manifest. At execution time:
   React state once per animation frame;
 - the React runtime copies runs, waits, and lookups into per-module view state;
 - `LivecodeEditorShape` joins active IDs and lookup IDs to manifest ranges;
-- `CodeMirrorEditor` replaces its wait marks and piano-roll widgets through
+- `CodeMirrorEditor` replaces its wait marks and generic entity widgets through
   CodeMirror state effects.
 
 Batching now happens twice: the server's changed-only ~30 Hz cadence, and one

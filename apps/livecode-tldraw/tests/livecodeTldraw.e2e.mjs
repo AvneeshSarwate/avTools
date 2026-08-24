@@ -69,6 +69,7 @@ let firstModuleId = ''
 let secondModuleId = ''
 let serverBaseUrl = ''
 let paramPaneShapeId = ''
+let signalScopeShapeId = ''
 let projectRoot = ''
 
 // Fixtures for the params cases. They live here rather than beside those cases
@@ -372,6 +373,7 @@ try {
   )
   await page.evaluate(() => window.__livecodeTldrawRuntimeDebug?.connect())
   await waitForTldrawReady()
+  await runResponsiveTopbarCase()
 
   // The default canvas creates one livecode-editor shape. Grab its module id.
   firstModuleId = await waitForFirstModuleId()
@@ -428,6 +430,54 @@ try {
 // ---------------------------------------------------------------------------
 // Test cases
 // ---------------------------------------------------------------------------
+
+async function runResponsiveTopbarCase() {
+  const originalViewport = page.viewportSize() ?? { width: 1280, height: 720 }
+  for (const width of [1200, 800, 480]) {
+    await page.setViewportSize({ width, height: 800 })
+    const bounds = await page.locator('.topbar').evaluate((topbar) => {
+      const rect = topbar.getBoundingClientRect()
+      return {
+        left: rect.left,
+        right: rect.right,
+        scrollWidth: topbar.scrollWidth,
+        clientWidth: topbar.clientWidth,
+        viewportWidth: window.innerWidth,
+      }
+    })
+    assert(bounds.left >= 0, `topbar stays on-screen at ${width}px`)
+    assert(
+      bounds.right <= bounds.viewportWidth,
+      `topbar right edge stays on-screen at ${width}px`
+    )
+    assert(
+      bounds.scrollWidth <= bounds.clientWidth,
+      `topbar content does not overflow at ${width}px`
+    )
+
+    const addSummary = page.locator('.topbar__menu summary', {
+      hasText: 'Add',
+    })
+    await addSummary.click()
+    const panel = page.locator('.topbar__menu[open] .topbar__panel')
+    await panel.waitFor({ state: 'visible' })
+    const panelBounds = await panel.evaluate((element) => {
+      const rect = element.getBoundingClientRect()
+      return {
+        left: rect.left,
+        right: rect.right,
+        viewportWidth: window.innerWidth,
+      }
+    })
+    assert(panelBounds.left >= 0, `topbar menu stays on-screen at ${width}px`)
+    assert(
+      panelBounds.right <= panelBounds.viewportWidth,
+      `topbar menu right edge stays on-screen at ${width}px`
+    )
+    await addSummary.click()
+  }
+  await page.setViewportSize(originalViewport)
+}
 
 /**
  * The default source reads the "melody" roll via a const-bound name
@@ -519,6 +569,7 @@ async function runPianoRollWidgetRuntimeResolvedCase() {
  * stuck in the running UI state after it completes.
  */
 async function runLookupOnlyModuleCompletesStoppedCase() {
+  const beforeCount = await readClientExecutionCount(firstModuleId)
   await setSource(`import type { TimeContext } from "@avtools/core-timing";
 import { getPianoRollClip } from "piano-roll-helpers";
 
@@ -531,11 +582,16 @@ export default async function(ctx: TimeContext) {
   await runModule(firstModuleId)
   await waitForResolvedLookups(firstModuleId, ['melody'], 'lookup-only runtime lookup')
   await waitForPageValue(
-    (moduleId) =>
-      window.__livecodeTldrawRuntimeDebug?.modules[moduleId]?.runStatus === 'stopped',
+    ({ moduleId, expectedCount }) => {
+      const module = window.__livecodeTldrawRuntimeDebug?.modules[moduleId]
+      return (
+        module?.runStatus === 'stopped' &&
+        module.executionCount === expectedCount
+      )
+    },
     'lookup-only module stopped after completion',
     scaled(15_000),
-    firstModuleId
+    { moduleId: firstModuleId, expectedCount: beforeCount + 1 }
   )
 }
 
@@ -567,12 +623,56 @@ export default async function(ctx: TimeContext) {
     label: 'harmony widget',
   })
 
+  await createEntityViaDebug(PIANO_ROLL_ENTITY_TYPE, 'harmony')
   await clickPianoRollButton('harmony')
 
   const after = await waitForShapeOfType('piano-roll-view', 'piano-roll-view created')
   const created = after.find((s) => s.props.rollName === 'harmony')
   assert(created, 'a piano-roll-view shape for "harmony" should be created')
   assertEqual(created.props.rollName, 'harmony', 'created shape rollName')
+  assertEqual(
+    created.props.w,
+    700,
+    'default piano-roll shape width fits its component'
+  )
+  assertEqual(
+    created.props.h,
+    557,
+    'default piano-roll shape height fits its component'
+  )
+  const pianoShape = page.locator('.piano-roll-shape').first()
+  await pianoShape.locator('piano-roll-component').waitFor({
+    state: 'attached',
+    timeout: scaled(10_000),
+  })
+  const fit = await pianoShape.evaluate((shape) => {
+    const body = shape.querySelector('.piano-roll-shape__body')
+    const viewport = body?.querySelector('.piano-roll-shape__viewport')
+    const component = viewport?.querySelector('piano-roll-component')
+    const stage = component?.shadowRoot?.querySelector('.piano-roll-container')
+    return body && component
+      ? {
+          bodyWidth: body.clientWidth,
+          bodyScrollWidth: body.scrollWidth,
+          bodyHeight: body.clientHeight,
+          bodyScrollHeight: body.scrollHeight,
+          viewportWidth: viewport.getBoundingClientRect().width,
+          viewportScrollWidth: viewport.scrollWidth,
+          componentWidth: component.getBoundingClientRect().width,
+          componentHeight: component.getBoundingClientRect().height,
+          componentScrollWidth: component.scrollWidth,
+          stageWidth: stage ? Math.round(stage.getBoundingClientRect().width) : null,
+          stageHeight: stage ? Math.round(stage.getBoundingClientRect().height) : null,
+        }
+      : null
+  })
+  assert(fit, 'the created piano-roll component should be mounted')
+  assertEqual(fit.stageWidth, 640, 'piano-roll internal canvas width')
+  assertEqual(fit.stageHeight, 360, 'piano-roll internal canvas height')
+  assert(
+    fit.bodyScrollWidth <= fit.bodyWidth && fit.bodyScrollHeight <= fit.bodyHeight,
+    `default piano-roll shape should not clip: ${JSON.stringify(fit)}`
+  )
 }
 
 /**
@@ -828,6 +928,27 @@ async function runPlayheadSignalMarkerCase() {
     PLAYHEAD_SIGNAL_NAME,
     'declared signal static name'
   )
+  await waitForEntityButtons('signal', [PLAYHEAD_SIGNAL_NAME], {
+    label: 'signal declaration widget',
+  })
+  await clickEntityButton('signal', PLAYHEAD_SIGNAL_NAME)
+  signalScopeShapeId = await waitForPageValue(
+    (signalName) => {
+      const shapes = window.__livecodeTldrawRuntimeDebug?.getShapes() ?? []
+      return (
+        shapes.find(
+          (shape) =>
+            shape.type === 'signal-scope' &&
+            shape.props.sourceType === 'signal' &&
+            shape.props.name === signalName &&
+            shape.props.path === ''
+        )?.id ?? null
+      )
+    },
+    'clicking the signal emoji creates its monitor',
+    scaled(10_000),
+    PLAYHEAD_SIGNAL_NAME
+  )
 
   await runModule(firstModuleId)
   const first = await waitForMarker(
@@ -919,10 +1040,9 @@ async function runTwoModulePlayheadMarkersCase() {
  * client-side at RAF, which is what the ring-buffer assertions read.
  */
 async function runSignalScopeAccumulatesCase() {
-  const signalScopeId = await createSignalScope('signal', PLAYHEAD_SIGNAL_NAME)
-  assert(signalScopeId, 'the debug surface should return the new scope shape id')
+  assert(signalScopeShapeId, 'the signal decorator should have created a scope')
   const signalScope = await waitForScopeState(
-    signalScopeId,
+    signalScopeShapeId,
     (state) => state.sampleCount > 10 && state.distinctCount > 1,
     'the signal scope accumulates a changing trace'
   )
@@ -1924,36 +2044,60 @@ async function waitForResolvedLookups(moduleId, expectedNames, label) {
 }
 
 async function waitForPianoRollButtons(expectedNames, { expectQuestionMark, label }) {
-  await waitForPageValue(
-    ({ expectedNames, expectQuestionMark }) => {
-      const buttons = Array.from(
-        document.querySelectorAll('.ltc-piano-roll-open-btn')
-      ).map((b) => b.textContent ?? '')
-      const normalize = (text) => text.replace(/^🎹\s*open\s*/, '').trim()
-      const labels = buttons.map(normalize)
-      const want = expectedNames.map((name) =>
-        expectQuestionMark ? `${name}?` : name
-      )
-      return want.every((w) => labels.includes(w)) ? labels : null
-    },
+  return await waitForEntityButtons('pianoRoll', expectedNames, {
+    tentative: expectQuestionMark,
     label,
-    10_000,
-    { expectedNames, expectQuestionMark }
-  )
+  })
 }
 
 async function clickPianoRollButton(rollName) {
-  const clicked = await page.evaluate((rollName) => {
-    const buttons = Array.from(
-      document.querySelectorAll('.ltc-piano-roll-open-btn')
+  return await clickEntityButton('pianoRoll', rollName)
+}
+
+async function waitForEntityButtons(
+  entityType,
+  expectedNames,
+  { tentative = false, label }
+) {
+  await waitForPageValue(
+    ({ entityType, expectedNames, tentative }) => {
+      const emoji = { pianoRoll: '🎹', params: '🎛️', signal: '📈' }[entityType]
+      const buttons = Array.from(
+        document.querySelectorAll('.ltc-entity-open-btn')
+      ).filter((button) => button.dataset.entityType === entityType)
+      const byName = new Map(
+        buttons.map((button) => [button.dataset.entityName, button])
+      )
+      for (const name of expectedNames) {
+        const button = byName.get(name)
+        if (!button) return null
+        if ((button.textContent ?? '').trim() !== emoji) return null
+        const isTentative = (button.title ?? '').includes('run the module to confirm')
+        if (isTentative !== tentative) return null
+      }
+      return expectedNames
+    },
+    label,
+    scaled(10_000),
+    { entityType, expectedNames, tentative }
+  )
+}
+
+async function clickEntityButton(entityType, entityName) {
+  const clicked = await page.evaluate(({ entityType, entityName }) => {
+    const target = Array.from(
+      document.querySelectorAll('.ltc-entity-open-btn')
+    ).find(
+      (button) =>
+        button.dataset.entityType === entityType &&
+        button.dataset.entityName === entityName
     )
-    const target = buttons.find((b) => (b.textContent ?? '').includes(rollName))
     if (!target) return false
     target.click()
     return true
-  }, rollName)
+  }, { entityType, entityName })
   if (!clicked) {
-    throw new Error(`No piano roll open button matching "${rollName}" found`)
+    throw new Error(`No ${entityType} button matching "${entityName}" found`)
   }
 }
 
@@ -2008,17 +2152,7 @@ async function clickModuleActionButton(moduleId, label) {
 }
 
 async function waitForParamPaneButtons(expectedNames, label) {
-  await waitForPageValue(
-    (expectedNames) => {
-      const labels = Array.from(
-        document.querySelectorAll('.ltc-param-pane-open-btn')
-      ).map((b) => (b.textContent ?? '').replace(/^🎛\s*open\s*/, '').trim())
-      return expectedNames.every((name) => labels.includes(name)) ? labels : null
-    },
-    label,
-    10_000,
-    expectedNames
-  )
+  return await waitForEntityButtons('params', expectedNames, { label })
 }
 
 async function createParamPane(paramsName) {
@@ -2205,6 +2339,14 @@ function readClientRunToken(moduleId) {
   return page.evaluate(
     (moduleId) =>
       window.__livecodeTldrawRuntimeDebug?.modules[moduleId]?.runToken ?? null,
+    moduleId
+  )
+}
+
+function readClientExecutionCount(moduleId) {
+  return page.evaluate(
+    (moduleId) =>
+      window.__livecodeTldrawRuntimeDebug?.modules[moduleId]?.executionCount ?? 0,
     moduleId
   )
 }

@@ -224,11 +224,9 @@ complete.
 
 The first argument is the signal name, recorded as `nameArgRange` plus a
 `staticName` for a string literal or an uninterpolated template literal. There
-is no runtime name resolution, so a computed name has no `staticName` — and
-since v1 renders **no gutter widget for `canvasSignal` at all**, that limitation
-currently costs nothing: scopes are created from the topbar's "New scope" input
-or the debug surface. Client decoration builders filter by kind, so they skip
-this kind safely.
+is no runtime name resolution, so a computed name has no `staticName` and no
+inline widget. A static declaration renders a `📈` widget that focuses or
+creates a whole-signal scope.
 
 Multiple modules may declare the same signal name. Like params that is legal
 reattach: the last declarer owns it (and therefore ends it), and the anchor is

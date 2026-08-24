@@ -457,7 +457,7 @@ try {
   await waitUntil(
     () =>
       uiPage.evaluate(() =>
-        [...document.querySelectorAll('.topbar__group span')].some((node) =>
+        [...document.querySelectorAll('.topbar__notice')].some((node) =>
           (node.textContent ?? '').startsWith('exported ')
         )
           ? true

@@ -48,11 +48,14 @@ http://localhost:5173/?projectPath=<absolute path to this directory>
 6. **Reload the browser tab while modules run.** Markers and traces resume
    from server truth after reconnect; each scope's history restarts from the
    moment it remounted (ring buffers are view-side and never persisted).
-7. **New scope from the topbar.** Its datalist offers every live signal and
-   suffixes ended ones with `(ended)`. Bind a new scope to `signals/strider`
-   — a non-numeric object value renders the unsupported placeholder, which
-   is the honest v1 behavior for non-numeric signals.
-8. **Stop everything.** All three signals list as ended
+7. **Signal widget.** In `playhead walker`, click the `📈` just inside
+   `signal(`. It selects the existing `signals/walker` scope; after deleting
+   that scope, clicking again recreates it beside the module.
+8. **New scope from Add.** Open **Add → New scope**. Its datalist offers every
+   live signal and suffixes ended ones with `(ended)`. Bind a new scope to
+   `signals/strider` — a non-numeric object value renders the unsupported
+   placeholder, which is the honest v1 behavior for non-numeric signals.
+9. **Stop everything.** All three signals list as ended
    (`curl -s localhost:7777/signals/list`) until a relaunch redeclares them.
 
 ## Expected-state notes
