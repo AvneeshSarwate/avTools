@@ -58,13 +58,14 @@ Open `http://localhost:5173/`. Useful URL parameters are:
 | Freeform canvas shapes and non-project layout | tldraw client | In-memory unless explicitly saved as `.tldr`; no `persistenceKey`. |
 | Project module source | Project `*.orig.ts` files | Written by the server during project edit analysis. |
 | Project runtime source | Project `*.ts` files | Materialized by the server transform; never hand-edit. |
-| Project module, piano-roll-view, param-pane, and signal-scope layout | `project.avtools-livecode.json` | Module layout through `/project/modules/update`; all three canvas view arrays through `/project/canvas`. A scope persists its binding, never its samples. |
+| Project module and registered canvas-view layout | `project.avtools-livecode.json` | Module layout through `/project/modules/update`; piano-roll, params, animation-editor, and scope view arrays through `/project/canvas`. A scope persists its binding, never its samples. |
 | Prepared builds and manifests | Deno server memory plus generated/runtime files | Latest manifests exposed by `/runtime/state`; non-project builds are pruned to a small rolling set. |
 | Active module lifecycle | Engine (`moduleRunSnapshots`) | `run` entities on `/sync`, plus `/runtime/state` and `/runtime/status`. Each row carries a `runToken` that identifies the run rather than its build. |
 | Active wait counts and resolved piano-roll lookup names | Process-global runtime singleton in `visualizer/runtime.ts` | `moduleWaits` / `moduleLookups` entities on `/sync` only; lookup values persist after completion until a later analyze clears that module. |
 | Named piano-roll objects | Process-global `entity_store.ts` through `piano_roll_store.ts` | In memory, and written to a project's `data/pianoRoll/*.json` by an explicit `/project/save`; `/project/open` loads them back before any module runs. |
 | Piano-roll undo/redo history | A side map in `piano_roll_store.ts`, keyed by entity name | In memory only. Never serialized, dropped when the entity is deleted, and cleared per roll on load, because open adopts disk truth. |
 | Named params entities and their values | Process-global `entity_store.ts` through `params_store.ts`; the live value object is shared with the declaring module | In memory, and saved/loaded with their `meta` like piano rolls, so an opened project renders panes before any module runs. Declaration reattaches and reconciles rather than resetting, so values also survive a relaunch inside one server process. |
+| Named animation timelines | Process-global `entity_store.ts` through `animation_timeline_store.ts` | Durable `{ tracks, trackOrder }` data is synced and explicitly saved/loaded. Sampling and function-hit evaluation are engine helpers; playhead/window/mode and callbacks are runtime/view state. |
 | Named ephemeral signals and their latest values | Process-global `entity_store.ts` through `signals_store.ts`; the value is written by the publishing module | Process-runtime truth, **never persisted**. Not registered as a durable type, so no save, status row, project load, or `/entities/*` action can see one. A reconnecting client recovers current values only — there is no history on the server — and a run's signals end with it. |
 | Scope sample history | The browser tab's `signal-scope` shape | Nothing. Ring buffers are per-shape, in-memory, and discarded on unmount or rebind; they are a view over shipped samples, not a record. |
 | Editor text in a shape | `livecode-editor.props.source` plus mirrored React runtime record | `.tldr` for transient canvases; project source is also written to `*.orig.ts`. |
@@ -88,10 +89,10 @@ which is the only side with a filesystem.
 Three connection domains:
 
 1. **Sync** — `/sync`, one socket for every watched entity kind: piano rolls,
-   params, signals, runs, module waits, and module lookups. It connects when
-   `SyncRuntimeProvider` mounts, independent of the Connect button, and it is
-   the only channel carrying watched state. Delivery is per entity,
-   changed-only, and scoped to what that socket subscribed to.
+   params, animation timelines, signals, runs, module waits, and module
+   lookups. It connects when `SyncRuntimeProvider` mounts, independent of the
+   Connect button, and it is the only channel carrying watched state. Delivery
+   is per entity, changed-only, and scoped to what that socket subscribed to.
 2. **Client control** — `/client/control`, connected whenever the tldraw page is
    mounted, also independent of Connect. It lets an HTTP caller ask the server
    to forward commands to this browser.
@@ -174,6 +175,13 @@ Batching now happens twice: the server's changed-only ~30 Hz cadence, and one
 `requestAnimationFrame` coalescing pass in the sync provider that covers every
 entity kind rather than three of them.
 
+Store-backed kinds are registered through `entity_kinds.ts`, where one type ID
+supplies sync behavior and optional durability. Canvas views use the separate
+`CANVAS_VIEW_CODECS` registry for shape registration, project collect/restore,
+entity references, and construction. Domain stores, mutation routes, and
+per-kind React contexts stay explicit because their semantics and update rates
+differ.
+
 ## Stop, cleanup, and panic
 
 A graceful module stop runs an optional exported `stop()` hook with a two-second
@@ -224,7 +232,7 @@ The execution plane now lives in `packages/livecode-engine` (see `server.md`):
 in local mode the server constructs one `createLivecodeEngine` instance and
 hosts it behind its transports; everything imports the package directly (the
 old `visualizer/` paths are gone). The runtime instrumentation map and the entity store
-(piano rolls, params, and signals alike) are module-level singletons in that
+(piano rolls, params, animation timelines, and signals alike) are module-level singletons in that
 package, so two server instances created in the same isolate would share them.
 The root-clock context in `runtime.ts` is a singleton for the same reason: the
 last engine to start its parent loop would own it. Run records are the

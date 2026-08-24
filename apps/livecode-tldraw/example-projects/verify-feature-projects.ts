@@ -6,7 +6,8 @@
  * /project/diagnostics is clean, launches its modules through the documented
  * /runtime/analyze + /runtime/launch flow, and asserts the documented
  * observable state (params entities with values/meta, rolls with notes,
- * signals with anchors, lifecycle terminal states, stop-hook effects).
+ * animation timelines, signals with anchors, lifecycle terminal states, and
+ * stop-hook effects).
  *
  * Usage (from the repository root or anywhere):
  *
@@ -143,7 +144,9 @@ async function waitForRun(
   timeoutMs = 15_000,
 ): Promise<void> {
   await waitUntil(
-    `${id} reaches run state "${state}"${generatedRunId ? " (run-id matched)" : ""}`,
+    `${id} reaches run state "${state}"${
+      generatedRunId ? " (run-id matched)" : ""
+    }`,
     async () => {
       const snapshot = await runState();
       const entry = snapshot.moduleRuns?.[id];
@@ -171,6 +174,41 @@ async function signalEntity(name: string): Promise<any> {
 async function roll(name: string): Promise<any> {
   const snapshot = await get("/piano-roll/list");
   return snapshot.rolls?.[name];
+}
+
+async function syncEntities(entityType: string): Promise<any[]> {
+  const syncUrl = new URL("/sync", baseUrl);
+  syncUrl.protocol = syncUrl.protocol === "https:" ? "wss:" : "ws:";
+  return await new Promise((resolve, reject) => {
+    const socket = new WebSocket(syncUrl);
+    const timer = setTimeout(() => {
+      socket.close();
+      reject(new Error(`Timed out waiting for ${entityType} sync reset`));
+    }, 10_000);
+    socket.onopen = () => {
+      socket.send(JSON.stringify({
+        type: "subscribe",
+        entityTypes: [entityType],
+      }));
+    };
+    socket.onmessage = (event) => {
+      const message = JSON.parse(String(event.data));
+      const reset = message.resets?.[entityType];
+      if (!Array.isArray(reset)) return;
+      clearTimeout(timer);
+      socket.close();
+      resolve(reset);
+    };
+    socket.onerror = () => {
+      clearTimeout(timer);
+      reject(new Error(`Sync socket failed for ${entityType}`));
+    };
+  });
+}
+
+async function animationTimelineEntity(name: string): Promise<any> {
+  return (await syncEntities("animationTimeline"))
+    .find((entity) => entity.name === name);
 }
 
 async function stopAll(): Promise<void> {
@@ -213,7 +251,7 @@ async function verifyParamsBasics(): Promise<void> {
   );
 
   await waitUntil(
-    "automation writes are adopted (updatedBy becomes \"code\")",
+    'automation writes are adopted (updatedBy becomes "code")',
     async () => {
       const current = await paramsEntity("params-basics/panel");
       return current?.updatedBy === "code" ? current : false;
@@ -345,7 +383,7 @@ async function verifyPianoRollFlows(): Promise<void> {
   });
   assert(
     duplicated.status === 200 && duplicated.body.entity?.name ===
-      "rolls/loop-copy",
+        "rolls/loop-copy",
     "/entities/duplicate copies the loop",
   );
   await waitUntil(
@@ -372,6 +410,106 @@ async function verifyPianoRollFlows(): Promise<void> {
   await waitForRun("piano-roll-flows/player", "stopped");
   projectSummaries.push(
     "feature-piano-roll-flows: seed write, read-transform-write echo, live player, HTTP entity CRUD incl. 409",
+  );
+}
+
+async function verifyAnimationTimeline(): Promise<void> {
+  console.log("\n=== feature-animation-timeline ===");
+  await openProject("feature-animation-timeline");
+
+  const name = "animation-fixture/timeline";
+  const timeline = await waitUntil(
+    "animation timeline restored from checked-in data",
+    () => animationTimelineEntity(name),
+  );
+  assert(timeline.updatedBy === "load", "timeline records its load origin");
+  assert(
+    timeline.data.trackOrder.join(",") === "gain-track,scene-track,cue-track",
+    "number, enum, and function tracks retain their saved order",
+  );
+  assert(
+    timeline.data.tracks.map((track: any) => track.fieldType).join(",") ===
+      "number,enum,func",
+    "all three animation track kinds restore",
+  );
+  const status = await get("/project/status");
+  const dataStatus = status.data.find((entry: any) =>
+    entry.type === "animationTimeline" && entry.name === name
+  );
+  assert(dataStatus?.unsaved === false, "restored timeline starts saved");
+
+  const sampler = await launchModule("animation-fixture/sampler");
+  assert(sampler.launchStatus === 200, "timeline sampler launch accepted");
+  await waitForRun(
+    "animation-fixture/sampler",
+    "running",
+    sampler.generatedRunId,
+  );
+  const gain = await waitUntil(
+    "sampler publishes numeric gain",
+    async () => {
+      const signal = await signalEntity("animation-fixture/gain");
+      return typeof signal?.value === "number" ? signal : false;
+    },
+  );
+  await waitUntil(
+    "sampler follows the saved gain curve",
+    async () => {
+      const signal = await signalEntity("animation-fixture/gain");
+      return signal?.value !== gain.value ? signal : false;
+    },
+  );
+
+  const edited = structuredClone(timeline.data);
+  const gainTrack = edited.tracks.find((track: any) =>
+    track.id === "gain-track"
+  );
+  assert(gainTrack, "saved gain track exists");
+  for (const element of gainTrack.elementData) element.value = 0.42;
+  const setResult = await post("/animation-timeline/set", {
+    name,
+    data: edited,
+    expectedRev: timeline.rev,
+    originId: "feature-project-verifier",
+  });
+  assert(
+    setResult.status === 200 && setResult.body.ok === true,
+    "whole-timeline compare-and-set edit accepted",
+  );
+  await waitUntil(
+    "running sampler sees the timeline edit",
+    async () => {
+      const signal = await signalEntity("animation-fixture/gain");
+      return signal?.value === 0.42 ? signal : false;
+    },
+  );
+
+  const restored = await post("/animation-timeline/set", {
+    name,
+    data: timeline.data,
+    expectedRev: setResult.body.timeline.rev,
+    originId: "feature-project-verifier",
+  });
+  assert(restored.body.ok === true, "timeline restored after verifier edit");
+  const restoredStatus = await get("/project/status");
+  assert(
+    restoredStatus.data.find((entry: any) =>
+      entry.type === "animationTimeline" && entry.name === name
+    )?.unsaved === false,
+    "restoring saved data clears the unsaved comparison",
+  );
+
+  await post("/runtime/stop", { moduleId: "animation-fixture/sampler" });
+  await waitForRun("animation-fixture/sampler", "stopped");
+  await waitUntil(
+    "sampler signal ends with its module",
+    async () => {
+      const signal = await signalEntity("animation-fixture/gain");
+      return signal?.ended === true ? signal : false;
+    },
+  );
+  projectSummaries.push(
+    "feature-animation-timeline: checked-in restore, all track kinds, live sampling, CAS edit, saved-state comparison",
   );
 }
 
@@ -565,7 +703,8 @@ async function verifyStudioCombined(): Promise<void> {
     async () => {
       const sig = await signalEntity("studio/playhead");
       return sig && typeof sig.value === "number" &&
-          sig.anchor?.type === "pianoRoll" && sig.anchor?.name === "studio/theme"
+          sig.anchor?.type === "pianoRoll" &&
+          sig.anchor?.name === "studio/theme"
         ? sig
         : false;
     },
@@ -686,13 +825,17 @@ async function main(): Promise<number> {
     baseUrl = await Promise.race([
       ready.promise,
       new Promise<string>((_, reject) =>
-        setTimeout(() => reject(new Error("server did not become ready")), 30_000)
+        setTimeout(
+          () => reject(new Error("server did not become ready")),
+          30_000,
+        )
       ),
     ]);
     console.log(`server ready at ${baseUrl}`);
 
     await verifyParamsBasics();
     await verifyPianoRollFlows();
+    await verifyAnimationTimeline();
     await verifySignalsAndScopes();
     await verifyLifecycleBasics();
     await verifyStudioCombined();

@@ -152,11 +152,31 @@ under `src/pianoRoll`. Anyone pulling a commit that touched the component must
 rebuild it locally; the bundle is gitignored on purpose.
 
 `npm run setupLivecode` (from `apps/livecode-tldraw`) is the one-shot wrapper
-for every such local step: both npm installs, the piano-roll bundle, a
-best-effort Deno dependency pre-cache, and best-effort builds of
-not-yet-integrated component bundles (tweakpane, animation editor). Required
-steps fail the run; optional ones warn and continue. New locally-built
-components should be added to `scripts/setupLivecode.mjs` as one step each.
+for every such local step: both npm installs, the required piano-roll and
+animation-editor bundles, a best-effort Deno dependency pre-cache, and the
+optional tweakpane bundle. Required steps fail the run; optional ones warn and
+continue. New locally-built components should be added to
+`scripts/setupLivecode.mjs` as one step each.
+
+## Shared manual/E2E feature fixtures
+
+A user-visible feature should leave behind a checked-in project under
+`apps/livecode-tldraw/example-projects/`, not only inline test payloads or a
+session directory. The project must be useful in both modes:
+
+- its README gives the exact startup/open instructions, expected initial
+  state, live behavior, edit/save/reopen checks, and how to restore the fixture;
+- an automated end-to-end path opens the same manifest, source, data, and
+  canvas views;
+- tests copy the directory before destructive saves, deletes, or layout edits;
+- invalid and boundary inputs stay in focused unit fixtures rather than
+  bloating the manual project.
+
+`feature-animation-timeline` is the reference implementation. The standalone
+feature verifier opens it in place without saving or changing tracked files
+(project open may materialize an ignored runtime module). The Playwright E2E
+copies it into its session, verifies the restored timeline/editor/scope, then
+augments and mutates only that copy for the broader persistence cases.
 
 ## Recommended full verification
 
@@ -248,15 +268,14 @@ graphics initialization, window cleanup, or shared project state changes.
   accumulating changing traces in their ring buffers, and a `meta.graph` field
   rendering its readonly graph row;
 - the tldraw project-mode block, which runs last on its own canvas: booting
-  from a temp project created over HTTP, creating an entity plus its first view
-  from the GUI surface, an explicit save asserted from Node against the real
-  manifest `data` entries and both percent-encoded JSON files, the status
-  section going from unsaved to clean across that save, `/project/open`
-  reverting live edits to both entity types, a fresh param pane rendering
-  bindings with no module running, and duplicate/delete including the surviving
-  view, the removed manifest entry, and the orphaned data file, plus the proof
-  that a save writes no signal files and no `"signal"` manifest entries while
-  signals are still live in the store;
+  from a temporary copy of `feature-animation-timeline`, verifying its restored
+  timeline/editor/scope and live sampler, then augmenting that copy for the
+  broader entity cases; creating entities plus views from the GUI surface; an
+  explicit save asserted from Node against real manifest entries and
+  percent-encoded roll, params, and animation files; unsaved-to-clean status;
+  `/project/open` restoring saved truth; pre-launch params rendering; and
+  duplicate/delete behavior, plus proof that live signals never enter project
+  data;
 - a temp-project p5gpu snapshot and shared module state.
 
 ### Material gaps

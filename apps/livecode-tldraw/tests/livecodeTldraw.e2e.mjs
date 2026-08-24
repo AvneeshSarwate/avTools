@@ -2,6 +2,7 @@ import { chromium } from 'playwright'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -26,6 +27,10 @@ const tldrawAppRoot = path.resolve(__dirname, '..')
 const repoRoot = path.resolve(tldrawAppRoot, '../..')
 const denoNotebookRoot = path.join(repoRoot, 'apps/deno-notebooks')
 const denoServerPath = path.join(denoNotebookRoot, 'livecode/visualizer/main.ts')
+const projectFixtureRoot = path.join(
+  tldrawAppRoot,
+  'example-projects/feature-animation-timeline'
+)
 const sessionRoot = path.join(
   denoNotebookRoot,
   '.avtools-livecode-sessions',
@@ -211,16 +216,48 @@ export default async function(ctx: TimeContext) {
 
 // Fixtures for the project-mode cases, which run last on their own canvas.
 const PROJECT_MANIFEST_FILENAME = 'project.avtools-livecode.json'
-const PROJECT_MODULE_PATH = 'modules/main.ts'
+const projectFixtureManifest = JSON.parse(
+  readFileSync(path.join(projectFixtureRoot, PROJECT_MANIFEST_FILENAME), 'utf8')
+)
+const fixtureAnimationEntry = projectFixtureManifest.data.find(
+  (entry) => entry.type === 'animationTimeline'
+)
+const fixtureAnimationView = projectFixtureManifest.canvas.animationEditorViews.find(
+  (view) => view.animationName === fixtureAnimationEntry?.name
+)
+const fixtureGainScope = projectFixtureManifest.canvas.scopeViews.find(
+  (view) => view.sourceType === 'signal'
+)
+if (
+  !projectFixtureManifest.modules[0]?.id ||
+  !fixtureAnimationEntry ||
+  !fixtureAnimationView ||
+  !fixtureGainScope
+) {
+  throw new Error('feature-animation-timeline fixture is incomplete')
+}
+const FIXTURE_MODULE_ID = projectFixtureManifest.modules[0].id
+const FIXTURE_ANIMATION_NAME = fixtureAnimationEntry.name
+const FIXTURE_ANIMATION_DATA = JSON.parse(
+  readFileSync(path.join(projectFixtureRoot, fixtureAnimationEntry.path), 'utf8')
+).data
+const FIXTURE_ANIMATION_VIEW_ID = fixtureAnimationView.id
+const FIXTURE_GAIN_SCOPE_ID = fixtureGainScope.id
+const FIXTURE_GAIN_SIGNAL_NAME = fixtureGainScope.name
 const PROJECT_PARAMS_NAME = 'e2e/project-params'
+const PROJECT_PARAMS_MODULE_ID = 'e2e/project-params-module'
+const PROJECT_PARAMS_MODULE_PATH = 'modules/e2e-project-params.ts'
 const PROJECT_ROLL_NAME = 'e2e/roll'
 const PROJECT_ROLL_COPY_NAME = 'e2e/roll-copy'
+const PROJECT_ANIMATION_NAME = 'e2e/animation'
 const PIANO_ROLL_ENTITY_TYPE = 'pianoRoll'
 const PARAMS_ENTITY_TYPE = 'params'
+const ANIMATION_TIMELINE_ENTITY_TYPE = 'animationTimeline'
 /** Percent-encoded names: every byte outside `[a-zA-Z0-9._-]`, `/` included. */
 const PROJECT_ROLL_DATA_PATH = 'data/pianoRoll/e2e%2Froll.json'
 const PROJECT_PARAMS_DATA_PATH = 'data/params/e2e%2Fproject-params.json'
-const PROJECT_MODULE_SOURCE = `import type { TimeContext } from "@avtools/core-timing";
+const PROJECT_ANIMATION_DATA_PATH = 'data/animationTimeline/e2e%2Fanimation.json'
+const PROJECT_PARAMS_MODULE_SOURCE = `import type { TimeContext } from "@avtools/core-timing";
 import { canvasParams } from "canvas-params";
 
 export const params = canvasParams(
@@ -240,6 +277,31 @@ const SAVED_ROLL_NOTES = [
   { pitch: 67, position: 1, duration: 0.5 },
 ]
 const UNSAVED_ROLL_NOTES = [{ pitch: 72, position: 2, duration: 2 }]
+const SAVED_ANIMATION_DATA = {
+  tracks: [
+    {
+      id: 'gain-track',
+      name: 'gain',
+      fieldType: 'number',
+      low: 0,
+      high: 1,
+      elementData: [
+        { id: 'gain-start', time: 0, value: 0.25 },
+        { id: 'gain-end', time: 2, value: 0.75 },
+      ],
+    },
+  ],
+  trackOrder: ['gain-track'],
+}
+const UNSAVED_ANIMATION_DATA = {
+  tracks: [
+    {
+      ...SAVED_ANIMATION_DATA.tracks[0],
+      elementData: [{ id: 'gain-live', time: 0, value: 1 }],
+    },
+  ],
+  trackOrder: ['gain-track'],
+}
 
 function assert(value, message) {
   if (!value) throw new Error(message)
@@ -336,6 +398,8 @@ try {
   // Everything above runs on the transient default canvas. Project mode
   // replaces it, so these cases come last and never disturb the ones before.
   await enterProjectMode(viteBaseUrl)
+  await runCheckedInAnimationFixtureCase()
+  await addProjectParamsModule(viteBaseUrl)
   await runProjectEntityCreateCase()
   await runProjectSaveRoundTripCase()
   await runProjectOpenRestoresSavedTruthCase()
@@ -1109,6 +1173,65 @@ async function runReplaceButtonCase() {
 }
 
 /**
+ * The checked-in example is the browser fixture, not just a source for copied
+ * values. It must open with its durable timeline and both saved views intact.
+ */
+async function runCheckedInAnimationFixtureCase() {
+  const timeline = await waitForAnimationTimelineData(
+    FIXTURE_ANIMATION_DATA,
+    'the checked-in fixture restores its animation timeline',
+    FIXTURE_ANIMATION_NAME
+  )
+  assertEqual(timeline.updatedBy, 'load', 'fixture timeline load origin')
+  await waitForAnimationEditorData(
+    FIXTURE_ANIMATION_DATA,
+    'the checked-in fixture renders its animation editor',
+    FIXTURE_ANIMATION_NAME
+  )
+
+  const shapes = await getShapes()
+  const editorView = shapes.find((shape) => shape.id === FIXTURE_ANIMATION_VIEW_ID)
+  assert(editorView, 'the checked-in animation-editor view keeps its shape id')
+  assertEqual(
+    editorView.props.animationName,
+    FIXTURE_ANIMATION_NAME,
+    'fixture animation view binding'
+  )
+  assert(
+    shapes.some((shape) => shape.id === FIXTURE_GAIN_SCOPE_ID),
+    'the checked-in gain scope keeps its shape id'
+  )
+
+  await runModule(FIXTURE_MODULE_ID)
+  await waitForServerRunState(
+    FIXTURE_MODULE_ID,
+    true,
+    'fixture sampler module running'
+  )
+  const first = await waitForSignalEntity(
+    FIXTURE_GAIN_SIGNAL_NAME,
+    (signal) => typeof signal.value === 'number',
+    'fixture sampler publishes numeric gain'
+  )
+  await waitForSignalEntity(
+    FIXTURE_GAIN_SIGNAL_NAME,
+    (signal) => signal.value !== first.value,
+    'fixture sampler follows the timeline curve'
+  )
+  await waitForScopeState(
+    FIXTURE_GAIN_SCOPE_ID,
+    (state) => state.sampleCount > 10 && state.distinctCount > 1,
+    'fixture gain scope accumulates the sampled curve'
+  )
+  await stopModule(FIXTURE_MODULE_ID)
+  await waitForServerRunState(
+    FIXTURE_MODULE_ID,
+    false,
+    'fixture sampler module stopped'
+  )
+}
+
+/**
  * Entity creation as the GUI does it: the create action and the first view are
  * one composite gesture, driven here through the debug surface rather than the
  * topbar DOM.
@@ -1147,6 +1270,52 @@ async function runProjectEntityCreateCase() {
       document.querySelectorAll('.piano-roll-shape__empty').length === 0,
     'the created view renders its roll'
   )
+
+  const createdAnimation = await createEntityViaDebug(
+    ANIMATION_TIMELINE_ENTITY_TYPE,
+    PROJECT_ANIMATION_NAME
+  )
+  assertEqual(
+    createdAnimation.entity,
+    { type: ANIMATION_TIMELINE_ENTITY_TYPE, name: PROJECT_ANIMATION_NAME },
+    'created animation entity summary'
+  )
+
+  const animationViewId = await createEntityViewViaDebug(
+    ANIMATION_TIMELINE_ENTITY_TYPE,
+    PROJECT_ANIMATION_NAME
+  )
+  assert(animationViewId, 'debug surface should return the animation-editor-view shape id')
+  const animationView = (await getShapes()).find((shape) => shape.id === animationViewId)
+  assert(animationView, 'an animation-editor-view shape should exist after creating one')
+  assertEqual(
+    animationView.props.animationName,
+    PROJECT_ANIMATION_NAME,
+    'created view animationName'
+  )
+  await waitForPageValue(
+    (name) => {
+      const editor = Array.from(
+        document.querySelectorAll('animation-editor-component')
+      ).find((candidate) => candidate.dataset.animationName === name)
+      return editor?.getTimeline?.().trackOrder.length === 0
+    },
+    'the animation view receives its empty entity',
+    scaled(5_000),
+    PROJECT_ANIMATION_NAME
+  )
+
+  await page.evaluate(({ name, data }) => {
+    const editor = Array.from(
+      document.querySelectorAll('animation-editor-component')
+    ).find((candidate) => candidate.dataset.animationName === name)
+    if (!editor) throw new Error('No mounted animation editor')
+    editor.dispatchEvent(new CustomEvent('timeline-change', { detail: [data] }))
+  }, { name: PROJECT_ANIMATION_NAME, data: SAVED_ANIMATION_DATA })
+  await waitForAnimationTimelineData(
+    SAVED_ANIMATION_DATA,
+    'the component edit reaches the canonical animation entity'
+  )
 }
 
 /**
@@ -1177,10 +1346,21 @@ async function runProjectSaveRoundTripCase() {
   const savedParams = result.data.find(
     (entry) => entry.type === PARAMS_ENTITY_TYPE && entry.name === PROJECT_PARAMS_NAME
   )
+  const savedAnimation = result.data.find(
+    (entry) =>
+      entry.type === ANIMATION_TIMELINE_ENTITY_TYPE &&
+      entry.name === PROJECT_ANIMATION_NAME
+  )
   assert(savedRoll?.ok, `the roll should save: ${JSON.stringify(result)}`)
   assert(savedParams?.ok, `the params should save: ${JSON.stringify(result)}`)
+  assert(savedAnimation?.ok, `the animation should save: ${JSON.stringify(result)}`)
   assertEqual(savedRoll.path, PROJECT_ROLL_DATA_PATH, 'encoded roll data path')
   assertEqual(savedParams.path, PROJECT_PARAMS_DATA_PATH, 'encoded params data path')
+  assertEqual(
+    savedAnimation.path,
+    PROJECT_ANIMATION_DATA_PATH,
+    'encoded animation data path'
+  )
 
   const manifestData = readProjectManifest().data
   assert(
@@ -1201,6 +1381,15 @@ async function runProjectSaveRoundTripCase() {
     ),
     `manifest data should list the params entity: ${JSON.stringify(manifestData)}`
   )
+  assert(
+    manifestData.some(
+      (entry) =>
+        entry.type === ANIMATION_TIMELINE_ENTITY_TYPE &&
+        entry.name === PROJECT_ANIMATION_NAME &&
+        entry.path === PROJECT_ANIMATION_DATA_PATH
+    ),
+    `manifest data should list the animation: ${JSON.stringify(manifestData)}`
+  )
 
   const rollFile = readProjectJson(PROJECT_ROLL_DATA_PATH)
   assertEqual(rollFile.type, PIANO_ROLL_ENTITY_TYPE, 'saved roll file type')
@@ -1218,6 +1407,21 @@ async function runProjectSaveRoundTripCase() {
     paramsFile.meta,
     { depth: { min: 0, max: 8, step: 1 } },
     'saved params meta'
+  )
+
+  const animationFile = readProjectJson(PROJECT_ANIMATION_DATA_PATH)
+  assertEqual(
+    animationFile.type,
+    ANIMATION_TIMELINE_ENTITY_TYPE,
+    'saved animation file type'
+  )
+  assertEqual(animationFile.name, PROJECT_ANIMATION_NAME, 'saved animation file name')
+  assertEqual(animationFile.data, SAVED_ANIMATION_DATA, 'saved animation timeline')
+
+  const animationViews = readProjectManifest().canvas?.animationEditorViews ?? []
+  assert(
+    animationViews.some((view) => view.animationName === PROJECT_ANIMATION_NAME),
+    `manifest canvas should list the animation view: ${JSON.stringify(animationViews)}`
   )
 
   // Ephemeral signals are excluded from persistence by construction (they are
@@ -1245,11 +1449,11 @@ async function runProjectSaveRoundTripCase() {
   )
   assertEqual(
     readdirSync(path.join(projectRoot, 'data')).sort(),
-    [PARAMS_ENTITY_TYPE, PIANO_ROLL_ENTITY_TYPE].sort(),
+    [ANIMATION_TIMELINE_ENTITY_TYPE, PARAMS_ENTITY_TYPE, PIANO_ROLL_ENTITY_TYPE].sort(),
     'data/ holds exactly the durable entity types'
   )
 
-  // What the unsaved pill reads: both entities go clean on the same save.
+  // What the unsaved pill reads: every durable entity goes clean on one save.
   assertEqual(
     (await fetchDataStatus(PIANO_ROLL_ENTITY_TYPE, PROJECT_ROLL_NAME)).unsaved,
     false,
@@ -1259,6 +1463,11 @@ async function runProjectSaveRoundTripCase() {
     (await fetchDataStatus(PARAMS_ENTITY_TYPE, PROJECT_PARAMS_NAME)).unsaved,
     false,
     'the params entity reports saved after the save'
+  )
+  assertEqual(
+    (await fetchDataStatus(ANIMATION_TIMELINE_ENTITY_TYPE, PROJECT_ANIMATION_NAME)).unsaved,
+    false,
+    'the animation reports saved after the save'
   )
 }
 
@@ -1276,6 +1485,7 @@ async function runProjectOpenRestoresSavedTruthCase() {
     name: PROJECT_PARAMS_NAME,
     values: { gain: 0.9 },
   })
+  await setAnimationTimelineOverHttp(PROJECT_ANIMATION_NAME, UNSAVED_ANIMATION_DATA)
   await waitForParamsEntity(
     PROJECT_PARAMS_NAME,
     (candidate) => candidate.values.gain === 0.9,
@@ -1297,6 +1507,14 @@ async function runProjectOpenRestoresSavedTruthCase() {
     restoredParams.meta,
     { depth: { min: 0, max: 8, step: 1 } },
     'the loaded params entity carries its saved meta'
+  )
+  await waitForAnimationTimelineData(
+    SAVED_ANIMATION_DATA,
+    'open restores the saved animation over the live one'
+  )
+  await waitForAnimationEditorData(
+    SAVED_ANIMATION_DATA,
+    'the animation view renders the restored timeline'
   )
 
   const activeModules = await fetchActiveModuleIds()
@@ -1391,17 +1609,7 @@ async function runProjectDuplicateAndDeleteCase() {
  */
 async function enterProjectMode(viteBaseUrl) {
   projectRoot = path.join(sessionRoot, 'project-mode')
-  await serverPostJson('/project/create', {
-    projectPath: projectRoot,
-    name: 'tldraw-e2e-project',
-    modules: [
-      {
-        path: PROJECT_MODULE_PATH,
-        title: 'params module',
-        sourceText: PROJECT_MODULE_SOURCE,
-      },
-    ],
-  })
+  cpSync(projectFixtureRoot, projectRoot, { recursive: true })
 
   await page.goto(projectUrl(viteBaseUrl, serverBaseUrl, projectRoot), {
     waitUntil: 'domcontentloaded',
@@ -1415,7 +1623,39 @@ async function enterProjectMode(viteBaseUrl) {
   await page.evaluate(() => window.__livecodeTldrawRuntimeDebug?.connect())
   await waitForTldrawReady()
   firstModuleId = await waitForFirstModuleId()
-  assertEqual(firstModuleId, PROJECT_MODULE_PATH, 'project module id after navigation')
+  assertEqual(firstModuleId, FIXTURE_MODULE_ID, 'fixture module id after navigation')
+}
+
+async function addProjectParamsModule(viteBaseUrl) {
+  await serverPostJson('/project/modules/add', {
+    id: PROJECT_PARAMS_MODULE_ID,
+    path: PROJECT_PARAMS_MODULE_PATH,
+    title: 'project params persistence',
+    sourceText: PROJECT_PARAMS_MODULE_SOURCE,
+    x: 80,
+    y: 580,
+    w: 560,
+    h: 440,
+  })
+  await page.goto(projectUrl(viteBaseUrl, serverBaseUrl, projectRoot), {
+    waitUntil: 'domcontentloaded',
+  })
+  await page.locator('.livecode-shape').first().waitFor({ timeout: scaled(20_000) })
+  await waitForPageValue(
+    () => Boolean(window.__livecodeTldrawRuntimeDebug),
+    'tldraw runtime debug hooks installed after project augmentation',
+    10_000
+  )
+  await page.evaluate(() => window.__livecodeTldrawRuntimeDebug?.connect())
+  await waitForTldrawReady()
+  await waitForPageValue(
+    (moduleId) =>
+      window.__livecodeTldrawRuntimeDebug?.getModuleIds().includes(moduleId),
+    'the copied project includes the E2E params module',
+    scaled(20_000),
+    PROJECT_PARAMS_MODULE_ID
+  )
+  firstModuleId = PROJECT_PARAMS_MODULE_ID
 }
 
 function createEntityViaDebug(type, name) {
@@ -1444,12 +1684,16 @@ function saveProjectViaDebug() {
   return page.evaluate(() => window.__livecodeTldrawRuntimeDebug?.saveProject())
 }
 
-function createPianoRollView(rollName) {
+function createEntityViewViaDebug(type, name) {
   return page.evaluate(
-    (rollName) =>
-      window.__livecodeTldrawRuntimeDebug?.createPianoRollView(rollName) ?? null,
-    rollName
+    ({ type, name }) =>
+      window.__livecodeTldrawRuntimeDebug?.createEntityView(type, name) ?? null,
+    { type, name }
   )
+}
+
+function createPianoRollView(rollName) {
+  return createEntityViewViaDebug(PIANO_ROLL_ENTITY_TYPE, rollName)
 }
 
 function createModuleViaDebug(source) {
@@ -1583,6 +1827,10 @@ function setPianoRollOverHttp(name, notes) {
     source: 'client',
     label: 'E2E edit',
   })
+}
+
+function setAnimationTimelineOverHttp(name, data) {
+  return serverPostJson('/animation-timeline/set', { name, data })
 }
 
 async function serverGetJson(pathname) {
@@ -1774,11 +2022,7 @@ async function waitForParamPaneButtons(expectedNames, label) {
 }
 
 async function createParamPane(paramsName) {
-  return await page.evaluate(
-    (paramsName) =>
-      window.__livecodeTldrawRuntimeDebug?.createParamPane(paramsName) ?? null,
-    paramsName
-  )
+  return await createEntityViewViaDebug(PARAMS_ENTITY_TYPE, paramsName)
 }
 
 /**
@@ -1851,6 +2095,58 @@ async function waitForParamsEntity(name, predicate, label, timeoutMs = scaled(20
   }
   throw new Error(
     `Timed out waiting for ${label} (last seen: ${JSON.stringify(last)})`
+  )
+}
+
+function waitForAnimationTimelineData(
+  expected,
+  label,
+  name = PROJECT_ANIMATION_NAME
+) {
+  return waitForPageValue(
+    ({ name, expected }) => {
+      const debug = window.__livecodeSyncDebug
+      const entity = debug?.getEntities('animationTimeline')?.[name]
+      return JSON.stringify(entity?.data) === JSON.stringify(expected) ? entity : null
+    },
+    label,
+    scaled(20_000),
+    { name, expected }
+  )
+}
+
+function waitForAnimationEditorData(
+  expected,
+  label,
+  name = PROJECT_ANIMATION_NAME
+) {
+  return waitForPageValue(
+    ({ name, expected }) => {
+      const editor = Array.from(
+        document.querySelectorAll('animation-editor-component')
+      ).find((candidate) => candidate.dataset.animationName === name)
+      const actual = editor?.getTimeline?.()
+      const signature = (value) => JSON.stringify({
+        trackOrder: value?.trackOrder,
+        tracks: value?.tracks.map((track) => [
+          track.id,
+          track.name,
+          track.fieldType,
+          track.low,
+          track.high,
+          track.enumOptions ?? null,
+          track.elementData.map((element) => [
+            element.id,
+            element.time,
+            element.value,
+          ]),
+        ]),
+      })
+      return signature(actual) === signature(expected) ? actual : null
+    },
+    label,
+    scaled(10_000),
+    { name, expected }
   )
 }
 

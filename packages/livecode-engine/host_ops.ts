@@ -26,6 +26,7 @@ import {
 } from "./piano_roll_store.ts";
 import { makeParamsSnapshot, setParamsValues } from "./params_store.ts";
 import { makeSignalsSnapshot } from "./signals_store.ts";
+import { setAnimationTimeline } from "./animation_timeline_store.ts";
 
 function resolveEntityRequest(
   typeId: unknown,
@@ -199,6 +200,11 @@ export async function executeEngineOp(
         originId: op.request.originId,
         expectedRev: op.request.expectedRev,
       }) ?? null;
+    case "animationTimelineSet":
+      return setAnimationTimeline(op.request.name, op.request.data, {
+        originId: op.request.originId,
+        expectedRev: op.request.expectedRev,
+      });
     case "signalsList":
       return makeSignalsSnapshot();
     case "entityCreate": {

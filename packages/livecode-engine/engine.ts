@@ -9,17 +9,14 @@ import type {
 import {
   createModuleLookupsSyncSource,
   createModuleWaitsSyncSource,
-  createParamsSyncSource,
-  createPianoRollSyncSource,
   createRunSyncSource,
-  createSignalsSyncSource,
   type SyncCollectedChanges,
   SyncSourceRegistry,
 } from "./sync_sources.ts";
 import { clearModuleWaits, setRootTimeContext } from "./runtime.ts";
 import { endSignalsForModule } from "./signals_store.ts";
 import { seedDemoPianoRoll } from "./piano_roll_store.ts";
-import { registerBuiltinDurableEntityTypes } from "./entity_registry.ts";
+import { registerBuiltinEntityKinds } from "./entity_kinds.ts";
 
 // The execution plane extracted from the Deno visualizer server: the parent
 // TimeContext loop, the launch queue with its pending-launch safety window,
@@ -145,7 +142,6 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
   let parentContext: TimeContext | null = null;
   let closing = false;
 
-  registerBuiltinDurableEntityTypes();
   // Construction, not a read path: `snapshotAll()` has to be genuinely
   // read-only, so nothing may seed a roll on the way to answering a subscribe.
   if (deps.seedDemoRoll ?? true) seedDemoPianoRoll();
@@ -174,9 +170,7 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
   });
 
   const syncSources = new SyncSourceRegistry();
-  syncSources.register(createPianoRollSyncSource());
-  syncSources.register(createParamsSyncSource());
-  syncSources.register(createSignalsSyncSource());
+  registerBuiltinEntityKinds(syncSources);
   syncSources.register(createModuleWaitsSyncSource());
   syncSources.register(createModuleLookupsSyncSource());
   syncSources.register(createRunSyncSource({

@@ -13,6 +13,7 @@
 
 import type { ParamsEntity } from "./params.ts";
 import type { PianoRollObject } from "./piano_roll.ts";
+import type { AnimationTimelineEntity } from "./animation_timeline.ts";
 import type {
   ModuleLookupsEntity,
   ModuleWaitsEntity,
@@ -27,6 +28,7 @@ import type { SignalEntity } from "./signals.ts";
 export const SYNC_ENTITY_TYPES = [
   "pianoRoll",
   "params",
+  "animationTimeline",
   "signal",
   "run",
   "moduleWaits",
@@ -39,6 +41,7 @@ export type SyncEntityTypeId = (typeof SYNC_ENTITY_TYPES)[number];
 export interface SyncEntityByType {
   pianoRoll: PianoRollObject;
   params: ParamsEntity;
+  animationTimeline: AnimationTimelineEntity;
   signal: SignalEntity;
   run: RunEntity;
   moduleWaits: ModuleWaitsEntity;

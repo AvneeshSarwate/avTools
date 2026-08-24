@@ -4,10 +4,7 @@
 //
 //   npm run setupLivecode
 //
-// Steps are a flat list so future components (animation editor, perf pane,
-// custom canvases) can be appended as one entry each. Required steps fail
-// the run; optional steps warn and continue — a broken not-yet-integrated
-// component build must never block livecode work.
+// Required component bundles fail setup; optional development bundles warn.
 
 import { execSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
@@ -38,24 +35,23 @@ const steps = [
     verify: () => existsSync(dir('webcomponents', 'piano-roll', 'dist', 'piano-roll.js')),
   },
   {
+    name: 'build: animation editor web component (gitignored bundle)',
+    cwd: dir('apps', 'browser-projections'),
+    cmd: 'npm run buildAnimationEditor',
+    required: true,
+    verify: () => existsSync(dir('webcomponents', 'animation-editor', 'dist', 'animation-editor.js')),
+  },
+  {
     name: 'cache: Deno server dependencies (pre-warm first launch)',
     cwd: dir('apps', 'deno-notebooks'),
     cmd: 'deno cache livecode/visualizer/main.ts',
     required: false,
     missingHint: 'deno not found on PATH — install Deno 2.x to run the livecode server',
   },
-  // Not yet consumed by the livecode client; built best-effort so the bundles
-  // are fresh when they get integrated. Promote to required at that point.
   {
     name: 'build (optional): tweakpane web component',
     cwd: dir('apps', 'browser-projections'),
     cmd: 'npm run buildTweakpane',
-    required: false,
-  },
-  {
-    name: 'build (optional): animation editor web component',
-    cwd: dir('apps', 'browser-projections'),
-    cmd: 'npm run buildAnimationEditor',
     required: false,
   },
 ]

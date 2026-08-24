@@ -208,18 +208,18 @@ strategy.
 ## P1: destructive and incomplete project layout paths
 
 The client captures `projectPath` from the initial URL. Canvas-view persistence
-is conditioned on that captured value, for both piano-roll views and param
-panes. A project opened later via `/client/control` can display saved views of
-either kind, but subsequent view layout/name changes are not posted to
+is conditioned on that captured value for every registered view kind. A project
+opened later via `/client/control` can display saved views, but subsequent view
+layout/name changes are not posted to
 `/project/canvas`.
 
 The save UI inherits the same gate: the "Save project" button, the unsaved
 pill, and its `/project/status` poll all render only when the initial URL
 carried a `projectPath`. A human who opened the project through client control
 sees no way to save the entities they just edited. Agents and the E2E are
-unaffected — `window.__livecodeTldrawRuntimeDebug.saveProject()` and the raw
-`POST /project/save` do not consult that flag — so the gap is a human-facing
-one, and it disappears with whatever fix gives the client a live project
+unaffected — `window.__livecodeTldrawRuntimeDebug.saveProject()` flushes the
+current canvas and saves, while raw `POST /project/save` remains available for
+entity data — so the gap is human-facing. It disappears once the client has a live project
 selection instead of a captured URL value.
 
 Module layout persistence keys off each shape's `projectModulePath` and does
@@ -231,11 +231,11 @@ post, but the underlying behavior is unchanged: a further canvas field, or a
 second writer, would still be lost unless the client reads/merges it or the
 server offers granular actions.
 
-`scopeViews` is the predicted third field arriving, and it arrived exactly as
-predicted: an **older client** — one that does not know about scopes — still
+`scopeViews` and `animationEditorViews` demonstrate the predicted growth: an
+**older client** — one that does not know about a newer codec — still
 posts a whole-canvas replacement built from the shapes it understands, so
-opening a project in an old client and moving any view **deletes every saved
-scope binding** from the manifest. Nothing warns. The current client is
+opening a project in an old client and moving any view can delete newer saved
+view records from the manifest. Nothing warns. The current client is
 consistent with itself; the exposure is mixed-version use of one project, and it
 is the same shape the third-field prediction described. The real fix is the same
 one: merge-on-read, or granular per-kind canvas actions.
@@ -465,9 +465,9 @@ operator closed the tab themselves.
 
 ## P1: the browser module-delivery surface is narrower than the Run gate
 
-A browser engine can import exactly: the five helper aliases bundled by
+A browser engine can import exactly: the six helper aliases bundled by
 `build_host_assets.ts` (`piano-roll-helpers`, `midi-helpers`,
-`canvas-params`, `canvas-signals`, `piano-roll-store`), the generated
+`canvas-params`, `canvas-signals`, `piano-roll-store`, `animation-timeline`), the generated
 runtime, and relative project files. The browser-target shadow check resolves
 the WHOLE repo import map, so a module importing anything else (e.g.
 `@avtools/shader-fx`, npm packages) typechecks green and then fails at
@@ -482,7 +482,7 @@ These behaviors are deliberate until a design changes them:
 
 - transient tldraw canvases are not automatically persistent;
 - dynamic import occurs only on explicit launch, never analysis;
-- piano-roll note state and params values are server-owned and in memory;
+- piano-roll, params, and animation timeline data are engine-owned and in memory;
   writes at any rate never touch disk, and only an explicit `/project/save`
   persists them. Nothing auto-saves, saves on shutdown, or saves on close, so
   losing a server process loses whatever was not saved. The unsaved count in
