@@ -11,6 +11,9 @@ the time they were written.
   documentation audit.
 - `server-architecture-2026-07-01.md` is the server handoff that preceded the
   audit; it mixes still-useful details with obsolete Vue-era behavior.
+- `doc-snapshot-2026-08-24/` preserves the complete verbose `current/` set
+  immediately before the lean architecture-doc rewrite, including its two
+  code/test review artifacts. Its README records the tokenizer baseline.
 
 ## Principles-tree archaeology
 
@@ -90,8 +93,9 @@ chosen, and why tldraw was considered a spatial shell. The active client is now
   archaeology — measures each in tokens, and proposes per-document targets
   cutting the set from ~54K to ~30K. It also argues that the README's
   maintenance contract, by asking for completeness, is what regenerates the
-  restatement. Proposal only: nothing in it has been applied, so its token
-  counts and section sizes describe `current/` as of commit `699cac7`.
+  restatement. Its proposal was applied and extended on 2026-08-24; its original
+  token counts and section sizes still describe `current/` at commit `699cac7`,
+  while `doc-snapshot-2026-08-24/` records the larger final pre-edit baseline.
 
 ## Stability review
 
