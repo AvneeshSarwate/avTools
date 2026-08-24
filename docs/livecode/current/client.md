@@ -329,11 +329,13 @@ Shape props contain layout/presentation metadata only:
 ```
 
 `animationName` selects an engine-owned `animationTimeline`. The component owns
-playhead, duration/window, mode, and callback behavior as local runtime/view
+scrub playhead, duration/window, mode, and callback behavior as local runtime/view
 state; only `{ tracks, trackOrder }` is durable. Engine sync calls the custom
 element's `setTimeline`. Its `timeline-change` event replaces the whole entity
 through compare-and-set, and accepted or conflicting server truth is applied
-back to the component. The shape renders a waiting state after entity deletion.
+back to the component. Signal-backed named playheads are an independent monitor
+layer and never alter the scrub cursor or timeline. The shape renders a waiting
+state after entity deletion.
 
 ### `signal-scope`
 
@@ -551,6 +553,7 @@ the button's tooltip and accessible label.
   static literal fallback is marked tentative in its tooltip until the module
   runs. An unresolved nonliteral name renders no button until executed.
 - Params declarations with a static name render `🎛️`.
+- Animation-timeline declarations with a static name render `▶️`.
 - Signal declarations with a static name render `📈`.
 
 Clicking a durable-entity widget selects and zooms to an existing registered
@@ -558,8 +561,8 @@ entity view with the same type/name, or creates one immediately to the right of
 the code shape through the canvas-view registry.
 
 Clicking a signal widget selects an existing whole-signal scope or creates one
-to the right. Params and signals have no runtime name-resolution stream, so a
-computed declaration name has no widget.
+to the right. Declaration widgets have no runtime name-resolution stream, so a
+computed params, animation-timeline, or signal name has no widget.
 
 ## Piano-roll web component bridge
 
@@ -590,14 +593,15 @@ reconciled by id, which is what lets several processes play one melody at once
 and stay distinguishable. `getPlayheadMarkers()` reads back what is rendered.
 
 The shape feeds it from `useSignalsSync()`. On each RAF-coalesced flush it
-selects every signal anchored `{ type: "pianoRoll", name: rollName }` that has
-not ended, and turns each into one marker:
+selects every signal whose `anchors` include
+`{ type: "pianoRoll", name: rollName }` and that has not ended, then turns each
+into one marker:
 
 - a numeric value is the position;
 - an object with a numeric `position` uses that field;
 - anything else (strings, objects without a position, nulls, non-finite
   numbers) renders **nothing** rather than guessing;
-- positions are quarter notes, the component's own unit, and `anchor.path` is
+- positions are quarter notes, the component's own unit, and the anchor `path` is
   ignored in v1.
 
 Meaning stays in the process: the platform never knows why a position moves.
@@ -618,6 +622,14 @@ The component now has a transport-neutral whole-timeline API:
 still available to standalone consumers, but the tldraw shape never opens one.
 Direct server applies mark the component's signatures before invalidation, so
 they do not echo as user edits. Track and element IDs are preserved.
+
+The same component also exposes `setPlayheadMarkers()` and
+`getPlayheadMarkers()`. The tldraw shape uses the shared signal-marker adapter
+to select signals whose anchors include
+`{ type: "animationTimeline", name: animationName }`. Numeric values and
+`{ position }` values are interpreted as seconds in the animation editor's own
+window coordinates. Markers are labeled and visible in both view and edit modes;
+ending the signal or losing sync removes them.
 
 ## Event boundaries
 

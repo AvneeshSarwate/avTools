@@ -138,8 +138,9 @@ directly.
   declaration helper. It is a thin typed delegate to `registerParams` and has
   no server dependency, so a module using it also runs under a plain
   `deno run`.
-- `helpers/canvas_signals.ts`: the `signal(name, { anchor? })` declaration
-  helper, a thin typed delegate to `declareSignal`. Like `canvas_params.ts` it
+- `helpers/canvas_signals.ts`: the `signal(name)` declaration helper and its
+  `addAnchor`/`removeAnchor` handle, a thin typed delegate to `declareSignal`.
+  Like `canvas_params.ts` it
   has no server dependency, so a module using it also runs under a plain
   `deno run` — where its signals simply have no owner and never auto-end.
 - `helpers/midi_helpers.ts`: the livecode MIDI surface over the isomorphic
@@ -508,7 +509,7 @@ resets to an empty list rather than 404ing.
 ### Change tracking is per name, not a boolean
 
 `entity_store.ts`'s gate is a per-type **set of changed names**, written by
-every mutator: value writes, meta writes, `ended`/anchor/owner flips,
+every mutator: value writes, meta writes, `ended`/anchors/owner flips,
 `unserializable` transitions, creates, and deletes. `consumeEntityTypeChanges`
 resolves that set against the live records at collect time and returns
 `{ changed, deleted }`, both sorted — so a name created and deleted inside one
@@ -762,13 +763,20 @@ project open, and `/entities/*` all iterate `listDurableEntityTypes()`, so
 signals are invisible to persistence and to generic CRUD by construction rather
 than by a filter someone has to remember to keep in sync.
 
-`declareSignal(name, { anchor? })` is create-or-reattach and returns a **handle
+`declareSignal(name)` is create-or-reattach and returns a **handle
 closed over the record**:
 
 - absent: a new record at `value: null` with `updatedBy: "declare"`;
 - present: the record survives (a handle another module still holds keeps
-  writing to live truth), the anchor is replaced, and `ended` is cleared. That
-  is a value-free change, so it marks the type dirty without bumping rev.
+  writing to live truth), its previous run's anchors are cleared, and `ended` is
+  cleared. That is a value-free change, so it marks the type dirty without
+  bumping rev.
+
+`handle.addAnchor(anchor)` and `handle.removeAnchor(anchor)` may be called at
+any point in the run and maintain an idempotent set keyed by
+`{ type, name, path }`. A real set change is shipped as signal metadata without
+bumping the value revision. Starting each declaration with an empty set
+prevents an anchor removed from source code from surviving a later run.
 
 `handle.set(value)` is a **pure field assignment** — no store lookup, no
 serialization, no dirty flag. Publishing an unwatched signal costs the same as a
@@ -802,9 +810,9 @@ Ending is sticky and lifecycle-driven:
   redeclaration clears it. Nothing polices a user timer that outlived
   cooperative cancellation; the contradiction is a surfaced finding.
 
-Nothing reachable from user timing — `set`, `end`, ownership stamping, the
-sampler — throws. Ended signals stay listed until their name is redeclared or
-the server restarts (see `known-risks.md`).
+Nothing reachable from user timing — `set`, anchor mutation, `end`, ownership
+stamping, the sampler — throws. Ended signals stay listed until their name is
+redeclared or the server restarts (see `known-risks.md`).
 
 ## Root clock
 

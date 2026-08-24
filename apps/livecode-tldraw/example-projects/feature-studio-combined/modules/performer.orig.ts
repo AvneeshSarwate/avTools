@@ -46,9 +46,8 @@ let stopping = false;
 
 export default async function (ctx: TimeContext) {
   stopping = false;
-  const playhead = signal<number>("studio/playhead", {
-    anchor: { type: "pianoRoll", name: "studio/theme" },
-  });
+  const playhead = signal<number>("studio/playhead");
+  playhead.addAnchor({ type: "pianoRoll", name: "studio/theme" });
   while (true) {
     const roll = getPianoRoll("studio/theme");
     if (!roll || roll.data.notes.length === 0) {

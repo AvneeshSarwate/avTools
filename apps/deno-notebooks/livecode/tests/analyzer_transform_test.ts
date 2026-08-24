@@ -585,14 +585,42 @@ export default async function(_ctx: TimeContext) {}
   assert(entry.nameArgRange, "nameArgRange should still be present");
 });
 
+Deno.test("analyzer records animationTimeline declarations without editing them", () => {
+  const result = analyze(`
+import type { TimeContext } from "@avtools/core-timing";
+import { animationTimeline } from "animation-timeline";
+
+export const timeline = animationTimeline("kinaree/motion");
+
+export default async function(_ctx: TimeContext) {}
+`);
+
+  assertEquals(result.type, "analyzeSuccess");
+  if (result.type !== "analyzeSuccess") return;
+
+  assertEquals(result.manifest.callsites.length, 1);
+  const entry = result.manifest.callsites[0];
+  assertEquals(entry.kind, "animationTimeline");
+  assertEquals(entry.displayName, "animationTimeline");
+  assertEquals(entry.staticName, "kinaree/motion");
+  assert(entry.nameArgRange, "nameArgRange should be present");
+  assertStringIncludes(
+    result.transformedCode,
+    'export const timeline = animationTimeline("kinaree/motion")',
+  );
+  assert(
+    !result.transformedCode.includes("__tcv"),
+    "an observation-only declaration must not be instrumented",
+  );
+});
+
 Deno.test("analyzer wraps a top-level signal declaration and emits the runtime import", () => {
   const result = analyze(`
 import type { TimeContext } from "@avtools/core-timing";
 import { signal } from "canvas-signals";
 
-export const playhead = signal("kinaree/playhead", {
-  anchor: { type: "pianoRoll", name: "melody" },
-});
+export const playhead = signal("kinaree/playhead");
+playhead.addAnchor({ type: "pianoRoll", name: "melody" });
 
 export default async function(_ctx: TimeContext) {}
 `);
@@ -616,7 +644,7 @@ export default async function(_ctx: TimeContext) {}
   // untouched, so the declaration keeps its exact meaning.
   assertStringIncludes(
     result.transformedCode,
-    'export const playhead = __tcvOwnedSignal("module-test", "id_1", signal("kinaree/playhead", {\n  anchor: { type: "pianoRoll", name: "melody" },\n}))',
+    'export const playhead = __tcvOwnedSignal("module-test", "id_1", signal("kinaree/playhead"))',
   );
   // A signal-bearing module must import the wrapper, or the generated code
   // would ReferenceError at launch.

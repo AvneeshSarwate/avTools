@@ -1,12 +1,21 @@
 <script setup lang="ts">
 import { ref, provide, onMounted, onUnmounted, computed, shallowRef, reactive, watch } from 'vue'
-import type { TrackDef, EditorMode, TrackElement, NumberElement, EnumElement, FuncElementData } from '../types'
+import type {
+  TrackDef,
+  EditorMode,
+  TrackElement,
+  NumberElement,
+  EnumElement,
+  FuncElementData,
+  PlayheadMarker,
+} from '../types'
 import { Core } from '../core'
 import { RenderScheduler } from '../renderScheduler'
 import { NAME_COLUMN_WIDTH } from '../constants'
 import TimeRibbon from './TimeRibbon.vue'
 import TrackList from './TrackList.vue'
 import Playhead from './Playhead.vue'
+import PlayheadMarkers from './PlayheadMarkers.vue'
 import EditModeView from './EditModeView.vue'
 import ToastContainer from './ToastContainer.vue'
 import {
@@ -86,6 +95,7 @@ const mode = ref<EditorMode>('view')
 // Reactive state that shadows core state for Vue reactivity
 const currentTime = ref(0)
 const trackIds = ref<string[]>([])
+const playheadMarkers = ref<PlayheadMarker[]>([])
 
 // Track selection for edit mode (checkboxes in view mode)
 const selectedTrackIdsForEdit = ref<Set<string>>(new Set())
@@ -212,6 +222,14 @@ function setTimeline(value: AnimationTimelineValue) {
 
 function getTimeline(): AnimationTimelineValue {
   return getTrackPayload()
+}
+
+function setPlayheadMarkers(markers: readonly PlayheadMarker[]): void {
+  playheadMarkers.value = markers.map((marker) => ({ ...marker }))
+}
+
+function getPlayheadMarkers(): PlayheadMarker[] {
+  return playheadMarkers.value.map((marker) => ({ ...marker }))
 }
 
 function getTrackExtent(): number {
@@ -486,6 +504,8 @@ defineExpose({
   setWindowRange,
   setTimeline,
   getTimeline,
+  setPlayheadMarkers,
+  getPlayheadMarkers,
   core,
   mode,
 })
@@ -563,6 +583,13 @@ defineExpose({
             :canvas-width="canvasAreaWidth"
             :left-offset="sidebarWidth"
           />
+          <PlayheadMarkers
+            :markers="playheadMarkers"
+            :window-start="windowStart"
+            :window-end="windowEnd"
+            :canvas-width="canvasAreaWidth"
+            :left-offset="sidebarWidth"
+          />
         </div>
       </template>
 
@@ -573,6 +600,7 @@ defineExpose({
         :window-start="windowStart"
         :window-end="windowEnd"
         :current-time="currentTime"
+        :playhead-markers="playheadMarkers"
         :data-version="trackDataVersion"
         :initial-enabled-track-ids="selectedTrackIdsForEdit"
       />

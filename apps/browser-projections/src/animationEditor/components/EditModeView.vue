@@ -11,6 +11,7 @@ import type {
   EnumElement,
   FuncElementData,
   FuncArg,
+  PlayheadMarker,
 } from '../types'
 import { useToast } from '../useToast'
 import EditSidebar from './EditSidebar.vue'
@@ -19,6 +20,7 @@ import EnumLane from './EnumLane.vue'
 import FuncLane from './FuncLane.vue'
 import PrecisionEditor from './PrecisionEditor.vue'
 import Playhead from './Playhead.vue'
+import PlayheadMarkers from './PlayheadMarkers.vue'
 import { NUMBER_LANE_HEIGHT, ENUM_LANE_HEIGHT } from '../constants'
 
 const props = defineProps<{
@@ -26,6 +28,7 @@ const props = defineProps<{
   windowStart: number
   windowEnd: number
   currentTime: number
+  playheadMarkers: readonly PlayheadMarker[]
   dataVersion: number
   initialEnabledTrackIds?: Set<string>
 }>()
@@ -568,6 +571,13 @@ const precisionBtnStyle = computed(() => {
         <!-- Playhead overlay -->
         <Playhead
           :current-time="currentTime"
+          :window-start="windowStart"
+          :window-end="windowEnd"
+          :canvas-width="lanesWidth"
+          :left-offset="0"
+        />
+        <PlayheadMarkers
+          :markers="playheadMarkers"
           :window-start="windowStart"
           :window-end="windowEnd"
           :canvas-width="lanesWidth"

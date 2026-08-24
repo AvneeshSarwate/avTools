@@ -10,9 +10,8 @@ const LOOP_BEATS = 8;
  * markers on one melody.
  */
 export default async function (ctx: TimeContext) {
-  const playhead = signal<{ position: number }>("signals/strider", {
-    anchor: { type: "pianoRoll", name: "signals/groove" },
-  });
+  const playhead = signal<{ position: number }>("signals/strider");
+  playhead.addAnchor({ type: "pianoRoll", name: "signals/groove" });
   const stepBeats = 1 / 4;
   let beat = 0;
   while (true) {

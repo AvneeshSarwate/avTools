@@ -42,7 +42,11 @@ interface LivecodeTldrawDebug {
   ): Promise<string[]>
 }
 
-export type EntityCallDecorationType = 'pianoRoll' | 'params' | 'signal'
+export type EntityCallDecorationType =
+  | 'pianoRoll'
+  | 'params'
+  | 'animationTimeline'
+  | 'signal'
 
 export interface EntityCallDecoration {
   /** Start offset of the name argument; the widget is placed before it. */
@@ -127,6 +131,11 @@ const ENTITY_DECORATION_PRESENTATION: Record<
     emoji: '🎛️',
     label: 'params pane',
     className: 'ltc-entity-open-btn--params',
+  },
+  animationTimeline: {
+    emoji: '▶️',
+    label: 'animation editor',
+    className: 'ltc-entity-open-btn--animation-timeline',
   },
   signal: {
     emoji: '📈',
@@ -228,6 +237,9 @@ const livecodeTheme = EditorView.theme({
   },
   '.ltc-entity-open-btn--params:hover': {
     background: 'rgba(122, 137, 224, 0.32)',
+  },
+  '.ltc-entity-open-btn--animation-timeline:hover': {
+    background: 'rgba(240, 160, 64, 0.3)',
   },
   '.ltc-entity-open-btn--signal:hover': {
     background: 'rgba(223, 113, 184, 0.28)',
