@@ -128,6 +128,16 @@ Widgets stop pointerdown and click. Components needing document-wide drag
 tracking should use pointer capture or capture-phase listeners, because the
 shape boundary intentionally blocks normal bubbling.
 
+## Projects index page
+
+`projects.html` (`src/projectsIndex.ts`) is a standalone page beside the app,
+not part of the provider tree: it probes candidate hosts for `/health`,
+lists `/projects/list`, and opens a project by navigating to the app with
+`serverBaseUrl` and `projectPath` query params. For "engine in browser" it
+may `POST /server/engine-mode` (dropping every live connection) and opens the
+`/engine/` tab itself; it does not check a project's library compatibility
+with the chosen world — an incompatible project fails at run time.
+
 ## Project and control caveats
 
 URL-driven project load suppresses per-shape registration churn while restoring

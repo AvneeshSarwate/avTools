@@ -16,6 +16,7 @@ and the end-to-end topology and flows are in
 | Area | Files |
 | --- | --- |
 | App shell, tldraw overrides, project load/save | `src/App.tsx` |
+| Projects index page (server discovery, project list, topology-aware open) | `projects.html`, `src/projectsIndex.ts` |
 | The one `/sync` socket, per-kind contexts, typed hooks, HTTP writes | `src/syncRuntime.tsx` |
 | Runtime provider, analysis/run state, connect-armed sequence, project synchronization | `src/livecodeRuntime.tsx` |
 | Launch acknowledgement/run-token correlation | `src/runCorrelation.ts` |

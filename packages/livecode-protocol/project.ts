@@ -265,3 +265,23 @@ export interface ProjectModuleSourceResponse {
   module: ProjectModuleRecord;
   sourceText: string;
 }
+
+/** One project discovered by `GET /projects/list`. */
+export interface ProjectIndexEntry {
+  /** Absolute project directory; pass it as `projectPath` to open the project. */
+  root: string;
+  manifestPath: string;
+  /** Manifest name, or the directory name when the manifest is unreadable. */
+  name: string;
+  engineTarget?: "deno" | "browser";
+  moduleCount: number;
+  /** Present when the manifest exists but could not be read or parsed. */
+  error?: string;
+}
+
+export interface ProjectsListResponse {
+  ok: true;
+  /** The absolute directories that were scanned. */
+  roots: string[];
+  projects: ProjectIndexEntry[];
+}
