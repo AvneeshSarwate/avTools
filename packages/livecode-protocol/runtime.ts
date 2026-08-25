@@ -104,6 +104,25 @@ export interface HealthResponse {
   };
 }
 
+/** `POST /server/engine-mode`: ask the server to run under another plane. */
+export interface EngineModeChangeRequest {
+  mode: "local" | "remote";
+}
+
+export interface EngineModeChangeResponse {
+  ok: true;
+  mode: "local" | "remote";
+  /** False when the server was already in the requested mode. */
+  changed: boolean;
+  /**
+   * True when the process is about to close this listener and re-listen on the
+   * same host/port under the new mode. Callers should poll `/health` until it
+   * answers with the requested mode; everything engine-held (runs, unsaved
+   * entities) is gone after the restart.
+   */
+  restarting: boolean;
+}
+
 export interface RuntimeModuleStatus {
   moduleId: string;
   generatedRunId: string;

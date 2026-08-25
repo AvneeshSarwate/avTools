@@ -14,6 +14,13 @@ deno task livecode:server
 From `apps/livecode-tldraw`, run `npm run setupLivecode` once after checkout or
 after a bundled web component changes, then `npm run dev`.
 
+With both running, `projects.html` on the Vite origin (e.g.
+`http://localhost:5173/projects.html`) is the human entry point: it discovers
+the server via `/health` probes, lists `/projects/list`, and opens a project
+in either engine topology — including asking the server to restart itself into
+the other mode. Opening a project by hand means composing
+`/?serverBaseUrl=<server>&projectPath=<abs project dir>` yourself.
+
 For a cross-boundary change, the canonical gate is:
 
 ```sh

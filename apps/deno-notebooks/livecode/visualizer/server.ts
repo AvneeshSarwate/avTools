@@ -21,6 +21,8 @@ import type {
   ClientControlRequest,
   ClientControlResultMessage,
   CreateProjectRequest,
+  EngineModeChangeRequest,
+  EngineModeChangeResponse,
   EntityCreateRequest,
   EntityDeleteRequest,
   EntityDuplicateRequest,
@@ -34,6 +36,7 @@ import type {
   ProjectCurrentResponse,
   ProjectDataEntityStatus,
   ProjectDataEntry,
+  ProjectIndexEntry,
   ProjectModuleInput,
   ProjectModuleRecord,
   ProjectModuleSourceResponse,
@@ -42,6 +45,7 @@ import type {
   ProjectSaveResponse,
   ProjectSaveSkippedEntity,
   ProjectShadowCheckResponse,
+  ProjectsListResponse,
   ProjectStatusResponse,
   ReloadProjectModuleRequest,
   RemoveProjectModuleRequest,
@@ -185,6 +189,21 @@ export interface LivecodeVisualizerServerOptions {
    * BroadcastChannel directly instead of the relayed `/sync` socket.
    */
   uiDist?: string;
+  /**
+   * Directories `GET /projects/list` scans (recursively, a few levels deep)
+   * for `project.avtools-livecode.json` manifests. Defaults to the repo's
+   * `apps/livecode-tldraw/example-projects`.
+   */
+  projectsRoots?: string[];
+  /**
+   * When set, `POST /server/engine-mode` with a different mode answers ok and
+   * then invokes this callback; the embedder (see `main.ts`) is expected to
+   * close this server and create a new one in the requested mode on the same
+   * host/port. When absent the route answers 501: engine mode is fixed at
+   * creation and everything from the plane to generated-code import URLs is
+   * derived from it, so it cannot change inside a live server.
+   */
+  onEngineModeChangeRequest?: (mode: "local" | "remote") => void;
 }
 
 export interface LivecodeVisualizerServer {
@@ -200,6 +219,8 @@ const PROJECT_MANIFEST_FILENAME = "project.avtools-livecode.json";
 const SOURCE_SUFFIX = ".orig.ts";
 const REPO_ROOT = fromFileUrl(new URL("../../../..", import.meta.url));
 const MAX_PREPARED_RUNS_PER_MODULE = 3;
+/** How deep under each projects root `/projects/list` looks for manifests. */
+const PROJECT_SCAN_MAX_DEPTH = 3;
 const DEFAULT_SESSION_ROOT = fromFileUrl(
   new URL("../../.avtools-livecode-sessions", import.meta.url),
 );
@@ -402,6 +423,10 @@ export async function createLivecodeVisualizerServer(
     },
   });
 
+  const projectsRoots = (options.projectsRoots ?? [
+    join(REPO_ROOT, "apps", "livecode-tldraw", "example-projects"),
+  ]).map(resolvePath);
+
   const uiDist = options.uiDist ? resolvePath(options.uiDist) : null;
   const UI_MIME: Record<string, string> = {
     ".html": "text/html; charset=utf-8",
@@ -451,6 +476,49 @@ export async function createLivecodeVisualizerServer(
         },
       };
       return json(response);
+    }
+
+    if (request.method === "POST" && url.pathname === "/server/engine-mode") {
+      const requestBody = await request.json() as EngineModeChangeRequest;
+      const mode = requestBody.mode;
+      if (mode !== "local" && mode !== "remote") {
+        return json(
+          { ok: false, error: `Unknown engine mode: ${String(mode)}` },
+          { status: 400 },
+        );
+      }
+      if (mode === engineMode) {
+        const response: EngineModeChangeResponse = {
+          ok: true,
+          mode,
+          changed: false,
+          restarting: false,
+        };
+        return json(response);
+      }
+      if (!options.onEngineModeChangeRequest) {
+        return json({
+          ok: false,
+          error: "This server cannot restart itself into another engine " +
+            `mode; restart it with --engine ${mode}`,
+        }, { status: 501 });
+      }
+      await log({ type: "engineModeChangeRequested", from: engineMode, to: mode });
+      // Give this response time to flush before the embedder tears the
+      // listener down and re-creates the server in the requested mode.
+      const onChange = options.onEngineModeChangeRequest;
+      setTimeout(() => onChange(mode), 150);
+      const response: EngineModeChangeResponse = {
+        ok: true,
+        mode,
+        changed: true,
+        restarting: true,
+      };
+      return json(response);
+    }
+
+    if (request.method === "GET" && url.pathname === "/projects/list") {
+      return json(await listProjects());
     }
 
     if (request.method === "GET" && url.pathname === "/client/clients") {
@@ -1192,6 +1260,65 @@ export async function createLivecodeVisualizerServer(
       moduleCount: state.manifest.modules.length,
     });
     return await makeProjectCurrentResponse();
+  }
+
+  async function listProjects(): Promise<ProjectsListResponse> {
+    const projects: ProjectIndexEntry[] = [];
+    for (const root of projectsRoots) {
+      await scanForProjects(root, 0, projects);
+    }
+    projects.sort((a, b) => a.name.localeCompare(b.name));
+    return { ok: true, roots: projectsRoots, projects };
+  }
+
+  async function scanForProjects(
+    dir: string,
+    depth: number,
+    out: ProjectIndexEntry[],
+  ): Promise<void> {
+    let entries: Deno.DirEntry[];
+    try {
+      entries = await Array.fromAsync(Deno.readDir(dir));
+    } catch {
+      // An unreadable/missing root is an empty listing, not a failed one.
+      return;
+    }
+    const hasManifest = entries.some((entry) =>
+      entry.isFile && entry.name === PROJECT_MANIFEST_FILENAME
+    );
+    if (hasManifest) {
+      const manifestPath = join(dir, PROJECT_MANIFEST_FILENAME);
+      try {
+        const manifest = JSON.parse(
+          await Deno.readTextFile(manifestPath),
+        ) as LivecodeProjectManifest;
+        out.push({
+          root: dir,
+          manifestPath,
+          name: manifest.name ?? basename(dir),
+          engineTarget: manifest.engineTarget,
+          moduleCount: Array.isArray(manifest.modules)
+            ? manifest.modules.length
+            : 0,
+        });
+      } catch (error) {
+        out.push({
+          root: dir,
+          manifestPath,
+          name: basename(dir),
+          moduleCount: 0,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      // A project directory does not nest further listed projects.
+      return;
+    }
+    if (depth >= PROJECT_SCAN_MAX_DEPTH) return;
+    for (const entry of entries) {
+      if (!entry.isDirectory) continue;
+      if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+      await scanForProjects(join(dir, entry.name), depth + 1, out);
+    }
   }
 
   async function openProject(
