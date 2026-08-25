@@ -28,6 +28,12 @@ creates the static form. The engine package must
 remain browser-typecheckable; host-only filesystem, Deno, and MIDI choices do
 not belong in it.
 
+Moving between the local and remote-browser topologies is a server restart,
+not a live reconfiguration: `POST /server/engine-mode` makes `main.ts` close
+and re-create the server in the other mode on the same port, losing all engine
+state. The projects index page (`projects.html` in the tldraw app) is the
+human front door for picking a project and a topology together.
+
 ## State ownership
 
 - Canonical project source is `*.orig.ts`; generated `*.ts` files are
