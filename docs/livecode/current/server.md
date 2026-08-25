@@ -25,6 +25,18 @@ process, source transformation, and project concerns in the host. Both modes
 must use the same op shapes from `packages/livecode-protocol/engine_uplink.ts`;
 do not special-case route semantics by topology.
 
+Engine mode is fixed for a server's lifetime: the plane, MIDI capability, the
+generated-code instrumentation import, and default engine target are all
+derived from it at creation. `POST /server/engine-mode` therefore does not
+mutate a live server; it answers ok and asks its embedder (the `main.ts` loop)
+to close this server and create a new one in the requested mode on the same
+host/port. Everything engine-held — runs, unsaved entities — dies with the
+restart, and an embedderless server (tests, direct library use) answers 501.
+The projects index page (`projects.html` in the tldraw app) drives this and
+`GET /projects/list`, which scans configured roots (default:
+`apps/livecode-tldraw/example-projects`; override with `--projects-root`) for
+project manifests.
+
 The engine package contains module-level stores and runtime instrumentation.
 They intentionally provide a stable singleton imported by every generated
 module, but also mean multiple engines in one isolate are unsupported. Active
@@ -111,6 +123,13 @@ are:
   bypass project diagnostics. Refusal of an occupied slot is 409 unless
   replacement was explicit.
 - `/project/events` is a one-shot status response, not SSE.
+- `/projects/list` is read-only discovery over the configured roots (a few
+  levels deep; an unreadable manifest is listed with an `error`, and a project
+  directory is never scanned for nested projects). It does not consult or
+  affect the current project.
+- `/server/engine-mode` with a different mode restarts the whole server
+  process-side (see above); callers must re-poll `/health` and expect every
+  connection to drop.
 - module remove is manifest-only; it neither deletes files nor stops a run.
 - `/project/canvas` replaces the whole canvas object.
 - generic `/entities/*` sees durable registered kinds only and never deletes
