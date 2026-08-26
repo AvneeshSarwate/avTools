@@ -4,6 +4,11 @@ import type { TimeContext } from "@avtools/core-timing";
 import { assignSignalOwner } from "./signals_store.ts";
 
 const activeWaitCounts = new Map<string, Map<string, number>>();
+// The run token currently allowed to publish waits for each module slot. A
+// replacement reuses moduleId, so module identity alone cannot keep a slow
+// predecessor's finally block from erasing or decrementing its successor's
+// waits.
+const waitOwners = new Map<string, string>();
 const pianoRollLookups = new Map<string, Map<string, string>>();
 // Module ids whose waits/lookups a mutator touched since the last collect.
 // These are hints, not truth: `enterWait` runs on every awaited callsite, so
@@ -22,13 +27,26 @@ function getOrCreateModuleCounts(moduleId: string): Map<string, number> {
   return moduleCounts;
 }
 
-export function enterWait(moduleId: string, id: string) {
-  const moduleCounts = getOrCreateModuleCounts(moduleId);
-  moduleCounts.set(id, (moduleCounts.get(id) ?? 0) + 1);
+export interface WaitLease {
+  owner: string | null;
+}
+
+/** Start a new run's wait world, retiring any counts from its predecessor. */
+export function claimModuleWaits(moduleId: string, runToken: string): void {
+  activeWaitCounts.delete(moduleId);
+  waitOwners.set(moduleId, runToken);
   dirtyWaitModules.add(moduleId);
 }
 
-export function exitWait(moduleId: string, id: string) {
+export function enterWait(moduleId: string, id: string): WaitLease {
+  const moduleCounts = getOrCreateModuleCounts(moduleId);
+  moduleCounts.set(id, (moduleCounts.get(id) ?? 0) + 1);
+  dirtyWaitModules.add(moduleId);
+  return { owner: waitOwners.get(moduleId) ?? null };
+}
+
+export function exitWait(moduleId: string, id: string, lease: WaitLease) {
+  if ((waitOwners.get(moduleId) ?? null) !== lease.owner) return;
   const moduleCounts = activeWaitCounts.get(moduleId);
   if (!moduleCounts) return;
 
@@ -45,17 +63,27 @@ export async function visualizedAwait<T>(
   id: string,
   promise: PromiseLike<T>,
 ): Promise<T> {
-  enterWait(moduleId, id);
+  const lease = enterWait(moduleId, id);
   try {
     return await promise;
   } finally {
-    exitWait(moduleId, id);
+    exitWait(moduleId, id, lease);
   }
 }
 
 export function clearModuleWaits(moduleId: string) {
   activeWaitCounts.delete(moduleId);
+  waitOwners.delete(moduleId);
   dirtyWaitModules.add(moduleId);
+}
+
+/** Clear one run's waits only while it still owns the module slot. */
+export function clearOwnedModuleWaits(
+  moduleId: string,
+  runToken: string,
+): void {
+  if (waitOwners.get(moduleId) !== runToken) return;
+  clearModuleWaits(moduleId);
 }
 
 export function clearAllWaits() {
@@ -63,6 +91,7 @@ export function clearAllWaits() {
     dirtyWaitModules.add(moduleId);
   }
   activeWaitCounts.clear();
+  waitOwners.clear();
 }
 
 export function getActiveWaitsByModule(): Record<string, string[]> {

@@ -280,6 +280,49 @@ export default async function(_ctx: TimeContext) {}
   }
 });
 
+Deno.test("shadow diagnostics cache is scoped to one project generation", async () => {
+  const sessionRoot = await Deno.makeTempDir({
+    prefix: "tcv-shadow-cache-session-",
+  });
+  const firstRoot = await Deno.makeTempDir({
+    prefix: "tcv-shadow-cache-first-",
+  });
+  const secondRoot = await Deno.makeTempDir({
+    prefix: "tcv-shadow-cache-second-",
+  });
+  const server = await createLivecodeVisualizerServer({
+    port: 0,
+    sessionRoot,
+  });
+
+  try {
+    await postJson(`${server.baseUrl}/project/create`, {
+      projectPath: firstRoot,
+      name: "same-source-project",
+      modules: [],
+    });
+    const first = await fetchJson<ProjectShadowCheckResponse>(
+      `${server.baseUrl}/project/diagnostics`,
+    );
+    assertEquals(first.project?.root, firstRoot);
+
+    await postJson(`${server.baseUrl}/project/create`, {
+      projectPath: secondRoot,
+      name: "same-source-project",
+      modules: [],
+    });
+    const second = await fetchJson<ProjectShadowCheckResponse>(
+      `${server.baseUrl}/project/diagnostics`,
+    );
+    assertEquals(second.project?.root, secondRoot);
+  } finally {
+    await server.close();
+    await Deno.remove(sessionRoot, { recursive: true });
+    await Deno.remove(firstRoot, { recursive: true });
+    await Deno.remove(secondRoot, { recursive: true });
+  }
+});
+
 async function analyzeProjectModule(
   baseUrl: string,
   modulePath: string,

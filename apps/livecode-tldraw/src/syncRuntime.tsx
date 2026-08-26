@@ -28,14 +28,27 @@ import type {
   SetPianoRollRequest,
   SignalEntity,
   SyncMessage,
-  SyncSubscribeMessage,
 } from "@avtools/livecode-protocol";
 import { SYNC_ENTITY_TYPES } from "@avtools/livecode-protocol";
-import {
-  createReconnectingSocket,
-  type ReconnectingSocketController,
-} from "./reconnectingSocket";
+import type { ReconnectingSocketController } from "./reconnectingSocket";
 import { engineAction, serverWebSocketUrl } from "./serverRequests";
+import {
+  applySyncMessageToState,
+  emptySyncSlice,
+  emptySyncState,
+  type SyncEntityTypeKey,
+  type SyncSlice,
+  type SyncState,
+} from "./syncState";
+import {
+  configuredSyncTransport,
+  createBroadcastSyncTransport,
+  createWebSocketSyncTransport,
+  type SyncPort,
+  type SyncTransportCallbacks,
+} from "./syncTransport";
+
+export type { SyncSlice } from "./syncState";
 
 export type SyncConnectionStatus = "closed" | "connecting" | "open" | "error";
 
@@ -52,11 +65,6 @@ export { SYNC_ENTITY_TYPES };
  * touched it. Per-slice rather than global so a component showing a sequence
  * number re-renders on its OWN traffic, the way the four channels behaved.
  */
-export interface SyncSlice<E> {
-  entities: Record<string, E>;
-  latestSeq: number | null;
-}
-
 export interface SyncConnection {
   connectionStatus: SyncConnectionStatus;
   connectionError: string | null;
@@ -104,22 +112,22 @@ export interface SyncLifecycleListener {
   onError?: (message: string) => void;
 }
 
-const emptySlice = <E,>(): SyncSlice<E> => ({ entities: {}, latestSeq: null });
-
 const PianoRollsContext = createContext<SyncSlice<PianoRollObject>>(
-  emptySlice(),
+  emptySyncSlice(),
 );
-const ParamsContext = createContext<SyncSlice<ParamsEntity>>(emptySlice());
+const ParamsContext = createContext<SyncSlice<ParamsEntity>>(emptySyncSlice());
 const AnimationTimelinesContext = createContext<
   SyncSlice<AnimationTimelineEntity>
->(emptySlice());
-const SignalsContext = createContext<SyncSlice<SignalEntity>>(emptySlice());
-const RunsContext = createContext<SyncSlice<RunEntity>>(emptySlice());
+>(emptySyncSlice());
+const SignalsContext = createContext<SyncSlice<SignalEntity>>(
+  emptySyncSlice(),
+);
+const RunsContext = createContext<SyncSlice<RunEntity>>(emptySyncSlice());
 const ModuleWaitsContext = createContext<SyncSlice<ModuleWaitsEntity>>(
-  emptySlice(),
+  emptySyncSlice(),
 );
 const ModuleLookupsContext = createContext<SyncSlice<ModuleLookupsEntity>>(
-  emptySlice(),
+  emptySyncSlice(),
 );
 const SyncConnectionContext = createContext<SyncConnection | null>(null);
 const SyncActionsContext = createContext<SyncActions | null>(null);
@@ -281,36 +289,6 @@ export function maxSeq(a: number | null, b: number | null): number | null {
   return Math.max(a, b);
 }
 
-interface SyncState {
-  pianoRoll: SyncSlice<PianoRollObject>;
-  params: SyncSlice<ParamsEntity>;
-  animationTimeline: SyncSlice<AnimationTimelineEntity>;
-  signal: SyncSlice<SignalEntity>;
-  run: SyncSlice<RunEntity>;
-  moduleWaits: SyncSlice<ModuleWaitsEntity>;
-  moduleLookups: SyncSlice<ModuleLookupsEntity>;
-}
-
-type SyncEntityTypeKey = keyof SyncState;
-
-/** Every entity carries its own name; this is the only shape assumption made. */
-interface NamedEntity {
-  name?: string;
-  moduleId?: string;
-}
-
-function emptySyncState(): SyncState {
-  return {
-    pianoRoll: emptySlice(),
-    params: emptySlice(),
-    animationTimeline: emptySlice(),
-    signal: emptySlice(),
-    run: emptySlice(),
-    moduleWaits: emptySlice(),
-    moduleLookups: emptySlice(),
-  };
-}
-
 /**
  * How this page receives watched state. "ws" is the default `/sync` socket;
  * "broadcast" (URL param `sync=broadcast`) reads the engine tab's
@@ -318,25 +296,6 @@ function emptySyncState(): SyncState {
  * docs/livecode/history/browser-engine-plan-2026-08.md — and never opens the
  * socket. Writes and every other route stay HTTP against `serverBaseUrl`.
  */
-const SYNC_TRANSPORT: "ws" | "broadcast" =
-  new URLSearchParams(window.location.search).get("sync") === "broadcast"
-    ? "broadcast"
-    : "ws";
-const SYNC_BROADCAST_CHANNEL = "livecode-sync";
-
-/** The one thing a transport must offer the subscribe/apply path. */
-interface SyncPort {
-  isOpen(): boolean;
-  sendMessage(message: SyncSubscribeMessage): void;
-}
-
-function webSocketPort(socket: WebSocket): SyncPort {
-  return {
-    isOpen: () => socket.readyState === WebSocket.OPEN,
-    sendMessage: (message) => socket.send(JSON.stringify(message)),
-  };
-}
-
 export function SyncRuntimeProvider({ children }: PropsWithChildren) {
   const initialServerUrl =
     new URLSearchParams(window.location.search).get("serverBaseUrl") ??
@@ -393,50 +352,9 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
       const previousSeq = lastSeqRef.current;
       lastSeqRef.current = message.seq;
 
-      if (message.resets) {
-        for (const [entityType, entities] of Object.entries(message.resets)) {
-          if (!isSyncEntityType(entityType)) continue;
-          // A reset REPLACES: absence is deletion, so rebuilding the map from
-          // scratch is the point, not an optimization.
-          const next: Record<string, unknown> = {};
-          for (const entity of entities) {
-            next[entityName(entity as NamedEntity)] = entity;
-          }
-          pendingRef.current[entityType] = {
-            entities: next,
-            latestSeq: message.seq,
-          } as never;
-          dirtyTypesRef.current.add(entityType);
-        }
-      }
-
-      if (message.changes && message.changes.length > 0) {
-        const touched = new Map<SyncEntityTypeKey, Record<string, unknown>>();
-        for (const change of message.changes) {
-          if (!isSyncEntityType(change.entityType)) continue;
-          let entities = touched.get(change.entityType);
-          if (!entities) {
-            entities = {
-              ...pendingRef.current[change.entityType].entities,
-            } as Record<string, unknown>;
-            touched.set(change.entityType, entities);
-          }
-          if (change.entity === null) {
-            delete entities[change.name];
-          } else {
-            // The whole entity ships on every change. `rev` is NOT a change key
-            // — a signal's `ended` flip and a params meta-only write both
-            // arrive with an unchanged rev — so nothing may dedupe on one.
-            entities[change.name] = change.entity;
-          }
-        }
-        for (const [entityType, entities] of touched) {
-          pendingRef.current[entityType] = {
-            entities,
-            latestSeq: message.seq,
-          } as never;
-          dirtyTypesRef.current.add(entityType);
-        }
+      const dirty = applySyncMessageToState(pendingRef.current, message);
+      for (const entityType of dirty) {
+        dirtyTypesRef.current.add(entityType);
       }
 
       scheduleFlush();
@@ -456,87 +374,42 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
     [scheduleFlush, subscribe],
   );
 
-  const createBroadcastController = useCallback(
-    (): ReconnectingSocketController => {
-      let channel: BroadcastChannel | null = null;
-      return {
-        socket: null,
-        connect: () => {
-          if (channel) return;
-          const active = new BroadcastChannel(SYNC_BROADCAST_CHANNEL);
-          channel = active;
-          const port: SyncPort = {
-            isOpen: () => channel === active,
-            sendMessage: (message) => active.postMessage(message),
-          };
-          active.onmessage = (event) => {
-            const message = event.data as SyncMessage | undefined;
-            if (message?.type !== "sync") return;
-            applyMessage(message, port);
-          };
-          // A channel has no open handshake: it is "open" the moment it
-          // exists, and it never closes on its own. Engine restarts surface
-          // as a seq regression, which the gap path answers by resubscribing.
-          openRef.current = true;
-          lastSeqRef.current = null;
-          subscribe(port);
-          setConnectionStatus("open");
-          setConnectionError(null);
-          for (const listener of [...listenersRef.current]) listener.onOpen?.();
-        },
-        close: () => {
-          channel?.close();
-          channel = null;
-        },
-      };
+  const transportCallbacks = useMemo<SyncTransportCallbacks>(() => ({
+    onOpen: (port) => {
+      openRef.current = true;
+      // A fresh transport is owed no state. Subscribe is both registration and
+      // the full reset that hydrates this client.
+      lastSeqRef.current = null;
+      subscribe(port);
+      setConnectionStatus("open");
+      setConnectionError(null);
+      for (const listener of [...listenersRef.current]) listener.onOpen?.();
     },
-    [applyMessage, subscribe],
-  );
+    onMessage: applyMessage,
+    onClose: () => {
+      openRef.current = false;
+      setConnectionStatus((current) =>
+        current === "error" ? current : "closed"
+      );
+      for (const listener of [...listenersRef.current]) listener.onClose?.();
+    },
+    onError: (message) => {
+      openRef.current = false;
+      setConnectionError(message);
+      setConnectionStatus("error");
+      for (const listener of [...listenersRef.current]) {
+        listener.onError?.(message);
+      }
+    },
+  }), [applyMessage, subscribe]);
 
-  if (controllerRef.current === null && SYNC_TRANSPORT === "broadcast") {
-    controllerRef.current = createBroadcastController();
-  }
   if (controllerRef.current === null) {
-    controllerRef.current = createReconnectingSocket({
-      makeUrl: () => serverWebSocketUrl(serverBaseUrlRef.current, "/sync"),
-      onOpen: (socket) => {
-        openRef.current = true;
-        // A fresh socket has no subscriptions and is owed nothing, so the
-        // resubscribe is also the full rehydration this client needs.
-        lastSeqRef.current = null;
-        subscribe(webSocketPort(socket));
-        setConnectionStatus("open");
-        setConnectionError(null);
-        for (const listener of [...listenersRef.current]) listener.onOpen?.();
-      },
-      onMessage: (event, socket) => {
-        let message: SyncMessage;
-        try {
-          message = JSON.parse(event.data as string) as SyncMessage;
-        } catch (error) {
-          console.error("[livecode-tldraw] malformed sync message", error);
-          return;
-        }
-        if (message.type !== "sync") return;
-        applyMessage(message, webSocketPort(socket));
-      },
-      onClose: () => {
-        openRef.current = false;
-        setConnectionStatus((current) =>
-          current === "error" ? current : "closed"
-        );
-        for (const listener of [...listenersRef.current]) listener.onClose?.();
-      },
-      onError: () => {
-        openRef.current = false;
-        const message = "sync websocket failed";
-        setConnectionError(message);
-        setConnectionStatus("error");
-        for (const listener of [...listenersRef.current]) {
-          listener.onError?.(message);
-        }
-      },
-    });
+    controllerRef.current = configuredSyncTransport === "broadcast"
+      ? createBroadcastSyncTransport(transportCallbacks)
+      : createWebSocketSyncTransport(
+        () => serverWebSocketUrl(serverBaseUrlRef.current, "/sync"),
+        transportCallbacks,
+      );
   }
 
   // Connects at MOUNT, not at Connect: piano-roll, params, and signals data has
@@ -740,15 +613,6 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
       </SyncActionsContext.Provider>
     </SyncLifecycleContext.Provider>
   );
-}
-
-function isSyncEntityType(value: string): value is SyncEntityTypeKey {
-  return (SYNC_ENTITY_TYPES as readonly string[]).includes(value);
-}
-
-/** Durable entities key on `name`; the module-keyed ephemeral kinds on `moduleId`. */
-function entityName(entity: NamedEntity): string {
-  return entity.name ?? entity.moduleId ?? "";
 }
 
 function useRequiredContext<T>(

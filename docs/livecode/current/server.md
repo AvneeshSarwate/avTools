@@ -58,7 +58,8 @@ replacing launch can therefore address the acceptance-to-import window. The
 queued action rechecks cancellation before import and before entering user
 code, then transfers ownership to `activeModules` without a moment when the
 slot is unowned. Teardown mutates the slot only if it still owns that exact run;
-a slow older `stop()` must not retire a replacement.
+wait entries carry the same run-token ownership, so a predecessor's late
+`finally` or slow `stop()` cannot clear or retire its replacement's state.
 
 The launch response means accepted/queued. A `run` sync entity distinguishes
 `launching`, `running`, and terminal state, and carries the token plus an
@@ -99,11 +100,14 @@ builds use immutable generated files and are pruned to a small rolling set.
 Project builds point at materialized project files, whose mutability and import
 caching are important risks described in `known-risks.md`.
 
-There is one process-global `currentProject`. Open/create select it for every
-client; they do not stop the prior project's modules. Project save first asks
-the engine to capture every durable entity, writes entity files, then rewrites
-the manifest with successful entries. It is explicit, non-atomic, and not
-project-scoped at the store level.
+There is one process-global `currentProject`. Project routes, project-backed
+analysis, and restart-all share one serialized operation lane, so awaits cannot
+interleave two project aggregates. Open/create prepare a candidate and publish
+it as current only after source/materialization/LSP preparation succeeds. This
+does not roll back filesystem or engine-entity side effects, stop the prior
+project's modules, or make stores project-scoped. Project save first captures
+every durable entity, writes entity files, then rewrites the manifest with
+successful entries; it remains explicit and non-atomic.
 
 Shadow diagnostics use a temporary transformed project and `deno check`; LSP
 uses a separate synthetic workspace/process. Neither is the runtime, and LSP
@@ -156,6 +160,9 @@ entities absent from the hello resets. Its executor is pinned to the arriving
 socket, and project-generation checks discard stale work around asynchronous
 file and engine operations. Project open and engine attach can happen in either
 order, while an engine that outlived a server restart keeps its live state.
+Ordinary engine requests are connection-scoped too: the host replies only on
+the socket that delivered a request, so reconnect discards a stale result rather
+than delivering it to a replacement server connection.
 
 The browser host separately enforces one engine per origin with Web Locks and
 explicit takeover, provides a silent-audio throttling mitigation, initializes

@@ -114,21 +114,26 @@ export interface EngineEntitySaveState {
   error?: string;
 }
 
-export interface EngineEntityLoadResult {
+interface EngineEntityLoadIdentity {
   type: string;
   name: string;
-  ok: boolean;
-  latestJson?: string | null;
-  error?: string;
 }
 
-export interface EngineEntityActionResult {
-  ok: boolean;
-  entity?: { type: string; name: string };
-  error?: string;
-  /** HTTP status the server should answer with when ok is false. */
-  status?: number;
-}
+export type EngineEntityLoadResult =
+  & EngineEntityLoadIdentity
+  & (
+    | { ok: true; latestJson: string | null }
+    | { ok: false; error: string }
+  );
+
+export type EngineEntityActionResult =
+  | { ok: true; entity: { type: string; name: string } }
+  | {
+    ok: false;
+    error: string;
+    /** HTTP status the server should answer with for this failure. */
+    status?: number;
+  };
 
 /** Server -> engine host. */
 export interface EngineUplinkRequest {
@@ -155,10 +160,7 @@ export type EngineUplinkClientMessage =
   | {
     type: "engineResult";
     requestId: string;
-    ok: boolean;
-    body?: unknown;
-    error?: string;
-  }
+  } & ({ ok: true; body: unknown } | { ok: false; error: string })
   | {
     /**
      * One structured engine log entry, forwarded so the server's log stays

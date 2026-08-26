@@ -48,7 +48,13 @@ export function broadcastEngineAction(op: EngineOp): Promise<unknown> {
     }, ACTION_TIMEOUT_MS);
     channel.onmessage = (event) => {
       const message = event.data as
-        | { type?: string; requestId?: string; ok?: boolean; body?: unknown; error?: string }
+        | {
+          type?: string;
+          requestId?: string;
+          ok?: boolean;
+          body?: unknown;
+          error?: string;
+        }
         | undefined;
       if (message?.type !== "engineResult" || message.requestId !== requestId) {
         return;
@@ -106,8 +112,8 @@ export async function engineAction<T>(
 function entityActionResult(
   result: EngineEntityActionResult,
 ): EntityMutationSuccess {
-  if (!result.ok || !result.entity) {
-    throw new Error(result.error ?? "entity action failed");
+  if (!result.ok) {
+    throw new Error(result.error);
   }
   return { ok: true, entity: result.entity };
 }

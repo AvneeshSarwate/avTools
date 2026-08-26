@@ -1,7 +1,7 @@
 # Current Project Model
 
 Status: checked against project routes, shadow analysis, the tldraw project
-bridge, and feature fixtures on 2026-08-24.
+bridge, and feature fixtures on 2026-08-26.
 
 ## Files and ownership
 
@@ -52,8 +52,10 @@ cache reset today; `/runtime/restart-all` is not one.
 
 ## Project operations that are not conventional CRUD
 
-- Open/create changes the global selection and is not transactional. It does
-  not stop active modules.
+- Open/create is serialized with other project-backed operations and publishes
+  the new global selection only after preparation succeeds. It does not stop
+  active modules, and filesystem or engine-entity side effects are not rolled
+  back if a later step fails.
 - Module update changes metadata/layout but does not implement path rename,
   despite accepting a path-shaped input.
 - Module remove drops the manifest/cache record only. Source/runtime files and

@@ -1,40 +1,51 @@
-export interface RunCorrelation {
-  requestPending: boolean
-  acknowledgedToken: string | null
-}
+export type RunCorrelation =
+  | { phase: "observing" }
+  | { phase: "launch-requested" }
+  | { phase: "awaiting-run"; runToken: string };
 
 export interface CorrelatedRun {
-  state: 'launching' | 'running' | 'stopped' | 'error'
-  runToken: string
+  state: "launching" | "running" | "stopped" | "error";
+  runToken: string;
+}
+
+export interface RunCorrelationDecision {
+  apply: boolean;
+  next: RunCorrelation;
 }
 
 export function createRunCorrelation(): RunCorrelation {
-  return { requestPending: false, acknowledgedToken: null }
+  return { phase: "observing" };
 }
 
-export function beginRunLaunch(correlation: RunCorrelation): void {
-  correlation.requestPending = true
-  correlation.acknowledgedToken = null
+export function beginRunLaunch(): RunCorrelation {
+  return { phase: "launch-requested" };
 }
 
-export function acknowledgeRunLaunch(correlation: RunCorrelation, runToken: string): void {
-  correlation.requestPending = false
-  correlation.acknowledgedToken = runToken
+export function acknowledgeRunLaunch(runToken: string): RunCorrelation {
+  return { phase: "awaiting-run", runToken };
 }
 
-export function rejectRunLaunch(correlation: RunCorrelation): void {
-  correlation.requestPending = false
-  correlation.acknowledgedToken = null
+export function rejectRunLaunch(): RunCorrelation {
+  return { phase: "observing" };
 }
 
-export function shouldApplyRun(correlation: RunCorrelation, run: CorrelatedRun): boolean {
-  const terminal = run.state === 'stopped' || run.state === 'error'
-  if (correlation.requestPending && terminal) return false
-
-  const acknowledgedToken = correlation.acknowledgedToken
-  if (acknowledgedToken && run.runToken !== acknowledgedToken) return false
-  if (run.runToken === acknowledgedToken) {
-    correlation.acknowledgedToken = null
+export function correlateRun(
+  correlation: RunCorrelation,
+  run: CorrelatedRun,
+): RunCorrelationDecision {
+  if (
+    correlation.phase === "launch-requested" &&
+    (run.state === "stopped" || run.state === "error")
+  ) {
+    return { apply: false, next: correlation };
   }
-  return true
+
+  if (correlation.phase === "awaiting-run") {
+    if (run.runToken !== correlation.runToken) {
+      return { apply: false, next: correlation };
+    }
+    return { apply: true, next: { phase: "observing" } };
+  }
+
+  return { apply: true, next: correlation };
 }

@@ -10,14 +10,16 @@ props and UI details belong in source.
 
 `SyncRuntimeProvider` must wrap `LivecodeRuntimeProvider`:
 
-- `syncRuntime.tsx` owns the server URL, the sync transport, per-kind entity
-  maps, write actions, sequence-gap recovery, and imperative socket lifecycle
-  notifications.
+- `syncRuntime.tsx` owns the server URL, public contexts/hooks, write actions,
+  sequence-gap recovery, and lifecycle notifications. `syncState.ts` applies
+  sync truth; `syncTransport.ts` adapts WebSocket and `BroadcastChannel`.
 - `livecodeRuntime.tsx` consumes run/wait/lookup slices and socket edges. It
   owns Connect, health/LSP/rehydration, module analysis, launch/stop, and the
-  mutable coordination record behind each published module view.
-- `App.tsx` joins those services to the tldraw store, project load/save/layout,
-  client control, and topbar actions.
+  mutable coordination record behind each published module view, with build and
+  run transitions isolated in `buildLifecycle.ts` and `runCorrelation.ts`.
+- `App.tsx` joins those services to the tldraw store. `TopBar.tsx`,
+  `projectCanvas.ts`, and `clientControlBridge.ts` own the corresponding UI,
+  canvas/project helpers, and automation bridge.
 
 Entity kinds have separate React contexts so high-rate signals do not rerender
 every roll or params pane. Incoming messages are accumulated in refs and
@@ -47,21 +49,23 @@ baked project boot from `baked.json`.
 
 ## Analysis and launch ordering
 
-Each module record holds a monotonically increasing analysis sequence, current
-buffer, prepared result, in-flight promise, manifest, and run correlation.
-Late analysis responses are ignored. Pressing Run while a debounce/in-flight
-analysis exists follows the freshest buffer; it must not launch the last build
-merely because it completed first.
+Each module has one build lifecycle rather than independent pending flags. A
+queued build owns its debounce timer, an analyzing build owns its request and
+promise, and a ready build owns its preparation. Work is identified by source
+plus server; late callbacks apply only while their request is still current.
+Pressing Run follows the freshest buffer rather than whichever build completed
+first.
 
 For project modules, buffer write-through and a successful shadow diagnostic
 check precede the launch request. Direct server callers do not receive this
 guard.
 
-The client begins a launch correlation before HTTP returns because a terminal
-`run` entity can cross the launch acknowledgement (instant failure is the
-important case). `runCorrelation.ts` temporarily holds that crossing terminal,
-then accepts only the acknowledgement's `runToken`. Never correlate by
-`generatedRunId`: an unchanged build can be launched more than once.
+The client begins launch correlation before HTTP returns because a terminal
+`run` entity can cross the acknowledgement (instant failure is the important
+case). While the request is pending, that terminal remains in the sync store but
+is not applied to the module view. After acknowledgement the client reapplies
+current sync truth and accepts only the acknowledged `runToken`. Never correlate
+by `generatedRunId`: an unchanged build can be launched more than once.
 
 Run and Replace are intentionally different gestures. Run never asks to replace
 an occupied module; while one is active, the control reads Replace and sends

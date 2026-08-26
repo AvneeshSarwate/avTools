@@ -1,6 +1,6 @@
 # Current Known Risks and Invariant Gaps
 
-Status: unresolved hazards checked against the implementation on 2026-08-24.
+Status: unresolved hazards checked against the implementation on 2026-08-26.
 
 This register contains only open risks and accepted limitations. Resolved
 investigations are preserved in
@@ -22,10 +22,11 @@ security boundary. This path lacks a focused regression test.
 
 ## P1: project and entity state are process-global
 
-One `currentProject` and module-ID namespace serve every client. Project open
-selects it before every read/materialization succeeds, does not stop prior runs,
-and can leave partial loaded state on failure. Duplicate IDs/paths are not fully
-schema-validated and can make lookup/status ambiguous.
+One `currentProject` and module-ID namespace serve every client. Project-backed
+operations are serialized and a candidate selection is published only after
+preparation, but filesystem and engine-entity side effects are not rolled back
+if a later step fails. Project open also leaves prior runs alive. Duplicate
+IDs/paths are not fully schema-validated and can make lookup/status ambiguous.
 
 Engine entity stores also survive project switches. Explicit save captures all
 durable names in those stores, including leftovers created by another project

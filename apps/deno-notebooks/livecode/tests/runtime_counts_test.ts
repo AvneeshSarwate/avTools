@@ -1,9 +1,11 @@
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import {
+  claimModuleWaits,
   clearAllPianoRollLookups,
   clearAllWaits,
   clearModulePianoRollLookups,
   clearModuleWaits,
+  clearOwnedModuleWaits,
   enterWait,
   exitWait,
   getActiveWaitsByModule,
@@ -14,14 +16,29 @@ import {
 
 Deno.test("runtime count map keeps ids active until count reaches zero", () => {
   clearAllWaits();
-  enterWait("module-a", "id-1");
-  enterWait("module-a", "id-1");
+  const first = enterWait("module-a", "id-1");
+  const second = enterWait("module-a", "id-1");
   assertEquals(getActiveWaitsByModule(), { "module-a": ["id-1"] });
 
-  exitWait("module-a", "id-1");
+  exitWait("module-a", "id-1", first);
   assertEquals(getActiveWaitsByModule(), { "module-a": ["id-1"] });
 
-  exitWait("module-a", "id-1");
+  exitWait("module-a", "id-1", second);
+  assertEquals(getActiveWaitsByModule(), {});
+});
+
+Deno.test("a predecessor cannot clear or exit its replacement's waits", () => {
+  clearAllWaits();
+  claimModuleWaits("module-a", "run-a");
+  const predecessor = enterWait("module-a", "shared-id");
+
+  claimModuleWaits("module-a", "run-b");
+  const replacement = enterWait("module-a", "shared-id");
+  clearOwnedModuleWaits("module-a", "run-a");
+  exitWait("module-a", "shared-id", predecessor);
+  assertEquals(getActiveWaitsByModule(), { "module-a": ["shared-id"] });
+
+  exitWait("module-a", "shared-id", replacement);
   assertEquals(getActiveWaitsByModule(), {});
 });
 

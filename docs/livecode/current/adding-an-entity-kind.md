@@ -1,7 +1,7 @@
 # Recipe: Adding an Entity Kind
 
 Status: checked against the entity-kind and canvas-view registries on
-2026-08-24. Read this only when adding a named engine-owned kind.
+2026-08-26. Read this only when adding a named engine-owned kind.
 
 The registries consolidate mechanical wiring, not domain semantics. A roll
 edit, params merge, animation replacement, and signal publish should not be
@@ -50,9 +50,9 @@ edits. A code-published kind may correctly have no client write operation.
 
 ## 5. Add the client slice and view
 
-Add a typed slice/context/reducer path in `syncRuntime.tsx`; separate contexts
-keep high-rate kinds isolated. Resets replace maps and views must tolerate a
-missing/deleted entity.
+Add the typed slice to `syncState.ts` and its context/hooks to
+`syncRuntime.tsx`; separate contexts keep high-rate kinds isolated. Resets
+replace maps and views must tolerate a missing/deleted entity.
 
 For a canvas representation, add one `CANVAS_VIEW_CODECS` entry. Its codec owns
 shape registration, collect/restore/change detection, optional entity

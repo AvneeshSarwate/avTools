@@ -62,18 +62,29 @@ const TICK_STRETCH_WARN_MS = 250;
 const TICK_STRETCH_LOG_INTERVAL_MS = 5_000;
 const TICK_WATCHDOG_INTERVAL_MS = 100;
 
-type EngineLockState = "starting" | "engine" | "blocked" | "takenOver";
+type EngineLockState =
+  | "starting"
+  | "retrying"
+  | "engine"
+  | "blocked"
+  | "takenOver";
 let lockState: EngineLockState = "starting";
 
 interface EngineRuntime {
   engine: LivecodeEngine;
   channel: BroadcastChannel;
   actionsChannel: BroadcastChannel;
-  uplink: WebSocket | null;
+  uplink: UplinkLifecycle;
   audio: AudioContext | null;
   watchdogTimer: number | null;
-  stopped: boolean;
 }
+
+type UplinkLifecycle =
+  | { phase: "idle" }
+  | { phase: "connecting"; socket: WebSocket }
+  | { phase: "open"; socket: WebSocket }
+  | { phase: "waiting"; timer: number }
+  | { phase: "stopped" };
 
 let runtime: EngineRuntime | null = null;
 
@@ -116,8 +127,6 @@ function holdForever(): Promise<never> {
   return new Promise<never>(() => {});
 }
 
-let blockedRetryUsed = false;
-
 async function tryBecomeEngine(options: { steal: boolean }): Promise<void> {
   try {
     await navigator.locks.request(
@@ -149,13 +158,15 @@ async function tryBecomeEngine(options: { steal: boolean }): Promise<void> {
 function onEngineLockBlocked(): void {
   // A just-closed engine tab releases its lock asynchronously; absorb that
   // with one short retry before declaring another engine alive.
-  if (!blockedRetryUsed) {
-    blockedRetryUsed = true;
+  if (lockState === "starting") {
+    lockState = "retrying";
     setTimeout(() => void tryBecomeEngine({ steal: false }), 750);
     return;
   }
   lockState = "blocked";
-  console.log("[livecode-engine] blocked: engine already running on this origin");
+  console.log(
+    "[livecode-engine] blocked: engine already running on this origin",
+  );
   setStatus(
     "livecode engine already running in another tab on this origin",
     () => void tryBecomeEngine({ steal: true }),
@@ -168,11 +179,14 @@ function shutdownEngine(reason: string): void {
   setStatus(`livecode engine stopped: ${reason}`);
   console.warn("[livecode-engine] shutdown:", reason);
   if (!active) return;
-  active.stopped = true;
+  const previousUplink = active.uplink;
+  active.uplink = { phase: "stopped" };
   // Panic first: branches cancelled, MIDI note-offs sent — the same emergency
   // semantics as the Deno host.
   void active.engine.panicRuntime(reason)
-    .catch((error) => console.warn("[livecode-engine] shutdown panic failed", error))
+    .catch((error) =>
+      console.warn("[livecode-engine] shutdown panic failed", error)
+    )
     .finally(() => {
       active.engine.close().catch((error) =>
         console.warn("[livecode-engine] shutdown close failed", error)
@@ -185,10 +199,16 @@ function shutdownEngine(reason: string): void {
   } catch {
     // Already closed.
   }
-  try {
-    active.uplink?.close();
-  } catch {
-    // Already closed.
+  if (previousUplink.phase === "waiting") {
+    clearTimeout(previousUplink.timer);
+  } else if (
+    previousUplink.phase === "connecting" || previousUplink.phase === "open"
+  ) {
+    try {
+      previousUplink.socket.close();
+    } catch {
+      // Already closed.
+    }
   }
   void active.audio?.close().catch(() => {});
 }
@@ -201,10 +221,9 @@ function startEngine(): void {
     engine: null as unknown as LivecodeEngine,
     channel: new BroadcastChannel(SYNC_CHANNEL_NAME),
     actionsChannel: new BroadcastChannel(ACTIONS_CHANNEL_NAME),
-    uplink: null,
+    uplink: { phase: "idle" },
     audio: startAudioKeepalive(),
     watchdogTimer: null,
-    stopped: false,
   };
   runtime = state;
   let seq = 0;
@@ -223,21 +242,12 @@ function startEngine(): void {
   }
 
   function sendUplink(message: EngineUplinkClientMessage): void {
-    if (!state.uplink || state.uplink.readyState !== WebSocket.OPEN) return;
+    if (state.uplink.phase !== "open") return;
     try {
-      state.uplink.send(JSON.stringify(message));
+      state.uplink.socket.send(JSON.stringify(message));
     } catch (error) {
       console.warn("[livecode-engine] uplink send failed", error);
     }
-  }
-
-  /** Throwing variant for op replies: a reply that cannot serialize must
-   * surface as an error result, not a server-side timeout. */
-  function sendUplinkStrict(message: EngineUplinkClientMessage): void {
-    if (!state.uplink || state.uplink.readyState !== WebSocket.OPEN) {
-      throw new Error("uplink not open");
-    }
-    state.uplink.send(JSON.stringify(message));
   }
 
   const engine = createLivecodeEngine({
@@ -340,7 +350,7 @@ function startEngine(): void {
     } catch {
       return;
     }
-    if (state.stopped) return;
+    if (state.uplink.phase === "stopped") return;
     try {
       if (baked.data.length > 0) {
         await executeEngineOp(engine, {
@@ -366,23 +376,35 @@ function startEngine(): void {
 
   // The server uplink: reconnect forever; a served page without a server (or
   // a server restart) just keeps retrying in the background.
+  function scheduleUplinkReconnect(): void {
+    if (
+      state.uplink.phase === "stopped" || state.uplink.phase === "waiting"
+    ) return;
+    const timer = setTimeout(() => {
+      if (state.uplink.phase !== "waiting" || state.uplink.timer !== timer) {
+        return;
+      }
+      state.uplink = { phase: "idle" };
+      connectUplink();
+    }, UPLINK_RETRY_MS) as unknown as number;
+    state.uplink = { phase: "waiting", timer };
+  }
+
   function connectUplink(): void {
-    if (state.stopped) return;
+    if (state.uplink.phase === "stopped") return;
     const url = new URL("/engine/uplink", location.href);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     let socket: WebSocket;
     try {
       socket = new WebSocket(url.href);
     } catch {
-      setTimeout(connectUplink, UPLINK_RETRY_MS);
+      scheduleUplinkReconnect();
       return;
     }
+    state.uplink = { phase: "connecting", socket };
     socket.onopen = () => {
-      if (state.stopped) {
-        socket.close();
-        return;
-      }
-      state.uplink = socket;
+      if (uplinkSocket(state.uplink) !== socket) return;
+      state.uplink = { phase: "open", socket };
       console.log("[livecode-engine] uplink connected");
       sendUplink({
         type: "engineHello",
@@ -399,28 +421,45 @@ function startEngine(): void {
         return;
       }
       if (message?.type !== "engineRequest") return;
+      // The request belongs to this socket generation. A reconnect may replace
+      // state.uplink while the operation is awaiting; its result must never be
+      // delivered to that replacement connection.
+      const reply = (result: EngineUplinkClientMessage): void => {
+        if (
+          state.uplink.phase !== "open" ||
+          state.uplink.socket !== socket ||
+          socket.readyState !== WebSocket.OPEN
+        ) {
+          return;
+        }
+        socket.send(JSON.stringify(result));
+      };
       void (async () => {
         try {
           const body = await executeEngineOp(engine, message.op);
-          sendUplinkStrict({
+          reply({
             type: "engineResult",
             requestId: message.requestId,
             ok: true,
             body,
           });
         } catch (error) {
-          sendUplink({
-            type: "engineResult",
-            requestId: message.requestId,
-            ok: false,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          try {
+            reply({
+              type: "engineResult",
+              requestId: message.requestId,
+              ok: false,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          } catch (replyError) {
+            console.warn("[livecode-engine] uplink reply failed", replyError);
+          }
         }
       })();
     };
     const retry = () => {
-      if (state.uplink === socket) state.uplink = null;
-      if (!state.stopped) setTimeout(connectUplink, UPLINK_RETRY_MS);
+      if (uplinkSocket(state.uplink) !== socket) return;
+      scheduleUplinkReconnect();
     };
     socket.onclose = retry;
     socket.onerror = () => {
@@ -428,6 +467,12 @@ function startEngine(): void {
     };
   }
   connectUplink();
+
+  function uplinkSocket(lifecycle: UplinkLifecycle): WebSocket | null {
+    return lifecycle.phase === "connecting" || lifecycle.phase === "open"
+      ? lifecycle.socket
+      : null;
+  }
 
   // The page-level harness the slice E2E (and manual debugging) drives.
   (globalThis as Record<string, unknown>).__livecodeBrowserEngine = {
@@ -469,7 +514,7 @@ function startMidiInit(): void {
 
 /** The MIDI line lives outside `setStatus` (which owns/wipes the body). */
 async function renderMidiStatus(): Promise<void> {
-  if (!runtime || runtime.stopped) return;
+  if (!runtime || runtime.uplink.phase === "stopped") return;
   const outputs = listMidiDevices();
   let text: string;
   if (outputs.length > 0) {

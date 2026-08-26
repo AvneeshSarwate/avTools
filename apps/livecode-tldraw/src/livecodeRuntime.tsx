@@ -24,7 +24,6 @@ import type {
   LaunchModuleRequest,
   LaunchModuleResponse,
   PreparedBuild,
-  PreparedFailure,
   ProjectShadowCheckResponse,
   RunEntity,
   RuntimeModuleRunState,
@@ -33,12 +32,22 @@ import type {
   VisualizerManifestMessage,
 } from "./livecodeProtocol";
 import {
+  buildIdentity,
+  type BuildLifecycle,
+  buildMatchesIdentity,
+  type BuildStatus,
+  buildStatusOf,
+  identitiesMatch,
+  isCurrentAnalysis,
+  lifecycleCanProduce,
+} from "./buildLifecycle";
+import {
   acknowledgeRunLaunch,
   beginRunLaunch,
+  correlateRun,
   createRunCorrelation,
   rejectRunLaunch,
   type RunCorrelation,
-  shouldApplyRun,
 } from "./runCorrelation";
 import {
   maxSeq,
@@ -52,13 +61,7 @@ const BUILD_DEBOUNCE_MS = 100;
 const PROJECT_DIAGNOSTICS_POLL_MS = 2_500;
 
 export type ConnectionStatus = "closed" | "connecting" | "open" | "error";
-export type BuildStatus =
-  | "idle"
-  | "queued"
-  | "analyzing"
-  | "ready"
-  | "error"
-  | "not-connected";
+export type { BuildStatus } from "./buildLifecycle";
 export type RunStatus =
   | "idle"
   | "running"
@@ -92,18 +95,11 @@ export interface ModuleViewState {
   executionCount: number;
 }
 
-interface ModuleRecord extends ModuleViewState {
-  buildTimer: number | null;
-  analyzeSequence: number;
+type ModuleRecord = Omit<ModuleViewState, "buildStatus"> & {
+  build: BuildLifecycle;
+  nextAnalyzeRequestId: number;
   runCorrelation: RunCorrelation;
-  pendingAnalyze: {
-    sourceText: string;
-    serverBaseUrl: string;
-    promise: Promise<PreparedBuild | null>;
-  } | null;
-  latestBuild: PreparedBuild | null;
-  latestFailure: PreparedFailure | null;
-}
+};
 export interface LivecodeRuntimeApi {
   serverBaseUrl: string;
   setServerBaseUrl(next: string): void;
@@ -191,6 +187,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
   const syncOpenRef = useRef<() => void>(() => {});
   const syncCloseRef = useRef<() => void>(() => {});
   const syncErrorRef = useRef<(message: string) => void>(() => {});
+  const reconnectAfterUrlChangeRef = useRef(false);
   // Bumped by every open-sequence start and by disconnect, so a slow health
   // response cannot land on a session that has since been superseded.
   const openSequenceRef = useRef(0);
@@ -215,6 +212,8 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
 
   const markModulesUnknown = useCallback(() => {
     for (const record of modulesRef.current.values()) {
+      cancelQueuedBuild(record);
+      record.build = { phase: "disconnected" };
       record.runStatus = "unknown";
       record.activeIds = [];
       record.pianoRollLookups = {};
@@ -230,11 +229,15 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     disconnectRef.current();
     // The sync provider owns the URL and its socket, so it is what actually
     // re-points; this side only has to re-arm if it was armed before.
+    reconnectAfterUrlChangeRef.current = reconnectAfterChange;
     syncActions.setServerBaseUrl(normalized);
-    if (reconnectAfterChange) {
-      window.setTimeout(() => void connectRef.current(), 0);
-    }
   }, [syncActions]);
+
+  useEffect(() => {
+    if (!reconnectAfterUrlChangeRef.current) return;
+    reconnectAfterUrlChangeRef.current = false;
+    void connectRef.current();
+  }, [serverBaseUrl]);
 
   const reconnectDenoLsp = useCallback(() => {
     const oldConnection = lspConnectionRef.current;
@@ -333,7 +336,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       const active = activeByModule.get(record.moduleId);
       const run = state.moduleRuns[record.moduleId];
       const latestPrepared = state.latestPreparedByModule[record.moduleId];
-      rejectRunLaunch(record.runCorrelation);
+      record.runCorrelation = rejectRunLaunch();
       if (run) {
         record.runToken = run.runToken;
         record.executionCount = run.executionCount;
@@ -371,20 +374,21 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       record: ModuleRecord,
       sourceText: string,
     ): Promise<PreparedBuild | null> => {
+      const identity = {
+        sourceText,
+        serverBaseUrl: serverBaseUrlRef.current,
+      };
       if (connectionStatusRef.current !== "open") {
-        record.buildStatus = "not-connected";
+        record.build = { phase: "disconnected" };
         publishModule(record);
         return null;
       }
 
       const sourceVersion = record.sourceVersion + 1;
-      const analyzeSequence = record.analyzeSequence + 1;
-      const requestServerUrl = serverBaseUrlRef.current;
+      const requestId = record.nextAnalyzeRequestId + 1;
       record.sourceVersion = sourceVersion;
-      record.analyzeSequence = analyzeSequence;
-      record.buildStatus = "analyzing";
+      record.nextAnalyzeRequestId = requestId;
       record.latestError = null;
-      publishModule(record);
 
       const analyzeRequest = record.projectModulePath
         ? {
@@ -413,7 +417,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
         );
       })()
         .then((response): PreparedBuild | null => {
-          if (record.analyzeSequence !== analyzeSequence) return null;
+          if (!isCurrentAnalysis(record.build, requestId)) return null;
           if (record.projectModulePath) {
             void fetchProjectDiagnostics();
           }
@@ -422,13 +426,11 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
             const prepared: PreparedBuild = {
               ...response,
               sourceText,
-              serverBaseUrl: requestServerUrl,
+              serverBaseUrl: identity.serverBaseUrl,
             };
-            record.latestBuild = prepared;
-            record.latestFailure = null;
+            record.build = { phase: "ready", build: prepared };
             record.manifest = response.manifest;
             record.diagnostics = [];
-            record.buildStatus = "ready";
             record.history = [
               {
                 generatedRunId: response.generatedRunId,
@@ -442,46 +444,35 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
             return prepared;
           }
 
-          record.latestBuild = null;
-          record.latestFailure = {
-            ...response,
-            sourceText,
-            serverBaseUrl: requestServerUrl,
-          };
+          record.build = { phase: "failed", identity };
           record.manifest = null;
           record.diagnostics = response.diagnostics;
           record.activeIds = [];
           record.pianoRollLookups = {};
-          record.buildStatus = "error";
           publishModule(record);
           return null;
         })
         .catch((error: unknown) => {
-          if (record.analyzeSequence !== analyzeSequence) return null;
-          record.latestBuild = null;
-          record.latestFailure = null;
+          if (!isCurrentAnalysis(record.build, requestId)) return null;
+          record.build = { phase: "failed", identity };
           record.manifest = null;
           record.diagnostics = [];
           record.activeIds = [];
           record.pianoRollLookups = {};
-          record.buildStatus = "error";
           record.latestError = error instanceof Error
             ? error.message
             : String(error);
           publishModule(record);
           return null;
-        })
-        .finally(() => {
-          if (record.pendingAnalyze?.promise === promise) {
-            record.pendingAnalyze = null;
-          }
         });
 
-      record.pendingAnalyze = {
-        sourceText,
-        serverBaseUrl: requestServerUrl,
+      record.build = {
+        phase: "analyzing",
+        identity,
+        requestId,
         promise,
       };
+      publishModule(record);
 
       return promise;
     },
@@ -490,17 +481,29 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
 
   const scheduleAnalyze = useCallback(
     (record: ModuleRecord, delayMs = BUILD_DEBOUNCE_MS) => {
-      if (record.buildTimer !== null) {
-        window.clearTimeout(record.buildTimer);
+      cancelQueuedBuild(record);
+      if (connectionStatusRef.current !== "open") {
+        record.build = { phase: "disconnected" };
+        publishModule(record);
+        return;
       }
-      record.buildStatus = connectionStatusRef.current === "open"
-        ? "queued"
-        : "not-connected";
-      publishModule(record);
-      record.buildTimer = window.setTimeout(() => {
-        record.buildTimer = null;
-        void analyzeNow(record, record.sourceText);
+
+      const identity = buildIdentity(
+        record.sourceText,
+        serverBaseUrlRef.current,
+      );
+      if (delayMs <= 0) {
+        void analyzeNow(record, identity.sourceText);
+        return;
+      }
+
+      const timer = window.setTimeout(() => {
+        if (record.build.phase !== "queued") return;
+        if (record.build.timer !== timer) return;
+        void analyzeNow(record, record.build.identity.sourceText);
       }, delayMs);
+      record.build = { phase: "queued", identity, timer };
+      publishModule(record);
     },
     [analyzeNow, publishModule],
   );
@@ -512,38 +515,46 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       // must keep following the freshest build/pending pair rather than
       // treating that null as a failure. Null is terminal only when nothing
       // newer is in flight or already landed.
-      for (let attempt = 0; attempt < 10; attempt++) {
+      while (true) {
+        const identity = buildIdentity(
+          record.sourceText,
+          serverBaseUrlRef.current,
+        );
+        const lifecycle = record.build;
         if (
-          record.latestBuild &&
-          record.latestBuild.sourceText === record.sourceText &&
-          record.latestBuild.serverBaseUrl === serverBaseUrlRef.current
+          lifecycle.phase === "ready" &&
+          buildMatchesIdentity(lifecycle.build, identity)
         ) {
-          return record.latestBuild;
+          return lifecycle.build;
         }
 
         let result: PreparedBuild | null;
         if (
-          record.pendingAnalyze &&
-          record.pendingAnalyze.sourceText === record.sourceText &&
-          record.pendingAnalyze.serverBaseUrl === serverBaseUrlRef.current
+          lifecycle.phase === "analyzing" &&
+          identitiesMatch(lifecycle.identity, identity)
         ) {
-          result = await record.pendingAnalyze.promise;
+          result = await lifecycle.promise;
         } else {
-          if (record.buildTimer !== null) {
-            window.clearTimeout(record.buildTimer);
-            record.buildTimer = null;
-          }
-          result = await analyzeNow(record, record.sourceText);
+          cancelQueuedBuild(record);
+          result = await analyzeNow(record, identity.sourceText);
         }
-        if (result) return result;
+        if (
+          result &&
+          buildMatchesIdentity(
+            result,
+            buildIdentity(record.sourceText, serverBaseUrlRef.current),
+          )
+        ) {
+          return result;
+        }
 
-        const superseded = record.pendingAnalyze !== null ||
-          (record.latestBuild !== null &&
-            record.latestBuild.sourceText === record.sourceText &&
-            record.latestBuild.serverBaseUrl === serverBaseUrlRef.current);
-        if (!superseded) return null;
+        const nextIdentity = buildIdentity(
+          record.sourceText,
+          serverBaseUrlRef.current,
+        );
+        if (lifecycleCanProduce(record.build, nextIdentity)) continue;
+        return null;
       }
-      return null;
     },
     [analyzeNow],
   );
@@ -719,9 +730,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     (moduleId: string) => {
       const record = modulesRef.current.get(moduleId);
       if (!record) return;
-      if (record.buildTimer !== null) {
-        window.clearTimeout(record.buildTimer);
-      }
+      cancelQueuedBuild(record);
       modulesRef.current.delete(moduleId);
       setModules((current) => {
         const next = { ...current };
@@ -749,8 +758,6 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       if (!record) return;
       if (record.sourceText === sourceText) return;
       record.sourceText = sourceText;
-      record.latestBuild = null;
-      record.latestFailure = null;
       record.manifest = null;
       record.diagnostics = [];
       record.activeIds = [];
@@ -797,7 +804,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
           }
         }
 
-        beginRunLaunch(record.runCorrelation);
+        record.runCorrelation = beginRunLaunch();
         const launch = await postJson<LaunchModuleResponse>(
           "/runtime/launch",
           {
@@ -811,7 +818,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
             ...(options.replaceRunning ? { replaceRunning: true } : {}),
           } satisfies LaunchModuleRequest,
         );
-        acknowledgeRunLaunch(record.runCorrelation, launch.runToken);
+        record.runCorrelation = acknowledgeRunLaunch(launch.runToken);
         record.runToken = launch.runToken;
         record.runStatus = "running";
         record.latestError = null;
@@ -819,7 +826,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
         publishModule(record);
       } catch (error) {
         record.runStatus = "error";
-        rejectRunLaunch(record.runCorrelation);
+        record.runCorrelation = rejectRunLaunch();
         record.latestError = error instanceof Error
           ? error.message
           : String(error);
@@ -917,6 +924,11 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
   );
 }
 
+function cancelQueuedBuild(record: ModuleRecord): void {
+  if (record.build.phase !== "queued") return;
+  window.clearTimeout(record.build.timer);
+}
+
 function makeModuleRecord(
   moduleId: string,
   sourceText: string,
@@ -927,7 +939,7 @@ function makeModuleRecord(
     projectModulePath,
     sourceText,
     sourceVersion: 0,
-    buildStatus: "idle",
+    build: { phase: "idle" },
     runStatus: "idle",
     diagnostics: [],
     manifest: null,
@@ -938,18 +950,16 @@ function makeModuleRecord(
     latestError: null,
     runToken: null,
     executionCount: 0,
-    buildTimer: null,
     runCorrelation: createRunCorrelation(),
-    analyzeSequence: 0,
-    pendingAnalyze: null,
-    latestBuild: null,
-    latestFailure: null,
+    nextAnalyzeRequestId: 0,
   };
 }
 
 function applyRunEntity(record: ModuleRecord, run: RunEntity | undefined) {
   if (!run) return;
-  if (!shouldApplyRun(record.runCorrelation, run)) return;
+  const decision = correlateRun(record.runCorrelation, run);
+  record.runCorrelation = decision.next;
+  if (!decision.apply) return;
 
   record.executionCount = run.executionCount;
   if (run.state === "launching" || run.state === "running") {
@@ -979,7 +989,7 @@ function toViewState(record: ModuleRecord): ModuleViewState {
     projectModulePath: record.projectModulePath,
     sourceText: record.sourceText,
     sourceVersion: record.sourceVersion,
-    buildStatus: record.buildStatus,
+    buildStatus: buildStatusOf(record.build),
     runStatus: record.runStatus,
     diagnostics: record.diagnostics,
     manifest: record.manifest,
