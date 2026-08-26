@@ -513,18 +513,6 @@ function renderProjectCard(project: ProjectIndexEntry): HTMLElement {
     void openProject(project, "remote");
   });
   actions.appendChild(remoteButton);
-
-  if (currentMode) {
-    actions.appendChild(
-      el(
-        "span",
-        "hint",
-        currentMode === "local"
-          ? "server is in engine-on-server mode"
-          : "server is in engine-in-browser mode",
-      ),
-    );
-  }
   item.appendChild(actions);
   return item;
 }
@@ -596,24 +584,6 @@ style.textContent = `
   .hint.roots { margin-top: 18px; }
 `;
 document.head.appendChild(style);
-
-// Returning to a hidden tab (whose poll loop went quiet — see pollHealthLoop)
-// refreshes immediately instead of waiting out a poll interval.
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden || state.busyMessage) return;
-  if (!state.serverBaseUrl) {
-    void discoverServer();
-    return;
-  }
-  void fetchHealth(state.serverBaseUrl, PROBE_TIMEOUT_MS).then((health) => {
-    if (health) {
-      state.health = health;
-      render();
-    } else {
-      void discoverServer();
-    }
-  });
-});
 
 render();
 void discoverServer();
