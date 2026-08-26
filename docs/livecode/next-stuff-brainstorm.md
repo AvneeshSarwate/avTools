@@ -5,6 +5,8 @@ for engine running in the browser with graphics libs, are there any tests for th
 - probably want at least full-screen popout wrapper for canvases, think of other things
 - figure out a way for WYSIWYG editting on engine tab (eg, drawing) to send data back to UI? (is it any harder than just writing it to stores?)
 
+figure out how to do typed arbitrary stores for inter-module state so you don't need to directly import from state modules (or find some way to visualize dependency)
+
 figure out a way to make it easier to import 3rd party libraries into project modules
 
 is there a need to add a system for events/handlers or pubsub between modules, or does it naturally fall out without need for extra structure (probably doesn't need a new thing?) 
