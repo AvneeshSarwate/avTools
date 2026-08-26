@@ -52,6 +52,17 @@ Cloudflare Access application:
   uplink, LSP) ride the Access cookie. The agent never crosses Access — it
   talks to the livecode server over localhost inside the container.
 
+Addendum 2026-08-26: the projects index page now shipped at
+`/projects.html` in the served UI is designed as this deployment's landing
+page: it adopts its own origin as the server (skipping plain-`http` probes on
+an `https` page), lists projects, opens the `/engine/` tab itself, defaults
+same-origin engine-in-browser opens to `sync=broadcast` (keeping the sync
+loop off the WAN, per this plan), and pauses its `/health` polling while the
+tab is hidden so a forgotten tab does not defeat `sleepAfter`. Its
+`POST /server/engine-mode` restart flow works here too — main.ts restarts
+in-process, so the entrypoint contract below is unaffected — but flipping to
+local mode runs the engine in the container, against this plan's intent.
+
 ## The fresh-browser ritual
 
 1. **Open the dev URL.** Access intercepts → sign in with Google — the one

@@ -55,27 +55,39 @@ function candidateServerBaseUrls(): string[] {
     "serverBaseUrl",
   );
   if (fromQuery) candidates.push(fromQuery);
+  // Served by the Deno server itself (--ui-dist, including the remote-dev
+  // deployment behind Cloudflare Access): same origin IS the server, and it
+  // outranks any remembered URL. A vite origin simply fails the probe.
+  candidates.push(window.location.origin);
   try {
     const stored = localStorage.getItem(LAST_SERVER_STORAGE_KEY);
     if (stored) candidates.push(stored);
   } catch {
     // Storage can be unavailable; discovery just tries the defaults.
   }
-  // Served by the Deno server itself (--ui-dist): same origin is the server.
-  candidates.push(window.location.origin);
-  // The common case: vite on one port, the server on 7777 of the same host —
-  // which is also what makes a LAN-opened page find the right machine.
+  // The common local case: vite on one port, the server on 7777 of the same
+  // host — which is also what makes a LAN-opened page find the right machine.
   candidates.push(`http://${window.location.hostname}:${DEFAULT_SERVER_PORT}`);
   candidates.push(`http://localhost:${DEFAULT_SERVER_PORT}`);
   candidates.push(`http://127.0.0.1:${DEFAULT_SERVER_PORT}`);
   const seen = new Set<string>();
+  const httpsPage = window.location.protocol === "https:";
   return candidates
     .map(normalizeServerBaseUrl)
     .filter((url) => {
       if (!url || seen.has(url)) return false;
+      // A https page cannot fetch http URLs (mixed content); skip them
+      // instead of burning a probe timeout each.
+      if (httpsPage && url.startsWith("http:")) return false;
       seen.add(url);
       return true;
     });
+}
+
+/** True when the page itself is served by the livecode server's origin. */
+function serverIsSameOrigin(): boolean {
+  return state.serverBaseUrl !== null &&
+    state.serverBaseUrl === normalizeServerBaseUrl(window.location.origin);
 }
 
 async function fetchHealth(
@@ -158,6 +170,10 @@ async function pollHealthLoop(): Promise<void> {
   // vanished server sends the page back to discovery.
   while (true) {
     await new Promise((resolve) => setTimeout(resolve, HEALTH_POLL_MS));
+    // A hidden tab must go quiet: on the remote-dev deployment every request
+    // through the Worker counts as activity, so a forgotten background tab
+    // polling /health would keep the container awake (and billed) forever.
+    if (document.hidden) continue;
     if (state.busyMessage) continue; // openProject owns the server right now
     if (state.serverBaseUrl) {
       const health = await fetchHealth(state.serverBaseUrl, PROBE_TIMEOUT_MS);
@@ -173,12 +189,24 @@ async function pollHealthLoop(): Promise<void> {
   }
 }
 
-function uiUrl(project: ProjectIndexEntry): string {
+/**
+ * Same-origin remote opens default to `sync=broadcast`: the UI reads the
+ * engine tab's BroadcastChannel instead of the server-relayed `/sync` socket,
+ * which on a remote-dev deployment keeps the ~33 ms sync fan-out off the WAN
+ * entirely (writes, analysis, and LSP stay HTTP against the server). Off by
+ * choice when the engine tab lives on another machine.
+ */
+let broadcastSyncPreferred = true;
+
+function uiUrl(project: ProjectIndexEntry, mode: "local" | "remote"): string {
   // The tldraw app is index.html next to this page, in dev and in a built
   // dist alike, so "the containing directory" is its URL.
   const url = new URL("./", window.location.href);
   url.searchParams.set("serverBaseUrl", state.serverBaseUrl ?? "");
   url.searchParams.set("projectPath", project.root);
+  if (mode === "remote" && serverIsSameOrigin() && broadcastSyncPreferred) {
+    url.searchParams.set("sync", "broadcast");
+  }
   return url.toString();
 }
 
@@ -245,7 +273,7 @@ async function openProject(
     }
     state.busyMessage = `Opening ${project.name}…`;
     render();
-    window.location.href = uiUrl(project);
+    window.location.href = uiUrl(project, mode);
   } catch (error) {
     engineWindow?.close();
     state.busyMessage = null;
@@ -353,6 +381,25 @@ function renderServerStatus(): HTMLElement {
     });
   });
   container.appendChild(form);
+
+  if (serverIsSameOrigin() && state.health) {
+    const toggle = el("label", "sync-toggle");
+    const checkbox = el("input") as HTMLInputElement;
+    checkbox.type = "checkbox";
+    checkbox.checked = broadcastSyncPreferred;
+    checkbox.addEventListener("change", () => {
+      broadcastSyncPreferred = checkbox.checked;
+    });
+    toggle.appendChild(checkbox);
+    toggle.appendChild(
+      document.createTextNode(
+        " engine-in-browser opens sync via the engine tab (BroadcastChannel," +
+          " keeps sync off the network); uncheck if the engine tab runs on" +
+          " another machine",
+      ),
+    );
+    container.appendChild(toggle);
+  }
   return container;
 }
 
@@ -541,10 +588,32 @@ style.textContent = `
     font-size: 12px; color: #8d8d99; margin: 6px 0 10px; word-break: break-all;
   }
   .project-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .sync-toggle {
+    flex-basis: 100%; color: #8d8d99; font-size: 12px; margin-top: 4px;
+    display: flex; align-items: baseline; gap: 6px; max-width: 640px;
+  }
   .hint { color: #8d8d99; font-size: 12px; }
   .hint.roots { margin-top: 18px; }
 `;
 document.head.appendChild(style);
+
+// Returning to a hidden tab (whose poll loop went quiet — see pollHealthLoop)
+// refreshes immediately instead of waiting out a poll interval.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden || state.busyMessage) return;
+  if (!state.serverBaseUrl) {
+    void discoverServer();
+    return;
+  }
+  void fetchHealth(state.serverBaseUrl, PROBE_TIMEOUT_MS).then((health) => {
+    if (health) {
+      state.health = health;
+      render();
+    } else {
+      void discoverServer();
+    }
+  });
+});
 
 render();
 void discoverServer();
