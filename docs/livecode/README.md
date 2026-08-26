@@ -8,7 +8,14 @@ These docs are a map of boundaries and non-obvious constraints. They are not an
 API catalog. Source and tests remain the authority for details visible directly
 in code.
 
-## Fresh-session bootstrap
+## Choose the entrypoint
+
+- To create or modify a livecode piece with a coding agent, start with
+  [`project-authoring-guide.md`](project-authoring-guide.md), then read that
+  project's README, manifest, and canonical `*.orig.ts` sources.
+- To change the livecode platform itself, use the architecture bootstrap below.
+
+## Platform-development bootstrap
 
 Read these in order:
 
@@ -35,6 +42,7 @@ runtime validation.
 
 | Location | Role |
 | --- | --- |
+| `docs/livecode/project-authoring-guide.md` | Operational entrypoint for agents creating and running pieces. |
 | `docs/livecode/current/` | Checked-in architecture, traps, and unresolved risks. |
 | `docs/livecode/principles.md` | Design principles; some describe a destination rather than current code. |
 | `docs/livecode/user-level-project-goals.md` | Intended workflows, the coding agent's role, and product non-goals. |

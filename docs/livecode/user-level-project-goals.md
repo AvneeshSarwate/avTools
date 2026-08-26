@@ -111,8 +111,8 @@ built-in widget.
 The whole point of the project format is that a piece can be any combination of
 data and code — both execution code and UI code for data formats. The piano
 roll is just one example of a data format plus its UI, not a privileged
-built-in. (Persisting store-entity data in the project format alongside code is
-intended and is currently missing implementation, not a design question.)
+built-in. Registered durable store entities can be explicitly captured in the
+project format alongside code; ephemeral observation state is excluded.
 
 Everything made with this tool should still "just run" as normal software —
 plain TypeScript files on disk that execute headlessly without the editor. The
@@ -200,6 +200,7 @@ Deliberately deferred decisions (do not fill these in without owner input):
 
 - Save granularity: normal project save/save-as vs. more granular forking
   patterns.
-- Store-entity persistence details (when data writes, take/snapshot gestures).
+- Whether entity persistence needs take/snapshot gestures beyond the current
+  explicit whole-project save.
 - The convention for where piece-local component forks live.
 - Everything about agent-with-ears (rendered-audio feedback loops for agents).
