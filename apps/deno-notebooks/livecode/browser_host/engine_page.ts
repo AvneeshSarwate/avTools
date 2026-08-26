@@ -19,8 +19,11 @@
 //  - one engine per origin: a `navigator.locks` exclusive lock; a second tab
 //    renders "already running" with a takeover (steal) button, and a stolen
 //    engine panics and shuts down;
-//  - MIDI panic parity: `panicMidi` from the shared midi-helpers singleton is
-//    wired into the engine, same as the Deno host;
+//  - MIDI: `initMidi()` runs at engine start (silent once the origin's
+//    permission is granted) and retries from the first user gesture (the
+//    first-ever visit's permission prompt), with a visible status line;
+//    `panicMidi` from the same midi-helpers singleton is wired into the
+//    engine, same as the Deno host;
 //  - throttling defenses: a silent AudioContext keepalive (exempts the tab
 //    from intensive throttling) plus a timer watchdog that logs — locally and
 //    over the uplink — whenever the main-thread clock stretches, so hidden-tab
@@ -31,7 +34,12 @@ import {
   executeEngineOp,
   type LivecodeEngine,
 } from "@avtools/livecode-engine";
-import { panicMidi } from "midi-helpers";
+import {
+  hasMidiAccess,
+  initMidi,
+  listMidiDevices,
+  panicMidi,
+} from "midi-helpers";
 import type {
   BakedProjectFile,
   EngineUplinkClientMessage,
@@ -419,7 +427,77 @@ function startEngine(): void {
   };
 
   setStatus("livecode browser engine running");
+  startMidiInit();
   console.log("[livecode-engine] browser engine host ready");
+}
+
+/**
+ * Web MIDI needs a one-time per-origin permission grant; after that,
+ * `initMidi()` resolves silently at page load, even in a background tab. So:
+ * try immediately (the steady state), and retry from the same gesture events
+ * the audio keepalive uses (the first-ever visit, where the permission prompt
+ * wants a focused tab and a user gesture; a failed init clears its latch so
+ * the retry re-prompts). Late init is safe — `playPianoRoll` resolves its
+ * output on every call, so a looping player picks the device up next pass.
+ */
+function startMidiInit(): void {
+  const attempt = () =>
+    void initMidi()
+      .then(renderMidiStatus)
+      .catch(() => renderMidiStatus());
+  const onGesture = () => {
+    if (listMidiDevices().length === 0) attempt();
+  };
+  globalThis.addEventListener("pointerdown", onGesture);
+  globalThis.addEventListener("keydown", onGesture);
+  attempt();
+}
+
+/** The MIDI line lives outside `setStatus` (which owns/wipes the body). */
+async function renderMidiStatus(): Promise<void> {
+  if (!runtime || runtime.stopped) return;
+  const outputs = listMidiDevices();
+  let text: string;
+  if (outputs.length > 0) {
+    text = `MIDI: ${outputs.length} output${outputs.length === 1 ? "" : "s"} (${
+      outputs.map((port) => port.name).join(", ")
+    })`;
+  } else if (hasMidiAccess()) {
+    text = "MIDI: no outputs found on this machine";
+  } else {
+    switch (await queryMidiPermission()) {
+      case "denied":
+        text = "MIDI: permission denied — re-enable it in site settings";
+        break;
+      case "granted":
+        text = "MIDI: access failed — click or press a key to retry";
+        break;
+      default:
+        text = "MIDI: not enabled — click or press a key to request access";
+    }
+  }
+  const body = document.body;
+  if (!body) return;
+  let line = body.querySelector<HTMLDivElement>(".livecode-midi-status");
+  if (!line) {
+    line = document.createElement("div");
+    line.className = "livecode-midi-status";
+    body.appendChild(line);
+  }
+  line.textContent = text;
+}
+
+async function queryMidiPermission(): Promise<string | null> {
+  try {
+    // "midi" is a valid permission name in Chrome (the supported browser) but
+    // not in TypeScript's PermissionDescriptor union.
+    const status = await navigator.permissions.query(
+      { name: "midi" } as unknown as PermissionDescriptor,
+    );
+    return status.state;
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -177,13 +177,20 @@ async function resolveMidiOutput(
       outputs[0];
 
   if (!defaultOutput) {
-    if ((options.log ?? true) && !warnedNoMidiOutput) {
+    // Deliberately not gated by `options.log`: that flag silences per-note
+    // logging, but "your notes are going nowhere" must always say so once.
+    if (!warnedNoMidiOutput) {
       warnedNoMidiOutput = true;
-      console.warn("[piano-roll]", "no MIDI output available");
+      console.warn(
+        "[piano-roll]",
+        "no MIDI output available; notes will be silent",
+      );
     }
     return undefined;
   }
 
+  // Re-arm the warning so a later outage warns again (once per outage).
+  warnedNoMidiOutput = false;
   return getMidiDevice(defaultOutput.name);
 }
 
