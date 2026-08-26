@@ -66,6 +66,11 @@ searching symbols or route strings, it probably does not belong here. Move
 resolved investigations and implementation narratives to `history/`; keep only
 the invariant they established.
 
+For an extension pattern, prefer naming one concrete feature as its reference
+instance ("to add X, follow how Y does it") over cataloging every instance:
+the exemplar stays correct as long as the code does, while a catalog goes
+stale with each addition.
+
 Boundary ownership:
 
 - topology and state ownership: `current/system-architecture.md`;
