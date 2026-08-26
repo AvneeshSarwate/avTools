@@ -70,6 +70,12 @@ export interface RemoteExecutionPlaneOptions {
    * watched world is gone, and clients must not keep rendering a dead one.
    */
   onEngineResets: (resets: Record<string, SyncEntity[]>) => void;
+  /**
+   * Attach-only hook (never fired on detach), with the hello resets: what the
+   * arriving engine already holds. The server uses it to replay the current
+   * project's saved entity data into a fresh engine world.
+   */
+  onEngineAttached?: (resets: Record<string, SyncEntity[]>) => void;
   requestTimeoutMs?: number;
 }
 
@@ -143,6 +149,7 @@ export function createRemoteExecutionPlane(
         engineKind: message.engineKind,
       });
       options.onEngineResets(message.resets ?? {});
+      options.onEngineAttached?.(message.resets ?? {});
       return;
     }
     if (message.type === "engineLog") {

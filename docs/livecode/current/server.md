@@ -146,11 +146,18 @@ In remote mode `/engine/` lazily builds/serves the engine host and helper
 bundles; generated and project modules are served under stable engine-asset
 URLs with type stripping. A new uplink replaces the old one. Detach broadcasts
 empty resets because the watched engine world has disappeared; attach hello
-replaces it with full resets.
+replaces it with full resets. On attach the server also replays the current
+project's saved entity data into the engine, but only for entities absent
+from the hello resets — project open and engine attach can happen in either
+order, while an engine that outlived a server restart keeps its live state.
 
 The browser host separately enforces one engine per origin with Web Locks and
-explicit takeover, provides a silent-audio throttling mitigation, and logs
-stretched ticks. These are operational defenses, not timing guarantees.
+explicit takeover, provides a silent-audio throttling mitigation, initializes
+Web MIDI (at start plus gesture retry, with a status line), and logs stretched
+ticks. These are operational defenses, not timing guarantees. Its import map
+also serves `three` and `p5` alongside the helper aliases, and
+`#livecode-stage` in the engine page is user-module DOM: graphics modules
+render there and page chrome never touches it.
 
 Engine close clears its broadcast timer, cancels pending and active runs,
 panics MIDI, unregisters the root clock, and stops its parent context. Server

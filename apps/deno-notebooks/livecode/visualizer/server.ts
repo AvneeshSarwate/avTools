@@ -330,6 +330,7 @@ export async function createLivecodeVisualizerServer(
       log,
       onSyncChanges: (changes) => broadcastSyncChangeList(changes),
       onEngineResets: (resets) => broadcastSyncResets(resets),
+      onEngineAttached: (resets) => void replayProjectDataToNewEngine(resets),
     })
     : null;
   // MIDI is an execution-plane capability: only a local (in-process) engine
@@ -1505,9 +1506,35 @@ export async function createLivecodeVisualizerServer(
    */
   async function loadProjectEntityData(state: ProjectState): Promise<void> {
     state.savedEntityJson.clear();
-    const entries = state.manifest.data;
-    if (!Array.isArray(entries)) return;
+    const loadable = await readProjectDataEntries(state);
+    if (loadable.length === 0) return;
 
+    let results: EngineEntityLoadResult[];
+    try {
+      results = await plane.execute({
+        kind: "loadEntities",
+        entries: loadable,
+      }) as EngineEntityLoadResult[];
+    } catch (error) {
+      // Remote mode with no engine attached: the open still succeeds, and
+      // replayProjectDataToNewEngine delivers these entries when one arrives.
+      await log({
+        type: "projectDataLoadSkipped",
+        message: error instanceof Error ? error.message : String(error),
+        entryCount: loadable.length,
+      });
+      return;
+    }
+    await applyEntityLoadResults(state, results);
+  }
+
+  /** Read the manifest's data entries from disk; an unreadable entry is
+   * logged and skipped, never fatal. */
+  async function readProjectDataEntries(
+    state: ProjectState,
+  ): Promise<EngineEntityLoadEntry[]> {
+    const entries = state.manifest.data;
+    if (!Array.isArray(entries)) return [];
     const loadable: EngineEntityLoadEntry[] = [];
     for (const rawEntry of entries as Array<Partial<ProjectDataEntry> | null>) {
       try {
@@ -1535,24 +1562,13 @@ export async function createLivecodeVisualizerServer(
         });
       }
     }
-    if (loadable.length === 0) return;
+    return loadable;
+  }
 
-    let results: EngineEntityLoadResult[];
-    try {
-      results = await plane.execute({
-        kind: "loadEntities",
-        entries: loadable,
-      }) as EngineEntityLoadResult[];
-    } catch (error) {
-      // Remote mode with no engine attached: the open still succeeds; the
-      // entities load when an engine is present at the next open.
-      await log({
-        type: "projectDataLoadSkipped",
-        message: error instanceof Error ? error.message : String(error),
-        entryCount: loadable.length,
-      });
-      return;
-    }
+  async function applyEntityLoadResults(
+    state: ProjectState,
+    results: EngineEntityLoadResult[],
+  ): Promise<void> {
     for (const result of results) {
       if (result.ok) {
         if (result.latestJson !== null && result.latestJson !== undefined) {
@@ -1569,6 +1585,44 @@ export async function createLivecodeVisualizerServer(
           message: result.error,
         });
       }
+    }
+  }
+
+  /**
+   * Remote mode: durable entity data loads into the engine at project open,
+   * so an engine that attaches later (first attach after open, a reopened or
+   * replacing tab) would start without the project's saved entities. On every
+   * hello, replay the entries the arriving engine does not already hold. An
+   * entity present in the hello resets is skipped — an engine that outlived a
+   * server restart keeps its live state, because engine memory is the truth.
+   */
+  async function replayProjectDataToNewEngine(
+    resets: Record<string, SyncEntity[]>,
+  ): Promise<void> {
+    const state = currentProject;
+    if (!state) return;
+    try {
+      const entries = await readProjectDataEntries(state);
+      const missing = entries.filter((entry) =>
+        !(resets[entry.type] ?? []).some((entity) =>
+          (entity as { name?: string }).name === entry.name
+        )
+      );
+      if (missing.length === 0) return;
+      const results = await plane.execute({
+        kind: "loadEntities",
+        entries: missing,
+      }) as EngineEntityLoadResult[];
+      await applyEntityLoadResults(state, results);
+      await log({
+        type: "projectDataReplayedToEngine",
+        entryCount: missing.length,
+      });
+    } catch (error) {
+      await log({
+        type: "projectDataLoadSkipped",
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
