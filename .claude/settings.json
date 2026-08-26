@@ -1,4 +1,15 @@
 {
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
+  "env": {
+    "GIT_AUTHOR_NAME": "Avneesh Sarwate",
+    "GIT_AUTHOR_EMAIL": "avneeshsarwate@gmail.com",
+    "GIT_COMMITTER_NAME": "Avneesh Sarwate",
+    "GIT_COMMITTER_EMAIL": "avneeshsarwate@gmail.com"
+  },
   "hooks": {
     "SessionStart": [
       {
