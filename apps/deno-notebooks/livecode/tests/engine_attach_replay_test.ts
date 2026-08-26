@@ -6,9 +6,11 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { join } from "jsr:@std/path@1";
 import { createLivecodeVisualizerServer } from "../visualizer/server.ts";
-import { postJson, waitFor } from "./test_helpers.ts";
+import { fetchJson, postJson, waitFor } from "./test_helpers.ts";
 import type {
   EngineUplinkServerMessage,
+  HealthResponse,
+  ProjectCurrentResponse,
 } from "../visualizer/protocol.ts";
 
 const TIMELINE_DATA = {
@@ -62,8 +64,16 @@ async function writeReplayProject(): Promise<string> {
 class FakeEngine {
   readonly socket: WebSocket;
   readonly loadOps: Array<{ type: string; name: string }[]> = [];
+  private readonly pendingLoads: Array<{
+    requestId: string;
+    entries: Array<{ type: string; name: string }>;
+  }> = [];
 
-  constructor(baseUrl: string, helloResets: Record<string, unknown[]>) {
+  constructor(
+    baseUrl: string,
+    helloResets: Record<string, unknown[]>,
+    private readonly autoRespond = true,
+  ) {
     this.socket = new WebSocket(
       `${baseUrl.replace("http", "ws")}/engine/uplink`,
     );
@@ -87,12 +97,10 @@ class FakeEngine {
       if (op.kind === "loadEntities") {
         const entries = op.entries ?? [];
         this.loadOps.push(entries.map((e) => ({ type: e.type, name: e.name })));
-        body = entries.map((e) => ({
-          type: e.type,
-          name: e.name,
-          ok: true,
-          latestJson: null,
-        }));
+        const pending = { requestId: message.requestId, entries };
+        if (this.autoRespond) this.respondToLoad(pending);
+        else this.pendingLoads.push(pending);
+        return;
       }
       this.socket.send(JSON.stringify({
         type: "engineResult",
@@ -103,10 +111,48 @@ class FakeEngine {
     };
   }
 
-  async close(): Promise<void> {
-    this.socket.close();
-    await new Promise((resolve) => setTimeout(resolve, 50));
+  respondNextLoad(): void {
+    const pending = this.pendingLoads.shift();
+    if (!pending) throw new Error("No pending loadEntities request");
+    this.respondToLoad(pending);
   }
+
+  private respondToLoad(pending: {
+    requestId: string;
+    entries: Array<{ type: string; name: string }>;
+  }): void {
+    this.socket.send(JSON.stringify({
+      type: "engineResult",
+      requestId: pending.requestId,
+      ok: true,
+      body: pending.entries.map((entry) => ({
+        type: entry.type,
+        name: entry.name,
+        ok: true,
+        latestJson: null,
+      })),
+    }));
+  }
+
+  async close(): Promise<void> {
+    if (this.socket.readyState === WebSocket.CLOSED) return;
+    const closed = new Promise<void>((resolve) => {
+      this.socket.addEventListener("close", () => resolve(), { once: true });
+    });
+    this.socket.close();
+    await closed;
+  }
+}
+
+async function waitForEngineReady(baseUrl: string): Promise<void> {
+  await waitFor(
+    async () => {
+      const health = await fetchJson<HealthResponse>(`${baseUrl}/health`);
+      return health.engine.attached;
+    },
+    "remote engine ready",
+    3_000,
+  );
 }
 
 Deno.test("engine attaching after project open receives saved entity data", async () => {
@@ -135,6 +181,7 @@ Deno.test("engine attaching after project open receives saved entity data", asyn
     assertEquals(fresh.loadOps[0], [
       { type: "animationTimeline", name: "replay/timeline" },
     ]);
+    await waitForEngineReady(server.baseUrl);
     await fresh.close();
 
     // An engine that already holds the entity (hello resets carry it) must
@@ -148,8 +195,8 @@ Deno.test("engine attaching after project open receives saved entity data", asyn
         updatedBy: "live",
       }],
     });
-    // Give a wrongly-sent replay time to arrive before asserting silence.
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    // Ready is the barrier after the attach initializer has inspected resets.
+    await waitForEngineReady(server.baseUrl);
     assertEquals(surviving.loadOps.length, 0);
     await surviving.close();
   } finally {
@@ -204,6 +251,63 @@ Deno.test("replay skips only the entities the engine already holds", async () =>
       { type: "animationTimeline", name: "replay/timeline" },
     ]);
     assert(engine.loadOps.length === 1);
+    await waitForEngineReady(server.baseUrl);
+    await engine.close();
+  } finally {
+    await server.close();
+  }
+});
+
+Deno.test("project open waits behind in-progress engine hydration", async () => {
+  const sessionRoot = await Deno.makeTempDir({ prefix: "tcv-replay-" });
+  const firstProject = await writeReplayProject();
+  const secondProject = await writeReplayProject();
+  const server = await createLivecodeVisualizerServer({
+    port: 0,
+    sessionRoot,
+    engineMode: "remote",
+  });
+  try {
+    await postJson(`${server.baseUrl}/project/open`, {
+      projectPath: firstProject,
+    });
+    const engine = new FakeEngine(server.baseUrl, {}, false);
+    await waitFor(
+      () => engine.loadOps.length === 1,
+      "first project attach hydration",
+      3_000,
+    );
+    const initializingHealth = await fetchJson<HealthResponse>(
+      `${server.baseUrl}/health`,
+    );
+    assertEquals(initializingHealth.engine.attached, false);
+
+    const secondOpen = postJson<ProjectCurrentResponse>(
+      `${server.baseUrl}/project/open`,
+      { projectPath: secondProject },
+    );
+    await waitFor(
+      async () => {
+        const current = await fetchJson<ProjectCurrentResponse>(
+          `${server.baseUrl}/project/current`,
+        );
+        return current.project?.root === secondProject;
+      },
+      "second project selection",
+      3_000,
+    );
+    assertEquals(engine.loadOps.length, 1);
+
+    engine.respondNextLoad();
+    await waitFor(
+      () => engine.loadOps.length === 2,
+      "second project hydration after engine readiness",
+      3_000,
+    );
+    engine.respondNextLoad();
+    const opened = await secondOpen;
+    assertEquals(opened.project?.root, secondProject);
+    await waitForEngineReady(server.baseUrl);
     await engine.close();
   } finally {
     await server.close();

@@ -1,7 +1,7 @@
 # Current System Architecture
 
 Status: checked against the local, remote-browser, and baked paths on
-2026-08-24.
+2026-08-26.
 
 ## Three planes, three topologies
 
@@ -33,6 +33,10 @@ not a live reconfiguration: `POST /server/engine-mode` makes `main.ts` close
 and re-create the server in the other mode on the same port, losing all engine
 state. The projects index page (`projects.html` in the tldraw app) is the
 human front door for picking a project and a topology together.
+
+A remote engine is live only after socket upgrade, hello, and project-data
+initialization. Operations that arrive between hello and readiness wait for
+that initialization; a replacing socket invalidates the prior transition.
 
 ## State ownership
 

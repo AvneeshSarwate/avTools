@@ -133,6 +133,7 @@ interface ProjectModuleHashes {
 }
 
 interface ProjectState {
+  generation: number;
   root: string;
   manifestPath: string;
   manifest: LivecodeProjectManifest;
@@ -197,11 +198,12 @@ export interface LivecodeVisualizerServerOptions {
   projectsRoots?: string[];
   /**
    * When set, `POST /server/engine-mode` with a different mode answers ok and
-   * then invokes this callback; the embedder (see `main.ts`) is expected to
-   * close this server and create a new one in the requested mode on the same
-   * host/port. When absent the route answers 501: engine mode is fixed at
-   * creation and everything from the plane to generated-code import URLs is
-   * derived from it, so it cannot change inside a live server.
+   * invokes this callback as it returns the response; the embedder (see
+   * `main.ts`) is expected to close this server gracefully and create a new one
+   * in the requested mode on the same host/port. When absent the route answers
+   * 501: engine mode is fixed at creation and everything from the plane to
+   * generated-code import URLs is derived from it, so it cannot change inside
+   * a live server.
    */
   onEngineModeChangeRequest?: (mode: "local" | "remote") => void;
 }
@@ -279,6 +281,7 @@ export async function createLivecodeVisualizerServer(
   const preparedRuns = new Map<string, PreparedRun>();
   const preparedRunIdsByModule = new Map<string, string[]>();
   let currentProject: ProjectState | null = null;
+  let nextProjectGeneration = 1;
   let diagnosticsInFlight: Promise<ProjectShadowCheckResponse> | null = null;
   let diagnosticsInFlightHash: string | null = null;
   let lastDiagnostics:
@@ -330,7 +333,8 @@ export async function createLivecodeVisualizerServer(
       log,
       onSyncChanges: (changes) => broadcastSyncChangeList(changes),
       onEngineResets: (resets) => broadcastSyncResets(resets),
-      onEngineAttached: (resets) => void replayProjectDataToNewEngine(resets),
+      initializeEngine: (resets, execute) =>
+        replayProjectDataToNewEngine(resets, execute),
     })
     : null;
   // MIDI is an execution-plane capability: only a local (in-process) engine
@@ -477,16 +481,21 @@ export async function createLivecodeVisualizerServer(
     }
 
     if (request.method === "GET" && url.pathname === "/health") {
+      const remoteAttached = remotePlane?.hasEngine() ?? false;
       const response: HealthResponse = {
         ok: true,
         serverVersion: SERVER_VERSION,
         sessionRoot,
-        activeModules: await activeModuleIdsSafe(),
+        // Health is also the readiness probe. Do not make it wait behind the
+        // very initialization transition it is supposed to report.
+        activeModules: localPlane || remoteAttached
+          ? await activeModuleIdsSafe()
+          : [],
         runtimeCapabilities,
         engine: {
           mode: engineMode,
           kind: localPlane ? "deno" : remotePlane?.engineKind() ?? null,
-          attached: localPlane ? true : remotePlane?.hasEngine() ?? false,
+          attached: localPlane ? true : remoteAttached,
         },
       };
       return json(response);
@@ -517,17 +526,21 @@ export async function createLivecodeVisualizerServer(
             `mode; restart it with --engine ${mode}`,
         }, { status: 501 });
       }
-      await log({ type: "engineModeChangeRequested", from: engineMode, to: mode });
-      // Give this response time to flush before the embedder tears the
-      // listener down and re-creates the server in the requested mode.
-      const onChange = options.onEngineModeChangeRequest;
-      setTimeout(() => onChange(mode), 150);
+      await log({
+        type: "engineModeChangeRequested",
+        from: engineMode,
+        to: mode,
+      });
       const response: EngineModeChangeResponse = {
         ok: true,
         mode,
         changed: true,
         restarting: true,
       };
+      // The embedder closes with Deno.HttpServer.shutdown(), which drains this
+      // in-flight response before releasing the listener. No elapsed-time
+      // guess is needed to make the response race the restart safely.
+      options.onEngineModeChangeRequest(mode);
       return json(response);
     }
 
@@ -1245,6 +1258,7 @@ export async function createLivecodeVisualizerServer(
       ? resolvePath(requestBody.projectPath)
       : join(sessionDir, "project");
     const state: ProjectState = {
+      generation: nextProjectGeneration++,
       root,
       manifestPath: join(root, PROJECT_MANIFEST_FILENAME),
       manifest: {
@@ -1351,6 +1365,7 @@ export async function createLivecodeVisualizerServer(
     ) as LivecodeProjectManifest;
     manifest.modules = manifest.modules.map(normalizeProjectModuleRecord);
     const state: ProjectState = {
+      generation: nextProjectGeneration++,
       root,
       manifestPath,
       manifest,
@@ -1598,21 +1613,25 @@ export async function createLivecodeVisualizerServer(
    */
   async function replayProjectDataToNewEngine(
     resets: Record<string, SyncEntity[]>,
+    executeOnArrivingEngine: ExecutionPlane["execute"],
   ): Promise<void> {
     const state = currentProject;
     if (!state) return;
+    const generation = state.generation;
     try {
       const entries = await readProjectDataEntries(state);
+      if (currentProject?.generation !== generation) return;
       const missing = entries.filter((entry) =>
         !(resets[entry.type] ?? []).some((entity) =>
           (entity as { name?: string }).name === entry.name
         )
       );
       if (missing.length === 0) return;
-      const results = await plane.execute({
+      const results = await executeOnArrivingEngine({
         kind: "loadEntities",
         entries: missing,
       }) as EngineEntityLoadResult[];
+      if (currentProject?.generation !== generation) return;
       await applyEntityLoadResults(state, results);
       await log({
         type: "projectDataReplayedToEngine",

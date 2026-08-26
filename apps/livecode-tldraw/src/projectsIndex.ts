@@ -27,12 +27,20 @@ const PROBE_TIMEOUT_MS = 1500;
 const MODE_SWITCH_TIMEOUT_MS = 30_000;
 const LAST_SERVER_STORAGE_KEY = "livecode:projectsIndex:serverBaseUrl";
 
+type EngineMode = "local" | "remote";
+type OpenPhase =
+  | { kind: "idle" }
+  | { kind: "requestingSwitch"; projectName: string; mode: EngineMode }
+  | { kind: "waitingForServer"; projectName: string; mode: EngineMode }
+  | { kind: "opening"; projectName: string; mode: EngineMode }
+  | { kind: "failed"; message: string };
+
 interface PageState {
   serverBaseUrl: string | null;
   health: HealthResponse | null;
   projects: ProjectsListResponse | null;
   projectsError: string | null;
-  busyMessage: string | null;
+  openPhase: OpenPhase;
   errorMessage: string | null;
 }
 
@@ -41,9 +49,37 @@ const state: PageState = {
   health: null,
   projects: null,
   projectsError: null,
-  busyMessage: null,
+  openPhase: { kind: "idle" },
   errorMessage: null,
 };
+
+let discoveryGeneration = 0;
+let projectsGeneration = 0;
+
+function openInProgress(): boolean {
+  return state.openPhase.kind === "requestingSwitch" ||
+    state.openPhase.kind === "waitingForServer" ||
+    state.openPhase.kind === "opening";
+}
+
+function openPhaseMessage(): string | null {
+  const phase = state.openPhase;
+  switch (phase.kind) {
+    case "requestingSwitch":
+      return phase.mode === "remote"
+        ? "Requesting browser-engine mode…"
+        : "Requesting in-process-engine mode…";
+    case "waitingForServer":
+      return phase.mode === "remote"
+        ? "Waiting for the server to return in browser-engine mode…"
+        : "Waiting for the server to return with an in-process engine…";
+    case "opening":
+      return `Opening ${phase.projectName}…`;
+    case "idle":
+    case "failed":
+      return null;
+  }
+}
 
 function normalizeServerBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, "");
@@ -111,16 +147,20 @@ async function fetchHealth(
 }
 
 async function discoverServer(): Promise<void> {
+  const generation = ++discoveryGeneration;
   for (const candidate of candidateServerBaseUrls()) {
     const health = await fetchHealth(candidate, PROBE_TIMEOUT_MS);
+    if (generation !== discoveryGeneration) return;
     if (health) {
       adoptServer(candidate, health);
       return;
     }
   }
+  if (generation !== discoveryGeneration) return;
   state.serverBaseUrl = null;
   state.health = null;
   state.projects = null;
+  projectsGeneration += 1;
   render();
 }
 
@@ -128,6 +168,11 @@ function adoptServer(serverBaseUrl: string, health: HealthResponse): void {
   const changed = state.serverBaseUrl !== serverBaseUrl;
   state.serverBaseUrl = serverBaseUrl;
   state.health = health;
+  state.errorMessage = null;
+  if (changed) {
+    state.projects = null;
+    state.projectsError = null;
+  }
   try {
     localStorage.setItem(LAST_SERVER_STORAGE_KEY, serverBaseUrl);
   } catch {
@@ -139,6 +184,7 @@ function adoptServer(serverBaseUrl: string, health: HealthResponse): void {
 
 async function refreshProjects(): Promise<void> {
   if (!state.serverBaseUrl) return;
+  const generation = ++projectsGeneration;
   const serverBaseUrl = state.serverBaseUrl;
   try {
     const response = await fetch(`${serverBaseUrl}/projects/list`);
@@ -146,7 +192,9 @@ async function refreshProjects(): Promise<void> {
       ok: false;
       error?: string;
     };
-    if (serverBaseUrl !== state.serverBaseUrl) return;
+    if (
+      generation !== projectsGeneration || serverBaseUrl !== state.serverBaseUrl
+    ) return;
     if (!body.ok) {
       state.projects = null;
       state.projectsError = ("error" in body && body.error) ||
@@ -156,7 +204,9 @@ async function refreshProjects(): Promise<void> {
       state.projectsError = null;
     }
   } catch (error) {
-    if (serverBaseUrl !== state.serverBaseUrl) return;
+    if (
+      generation !== projectsGeneration || serverBaseUrl !== state.serverBaseUrl
+    ) return;
     state.projects = null;
     state.projectsError = error instanceof Error
       ? error.message
@@ -174,9 +224,11 @@ async function pollHealthLoop(): Promise<void> {
     // through the Worker counts as activity, so a forgotten background tab
     // polling /health would keep the container awake (and billed) forever.
     if (document.hidden) continue;
-    if (state.busyMessage) continue; // openProject owns the server right now
+    if (openInProgress()) continue; // openProject owns the server right now
     if (state.serverBaseUrl) {
-      const health = await fetchHealth(state.serverBaseUrl, PROBE_TIMEOUT_MS);
+      const serverBaseUrl = state.serverBaseUrl;
+      const health = await fetchHealth(serverBaseUrl, PROBE_TIMEOUT_MS);
+      if (serverBaseUrl !== state.serverBaseUrl || openInProgress()) continue;
       if (health) {
         state.health = health;
         render();
@@ -228,9 +280,9 @@ async function waitForEngineMode(
 
 async function openProject(
   project: ProjectIndexEntry,
-  mode: "local" | "remote",
+  mode: EngineMode,
 ): Promise<void> {
-  if (!state.serverBaseUrl || !state.health || state.busyMessage) return;
+  if (!state.serverBaseUrl || !state.health || openInProgress()) return;
   const serverBaseUrl = state.serverBaseUrl;
   let health = state.health;
 
@@ -246,9 +298,11 @@ async function openProject(
   state.errorMessage = null;
   try {
     if (health.engine.mode !== mode) {
-      state.busyMessage = mode === "remote"
-        ? "Restarting server for a browser engine…"
-        : "Restarting server for an in-process engine…";
+      state.openPhase = {
+        kind: "requestingSwitch",
+        projectName: project.name,
+        mode,
+      };
       render();
       const response = await fetch(`${serverBaseUrl}/server/engine-mode`, {
         method: "POST",
@@ -265,21 +319,27 @@ async function openProject(
             `engine mode change failed (${response.status})`,
         );
       }
-      if (body.changed) health = await waitForEngineMode(serverBaseUrl, mode);
+      state.openPhase = {
+        kind: "waitingForServer",
+        projectName: project.name,
+        mode,
+      };
+      render();
+      health = await waitForEngineMode(serverBaseUrl, mode);
       state.health = health;
     }
     if (engineWindow) {
       engineWindow.location.href = `${serverBaseUrl}/engine/`;
     }
-    state.busyMessage = `Opening ${project.name}…`;
+    state.openPhase = { kind: "opening", projectName: project.name, mode };
     render();
     window.location.href = uiUrl(project, mode);
   } catch (error) {
     engineWindow?.close();
-    state.busyMessage = null;
-    state.errorMessage = error instanceof Error
-      ? error.message
-      : String(error);
+    state.openPhase = {
+      kind: "failed",
+      message: error instanceof Error ? error.message : String(error),
+    };
     render();
   }
 }
@@ -312,8 +372,12 @@ function render(): void {
   if (state.errorMessage) {
     page.appendChild(el("div", "banner error", state.errorMessage));
   }
-  if (state.busyMessage) {
-    page.appendChild(el("div", "banner busy", state.busyMessage));
+  if (state.openPhase.kind === "failed") {
+    page.appendChild(el("div", "banner error", state.openPhase.message));
+  }
+  const busyMessage = openPhaseMessage();
+  if (busyMessage) {
+    page.appendChild(el("div", "banner busy", busyMessage));
   }
 
   page.appendChild(renderProjects());
@@ -363,16 +427,21 @@ function renderServerStatus(): HTMLElement {
   input.value = state.serverBaseUrl ?? "";
   const submit = el("button", undefined, "Use server") as HTMLButtonElement;
   submit.type = "submit";
+  input.disabled = openInProgress();
+  submit.disabled = openInProgress();
   form.appendChild(input);
   form.appendChild(submit);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (openInProgress()) return;
     const url = normalizeServerBaseUrl(input.value);
     if (!url) {
       void discoverServer();
       return;
     }
+    const generation = ++discoveryGeneration;
     void fetchHealth(url, PROBE_TIMEOUT_MS).then((health) => {
+      if (generation !== discoveryGeneration) return;
       if (health) adoptServer(url, health);
       else {
         state.errorMessage = `No livecode server responded at ${url}`;
@@ -420,7 +489,11 @@ function renderProjects(): HTMLElement {
   }
   if (state.projectsError) {
     container.appendChild(
-      el("div", "banner error", `Project listing failed: ${state.projectsError}`),
+      el(
+        "div",
+        "banner error",
+        `Project listing failed: ${state.projectsError}`,
+      ),
     );
     return container;
   }
@@ -482,7 +555,7 @@ function renderProjectCard(project: ProjectIndexEntry): HTMLElement {
   }
 
   const actions = el("div", "project-actions");
-  const busy = state.busyMessage !== null;
+  const busy = openInProgress();
   const currentMode = state.health?.engine.mode;
 
   const localButton = el(

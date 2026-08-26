@@ -5,7 +5,7 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { join } from "jsr:@std/path@1";
 import { createLivecodeVisualizerServer } from "../visualizer/server.ts";
-import { fetchJson, postJson, waitFor } from "./test_helpers.ts";
+import { fetchJson, postJson } from "./test_helpers.ts";
 import type {
   EngineModeChangeResponse,
   ProjectsListResponse,
@@ -123,31 +123,41 @@ Deno.test("POST /server/engine-mode answers per mode and callback", async () => 
 
   // With a restart callback: the route answers restarting and invokes it,
   // and a main.ts-style embedder can re-create the server on the same port.
-  let requestedMode: "local" | "remote" | null = null;
+  let resolveNextMode!: (mode: "local" | "remote") => void;
+  const nextMode = new Promise<"local" | "remote">((resolve) => {
+    resolveNextMode = resolve;
+  });
   const restartable = await createLivecodeVisualizerServer({
     port: 0,
     sessionRoot,
-    onEngineModeChangeRequest: (mode) => {
-      requestedMode = mode;
-    },
+    onEngineModeChangeRequest: resolveNextMode,
   });
+  let restartableClosed = false;
   try {
-    const changed = await postJson<EngineModeChangeResponse>(
+    const changedPromise = postJson<EngineModeChangeResponse>(
       `${restartable.baseUrl}/server/engine-mode`,
       { mode: "remote" },
     );
+    // Mirror main.ts: begin graceful shutdown as soon as the route signals the
+    // requested mode, while the client is still consuming the response.
+    const closePromise = nextMode.then(async (mode) => {
+      await restartable.close();
+      restartableClosed = true;
+      return mode;
+    });
+    const [changed, requestedMode] = await Promise.all([
+      changedPromise,
+      closePromise,
+    ]);
     assertEquals(changed, {
       ok: true,
       mode: "remote",
       changed: true,
       restarting: true,
     });
-    await waitFor(
-      () => requestedMode === "remote",
-      "engine-mode change callback",
-    );
+    assertEquals(requestedMode, "remote");
   } finally {
-    await restartable.close();
+    if (!restartableClosed) await restartable.close();
   }
 
   const port = restartable.port;

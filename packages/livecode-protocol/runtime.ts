@@ -98,8 +98,9 @@ export interface HealthResponse {
   /** Which execution plane serves this server, and whether it is live. */
   engine: {
     mode: "local" | "remote";
-    /** From the engine's hello; null while no remote engine is attached. */
+    /** From the engine's hello; null until a remote engine is ready. */
     kind: "deno" | "browser" | null;
+    /** True after hello initialization has settled, not merely socket upgrade. */
     attached: boolean;
   };
 }
