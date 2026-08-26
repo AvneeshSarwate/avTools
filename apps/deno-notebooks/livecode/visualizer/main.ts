@@ -20,12 +20,24 @@ let port = args.port ? Number(args.port) : 0;
 
 let server: LivecodeVisualizerServer | null = null;
 let closing = false;
+const FORCE_EXIT_AFTER_MS = 3_000;
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
-  Deno.addSignalListener(sig, async () => {
-    if (closing) return;
+  Deno.addSignalListener(sig, () => {
+    // Second Ctrl-C: don't wait on a graceful close that may be stuck.
+    if (closing) Deno.exit(130);
     closing = true;
-    await server?.close();
-    Deno.exit(0);
+    // Graceful close can wait indefinitely on open connections (a UI tab's
+    // reconnecting socket, an in-flight shadow `deno check`), so bound it:
+    // Ctrl-C must always kill the process.
+    setTimeout(() => {
+      console.error(
+        `[livecode] close did not finish within ${FORCE_EXIT_AFTER_MS}ms; forcing exit`,
+      );
+      Deno.exit(130);
+    }, FORCE_EXIT_AFTER_MS);
+    void (server?.close() ?? Promise.resolve())
+      .catch((error) => console.error("[livecode] close failed", error))
+      .finally(() => Deno.exit(0));
   });
 }
 

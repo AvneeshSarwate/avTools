@@ -127,6 +127,36 @@ export async function buildBrowserHostAssets(
     );
   }
 
+  // The midi package reaches its browser backend through a variable-specifier
+  // dynamic import ("./browser.ts", resolved at runtime against the importing
+  // chunk's URL) that no bundler can see, so the build above never includes
+  // it. Emit it as its own bundle at exactly that URL — without this file,
+  // browser-engine MIDI cannot initialize (the runtime import 404s).
+  const midiBrowserBundle = new Deno.Command(Deno.execPath(), {
+    args: [
+      "bundle",
+      "--platform",
+      "browser",
+      "--quiet",
+      "--config",
+      configPath,
+      "--output",
+      join(outDir, "browser.ts"),
+      join(REPO_ROOT, "packages/midi/browser.ts"),
+    ],
+    cwd: REPO_ROOT,
+    stdout: "piped",
+    stderr: "piped",
+  });
+  const midiBrowserResult = await midiBrowserBundle.output();
+  if (midiBrowserResult.code !== 0) {
+    throw new Error(
+      `deno bundle (midi browser backend) failed:\n${
+        new TextDecoder().decode(midiBrowserResult.stderr)
+      }`,
+    );
+  }
+
   await Deno.writeTextFile(
     join(outDir, "engine.html"),
     `<!doctype html>

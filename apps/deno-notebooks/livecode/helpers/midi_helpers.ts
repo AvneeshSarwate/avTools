@@ -155,6 +155,10 @@ export function initMidi(): Promise<void> {
       console.warn("[midi-helpers] MIDI unavailable", error);
       access = null;
       outputPorts = [];
+      // Clear the latch: in a browser this path is a denied or dismissed
+      // permission prompt, and a later initMidi() from a real user gesture
+      // must be able to re-prompt instead of replaying this failure forever.
+      initPromise = null;
       return;
     }
     outputPorts = safeListOutputs(access);
@@ -195,6 +199,12 @@ export const midiDevices = new Proxy(midiDevicesByName, {
 
 export function listMidiDevices(): LivecodePortInfo[] {
   return [...outputPorts];
+}
+
+/** True once MIDI access opened, even with zero output ports — lets a host
+ * distinguish "no devices" from "init failed / never ran". */
+export function hasMidiAccess(): boolean {
+  return access !== null;
 }
 
 export function getMidiDevice(name: string): LivecodeMidiOutput {

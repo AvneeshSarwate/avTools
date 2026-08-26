@@ -462,6 +462,19 @@ export async function createLivecodeVisualizerServer(
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
 
+    // Once close() has begun, a reconnecting client (the UI tab's sync
+    // socket, LSP) must not open a fresh WebSocket: graceful shutdown waits
+    // for open connections, so a late upgrade would hold the process alive.
+    if (
+      closing &&
+      request.headers.get("upgrade")?.toLowerCase() === "websocket"
+    ) {
+      return new Response("Server closing", {
+        status: 503,
+        headers: CORS_HEADERS,
+      });
+    }
+
     if (request.method === "GET" && url.pathname === "/health") {
       const response: HealthResponse = {
         ok: true,
@@ -885,7 +898,10 @@ export async function createLivecodeVisualizerServer(
         }
         const contentType = filePath.endsWith(".html")
           ? "text/html; charset=utf-8"
-          : filePath.endsWith(".js")
+          // ".ts" is also JS here: the built dir's browser.ts is a bundled JS
+          // module kept under the name the midi package's runtime dynamic
+          // import ("./browser.ts") resolves to.
+          : filePath.endsWith(".js") || filePath.endsWith(".ts")
           ? "text/javascript; charset=utf-8"
           : "application/octet-stream";
         return await serveStaticFile(filePath, contentType);
