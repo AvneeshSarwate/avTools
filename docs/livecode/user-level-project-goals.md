@@ -23,8 +23,10 @@ game-engine-like authoring environment, showing interactive views of live data
 (e.g., a piano roll you can edit while a code module is actively playing music
 from the melody instance bound to that piano roll view). I want to leverage
 TypeScript compiler extensions to allow for automatic instrumentation of
-different data structures or library usage patterns (e.g., how the
-timing-library detection is done to drive wait visualization) — this allows the
+different data structures or library usage patterns, enabling better visualization
+of program state (e.g., how the timing-library detection is done to drive wait 
+visualization, or the cmd-click on store functions to show the named entity).
+The typescript compiler extensions can also enable custom analysis that allows the
 system to express constraints around library usage that can protect users from
 state-mangling pitfalls in an open-ended livecoding environment. The system
 should also have an API accessible to a coding agent, so that composing and

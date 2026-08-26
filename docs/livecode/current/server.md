@@ -154,10 +154,12 @@ order, while an engine that outlived a server restart keeps its live state.
 The browser host separately enforces one engine per origin with Web Locks and
 explicit takeover, provides a silent-audio throttling mitigation, initializes
 Web MIDI (at start plus gesture retry, with a status line), and logs stretched
-ticks. These are operational defenses, not timing guarantees. Its import map
-also serves `three` and `p5` alongside the helper aliases, and
-`#livecode-stage` in the engine page is user-module DOM: graphics modules
-render there and page chrome never touches it.
+ticks. These are operational defenses, not timing guarantees. To serve a
+third-party library to browser-engine modules, follow the `three`/`p5`
+instances in `build_host_assets.ts` (`ALIAS_ENTRIES` plus the import map,
+pinned in the root `deno.json`). `#livecode-stage` in the engine page is
+user-module DOM: graphics modules render there and page chrome never touches
+it.
 
 Engine close clears its broadcast timer, cancels pending and active runs,
 panics MIDI, unregisters the root clock, and stops its parent context. Server

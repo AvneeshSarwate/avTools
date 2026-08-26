@@ -130,6 +130,17 @@ machine can still replace the uplink repeatedly; browsers without Web Locks are
 unguarded. Explicit takeover intentionally panics and destroys the losing
 engine's state.
 
+## P2: the workspace deliberately holds two p5 majors
+
+`browser-projections` pins p5 `^1` while the root map and the livecode graph
+pin `^2`. The repo's top-level `node_modules` can only satisfy one of them, so
+byonm resolution (`nodeModulesDir: "manual"`) fails for `^2` with a misleading
+"no matching package" — the failure surfaces in generated configs far from
+either pin. The engine-bundle and browser-shadow-check configs therefore use
+`nodeModulesDir: "auto"`; any new generated config or resolver must do the
+same. The LSP proxy's synthetic workspace has not been audited for this and
+is the suspected cause of editor-side p5 type errors.
+
 ## P2: browser MIDI and checked-in p5gpu coverage are incomplete
 
 The browser engine host initializes Web MIDI at engine start and retries from
