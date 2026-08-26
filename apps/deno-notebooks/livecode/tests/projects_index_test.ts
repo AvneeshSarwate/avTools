@@ -1,7 +1,6 @@
-// Coverage for the projects-index surface: `GET /projects/list` scanning and
-// `POST /server/engine-mode` (already-in-mode, restart-callback, and
-// no-callback answers). The full page flow is exercised by hand/e2e; these
-// tests pin the route contracts the index page depends on.
+// Route contracts the projects index page depends on: `GET /projects/list`
+// scanning and `POST /server/engine-mode` (already-in-mode, restart-callback,
+// and no-callback answers).
 
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { join } from "jsr:@std/path@1";
