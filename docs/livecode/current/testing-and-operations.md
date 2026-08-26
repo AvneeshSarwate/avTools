@@ -45,7 +45,8 @@ file list rather than maintaining it here.
   `run_correlation_test.ts`, and the run portions of `sync_transport_test.ts`.
 - Stores/durability: the concrete store test plus `entity_registry_test.ts`.
 - Transport or remote-plane behavior: `sync_transport_test.ts`,
-  `protocol_smoke_test.ts`, and the topology E2E scripts.
+  `protocol_smoke_test.ts`, `execution_plane_state_test.ts`,
+  `engine_attach_replay_test.ts`, and the topology E2E scripts.
 - Project graph/targets/LSP: project shadow, browser-target, and LSP tests.
 - Visible canvas/reconnect/save behavior: `apps/livecode-tldraw/tests/livecodeTldraw.e2e.mjs`.
 

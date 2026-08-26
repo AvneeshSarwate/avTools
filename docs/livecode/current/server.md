@@ -2,7 +2,7 @@
 
 Status: checked against
 `apps/deno-notebooks/livecode/visualizer/server.ts`, its execution-plane seam,
-and `packages/livecode-engine` on 2026-08-24.
+and `packages/livecode-engine` on 2026-08-26.
 
 Use `apps/deno-notebooks/livecode/architecture.md` for the local file index.
 This document records the seams and lifecycle rules that are easy to violate
@@ -146,9 +146,15 @@ In remote mode `/engine/` lazily builds/serves the engine host and helper
 bundles; generated and project modules are served under stable engine-asset
 URLs with type stripping. A new uplink replaces the old one. Detach broadcasts
 empty resets because the watched engine world has disappeared; attach hello
-replaces it with full resets. On attach the server also replays the current
-project's saved entity data into the engine, but only for entities absent
-from the hello resets — project open and engine attach can happen in either
+replaces it with full resets. The remote plane then moves from awaiting hello,
+through initialization, to ready. `/health` reports it attached only at ready;
+ordinary operations arriving during initialization wait behind that transition
+under their existing request deadline.
+
+Initialization replays the current project's saved entity data, but only for
+entities absent from the hello resets. Its executor is pinned to the arriving
+socket, and project-generation checks discard stale work around asynchronous
+file and engine operations. Project open and engine attach can happen in either
 order, while an engine that outlived a server restart keeps its live state.
 
 The browser host separately enforces one engine per origin with Web Locks and

@@ -71,11 +71,15 @@ export interface RemoteExecutionPlaneOptions {
    */
   onEngineResets: (resets: Record<string, SyncEntity[]>) => void;
   /**
-   * Attach-only hook (never fired on detach), with the hello resets: what the
-   * arriving engine already holds. The server uses it to replay the current
-   * project's saved entity data into a fresh engine world.
+   * Initialize an arriving engine from its hello resets. The supplied executor
+   * is pinned to that engine socket; it can be used before the plane becomes
+   * ready without accidentally targeting a replacement engine. Ordinary
+   * `execute()` calls wait for this hook to settle.
    */
-  onEngineAttached?: (resets: Record<string, SyncEntity[]>) => void;
+  initializeEngine?: (
+    resets: Record<string, SyncEntity[]>,
+    execute: (op: EngineOp) => Promise<unknown>,
+  ) => void | Promise<void>;
   requestTimeoutMs?: number;
 }
 
@@ -94,6 +98,32 @@ interface PendingEngineRequest {
   timer: number;
 }
 
+interface EngineReadySignal {
+  promise: Promise<WebSocket>;
+  resolve: (socket: WebSocket) => void;
+  reject: (error: Error) => void;
+}
+
+type RemoteEngineState =
+  | { phase: "detached" }
+  | {
+    phase: "awaitingHello";
+    socket: WebSocket;
+    ready: EngineReadySignal;
+  }
+  | {
+    phase: "initializing";
+    socket: WebSocket;
+    engineKind: "deno" | "browser";
+    ready: EngineReadySignal;
+  }
+  | {
+    phase: "ready";
+    socket: WebSocket;
+    engineKind: "deno" | "browser";
+  }
+  | { phase: "closed" };
+
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
 export function createRemoteExecutionPlane(
@@ -101,9 +131,27 @@ export function createRemoteExecutionPlane(
 ): RemoteExecutionPlane {
   const timeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const pending = new Map<string, PendingEngineRequest>();
-  let currentSocket: WebSocket | null = null;
-  let attachedEngineKind: "deno" | "browser" | null = null;
-  let closing = false;
+  let state: RemoteEngineState = { phase: "detached" };
+
+  function createReadySignal(): EngineReadySignal {
+    let resolve!: (socket: WebSocket) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<WebSocket>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    // A socket can disappear before an ordinary operation waits on readiness.
+    // Keep that expected transition from becoming an unhandled rejection.
+    void promise.catch(() => {});
+    return { promise, resolve, reject };
+  }
+
+  function stateSocket(candidate = state): WebSocket | null {
+    return candidate.phase === "awaitingHello" ||
+        candidate.phase === "initializing" || candidate.phase === "ready"
+      ? candidate.socket
+      : null;
+  }
 
   function failAllPending(reason: string): void {
     for (const [requestId, entry] of pending) {
@@ -121,12 +169,114 @@ export function createRemoteExecutionPlane(
   }
 
   function detach(socket: WebSocket, reason: string): void {
-    if (currentSocket !== socket) return;
-    currentSocket = null;
-    attachedEngineKind = null;
+    if (stateSocket() !== socket) return;
+    const previous = state;
+    state = previous.phase === "closed" ? previous : { phase: "detached" };
+    if (
+      previous.phase === "awaitingHello" || previous.phase === "initializing"
+    ) {
+      previous.ready.reject(new Error(`engine detached (${reason})`));
+    }
     failAllPending(`engine detached (${reason})`);
     void options.log({ type: "engineDetached", reason });
-    if (!closing) options.onEngineResets(emptyResets());
+    if (state.phase !== "closed") options.onEngineResets(emptyResets());
+  }
+
+  function executeOnSocket(
+    socket: WebSocket,
+    op: EngineOp,
+    operationTimeoutMs = timeoutMs,
+  ): Promise<unknown> {
+    if (stateSocket() !== socket || socket.readyState !== WebSocket.OPEN) {
+      return Promise.reject(
+        new Error("engine replaced before operation started"),
+      );
+    }
+    const requestId = crypto.randomUUID();
+    const request: EngineUplinkRequest = {
+      type: "engineRequest",
+      requestId,
+      op,
+    };
+    return new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pending.delete(requestId);
+        reject(
+          new Error(
+            `engine op ${op.kind} timed out after ${operationTimeoutMs}ms`,
+          ),
+        );
+      }, operationTimeoutMs) as unknown as number;
+      pending.set(requestId, { resolve, reject, timer });
+      try {
+        socket.send(JSON.stringify(request));
+      } catch (error) {
+        pending.delete(requestId);
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
+  async function executeWhenReady(
+    ready: EngineReadySignal,
+    op: EngineOp,
+  ): Promise<unknown> {
+    const deadline = Date.now() + timeoutMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const socket = await Promise.race([
+        ready.promise,
+        new Promise<WebSocket>((_resolve, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `engine did not become ready within ${timeoutMs}ms`,
+                ),
+              ),
+            timeoutMs,
+          );
+        }),
+      ]);
+      return await executeOnSocket(
+        socket,
+        op,
+        Math.max(1, deadline - Date.now()),
+      );
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
+  async function finishInitialization(
+    initializing: Extract<RemoteEngineState, { phase: "initializing" }>,
+    resets: Record<string, SyncEntity[]>,
+  ): Promise<void> {
+    try {
+      await options.initializeEngine?.(
+        resets,
+        (op) => executeOnSocket(initializing.socket, op),
+      );
+    } catch (error) {
+      if (state !== initializing) return;
+      void options.log({
+        type: "engineInitializationFailed",
+        engineKind: initializing.engineKind,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (state !== initializing) return;
+    state = {
+      phase: "ready",
+      socket: initializing.socket,
+      engineKind: initializing.engineKind,
+    };
+    initializing.ready.resolve(initializing.socket);
+    void options.log({
+      type: "engineAttached",
+      engineKind: initializing.engineKind,
+    });
   }
 
   function handleMessage(socket: WebSocket, payload: string): void {
@@ -140,16 +290,23 @@ export function createRemoteExecutionPlane(
       });
       return;
     }
-    if (socket !== currentSocket) return;
+    if (socket !== stateSocket()) return;
 
     if (message.type === "engineHello") {
-      attachedEngineKind = message.engineKind === "deno" ? "deno" : "browser";
-      void options.log({
-        type: "engineAttached",
-        engineKind: message.engineKind,
-      });
-      options.onEngineResets(message.resets ?? {});
-      options.onEngineAttached?.(message.resets ?? {});
+      if (state.phase !== "awaitingHello" || state.socket !== socket) return;
+      const resets = message.resets ?? {};
+      const initializing: Extract<
+        RemoteEngineState,
+        { phase: "initializing" }
+      > = {
+        phase: "initializing",
+        socket,
+        engineKind: message.engineKind === "deno" ? "deno" : "browser",
+        ready: state.ready,
+      };
+      state = initializing;
+      options.onEngineResets(resets);
+      void finishInitialization(initializing, resets);
       return;
     }
     if (message.type === "engineLog") {
@@ -174,14 +331,28 @@ export function createRemoteExecutionPlane(
 
   return {
     kind: "remote",
-    hasEngine: () => currentSocket !== null,
-    engineKind: () => attachedEngineKind,
+    hasEngine: () => state.phase === "ready",
+    engineKind: () => state.phase === "ready" ? state.engineKind : null,
     attachEngineSocket: (socket) => {
-      const previous = currentSocket;
-      currentSocket = socket;
-      if (previous && previous.readyState === WebSocket.OPEN) {
+      if (state.phase === "closed") {
+        socket.close();
+        return;
+      }
+      const previous = state;
+      const previousSocket = stateSocket(previous);
+      if (
+        previous.phase === "awaitingHello" || previous.phase === "initializing"
+      ) {
+        previous.ready.reject(new Error("engine replaced"));
+      }
+      state = {
+        phase: "awaitingHello",
+        socket,
+        ready: createReadySignal(),
+      };
+      if (previousSocket?.readyState === WebSocket.OPEN) {
         // Same replacement rule as /client/control: the newest engine wins.
-        previous.close();
+        previousSocket.close();
       }
       failAllPending("engine replaced");
       socket.onmessage = (event) => {
@@ -192,41 +363,26 @@ export function createRemoteExecutionPlane(
       socket.onerror = () => detach(socket, "error");
     },
     execute: (op) => {
-      const socket = currentSocket;
-      if (!socket || socket.readyState !== WebSocket.OPEN) {
-        return Promise.reject(
-          new Error("No engine attached: open the /engine/ page first"),
-        );
+      if (state.phase === "ready") {
+        return executeOnSocket(state.socket, op);
       }
-      const requestId = crypto.randomUUID();
-      const request: EngineUplinkRequest = {
-        type: "engineRequest",
-        requestId,
-        op,
-      };
-      return new Promise<unknown>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          pending.delete(requestId);
-          reject(
-            new Error(`engine op ${op.kind} timed out after ${timeoutMs}ms`),
-          );
-        }, timeoutMs) as unknown as number;
-        pending.set(requestId, { resolve, reject, timer });
-        try {
-          socket.send(JSON.stringify(request));
-        } catch (error) {
-          pending.delete(requestId);
-          clearTimeout(timer);
-          reject(error instanceof Error ? error : new Error(String(error)));
-        }
-      });
+      if (state.phase === "awaitingHello" || state.phase === "initializing") {
+        return executeWhenReady(state.ready, op);
+      }
+      return Promise.reject(
+        new Error("No engine attached: open the /engine/ page first"),
+      );
     },
     close: () => {
-      closing = true;
+      const previous = state;
+      state = { phase: "closed" };
+      if (
+        previous.phase === "awaitingHello" || previous.phase === "initializing"
+      ) {
+        previous.ready.reject(new Error("server closing"));
+      }
       failAllPending("server closing");
-      currentSocket?.close();
-      currentSocket = null;
-      attachedEngineKind = null;
+      stateSocket(previous)?.close();
       return Promise.resolve();
     },
   };

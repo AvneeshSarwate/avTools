@@ -1,6 +1,6 @@
 # Current Client Architecture
 
-Status: checked against `apps/livecode-tldraw/src` on 2026-08-24.
+Status: checked against `apps/livecode-tldraw/src` on 2026-08-26.
 
 Use `apps/livecode-tldraw/architecture.md` for the local file index. This
 document explains how the client's state machines and registries meet; component
@@ -137,6 +137,12 @@ lists `/projects/list`, and opens a project by navigating to the app with
 may `POST /server/engine-mode` (dropping every live connection) and opens the
 `/engine/` tab itself; it does not check a project's library compatibility
 with the chosen world — an incompatible project fails at run time.
+
+The open operation is a small explicit workflow: request a mode switch, wait
+for `/health` to confirm the restarted server, then open the engine/UI, or end
+in a retryable failure. Health polling and manual server selection cannot race
+that workflow; stale discovery and project-list responses carry generations
+and are ignored.
 
 Three behaviors exist for the served-UI/remote-dev deployment (the
 Cloudflare plan in `history/`): the page's own origin outranks every
