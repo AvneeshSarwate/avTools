@@ -457,12 +457,10 @@ function startEngine(): void {
  * output on every call, so a looping player picks the device up next pass.
  */
 function startMidiInit(): void {
-  const attempt = () =>
-    void initMidi()
-      .then(renderMidiStatus)
-      .catch(() => renderMidiStatus());
+  // initMidi never rejects — failure is caught inside and leaves no access.
+  const attempt = () => void initMidi().then(renderMidiStatus);
   const onGesture = () => {
-    if (listMidiDevices().length === 0) attempt();
+    if (!hasMidiAccess()) attempt();
   };
   globalThis.addEventListener("pointerdown", onGesture);
   globalThis.addEventListener("keydown", onGesture);
