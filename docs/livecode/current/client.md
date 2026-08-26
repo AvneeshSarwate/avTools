@@ -138,6 +138,15 @@ may `POST /server/engine-mode` (dropping every live connection) and opens the
 `/engine/` tab itself; it does not check a project's library compatibility
 with the chosen world — an incompatible project fails at run time.
 
+Three behaviors exist for the served-UI/remote-dev deployment (the
+Cloudflare plan in `history/`): the page's own origin outranks every
+remembered or default candidate, and plain-`http` candidates are skipped on
+an `https` page; health polling pauses while the tab is hidden, so a
+background tab cannot hold a wake-on-request container awake; and a
+same-origin "engine in browser" open appends `sync=broadcast` (toggleable)
+so sync rides the engine tab's BroadcastChannel instead of a WAN round trip,
+while writes, analysis, and LSP stay HTTP.
+
 ## Project and control caveats
 
 URL-driven project load suppresses per-shape registration churn while restoring
