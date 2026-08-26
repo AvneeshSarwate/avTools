@@ -286,16 +286,10 @@ Deno.test("project open waits behind in-progress engine hydration", async () => 
       `${server.baseUrl}/project/open`,
       { projectPath: secondProject },
     );
-    await waitFor(
-      async () => {
-        const current = await fetchJson<ProjectCurrentResponse>(
-          `${server.baseUrl}/project/current`,
-        );
-        return current.project?.root === secondProject;
-      },
-      "second project selection",
-      3_000,
-    );
+    // Health is deliberately outside the project-operation lane. Its response
+    // proves the second request reached a live server while the first engine
+    // hydration is still the only load operation in flight.
+    await fetchJson<HealthResponse>(`${server.baseUrl}/health`);
     assertEquals(engine.loadOps.length, 1);
 
     engine.respondNextLoad();
@@ -307,6 +301,10 @@ Deno.test("project open waits behind in-progress engine hydration", async () => 
     engine.respondNextLoad();
     const opened = await secondOpen;
     assertEquals(opened.project?.root, secondProject);
+    const current = await fetchJson<ProjectCurrentResponse>(
+      `${server.baseUrl}/project/current`,
+    );
+    assertEquals(current.project?.root, secondProject);
     await waitForEngineReady(server.baseUrl);
     await engine.close();
   } finally {

@@ -22,57 +22,54 @@ export function createReconnectingSocket(
   const maxBackoffMs = options.maxBackoffMs ?? 10_000;
   const backoffFactor = options.backoffFactor ?? 2;
 
-  let enabled = false;
-  let currentSocket: WebSocket | null = null;
-  let reconnectTimer: number | null = null;
+  type SocketState =
+    | { phase: "idle" }
+    | { phase: "connecting"; socket: WebSocket }
+    | { phase: "open"; socket: WebSocket }
+    | { phase: "waiting"; timer: number };
+
+  let state: SocketState = { phase: "idle" };
   let backoffMs = initialBackoffMs;
 
-  const clearReconnectTimer = () => {
-    if (reconnectTimer === null) return;
-    window.clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  };
-
   const scheduleReconnect = () => {
-    if (!enabled || reconnectTimer !== null) return;
+    if (state.phase === "idle" || state.phase === "waiting") return;
     const delayMs = backoffMs;
     backoffMs = Math.min(backoffMs * backoffFactor, maxBackoffMs);
-    reconnectTimer = window.setTimeout(() => {
-      reconnectTimer = null;
+    const timer = window.setTimeout(() => {
+      if (state.phase !== "waiting" || state.timer !== timer) return;
+      state = { phase: "idle" };
       open();
     }, delayMs);
+    state = { phase: "waiting", timer };
   };
 
   const open = () => {
-    if (!enabled) return;
-    clearReconnectTimer();
-    const previous = currentSocket;
-    currentSocket = null;
-    previous?.close();
-
     const socket = new WebSocket(options.makeUrl());
-    currentSocket = socket;
+    state = { phase: "connecting", socket };
 
     socket.onopen = () => {
-      if (currentSocket !== socket) return;
+      if (stateSocket(state) !== socket) return;
+      state = { phase: "open", socket };
       backoffMs = initialBackoffMs;
       options.onOpen?.(socket);
     };
 
     socket.onmessage = (event) => {
-      if (currentSocket !== socket) return;
+      if (stateSocket(state) !== socket) return;
       options.onMessage?.(event, socket);
     };
 
     socket.onerror = () => {
-      if (currentSocket !== socket) return;
+      if (stateSocket(state) !== socket) return;
       options.onError?.();
-      scheduleReconnect();
+      // One failure edge owns reconnection. Closing funnels both browser error
+      // orderings through onclose instead of allowing an error timer and close
+      // timer to race each other.
+      socket.close();
     };
 
     socket.onclose = () => {
-      if (currentSocket !== socket) return;
-      currentSocket = null;
+      if (stateSocket(state) !== socket) return;
       options.onClose?.();
       scheduleReconnect();
     };
@@ -80,18 +77,37 @@ export function createReconnectingSocket(
 
   return {
     connect() {
-      enabled = true;
+      retireState(state);
+      state = { phase: "idle" };
       open();
     },
     close() {
-      enabled = false;
-      clearReconnectTimer();
-      const socket = currentSocket;
-      currentSocket = null;
-      socket?.close();
+      const previous = state;
+      state = { phase: "idle" };
+      retireState(previous);
     },
     get socket() {
-      return currentSocket;
+      return stateSocket(state);
     },
   };
+
+  function retireState(previous: SocketState): void {
+    if (previous.phase === "waiting") {
+      window.clearTimeout(previous.timer);
+      return;
+    }
+    const socket = stateSocket(previous);
+    if (!socket) return;
+    socket.onopen = null;
+    socket.onmessage = null;
+    socket.onerror = null;
+    socket.onclose = null;
+    socket.close();
+  }
+
+  function stateSocket(candidate: SocketState): WebSocket | null {
+    return candidate.phase === "connecting" || candidate.phase === "open"
+      ? candidate.socket
+      : null;
+  }
 }

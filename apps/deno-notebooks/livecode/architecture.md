@@ -15,14 +15,16 @@ and analysis/code generation is documented in
 
 | Area | Files |
 | --- | --- |
-| HTTP/WebSocket routes, the engine instance and its tick fan-out | `visualizer/server.ts` |
-| Execution plane: launch queue, run records, the one broadcast timer, stores, sync sources | `packages/livecode-engine` (repo root) |
+| HTTP/WebSocket routing, project coordination, analysis, and sync fan-out | `visualizer/server.ts` |
+| Local/remote execution-plane lifecycle and engine-op forwarding | `visualizer/execution_plane.ts` |
+| Browser engine host, Web Lock ownership, uplink, and baked boot | `browser_host/engine_page.ts` |
+| Portable engine: launch queue, run records, the broadcast timer, stores, sync sources | `packages/livecode-engine` (repo root) |
 | Sync source registry: what that timer walks, one entry per entity kind | `packages/livecode-engine/sync_sources.ts` |
 | Static analysis and generated source | `visualizer/analyze_transform.ts` |
 | Prepared-module instrumentation, active wait tracking, signal ownership, and the process root clock | `packages/livecode-engine/runtime.ts` |
 | Project import graph, shadow files, and diagnostics | `visualizer/project_shadow_analysis.ts` |
 | Generic entity records and the per-type changed-name gate | `packages/livecode-engine/entity_store.ts` |
-| Typed stores over it: params, ephemeral signals (unregistered by design), piano rolls | `packages/livecode-engine/params_store.ts`, `signals_store.ts`, `piano_roll_store.ts` |
+| Typed stores over it: params, ephemeral signals, piano rolls, animation timelines | `packages/livecode-engine/params_store.ts`, `signals_store.ts`, `piano_roll_store.ts`, `animation_timeline_store.ts` |
 | Durable-type registry and entity-name file encoding | `packages/livecode-engine/entity_registry.ts` |
 | User-facing declaration helpers | `helpers/canvas_params.ts`, `helpers/canvas_signals.ts` |
 | User-facing piano-roll conversion/playback | `helpers/piano_roll_helpers.ts` |

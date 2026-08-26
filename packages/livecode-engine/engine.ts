@@ -13,7 +13,12 @@ import {
   type SyncCollectedChanges,
   SyncSourceRegistry,
 } from "./sync_sources.ts";
-import { clearModuleWaits, setRootTimeContext } from "./runtime.ts";
+import {
+  claimModuleWaits,
+  clearModuleWaits,
+  clearOwnedModuleWaits,
+  setRootTimeContext,
+} from "./runtime.ts";
 import { endSignalsForModule } from "./signals_store.ts";
 import { seedDemoPianoRoll } from "./piano_roll_store.ts";
 import { registerBuiltinEntityKinds } from "./entity_kinds.ts";
@@ -141,7 +146,8 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
   const dirtyRunModules = new Set<string>();
   const launchQueue: Array<(ctx: TimeContext) => Promise<void> | void> = [];
   let parentContext: TimeContext | null = null;
-  let closing = false;
+  let lifecycle: "open" | "closing" | "closed" = "open";
+  let closePromise: Promise<void> | null = null;
 
   // Construction, not a read path: `snapshotAll()` has to be genuinely
   // read-only, so nothing may seed a roll on the way to answering a subscribe.
@@ -153,7 +159,7 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
     // signals sampler today) stamps samples with its logical time.
     setRootTimeContext(ctx);
     await log({ type: "parentLoopStarted" });
-    while (!closing) {
+    while (lifecycle === "open") {
       const queued = launchQueue.splice(0);
       for (const action of queued) {
         await action(ctx);
@@ -161,7 +167,7 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
       try {
         await ctx.waitSec(0.03);
       } catch (error) {
-        if (closing || isAbortError(error)) break;
+        if (lifecycle !== "open" || isAbortError(error)) break;
         throw error;
       }
     }
@@ -237,6 +243,9 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
     requestBody: LaunchModuleRequest,
     prepared?: PreparedLaunchMetadata,
   ): Promise<LaunchModuleResponse> {
+    if (lifecycle !== "open") {
+      throw new Error(`Livecode engine is ${lifecycle}; launches are closed`);
+    }
     await log({
       type: "launchQueued",
       moduleId: requestBody.moduleId,
@@ -397,6 +406,7 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
           executionCount: previousExecutionCount + 1,
         };
         const handle = ctx.branch(async (branchCtx) => {
+          claimModuleWaits(requestBody.moduleId, runToken);
           setModuleRunSnapshot({ ...startedRunSnapshotBase, state: "running" });
           await log({
             type: "moduleStarted",
@@ -421,7 +431,7 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
               });
             }
           } finally {
-            clearModuleWaits(requestBody.moduleId);
+            clearOwnedModuleWaits(requestBody.moduleId, runToken);
             const active = activeModules.get(requestBody.moduleId);
             if (active?.runToken === runToken) {
               activeModules.delete(requestBody.moduleId);
@@ -586,7 +596,7 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
       return;
     }
     activeModules.delete(active.moduleId);
-    clearModuleWaits(active.moduleId);
+    clearOwnedModuleWaits(active.moduleId, active.runToken);
     // Ephemeral entities end with the run that published them rather than
     // silently freezing, so stop and panic both end this module's signals.
     endSignalsForModule(active.moduleId);
@@ -665,6 +675,22 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
     };
   }
 
+  function closeEngine(): Promise<void> {
+    if (closePromise) return closePromise;
+    lifecycle = "closing";
+    closePromise = (async () => {
+      clearInterval(broadcastTimer);
+      // The parent loop is about to be cancelled; a cancelled clock must not
+      // keep stamping samples with its frozen logical time.
+      setRootTimeContext(null);
+      await stopAllModules("serverClose");
+      deps.panicMidi?.();
+      parentHandle.cancel();
+      lifecycle = "closed";
+    })();
+    return closePromise;
+  }
+
   return {
     syncSources,
     launchModule,
@@ -682,16 +708,7 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
         active.generatedRunId === generatedRunId
       ),
     moduleRunRecords: () => Object.fromEntries(moduleRunSnapshots),
-    close: async () => {
-      closing = true;
-      clearInterval(broadcastTimer);
-      // The parent loop is about to be cancelled; a cancelled clock must not
-      // keep stamping samples with its frozen logical time.
-      setRootTimeContext(null);
-      await stopAllModules("serverClose");
-      deps.panicMidi?.();
-      parentHandle.cancel();
-    },
+    close: closeEngine,
   };
 }
 

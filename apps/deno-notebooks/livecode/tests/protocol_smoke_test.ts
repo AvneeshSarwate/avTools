@@ -271,7 +271,7 @@ Deno.test("server forwards agent commands to a connected tldraw client websocket
         timeoutMs: 1_000,
       },
     );
-    assertEquals(response.ok, true);
+    assert(response.ok);
     assertEquals(response.clientId, clientId);
     assertEquals(response.result, {
       commandType: "getState",

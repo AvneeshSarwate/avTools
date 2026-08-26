@@ -95,6 +95,7 @@ import {
 } from "@avtools/livecode-engine/runtime.ts";
 import { buildBrowserHostAssets } from "../browser_host/build_host_assets.ts";
 import { writeBrowserCheckConfig } from "./browser_check_config.ts";
+import { resolveContainedUrlPath } from "./contained_path.ts";
 import { ts as typescript } from "npm:ts-morph@23.0.0";
 
 interface PreparedRun {
@@ -282,12 +283,24 @@ export async function createLivecodeVisualizerServer(
   const preparedRunIdsByModule = new Map<string, string[]>();
   let currentProject: ProjectState | null = null;
   let nextProjectGeneration = 1;
-  let diagnosticsInFlight: Promise<ProjectShadowCheckResponse> | null = null;
-  let diagnosticsInFlightHash: string | null = null;
   let lastDiagnostics:
     | { diagnosticsKey: string; response: ProjectShadowCheckResponse }
     | null = null;
+  // Project state is one mutable aggregate spanning the manifest, source
+  // caches, materialized code, hashes, and durable entity snapshots. Route
+  // operations enter one explicit lane so an await cannot splice two projects'
+  // aggregates together.
+  let projectOperationTail: Promise<void> = Promise.resolve();
   let closing = false;
+
+  function runProjectOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = projectOperationTail.then(operation, operation);
+    projectOperationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
 
   // Generated code's instrumentation import. Local engines import the package
   // source by file URL; a browser engine imports the served runtime bundle.
@@ -381,16 +394,20 @@ export async function createLivecodeVisualizerServer(
   // The world the current project's modules execute in. The shadow check and
   // the editor's LSP both key off this, so the Run gate and editor diagnostics
   // can never disagree about which globals exist.
-  const effectiveEngineTarget = (): "deno" | "browser" =>
-    currentProject?.manifest.engineTarget ??
+  const effectiveEngineTarget = (
+    state: ProjectState | null = currentProject,
+  ): "deno" | "browser" =>
+    state?.manifest.engineTarget ??
       (engineMode === "remote" ? "browser" : "deno");
   // LSP proxies live in their own processes; they learn the target from this
   // file (read at config-write time, watched for live flips on project open).
   const lspEngineTargetPath = join(lspWorkspacesDir, "engine-target.json");
-  const publishLspEngineTarget = async () => {
+  const publishLspEngineTarget = async (
+    state: ProjectState | null = currentProject,
+  ) => {
     await Deno.writeTextFile(
       lspEngineTargetPath,
-      JSON.stringify({ target: effectiveEngineTarget() }) + "\n",
+      JSON.stringify({ target: effectiveEngineTarget(state) }) + "\n",
     );
   };
   await publishLspEngineTarget();
@@ -564,9 +581,287 @@ export async function createLivecodeVisualizerServer(
       return json(await sendClientControlCommand(requestBody));
     }
 
+    const runtimeResponse = await handleRuntimeRoute(request, url);
+    if (runtimeResponse) return runtimeResponse;
+    const projectResponse = await handleProjectRoute(request, url);
+    if (projectResponse) return projectResponse;
+
+    const entityResponse = await handleEntityRoute(request, url);
+    if (entityResponse) return entityResponse;
+
+    const socketResponse = await handleSocketRoute(request, url);
+    if (socketResponse) return socketResponse;
+    const assetResponse = await handleAssetRoute(request, url);
+    if (assetResponse) return assetResponse;
+
+    return new Response("Not found", { status: 404, headers: CORS_HEADERS });
+  };
+
+  async function handleSocketRoute(
+    request: Request,
+    url: URL,
+  ): Promise<Response | null> {
+    if (request.method !== "GET") return null;
+    if (url.pathname === "/lsp") {
+      const session = url.searchParams.get("session");
+      if (!session) {
+        return new Response("Missing lsp session", {
+          status: 400,
+          headers: CORS_HEADERS,
+        });
+      }
+      const { socket, response } = Deno.upgradeWebSocket(request);
+      await log({ type: "lspSocketAccepted", sessionId: session });
+      try {
+        return response;
+      } finally {
+        lspWsServer.handleNewWebsocket(socket, session);
+      }
+    }
+
+    if (url.pathname === "/sync") {
+      const { socket, response } = Deno.upgradeWebSocket(request);
+      const state: SyncSocketState = {
+        socket,
+        subscriptions: new Set(),
+        seq: 0,
+      };
+      socket.onopen = () => syncSockets.set(socket, state);
+      socket.onmessage = (event) => {
+        if (typeof event.data !== "string") return;
+        void handleSyncClientMessage(state, event.data);
+      };
+      socket.onclose = () => syncSockets.delete(socket);
+      socket.onerror = () => syncSockets.delete(socket);
+      return response;
+    }
+
+    if (url.pathname === "/client/control") {
+      const requestedClientId = url.searchParams.get("clientId")?.trim();
+      const clientId = requestedClientId || crypto.randomUUID();
+      const { socket, response } = Deno.upgradeWebSocket(request);
+      socket.onopen = () => {
+        const existing = clientControlSockets.get(clientId);
+        if (existing?.socket.readyState === WebSocket.OPEN) {
+          existing.socket.close();
+        }
+        clientControlSockets.set(clientId, {
+          clientId,
+          socket,
+          connectedAt: Date.now(),
+        });
+        void log({ type: "clientControlConnected", clientId });
+      };
+      socket.onmessage = (event) => {
+        if (typeof event.data !== "string") return;
+        handleClientControlMessage(clientId, event.data);
+      };
+      socket.onclose = () =>
+        removeClientControlSocket(clientId, "closed", socket);
+      socket.onerror = () =>
+        removeClientControlSocket(clientId, "error", socket);
+      return response;
+    }
+    return null;
+  }
+
+  async function handleAssetRoute(
+    request: Request,
+    url: URL,
+  ): Promise<Response | null> {
+    if (request.method !== "GET") return null;
+    if (remotePlane && url.pathname === "/engine/uplink") {
+      const { socket, response } = Deno.upgradeWebSocket(request);
+      remotePlane.attachEngineSocket(socket);
+      await log({ type: "engineUplinkAccepted" });
+      return response;
+    }
+    if (
+      remotePlane && (url.pathname === "/engine" || url.pathname === "/engine/")
+    ) {
+      await ensureBrowserHostAssets();
+      return await serveStaticFile(
+        join(browserHostDir, "engine.html"),
+        "text/html; charset=utf-8",
+      );
+    }
+    if (remotePlane && url.pathname.startsWith("/engine/")) {
+      await ensureBrowserHostAssets();
+      const filePath = resolveContainedUrlPath(
+        browserHostDir,
+        url.pathname.slice("/engine/".length),
+      );
+      if (!filePath) return notFound();
+      const contentType = filePath.endsWith(".html")
+        ? "text/html; charset=utf-8"
+        : filePath.endsWith(".js") || filePath.endsWith(".ts")
+        ? "text/javascript; charset=utf-8"
+        : "application/octet-stream";
+      return await serveStaticFile(filePath, contentType);
+    }
+    if (
+      remotePlane && url.pathname.startsWith("/engine-assets/generated/")
+    ) {
+      const filePath = resolveContainedUrlPath(
+        generatedDir,
+        url.pathname.slice("/engine-assets/generated/".length),
+      );
+      return filePath?.endsWith(".ts")
+        ? await serveTranspiledModule(filePath)
+        : notFound();
+    }
+    if (remotePlane && url.pathname.startsWith("/engine-assets/project/")) {
+      const state = currentProject;
+      if (!state) {
+        return new Response("No project open", {
+          status: 404,
+          headers: CORS_HEADERS,
+        });
+      }
+      const filePath = resolveContainedUrlPath(
+        state.root,
+        url.pathname.slice("/engine-assets/project/".length),
+      );
+      return filePath?.endsWith(".ts")
+        ? await serveTranspiledModule(filePath)
+        : notFound();
+    }
+    if (uiDist) {
+      const encodedRelative = url.pathname === "/"
+        ? "index.html"
+        : url.pathname.slice(1);
+      const filePath = resolveContainedUrlPath(uiDist, encodedRelative);
+      if (!filePath) return null;
+      const extension = filePath.slice(filePath.lastIndexOf("."));
+      return await serveStaticFile(
+        filePath,
+        UI_MIME[extension] ?? "application/octet-stream",
+      );
+    }
+    return null;
+  }
+
+  function notFound(): Response {
+    return new Response("Not found", { status: 404, headers: CORS_HEADERS });
+  }
+
+  async function handleEntityRoute(
+    request: Request,
+    url: URL,
+  ): Promise<Response | null> {
+    if (request.method === "POST" && url.pathname === "/entities/create") {
+      const requestBody = await request.json() as EntityCreateRequest;
+      return await entityActionResponse(
+        await plane.execute({
+          kind: "entityCreate",
+          request: requestBody,
+        }) as EngineEntityActionResult,
+        "entityCreated",
+      );
+    }
+    if (request.method === "POST" && url.pathname === "/entities/duplicate") {
+      const requestBody = await request.json() as EntityDuplicateRequest;
+      return await entityActionResponse(
+        await plane.execute({
+          kind: "entityDuplicate",
+          request: requestBody,
+        }) as EngineEntityActionResult,
+        "entityDuplicated",
+      );
+    }
+    if (request.method === "POST" && url.pathname === "/entities/delete") {
+      const requestBody = await request.json() as EntityDeleteRequest;
+      return await entityActionResponse(
+        await plane.execute({
+          kind: "entityDelete",
+          request: requestBody,
+        }) as EngineEntityActionResult,
+        "entityDeleted",
+      );
+    }
+    if (request.method === "GET" && url.pathname === "/piano-roll/list") {
+      return json(
+        await plane.execute({ kind: "pianoRollList" }) as PianoRollSnapshot,
+      );
+    }
+    if (request.method === "POST" && url.pathname === "/piano-roll/set") {
+      const requestBody = await request.json() as SetPianoRollRequest;
+      return json(
+        await plane.execute({
+          kind: "pianoRollSet",
+          request: requestBody,
+        }) as PianoRollSetResult,
+      );
+    }
+    if (request.method === "POST" && url.pathname === "/piano-roll/undo") {
+      const requestBody = await request.json() as PianoRollHistoryRequest;
+      const result = await plane.execute({
+        kind: "pianoRollHistory",
+        action: "undo",
+        request: requestBody,
+      }) as PianoRollObject | null;
+      return json(result ?? { ok: false });
+    }
+    if (request.method === "POST" && url.pathname === "/piano-roll/redo") {
+      const requestBody = await request.json() as PianoRollHistoryRequest;
+      const result = await plane.execute({
+        kind: "pianoRollHistory",
+        action: "redo",
+        request: requestBody,
+      }) as PianoRollObject | null;
+      return json(result ?? { ok: false });
+    }
+    if (request.method === "GET" && url.pathname === "/params/list") {
+      return json(
+        await plane.execute({ kind: "paramsList" }) as ParamsSnapshot,
+      );
+    }
+    if (request.method === "POST" && url.pathname === "/params/set") {
+      const requestBody = await request.json() as SetParamsRequest;
+      const entity = await plane.execute({
+        kind: "paramsSet",
+        request: requestBody,
+      }) as ParamsEntity | null;
+      if (!entity) {
+        return json({
+          ok: false,
+          error: `No params entity "${requestBody.name}"`,
+        }, { status: 404 });
+      }
+      return json(entity);
+    }
+    if (
+      request.method === "POST" &&
+      url.pathname === "/animation-timeline/set"
+    ) {
+      const requestBody = await request.json() as SetAnimationTimelineRequest;
+      return json(
+        await plane.execute({
+          kind: "animationTimelineSet",
+          request: requestBody,
+        }) as AnimationTimelineSetResult,
+      );
+    }
+    if (request.method === "GET" && url.pathname === "/signals/list") {
+      return json(
+        await plane.execute({ kind: "signalsList" }) as SignalsSnapshot,
+      );
+    }
+    return null;
+  }
+
+  async function handleRuntimeRoute(
+    request: Request,
+    url: URL,
+  ): Promise<Response | null> {
+    if (!url.pathname.startsWith("/runtime/")) return null;
+
     if (request.method === "POST" && url.pathname === "/runtime/analyze") {
       const requestBody = await request.json() as AnalyzeRequest;
-      return json(await analyzeModule(requestBody));
+      const analysis = analyzeUsesCurrentProject(requestBody)
+        ? runProjectOperation(() => analyzeModule(requestBody))
+        : analyzeModule(requestBody);
+      return json(await analysis);
     }
 
     if (request.method === "POST" && url.pathname === "/runtime/launch") {
@@ -597,395 +892,129 @@ export async function createLivecodeVisualizerServer(
     if (request.method === "GET" && url.pathname === "/runtime/status") {
       return json({ ok: true, activeModules: await listRuntimeStatus() });
     }
-
     if (request.method === "GET" && url.pathname === "/runtime/state") {
       return json(await makeRuntimeStateResponse());
     }
-
     if (request.method === "POST" && url.pathname === "/runtime/stop-all") {
       await plane.execute({ kind: "stopAll", reason: "stopAllRequest" });
       return json({ ok: true });
     }
-
     if (request.method === "POST" && url.pathname === "/runtime/panic") {
       await plane.execute({ kind: "panic", reason: "panic" });
       return json({ ok: true });
     }
-
     if (request.method === "POST" && url.pathname === "/runtime/restart-all") {
-      await plane.execute({ kind: "stopAll", reason: "restartAllRequest" });
-      if (currentProject) await materializeProjectRuntime(currentProject);
-      return json({ ok: true, activeModules: await listRuntimeStatus() });
+      return await runProjectOperation(async () => {
+        await plane.execute({ kind: "stopAll", reason: "restartAllRequest" });
+        if (currentProject) await materializeProjectRuntime(currentProject);
+        return json({ ok: true, activeModules: await listRuntimeStatus() });
+      });
     }
+    return null;
+  }
 
+  async function handleProjectRoute(
+    request: Request,
+    url: URL,
+  ): Promise<Response | null> {
+    if (!url.pathname.startsWith("/project/")) return null;
     if (request.method === "POST" && url.pathname === "/project/create") {
       const requestBody = await request.json() as CreateProjectRequest;
-      return json(await createProject(requestBody));
+      return json(await runProjectOperation(() => createProject(requestBody)));
     }
-
     if (request.method === "POST" && url.pathname === "/project/open") {
       const requestBody = await request.json() as OpenProjectRequest;
-      return json(await openProject(requestBody.projectPath));
+      return json(
+        await runProjectOperation(() => openProject(requestBody.projectPath)),
+      );
     }
-
     if (request.method === "POST" && url.pathname === "/project/save") {
-      if (!currentProject) {
-        return json({ ok: false, error: "No project open" }, { status: 400 });
-      }
-      return json(await saveProject(currentProject));
+      return await runProjectOperation(async () => {
+        if (!currentProject) {
+          return json({ ok: false, error: "No project open" }, { status: 400 });
+        }
+        return json(await saveProject(currentProject));
+      });
     }
-
     if (request.method === "GET" && url.pathname === "/project/current") {
-      return json(await makeProjectCurrentResponse());
+      return json(
+        await runProjectOperation(async () => makeProjectCurrentResponse()),
+      );
     }
-
     if (request.method === "GET" && url.pathname === "/project/status") {
-      return json(await makeProjectStatusResponse());
+      return json(await runProjectOperation(makeProjectStatusResponse));
     }
-
     if (request.method === "GET" && url.pathname === "/project/diagnostics") {
-      return json(await makeProjectDiagnosticsResponse());
+      return json(await runProjectOperation(makeProjectDiagnosticsResponse));
     }
-
     if (
       request.method === "GET" && url.pathname === "/project/modules/source"
     ) {
       return json(
-        await makeProjectModuleSourceResponse({
-          id: url.searchParams.get("id") ?? undefined,
-          path: url.searchParams.get("path") ?? undefined,
-        }),
+        await runProjectOperation(() =>
+          makeProjectModuleSourceResponse({
+            id: url.searchParams.get("id") ?? undefined,
+            path: url.searchParams.get("path") ?? undefined,
+          })
+        ),
       );
     }
-
     if (request.method === "GET" && url.pathname === "/project/events") {
-      return json(await makeProjectStatusResponse());
+      return json(await runProjectOperation(makeProjectStatusResponse));
     }
-
     if (request.method === "POST" && url.pathname === "/project/modules/add") {
       const requestBody = await request.json() as AddProjectModuleRequest;
-      return json(await addProjectModule(requestBody));
+      return json(
+        await runProjectOperation(() => addProjectModule(requestBody)),
+      );
     }
-
     if (
       request.method === "POST" && url.pathname === "/project/modules/update"
     ) {
       const requestBody = await request.json() as UpdateProjectModuleRequest;
-      return json(await updateProjectModule(requestBody));
+      return json(
+        await runProjectOperation(() => updateProjectModule(requestBody)),
+      );
     }
-
     if (
       request.method === "POST" && url.pathname === "/project/modules/write"
     ) {
       const requestBody = await request.json() as WriteProjectModuleRequest;
-      return json(await writeProjectModule(requestBody));
+      return json(
+        await runProjectOperation(() => writeProjectModule(requestBody)),
+      );
     }
-
     if (
       request.method === "POST" && url.pathname === "/project/modules/reload"
     ) {
       const requestBody = await request.json() as ReloadProjectModuleRequest;
-      return json(await reloadProjectModule(requestBody));
+      return json(
+        await runProjectOperation(() => reloadProjectModule(requestBody)),
+      );
     }
-
     if (
       request.method === "POST" && url.pathname === "/project/modules/remove"
     ) {
       const requestBody = await request.json() as RemoveProjectModuleRequest;
-      return json(await removeProjectModule(requestBody));
+      return json(
+        await runProjectOperation(() => removeProjectModule(requestBody)),
+      );
     }
-
     if (request.method === "POST" && url.pathname === "/project/canvas") {
       const requestBody = await request.json() as {
         canvas: LivecodeProjectManifest["canvas"];
       };
-      const state = requireCurrentProject();
-      state.manifest.canvas = requestBody.canvas;
-      await writeProjectManifest(state);
-      return json(await makeProjectCurrentResponse());
-    }
-
-    if (request.method === "POST" && url.pathname === "/entities/create") {
-      const requestBody = await request.json() as EntityCreateRequest;
-      return await entityActionResponse(
-        await plane.execute({
-          kind: "entityCreate",
-          request: requestBody,
-        }) as EngineEntityActionResult,
-        "entityCreated",
-      );
-    }
-
-    if (request.method === "POST" && url.pathname === "/entities/duplicate") {
-      const requestBody = await request.json() as EntityDuplicateRequest;
-      return await entityActionResponse(
-        await plane.execute({
-          kind: "entityDuplicate",
-          request: requestBody,
-        }) as EngineEntityActionResult,
-        "entityDuplicated",
-      );
-    }
-
-    if (request.method === "POST" && url.pathname === "/entities/delete") {
-      const requestBody = await request.json() as EntityDeleteRequest;
-      return await entityActionResponse(
-        await plane.execute({
-          kind: "entityDelete",
-          request: requestBody,
-        }) as EngineEntityActionResult,
-        "entityDeleted",
-      );
-    }
-
-    if (request.method === "GET" && url.pathname === "/piano-roll/list") {
       return json(
-        await plane.execute({ kind: "pianoRollList" }) as PianoRollSnapshot,
+        await runProjectOperation(async () => {
+          const state = requireCurrentProject();
+          state.manifest.canvas = requestBody.canvas;
+          await writeProjectManifest(state);
+          return makeProjectCurrentResponse(state);
+        }),
       );
     }
-
-    if (request.method === "POST" && url.pathname === "/piano-roll/set") {
-      const requestBody = await request.json() as SetPianoRollRequest;
-      return json(
-        await plane.execute({
-          kind: "pianoRollSet",
-          request: requestBody,
-        }) as PianoRollSetResult,
-      );
-    }
-
-    if (request.method === "POST" && url.pathname === "/piano-roll/undo") {
-      const requestBody = await request.json() as PianoRollHistoryRequest;
-      const result = await plane.execute({
-        kind: "pianoRollHistory",
-        action: "undo",
-        request: requestBody,
-      }) as PianoRollObject | null;
-      return json(result ?? { ok: false });
-    }
-
-    if (request.method === "POST" && url.pathname === "/piano-roll/redo") {
-      const requestBody = await request.json() as PianoRollHistoryRequest;
-      const result = await plane.execute({
-        kind: "pianoRollHistory",
-        action: "redo",
-        request: requestBody,
-      }) as PianoRollObject | null;
-      return json(result ?? { ok: false });
-    }
-
-    if (request.method === "GET" && url.pathname === "/params/list") {
-      return json(
-        await plane.execute({ kind: "paramsList" }) as ParamsSnapshot,
-      );
-    }
-
-    if (request.method === "POST" && url.pathname === "/params/set") {
-      const requestBody = await request.json() as SetParamsRequest;
-      const entity = await plane.execute({
-        kind: "paramsSet",
-        request: requestBody,
-      }) as ParamsEntity | null;
-      if (!entity) {
-        return json({
-          ok: false,
-          error: `No params entity "${requestBody.name}"`,
-        }, { status: 404 });
-      }
-      return json(entity);
-    }
-
-    if (
-      request.method === "POST" &&
-      url.pathname === "/animation-timeline/set"
-    ) {
-      const requestBody = await request.json() as SetAnimationTimelineRequest;
-      return json(
-        await plane.execute({
-          kind: "animationTimelineSet",
-          request: requestBody,
-        }) as AnimationTimelineSetResult,
-      );
-    }
-
-    if (request.method === "GET" && url.pathname === "/signals/list") {
-      return json(
-        await plane.execute({ kind: "signalsList" }) as SignalsSnapshot,
-      );
-    }
-
-    if (request.method === "GET" && url.pathname === "/lsp") {
-      const session = url.searchParams.get("session");
-      if (!session) {
-        return new Response("Missing lsp session", {
-          status: 400,
-          headers: CORS_HEADERS,
-        });
-      }
-
-      const { socket, response } = Deno.upgradeWebSocket(request);
-      await log({ type: "lspSocketAccepted", sessionId: session });
-      try {
-        return response;
-      } finally {
-        lspWsServer.handleNewWebsocket(socket, session);
-      }
-    }
-
-    if (request.method === "GET" && url.pathname === "/sync") {
-      const { socket, response } = Deno.upgradeWebSocket(request);
-      const state: SyncSocketState = {
-        socket,
-        subscriptions: new Set(),
-        seq: 0,
-      };
-      socket.onopen = () => {
-        // Nothing is sent until the client subscribes: an unwatched entity kind
-        // costs this socket nothing.
-        syncSockets.set(socket, state);
-      };
-      socket.onmessage = (event) => {
-        if (typeof event.data !== "string") return;
-        void handleSyncClientMessage(state, event.data);
-      };
-      socket.onclose = () => syncSockets.delete(socket);
-      socket.onerror = () => syncSockets.delete(socket);
-      return response;
-    }
-
-    if (request.method === "GET" && url.pathname === "/client/control") {
-      const requestedClientId = url.searchParams.get("clientId")?.trim();
-      const clientId = requestedClientId || crypto.randomUUID();
-      const { socket, response } = Deno.upgradeWebSocket(request);
-      socket.onopen = () => {
-        const existing = clientControlSockets.get(clientId);
-        if (existing && existing.socket.readyState === WebSocket.OPEN) {
-          existing.socket.close();
-        }
-        clientControlSockets.set(clientId, {
-          clientId,
-          socket,
-          connectedAt: Date.now(),
-        });
-        void log({ type: "clientControlConnected", clientId });
-      };
-      socket.onmessage = (event) => {
-        if (typeof event.data !== "string") return;
-        handleClientControlMessage(clientId, event.data);
-      };
-      socket.onclose = () =>
-        removeClientControlSocket(clientId, "closed", socket);
-      socket.onerror = () =>
-        removeClientControlSocket(clientId, "error", socket);
-      return response;
-    }
-
-    // --- remote engine mode: host page, uplink, and browser module assets ---
-    if (remotePlane) {
-      if (request.method === "GET" && url.pathname === "/engine/uplink") {
-        const { socket, response } = Deno.upgradeWebSocket(request);
-        remotePlane.attachEngineSocket(socket);
-        await log({ type: "engineUplinkAccepted" });
-        return response;
-      }
-
-      if (
-        request.method === "GET" &&
-        (url.pathname === "/engine" || url.pathname === "/engine/")
-      ) {
-        await ensureBrowserHostAssets();
-        return await serveStaticFile(
-          join(browserHostDir, "engine.html"),
-          "text/html; charset=utf-8",
-        );
-      }
-
-      if (request.method === "GET" && url.pathname.startsWith("/engine/")) {
-        await ensureBrowserHostAssets();
-        const relative = url.pathname.slice("/engine/".length);
-        const filePath = join(browserHostDir, normalize(relative));
-        if (relative.includes("..") || !filePath.startsWith(browserHostDir)) {
-          return new Response("Not found", {
-            status: 404,
-            headers: CORS_HEADERS,
-          });
-        }
-        const contentType = filePath.endsWith(".html")
-          ? "text/html; charset=utf-8"
-          // ".ts" is also JS here: the built dir's browser.ts is a bundled JS
-          // module kept under the name the midi package's runtime dynamic
-          // import ("./browser.ts") resolves to.
-          : filePath.endsWith(".js") || filePath.endsWith(".ts")
-          ? "text/javascript; charset=utf-8"
-          : "application/octet-stream";
-        return await serveStaticFile(filePath, contentType);
-      }
-
-      if (
-        request.method === "GET" &&
-        url.pathname.startsWith("/engine-assets/generated/")
-      ) {
-        const relative = decodeURIComponent(
-          url.pathname.slice("/engine-assets/generated/".length),
-        );
-        const filePath = join(generatedDir, normalize(relative));
-        if (
-          relative.includes("..") || !filePath.startsWith(generatedDir) ||
-          !filePath.endsWith(".ts")
-        ) {
-          return new Response("Not found", {
-            status: 404,
-            headers: CORS_HEADERS,
-          });
-        }
-        return await serveTranspiledModule(filePath);
-      }
-
-      if (
-        request.method === "GET" &&
-        url.pathname.startsWith("/engine-assets/project/")
-      ) {
-        if (!currentProject) {
-          return new Response("No project open", {
-            status: 404,
-            headers: CORS_HEADERS,
-          });
-        }
-        const relative = decodeURIComponent(
-          url.pathname.slice("/engine-assets/project/".length),
-        );
-        const filePath = join(currentProject.root, normalize(relative));
-        if (
-          relative.includes("..") ||
-          !filePath.startsWith(currentProject.root) ||
-          !filePath.endsWith(".ts")
-        ) {
-          return new Response("Not found", {
-            status: 404,
-            headers: CORS_HEADERS,
-          });
-        }
-        return await serveTranspiledModule(filePath);
-      }
-    }
-
-    // Static UI fallback: everything the API routes above did not claim.
-    if (uiDist && request.method === "GET") {
-      const relative = url.pathname === "/"
-        ? "index.html"
-        : decodeURIComponent(url.pathname.slice(1));
-      const filePath = join(uiDist, normalize(relative));
-      if (!relative.includes("..") && filePath.startsWith(uiDist)) {
-        const extension = filePath.slice(filePath.lastIndexOf("."));
-        return await serveStaticFile(
-          filePath,
-          UI_MIME[extension] ?? "application/octet-stream",
-        );
-      }
-    }
-
-    return new Response("Not found", { status: 404, headers: CORS_HEADERS });
-  };
+    return null;
+  }
 
   async function serveStaticFile(
     filePath: string,
@@ -1212,15 +1241,23 @@ export async function createLivecodeVisualizerServer(
       commandId: message.commandId,
       clientId,
       ok: message.ok,
-      error: message.error,
+      ...(message.ok ? {} : { error: message.error }),
     });
-    pending.resolve({
-      ok: message.ok,
-      commandId: message.commandId,
-      clientId,
-      result: message.result,
-      error: message.error,
-    });
+    pending.resolve(
+      message.ok
+        ? {
+          ok: true,
+          commandId: message.commandId,
+          clientId,
+          result: message.result,
+        }
+        : {
+          ok: false,
+          commandId: message.commandId,
+          clientId,
+          error: message.error,
+        },
+    );
   }
 
   function removeClientControlSocket(
@@ -1273,7 +1310,6 @@ export async function createLivecodeVisualizerServer(
     };
 
     await Deno.mkdir(root, { recursive: true });
-    currentProject = state;
     for (const moduleInput of requestBody.modules ?? []) {
       await addOrUpdateProjectModule(state, moduleInput, {
         allowNew: true,
@@ -1284,13 +1320,14 @@ export async function createLivecodeVisualizerServer(
     if (state.manifest.modules.length > 0) {
       await materializeProjectRuntime(state);
     }
-    await publishLspEngineTarget();
+    await publishLspEngineTarget(state);
+    currentProject = state;
     await log({
       type: "projectCreated",
       root,
       moduleCount: state.manifest.modules.length,
     });
-    return await makeProjectCurrentResponse();
+    return makeProjectCurrentResponse(state);
   }
 
   async function listProjects(): Promise<ProjectsListResponse> {
@@ -1374,7 +1411,6 @@ export async function createLivecodeVisualizerServer(
       sourceContentCache: new Map(),
       savedEntityJson: new Map(),
     };
-    currentProject = state;
     // Before materialization, so every durable entity exists before any module
     // could run and read one.
     await loadProjectEntityData(state);
@@ -1389,14 +1425,15 @@ export async function createLivecodeVisualizerServer(
     if (state.manifest.modules.length > 0) {
       await materializeProjectRuntime(state);
     }
-    await publishLspEngineTarget();
+    await publishLspEngineTarget(state);
+    currentProject = state;
     await log({
       type: "projectOpened",
       root,
       moduleCount: state.manifest.modules.length,
       dataCount: state.savedEntityJson.size,
     });
-    return await makeProjectCurrentResponse();
+    return makeProjectCurrentResponse(state);
   }
 
   /**
@@ -1511,7 +1548,7 @@ export async function createLivecodeVisualizerServer(
       skippedCount: skipped.length,
     });
 
-    return { ...await makeProjectCurrentResponse(), data: results, skipped };
+    return { ...makeProjectCurrentResponse(state), data: results, skipped };
   }
 
   /**
@@ -1653,9 +1690,9 @@ export async function createLivecodeVisualizerServer(
     result: EngineEntityActionResult,
     logType: string,
   ): Promise<Response> {
-    if (!result.ok || !result.entity) {
+    if (!result.ok) {
       return json(
-        { ok: false, error: result.error ?? "entity action failed" },
+        { ok: false, error: result.error },
         {
           status: result.status ?? 500,
         },
@@ -1901,22 +1938,25 @@ export async function createLivecodeVisualizerServer(
     return { generatedRunId, projectSourceHash, sourceHashes, results };
   }
 
-  async function makeProjectCurrentResponse(): Promise<ProjectCurrentResponse> {
+  function makeProjectCurrentResponse(
+    state: ProjectState | null = currentProject,
+  ): ProjectCurrentResponse {
     return {
       ok: true,
-      project: currentProject
+      project: state
         ? {
-          root: currentProject.root,
-          manifestPath: currentProject.manifestPath,
-          manifest: currentProject.manifest,
+          root: state.root,
+          manifestPath: state.manifestPath,
+          manifest: state.manifest,
         }
         : null,
     };
   }
 
   async function makeProjectStatusResponse(): Promise<ProjectStatusResponse> {
-    const current = await makeProjectCurrentResponse();
-    if (!currentProject) {
+    const state = currentProject;
+    const current = makeProjectCurrentResponse(state);
+    if (!state) {
       return {
         ok: true,
         project: null,
@@ -1928,7 +1968,7 @@ export async function createLivecodeVisualizerServer(
     }
 
     const moduleStatuses: ProjectModuleStatus[] = [];
-    const sourceModules = await readProjectSourceModules(currentProject);
+    const sourceModules = await readProjectSourceModules(state);
     const diskHashes = new Map(
       sourceModules.map((moduleRecord) => [
         moduleRecord.id,
@@ -1937,7 +1977,7 @@ export async function createLivecodeVisualizerServer(
     );
     const projectSourceHash = await projectSourceHashFromHashes(diskHashes);
     const graph = buildProjectImportGraph({
-      projectRoot: currentProject.root,
+      projectRoot: state.root,
       modules: sourceModules,
     });
     const changedModuleIds = new Set(
@@ -1955,7 +1995,7 @@ export async function createLivecodeVisualizerServer(
     );
     for (const moduleRecord of sourceModules) {
       const diskHash = diskHashes.get(moduleRecord.id) ?? null;
-      const hashState = currentProject.hashes.get(moduleRecord.id);
+      const hashState = state.hashes.get(moduleRecord.id);
       const active = activeByModule.get(moduleRecord.id);
       const editorHash = hashState?.editorHash ?? null;
       const lastLoadedHash = hashState?.lastLoadedHash ?? null;
@@ -2005,15 +2045,16 @@ export async function createLivecodeVisualizerServer(
       modules: moduleStatuses,
       activeModules: runtimeRows,
       projectSourceHash,
-      data: await makeProjectDataStatus(currentProject),
+      data: await makeProjectDataStatus(state),
     };
   }
 
   async function makeProjectDiagnosticsResponse(): Promise<
     ProjectShadowCheckResponse
   > {
-    const current = await makeProjectCurrentResponse();
-    if (!currentProject) {
+    const state = currentProject;
+    const current = makeProjectCurrentResponse(state);
+    if (!state) {
       return {
         ok: true,
         project: null,
@@ -2027,7 +2068,7 @@ export async function createLivecodeVisualizerServer(
       };
     }
 
-    const sourceModules = await readProjectSourceModules(currentProject);
+    const sourceModules = await readProjectSourceModules(state);
     const sourceHashes = new Map(
       sourceModules.map((moduleRecord) => [
         moduleRecord.id,
@@ -2040,32 +2081,17 @@ export async function createLivecodeVisualizerServer(
     // globals are legal and a reachable `Deno.*` is the type error it would
     // be at runtime. The target is part of the cache key so a retargeted
     // project cannot reuse the other world's verdict.
-    const engineTarget = effectiveEngineTarget();
-    const diagnosticsKey = `${engineTarget}:${projectSourceHash}`;
+    const engineTarget = effectiveEngineTarget(state);
+    const diagnosticsKey =
+      `${state.generation}:${engineTarget}:${projectSourceHash}`;
     if (lastDiagnostics?.diagnosticsKey === diagnosticsKey) {
       return lastDiagnostics.response;
     }
-    // If a run is already in flight, only reuse it when it was started for the
-    // exact same source hash. Otherwise wait for the slot to free up (the run
-    // may already cover a newer hash by the time it finishes) before starting
-    // our own run keyed to the current hash. Bounded in practice: each
-    // iteration awaits a distinct in-flight run.
-    while (diagnosticsInFlight) {
-      if (diagnosticsInFlightHash === diagnosticsKey) {
-        return await diagnosticsInFlight;
-      }
-      await diagnosticsInFlight.catch(() => {});
-      if (lastDiagnostics?.diagnosticsKey === diagnosticsKey) {
-        return lastDiagnostics.response;
-      }
-    }
-
-    diagnosticsInFlightHash = diagnosticsKey;
     const denoConfigPath = engineTarget === "browser"
       ? await writeBrowserCheckConfig(REPO_ROOT)
       : join(REPO_ROOT, "deno.json");
-    const promise = analyzeProjectShadow({
-      projectRoot: currentProject.root,
+    const response = await analyzeProjectShadow({
+      projectRoot: state.root,
       project: current.project,
       modules: sourceModules,
       shadowRoot: shadowDir,
@@ -2075,19 +2101,11 @@ export async function createLivecodeVisualizerServer(
         "../../../../packages/livecode-engine/runtime.ts",
         import.meta.url,
       ).href,
-    }).then((response) => {
-      lastDiagnostics = { diagnosticsKey, response };
-      return response;
     });
-    diagnosticsInFlight = promise;
-    try {
-      return await promise;
-    } finally {
-      if (diagnosticsInFlight === promise) {
-        diagnosticsInFlight = null;
-        diagnosticsInFlightHash = null;
-      }
+    if (currentProject === state) {
+      lastDiagnostics = { diagnosticsKey, response };
     }
+    return response;
   }
 
   async function makeProjectModuleSourceResponse(
@@ -2523,15 +2541,16 @@ export async function createLivecodeVisualizerServer(
     // module runs again.
     clearModulePianoRollLookups(requestBody.moduleId);
 
-    const projectModule = currentProject
-      ? findProjectModule(currentProject, {
+    const projectState = currentProject;
+    const projectModule = projectState
+      ? findProjectModule(projectState, {
         id: requestBody.projectModuleId ?? requestBody.moduleId,
         path: requestBody.projectModulePath,
       })
       : null;
 
-    if (currentProject && projectModule) {
-      const materialized = await materializeProjectRuntime(currentProject);
+    if (projectState && projectModule) {
+      const materialized = await materializeProjectRuntime(projectState);
       const result = materialized.results.get(projectModule.id);
       if (!result) {
         throw new Error(`No materialized result for ${projectModule.id}`);
@@ -2550,7 +2569,7 @@ export async function createLivecodeVisualizerServer(
       const transformedModuleUri = engineMode === "remote"
         ? `/engine-assets/project/${projectModule.runtimePath}`
         : pathToFileURL(
-          projectAbsolutePath(currentProject, projectModule.runtimePath),
+          projectAbsolutePath(projectState, projectModule.runtimePath),
         ).href;
       const sourceHash = materialized.sourceHashes.get(projectModule.id);
       await rememberPreparedRun({
@@ -2665,6 +2684,16 @@ export async function createLivecodeVisualizerServer(
       transformedCode: undefined,
       sourceHash,
     };
+  }
+
+  function analyzeUsesCurrentProject(requestBody: AnalyzeRequest): boolean {
+    const state = currentProject;
+    return Boolean(
+      state && findProjectModule(state, {
+        id: requestBody.projectModuleId ?? requestBody.moduleId,
+        path: requestBody.projectModulePath,
+      }),
+    );
   }
 
   async function rememberPreparedRun(run: PreparedRun): Promise<void> {

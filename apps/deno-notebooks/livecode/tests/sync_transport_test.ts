@@ -641,7 +641,7 @@ Deno.test("the module-keyed sources compare values, so a re-marked identical set
   lookups.collectChanges();
   assertEquals(waits.collectChanges(), null, "an idle tick collects nothing");
 
-  enterWait(moduleId, "w2");
+  const baselineW2 = enterWait(moduleId, "w2");
   enterWait(moduleId, "w1");
   assertEquals(waits.collectChanges(), [{
     name: moduleId,
@@ -652,17 +652,17 @@ Deno.test("the module-keyed sources compare values, so a re-marked identical set
   // tick. The dirty hint fires on every one of those calls and the resulting
   // set is unchanged, so nothing may go out: today's global JSON compare gives
   // that silence and the natural-completion e2e depends on it.
-  enterWait(moduleId, "w1");
-  exitWait(moduleId, "w1");
-  enterWait(moduleId, "w2");
-  exitWait(moduleId, "w2");
+  const transientW1 = enterWait(moduleId, "w1");
+  exitWait(moduleId, "w1", transientW1);
+  const transientW2 = enterWait(moduleId, "w2");
+  exitWait(moduleId, "w2", transientW2);
   assertEquals(
     waits.collectChanges(),
     null,
     "an unchanged callsite set must not rebroadcast",
   );
 
-  exitWait(moduleId, "w2");
+  exitWait(moduleId, "w2", baselineW2);
   assertEquals(waits.collectChanges(), [{
     name: moduleId,
     entity: { moduleId, callsiteIds: ["w1"] },

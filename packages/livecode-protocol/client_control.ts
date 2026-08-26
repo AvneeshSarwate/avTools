@@ -33,21 +33,27 @@ export interface ClientControlEnvelope {
   command: ClientControlCommand;
 }
 
-export interface ClientControlResultMessage {
+interface ClientControlResultIdentity {
   type: "clientCommandResult";
   commandId: string;
-  ok: boolean;
-  result?: unknown;
-  error?: string;
 }
 
-export interface ClientControlCommandResponse {
-  ok: boolean;
+type ClientControlOutcome =
+  | { ok: true; result: unknown }
+  | { ok: false; error: string };
+
+export type ClientControlResultMessage =
+  & ClientControlResultIdentity
+  & ClientControlOutcome;
+
+interface ClientControlResponseIdentity {
   commandId: string;
   clientId: string;
-  result?: unknown;
-  error?: string;
 }
+
+export type ClientControlCommandResponse =
+  & ClientControlResponseIdentity
+  & ClientControlOutcome;
 
 export interface ClientControlClientsResponse {
   ok: true;

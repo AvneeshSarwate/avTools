@@ -15,11 +15,14 @@ and the end-to-end topology and flows are in
 
 | Area | Files |
 | --- | --- |
-| App shell, tldraw overrides, project load/save | `src/App.tsx` |
+| App/provider composition and tldraw-store coordination | `src/App.tsx` |
+| Topbar controls, project save, and entity/view actions | `src/TopBar.tsx` |
+| Project, baked-project, and `.tldr` canvas helpers | `src/projectCanvas.ts` |
+| Browser automation/client-control bridge | `src/clientControlBridge.ts` |
 | Projects index page (server discovery, project list, topology-aware open) | `projects.html`, `src/projectsIndex.ts` |
-| The one `/sync` socket, per-kind contexts, typed hooks, HTTP writes | `src/syncRuntime.tsx` |
-| Runtime provider, analysis/run state, connect-armed sequence, project synchronization | `src/livecodeRuntime.tsx` |
-| Launch acknowledgement/run-token correlation | `src/runCorrelation.ts` |
+| Sync provider, per-kind contexts, typed hooks, and HTTP writes | `src/syncRuntime.tsx` |
+| Sync map reduction and WebSocket/BroadcastChannel adapters | `src/syncState.ts`, `src/syncTransport.ts` |
+| Runtime provider, connect/recovery, analysis, launch, and project synchronization | `src/livecodeRuntime.tsx`, `src/buildLifecycle.ts`, `src/runCorrelation.ts` |
 | Livecode shape and utility | `src/LivecodeEditorShape.tsx` |
 | CodeMirror, LSP bridge, wait decorations | `src/CodeMirrorEditor.tsx`, `src/denoLsp.ts` |
 | Piano-roll shape | `src/PianoRollShape.tsx` |
@@ -27,7 +30,7 @@ and the end-to-end topology and flows are in
 | Signal scope shape | `src/SignalScopeShape.tsx` |
 | Wire types | `packages/livecode-protocol` (vite alias + tsconfig path); `src/livecodeProtocol.ts` re-exports it and adds client-local view models |
 | Piano-roll custom element typing | `src/custom-elements.d.ts` |
-| Socket behavior | `src/reconnectingSocket.ts`, `src/serverRequests.ts` |
+| Reconnecting sockets and bounded requests | `src/reconnectingSocket.ts`, `src/serverRequests.ts` |
 | Debug/test surfaces | `src/livecodeTldrawDebug.ts` plus APIs installed by `App.tsx` and `livecodeRuntime.tsx` |
 | Browser tests and fixtures | `tests/`, `public/test-canvases/` |
 
