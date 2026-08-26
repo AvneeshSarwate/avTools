@@ -69,10 +69,12 @@ request validation, and imported-path constraints.
 ## P1: browser target checking over-promises module delivery
 
 The browser engine serves relative project files, the generated runtime, and a
-small fixed helper-alias bundle. Browser-target shadow checking resolves the
-wider repository import map, so a module can typecheck successfully and then
-fail at browser import on an unserved bare specifier. Either expand bundling or
-narrow the checker's import map to the served surface.
+fixed alias-bundle set (the livecode helpers plus `three` and `p5`).
+Browser-target shadow checking resolves the wider repository import map, so a
+module can typecheck successfully and then fail at browser import on an
+unserved bare specifier. Either expand bundling (add the specifier to
+`ALIAS_ENTRIES`/the import map in `build_host_assets.ts`) or narrow the
+checker's import map to the served surface.
 
 ## P1: browser-engine timing is not guaranteed in the background
 
@@ -130,9 +132,12 @@ engine's state.
 
 ## P2: browser MIDI and checked-in p5gpu coverage are incomplete
 
-Web MIDI is window-, permission-, browser-, and gesture-dependent; until init
-succeeds, sends and panic have no devices to act on. Tests use fakes and cannot
-prove real ports. Chrome is the supported browser target.
+The browser engine host initializes Web MIDI at engine start and retries from
+the first user gesture, with a visible status line. The residual gaps: the
+first-ever permission grant needs a focused tab (a background engine tab shows
+"not enabled" until visited once), and there is no hotplug rescan — devices
+connected after init need a tab reload. Tests use fakes and cannot prove real
+ports. Chrome is the supported browser target.
 
 The checked-in `minimal-p5gpu` example has a `sped`/`speed` mismatch. The p5gpu
 test builds a different temporary project, so do not use the checked-in example

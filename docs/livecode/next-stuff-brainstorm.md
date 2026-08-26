@@ -1,7 +1,11 @@
 
-need some kind of library/viewer for seeing entites that have been programatically created but don't have a UI on the canvas yet (or a browse view to just scroll through or something
+need some kind of library/viewer for seeing entites that have been programatically created but don't have a UI on the canvas yet (or a browse view to just scroll through or something)
 
 for engine running in the browser with graphics libs, are there any tests for that wrt assigning canvases and outputs? probably need some extra "engine side UI" for when things run in the browser
+- probably want at least full-screen popout wrapper for canvases, think of other things
+- figure out a way for WYSIWYG editting on engine tab (eg, drawing) to send data back to UI? (is it any harder than just writing it to stores?)
+
+figure out a way to make it easier to import 3rd party libraries into project modules
 
 is there a need to add a system for events/handlers or pubsub between modules, or does it naturally fall out without need for extra structure (probably doesn't need a new thing?) 
 

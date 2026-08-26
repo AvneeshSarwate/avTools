@@ -30,6 +30,13 @@ const ALIAS_ENTRIES: Record<string, string> = {
   "piano_roll_helpers": 'export * from "piano-roll-helpers";\n',
   "piano_roll_store": 'export * from "piano-roll-store";\n',
   "midi_helpers": 'export * from "midi-helpers";\n',
+  // Graphics libraries user modules may import when the engine runs in a
+  // browser tab (versions pinned by the root import map). Re-exported through
+  // repo-resident vendor shims so the npm specifiers resolve from inside the
+  // repo (entry stubs live in the out dir, which has no node_modules above
+  // it).
+  "three": `export * from "${join(HERE, "vendor", "three.ts")}";\n`,
+  "p5": `export { default } from "${join(HERE, "vendor", "p5.ts")}";\n`,
   "runtime":
     'export {\n  visualizedAwait,\n  visualizedOwnedSignal,\n  visualizedPianoRollLookup,\n} from "@avtools/livecode-engine/runtime.ts";\n',
 };
@@ -42,7 +49,9 @@ const IMPORT_MAP_HTML = `<script type="importmap">
     "animation-timeline": "./animation_timeline.js",
     "piano-roll-helpers": "./piano_roll_helpers.js",
     "piano-roll-store": "./piano_roll_store.js",
-    "midi-helpers": "./midi_helpers.js"
+    "midi-helpers": "./midi_helpers.js",
+    "three": "./three.js",
+    "p5": "./p5.js"
   }
 }
 </script>`;
@@ -70,7 +79,11 @@ async function writeBundleConfig(): Promise<string> {
   await Deno.writeTextFile(
     configPath,
     JSON.stringify(
-      { imports, nodeModulesDir: "manual", lock: false },
+      // "auto" (deno-managed node_modules for this config) rather than
+      // "manual" (byonm): the repo's top-level node_modules can only hold one
+      // version per package, and browser-projections pins p5@^1 while the
+      // livecode graph wants p5@^2 — byonm cannot serve both.
+      { imports, nodeModulesDir: "auto", lock: false },
       null,
       2,
     ) + "\n",
@@ -164,7 +177,11 @@ export async function buildBrowserHostAssets(
 <title>livecode browser engine</title>
 ${IMPORT_MAP_HTML}
 <script type="module" src="./engine_page.js"></script>
-<body>livecode browser engine host</body>
+<body>
+<div class="livecode-engine-status">livecode browser engine host</div>
+<div class="livecode-midi-status"></div>
+<div id="livecode-stage"></div>
+</body>
 `,
   );
   await Deno.writeTextFile(

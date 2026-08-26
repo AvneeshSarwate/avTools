@@ -24,6 +24,8 @@
 //    first-ever visit's permission prompt), with a visible status line;
 //    `panicMidi` from the same midi-helpers singleton is wired into the
 //    engine, same as the Deno host;
+//  - graphics stage: `#livecode-stage` (engine.html) is user-module DOM —
+//    graphics modules append canvases there; page chrome never touches it;
 //  - throttling defenses: a silent AudioContext keepalive (exempts the tab
 //    from intensive throttling) plus a timer watchdog that logs — locally and
 //    over the uplink — whenever the main-thread clock stretches, so hidden-tab
@@ -75,21 +77,35 @@ interface EngineRuntime {
 
 let runtime: EngineRuntime | null = null;
 
-function setStatus(text: string, takeover?: () => void): void {
+/**
+ * Find-or-create one of the page's own chrome lines. Status rendering only
+ * ever touches these elements — never the body — because `#livecode-stage`
+ * (declared in engine.html) belongs to user modules: graphics modules append
+ * canvases there, and a status update must not destroy them.
+ */
+function pageLine(className: string): HTMLDivElement | null {
   const body = document.body;
-  if (!body) return;
-  body.textContent = "";
-  const line = document.createElement("div");
-  line.className = "livecode-engine-status";
+  if (!body) return null;
+  let line = body.querySelector<HTMLDivElement>(`:scope > .${className}`);
+  if (!line) {
+    line = document.createElement("div");
+    line.className = className;
+    body.appendChild(line);
+  }
+  return line;
+}
+
+function setStatus(text: string, takeover?: () => void): void {
+  const line = pageLine("livecode-engine-status");
+  if (!line) return;
   line.textContent = text;
-  body.appendChild(line);
   if (takeover) {
     const button = document.createElement("button");
     button.className = "livecode-engine-takeover";
     button.type = "button";
     button.textContent = "Take over as engine";
     button.onclick = takeover;
-    body.appendChild(button);
+    line.appendChild(button);
   }
 }
 
@@ -476,15 +492,8 @@ async function renderMidiStatus(): Promise<void> {
         text = "MIDI: not enabled — click or press a key to request access";
     }
   }
-  const body = document.body;
-  if (!body) return;
-  let line = body.querySelector<HTMLDivElement>(".livecode-midi-status");
-  if (!line) {
-    line = document.createElement("div");
-    line.className = "livecode-midi-status";
-    body.appendChild(line);
-  }
-  line.textContent = text;
+  const line = pageLine("livecode-midi-status");
+  if (line) line.textContent = text;
 }
 
 async function queryMidiPermission(): Promise<string | null> {

@@ -25,8 +25,8 @@ let configDir: string | null = null;
 
 /**
  * Write the browser-lib deno config and return its path. npm specifiers
- * resolve byonm from the repository's node_modules (found by walking up from
- * the checked files), so no install step is involved.
+ * resolve through a deno-managed node_modules next to the config
+ * (nodeModulesDir "auto"), populated from the shared store on first check.
  */
 export async function writeBrowserCheckConfig(
   repoRoot: string,
@@ -48,7 +48,12 @@ export async function writeBrowserCheckConfig(
       {
         compilerOptions: { lib: BROWSER_CHECK_LIB },
         imports,
-        nodeModulesDir: "manual",
+        // "auto" rather than byonm ("manual"): the repo's top-level
+        // node_modules holds one version per package, and browser-projections
+        // pins p5@^1 while the livecode graph wants p5@^2 — byonm cannot
+        // serve both. Same choice as the engine bundle config
+        // (build_host_assets.ts).
+        nodeModulesDir: "auto",
         lock: false,
       },
       null,

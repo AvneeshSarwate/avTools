@@ -5033,7 +5033,9 @@
       "jsr:@std/random@~0.1.4",
       "npm:babylonjs@^8.20.0",
       "npm:earcut@3",
+      "npm:p5@2",
       "npm:seedrandom@^3.0.5",
+      "npm:three@0.178",
       "npm:wgsl_reflect@^1.2.3"
     ],
     "members": {
