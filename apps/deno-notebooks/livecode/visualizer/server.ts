@@ -197,6 +197,8 @@ export interface LivecodeVisualizerServerOptions {
    * `apps/livecode-tldraw/example-projects`.
    */
   projectsRoots?: string[];
+  /** Build the remote browser-engine host in the background after listen. */
+  prewarmBrowserHost?: boolean;
   /**
    * When set, `POST /server/engine-mode` with a different mode answers ok and
    * invokes this callback as it returns the response; the embedder (see
@@ -362,9 +364,16 @@ export async function createLivecodeVisualizerServer(
     : null;
   const plane: ExecutionPlane = (localPlane ?? remotePlane)!;
 
-  // Remote mode serves the engine host page and browser-built module assets;
-  // built lazily at first request so local-mode startup pays nothing.
-  const browserHostDir = join(sessionDir, "browser-host");
+  // The browser-host bundle is disposable build output on the request path.
+  // Keep it on container-local storage even when sessionRoot is an R2 mount:
+  // bundling through object-storage FUSE can turn a seconds-long build into a
+  // minutes-long first engine load. Remote mode prewarms it after listen;
+  // local mode never pays for it.
+  const browserHostDir = join(
+    Deno.env.get("TMPDIR") ?? "/tmp",
+    "avtools-livecode-browser-hosts",
+    sessionId,
+  );
   let browserHostBuild: Promise<void> | null = null;
   const ensureBrowserHostAssets = (): Promise<void> => {
     if (!browserHostBuild) {
@@ -1095,6 +1104,15 @@ export async function createLivecodeVisualizerServer(
     logPath,
   });
 
+  if (remotePlane && options.prewarmBrowserHost) {
+    void ensureBrowserHostAssets().catch((error) => {
+      void log({
+        type: "browserHostAssetsPrewarmFailed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
   return {
     baseUrl,
     host,
@@ -1294,10 +1312,17 @@ export async function createLivecodeVisualizerServer(
     const root = requestBody.projectPath
       ? resolvePath(requestBody.projectPath)
       : join(sessionDir, "project");
+    const manifestPath = join(root, PROJECT_MANIFEST_FILENAME);
+    try {
+      await Deno.stat(manifestPath);
+      throw new Error(`Project already exists at ${root}`);
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    }
     const state: ProjectState = {
       generation: nextProjectGeneration++,
       root,
-      manifestPath: join(root, PROJECT_MANIFEST_FILENAME),
+      manifestPath,
       manifest: {
         version: 1,
         name: requestBody.name ?? basename(root),

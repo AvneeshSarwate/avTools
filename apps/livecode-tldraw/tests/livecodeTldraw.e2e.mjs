@@ -323,11 +323,11 @@ try {
       `LIVECODE_E2E_UI=served needs a built client: run npm run build (missing ${uiDistDir}/index.html)`
     )
   }
-  const serverReady = startDenoServer()
-  const vitePromise = uiMode === 'served' ? null : startVite()
-  const serverInfo = await serverReady
+  const serverInfo = await startDenoServer()
   serverBaseUrl = serverInfo.baseUrl
-  const viteBaseUrl = vitePromise ? await vitePromise : `${serverBaseUrl}/`
+  const viteBaseUrl = uiMode === 'served'
+    ? `${serverBaseUrl}/`
+    : await startVite(serverBaseUrl)
 
   browser = await launchBrowserWithRetry()
   // One context for every page: BroadcastChannel (the served-UI sync
@@ -362,6 +362,16 @@ try {
   page.on('pageerror', (error) => {
     browserOutput.push(`[browser:pageerror] ${error.stack ?? error.message}`)
   })
+
+  if (uiMode === 'vite') {
+    await page.goto(viteBaseUrl, { waitUntil: 'domcontentloaded' })
+    assert(
+      new URL(page.url()).pathname === '/projects.html',
+      `Vite root should land on /projects.html, received ${page.url()}`
+    )
+    await page.getByRole('heading', { name: 'Livecode projects' }).waitFor()
+    await page.getByRole('button', { name: 'Create new project' }).waitFor()
+  }
 
   await page.goto(tldrawUrl(viteBaseUrl, serverInfo.baseUrl), {
     waitUntil: 'domcontentloaded',
@@ -2607,6 +2617,11 @@ async function waitForTldrawReady() {
     'runtime connected to server',
     scaled(30_000)
   )
+  await waitForPageValue(
+    () => window.__livecodeTldrawRuntimeDebug?.lspStatus === 'ready',
+    'Deno LSP connected through the UI origin',
+    scaled(30_000)
+  )
 }
 
 async function waitForPageValue(predicate, label, timeoutMs = scaled(5_000), arg) {
@@ -2629,7 +2644,7 @@ function sleep(ms) {
 }
 
 function tldrawUrl(viteBaseUrl, serverBaseUrl) {
-  const url = new URL('/', viteBaseUrl)
+  const url = new URL('/index.html', viteBaseUrl)
   url.searchParams.set('serverBaseUrl', serverBaseUrl)
   if (uiMode === 'served') url.searchParams.set('sync', 'broadcast')
   return url.href
@@ -2661,6 +2676,8 @@ function startDenoServer() {
         'debug',
         '--engine',
         engineMode,
+        '--projects-root',
+        path.join(tldrawAppRoot, 'example-projects'),
         ...(uiMode === 'served' ? ['--ui-dist', uiDistDir] : []),
       ],
       {
@@ -2715,7 +2732,7 @@ async function launchBrowserWithRetry(attempts = 5) {
   throw lastError
 }
 
-async function startVite() {
+async function startVite(serverTarget) {
   const port = await getFreePort()
   const viteBaseUrl = `http://127.0.0.1:${port}/`
   viteProc = spawn(
@@ -2731,6 +2748,10 @@ async function startVite() {
     {
       cwd: tldrawAppRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        LIVECODE_SERVER_TARGET: serverTarget,
+      },
     }
   )
   viteProc.stdout.setEncoding('utf8')
@@ -2749,8 +2770,11 @@ async function waitForHttp(url, label, timeoutMs = scaled(30_000)) {
   let lastError
   while (Date.now() - start < timeoutMs) {
     try {
-      const response = await fetch(url)
-      if (response.ok) return
+      // The Vite dev box intentionally redirects `/` to `/projects.html`.
+      // A manual redirect still proves the listener is ready and leaves the
+      // actual landing-page redirect to the browser assertion above.
+      const response = await fetch(url, { redirect: 'manual' })
+      if (response.status >= 200 && response.status < 400) return
     } catch (error) {
       lastError = error
     }
