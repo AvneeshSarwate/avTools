@@ -26,6 +26,9 @@ browser-engine timing hardening: a Worker-backed time source for core-timing - b
 
 
 
-small things
+smaller things
 - should browser component internal canvas also stretch to fit tldraw shape component like animation editor?
 - should UI state like scroll/zoom of piano roll and animation editor get persisted to doc?
+- closing engine tab should show warning in UI
+- why does loading engine take so long after deploy
+- need to "appify" closing/loading different projects in a single session, maybe show changed state or to TD style directory of old snapshots

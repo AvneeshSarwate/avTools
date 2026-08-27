@@ -1,0 +1,36 @@
+{
+  "name": "livecode-cloudflare",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "cf": "WRANGLER_LOG_PATH=.wrangler/logs wrangler",
+    "cf:login": "WRANGLER_LOG_PATH=.wrangler/logs wrangler login",
+    "cf:whoami": "WRANGLER_LOG_PATH=.wrangler/logs wrangler whoami",
+    "build:ui": "npm --prefix ../livecode-tldraw run build",
+    "build:terminal": "vite build --config terminal/vite.config.ts",
+    "build": "npm run build:terminal",
+    "types": "WRANGLER_LOG_PATH=.wrangler/logs wrangler types",
+    "type-check": "tsc --noEmit",
+    "check": "npm run types && npm run type-check",
+    "dev": "WRANGLER_LOG_PATH=.wrangler/logs wrangler dev",
+    "deploy:disabled": "npm run build && WRANGLER_LOG_PATH=.wrangler/logs wrangler deploy",
+    "deploy:enabled": "npm run build && WRANGLER_LOG_PATH=.wrangler/logs wrangler deploy --var LIVECODE_ENABLED:true",
+    "deploy:dry-run": "npm run build && WRANGLER_LOG_PATH=.wrangler/logs wrangler deploy --dry-run"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260826.1",
+    "@types/node": "^22.20.1",
+    "typescript": "^7.0.2",
+    "vite": "^7.3.6",
+    "wrangler": "^4.126.0"
+  },
+  "dependencies": {
+    "@cloudflare/sandbox": "^0.13.0-next.751.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0"
+  }
+}

@@ -35,22 +35,27 @@ rules one in:
 One Cloudflare Worker + one container (Containers / Sandbox SDK) + R2 + one
 Cloudflare Access application:
 
-- **Worker**: routes the hostname to the container — the livecode
-  coordination server (UI at `/`, engine host at `/engine/`, uplink WS,
-  agent HTTP surface, LSP WS) — plus a status page and a break-glass
+- **Worker**: routes the hostname to container Vite on port 5173. Vite serves
+  source with HMR and proxies the livecode coordination server's HTTP and
+  WebSocket routes to localhost:7777. The Worker also provides a status page
+  and a break-glass
   browser-terminal route (Sandbox SDK PTY + xterm.js addon; zero custom
   terminal code).
-- **Container**: the dev machine. Runs the livecode server (`--engine remote
-  --ui-dist ...`) and a Claude Code **Remote Control server**
-  (`claude remote-control`) side by side. The engine itself runs in the
+- **Container**: the dev machine. Runs Vite, the livecode server (`--engine
+  remote`, without `--ui-dist`), and a Claude Code **Remote Control server**
+  (`claude remote-control`) side by side against a full Git worktree. The
+  engine itself runs in the
   operator's local browser tab — that split is the whole point of Setup B
   (the 33 ms loop never crosses the WAN).
-- **R2**: durable state — repo mirror/pushes, livecode project `data/`,
-  and the live `~/.claude` credential directory.
-- **Access**: one application covering the hostname, Google IdP, allowlist of
-  exactly the operator's gmail. Same-origin WebSockets (sync in ws mode,
-  uplink, LSP) ride the Access cookie. The agent never crosses Access — it
-  talks to the livecode server over localhost inside the container.
+- **R2**: durable state — the Git worktree/project mirror, repo-scoped SSH
+  deploy key, livecode session data, and the live `~/.claude` and `~/.codex`
+  state directories. The active worktree stays on local container disk so
+  Vite file watching has normal filesystem semantics.
+- **Access**: one application covering the hostname, email one-time PIN, and
+  an allowlist of exactly the operator's working email alias. Same-origin
+  WebSockets (Vite HMR, sync, uplink, LSP, terminal) ride the Access cookie.
+  The agent never crosses Access — it talks to the livecode server over
+  localhost inside the container.
 
 Addendum 2026-08-26: the projects index page now shipped at
 `/projects.html` in the served UI is designed as this deployment's landing
@@ -63,11 +68,19 @@ tab is hidden so a forgotten tab does not defeat `sleepAfter`. Its
 in-process, so the entrypoint contract below is unaffected — but flipping to
 local mode runs the engine in the container, against this plan's intent.
 
+Implementation correction 2026-08-26: this is a remote development machine,
+not a static client deployment. The earlier `--ui-dist` topology omitted the
+operator's core requirement that agents edit the framework itself and see Vite
+HMR through the public hostname. The implementation therefore exposes Vite on
+5173 and places Deno behind Vite on 7777. It bakes the full Git worktree and
+dependencies into the private container image, restores the durable R2 mirror
+to local disk, and starts the browser terminal in that worktree. `/` is the
+projects index; a blank project is created only through its explicit button.
+
 ## The fresh-browser ritual
 
-1. **Open the dev URL.** Access intercepts → sign in with Google — the one
-   real authentication. Use Google's cross-device passkey flow (QR approved
-   on the phone) so no credential is ever typed on an untrusted laptop.
+1. **Open the dev URL.** Access intercepts → enter the email allowlisted by
+   the Access policy and the emailed one-time PIN.
 2. **The page load wakes the container.** No separate start action: any
    request through the Worker starts the instance (charges begin then).
    Warm-image starts are seconds. The tldraw UI that loads is already a full
@@ -83,19 +96,26 @@ Ordering quirk to remember: **claude.ai/code cannot wake the container**
 first, claude.ai second. Since the dev URL is where the editors live anyway,
 this is the natural habit.
 
-Total ritual: one Google auth (QR scan) + one URL + two clicks.
+Total ritual: one emailed Access PIN + one URL + two Claude-session clicks.
 
 ## Container boot / shutdown (entrypoint contract)
 
 Boot:
-1. Restore from R2: `~/.claude`, repo checkout, project `data/`.
-2. Start the livecode coordination server.
-3. `until claude remote-control --name livecode-cloud -c; do sleep 5; done`
-   — the `-c` re-adopts the previous session after any restart instead of
-   orphaning it; the loop also covers the by-design process exit after ~10
-   minutes of network outage.
-4. Start a watcher that pushes `~/.claude` to R2 **on file change**
-   (see credentials below) and project `data/` on save/interval.
+1. Seed the local-disk worktree from the image, then overlay its R2 mirror;
+   restore `~/.claude`, `~/.codex`, `~/.ssh`, and session/project state.
+2. Start the livecode coordination server on localhost:7777.
+3. Start Vite on 0.0.0.0:5173 with same-origin HTTP/WebSocket proxies to Deno.
+4. `until claude remote-control --name livecode-cloud --spawn same-dir
+   --capacity 1; do sleep 5; done` after a full-scope credential exists. The
+   old `-c` flag in the original note is not part of the current CLI contract.
+5. Start a watcher that pushes `~/.claude`, `~/.codex`, and `~/.ssh` to R2
+   **on top-level file change**, plus a 30-second fallback sync (see
+   credentials below), and project `data/` on save/interval.
+
+The browser-engine host bundle is generated, prewarmed, and served from local
+container storage. It is disposable build output; placing it under the
+R2-mounted session root made the first `/engine/` load take minutes because a
+bundler creates many small files through object-storage FUSE.
 
 Shutdown: the platform sends SIGTERM with up to 15 minutes before SIGKILL.
 Trap it: push repo state (commit/push or R2), project `data/`, and
@@ -105,7 +125,10 @@ Sleep policy: `sleepAfter` generous (e.g. 30–60 min) — but note "activity"
 means inbound requests through the Worker, so **a long agent task with no
 inbound traffic looks idle**. While a Remote Control session is live, keep
 the container awake explicitly (entrypoint pings its own Worker, or manual
-lifecycle instead of `sleepAfter`).
+lifecycle instead of `sleepAfter`). The implementation uses the latter: the
+browser terminal exposes **Keep awake** / **Allow sleep**, backed by the
+Sandbox SDK's persisted `setKeepAlive()` setting. This makes unattended work
+explicit and does not rely on incidental browser or WebSocket traffic.
 
 ## Auth and credentials
 
@@ -113,6 +136,9 @@ lifecycle instead of `sleepAfter`).
   `claude setup-token` / `CLAUDE_CODE_OAUTH_TOKEN` tokens are model-request-
   only and are rejected, as are API keys. One-time seeding: log in anywhere,
   put `~/.claude` into R2.
+- Install both Claude Code and Codex with their official native installers on
+  the `latest` channel. Persist Codex's `~/.codex` state alongside Claude so a
+  one-time `codex login --device-auth` also survives container replacement.
 - **Rotation is a non-issue during active use**: the CLI refreshes tokens
   invisibly and rewrites `~/.claude/.credentials.json`; activity keeps the
   grant alive. The only real staleness hazards are (a) an unclean shutdown
@@ -163,13 +189,14 @@ off the WAN by design, so effectively zero. Model usage: covered by Max.
 
 ## Build list (the actual plumbing, ~a day)
 
-1. Dockerfile: Deno + Node + Claude CLI + pre-warmed `deno cache` /
-   `node_modules` (image is GB-scale; first provision minutes, warm starts
-   seconds — pre-bake aggressively).
-2. Worker: container routing, status page, terminal route, Access config.
+1. Dockerfile: full Git worktree + Deno + Node + Claude CLI + pre-warmed
+   `deno cache` / `node_modules` (image is GB-scale; first provision minutes,
+   warm starts seconds — pre-bake aggressively).
+2. Worker: route the public app/WebSockets to Vite, plus status page, terminal
+   route, and Access config.
 3. Entrypoint script per the boot/shutdown contract above (restore, two
    servers, restart loop, credential watcher, SIGTERM trap).
-4. One-time: Access app + Google IdP; R2 bucket; credential + deploy-key
+4. One-time: Access app + email OTP; R2 bucket; credential + deploy-key
    seeding.
 
 ## Open questions / revisit triggers
@@ -181,8 +208,8 @@ off the WAN by design, so effectively zero. Model usage: covered by Max.
   environments** (start sessions from claude.ai/code directly into the
   container via an environment picker; runner polls outbound-only) as a
   replacement for the Remote Control server.
-- Remote Control is a research preview; flags (`--name`, `--spawn`,
-  `--capacity`, `-c`) and the session-list behavior should be re-verified
+- Remote Control is a research preview; flags (`--name`, `--spawn`, and
+  `--capacity`) and the session-list behavior should be re-verified
   against the docs when building.
 - The decimated uplink mirror (recorded in `browser-engine-plan-2026-08.md`)
   becomes worth building once real WAN latency to this deployment is

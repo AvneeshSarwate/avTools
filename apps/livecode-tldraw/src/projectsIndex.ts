@@ -15,11 +15,13 @@
  * run time exactly as it would when launched by hand.
  */
 import type {
+  CreateProjectRequest,
   EngineModeChangeResponse,
   HealthResponse,
   ProjectIndexEntry,
   ProjectsListResponse,
 } from "@avtools/livecode-protocol";
+import { DEFAULT_LIVECODE_SOURCE } from "./defaultSource";
 
 const DEFAULT_SERVER_PORT = 7777;
 const HEALTH_POLL_MS = 3000;
@@ -251,15 +253,87 @@ async function pollHealthLoop(): Promise<void> {
 let broadcastSyncPreferred = true;
 
 function uiUrl(project: ProjectIndexEntry, mode: "local" | "remote"): string {
-  // The tldraw app is index.html next to this page, in dev and in a built
-  // dist alike, so "the containing directory" is its URL.
-  const url = new URL("./", window.location.href);
+  // Root is the project picker in the remote dev box; the editor therefore
+  // always gets an explicit URL in both Vite dev and built deployments.
+  const url = new URL("./index.html", window.location.href);
   url.searchParams.set("serverBaseUrl", state.serverBaseUrl ?? "");
   url.searchParams.set("projectPath", project.root);
   if (mode === "remote" && serverIsSameOrigin() && broadcastSyncPreferred) {
     url.searchParams.set("sync", "broadcast");
   }
   return url.toString();
+}
+
+function projectSlug(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+}
+
+async function createProjectFromPrompt(): Promise<void> {
+  if (!state.serverBaseUrl || !state.projects || openInProgress()) return;
+  const name = window.prompt("New project name")?.trim();
+  if (!name) return;
+  const slug = projectSlug(name);
+  if (!slug) {
+    state.errorMessage = "Project names must contain a letter or number.";
+    render();
+    return;
+  }
+  const root = state.projects.roots[0];
+  if (!root) {
+    state.errorMessage = "The server has no writable projects root.";
+    render();
+    return;
+  }
+  if (
+    state.projects.projects.some((project) =>
+      project.root === `${root}/${slug}`
+    )
+  ) {
+    state.errorMessage = `A project named ${slug} already exists.`;
+    render();
+    return;
+  }
+
+  const request: CreateProjectRequest = {
+    projectPath: `${root}/${slug}`,
+    name,
+    modules: [
+      {
+        path: "modules/main.ts",
+        kind: "runnable",
+        title: "main",
+        sourceText: DEFAULT_LIVECODE_SOURCE,
+        x: 80,
+        y: 80,
+        w: 620,
+        h: 520,
+      },
+    ],
+  };
+
+  state.errorMessage = null;
+  try {
+    const response = await fetch(`${state.serverBaseUrl}/project/create`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+    });
+    const body = await response.json() as { ok: boolean; error?: string };
+    if (!response.ok || !body.ok) {
+      throw new Error(
+        body.error ?? `project creation failed (${response.status})`,
+      );
+    }
+    await refreshProjects();
+  } catch (error) {
+    state.errorMessage = error instanceof Error ? error.message : String(error);
+    render();
+  }
 }
 
 async function waitForEngineMode(
@@ -365,7 +439,26 @@ function render(): void {
   const page = el("div", "page");
 
   const header = el("header", "header");
-  header.appendChild(el("h1", undefined, "Livecode projects"));
+  const titleRow = el("div", "title-row");
+  titleRow.appendChild(el("h1", undefined, "Livecode projects"));
+  const titleActions = el("div", "title-actions");
+  const terminalLink = el("a", "terminal-link", "Dev terminal");
+  terminalLink.href = "/__cloud/terminal/";
+  titleActions.appendChild(terminalLink);
+  const createButton = el(
+    "button",
+    "create-project-button",
+    "Create new project",
+  ) as HTMLButtonElement;
+  createButton.type = "button";
+  createButton.disabled = !state.serverBaseUrl || !state.projects ||
+    openInProgress();
+  createButton.addEventListener("click", () => {
+    void createProjectFromPrompt();
+  });
+  titleActions.appendChild(createButton);
+  titleRow.appendChild(titleActions);
+  header.appendChild(titleRow);
   header.appendChild(renderServerStatus());
   page.appendChild(header);
 
@@ -603,7 +696,13 @@ style.textContent = `
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   }
   .page { max-width: 860px; margin: 0 auto; padding: 32px 20px 60px; }
+  .title-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; margin-bottom: 12px;
+  }
+  .title-actions { display: flex; align-items: center; gap: 8px; }
   .header h1 { margin: 0 0 12px; font-size: 24px; font-weight: 600; }
+  .title-row h1 { margin: 0; }
   .server-status {
     display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
     margin-bottom: 20px;
@@ -630,6 +729,12 @@ style.textContent = `
     background: #2b2b33; color: #e8e8ec; border: 1px solid #45454f;
     border-radius: 6px; padding: 6px 12px; font-size: 13px; cursor: pointer;
   }
+  .terminal-link {
+    background: #2b2b33; color: #e8e8ec; border: 1px solid #45454f;
+    border-radius: 6px; padding: 6px 12px; font-size: 13px;
+    text-decoration: none;
+  }
+  .terminal-link:hover { background: #37373f; }
   button:hover:not(:disabled) { background: #37373f; }
   button:disabled { opacity: 0.5; cursor: default; }
   .banner {

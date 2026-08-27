@@ -63,6 +63,7 @@ while (!closing) {
       ?.split(",")
       .map((entry) => entry.trim())
       .filter((entry) => entry.length > 0),
+    prewarmBrowserHost: args["prewarm-browser-host"] === "true",
     onEngineModeChangeRequest: (mode) => resolveNextMode(mode),
   });
   port = server.port;

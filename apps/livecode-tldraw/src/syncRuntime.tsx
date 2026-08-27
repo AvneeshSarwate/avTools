@@ -297,9 +297,12 @@ export function maxSeq(a: number | null, b: number | null): number | null {
  * socket. Writes and every other route stay HTTP against `serverBaseUrl`.
  */
 export function SyncRuntimeProvider({ children }: PropsWithChildren) {
+  const isLocalDevelopment = ["localhost", "127.0.0.1", "::1"].includes(
+    window.location.hostname,
+  );
   const initialServerUrl =
     new URLSearchParams(window.location.search).get("serverBaseUrl") ??
-      "http://localhost:7777";
+      (isLocalDevelopment ? "http://localhost:7777" : window.location.origin);
 
   const [serverBaseUrl, setServerBaseUrlState] = useState(initialServerUrl);
   const serverBaseUrlRef = useRef(initialServerUrl);

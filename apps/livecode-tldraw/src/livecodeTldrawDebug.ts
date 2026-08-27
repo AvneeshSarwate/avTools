@@ -50,6 +50,7 @@ export interface TldrawRuntimeDebugShape {
 
 export interface TldrawRuntimeDebug {
   connectionStatus: string;
+  lspStatus: string;
   serverBaseUrl: string;
   modules: Record<string, TldrawRuntimeDebugModule>;
   shapes: TldrawRuntimeDebugShape[];
@@ -118,6 +119,9 @@ function installDebugApi() {
   window.__livecodeTldrawRuntimeDebug = {
     get connectionStatus() {
       return refs.runtime?.connectionStatus ?? "closed";
+    },
+    get lspStatus() {
+      return refs.runtime?.lspStatus ?? "closed";
     },
     get serverBaseUrl() {
       return refs.runtime?.serverBaseUrl ?? "";
