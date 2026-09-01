@@ -27,6 +27,7 @@
     "@avtools/midi": "./packages/midi/mod.ts",
     "@avtools/midi/browser": "./packages/midi/browser.ts",
     "@avtools/midi/native": "./packages/midi/native.ts",
+    "@avtools/six-sines": "./packages/six-sines/six-sines-node.js",
     "@avtools/music-types": "./packages/music-types/mod.ts",
     "@avtools/ui-bridge": "./packages/ui-bridge/mod.ts",
     "@avtools/power2d": "./packages/power2d/mod.ts",

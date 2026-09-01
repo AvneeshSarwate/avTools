@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "name": "browser-six-sines-piano-roll",
+  "engineTarget": "browser",
+  "modules": [
+    {
+      "id": "six-sines-piano-roll/helpers",
+      "path": "modules/six-sines.ts",
+      "sourcePath": "modules/six-sines.orig.ts",
+      "runtimePath": "modules/six-sines.ts",
+      "kind": "runnable",
+      "title": "Six Sines piano-roll helpers",
+      "sourceVersion": 2,
+      "x": 80,
+      "y": 80,
+      "w": 620,
+      "h": 900
+    },
+    {
+      "id": "six-sines-piano-roll/seed",
+      "path": "modules/seed.ts",
+      "sourcePath": "modules/seed.orig.ts",
+      "runtimePath": "modules/seed.ts",
+      "kind": "runnable",
+      "title": "seed the synth loop",
+      "sourceVersion": 2,
+      "x": 80,
+      "y": 1040,
+      "w": 620,
+      "h": 480
+    },
+    {
+      "id": "six-sines-piano-roll/player",
+      "path": "modules/player.ts",
+      "sourcePath": "modules/player.orig.ts",
+      "runtimePath": "modules/player.ts",
+      "kind": "runnable",
+      "title": "Six Sines loop player",
+      "sourceVersion": 2,
+      "x": 80,
+      "y": 1580,
+      "w": 620,
+      "h": 560
+    }
+  ],
+  "canvas": {
+    "pianoRollViews": [
+      {
+        "id": "shape:six-sines-loop",
+        "rollName": "six-sines/loop",
+        "x": 760,
+        "y": 80,
+        "w": 700,
+        "h": 557
+      }
+    ],
+    "paramPaneViews": [],
+    "animationEditorViews": [],
+    "scopeViews": []
+  }
+}
