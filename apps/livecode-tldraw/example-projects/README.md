@@ -27,6 +27,7 @@ layout churn you did not mean to keep.
 | Project | Purpose |
 | --- | --- |
 | `basic-multi-module` | Minimal known-green template for agent-authored projects: three modules sharing imported mutable state. |
+| `browser-six-sines-piano-roll` | Browser-engine AudioWorklet example: a canvas-visible project helper plays an editable piano roll through the packaged Six Sines Wasm synth, with note-identity and per-note modulation helpers. |
 | `minimal-p5gpu` | **Deliberately-broken diagnostics fixture** (`sped`/`speed` mismatch). It exists to show failing project diagnostics; do not "fix" it and do not use it as a smoke test. |
 | `feature-params-basics` | `canvasParams` slice: nested groups, meta bounds/labels, a `graph: true` field, code-driven automation writes, loop-rate reads, `/params/set`. |
 | `feature-piano-roll-flows` | Piano-roll slice: module write-back (`setPianoRollClip`), live playback (`playPianoRoll`), multiple views of one roll, entity CRUD via topbar and HTTP. |

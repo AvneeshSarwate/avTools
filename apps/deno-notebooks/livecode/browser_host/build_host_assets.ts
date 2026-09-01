@@ -30,6 +30,7 @@ const ALIAS_ENTRIES: Record<string, string> = {
   "piano_roll_helpers": 'export * from "piano-roll-helpers";\n',
   "piano_roll_store": 'export * from "piano-roll-store";\n',
   "midi_helpers": 'export * from "midi-helpers";\n',
+  "six_sines": 'export * from "@avtools/six-sines";\n',
   // Graphics libraries user modules may import when the engine runs in a
   // browser tab (versions pinned by the root import map). Re-exported through
   // repo-resident vendor shims so the npm specifiers resolve from inside the
@@ -50,11 +51,23 @@ const IMPORT_MAP_HTML = `<script type="importmap">
     "piano-roll-helpers": "./piano_roll_helpers.js",
     "piano-roll-store": "./piano_roll_store.js",
     "midi-helpers": "./midi_helpers.js",
+    "@avtools/six-sines": "./six_sines.js",
     "three": "./three.js",
     "p5": "./p5.js"
   }
 }
 </script>`;
+
+// The public node module is bundled above as `six_sines.js`. It resolves the
+// worklet and Wasm relative to its own import.meta.url, and the worklet in turn
+// imports the Emscripten glue beside itself, so these filenames are part of the
+// runtime contract and must remain adjacent in the host asset tree.
+const SIX_SINES_RUNTIME_FILES = [
+  "six-sines-worklet.js",
+  "six-sines.js",
+  "six-sines.wasm",
+  "six-sines-build.json",
+] as const;
 
 async function writeBundleConfig(): Promise<string> {
   const rootConfig = JSON.parse(
@@ -154,6 +167,13 @@ export async function buildBrowserHostAssets(
     join(outDir, "browser.ts"),
     join(REPO_ROOT, "packages/midi/browser.ts"),
   ]);
+
+  await Promise.all(SIX_SINES_RUNTIME_FILES.map((name) =>
+    Deno.copyFile(
+      join(REPO_ROOT, "packages/six-sines", name),
+      join(outDir, name),
+    )
+  ));
 
   await Deno.writeTextFile(
     join(outDir, "engine.html"),
