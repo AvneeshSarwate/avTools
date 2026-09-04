@@ -1,0 +1,163 @@
+{
+  "version": 1,
+  "name": "timing-composition",
+  "engineTarget": "browser",
+  "modules": [
+    {
+      "id": "composition/phrases",
+      "path": "modules/phrases.ts",
+      "sourcePath": "modules/phrases.orig.ts",
+      "runtimePath": "modules/phrases.ts",
+      "kind": "runnable",
+      "title": "1. phrases as functions, chosen by if/else",
+      "sourceVersion": 1,
+      "x": 80,
+      "y": 80,
+      "w": 640,
+      "h": 600
+    },
+    {
+      "id": "composition/reuse",
+      "path": "modules/reuse.ts",
+      "sourcePath": "modules/reuse.orig.ts",
+      "runtimePath": "modules/reuse.ts",
+      "kind": "runnable",
+      "title": "2. one function, many voices, per-voice knobs",
+      "sourceVersion": 1,
+      "x": 80,
+      "y": 740,
+      "w": 640,
+      "h": 600
+    },
+    {
+      "id": "composition/triggers",
+      "path": "modules/triggers.ts",
+      "sourcePath": "modules/triggers.orig.ts",
+      "runtimePath": "modules/triggers.ts",
+      "kind": "runnable",
+      "title": "3. momentary controls: a branch per event",
+      "sourceVersion": 1,
+      "x": 80,
+      "y": 1400,
+      "w": 640,
+      "h": 600
+    },
+    {
+      "id": "composition/combinators",
+      "path": "modules/combinators.ts",
+      "sourcePath": "modules/combinators.orig.ts",
+      "runtimePath": "modules/combinators.ts",
+      "kind": "runnable",
+      "title": "4. combinators: seq, repeat, par",
+      "sourceVersion": 1,
+      "x": 80,
+      "y": 2060,
+      "w": 640,
+      "h": 600
+    },
+    {
+      "id": "composition/modes",
+      "path": "modules/modes.ts",
+      "sourcePath": "modules/modes.orig.ts",
+      "runtimePath": "modules/modes.ts",
+      "kind": "runnable",
+      "title": "5. modes: swapping behaviors with transitions",
+      "sourceVersion": 1,
+      "x": 80,
+      "y": 2720,
+      "w": 640,
+      "h": 600
+    }
+  ],
+  "canvas": {
+    "pianoRollViews": [],
+    "paramPaneViews": [
+      {
+        "id": "shape:composition-phrases-params",
+        "paramsName": "composition/phrases",
+        "x": 760,
+        "y": 450,
+        "w": 320,
+        "h": 200
+      },
+      {
+        "id": "shape:composition-reuse-params",
+        "paramsName": "composition/reuse",
+        "x": 760,
+        "y": 1110,
+        "w": 320,
+        "h": 260
+      },
+      {
+        "id": "shape:composition-triggers-params",
+        "paramsName": "composition/triggers",
+        "x": 760,
+        "y": 1770,
+        "w": 320,
+        "h": 200
+      },
+      {
+        "id": "shape:composition-combinators-params",
+        "paramsName": "composition/combinators",
+        "x": 760,
+        "y": 2430,
+        "w": 320,
+        "h": 200
+      },
+      {
+        "id": "shape:composition-modes-params",
+        "paramsName": "composition/modes",
+        "x": 760,
+        "y": 3090,
+        "w": 320,
+        "h": 200
+      }
+    ],
+    "animationEditorViews": [],
+    "scopeViews": [],
+    "drawingViews": [],
+    "canvasSurfaceViews": [
+      {
+        "id": "shape:composition-phrases-view",
+        "surfaceName": "composition/phrases",
+        "x": 760,
+        "y": 80,
+        "w": 520,
+        "h": 360
+      },
+      {
+        "id": "shape:composition-reuse-view",
+        "surfaceName": "composition/reuse",
+        "x": 760,
+        "y": 740,
+        "w": 520,
+        "h": 360
+      },
+      {
+        "id": "shape:composition-triggers-view",
+        "surfaceName": "composition/triggers",
+        "x": 760,
+        "y": 1400,
+        "w": 520,
+        "h": 360
+      },
+      {
+        "id": "shape:composition-combinators-view",
+        "surfaceName": "composition/combinators",
+        "x": 760,
+        "y": 2060,
+        "w": 520,
+        "h": 360
+      },
+      {
+        "id": "shape:composition-modes-view",
+        "surfaceName": "composition/modes",
+        "x": 760,
+        "y": 2720,
+        "w": 520,
+        "h": 360
+      }
+    ]
+  },
+  "data": []
+}

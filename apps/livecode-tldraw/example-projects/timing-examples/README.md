@@ -24,6 +24,10 @@ start/stop: `running` off cancels the example's scene branch, `running` on
 starts a fresh one. The other params (step length, voice count, phrase
 lengths, bpm, rubato) are live.
 
+The follow-up gallery, [`timing-composition`](../timing-composition/),
+shows how these primitives organize into programs and how the params pane
+plays them.
+
 ## Bake and open
 
 From `apps/livecode-tldraw`, `npm run build` once (the bake copies `dist/`).

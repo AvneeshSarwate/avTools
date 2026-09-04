@@ -1,17 +1,18 @@
-// Gallery E2E: bake the checked-in `timing-examples` project into a static
+// Gallery E2E: bake a checked-in timing gallery project into a static
 // directory, serve it with a dumb file server, open its bare root URL in one
 // headless tab, and prove the single-page demo form works for a real
 // multi-module project:
 //
-//   - the stamped boot defaults make this tab the engine and auto-launch all
-//     five timing modules;
-//   - every module's `canvasSurface` is found by its canvas view and keeps
-//     drawing frames;
-//   - each example's params entity exists, and a params write through the
-//     actions channel (the panes' transport) pauses one example and retimes
-//     another without disturbing the rest.
+//   - the stamped boot defaults make this tab the engine and auto-launch
+//     every module;
+//   - every module's `canvasSurface` (one per manifest canvas view) is found
+//     by its view and keeps drawing frames;
+//   - each example's params entity exists with `running: true`, and params
+//     writes through the actions channel (the panes' transport) pause one
+//     example, leave the others untouched, and resume it.
 //
-// Run from apps/deno-notebooks:  node livecode/tests/timing_examples.e2e.mjs
+// Run from apps/deno-notebooks:
+//   node livecode/tests/timing_examples.e2e.mjs [timing-examples|timing-composition]
 // Needs a built tldraw client (npm run build in apps/livecode-tldraw).
 
 import { chromium } from 'playwright'
@@ -26,17 +27,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const denoNotebookRoot = path.resolve(__dirname, '../..')
 const tldrawRoot = path.resolve(denoNotebookRoot, '../livecode-tldraw')
 const uiDist = path.join(tldrawRoot, 'dist')
-const projectRoot = path.join(tldrawRoot, 'example-projects', 'timing-examples')
+const projectName = process.argv[2] ?? 'timing-examples'
+const projectRoot = path.join(tldrawRoot, 'example-projects', projectName)
 const scale = Number(process.env.LIVECODE_E2E_TIMEOUT_SCALE || '1') || 1
 const scaled = (ms) => Math.round(ms * scale)
 
-const SURFACES = [
-  'timing/sequence',
-  'timing/branches',
-  'timing/barrier',
-  'timing/cancel',
-  'timing/tempo',
-]
+const manifest = JSON.parse(
+  readFileSync(path.join(projectRoot, 'project.avtools-livecode.json'), 'utf8'),
+)
+/** Surface names double as module ids and params names in these galleries. */
+const SURFACES = manifest.canvas.canvasSurfaceViews.map((view) => view.surfaceName)
+if (SURFACES.length === 0) fail(`${projectName} has no canvas surface views`)
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -150,7 +151,7 @@ try {
           ? true
           : null
       }, SURFACES),
-    'this tab is the engine with all five timing modules active',
+    `this tab is the engine with all ${SURFACES.length} modules active`,
     scaled(60_000),
   ).catch((error) => {
     console.error('--- page console tail ---')
@@ -213,25 +214,21 @@ try {
         })
       }), [name, values])
 
-  const paused = await setParams('timing/cancel', { running: false })
+  const [pausedName, ...others] = SURFACES
+  const paused = await setParams(pausedName, { running: false })
   if (paused?.values?.running !== false) {
     fail(`pause write failed: ${JSON.stringify(paused)}`)
   }
-  const retimed = await setParams('timing/tempo', { bpm: 200 })
-  if (retimed?.values?.bpm !== 200) {
-    fail(`bpm write failed: ${JSON.stringify(retimed)}`)
-  }
   await waitUntil(
     () =>
-      page.evaluate(() => {
+      page.evaluate(([pausedName, others]) => {
         const params = globalThis.__livecodeSyncDebug.getEntities('params')
-        return params['timing/cancel']?.values?.running === false &&
-            params['timing/tempo']?.values?.bpm === 200 &&
-            params['timing/sequence']?.values?.running === true
+        return params[pausedName]?.values?.running === false &&
+            others.every((name) => params[name]?.values?.running === true)
           ? true
           : null
-      }),
-    'params writes visible in the sync maps, other examples untouched',
+      }, [pausedName, others]),
+    'pause write visible in the sync maps, other examples untouched',
   )
   // A paused example keeps its view alive (the module still draws its
   // paused frame) and every other view keeps animating.
@@ -250,6 +247,11 @@ try {
     'all canvas views still drawing after the params writes',
   )
 
+  const resumed = await setParams(pausedName, { running: true })
+  if (resumed?.values?.running !== true) {
+    fail(`resume write failed: ${JSON.stringify(resumed)}`)
+  }
+
   // Font requests to tldraw's CDN can fail offline; only engine/page faults count.
   const realErrors = pageErrors.filter((entry) => !/fetch|NetworkError/i.test(entry))
   if (realErrors.length > 0) fail(`page errors: ${realErrors.join('\n')}`)
@@ -257,6 +259,7 @@ try {
   console.log(JSON.stringify({
     ok: true,
     type: 'timingExamplesE2E',
+    project: projectName,
     origin,
     surfaces: surfaceStates.map((state) => state.surfaceName).sort(),
   }))
