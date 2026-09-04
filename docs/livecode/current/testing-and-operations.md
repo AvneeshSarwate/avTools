@@ -56,6 +56,13 @@ file list rather than maintaining it here.
 - Project graph/targets/LSP: project shadow, browser-target, and LSP tests.
 - Visible canvas/reconnect/save behavior: `apps/livecode-tldraw/tests/livecodeTldraw.e2e.mjs`.
 
+`baked_project.e2e.mjs` covers both bake forms in one run: the two-tab
+BroadcastChannel pair, then the single-page in-process form opened at the bare
+root URL (boot defaults, in-process sync and actions, and a canvas view
+mirroring a module canvas checked by pixel). The in-process form against a
+live server is not E2E-covered. `browser_host_import_map_test.ts` keeps the
+client and engine-page import maps identical.
+
 The tldraw E2E is broad but monolithic; it is not a substitute for deterministic
 unit/server coverage of a race or validation rule. Prefer condition-based
 polling over sleeps. Tests that assert generated-code spelling should do so only

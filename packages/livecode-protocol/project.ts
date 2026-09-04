@@ -76,12 +76,26 @@ export interface ProjectCanvasDrawingView {
   h: number;
 }
 
+/**
+ * A view mirroring a module's named canvas (`canvasSurface(name)`). The name
+ * is a DOM convention between module and UI, not an entity reference.
+ */
+export interface ProjectCanvasSurfaceView {
+  id: string;
+  surfaceName: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface ProjectCanvasState {
   pianoRollViews?: ProjectCanvasPianoRollView[];
   paramPaneViews?: ProjectCanvasParamPaneView[];
   animationEditorViews?: ProjectCanvasAnimationEditorView[];
   scopeViews?: ProjectCanvasScopeView[];
   drawingViews?: ProjectCanvasDrawingView[];
+  canvasSurfaceViews?: ProjectCanvasSurfaceView[];
 }
 
 /**

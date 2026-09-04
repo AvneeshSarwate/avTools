@@ -46,7 +46,8 @@ its engine runs:
 | Target | Use it for |
 | --- | --- |
 | Deno engine | Default local work, native/server capabilities, and the broad repository import map. |
-| Browser engine | DOM/Web APIs and browser graphics. Set `engineTarget: "browser"` and open with **engine in browser**. The actual graphics render in the engine tab's `#livecode-stage`, not on the tldraw canvas. |
+| Browser engine | DOM/Web APIs and browser graphics. Set `engineTarget: "browser"` and open with **engine in browser**. The actual graphics render in the engine tab's `#livecode-stage`, not on the tldraw canvas — unless the module draws into a `canvasSurface(name)` and the canvas has a canvas view, which mirrors it on the tldraw canvas when the engine runs in the UI's own tab. |
+| Single-page bake | Presenting a finished piece as a static page: `bake_project.ts` output opens with the engine in the same tab, canvas views show module canvases next to their code, and nothing can be started or stopped after boot. Give each example its own module and a `running` params toggle. See [`feature-canvas-surface`](../../apps/livecode-tldraw/example-projects/feature-canvas-surface/). |
 
 If `engineTarget` is absent, the project follows the server's current engine
 mode. A browser-target project should be authored and tested in the browser
@@ -164,7 +165,8 @@ These bare imports are the intentionally supported livecode surface:
 | `piano-roll-store` | Read or update named piano-roll entities. | Deno and browser |
 | `piano-roll-helpers` | Convert clips, write roll data, and play a roll through logical time and optional MIDI output. | Deno and browser |
 | `midi-helpers` | Discover/select outputs, send notes/CC, and panic. Browser MIDI may require a focused user gesture and permission. | Deno and browser |
-| `p5`, `three` | Browser graphics rendered in the engine tab. | Browser engine |
+| `canvas-surface` | `canvasSurface(name)` returns a named container/canvas under `#livecode-stage` for Canvas 2D or as a p5 parent; a canvas view shape mirrors it when the engine runs in the UI tab. | Browser engine |
+| `p5`, `three` | Browser graphics rendered in the engine tab (or into a `canvasSurface`). | Browser engine |
 
 The Deno engine can resolve additional repository and notebook imports,
 including creative algorithms, music types, MIDI backends, Power2D/shader

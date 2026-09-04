@@ -23,6 +23,7 @@ only an interface.
 | project and saved entities | `project.ts`, `saved_entities.ts` | project server, App/canvas registry, bake |
 | domain entities | `piano_roll.ts`, `params.ts`, `animation_timeline.ts`, `drawing.ts`, `signals.ts` | stores, host ops/routes, per-kind client slices/views |
 | local/remote engine ops | `engine_uplink.ts` | execution plane, engine host, bake |
+| in-process engine host | `engine_host.ts` | browser engine host, tldraw `inProcessEngine.ts` (not JSON: a same-realm function contract, still the one type source) |
 | browser automation | `client_control.ts` | HTTP caller, server bridge, mounted client |
 
 ## Sync semantics

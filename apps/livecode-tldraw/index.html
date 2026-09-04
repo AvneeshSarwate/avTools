@@ -4,6 +4,33 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Livecode tldraw</title>
+    <!--
+      Module helper aliases for the in-process engine (`?engine=inprocess`):
+      modules the engine launches in THIS tab resolve their bare imports to the
+      served engine asset tree at ./engine/ (the Vite proxy in dev, the same
+      origin when served by the Deno server, the sibling directory in a bake).
+      Must mirror MODULE_IMPORT_MAP in
+      apps/deno-notebooks/livecode/browser_host/build_host_assets.ts; the
+      browser_host_import_map_test keeps them in agreement. Harmless when the
+      engine runs elsewhere: nothing in the UI bundle imports these names.
+    -->
+    <script type="importmap">
+{
+  "imports": {
+    "canvas-signals": "./engine/canvas_signals.js",
+    "canvas-params": "./engine/canvas_params.js",
+    "animation-timeline": "./engine/animation_timeline.js",
+    "canvas-drawing": "./engine/canvas_drawing.js",
+    "canvas-surface": "./engine/canvas_surface.js",
+    "piano-roll-helpers": "./engine/piano_roll_helpers.js",
+    "piano-roll-store": "./engine/piano_roll_store.js",
+    "midi-helpers": "./engine/midi_helpers.js",
+    "@avtools/six-sines": "./engine/six_sines.js",
+    "three": "./engine/three.js",
+    "p5": "./engine/p5.js"
+  }
+}
+    </script>
   </head>
   <body>
     <div id="root"></div>
