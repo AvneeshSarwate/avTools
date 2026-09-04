@@ -59,8 +59,10 @@ file list rather than maintaining it here.
 `baked_project.e2e.mjs` covers both bake forms in one run: the two-tab
 BroadcastChannel pair, then the single-page in-process form opened at the bare
 root URL (boot defaults, in-process sync and actions, and a canvas view
-mirroring a module canvas checked by pixel). The in-process form against a
-live server is not E2E-covered. `browser_host_import_map_test.ts` keeps the
+mirroring a module canvas checked by pixel). `timing_examples.e2e.mjs` bakes the
+checked-in `timing-examples` gallery and checks all five canvas views draw and
+that params writes pause one example and retime another. The in-process form
+against a live server is not E2E-covered. `browser_host_import_map_test.ts` keeps the
 client and engine-page import maps identical.
 
 The tldraw E2E is broad but monolithic; it is not a substitute for deterministic
