@@ -31,8 +31,6 @@ export interface DrawingTransform {
   offsetY?: number;
 }
 
-export const IDENTITY_MATRIX: AffineMatrix = [1, 0, 0, 1, 0, 0];
-
 /** `m × n`: apply `n` first, then `m`; Konva's `Transform.multiply`. */
 export function multiplyMatrices(
   m: AffineMatrix,

@@ -345,7 +345,8 @@ export const createCircleNode = (
 
   circle.shape = circleShape
   circleShapes(state).set(id, circle)
-  ;(options.parent ?? state.groups.circleShapes)?.add(circleShape)
+  const parent = options.parent ?? state.groups.circleShapes
+  parent?.add(circleShape)
 
   // Register as CanvasItem
   createCircleItem(state, circleShape)

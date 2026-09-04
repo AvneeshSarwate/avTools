@@ -31,11 +31,10 @@ only an interface.
 drawings, signals, runs, waits, and lookups. In served/baked browser-engine
 topologies the equivalent envelopes may use `BroadcastChannel`.
 
-The drawing kind is the one whose value type lives outside this package:
-`drawing.ts` re-exports `DrawingDocument` from `packages/drawing-document`,
-which also owns the document's validation and its Konva-free bake. The wire
-carries the lossless document, never the baked render data; consumers bake
-locally.
+`drawing.ts` is the one file here that imports another package: the document
+type, its validation, and its Konva-free bake are owned by
+`packages/drawing-document` so the canvas element and the engine share them.
+The wire carries the lossless document, never the baked render data.
 
 The invariants in `sync.ts` matter more than the transport:
 

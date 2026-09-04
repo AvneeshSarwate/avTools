@@ -1,10 +1,7 @@
-// The canvas's lossless document form: `serializeDrawingDocument` reads the
-// live Konva scene into a `DrawingDocument`, `hydrateDrawingDocument` rebuilds
-// the scene from one. Unlike the baked render data this keeps every node's
-// transform, group nesting on every layer, raw stroke points with timing, and
-// creation order, so a document round trip is exact. The format itself and its
-// Konva-free bake live in `@avtools/drawing-document`, shared with the livecode
-// engine.
+// The canvas's lossless document form (`@avtools/drawing-document`, shared with
+// the livecode engine): serialize the live Konva scene to a DrawingDocument and
+// rebuild the scene from one. Unlike the baked render data, a round trip through
+// the document is exact.
 
 import Konva from 'konva'
 import {
@@ -154,10 +151,10 @@ const serializeNode = (state: CanvasRuntimeState, layer: DrawingLayerName, konva
 // ==================== hydrate ====================
 
 /**
- * Replace the whole scene with `input`. Emission of `document-update` is
- * suppressed for the duration (`state.hydrating`), so a document pushed in by
- * a host is never echoed back as an edit. Throws on an invalid document,
- * leaving the scene untouched.
+ * Replace the whole scene with `input`. `state.hydrating` suppresses
+ * `document-update` for the duration, so a document pushed in by a host is never
+ * echoed back as an edit. Throws on an invalid document, leaving the scene
+ * untouched.
  */
 export const hydrateDrawingDocument = (state: CanvasRuntimeState, input: DrawingDocument) => {
   const doc = normalizeDrawingDocument(input)
@@ -171,20 +168,17 @@ export const hydrateDrawingDocument = (state: CanvasRuntimeState, input: Drawing
 
   state.hydrating = true
   try {
-    // Freehand
     freehandGroup.destroyChildren()
     clearStrokesInState(state)
     selectionStore.clear(state)
     applyTransform(freehandGroup, doc.freehand.transform)
-    for (const node of doc.freehand.nodes) {
-      const built = buildFreehandNode(state, node)
-      freehandGroup.add(built)
-      if (built instanceof Konva.Group) attachHandlersRecursively(state, built)
-    }
+    for (const node of doc.freehand.nodes) buildFreehandNode(state, node, freehandGroup)
+    freehandGroup.getChildren().forEach((child) => {
+      if (child instanceof Konva.Group) attachHandlersRecursively(state, child)
+    })
     updateFreehandDraggableStates(state)
     updateTimelineState(state)
 
-    // Polygons
     polygonGroup.destroyChildren()
     state.polygon.shapes.clear()
     state.polygon.groups.clear()
@@ -197,18 +191,15 @@ export const hydrateDrawingDocument = (state: CanvasRuntimeState, input: Drawing
       updatePolygonControlPoints(state)
     }
 
-    // Circles
     circleGroup.destroyChildren()
     state.circle.shapes.clear()
     applyTransform(circleGroup, doc.circle.transform)
-    for (const node of doc.circle.nodes) {
-      circleGroup.add(buildCircleNode(state, node, circleGroup))
-    }
+    for (const node of doc.circle.nodes) buildCircleNode(state, node, circleGroup)
 
     stage.batchDraw()
 
-    // Refresh the hot-reload snapshots and the baked data. The bake callbacks
-    // emit state-update (sketches rely on it) but not document-update.
+    // The bake callbacks emit state-update (sketches rely on it) but, while
+    // hydrating, not document-update.
     const freehandSnapshot = getCurrentFreehandState(state)
     if (freehandSnapshot) state.freehand.serializedState = JSON.stringify(freehandSnapshot)
     const polygonSnapshot = getCurrentPolygonState(state)
@@ -223,29 +214,31 @@ export const hydrateDrawingDocument = (state: CanvasRuntimeState, input: Drawing
   }
 }
 
-const buildFreehandNode = (state: CanvasRuntimeState, node: DrawingNode): Konva.Group | Konva.Path => {
+const buildFreehandNode = (state: CanvasRuntimeState, node: DrawingNode, parent: Konva.Container) => {
   if (node.type === 'group') {
     const group = new Konva.Group({ id: node.id, draggable: false })
     applyTransform(group, node.transform)
     if (node.metadata) group.setAttr('metadata', node.metadata)
-    for (const child of node.children) group.add(buildFreehandNode(state, child))
+    parent.add(group)
+    for (const child of node.children) buildFreehandNode(state, child, group)
     createGroupItem(state, group)
     setStrokeGroupInState(state, node.id, {
       id: node.id,
       strokeIds: group.find('Path').map((path) => path.id()),
       group
     })
-    return group
+    return
   }
   if (node.type !== 'stroke') {
     throw new Error(`Unexpected ${node.type} node on the freehand layer`)
   }
-  // createStrokeShape normalizes the points to their minimum corner and places
-  // the path there; the stored transform (if any) then overrides that position.
+  // createStrokeShape places the path at the points' minimum corner; a stored
+  // transform overrides that position.
   const shape = createStrokeShape(state, node.points, node.id)
   const bounds = getPointsBounds(node.points)
   applyTransform(shape, node.transform, { x: bounds.minX, y: bounds.minY })
   if (node.metadata) shape.setAttr('metadata', node.metadata)
+  parent.add(shape)
   const stroke: FreehandStroke = {
     id: node.id,
     points: [...node.points],
@@ -256,10 +249,9 @@ const buildFreehandNode = (state: CanvasRuntimeState, node: DrawingNode): Konva.
     shape
   }
   setStrokeInState(state, node.id, stroke)
-  return shape
 }
 
-const buildPolygonNode = (state: CanvasRuntimeState, node: DrawingPolygonNode, parent: Konva.Container): Konva.Line => {
+const buildPolygonNode = (state: CanvasRuntimeState, node: DrawingPolygonNode, parent: Konva.Container) => {
   const line = createPolygonNode(state, node.id, [...node.points], node.creationTime, parent)
   if (!node.closed) {
     line.closed(false)
@@ -268,17 +260,17 @@ const buildPolygonNode = (state: CanvasRuntimeState, node: DrawingPolygonNode, p
   }
   applyTransform(line, node.transform)
   if (node.metadata) line.setAttr('metadata', node.metadata)
-  return line
 }
 
-const buildCircleNode = (state: CanvasRuntimeState, node: DrawingNode, parent: Konva.Container): Konva.Group | Konva.Circle => {
+const buildCircleNode = (state: CanvasRuntimeState, node: DrawingNode, parent: Konva.Container) => {
   if (node.type === 'group') {
     const group = new Konva.Group({ id: node.id, draggable: false })
     applyTransform(group, node.transform)
     if (node.metadata) group.setAttr('metadata', node.metadata)
-    for (const child of node.children) group.add(buildCircleNode(state, child, group))
+    parent.add(group)
+    for (const child of node.children) buildCircleNode(state, child, group)
     createGroupItem(state, group)
-    return group
+    return
   }
   if (node.type !== 'circle') {
     throw new Error(`Unexpected ${node.type} node on the circle layer`)
@@ -292,6 +284,4 @@ const buildCircleNode = (state: CanvasRuntimeState, node: DrawingNode, parent: K
   })
   applyTransform(shape, node.transform)
   if (node.metadata) shape.setAttr('metadata', node.metadata)
-  // createCircleNode already added the shape to `parent`; the caller's add is a no-op move.
-  return shape
 }
