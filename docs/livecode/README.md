@@ -102,6 +102,10 @@ Boundary ownership:
   `packages/core-timing/offline_time_context.ts`.
 - `apps/browser-projections/src/pianoRoll` and the built
   `webcomponents/piano-roll/dist/piano-roll.js` supply the piano-roll element.
+- `apps/browser-projections/src/canvas` and the built
+  `webcomponents/handwriting-canvas/dist/handwriting-canvas.js` supply the
+  drawing element. Its lossless document format and Konva-free bake live in
+  `packages/drawing-document`, shared by the element and the engine.
 - User modules also import graphics, window, MIDI, and other `@avtools/*`
   packages. The livecode docs describe their integration boundary, not their
   internals.

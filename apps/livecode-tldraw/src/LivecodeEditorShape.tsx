@@ -26,6 +26,7 @@ import {
 } from "./SignalScopeShape";
 import {
   ANIMATION_TIMELINE_ENTITY_TYPE,
+  DRAWING_ENTITY_TYPE,
   PARAMS_ENTITY_TYPE,
   PIANO_ROLL_ENTITY_TYPE,
 } from "./serverRequests";
@@ -37,6 +38,7 @@ const DECLARATION_ENTITY_TYPES: Partial<
 > = {
   canvasParams: PARAMS_ENTITY_TYPE,
   animationTimeline: ANIMATION_TIMELINE_ENTITY_TYPE,
+  canvasDrawing: DRAWING_ENTITY_TYPE,
   canvasSignal: "signal",
 };
 

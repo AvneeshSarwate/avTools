@@ -46,6 +46,7 @@ export type EntityCallDecorationType =
   | 'pianoRoll'
   | 'params'
   | 'animationTimeline'
+  | 'drawing'
   | 'signal'
 
 export interface EntityCallDecoration {
@@ -136,6 +137,11 @@ const ENTITY_DECORATION_PRESENTATION: Record<
     emoji: '▶️',
     label: 'animation editor',
     className: 'ltc-entity-open-btn--animation-timeline',
+  },
+  drawing: {
+    emoji: '✏️',
+    label: 'drawing canvas',
+    className: 'ltc-entity-open-btn--drawing',
   },
   signal: {
     emoji: '📈',

@@ -341,7 +341,7 @@ Deno.test("signals are invisible to the durable entity registry", () => {
   // whole ephemeral guarantee: no filter anywhere has to remember signals.
   assertEquals(
     listDurableEntityTypes().map((descriptor) => descriptor.typeId),
-    ["animationTimeline", "params", "pianoRoll"],
+    ["animationTimeline", "drawing", "params", "pianoRoll"],
   );
   assertEquals(getDurableEntityType(SIGNAL_ENTITY_TYPE), undefined);
   for (const descriptor of listDurableEntityTypes()) {

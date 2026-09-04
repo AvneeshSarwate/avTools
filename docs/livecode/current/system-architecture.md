@@ -45,8 +45,9 @@ that initialization; a replacing socket invalidates the prior transition.
 - The project manifest owns module metadata/layout, canvas-view layout, and
   references to saved entity files. It does not own live execution.
 - The engine owns active/pending runs and all named entities. Piano rolls,
-  params, and animation timelines are durable only when explicitly captured by
-  project save. Signals, run state, waits, and lookups are ephemeral.
+  params, animation timelines, and drawings are durable only when explicitly
+  captured by project save. Signals, run state, waits, and lookups are
+  ephemeral.
 - tldraw owns transient canvas shapes and editor buffers. A transient canvas is
   memory-only unless saved as `.tldr`.
 - Signal-scope histories are browser-side ring buffers over delivered samples,

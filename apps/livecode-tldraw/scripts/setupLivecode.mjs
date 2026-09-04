@@ -42,6 +42,13 @@ const steps = [
     verify: () => existsSync(dir('webcomponents', 'animation-editor', 'dist', 'animation-editor.js')),
   },
   {
+    name: 'build: handwriting canvas web component (gitignored bundle)',
+    cwd: dir('apps', 'browser-projections'),
+    cmd: 'npm run buildCanvas',
+    required: true,
+    verify: () => existsSync(dir('webcomponents', 'handwriting-canvas', 'dist', 'handwriting-canvas.js')),
+  },
+  {
     name: 'cache: Deno server dependencies (pre-warm first launch)',
     cwd: dir('apps', 'deno-notebooks'),
     cmd: 'deno cache livecode/visualizer/main.ts',

@@ -1,12 +1,14 @@
 import type React from "react";
 import type {
   AnimationTimelineData,
+  DrawingDocument,
   NoteData,
   NoteDataInput,
 } from "@avtools/livecode-protocol";
 
 declare module "@avtools/piano-roll";
 declare module "@avtools/animation-editor";
+declare module "@avtools/handwriting-canvas";
 
 /** One labeled playhead line in a component's native position unit. */
 export interface PlayheadMarker {
@@ -42,6 +44,25 @@ export interface AnimationEditorComponentElement extends HTMLElement {
   getPlayheadMarkers?: () => PlayheadMarker[];
 }
 
+/**
+ * The imperative surface `<handwriting-canvas>` exposes. Documents are the
+ * lossless form (`@avtools/drawing-document`); the element emits
+ * `document-update` (detail `[DrawingDocument]`) on every committed edit and
+ * never while a document is being pushed in.
+ */
+export interface HandwritingCanvasElement extends HTMLElement {
+  width?: number | string;
+  height?: number | string;
+  showTimeline?: boolean;
+  showVisualizations?: boolean;
+  showSnapshots?: boolean;
+  showRescale?: boolean;
+  setDrawingDocument?: (value: DrawingDocument) => void;
+  getDrawingDocument?: () => DrawingDocument;
+  setCanvasState?: (serialized: string) => void;
+  getCanvasState?: () => string;
+}
+
 declare module "react" {
   namespace JSX {
     interface IntrinsicElements {
@@ -52,6 +73,10 @@ declare module "react" {
       "animation-editor-component": React.DetailedHTMLProps<
         React.HTMLAttributes<AnimationEditorComponentElement>,
         AnimationEditorComponentElement
+      >;
+      "handwriting-canvas": React.DetailedHTMLProps<
+        React.HTMLAttributes<HandwritingCanvasElement>,
+        HandwritingCanvasElement
       >;
     }
   }

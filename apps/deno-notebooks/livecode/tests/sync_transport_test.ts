@@ -24,6 +24,7 @@ import {
 import type {
   AnalyzeSuccess,
   AnimationTimelineEntity,
+  DrawingEntity,
   ModuleLookupsEntity,
   ModuleWaitsEntity,
   ParamsEntity,
@@ -217,6 +218,81 @@ Deno.test("animation timelines reset, change, and delete on the shared transport
         "animationTimeline",
         (change) => change.name === "sync/animation" && change.entity === null,
         "the animation deletion",
+      );
+    } finally {
+      client.close();
+    }
+  });
+});
+
+Deno.test("drawings reset, change, and delete on the shared transport", async () => {
+  await withServer("tcv-sync-drawing-", async ({ baseUrl }) => {
+    await postJson(`${baseUrl}/entities/create`, {
+      type: "drawing",
+      name: "sync/drawing",
+    });
+    const circleDoc = (x: number) => ({
+      version: 1,
+      freehand: { nodes: [] },
+      polygon: { nodes: [] },
+      circle: {
+        nodes: [{
+          type: "circle",
+          id: "c",
+          radius: 5,
+          creationTime: 1,
+          transform: { x, y: 0 },
+        }],
+      },
+    });
+    await postJson(`${baseUrl}/drawing/set`, {
+      name: "sync/drawing",
+      data: circleDoc(10),
+    });
+
+    const client = await SyncClient.open(baseUrl);
+    try {
+      const reset = await client.subscribe(["drawing"]);
+      const initial = (reset.resets?.drawing as DrawingEntity[])[0];
+      assertEquals(initial.name, "sync/drawing");
+      assertEquals(initial.data.circle.nodes[0].transform, { x: 10 });
+
+      const before = client.messages.length;
+      await postJson(`${baseUrl}/drawing/set`, {
+        name: "sync/drawing",
+        expectedRev: initial.rev,
+        data: circleDoc(20),
+      });
+      await client.waitForChange(
+        before,
+        "drawing",
+        (change) =>
+          (change.entity as DrawingEntity | null)?.rev === initial.rev + 1,
+        "the drawing edit",
+      );
+
+      // A stale compare-and-set is refused with the current entity attached.
+      const stale = await postJson<{ ok: boolean; current?: DrawingEntity }>(
+        `${baseUrl}/drawing/set`,
+        {
+          name: "sync/drawing",
+          expectedRev: initial.rev,
+          data: circleDoc(30),
+        },
+      );
+      assertEquals(stale.ok, false);
+      assertEquals(stale.current?.rev, initial.rev + 1);
+
+      const beforeDelete = client.messages.length;
+      await postJson(`${baseUrl}/entities/delete`, {
+        type: "drawing",
+        name: "sync/drawing",
+      });
+      await client.waitForChange(
+        beforeDelete,
+        "drawing",
+        (change) => change.name === "sync/drawing" && change.entity === null,
+        "the drawing deletion",
       );
     } finally {
       client.close();

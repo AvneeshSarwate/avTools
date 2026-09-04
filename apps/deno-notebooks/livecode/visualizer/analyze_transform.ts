@@ -76,6 +76,17 @@ const ANIMATION_TIMELINE_SOURCE_BASENAMES = new Set([
   "animation_timeline_store.ts",
 ]);
 
+const CANVAS_DRAWING_FUNCTIONS = new Set(["drawing"]);
+const CANVAS_DRAWING_IMPORT_ALIASES = new Set(["canvas-drawing"]);
+const CANVAS_DRAWING_SOURCE_SUFFIXES = [
+  "/helpers/canvas_drawing.ts",
+  "/livecode-engine/drawing_store.ts",
+];
+const CANVAS_DRAWING_SOURCE_BASENAMES = new Set([
+  "canvas_drawing.ts",
+  "drawing_store.ts",
+]);
+
 /**
  * Ephemeral signal declarations. Discovered like canvas-params (whole file,
  * any depth) but edited like a wait: the WHOLE call is wrapped so the runtime
@@ -212,6 +223,7 @@ export function analyzeAndTransformTimedModule(
   const pianoRollLookupBindings = collectPianoRollLookupImports(sourceFile);
   const canvasParamsBindings = collectCanvasParamsImports(sourceFile);
   const animationTimelineBindings = collectAnimationTimelineImports(sourceFile);
+  const canvasDrawingBindings = collectCanvasDrawingImports(sourceFile);
   const canvasSignalBindings = collectCanvasSignalImports(sourceFile);
 
   for (const scope of collectVisualFunctionScopes(sourceFile)) {
@@ -228,6 +240,11 @@ export function analyzeAndTransformTimedModule(
     "animationTimeline",
   );
   collectNamedHelperCallsites(
+    canvasDrawingBindings,
+    CANVAS_DRAWING_FUNCTIONS,
+    "canvasDrawing",
+  );
+  collectNamedHelperCallsites(
     canvasSignalBindings,
     CANVAS_SIGNAL_FUNCTIONS,
     "canvasSignal",
@@ -240,7 +257,8 @@ export function analyzeAndTransformTimedModule(
     const end = call.getEnd();
     if (
       callsite.kind === "canvasParams" ||
-      callsite.kind === "animationTimeline"
+      callsite.kind === "animationTimeline" ||
+      callsite.kind === "canvasDrawing"
     ) {
       // Observation only: the manifest entry is the whole feature, so this
       // kind deliberately emits no wrapper and no runtime import.
@@ -536,7 +554,11 @@ export function analyzeAndTransformTimedModule(
   function collectNamedHelperCallsites(
     bindings: HelperImportBindings,
     functionNames: Set<string>,
-    kind: "canvasParams" | "animationTimeline" | "canvasSignal",
+    kind:
+      | "canvasParams"
+      | "animationTimeline"
+      | "canvasDrawing"
+      | "canvasSignal",
   ) {
     if (bindings.named.size === 0 && bindings.namespaces.size === 0) return;
     sourceFile.forEachDescendant((node) => {
@@ -854,6 +876,17 @@ function collectAnimationTimelineImports(
   );
 }
 
+/** And again for `drawing(...)` declarations. */
+function collectCanvasDrawingImports(
+  sourceFile: SourceFile,
+): HelperImportBindings {
+  return collectHelperImports(
+    sourceFile,
+    CANVAS_DRAWING_FUNCTIONS,
+    isCanvasDrawingModuleSpecifier,
+  );
+}
+
 /** And again for `signal(...)` declarations. */
 function collectCanvasSignalImports(
   sourceFile: SourceFile,
@@ -948,6 +981,15 @@ function isAnimationTimelineModuleSpecifier(specifier: string): boolean {
     ANIMATION_TIMELINE_IMPORT_ALIASES,
     ANIMATION_TIMELINE_SOURCE_SUFFIXES,
     ANIMATION_TIMELINE_SOURCE_BASENAMES,
+  );
+}
+
+function isCanvasDrawingModuleSpecifier(specifier: string): boolean {
+  return matchesHelperModuleSpecifier(
+    specifier,
+    CANVAS_DRAWING_IMPORT_ALIASES,
+    CANVAS_DRAWING_SOURCE_SUFFIXES,
+    CANVAS_DRAWING_SOURCE_BASENAMES,
   );
 }
 

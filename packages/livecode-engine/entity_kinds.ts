@@ -1,5 +1,6 @@
 import {
   animationTimelineEntityType,
+  drawingEntityType,
   type DurableEntityTypeBehavior,
   paramsEntityType,
   pianoRollEntityType,
@@ -10,6 +11,11 @@ import {
   collectAnimationTimelineChanges,
   listAnimationTimelines,
 } from "./animation_timeline_store.ts";
+import {
+  collectDrawingChanges,
+  DRAWING_ENTITY_TYPE,
+  listDrawings,
+} from "./drawing_store.ts";
 import {
   collectPianoRollChanges,
   listPianoRollObjects,
@@ -57,6 +63,14 @@ export const BUILTIN_ENTITY_KINDS: EntityKindRegistration[] = [
       snapshotAll: () => listAnimationTimelines(),
     },
     durable: animationTimelineEntityType,
+  },
+  {
+    typeId: DRAWING_ENTITY_TYPE,
+    sync: {
+      collectChanges: () => collectDrawingChanges(),
+      snapshotAll: () => listDrawings(),
+    },
+    durable: drawingEntityType,
   },
   {
     typeId: SIGNAL_ENTITY_TYPE,

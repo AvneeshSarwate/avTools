@@ -1,0 +1,36 @@
+{
+  "type": "drawing",
+  "name": "drawing-p5_shapes",
+  "savedAt": "2026-09-04T00:00:00.000Z",
+  "data": {
+    "version": 1,
+    "freehand": {
+      "nodes": [
+        {
+          "type": "stroke",
+          "id": "saved-stroke",
+          "points": [120, 300, 160, 260, 210, 290, 260, 250, 320, 300],
+          "timestamps": [0, 40, 80, 120, 160],
+          "creationTime": 1,
+          "isFreehand": true,
+          "metadata": { "name": "saved-stroke" }
+        }
+      ]
+    },
+    "polygon": {
+      "nodes": [
+        {
+          "type": "polygon",
+          "id": "saved-polygon",
+          "points": [140, 80, 320, 60, 360, 200, 200, 220],
+          "closed": true,
+          "creationTime": 1,
+          "metadata": { "name": "saved-polygon" }
+        }
+      ]
+    },
+    "circle": {
+      "nodes": []
+    }
+  }
+}

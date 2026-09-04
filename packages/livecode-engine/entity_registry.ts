@@ -29,6 +29,16 @@ import {
   loadAnimationTimeline,
   removeAnimationTimeline,
 } from "./animation_timeline_store.ts";
+import {
+  createEmptyDrawing,
+  DRAWING_ENTITY_TYPE,
+  duplicateDrawing,
+  getDrawing,
+  latestDrawingJson,
+  listDrawingNames,
+  loadDrawing,
+  removeDrawing,
+} from "./drawing_store.ts";
 import type {
   AnimationTimelineData,
   ParamsMeta,
@@ -37,6 +47,7 @@ import type {
   PianoRollObject,
   PianoRollSetResult,
   SavedAnimationTimelineEntity,
+  SavedDrawingEntity,
   SavedParamsEntity,
   SavedPianoRollEntity,
 } from "@avtools/livecode-protocol";
@@ -254,6 +265,35 @@ export const animationTimelineEntityType: DurableEntityTypeBehavior = {
     loadAnimationTimeline(name, saved.data as AnimationTimelineData);
   },
   latestJson: (name) => latestAnimationTimelineJson(name),
+};
+
+export const drawingEntityType: DurableEntityTypeBehavior = {
+  listNames: () => listDrawingNames(),
+  exists: (name) => getDrawing(name) !== undefined,
+  create: (name) => {
+    createEmptyDrawing(name);
+  },
+  duplicate: (sourceName, targetName) => {
+    duplicateDrawing(sourceName, targetName);
+  },
+  remove: (name) => removeDrawing(name),
+  serialize(name) {
+    const entity = getDrawing(name);
+    if (!entity) return null;
+    const saved: SavedDrawingEntity = {
+      type: DRAWING_ENTITY_TYPE,
+      name: entity.name,
+      savedAt: new Date().toISOString(),
+      data: entity.data,
+    };
+    return saved;
+  },
+  deserialize(name, data) {
+    const saved = requireJsonObject(data, `Saved drawing "${name}"`);
+    // loadDrawing validates the document and rejects it whole on any problem.
+    loadDrawing(name, saved.data);
+  },
+  latestJson: (name) => latestDrawingJson(name),
 };
 
 /**

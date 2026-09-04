@@ -52,6 +52,7 @@ import type {
   RuntimeModuleStatus,
   RuntimeStateResponse,
   SetAnimationTimelineRequest,
+  SetDrawingRequest,
   SetParamsRequest,
   SetPianoRollRequest,
   StopModuleRequest,
@@ -65,6 +66,7 @@ import type {
 } from "./protocol.ts";
 import type {
   AnimationTimelineSetResult,
+  DrawingSetResult,
   EngineEntityActionResult,
   EngineEntityCapture,
   EngineEntityLoadEntry,
@@ -849,6 +851,15 @@ export async function createLivecodeVisualizerServer(
           kind: "animationTimelineSet",
           request: requestBody,
         }) as AnimationTimelineSetResult,
+      );
+    }
+    if (request.method === "POST" && url.pathname === "/drawing/set") {
+      const requestBody = await request.json() as SetDrawingRequest;
+      return json(
+        await plane.execute({
+          kind: "drawingSet",
+          request: requestBody,
+        }) as DrawingSetResult,
       );
     }
     if (request.method === "GET" && url.pathname === "/signals/list") {

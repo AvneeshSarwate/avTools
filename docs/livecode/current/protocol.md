@@ -21,15 +21,21 @@ only an interface.
 | launch/run/waits/lookups/health | `runtime.ts` | engine, server, livecode runtime |
 | multiplexed observation | `sync.ts` | engine sync sources, server/uplink, sync provider |
 | project and saved entities | `project.ts`, `saved_entities.ts` | project server, App/canvas registry, bake |
-| domain entities | `piano_roll.ts`, `params.ts`, `animation_timeline.ts`, `signals.ts` | stores, host ops/routes, per-kind client slices/views |
+| domain entities | `piano_roll.ts`, `params.ts`, `animation_timeline.ts`, `drawing.ts`, `signals.ts` | stores, host ops/routes, per-kind client slices/views |
 | local/remote engine ops | `engine_uplink.ts` | execution plane, engine host, bake |
 | browser automation | `client_control.ts` | HTTP caller, server bridge, mounted client |
 
 ## Sync semantics
 
 `/sync` is one subscribed channel for piano rolls, params, animation timelines,
-signals, runs, waits, and lookups. In served/baked browser-engine topologies the
-equivalent envelopes may use `BroadcastChannel`.
+drawings, signals, runs, waits, and lookups. In served/baked browser-engine
+topologies the equivalent envelopes may use `BroadcastChannel`.
+
+The drawing kind is the one whose value type lives outside this package:
+`drawing.ts` re-exports `DrawingDocument` from `packages/drawing-document`,
+which also owns the document's validation and its Konva-free bake. The wire
+carries the lossless document, never the baked render data; consumers bake
+locally.
 
 The invariants in `sync.ts` matter more than the transport:
 

@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "name": "feature-drawing-p5",
+  "engineTarget": "browser",
+  "modules": [
+    {
+      "id": "drawing-p5/writer",
+      "path": "modules/writer.ts",
+      "sourcePath": "modules/writer.orig.ts",
+      "runtimePath": "modules/writer.ts",
+      "kind": "runnable",
+      "title": "circle writer (code -> drawing)",
+      "sourceVersion": 2,
+      "x": 80,
+      "y": 80,
+      "w": 560,
+      "h": 420
+    },
+    {
+      "id": "drawing-p5/sketch",
+      "path": "modules/sketch.ts",
+      "sourcePath": "modules/sketch.orig.ts",
+      "runtimePath": "modules/sketch.ts",
+      "kind": "runnable",
+      "title": "p5 sketch (draws the drawing in the engine tab)",
+      "sourceVersion": 2,
+      "x": 80,
+      "y": 540,
+      "w": 560,
+      "h": 640
+    }
+  ],
+  "canvas": {
+    "pianoRollViews": [],
+    "paramPaneViews": [],
+    "animationEditorViews": [],
+    "scopeViews": [],
+    "drawingViews": [
+      {
+        "id": "shape:drawing-p5-view",
+        "drawingName": "drawing-p5_shapes",
+        "x": 700,
+        "y": 80,
+        "w": 760,
+        "h": 600
+      }
+    ]
+  },
+  "data": [
+    {
+      "type": "drawing",
+      "name": "drawing-p5_shapes",
+      "path": "data/drawing/drawing-p5_shapes.json"
+    }
+  ]
+}

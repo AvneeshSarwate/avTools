@@ -36,7 +36,6 @@ export interface FlattenedStroke {
   readonly type: 'stroke'
   readonly id: string
   readonly points: ReadonlyArray<TimedPoint>
-  readonly creationTime?: number
   readonly metadata?: Readonly<Record<string, unknown>>
 }
 
@@ -51,7 +50,6 @@ export interface FlattenedPolygon {
   readonly type: 'polygon'
   readonly id: string
   readonly points: ReadonlyArray<Point>
-  readonly creationTime?: number
   readonly metadata?: Readonly<Record<string, unknown>>
 }
 
@@ -63,7 +61,6 @@ export interface FlattenedCircle {
   readonly rx: number
   readonly ry: number
   readonly rotation: number
-  readonly creationTime?: number
   readonly metadata?: Readonly<Record<string, unknown>>
 }
 

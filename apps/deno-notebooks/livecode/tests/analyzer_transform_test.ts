@@ -614,6 +614,39 @@ export default async function(_ctx: TimeContext) {}
   );
 });
 
+Deno.test("analyzer records drawing declarations without editing them", () => {
+  const result = analyze(`
+import type { TimeContext } from "@avtools/core-timing";
+import { drawing, makeCircleNode } from "canvas-drawing";
+
+export const shapes = drawing("kinaree/shapes");
+
+export default async function(_ctx: TimeContext) {
+  shapes.update((doc) => {
+    doc.circle.nodes.push(makeCircleNode({ x: 1, y: 2, radius: 3 }));
+  });
+}
+`);
+
+  assertEquals(result.type, "analyzeSuccess");
+  if (result.type !== "analyzeSuccess") return;
+
+  assertEquals(result.manifest.callsites.length, 1);
+  const entry = result.manifest.callsites[0];
+  assertEquals(entry.kind, "canvasDrawing");
+  assertEquals(entry.displayName, "drawing");
+  assertEquals(entry.staticName, "kinaree/shapes");
+  assert(entry.nameArgRange, "nameArgRange should be present");
+  assertStringIncludes(
+    result.transformedCode,
+    'export const shapes = drawing("kinaree/shapes")',
+  );
+  assert(
+    !result.transformedCode.includes("__tcv"),
+    "an observation-only declaration must not be instrumented",
+  );
+});
+
 Deno.test("analyzer wraps a top-level signal declaration and emits the runtime import", () => {
   const result = analyze(`
 import type { TimeContext } from "@avtools/core-timing";

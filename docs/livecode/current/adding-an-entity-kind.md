@@ -41,6 +41,12 @@ Add one `BUILTIN_ENTITY_KINDS` entry in `entity_kinds.ts` with sync collection
 and snapshot behavior. Add the durable behavior only when intended. Do not add
 another timer, socket, or parallel type list.
 
+When the natural value is a browser component's own scene rather than a plain
+domain record, do what the drawing kind does: define a lossless document the
+component can serialize and hydrate exactly, store that, and derive the
+sketch-facing form with a Konva-free bake in a shared package
+(`packages/drawing-document`). Never store the derived form.
+
 ## 4. Add explicit operations
 
 Registration covers observation and optional durability, not writes. Add typed

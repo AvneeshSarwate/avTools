@@ -18,6 +18,7 @@ import type {
 export const PIANO_ROLL_ENTITY_TYPE = "pianoRoll";
 export const PARAMS_ENTITY_TYPE = "params";
 export const ANIMATION_TIMELINE_ENTITY_TYPE = "animationTimeline";
+export const DRAWING_ENTITY_TYPE = "drawing";
 
 /**
  * "broadcast" routes entity/roll/params actions over the engine tab's

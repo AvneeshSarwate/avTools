@@ -3,6 +3,7 @@
   "workspace": [
     "./packages/core-timing",
     "./packages/creative-algs",
+    "./packages/drawing-document",
     "./packages/livecode-engine",
     "./packages/livecode-protocol",
     "./packages/midi",
@@ -21,6 +22,7 @@
     "@std/random": "jsr:@std/random@^0.1.4",
     "@avtools/core-timing": "./packages/core-timing/mod.ts",
     "@avtools/creative-algs": "./packages/creative-algs/mod.ts",
+    "@avtools/drawing-document": "./packages/drawing-document/mod.ts",
     "@avtools/livecode-engine": "./packages/livecode-engine/mod.ts",
     "@avtools/livecode-engine/": "./packages/livecode-engine/",
     "@avtools/livecode-protocol": "./packages/livecode-protocol/mod.ts",
@@ -54,6 +56,7 @@
     "canvas-params": "./apps/deno-notebooks/livecode/helpers/canvas_params.ts",
     "canvas-signals": "./apps/deno-notebooks/livecode/helpers/canvas_signals.ts",
     "animation-timeline": "./apps/deno-notebooks/livecode/helpers/animation_timeline.ts",
+    "canvas-drawing": "./apps/deno-notebooks/livecode/helpers/canvas_drawing.ts",
     "midi-helpers": "./apps/deno-notebooks/livecode/helpers/midi_helpers.ts",
     "piano-roll-helpers": "./apps/deno-notebooks/livecode/helpers/piano_roll_helpers.ts",
     "piano-roll-store": "./packages/livecode-engine/piano_roll_store.ts",

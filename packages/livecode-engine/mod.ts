@@ -9,6 +9,7 @@ export * from "./entity_store.ts";
 export * from "./entity_registry.ts";
 export * from "./entity_kinds.ts";
 export * from "./animation_timeline_store.ts";
+export * from "./drawing_store.ts";
 export * from "./params_store.ts";
 export * from "./signals_store.ts";
 export * from "./piano_roll_store.ts";

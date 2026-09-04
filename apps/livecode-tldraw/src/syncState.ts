@@ -1,5 +1,6 @@
 import type {
   AnimationTimelineEntity,
+  DrawingEntity,
   ModuleLookupsEntity,
   ModuleWaitsEntity,
   ParamsEntity,
@@ -19,6 +20,7 @@ export interface SyncState {
   pianoRoll: SyncSlice<PianoRollObject>;
   params: SyncSlice<ParamsEntity>;
   animationTimeline: SyncSlice<AnimationTimelineEntity>;
+  drawing: SyncSlice<DrawingEntity>;
   signal: SyncSlice<SignalEntity>;
   run: SyncSlice<RunEntity>;
   moduleWaits: SyncSlice<ModuleWaitsEntity>;
@@ -42,6 +44,7 @@ export function emptySyncState(): SyncState {
     pianoRoll: emptySyncSlice(),
     params: emptySyncSlice(),
     animationTimeline: emptySyncSlice(),
+    drawing: emptySyncSlice(),
     signal: emptySyncSlice(),
     run: emptySyncSlice(),
     moduleWaits: emptySyncSlice(),

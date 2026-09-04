@@ -12,6 +12,13 @@ import {
   createAnimationEditorShape,
 } from "./AnimationEditorShape";
 import {
+  createDrawingShape,
+  DRAWING_ENTITY_TYPE,
+  DRAWING_SHAPE_TYPE,
+  type DrawingShape,
+  DrawingShapeUtil,
+} from "./DrawingShape";
+import {
   createParamPaneShape,
   PARAM_PANE_SHAPE_TYPE,
   type ParamPaneShape,
@@ -49,6 +56,7 @@ interface CanvasViewCodec extends CanvasViewDispatchCodec {
     | typeof PianoRollShapeUtil
     | typeof ParamPaneShapeUtil
     | typeof AnimationEditorShapeUtil
+    | typeof DrawingShapeUtil
     | typeof SignalScopeShapeUtil;
   restore(editor: Editor, canvas: ProjectCanvasState): void;
   entityType?: string;
@@ -189,6 +197,48 @@ export const CANVAS_VIEW_CODECS: readonly CanvasViewCodec[] = [
       const b = after as AnimationEditorShape;
       return hasBoxChanged(a, b) ||
         a.props.animationName !== b.props.animationName;
+    },
+  },
+  {
+    shapeUtil: DrawingShapeUtil,
+    isShape: isDrawingShape,
+    entityType: DRAWING_ENTITY_TYPE,
+    entityRef: (shape) => ({
+      type: DRAWING_ENTITY_TYPE,
+      name: (shape as DrawingShape).props.drawingName,
+    }),
+    createEntityView: (editor, name, position) =>
+      String(createDrawingShape(editor, { ...position, drawingName: name })),
+    collect: (shapes) => ({
+      drawingViews: shapes.filter(isDrawingShape).map((shape) => ({
+        id: shape.id,
+        drawingName: shape.props.drawingName,
+        x: shape.x,
+        y: shape.y,
+        w: shape.props.w,
+        h: shape.props.h,
+      })),
+    }),
+    restore(editor, canvas) {
+      for (const view of canvas.drawingViews ?? []) {
+        const id = view.id as DrawingShape["id"];
+        if (editor.getShape(id)) continue;
+        createDrawingShape(editor, {
+          id,
+          x: view.x,
+          y: view.y,
+          w: view.w,
+          h: view.h,
+          drawingName: view.drawingName,
+          title: `drawing: ${view.drawingName}`,
+        });
+      }
+    },
+    hasChanged: (before, after) => {
+      const a = before as DrawingShape;
+      const b = after as DrawingShape;
+      return hasBoxChanged(a, b) ||
+        a.props.drawingName !== b.props.drawingName;
     },
   },
   {
@@ -350,6 +400,10 @@ function isParamPaneShape(value: unknown): value is ParamPaneShape {
 
 function isAnimationEditorShape(value: unknown): value is AnimationEditorShape {
   return hasShapeType(value, ANIMATION_EDITOR_SHAPE_TYPE);
+}
+
+function isDrawingShape(value: unknown): value is DrawingShape {
+  return hasShapeType(value, DRAWING_SHAPE_TYPE);
 }
 
 function isSignalScopeShape(value: unknown): value is SignalScopeShape {

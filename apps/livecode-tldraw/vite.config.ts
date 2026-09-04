@@ -93,6 +93,12 @@ export default defineConfig({
           import.meta.url,
         ),
       ),
+      "@avtools/handwriting-canvas": fileURLToPath(
+        new URL(
+          "../../webcomponents/handwriting-canvas/dist/handwriting-canvas.js",
+          import.meta.url,
+        ),
+      ),
       // Raw-TS workspace package: the shared wire contract, compiled by Vite
       // straight from source (the same mechanism browser-projections uses for
       // @avtools/core-timing).

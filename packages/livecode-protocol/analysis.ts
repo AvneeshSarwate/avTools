@@ -26,6 +26,8 @@ export type WaitCallsiteKind =
   | "canvasParams"
   /** An `animationTimeline(...)` declaration. Observed only; never instrumented. */
   | "animationTimeline"
+  /** A `drawing(...)` declaration. Observed only; never instrumented. */
+  | "canvasDrawing"
   /**
    * A `signal(...)` declaration. The whole call is wrapped so the runtime can
    * attribute the signal to its module.

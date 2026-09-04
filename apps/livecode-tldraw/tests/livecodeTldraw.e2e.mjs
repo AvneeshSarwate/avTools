@@ -417,6 +417,7 @@ try {
   await runProjectSaveRoundTripCase()
   await runProjectOpenRestoresSavedTruthCase()
   await runProjectDuplicateAndDeleteCase()
+  await runDrawingFixtureCase(viteBaseUrl)
 
   console.log(
     JSON.stringify({
@@ -1756,6 +1757,220 @@ async function runProjectOpenRestoresSavedTruthCase() {
 }
 
 /**
+ * The drawing entity end to end on a copy of the checked-in feature-drawing-p5
+ * project: the saved document restores into the engine and into the canvas
+ * view, the declaration widget focuses that view, the writer module's code
+ * write reaches the view, a committed edit inside the view reaches the engine
+ * with the view's origin, and an HTTP compare-and-set write re-hydrates the
+ * view. The project is browser-target, but only the writer runs here and it
+ * needs no DOM; the p5 sketch stays a manual step.
+ */
+async function runDrawingFixtureCase(viteBaseUrl) {
+  const fixtureRoot = path.join(tldrawAppRoot, 'example-projects/feature-drawing-p5')
+  const drawingProjectRoot = path.join(sessionRoot, 'drawing-project')
+  cpSync(fixtureRoot, drawingProjectRoot, { recursive: true })
+  const manifest = JSON.parse(
+    readFileSync(path.join(fixtureRoot, 'project.avtools-livecode.json'), 'utf8')
+  )
+  const view = manifest.canvas.drawingViews[0]
+  const dataEntry = manifest.data.find((entry) => entry.type === 'drawing')
+  const savedDocument = JSON.parse(
+    readFileSync(path.join(fixtureRoot, dataEntry.path), 'utf8')
+  ).data
+  const drawingName = dataEntry.name
+  const writerModuleId = 'drawing-p5/writer'
+  const layerIds = (doc) =>
+    JSON.stringify(
+      ['freehand', 'polygon', 'circle'].map((layer) => doc[layer].nodes.map((node) => node.id))
+    )
+
+  await page.goto(projectUrl(viteBaseUrl, serverBaseUrl, drawingProjectRoot), {
+    waitUntil: 'domcontentloaded',
+  })
+  await page.locator('.livecode-shape').first().waitFor({ timeout: scaled(20_000) })
+  await waitForPageValue(
+    () => Boolean(window.__livecodeTldrawRuntimeDebug),
+    'tldraw runtime debug hooks installed for the drawing project',
+    10_000
+  )
+  await page.evaluate(() => window.__livecodeTldrawRuntimeDebug?.connect())
+  await waitForTldrawReady()
+  await waitForPageValue(
+    (moduleId) => window.__livecodeTldrawRuntimeDebug?.getModuleIds().includes(moduleId),
+    'drawing writer module registered',
+    scaled(15_000),
+    writerModuleId
+  )
+
+  // Server -> sync store -> view.
+  const restored = await waitForPageValue(
+    ({ name, expected }) => {
+      const entity = window.__livecodeSyncDebug?.getEntities('drawing')?.[name]
+      if (!entity) return null
+      const ids = JSON.stringify(
+        ['freehand', 'polygon', 'circle'].map((layer) =>
+          entity.data[layer].nodes.map((node) => node.id)
+        )
+      )
+      return ids === expected ? entity : null
+    },
+    'the checked-in fixture restores its drawing',
+    scaled(20_000),
+    { name: drawingName, expected: layerIds(savedDocument) }
+  )
+  assertEqual(restored.updatedBy, 'load', 'fixture drawing load origin')
+  const viewDocument = await waitForPageValue(
+    ({ name }) => {
+      const element = Array.from(document.querySelectorAll('handwriting-canvas')).find(
+        (candidate) => candidate.dataset.drawingName === name
+      )
+      const doc = element?.getDrawingDocument?.()
+      return doc && doc.freehand.nodes.length === 1 && doc.polygon.nodes.length === 1
+        ? doc
+        : null
+    },
+    'the drawing view hydrates the restored document',
+    scaled(15_000),
+    { name: drawingName }
+  )
+  assertEqual(viewDocument.freehand.nodes[0].id, 'saved-stroke', 'the view holds the saved stroke')
+  assertEqual(
+    viewDocument.polygon.nodes[0].metadata,
+    { name: 'saved-polygon' },
+    'the view holds the saved polygon with its metadata'
+  )
+  const shapes = await getShapes()
+  const drawingView = shapes.find((shape) => shape.id === view.id)
+  assert(drawingView, 'the checked-in drawing view keeps its shape id')
+  assertEqual(drawingView.props.drawingName, drawingName, 'fixture drawing view binding')
+
+  // Declaration widget focuses the existing view instead of creating another.
+  const writerManifest = await waitForManifest(writerModuleId, 1, 'drawing declaration manifest')
+  const callsite = writerManifest.callsites.find((entry) => entry.kind === 'canvasDrawing')
+  assert(callsite, 'the drawing declaration has a callsite')
+  assertEqual(callsite.staticName, drawingName, 'drawing callsite static name')
+  await waitForEntityButtons('drawing', [drawingName], { label: 'drawing declaration widget' })
+  await clickEntityButton('drawing', drawingName)
+  await waitForPageValue(
+    (id) => window.__livecodeTldrawRuntimeDebug?.getSelectedShapeIds().includes(id),
+    'the drawing emoji focuses its existing view',
+    scaled(10_000),
+    view.id
+  )
+  assertEqual(
+    (await getShapes()).filter(
+      (shape) => shape.type === 'drawing-view' && shape.props.drawingName === drawingName
+    ).length,
+    1,
+    'the drawing emoji does not duplicate an existing view'
+  )
+
+  // Code -> engine -> view.
+  await runModule(writerModuleId)
+  const written = await waitForPageValue(
+    ({ name }) => {
+      const entity = window.__livecodeSyncDebug?.getEntities('drawing')?.[name]
+      return entity?.data.circle.nodes.some((node) => node.id === 'code-circle') ? entity : null
+    },
+    "the writer's circle reaches the sync store",
+    scaled(20_000),
+    { name: drawingName }
+  )
+  assertEqual(written.updatedBy, 'drawing-p5/writer', 'code write carries the writer origin')
+  await waitForPageValue(
+    ({ name }) => {
+      const element = Array.from(document.querySelectorAll('handwriting-canvas')).find(
+        (candidate) => candidate.dataset.drawingName === name
+      )
+      const doc = element?.getDrawingDocument?.()
+      return doc?.circle.nodes.some((node) => node.id === 'code-circle') ? true : null
+    },
+    'the drawing view shows the circle the writer added',
+    scaled(15_000),
+    { name: drawingName }
+  )
+
+  // View -> engine: a committed edit inside the element writes the entity.
+  await page.evaluate(({ name }) => {
+    const element = Array.from(document.querySelectorAll('handwriting-canvas')).find(
+      (candidate) => candidate.dataset.drawingName === name
+    )
+    const state = element.canvasState
+    state.command.executeCommand('e2e: delete saved polygon', () => {
+      const item = state.canvasItems.get('saved-polygon')
+      item?.konvaNode.destroy()
+      state.canvasItems.delete('saved-polygon')
+      state.polygon.shapes.delete('saved-polygon')
+    })
+  }, { name: drawingName })
+  const edited = await waitForPageValue(
+    ({ name, rev }) => {
+      const entity = window.__livecodeSyncDebug?.getEntities('drawing')?.[name]
+      return entity && entity.rev > rev && entity.data.polygon.nodes.length === 0 ? entity : null
+    },
+    'the view edit reaches the engine',
+    scaled(15_000),
+    { name: drawingName, rev: written.rev }
+  )
+  assert(
+    edited.updatedBy.startsWith('drawing-view-'),
+    `the view write carries the view origin (${edited.updatedBy})`
+  )
+  assertEqual(
+    edited.data.freehand.nodes.map((node) => node.id),
+    ['saved-stroke'],
+    'the view edit keeps the freehand layer'
+  )
+  assert(
+    edited.data.circle.nodes.some((node) => node.id === 'code-circle'),
+    'the view edit keeps the code circle'
+  )
+  const editedStatus = await serverGetJson('/project/status')
+  assertEqual(
+    editedStatus.data.find((entry) => entry.type === 'drawing' && entry.name === drawingName)
+      ?.unsaved,
+    true,
+    'the drawing reads unsaved after the edits'
+  )
+
+  // Engine -> view over HTTP, with compare-and-set on both the stale and fresh rev.
+  const stale = await serverPostJson('/drawing/set', {
+    name: drawingName,
+    data: savedDocument,
+    expectedRev: written.rev,
+    originId: 'e2e',
+  })
+  assertEqual(stale.ok, false, 'a stale compare-and-set write is refused')
+  assertEqual(stale.current?.rev, edited.rev, 'the refusal carries the current revision')
+  const restoredWrite = await serverPostJson('/drawing/set', {
+    name: drawingName,
+    data: savedDocument,
+    expectedRev: edited.rev,
+    originId: 'e2e',
+  })
+  assertEqual(restoredWrite.ok, true, 'the fresh compare-and-set write is accepted')
+  await waitForPageValue(
+    ({ name }) => {
+      const element = Array.from(document.querySelectorAll('handwriting-canvas')).find(
+        (candidate) => candidate.dataset.drawingName === name
+      )
+      const doc = element?.getDrawingDocument?.()
+      return doc && doc.polygon.nodes.length === 1 && doc.circle.nodes.length === 0 ? true : null
+    },
+    'an HTTP write re-hydrates the drawing view',
+    scaled(15_000),
+    { name: drawingName }
+  )
+  const restoredStatus = await serverGetJson('/project/status')
+  assertEqual(
+    restoredStatus.data.find((entry) => entry.type === 'drawing' && entry.name === drawingName)
+      ?.unsaved,
+    false,
+    'restoring the saved document clears the unsaved comparison'
+  )
+}
+
+/**
  * Duplicate is the variations gesture and delete is its counterweight: the copy
  * is live and saved, and deleting the entity leaves the view (a view is not the
  * entity) plus the old data file (manifest-only remove) behind.
@@ -2217,6 +2432,7 @@ async function waitForEntityButtons(
         pianoRoll: '🎹',
         params: '🎛️',
         animationTimeline: '▶️',
+        drawing: '✏️',
         signal: '📈',
       }[entityType]
       const buttons = Array.from(

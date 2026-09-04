@@ -23,6 +23,7 @@
       "@/*": ["./src/*"],
       "@avtools/core-timing": ["../../packages/core-timing/mod.ts"],
       "@avtools/core-timing/*": ["../../packages/core-timing/*"],
+      "@avtools/drawing-document": ["../../packages/drawing-document/mod.ts"],
       "@avtools/creative-algs": ["../../packages/creative-algs/mod.ts"],
       "@avtools/creative-algs/*": ["../../packages/creative-algs/*"],
       "@avtools/music-types": ["../../packages/music-types/mod.ts"],

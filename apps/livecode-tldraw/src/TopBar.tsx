@@ -5,6 +5,7 @@ import type { DurableEntityRef, ProjectSaveResponse } from "./livecodeProtocol";
 import { useLivecodeRuntime } from "./livecodeRuntime";
 import {
   useAnimationTimelinesSync,
+  useDrawingsSync,
   useParamsSync,
   usePianoRollsSync,
   useSignalsSync,
@@ -23,6 +24,7 @@ import { ANIMATION_TIMELINE_ENTITY_TYPE } from "./AnimationEditorShape";
 import {
   createEntity,
   deleteEntity,
+  DRAWING_ENTITY_TYPE,
   duplicateEntity,
   fetchProjectStatus,
   PARAMS_ENTITY_TYPE,
@@ -48,6 +50,7 @@ export function TopBar({
   const paramsRuntime = useParamsSync();
   const pianoRollRuntime = usePianoRollsSync();
   const animationRuntime = useAnimationTimelinesSync();
+  const drawingsRuntime = useDrawingsSync();
   const signalsRuntime = useSignalsSync();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [scopeDraft, setScopeDraft] = useState<string | null>(null);
@@ -73,6 +76,10 @@ export function TopBar({
   const knownAnimationNames = useMemo(
     () => Object.keys(animationRuntime.timelines).sort(),
     [animationRuntime.timelines],
+  );
+  const knownDrawingNames = useMemo(
+    () => Object.keys(drawingsRuntime.drawings).sort(),
+    [drawingsRuntime.drawings],
   );
   // Everything a scope can bind to, in the one syntax the input accepts: signal
   // names as they are, param leaves as `params:<name>.<field>`. Ended signals
@@ -285,6 +292,27 @@ export function TopBar({
                       ANIMATION_TIMELINE_ENTITY_TYPE,
                       name,
                     );
+                  }
+                })}
+            />
+            <EntityViewCreator
+              editor={editor}
+              buttonLabel="New drawing"
+              submitLabel="Add drawing"
+              placeholder="drawing name"
+              datalistId="topbar-drawing-names"
+              knownNames={knownDrawingNames}
+              onAdd={(name) =>
+                runEntityAction(async () => {
+                  if (!knownDrawingNames.includes(name)) {
+                    await createEntity(
+                      runtime.serverBaseUrl,
+                      DRAWING_ENTITY_TYPE,
+                      name,
+                    );
+                  }
+                  if (editor) {
+                    createEntityView(editor, DRAWING_ENTITY_TYPE, name);
                   }
                 })}
             />

@@ -7,6 +7,7 @@
 import type { PianoRollData } from "./piano_roll.ts";
 import type { ParamsMeta, ParamsValues } from "./params.ts";
 import type { AnimationTimelineData } from "./animation_timeline.ts";
+import type { DrawingDocument } from "./drawing.ts";
 
 /** File format of `data/pianoRoll/<encoded-name>.json`. */
 export interface SavedPianoRollEntity {
@@ -34,4 +35,12 @@ export interface SavedAnimationTimelineEntity {
   name: string;
   savedAt: string;
   data: AnimationTimelineData;
+}
+
+/** File format of `data/drawing/<encoded-name>.json`: the lossless document, never the baked render data. */
+export interface SavedDrawingEntity {
+  type: "drawing";
+  name: string;
+  savedAt: string;
+  data: DrawingDocument;
 }

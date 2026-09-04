@@ -1,6 +1,6 @@
 <!-- eslint-disable @typescript-eslint/no-unused-vars -->
 <script setup lang="ts">
-import { createCanvasRuntimeState, type CanvasRenderData, type CanvasRuntimeState, type CanvasStateSnapshot, type CanvasStateSnapshotBase, type FreehandRenderData, type PolygonRenderData } from './canvasState';
+import { createCanvasRuntimeState, type CanvasRuntimeState, type CanvasStateSnapshot, type CanvasStateSnapshotBase, type FreehandRenderData, type PolygonRenderData } from './canvasState';
 import { diff, type IChange } from 'json-diff-ts';
 import * as selectionStore from './selectionStore';
 import { getCanvasItem } from './CanvasItem';
@@ -34,7 +34,9 @@ import {
   duplicateSelection as duplicateSelectionImpl,
   deleteSelection as deleteSelectionImpl
 } from './selectTool';
-import { downloadCanvasState as downloadCanvasStateImpl, uploadCanvasState as uploadCanvasStateImpl, serializeCanvasState as serializeCanvasStateImpl, deserializeCanvasState as deserializeCanvasStateImpl, deserializeCanvasRenderData as deserializeCanvasRenderDataImpl, collectCanvasRenderData as collectCanvasRenderDataImpl } from './canvasPersistence';
+import { downloadCanvasState as downloadCanvasStateImpl, uploadCanvasState as uploadCanvasStateImpl, serializeCanvasState as serializeCanvasStateImpl, deserializeCanvasState as deserializeCanvasStateImpl, collectCanvasRenderData as collectCanvasRenderDataImpl } from './canvasPersistence';
+import { hydrateDrawingDocument, serializeDrawingDocument } from './drawingDocument';
+import { normalizeDrawingDocument, type DrawingDocument } from '@avtools/drawing-document';
 import type { ZodTypeAny } from 'zod';
 
 const DEFAULT_GRID_SIZE = 20
@@ -87,6 +89,8 @@ const wsController = shallowRef<CanvasWebSocketController | null>(null)
 
 const emit = defineEmits<{
   (event: 'state-update', state: CanvasStateSnapshot): void
+  /** The lossless document after each committed edit; never fired while a document is being loaded. */
+  (event: 'document-update', document: DrawingDocument): void
 }>()
 
 const resolution = computed(() => {
@@ -275,6 +279,13 @@ const emitStateUpdate = (state: CanvasRuntimeState) => {
   if (wsController.value?.isConnected) {
     wsController.value.sendStateUpdate(snapshot)
   }
+
+  // Hosts that own the drawing as an entity listen for the document rather
+  // than the baked snapshot. Nothing is emitted before mount (there is no
+  // scene yet) or during hydration (a pushed document is not an edit).
+  if (state.stage && !state.hydrating) {
+    emit('document-update', serializeDrawingDocument(state))
+  }
 }
 
 canvasState.callbacks.syncAppState = emitStateUpdate
@@ -429,19 +440,30 @@ const setAnimatingState = (animating: boolean) => {
 
 // Imperative surface for hosts that embed the custom element (no Vue props).
 const setCanvasState = (stateString: string) => restoreCanvasState(stateString)
-const setCanvasRenderData = (data: CanvasRenderData) => {
-  const restored = deserializeCanvasRenderDataImpl(canvasState, data, { handleTimeUpdate })
-  if (!restored) {
-    console.warn('Failed to restore canvas render data: payload has no freehand, polygon, or circle data')
+// Replace the scene with a document. Throws on an invalid document, leaving
+// the scene as it was; never emits document-update. A document set before the
+// stage exists is validated now and applied at the end of mount.
+let pendingDrawingDocument: DrawingDocument | null = null
+const setDrawingDocument = (doc: DrawingDocument) => {
+  if (!canvasState.stage) {
+    pendingDrawingDocument = normalizeDrawingDocument(doc)
+    return
   }
+  const wasAnimating = canvasState.freehand.currentPlaybackTime.value > 0
+  canvasState.freehand.currentPlaybackTime.value = 0
+  canvasState.freehand.isAnimating.value = false
+  hydrateDrawingDocument(canvasState, doc)
+  if (wasAnimating) handleTimeUpdate(0)
 }
-const getCanvasRenderData = (): CanvasRenderData => collectCanvasRenderDataImpl(canvasState)
+const getDrawingDocument = (): DrawingDocument => serializeDrawingDocument(canvasState)
+const getCanvasRenderData = () => collectCanvasRenderDataImpl(canvasState)
 
 defineExpose({
   canvasState,
   setCanvasState,
   getCanvasState: captureCanvasState,
-  setCanvasRenderData,
+  setDrawingDocument,
+  getDrawingDocument,
   getCanvasRenderData
 })
 
@@ -993,6 +1015,12 @@ onMounted(async () => {
         }
       })
       wsController.value.connect()
+    }
+
+    if (pendingDrawingDocument) {
+      const doc = pendingDrawingDocument
+      pendingDrawingDocument = null
+      hydrateDrawingDocument(canvasState, doc)
     }
 
   } catch (e) {

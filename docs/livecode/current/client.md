@@ -99,7 +99,8 @@ effects; editor decorations do not own runtime state.
 
 Entity-call widgets are derived from manifest entries. Piano-roll names may be
 resolved at runtime, with a literal fallback marked tentative; params,
-animation-timeline, and signal declarations need a static literal name. The
+animation-timeline, drawing, and signal declarations need a static literal
+name. The
 widget focuses an existing registered view or creates one. Computed declaration
 names deliberately have no widget because there is no runtime declaration-name
 stream.
@@ -112,6 +113,13 @@ Domain bridges retain distinct semantics:
 - Params panes edit a live declared object through leaf merges. Creating a pane
   does not create a schema; a not-yet-declared entity can correctly render
   empty/unavailable.
+- The drawing view (`DrawingShape.tsx`) hydrates the `<handwriting-canvas>`
+  element from the entity's lossless document and writes committed edits back
+  whole with compare-and-set. Two guards make that loop safe: the element never
+  emits `document-update` while a document is being pushed in, and the view
+  writes nothing until its first hydration and skips re-hydrating its own
+  accepted writes. The element's baked `state-update` snapshot is not the
+  entity value; modules bake the document themselves.
 - Signal playhead markers are derived by `signalPlayheadMarkers.ts` from signal
   anchors. Piano-roll anchors interpret position in beats; animation anchors
   interpret it in seconds. One signal sent to both must choose compatible units.
@@ -119,9 +127,9 @@ Domain bridges retain distinct semantics:
   leaf by path. Rebind, unmount, or reload discards history; an ended source
   freezes/dims rather than fabricating samples.
 
-After changing the Vue piano-roll or animation-editor component, rebuild its
-checked-in/ignored bundle before testing this app. `setupLivecode` is the
-one-shot path that prepares all component bundles.
+After changing the Vue piano-roll, animation-editor, or handwriting-canvas
+component, rebuild its checked-in/ignored bundle before testing this app.
+`setupLivecode` is the one-shot path that prepares all component bundles.
 
 ## DOM event boundary
 

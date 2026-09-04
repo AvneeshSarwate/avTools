@@ -6,18 +6,15 @@ import type { ZodTypeAny } from 'zod'
 
 export type MetadataSchemaEntry = { name: string; schema: ZodTypeAny }
 
-// Baked ("flattened") render data. Points are in world/stage coordinates with
-// every Konva transform already applied, so a consumer never needs Konva. The
-// same data can be loaded back into the canvas with `deserializeCanvasRenderData`;
-// see that function for what the round trip does and does not preserve.
+// Baked ("flattened") render data: world/stage coordinates with every Konva
+// transform already applied, so a consumer never needs Konva. It is a one-way
+// export; the lossless form is the DrawingDocument in ./drawingDocument.ts.
 
 export type FlattenedStroke = {
   type: 'stroke'
   id: string
   /** `ts` is milliseconds since the stroke started, one entry per point. */
   points: { x: number, y: number, ts: number }[]
-  /** Wall-clock creation time; orders strokes in timeline playback. */
-  creationTime?: number
   metadata?: any
 }
 
@@ -34,7 +31,6 @@ export type FlattenedPolygon = {
   type: 'polygon'
   id: string
   points: { x: number, y: number }[]
-  creationTime?: number
   metadata?: any
 }
 
@@ -49,17 +45,16 @@ export type FlattenedCircle = {
   ry: number
   /** Radians; the direction of the rx axis in world space. */
   rotation: number
-  creationTime?: number
   metadata?: any
 }
 
 export type CircleRenderData = FlattenedCircle[]
 
-/** Per-tool baked render data, the input of `deserializeCanvasRenderData`. */
+/** Every tool's current baked render data, as `getCanvasRenderData` returns it. */
 export type CanvasRenderData = {
-  freehand?: FreehandRenderData
-  polygon?: PolygonRenderData
-  circle?: CircleRenderData
+  freehand: FreehandRenderData
+  polygon: PolygonRenderData
+  circle: CircleRenderData
 }
 
 export type CanvasStateSnapshotBase = {
@@ -142,6 +137,8 @@ export interface CanvasRuntimeState {
   konvaContainer?: HTMLDivElement
   activeTool: Ref<'select' | 'freehand' | 'polygon' | 'circle'>
   metadataSchemas: MetadataSchemaEntry[]
+  /** True while a document is being loaded, so the load never emits as an edit. */
+  hydrating: boolean
   layers: {
     grid?: Konva.Layer
     drawing?: Konva.Layer
@@ -283,6 +280,7 @@ export const createCanvasRuntimeState = (): CanvasRuntimeState => {
     konvaContainer: undefined,
     activeTool: ref('select'),
     metadataSchemas: [],
+    hydrating: false,
     layers: {
       grid: undefined,
       drawing: undefined,

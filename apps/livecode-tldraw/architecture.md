@@ -28,8 +28,9 @@ and the end-to-end topology and flows are in
 | Piano-roll shape | `src/PianoRollShape.tsx` |
 | Params pane shape | `src/ParamPaneShape.tsx` |
 | Signal scope shape | `src/SignalScopeShape.tsx` |
+| Drawing (handwriting canvas) shape | `src/DrawingShape.tsx` |
 | Wire types | `packages/livecode-protocol` (vite alias + tsconfig path); `src/livecodeProtocol.ts` re-exports it and adds client-local view models |
-| Piano-roll custom element typing | `src/custom-elements.d.ts` |
+| Custom element typings (piano roll, animation editor, handwriting canvas) | `src/custom-elements.d.ts` |
 | Reconnecting sockets and bounded requests | `src/reconnectingSocket.ts`, `src/serverRequests.ts` |
 | Debug/test surfaces | `src/livecodeTldrawDebug.ts` plus APIs installed by `App.tsx` and `livecodeRuntime.tsx` |
 | Browser tests and fixtures | `tests/`, `public/test-canvases/` |
