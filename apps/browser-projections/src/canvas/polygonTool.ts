@@ -128,6 +128,7 @@ export const generateBakedPolygonData = (
         type: 'polygon',
         id: polygonId,
         points: transformedPoints,
+        ...(polygonRuntime && { creationTime: polygonRuntime.creationTime }),
         ...(metadata && { metadata }) // Only include metadata if it exists
       })
     }
@@ -142,6 +143,48 @@ export const updateBakedPolygonData = (
 ) => {
   canvasState.polygon.bakedRenderData = generateBakedPolygonData(canvasState)
   canvasState.callbacks.syncAppState?.(canvasState)
+}
+
+/**
+ * Rebuild the polygon layer from baked render data, the inverse of
+ * `updateBakedPolygonData`. Points are world space with transforms already
+ * applied, so every polygon is recreated at identity.
+ */
+export const buildPolygonsFromRenderData = (
+  canvasState: CanvasRuntimeState,
+  data: PolygonRenderData
+) => {
+  const polygonShapesGroup = canvasState.groups.polygonShapes
+  const stageRef = canvasState.stage
+  if (!stageRef || !polygonShapesGroup) return
+
+  polygonShapesGroup.destroyChildren()
+  canvasState.polygon.shapes.clear()
+  canvasState.polygon.groups.clear()
+  selectionStore.clear(canvasState)
+
+  const fallbackCreationBase = Date.now()
+  data.forEach((flat, index) => {
+    const points = flat.points.flatMap((point) => [point.x, point.y])
+    const line = createPolygonNode(
+      canvasState,
+      flat.id || uid('poly_'),
+      points,
+      flat.creationTime ?? fallbackCreationBase + index
+    )
+    if (flat.metadata !== undefined) line.setAttr('metadata', flat.metadata)
+  })
+
+  canvasState.groups.polygonControls?.destroyChildren()
+  if (canvasState.activeTool.value === 'polygon' && canvasState.polygon.mode.value === 'edit') {
+    updatePolygonControlPoints(canvasState)
+  }
+
+  polygonShapesGroup.getLayer()?.batchDraw()
+
+  const snapshot = getCurrentPolygonState(canvasState)
+  if (snapshot) canvasState.polygon.serializedState = JSON.stringify(snapshot)
+  updateBakedPolygonData(canvasState)
 }
 
 // Polygon drawing state now managed via global canvas state
@@ -595,40 +638,51 @@ export const updatePolygonPreview = (state: CanvasRuntimeState) => {
   polygonPreviewGroup.getLayer()?.batchDraw()
 }
 
+// Create a closed polygon node with the canvas's polygon style, register its
+// runtime record and CanvasItem, and add it to the polygon layer.
+export const createPolygonNode = (
+  state: CanvasRuntimeState,
+  id: string,
+  points: number[],
+  creationTime: number
+): Konva.Line => {
+  const polygon: PolygonShape = {
+    id,
+    points,
+    closed: true,
+    creationTime
+  }
+
+  const polygonLine = new Konva.Line({
+    points: polygon.points,
+    stroke: '#000',
+    strokeWidth: 2,
+    fill: 'rgba(0, 100, 255, 0.1)',
+    closed: true,
+    draggable: false, // Will be handled by control points in edit mode
+    id
+  })
+
+  attachPolygonHandlers(state, polygonLine)
+
+  polygon.konvaShape = polygonLine
+  polygonShapes(state).set(id, polygon)
+  state.groups.polygonShapes?.add(polygonLine)
+
+  // Register as CanvasItem
+  createPolygonItem(state, polygonLine)
+
+  return polygonLine
+}
+
 export const finishPolygon = (state: CanvasRuntimeState) => {
   const polygonShapesGroup = state.groups.polygonShapes
   const polygonPreviewGroup = state.groups.polygonPreview
   if (state.polygon.currentPoints.value.length < 6) return // Need at least 3 points
-  
-  executeCommand(state, 'Create Polygon', () => {
-    const polygonId = `polygon-${Date.now()}`
-    const polygon: PolygonShape = {
-      id: polygonId,
-      points: [...state.polygon.currentPoints.value],
-      closed: true,
-      creationTime: Date.now()
-    }
-    
-    // Create Konva shape
-    const polygonLine = new Konva.Line({
-      points: polygon.points,
-      stroke: '#000',
-      strokeWidth: 2,
-      fill: 'rgba(0, 100, 255, 0.1)',
-      closed: true,
-      draggable: false, // Will be handled by control points in edit mode
-      id: polygonId
-    })
 
-    attachPolygonHandlers(state, polygonLine)
-    
-    polygon.konvaShape = polygonLine
-    polygonShapes(state).set(polygonId, polygon)
-    polygonShapesGroup?.add(polygonLine)
-    
-    // Register as CanvasItem
-    createPolygonItem(state, polygonLine)
-    
+  executeCommand(state, 'Create Polygon', () => {
+    createPolygonNode(state, `polygon-${Date.now()}`, [...state.polygon.currentPoints.value], Date.now())
+
     // Reset drawing state to allow drawing new shapes
     state.polygon.isDrawing.value = false
     state.polygon.currentPoints.value = []

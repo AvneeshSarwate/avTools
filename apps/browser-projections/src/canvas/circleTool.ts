@@ -278,40 +278,13 @@ export const handleCirclePointerUp = (state: CanvasRuntimeState) => {
   if (!center || radius < 2) return
 
   executeCommand(state, 'Create Circle', () => {
-    const circleId = uid('circle_')
-    const creationTime = Date.now()
-    const circle: CircleShapeRuntime = {
-      id: circleId,
+    createCircleNode(state, uid('circle_'), {
       x: center.x,
       y: center.y,
-      r: radius,
-      creationTime: creationTime
-    }
-    
-    // Create Konva shape
-    const circleShape = new Konva.Circle({
-      x: center.x,
-      y: center.y,
-      radius: radius,
-      stroke: '#000',
-      strokeWidth: 2,
-      fill: 'rgba(0, 100, 255, 0.1)',
-      draggable: false,
-      id: circleId
+      radius,
+      creationTime: Date.now()
     })
-    
-    // Store creationTime in node attrs for persistence
-    circleShape.setAttr('creationTime', creationTime)
 
-    attachCircleHandlers(state, circleShape)
-    
-    circle.shape = circleShape
-    circleShapes(state).set(circleId, circle)
-    circleShapesGroup?.add(circleShape)
-    
-    // Register as CanvasItem
-    createCircleItem(state, circleShape)
-    
     // Reset drawing state
     state.circle.currentCenter.value = null
     state.circle.currentRadius.value = 0
@@ -322,6 +295,101 @@ export const handleCirclePointerUp = (state: CanvasRuntimeState) => {
     circleShapesGroup?.getLayer()?.batchDraw()
     updateBakedCircleData(state) // Update baked data after creating circle
   })
+}
+
+export interface CreateCircleNodeOptions {
+  x: number
+  y: number
+  radius: number
+  /** Vertical stretch relative to `radius`; 1 for a true circle. */
+  scaleY?: number
+  /** Degrees, Konva's rotation unit. */
+  rotation?: number
+  creationTime: number
+}
+
+// Create a circle node with the canvas's circle style, register its runtime
+// record and CanvasItem, and add it to the circle layer.
+export const createCircleNode = (
+  state: CanvasRuntimeState,
+  id: string,
+  options: CreateCircleNodeOptions
+): Konva.Circle => {
+  const circle: CircleShapeRuntime = {
+    id,
+    x: options.x,
+    y: options.y,
+    r: options.radius,
+    creationTime: options.creationTime
+  }
+
+  const circleShape = new Konva.Circle({
+    x: options.x,
+    y: options.y,
+    radius: options.radius,
+    scaleY: options.scaleY ?? 1,
+    rotation: options.rotation ?? 0,
+    stroke: '#000',
+    strokeWidth: 2,
+    fill: 'rgba(0, 100, 255, 0.1)',
+    draggable: false,
+    id
+  })
+
+  // Store creationTime in node attrs for persistence
+  circleShape.setAttr('creationTime', options.creationTime)
+
+  attachCircleHandlers(state, circleShape)
+
+  circle.shape = circleShape
+  circleShapes(state).set(id, circle)
+  state.groups.circleShapes?.add(circleShape)
+
+  // Register as CanvasItem
+  createCircleItem(state, circleShape)
+
+  return circleShape
+}
+
+/**
+ * Rebuild the circle layer from baked render data, the inverse of
+ * `updateBakedCircleData`. The bake reduces any transform stack to an ellipse
+ * (`rx`, `ry`, `rotation`), so each circle is recreated as one node with that
+ * ellipse expressed as radius, scaleY, and rotation. Groups of circles are not
+ * part of the baked data and do not come back.
+ */
+export const buildCirclesFromRenderData = (
+  canvasState: CanvasRuntimeState,
+  data: CircleRenderData
+) => {
+  const circleShapesGroup = canvasState.groups.circleShapes
+  const stageRef = canvasState.stage
+  if (!stageRef || !circleShapesGroup) return
+
+  circleShapesGroup.destroyChildren()
+  canvasState.circle.shapes.clear()
+  selectionStore.clear(canvasState)
+
+  const fallbackCreationBase = Date.now()
+  data.forEach((flat, index) => {
+    const rx = flat.r ?? flat.rx
+    const ry = flat.r ?? flat.ry
+    const shape = createCircleNode(canvasState, flat.id || uid('circle_'), {
+      x: flat.center.x,
+      y: flat.center.y,
+      radius: rx,
+      scaleY: rx > 0 ? ry / rx : 1,
+      rotation: ((flat.rotation ?? 0) * 180) / Math.PI,
+      creationTime: flat.creationTime ?? fallbackCreationBase + index
+    })
+    if (flat.metadata !== undefined) shape.setAttr('metadata', flat.metadata)
+  })
+
+  circleShapesGroup.getLayer()?.batchDraw()
+
+  const snapshot = getCurrentCircleState(canvasState)
+  if (snapshot) canvasState.circle.serializedState = JSON.stringify(snapshot)
+  updateBakedCircleData(canvasState)
 }
 
 // Function to generate baked circle data for external rendering (p5, three.js, etc.)
@@ -376,6 +444,7 @@ export const generateBakedCircleData = (
         rx,
         ry,
         rotation,
+        ...(circleRuntime && { creationTime: circleRuntime.creationTime }),
         ...(metadata && { metadata }) // Only include metadata if it exists
       }
     } else if (node instanceof Konva.Group) {

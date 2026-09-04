@@ -1,6 +1,6 @@
 <!-- eslint-disable @typescript-eslint/no-unused-vars -->
 <script setup lang="ts">
-import { createCanvasRuntimeState, type CanvasRuntimeState, type CanvasStateSnapshot, type CanvasStateSnapshotBase, type FreehandRenderData, type PolygonRenderData } from './canvasState';
+import { createCanvasRuntimeState, type CanvasRenderData, type CanvasRuntimeState, type CanvasStateSnapshot, type CanvasStateSnapshotBase, type FreehandRenderData, type PolygonRenderData } from './canvasState';
 import { diff, type IChange } from 'json-diff-ts';
 import * as selectionStore from './selectionStore';
 import { getCanvasItem } from './CanvasItem';
@@ -34,7 +34,7 @@ import {
   duplicateSelection as duplicateSelectionImpl,
   deleteSelection as deleteSelectionImpl
 } from './selectTool';
-import { downloadCanvasState as downloadCanvasStateImpl, uploadCanvasState as uploadCanvasStateImpl, serializeCanvasState as serializeCanvasStateImpl, deserializeCanvasState as deserializeCanvasStateImpl } from './canvasPersistence';
+import { downloadCanvasState as downloadCanvasStateImpl, uploadCanvasState as uploadCanvasStateImpl, serializeCanvasState as serializeCanvasStateImpl, deserializeCanvasState as deserializeCanvasStateImpl, deserializeCanvasRenderData as deserializeCanvasRenderDataImpl, collectCanvasRenderData as collectCanvasRenderDataImpl } from './canvasPersistence';
 import type { ZodTypeAny } from 'zod';
 
 const DEFAULT_GRID_SIZE = 20
@@ -427,7 +427,23 @@ const setAnimatingState = (animating: boolean) => {
   }
 }
 
-defineExpose({ canvasState })
+// Imperative surface for hosts that embed the custom element (no Vue props).
+const setCanvasState = (stateString: string) => restoreCanvasState(stateString)
+const setCanvasRenderData = (data: CanvasRenderData) => {
+  const restored = deserializeCanvasRenderDataImpl(canvasState, data, { handleTimeUpdate })
+  if (!restored) {
+    console.warn('Failed to restore canvas render data: payload has no freehand, polygon, or circle data')
+  }
+}
+const getCanvasRenderData = (): CanvasRenderData => collectCanvasRenderDataImpl(canvasState)
+
+defineExpose({
+  canvasState,
+  setCanvasState,
+  getCanvasState: captureCanvasState,
+  setCanvasRenderData,
+  getCanvasRenderData
+})
 
 const updateCanvasGrid = () => {
   const stageRef = canvasState.stage

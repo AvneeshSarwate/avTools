@@ -1,7 +1,13 @@
-import { getCurrentFreehandStateString, restoreFreehandState } from './freehandTool'
-import { getCurrentPolygonStateString, restorePolygonState } from './polygonTool'
-import { getCurrentCircleStateString, restoreCircleState } from './circleTool'
-import type { CanvasRuntimeState } from './canvasState'
+import { buildFreehandFromRenderData, getCurrentFreehandStateString, restoreFreehandState } from './freehandTool'
+import { buildPolygonsFromRenderData, getCurrentPolygonStateString, restorePolygonState } from './polygonTool'
+import { buildCirclesFromRenderData, getCurrentCircleStateString, restoreCircleState } from './circleTool'
+import type {
+  CanvasRenderData,
+  CanvasRuntimeState,
+  CircleRenderData,
+  FreehandRenderData,
+  PolygonRenderData
+} from './canvasState'
 
 export interface CanvasPersistenceOptions {
   handleTimeUpdate?: (time: number) => void
@@ -23,33 +29,34 @@ const parseStateString = (stateString: string | null | undefined) => {
   }
 }
 
+// One tool's section of a payload as a serialized (Konva) state string, or
+// undefined when the section carries no serialized state. Bare render-data
+// arrays and `{ bakedRenderData }` sections without a serialized string are
+// left for `extractRenderData`.
+const normalizeSection = (section: any): string | undefined => {
+  if (section === undefined || section === null) return undefined
+  if (typeof section === 'string') return section || undefined
+  if (Array.isArray(section)) return undefined
+  if (typeof section !== 'object') return undefined
+  if ('serializedState' in section || 'bakedRenderData' in section) {
+    return typeof section.serializedState === 'string' && section.serializedState
+      ? section.serializedState
+      : undefined
+  }
+  return JSON.stringify(section)
+}
+
 const normalizeParsedState = (parsed: any): NormalizedCanvasState => {
   if (!parsed || typeof parsed !== 'object') {
     return {}
   }
 
   if ('freehand' in parsed || 'polygon' in parsed || 'circle' in parsed) {
-    const result: NormalizedCanvasState = {}
-
-    if (parsed.freehand !== undefined) {
-      result.freehand = typeof parsed.freehand === 'string'
-        ? parsed.freehand
-        : JSON.stringify(parsed.freehand)
+    return {
+      freehand: normalizeSection(parsed.freehand),
+      polygon: normalizeSection(parsed.polygon),
+      circle: normalizeSection(parsed.circle)
     }
-
-    if (parsed.polygon !== undefined) {
-      result.polygon = typeof parsed.polygon === 'string'
-        ? parsed.polygon
-        : JSON.stringify(parsed.polygon)
-    }
-
-    if (parsed.circle !== undefined) {
-      result.circle = typeof parsed.circle === 'string'
-        ? parsed.circle
-        : JSON.stringify(parsed.circle)
-    }
-
-    return result
   }
 
   if ('layer' in parsed && (parsed.strokes || parsed.strokeGroups)) {
@@ -65,6 +72,72 @@ const normalizeParsedState = (parsed: any): NormalizedCanvasState => {
   }
 
   return {}
+}
+
+// Baked render data found in a parsed payload. Each tool section may be a bare
+// array (`CanvasRenderData`) or a `{ bakedRenderData }` object
+// (`CanvasStateSnapshotBase`).
+const extractRenderData = (parsed: any): CanvasRenderData | null => {
+  if (!parsed || typeof parsed !== 'object') return null
+
+  const pick = <T,>(section: any): T[] | undefined => {
+    if (Array.isArray(section)) return section as T[]
+    if (section && typeof section === 'object' && Array.isArray(section.bakedRenderData)) {
+      return section.bakedRenderData as T[]
+    }
+    return undefined
+  }
+
+  const freehand = pick<FreehandRenderData[number]>(parsed.freehand)
+  const polygon = pick<PolygonRenderData[number]>(parsed.polygon)
+  const circle = pick<CircleRenderData[number]>(parsed.circle)
+  if (!freehand && !polygon && !circle) return null
+  return { freehand, polygon, circle }
+}
+
+/** The current baked render data of every tool, in the shape `deserializeCanvasRenderData` accepts. */
+export const collectCanvasRenderData = (state: CanvasRuntimeState): CanvasRenderData => ({
+  freehand: state.freehand.bakedRenderData,
+  polygon: state.polygon.bakedRenderData,
+  circle: state.circle.bakedRenderData
+})
+
+/**
+ * Load the canvas from baked render data instead of serialized Konva state.
+ * Only the tools present in `data` are replaced. Returns false when `data`
+ * carries nothing to load.
+ *
+ * What the baked form preserves: geometry in world space, per-shape metadata
+ * and ids, freehand grouping and stroke timing, and creation order. What it
+ * does not: the original transform stack (folded into the points), circle
+ * groups, and any Konva styling beyond the canvas defaults.
+ */
+export const deserializeCanvasRenderData = (
+  canvasState: CanvasRuntimeState,
+  data: CanvasRenderData,
+  options: CanvasPersistenceOptions = {}
+): boolean => {
+  const { freehand, polygon, circle } = data
+  if (!freehand && !polygon && !circle) return false
+
+  if (freehand) {
+    // Mirror restoreFreehandState: stop playback before the strokes it animates go away.
+    const wasAnimating = canvasState.freehand.currentPlaybackTime.value > 0
+    canvasState.freehand.currentPlaybackTime.value = 0
+    canvasState.freehand.isAnimating.value = false
+    buildFreehandFromRenderData(canvasState, freehand)
+    if (wasAnimating) options.handleTimeUpdate?.(0)
+  }
+
+  if (polygon) {
+    buildPolygonsFromRenderData(canvasState, polygon)
+  }
+
+  if (circle) {
+    buildCirclesFromRenderData(canvasState, circle)
+  }
+
+  return true
 }
 
 export const serializeCanvasState = (state: CanvasRuntimeState): string => {
@@ -103,7 +176,18 @@ export const deserializeCanvasState = (
 
   const { freehand, polygon, circle } = normalizeParsedState(parsed)
 
-  if (!freehand && !polygon && !circle) {
+  // A section with no serialized Konva state can still be rebuilt from its
+  // baked render data, so a `CanvasStateSnapshotBase` or bare render data is
+  // an acceptable payload too. Serialized state wins where both exist.
+  const render = extractRenderData(parsed)
+  const renderFallback: CanvasRenderData = {
+    freehand: freehand ? undefined : render?.freehand,
+    polygon: polygon ? undefined : render?.polygon,
+    circle: circle ? undefined : render?.circle
+  }
+  const hasRenderFallback = Boolean(renderFallback.freehand || renderFallback.polygon || renderFallback.circle)
+
+  if (!freehand && !polygon && !circle && !hasRenderFallback) {
     console.warn('Canvas state payload missing freehand, polygon, and circle data')
     return false
   }
@@ -118,6 +202,10 @@ export const deserializeCanvasState = (
 
   if (circle) {
     restoreCircleState(canvasState, circle)
+  }
+
+  if (hasRenderFallback) {
+    deserializeCanvasRenderData(canvasState, renderFallback, options)
   }
 
   return true
