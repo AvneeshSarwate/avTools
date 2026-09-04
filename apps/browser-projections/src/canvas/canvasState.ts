@@ -6,10 +6,18 @@ import type { ZodTypeAny } from 'zod'
 
 export type MetadataSchemaEntry = { name: string; schema: ZodTypeAny }
 
+// Baked ("flattened") render data. Points are in world/stage coordinates with
+// every Konva transform already applied, so a consumer never needs Konva. The
+// same data can be loaded back into the canvas with `deserializeCanvasRenderData`;
+// see that function for what the round trip does and does not preserve.
+
 export type FlattenedStroke = {
   type: 'stroke'
   id: string
+  /** `ts` is milliseconds since the stroke started, one entry per point. */
   points: { x: number, y: number, ts: number }[]
+  /** Wall-clock creation time; orders strokes in timeline playback. */
+  creationTime?: number
   metadata?: any
 }
 
@@ -26,6 +34,7 @@ export type FlattenedPolygon = {
   type: 'polygon'
   id: string
   points: { x: number, y: number }[]
+  creationTime?: number
   metadata?: any
 }
 
@@ -38,11 +47,20 @@ export type FlattenedCircle = {
   r?: number  // Present if circle is not distorted (rx ≈ ry)
   rx: number
   ry: number
+  /** Radians; the direction of the rx axis in world space. */
   rotation: number
+  creationTime?: number
   metadata?: any
 }
 
 export type CircleRenderData = FlattenedCircle[]
+
+/** Per-tool baked render data, the input of `deserializeCanvasRenderData`. */
+export type CanvasRenderData = {
+  freehand?: FreehandRenderData
+  polygon?: PolygonRenderData
+  circle?: CircleRenderData
+}
 
 export type CanvasStateSnapshotBase = {
   freehand: {
