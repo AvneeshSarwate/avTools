@@ -17,6 +17,7 @@ const PORTABLE_ENTRYPOINTS = [
   "apps/deno-notebooks/livecode/helpers/animation_timeline.ts",
   "apps/deno-notebooks/livecode/helpers/piano_roll_helpers.ts",
   "apps/deno-notebooks/livecode/helpers/midi_helpers.ts",
+  "apps/deno-notebooks/livecode/helpers/canvas_surface.ts",
   "packages/livecode-engine/piano_roll_store.ts",
   // The generated-code runtime import target: every browser-built module
   // imports it, so it must be part of the browser-clean graph.

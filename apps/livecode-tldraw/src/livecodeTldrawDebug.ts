@@ -19,6 +19,12 @@ import {
   type SignalScopeSourceType,
 } from "./SignalScopeShape";
 import { createEntity, deleteEntity, duplicateEntity } from "./serverRequests";
+import {
+  type CanvasSurfaceDebugState,
+  createCanvasSurfaceShape,
+  listCanvasSurfaceDebug,
+  readCanvasSurfaceDebug,
+} from "./CanvasSurfaceShape";
 
 export interface TldrawRuntimeDebugModule {
   moduleId: string;
@@ -76,6 +82,10 @@ export interface TldrawRuntimeDebug {
   /** What one scope has accumulated; scopes hold samples outside the store. */
   getScopeState(shapeId: string): SignalScopeDebugState | null;
   getScopeStates(): SignalScopeDebugState[];
+  /** A view mirroring a module's named canvas; returns its shape id. */
+  createCanvasSurfaceView(surfaceName: string): string | null;
+  getCanvasSurfaceState(shapeId: string): CanvasSurfaceDebugState | null;
+  getCanvasSurfaceStates(): CanvasSurfaceDebugState[];
   /** The marker lines the roll view for `rollName` is currently rendering. */
   getPlayheadMarkers(rollName: string): Array<{ id: string; position: number }>;
   /** Every mounted roll view and its markers, so "no view" is distinguishable. */
@@ -212,6 +222,17 @@ function installDebugApi() {
     },
     getScopeStates() {
       return listSignalScopeDebug();
+    },
+    createCanvasSurfaceView(surfaceName) {
+      const editor = refs.editor;
+      if (!editor) return null;
+      return String(createCanvasSurfaceShape(editor, { surfaceName }));
+    },
+    getCanvasSurfaceState(shapeId) {
+      return readCanvasSurfaceDebug(shapeId);
+    },
+    getCanvasSurfaceStates() {
+      return listCanvasSurfaceDebug();
     },
     getPlayheadMarkers(rollName) {
       return listPianoRollMarkerViews()

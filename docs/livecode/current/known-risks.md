@@ -131,6 +131,36 @@ machine can still replace the uplink repeatedly; browsers without Web Locks are
 unguarded. Explicit takeover intentionally panics and destroys the losing
 engine's state.
 
+## P2: baked pages cannot start, stop, or order modules
+
+A bake auto-launches every module once at boot and has no coordination server,
+so there is no start/stop/relaunch after that, and the launch order is the
+manifest order with no dependency inference. For an example-gallery bake each
+example must be an independent module with no imports between examples, and
+per-example start/stop must be a params toggle (`running: true` with a pane)
+that the module's own loop honors. A module that finishes cannot be restarted
+without reloading the page, which restarts the whole engine.
+
+## P2: the in-process engine dies with its page
+
+With `engine=inprocess` the UI tab is the engine: a reload or navigation
+restarts it, killing runs and unsaved entities, so this form is for baked demos
+and quick checks, not live sessions. Two engines can also coexist unnoticed
+when they sit on different origins (an `/engine/` tab on the server origin
+plus an in-process UI on the Vite origin): Web Locks are per origin, and both
+would replace each other's uplink. Do not open both. The module import map
+exists twice (engine page and client `index.html`) and a test keeps them equal;
+a helper added to one without the other fails only at browser launch time.
+
+## P2: canvas views mirror same-realm canvases only
+
+A canvas view finds its source by DOM lookup in this tab, so it shows nothing
+when the engine runs in another tab or in Deno, and there is no frame
+streaming fallback. It copies whatever the source canvas holds at animation
+frame time: Canvas 2D and p5 2D sources are fine, but a WebGL source that does
+not preserve its drawing buffer can read blank. Surface discovery is DOM
+polling, not an entity; the topbar's name list is whatever exists right now.
+
 ## P2: the workspace deliberately holds two p5 majors
 
 `browser-projections` pins p5 `^1` while the root map and the livecode graph

@@ -47,10 +47,12 @@ import {
 import {
   configuredSyncTransport,
   createBroadcastSyncTransport,
+  createInProcessSyncTransport,
   createWebSocketSyncTransport,
   type SyncPort,
   type SyncTransportCallbacks,
 } from "./syncTransport";
+import { readBootParam } from "./bootParams";
 
 export type { SyncSlice } from "./syncState";
 
@@ -330,15 +332,17 @@ export function maxSeq(a: number | null, b: number | null): number | null {
  * "broadcast" (URL param `sync=broadcast`) reads the engine tab's
  * BroadcastChannel sync host on the same origin — stage 2 of
  * docs/livecode/history/browser-engine-plan-2026-08.md — and never opens the
- * socket. Writes and every other route stay HTTP against `serverBaseUrl`.
+ * socket; "inprocess" (`engine=inprocess`) observes this tab's own engine
+ * directly. Writes and every other route stay HTTP against `serverBaseUrl`,
+ * except that the in-process and baked topologies execute entity writes on
+ * the engine themselves (see serverRequests.ts).
  */
 export function SyncRuntimeProvider({ children }: PropsWithChildren) {
   const isLocalDevelopment = ["localhost", "127.0.0.1", "::1"].includes(
     window.location.hostname,
   );
-  const initialServerUrl =
-    new URLSearchParams(window.location.search).get("serverBaseUrl") ??
-      (isLocalDevelopment ? "http://localhost:7777" : window.location.origin);
+  const initialServerUrl = readBootParam("serverBaseUrl") ??
+    (isLocalDevelopment ? "http://localhost:7777" : window.location.origin);
 
   const [serverBaseUrl, setServerBaseUrlState] = useState(initialServerUrl);
   const serverBaseUrlRef = useRef(initialServerUrl);
@@ -443,7 +447,13 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
   }), [applyMessage, subscribe]);
 
   if (controllerRef.current === null) {
-    controllerRef.current = configuredSyncTransport === "broadcast"
+    controllerRef.current = configuredSyncTransport === "inprocess"
+      ? createInProcessSyncTransport(transportCallbacks, {
+        // A serverless bake (`serverBaseUrl=none`) has no server link to
+        // wait for; otherwise "open" means this tab's engine is attached.
+        requireUplink: initialServerUrl.trim().replace(/\/+$/, "") !== "none",
+      })
+      : configuredSyncTransport === "broadcast"
       ? createBroadcastSyncTransport(transportCallbacks)
       : createWebSocketSyncTransport(
         () => serverWebSocketUrl(serverBaseUrlRef.current, "/sync"),

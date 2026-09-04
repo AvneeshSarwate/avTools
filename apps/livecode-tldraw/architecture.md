@@ -28,6 +28,8 @@ and the end-to-end topology and flows are in
 | Piano-roll shape | `src/PianoRollShape.tsx` |
 | Params pane shape | `src/ParamPaneShape.tsx` |
 | Signal scope shape | `src/SignalScopeShape.tsx` |
+| Canvas view shape (mirrors a module's named canvas, in-process only) | `src/CanvasSurfaceShape.tsx` |
+| In-process engine (this tab hosts the engine), boot defaults | `src/inProcessEngine.ts`, `src/bootParams.ts`, the import map in `index.html` |
 | Drawing (handwriting canvas) shape | `src/DrawingShape.tsx` |
 | Wire types | `packages/livecode-protocol` (vite alias + tsconfig path); `src/livecodeProtocol.ts` re-exports it and adds client-local view models |
 | Custom element typings (piano roll, animation editor, handwriting canvas) | `src/custom-elements.d.ts` |

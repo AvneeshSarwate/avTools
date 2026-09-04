@@ -19,12 +19,18 @@ The supported topologies move these planes without changing their contracts:
 | --- | --- |
 | Local (default) | Deno hosts coordination and one in-process engine; Vite hosts the UI. |
 | Remote browser engine | Deno keeps coordination; `/engine/` runs the execution plane in a browser tab. Ops use `/engine/uplink`; a same-origin served UI may receive sync and send actions through `BroadcastChannel`. |
-| Baked static project | Static UI and engine tabs communicate through `BroadcastChannel`; `baked.json` replaces project/file routes. There is no coordination server at runtime. |
+| Baked static project (two tabs) | Static UI and engine tabs communicate through `BroadcastChannel`; `baked.json` replaces project/file routes. There is no coordination server at runtime. |
+| In-process browser engine (single page) | The UI tab hosts the engine itself: it imports `engine_host.js` from the served engine asset tree, so the engine and the modules it launches share one set of store singletons, and sync/actions are same-realm function calls with no serialization. A bake opens this way by default (`engine=inprocess`, stamped into its `index.html`); against a live `--engine remote` server it also attaches over `/engine/uplink`, but it is a demo/presentation form, not a live-coding workflow. |
 
 `apps/deno-notebooks/livecode/visualizer/execution_plane.ts` is the local/remote
-seam. `apps/deno-notebooks/livecode/browser_host/engine_page.ts` hosts the
-browser engine, and `apps/deno-notebooks/livecode/browser_host/bake_project.ts`
-creates the static form. The engine package must
+seam. `apps/deno-notebooks/livecode/browser_host/browser_engine_host.ts` is the
+browser engine host (`startBrowserEngineHost`), embedded by both
+`engine_page.ts` (the `/engine/` tab) and the tldraw UI's in-process mode
+(`apps/livecode-tldraw/src/inProcessEngine.ts`), and
+`apps/deno-notebooks/livecode/browser_host/bake_project.ts` creates the static
+form. The in-process embedder must load the host from the same code-split
+asset tree the modules' import map points at; a UI-bundled copy of the engine
+package would observe stores no module writes to. The engine package must
 remain browser-typecheckable; host-only filesystem, Deno, and MIDI choices do
 not belong in it.
 
@@ -56,7 +62,8 @@ that initialization; a replacing socket invalidates the prior transition.
   truth.
 
 “Engine memory” means Deno memory locally and the engine tab's memory remotely
-or in a bake. Closing that tab kills its runs and unsaved entities.
+or in a bake. Closing that tab kills its runs and unsaved entities; with the
+engine in the UI's own tab, so does reloading the UI.
 
 ## Edit, analyze, and run
 
@@ -86,8 +93,10 @@ frame. This two-stage batching is the hot-path boundary.
 Sync, client control, and LSP are separate connections:
 
 - Sync opens when `SyncRuntimeProvider` mounts, even before Connect, so entity
-  views can show engine truth. It is `/sync` normally or `BroadcastChannel` in
-  a same-origin browser-engine topology.
+  views can show engine truth. It is `/sync` normally, `BroadcastChannel` in
+  a same-origin browser-engine topology, or a same-realm observer on this
+  tab's own engine in the in-process topology (entities arrive as the fresh
+  wire objects the engine built, by reference).
 - Connect only arms the runtime sequence: health, a fresh LSP session,
   `/runtime/state` rehydration, queued-stop flush, and reanalysis.
 - `/client/control` lets an external caller drive a mounted UI and is unrelated

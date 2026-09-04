@@ -36,6 +36,14 @@ import {
   isBakedServerBaseUrl,
   saveTldrawCanvas,
 } from "./projectCanvas";
+import {
+  inProcessEngineHost,
+  useInProcessEngineState,
+} from "./inProcessEngine";
+import {
+  createCanvasSurfaceShape,
+  listCanvasSurfaceNames,
+} from "./CanvasSurfaceShape";
 
 export function TopBar({
   editor,
@@ -54,6 +62,9 @@ export function TopBar({
   const signalsRuntime = useSignalsSync();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [scopeDraft, setScopeDraft] = useState<string | null>(null);
+  const [canvasSurfaceDraft, setCanvasSurfaceDraft] = useState<string | null>(
+    null,
+  );
   const [duplicateDraft, setDuplicateDraft] = useState<string | null>(null);
   // The name the delete button is armed for, so a selection change disarms it:
   // a confirm can never land on an entity the operator was not looking at.
@@ -372,6 +383,58 @@ export function TopBar({
                   </button>
                 </form>
               )}
+            {canvasSurfaceDraft === null
+              ? (
+                <button
+                  type="button"
+                  disabled={!editor}
+                  onClick={() => setCanvasSurfaceDraft("")}
+                >
+                  New canvas view
+                </button>
+              )
+              : (
+                <form
+                  className="topbar__group"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const surfaceName = canvasSurfaceDraft.trim();
+                    if (!editor || !surfaceName) return;
+                    createCanvasSurfaceShape(editor, { surfaceName });
+                    setCanvasSurfaceDraft(null);
+                  }}
+                >
+                  <input
+                    autoFocus
+                    list="topbar-canvas-surfaces"
+                    placeholder="canvasSurface name"
+                    value={canvasSurfaceDraft}
+                    spellCheck={false}
+                    onChange={(event) =>
+                      setCanvasSurfaceDraft(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") setCanvasSurfaceDraft(null);
+                    }}
+                  />
+                  <datalist id="topbar-canvas-surfaces">
+                    {listCanvasSurfaceNames().map((name) => (
+                      <option key={name} value={name} />
+                    ))}
+                  </datalist>
+                  <button
+                    type="submit"
+                    disabled={!editor || !canvasSurfaceDraft.trim()}
+                  >
+                    Add canvas view
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCanvasSurfaceDraft(null)}
+                  >
+                    Cancel
+                  </button>
+                </form>
+              )}
           </div>
         </details>
 
@@ -522,6 +585,7 @@ export function TopBar({
       </div>
 
       <div className="topbar__status">
+        <InProcessEnginePill />
         <span
           className={`status-pill status-pill--${runtime.connectionStatus}`}
         >
@@ -760,4 +824,76 @@ function useUnsavedEntityCount(
   }, [projectPath, serverBaseUrl]);
 
   return unsavedCount;
+}
+
+/**
+ * Where the engine is when it is THIS tab (`engine=inprocess`): running,
+ * blocked by another tab on the origin (with the same takeover the engine
+ * page offers), stopped, or never loaded. Absent in every other topology.
+ */
+function InProcessEnginePill() {
+  const state = useInProcessEngineState();
+  if (state.phase === "off") return null;
+  if (state.phase === "loading") {
+    return (
+      <span className="status-pill status-pill--connecting">
+        engine: loading…
+      </span>
+    );
+  }
+  if (state.phase === "failed") {
+    return (
+      <span className="status-pill status-pill--error" title={state.error}>
+        engine: unavailable
+      </span>
+    );
+  }
+  const { status, serverless } = state;
+  const midiTitle = status.midi ?? undefined;
+  switch (status.lock) {
+    case "engine":
+      return (
+        <span
+          className={`status-pill status-pill--${
+            serverless || status.uplinkOpen ? "running" : "connecting"
+          }`}
+          title={midiTitle}
+        >
+          {serverless || status.uplinkOpen
+            ? "engine: this tab"
+            : "engine: this tab (attaching to server…)"}
+        </span>
+      );
+    case "blocked":
+      return (
+        <span
+          className="status-pill status-pill--unknown status-pill--engine-blocked"
+          title={status.message}
+        >
+          engine: another tab
+          <button
+            type="button"
+            className="livecode-engine-takeover"
+            onClick={() => {
+              void inProcessEngineHost().then((host) => host.takeover());
+            }}
+          >
+            Take over
+          </button>
+        </span>
+      );
+    case "takenOver":
+    case "stopped":
+      return (
+        <span className="status-pill status-pill--error" title={status.message}>
+          engine: stopped
+        </span>
+      );
+    default:
+      return (
+        <span className="status-pill status-pill--connecting">
+          engine: starting…
+        </span>
+      );
+  }
 }

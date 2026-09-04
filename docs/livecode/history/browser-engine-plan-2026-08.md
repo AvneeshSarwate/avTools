@@ -549,6 +549,18 @@ sync-source registry. The narrow browser module-delivery surface (helper
 aliases + relative imports, versus the full import map the Run gate checks)
 is recorded in `current/known-risks.md` rather than fixed.
 
+**A third embedder, the in-process engine, landed 2026-09-04**: the engine
+page's lifecycle became `startBrowserEngineHost` (`browser_engine_host.ts`),
+bundled as an `engine_host` entry of the same code-split asset tree, and the
+tldraw UI can import it and be the engine (`?engine=inprocess`). Sync is a
+same-realm observer and actions call `executeEngineOp` directly — the
+serialization the plan's transports carry is simply absent. It exists for
+single-page baked demos (the bake stamps boot defaults so its root URL opens
+this way) together with `canvas-surface` / canvas view shapes that mirror a
+module's canvas next to its code; `current/` documents the form and
+`known-risks.md` its limits (reload restarts the engine; bakes cannot
+start/stop modules).
+
 **Stage 2 is implemented and E2E-tested too**: `--ui-dist` serves the built
 tldraw client at the server origin, and the client's `sync=broadcast`
 transport (a `SyncPort` seam in `syncRuntime.tsx`) reads the engine tab's

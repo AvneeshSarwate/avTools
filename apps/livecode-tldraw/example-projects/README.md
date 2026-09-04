@@ -35,6 +35,7 @@ layout churn you did not mean to keep.
 | `feature-signals-and-scopes` | Ephemeral-signal slice: one playhead sent to two restored rolls, two playheads on one melody (both marker value shapes), numeric signal + scopes, and sticky `ended`. |
 | `feature-lifecycle-basics` | Lifecycle slice: natural completion, Replace-while-running with state continuity, observable `stop()` hook, 409 without replacement consent. |
 | `feature-studio-combined` | Richer combined project **with checked-in `data/`**: pre-launch restored pane (values + meta) and roll, edit→save→mutate→re-open loop, playhead + graph field, and both scope source types. |
+| `feature-canvas-surface` | Single-page demo slice (browser-engine target, meant to be baked): two independent modules draw into named `canvasSurface`s with Canvas 2D and p5, canvas view shapes mirror them next to the code, and each module has a `running` params toggle because a bake cannot start/stop modules. |
 | `feature-drawing-p5` | Durable drawing slice **with checked-in `data/`** (browser-engine target): restored canvas view, a module that upserts a circle into the drawing from code, a p5 sketch drawing the baked render data in the engine tab, whole-document CAS, and save/reopen. |
 
 ## Feature coverage matrix (feature-* projects)
