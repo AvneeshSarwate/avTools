@@ -876,6 +876,11 @@ input {
   height: 100%;
 }
 
+/* The class's display would otherwise outrank the `hidden` attribute. */
+.canvas-surface-shape__empty[hidden] {
+  display: none;
+}
+
 .canvas-surface-shape__empty {
   position: absolute;
   inset: 0;

@@ -158,7 +158,7 @@ These bare imports are the intentionally supported livecode surface:
 
 | Import | Purpose | Targets |
 | --- | --- | --- |
-| `@avtools/core-timing` | `TimeContext` types and logical-time primitives. Project modules normally import `TimeContext` as a type and use the injected context. | Deno; type-only import in browser modules |
+| `@avtools/core-timing` | `TimeContext` types and logical-time primitives. Project modules normally import `TimeContext` as a type and use the injected context; value imports (`startBarrier`/`awaitBarrier`/`resolveBarrier`, `TempoMap`) are served to browser modules as a bundled alias sharing the engine's instance. | Deno and browser |
 | `canvas-params` | `canvasParams(name, defaults, meta)` returns a live JSON-simple object that panes can edit; redeclaration reattaches to existing values. | Deno and browser |
 | `canvas-signals` | `signal(name)` publishes ephemeral monitor/playhead values and optional entity anchors. Signals end with their owner run and are not a cross-module data API. | Deno and browser |
 | `animation-timeline` | Declare and sample durable number, enum, and function tracks. | Deno and browser |
