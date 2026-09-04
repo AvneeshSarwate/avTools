@@ -30,12 +30,12 @@
       "h": 600
     },
     {
-      "id": "timing/cancel",
-      "path": "modules/cancel.ts",
-      "sourcePath": "modules/cancel.orig.ts",
-      "runtimePath": "modules/cancel.ts",
+      "id": "timing/barrier",
+      "path": "modules/barrier.ts",
+      "sourcePath": "modules/barrier.orig.ts",
+      "runtimePath": "modules/barrier.ts",
       "kind": "runnable",
-      "title": "3. cancellation cascades (branch handle cancel)",
+      "title": "3. barrier sync between loops of different lengths",
       "sourceVersion": 1,
       "x": 80,
       "y": 1400,
@@ -43,12 +43,12 @@
       "h": 600
     },
     {
-      "id": "timing/barrier",
-      "path": "modules/barrier.ts",
-      "sourcePath": "modules/barrier.orig.ts",
-      "runtimePath": "modules/barrier.ts",
+      "id": "timing/cancel",
+      "path": "modules/cancel.ts",
+      "sourcePath": "modules/cancel.orig.ts",
+      "runtimePath": "modules/cancel.ts",
       "kind": "runnable",
-      "title": "4. barrier sync between loops of different lengths",
+      "title": "4. cancellation cascades (branch handle cancel)",
       "sourceVersion": 1,
       "x": 80,
       "y": 2060,
@@ -72,21 +72,91 @@
   "canvas": {
     "pianoRollViews": [],
     "paramPaneViews": [
-      { "id": "shape:timing-sequence-params", "paramsName": "timing/sequence", "x": 760, "y": 450, "w": 320, "h": 170 },
-      { "id": "shape:timing-branches-params", "paramsName": "timing/branches", "x": 760, "y": 1110, "w": 320, "h": 200 },
-      { "id": "shape:timing-cancel-params", "paramsName": "timing/cancel", "x": 760, "y": 1770, "w": 320, "h": 200 },
-      { "id": "shape:timing-barrier-params", "paramsName": "timing/barrier", "x": 760, "y": 2430, "w": 320, "h": 200 },
-      { "id": "shape:timing-tempo-params", "paramsName": "timing/tempo", "x": 760, "y": 3090, "w": 320, "h": 230 }
+      {
+        "id": "shape:timing-sequence-params",
+        "paramsName": "timing/sequence",
+        "x": 760,
+        "y": 450,
+        "w": 320,
+        "h": 170
+      },
+      {
+        "id": "shape:timing-branches-params",
+        "paramsName": "timing/branches",
+        "x": 760,
+        "y": 1110,
+        "w": 320,
+        "h": 200
+      },
+      {
+        "id": "shape:timing-barrier-params",
+        "paramsName": "timing/barrier",
+        "x": 760,
+        "y": 1770,
+        "w": 320,
+        "h": 200
+      },
+      {
+        "id": "shape:timing-cancel-params",
+        "paramsName": "timing/cancel",
+        "x": 760,
+        "y": 2430,
+        "w": 320,
+        "h": 200
+      },
+      {
+        "id": "shape:timing-tempo-params",
+        "paramsName": "timing/tempo",
+        "x": 760,
+        "y": 3090,
+        "w": 320,
+        "h": 230
+      }
     ],
     "animationEditorViews": [],
     "scopeViews": [],
     "drawingViews": [],
     "canvasSurfaceViews": [
-      { "id": "shape:timing-sequence-view", "surfaceName": "timing/sequence", "x": 760, "y": 80, "w": 520, "h": 360 },
-      { "id": "shape:timing-branches-view", "surfaceName": "timing/branches", "x": 760, "y": 740, "w": 520, "h": 360 },
-      { "id": "shape:timing-cancel-view", "surfaceName": "timing/cancel", "x": 760, "y": 1400, "w": 520, "h": 360 },
-      { "id": "shape:timing-barrier-view", "surfaceName": "timing/barrier", "x": 760, "y": 2060, "w": 520, "h": 360 },
-      { "id": "shape:timing-tempo-view", "surfaceName": "timing/tempo", "x": 760, "y": 2720, "w": 520, "h": 360 }
+      {
+        "id": "shape:timing-sequence-view",
+        "surfaceName": "timing/sequence",
+        "x": 760,
+        "y": 80,
+        "w": 520,
+        "h": 360
+      },
+      {
+        "id": "shape:timing-branches-view",
+        "surfaceName": "timing/branches",
+        "x": 760,
+        "y": 740,
+        "w": 520,
+        "h": 360
+      },
+      {
+        "id": "shape:timing-barrier-view",
+        "surfaceName": "timing/barrier",
+        "x": 760,
+        "y": 1400,
+        "w": 520,
+        "h": 360
+      },
+      {
+        "id": "shape:timing-cancel-view",
+        "surfaceName": "timing/cancel",
+        "x": 760,
+        "y": 2060,
+        "w": 520,
+        "h": 360
+      },
+      {
+        "id": "shape:timing-tempo-view",
+        "surfaceName": "timing/tempo",
+        "x": 760,
+        "y": 2720,
+        "w": 520,
+        "h": 360
+      }
     ]
   },
   "data": []

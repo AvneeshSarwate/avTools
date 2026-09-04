@@ -3,7 +3,10 @@ import { canvasParams } from "canvas-params";
 import { canvasSurface } from "canvas-surface";
 
 /**
- * 3. Cancellation cascades through the context tree.
+ * 4. Cancellation cascades through the context tree.
+ *
+ * Every example's `running` toggle already calls `scene.cancel()`; this one
+ * shows what that does to a whole subtree.
  *
  * The parent keeps a heartbeat running and, every few seconds, spawns a
  * "family": one child branch that itself spawns two grandchild orbits. After

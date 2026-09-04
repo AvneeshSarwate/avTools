@@ -8,7 +8,10 @@ import { canvasParams } from "canvas-params";
 import { canvasSurface } from "canvas-surface";
 
 /**
- * 4. Barrier sync between loops with different phrase lengths.
+ * 3. Barrier sync between loops with different phrase lengths.
+ *
+ * Example 2 joined children that end; this is the same problem for loops
+ * that never end.
  *
  * Voice B plays a long phrase in a loop and brackets each cycle with
  * `startBarrier(key)` / `resolveBarrier(key)`. Voice A plays a shorter phrase
