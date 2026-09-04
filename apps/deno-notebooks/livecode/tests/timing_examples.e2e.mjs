@@ -33,8 +33,8 @@ const scaled = (ms) => Math.round(ms * scale)
 const SURFACES = [
   'timing/sequence',
   'timing/branches',
-  'timing/cancel',
   'timing/barrier',
+  'timing/cancel',
   'timing/tempo',
 ]
 
