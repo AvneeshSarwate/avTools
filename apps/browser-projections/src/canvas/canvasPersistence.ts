@@ -23,33 +23,33 @@ const parseStateString = (stateString: string | null | undefined) => {
   }
 }
 
-// One tool's section of a payload as a serialized (Konva) state string, or
-// undefined when the section carries none. A `CanvasStateSnapshotBase` section
-// contributes its `serializedState`; the baked render data beside it is
-// derived output and is never loaded from.
-const normalizeSection = (section: any): string | undefined => {
-  if (section === undefined || section === null) return undefined
-  if (typeof section === 'string') return section || undefined
-  if (typeof section !== 'object' || Array.isArray(section)) return undefined
-  if ('serializedState' in section || 'bakedRenderData' in section) {
-    return typeof section.serializedState === 'string' && section.serializedState
-      ? section.serializedState
-      : undefined
-  }
-  return JSON.stringify(section)
-}
-
 const normalizeParsedState = (parsed: any): NormalizedCanvasState => {
   if (!parsed || typeof parsed !== 'object') {
     return {}
   }
 
   if ('freehand' in parsed || 'polygon' in parsed || 'circle' in parsed) {
-    return {
-      freehand: normalizeSection(parsed.freehand),
-      polygon: normalizeSection(parsed.polygon),
-      circle: normalizeSection(parsed.circle)
+    const result: NormalizedCanvasState = {}
+
+    if (parsed.freehand !== undefined) {
+      result.freehand = typeof parsed.freehand === 'string'
+        ? parsed.freehand
+        : JSON.stringify(parsed.freehand)
     }
+
+    if (parsed.polygon !== undefined) {
+      result.polygon = typeof parsed.polygon === 'string'
+        ? parsed.polygon
+        : JSON.stringify(parsed.polygon)
+    }
+
+    if (parsed.circle !== undefined) {
+      result.circle = typeof parsed.circle === 'string'
+        ? parsed.circle
+        : JSON.stringify(parsed.circle)
+    }
+
+    return result
   }
 
   if ('layer' in parsed && (parsed.strokes || parsed.strokeGroups)) {
@@ -67,7 +67,6 @@ const normalizeParsedState = (parsed: any): NormalizedCanvasState => {
   return {}
 }
 
-/** The current baked render data of every tool. Read-only output; load with a DrawingDocument instead. */
 export const collectCanvasRenderData = (state: CanvasRuntimeState): CanvasRenderData => ({
   freehand: state.freehand.bakedRenderData,
   polygon: state.polygon.bakedRenderData,

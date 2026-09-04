@@ -113,13 +113,12 @@ Domain bridges retain distinct semantics:
 - Params panes edit a live declared object through leaf merges. Creating a pane
   does not create a schema; a not-yet-declared entity can correctly render
   empty/unavailable.
-- The drawing view (`DrawingShape.tsx`) hydrates the `<handwriting-canvas>`
-  element from the entity's lossless document and writes committed edits back
-  whole with compare-and-set. Two guards make that loop safe: the element never
-  emits `document-update` while a document is being pushed in, and the view
-  writes nothing until its first hydration and skips re-hydrating its own
-  accepted writes. The element's baked `state-update` snapshot is not the
-  entity value; modules bake the document themselves.
+- The drawing view hydrates the handwriting-canvas element from the entity's
+  lossless document and writes committed edits back whole with compare-and-set.
+  The element must not emit `document-update` while a document is being pushed
+  in, and the view must not write before its first hydration; either breaks the
+  loop (an echo, or a fresh view erasing the entity). The element's baked
+  `state-update` snapshot is not the entity value.
 - Signal playhead markers are derived by `signalPlayheadMarkers.ts` from signal
   anchors. Piano-roll anchors interpret position in beats; animation anchors
   interpret it in seconds. One signal sent to both must choose compatible units.

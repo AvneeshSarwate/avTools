@@ -155,7 +155,7 @@ export function setDrawing(
     return { ok: true, drawing: toDrawingEntity(record) };
   }
 
-  replaceDocument(record.value, next);
+  record.value = next;
   commitEntityWrite(record, {
     updatedBy: options.originId ?? "client",
     valueJson: nextJson,
@@ -187,7 +187,7 @@ export function removeDrawing(name: string): boolean {
   );
 }
 
-/** Adopt disk truth on project open: validate, then create or replace in place. */
+/** Adopt disk truth on project open: validate, then create or replace. */
 export function loadDrawing(name: string, data: unknown): DrawingEntity {
   const entityName = normalizeEntityName(DRAWING_ENTITY_TYPE, name);
   const next = normalizeDrawingDocument(data, `Saved drawing "${entityName}"`);
@@ -196,7 +196,7 @@ export function loadDrawing(name: string, data: unknown): DrawingEntity {
     entityName,
   );
   if (!record) return createDrawing(entityName, next, "load");
-  replaceDocument(record.value, next);
+  record.value = next;
   commitEntityWrite(record, {
     updatedBy: "load",
     valueJson: JSON.stringify(next),
@@ -274,18 +274,4 @@ function toDrawingEntity(record: EntityRecord<DrawingDocument>): DrawingEntity {
     updatedAt: record.updatedAt,
     updatedBy: record.updatedBy,
   };
-}
-
-/** Keep the live object's identity: replace layer contents in place. */
-function replaceDocument(
-  current: DrawingDocument,
-  next: DrawingDocument,
-): void {
-  current.version = next.version;
-  for (const layer of ["freehand", "polygon", "circle"] as const) {
-    const target = current[layer];
-    target.nodes.splice(0, target.nodes.length, ...next[layer].nodes);
-    if (next[layer].transform) target.transform = next[layer].transform;
-    else delete target.transform;
-  }
 }

@@ -1,20 +1,14 @@
 /**
- * `@avtools/drawing-document`: the lossless, Konva-free form of a handwriting
- * canvas drawing, and the bake that turns it into the flattened render data
- * sketches consume.
+ * The lossless, Konva-free form of a handwriting-canvas drawing, and the bake
+ * that turns it into the flattened render data sketches consume.
  *
- * The BAKED render data (`FlattenedStroke` and friends, unchanged from
- * `apps/browser-projections/src/canvas/canvasState.ts`) is world-space
- * geometry with every transform applied. It is what modules read. It cannot
- * be loaded back into the canvas without loss: transforms are folded into
- * points, circle groups are gone, and stroke provenance is missing.
- *
- * The DOCUMENT keeps exactly what the canvas holds: per-node transforms in
- * Konva's vocabulary, group nesting on every layer, raw stroke points with
- * their timing, creation order, and per-node metadata. It is the value the
- * livecode `drawing` entity stores, the form the canvas hydrates from, and the
- * form code writes. `bakeDrawingDocument` derives the render data from it
- * without Konva, so a module can read a drawing no view has ever displayed.
+ * The baked render data (`FlattenedStroke` and friends, the same types as
+ * `apps/browser-projections/src/canvas/canvasState.ts`) folds every transform
+ * into world-space points and drops circle groups and stroke provenance, so it
+ * cannot be loaded back. The document keeps what the canvas holds; it is what
+ * the `drawing` entity stores, what the canvas hydrates from, and what code
+ * writes. `bakeDrawingDocument` must agree with the canvas's own Konva bake;
+ * `apps/browser-projections/tests/canvasDrawingDocument.smoke.mjs` checks that.
  */
 
 import {
@@ -26,17 +20,9 @@ import {
 } from "./transform.ts";
 
 export type { AffineMatrix, DrawingTransform } from "./transform.ts";
-export {
-  applyMatrix,
-  multiplyMatrices,
-  transformToMatrix,
-} from "./transform.ts";
+export { transformToMatrix } from "./transform.ts";
 
 export const DRAWING_DOCUMENT_VERSION = 1 as const;
-
-// ---------------------------------------------------------------------------
-// Document types
-// ---------------------------------------------------------------------------
 
 export interface DrawingNodeBase {
   /** Unique across the whole document; the canvas uses it as the Konva id. */
@@ -101,11 +87,6 @@ export interface DrawingLayer {
 }
 
 export type DrawingLayerName = "freehand" | "polygon" | "circle";
-export const DRAWING_LAYER_NAMES: readonly DrawingLayerName[] = [
-  "freehand",
-  "polygon",
-  "circle",
-];
 
 /**
  * A whole drawing. `freehand` holds strokes and groups of strokes, `polygon`
@@ -118,10 +99,6 @@ export interface DrawingDocument {
   polygon: DrawingLayer;
   circle: DrawingLayer;
 }
-
-// ---------------------------------------------------------------------------
-// Baked render data (the sketch-facing format; identical to the canvas's own)
-// ---------------------------------------------------------------------------
 
 export interface FlattenedStroke {
   type: "stroke";
@@ -171,10 +148,6 @@ export interface DrawingRenderData {
   circle: CircleRenderData;
   circleGroupMap: Record<string, number[]>;
 }
-
-// ---------------------------------------------------------------------------
-// Construction helpers
-// ---------------------------------------------------------------------------
 
 export function createEmptyDrawingDocument(): DrawingDocument {
   return {
@@ -287,18 +260,20 @@ export function makeGroupNode(options: MakeGroupNodeOptions): DrawingGroupNode {
 
 /** Depth-first search over one layer or the whole document. */
 export function findDrawingNode(
-  scope: DrawingDocument | DrawingLayer | DrawingNode[],
+  scope: DrawingDocument | DrawingLayer,
   id: string,
 ): DrawingNode | undefined {
-  const nodes = Array.isArray(scope)
-    ? scope
-    : "nodes" in scope
+  const nodes = "nodes" in scope
     ? scope.nodes
     : [...scope.freehand.nodes, ...scope.polygon.nodes, ...scope.circle.nodes];
+  return findInList(nodes, id);
+}
+
+function findInList(nodes: DrawingNode[], id: string): DrawingNode | undefined {
   for (const node of nodes) {
     if (node.id === id) return node;
     if (node.type === "group") {
-      const found = findDrawingNode(node.children, id);
+      const found = findInList(node.children, id);
       if (found) return found;
     }
   }
@@ -350,10 +325,6 @@ function removeFromList(nodes: DrawingNode[], id: string): boolean {
   }
   return false;
 }
-
-// ---------------------------------------------------------------------------
-// Validation and canonical form
-// ---------------------------------------------------------------------------
 
 const LEAF_TYPE_BY_LAYER: Record<DrawingLayerName, DrawingNode["type"]> = {
   freehand: "stroke",
@@ -609,10 +580,6 @@ function pointsMin(points: number[]): { x: number; y: number } {
     y: Number.isFinite(y) ? y : 0,
   };
 }
-
-// ---------------------------------------------------------------------------
-// Bake: document -> world-space render data, without Konva
-// ---------------------------------------------------------------------------
 
 /**
  * Flatten a document into the render data the canvas emits, replicating the

@@ -97,11 +97,6 @@ Signals are excluded by the absence of a durable descriptor, not by a save-time
 filter. Adding one accidentally would make them visible to save/status/load and
 generic entity CRUD.
 
-A saved drawing (`data/drawing/`) is the lossless document, validated whole on
-open: one malformed node rejects the file, since a partially loaded drawing
-would silently drop shapes. The baked render data a sketch consumes is never
-saved; it is derived from the document wherever it is needed.
-
 ## Diagnostics and staleness
 
 Project status builds a relative-import graph from static imports, source

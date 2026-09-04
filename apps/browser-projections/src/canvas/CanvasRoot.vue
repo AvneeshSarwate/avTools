@@ -36,7 +36,7 @@ import {
 } from './selectTool';
 import { downloadCanvasState as downloadCanvasStateImpl, uploadCanvasState as uploadCanvasStateImpl, serializeCanvasState as serializeCanvasStateImpl, deserializeCanvasState as deserializeCanvasStateImpl, collectCanvasRenderData as collectCanvasRenderDataImpl } from './canvasPersistence';
 import { hydrateDrawingDocument, serializeDrawingDocument } from './drawingDocument';
-import { normalizeDrawingDocument, type DrawingDocument } from '@avtools/drawing-document';
+import type { DrawingDocument } from '@avtools/drawing-document';
 import type { ZodTypeAny } from 'zod';
 
 const DEFAULT_GRID_SIZE = 20
@@ -280,9 +280,7 @@ const emitStateUpdate = (state: CanvasRuntimeState) => {
     wsController.value.sendStateUpdate(snapshot)
   }
 
-  // Hosts that own the drawing as an entity listen for the document rather
-  // than the baked snapshot. Nothing is emitted before mount (there is no
-  // scene yet) or during hydration (a pushed document is not an edit).
+  // Never during hydration: a pushed document is not an edit.
   if (state.stage && !state.hydrating) {
     emit('document-update', serializeDrawingDocument(state))
   }
@@ -441,14 +439,8 @@ const setAnimatingState = (animating: boolean) => {
 // Imperative surface for hosts that embed the custom element (no Vue props).
 const setCanvasState = (stateString: string) => restoreCanvasState(stateString)
 // Replace the scene with a document. Throws on an invalid document, leaving
-// the scene as it was; never emits document-update. A document set before the
-// stage exists is validated now and applied at the end of mount.
-let pendingDrawingDocument: DrawingDocument | null = null
+// the scene as it was; never emits document-update.
 const setDrawingDocument = (doc: DrawingDocument) => {
-  if (!canvasState.stage) {
-    pendingDrawingDocument = normalizeDrawingDocument(doc)
-    return
-  }
   const wasAnimating = canvasState.freehand.currentPlaybackTime.value > 0
   canvasState.freehand.currentPlaybackTime.value = 0
   canvasState.freehand.isAnimating.value = false
@@ -1015,12 +1007,6 @@ onMounted(async () => {
         }
       })
       wsController.value.connect()
-    }
-
-    if (pendingDrawingDocument) {
-      const doc = pendingDrawingDocument
-      pendingDrawingDocument = null
-      hydrateDrawingDocument(canvasState, doc)
     }
 
   } catch (e) {
