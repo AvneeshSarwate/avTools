@@ -14,6 +14,13 @@ deno task livecode:server
 From `apps/livecode-tldraw`, run `npm run setupLivecode` once after checkout or
 after a bundled web component changes, then `npm run dev`.
 
+The handwriting-canvas element has its own headless check in
+`apps/browser-projections`: `npm run test:canvas` (after `npm run buildCanvas`)
+loads the built bundle in Chromium and proves the drawing-document round trip
+is exact and that the element's Konva bake matches the package's Konva-free
+bake. Like the tldraw E2E, it honors `PW_CHROMIUM_PATH` when Playwright's own
+browser download is unavailable.
+
 With both running, `projects.html` on the Vite origin (e.g.
 `http://localhost:5173/projects.html`) is the human entry point: it discovers
 the server via `/health` probes, lists `/projects/list`, and opens a project

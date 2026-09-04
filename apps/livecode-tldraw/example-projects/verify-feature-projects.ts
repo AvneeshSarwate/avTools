@@ -211,6 +211,11 @@ async function animationTimelineEntity(name: string): Promise<any> {
     .find((entity) => entity.name === name);
 }
 
+async function drawingEntity(name: string): Promise<any> {
+  return (await syncEntities("drawing"))
+    .find((entity) => entity.name === name);
+}
+
 async function stopAll(): Promise<void> {
   await post("/runtime/stop-all", {});
 }
@@ -794,6 +799,128 @@ async function verifyStudioCombined(): Promise<void> {
   );
 }
 
+async function verifyDrawingP5(): Promise<void> {
+  console.log("\n=== feature-drawing-p5 ===");
+  // The p5 sketch needs the engine tab, so only the writer is launched here;
+  // the project still has to open and type-check clean under the browser lib.
+  await openProject("feature-drawing-p5");
+
+  const name = "drawing-p5_shapes";
+  const restored = await waitUntil(
+    "drawing restored from checked-in data",
+    () => drawingEntity(name),
+  );
+  assert(restored.updatedBy === "load", "drawing records its load origin");
+  assert(
+    restored.data.freehand.nodes.length === 1 &&
+      restored.data.freehand.nodes[0].id === "saved-stroke",
+    "saved stroke restores with its id",
+  );
+  assert(
+    restored.data.polygon.nodes[0]?.metadata?.name === "saved-polygon",
+    "saved polygon restores with its metadata",
+  );
+  assert(restored.data.circle.nodes.length === 0, "no circle before the writer runs");
+  const status = await get("/project/status");
+  const dataStatus = status.data.find((entry: any) =>
+    entry.type === "drawing" && entry.name === name
+  );
+  assert(dataStatus?.unsaved === false, "restored drawing starts saved");
+
+  const writer = await launchModule("drawing-p5/writer");
+  assert(writer.launchStatus === 200, "circle writer launch accepted");
+  await waitForRun("drawing-p5/writer", "stopped", writer.generatedRunId);
+  const written = await waitUntil(
+    "writer upserts its circle into the drawing",
+    async () => {
+      const entity = await drawingEntity(name);
+      return entity?.data.circle.nodes.some((node: any) =>
+          node.id === "code-circle"
+        )
+        ? entity
+        : false;
+    },
+  );
+  assert(written.rev === restored.rev + 1, "one code write bumps rev once");
+  assert(written.updatedBy === "drawing-p5/writer", "write carries the writer's origin");
+  const circle = written.data.circle.nodes.find((node: any) =>
+    node.id === "code-circle"
+  );
+  assert(
+    circle.transform.x === 640 && circle.transform.y === 260 &&
+      circle.radius === 70,
+    "code circle lands at its coded position",
+  );
+  assert(
+    written.data.freehand.nodes.length === 1 &&
+      written.data.polygon.nodes.length === 1,
+    "the writer leaves the saved shapes alone",
+  );
+  const afterStatus = await get("/project/status");
+  assert(
+    afterStatus.data.find((entry: any) =>
+      entry.type === "drawing" && entry.name === name
+    )?.unsaved === true,
+    "the code write makes the drawing unsaved",
+  );
+
+  // The bake the sketch would draw from, computed without any view.
+  const { bakeDrawingDocument } = await import(
+    "../../../packages/drawing-document/mod.ts"
+  );
+  const render = bakeDrawingDocument(written.data);
+  const bakedCircle = render.circle.find((entry) => entry.id === "code-circle");
+  assert(
+    bakedCircle?.center.x === 640 && bakedCircle.center.y === 260 &&
+      bakedCircle.r === 70,
+    "baked render data places the circle at its center with r",
+  );
+  assert(
+    render.freehand[0]?.children[0]?.type === "stroke" &&
+      render.freehand[0].children[0].points.length === 5 &&
+      render.freehand[0].children[0].points[4].ts === 160,
+    "baked stroke keeps its five points and timing",
+  );
+  assert(render.polygon[0]?.points.length === 4, "baked polygon keeps its points");
+
+  // Re-running the writer moves nothing (same content is a no-op).
+  const again = await launchModule("drawing-p5/writer", { replaceRunning: true });
+  assert(again.launchStatus === 200, "second writer launch accepted");
+  await waitForRun("drawing-p5/writer", "stopped", again.generatedRunId);
+  const unchanged = await drawingEntity(name);
+  assert(unchanged.rev === written.rev, "an identical code write is a no-op");
+
+  // A stale compare-and-set is refused with the current document attached.
+  const stale = await post("/drawing/set", {
+    name,
+    data: restored.data,
+    expectedRev: restored.rev,
+    originId: "feature-project-verifier",
+  });
+  assert(
+    stale.status === 200 && stale.body.ok === false &&
+      stale.body.current?.rev === written.rev,
+    "stale compare-and-set is refused",
+  );
+  const restoredAgain = await post("/drawing/set", {
+    name,
+    data: restored.data,
+    expectedRev: written.rev,
+    originId: "feature-project-verifier",
+  });
+  assert(restoredAgain.body.ok === true, "drawing restored after verifier edit");
+  const finalStatus = await get("/project/status");
+  assert(
+    finalStatus.data.find((entry: any) =>
+      entry.type === "drawing" && entry.name === name
+    )?.unsaved === false,
+    "restoring saved data clears the unsaved comparison",
+  );
+  projectSummaries.push(
+    "feature-drawing-p5: checked-in restore, code upsert of a circle, Konva-free bake, no-op rewrite, CAS refusal, saved-state comparison",
+  );
+}
+
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<number> {
@@ -865,6 +992,7 @@ async function main(): Promise<number> {
     await verifySignalsAndScopes();
     await verifyLifecycleBasics();
     await verifyStudioCombined();
+    await verifyDrawingP5();
 
     console.log(`\nALL PROJECTS VERIFIED (${checksPassed} checks)`);
     for (const line of projectSummaries) console.log(`  - ${line}`);

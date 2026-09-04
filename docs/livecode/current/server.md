@@ -81,9 +81,9 @@ Each source provides two operations with deliberately different effects:
   remote-engine hello, or detach recovery without swallowing a future update.
 
 Store-backed kinds are registered once in
-`packages/livecode-engine/entity_kinds.ts`. Piano rolls, params, and animation
-timelines add a durable descriptor; signals omit it and therefore cannot be
-saved or reached through generic entity CRUD. Run/wait/lookup sources are wired
+`packages/livecode-engine/entity_kinds.ts`. Piano rolls, params, animation
+timelines, and drawings add a durable descriptor; signals omit it and therefore
+cannot be saved or reached through generic entity CRUD. Run/wait/lookup sources are wired
 separately because their state is engine/runtime-owned rather than a named
 domain store.
 

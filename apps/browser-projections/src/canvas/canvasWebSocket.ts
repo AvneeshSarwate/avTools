@@ -12,7 +12,6 @@ const FlattenedStrokeSchema = z.object({
   type: z.literal('stroke'),
   id: z.string(),
   points: z.array(TimedPointSchema),
-  creationTime: z.number().optional(),
   metadata: MetadataSchema
 })
 
@@ -37,7 +36,6 @@ const FlattenedPolygonSchema = z.object({
   type: z.literal('polygon'),
   id: z.string(),
   points: z.array(PointSchema),
-  creationTime: z.number().optional(),
   metadata: MetadataSchema
 })
 
@@ -51,7 +49,6 @@ const FlattenedCircleSchema = z.object({
   rx: z.number(),
   ry: z.number(),
   rotation: z.number(),
-  creationTime: z.number().optional(),
   metadata: MetadataSchema
 })
 

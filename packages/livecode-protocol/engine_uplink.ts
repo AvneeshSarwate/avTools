@@ -12,6 +12,7 @@ import type { LaunchModuleRequest } from "./runtime.ts";
 import type { SetPianoRollRequest } from "./piano_roll.ts";
 import type { SetParamsRequest } from "./params.ts";
 import type { SetAnimationTimelineRequest } from "./animation_timeline.ts";
+import type { SetDrawingRequest } from "./drawing.ts";
 import type {
   EntityCreateRequest,
   EntityDeleteRequest,
@@ -83,6 +84,7 @@ export type EngineOp =
   | { kind: "paramsList" }
   | { kind: "paramsSet"; request: SetParamsRequest }
   | { kind: "animationTimelineSet"; request: SetAnimationTimelineRequest }
+  | { kind: "drawingSet"; request: SetDrawingRequest }
   | { kind: "signalsList" }
   | { kind: "entityCreate"; request: EntityCreateRequest }
   | { kind: "entityDuplicate"; request: EntityDuplicateRequest }

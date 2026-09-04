@@ -16,6 +16,9 @@ import type {
   AnimationTimelineData,
   AnimationTimelineEntity,
   AnimationTimelineSetResult,
+  DrawingDocument,
+  DrawingEntity,
+  DrawingSetResult,
   ModuleLookupsEntity,
   ModuleWaitsEntity,
   ParamsEntity,
@@ -25,6 +28,7 @@ import type {
   PianoRollSetResult,
   RunEntity,
   SetAnimationTimelineRequest,
+  SetDrawingRequest,
   SetPianoRollRequest,
   SignalEntity,
   SyncMessage,
@@ -92,6 +96,11 @@ export interface SyncActions {
     data: AnimationTimelineData,
     options?: { originId?: string; expectedRev?: number },
   ): Promise<AnimationTimelineSetResult>;
+  setDrawing(
+    name: string,
+    data: DrawingDocument,
+    options?: { originId?: string; expectedRev?: number },
+  ): Promise<DrawingSetResult>;
 }
 
 /**
@@ -119,6 +128,9 @@ const ParamsContext = createContext<SyncSlice<ParamsEntity>>(emptySyncSlice());
 const AnimationTimelinesContext = createContext<
   SyncSlice<AnimationTimelineEntity>
 >(emptySyncSlice());
+const DrawingsContext = createContext<SyncSlice<DrawingEntity>>(
+  emptySyncSlice(),
+);
 const SignalsContext = createContext<SyncSlice<SignalEntity>>(
   emptySyncSlice(),
 );
@@ -223,6 +235,30 @@ export function useAnimationTimelinesSync(): AnimationTimelinesSyncApi {
       setTimeline: setAnimationTimeline,
     }),
     [connectionError, connectionStatus, setAnimationTimeline, slice],
+  );
+}
+
+export interface DrawingsSyncApi {
+  connectionStatus: SyncConnectionStatus;
+  connectionError: string | null;
+  drawings: Record<string, DrawingEntity>;
+  latestSeq: number | null;
+  setDrawing: SyncActions["setDrawing"];
+}
+
+export function useDrawingsSync(): DrawingsSyncApi {
+  const slice = useContext(DrawingsContext);
+  const { connectionStatus, connectionError } = useSyncConnection();
+  const { setDrawing } = useSyncActions();
+  return useMemo(
+    () => ({
+      connectionStatus,
+      connectionError,
+      drawings: slice.entities,
+      latestSeq: slice.latestSeq,
+      setDrawing,
+    }),
+    [connectionError, connectionStatus, setDrawing, slice],
   );
 }
 
@@ -535,6 +571,28 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
     [],
   );
 
+  const setDrawing = useCallback(
+    async (
+      name: string,
+      data: DrawingDocument,
+      options: { originId?: string; expectedRev?: number } = {},
+    ) => {
+      const body: SetDrawingRequest = {
+        name,
+        data,
+        originId: options.originId,
+        expectedRev: options.expectedRev,
+      };
+      return await engineAction<DrawingSetResult>(
+        { kind: "drawingSet", request: body },
+        serverBaseUrlRef.current,
+        "/drawing/set",
+        body,
+      );
+    },
+    [],
+  );
+
   // A tiny window hook so tests and agents can read the live sync maps
   // without a server round trip — the only entity reader that exists in the
   // serverless baked topology.
@@ -577,11 +635,13 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
       redoRoll,
       setParams,
       setAnimationTimeline,
+      setDrawing,
     }),
     [
       redoRoll,
       serverBaseUrl,
       setAnimationTimeline,
+      setDrawing,
       setParams,
       setRoll,
       setServerBaseUrl,
@@ -604,7 +664,9 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
                       <ModuleLookupsContext.Provider
                         value={state.moduleLookups}
                       >
-                        {children}
+                        <DrawingsContext.Provider value={state.drawing}>
+                          {children}
+                        </DrawingsContext.Provider>
                       </ModuleLookupsContext.Provider>
                     </ModuleWaitsContext.Provider>
                   </RunsContext.Provider>

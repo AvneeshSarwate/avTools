@@ -73,8 +73,8 @@ and their handlers in
 
 ## Durable entity persistence
 
-Piano rolls, params, and animation timelines live in engine memory. Only an
-explicit project save captures them; code writes never touch disk and shutdown
+Piano rolls, params, animation timelines, and drawings live in engine memory.
+Only an explicit project save captures them; code writes never touch disk and shutdown
 does not auto-save. Save first captures all durable registered stores, writes
 one JSON file per entity, and rewrites manifest data entries. The save is not
 atomic and captures the process-global store, not only entities introduced by
@@ -96,6 +96,11 @@ loaded is not rolled back if a later open step fails.
 Signals are excluded by the absence of a durable descriptor, not by a save-time
 filter. Adding one accidentally would make them visible to save/status/load and
 generic entity CRUD.
+
+A saved drawing (`data/drawing/`) is the lossless document, validated whole on
+open: one malformed node rejects the file, since a partially loaded drawing
+would silently drop shapes. The baked render data a sketch consumes is never
+saved; it is derived from the document wherever it is needed.
 
 ## Diagnostics and staleness
 

@@ -27,6 +27,7 @@ import {
 import { makeParamsSnapshot, setParamsValues } from "./params_store.ts";
 import { makeSignalsSnapshot } from "./signals_store.ts";
 import { setAnimationTimeline } from "./animation_timeline_store.ts";
+import { setDrawing } from "./drawing_store.ts";
 
 function resolveEntityRequest(
   typeId: unknown,
@@ -202,6 +203,11 @@ export async function executeEngineOp(
       }) ?? null;
     case "animationTimelineSet":
       return setAnimationTimeline(op.request.name, op.request.data, {
+        originId: op.request.originId,
+        expectedRev: op.request.expectedRev,
+      });
+    case "drawingSet":
+      return setDrawing(op.request.name, op.request.data, {
         originId: op.request.originId,
         expectedRev: op.request.expectedRev,
       });

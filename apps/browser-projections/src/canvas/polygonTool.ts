@@ -128,7 +128,6 @@ export const generateBakedPolygonData = (
         type: 'polygon',
         id: polygonId,
         points: transformedPoints,
-        ...(polygonRuntime && { creationTime: polygonRuntime.creationTime }),
         ...(metadata && { metadata }) // Only include metadata if it exists
       })
     }
@@ -143,48 +142,6 @@ export const updateBakedPolygonData = (
 ) => {
   canvasState.polygon.bakedRenderData = generateBakedPolygonData(canvasState)
   canvasState.callbacks.syncAppState?.(canvasState)
-}
-
-/**
- * Rebuild the polygon layer from baked render data, the inverse of
- * `updateBakedPolygonData`. Points are world space with transforms already
- * applied, so every polygon is recreated at identity.
- */
-export const buildPolygonsFromRenderData = (
-  canvasState: CanvasRuntimeState,
-  data: PolygonRenderData
-) => {
-  const polygonShapesGroup = canvasState.groups.polygonShapes
-  const stageRef = canvasState.stage
-  if (!stageRef || !polygonShapesGroup) return
-
-  polygonShapesGroup.destroyChildren()
-  canvasState.polygon.shapes.clear()
-  canvasState.polygon.groups.clear()
-  selectionStore.clear(canvasState)
-
-  const fallbackCreationBase = Date.now()
-  data.forEach((flat, index) => {
-    const points = flat.points.flatMap((point) => [point.x, point.y])
-    const line = createPolygonNode(
-      canvasState,
-      flat.id || uid('poly_'),
-      points,
-      flat.creationTime ?? fallbackCreationBase + index
-    )
-    if (flat.metadata !== undefined) line.setAttr('metadata', flat.metadata)
-  })
-
-  canvasState.groups.polygonControls?.destroyChildren()
-  if (canvasState.activeTool.value === 'polygon' && canvasState.polygon.mode.value === 'edit') {
-    updatePolygonControlPoints(canvasState)
-  }
-
-  polygonShapesGroup.getLayer()?.batchDraw()
-
-  const snapshot = getCurrentPolygonState(canvasState)
-  if (snapshot) canvasState.polygon.serializedState = JSON.stringify(snapshot)
-  updateBakedPolygonData(canvasState)
 }
 
 // Polygon drawing state now managed via global canvas state
@@ -639,12 +596,14 @@ export const updatePolygonPreview = (state: CanvasRuntimeState) => {
 }
 
 // Create a closed polygon node with the canvas's polygon style, register its
-// runtime record and CanvasItem, and add it to the polygon layer.
+// runtime record and CanvasItem, and add it to `parent` (the polygon layer by
+// default).
 export const createPolygonNode = (
   state: CanvasRuntimeState,
   id: string,
   points: number[],
-  creationTime: number
+  creationTime: number,
+  parent: Konva.Container | undefined = state.groups.polygonShapes
 ): Konva.Line => {
   const polygon: PolygonShape = {
     id,
@@ -667,7 +626,7 @@ export const createPolygonNode = (
 
   polygon.konvaShape = polygonLine
   polygonShapes(state).set(id, polygon)
-  state.groups.polygonShapes?.add(polygonLine)
+  parent?.add(polygonLine)
 
   // Register as CanvasItem
   createPolygonItem(state, polygonLine)

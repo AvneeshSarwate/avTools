@@ -656,6 +656,71 @@ input {
   font-size: 12px;
 }
 
+.drawing-shape {
+  display: grid;
+  grid-template-rows: 48px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(236, 244, 239, 0.18);
+  border-radius: 8px;
+  color: #eef5f1;
+  background: #111412;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  pointer-events: all;
+}
+
+.drawing-shape__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #171c19;
+  cursor: grab;
+}
+
+.drawing-shape__header > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.drawing-shape__header strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawing-shape__header span {
+  color: #9ca8a2;
+  font-size: 11px;
+}
+
+/* The component brings its own toolbar and light theme; let it scroll rather than clip. */
+.drawing-shape__body {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: #f4f4f4;
+  color: #202020;
+}
+
+.drawing-shape__body handwriting-canvas {
+  display: block;
+}
+
+.drawing-shape__empty {
+  display: grid;
+  height: 100%;
+  place-content: center;
+  gap: 8px;
+  color: #9ca8a2;
+  font-size: 12px;
+  background: #111412;
+}
+
 .signal-scope-shape {
   display: grid;
   grid-template-rows: 40px minmax(0, 1fr);

@@ -306,10 +306,12 @@ export interface CreateCircleNodeOptions {
   /** Degrees, Konva's rotation unit. */
   rotation?: number
   creationTime: number
+  /** Container to add the node to; the circle layer by default. */
+  parent?: Konva.Container
 }
 
 // Create a circle node with the canvas's circle style, register its runtime
-// record and CanvasItem, and add it to the circle layer.
+// record and CanvasItem, and add it to its parent.
 export const createCircleNode = (
   state: CanvasRuntimeState,
   id: string,
@@ -343,53 +345,12 @@ export const createCircleNode = (
 
   circle.shape = circleShape
   circleShapes(state).set(id, circle)
-  state.groups.circleShapes?.add(circleShape)
+  ;(options.parent ?? state.groups.circleShapes)?.add(circleShape)
 
   // Register as CanvasItem
   createCircleItem(state, circleShape)
 
   return circleShape
-}
-
-/**
- * Rebuild the circle layer from baked render data, the inverse of
- * `updateBakedCircleData`. The bake reduces any transform stack to an ellipse
- * (`rx`, `ry`, `rotation`), so each circle is recreated as one node with that
- * ellipse expressed as radius, scaleY, and rotation. Groups of circles are not
- * part of the baked data and do not come back.
- */
-export const buildCirclesFromRenderData = (
-  canvasState: CanvasRuntimeState,
-  data: CircleRenderData
-) => {
-  const circleShapesGroup = canvasState.groups.circleShapes
-  const stageRef = canvasState.stage
-  if (!stageRef || !circleShapesGroup) return
-
-  circleShapesGroup.destroyChildren()
-  canvasState.circle.shapes.clear()
-  selectionStore.clear(canvasState)
-
-  const fallbackCreationBase = Date.now()
-  data.forEach((flat, index) => {
-    const rx = flat.r ?? flat.rx
-    const ry = flat.r ?? flat.ry
-    const shape = createCircleNode(canvasState, flat.id || uid('circle_'), {
-      x: flat.center.x,
-      y: flat.center.y,
-      radius: rx,
-      scaleY: rx > 0 ? ry / rx : 1,
-      rotation: ((flat.rotation ?? 0) * 180) / Math.PI,
-      creationTime: flat.creationTime ?? fallbackCreationBase + index
-    })
-    if (flat.metadata !== undefined) shape.setAttr('metadata', flat.metadata)
-  })
-
-  circleShapesGroup.getLayer()?.batchDraw()
-
-  const snapshot = getCurrentCircleState(canvasState)
-  if (snapshot) canvasState.circle.serializedState = JSON.stringify(snapshot)
-  updateBakedCircleData(canvasState)
 }
 
 // Function to generate baked circle data for external rendering (p5, three.js, etc.)
@@ -402,9 +363,11 @@ export const generateBakedCircleData = (
   // Track circle indices and group map
   let circleIndex = 0
   const groupMap: Record<string, number[]> = {}
+  const bakedCircles: FlattenedCircle[] = []
 
-  // Helper function to process a Konva node recursively
-  const processNode = (node: Konva.Node): FlattenedCircle | null => {
+  // Walk the layer recursively; every circle, grouped or not, is appended in
+  // document order so the group map's indices point at real entries.
+  const processNode = (node: Konva.Node): void => {
     if (node instanceof Konva.Circle) {
       const r = node.radius()
       const t = node.getAbsoluteTransform()
@@ -436,7 +399,7 @@ export const generateBakedCircleData = (
       // Increment circle index for this concrete circle
       circleIndex++
 
-      return {
+      bakedCircles.push({
         type: 'circle',
         id: circleId,
         center: { x: c.x, y: c.y },
@@ -444,9 +407,8 @@ export const generateBakedCircleData = (
         rx,
         ry,
         rotation,
-        ...(circleRuntime && { creationTime: circleRuntime.creationTime }),
         ...(metadata && { metadata }) // Only include metadata if it exists
-      }
+      })
     } else if (node instanceof Konva.Group) {
       // Track circle indices for this group
       const groupStartIndex = circleIndex
@@ -470,21 +432,11 @@ export const generateBakedCircleData = (
       if (groupKey) {
         groupMap[groupKey] = groupCircleIndices
       }
-
-      return null
     }
-
-    return null
   }
 
-  // Collect all processed circles
-  const bakedCircles: FlattenedCircle[] = []
-
   circleShapesGroup.getChildren().forEach(child => {
-    const processed = processNode(child)
-    if (processed) {
-      bakedCircles.push(processed)
-    }
+    processNode(child)
   })
 
   return { data: bakedCircles, groupMap }

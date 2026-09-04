@@ -67,11 +67,21 @@ export interface ProjectCanvasScopeView {
   h: number;
 }
 
+export interface ProjectCanvasDrawingView {
+  id: string;
+  drawingName: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface ProjectCanvasState {
   pianoRollViews?: ProjectCanvasPianoRollView[];
   paramPaneViews?: ProjectCanvasParamPaneView[];
   animationEditorViews?: ProjectCanvasAnimationEditorView[];
   scopeViews?: ProjectCanvasScopeView[];
+  drawingViews?: ProjectCanvasDrawingView[];
 }
 
 /**

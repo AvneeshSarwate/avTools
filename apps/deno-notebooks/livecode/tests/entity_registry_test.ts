@@ -31,9 +31,19 @@ import {
   getAnimationTimeline,
   setAnimationTimeline,
 } from "@avtools/livecode-engine/animation_timeline_store.ts";
+import {
+  clearDrawingStore,
+  getDrawing,
+  setDrawing,
+} from "@avtools/livecode-engine/drawing_store.ts";
+import {
+  createEmptyDrawingDocument,
+  makeCircleNode,
+} from "@avtools/drawing-document";
 import type {
   NoteDataInput,
   SavedAnimationTimelineEntity,
+  SavedDrawingEntity,
   SavedParamsEntity,
   SavedPianoRollEntity,
 } from "../visualizer/protocol.ts";
@@ -43,11 +53,13 @@ registerBuiltinEntityKinds(new SyncSourceRegistry());
 const pianoRolls = getDurableEntityType("pianoRoll")!;
 const params = getDurableEntityType("params")!;
 const animations = getDurableEntityType("animationTimeline")!;
+const drawings = getDurableEntityType("drawing")!;
 
 function resetStores(): void {
   clearPianoRollStore();
   clearParamsStore();
   clearAnimationTimelineStore();
+  clearDrawingStore();
   // Seeding is an explicit server-construction step now, not something a read
   // path does lazily, so a reset reproduces construction rather than relying on
   // the next list/get to conjure `melody` back.
@@ -60,9 +72,52 @@ function resetStores(): void {
 Deno.test("the registry exposes the built-in durable types", () => {
   assertEquals(
     listDurableEntityTypes().map((descriptor) => descriptor.typeId),
-    ["animationTimeline", "params", "pianoRoll"],
+    ["animationTimeline", "drawing", "params", "pianoRoll"],
   );
   assertEquals(getDurableEntityType("nope"), undefined);
+});
+
+Deno.test("drawing registry CRUD and persistence round-trip", () => {
+  resetStores();
+  drawings.create("reg/drawing");
+  assertEquals(getDrawing("reg/drawing")?.data, createEmptyDrawingDocument());
+  assertThrows(() => drawings.create("reg/drawing"), Error, "already exists");
+
+  const doc = createEmptyDrawingDocument();
+  doc.circle.nodes.push(
+    makeCircleNode({ id: "c", x: 10, y: 20, radius: 5, creationTime: 1 }),
+  );
+  const written = setDrawing("reg/drawing", doc);
+  assert(written.ok);
+
+  drawings.duplicate("reg/drawing", "reg/drawing-copy");
+  assertEquals(
+    getDrawing("reg/drawing-copy")?.data,
+    getDrawing("reg/drawing")?.data,
+  );
+
+  const saved = drawings.serialize("reg/drawing") as SavedDrawingEntity;
+  assertEquals(saved.type, "drawing");
+  assertEquals(saved.data.circle.nodes[0].id, "c");
+  drawings.deserialize("reg/drawing-loaded", saved);
+  assertEquals(
+    drawings.latestJson("reg/drawing-loaded"),
+    drawings.latestJson("reg/drawing"),
+  );
+  assertEquals(getDrawing("reg/drawing-loaded")?.updatedBy, "load");
+  assertThrows(
+    () =>
+      drawings.deserialize("reg/invalid-drawing", {
+        data: {
+          polygon: { nodes: [{ type: "group", id: "g", children: [] }] },
+        },
+      }),
+    Error,
+    "cannot contain groups",
+  );
+  assertEquals(drawings.exists("reg/invalid-drawing"), false);
+  assertEquals(drawings.remove("reg/drawing-copy"), true);
+  assertEquals(drawings.remove("reg/drawing-copy"), false);
 });
 
 Deno.test("one entity-kind registration materializes sync and durability", () => {

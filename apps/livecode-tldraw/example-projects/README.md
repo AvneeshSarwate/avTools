@@ -35,35 +35,40 @@ layout churn you did not mean to keep.
 | `feature-signals-and-scopes` | Ephemeral-signal slice: one playhead sent to two restored rolls, two playheads on one melody (both marker value shapes), numeric signal + scopes, and sticky `ended`. |
 | `feature-lifecycle-basics` | Lifecycle slice: natural completion, Replace-while-running with state continuity, observable `stop()` hook, 409 without replacement consent. |
 | `feature-studio-combined` | Richer combined project **with checked-in `data/`**: pre-launch restored pane (values + meta) and roll, edit→save→mutate→re-open loop, playhead + graph field, and both scope source types. |
+| `feature-drawing-p5` | Durable drawing slice **with checked-in `data/`** (browser-engine target): restored canvas view, a module that upserts a circle into the drawing from code, a p5 sketch drawing the baked render data in the engine tab, whole-document CAS, and save/reopen. |
 
 ## Feature coverage matrix (feature-* projects)
 
-| Behavior | params-basics | piano-roll-flows | animation-timeline | signals-and-scopes | lifecycle-basics | studio-combined |
-| --- | :-: | :-: | :-: | :-: | :-: | :-: |
-| canvasParams nested groups + meta (bounds/labels) | x | | | | | x |
-| `graph: true` monitored field | x | | | | | x |
-| Module reads params at frame/loop rate | x | | | | | x |
-| Module writes params (code automation) | x | | | | x | x |
-| Module reads/plays a piano roll | | x | | | | x |
-| Module writes back to a piano roll | | x | | | | x |
-| Multiple views of one roll | | x | | | | |
-| Entity CRUD (create/duplicate/delete) | | x (HTTP + topbar) | | | | x (topbar) |
-| Number, enum, and function animation tracks | | | x | | | |
-| Module samples an animation at loop rate | | | x | | | |
-| Whole-timeline compare-and-set edit | | | x | | | |
-| Animation-editor view persisted in canvas | | | x | | | |
-| Checked-in `data/` restored on open | | | x (timeline) | x (roll) | | x (roll + params w/ meta) |
-| Save → mutate → re-open → verify checklist | | | x | | | x |
-| Playhead signal anchored to a roll | | | | x | | x |
-| One signal sent to multiple anchors | | | | x | | |
-| Two playheads against one melody | | | | x | | |
-| Playhead signal anchored to an animation editor | | | x | | | |
-| Plain numeric signal for a scope | x | | x | x | | |
-| Scope views persisted in canvas (signal / params leaf) | x (signal) | | x (signal) | x (signal) | | x (both) |
-| Finite module ending naturally | x (no-op root) | x (seed/echo) | | | x | x (sparkle) |
-| Infinite module | x | x | x | | x | x |
-| Observable `stop()` hook | | | | | x | x |
-| Canvas layout persistence | partial | partial | module + animation + scope | partial | partial | module + roll + params + scopes |
+| Behavior | params-basics | piano-roll-flows | animation-timeline | signals-and-scopes | lifecycle-basics | studio-combined | drawing-p5 |
+| --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| canvasParams nested groups + meta (bounds/labels) | x | | | | | x |  |
+| `graph: true` monitored field | x | | | | | x |  |
+| Module reads params at frame/loop rate | x | | | | | x |  |
+| Module writes params (code automation) | x | | | | x | x |  |
+| Module reads/plays a piano roll | | x | | | | x |  |
+| Module writes back to a piano roll | | x | | | | x |  |
+| Multiple views of one roll | | x | | | | |  |
+| Entity CRUD (create/duplicate/delete) | | x (HTTP + topbar) | | | | x (topbar) | x (topbar) |
+| Number, enum, and function animation tracks | | | x | | | |  |
+| Module samples an animation at loop rate | | | x | | | |  |
+| Whole-timeline compare-and-set edit | | | x | | | |  |
+| Animation-editor view persisted in canvas | | | x | | | |  |
+| Checked-in `data/` restored on open | | | x (timeline) | x (roll) | | x (roll + params w/ meta) | x (drawing) |
+| Save → mutate → re-open → verify checklist | | | x | | | x | x |
+| Playhead signal anchored to a roll | | | | x | | x |  |
+| One signal sent to multiple anchors | | | | x | | |  |
+| Two playheads against one melody | | | | x | | |  |
+| Playhead signal anchored to an animation editor | | | x | | | |  |
+| Plain numeric signal for a scope | x | | x | x | | |  |
+| Scope views persisted in canvas (signal / params leaf) | x (signal) | | x (signal) | x (signal) | | x (both) |  |
+| Finite module ending naturally | x (no-op root) | x (seed/echo) | | | x | x (sparkle) | x (writer) |
+| Infinite module | x | x | x | | x | x | x (sketch) |
+| Observable `stop()` hook | | | | | x | x | x (sketch) |
+| Canvas layout persistence | partial | partial | module + animation + scope | partial | partial | module + roll + params + scopes | module + drawing |
+| Module writes into a drawing (code upsert by node id) |  |  |  |  |  |  | x |
+| Module reads baked drawing render data at frame rate (p5) |  |  |  |  |  |  | x |
+| Whole-document compare-and-set edit |  |  |  |  |  |  | x |
+| Drawing view persisted in canvas |  |  |  |  |  |  | x |
 
 ## Automated verification
 

@@ -375,7 +375,7 @@ export const maxInterStrokeDelay = 300
 
 
 // Get current canvas state for undo/redo (freehand only)
-const getCurrentFreehandState = (
+export const getCurrentFreehandState = (
   state: CanvasRuntimeState
 ) => {
   return selectionStore.withSelectionHighlightSuppressed(state, () => {
@@ -1008,7 +1008,6 @@ const generateBakedStrokeData = (
         type: 'stroke',
         id: stroke.id,
         points: flattenedPoints,
-        creationTime: stroke.creationTime,
         ...(metadata && { metadata }) // Only include metadata if it exists
       } as FlattenedStroke
     } else if (node instanceof Konva.Group) {
@@ -1081,100 +1080,6 @@ export const updateBakedFreehandData = (
   canvasState.freehand.bakedRenderData = result.data
   canvasState.freehand.bakedGroupMap = result.groupMap
   canvasState.callbacks.syncAppState?.(canvasState)
-}
-
-// The bake wraps every top-level stroke in a one-child group that reuses the
-// stroke's id (see generateBakedStrokeData). Real groups get `group_` ids from
-// `uid`, so the id match is unambiguous.
-const isSyntheticStrokeWrapper = (group: FlattenedStrokeGroup): boolean => {
-  const only = group.children.length === 1 ? group.children[0] : undefined
-  return only !== undefined && only.type === 'stroke' && only.id === group.id && group.metadata === undefined
-}
-
-/**
- * Rebuild the freehand layer from baked render data, the inverse of
- * `updateBakedFreehandData`.
- *
- * Because the bake applies every transform to the points, all nodes are
- * recreated at identity: the picture and the metadata are identical, but a
- * group that was moved or scaled comes back with that transform folded into its
- * children. Stroke timing is restored from `ts`; `creationTime` is restored
- * when present and otherwise assigned in document order so timeline playback
- * keeps the drawn sequence.
- */
-export const buildFreehandFromRenderData = (
-  canvasState: CanvasRuntimeState,
-  data: FreehandRenderData
-) => {
-  const freehandShapeGroup = canvasState.groups.freehandShape
-  const stageRef = canvasState.stage
-  if (!stageRef || !freehandShapeGroup) return
-
-  freehandShapeGroup.destroyChildren()
-  clearStrokesInState(canvasState)
-  selectionStore.clear(canvasState)
-
-  const fallbackCreationBase = Date.now()
-  let strokeOrdinal = 0
-
-  const buildStroke = (flat: FlattenedStroke): Konva.Path => {
-    const points: number[] = []
-    const timestamps: number[] = []
-    for (const point of flat.points) {
-      points.push(point.x, point.y)
-      timestamps.push(point.ts ?? 0)
-    }
-    const id = flat.id || uid('stroke_')
-    // createStrokeShape normalizes the points, positions the path, and registers
-    // the CanvasItem; metadata is applied afterwards so it wins over defaults.
-    const shape = createStrokeShape(canvasState, points, id)
-    if (flat.metadata !== undefined) shape.setAttr('metadata', flat.metadata)
-    const stroke: FreehandStroke = {
-      id,
-      points,
-      timestamps,
-      originalPath: shape.data(),
-      creationTime: flat.creationTime ?? fallbackCreationBase + strokeOrdinal,
-      isFreehand: timestamps.some((ts) => ts > 0),
-      shape,
-    }
-    strokeOrdinal++
-    setStrokeInState(canvasState, id, stroke)
-    return shape
-  }
-
-  const buildGroup = (flat: FlattenedStrokeGroup): Konva.Group => {
-    const group = new Konva.Group({ id: flat.id || uid('group_'), draggable: false })
-    if (flat.metadata !== undefined) group.setAttr('metadata', flat.metadata)
-    for (const child of flat.children) {
-      group.add(child.type === 'stroke' ? buildStroke(child) : buildGroup(child))
-    }
-    createGroupItem(canvasState, group)
-    setStrokeGroupInState(canvasState, group.id(), {
-      id: group.id(),
-      strokeIds: group.find('Path').map((path) => path.id()),
-      group,
-    })
-    return group
-  }
-
-  for (const entry of data) {
-    if (isSyntheticStrokeWrapper(entry)) {
-      freehandShapeGroup.add(buildStroke(entry.children[0] as FlattenedStroke))
-    } else {
-      const group = buildGroup(entry)
-      freehandShapeGroup.add(group)
-      attachHandlersRecursively(canvasState, group)
-    }
-  }
-
-  updateFreehandDraggableStates(canvasState)
-  updateTimelineState(canvasState)
-  freehandShapeGroup.getLayer()?.batchDraw()
-
-  const snapshot = getCurrentFreehandState(canvasState)
-  if (snapshot) canvasState.freehand.serializedState = JSON.stringify(snapshot)
-  updateBakedFreehandData(canvasState)
 }
 
 // Hierarchy utilities are now accessed directly from the metadata module
