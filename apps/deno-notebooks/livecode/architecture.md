@@ -17,7 +17,9 @@ and analysis/code generation is documented in
 | --- | --- |
 | HTTP/WebSocket routing, project coordination, analysis, and sync fan-out | `visualizer/server.ts` |
 | Local/remote execution-plane lifecycle and engine-op forwarding | `visualizer/execution_plane.ts` |
-| Browser engine host, Web Lock ownership, uplink, and baked boot | `browser_host/engine_page.ts` |
+| Browser engine host, Web Lock ownership, uplink, in-process observer surface, and baked boot | `browser_host/browser_engine_host.ts`; `browser_host/engine_page.ts` is the `/engine/` page around it |
+| Engine asset build (code-split bundle, helper aliases, the module import map) and the bake | `browser_host/build_host_assets.ts`, `browser_host/bake_project.ts` |
+| Named canvas surfaces for canvas views | `helpers/canvas_surface.ts` |
 | Portable engine: launch queue, run records, the broadcast timer, stores, sync sources | `packages/livecode-engine` (repo root) |
 | Sync source registry: what that timer walks, one entry per entity kind | `packages/livecode-engine/sync_sources.ts` |
 | Static analysis and generated source | `visualizer/analyze_transform.ts` |

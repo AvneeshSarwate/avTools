@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "name": "feature-canvas-surface",
+  "engineTarget": "browser",
+  "modules": [
+    {
+      "id": "canvas-surface/bounce",
+      "path": "modules/bounce.ts",
+      "sourcePath": "modules/bounce.orig.ts",
+      "runtimePath": "modules/bounce.ts",
+      "kind": "runnable",
+      "title": "bounce (Canvas 2D into a named surface)",
+      "sourceVersion": 1,
+      "x": 80,
+      "y": 80,
+      "w": 560,
+      "h": 640
+    },
+    {
+      "id": "canvas-surface/pulse",
+      "path": "modules/pulse.ts",
+      "sourcePath": "modules/pulse.orig.ts",
+      "runtimePath": "modules/pulse.ts",
+      "kind": "runnable",
+      "title": "pulse (p5 into a named surface)",
+      "sourceVersion": 1,
+      "x": 80,
+      "y": 780,
+      "w": 560,
+      "h": 640
+    }
+  ],
+  "canvas": {
+    "pianoRollViews": [],
+    "paramPaneViews": [
+      {
+        "id": "shape:canvas-surface-bounce-params",
+        "paramsName": "canvas-surface/bounce",
+        "x": 700,
+        "y": 440,
+        "w": 320,
+        "h": 200
+      },
+      {
+        "id": "shape:canvas-surface-pulse-params",
+        "paramsName": "canvas-surface/pulse",
+        "x": 700,
+        "y": 1220,
+        "w": 320,
+        "h": 180
+      }
+    ],
+    "animationEditorViews": [],
+    "scopeViews": [],
+    "drawingViews": [],
+    "canvasSurfaceViews": [
+      {
+        "id": "shape:canvas-surface-bounce-view",
+        "surfaceName": "canvas-surface/bounce",
+        "x": 700,
+        "y": 80,
+        "w": 500,
+        "h": 350
+      },
+      {
+        "id": "shape:canvas-surface-pulse-view",
+        "surfaceName": "canvas-surface/pulse",
+        "x": 700,
+        "y": 780,
+        "w": 420,
+        "h": 420
+      }
+    ]
+  },
+  "data": []
+}

@@ -57,6 +57,7 @@
     "canvas-signals": "./apps/deno-notebooks/livecode/helpers/canvas_signals.ts",
     "animation-timeline": "./apps/deno-notebooks/livecode/helpers/animation_timeline.ts",
     "canvas-drawing": "./apps/deno-notebooks/livecode/helpers/canvas_drawing.ts",
+    "canvas-surface": "./apps/deno-notebooks/livecode/helpers/canvas_surface.ts",
     "midi-helpers": "./apps/deno-notebooks/livecode/helpers/midi_helpers.ts",
     "piano-roll-helpers": "./apps/deno-notebooks/livecode/helpers/piano_roll_helpers.ts",
     "piano-roll-store": "./packages/livecode-engine/piano_roll_store.ts",

@@ -28,6 +28,12 @@ const ALIAS_ENTRIES: Record<string, string> = {
   "canvas_params": 'export { canvasParams } from "canvas-params";\n',
   "animation_timeline": 'export * from "animation-timeline";\n',
   "canvas_drawing": 'export * from "canvas-drawing";\n',
+  "canvas_surface": 'export * from "canvas-surface";\n',
+  // The timing library itself, for value imports (barriers, launch helpers,
+  // TempoMap): its module state (barrier registry, scheduler classes) is in
+  // the shared chunk the engine uses, so a module's barrier and the engine's
+  // root context see one registry.
+  "core_timing": 'export * from "@avtools/core-timing";\n',
   "piano_roll_helpers": 'export * from "piano-roll-helpers";\n',
   "piano_roll_store": 'export * from "piano-roll-store";\n',
   "midi_helpers": 'export * from "midi-helpers";\n',
@@ -41,24 +47,47 @@ const ALIAS_ENTRIES: Record<string, string> = {
   "p5": `export { default } from "${join(HERE, "vendor", "p5.ts")}";\n`,
   "runtime":
     'export {\n  visualizedAwait,\n  visualizedOwnedSignal,\n  visualizedPianoRollLookup,\n} from "@avtools/livecode-engine/runtime.ts";\n',
+  // The reusable engine host, for a UI page that runs the engine in its own
+  // tab (`?engine=inprocess`). Bundled in the same code-splitting invocation
+  // as the page and the aliases, so an in-process engine and the modules it
+  // launches share one set of store singletons.
+  "engine_host": `export * from "${join(HERE, "browser_engine_host.ts")}";\n`,
 };
 
-const IMPORT_MAP_HTML = `<script type="importmap">
-{
-  "imports": {
-    "canvas-signals": "./canvas_signals.js",
-    "canvas-params": "./canvas_params.js",
-    "animation-timeline": "./animation_timeline.js",
-    "canvas-drawing": "./canvas_drawing.js",
-    "piano-roll-helpers": "./piano_roll_helpers.js",
-    "piano-roll-store": "./piano_roll_store.js",
-    "midi-helpers": "./midi_helpers.js",
-    "@avtools/six-sines": "./six_sines.js",
-    "three": "./three.js",
-    "p5": "./p5.js"
-  }
+/**
+ * Bare specifiers user modules keep after the analyzer transform, mapped to
+ * the bundles above. Both engine.html (prefix `./`) and the tldraw client's
+ * index.html (prefix `./engine/`, for the in-process topology) declare this
+ * map; `browser_host_import_map_test.ts` keeps the two copies in agreement.
+ */
+export const MODULE_IMPORT_MAP: Readonly<Record<string, string>> = {
+  "canvas-signals": "canvas_signals.js",
+  "canvas-params": "canvas_params.js",
+  "animation-timeline": "animation_timeline.js",
+  "canvas-drawing": "canvas_drawing.js",
+  "canvas-surface": "canvas_surface.js",
+  "@avtools/core-timing": "core_timing.js",
+  "piano-roll-helpers": "piano_roll_helpers.js",
+  "piano-roll-store": "piano_roll_store.js",
+  "midi-helpers": "midi_helpers.js",
+  "@avtools/six-sines": "six_sines.js",
+  "three": "three.js",
+  "p5": "p5.js",
+};
+
+export function moduleImportMapHtml(prefix: string): string {
+  const imports = Object.fromEntries(
+    Object.entries(MODULE_IMPORT_MAP).map(([specifier, file]) => [
+      specifier,
+      `${prefix}${file}`,
+    ]),
+  );
+  return `<script type="importmap">\n${
+    JSON.stringify({ imports }, null, 2)
+  }\n</script>`;
 }
-</script>`;
+
+const IMPORT_MAP_HTML = moduleImportMapHtml("./");
 
 // The public node module is bundled above as `six_sines.js`. It resolves the
 // worklet and Wasm relative to its own import.meta.url, and the worklet in turn

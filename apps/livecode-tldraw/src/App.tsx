@@ -14,6 +14,10 @@ import {
   isCanvasViewShape,
 } from "./canvasViews";
 import { setRuntimeDebugRefs } from "./livecodeTldrawDebug";
+import {
+  IN_PROCESS_ENGINE,
+  waitForInProcessEngineAttached,
+} from "./inProcessEngine";
 import { useClientControlBridge } from "./clientControlBridge";
 import { TopBar } from "./TopBar";
 import {
@@ -263,6 +267,15 @@ function LivecodeTldrawPage() {
     if (!editor || !projectPath || projectLoadedRef.current) return;
 
     void (async () => {
+      // With the engine in this tab, project open replays saved entities into
+      // it through the server, so the server must be able to reach it first.
+      try {
+        await waitForInProcessEngineAttached();
+      } catch (error) {
+        console.error("[livecode-tldraw] in-process engine unavailable", error);
+        return;
+      }
+      if (projectLoadedRef.current) return;
       suppressStoreListenerRef.current = true;
       try {
         await loadProjectIntoCanvas(editor, runtime.serverBaseUrl, projectPath);
@@ -308,6 +321,15 @@ function LivecodeTldrawPage() {
         projectPath={projectPath}
         onOpenTldrawFile={loadTldrawFile}
       />
+      {IN_PROCESS_ENGINE
+        ? (
+          // User-module DOM for the engine running in this tab: graphics
+          // modules append canvases here (and `canvas-surface` containers,
+          // which canvas view shapes mirror onto the tldraw canvas). Kept in
+          // the document but off-screen so hidden canvases still paint.
+          <div id="livecode-stage" className="livecode-stage" />
+        )
+        : null}
       <div className="canvas-shell">
         <Tldraw
           shapeUtils={shapeUtils}
