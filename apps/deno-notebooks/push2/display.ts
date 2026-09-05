@@ -17,7 +17,7 @@ export class Push2Display {
   private rgbaStaging: Uint8Array<ArrayBuffer>;
 
   private drawFn: (p5: P5GPU) => void;
-  private intervalId: number | null = null;
+  private intervalId: ReturnType<typeof setInterval> | null = null;
 
   private constructor(
     device: GPUDevice,

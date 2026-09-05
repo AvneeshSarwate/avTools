@@ -5,10 +5,12 @@ seed_root=/opt/avtools-seed
 workspace_root=/workspace/avTools
 persistent_root=/data/livecode
 persistent_repo="$persistent_root/repo"
+repo_snapshot_marker="$persistent_root/repo-snapshot-complete"
 claude_state_root="$persistent_root/claude"
 codex_state_root="$persistent_root/codex"
 ssh_state_root="$persistent_root/ssh"
 runtime_state_root=/workspace/.livecode-runtime
+boot_status_file="$runtime_state_root/boot-status.json"
 claude_status_file="$runtime_state_root/claude-status"
 keepalive_status_file="$persistent_root/keepalive-status"
 repo_persist_lock="$runtime_state_root/repo-persist.lock"
@@ -26,14 +28,35 @@ mkdir -p \
   /root/.ssh \
   /workspace
 
+boot_phase=initializing
+write_boot_status() {
+  local phase=$1
+  local detail=${2:-}
+  local updated_at
+  local temporary_file="${boot_status_file}.tmp.$$"
+
+  boot_phase=$phase
+  updated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  if [[ -n "$detail" ]]; then
+    printf '{"phase":"%s","detail":"%s","updatedAt":"%s"}\n' \
+      "$phase" "$detail" "$updated_at" > "$temporary_file"
+  else
+    printf '{"phase":"%s","updatedAt":"%s"}\n' \
+      "$phase" "$updated_at" > "$temporary_file"
+  fi
+  mv "$temporary_file" "$boot_status_file"
+}
+
+write_boot_status initializing
+
 # Always run on the container's local disk so Vite's file watcher and HMR have
 # normal filesystem semantics. R2 is the durable mirror, not the live cwd.
+write_boot_status seeding_workspace
 mkdir -p "$workspace_root"
 rsync --archive --delete "$seed_root/" "$workspace_root/"
 
-repo_sync_args=(
+repo_copy_args=(
   --archive
-  --delete
   --exclude=node_modules
   --exclude=.vite
   --exclude=.cache
@@ -61,9 +84,18 @@ repo_sync_args=(
   --exclude=/encoder-gui/bundle/macos/staging
 )
 
-if [[ -d "$persistent_repo/.git" ]]; then
+if [[ -d "$persistent_repo/.git" && -f "$repo_snapshot_marker" ]]; then
+  write_boot_status restoring_workspace
   echo "[livecode] restoring the persisted Git workspace from R2"
-  rsync "${repo_sync_args[@]}" "$persistent_repo/" "$workspace_root/"
+  rsync "${repo_copy_args[@]}" --delete "$persistent_repo/" "$workspace_root/"
+elif [[ -d "$persistent_repo/.git" ]]; then
+  write_boot_status recovering_workspace
+  echo "[livecode] recovering files from an incomplete R2 snapshot" >&2
+  # A prior container may have stopped midway through its first R2 upload.
+  # Preserve the baked Git metadata and all baked files that never reached R2,
+  # while salvaging any worktree files that did make it into the snapshot.
+  rsync "${repo_copy_args[@]}" --exclude=.git \
+    "$persistent_repo/" "$workspace_root/"
 else
   echo "[livecode] first boot; the baked Git workspace will seed R2"
 fi
@@ -117,6 +149,7 @@ promote_seed_file_if_unmodified \
   apps/deno-notebooks/livecode/visualizer/main.ts \
   96dde58a65321b5ccd2cb8a334e9f1685d1529d3c1bec136452f8f798aa3f846
 
+write_boot_status restoring_credentials
 rsync --archive "$claude_state_root/" /root/.claude/
 rsync --archive "$codex_state_root/" /root/.codex/
 rsync --archive "$ssh_state_root/" /root/.ssh/
@@ -128,6 +161,7 @@ fi
 
 # If an agent changed either lockfile since this image was built, reconcile the
 # local dependency tree before starting Vite. The normal case is instant.
+write_boot_status reconciling_dependencies
 if ! cmp -s \
   "$seed_root/apps/livecode-tldraw/package-lock.json" \
   "$workspace_root/apps/livecode-tldraw/package-lock.json"; then
@@ -142,8 +176,14 @@ if ! cmp -s \
 fi
 
 persist_repo() {
-  flock --wait 120 "$repo_persist_lock" \
-    rsync "${repo_sync_args[@]}" "$workspace_root/" "$persistent_repo/"
+  (
+    flock --wait 120 9
+    rm -f "$repo_snapshot_marker"
+    rsync "${repo_copy_args[@]}" --delete \
+      "$workspace_root/" "$persistent_repo/"
+    printf 'complete %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      > "$repo_snapshot_marker"
+  ) 9> "$repo_persist_lock"
 }
 
 persist_credentials() {
@@ -207,7 +247,14 @@ remote_control_loop() {
 }
 
 shutdown() {
+  local exit_code=$?
   trap - TERM INT EXIT
+  set +e
+  if [[ "$exit_code" -eq 0 ]]; then
+    write_boot_status stopping
+  elif [[ "$boot_phase" != failed ]]; then
+    write_boot_status failed "supervisor_exit_${exit_code}"
+  fi
   for process_id in \
     "${repo_persist_pid:-}" \
     "${credential_watch_pid:-}" \
@@ -219,18 +266,56 @@ shutdown() {
     fi
   done
   wait 2>/dev/null || true
-  persist_all
+  if [[ "${boot_reached_ready:-false}" == true ]]; then
+    persist_all
+  else
+    echo "[livecode] skipping workspace persistence because boot never reached ready" >&2
+    persist_credentials || echo "[livecode] credential persistence failed" >&2
+  fi
+  exit "$exit_code"
 }
-trap shutdown TERM INT EXIT
 
-repo_persist_loop &
-repo_persist_pid=$!
+terminate() {
+  exit 143
+}
+
+interrupt() {
+  exit 130
+}
+
+fail_if_exited() {
+  local process_id=$1
+  local process_name=$2
+  local exit_code
+
+  if kill -0 "$process_id" 2>/dev/null; then
+    return
+  fi
+
+  set +e
+  wait "$process_id"
+  exit_code=$?
+  set -e
+  if [[ "$exit_code" -eq 0 ]]; then
+    exit_code=1
+  fi
+  write_boot_status failed "${process_name}_exited_${exit_code}"
+  echo "[livecode] ${process_name} exited before startup completed (${exit_code})" >&2
+  exit "$exit_code"
+}
+
+trap terminate TERM
+trap interrupt INT
+trap shutdown EXIT
+
+write_boot_status starting_background_services
 credential_watch_loop &
 credential_watch_pid=$!
 remote_control_loop &
 remote_control_pid=$!
 
 cd "$workspace_root"
+write_boot_status starting_deno
 deno run \
   --unstable-webgpu \
   --unstable-ffi \
@@ -246,12 +331,11 @@ deno run \
 deno_pid=$!
 
 until curl --fail --silent http://127.0.0.1:7777/health >/dev/null; do
-  if ! kill -0 "$deno_pid" 2>/dev/null; then
-    wait "$deno_pid"
-  fi
+  fail_if_exited "$deno_pid" deno
   sleep 1
 done
 
+write_boot_status starting_vite
 LIVECODE_SERVER_TARGET=http://127.0.0.1:7777 \
   npm --prefix apps/livecode-tldraw run dev -- \
     --host 0.0.0.0 \
@@ -259,4 +343,24 @@ LIVECODE_SERVER_TARGET=http://127.0.0.1:7777 \
     --strictPort &
 vite_pid=$!
 
+until curl --fail --silent http://127.0.0.1:5173/ >/dev/null; do
+  fail_if_exited "$deno_pid" deno
+  fail_if_exited "$vite_pid" vite
+  sleep 1
+done
+write_boot_status ready
+boot_reached_ready=true
+
+repo_persist_loop &
+repo_persist_pid=$!
+
+set +e
 wait -n "$deno_pid" "$vite_pid"
+service_exit=$?
+set -e
+if [[ "$service_exit" -eq 0 ]]; then
+  service_exit=1
+fi
+write_boot_status failed "service_exited_${service_exit}"
+echo "[livecode] a required service exited (${service_exit})" >&2
+exit "$service_exit"
