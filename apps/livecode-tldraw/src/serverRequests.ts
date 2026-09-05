@@ -13,6 +13,8 @@ import type {
   ProjectSaveResponse,
   ProjectStatusResponse,
 } from "./livecodeProtocol";
+import { readBootParam } from "./bootParams";
+import { IN_PROCESS_ENGINE, inProcessEngineHost } from "./inProcessEngine";
 
 /** Wire ids of the registered durable entity types. */
 export const PIANO_ROLL_ENTITY_TYPE = "pianoRoll";
@@ -23,11 +25,15 @@ export const DRAWING_ENTITY_TYPE = "drawing";
 /**
  * "broadcast" routes entity/roll/params actions over the engine tab's
  * BroadcastChannel (URL param `actions=broadcast`) instead of HTTP — the
- * serverless baked topology, where there is no server to POST to. Everything
- * else (analysis, project, LSP) is server-only and simply absent there.
+ * serverless baked topology, where there is no server to POST to.
+ * "inprocess" (`engine=inprocess`) executes them on this tab's own engine as
+ * direct calls. Everything else (analysis, project, LSP) is server-only and
+ * simply absent without a server.
  */
-export const ACTIONS_TRANSPORT: "http" | "broadcast" =
-  new URLSearchParams(window.location.search).get("actions") === "broadcast"
+export const ACTIONS_TRANSPORT: "http" | "broadcast" | "inprocess" =
+  IN_PROCESS_ENGINE
+    ? "inprocess"
+    : readBootParam("actions") === "broadcast"
     ? "broadcast"
     : "http";
 const ACTIONS_CHANNEL = "livecode-actions";
@@ -70,16 +76,28 @@ export function broadcastEngineAction(op: EngineOp): Promise<unknown> {
 }
 
 /**
- * The baked topology's save: capture every durable entity the engine tab holds
- * right now, over the broadcast actions channel, as the same `{type, name,
- * data}` rows baked.json carries. Deliberately omitted rows such as the
- * pristine demo roll are counted but not exported; capture errors abort.
+ * One engine action on the local engine, over whichever serverless transport
+ * this page uses: a direct call into this tab's engine, or the broadcast
+ * actions channel to an engine tab.
+ */
+export async function localEngineAction(op: EngineOp): Promise<unknown> {
+  if (ACTIONS_TRANSPORT === "inprocess") {
+    return await (await inProcessEngineHost()).execute(op);
+  }
+  return await broadcastEngineAction(op);
+}
+
+/**
+ * The baked topology's save: capture every durable entity the engine holds
+ * right now, as the same `{type, name, data}` rows baked.json carries.
+ * Deliberately omitted rows such as the pristine demo roll are counted but not
+ * exported; capture errors abort.
  */
 export async function captureBakedEntities(): Promise<{
   entities: EngineEntityLoadEntry[];
   skippedCount: number;
 }> {
-  const rows = await broadcastEngineAction({
+  const rows = await localEngineAction({
     kind: "captureEntities",
   }) as EngineEntityCapture[];
   const failed = rows.filter((row) => row.error !== undefined);
@@ -104,8 +122,8 @@ export async function engineAction<T>(
   httpPath: string,
   httpBody: unknown,
 ): Promise<T> {
-  if (ACTIONS_TRANSPORT === "broadcast") {
-    return await broadcastEngineAction(op) as T;
+  if (ACTIONS_TRANSPORT !== "http") {
+    return await localEngineAction(op) as T;
   }
   return await postServerJson<T>(serverBaseUrl, httpPath, httpBody);
 }
@@ -166,9 +184,9 @@ export async function createEntity(
   type: string,
   name: string,
 ): Promise<EntityMutationSuccess> {
-  if (ACTIONS_TRANSPORT === "broadcast") {
+  if (ACTIONS_TRANSPORT !== "http") {
     return entityActionResult(
-      await broadcastEngineAction({
+      await localEngineAction({
         kind: "entityCreate",
         request: { type, name },
       }) as EngineEntityActionResult,
@@ -187,9 +205,9 @@ export async function duplicateEntity(
   name: string,
   targetName: string,
 ): Promise<EntityMutationSuccess> {
-  if (ACTIONS_TRANSPORT === "broadcast") {
+  if (ACTIONS_TRANSPORT !== "http") {
     return entityActionResult(
-      await broadcastEngineAction({
+      await localEngineAction({
         kind: "entityDuplicate",
         request: { type, name, targetName },
       }) as EngineEntityActionResult,
@@ -207,9 +225,9 @@ export async function deleteEntity(
   type: string,
   name: string,
 ): Promise<EntityMutationSuccess> {
-  if (ACTIONS_TRANSPORT === "broadcast") {
+  if (ACTIONS_TRANSPORT !== "http") {
     return entityActionResult(
-      await broadcastEngineAction({
+      await localEngineAction({
         kind: "entityDelete",
         request: { type, name },
       }) as EngineEntityActionResult,

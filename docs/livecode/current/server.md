@@ -164,6 +164,14 @@ Ordinary engine requests are connection-scoped too: the host replies only on
 the socket that delivered a request, so reconnect discards a stale result rather
 than delivering it to a replacement server connection.
 
+`browser_engine_host.ts` owns the host lifecycle behind `startBrowserEngineHost`;
+`engine_page.ts` only renders its status, and the same function is bundled as
+the `engine_host` entry for the tldraw UI's in-process mode. Every entry
+(page, host, runtime import, each helper alias) is one code-splitting
+invocation so they share store singletons; adding an entry elsewhere breaks
+observation silently. The `canvas-surface` alias is the module-facing half of
+the client's canvas views: a DOM naming convention under `#livecode-stage`.
+
 The browser host separately enforces one engine per origin with Web Locks and
 explicit takeover, provides a silent-audio throttling mitigation, initializes
 Web MIDI (at start plus gesture retry, with a status line), and logs stretched
@@ -172,7 +180,9 @@ third-party library to browser-engine modules, follow the `three`/`p5`
 instances in `build_host_assets.ts` (`ALIAS_ENTRIES` plus the import map,
 pinned in the root `deno.json`). `#livecode-stage` in the engine page is
 user-module DOM: graphics modules render there and page chrome never touches
-it.
+it. The bake stamps `window.livecodeBootDefaults` into the copied client
+`index.html` so its root URL opens the single-page in-process form; a bake
+cannot start, stop, or relaunch modules after boot (see `known-risks.md`).
 
 Engine close clears its broadcast timer, cancels pending and active runs,
 panics MIDI, unregisters the root clock, and stops its parent context. Server

@@ -31,6 +31,12 @@ import {
   PianoRollShapeUtil,
 } from "./PianoRollShape";
 import {
+  CANVAS_SURFACE_SHAPE_TYPE,
+  type CanvasSurfaceShape,
+  CanvasSurfaceShapeUtil,
+  createCanvasSurfaceShape,
+} from "./CanvasSurfaceShape";
+import {
   createSignalScopeShape,
   describeScopeSource,
   SIGNAL_SCOPE_SHAPE_TYPE,
@@ -57,7 +63,8 @@ interface CanvasViewCodec extends CanvasViewDispatchCodec {
     | typeof ParamPaneShapeUtil
     | typeof AnimationEditorShapeUtil
     | typeof DrawingShapeUtil
-    | typeof SignalScopeShapeUtil;
+    | typeof SignalScopeShapeUtil
+    | typeof CanvasSurfaceShapeUtil;
   restore(editor: Editor, canvas: ProjectCanvasState): void;
   entityType?: string;
   createEntityView?(
@@ -285,6 +292,41 @@ export const CANVAS_VIEW_CODECS: readonly CanvasViewCodec[] = [
         a.props.windowSec !== b.props.windowSec;
     },
   },
+  {
+    shapeUtil: CanvasSurfaceShapeUtil,
+    isShape: isCanvasSurfaceShape,
+    collect: (shapes) => ({
+      canvasSurfaceViews: shapes.filter(isCanvasSurfaceShape).map((shape) => ({
+        id: shape.id,
+        surfaceName: shape.props.surfaceName,
+        x: shape.x,
+        y: shape.y,
+        w: shape.props.w,
+        h: shape.props.h,
+      })),
+    }),
+    restore(editor, canvas) {
+      for (const view of canvas.canvasSurfaceViews ?? []) {
+        const id = view.id as CanvasSurfaceShape["id"];
+        if (editor.getShape(id)) continue;
+        createCanvasSurfaceShape(editor, {
+          id,
+          x: view.x,
+          y: view.y,
+          w: view.w,
+          h: view.h,
+          surfaceName: view.surfaceName,
+          title: `canvas: ${view.surfaceName}`,
+        });
+      }
+    },
+    hasChanged: (before, after) => {
+      const a = before as CanvasSurfaceShape;
+      const b = after as CanvasSurfaceShape;
+      return hasBoxChanged(a, b) ||
+        a.props.surfaceName !== b.props.surfaceName;
+    },
+  },
 ];
 
 export const CANVAS_VIEW_SHAPE_UTILS = CANVAS_VIEW_CODECS.map((codec) =>
@@ -408,4 +450,8 @@ function isDrawingShape(value: unknown): value is DrawingShape {
 
 function isSignalScopeShape(value: unknown): value is SignalScopeShape {
   return hasShapeType(value, SIGNAL_SCOPE_SHAPE_TYPE);
+}
+
+function isCanvasSurfaceShape(value: unknown): value is CanvasSurfaceShape {
+  return hasShapeType(value, CANVAS_SURFACE_SHAPE_TYPE);
 }

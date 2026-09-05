@@ -2,8 +2,12 @@
 // of docs/livecode/history/browser-engine-plan-2026-08.md:
 //
 //   <out>/index.html, assets/...   the built tldraw client (copied from a
-//                                  vite dist), opened with
+//                                  vite dist) with boot defaults stamped in:
+//                                  opened bare it runs the engine IN THE SAME
+//                                  TAB (`serverBaseUrl=none&engine=inprocess`),
+//                                  the single-page demo form; an explicit
 //                                  ?serverBaseUrl=none&sync=broadcast&actions=broadcast
+//                                  still selects the two-tab form
 //   <out>/engine/...               the engine host assets (one code-split
 //                                  bundle; see build_host_assets.ts)
 //   <out>/engine/project/...       every project module: analyzer-transformed,
@@ -13,23 +17,21 @@
 //                                  tree) plus the module list the engine tab
 //                                  auto-launches at boot
 //
-// Host the output on any static file server; open /engine/engine.html in one
-// tab and / in another. The engine runs the piece; the UI watches over
-// BroadcastChannel and edits over the broadcast actions channel. Code is no
-// longer editable — that is the bake's contract.
+// Host the output on any static file server and open /: one tab runs the
+// piece and shows it, with canvas view shapes mirroring the modules' named
+// canvases. Or open /engine/engine.html in one tab and the two-tab UI URL in
+// another: the engine runs the piece; the UI watches over BroadcastChannel and
+// edits over the broadcast actions channel. Code is no longer editable — that
+// is the bake's contract — and a bake cannot start or stop modules: every
+// module auto-launches at boot, so per-example running state belongs in a
+// params toggle the module itself honors.
 //
 // Usage (from apps/deno-notebooks):
 //   deno run --allow-all livecode/browser_host/bake_project.ts \
 //     --project <dir> --out <dir> [--ui <tldraw dist dir>]
 
 import { ts } from "npm:ts-morph@23.0.0";
-import {
-  dirname,
-  fromFileUrl,
-  join,
-  relative,
-  resolve,
-} from "jsr:@std/path@1";
+import { dirname, fromFileUrl, join, relative, resolve } from "jsr:@std/path@1";
 import { analyzeAndTransformTimedModule } from "../visualizer/analyze_transform.ts";
 import { buildBrowserHostAssets } from "./build_host_assets.ts";
 import type {
@@ -102,6 +104,37 @@ async function copyDirectory(from: string, to: string): Promise<void> {
     if (entry.isDirectory) await copyDirectory(source, target);
     else if (entry.isFile) await Deno.copyFile(source, target);
   }
+}
+
+/** Boot defaults the copied UI reads when its URL carries no query string. */
+export const BAKED_BOOT_DEFAULTS: Readonly<Record<string, string>> = {
+  serverBaseUrl: "none",
+  engine: "inprocess",
+};
+
+/**
+ * Stamp the single-tab boot defaults into the copied client's index.html, as
+ * the first script in <head> so it runs before the module script reads them
+ * (`readBootParam` in the client). Idempotent for a re-bake over an old out.
+ */
+export async function stampBootDefaults(indexPath: string): Promise<void> {
+  const html = await Deno.readTextFile(indexPath);
+  const tag = `<script>window.livecodeBootDefaults=${
+    JSON.stringify(BAKED_BOOT_DEFAULTS)
+  };</script>`;
+  const stripped = html.replace(
+    /<script>window\.livecodeBootDefaults=[^<]*<\/script>\n?/g,
+    "",
+  );
+  const headOpen = stripped.match(/<head[^>]*>/);
+  if (!headOpen || headOpen.index === undefined) {
+    throw new Error(`bake: ${indexPath} has no <head> to stamp defaults into`);
+  }
+  const insertAt = headOpen.index + headOpen[0].length;
+  await Deno.writeTextFile(
+    indexPath,
+    stripped.slice(0, insertAt) + "\n    " + tag + stripped.slice(insertAt),
+  );
 }
 
 export interface BakeProjectOptions {
@@ -198,6 +231,7 @@ export async function bakeProject(options: BakeProjectOptions): Promise<{
 
   if (options.uiDist) {
     await copyDirectory(resolve(options.uiDist), outDir);
+    await stampBootDefaults(join(outDir, "index.html"));
   }
 
   return { moduleCount: bakedModules.length, dataCount: data.length };

@@ -15,7 +15,12 @@
 //   - the UI boots project-shaped from baked.json: one read-only code shape
 //     per module at its manifest position, plus the manifest's canvas views;
 //   - the Export data button captures the engine tab's durable entities over
-//     the actions channel and downloads them as {type, name, data} rows.
+//     the actions channel and downloads them as {type, name, data} rows;
+//   - the single-page form: the bake's bare root URL boots with the stamped
+//     defaults (serverBaseUrl=none, engine=inprocess), so ONE tab runs the
+//     engine and the UI — sync arrives through the in-process observer,
+//     entity actions execute directly, and a canvas view shape mirrors the
+//     pixels a module draws into its named `canvasSurface`.
 //
 // Run from apps/deno-notebooks:  node livecode/tests/baked_project.e2e.mjs
 
@@ -103,6 +108,22 @@ export default async function run(ctx: TimeContext) {
 `,
 )
 writeFileSync(
+  path.join(projectRoot, 'modules', 'canvas.orig.ts'),
+  `import type { TimeContext } from "@avtools/core-timing";
+import { canvasSurface } from "canvas-surface";
+
+export default async function run(ctx: TimeContext) {
+  const canvas = canvasSurface("baked/canvas").createCanvas(120, 80);
+  const g = canvas.getContext("2d")!;
+  while (true) {
+    g.fillStyle = "rgb(10, 200, 30)";
+    g.fillRect(0, 0, 120, 80);
+    await ctx.waitSec(0.05);
+  }
+}
+`,
+)
+writeFileSync(
   path.join(projectRoot, 'data', 'pianoRoll', 'seeded.json'),
   JSON.stringify({
     type: 'pianoRoll',
@@ -146,6 +167,19 @@ writeFileSync(
         w: 560,
         h: 460,
       },
+      {
+        id: 'modules/canvas.ts',
+        path: 'modules/canvas.ts',
+        sourcePath: 'modules/canvas.orig.ts',
+        runtimePath: 'modules/canvas.ts',
+        kind: 'runnable',
+        title: 'canvas',
+        sourceVersion: 1,
+        x: 1160,
+        y: 40,
+        w: 480,
+        h: 300,
+      },
     ],
     canvas: {
       pianoRollViews: [
@@ -156,6 +190,16 @@ writeFileSync(
           y: 420,
           w: 420,
           h: 260,
+        },
+      ],
+      canvasSurfaceViews: [
+        {
+          id: 'shape:baked-canvas-view',
+          surfaceName: 'baked/canvas',
+          x: 1160,
+          y: 380,
+          w: 300,
+          h: 240,
         },
       ],
     },
@@ -271,11 +315,11 @@ try {
         const titles = [...document.querySelectorAll(
           '.livecode-shape .livecode-shape__title strong',
         )].map((node) => node.textContent)
-        return titles.length === 2 ? titles.sort() : null
+        return titles.length === 3 ? titles.sort() : null
       }),
-    'two baked code shapes on the canvas',
+    'three baked code shapes on the canvas',
   )
-  if (shapeTitles.join(',') !== 'main,state') {
+  if (shapeTitles.join(',') !== 'canvas,main,state') {
     fail(`baked code shape titles wrong: ${JSON.stringify(shapeTitles)}`)
   }
   const editorStates = await waitUntil(
@@ -284,7 +328,7 @@ try {
         const editors = [...document.querySelectorAll(
           '.livecode-shape .cm-content',
         )]
-        if (editors.length !== 2) return null
+        if (editors.length !== 3) return null
         return editors.map((node) => ({
           editable: node.getAttribute('contenteditable'),
           hasSource: (node.textContent ?? '').length > 0,
@@ -508,6 +552,155 @@ try {
   if (engineErrors.length > 0) fail(`engine page errors: ${engineErrors}`)
   if (engine2Errors.length > 0) fail(`takeover engine page errors: ${engine2Errors}`)
   if (uiErrors.length > 0) fail(`ui page errors: ${uiErrors}`)
+
+  // --- single-page form: engine in the UI's own tab ------------------------
+  // Release the origin's engine lock by closing every earlier page, then open
+  // the bake's BARE root URL: the stamped boot defaults must select
+  // serverBaseUrl=none + engine=inprocess with no query string at all.
+  await enginePage.close()
+  await enginePage2.close()
+  await uiPage.close()
+  const singlePage = await context.newPage()
+  const singleErrors = []
+  const singleConsole = []
+  singlePage.on('pageerror', (error) => singleErrors.push(String(error)))
+  singlePage.on('console', (message) => singleConsole.push(message.text()))
+  await singlePage.goto(`${origin}/`)
+  await waitUntil(
+    () =>
+      singlePage.evaluate(() =>
+        globalThis.__livecodeEngineLock?.state() === 'engine' &&
+          globalThis.__livecodeBrowserEngine?.activeModuleIds().includes(
+            'modules/main.ts',
+          ) &&
+          globalThis.__livecodeBrowserEngine?.activeModuleIds().includes(
+            'modules/canvas.ts',
+          )
+          ? true
+          : null
+      ),
+    'single page becomes the engine and boots the bake',
+  ).catch((error) => {
+    console.error('--- single page console tail ---')
+    console.error(singleConsole.slice(-25).join('\n'))
+    throw error
+  })
+  const singleServerBaseUrl = await waitUntil(
+    () =>
+      singlePage.evaluate(() =>
+        globalThis.__livecodeTldrawRuntimeDebug?.serverBaseUrl ?? null
+      ),
+    'runtime debug hook on the single page',
+  )
+  if (singleServerBaseUrl !== 'none') {
+    fail(`boot defaults not applied: serverBaseUrl=${singleServerBaseUrl}`)
+  }
+  await waitUntil(
+    () =>
+      singlePage.evaluate(() =>
+        [...document.querySelectorAll('.status-pill')].some((node) =>
+          node.textContent === 'engine: this tab'
+        )
+          ? true
+          : null
+      ),
+    'topbar reports the engine in this tab',
+  )
+  // Same observations as the two-tab form, now over the in-process observer.
+  await waitUntil(
+    () =>
+      singlePage.evaluate(() => {
+        const rolls = globalThis.__livecodeSyncDebug?.getEntities('pianoRoll') ?? {}
+        const runs = globalThis.__livecodeSyncDebug?.getEntities('run') ?? {}
+        return rolls['baked/seeded'] && rolls['baked/roll'] &&
+            runs['modules/main.ts']?.state === 'running'
+          ? true
+          : null
+      }),
+    'seeds, write-back roll, and running run over the in-process observer',
+  )
+  const singleTick = await waitUntil(
+    () =>
+      singlePage.evaluate(() => {
+        const tick = globalThis.__livecodeSyncDebug.getEntities('signal')['baked/tick']
+        return typeof tick?.value === 'number' && tick.value > 0 ? tick.value : null
+      }),
+    'advancing signal in the single page',
+  )
+  await waitUntil(
+    () =>
+      singlePage.evaluate((previous) => {
+        const tick = globalThis.__livecodeSyncDebug.getEntities('signal')['baked/tick']
+        return typeof tick?.value === 'number' && tick.value > previous ? true : null
+      }, singleTick),
+    'signal keeps advancing in the single page',
+  )
+  // Entity actions execute directly on this tab's engine.
+  await singlePage.evaluate(() =>
+    globalThis.__livecodeTldrawRuntimeDebug.createEntity(
+      'pianoRoll',
+      'baked/created-inprocess',
+    ))
+  await waitUntil(
+    () =>
+      singlePage.evaluate(() =>
+        globalThis.__livecodeSyncDebug.getEntities('pianoRoll')['baked/created-inprocess']
+          ? true
+          : null
+      ),
+    'in-process entity create visible in sync maps',
+  )
+  await singlePage.evaluate(() =>
+    globalThis.__livecodeTldrawRuntimeDebug.deleteEntity(
+      'pianoRoll',
+      'baked/created-inprocess',
+    ))
+  await waitUntil(
+    () =>
+      singlePage.evaluate(() =>
+        globalThis.__livecodeSyncDebug.getEntities('pianoRoll')['baked/created-inprocess']
+          ? null
+          : true
+      ),
+    'in-process entity delete removes it',
+  )
+  // The manifest's canvas view mirrors the module's named canvas: the shape
+  // exists, has found its source, and shows the module's solid color.
+  const surfaceState = await waitUntil(
+    () =>
+      singlePage.evaluate(() => {
+        const states = globalThis.__livecodeTldrawRuntimeDebug.getCanvasSurfaceStates()
+        const state = states.find((entry) => entry.surfaceName === 'baked/canvas')
+        return state?.sourceFound && state.frameCount > 2 ? state : null
+      }),
+    'canvas view found the module canvas and drew frames',
+  )
+  if (surfaceState.sourceWidth !== 120 || surfaceState.sourceHeight !== 80) {
+    fail(`canvas view source size wrong: ${JSON.stringify(surfaceState)}`)
+  }
+  const centerPixel = await waitUntil(
+    () =>
+      singlePage.evaluate(() => {
+        const canvas = document.querySelector('.canvas-surface-shape__canvas')
+        if (!canvas) return null
+        const ctx = canvas.getContext('2d')
+        const [r, g, b, a] = ctx.getImageData(
+          Math.floor(canvas.width / 2),
+          Math.floor(canvas.height / 2),
+          1,
+          1,
+        ).data
+        return a === 255 ? { r, g, b } : null
+      }),
+    'canvas view has an opaque center pixel',
+  )
+  if (
+    Math.abs(centerPixel.r - 10) > 6 || Math.abs(centerPixel.g - 200) > 6 ||
+    Math.abs(centerPixel.b - 30) > 6
+  ) {
+    fail(`canvas view pixel is not the module's color: ${JSON.stringify(centerPixel)}`)
+  }
+  if (singleErrors.length > 0) fail(`single page errors: ${singleErrors}`)
 
   console.log(JSON.stringify({
     ok: true,

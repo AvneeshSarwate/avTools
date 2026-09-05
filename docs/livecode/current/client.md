@@ -47,6 +47,22 @@ browser-engine paths. They must preserve the WebSocket/HTTP semantics even
 though their transport is a `BroadcastChannel`. `serverBaseUrl=none` selects a
 baked project boot from `baked.json`.
 
+`?engine=inprocess` makes this tab the engine (`inProcessEngine.ts`). The page
+dynamically imports `./engine/engine_host.js` from the served asset tree, never
+a Vite-bundled engine, and `index.html` carries the same module import map as
+the engine page (kept identical by `browser_host_import_map_test.ts`). Sync is
+then a same-realm observer and entity actions call `executeEngineOp` directly;
+launch, analysis, project, and LSP stay HTTP. The transport reports "open" only
+while the engine has attached to the server over its uplink (or immediately
+when `serverBaseUrl=none`), so the runtime's connect sequence and project open
+wait for the engine the server will forward to. Entity truth flows regardless
+of that link. Boot parameters are read through `bootParams.ts`, which falls
+back to `window.livecodeBootDefaults`, the values a bake stamps into its copied
+`index.html` so its bare root URL opens in this form. The page renders a
+`#livecode-stage` container (off-screen, not `display:none`) that modules draw
+into, and the topbar shows an engine pill with the same takeover the engine page
+offers. Reloading the page restarts the engine.
+
 ## Analysis and launch ordering
 
 Each module has one build lifecycle rather than independent pending flags. A
@@ -125,6 +141,13 @@ Domain bridges retain distinct semantics:
 - Signal scopes keep local numeric histories. They can also resolve a params
   leaf by path. Rebind, unmount, or reload discards history; an ended source
   freezes/dims rather than fabricating samples.
+- Canvas views (`CanvasSurfaceShape.tsx`) mirror a module's named canvas
+  (`canvasSurface(name)` from the `canvas-surface` helper) with one
+  `drawImage` per animation frame. The source is found by DOM lookup under
+  `#livecode-stage`, never through sync, so a view only shows pixels when the
+  engine runs in this tab; elsewhere it says so. The source keeps its own
+  resolution and the view letterboxes it. Nothing about the view reaches the
+  module.
 
 After changing the Vue piano-roll, animation-editor, or handwriting-canvas
 component, rebuild its checked-in/ignored bundle before testing this app.
