@@ -23,9 +23,13 @@ bake and the package's Konva-free bake are checked by `npm run test:canvas` in
 With both running, `projects.html` on the Vite origin (e.g.
 `http://localhost:5173/projects.html`) is the human entry point: it discovers
 the server via `/health` probes, lists `/projects/list`, and opens a project
-in either engine topology — including asking the server to restart itself into
-the other mode. Opening a project by hand means composing
-`/?serverBaseUrl=<server>&projectPath=<abs project dir>` yourself.
+with the engine on the server, in a separate browser tab, or in the UI tab —
+including asking the server to restart itself into the required mode. All three
+launch buttons open the UI in a new tab and keep the project picker open. Choose
+**Open · engine in same tab** for examples that mirror canvas outputs into
+tldraw; reloading that tab restarts the engine. Opening a project by hand means
+composing `/index.html?serverBaseUrl=<server>&projectPath=<abs project dir>`
+yourself, adding `&engine=inprocess` for the same-tab form.
 
 For a cross-boundary change, the canonical gate is:
 
@@ -94,6 +98,14 @@ release affecting these seams, manually check the applicable item:
 5. open an external-repository project and verify relative imports in LSP.
 
 ## Environment and artifacts
+
+For the Cloudflare remote dev box, see
+[`apps/livecode-cloudflare/README.md`](../../../apps/livecode-cloudflare/README.md)
+for packed R2 checkpoint migration/recovery, offline checks, and startup timing.
+Its Deno session files are disposable local artifacts; canonical projects, Git
+state, and credentials persist separately. Older container boot scripts cannot
+read packed checkpoints, so rollback requires exporting the latest workspace to
+the legacy mirror first.
 
 Cold Deno caches require network access to JSR and npm. The server uses broad
 permissions plus unstable WebGPU/FFI flags; a healthy ordinary test process may

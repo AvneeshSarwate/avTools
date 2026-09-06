@@ -1,12 +1,14 @@
 /**
  * The projects index page (`projects.html`): finds the local livecode Deno
  * server, lists every project it can see (`GET /projects/list`), and opens a
- * chosen project in the tldraw UI in either execution topology:
+ * chosen project in the tldraw UI in one of three execution topologies:
  *
  * - "engine on server": the server runs with an in-process engine
  *   (`--engine local`, the default);
  * - "engine in browser": the server coordinates only and a `/engine/` tab
- *   executes modules (`--engine remote`).
+ *   executes modules (`--engine remote`);
+ * - "engine in same tab": the UI itself executes modules (`engine=inprocess`)
+ *   while the server coordinates only (`--engine remote`).
  *
  * When the server is currently in the other mode, opening asks it to restart
  * itself via `POST /server/engine-mode` and waits for `/health` to come back
@@ -30,6 +32,7 @@ const MODE_SWITCH_TIMEOUT_MS = 30_000;
 const LAST_SERVER_STORAGE_KEY = "livecode:projectsIndex:serverBaseUrl";
 
 type EngineMode = "local" | "remote";
+type LaunchMode = EngineMode | "inprocess";
 type OpenPhase =
   | { kind: "idle" }
   | { kind: "requestingSwitch"; projectName: string; mode: EngineMode }
@@ -252,12 +255,15 @@ async function pollHealthLoop(): Promise<void> {
  */
 let broadcastSyncPreferred = true;
 
-function uiUrl(project: ProjectIndexEntry, mode: "local" | "remote"): string {
+function uiUrl(project: ProjectIndexEntry, mode: LaunchMode): string {
   // Root is the project picker in the remote dev box; the editor therefore
   // always gets an explicit URL in both Vite dev and built deployments.
   const url = new URL("./index.html", window.location.href);
   url.searchParams.set("serverBaseUrl", state.serverBaseUrl ?? "");
   url.searchParams.set("projectPath", project.root);
+  if (mode === "inprocess") {
+    url.searchParams.set("engine", "inprocess");
+  }
   if (mode === "remote" && serverIsSameOrigin() && broadcastSyncPreferred) {
     url.searchParams.set("sync", "broadcast");
   }
@@ -354,23 +360,35 @@ async function waitForEngineMode(
 
 async function openProject(
   project: ProjectIndexEntry,
-  mode: EngineMode,
+  launchMode: LaunchMode,
 ): Promise<void> {
   if (!state.serverBaseUrl || !state.health || openInProgress()) return;
+  const mode: EngineMode = launchMode === "local" ? "local" : "remote";
   const serverBaseUrl = state.serverBaseUrl;
   let health = state.health;
 
-  // A popup is only allowed inside the click gesture, so reserve the engine
-  // tab now and point it at /engine/ once the server is in remote mode.
+  // Reserve tabs inside the click gesture, before a mode switch awaits HTTP.
+  // Keep the picker open so it can launch more projects after this completes.
+  let uiWindow: Window | null = null;
   let engineWindow: Window | null = null;
   const engineAttached = health.engine.mode === "remote" &&
     health.engine.attached;
-  if (mode === "remote" && !engineAttached) {
-    engineWindow = window.open("", "livecode-engine");
-  }
 
   state.errorMessage = null;
   try {
+    uiWindow = window.open("", "_blank");
+    if (!uiWindow) {
+      throw new Error("Allow pop-ups for this page to open the project UI.");
+    }
+    uiWindow.opener = null;
+    if (launchMode === "remote" && !engineAttached) {
+      engineWindow = window.open("", "livecode-engine");
+      if (!engineWindow) {
+        throw new Error(
+          "Allow pop-ups for this page to open both the UI and engine tabs.",
+        );
+      }
+    }
     if (health.engine.mode !== mode) {
       state.openPhase = {
         kind: "requestingSwitch",
@@ -402,13 +420,19 @@ async function openProject(
       health = await waitForEngineMode(serverBaseUrl, mode);
       state.health = health;
     }
+    if (uiWindow.closed) {
+      throw new Error("The project UI tab was closed before it could open.");
+    }
     if (engineWindow) {
       engineWindow.location.href = `${serverBaseUrl}/engine/`;
     }
     state.openPhase = { kind: "opening", projectName: project.name, mode };
     render();
-    window.location.href = uiUrl(project, mode);
+    uiWindow.location.href = uiUrl(project, launchMode);
+    state.openPhase = { kind: "idle" };
+    render();
   } catch (error) {
+    uiWindow?.close();
     engineWindow?.close();
     state.openPhase = {
       kind: "failed",
@@ -555,7 +579,7 @@ function renderServerStatus(): HTMLElement {
     toggle.appendChild(checkbox);
     toggle.appendChild(
       document.createTextNode(
-        " engine-in-browser opens sync via the engine tab (BroadcastChannel," +
+        " separate-browser-tab opens sync via the engine tab (BroadcastChannel," +
           " keeps sync off the network); uncheck if the engine tab runs on" +
           " another machine",
       ),
@@ -679,6 +703,20 @@ function renderProjectCard(project: ProjectIndexEntry): HTMLElement {
     void openProject(project, "remote");
   });
   actions.appendChild(remoteButton);
+
+  const inProcessButton = el(
+    "button",
+    "open-button",
+    "Open · engine in same tab",
+  ) as HTMLButtonElement;
+  inProcessButton.disabled = busy;
+  inProcessButton.title =
+    "Run the engine in the UI tab so canvas outputs appear in canvas views. " +
+    "Reloading this tab restarts the engine.";
+  inProcessButton.addEventListener("click", () => {
+    void openProject(project, "inprocess");
+  });
+  actions.appendChild(inProcessButton);
   item.appendChild(actions);
   return item;
 }

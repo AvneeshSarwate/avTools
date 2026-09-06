@@ -17,8 +17,6 @@ repo_persist_lock="$runtime_state_root/repo-persist.lock"
 credential_persist_lock="$runtime_state_root/credential-persist.lock"
 
 mkdir -p \
-  /data/sessions \
-  "$persistent_repo" \
   "$claude_state_root" \
   "$codex_state_root" \
   "$ssh_state_root" \
@@ -29,13 +27,21 @@ mkdir -p \
   /workspace
 
 boot_phase=initializing
+boot_started_ms=$(date +%s%3N)
+phase_started_ms=$boot_started_ms
 write_boot_status() {
   local phase=$1
   local detail=${2:-}
   local updated_at
   local temporary_file="${boot_status_file}.tmp.$$"
 
+  local now_ms
+  now_ms=$(date +%s%3N)
+  printf '{"component":"livecode-boot","event":"phase.completed","phase":"%s","durationMs":%s,"elapsedMs":%s}\n' \
+    "$boot_phase" "$((now_ms - phase_started_ms))" "$((now_ms - boot_started_ms))" \
+    | tee -a "$runtime_state_root/boot-timings.jsonl"
   boot_phase=$phase
+  phase_started_ms=$now_ms
   updated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   if [[ -n "$detail" ]]; then
     printf '{"phase":"%s","detail":"%s","updatedAt":"%s"}\n' \
@@ -49,42 +55,44 @@ write_boot_status() {
 
 write_boot_status initializing
 
-# Always run on the container's local disk so Vite's file watcher and HMR have
-# normal filesystem semantics. R2 is the durable mirror, not the live cwd.
-write_boot_status seeding_workspace
+# Credentials are independent of the worktree. Start their restore now, but
+# join it before any credential watcher, agent, or ready/terminal access.
+(
+  credential_started_ms=$(date +%s%3N)
+  rsync --archive "$claude_state_root/" /root/.claude/
+  rsync --archive "$codex_state_root/" /root/.codex/
+  rsync --archive "$ssh_state_root/" /root/.ssh/
+  chmod 0700 /root/.claude /root/.codex /root/.ssh
+  find /root/.claude /root/.codex /root/.ssh -type f -exec chmod 0600 {} +
+  credential_finished_ms=$(date +%s%3N)
+  printf '{"event":"credentials.restored","durationMs":%s,"elapsedMs":%s}\n' \
+    "$((credential_finished_ms - credential_started_ms))" "$((credential_finished_ms - boot_started_ms))" \
+    | tee -a "$runtime_state_root/boot-timings.jsonl"
+) &
+credential_restore_pid=$!
+# Early workspace failures must not leave a restore running. No credential
+# persistence starts until the successful join below.
+trap 'kill "$credential_restore_pid" 2>/dev/null || true; wait "$credential_restore_pid" 2>/dev/null || true' EXIT
+
+# The image already contains the workspace at its final path. Restore only
+# source; baked dependency trees never need a second copy on wake.
+write_boot_status restoring_workspace
 mkdir -p "$workspace_root"
-rsync --archive --delete "$seed_root/" "$workspace_root/"
 
 repo_copy_args=(
   --archive
-  --exclude=node_modules
-  --exclude=.vite
-  --exclude=.cache
-  --exclude=.deno
-  --exclude=.venv
-  --exclude=venv
-  --exclude=target
-  --exclude=coverage
-  --exclude=dist
-  --exclude=build
-  --exclude=out
-  --exclude=.wrangler
-  --exclude=.avtools-livecode-sessions
-  --exclude=.livecode-runtime
-  --exclude='*.log'
-  --exclude=.env
-  --exclude='.env.*'
-  --exclude=.DS_Store
-  --exclude=/apps/browser-projections/public/block_rocking.mp4
-  --exclude=/apps/browser-projections/reaction-diffusion-webgl
-  --exclude=/apps/deno-notebooks/examples/hanoiShow/bundle/macos/HanoiShow.app
-  --exclude=/apps/deno-notebooks/examples/hanoiShow/bundle/macos/staging
-  --exclude=/apps/deno-notebooks/examples/hanoiShow/bundle/macos/staging_assets
-  --exclude=/apps/deno-notebooks/examples/hanoiShow/bundle/macos/staging_bin
-  --exclude=/encoder-gui/bundle/macos/staging
+  --exclude-from=/opt/livecode/repo-excludes.txt
 )
 
-if [[ -d "$persistent_repo/.git" && -f "$repo_snapshot_marker" ]]; then
+checkpoint_restore_exit=0
+node /opt/livecode/checkpoint.mjs restore \
+  "$workspace_root" "$persistent_root" "$runtime_state_root" || checkpoint_restore_exit=$?
+if [[ "$checkpoint_restore_exit" -eq 0 ]]; then
+  echo "[livecode] packed workspace restored"
+elif [[ "$checkpoint_restore_exit" -ne 3 ]]; then
+  write_boot_status failed checkpoint_restore_failed
+  exit "$checkpoint_restore_exit"
+elif [[ -d "$persistent_repo/.git" && -f "$repo_snapshot_marker" ]]; then
   write_boot_status restoring_workspace
   echo "[livecode] restoring the persisted Git workspace from R2"
   rsync "${repo_copy_args[@]}" --delete "$persistent_repo/" "$workspace_root/"
@@ -149,12 +157,12 @@ promote_seed_file_if_unmodified \
   apps/deno-notebooks/livecode/visualizer/main.ts \
   96dde58a65321b5ccd2cb8a334e9f1685d1529d3c1bec136452f8f798aa3f846
 
-write_boot_status restoring_credentials
-rsync --archive "$claude_state_root/" /root/.claude/
-rsync --archive "$codex_state_root/" /root/.codex/
-rsync --archive "$ssh_state_root/" /root/.ssh/
-chmod 0700 /root/.claude /root/.codex /root/.ssh
-find /root/.claude /root/.codex /root/.ssh -type f -exec chmod 0600 {} +
+write_boot_status waiting_for_credentials
+if ! wait "$credential_restore_pid"; then
+  write_boot_status failed credential_restore_failed
+  exit 1
+fi
+trap - EXIT
 if [[ ! -f "$keepalive_status_file" ]]; then
   printf 'false\n' > "$keepalive_status_file"
 fi
@@ -173,16 +181,14 @@ if ! cmp -s \
   npm ci --prefix "$workspace_root/apps/browser-projections"
   npm --prefix "$workspace_root/apps/browser-projections" run buildPianoRoll
   npm --prefix "$workspace_root/apps/browser-projections" run buildAnimationEditor
+  npm --prefix "$workspace_root/apps/browser-projections" run buildCanvas
 fi
 
 persist_repo() {
   (
-    flock --wait 120 9
-    rm -f "$repo_snapshot_marker"
-    rsync "${repo_copy_args[@]}" --delete \
-      "$workspace_root/" "$persistent_repo/"
-    printf 'complete %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      > "$repo_snapshot_marker"
+    flock --wait 120 9 || exit 1
+    node /opt/livecode/checkpoint.mjs save \
+      "$workspace_root" "$persistent_root" "$runtime_state_root"
   ) 9> "$repo_persist_lock"
 }
 
@@ -315,7 +321,9 @@ remote_control_loop &
 remote_control_pid=$!
 
 cd "$workspace_root"
-write_boot_status starting_deno
+write_boot_status starting_services
+export LIVECODE_BROWSER_HOST_BAKED_CACHE=/opt/livecode/browser-host-cache
+export LIVECODE_BROWSER_HOST_CACHE="$persistent_root/browser-host-cache"
 deno run \
   --unstable-webgpu \
   --unstable-ffi \
@@ -326,16 +334,10 @@ deno run \
   --engine remote \
   --prewarm-browser-host \
   --projects-root apps/livecode-tldraw/example-projects \
-  --session-root /data/sessions \
+  --session-root /workspace/.livecode-runtime/sessions \
   --log-level info &
 deno_pid=$!
 
-until curl --fail --silent http://127.0.0.1:7777/health >/dev/null; do
-  fail_if_exited "$deno_pid" deno
-  sleep 1
-done
-
-write_boot_status starting_vite
 LIVECODE_SERVER_TARGET=http://127.0.0.1:7777 \
   npm --prefix apps/livecode-tldraw run dev -- \
     --host 0.0.0.0 \
@@ -343,10 +345,20 @@ LIVECODE_SERVER_TARGET=http://127.0.0.1:7777 \
     --strictPort &
 vite_pid=$!
 
-until curl --fail --silent http://127.0.0.1:5173/ >/dev/null; do
+deno_ready=false
+vite_ready=false
+until [[ "$deno_ready" == true && "$vite_ready" == true ]]; do
   fail_if_exited "$deno_pid" deno
   fail_if_exited "$vite_pid" vite
-  sleep 1
+  if [[ "$deno_ready" == false ]] && curl --max-time 1 --fail --silent http://127.0.0.1:7777/health >/dev/null; then
+    deno_ready=true
+    echo "{\"event\":\"deno.ready\",\"elapsedMs\":$(($(date +%s%3N) - boot_started_ms))}" | tee -a "$runtime_state_root/boot-timings.jsonl"
+  fi
+  if [[ "$vite_ready" == false ]] && curl --max-time 1 --fail --silent http://127.0.0.1:5173/projects.html >/dev/null; then
+    vite_ready=true
+    echo "{\"event\":\"vite.ready\",\"elapsedMs\":$(($(date +%s%3N) - boot_started_ms))}" | tee -a "$runtime_state_root/boot-timings.jsonl"
+  fi
+  if [[ "$deno_ready" == false || "$vite_ready" == false ]]; then sleep 0.25; fi
 done
 write_boot_status ready
 boot_reached_ready=true

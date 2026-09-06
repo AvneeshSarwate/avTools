@@ -13,25 +13,44 @@ RUN curl -fsSL https://deno.land/install.sh -o /tmp/install-deno.sh \
 
 # Install the two hot-path dependency trees in a cacheable layer. The browser
 # project has one repository-local file dependency.
-COPY apps/livecode-tldraw/package.json apps/livecode-tldraw/package-lock.json /opt/avtools-seed/apps/livecode-tldraw/
-COPY apps/browser-projections/package.json apps/browser-projections/package-lock.json /opt/avtools-seed/apps/browser-projections/
-COPY packages/hysnappy2 /opt/avtools-seed/packages/hysnappy2
-RUN npm ci --prefix /opt/avtools-seed/apps/livecode-tldraw \
-    && npm ci --prefix /opt/avtools-seed/apps/browser-projections
+COPY apps/livecode-tldraw/package.json apps/livecode-tldraw/package-lock.json /workspace/avTools/apps/livecode-tldraw/
+COPY apps/browser-projections/package.json apps/browser-projections/package-lock.json /workspace/avTools/apps/browser-projections/
+COPY packages/hysnappy2 /workspace/avTools/packages/hysnappy2
+RUN npm ci --prefix /workspace/avTools/apps/livecode-tldraw \
+    && npm ci --prefix /workspace/avTools/apps/browser-projections
 
 # This is a dev machine, not a minimal production artifact: seed the complete
 # Git worktree so the browser terminal and agents can edit framework code as
 # well as individual projects. Generated/dependency directories are filtered
 # by the repository-level .dockerignore.
-COPY . /opt/avtools-seed
+COPY . /workspace/avTools
 
-RUN npm --prefix /opt/avtools-seed/apps/browser-projections run buildPianoRoll \
-    && npm --prefix /opt/avtools-seed/apps/browser-projections run buildAnimationEditor \
+RUN npm --prefix /workspace/avTools/apps/browser-projections run buildPianoRoll \
+    && npm --prefix /workspace/avTools/apps/browser-projections run buildAnimationEditor \
+    && npm --prefix /workspace/avTools/apps/browser-projections run buildCanvas \
     && mkdir -p /opt/livecode \
-    && cp /opt/avtools-seed/apps/livecode-cloudflare/container/boot.sh /opt/livecode/boot.sh \
+    && cp /workspace/avTools/apps/livecode-cloudflare/container/* /opt/livecode/ \
     && chmod 0755 /opt/livecode/boot.sh \
-    && cd /opt/avtools-seed/apps/deno-notebooks \
+    && cd /workspace/avTools \
+    && mkdir -p /opt/avtools-seed \
+    && cp --parents apps/livecode-tldraw/package-lock.json \
+      apps/browser-projections/package-lock.json \
+      apps/livecode-tldraw/vite.config.ts \
+      apps/livecode-tldraw/src/livecodeTldrawDebug.ts \
+      apps/livecode-tldraw/tests/livecodeTldraw.e2e.mjs \
+      apps/deno-notebooks/livecode/visualizer/server.ts \
+      apps/deno-notebooks/livecode/visualizer/main.ts /opt/avtools-seed/ \
+    && cd apps/deno-notebooks \
     && deno cache livecode/visualizer/main.ts
+
+# Reusable engine output, validated against the restored source graph at runtime.
+RUN cd /workspace/avTools \
+    && LIVECODE_BROWSER_HOST_CACHE=/opt/livecode/browser-host-cache \
+      deno run --allow-all apps/deno-notebooks/livecode/browser_host/build_host_assets.ts \
+      --out /tmp/livecode-engine-build \
+    && test -s /opt/livecode/browser-host-cache/current.json \
+    && cp --parents apps/deno-notebooks/livecode/browser_host/build_host_assets.ts \
+      apps/deno-notebooks/livecode/browser_host/asset_cache.ts /opt/avtools-seed/
 
 # These remote metadata files change with each agent release, invalidating the
 # installer layer even when the installer scripts themselves are unchanged.

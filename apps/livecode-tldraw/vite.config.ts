@@ -3,7 +3,7 @@ import { fileURLToPath, URL } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 
 const livecodeServerTarget = process.env.LIVECODE_SERVER_TARGET ??
-  "http://127.0.0.1:7777";
+  "http://localhost:7777";
 
 const livecodeRoutePrefixes = [
   "/health",
