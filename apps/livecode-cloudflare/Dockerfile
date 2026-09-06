@@ -72,5 +72,24 @@ RUN curl -fsSL https://claude.ai/install.sh -o /tmp/install-claude.sh \
 ENV CLAUDE_CONFIG_DIR=/root/.claude
 ENV CODEX_HOME=/root/.codex
 
+# Pin the editor and verify the release artifact. Install at build time, never
+# while waking the devbox. This layer also supplies Git's SSH client/keygen.
+ARG CODE_SERVER_VERSION=4.135.0
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-client \
+    && arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+      amd64) checksum=f87d0d49c6c0a59d41214c9510f506e4123991f2d27b41f6d56f3f5c96458d3e ;; \
+      arm64) checksum=565e77cf74820d1cc3f473a17f41adb0703bbb07dc1243ded66a4740c595fdad ;; \
+      *) exit 1 ;; \
+    esac \
+    && curl -fSL --retry 3 "https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/code-server_${CODE_SERVER_VERSION}_${arch}.deb" -o /tmp/code-server.deb \
+    && echo "$checksum  /tmp/code-server.deb" | sha256sum --check \
+    && apt-get install -y --no-install-recommends /tmp/code-server.deb \
+    && rm /tmp/code-server.deb \
+    && rm -rf /var/lib/apt/lists/* \
+    && code-server --config /dev/null --version \
+    && command -v ssh-keygen
+
 WORKDIR /workspace/avTools
-EXPOSE 5173 7777
+EXPOSE 5173 7777 8080

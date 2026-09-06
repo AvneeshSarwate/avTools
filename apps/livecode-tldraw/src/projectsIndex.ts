@@ -469,6 +469,11 @@ function render(): void {
   const terminalLink = el("a", "terminal-link", "Dev terminal");
   terminalLink.href = "/__cloud/terminal/";
   titleActions.appendChild(terminalLink);
+  const editorLink = el("a", "terminal-link", "Code editor");
+  editorLink.href = "/__cloud/editor/";
+  editorLink.target = "_blank";
+  editorLink.rel = "noopener";
+  titleActions.appendChild(editorLink);
   const createButton = el(
     "button",
     "create-project-button",

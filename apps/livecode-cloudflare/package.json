@@ -17,6 +17,7 @@
     "type-check": "tsc --noEmit",
     "test:checkpoint": "node --test tests/checkpoint.test.mjs",
     "test:credentials": "node --test tests/credential-startup.test.mjs",
+    "test:editor": "node --test tests/editor.test.mjs",
     "check": "npm run types && npm run type-check",
     "dev": "WRANGLER_LOG_PATH=.wrangler/logs wrangler dev",
     "deploy:disabled": "npm run build && WRANGLER_LOG_PATH=.wrangler/logs wrangler deploy",

@@ -1,0 +1,6 @@
+# Keep extension node_modules/dist: those are required at runtime.
+/user-data/logs/
+/user-data/CachedData/
+/user-data/CachedExtensionVSIXs/
+/user-data/Crashpad/
+/user-data/code-server-ipc.sock

@@ -71,6 +71,60 @@ stored in the container.
 
 ## Runtime and persistence
 
+### Browser code editor
+
+Open `/__cloud/editor/` (or **Code editor** in the terminal/projects header).
+code-server opens the actual `/workspace/avTools` worktree, with file search,
+Git diffs, integrated terminals, and extensions from Open VSX. Saving a source
+file participates in the existing workspace checkpointing and Vite hot reload.
+
+The Docker image installs code-server 4.135.0 from checksum-verified release
+packages, plus `openssh-client` for Git over SSH and `ssh-keygen`. Nothing is
+downloaded to install the editor during container startup. Only visiting the
+editor entry page starts its supervisor; the livecoding app does not wait for
+it. The editor remains running after closing the tab until it exits or the
+container stops. An open editor connection can affect idle/sleep behavior.
+
+The Worker strips `/__cloud/editor` and forwards HTTP and WebSockets to port
+8080. **Cloudflare Access must cover the entire hostname**, including editor
+assets and WebSockets. The editor uses `--auth none` behind that boundary;
+never expose its port or an unprotected alternate hostname. Cross-origin
+requests are rejected, code-server origin checks remain enabled, and its
+additional port proxy is disabled. This is a single-user root shell, not a
+read-only file viewer or a multi-tenant IDE.
+
+Editor settings, extension installations, and user state live on local disk at
+`/workspace/.livecode-runtime/editor-state`, separately from the Git worktree.
+They are packed into `livecode/editor/checkpoints/` in R2 every 30 seconds after
+the previous save, and on graceful editor shutdown. Logs and selected disposable
+caches are excluded; extension `node_modules` and `dist` files are retained.
+Like source checkpoints, these archives are file-level crash recovery, not
+transactional backups of running extension databases. Settings may contain
+extension credentials: treat these R2 objects as sensitive. Do not rely on
+unsaved buffers or running terminals surviving container replacement.
+
+Restoration occurs on the first editor launch of each container, with checksum
+validation and previous-generation fallback; corrupt state fails closed rather
+than overwriting it. Restarting just the editor retains local, not-yet-synced
+changes. Concurrent launch requests use a container-local singleton lock.
+Editor output is available in `/workspace/.livecode-runtime/editor.log`.
+
+Validation: `npm run test:editor`, `npm run test:checkpoint`,
+`npm run test:credentials`, `npm run type-check`, and `npm run build`.
+Deploying the editor requires both the new image and Worker. The terminal link
+ships with Worker assets; the projects-page link requires pulling/merging the
+updated source into an existing persisted workspace.
+
+Deployed 2026-09-06 as container application version 14 and Worker version
+`a3a04d2a-286e-4e3b-a387-a13e228d9c28`. Verified the running release serves the
+editor HTML and health endpoint, upgrades editor WebSockets (101), and preserves
+the existing SSH key exactly against R2. Public unauthenticated editor requests
+still redirect to Access. First observed editor launch on the warm devbox took
+3.48 seconds; this is not a container cold-start measurement. The projects-page
+link was applied to the persisted workspace and checkpointed before rollout.
+
+### Workspace
+
 Vite and Deno run from the container's local disk so file watching behaves like
 a normal development machine. The workspace is checkpointed to R2 every 30 seconds
 after the preceding checkpoint completes, and again on SIGTERM. Dependency trees, generated builds, logs, and `.env`

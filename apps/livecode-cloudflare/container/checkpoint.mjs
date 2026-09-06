@@ -10,9 +10,9 @@ import { fileURLToPath } from 'node:url';
 
 const excludes = join(dirname(fileURLToPath(import.meta.url)), 'repo-excludes.txt');
 const exec = promisify(execFile);
-const sync = async (source, target, checksum = false) => (await exec('rsync', [
+const sync = async (source, target, checksum = false, excludeFile = excludes) => (await exec('rsync', [
   '--archive', '--delete', '--itemize-changes', ...(checksum ? ['--checksum'] : []),
-  `--exclude-from=${excludes}`, `${source}/`, `${target}/`,
+  `--exclude-from=${excludeFile}`, `${source}/`, `${target}/`,
 ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })).stdout;
 async function digest(path) {
   const hash = createHash('sha256');
@@ -31,7 +31,7 @@ async function manifest(path) {
   }
 }
 
-export async function restore(workspace, bucket, runtime) {
+export async function restore(workspace, bucket, runtime, { excludeFile = excludes, requiredDirectory = '.git' } = {}) {
   const root = join(bucket, 'checkpoints');
   let found = false;
   for (const name of ['current.json', 'previous.json']) {
@@ -47,10 +47,10 @@ export async function restore(workspace, bucket, runtime) {
       const tree = join(stage, 'tree');
       await mkdir(tree);
       await exec('tar', ['-xzf', archive, '-C', tree]);
-      if (!(await stat(join(tree, '.git'))).isDirectory()) throw new Error('Checkpoint lacks .git');
+      if (!(await stat(join(tree, requiredDirectory))).isDirectory()) throw new Error(`Checkpoint lacks ${requiredDirectory}`);
       // Validate before touching the live worktree; excluded baked dependencies
       // survive while --delete restores source deletions faithfully.
-      await sync(tree, workspace, true);
+      await sync(tree, workspace, true, excludeFile);
       await writeFile(join(runtime, 'restored-checkpoint.json'), JSON.stringify(entry));
       console.log(`[livecode] restored ${name}: ${entry.archive}`);
       return true;
@@ -66,7 +66,7 @@ export async function restore(workspace, bucket, runtime) {
   return false;
 }
 
-export async function save(workspace, bucket, runtime) {
+export async function save(workspace, bucket, runtime, { excludeFile = excludes, requiredDirectory = '.git' } = {}) {
   const root = join(bucket, 'checkpoints');
   const stage = join(runtime, 'checkpoint-tree');
   await mkdir(root, { recursive: true });
@@ -78,13 +78,13 @@ export async function save(workspace, bucket, runtime) {
   // next rsync reports no changes against its partially updated local mirror.
   await writeFile(dirty, 'pending');
   // Local checksums also catch same-size edits within rsync's mtime precision.
-  const changes = await sync(workspace, stage, true);
+  const changes = await sync(workspace, stage, true, excludeFile);
   const receipt = await manifest(join(runtime, 'restored-checkpoint.json'));
   if (!pending && !changes.trim() && receipt) {
     await rm(dirty);
     return;
   }
-  if (!(await stat(join(stage, '.git'))).isDirectory()) throw new Error('Workspace lacks .git');
+  if (!(await stat(join(stage, requiredDirectory))).isDirectory()) throw new Error(`Workspace lacks ${requiredDirectory}`);
   const archive = join(runtime, 'checkpoint.tar.gz');
   // Archive the local mirror, so concurrent edits cannot interrupt tar. This
   // is file-level crash continuity, not an application-transaction snapshot.
