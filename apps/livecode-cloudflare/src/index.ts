@@ -530,9 +530,18 @@ async function probeBootProcess(
   if (!process) return sandbox.markDevBoxIdle(generation);
 
   try {
+    // Vite may listen before Deno now that they launch concurrently. Only the
+    // supervisor can declare the combined application ready.
+    const bootStatus = await readBootStatus(sandbox);
+    if (bootStatus?.phase !== "ready") {
+      return sandbox.markDevBoxStarting(
+        generation, "waiting_for_services", processStatus.id,
+        processStatus.startedAt, bootStatus?.phase,
+      );
+    }
     await process.waitForPort(UI_PORT, {
       mode: "http",
-      path: "/",
+      path: "/projects.html",
       status: { min: 200, max: 399 },
       timeout: STARTUP_PROBE_TIMEOUT_MS,
       interval: 250,
@@ -604,7 +613,12 @@ async function ensureDevBoxStarted(
 
   const generation = claim.status.generation;
   try {
+    const mountStarted = Date.now();
     await mountStateBucket(sandbox);
+    startupLog("info", "startup.mount.completed", {
+      generation, durationMs: Date.now() - mountStarted,
+      note: "Includes lazy container acquisition and SDK startup",
+    });
     await sandbox.markDevBoxStarting(generation, "discovering_process");
 
     const processes = await sandbox.listProcesses();
@@ -832,18 +846,21 @@ async function statusResponse(sandbox: LivecodeSandbox): Promise<Response> {
     );
   }
 
-  const [processes, terminals, claudeStatus, keepAliveStatus] = await Promise
+  const [processes, terminals, claudeStatus, keepAliveStatus, bootTimings] = await Promise
     .all([
       sandbox.listProcesses(),
       sandbox.listTerminals(),
       sandbox.readFile(CLAUDE_STATUS_FILE).catch(() => null),
       sandbox.readFile(KEEPALIVE_STATUS_FILE).catch(() => null),
+      sandbox.readFile(`${RUNTIME_ROOT}/boot-timings.jsonl`).catch(() => null),
     ]);
   return Response.json(
     {
       ok: true,
       workspace: WORKSPACE_ROOT,
       startup,
+      // Keep JSONL as text: an incomplete last line must not break status.
+      bootTimings: bootTimings?.success ? bootTimings.content : null,
       claude: claudeStatus?.success ? claudeStatus.content.trim() : "unknown",
       keepAlive: keepAliveStatus?.success &&
         keepAliveStatus.content.trim() === "true",

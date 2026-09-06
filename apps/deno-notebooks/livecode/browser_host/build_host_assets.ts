@@ -17,6 +17,12 @@
 // never has to resolve at bundle time.
 
 import { dirname, fromFileUrl, join, resolve } from "jsr:@std/path@1";
+import {
+  type CacheInputs,
+  captureInputs,
+  publishAssetCache,
+  restoreAssetCache,
+} from "./asset_cache.ts";
 
 const HERE = dirname(fromFileUrl(import.meta.url));
 const REPO_ROOT = resolve(HERE, "../../../..");
@@ -160,6 +166,11 @@ export async function buildBrowserHostAssets(
   options: BuildBrowserHostAssetsOptions,
 ): Promise<void> {
   const outDir = options.outDir;
+  const bakedCache = Deno.env.get("LIVECODE_BROWSER_HOST_BAKED_CACHE");
+  const writableCache = Deno.env.get("LIVECODE_BROWSER_HOST_CACHE");
+  for (const cache of [writableCache, bakedCache]) {
+    if (cache && await restoreAssetCache(REPO_ROOT, cache, outDir)) return;
+  }
   const entriesDir = join(outDir, "entries");
   await Deno.mkdir(entriesDir, { recursive: true });
 
@@ -176,6 +187,50 @@ export async function buildBrowserHostAssets(
     `import "${join(HERE, "engine_page.ts")}";\n`,
   );
   entryPaths.push(enginePageEntry);
+
+  let cacheInputs: CacheInputs | undefined;
+  if (writableCache) {
+    try {
+      // Ask Deno for the resolved graph, rather than guessing which framework
+      // folders the bundle imports. This runs only on cache misses/builds.
+      const graphEntry = join(entriesDir, "cache_graph.ts");
+      await Deno.writeTextFile(
+        graphEntry,
+        [...entryPaths, join(REPO_ROOT, "packages/midi/browser.ts")]
+          .map((path) => `import ${JSON.stringify(path)};`).join("\n"),
+      );
+      const graphResult = await new Deno.Command(Deno.execPath(), {
+        args: ["info", "--json", "--config", configPath, graphEntry],
+        cwd: REPO_ROOT,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      if (!graphResult.success) {
+        throw new Error(new TextDecoder().decode(graphResult.stderr));
+      }
+      const graph = JSON.parse(new TextDecoder().decode(graphResult.stdout));
+      const paths = [
+        join(REPO_ROOT, "deno.json"),
+        join(REPO_ROOT, "deno.lock"),
+        join(HERE, "build_host_assets.ts"),
+        join(HERE, "asset_cache.ts"),
+        ...SIX_SINES_RUNTIME_FILES.map((name) =>
+          join(REPO_ROOT, "packages/six-sines", name)
+        ),
+      ];
+      for (const module of graph.modules) {
+        if (module.error) throw new Error(module.error);
+        if (module.specifier.startsWith("file:")) {
+          const path = fromFileUrl(module.specifier);
+          if (!path.startsWith(entriesDir + "/")) paths.push(path);
+        }
+      }
+      cacheInputs = await captureInputs(REPO_ROOT, paths);
+    } catch (error) {
+      // Caching must never prevent a normal build (e.g. an external local import).
+      console.warn(`[livecode] asset dependency capture skipped: ${error}`);
+    }
+  }
 
   await runDenoBundle("host assets", [
     "--code-splitting",
@@ -228,6 +283,13 @@ ${IMPORT_MAP_HTML}
 <body>livecode observer tab</body>
 `,
   );
+  if (writableCache && cacheInputs) {
+    try {
+      await publishAssetCache(REPO_ROOT, writableCache, outDir, cacheInputs);
+    } catch (error) {
+      console.warn(`[livecode] asset cache publication skipped: ${error}`);
+    }
+  }
 }
 
 if (import.meta.main) {
