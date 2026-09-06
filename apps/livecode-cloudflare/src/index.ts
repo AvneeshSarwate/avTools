@@ -7,6 +7,7 @@ import {
   type ProcessStatus,
   type SandboxProcess,
 } from "@cloudflare/sandbox";
+import { EDITOR_PATH, EDITOR_PORT, editorPendingResponse, editorRequestAllowed, editorUpstreamRequest } from "./editor";
 
 export { ContainerProxy };
 
@@ -1015,6 +1016,13 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   if (String(env.LIVECODE_ENABLED) !== "true") return disabledResponse();
 
   const url = new URL(request.url);
+  if (url.pathname === EDITOR_PATH || url.pathname.startsWith(`${EDITOR_PATH}/`)) {
+    if (!editorRequestAllowed(request)) return new Response("Forbidden", { status: 403 });
+    if (url.pathname === EDITOR_PATH) {
+      url.pathname += "/";
+      return Response.redirect(url.toString(), 307);
+    }
+  }
   if (url.pathname === "/__cloud/terminal") {
     return Response.redirect(`${url.origin}/__cloud/terminal/`, 302);
   }
@@ -1045,8 +1053,44 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   if (url.pathname.startsWith("/__cloud/terminal/")) {
     return env.ASSETS.fetch(request);
   }
+  if (url.pathname.startsWith(`${EDITOR_PATH}/`)) {
+    return proxyEditorRequest(request, sandbox);
+  }
 
   return proxyDevBoxRequest(request, sandbox);
+}
+
+async function proxyEditorRequest(request: Request, sandbox: LivecodeSandbox): Promise<Response> {
+  const startup = await ensureDevBoxStarted(sandbox);
+  if (startup.state !== "ready") return startupResponse(request, startup);
+  const isSocket = request.headers.get("Upgrade")?.toLowerCase() === "websocket";
+  const isEntry = new URL(request.url).pathname === `${EDITOR_PATH}/` && !isSocket;
+  try {
+    // Only document entry starts the editor. Asset requests and WebSockets
+    // forward directly; no process listing/spawning on every asset fetch.
+    if (isEntry) {
+      const processes = await sandbox.listProcesses();
+      const running = processes.find((process) => process.state === "running" &&
+        process.command.includes("/opt/livecode/editor.sh"));
+      const existing = running
+        ? await sandbox.getProcess(running.id)
+        : null;
+      const process = existing ?? await sandbox.exec(["/bin/bash", "/opt/livecode/editor.sh"]);
+      await process.waitForPort(EDITOR_PORT, {
+        mode: "http", path: "/healthz", status: 200,
+        timeout: STARTUP_PROBE_TIMEOUT_MS, interval: 250,
+      });
+    }
+    const upstream = editorUpstreamRequest(request);
+    return isSocket
+      ? await sandbox.wsConnect(upstream, EDITOR_PORT)
+      : await sandbox.containerFetch(upstream, EDITOR_PORT);
+  } catch (error) {
+    // Editor failures must not mark the livecoding app itself as failed.
+    const pending = isReadinessTimeout(error) || isPlatformTransientError(error);
+    if (!pending) startupLog("error", "editor.failed", { error: errorDetails(error) });
+    return editorPendingResponse(request, !pending);
+  }
 }
 
 export default {
