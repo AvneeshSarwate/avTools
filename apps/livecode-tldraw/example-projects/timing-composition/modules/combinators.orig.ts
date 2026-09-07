@@ -1,23 +1,9 @@
 import type { TimeContext } from "@avtools/core-timing";
+import p5 from "p5";
 import { canvasParams } from "canvas-params";
 import { canvasSurface } from "canvas-surface";
 
-/**
- * 4. Combinators: a score assembled from higher-order functions.
- *
- * Because a timed behavior is a function of its context, behaviors compose
- * like functions. `seq` runs behaviors one after another, `repeat` runs one
- * N times, and `par` runs several at once on branchWait children and joins
- * them. `section` makes a leaf behavior that draws itself onto the timeline.
- * The score is rebuilt each cycle from the pane's values, so `repeats` and
- * the section lengths reshape the structure live. Watch the join: `par`
- * ends when its longest voice ends, and the outro starts exactly then.
- */
-const WIDTH = 480;
-const HEIGHT = 300;
-const LANES = 4;
-const WINDOW_SEC = 12;
-
+// Build a score from functions: sequence, repeat, and parallel.
 const params = canvasParams(
   "composition/combinators",
   { running: true, repeats: 2, verseSec: 0.8, melodySec: 1.6, drumsSec: 1.0 },
@@ -31,38 +17,14 @@ const params = canvasParams(
 );
 
 type Timed = (c: TimeContext) => Promise<void>;
+const state = { active: [false, false, false, false, false], cycles: 0 };
+const labels = ["intro", "verse", "melody", "drums", "outro"];
 
-interface Block {
-  name: string;
-  color: string;
-  lane: number;
-  startAt: number;
-  endAt: number | null;
-}
-
-interface State {
-  blocks: Block[];
-  laneBusy: boolean[];
-  cycles: number;
-  joinedAt: number | null;
-}
-
-function freshState(): State {
-  return { blocks: [], laneBusy: Array(LANES).fill(false), cycles: 0, joinedAt: null };
-}
-
-/** The one context method the join needs, typed structurally so this helper
- * stays outside the analyzer's timed scopes (see timing-examples/branches). */
-interface JoinPoint {
-  wait(beats: number): Promise<void>;
-}
-
-async function joinAll(c: JoinPoint, children: Promise<unknown>[]) {
+// Structural typing keeps Promise.all outside the analyzer's timed scopes.
+async function joinAll(c: { wait(beats: number): Promise<void> }, children: Promise<unknown>[]) {
   await Promise.all(children);
-  await c.wait(0);
+  await c.wait(0); // Let the parent adopt the children's finish time.
 }
-
-// --- combinators ------------------------------------------------------------
 
 function seq(...steps: Timed[]): Timed {
   return async (c: TimeContext) => {
@@ -70,10 +32,9 @@ function seq(...steps: Timed[]): Timed {
   };
 }
 
-function repeat(times: () => number, step: Timed): Timed {
+function repeat(times: number, step: Timed): Timed {
   return async (c: TimeContext) => {
-    const n = Math.max(1, Math.round(times()));
-    for (let i = 0; i < n; i++) await step(c);
+    for (let i = 0; i < times; i++) await step(c);
   };
 }
 
@@ -83,102 +44,80 @@ function par(...voices: Timed[]): Timed {
   };
 }
 
-// --- leaves -----------------------------------------------------------------
-
-function section(state: State, name: string, seconds: () => number, color: string): Timed {
+function section(index: number, seconds: number): Timed {
   return async (c: TimeContext) => {
-    let lane = state.laneBusy.indexOf(false);
-    if (lane < 0) lane = LANES - 1;
-    state.laneBusy[lane] = true;
-    const block: Block = { name, color, lane, startAt: c.time, endAt: null };
-    state.blocks.push(block);
-    await c.waitSec(seconds());
-    block.endAt = c.time;
-    state.laneBusy[lane] = false;
+    state.active[index] = true;
+    try {
+      await c.waitSec(seconds);
+    } finally {
+      state.active[index] = false;
+    }
   };
 }
 
-export default async function (ctx: TimeContext) {
-  const g = canvasSurface("composition/combinators").createCanvas(WIDTH, HEIGHT)
-    .getContext("2d")!;
-  let state = freshState();
-  let scene: ReturnType<TimeContext["branch"]> | null = null;
-
-  const runScene = async (c: TimeContext) => {
-    for (;;) {
-      const score = seq(
-        section(state, "intro", () => 0.6, "#78c8ff"),
-        repeat(() => params.repeats, section(state, "verse", () => params.verseSec, "#4fd08a")),
-        par(
-          section(state, "melody", () => params.melodySec, "#f2d38b"),
-          section(state, "drums", () => params.drumsSec, "#ff9a6a"),
-        ),
-        section(state, "outro", () => 0.6, "#78c8ff"),
-      );
-      await score(c);
-      state.cycles += 1;
-      await c.waitSec(0.5);
-    }
-  };
-
+async function play(c: TimeContext) {
   while (true) {
-    await ctx.waitSec(1 / 60);
-    if (params.running && !scene) {
-      state = freshState();
-      scene = ctx.branch(runScene, "combinators-scene");
-    } else if (!params.running && scene) {
-      scene.cancel();
-      scene = null;
-    }
-    // Forget blocks that scrolled off the left edge.
-    const cutoff = ctx.time - WINDOW_SEC;
-    state.blocks = state.blocks.filter((b) => b.endAt === null || b.endAt > cutoff);
-    draw(g, state, ctx.time, params.running);
+    const score = seq(
+      section(0, 0.6),
+      repeat(Math.round(params.repeats), section(1, params.verseSec)),
+      par(section(2, params.melodySec), section(3, params.drumsSec)),
+      section(4, 0.6),
+    );
+    await score(c);
+    state.cycles += 1;
+    await c.waitSec(0.5);
   }
 }
 
-function draw(g: CanvasRenderingContext2D, state: State, now: number, running: boolean) {
-  g.fillStyle = "#12161f";
-  g.fillRect(0, 0, WIDTH, HEIGHT);
-  g.font = "13px ui-monospace, monospace";
-  g.textBaseline = "top";
-  g.fillStyle = "#dce5df";
-  g.fillText(
-    `seq(intro, repeat(${Math.round(params.repeats)}, verse), par(melody, drums), outro)`,
-    16,
-    14,
-  );
+// p5 reads state; all animation changes happen in the timing functions above.
+let instance: p5 | null = null;
 
-  const left = 16;
-  const right = WIDTH - 16;
-  const pxPerSec = (right - left) / WINDOW_SEC;
-  const top = 50;
-  const laneH = 40;
-  for (const block of state.blocks) {
-    const x0 = right - (now - block.startAt) * pxPerSec;
-    const x1 = block.endAt === null ? right : right - (now - block.endAt) * pxPerSec;
-    const y = top + block.lane * laneH;
-    const x = Math.max(left, x0);
-    const w = Math.max(2, x1 - x - 2); // a 2 px gap separates adjacent blocks
-    g.fillStyle = block.color;
-    g.globalAlpha = block.endAt === null ? 1 : 0.55;
-    g.fillRect(x, y, w, laneH - 8);
-    g.globalAlpha = 1;
-    if (g.measureText(block.name).width + 8 <= w) {
-      g.fillStyle = "#12161f";
-      g.fillText(block.name, x + 4, y + 10);
+export function stop() {
+  instance?.remove();
+  instance = null;
+}
+
+export default async function run(ctx: TimeContext) {
+  stop();
+  instance = new p5((p: p5) => {
+    p.setup = () => {
+      p.pixelDensity(1);
+      p.createCanvas(480, 300);
+      p.textSize(14);
+    };
+    p.draw = () => {
+      p.background("#12161f");
+      p.noStroke();
+      p.fill("#dce5df");
+      p.text("intro → verses → melody + drums → outro", 16, 40);
+      labels.forEach((label, i) => {
+        p.fill(state.active[i] ? "#78c8ff" : "#232a33");
+        p.rect(16 + i * 92, 100, 80, 80, 8);
+        p.fill("#dce5df");
+        p.text(label, 20 + i * 92, 210);
+      });
+      p.text(`completed: ${state.cycles}`, 16, 255);
+      p.noStroke();
+      p.fill("#9ca8a2");
+      p.text(params.running ? "" : "paused — turn running on to restart", 16, 286);
+    };
+  }, canvasSurface("composition/combinators").container);
+
+  let scene: ReturnType<TimeContext["branch"]> | null = null;
+  try {
+    while (true) {
+      if (params.running && !scene) {
+        state.active.fill(false);
+        state.cycles = 0;
+        scene = ctx.branch(play, "combinators");
+      } else if (!params.running && scene) {
+        scene.cancel();
+        scene = null;
+      }
+      await ctx.waitSec(1 / 60);
     }
+  } finally {
+    scene?.cancel();
+    stop();
   }
-  g.strokeStyle = "#dce5df";
-  g.beginPath();
-  g.moveTo(right, top - 6);
-  g.lineTo(right, top + LANES * laneH);
-  g.stroke();
-
-  g.fillStyle = "#9ca8a2";
-  g.fillText(
-    running ? `cycles completed: ${state.cycles} · lanes = concurrent voices` : "paused (running = false)",
-    16,
-    HEIGHT - 24,
-  );
 }

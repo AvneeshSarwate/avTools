@@ -1,25 +1,9 @@
 import type { TimeContext } from "@avtools/core-timing";
+import p5 from "p5";
 import { canvasParams } from "canvas-params";
 import { canvasSurface } from "canvas-surface";
 
-/**
- * 4. Cancellation cascades through the context tree.
- *
- * Every example's `running` toggle already calls `scene.cancel()`; this one
- * shows what that does to a whole subtree.
- *
- * The parent keeps a heartbeat running and, every few seconds, spawns a
- * "family": one child branch that itself spawns two grandchild orbits. After
- * `lifetimeSec` the parent calls `family.cancel()` on the handle it got from
- * `branch`. That aborts the child and, recursively, every grandchild: their
- * pending waits reject, their loops end, and the counters prove no tick ever
- * lands after the cancel instant. `handleCancel` runs cleanup exactly once on
- * cancellation (preferred over Promise.finally for cancel-only cleanup). The
- * parent's own heartbeat is untouched: cancellation only flows downward.
- */
-const WIDTH = 480;
-const HEIGHT = 300;
-
+// Cancel a family of branches while the parent heartbeat keeps going.
 const params = canvasParams(
   "timing/cancel",
   { running: true, lifetimeSec: 2, gapSec: 1 },
@@ -30,173 +14,92 @@ const params = canvasParams(
   },
 );
 
-interface Sprite {
-  angle: number;
-  radius: number;
-  speed: number;
-  color: string;
-}
+const state = { heartbeat: 0, angles: [0, 0], visible: false, cleanups: 0 };
 
-interface State {
-  heartbeat: number;
-  familyIndex: number;
-  familyBornAt: number | null;
-  familyCancelledAt: number | null;
-  sprites: Sprite[];
-  childTicks: number;
-  grandTicks: number;
-  ticksAtCancel: number | null;
-  orphanTicks: number;
-  cleanups: number;
-}
-
-function freshState(): State {
-  return {
-    heartbeat: 0,
-    familyIndex: 0,
-    familyBornAt: null,
-    familyCancelledAt: null,
-    sprites: [],
-    childTicks: 0,
-    grandTicks: 0,
-    ticksAtCancel: null,
-    orphanTicks: 0,
-    cleanups: 0,
-  };
-}
-
-export default async function (ctx: TimeContext) {
-  const g = canvasSurface("timing/cancel").createCanvas(WIDTH, HEIGHT)
-    .getContext("2d")!;
-  let state = freshState();
-  let scene: ReturnType<TimeContext["branch"]> | null = null;
-
-  const runScene = async (c: TimeContext) => {
-    // The parent's heartbeat: a sibling branch that outlives every family.
-    c.branch(async (h) => {
-      while (true) {
-        state.heartbeat += 1;
-        await h.waitSec(0.5);
-      }
-    }, "heartbeat");
-
-    for (let n = 0;; n++) {
-      state.familyIndex = n;
-      state.familyBornAt = c.time;
-      state.familyCancelledAt = null;
-      state.ticksAtCancel = null;
-      state.childTicks = 0;
-      state.grandTicks = 0;
-      state.sprites = [
-        { angle: 0, radius: 70, speed: 2.2, color: "#78c8ff" },
-        { angle: Math.PI, radius: 40, speed: -3.4, color: "#f2d38b" },
-      ];
-
-      const family = c.branch(async (child) => {
-        for (const sprite of state.sprites) {
-          child.branch(async (grand) => {
-            while (true) {
-              sprite.angle += sprite.speed / 60;
-              state.grandTicks += 1;
-              if (state.ticksAtCancel !== null) state.orphanTicks += 1;
-              await grand.waitSec(1 / 60);
-            }
-          }, "orbit");
-        }
-        while (true) {
-          state.childTicks += 1;
-          if (state.ticksAtCancel !== null) state.orphanTicks += 1;
-          await child.waitSec(0.1);
-        }
-      }, `family-${n}`);
-      family.handleCancel(() => {
-        state.cleanups += 1;
-        state.sprites = [];
-      });
-
-      await c.waitSec(params.lifetimeSec);
-      state.ticksAtCancel = state.childTicks + state.grandTicks;
-      state.familyCancelledAt = c.time;
-      family.cancel();
-
-      await c.waitSec(params.gapSec);
-    }
-  };
-
+async function orbit(c: TimeContext, index: number) {
   while (true) {
-    await ctx.waitSec(1 / 60);
-    if (params.running && !scene) {
-      state = freshState();
-      scene = ctx.branch(runScene, "cancel-scene");
-    } else if (!params.running && scene) {
-      scene.cancel();
-      scene = null;
-    }
-    draw(g, state, ctx.time, params.running);
+    state.angles[index] += (index + 1) / 60;
+    await c.waitSec(1 / 60);
   }
 }
 
-function draw(
-  g: CanvasRenderingContext2D,
-  state: State,
-  now: number,
-  running: boolean,
-) {
-  g.fillStyle = "#12161f";
-  g.fillRect(0, 0, WIDTH, HEIGHT);
-  g.font = "13px ui-monospace, monospace";
-  g.textBaseline = "top";
-
-  // Parent heartbeat: pulses regardless of what happens to the families.
-  const pulse = state.heartbeat % 2 === 0 ? 1 : 0.55;
-  g.fillStyle = `rgba(79, 208, 138, ${pulse})`;
-  g.fillRect(16, 14, 12, 12);
-  g.fillStyle = "#dce5df";
-  g.fillText(`parent heartbeat ${state.heartbeat}`, 36, 13);
-
-  const cx = 150;
-  const cy = 170;
-  g.strokeStyle = "#3a4450";
-  g.beginPath();
-  g.arc(cx, cy, 4, 0, Math.PI * 2);
-  g.stroke();
-  for (const sprite of state.sprites) {
-    g.fillStyle = sprite.color;
-    g.beginPath();
-    g.arc(
-      cx + Math.cos(sprite.angle) * sprite.radius,
-      cy + Math.sin(sprite.angle) * sprite.radius,
-      8,
-      0,
-      Math.PI * 2,
-    );
-    g.fill();
+async function play(c: TimeContext) {
+  c.branch(async (beat) => {
+    while (true) {
+      state.heartbeat += 1;
+      await beat.waitSec(0.5);
+    }
+  }, "heartbeat");
+  while (true) {
+    state.visible = true;
+    const family = c.branch(async (child) => {
+      child.branch(async (a) => { await orbit(a, 0); }, "dot-A");
+      child.branch(async (b) => { await orbit(b, 1); }, "dot-B");
+      while (true) await child.waitSec(1);
+    }, "family");
+    family.handleCancel(() => {
+      state.visible = false;
+      state.cleanups += 1;
+    });
+    await c.waitSec(params.lifetimeSec);
+    family.cancel(); // Cancels both orbit grandchildren too.
+    await c.waitSec(params.gapSec);
   }
+}
 
-  g.fillStyle = "#9ca8a2";
-  const x = 280;
-  let y = 60;
-  const line = (text: string, color = "#9ca8a2") => {
-    g.fillStyle = color;
-    g.fillText(text, x, y);
-    y += 20;
-  };
-  if (!running) {
-    line("paused (running = false)");
-    return;
+// p5 reads state; all animation changes happen in the timing functions above.
+let instance: p5 | null = null;
+
+export function stop() {
+  instance?.remove();
+  instance = null;
+}
+
+export default async function run(ctx: TimeContext) {
+  stop();
+  instance = new p5((p: p5) => {
+    p.setup = () => {
+      p.pixelDensity(1);
+      p.createCanvas(480, 300);
+      p.textSize(14);
+    };
+    p.draw = () => {
+      p.background("#12161f");
+      p.noStroke();
+      p.fill(state.heartbeat % 2 ? "#4fd08a" : "#236546");
+      p.circle(30, 30, 18);
+      p.fill("#dce5df");
+      p.text(`parent heartbeat: ${state.heartbeat}`, 50, 35);
+      if (state.visible) {
+        state.angles.forEach((angle, i) => {
+          p.fill(i === 0 ? "#78c8ff" : "#f2d38b");
+          p.circle(240 + Math.cos(angle) * 80, 150 + Math.sin(angle) * 80, 20);
+        });
+      }
+      p.fill("#9ca8a2");
+      p.text(`family ${state.visible ? "playing" : "cancelled"} · cleanups: ${state.cleanups}`, 16, 255);
+      p.noStroke();
+      p.fill("#9ca8a2");
+      p.text(params.running ? "" : "paused — turn running on to restart", 16, 286);
+    };
+  }, canvasSurface("timing/cancel").container);
+
+  let scene: ReturnType<TimeContext["branch"]> | null = null;
+  try {
+    while (true) {
+      if (params.running && !scene) {
+        state.heartbeat = 0;
+        state.angles = [0, 0];
+        state.cleanups = 0;
+        scene = ctx.branch(play, "cancel");
+      } else if (!params.running && scene) {
+        scene.cancel();
+        scene = null;
+      }
+      await ctx.waitSec(1 / 60);
+    }
+  } finally {
+    scene?.cancel();
+    stop();
   }
-  line(`family #${state.familyIndex}`, "#dce5df");
-  if (state.familyBornAt !== null && state.familyCancelledAt === null) {
-    line(`alive ${(now - state.familyBornAt).toFixed(1)} s`, "#78c8ff");
-    line(`child ticks ${state.childTicks}`);
-    line(`grandchild ticks ${state.grandTicks}`);
-  } else if (state.familyCancelledAt !== null) {
-    line(`cancelled ${(now - state.familyCancelledAt).toFixed(1)} s ago`, "#ff9a6a");
-    line(`ticks at cancel ${state.ticksAtCancel}`);
-    line(
-      `ticks after cancel ${state.orphanTicks}`,
-      state.orphanTicks === 0 ? "#4fd08a" : "#ff6a6a",
-    );
-  }
-  line(`handleCancel ran ${state.cleanups}×`);
 }
