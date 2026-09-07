@@ -1,22 +1,9 @@
 import type { TimeContext } from "@avtools/core-timing";
+import p5 from "p5";
 import { canvasParams } from "canvas-params";
 import { canvasSurface } from "canvas-surface";
 
-/**
- * 3. Momentary controls: a checkbox as a trigger, a branch per event.
- *
- * The pane has no buttons, but a boolean works as one: the scene loop polls
- * `fire` at 60 fps, and when it sees `true` it launches a `burst` branch and
- * writes `false` straight back into the params object. The engine samples
- * code writes every tick, so the pane's checkbox clears itself. Each burst
- * is its own timeline started with `branch` (fire and forget): tick the box
- * quickly and several bursts overlap, each expanding on its own clock.
- * `autoFireSec` fires one on a timer so the demo moves unattended; set it
- * to 0 to drive it by hand.
- */
-const WIDTH = 480;
-const HEIGHT = 300;
-
+// Consume the fire checkbox and start one independent burst per event.
 const params = canvasParams(
   "composition/triggers",
   { running: true, fire: false, burstSec: 1.4, autoFireSec: 1.5 },
@@ -28,115 +15,86 @@ const params = canvasParams(
   },
 );
 
-interface Burst {
-  x: number;
-  y: number;
-  radius: number;
-  alpha: number;
-  hue: number;
-}
+type Ring = { x: number; y: number; size: number; alpha: number };
+const state = { rings: [] as Ring[] };
 
-interface State {
-  bursts: Burst[];
-  fired: number;
-  manual: number;
-}
-
-function freshState(): State {
-  return { bursts: [], fired: 0, manual: 0 };
-}
-
-/** One event's whole life, on its own timeline. */
-async function burst(c: TimeContext, state: State, origin: { x: number; y: number }) {
-  const b: Burst = {
-    x: origin.x,
-    y: origin.y,
-    radius: 0,
-    alpha: 1,
-    hue: Math.floor(c.random() * 360),
-  };
-  state.bursts.push(b);
-  state.fired += 1;
+async function burst(c: TimeContext) {
+  const ring = { x: 80 + c.random() * 320, y: 80 + c.random() * 140, size: 20, alpha: 1 };
+  state.rings.push(ring);
   const seconds = params.burstSec;
   const start = c.time;
   try {
     while (c.time - start < seconds) {
       const t = (c.time - start) / seconds;
-      b.radius = 10 + 110 * (1 - (1 - t) * (1 - t));
-      b.alpha = 1 - t;
+      ring.size = 20 + 180 * t;
+      ring.alpha = 1 - t;
       await c.waitSec(1 / 60);
     }
   } finally {
-    // Runs on natural completion and on cancel (the running toggle), so a
-    // cancelled burst never lingers in the list.
-    state.bursts.splice(state.bursts.indexOf(b), 1);
+    state.rings = state.rings.filter((item) => item !== ring);
   }
 }
 
-export default async function (ctx: TimeContext) {
-  const g = canvasSurface("composition/triggers").createCanvas(WIDTH, HEIGHT)
-    .getContext("2d")!;
-  let state = freshState();
-  let scene: ReturnType<TimeContext["branch"]> | null = null;
-
-  const runScene = async (c: TimeContext) => {
-    let lastAuto = c.time;
-    for (;;) {
-      await c.waitSec(1 / 60);
-      if (params.fire) {
-        params.fire = false; // consumed: the pane's checkbox clears itself
-        state.manual += 1;
-        const origin = { x: 60 + c.random() * (WIDTH - 120), y: 60 + c.random() * (HEIGHT - 120) };
-        c.branch(async (b) => {
-          await burst(b, state, origin);
-        }, "burst");
-      }
-      if (params.autoFireSec > 0 && c.time - lastAuto >= params.autoFireSec) {
-        lastAuto = c.time;
-        const origin = { x: 60 + c.random() * (WIDTH - 120), y: 60 + c.random() * (HEIGHT - 120) };
-        c.branch(async (b) => {
-          await burst(b, state, origin);
-        }, "auto-burst");
-      }
-    }
-  };
-
+async function play(c: TimeContext) {
+  let lastAuto = c.time;
   while (true) {
-    await ctx.waitSec(1 / 60);
-    if (params.running && !scene) {
-      state = freshState();
-      scene = ctx.branch(runScene, "triggers-scene");
-    } else if (!params.running && scene) {
-      scene.cancel();
-      scene = null;
+    const auto = params.autoFireSec > 0 && c.time - lastAuto >= params.autoFireSec;
+    if (params.fire || auto) {
+      params.fire = false;
+      if (auto) lastAuto = c.time;
+      c.branch(burst, "burst");
     }
-    draw(g, state, params.running);
+    await c.waitSec(1 / 60);
   }
 }
 
-function draw(g: CanvasRenderingContext2D, state: State, running: boolean) {
-  g.fillStyle = "#12161f";
-  g.fillRect(0, 0, WIDTH, HEIGHT);
-  g.font = "13px ui-monospace, monospace";
-  g.textBaseline = "top";
+// p5 reads state; all animation changes happen in the timing functions above.
+let instance: p5 | null = null;
 
-  for (const b of state.bursts) {
-    g.strokeStyle = `hsla(${b.hue}, 80%, 65%, ${b.alpha})`;
-    g.lineWidth = 3;
-    g.beginPath();
-    g.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
-    g.stroke();
+export function stop() {
+  instance?.remove();
+  instance = null;
+}
+
+export default async function run(ctx: TimeContext) {
+  stop();
+  instance = new p5((p: p5) => {
+    p.setup = () => {
+      p.pixelDensity(1);
+      p.createCanvas(480, 300);
+      p.textSize(14);
+    };
+    p.draw = () => {
+      p.background("#12161f");
+      p.noStroke();
+      p.fill("#dce5df");
+      p.text("Tick fire to add a ring", 16, 30);
+      p.noFill();
+      p.strokeWeight(3);
+      for (const ring of state.rings) {
+        p.stroke(120, 200, 255, ring.alpha * 255);
+        p.circle(ring.x, ring.y, ring.size);
+      }
+      p.noStroke();
+      p.fill("#9ca8a2");
+      p.text(params.running ? "" : "paused — turn running on to restart", 16, 286);
+    };
+  }, canvasSurface("composition/triggers").container);
+
+  let scene: ReturnType<TimeContext["branch"]> | null = null;
+  try {
+    while (true) {
+      if (params.running && !scene) {
+        state.rings = [];
+        scene = ctx.branch(play, "triggers");
+      } else if (!params.running && scene) {
+        scene.cancel();
+        scene = null;
+      }
+      await ctx.waitSec(1 / 60);
+    }
+  } finally {
+    scene?.cancel();
+    stop();
   }
-  g.lineWidth = 1;
-
-  g.fillStyle = "#dce5df";
-  g.fillText(
-    running
-      ? `${state.bursts.length} live burst${state.bursts.length === 1 ? "" : "s"} · ${state.fired} fired (${state.manual} by hand)`
-      : "paused (running = false)",
-    16,
-    14,
-  );
-  g.fillStyle = "#9ca8a2";
-  g.fillText("tick `fire` in the pane: it launches a burst and unticks itself", 16, HEIGHT - 24);
 }

@@ -1,25 +1,9 @@
 import type { TimeContext } from "@avtools/core-timing";
+import p5 from "p5";
 import { canvasParams } from "canvas-params";
 import { canvasSurface } from "canvas-surface";
 
-/**
- * 1. Phrases are functions; a variable picks which one plays.
- *
- * A timed behavior is just an async function that takes the context it runs
- * on. `glide` and `hold` are the building blocks; `sweep`, `zigzag`, and
- * `spiral` are phrases composed from them; the scene loop is an `if/else`
- * on the pane's `pattern` that awaits one phrase, then the next. Change
- * `pattern` while a phrase plays: the current one finishes, and the next
- * cycle picks the new function. `phraseSec` is read when a phrase starts;
- * the readout shows which phrase and which sub-step is running.
- */
-const WIDTH = 480;
-const HEIGHT = 300;
-const LEFT = 60;
-const RIGHT = WIDTH - 60;
-const MID = 150;
-const PHRASES = ["sweep", "zigzag", "spiral"];
-
+// A phrase is an async function. Choose the next one with if/else.
 const params = canvasParams(
   "composition/phrases",
   { running: true, pattern: 0, phraseSec: 1.2, restSec: 0.3 },
@@ -31,161 +15,100 @@ const params = canvasParams(
   },
 );
 
-interface Dot {
-  x: number;
-  y: number;
-}
+const state = { x: 60, y: 150, phrase: "sweep" };
 
-interface State {
-  dot: Dot;
-  trail: Dot[];
-  phrase: string;
-  sub: string;
-  history: string[];
-  cycles: number;
-}
-
-function freshState(): State {
-  return {
-    dot: { x: LEFT, y: MID },
-    trail: [],
-    phrase: "",
-    sub: "",
-    history: [],
-    cycles: 0,
-  };
-}
-
-// --- building blocks -------------------------------------------------------
-
-async function glide(c: TimeContext, state: State, to: Dot, seconds: number) {
-  const from = { ...state.dot };
+async function glide(c: TimeContext, x: number, y: number, seconds: number) {
+  const fromX = state.x;
+  const fromY = state.y;
   const start = c.time;
   while (c.time - start < seconds) {
     const t = (c.time - start) / seconds;
-    const eased = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
-    state.dot = {
-      x: from.x + (to.x - from.x) * eased,
-      y: from.y + (to.y - from.y) * eased,
-    };
+    state.x = fromX + (x - fromX) * t;
+    state.y = fromY + (y - fromY) * t;
     await c.waitSec(1 / 60);
   }
-  state.dot = { ...to };
+  state.x = x;
+  state.y = y;
 }
 
-async function hold(c: TimeContext, state: State, seconds: number) {
-  state.sub = `hold ${seconds.toFixed(2)} s`;
-  await c.waitSec(seconds);
+async function sweep(c: TimeContext, seconds: number) {
+  await glide(c, 420, 150, seconds / 2);
+  await glide(c, 60, 150, seconds / 2);
 }
 
-// --- phrases: compositions of building blocks -------------------------------
-
-async function sweep(c: TimeContext, state: State) {
-  const half = params.phraseSec / 2;
-  state.sub = "glide right";
-  await glide(c, state, { x: RIGHT, y: MID }, half);
-  state.sub = "glide left";
-  await glide(c, state, { x: LEFT, y: MID }, half);
+async function zigzag(c: TimeContext, seconds: number) {
+  await glide(c, 180, 70, seconds / 3);
+  await glide(c, 360, 230, seconds / 3);
+  await glide(c, 60, 150, seconds / 3);
 }
 
-async function zigzag(c: TimeContext, state: State) {
-  const legs: Dot[] = [
-    { x: LEFT + 100, y: MID - 70 },
-    { x: LEFT + 200, y: MID + 70 },
-    { x: LEFT + 300, y: MID - 70 },
-    { x: LEFT, y: MID },
-  ];
-  for (let i = 0; i < legs.length; i++) {
-    state.sub = `leg ${i + 1} of ${legs.length}`;
-    await glide(c, state, legs[i], params.phraseSec / legs.length);
-  }
-}
-
-async function spiral(c: TimeContext, state: State) {
-  const seconds = params.phraseSec;
+async function spiral(c: TimeContext, seconds: number) {
   const start = c.time;
-  const center = { x: WIDTH / 2, y: MID };
-  state.sub = "spiral in";
   while (c.time - start < seconds) {
     const t = (c.time - start) / seconds;
-    const radius = 120 * (1 - t);
-    const angle = t * Math.PI * 4;
-    state.dot = {
-      x: center.x + Math.cos(angle) * radius,
-      y: center.y + Math.sin(angle) * radius,
-    };
+    state.x = 240 + Math.cos(t * Math.PI * 4) * 120 * (1 - t);
+    state.y = 150 + Math.sin(t * Math.PI * 4) * 120 * (1 - t);
     await c.waitSec(1 / 60);
   }
-  await hold(c, state, 0.2);
-  state.sub = "return";
-  await glide(c, state, { x: LEFT, y: MID }, 0.4);
+  state.x = 240;
+  state.y = 150;
 }
 
-export default async function (ctx: TimeContext) {
-  const g = canvasSurface("composition/phrases").createCanvas(WIDTH, HEIGHT)
-    .getContext("2d")!;
-  let state = freshState();
-  let scene: ReturnType<TimeContext["branch"]> | null = null;
-
-  const runScene = async (c: TimeContext) => {
-    for (;;) {
-      const pattern = Math.round(params.pattern);
-      state.phrase = PHRASES[pattern] ?? PHRASES[0];
-      // The organizing move: a plain conditional chooses a function, and the
-      // await hands it this timeline until it returns.
-      if (pattern === 1) await zigzag(c, state);
-      else if (pattern === 2) await spiral(c, state);
-      else await sweep(c, state);
-      state.history.unshift(state.phrase);
-      state.history.splice(6);
-      state.cycles += 1;
-      await hold(c, state, params.restSec);
-    }
-  };
-
+async function play(c: TimeContext) {
   while (true) {
-    await ctx.waitSec(1 / 60);
-    if (params.running && !scene) {
-      state = freshState();
-      scene = ctx.branch(runScene, "phrases-scene");
-    } else if (!params.running && scene) {
-      scene.cancel();
-      scene = null;
-    }
-    state.trail.push({ ...state.dot });
-    if (state.trail.length > 90) state.trail.shift();
-    draw(g, state, params.running);
+    const pattern = Math.round(params.pattern);
+    state.phrase = ["sweep", "zigzag", "spiral"][pattern];
+    if (pattern === 1) await zigzag(c, params.phraseSec);
+    else if (pattern === 2) await spiral(c, params.phraseSec);
+    else await sweep(c, params.phraseSec);
+    await c.waitSec(params.restSec);
   }
 }
 
-function draw(g: CanvasRenderingContext2D, state: State, running: boolean) {
-  g.fillStyle = "#12161f";
-  g.fillRect(0, 0, WIDTH, HEIGHT);
-  g.font = "13px ui-monospace, monospace";
-  g.textBaseline = "top";
+// p5 reads state; all animation changes happen in the timing functions above.
+let instance: p5 | null = null;
 
-  state.trail.forEach((p, i) => {
-    g.fillStyle = `rgba(120, 200, 255, ${(i / state.trail.length) * 0.6})`;
-    g.beginPath();
-    g.arc(p.x, p.y, 4, 0, Math.PI * 2);
-    g.fill();
-  });
-  g.fillStyle = "#78c8ff";
-  g.beginPath();
-  g.arc(state.dot.x, state.dot.y, 12, 0, Math.PI * 2);
-  g.fill();
+export function stop() {
+  instance?.remove();
+  instance = null;
+}
 
-  g.fillStyle = "#dce5df";
-  g.fillText(
-    running ? `phrase: ${state.phrase} · ${state.sub}` : "paused (running = false)",
-    16,
-    14,
-  );
-  g.fillStyle = "#9ca8a2";
-  g.fillText(
-    `played: ${state.history.length ? state.history.join(" ← ") : "…"}`,
-    16,
-    HEIGHT - 44,
-  );
-  g.fillText(`next pick reads pattern = ${Math.round(params.pattern)}`, 16, HEIGHT - 24);
+export default async function run(ctx: TimeContext) {
+  stop();
+  instance = new p5((p: p5) => {
+    p.setup = () => {
+      p.pixelDensity(1);
+      p.createCanvas(480, 300);
+      p.textSize(14);
+    };
+    p.draw = () => {
+      p.background("#12161f");
+      p.noStroke();
+      p.fill("#dce5df");
+      p.text(`playing: ${state.phrase}`, 16, 30);
+      p.fill("#78c8ff");
+      p.circle(state.x, state.y, 28);
+      p.noStroke();
+      p.fill("#9ca8a2");
+      p.text(params.running ? "" : "paused — turn running on to restart", 16, 286);
+    };
+  }, canvasSurface("composition/phrases").container);
+
+  let scene: ReturnType<TimeContext["branch"]> | null = null;
+  try {
+    while (true) {
+      if (params.running && !scene) {
+        state.x = 60;
+        state.y = 150;
+        scene = ctx.branch(play, "phrases");
+      } else if (!params.running && scene) {
+        scene.cancel();
+        scene = null;
+      }
+      await ctx.waitSec(1 / 60);
+    }
+  } finally {
+    scene?.cancel();
+    stop();
+  }
 }

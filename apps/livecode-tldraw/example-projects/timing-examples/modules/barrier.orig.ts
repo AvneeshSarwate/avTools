@@ -1,31 +1,9 @@
-import {
-  awaitBarrier,
-  resolveBarrier,
-  startBarrier,
-  type TimeContext,
-} from "@avtools/core-timing";
+import { awaitBarrier, resolveBarrier, startBarrier, type TimeContext } from "@avtools/core-timing";
+import p5 from "p5";
 import { canvasParams } from "canvas-params";
 import { canvasSurface } from "canvas-surface";
 
-/**
- * 3. Barrier sync between loops with different phrase lengths.
- *
- * Example 2 joined children that end; this is the same problem for loops
- * that never end.
- *
- * Voice B plays a long phrase in a loop and brackets each cycle with
- * `startBarrier(key)` / `resolveBarrier(key)`. Voice A plays a shorter phrase
- * and then `awaitBarrier(key)`s: it is released when B's current cycle
- * resolves. So A's starts stay locked to B's cycle boundaries without either
- * voice knowing the other's length, and without any downbeat grid. Change the
- * lengths live: A always idles for exactly the remainder of B's cycle. A
- * barrier is scoped to the root context tree and a user key, so the key here
- * is namespaced to this example.
- */
-const WIDTH = 480;
-const HEIGHT = 300;
-const KEY = "timing-examples/barrier";
-
+// A finishes its phrase, then waits for B to finish its current cycle.
 const params = canvasParams(
   "timing/barrier",
   { running: true, aPhraseSec: 0.5, bPhraseSec: 0.8 },
@@ -36,144 +14,82 @@ const params = canvasParams(
   },
 );
 
-interface Voice {
-  progress: number;
-  cycles: number;
-  waiting: boolean;
-  lastStartAt: number | null;
+const KEY = "timing-examples/barrier";
+const state = { a: 0, b: 0, waiting: false };
+
+async function phrase(c: TimeContext, voice: "a" | "b", seconds: number) {
+  const start = c.time;
+  const end = start + seconds;
+  while (c.time < end) {
+    state[voice] = (c.time - start) / seconds;
+    await c.waitSec(Math.min(1 / 60, end - c.time));
+  }
+  state[voice] = 1;
 }
 
-interface State {
-  a: Voice;
-  b: Voice;
-  syncs: number;
-  lastSyncGap: number | null;
-}
-
-function freshState(): State {
-  return {
-    a: { progress: 0, cycles: 0, waiting: false, lastStartAt: null },
-    b: { progress: 0, cycles: 0, waiting: false, lastStartAt: null },
-    syncs: 0,
-    lastSyncGap: null,
-  };
-}
-
-export default async function (ctx: TimeContext) {
-  const g = canvasSurface("timing/barrier").createCanvas(WIDTH, HEIGHT)
-    .getContext("2d")!;
-  let state = freshState();
-  let scene: ReturnType<TimeContext["branch"]> | null = null;
-
-  const phrase = async (v: TimeContext, voice: Voice, seconds: number) => {
-    voice.lastStartAt = v.time;
-    const start = v.time;
-    while (v.time - start < seconds) {
-      voice.progress = (v.time - start) / seconds;
-      await v.waitSec(1 / 60);
+async function play(c: TimeContext) {
+  c.branch(async (b) => {
+    while (true) {
+      startBarrier(KEY, b);
+      await phrase(b, "b", params.bPhraseSec);
+      resolveBarrier(KEY, b);
     }
-    voice.progress = 1;
-    voice.cycles += 1;
-  };
-
-  const runScene = async (c: TimeContext) => {
-    c.branch(async (b) => {
-      while (true) {
-        startBarrier(KEY, b);
-        await phrase(b, state.b, params.bPhraseSec);
-        resolveBarrier(KEY, b);
-      }
-    }, "voice-B");
-
-    c.branch(async (a) => {
-      while (true) {
-        await phrase(a, state.a, params.aPhraseSec);
-        state.a.waiting = true;
-        await awaitBarrier(KEY, a);
-        state.a.waiting = false;
-        state.syncs += 1;
-        // After release, A's next start coincides with B's next start.
-        state.lastSyncGap = state.b.lastStartAt === null
-          ? null
-          : a.time - state.b.lastStartAt;
-      }
-    }, "voice-A");
-
-    // The scene branch idles cancellably; the voices are its children.
-    while (true) await c.waitSec(3600);
-  };
-
+  }, "B");
   while (true) {
-    await ctx.waitSec(1 / 60);
-    if (params.running && !scene) {
-      state = freshState();
-      scene = ctx.branch(runScene, "barrier-scene");
-    } else if (!params.running && scene) {
-      scene.cancel();
-      scene = null;
-    }
-    draw(g, state, params.running);
+    await phrase(c, "a", params.aPhraseSec);
+    state.waiting = true;
+    await awaitBarrier(KEY, c);
+    state.waiting = false;
   }
 }
 
-function draw(g: CanvasRenderingContext2D, state: State, running: boolean) {
-  g.fillStyle = "#12161f";
-  g.fillRect(0, 0, WIDTH, HEIGHT);
-  g.font = "13px ui-monospace, monospace";
-  g.textBaseline = "top";
+// p5 reads state; all animation changes happen in the timing functions above.
+let instance: p5 | null = null;
 
-  drawVoice(g, 30, `A: ${params.aPhraseSec.toFixed(2)} s phrase, then awaitBarrier`,
-    state.a, "#78c8ff");
-  drawVoice(g, 130, `B: ${params.bPhraseSec.toFixed(2)} s phrase, startBarrier … resolveBarrier`,
-    state.b, "#f2d38b");
-
-  g.fillStyle = "#9ca8a2";
-  if (!running) {
-    g.fillText("paused (running = false)", 16, HEIGHT - 60);
-    return;
-  }
-  g.fillText(`A released by B ${state.syncs}× · A cycles ${state.a.cycles} · B cycles ${state.b.cycles}`,
-    16, HEIGHT - 60);
-  g.fillStyle = "#4fd08a";
-  g.fillText(
-    state.lastSyncGap === null
-      ? "waiting for the first release…"
-      : `A's start − B's start after release: ${(state.lastSyncGap * 1000).toFixed(1)} ms`,
-    16,
-    HEIGHT - 40,
-  );
+export function stop() {
+  instance?.remove();
+  instance = null;
 }
 
-function drawVoice(
-  g: CanvasRenderingContext2D,
-  top: number,
-  label: string,
-  voice: Voice,
-  color: string,
-) {
-  g.fillStyle = "#dce5df";
-  g.fillText(label, 16, top);
-  const left = 16;
-  const width = WIDTH - 32;
-  g.fillStyle = "#232a33";
-  g.fillRect(left, top + 24, width, 34);
-  if (voice.waiting) {
-    // Hatched: this voice is parked on the barrier.
-    g.strokeStyle = color;
-    g.globalAlpha = 0.5;
-    for (let x = left; x < left + width; x += 12) {
-      g.beginPath();
-      g.moveTo(x, top + 58);
-      g.lineTo(x + 12, top + 24);
-      g.stroke();
+export default async function run(ctx: TimeContext) {
+  stop();
+  instance = new p5((p: p5) => {
+    p.setup = () => {
+      p.pixelDensity(1);
+      p.createCanvas(480, 300);
+      p.textSize(14);
+    };
+    p.draw = () => {
+      p.background("#12161f");
+      p.noStroke();
+      p.fill("#78c8ff");
+      p.text(state.waiting ? "A: waiting for B" : "A: playing", 16, 60);
+      p.rect(16, 80, 448 * state.a, 30);
+      p.fill("#f2d38b");
+      p.text("B: starts and resolves the barrier", 16, 170);
+      p.rect(16, 190, 448 * state.b, 30);
+      p.noStroke();
+      p.fill("#9ca8a2");
+      p.text(params.running ? "" : "paused — turn running on to restart", 16, 286);
+    };
+  }, canvasSurface("timing/barrier").container);
+
+  let scene: ReturnType<TimeContext["branch"]> | null = null;
+  try {
+    while (true) {
+      if (params.running && !scene) {
+        state.a = 0;
+        state.b = 0;
+        state.waiting = false;
+        scene = ctx.branch(play, "barrier");
+      } else if (!params.running && scene) {
+        scene.cancel();
+        scene = null;
+      }
+      await ctx.waitSec(1 / 60);
     }
-    g.globalAlpha = 1;
-    g.fillStyle = color;
-    g.fillText("waiting on barrier", left + 8, top + 64);
-  } else {
-    g.fillStyle = color;
-    g.fillRect(left, top + 24, width * voice.progress, 34);
-    g.fillStyle = "#9ca8a2";
-    g.fillText("playing phrase", left + 8, top + 64);
+  } finally {
+    scene?.cancel();
+    stop();
   }
 }

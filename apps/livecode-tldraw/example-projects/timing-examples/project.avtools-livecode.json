@@ -9,7 +9,7 @@
       "sourcePath": "modules/sequence.orig.ts",
       "runtimePath": "modules/sequence.ts",
       "kind": "runnable",
-      "title": "1. drift-free sequential waits (waitSec)",
+      "title": "1. sequential steps (waitSec)",
       "sourceVersion": 2,
       "x": 80,
       "y": 80,

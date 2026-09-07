@@ -1,38 +1,53 @@
 # timing-composition
 
-The follow-up to [`timing-examples`](../timing-examples/): that gallery shows
-the timing library's primitives, this one shows how they organize into
-programs, and how the params pane turns each program into an instrument. The
-one idea underneath every example is that a timed behavior is an ordinary
-async function taking the context it runs on, so behaviors compose the way
-functions do: chosen with `if/else`, reused with arguments, passed to
-higher-order combinators, held in variables as branch handles.
+Five small p5.js instance-mode sketches that build on
+[timing-examples](../timing-examples/). A timed behavior is an ordinary async
+function taking a `TimeContext`: choose it with `if/else`, reuse it with
+arguments, or combine it with other functions.
 
-| Module | Shows | Pane interaction |
+| Module | Idea | Try it |
 | --- | --- | --- |
-| `phrases` | `glide`/`hold` building blocks composed into `sweep`/`zigzag`/`spiral` phrases; the scene loop is an `if/else` that awaits one phrase per cycle. | `pattern` picks the next phrase; `phraseSec` and `restSec` are read when a phrase starts. |
-| `reuse` | One `bounce(c, voice)` function running in three branches, each pointed at its own params folder. | Nested folders per voice; `period` and `height` apply at the next half-bounce. |
-| `triggers` | A boolean as a momentary control: the loop consumes `fire`, launches a `burst` branch per event, and writes `false` back so the pane clears itself. Bursts overlap, each on its own timeline. | Tick `fire` repeatedly; `burstSec`; `autoFireSec` (0 = manual only). |
-| `combinators` | `seq`, `repeat`, `par` as higher-order functions over `(c) => Promise<void>`; `par` joins branchWait children; a score rebuilt each cycle, drawn as a lane timeline. | `repeats`, `verseSec`, `melodySec`, `drumsSec` reshape the score live. |
-| `modes` | Long-running `orbit`/`wave`/`rain` behaviors held as a branch handle; a manager awaits `fadeTo(0)`, cancels, starts the next with `if/else`, awaits `fadeTo(1)`. | `mode` switches behaviors; `fadeSec` and `speed` are live. |
+| `phrases` | Await movement functions to build a phrase; choose the next phrase with `if/else`. | Set `pattern` to 0 (sweep), 1 (zigzag), or 2 (spiral). The current phrase finishes first. Length is read at phrase start. |
+| `reuse` | Run one `bounce(c, index)` function on three branches. | Change `voices › a › period` or `height`. A reads its controls at the next bounce; B and C keep theirs. |
+| `triggers` | A checkbox launches a branch, then clears itself. | Set `autoFireSec` to 0 and tick `fire` repeatedly. Rings overlap on independent timelines. Each reads `burstSec` at birth. |
+| `combinators` | `seq`, `repeat`, and `par` assemble a score from functions. | Change repeat count or durations. The next score uses them. Melody and drums light together; outro waits for both. |
+| `modes` | Hold the current behavior's branch handle, fade out, cancel it, start another, fade in. | Set `mode` to 0 (orbit), 1 (wave), or 2 (falling dot). Try `fadeSec` = 0 for an immediate change. |
 
-Read them in order: composing sequential phrases, reusing one behavior across
-voices, turning pane values into events, abstracting structure into
-combinators, and finally managing concurrent behaviors as state.
+## How to read the code
 
-Every module has a `running` toggle, for the reason explained in
-`timing-examples`: a bake cannot start or stop modules, so each example owns
-its restart. Two analyzer constraints shape the code and are worth knowing
-when writing your own: inside any function with a `TimeContext` parameter,
-every `await` must be a direct call that either is a context method or
-receives the context (`await phrase(c, …)`), and a helper that awaits
-`Promise.all` takes the context under a structural type so its body stays
-outside those scopes (`joinAll` in `combinators`).
+Each module is a complete, independent sketch. Read it from top to bottom:
+
+1. `params` declares the controls in the pane.
+2. `state` is a plain object at module scope: the current picture.
+3. The async timing functions change that state and wait through `TimeContext`.
+4. `p.setup` creates the canvas; `p.draw` only reads state and renders it.
+
+For example, the timing code changes a dot's position, then calls
+`await c.waitSec(1 / 60)`. p5's own draw loop paints that position whenever
+it renders a frame. No animation state advances inside `draw`: there is no
+`frameCount`, `millis`, or separate timer driving the picture.
+
+The small loop at the bottom manages `running`. Turning it off cancels the
+scene and its children; turning it on resets state and starts a new scene.
+p5 keeps drawing while paused. Cancellation cleanup may remove active shapes.
+This toggle is needed because a baked page launches modules once and cannot
+relaunch them. Each sketch uses its own named `canvasSurface` container, so
+its p5 canvas appears beside its code in the same-tab IDE or a bake.
+`stop()` and `finally` remove the p5 instance when the module ends, including
+cancellation, so Stop/Replace do not leave old draw loops behind.
+
+`combinators` is the most advanced example. Each section turns its tile on,
+waits, then turns it off. `seq` awaits functions in order; `repeat` awaits one
+function several times; `par` starts `branchWait` children and joins them.
+The structurally typed `joinAll` helper allows `Promise.all` outside the
+analyzer's timed scopes; `wait(0)` updates the parent's logical time after
+the join. Inside timed functions, await context methods or helpers that
+receive the context directly.
 
 ## Bake and open
 
-From `apps/livecode-tldraw`, `npm run build` once. Then from
-`apps/deno-notebooks`:
+From `apps/livecode-tldraw`, run `npm run setupLivecode` once, then
+`npm run build`. From `apps/deno-notebooks`:
 
 ```sh
 deno run --allow-all livecode/browser_host/bake_project.ts \
@@ -41,28 +56,20 @@ deno run --allow-all livecode/browser_host/bake_project.ts \
 npx --yes serve /tmp/timing-composition-bake
 ```
 
-## Automated check
+Open the served root URL. For live editing, use the project picker and
+**Open · engine in same tab**, then Run the modules. No launch order is needed.
 
-`apps/deno-notebooks/livecode/tests/timing_examples.e2e.mjs timing-composition`
-bakes this project and asserts all five modules run, every canvas view
-draws, and a pane write pauses and resumes one example. Part of
-`deno task test:livecode:topologies`.
+## Verify
 
-## Manual verification
+From `apps/deno-notebooks`:
 
-1. **phrases**: the dot sweeps left and right. Set `pattern` to 1 mid-sweep:
-   the sweep finishes, then the zigzag plays, and the "played" breadcrumb
-   grows. Set 2 for the spiral.
-2. **reuse**: three balls bounce at different rates. Open the `voices › a`
-   folder and drag `period`: A changes rhythm at its next apex or floor while
-   B and C keep theirs.
-3. **triggers**: rings expand and fade on the auto-fire timer. Tick `fire`:
-   a ring appears and the box unticks by itself. Tick it several times fast:
-   the rings overlap. Set `autoFireSec` to 0 and it only fires by hand.
-4. **combinators**: the timeline scrolls right to left: intro, N verses, then
-   melody and drums stacked in two lanes, then outro exactly when the longer
-   of the two ends. Change `repeats` or the section lengths: the next cycle
-   has the new shape.
-5. **modes**: the orbit fades out, then the wave fades in when `mode` goes
-   to 1; `switches` increments once per change. With `fadeSec` at 0 the
-   swap is instant.
+```sh
+node livecode/tests/timing_examples.e2e.mjs timing-composition
+```
+
+This bakes the checked-in sources, runs all five modules in a browser, checks
+their canvas views, and exercises a running toggle through the params transport.
+It is also part of `deno task test:livecode:topologies`.
+
+In the live IDE, also Stop and Run a module, then Replace it while playing:
+there should be one canvas and one animation for that example each time.
