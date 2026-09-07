@@ -10,7 +10,7 @@
       "runtimePath": "modules/player.ts",
       "kind": "runnable",
       "title": "Play piano roll",
-      "sourceVersion": 7,
+      "sourceVersion": 2,
       "x": 80,
       "y": 80,
       "w": 620,
@@ -36,7 +36,7 @@
       "runtimePath": "modules/harmonize.ts",
       "kind": "runnable",
       "title": "Generate random harmony",
-      "sourceVersion": 14,
+      "sourceVersion": 2,
       "x": 1500,
       "y": 80,
       "w": 620,
@@ -65,6 +65,14 @@
         "id": "shape:ZOdHVbuFkrOljvUiivwwO",
         "rollName": "melody",
         "x": 1894.9496260540163,
+        "y": 959.335111376349,
+        "w": 700,
+        "h": 557
+      },
+      {
+        "id": "shape:7pE1isS0X7lB2PrZ-FC04",
+        "rollName": "melody v2",
+        "x": 2604.9496260540163,
         "y": 959.335111376349,
         "w": 700,
         "h": 557

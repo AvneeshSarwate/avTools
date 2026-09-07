@@ -4,7 +4,7 @@ import { setPianoRollClip } from "piano-roll-helpers";
 
 // Run again to choose a fresh third or fourth for each melody note.
 export default async function harmonize(ctx: TimeContext) {
-  const source = getPianoRoll("melody");
+  const source = getPianoRoll("melody v2");
   if (!source) throw new Error("The source piano roll is missing");
   const scale = [0, 2, 4, 5, 7, 9, 11]; // C major
   const melody = source.data.notes.map((note, i) => ({

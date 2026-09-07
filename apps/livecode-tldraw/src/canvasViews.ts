@@ -3,7 +3,7 @@ import type {
   ProjectCanvasState,
   ProjectSaveResponse,
 } from "@avtools/livecode-protocol";
-import type { Editor } from "tldraw";
+import type { Editor, TLShape } from "tldraw";
 import {
   ANIMATION_EDITOR_SHAPE_TYPE,
   ANIMATION_TIMELINE_ENTITY_TYPE,
@@ -67,6 +67,7 @@ interface CanvasViewCodec extends CanvasViewDispatchCodec {
     | typeof CanvasSurfaceShapeUtil;
   restore(editor: Editor, canvas: ProjectCanvasState): void;
   entityType?: string;
+  rebindEntity?(shape: TLShape, name: string): TLShape;
   createEntityView?(
     editor: Editor,
     name: string,
@@ -74,11 +75,27 @@ interface CanvasViewCodec extends CanvasViewDispatchCodec {
   ): string;
 }
 
+export function rebindCanvasViewEntity(shape: TLShape, name: string): TLShape {
+  const codec = CANVAS_VIEW_CODECS.find((candidate) =>
+    candidate.isShape(shape)
+  );
+  if (!codec?.rebindEntity) throw new Error(`Cannot rebind ${shape.type}`);
+  return codec.rebindEntity(shape, name);
+}
+
 export const CANVAS_VIEW_CODECS: readonly CanvasViewCodec[] = [
   {
     shapeUtil: PianoRollShapeUtil,
     isShape: isPianoRollShape,
     entityType: PIANO_ROLL_ENTITY_TYPE,
+    rebindEntity: (shape, name) => ({
+      ...shape,
+      props: {
+        ...shape.props,
+        rollName: name,
+        title: `piano roll: ${name}`,
+      },
+    } as PianoRollShape),
     entityRef: (shape) => ({
       type: PIANO_ROLL_ENTITY_TYPE,
       name: (shape as PianoRollShape).props.rollName,
@@ -120,6 +137,14 @@ export const CANVAS_VIEW_CODECS: readonly CanvasViewCodec[] = [
     shapeUtil: ParamPaneShapeUtil,
     isShape: isParamPaneShape,
     entityType: PARAMS_ENTITY_TYPE,
+    rebindEntity: (shape, name) => ({
+      ...shape,
+      props: {
+        ...shape.props,
+        paramsName: name,
+        title: `params: ${name}`,
+      },
+    } as ParamPaneShape),
     entityRef: (shape) => ({
       type: PARAMS_ENTITY_TYPE,
       name: (shape as ParamPaneShape).props.paramsName,
@@ -161,6 +186,14 @@ export const CANVAS_VIEW_CODECS: readonly CanvasViewCodec[] = [
     shapeUtil: AnimationEditorShapeUtil,
     isShape: isAnimationEditorShape,
     entityType: ANIMATION_TIMELINE_ENTITY_TYPE,
+    rebindEntity: (shape, name) => ({
+      ...shape,
+      props: {
+        ...shape.props,
+        animationName: name,
+        title: `animation: ${name}`,
+      },
+    } as AnimationEditorShape),
     entityRef: (shape) => ({
       type: ANIMATION_TIMELINE_ENTITY_TYPE,
       name: (shape as AnimationEditorShape).props.animationName,
@@ -210,6 +243,14 @@ export const CANVAS_VIEW_CODECS: readonly CanvasViewCodec[] = [
     shapeUtil: DrawingShapeUtil,
     isShape: isDrawingShape,
     entityType: DRAWING_ENTITY_TYPE,
+    rebindEntity: (shape, name) => ({
+      ...shape,
+      props: {
+        ...shape.props,
+        drawingName: name,
+        title: `drawing: ${name}`,
+      },
+    } as DrawingShape),
     entityRef: (shape) => ({
       type: DRAWING_ENTITY_TYPE,
       name: (shape as DrawingShape).props.drawingName,

@@ -17,6 +17,7 @@ import { setRuntimeDebugRefs } from "./livecodeTldrawDebug";
 import { waitForInProcessEngineAttached } from "./inProcessEngine";
 import { useClientControlBridge } from "./clientControlBridge";
 import { TopBar } from "./TopBar";
+import { createEntityDuplicateOverrides } from "./duplicateCanvasEntities";
 import {
   createDefaultLivecodeCanvas,
   hasLivecodeShapes,
@@ -50,6 +51,12 @@ export function App() {
 function LivecodeTldrawPage() {
   const [editor, setEditor] = useState<Editor | null>(null);
   const runtime = useLivecodeRuntime();
+  const serverRef = useRef(runtime.serverBaseUrl);
+  serverRef.current = runtime.serverBaseUrl;
+  const uiOverrides = useMemo(
+    () => createEntityDuplicateOverrides(() => serverRef.current),
+    [],
+  );
   const { registerModule, unregisterModule, setModuleSource } = runtime;
   const projectPath = useMemo(
     () => new URLSearchParams(window.location.search).get("projectPath"),
@@ -320,6 +327,7 @@ function LivecodeTldrawPage() {
       />
       <div className="canvas-shell">
         <Tldraw
+          overrides={uiOverrides}
           shapeUtils={shapeUtils}
           onMount={(mountedEditor) => {
             setEditor(mountedEditor);
