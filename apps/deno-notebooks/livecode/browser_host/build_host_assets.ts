@@ -52,7 +52,7 @@ const ALIAS_ENTRIES: Record<string, string> = {
   "three": `export * from "${join(HERE, "vendor", "three.ts")}";\n`,
   "p5": `export { default } from "${join(HERE, "vendor", "p5.ts")}";\n`,
   "runtime":
-    'export {\n  visualizedAwait,\n  visualizedOwnedSignal,\n  visualizedPianoRollLookup,\n} from "@avtools/livecode-engine/runtime.ts";\n',
+    'export {\n  visualizedAwait,\n  visualizedTask,\n  visualizedOwnedSignal,\n  visualizedPianoRollLookup,\n} from "@avtools/livecode-engine/runtime.ts";\n',
   // The reusable engine host, for a UI page that runs the engine in its own
   // tab (`?engine=inprocess`). Bundled in the same code-splitting invocation
   // as the page and the aliases, so an in-process engine and the modules it

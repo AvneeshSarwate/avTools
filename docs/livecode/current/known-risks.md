@@ -168,9 +168,10 @@ pin `^2`. The repo's top-level `node_modules` can only satisfy one of them, so
 byonm resolution (`nodeModulesDir: "manual"`) fails for `^2` with a misleading
 "no matching package" — the failure surfaces in generated configs far from
 either pin. The engine-bundle and browser-shadow-check configs therefore use
-`nodeModulesDir: "auto"`; any new generated config or resolver must do the
-same. The LSP proxy's synthetic workspace has not been audited for this and
-is the suspected cause of editor-side p5 type errors.
+`nodeModulesDir: "auto"`. The LSP uses `"none"` to resolve directly from the
+shared Deno cache, avoiding stale missing-package diagnostics with temporary
+node_modules; see `server.md` for its cache and retry behavior. Both modes are
+Deno-managed and support the two majors; new resolvers must avoid `"manual"`.
 
 ## P2: browser MIDI and checked-in p5gpu coverage are incomplete
 

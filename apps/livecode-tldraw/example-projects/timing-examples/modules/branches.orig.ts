@@ -17,12 +17,6 @@ const params = canvasParams(
 type Bar = { progress: number; duration: number };
 const state = { bars: [] as Bar[], joined: false };
 
-// Structural typing keeps Promise.all outside the analyzer's timed scopes.
-async function joinAll(c: { wait(beats: number): Promise<void> }, children: Promise<unknown>[]) {
-  await Promise.all(children);
-  await c.wait(0); // Let the parent adopt the children's finish time.
-}
-
 async function fillBar(c: TimeContext, bar: Bar) {
   const start = c.time;
   const end = start + bar.duration;
@@ -43,7 +37,7 @@ async function play(c: TimeContext) {
     const children = state.bars.map((bar) =>
       c.branchWait(async (voice) => { await fillBar(voice, bar); })
     );
-    await joinAll(c, children);
+    await Promise.all(children);
     state.joined = true;
     await c.waitSec(0.8);
   }

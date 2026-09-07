@@ -71,6 +71,18 @@ export async function visualizedAwait<T>(
   }
 }
 
+/** Observe a joined task without replacing its cancelable handle or type. */
+export function visualizedTask<P extends PromiseLike<unknown>>(
+  moduleId: string,
+  id: string,
+  task: P,
+): P {
+  const lease = enterWait(moduleId, id);
+  const finish = () => exitWait(moduleId, id, lease);
+  task.then(finish, finish);
+  return task;
+}
+
 export function clearModuleWaits(moduleId: string) {
   activeWaitCounts.delete(moduleId);
   waitOwners.delete(moduleId);

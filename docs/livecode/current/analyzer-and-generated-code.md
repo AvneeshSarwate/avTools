@@ -26,12 +26,27 @@ Within those scopes it understands direct awaited context methods, directly
 awaited helpers receiving the context identifier, `ctx.branch`, and inline
 branch callbacks with their own context parameter.
 
-Recognition is intentionally syntactic:
+Context recognition is intentionally syntactic:
 
 - the type is detected by `TimeContext` text;
 - the receiver/argument must be the direct context identifier;
 - aliases, destructuring, bound methods, property-held contexts, transitive
   calls, arbitrary receiver expressions, and re-export chains are not followed.
+
+`await Promise.all(tasks)` is also supported when TypeScript resolves `tasks`
+as an array, readonly array, or tuple whose every element is assignable to the
+actual `CancelablePromiseProxy<unknown>` class. This includes synchronous
+`map` calls returning `branchWait` handles. Ordinary promises (including
+`wait` and async-map results), mixed arrays, widened `Promise<unknown>[]`,
+`any`, and unresolved element types are rejected. The built-in `Promise`
+binding is required; shadowed lookalikes are not recognized. Empty arrays work.
+Parent-context consistency is the caller's responsibility.
+
+The join uses normal `Promise.all` semantics: it rejects on the first failure
+without canceling other children. Handle producers in array literals, inline
+map callbacks, and local const initializers are observed without replacing their
+cancelable objects. Inline branch callback waits are instrumented too. Arbitrary
+producer data flow is not followed, and discarded tasks remain errors.
 
 Detectable timed patterns that cannot be visualized honestly are diagnostics,
 including arbitrary awaits, unawaited timed/Promise-like calls, dynamic context
@@ -43,6 +58,7 @@ reported before root-shape errors so an incomplete edit is not misdiagnosed.
 
 | Manifest kind | Detection scope | Generated edit | Runtime meaning |
 | --- | --- | --- | --- |
+| `promiseAll` | timed scopes, checked task-array type | wraps the aggregate promise | Count of pending joins; remaining children stay active after a failed join. |
 | timed method/helper | timed scopes | wraps the pending promise | Count of currently pending activations for the source callsite. |
 | piano-roll lookup | timed scopes, recognized symbol/import | wraps the name argument | Latest resolved string name for editor/view linking. |
 | `canvasParams` | whole file, recognized helper import | none | Static declaration location/name for a params-view widget. |
@@ -75,9 +91,9 @@ The transform normalizes the default function to a `runFunc` binding and
 re-exports it as default while preserving recursive references. A conflicting
 top-level binding blocks the transform instead of emitting ambiguous code.
 
-When any callsite actually needs a wrapper, one generated import names every
-runtime helper the transform may emit. Observation-only params/animation
-entries must not cause that import. The runtime URL must be stable across every
+When a callsite needs a wrapper, the generated code imports the runtime
+instrumentation helpers, adding the handle-preserving task observer when needed.
+Observation-only params/animation entries must not cause runtime imports. The runtime URL must be stable across every
 generated module so counts, lookups, signal ownership, and root-clock state meet
 the same singleton.
 
@@ -89,7 +105,10 @@ specifier branch.
 
 ## Typechecking boundary
 
-The per-module ts-morph project is not the repository graph. Transient analysis
+The per-module ts-morph project resolves `@avtools/core-timing` to the repository
+package for the task-handle assignability check; file-URL source paths are
+normalized for local import resolution. It is not the repository graph and does
+not load arbitrary Deno import maps or download third-party dependencies. Transient analysis
 may succeed and dynamic import may still fail. Project-mode Run separately
 requires a successful shadow `deno check` in the client; direct
 `/runtime/launch` bypasses it. Browser-target checking also currently accepts a

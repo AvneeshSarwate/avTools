@@ -39,10 +39,10 @@ cancellation, so Stop/Replace do not leave old draw loops behind.
 `combinators` is the most advanced example. Each section turns its tile on,
 waits, then turns it off. `seq` awaits functions in order; `repeat` awaits one
 function several times; `par` starts `branchWait` children and joins them.
-The structurally typed `joinAll` helper allows `Promise.all` outside the
-analyzer's timed scopes; `wait(0)` updates the parent's logical time after
-the join. Inside timed functions, await context methods or helpers that
-receive the context directly.
+`par` directly awaits `Promise.all` over the cancelable task handles returned
+by `branchWait`. The analyzer visualizes the join and its children. Each
+`branchWait` completion updates its parent's logical time, so after the join
+the parent is already at the longest child's finish time; no `wait(0)` is needed.
 
 ## Bake and open
 

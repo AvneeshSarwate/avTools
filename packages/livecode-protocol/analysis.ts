@@ -21,6 +21,7 @@ export interface VisualizerDiagnostic {
 export type WaitCallsiteKind =
   | "timeContextMethod"
   | "timeContextArgumentCall"
+  | "promiseAll"
   | "pianoRollLookup"
   /** A `canvasParams(...)` declaration. Observed only; never instrumented. */
   | "canvasParams"

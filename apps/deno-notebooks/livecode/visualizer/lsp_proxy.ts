@@ -26,6 +26,8 @@ const workspaceDir = join(workspaceRoot, crypto.randomUUID());
 // agree with the Run gate about which globals exist.
 const engineTargetFile = args["engine-target-file"];
 const documentVersions = new Map<string, number>();
+const attemptedNpmDependencies = new Set<string>();
+let dependencyCacheQueue = Promise.resolve();
 let lastAppliedEngineTarget: "deno" | "browser" | null = null;
 // The workspace config the LS should use right now. Target-specific filenames,
 // because `deno lsp` re-reads config when the `deno.config` SETTING changes on
@@ -97,6 +99,7 @@ const proxy = new LSProxy({
   },
   procToClientMiddlewares: {
     "textDocument/publishDiagnostics": (params) => {
+      cacheMissingNpmDependencies(params);
       if (
         typeof params.version !== "number" &&
         typeof params.uri === "string"
@@ -118,6 +121,54 @@ const proxy = new LSProxy({
     },
   },
 });
+
+function cacheMissingNpmDependencies(params: {
+  uri: string;
+  diagnostics: Array<{ source?: string; code?: unknown; data?: unknown }>;
+}) {
+  const connection = proxy.procConn;
+  if (cleaningUp || !connection) return;
+  const specifiers: string[] = [];
+  for (const diagnostic of params.diagnostics) {
+    if (
+      diagnostic.source !== "deno" || diagnostic.code !== "not-installed-npm"
+    ) continue;
+    const specifier = (diagnostic.data as { specifier?: unknown } | undefined)
+      ?.specifier;
+    if (typeof specifier !== "string" || !specifier.startsWith("npm:")) {
+      continue;
+    }
+    const key = `${activeConfigPath}\n${specifier}`;
+    if (attemptedNpmDependencies.has(key)) continue;
+    // Include failed attempts: an invalid package must not loop every time
+    // Deno republishes diagnostics. A new LSP session allows a fresh attempt.
+    attemptedNpmDependencies.add(key);
+    specifiers.push(specifier);
+  }
+  if (specifiers.length === 0) return;
+
+  // This middleware sees client URIs; direct procConn requests need the
+  // mirrored URI Deno knows. Cache only missing packages, not the whole module
+  // graph (which may contain half-written imports during editing).
+  const referrer = utils.virtualUriToTempDirUri(params.uri, workspaceDir) ??
+    params.uri;
+  dependencyCacheQueue = dependencyCacheQueue.then(async () => {
+    if (cleaningUp) return;
+    // Deno populates its shared cache and republishes diagnostics.
+    // Going directly to procConn also avoids
+    // LSProxy's URI transformer rejecting the command's boolean result.
+    await connection.sendRequest("workspace/executeCommand", {
+      command: "deno.cache",
+      arguments: [specifiers, referrer],
+    });
+  }).catch((error) => {
+    console.warn(
+      "[livecode-lsp-proxy] dependency cache failed",
+      specifiers,
+      error,
+    );
+  });
+}
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   Deno.addSignalListener(sig, async () => {
@@ -223,7 +274,11 @@ async function writeWorkspaceDenoConfig(targetDir: string, rootDir: string) {
     join(targetDir, configName),
     JSON.stringify(
       {
-        nodeModulesDir: "auto",
+        // LSP reads npm packages directly from DENO_DIR. With "auto", Deno
+        // 2.9.5 can keep reporting not-installed-npm for several open modules
+        // after a successful install into the temporary node_modules.
+        // "none" is still Deno-managed resolution, not byonm ("manual").
+        nodeModulesDir: "none",
         imports,
         ...(engineTarget === "browser"
           ? { compilerOptions: { lib: BROWSER_CHECK_LIB } }

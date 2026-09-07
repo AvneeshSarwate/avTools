@@ -812,3 +812,95 @@ export default async function(_ctx: TimeContext) {}
     'export const playhead = __tcvOwnedSignal("module-test", "id_2", signal("both/playhead"))',
   );
 });
+
+Deno.test("Promise.all accepts only arrays and tuples of timing task handles", () => {
+  const prefix =
+    `import type { TimeContext, CancelablePromiseProxy } from "@avtools/core-timing";`;
+  for (
+    const [declaration, argument] of [
+      [
+        "",
+        "[ctx.branchWait(async c => { await c.wait(1); }), ctx.branchWait(async c => { await c.wait(2); })]",
+      ],
+      ["", "[1, 2].map(n => ctx.branchWait(async c => { await c.wait(n); }))"],
+      [
+        "const tasks = [1, 2].map(n => ctx.branchWait(async c => { await c.wait(n); }));",
+        "tasks",
+      ],
+      [
+        "const tasks = [ctx.branchWait(async c => { await c.wait(1); })] as const;",
+        "tasks",
+      ],
+      [
+        "const tasks: readonly CancelablePromiseProxy<unknown>[] = [];",
+        "tasks",
+      ],
+      [
+        "const tasks: [CancelablePromiseProxy<number>, CancelablePromiseProxy<string>] = [ctx.branchWait(async c => 1), ctx.branchWait(async c => 'x')];",
+        "tasks",
+      ],
+      ["", "[]"],
+    ]
+  ) {
+    const result = analyze(
+      `${prefix}\nexport default async function(ctx: TimeContext) { ${declaration} await Promise.all(${argument}); }`,
+    );
+    assertEquals(result.type, "analyzeSuccess", JSON.stringify(result));
+    if (result.type !== "analyzeSuccess") continue;
+    assert(result.manifest.callsites.some((c) => c.kind === "promiseAll"));
+    if (argument.includes("branchWait") || declaration.includes("branchWait")) {
+      assertStringIncludes(result.transformedCode, "__tcvVisualizedTask(");
+    }
+    if (argument.includes("c.wait") || declaration.includes("c.wait")) {
+      assert(result.manifest.callsites.some((c) => c.displayName === "c.wait"));
+    }
+  }
+});
+
+Deno.test("Promise.all rejects widened, mixed, unresolved and ordinary promises", () => {
+  for (
+    const [declaration, argument] of [
+      ["", "[ctx.wait(1)]"],
+      ["", "[ctx.branchWait(async c => {}), Promise.resolve(1)]"],
+      ["", "[1].map(async n => ctx.branchWait(async c => {}))"],
+      ["declareImpossible(); const tasks = null as any;", "tasks"],
+      ["const tasks = null as unknown;", "tasks"],
+      ["const tasks: MissingType[] = [];", "tasks"],
+      ["const tasks: Promise<unknown>[] = [];", "tasks"],
+      ["const tasks: [CancelablePromiseProxy<void>?] = [];", "tasks"],
+      ["const tasks = new Set<CancelablePromiseProxy<void>>();", "tasks"],
+      [
+        "const Promise = { all: (tasks: CancelablePromiseProxy<void>[]) => tasks };",
+        "[]",
+      ],
+    ]
+  ) {
+    const result = analyze(
+      `import type { TimeContext, CancelablePromiseProxy } from "@avtools/core-timing";
+export default async function(ctx: TimeContext) { ${declaration} await Promise.all(${argument}); }`,
+    );
+    assertEquals(
+      result.type,
+      "analyzeFailure",
+      JSON.stringify({ declaration, argument, result }),
+    );
+  }
+});
+
+Deno.test("Promise.all does not excuse discarded tasks in a map callback", () => {
+  const result = analyze(
+    `import type { TimeContext } from "@avtools/core-timing";
+export default async function(ctx: TimeContext) {
+  await Promise.all([1].map(n => {
+    ctx.branchWait(async c => {});
+    return ctx.branchWait(async c => { await c.wait(n); });
+  }));
+}`,
+  );
+  assertEquals(result.type, "analyzeFailure");
+  if (result.type === "analyzeFailure") {
+    assert(
+      result.diagnostics.some((d) => d.code === "TCV_UNAWAITED_TIMED_CALL"),
+    );
+  }
+});

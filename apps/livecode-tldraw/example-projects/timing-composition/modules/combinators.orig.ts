@@ -20,12 +20,6 @@ type Timed = (c: TimeContext) => Promise<void>;
 const state = { active: [false, false, false, false, false], cycles: 0 };
 const labels = ["intro", "verse", "melody", "drums", "outro"];
 
-// Structural typing keeps Promise.all outside the analyzer's timed scopes.
-async function joinAll(c: { wait(beats: number): Promise<void> }, children: Promise<unknown>[]) {
-  await Promise.all(children);
-  await c.wait(0); // Let the parent adopt the children's finish time.
-}
-
 function seq(...steps: Timed[]): Timed {
   return async (c: TimeContext) => {
     for (const step of steps) await step(c);
@@ -40,7 +34,7 @@ function repeat(times: number, step: Timed): Timed {
 
 function par(...voices: Timed[]): Timed {
   return async (c: TimeContext) => {
-    await joinAll(c, voices.map((voice) => c.branchWait(voice)));
+    await Promise.all(voices.map((voice) => c.branchWait(voice)));
   };
 }
 

@@ -121,6 +121,7 @@ export function createParamPaneShape(
 function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
   const runtime = useParamsSync()
   const entity = runtime.params[shape.props.paramsName]
+  const bodyRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const paneRef = useRef<Pane | null>(null)
   const entriesRef = useRef<BindingEntry[]>([])
@@ -131,6 +132,16 @@ function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
   const runtimeRef = useRef(runtime)
   const originId = useMemo(() => `param-pane-${shape.id}`, [shape.id])
   const paramsName = shape.props.paramsName
+
+  useEffect(() => {
+    const body = bodyRef.current
+    if (!body) return
+    // React's delegated onWheel runs after tldraw's native canvas listener,
+    // which prevents scrolling unless the shape is in editing mode.
+    const stopWheel = (event: WheelEvent) => event.stopPropagation()
+    body.addEventListener('wheel', stopWheel, { passive: true })
+    return () => body.removeEventListener('wheel', stopWheel)
+  }, [])
 
   // Latched before the build/apply effects below, which must not re-run per
   // snapshot: they read the newest entity and runtime through these refs.
@@ -283,6 +294,7 @@ function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
         ) : null}
       </div>
       <div
+        ref={bodyRef}
         className="param-pane-shape__body"
         onPointerDownCapture={(event) => {
           activeEntryRef.current = findEntryForTarget(
@@ -296,7 +308,6 @@ function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
         onPointerCancel={stopCanvasEvent}
         onTouchStart={stopCanvasEvent}
         onKeyDownCapture={stopCanvasEvent}
-        onWheel={stopCanvasEvent}
       >
         <div ref={containerRef} className="param-pane-shape__pane" />
         {entity?.values === null ? (

@@ -114,6 +114,17 @@ uses a separate synthetic workspace/process. Neither is the runtime, and LSP
 diagnostics do not gate launch. Browser-engine target selection is published to
 LSP/shadow configuration because Deno and browser module surfaces differ.
 
+Each LSP session has a temporary config but resolves npm packages directly from
+the shared Deno cache (`nodeModulesDir: "none"`). This is deliberately different
+from the engine bundle and shadow checker: with `"auto"`, Deno 2.9.5 can retain
+false `not-installed-npm` diagnostics across multiple open modules even after
+populating the temporary node_modules. `"none"` remains Deno-managed resolution
+and does not fall back to the repository's npm installation. `lsp_proxy.ts`
+serializes cache requests for genuinely missing npm dependencies. Automatic
+attempts are limited to once per specifier and target config per session,
+including failures; reconnecting retries a failed dependency. Local package
+imports still resolve through the repository mirror without installation.
+
 ## Route traps
 
 The exact handlers are contiguous in
