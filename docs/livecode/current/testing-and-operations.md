@@ -60,14 +60,18 @@ file list rather than maintaining it here.
 - Project graph/targets/LSP: project shadow, browser-target, and LSP tests.
 - Visible canvas/reconnect/save behavior: `apps/livecode-tldraw/tests/livecodeTldraw.e2e.mjs`.
 
+`browser_engine_slice.e2e.mjs` also checks that the host's first ready status
+has a usable snapshot and that shutdown releases its lock without page close.
 `baked_project.e2e.mjs` covers both bake forms in one run: the two-tab
 BroadcastChannel pair, then the single-page in-process form opened at the bare
 root URL (boot defaults, in-process sync and actions, and a canvas view
-mirroring a module canvas checked by pixel). `timing_examples.e2e.mjs <project>` bakes a
+mirroring a module canvas checked by pixel, plus sync-map clearing on takeover).
+`timing_examples.e2e.mjs <project>` bakes a
 checked-in timing gallery (`timing-examples`, `timing-composition`) and checks
-every canvas view draws and that params writes pause and resume an example. The in-process form
-against a live server is not E2E-covered. `browser_host_import_map_test.ts` keeps the
-client and engine-page import maps identical.
+every canvas view draws and that the in-process params action freezes and
+resumes an example's rendered scene. The in-process form against a live server
+is not E2E-covered. `browser_host_import_map_test.ts` keeps the client and
+engine-page import maps identical.
 
 The tldraw E2E is broad but monolithic; it is not a substitute for deterministic
 unit/server coverage of a race or validation rule. Prefer condition-based

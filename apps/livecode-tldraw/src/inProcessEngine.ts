@@ -1,14 +1,5 @@
-// The in-process engine: `?engine=inprocess` (or a bake's boot default) makes
-// THIS tab the engine. The page imports the served engine asset tree's
-// `engine_host.js` at runtime — never a Vite-bundled copy — because the
-// modules the engine launches resolve their helper imports through the same
-// asset tree (index.html's import map), and observation only works when the
-// engine and those modules share one set of store singletons. Sync then
-// arrives as a same-realm observer callback and writes call `executeEngineOp`
-// directly: no serialization anywhere between the engine and the views.
-//
-// The topology is meant for single-page baked demos: reloading this tab
-// restarts the engine, exactly as closing an engine tab would.
+// Load the served host, not a UI-bundled engine: user modules and observation
+// must share the asset tree's store singletons. Reloading this page kills it.
 
 import { useEffect, useState } from "react";
 import type {
@@ -18,16 +9,15 @@ import type {
 } from "@avtools/livecode-protocol";
 import { readBootParam } from "./bootParams";
 
-export const IN_PROCESS_ENGINE: boolean =
-  readBootParam("engine") === "inprocess";
+export const IN_PROCESS_ENGINE = readBootParam("engine") === "inprocess";
 
 /** The bake's serverless boot; the in-process host then runs no uplink. */
-const SERVERLESS: boolean =
+const SERVERLESS =
   (readBootParam("serverBaseUrl") ?? "").trim().replace(/\/+$/, "") === "none";
 
 /** Where the engine asset tree lives relative to this page (`/engine/` on the
  * server origin, `engine/` beside a bake's index.html). */
-export const ENGINE_ASSETS_URL: string = new URL(
+const ENGINE_ASSETS_URL = new URL(
   "./engine/",
   window.location.href,
 ).href;
@@ -49,10 +39,6 @@ function setState(next: InProcessEngineState): void {
   for (const listener of [...listeners]) listener();
 }
 
-export function inProcessEngineState(): InProcessEngineState {
-  return state;
-}
-
 /** Start (once) and return this tab's engine host. Rejects when the asset tree
  * is unreachable — a server in local engine mode, or a wrong origin. */
 export function inProcessEngineHost(): Promise<BrowserEngineHost> {
@@ -65,26 +51,29 @@ export function inProcessEngineHost(): Promise<BrowserEngineHost> {
 
 async function loadHost(): Promise<BrowserEngineHost> {
   const moduleUrl = new URL("engine_host.js", ENGINE_ASSETS_URL).href;
-  let hostModule: BrowserEngineHostModule;
   try {
-    hostModule = await import(/* @vite-ignore */ moduleUrl);
+    const hostModule: BrowserEngineHostModule = await import(
+      /* @vite-ignore */ moduleUrl
+    );
+    const host = hostModule.startBrowserEngineHost({
+      engineBaseUrl: ENGINE_ASSETS_URL,
+      uplink: !SERVERLESS,
+      onStatus: (status) =>
+        setState({ phase: "hosted", status, serverless: SERVERLESS }),
+    });
+    setState({
+      phase: "hosted",
+      status: host.status(),
+      serverless: SERVERLESS,
+    });
+    return host;
   } catch (error) {
-    const message = `engine assets not reachable at ${ENGINE_ASSETS_URL} (` +
-      "the server must run with --engine remote and be reachable from this " +
-      `origin, or this must be a bake): ${
-        error instanceof Error ? error.message : String(error)
-      }`;
+    const message = `Could not start engine from ${ENGINE_ASSETS_URL}: ${
+      error instanceof Error ? error.message : String(error)
+    }`;
     setState({ phase: "failed", error: message });
-    throw new Error(message);
+    throw new Error(message, { cause: error });
   }
-  const host = hostModule.startBrowserEngineHost({
-    engineBaseUrl: ENGINE_ASSETS_URL,
-    uplink: !SERVERLESS,
-    onStatus: (status) =>
-      setState({ phase: "hosted", status, serverless: SERVERLESS }),
-  });
-  setState({ phase: "hosted", status: host.status(), serverless: SERVERLESS });
-  return host;
 }
 
 /**

@@ -702,6 +702,24 @@ try {
   }
   if (singleErrors.length > 0) fail(`single page errors: ${singleErrors}`)
 
+  // Losing this page's engine destroys its observed world, even though the
+  // UI remains mounted. It must not display the old rolls/signals as live.
+  const replacementPage = await context.newPage()
+  await replacementPage.goto(`${origin}/engine/engine.html`)
+  await replacementPage.waitForSelector('button.livecode-engine-takeover')
+  await replacementPage.click('button.livecode-engine-takeover')
+  await waitUntil(
+    () => singlePage.evaluate(() => {
+      const debug = globalThis.__livecodeSyncDebug
+      return globalThis.__livecodeEngineLock.state() === 'takenOver' &&
+        ['pianoRoll', 'params', 'signal', 'run', 'moduleWaits'].every(
+          (type) => Object.keys(debug.getEntities(type)).length === 0,
+        )
+    }),
+    'takeover clears the same-tab sync maps',
+  )
+  if (singleErrors.length > 0) fail(`single page errors after takeover: ${singleErrors}`)
+
   console.log(JSON.stringify({
     ok: true,
     type: 'bakedProjectE2E',

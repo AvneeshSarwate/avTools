@@ -1,20 +1,12 @@
-// The browser engine host contract: the surface `startBrowserEngineHost`
-// (built into the engine asset tree as `engine_host.js`) exposes to whichever
-// page embeds it — the standalone engine page, or the tldraw UI hosting the
-// engine in its own tab (the in-process topology).
-//
-// This is not a JSON wire contract: the UI dynamically imports the served
-// bundle and calls these functions directly, so the engine and the modules it
-// launches share one set of store singletons with no serialization between the
-// engine and the views. It lives here because it is the one type source both
-// sides compile against.
+// Same-realm contract for the dynamically imported engine_host.js bundle.
+// Kept here so both embedders compile against the same host surface.
 
 import type { EngineOp } from "./engine_uplink.ts";
 import type { SyncEntity, SyncEntityChange } from "./sync.ts";
 
 /**
  * Engine ownership within one browser origin. `engine` is the only state in
- * which this page runs modules; `blocked` means another tab holds the lock and
+ * which snapshot/execute are ready; `blocked` means another tab holds the lock and
  * `takeover()` can steal it; `takenOver`/`stopped` are terminal for this host.
  */
 export type BrowserEngineLockState =
@@ -55,8 +47,7 @@ export interface BrowserEngineHostOptions {
 export interface InProcessSyncObserver {
   /**
    * Entities are the freshly built wire objects the engine emits and never
-   * mutates afterwards; the observer owns them and must treat them as
-   * immutable.
+   * mutates afterwards; all observers share them and must treat them as immutable.
    */
   onChanges(changes: SyncEntityChange[]): void;
 }
@@ -67,11 +58,12 @@ export interface BrowserEngineHost {
   subscribeStatus(
     listener: (status: BrowserEngineHostStatus) => void,
   ): () => void;
-  /** Steal the origin's engine lock from another tab. */
+  /** Steal the origin's engine lock when blocked; otherwise a no-op. */
   takeover(): void;
   /**
    * Point-in-time full state per requested type (all watched types when
-   * omitted). Read-only: never consumes the engine's changed-name gates.
+   * omitted). Requested types reset to [] if this host has no engine.
+   * Read-only: never consumes the engine's changed-name gates.
    */
   snapshot(entityTypes?: readonly string[]): Record<string, SyncEntity[]>;
   observe(observer: InProcessSyncObserver): () => void;
@@ -86,6 +78,7 @@ export interface BrowserEngineHost {
    * created with `uplink: false`; rejects once the host is shut down.
    */
   whenUplinkOpen(): Promise<void>;
+  /** Terminal and idempotent; releases the Web Lock after engine cleanup. */
   shutdown(reason: string): void;
 }
 

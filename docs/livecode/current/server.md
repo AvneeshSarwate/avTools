@@ -183,6 +183,12 @@ invocation so they share store singletons; adding an entry elsewhere breaks
 observation silently. The `canvas-surface` alias is the module-facing half of
 the client's canvas views: a DOM naming convention under `#livecode-stage`.
 
+The browser host publishes its `engine` status only after snapshot/action
+access is ready. Shutdown is terminal: gesture listeners and transports retire
+immediately, then the Web Lock releases after panic and engine close. A same-tab
+observer receives empty resets on engine loss, just as server sync does on
+uplink detach.
+
 The browser host separately enforces one engine per origin with Web Locks and
 explicit takeover, provides a silent-audio throttling mitigation, initializes
 Web MIDI (at start plus gesture retry, with a status line), and logs stretched
@@ -199,3 +205,8 @@ Engine close clears its broadcast timer, cancels pending and active runs,
 panics MIDI, unregisters the root clock, and stops its parent context. Server
 close also retires sockets, control requests, LSP processes, and the HTTP
 server. Session directories/logs intentionally survive normal shutdown.
+
+The embedded LSP server's `shutdownAfter` option must stay unset: the dependency
+calls `process.exit()` on LSP inactivity, terminating the whole coordination
+server and any local runs. Editor activity does not govern server lifetime;
+explicit shutdown and the Cloudflare container's separate idle policy do.

@@ -1,16 +1,6 @@
 /// <reference lib="dom" />
-// Module-facing entry for named canvas surfaces: a browser-engine module asks
-// for a surface by name and draws into it with p5 or plain Canvas 2D; a
-// `canvas-surface` view shape in the tldraw UI mirrors that canvas next to the
-// module's code, frame by frame, when the engine runs in the UI's own tab (the
-// in-process topology, docs/livecode/current/system-architecture.md).
-//
-// The contract between the two sides is deliberately a DOM naming convention,
-// not an entity: the engine owns a container element under `#livecode-stage`
-// tagged with the surface name, and the view finds the first <canvas> inside
-// it. Nothing about the view reaches the engine — deleting the view never
-// touches the sketch, and the module works identically in a standalone engine
-// tab (where the stage is simply visible page DOM instead).
+// Same-tab canvas views find the first canvas in a named stage container.
+// Deleting/resizing a view never changes this module-owned DOM.
 
 /** Attribute the view queries: `[data-livecode-canvas-surface="<name>"]`. */
 export const CANVAS_SURFACE_ATTRIBUTE = "data-livecode-canvas-surface";
@@ -46,7 +36,7 @@ export function canvasSurface(name: string): CanvasSurface {
   }
   const stage = ensureStage();
   let container = stage.querySelector<HTMLDivElement>(
-    `:scope > [${CANVAS_SURFACE_ATTRIBUTE}="${cssEscape(surfaceName)}"]`,
+    `:scope > [${CANVAS_SURFACE_ATTRIBUTE}="${CSS.escape(surfaceName)}"]`,
   );
   if (!container) {
     container = document.createElement("div");
@@ -56,20 +46,20 @@ export function canvasSurface(name: string): CanvasSurface {
   } else {
     container.replaceChildren();
   }
-  const owned = container;
+  const surfaceContainer = container;
   return {
     name: surfaceName,
-    container: owned,
+    container: surfaceContainer,
     createCanvas(width, height) {
-      owned.replaceChildren();
+      surfaceContainer.replaceChildren();
       const canvas = document.createElement("canvas");
       canvas.width = Math.max(1, Math.round(width));
       canvas.height = Math.max(1, Math.round(height));
-      owned.appendChild(canvas);
+      surfaceContainer.appendChild(canvas);
       return canvas;
     },
-    canvas: () => owned.querySelector("canvas"),
-    clear: () => owned.replaceChildren(),
+    canvas: () => surfaceContainer.querySelector("canvas"),
+    clear: () => surfaceContainer.replaceChildren(),
   };
 }
 
@@ -87,10 +77,4 @@ function ensureStage(): HTMLElement {
     document.body.appendChild(stage);
   }
   return stage;
-}
-
-function cssEscape(value: string): string {
-  const escaper = (globalThis as { CSS?: { escape?: (v: string) => string } })
-    .CSS?.escape;
-  return escaper ? escaper(value) : value.replace(/["\\]/g, "\\$&");
 }

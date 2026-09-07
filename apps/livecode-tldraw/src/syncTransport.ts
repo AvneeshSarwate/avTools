@@ -1,6 +1,8 @@
-import type {
-  SyncMessage,
-  SyncSubscribeMessage,
+import {
+  type BrowserEngineHostStatus,
+  SYNC_ENTITY_TYPES,
+  type SyncMessage,
+  type SyncSubscribeMessage,
 } from "@avtools/livecode-protocol";
 import {
   createReconnectingSocket,
@@ -128,32 +130,52 @@ export function createInProcessSyncTransport(
         if (active.closed) return;
         let seq = 0;
         let open = false;
+        let running = false;
+        let entityTypes = new Set<string>(SYNC_ENTITY_TYPES);
         const engineRunning = () => host.status().lock === "engine";
         const port: SyncPort = {
           isOpen: () => !active.closed && engineRunning(),
           sendMessage: (message) => {
             if (message.type !== "subscribe" || active.closed) return;
+            entityTypes = new Set(message.entityTypes);
             // Answered asynchronously, like a socket reply, so a subscribe
             // issued from inside onOpen never re-enters the provider.
-            const resets = host.snapshot(message.entityTypes);
             queueMicrotask(() => {
               if (active.closed) return;
-              deliver({ resets });
+              deliver({ resets: host.snapshot([...entityTypes]) });
             });
           },
         };
         const deliver = (body: Pick<SyncMessage, "resets" | "changes">) => {
+          if (active.closed) return;
           callbacks.onMessage(
             { type: "sync", seq: ++seq, timestampMs: Date.now(), ...body },
             port,
           );
         };
         active.teardown.push(
-          host.observe({ onChanges: (changes) => deliver({ changes }) }),
+          host.observe({
+            onChanges: (changes) => {
+              const subscribed = changes.filter((change) =>
+                entityTypes.has(change.entityType)
+              );
+              if (subscribed.length > 0) deliver({ changes: subscribed });
+            },
+          }),
         );
-        const evaluate = (status: { lock: string; uplinkOpen: boolean }) => {
+        const evaluate = (status: BrowserEngineHostStatus) => {
           const shouldBeOpen = status.lock === "engine" &&
             (!options.requireUplink || status.uplinkOpen);
+          const wasRunning = running;
+          running = status.lock === "engine";
+          // Engine loss destroys this world; uplink loss leaves it alive.
+          // Hydrate even before a server attaches, and clear it on takeover.
+          if (running !== wasRunning && !shouldBeOpen) {
+            port.sendMessage({
+              type: "subscribe",
+              entityTypes: [...entityTypes],
+            });
+          }
           if (shouldBeOpen && !open) {
             open = true;
             callbacks.onOpen(port);

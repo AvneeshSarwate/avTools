@@ -1,0 +1,2 @@
+modules/*.ts
+!modules/*.orig.ts

@@ -1,6 +1,7 @@
 # Current Known Risks and Invariant Gaps
 
 Status: unresolved hazards checked against the implementation on 2026-08-26.
+Same-tab boot and serialization concerns updated on 2026-09-07.
 
 This register contains only open risks and accepted limitations. Resolved
 investigations are preserved in
@@ -109,6 +110,13 @@ Large values changing every tick therefore serialize at full approximately
 30 Hz even if a page shows one name. The client also republishes the full module
 view map when run/wait/lookup state changes.
 
+Same-tab observation avoids a transport copy for the local UI, but the browser
+host still posts every nonempty sync tick to `BroadcastChannel` and, when
+connected, the uplink. It does not track whether any broadcast observers exist,
+so same-tab mode still pays that serialization cost. Measure this overhead
+before adding subscription-aware broadcast fan-out; it is an unmeasured
+performance limitation, not an established timing regression.
+
 Several identities have no eviction: latest run rows per module, serialized
 module-source caches, lookup maps until reanalysis, named durable entities,
 params tombstones, ended signals, and session directories/logs. Dynamically
@@ -148,9 +156,28 @@ restarts it, killing runs and unsaved entities, so this form is for baked demos
 and quick checks, not live sessions. Two engines can also coexist unnoticed
 when they sit on different origins (an `/engine/` tab on the server origin
 plus an in-process UI on the Vite origin): Web Locks are per origin, and both
-would replace each other's uplink. Do not open both. The module import map
-exists twice (engine page and client `index.html`) and a test keeps them equal;
-a helper added to one without the other fails only at browser launch time.
+would replace each other's uplink. Do not open both.
+
+## P2: same-tab server selection can diverge from the engine
+
+The same-tab host loads assets and opens its uplink relative to the UI
+origin, independently of `serverBaseUrl`. In Vite this follows the fixed
+`LIVECODE_SERVER_TARGET` proxy. Picking a different coordination server can
+therefore attach the engine to one server while sending project operations to
+another. Same-tab mode currently requires the selected server and that proxy
+target to agree; changing the URL field cannot retarget the host. Supporting
+arbitrary server selection needs one boot configuration for the host, import
+map, and coordination requests, plus a live-server same-tab E2E.
+
+This is a source-level finding; the multi-server browser scenario has not been
+reproduced in a test.
+
+## P2: browser import maps are authored twice
+
+The module import map exists in the engine-page builder and client `index.html`.
+`browser_host_import_map_test.ts` keeps them equal; without that gate, a helper
+added to one alone fails only when a module launches in the other topology.
+Generate both from one data source when changing the build/bootstrap boundary.
 
 ## P2: canvas views mirror same-realm canvases only
 

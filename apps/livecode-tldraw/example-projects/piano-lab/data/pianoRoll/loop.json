@@ -1,0 +1,36 @@
+{
+  "type": "pianoRoll",
+  "name": "piano-lab/loop",
+  "data": {
+    "notes": [
+      {
+        "id": "note-1",
+        "pitch": 60,
+        "position": 0,
+        "duration": 1,
+        "velocity": 96
+      },
+      {
+        "id": "note-2",
+        "pitch": 64,
+        "position": 1,
+        "duration": 1,
+        "velocity": 88
+      },
+      {
+        "id": "note-3",
+        "pitch": 67,
+        "position": 2,
+        "duration": 1,
+        "velocity": 92
+      },
+      {
+        "id": "note-4",
+        "pitch": 72,
+        "position": 3,
+        "duration": 1,
+        "velocity": 84
+      }
+    ]
+  }
+}
