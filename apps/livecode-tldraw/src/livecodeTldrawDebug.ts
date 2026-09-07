@@ -70,6 +70,7 @@ export interface TldrawRuntimeDebug {
   getModuleIds(): string[];
   getShapes(): TldrawRuntimeDebugShape[];
   selectShape(id: string): void;
+  selectShapes(ids: string[]): void;
   getSelectedShapeIds(): string[];
   createEntityView(type: string, name: string): string | null;
   /** A second (third, ...) module on the canvas; returns its module id. */
@@ -184,6 +185,9 @@ function installDebugApi() {
     },
     selectShape(id) {
       refs.editor?.select(id as never);
+    },
+    selectShapes(ids) {
+      refs.editor?.select(...ids as never[]);
     },
     getSelectedShapeIds() {
       return refs.editor?.getSelectedShapeIds().map(String) ?? [];

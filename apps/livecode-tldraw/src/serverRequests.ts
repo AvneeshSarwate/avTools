@@ -128,11 +128,17 @@ export async function engineAction<T>(
   return await postServerJson<T>(serverBaseUrl, httpPath, httpBody);
 }
 
+export class ServerActionError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 function entityActionResult(
   result: EngineEntityActionResult,
 ): EntityMutationSuccess {
   if (!result.ok) {
-    throw new Error(result.error);
+    throw new ServerActionError(result.error, result.status ?? 500);
   }
   return { ok: true, entity: result.entity };
 }
@@ -168,8 +174,9 @@ export async function postServerJson<T>(
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    throw new Error(
+    throw new ServerActionError(
       `${path} failed with ${response.status}: ${await response.text()}`,
+      response.status,
     );
   }
   return (await response.json()) as T;

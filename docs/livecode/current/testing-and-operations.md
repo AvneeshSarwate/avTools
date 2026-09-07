@@ -78,6 +78,13 @@ unit/server coverage of a race or validation rule. Prefer condition-based
 polling over sleeps. Tests that assert generated-code spelling should do so only
 when the emitted text itself is the contract.
 
+For the standard canvas Duplicate action, run
+`LIVECODE_E2E_CASE=duplicate npm run test:e2e` from `apps/livecode-tldraw`.
+This isolates the menu/keyboard, grouping, undo, collision, and failure checks.
+After building the client, add `LIVECODE_E2E_ENGINE=remote
+LIVECODE_E2E_UI=served LIVECODE_E2E_ACTIONS=broadcast` to exercise browser-engine
+actions instead of HTTP (the HTTP response-delay test is skipped there).
+
 ## Feature fixtures
 
 A user-visible feature should leave one project under

@@ -52,6 +52,10 @@ const engineMode = process.env.LIVECODE_E2E_ENGINE === 'remote' ? 'remote' : 'lo
 // the browser-engine plan. Requires the remote engine (same origin, same
 // browser) and a prior `npm run build`.
 const uiMode = process.env.LIVECODE_E2E_UI === 'served' ? 'served' : 'vite'
+const actionsMode = process.env.LIVECODE_E2E_ACTIONS === 'broadcast' ? 'broadcast' : 'http'
+if (actionsMode === 'broadcast' && uiMode !== 'served') {
+  throw new Error('Broadcast actions require the same-origin served UI')
+}
 if (uiMode === 'served' && engineMode !== 'remote') {
   throw new Error('LIVECODE_E2E_UI=served requires LIVECODE_E2E_ENGINE=remote')
 }
@@ -384,40 +388,45 @@ try {
   )
   await page.evaluate(() => window.__livecodeTldrawRuntimeDebug?.connect())
   await waitForTldrawReady()
-  await runResponsiveTopbarCase()
+  if (process.env.LIVECODE_E2E_CASE === 'duplicate') {
+    await runCanvasDuplicateActionCase()
+  } else {
+    await runResponsiveTopbarCase()
 
-  // The default canvas creates one livecode-editor shape. Grab its module id.
-  firstModuleId = await waitForFirstModuleId()
+    // The default canvas creates one livecode-editor shape. Grab its module id.
+    firstModuleId = await waitForFirstModuleId()
 
-  await runPianoRollLookupManifestCase()
-  await runPianoRollWidgetStaticNameCase()
-  await runPianoRollWidgetRuntimeResolvedCase()
-  await runLookupOnlyModuleCompletesStoppedCase()
-  await runOpenPianoRollCreatesShapeCase()
-  await runOpenPianoRollFocusesExistingShapeCase()
-  await runParamPaneRendersDeclaredEntityCase()
-  await runParamPaneEditWritesThroughCase()
-  await runParamPaneShowsCodeWritesCase()
-  await runParamPaneRehydratesAfterReloadCase()
-  await runParamPaneShowsUnavailableValueCase()
-  await runPlayheadSignalMarkerCase()
-  await runTwoModulePlayheadMarkersCase()
-  await runSignalScopeAccumulatesCase()
-  await runParamGraphRowCase()
-  await runNaturalCompletionAfterEditCase()
-  await runInstantFailureCase()
-  await runReplaceButtonCase()
+    await runPianoRollLookupManifestCase()
+    await runPianoRollWidgetStaticNameCase()
+    await runPianoRollWidgetRuntimeResolvedCase()
+    await runLookupOnlyModuleCompletesStoppedCase()
+    await runOpenPianoRollCreatesShapeCase()
+    await runOpenPianoRollFocusesExistingShapeCase()
+    await runParamPaneRendersDeclaredEntityCase()
+    await runParamPaneEditWritesThroughCase()
+    await runParamPaneShowsCodeWritesCase()
+    await runParamPaneRehydratesAfterReloadCase()
+    await runParamPaneShowsUnavailableValueCase()
+    await runPlayheadSignalMarkerCase()
+    await runTwoModulePlayheadMarkersCase()
+    await runSignalScopeAccumulatesCase()
+    await runParamGraphRowCase()
+    await runNaturalCompletionAfterEditCase()
+    await runInstantFailureCase()
+    await runReplaceButtonCase()
 
-  // Everything above runs on the transient default canvas. Project mode
-  // replaces it, so these cases come last and never disturb the ones before.
-  await enterProjectMode(viteBaseUrl)
-  await runCheckedInAnimationFixtureCase()
-  await addProjectParamsModule(viteBaseUrl)
-  await runProjectEntityCreateCase()
-  await runProjectSaveRoundTripCase()
-  await runProjectOpenRestoresSavedTruthCase()
-  await runProjectDuplicateAndDeleteCase()
-  await runDrawingFixtureCase(viteBaseUrl)
+    // Everything above runs on the transient default canvas. Project mode
+    // replaces it, so these cases come last and never disturb the ones before.
+    await enterProjectMode(viteBaseUrl)
+    await runCheckedInAnimationFixtureCase()
+    await addProjectParamsModule(viteBaseUrl)
+    await runProjectEntityCreateCase()
+    await runProjectSaveRoundTripCase()
+    await runProjectOpenRestoresSavedTruthCase()
+    await runProjectDuplicateAndDeleteCase()
+    await runDrawingFixtureCase(viteBaseUrl)
+    await runCanvasDuplicateActionCase()
+  }
 
   console.log(
     JSON.stringify({
@@ -442,6 +451,156 @@ try {
 // ---------------------------------------------------------------------------
 // Test cases
 // ---------------------------------------------------------------------------
+
+async function runCanvasDuplicateActionCase() {
+  const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
+  const kinds = [
+    ['pianoRoll', 'rollName'],
+    ['params', 'paramsName'],
+    ['animationTimeline', 'animationName'],
+    ['drawing', 'drawingName'],
+  ]
+  for (const [type, nameProp] of kinds) {
+    const name = `duplicate-action-${type}`
+    await createEntityViaDebug(type, name)
+    if (type === 'pianoRoll') {
+      await setPianoRollOverHttp(name, [{ pitch: 60, time: 0, duration: 1, velocity: 0.8 }])
+    }
+    // Occupy v2 without making a view: allocation must use engine truth.
+    await duplicateEntityViaDebug(type, name, `${name} v2`)
+    const id = await page.evaluate(({ type, name }) =>
+      window.__livecodeTldrawRuntimeDebug.createEntityView(type, name), { type, name })
+    await page.evaluate((id) => window.__livecodeTldrawRuntimeDebug.selectShape(id), id)
+    // Focus tldraw without changing the selection or focusing an embedded editor.
+    await page.locator('.tl-container').focus()
+    const original = (await getShapes()).find((shape) => shape.id === id)
+    if (type === 'pianoRoll') {
+      await page.keyboard.press('Shift+2')
+      const header = page.locator('.piano-roll-shape__header').filter({ hasText: name }).first()
+      await header.click({ button: 'right' })
+      await page.getByTestId('context-menu').getByRole('menuitem', { name: /Duplicate/ }).click()
+    } else {
+      await page.keyboard.press(`${modifier}+d`)
+    }
+    const copy = await waitForPageValue(({ nameProp, name }) =>
+      window.__livecodeTldrawRuntimeDebug.getShapes().find((shape) =>
+        shape.props[nameProp] === `${name} v3`), 'Duplicate creates a versioned view',
+      scaled(10_000), { nameProp, name })
+    assertEqual(copy.props.w, original.props.w, 'duplicate preserves width')
+    assertEqual(copy.props.h, original.props.h, 'duplicate preserves height')
+    assert(copy.id !== original.id, 'duplicate has a new shape identity')
+    await waitForPageValue(({ type, name }) =>
+      Boolean(window.__livecodeSyncDebug.getEntities(type)?.[`${name} v3`]),
+      'duplicate exists in engine sync', scaled(10_000), { type, name })
+    if (type === 'pianoRoll') {
+      const rolls = (await fetchPianoRollList()).rolls
+      assertEqual(rolls[`${name} v3`].data, rolls[name].data, 'duplicate copies source notes')
+      await setPianoRollOverHttp(`${name} v3`, [])
+      assertEqual((await fetchPianoRollList()).rolls[name].data, rolls[name].data,
+        'editing the copy leaves source notes unchanged')
+    }
+
+    await page.locator('.tl-container').focus()
+    await page.keyboard.press(`${modifier}+z`)
+    await waitForPageValue((id) =>
+      !window.__livecodeTldrawRuntimeDebug.getShapes().some((shape) => shape.id === id),
+      'undo removes duplicate view', scaled(5_000), copy.id)
+    assert(await page.evaluate(({ type, name }) =>
+      Boolean(window.__livecodeSyncDebug.getEntities(type)?.[`${name} v3`]), { type, name }),
+      'canvas undo retains the entity')
+    await page.keyboard.press(`${modifier}+Shift+z`)
+    await waitForPageValue((id) =>
+      window.__livecodeTldrawRuntimeDebug.getShapes().some((shape) => shape.id === id),
+      'redo restores duplicate view', scaled(5_000), copy.id)
+    await page.keyboard.press(`${modifier}+d`)
+    await waitForPageValue(({ nameProp, name }) =>
+      window.__livecodeTldrawRuntimeDebug.getShapes().some((shape) =>
+        shape.props[nameProp] === `${name} v4`), 'duplicate of v3 advances to v4',
+      scaled(10_000), { nameProp, name })
+    await deleteEntityViaDebug(type, `${name} v3`)
+    assert(await page.evaluate(({ type, name }) =>
+      Boolean(window.__livecodeSyncDebug.getEntities(type)?.[name]), { type, name }),
+      'deleting a copy retains the source entity')
+  }
+
+  // One entity, two views and a monitor in a group: only one engine clone,
+  // both copied editors share it, and the copied monitor keeps its source.
+  const groupName = 'duplicate-group'
+  await createEntityViaDebug('pianoRoll', groupName)
+  await page.evaluate((name) => {
+    const dbg = window.__livecodeTldrawRuntimeDebug
+    const ids = [dbg.createEntityView('pianoRoll', name), dbg.createEntityView('pianoRoll', name),
+      dbg.createCanvasSurfaceView(name)]
+    dbg.selectShapes(ids)
+  }, groupName)
+  await page.locator('.tl-container').focus()
+  await page.keyboard.press(`${modifier}+g`)
+  const groupId = await page.evaluate(() => window.__livecodeTldrawRuntimeDebug.getSelectedShapeIds()[0])
+  assertEqual((await getShapes()).find((shape) => shape.id === groupId)?.type, 'group', 'views are grouped')
+  await page.keyboard.press(`${modifier}+d`)
+  await waitForPageValue((name) => window.__livecodeTldrawRuntimeDebug.getShapes()
+    .filter((shape) => shape.props.rollName === `${name} v2`).length === 2,
+    'group duplicate rebinds both views to one clone', scaled(10_000), groupName)
+  assert(!(await fetchPianoRollList()).rolls[`${groupName} v3`], 'shared views clone their entity only once')
+  const groupCopy = await page.evaluate(() => window.__livecodeTldrawRuntimeDebug.getSelectedShapeIds()[0])
+  assert(groupCopy !== groupId, 'duplicate creates a new group')
+  assertEqual((await getShapes()).filter((shape) => shape.props.surfaceName === groupName).length, 2,
+    'monitor is copied without changing its surface binding')
+
+  const missingName = 'duplicate-missing'
+  await createEntityViaDebug('pianoRoll', missingName)
+  const missingId = await page.evaluate((name) => {
+    const dbg = window.__livecodeTldrawRuntimeDebug
+    const id = dbg.createEntityView('pianoRoll', name)
+    dbg.selectShape(id)
+    return id
+  }, missingName)
+  await deleteEntityViaDebug('pianoRoll', missingName)
+  const beforeFailure = (await getShapes()).length
+  await page.keyboard.press(`${modifier}+d`)
+  await page.locator('.tlui-toast__description').filter({ hasText: /No pianoRoll entity/ }).waitFor()
+  assertEqual((await getShapes()).length, beforeFailure, 'missing entity fails without a duplicate view')
+
+  // Hold the successful HTTP response while the user changes selection. The
+  // completed clone stays available, but must never be attached to that new selection.
+  if (actionsMode === 'http') {
+    const raceName = 'duplicate-selection-race'
+    await createEntityViaDebug('pianoRoll', raceName)
+    await page.evaluate((name) => {
+      const dbg = window.__livecodeTldrawRuntimeDebug
+      dbg.selectShape(dbg.createEntityView('pianoRoll', name))
+    }, raceName)
+    let releaseResponse
+    let signalRequest
+    const responseGate = new Promise((resolve) => { releaseResponse = resolve })
+    const requestSeen = new Promise((resolve) => { signalRequest = resolve })
+    const holdResponse = async (route) => {
+      const response = await route.fetch()
+      signalRequest()
+      await responseGate
+      await route.fulfill({ response })
+    }
+    await page.route('**/entities/duplicate', holdResponse)
+    try {
+      await page.keyboard.press(`${modifier}+d`)
+      await Promise.race([
+        requestSeen,
+        sleep(scaled(10_000)).then(() => { throw new Error('Duplicate request did not arrive') }),
+      ])
+      await page.evaluate((id) => window.__livecodeTldrawRuntimeDebug.selectShape(id), missingId)
+      releaseResponse()
+      await page.locator('.tlui-toast__description').filter({
+        hasText: /Selection changed while duplicating.*Created entities remain available/,
+      }).waitFor()
+      assert(!(await getShapes()).some((shape) => shape.props.rollName === `${raceName} v2`),
+        'selection change cancels view creation')
+      assert((await fetchPianoRollList()).rolls[`${raceName} v2`], 'completed clone remains available')
+    } finally {
+      releaseResponse()
+      await page.unroute('**/entities/duplicate', holdResponse)
+    }
+  }
+}
 
 async function runResponsiveTopbarCase() {
   const originalViewport = page.viewportSize() ?? { width: 1280, height: 720 }
@@ -2863,6 +3022,7 @@ function tldrawUrl(viteBaseUrl, serverBaseUrl) {
   const url = new URL('/index.html', viteBaseUrl)
   url.searchParams.set('serverBaseUrl', serverBaseUrl)
   if (uiMode === 'served') url.searchParams.set('sync', 'broadcast')
+  if (actionsMode === 'broadcast') url.searchParams.set('actions', 'broadcast')
   return url.href
 }
 

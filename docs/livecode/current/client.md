@@ -94,8 +94,20 @@ an occupied module; while one is active, the control reads Replace and sends
 
 A tldraw shape is a view, not the entity it displays. Deleting a view never
 deletes engine data, and deleting an entity leaves its views in a waiting
-state. Duplication creates a new entity and an adjacent view; multiple views may
-legitimately point to the same entity.
+state. The standard tldraw Duplicate action (context menu, quick actions, and
+Cmd/Ctrl+D) clones each distinct durable entity in the selection once and binds
+its duplicated views to the clone. Names advance through `name v2`, `name v3`,
+etc., skipping names already in the engine. Multiple views may legitimately
+point to the same entity; Alt-drag and clipboard copies retain that binding,
+as do duplicated signal scopes and canvas-surface monitors.
+
+`duplicateCanvasEntities.ts` overrides the UI action and scopes a synchronous
+before-create hook to tldraw's stock duplication, preserving its layout,
+group/binding handling, and history. Entity cloning finishes before any copied
+view mounts. Canvas undo removes only views; redo reuses the cloned entities.
+If a selection changes or a later clone fails during the asynchronous work, no
+views are created and a toast identifies any entities already created. These
+remain available: multi-entity duplication is not an engine transaction.
 
 `CANVAS_VIEW_CODECS` in `canvasViews.ts` is the client extension point. One
 codec supplies shape registration, project collection/restoration,
