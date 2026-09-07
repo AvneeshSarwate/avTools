@@ -34,10 +34,10 @@ its p5 canvas appears beside its code in the same-tab IDE or a bake.
 `stop()` and `finally` remove the p5 instance when the module ends, including
 cancellation, so Stop/Replace do not leave old draw loops behind.
 
-`branches` has one small adapter, `joinAll`: its structurally typed context
-keeps `Promise.all` outside the analyzer's timed scopes. The final `wait(0)`
-lets the parent's logical time adopt its children's finish time. In timed
-functions, await context methods or helpers that receive that context directly.
+`branches` directly awaits `Promise.all(children)` over the cancelable handles
+returned by `branchWait`. The analyzer visualizes the join and its children.
+Each child completion updates the parent's logical time, so no `wait(0)` is
+needed after the join.
 
 `tempo` starts its scene with `{ tempo: "cloned" }` so its controls do not
 change the tempo of the other examples. Its second voice clones that map again.

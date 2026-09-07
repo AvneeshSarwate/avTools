@@ -162,6 +162,11 @@ Widgets stop pointerdown and click. Components needing document-wide drag
 tracking should use pointer capture or capture-phase listeners, because the
 shape boundary intentionally blocks normal bubbling.
 
+Scrollable bodies must shield wheel events with a native listener on the body
+(see `ParamPaneShape.tsx`). React's delegated `onWheel` runs after tldraw's
+native canvas listener, which can already have prevented the browser's default
+scrolling. Stop propagation without preventing default so the body scrolls.
+
 ## Projects index page
 
 `projects.html` (`src/projectsIndex.ts`) is a standalone page beside the app,

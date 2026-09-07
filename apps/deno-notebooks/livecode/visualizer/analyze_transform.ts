@@ -1,3 +1,4 @@
+import { fromFileUrl } from "jsr:@std/path@1";
 import MagicString from "npm:magic-string@0.30.17";
 import {
   ArrowFunction,
@@ -12,6 +13,7 @@ import {
   Project,
   SourceFile,
   ts,
+  Type,
 } from "npm:ts-morph@23.0.0";
 import type {
   AnalyzeFailure,
@@ -137,6 +139,7 @@ interface VisualFunctionScope extends VisualScope {
 
 interface InstrumentedCallsiteData {
   kind: WaitCallsiteKind;
+  preserveTask?: boolean;
   staticName?: string;
   nameArgRange?: { from: number; to: number };
 }
@@ -162,6 +165,8 @@ export function analyzeAndTransformTimedModule(
 ): AnalyzeAndTransformResult {
   const project = new Project({
     compilerOptions: {
+      baseUrl: fromFileUrl(new URL("../../../../", import.meta.url)),
+      paths: { "@avtools/core-timing": ["packages/core-timing/mod.ts"] },
       allowImportingTsExtensions: true,
       module: ts.ModuleKind.ESNext,
       moduleResolution: ts.ModuleResolutionKind.Bundler,
@@ -174,7 +179,9 @@ export function analyzeAndTransformTimedModule(
   });
 
   const sourceFile = project.createSourceFile(
-    request.sourceUri,
+    request.sourceUri.startsWith("file:")
+      ? fromFileUrl(request.sourceUri)
+      : request.sourceUri,
     request.sourceText,
     { overwrite: true },
   );
@@ -220,6 +227,114 @@ export function analyzeAndTransformTimedModule(
     "./timeContextVisualizerRuntime.ts";
   const instrumentedCalls = new Map<CallExpression, InstrumentedCallsiteData>();
   const processedBodies = new Set<Node>();
+  const approvedJoins = new Set<CallExpression>();
+  const joinedTasks = new Set<CallExpression>();
+  const taskCallbacks = new Set<Node>();
+  let taskType: Type | undefined;
+
+  function isTask(type: Type): boolean {
+    if (type.isAny() || type.isUnknown()) return false;
+    if (type.isUnion()) return type.getUnionTypes().every(isTask);
+    if (!taskType) {
+      const probe = project.createSourceFile(
+        fromFileUrl(
+          new URL("../../../../__tcv_task_type__.ts", import.meta.url),
+        ),
+        'import type { CancelablePromiseProxy } from "@avtools/core-timing"; declare let task: CancelablePromiseProxy<unknown>;',
+      );
+      taskType = probe.getVariableDeclarationOrThrow("task").getType();
+    }
+    return !taskType.isAny() && type.isAssignableTo(taskType);
+  }
+
+  function isTaskArray(type: Type): boolean {
+    if (type.isUnion()) return type.getUnionTypes().every(isTaskArray);
+    if (!type.isArray() && !type.isReadonlyArray() && !type.isTuple()) {
+      return false;
+    }
+    const element = type.getNumberIndexType();
+    return element !== undefined && isTask(element);
+  }
+
+  function isTimedPromiseAll(call: CallExpression): boolean {
+    const callee = call.getExpression();
+    if (
+      !Node.isPropertyAccessExpression(callee) || callee.getName() !== "all"
+    ) return false;
+    const receiver = callee.getExpression();
+    if (!Node.isIdentifier(receiver) || receiver.getText() !== "Promise") {
+      return false;
+    }
+    const declarations = receiver.getSymbol()?.getDeclarations();
+    if (
+      !declarations?.length ||
+      !declarations.every((decl) =>
+        /(?:^|\/)lib\.[^/]+\.d\.ts$/.test(decl.getSourceFile().getFilePath())
+      )
+    ) return false;
+    const args = call.getArguments();
+    return args.length === 1 && isTaskArray(args[0].getType());
+  }
+
+  // Follow value-producing syntax and immutable local aliases, not arbitrary
+  // data flow. Only calls that actually supply joined handles are exempt from
+  // the unawaited-call rule.
+  function prepareTasks(node: Node, seen = new Set<Node>()) {
+    if (seen.has(node)) return;
+    seen.add(node);
+    if (Node.isIdentifier(node)) {
+      for (const decl of node.getSymbol()?.getDeclarations() ?? []) {
+        if (
+          Node.isVariableDeclaration(decl) &&
+          decl.getSourceFile() === sourceFile &&
+          decl.getVariableStatement()?.getDeclarationKind() === "const"
+        ) {
+          const init = decl.getInitializer();
+          if (init) prepareTasks(init, seen);
+        }
+      }
+    } else if (
+      Node.isParenthesizedExpression(node) || Node.isAsExpression(node) ||
+      Node.isSatisfiesExpression(node) || Node.isNonNullExpression(node) ||
+      Node.isSpreadElement(node)
+    ) {
+      prepareTasks(node.getExpression(), seen);
+    } else if (Node.isArrayLiteralExpression(node)) {
+      node.getElements().forEach((element) => prepareTasks(element, seen));
+    } else if (Node.isConditionalExpression(node)) {
+      prepareTasks(node.getWhenTrue(), seen);
+      prepareTasks(node.getWhenFalse(), seen);
+    } else if (Node.isCallExpression(node)) {
+      if (isTask(node.getReturnType())) {
+        joinedTasks.add(node);
+        return;
+      }
+      const callee = node.getExpression();
+      if (
+        !Node.isPropertyAccessExpression(callee) ||
+        callee.getName() !== "map" ||
+        !isTaskArray(node.getReturnType())
+      ) return;
+      const callback = node.getArguments()[0];
+      if (
+        !Node.isArrowFunction(callback) && !Node.isFunctionExpression(callback)
+      ) return;
+      taskCallbacks.add(callback);
+      const body = callback.getBody();
+      if (!Node.isBlock(body)) prepareTasks(body, seen);
+      else {
+        const visit = (child: Node) => {
+          if (isNestedFunctionLike(child)) return;
+          if (Node.isReturnStatement(child)) {
+            const value = child.getExpression();
+            if (value) prepareTasks(value, seen);
+          } else child.forEachChild(visit);
+        };
+        visit(body);
+      }
+    }
+  }
+
   const pianoRollLookupBindings = collectPianoRollLookupImports(sourceFile);
   const canvasParamsBindings = collectCanvasParamsImports(sourceFile);
   const animationTimelineBindings = collectAnimationTimelineImports(sourceFile);
@@ -288,7 +403,9 @@ export function analyzeAndTransformTimedModule(
       hasWrappedCallsite = true;
       magic.prependLeft(
         start,
-        `__tcvVisualizedAwait(${JSON.stringify(request.moduleId)}, ${
+        `${
+          callsite.preserveTask ? "__tcvVisualizedTask" : "__tcvVisualizedAwait"
+        }(${JSON.stringify(request.moduleId)}, ${
           JSON.stringify(callsite.id)
         }, `,
       );
@@ -338,6 +455,13 @@ export function analyzeAndTransformTimedModule(
   }
   // Keyed on wrapped callsites, not on the manifest: observation-only entity
   // declarations must not pull runtime instrumentation into the module.
+  if ([...instrumentedCalls.values()].some((data) => data.preserveTask)) {
+    magic.prepend(
+      `import { visualizedTask as __tcvVisualizedTask } from ${
+        JSON.stringify(runtimeImport)
+      };\n`,
+    );
+  }
   if (hasWrappedCallsite) {
     magic.prepend(
       `import { visualizedAwait as __tcvVisualizedAwait, visualizedPianoRollLookup as __tcvPianoRollLookup, visualizedOwnedSignal as __tcvOwnedSignal } from ${
@@ -386,6 +510,7 @@ export function analyzeAndTransformTimedModule(
           index: callsiteIndex++,
         }),
         kind: data.kind,
+        preserveTask: data.preserveTask,
         displayName,
         ...(data.staticName !== undefined
           ? { staticName: data.staticName }
@@ -420,6 +545,18 @@ export function analyzeAndTransformTimedModule(
   function processVisualBody(scope: VisualFunctionScope) {
     if (processedBodies.has(scope.body)) return;
     processedBodies.add(scope.body);
+    const prepare = (node: Node) => {
+      if (isNestedFunctionLike(node)) return;
+      if (Node.isAwaitExpression(node)) {
+        const call = node.getExpression();
+        if (Node.isCallExpression(call) && isTimedPromiseAll(call)) {
+          approvedJoins.add(call);
+          prepareTasks(call.getArguments()[0]);
+        }
+      }
+      node.forEachChild(prepare);
+    };
+    prepare(scope.body);
     processNode(scope.body, scope);
   }
 
@@ -444,7 +581,13 @@ export function analyzeAndTransformTimedModule(
 
   function processChildNodes(node: Node, scope: VisualScope) {
     node.forEachChild((child) => {
-      if (isNestedFunctionLike(child)) return;
+      if (isNestedFunctionLike(child)) {
+        if (taskCallbacks.has(child)) {
+          const body = getFunctionBody(child);
+          if (body) processVisualBody({ ...scope, owner: child, body });
+        }
+        return;
+      }
       processNode(child, scope);
     });
   }
@@ -472,6 +615,11 @@ export function analyzeAndTransformTimedModule(
       return;
     }
 
+    if (approvedJoins.has(expr)) {
+      instrumentedCalls.set(expr, { kind: "promiseAll" });
+      return;
+    }
+
     if (isSupportedAwaitedCall(expr, scope.ctxNames)) {
       instrumentedCalls.set(expr, {
         kind: getDirectTimeContextMethod(expr, scope.ctxNames)
@@ -483,12 +631,21 @@ export function analyzeAndTransformTimedModule(
 
     addDiagnostic(
       "TCV_UNSUPPORTED_AWAIT",
-      "Awaited calls in timed modules must call a TimeContext method or receive a TimeContext argument.",
+      "Awaited calls in timed modules must call a TimeContext method, receive a TimeContext argument, or use Promise.all with an array or tuple of CancelablePromiseProxy handles.",
       awaitExpr,
     );
   }
 
   function processUnawaitedCall(call: CallExpression, scope: VisualScope) {
+    if (joinedTasks.has(call)) {
+      instrumentedCalls.set(call, {
+        kind: getDirectTimeContextMethod(call, scope.ctxNames)
+          ? "timeContextMethod"
+          : "timeContextArgumentCall",
+        preserveTask: true,
+      });
+      return;
+    }
     if (isAllowedUnawaitedBranch(call, scope.ctxNames)) return;
 
     if (isDynamicTimeContextCall(call, scope.ctxNames)) {

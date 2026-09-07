@@ -121,3 +121,27 @@ Deno.test("clearModulePianoRollLookups clears only piano roll lookups", () => {
   assertEquals(getActiveWaitsByModule(), { "module-a": ["wait-id-1"] });
   assertEquals(getPianoRollLookupsByModule(), {});
 });
+
+Deno.test("joined task observation preserves handles and counts after fail-fast rejection", async () => {
+  const { CancelablePromiseProxy } = await import("@avtools/core-timing");
+  const { visualizedTask } = await import(
+    "@avtools/livecode-engine/runtime.ts"
+  );
+  clearAllWaits();
+  const first = new CancelablePromiseProxy<void>(new AbortController());
+  const second = new CancelablePromiseProxy<void>(new AbortController());
+  let reject!: (error: Error) => void;
+  first.promise = new Promise<void>((_, r) => {
+    reject = r;
+  });
+  assert(visualizedTask("join", "child", first) === first);
+  assert(visualizedTask("join", "child", second) === second);
+  const joined = visualizedAwait("join", "all", Promise.all([first, second]));
+  reject(new Error("child failed"));
+  await assertRejects(() => joined, Error, "child failed");
+  assertEquals(getActiveWaitsByModule(), { join: ["child"] });
+  second.cancelSafe();
+  await second;
+  assert(second.abortController.signal.aborted);
+  assertEquals(getActiveWaitsByModule(), {});
+});
