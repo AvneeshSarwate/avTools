@@ -14,10 +14,7 @@ import {
   isCanvasViewShape,
 } from "./canvasViews";
 import { setRuntimeDebugRefs } from "./livecodeTldrawDebug";
-import {
-  IN_PROCESS_ENGINE,
-  waitForInProcessEngineAttached,
-} from "./inProcessEngine";
+import { waitForInProcessEngineAttached } from "./inProcessEngine";
 import { useClientControlBridge } from "./clientControlBridge";
 import { TopBar } from "./TopBar";
 import {
@@ -321,15 +318,6 @@ function LivecodeTldrawPage() {
         projectPath={projectPath}
         onOpenTldrawFile={loadTldrawFile}
       />
-      {IN_PROCESS_ENGINE
-        ? (
-          // User-module DOM for the engine running in this tab: graphics
-          // modules append canvases here (and `canvas-surface` containers,
-          // which canvas view shapes mirror onto the tldraw canvas). Kept in
-          // the document but off-screen so hidden canvases still paint.
-          <div id="livecode-stage" className="livecode-stage" />
-        )
-        : null}
       <div className="canvas-shell">
         <Tldraw
           shapeUtils={shapeUtils}

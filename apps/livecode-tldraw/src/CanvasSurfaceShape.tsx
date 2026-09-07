@@ -10,17 +10,8 @@ import {
 } from 'tldraw'
 import { IN_PROCESS_ENGINE } from './inProcessEngine'
 
-/**
- * A canvas view: mirrors a named engine canvas (`canvasSurface(name)` in a
- * module, helpers/canvas_surface.ts) onto the tldraw canvas, one `drawImage`
- * per animation frame. It only has something to mirror when the engine runs
- * in this same tab (`engine=inprocess`): the source is found by DOM lookup
- * under `#livecode-stage`, never through the sync transport, so a frame is a
- * GPU blit and no pixels cross any message boundary. It is a view, not an
- * entity: deleting it never touches the sketch, and the sketch never learns
- * the view's size — the source canvas keeps its own resolution and the view
- * letterboxes it.
- */
+// Mirrors same-tab module canvases without putting frames in tldraw state.
+// Source resolution stays module-owned; views letterbox and never resize it.
 export const CANVAS_SURFACE_SHAPE_TYPE = 'canvas-surface'
 export const CANVAS_SURFACE_ATTRIBUTE = 'data-livecode-canvas-surface'
 const DEFAULT_WIDTH = 480
@@ -134,11 +125,8 @@ export function listCanvasSurfaceNames(): string[] {
 
 function findSourceCanvas(surfaceName: string): HTMLCanvasElement | null {
   if (!surfaceName) return null
-  const escaped = typeof CSS !== 'undefined' && CSS.escape
-    ? CSS.escape(surfaceName)
-    : surfaceName.replace(/["\\]/g, '\\$&')
   return document.querySelector<HTMLCanvasElement>(
-    `#livecode-stage [${CANVAS_SURFACE_ATTRIBUTE}="${escaped}"] canvas`,
+    `#livecode-stage [${CANVAS_SURFACE_ATTRIBUTE}="${CSS.escape(surfaceName)}"] canvas`,
   )
 }
 

@@ -56,12 +56,15 @@ launch, analysis, project, and LSP stay HTTP. The transport reports "open" only
 while the engine has attached to the server over its uplink (or immediately
 when `serverBaseUrl=none`), so the runtime's connect sequence and project open
 wait for the engine the server will forward to. Entity truth flows regardless
-of that link. Boot parameters are read through `bootParams.ts`, which falls
-back to `window.livecodeBootDefaults`, the values a bake stamps into its copied
-`index.html` so its bare root URL opens in this form. The page renders a
-`#livecode-stage` container (off-screen, not `display:none`) that modules draw
-into, and the topbar shows an engine pill with the same takeover the engine page
-offers. Reloading the page restarts the engine.
+of that link; takeover or shutdown clears the local entity maps, while a
+server-link outage retains them. Boot parameters are read through
+`bootParams.ts`, which falls back to `window.livecodeBootDefaults`, the values
+a bake stamps into its copied
+`index.html` so its bare root URL opens in this form. That HTML also owns
+`#livecode-stage` (off-screen, not `display:none`) before any scripts start:
+modules can boot before React mounts, so the stage must not be React-owned.
+Modules draw into it, and the topbar shows an engine pill with the same takeover
+the engine page offers. Reloading the page restarts the engine.
 
 ## Analysis and launch ordering
 

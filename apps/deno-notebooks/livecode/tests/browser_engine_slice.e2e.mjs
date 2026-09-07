@@ -279,6 +279,58 @@ try {
     fail(`engine page errors: ${JSON.stringify(engineErrors)}`)
   }
 
+  // The embeddable host must be usable at its first "engine" status edge,
+  // and explicit shutdown must release ownership without closing the page.
+  await enginePage.close()
+  const hostPage = await context.newPage()
+  const hostErrors = []
+  hostPage.on('pageerror', (error) => hostErrors.push(String(error)))
+  await hostPage.goto(`${origin}/ui.html`)
+  await hostPage.evaluate(async () => {
+    const { startBrowserEngineHost } = await import('./engine_host.js')
+    const host = startBrowserEngineHost({
+      engineBaseUrl: new URL('./', location.href).href,
+      uplink: false,
+    })
+    globalThis.__host = host
+    host.subscribeStatus((status) => {
+      if (status.lock === 'engine' && !globalThis.__firstSnapshot) {
+        globalThis.__firstSnapshot = host.snapshot(['pianoRoll'])
+      }
+    })
+  })
+  const firstSnapshot = await waitFor(
+    hostPage,
+    () => globalThis.__firstSnapshot,
+    'first hosted-engine snapshot',
+  )
+  if (!firstSnapshot.pianoRoll?.some((roll) => roll.name === 'melody')) {
+    throw new Error(`host announced readiness before construction: ${JSON.stringify(firstSnapshot)}`)
+  }
+  await hostPage.evaluate(() => {
+    globalThis.__host.shutdown('lifecycle test')
+    globalThis.__host.shutdown('repeated shutdown')
+  })
+  await waitFor(
+    uiPage,
+    async () => navigator.locks.request(
+      'livecode-engine',
+      { ifAvailable: true },
+      (lock) => Boolean(lock),
+    ),
+    'shutdown releases the engine lock while its page stays open',
+  )
+  const stopped = await hostPage.evaluate(async () => {
+    try {
+      await globalThis.__host.execute({ kind: 'captureEntities' })
+      return false
+    } catch {
+      return globalThis.__host.status().lock === 'stopped'
+    }
+  })
+  if (!stopped) throw new Error('stopped host still accepts engine actions')
+  if (hostErrors.length > 0) throw new Error(`host page errors: ${hostErrors}`)
+
   console.log(JSON.stringify({
     ok: true,
     type: 'browserEngineSliceE2E',

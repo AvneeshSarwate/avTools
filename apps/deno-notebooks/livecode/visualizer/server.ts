@@ -422,6 +422,8 @@ export async function createLivecodeVisualizerServer(
     );
   };
   await publishLspEngineTarget();
+  // Leave shutdownAfter unset: LSWSServer implements it with process.exit(),
+  // so editor inactivity would kill the execution server and its live runs.
   const lspWsServer = new LSWSServer({
     lsCommand: Deno.execPath(),
     lsArgs: [
@@ -436,7 +438,6 @@ export async function createLivecodeVisualizerServer(
       lspEngineTargetPath,
     ],
     maxProcs: 4,
-    shutdownAfter: 60 * 30,
     lsStdoutLogPath: join(lspLogsDir, "proxy-stdout.log"),
     lsStderrLogPath: join(lspLogsDir, "proxy-stderr.log"),
     logger: NOOP_LSP_LOGGER,

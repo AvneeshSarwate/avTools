@@ -1,47 +1,6 @@
 /// <reference lib="dom" />
-// The browser engine host (docs/livecode/history/browser-engine-plan-2026-08.md
-// and docs/livecode/current/system-architecture.md, "in-process browser
-// engine"). One function, `startBrowserEngineHost`, embedded by two pages:
-//
-//  - engine_page.ts, the standalone `/engine/` tab, which renders the status
-//    lines this host reports;
-//  - the tldraw UI opened with `?engine=inprocess`, which imports the built
-//    `engine_host.js` from the same code-split asset tree and so shares the
-//    engine's store singletons with every module the engine launches — the
-//    same-realm topology where sync and actions are plain function calls.
-//
-// Bundled by build_host_assets.ts alongside per-alias helper bundles that
-// share its module instances via code splitting. The host runs the engine and
-// speaks three transports:
-//
-//  - the local BroadcastChannel sync host, carrying the real `SyncMessage`
-//    envelope to same-origin observer tabs (subscribe answered with resets);
-//  - the `/engine/uplink` WebSocket to the coordination server that served
-//    the asset tree: it announces itself with full resets, ships every tick's
-//    changes, and executes forwarded `EngineOp`s with the same
-//    `executeEngineOp` the server's local mode uses;
-//  - the in-process observer/execute surface (`BrowserEngineHost`), the
-//    zero-serialization path for a UI living in this realm.
-//
-// Served statically with no server (the baked setup, the slice E2E) the
-// uplink simply keeps retrying in the background — or is disabled by the
-// embedder — and everything local works.
-//
-// Operational duties beyond the transports:
-//  - one engine per origin: a `navigator.locks` exclusive lock; a second page
-//    reports "blocked" with a takeover, and a stolen engine panics and shuts
-//    down;
-//  - MIDI: `initMidi()` runs at engine start (silent once the origin's
-//    permission is granted) and retries from the first user gesture (the
-//    first-ever visit's permission prompt), with a status line;
-//    `panicMidi` from the same midi-helpers singleton is wired into the
-//    engine, same as the Deno host;
-//  - graphics stage: `#livecode-stage` is user-module DOM — graphics modules
-//    append canvases there; the host never touches it;
-//  - throttling defenses: a silent AudioContext keepalive (exempts the tab
-//    from intensive throttling) plus a timer watchdog that logs — locally and
-//    over the uplink — whenever the main-thread clock stretches, so hidden-tab
-//    clamping never fails silently.
+// Shared by the engine page and the same-tab UI. Build this host and every
+// module helper in one code-split asset tree so they share store singletons.
 
 import {
   createLivecodeEngine,
@@ -86,7 +45,7 @@ interface EngineRuntime {
   actionsChannel: BroadcastChannel;
   uplink: UplinkLifecycle;
   audio: AudioContext | null;
-  watchdogTimer: number | null;
+  watchdogTimer: number;
 }
 
 type UplinkLifecycle =
@@ -107,7 +66,6 @@ export function startBrowserEngineHost(
   const engineBaseUrl = new URL(options.engineBaseUrl, location.href).href;
   const uplinkEnabled = options.uplink ?? true;
 
-  let lockState: BrowserEngineLockState = "starting";
   let runtime: EngineRuntime | null = null;
   const status: BrowserEngineHostStatus = {
     lock: "starting",
@@ -117,6 +75,8 @@ export function startBrowserEngineHost(
   };
   const statusListeners = new Set<(status: BrowserEngineHostStatus) => void>();
   const observers = new Set<InProcessSyncObserver>();
+  const lifetime = new AbortController();
+  let releaseLock = () => {};
 
   let resolveUplinkOpen!: () => void;
   let rejectUplinkOpen!: (error: Error) => void;
@@ -136,15 +96,7 @@ export function startBrowserEngineHost(
   }
 
   function setLockState(next: BrowserEngineLockState, message?: string): void {
-    lockState = next;
     publishStatus({ lock: next, ...(message ? { message } : {}) });
-  }
-
-  // -------------------------------------------------------------------------
-  // One engine per origin: exclusive Web Lock with explicit takeover.
-
-  function holdForever(): Promise<never> {
-    return new Promise<never>(() => {});
   }
 
   async function tryBecomeEngine(steal: boolean): Promise<void> {
@@ -159,33 +111,45 @@ export function startBrowserEngineHost(
             onEngineLockBlocked();
             return;
           }
-          if (lockState === "takenOver" || lockState === "stopped") return;
-          setLockState("engine");
-          startEngine();
-          // Hold the lock for the page's lifetime; a steal rejects this request.
-          await holdForever();
+          if (status.lock === "takenOver" || status.lock === "stopped") return;
+          const released = new Promise<void>((resolve) => {
+            releaseLock = resolve;
+          });
+          try {
+            startEngine();
+          } catch (error) {
+            shutdownEngine(`startup failed: ${error}`, "stopped");
+          }
+          // Shutdown releases this after engine cleanup; stealing rejects the request.
+          await released;
         },
       );
     } catch (error) {
-      if (lockState === "engine") {
+      if (status.lock === "engine") {
         shutdownEngine("another tab took over as the engine", "takenOver");
-      } else {
-        console.warn("[livecode-engine] engine lock request failed", error);
+      } else if (!lifetime.signal.aborted) {
+        shutdownEngine(`engine lock request failed: ${error}`, "stopped");
       }
     }
+  }
+
+  function takeover(): void {
+    if (status.lock !== "blocked") return;
+    setLockState("retrying");
+    void tryBecomeEngine(true);
   }
 
   function onEngineLockBlocked(): void {
     // A just-closed engine tab releases its lock asynchronously; absorb that
     // with one short retry before declaring another engine alive.
-    if (lockState === "starting") {
+    if (status.lock === "starting") {
       setLockState("retrying");
       setTimeout(() => {
-        if (lockState === "retrying") void tryBecomeEngine(false);
+        if (status.lock === "retrying") void tryBecomeEngine(false);
       }, 750);
       return;
     }
-    if (lockState !== "retrying") return;
+    if (status.lock !== "retrying") return;
     console.log(
       "[livecode-engine] blocked: engine already running on this origin",
     );
@@ -199,13 +163,21 @@ export function startBrowserEngineHost(
     reason: string,
     finalState: "takenOver" | "stopped",
   ): void {
+    if (lifetime.signal.aborted) return;
+    lifetime.abort();
     const active = runtime;
     runtime = null;
-    setLockState(finalState, `livecode engine stopped: ${reason}`);
-    publishStatus({ uplinkOpen: false });
+    publishStatus({
+      lock: finalState,
+      message: `livecode engine stopped: ${reason}`,
+      uplinkOpen: false,
+    });
     rejectUplinkOpen(new Error(`engine host shut down: ${reason}`));
     console.warn("[livecode-engine] shutdown:", reason);
-    if (!active) return;
+    if (!active) {
+      releaseLock();
+      return;
+    }
     const previousUplink = active.uplink;
     active.uplink = { phase: "stopped" };
     // Panic first: branches cancelled, MIDI note-offs sent — the same emergency
@@ -214,45 +186,25 @@ export function startBrowserEngineHost(
       .catch((error) =>
         console.warn("[livecode-engine] shutdown panic failed", error)
       )
-      .finally(() => {
-        active.engine.close().catch((error) =>
-          console.warn("[livecode-engine] shutdown close failed", error)
-        );
-      });
-    if (active.watchdogTimer !== null) clearInterval(active.watchdogTimer);
-    try {
-      active.channel.close();
-      active.actionsChannel.close();
-    } catch {
-      // Already closed.
-    }
+      .finally(() => active.engine.close())
+      .catch((error) => {
+        console.warn("[livecode-engine] shutdown close failed", error);
+      })
+      .finally(releaseLock);
+    clearInterval(active.watchdogTimer);
+    active.channel.close();
+    active.actionsChannel.close();
     if (previousUplink.phase === "waiting") {
       clearTimeout(previousUplink.timer);
     } else if (
       previousUplink.phase === "connecting" || previousUplink.phase === "open"
     ) {
-      try {
-        previousUplink.socket.close();
-      } catch {
-        // Already closed.
-      }
+      previousUplink.socket.close();
     }
     void active.audio?.close().catch(() => {});
   }
 
-  // -------------------------------------------------------------------------
-  // The engine proper. Everything below runs only in the page holding the lock.
-
   function startEngine(): void {
-    const state: EngineRuntime = {
-      engine: null as unknown as LivecodeEngine,
-      channel: new BroadcastChannel(SYNC_CHANNEL_NAME),
-      actionsChannel: new BroadcastChannel(ACTIONS_CHANNEL_NAME),
-      uplink: { phase: "idle" },
-      audio: startAudioKeepalive(),
-      watchdogTimer: null,
-    };
-    runtime = state;
     let seq = 0;
 
     function sendLocal(body: {
@@ -269,9 +221,10 @@ export function startBrowserEngineHost(
     }
 
     function sendUplink(message: EngineUplinkClientMessage): void {
-      if (state.uplink.phase !== "open") return;
+      const uplink = runtime?.uplink;
+      if (uplink?.phase !== "open") return;
       try {
-        state.uplink.socket.send(JSON.stringify(message));
+        uplink.socket.send(JSON.stringify(message));
       } catch (error) {
         console.warn("[livecode-engine] uplink send failed", error);
       }
@@ -284,7 +237,7 @@ export function startBrowserEngineHost(
       },
       panicMidi,
       onSyncTick: (collected) => {
-        if (collected.size === 0) return;
+        if (runtime !== state || collected.size === 0) return;
         const changes: SyncEntityChange[] = [];
         for (const [entityType, entries] of collected) {
           for (const entry of entries) {
@@ -296,9 +249,8 @@ export function startBrowserEngineHost(
           }
         }
         if (changes.length === 0) return;
-        // Same-realm observers first: the entities are fresh wire objects the
-        // stores never touch again, so handing them over by reference is safe
-        // and costs nothing. The channel and uplink serialize their own copies.
+        // Observers share immutable wire objects; channel/uplink fan-out still
+        // serializes its own copies.
         for (const observer of [...observers]) {
           try {
             observer.onChanges(changes);
@@ -310,8 +262,15 @@ export function startBrowserEngineHost(
         sendUplink({ type: "engineSync", changes });
       },
     });
-    state.engine = engine;
-    state.watchdogTimer = startTickWatchdog(sendUplink);
+    const state: EngineRuntime = {
+      engine,
+      channel: new BroadcastChannel(SYNC_CHANNEL_NAME),
+      actionsChannel: new BroadcastChannel(ACTIONS_CHANNEL_NAME),
+      uplink: { phase: "idle" },
+      audio: startAudioKeepalive(lifetime.signal),
+      watchdogTimer: startTickWatchdog(sendUplink),
+    };
+    runtime = state;
 
     // Local observer tabs: a subscribe is answered with full resets.
     state.channel.onmessage = (event) => {
@@ -325,46 +284,58 @@ export function startBrowserEngineHost(
       sendLocal({ resets: snapshot(entityTypes) });
     };
 
-    // The actions channel: same-origin UI tabs post the uplink's
-    // `engineRequest` envelope here when there is no server to POST to (the
-    // serverless baked topology, `actions=broadcast`). Always listening is
-    // harmless in the served topology — nothing posts there.
     state.actionsChannel.onmessage = (event) => {
       const message = event.data as EngineUplinkServerMessage | undefined;
       if (message?.type !== "engineRequest") return;
-      void (async () => {
-        try {
-          const body = await executeEngineOp(engine, message.op);
-          state.actionsChannel.postMessage({
-            type: "engineResult",
-            requestId: message.requestId,
-            ok: true,
-            body,
-          });
-        } catch (error) {
-          state.actionsChannel.postMessage({
-            type: "engineResult",
-            requestId: message.requestId,
-            ok: false,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      })();
+      void handleRequest(message, (result) => {
+        if (runtime === state) state.actionsChannel.postMessage(result);
+      });
     };
 
-    // Baked boot: a static bake places baked.json in the engine asset tree —
-    // durable entity seeds plus the prebuilt module list, auto-launched because
-    // a baked artifact IS the performance setup. Absent (404) means the
-    // dynamic topologies, where launches arrive over the uplink or harness
-    // instead. The file's manifest/sourceText fields are for the UI; this
-    // host ignores them.
+    async function handleRequest(
+      message: EngineUplinkServerMessage,
+      reply: (result: EngineUplinkClientMessage) => void,
+    ): Promise<void> {
+      let result: EngineUplinkClientMessage;
+      try {
+        const body = await executeEngineOp(engine, message.op);
+        result = {
+          type: "engineResult",
+          requestId: message.requestId,
+          ok: true,
+          body,
+        };
+      } catch (error) {
+        result = {
+          type: "engineResult",
+          requestId: message.requestId,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+      try {
+        reply(result);
+      } catch (error) {
+        console.warn("[livecode-engine] engine reply failed", error);
+      }
+    }
+
+    // A bake seeds entities and launches prebuilt modules. A missing file
+    // means the server/harness owns launches instead.
     void (async () => {
       let baked: BakedProjectFile;
       try {
         const response = await fetch(new URL("baked.json", engineBaseUrl));
-        if (!response.ok) return;
+        if (response.status === 404) return;
+        if (!response.ok) {
+          throw new Error(`baked.json: HTTP ${response.status}`);
+        }
         baked = await response.json() as BakedProjectFile;
-      } catch {
+      } catch (error) {
+        console.warn(
+          "[livecode-engine] baked project could not be read",
+          error,
+        );
         return;
       }
       if (state.uplink.phase === "stopped") return;
@@ -376,6 +347,7 @@ export function startBrowserEngineHost(
           });
         }
         for (const bakedModule of baked.modules) {
+          if (lifetime.signal.aborted) return;
           await engine.launchModule({
             moduleId: bakedModule.moduleId,
             // Resolved against baked.json's own location so a bake hosted
@@ -404,7 +376,7 @@ export function startBrowserEngineHost(
         }
         state.uplink = { phase: "idle" };
         connectUplink();
-      }, UPLINK_RETRY_MS) as unknown as number;
+      }, UPLINK_RETRY_MS);
       state.uplink = { phase: "waiting", timer };
     }
 
@@ -433,7 +405,10 @@ export function startBrowserEngineHost(
         resolveUplinkOpen();
       };
       socket.onmessage = (event) => {
-        if (typeof event.data !== "string") return;
+        if (
+          uplinkSocket(state.uplink) !== socket ||
+          typeof event.data !== "string"
+        ) return;
         let message: EngineUplinkServerMessage;
         try {
           message = JSON.parse(event.data) as EngineUplinkServerMessage;
@@ -454,28 +429,7 @@ export function startBrowserEngineHost(
           }
           socket.send(JSON.stringify(result));
         };
-        void (async () => {
-          try {
-            const body = await executeEngineOp(engine, message.op);
-            reply({
-              type: "engineResult",
-              requestId: message.requestId,
-              ok: true,
-              body,
-            });
-          } catch (error) {
-            try {
-              reply({
-                type: "engineResult",
-                requestId: message.requestId,
-                ok: false,
-                error: error instanceof Error ? error.message : String(error),
-              });
-            } catch (replyError) {
-              console.warn("[livecode-engine] uplink reply failed", replyError);
-            }
-          }
-        })();
+        void handleRequest(message, reply);
       };
       const retry = () => {
         if (uplinkSocket(state.uplink) !== socket) return;
@@ -509,7 +463,7 @@ export function startBrowserEngineHost(
       activeModuleIds: () => engine.activeModuleIds(),
     };
 
-    publishStatus({ message: "livecode browser engine running" });
+    setLockState("engine", "livecode browser engine running");
     startMidiInit();
     console.log("[livecode-engine] browser engine host ready");
   }
@@ -521,33 +475,30 @@ export function startBrowserEngineHost(
   ): Record<string, SyncEntity[]> {
     const resets: Record<string, SyncEntity[]> = {};
     const engine = runtime?.engine;
-    if (!engine) return resets;
-    for (const entityType of entityTypes ?? engine.syncSources.entityTypes()) {
-      resets[entityType] = engine.syncSources.snapshotAll(
+    for (
+      const entityType of entityTypes ?? engine?.syncSources.entityTypes() ?? []
+    ) {
+      resets[entityType] = engine?.syncSources.snapshotAll(
         entityType,
-      ) as SyncEntity[];
+      ) as SyncEntity[] ?? [];
     }
     return resets;
   }
 
-  /**
-   * Web MIDI needs a one-time per-origin permission grant; after that,
-   * `initMidi()` resolves silently at page load, even in a background tab.
-   * So: try immediately (the steady state), and retry from the same gesture
-   * events the audio keepalive uses (the first-ever visit, where the
-   * permission prompt wants a focused tab and a user gesture; a failed init
-   * clears its latch so the retry re-prompts). Late init is safe —
-   * `playPianoRoll` resolves its output on every call, so a looping player
-   * picks the device up next pass.
-   */
+  // MIDI permission may need a focused gesture. Late init is safe because
+  // playPianoRoll resolves its output on every call.
   function startMidiInit(): void {
     // initMidi never rejects — failure is caught inside and leaves no access.
     const attempt = () => void initMidi().then(publishMidiStatus);
     const onGesture = () => {
       if (!hasMidiAccess()) attempt();
     };
-    globalThis.addEventListener("pointerdown", onGesture);
-    globalThis.addEventListener("keydown", onGesture);
+    globalThis.addEventListener("pointerdown", onGesture, {
+      signal: lifetime.signal,
+    });
+    globalThis.addEventListener("keydown", onGesture, {
+      signal: lifetime.signal,
+    });
     attempt();
   }
 
@@ -573,21 +524,22 @@ export function startBrowserEngineHost(
           text = "MIDI: not enabled — click or press a key to request access";
       }
     }
-    if (status.midi !== text) publishStatus({ midi: text });
+    if (!lifetime.signal.aborted && status.midi !== text) {
+      publishStatus({ midi: text });
+    }
   }
 
   // Always present, engine or not: the lock surface the E2E (and a curious
   // operator console) can query and drive.
   (globalThis as Record<string, unknown>).__livecodeEngineLock = {
-    state: () => lockState,
-    takeover: () => void tryBecomeEngine(true),
+    state: () => status.lock,
+    takeover,
   };
 
   if (typeof navigator.locks?.request === "function") {
     void tryBecomeEngine(false);
   } else {
     // No Web Locks (very old browser): run unguarded rather than not at all.
-    setLockState("engine");
     startEngine();
   }
 
@@ -599,7 +551,7 @@ export function startBrowserEngineHost(
         statusListeners.delete(listener);
       };
     },
-    takeover: () => void tryBecomeEngine(true),
+    takeover,
     snapshot,
     observe: (observer) => {
       observers.add(observer);
@@ -612,9 +564,9 @@ export function startBrowserEngineHost(
       if (!engine) {
         return Promise.reject(
           new Error(
-            lockState === "blocked"
+            status.lock === "blocked"
               ? "the engine is running in another tab on this origin"
-              : `no engine in this page (lock state: ${lockState})`,
+              : `no engine in this page (lock state: ${status.lock})`,
           ),
         );
       }
@@ -630,7 +582,7 @@ async function queryMidiPermission(): Promise<string | null> {
     // "midi" is a valid permission name in Chrome (the supported browser) but
     // not in TypeScript's PermissionDescriptor union.
     const status = await navigator.permissions.query(
-      { name: "midi" } as unknown as PermissionDescriptor,
+      { name: "midi" as PermissionName },
     );
     return status.state;
   } catch {
@@ -638,12 +590,9 @@ async function queryMidiPermission(): Promise<string | null> {
   }
 }
 
-/**
- * A running (silent) AudioContext exempts the tab from intensive throttling —
- * the same trick every browser DAW uses. Autoplay policy may hold it
- * suspended until a user gesture lands on this tab; resume opportunistically.
- */
-function startAudioKeepalive(): AudioContext | null {
+// Autoplay may suspend audio until a gesture; this is a throttling mitigation,
+// not a background timing guarantee.
+function startAudioKeepalive(signal: AbortSignal): AudioContext | null {
   const Ctor = globalThis.AudioContext;
   if (typeof Ctor !== "function") return null;
   try {
@@ -652,20 +601,14 @@ function startAudioKeepalive(): AudioContext | null {
       if (audio.state === "suspended") void audio.resume().catch(() => {});
     };
     resume();
-    globalThis.addEventListener("pointerdown", resume);
-    globalThis.addEventListener("keydown", resume);
+    globalThis.addEventListener("pointerdown", resume, { signal });
+    globalThis.addEventListener("keydown", resume, { signal });
     return audio;
   } catch {
     return null;
   }
 }
 
-/**
- * "The platform never fails silently": measure the main-thread timer clock
- * the engine's tick actually lives on. When a hidden tab gets clamped (or the
- * thread stalls), the interval fires late and the gap says by how much —
- * logged locally and over the uplink so the server log shows it too.
- */
 function startTickWatchdog(
   sendUplink: (message: EngineUplinkClientMessage) => void,
 ): number {
@@ -685,5 +628,5 @@ function startTickWatchdog(
     };
     console.warn("[livecode-engine] timer clock stretched", entry);
     sendUplink({ type: "engineLog", entry });
-  }, TICK_WATCHDOG_INTERVAL_MS) as unknown as number;
+  }, TICK_WATCHDOG_INTERVAL_MS);
 }

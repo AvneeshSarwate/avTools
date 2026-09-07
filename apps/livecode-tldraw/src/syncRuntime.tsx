@@ -612,11 +612,12 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
         ...pendingRef.current[entityType]?.entities,
       }),
       latestSeq: () => lastSeqRef.current,
+      setParams,
     };
     return () => {
       delete (window as unknown as Record<string, unknown>).__livecodeSyncDebug;
     };
-  }, []);
+  }, [setParams]);
 
   const lifecycleRef = useRef<SyncLifecycle | null>(null);
   if (lifecycleRef.current === null) {

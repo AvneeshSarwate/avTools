@@ -8,7 +8,7 @@
 //   - every module's `canvasSurface` (one per manifest canvas view) is found
 //     by its view and keeps drawing frames;
 //   - each example's params entity exists with `running: true`, and params
-//     writes through the actions channel (the panes' transport) pause one
+//     writes through the in-process pane action pause one
 //     example, leave the others untouched, and resume it.
 //
 // Run from apps/deno-notebooks:
@@ -190,29 +190,10 @@ try {
     'every example declared its params entity with running = true',
   )
 
-  // The panes' transport: one paramsSet over the actions channel.
+  // Exercise the same provider action the panes use in this topology.
   const setParams = (name, values) =>
     page.evaluate(([name, values]) =>
-      new Promise((resolvePromise, reject) => {
-        const channel = new BroadcastChannel('livecode-actions')
-        const requestId = crypto.randomUUID()
-        const timer = setTimeout(() => {
-          channel.close()
-          reject(new Error('params action timed out'))
-        }, 10_000)
-        channel.onmessage = (event) => {
-          const message = event.data
-          if (message?.type !== 'engineResult' || message.requestId !== requestId) return
-          clearTimeout(timer)
-          channel.close()
-          message.ok ? resolvePromise(message.body) : reject(new Error(message.error))
-        }
-        channel.postMessage({
-          type: 'engineRequest',
-          requestId,
-          op: { kind: 'paramsSet', request: { name, values, originId: 'timing-e2e' } },
-        })
-      }), [name, values])
+      globalThis.__livecodeSyncDebug.setParams(name, values), [name, values])
 
   const [pausedName, ...others] = SURFACES
   const paused = await setParams(pausedName, { running: false })
@@ -230,31 +211,38 @@ try {
       }, [pausedName, others]),
     'pause write visible in the sync maps, other examples untouched',
   )
-  // A paused example keeps its view alive (the module still draws its
-  // paused frame) and every other view keeps animating.
-  const before = await page.evaluate(() =>
-    Object.fromEntries(
-      globalThis.__livecodeTldrawRuntimeDebug.getCanvasSurfaceStates()
-        .map((state) => [state.surfaceName, state.frameCount]),
-    ))
-  await waitUntil(
-    () =>
-      page.evaluate((previous) =>
-        globalThis.__livecodeTldrawRuntimeDebug.getCanvasSurfaceStates()
-            .every((state) => state.frameCount > previous[state.surfaceName] + 10)
-          ? true
-          : null, before),
-    'all canvas views still drawing after the params writes',
-  )
+  // Read the module's drawing, not the mirror's frame counter: copying a
+  // frozen canvas would keep increasing that counter even if pause were broken.
+  const readScene = () => page.evaluate((name) => {
+    const canvas = document.querySelector(
+      `#livecode-stage [data-livecode-canvas-surface="${CSS.escape(name)}"] canvas`,
+    )
+    const crop = document.createElement('canvas')
+    crop.width = 480
+    crop.height = 190
+    crop.getContext('2d').drawImage(canvas, 0, 80, 480, 190, 0, 0, 480, 190)
+    return crop.toDataURL()
+  }, pausedName)
+  let pausedScene = await readScene()
+  let stableSince = Date.now()
+  await waitUntil(async () => {
+    const scene = await readScene()
+    if (scene !== pausedScene) {
+      pausedScene = scene
+      stableSince = Date.now()
+    }
+    return Date.now() - stableSince >= 1000
+  }, 'paused scene stops changing')
 
   const resumed = await setParams(pausedName, { running: true })
   if (resumed?.values?.running !== true) {
     fail(`resume write failed: ${JSON.stringify(resumed)}`)
   }
 
-  // Font requests to tldraw's CDN can fail offline; only engine/page faults count.
-  const realErrors = pageErrors.filter((entry) => !/fetch|NetworkError/i.test(entry))
-  if (realErrors.length > 0) fail(`page errors: ${realErrors.join('\n')}`)
+  await waitUntil(async () => (await readScene()) !== pausedScene,
+    'resumed timing code changes the scene again')
+
+  if (pageErrors.length > 0) fail(`page errors: ${pageErrors.join('\n')}`)
 
   console.log(JSON.stringify({
     ok: true,
