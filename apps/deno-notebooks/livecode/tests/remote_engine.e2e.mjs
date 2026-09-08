@@ -37,7 +37,8 @@ const MODULE_ID = 'remote/module'
 const MODULE_SOURCE = `import type { TimeContext } from "@avtools/core-timing";
 import { signal } from "canvas-signals";
 import { canvasParams } from "canvas-params";
-import { setPianoRollClip } from "piano-roll-helpers";
+import { setPianoRollClip, getPianoRollClip } from "piano-roll-helpers";
+import { AbletonClip } from "@avtools/music-types";
 
 const params = canvasParams("remote/params", { gain: 0.5 });
 
@@ -45,6 +46,9 @@ export default async function run(ctx: TimeContext) {
   setPianoRollClip("remote/beat", {
     notes: [{ id: "n1", pitch: 60, position: 0, duration: 1, velocity: 96 }],
   });
+  if (!(getPianoRollClip("remote/beat") instanceof AbletonClip)) {
+    throw new Error("Browser music-types must share AbletonClip identity with piano-roll helpers");
+  }
   const heartbeat = signal("remote/heartbeat");
   let beat = 0;
   while (true) {

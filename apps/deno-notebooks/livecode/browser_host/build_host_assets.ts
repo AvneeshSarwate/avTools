@@ -41,6 +41,7 @@ const ALIAS_ENTRIES: Record<string, string> = {
   // the shared chunk the engine uses, so a module's barrier and the engine's
   // root context see one registry.
   "core_timing": 'export * from "@avtools/core-timing";\n',
+  "music_types": 'export * from "@avtools/music-types";\n',
   "piano_roll_helpers": 'export * from "piano-roll-helpers";\n',
   "piano_roll_store": 'export * from "piano-roll-store";\n',
   "midi_helpers": 'export * from "midi-helpers";\n',
@@ -75,6 +76,7 @@ export const MODULE_IMPORT_MAP: Readonly<Record<string, string>> = {
   "canvas-drawing": "canvas_drawing.js",
   "canvas-surface": "canvas_surface.js",
   "@avtools/core-timing": "core_timing.js",
+  "@avtools/music-types": "music_types.js",
   "piano-roll-helpers": "piano_roll_helpers.js",
   "piano-roll-store": "piano_roll_store.js",
   "midi-helpers": "midi_helpers.js",

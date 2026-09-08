@@ -4,8 +4,8 @@ Three editable source piano rolls (`dscale5`, `dscale7`, `d7mel`), each with its
 own parameter object, pipeline instance, and one-shot/gate/stop buttons. All
 controls live on the tldraw canvas. No LPD8 or TouchOSC input adapter is included.
 
-Open **sonar-melodies** from the project picker using the **Deno engine**, then
-Run **melody player**. Its imported helpers initialize automatically; they do
+Open **sonar-melodies** using **engine on server**, **engine in browser**, or
+**engine in same tab**, then Run **melody player**. Its imported helpers initialize automatically; they do
 not need individual Run actions. After editing an imported helper, restart the
 engine to reload its cached module instance; replacing the player alone may
 retain the previous helper code. The source rolls are already saved in the
@@ -17,6 +17,17 @@ channel 0 (channel 1 in a DAW). Route those ports to instruments for sound.
 `dryRun` lets subsequent triggers run without a MIDI device. Changing output or
 BPM settings affects subsequent triggers; currently playing phrases finish
 with their captured routing/tempo. This project does not contain a synthesizer.
+
+`midi-helpers` uses the multi-target library in `packages/midi`: native MIDI on
+Deno and Web MIDI in browsers. The browser engine initializes MIDI when it
+starts. Allow the MIDI permission prompt; if needed, click in the engine tab
+(or the canvas for same-tab mode) to retry. The engine's MIDI status lists the
+available output names. Set the output fields to ports on the machine running
+the engine. The server mode needs the native MIDI bridge; browser mode does not.
+
+After pulling this change, restart the livecode server and reload the UI and
+any engine tab to receive the new browser import map and rebuilt engine assets.
+No project-specific build or helper-module launch is required.
 
 ## Canvas controls
 
