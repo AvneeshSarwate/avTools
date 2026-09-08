@@ -8,6 +8,7 @@
 // with `executeEngineOp` from `@avtools/livecode-engine` — one implementation,
 // two transports.
 
+import type { LivecodeEvent } from "./events.ts";
 import type { LaunchModuleRequest } from "./runtime.ts";
 import type { SetPianoRollRequest } from "./piano_roll.ts";
 import type { SetParamsRequest } from "./params.ts";
@@ -62,7 +63,9 @@ export interface BakedProjectFile {
   data: EngineEntityLoadEntry[];
 }
 
+
 export type EngineOp =
+  | { kind: "emitEvent"; event: LivecodeEvent }
   | {
     kind: "launch";
     request: LaunchModuleRequest;

@@ -54,6 +54,7 @@ import type {
   SetAnimationTimelineRequest,
   SetDrawingRequest,
   SetParamsRequest,
+  LivecodeEvent,
   SetPianoRollRequest,
   StopModuleRequest,
   SyncClientMessage,
@@ -827,6 +828,14 @@ export async function createLivecodeVisualizerServer(
       return json(
         await plane.execute({ kind: "paramsList" }) as ParamsSnapshot,
       );
+    }
+    if (request.method === "POST" && url.pathname === "/events/emit") {
+      try {
+        const event = await request.json() as LivecodeEvent;
+        return json(await plane.execute({ kind: "emitEvent", event }));
+      } catch (error) {
+        return json({ error: String(error) }, { status: 400 });
+      }
     }
     if (request.method === "POST" && url.pathname === "/params/set") {
       const requestBody = await request.json() as SetParamsRequest;

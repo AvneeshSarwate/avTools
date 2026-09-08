@@ -388,7 +388,10 @@ try {
   )
   await page.evaluate(() => window.__livecodeTldrawRuntimeDebug?.connect())
   await waitForTldrawReady()
-  if (process.env.LIVECODE_E2E_CASE === 'duplicate') {
+  if (process.env.LIVECODE_E2E_CASE === 'events') {
+    firstModuleId = await waitForFirstModuleId()
+    await runEventButtonsCase()
+  } else if (process.env.LIVECODE_E2E_CASE === 'duplicate') {
     await runCanvasDuplicateActionCase()
   } else {
     await runResponsiveTopbarCase()
@@ -407,6 +410,7 @@ try {
     await runParamPaneShowsCodeWritesCase()
     await runParamPaneRehydratesAfterReloadCase()
     await runParamPaneShowsUnavailableValueCase()
+    await runEventButtonsCase()
     await runPlayheadSignalMarkerCase()
     await runTwoModulePlayheadMarkersCase()
     await runSignalScopeAccumulatesCase()
@@ -3212,4 +3216,62 @@ async function stopProcess(proc) {
       resolve()
     })
   })
+}
+
+async function runEventButtonsCase() {
+  const source = readFileSync(path.join(tldrawAppRoot,
+    'example-projects/feature-event-buttons/modules/panel.orig.ts'), 'utf8')
+  await setSource(source)
+  await waitForManifest(firstModuleId, 2, 'event button manifest')
+  await runModule(firstModuleId)
+  await waitForParamsEntity('event-buttons', candidate => candidate.meta?.play?.button,
+    'static button metadata reaches UI')
+  const shapeId = await createParamPane('event-buttons')
+  const pane = page.locator('.param-pane-shape').filter({ hasText: 'params: event-buttons' })
+  const button = pane.getByRole('button', { name: 'play', exact: true }).first()
+  await button.waitFor()
+  const initial = await fetchParamsEntity('event-buttons')
+  let presses = initial.values.presses
+  let releases = initial.values.releases
+  const counts = async (held) => waitForParamsEntity('event-buttons', e =>
+    e.values.presses === presses && e.values.releases === releases && e.values.held === held,
+    `button counts ${presses}/${releases}`)
+  // Quick edges cannot conflate or arrive in the opposite order.
+  await button.click()
+  presses++; releases++
+  await counts(false)
+  // Pointer capture releases even outside the button/shape.
+  const box = await button.boundingBox()
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  presses++
+  await counts(true)
+  await page.mouse.move(5, 5)
+  await page.mouse.up()
+  releases++
+  await counts(false)
+  // Key repeat is one held press, followed by exactly one release.
+  await button.focus()
+  await page.keyboard.down('Space')
+  await page.keyboard.down('Space')
+  presses++
+  await counts(true)
+  await page.keyboard.up('Space')
+  releases++
+  await counts(false)
+  // Losing focus releases; a later physical up must not emit twice.
+  await button.focus()
+  await page.keyboard.down('Enter')
+  presses++
+  await counts(true)
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')))
+  releases++
+  await counts(false)
+  await page.keyboard.up('Enter')
+  // A nested button uses the same global registry.
+  await pane.getByRole('button', { name: 'play', exact: true }).nth(1).click()
+  presses++; releases++
+  await counts(false)
+  assert(shapeId, 'event pane exists')
+  console.log('PASS event buttons: metadata, pointer edges, keyboard, focus loss, nested buttons')
 }

@@ -3,6 +3,8 @@
  * record, its snapshot envelope, and the `/params/set` body.
  */
 
+import type { LivecodeEvent } from "./events.ts";
+
 export type ParamsPrimitive = number | string | boolean;
 
 /**
@@ -15,6 +17,8 @@ export interface ParamsValues {
 }
 
 export interface ParamsFieldMeta {
+  /** Static momentary-button message. The UI adds body.state on each edge. */
+  button?: LivecodeEvent<Record<string, unknown>>;
   label?: string;
   min?: number;
   max?: number;

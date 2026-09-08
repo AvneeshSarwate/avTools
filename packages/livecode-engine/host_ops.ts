@@ -24,6 +24,7 @@ import {
   setPianoRoll,
   undoPianoRoll,
 } from "./piano_roll_store.ts";
+import { emit } from "./events.ts";
 import { makeParamsSnapshot, setParamsValues } from "./params_store.ts";
 import { makeSignalsSnapshot } from "./signals_store.ts";
 import { setAnimationTimeline } from "./animation_timeline_store.ts";
@@ -194,6 +195,8 @@ export async function executeEngineOp(
       const apply = op.action === "undo" ? undoPianoRoll : redoPianoRoll;
       return apply(op.request.name, { originId: op.request.originId }) ?? null;
     }
+    case "emitEvent":
+      return emit(op.event);
     case "paramsList":
       return makeParamsSnapshot();
     case "paramsSet":

@@ -114,3 +114,9 @@ requires a successful shadow `deno check` in the client; direct
 `/runtime/launch` bypasses it. Browser-target checking also currently accepts a
 wider import map than the browser engine can actually serve; see
 `known-risks.md`.
+
+Direct named/aliased and namespace `onEvent` imports from `canvas-events` in timed
+scopes receive the nearest recognized context as an omitted second argument.
+This is ownership plumbing, not a visualization callsite. Explicit context
+arguments pass through. Unrecognized aliases, callbacks, and helper scopes must
+pass ctx themselves; the runtime rejects subscriptions without an owner.

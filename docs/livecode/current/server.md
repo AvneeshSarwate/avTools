@@ -210,3 +210,13 @@ The embedded LSP server's `shutdownAfter` option must stay unset: the dependency
 calls `process.exit()` on LSP inactivity, terminating the whole coordination
 server and any local runs. Editor activity does not govern server lifetime;
 explicit shutdown and the Cloudflare container's separate idle policy do.
+
+## Global input events
+
+`canvas-events` is a shared engine singleton, separate from stores and sync.
+Explicit event ops dispatch to current listeners without waiting for their musical
+work or retaining history. Listener errors are isolated and logged. Each listener
+belongs to an actual TimeContext; cancellation removes it immediately and natural
+module completion retires remaining descendant subscriptions. Module-ID reuse
+cannot transfer an old handler into a replacement. Headless callers pass ctx;
+the analyzer supplies it for recognized calls in timed scopes.

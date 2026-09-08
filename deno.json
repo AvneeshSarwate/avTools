@@ -53,6 +53,7 @@
     "@img/png": "jsr:@img/png@^0.1.6",
     "babylonjs": "npm:babylonjs@^8.20.0",
     "earcut": "npm:earcut@^3.0.0",
+    "canvas-events": "./apps/deno-notebooks/livecode/helpers/canvas_events.ts",
     "canvas-params": "./apps/deno-notebooks/livecode/helpers/canvas_params.ts",
     "canvas-signals": "./apps/deno-notebooks/livecode/helpers/canvas_signals.ts",
     "animation-timeline": "./apps/deno-notebooks/livecode/helpers/animation_timeline.ts",

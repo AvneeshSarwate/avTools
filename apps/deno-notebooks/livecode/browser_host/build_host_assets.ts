@@ -31,7 +31,8 @@ const REPO_ROOT = resolve(HERE, "../../../..");
  * specifiers user modules keep after transform at these bundles. */
 const ALIAS_ENTRIES: Record<string, string> = {
   "canvas_signals": 'export { signal } from "canvas-signals";\n',
-  "canvas_params": 'export { canvasParams } from "canvas-params";\n',
+  "canvas_events": 'export * from "canvas-events";\n',
+  "canvas_params": 'export * from "canvas-params";\n',
   "animation_timeline": 'export * from "animation-timeline";\n',
   "canvas_drawing": 'export * from "canvas-drawing";\n',
   "canvas_surface": 'export * from "canvas-surface";\n',
@@ -68,6 +69,7 @@ const ALIAS_ENTRIES: Record<string, string> = {
  */
 export const MODULE_IMPORT_MAP: Readonly<Record<string, string>> = {
   "canvas-signals": "canvas_signals.js",
+  "canvas-events": "canvas_events.js",
   "canvas-params": "canvas_params.js",
   "animation-timeline": "animation_timeline.js",
   "canvas-drawing": "canvas_drawing.js",
