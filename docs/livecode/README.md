@@ -13,6 +13,8 @@ in code.
 - To create or modify a livecode piece with a coding agent, start with
   [`project-authoring-guide.md`](project-authoring-guide.md), then read that
   project's README, manifest, and canonical `*.orig.ts` sources.
+- To run E2E in a restricted agent workspace, use
+  [`current/restricted-workspace-e2e.md`](current/restricted-workspace-e2e.md).
 - To change the livecode platform itself, use the architecture bootstrap below.
 
 ## Platform-development bootstrap

@@ -110,6 +110,12 @@ release affecting these seams, manually check the applicable item:
 
 ## Environment and artifacts
 
+For restricted Linux agent sessions with missing procfs, proxy-selection
+problems, or browser launch failures, follow
+[`restricted-workspace-e2e.md`](restricted-workspace-e2e.md). It separates a bake
+pass from partial browser validation and an unchanged E2E pass.
+
+
 For the Cloudflare remote dev box, see
 [`apps/livecode-cloudflare/README.md`](../../../apps/livecode-cloudflare/README.md)
 for packed R2 checkpoint migration/recovery, offline checks, and startup timing.
