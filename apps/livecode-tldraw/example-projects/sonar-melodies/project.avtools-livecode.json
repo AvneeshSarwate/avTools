@@ -1,0 +1,177 @@
+{
+  "version": 1,
+  "name": "sonar-melodies",
+  "engineTarget": "deno",
+  "modules": [
+    {
+      "id": "sonar/player",
+      "path": "modules/player.ts",
+      "sourcePath": "modules/player.orig.ts",
+      "runtimePath": "modules/player.ts",
+      "kind": "runnable",
+      "title": "Run: melody player",
+      "sourceVersion": 1,
+      "x": 80,
+      "y": 80,
+      "w": 560,
+      "h": 460
+    },
+    {
+      "id": "sonar/controls",
+      "path": "modules/controls.ts",
+      "sourcePath": "modules/controls.orig.ts",
+      "runtimePath": "modules/controls.ts",
+      "kind": "runnable",
+      "title": "controls",
+      "sourceVersion": 1,
+      "x": 2050,
+      "y": 1120,
+      "w": 560,
+      "h": 460
+    },
+    {
+      "id": "sonar/pipeline",
+      "path": "modules/pipeline.ts",
+      "sourcePath": "modules/pipeline.orig.ts",
+      "runtimePath": "modules/pipeline.ts",
+      "kind": "runnable",
+      "title": "pipeline",
+      "sourceVersion": 1,
+      "x": 2050,
+      "y": 1640,
+      "w": 560,
+      "h": 460
+    },
+    {
+      "id": "sonar/transforms",
+      "path": "modules/transforms.ts",
+      "sourcePath": "modules/transforms.orig.ts",
+      "runtimePath": "modules/transforms.ts",
+      "kind": "runnable",
+      "title": "transforms",
+      "sourceVersion": 1,
+      "x": 2050,
+      "y": 2160,
+      "w": 560,
+      "h": 460
+    },
+    {
+      "id": "sonar/easing",
+      "path": "modules/easing.ts",
+      "sourcePath": "modules/easing.orig.ts",
+      "runtimePath": "modules/easing.ts",
+      "kind": "runnable",
+      "title": "easing",
+      "sourceVersion": 1,
+      "x": 2050,
+      "y": 2680,
+      "w": 560,
+      "h": 460
+    },
+    {
+      "id": "sonar/sources",
+      "path": "modules/sources.ts",
+      "sourcePath": "modules/sources.orig.ts",
+      "runtimePath": "modules/sources.ts",
+      "kind": "runnable",
+      "title": "sources",
+      "sourceVersion": 1,
+      "x": 2050,
+      "y": 3200,
+      "w": 560,
+      "h": 460
+    },
+    {
+      "id": "sonar/playback",
+      "path": "modules/playback.ts",
+      "sourcePath": "modules/playback.orig.ts",
+      "runtimePath": "modules/playback.ts",
+      "kind": "runnable",
+      "title": "playback + note ownership",
+      "sourceVersion": 1,
+      "x": 2050,
+      "y": 3720,
+      "w": 560,
+      "h": 460
+    }
+  ],
+  "canvas": {
+    "pianoRollViews": [
+      {
+        "id": "shape:sonar-dscale5",
+        "rollName": "sonar/dscale5",
+        "x": 700,
+        "y": 80,
+        "w": 850,
+        "h": 557
+      },
+      {
+        "id": "shape:sonar-dscale7",
+        "rollName": "sonar/dscale7",
+        "x": 700,
+        "y": 780,
+        "w": 850,
+        "h": 557
+      },
+      {
+        "id": "shape:sonar-d7mel",
+        "rollName": "sonar/d7mel",
+        "x": 700,
+        "y": 1480,
+        "w": 850,
+        "h": 557
+      }
+    ],
+    "paramPaneViews": [
+      {
+        "id": "shape:sonar-params-dscale5",
+        "paramsName": "sonar/dscale5",
+        "x": 1600,
+        "y": 80,
+        "w": 360,
+        "h": 680
+      },
+      {
+        "id": "shape:sonar-params-dscale7",
+        "paramsName": "sonar/dscale7",
+        "x": 1600,
+        "y": 780,
+        "w": 360,
+        "h": 680
+      },
+      {
+        "id": "shape:sonar-params-d7mel",
+        "paramsName": "sonar/d7mel",
+        "x": 1600,
+        "y": 1480,
+        "w": 360,
+        "h": 680
+      },
+      {
+        "id": "shape:sonar-transport",
+        "paramsName": "sonar/transport",
+        "x": 80,
+        "y": 610,
+        "w": 560,
+        "h": 420
+      }
+    ]
+  },
+  "data": [
+    {
+      "type": "pianoRoll",
+      "name": "sonar/dscale5",
+      "path": "data/pianoRoll/dscale5.json"
+    },
+    {
+      "type": "pianoRoll",
+      "name": "sonar/dscale7",
+      "path": "data/pianoRoll/dscale7.json"
+    },
+    {
+      "type": "pianoRoll",
+      "name": "sonar/d7mel",
+      "path": "data/pianoRoll/d7mel.json"
+    }
+  ]
+}
