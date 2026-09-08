@@ -162,6 +162,7 @@ These bare imports are the intentionally supported livecode surface:
 | `canvas-params` | `canvasParams(name, defaults, meta)` returns a live JSON-simple object that panes can edit; redeclaration reattaches to existing values. | Deno and browser |
 | `canvas-signals` | `signal(name)` publishes ephemeral monitor/playhead values and optional entity anchors. Signals end with their owner run and are not a cross-module data API. | Deno and browser |
 | `animation-timeline` | Declare and sample durable number, enum, and function tracks. | Deno and browser |
+| `@avtools/music-types` | Shared `AbletonClip`, `Scale`, and curve data utilities; browser alias shares class identity with piano-roll helpers. | Deno and browser |
 | `piano-roll-store` | Read or update named piano-roll entities. | Deno and browser |
 | `piano-roll-helpers` | Convert clips, write roll data, and play a roll through logical time and optional MIDI output. | Deno and browser |
 | `midi-helpers` | Discover/select outputs, send notes/CC, and panic. Browser MIDI may require a focused user gesture and permission. | Deno and browser |
