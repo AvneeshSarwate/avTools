@@ -904,3 +904,30 @@ export default async function(ctx: TimeContext) {
     );
   }
 });
+
+Deno.test("event subscriptions infer the nearest timed context without a manifest entry", () => {
+  const result = analyze(`
+import type { TimeContext } from "@avtools/core-timing";
+import * as events from "canvas-events";
+import { onEvent as listen } from "canvas-events";
+export default async function(ctx: TimeContext) {
+  events.onEvent(event => console.log(event));
+  listen(event => console.log(event),);
+  listen(event => console.log(event), ctx);
+  ctx.branch(async child => {
+    events.onEvent(event => console.log(event));
+    await child.waitSec(1);
+  });
+  const other = { onEvent: (f: unknown) => f };
+  other.onEvent(() => {});
+  await ctx.waitSec(1);
+}
+`);
+  assertEquals(result.type, "analyzeSuccess");
+  if (result.type !== "analyzeSuccess") return;
+  assertStringIncludes(result.transformedCode, "events.onEvent(event => console.log(event), ctx)");
+  assertStringIncludes(result.transformedCode, "events.onEvent(event => console.log(event), child)");
+  assertStringIncludes(result.transformedCode, "listen(event => console.log(event), ctx)");
+  assertStringIncludes(result.transformedCode, "other.onEvent(() => {})");
+  assertEquals(result.manifest.callsites.length, 2);
+});

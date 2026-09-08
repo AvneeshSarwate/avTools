@@ -7,7 +7,7 @@ import type {
 import { waitFor } from "./test_helpers.ts";
 
 class FakeEngineSocket {
-  readyState = WebSocket.OPEN;
+  readyState: number = WebSocket.OPEN;
   onmessage: WebSocket["onmessage"] = null;
   onclose: WebSocket["onclose"] = null;
   onerror: WebSocket["onerror"] = null;
@@ -123,4 +123,25 @@ Deno.test("stale engine initialization cannot target its replacement", async () 
   assertEquals(replacement.requests.length, 0);
   assert(plane.hasEngine());
   await plane.close();
+});
+
+Deno.test("remote event operations preserve individual down/up messages", async () => {
+  const plane = createRemoteExecutionPlane({
+    log: () => {}, onSyncChanges: () => {}, onEngineResets: () => {},
+    initializeEngine: async () => {},
+  });
+  const socket = new FakeEngineSocket();
+  plane.attachEngineSocket(socket.asWebSocket());
+  hello(socket);
+  try {
+    await waitFor(() => plane.hasEngine(), "event engine ready");
+    for (const state of ["down", "up"]) {
+      await plane.execute({ kind: "emitEvent", event: {
+        type: "trigger", body: { melody: "dscale5", state },
+      } });
+    }
+    assertEquals(socket.requests.map(request => request.op), ["down", "up"].map(state => ({
+      kind: "emitEvent" as const, event: { type: "trigger", body: { melody: "dscale5", state } },
+    })));
+  } finally { await plane.close(); }
 });

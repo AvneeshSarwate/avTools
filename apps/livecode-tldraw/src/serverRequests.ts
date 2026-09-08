@@ -9,6 +9,8 @@ import type {
   EngineEntityCapture,
   EngineEntityLoadEntry,
   EngineOp,
+  LivecodeEvent,
+  EmitEventResult,
   EntityMutationSuccess,
   ProjectSaveResponse,
   ProjectStatusResponse,
@@ -126,6 +128,21 @@ export async function engineAction<T>(
     return await localEngineAction(op) as T;
   }
   return await postServerJson<T>(serverBaseUrl, httpPath, httpBody);
+}
+
+// Serialize this UI's edges across all panes: concurrent HTTP requests must
+// not deliver up before down. A failed request is surfaced, never retried.
+const eventLanes = new Map<string, Promise<unknown>>();
+export function emitEvent(serverBaseUrl: string, event: LivecodeEvent): Promise<EmitEventResult> {
+  const message = structuredClone(event);
+  const prior = eventLanes.get(serverBaseUrl) ?? Promise.resolve();
+  const next = prior.catch(() => {}).then(() => engineAction<EmitEventResult>(
+    { kind: 'emitEvent', event: message }, serverBaseUrl, '/events/emit', message,
+  ));
+  eventLanes.set(serverBaseUrl, next);
+  const clear = () => { if (eventLanes.get(serverBaseUrl) === next) eventLanes.delete(serverBaseUrl) };
+  next.then(clear, clear);
+  return next;
 }
 
 export class ServerActionError extends Error {

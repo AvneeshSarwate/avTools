@@ -19,6 +19,7 @@ import {
   clearOwnedModuleWaits,
   setRootTimeContext,
 } from "./runtime.ts";
+import { endEventContext } from "./events.ts";
 import { endSignalsForModule } from "./signals_store.ts";
 import { seedDemoPianoRoll } from "./piano_roll_store.ts";
 import { registerBuiltinEntityKinds } from "./entity_kinds.ts";
@@ -431,6 +432,7 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
               });
             }
           } finally {
+            endEventContext(branchCtx);
             clearOwnedModuleWaits(requestBody.moduleId, runToken);
             const active = activeModules.get(requestBody.moduleId);
             if (active?.runToken === runToken) {

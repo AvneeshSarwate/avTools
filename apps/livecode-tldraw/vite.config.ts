@@ -17,6 +17,7 @@ const livecodeRoutePrefixes = [
   "/entities",
   "/piano-roll",
   "/params",
+  "/events",
   "/animation-timeline",
   "/signals",
   "/runtime",

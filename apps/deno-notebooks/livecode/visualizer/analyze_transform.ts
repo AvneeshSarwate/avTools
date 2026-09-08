@@ -340,6 +340,11 @@ export function analyzeAndTransformTimedModule(
   const animationTimelineBindings = collectAnimationTimelineImports(sourceFile);
   const canvasDrawingBindings = collectCanvasDrawingImports(sourceFile);
   const canvasSignalBindings = collectCanvasSignalImports(sourceFile);
+  const eventFunctions = new Set(["onEvent"]);
+  const eventBindings = collectHelperImports(sourceFile, eventFunctions, specifier =>
+    matchesHelperModuleSpecifier(specifier, new Set(["canvas-events"]),
+      ["/helpers/canvas_events.ts"], new Set(["canvas_events.ts"])));
+  const ownedEventCalls = new Set<CallExpression>();
 
   for (const scope of collectVisualFunctionScopes(sourceFile)) {
     processVisualBody(scope);
@@ -571,6 +576,13 @@ export function analyzeAndTransformTimedModule(
     }
 
     if (Node.isCallExpression(node)) {
+      if (resolveHelperCallTarget(node, eventBindings, eventFunctions) &&
+          node.getArguments().length === 1 && !ownedEventCalls.has(node)) {
+        // Ownership follows the actual context, not a module name reused by Replace.
+        const ctxName = [...scope.ctxNames].at(-1)!;
+        magic.appendLeft(node.getEnd() - 1, `${node.compilerNode.arguments.hasTrailingComma ? "" : ","} ${ctxName}`);
+        ownedEventCalls.add(node);
+      }
       processUnawaitedCall(node, scope);
       processBranchCallback(node, scope);
       processPianoRollLookup(node);

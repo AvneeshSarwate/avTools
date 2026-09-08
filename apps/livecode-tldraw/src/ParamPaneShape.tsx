@@ -15,8 +15,11 @@ import type {
   ParamsMeta,
   ParamsPrimitive,
   ParamsValues,
+  LivecodeEvent,
 } from '@avtools/livecode-protocol'
-import { useParamsSync } from './syncRuntime'
+import { useParamsSync, useSyncActions } from './syncRuntime'
+import { emitEvent } from './serverRequests'
+import { bindParamButton } from './paramButton'
 
 export const PARAM_PANE_SHAPE_TYPE = 'param-pane'
 const DEFAULT_PARAM_PANE_WIDTH = 320
@@ -120,6 +123,7 @@ export function createParamPaneShape(
 
 function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
   const runtime = useParamsSync()
+  const { serverBaseUrl } = useSyncActions()
   const entity = runtime.params[shape.props.paramsName]
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -200,8 +204,12 @@ function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
 
     const draft = JSON.parse(JSON.stringify(current.values)) as ParamsValues
     const entries: BindingEntry[] = []
+    const cleanups: Array<() => void> = []
     const pane = new Pane({ container })
-    buildBindings(pane, draft, current.meta, [], entries, handleLeafChange)
+    buildBindings(pane, draft, current.meta, [], entries, handleLeafChange,
+      event => { emitEvent(serverBaseUrl, event).catch(error => {
+        console.error('[livecode-tldraw] button event failed', error)
+      }) }, cleanups)
 
     draftRef.current = draft
     entriesRef.current = entries
@@ -210,12 +218,13 @@ function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
     activeEntryRef.current = null
 
     return () => {
+      cleanups.forEach(cleanup => cleanup())
       pane.dispose()
       paneRef.current = null
       entriesRef.current = []
       activeEntryRef.current = null
     }
-  }, [handleLeafChange, structureKey])
+  }, [handleLeafChange, structureKey, serverBaseUrl])
 
   // The shape body stops bubbling, so gesture ends are observed in the capture
   // phase. Releasing a control resumes refreshes and catches it up. Enter ends
@@ -307,7 +316,12 @@ function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
         onPointerUp={stopCanvasEvent}
         onPointerCancel={stopCanvasEvent}
         onTouchStart={stopCanvasEvent}
-        onKeyDownCapture={stopCanvasEvent}
+        onKeyDownCapture={(event) => {
+          // Event buttons handle keys at the native target; other bindings keep
+          // the existing canvas keyboard shield.
+          if (!(event.target instanceof Element) ||
+              !event.target.closest('[data-param-event-button]')) stopCanvasEvent(event)
+        }}
       >
         <div ref={containerRef} className="param-pane-shape__pane" />
         {entity?.values === null ? (
@@ -337,10 +351,22 @@ function buildBindings(
   path: string[],
   entries: BindingEntry[],
   onChange: (entry: BindingEntry, value: ParamsPrimitive) => void,
+  sendEvent: (event: LivecodeEvent) => void,
+  cleanups: Array<() => void>,
 ) {
-  for (const key of Object.keys(target)) {
+  for (const key of new Set([...Object.keys(target), ...Object.keys(meta ?? {})])) {
     const value = target[key]
     const fieldMeta = meta?.[key]
+
+    if (!(key in target)) {
+      const buttonMeta = fieldMeta as ParamsFieldMeta | undefined
+      if (buttonMeta?.button) {
+        const blade = container.addButton({ title: buttonMeta.label ?? key })
+        const element = blade.element.querySelector('button')
+        if (element) cleanups.push(bindParamButton(element, buttonMeta.button, sendEvent))
+      }
+      continue
+    }
 
     if (isPlainObject(value)) {
       const folder = container.addFolder({ title: key })
@@ -351,6 +377,8 @@ function buildBindings(
         [...path, key],
         entries,
         onChange,
+        sendEvent,
+        cleanups,
       )
       continue
     }

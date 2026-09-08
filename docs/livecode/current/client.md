@@ -219,3 +219,12 @@ The client-control bridge is an automation surface, not a second state owner.
 Its `getState` joins local shapes with a fresh server status read; if that read
 fails, the current implementation reports no server-running modules, which is
 unknown disguised as empty.
+
+## Parameter action buttons
+
+`button(...)` declarations travel as static params metadata, not editable values.
+The pane renders Tweakpane buttons with pointer/keyboard down/up handling. Release
+outside the button, pointer cancellation, focus loss, and view disposal end a
+held gesture once. The UI serializes global event sends across panes so separate
+HTTP requests cannot reorder a quick press/release; errors surface without retry.
+Abrupt tab/network loss can still lose a release. No reconnect replay is attempted.

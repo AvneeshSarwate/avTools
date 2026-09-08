@@ -13,6 +13,7 @@ export type * from "./drawing.ts";
 export type * from "./engine_host.ts";
 export type * from "./engine_uplink.ts";
 export type * from "./entities.ts";
+export type * from "./events.ts";
 export type * from "./params.ts";
 export type * from "./piano_roll.ts";
 export type * from "./project.ts";
