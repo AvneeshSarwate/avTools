@@ -1,0 +1,51 @@
+{
+  "type": "pianoRoll",
+  "name": "sonar/dscale5",
+  "savedAt": "2026-09-08T00:00:00.000Z",
+  "data": {
+    "notes": [
+      {
+        "id": "dscale5-0",
+        "pitch": 62,
+        "position": 0.0,
+        "duration": 0.5,
+        "velocity": 100.0
+      },
+      {
+        "id": "dscale5-1",
+        "pitch": 66,
+        "position": 0.5,
+        "duration": 0.5,
+        "velocity": 100.0
+      },
+      {
+        "id": "dscale5-2",
+        "pitch": 68,
+        "position": 1.0,
+        "duration": 0.5,
+        "velocity": 100.0
+      },
+      {
+        "id": "dscale5-3",
+        "pitch": 71,
+        "position": 1.5,
+        "duration": 0.5,
+        "velocity": 100.0
+      },
+      {
+        "id": "dscale5-4",
+        "pitch": 73,
+        "position": 2.0,
+        "duration": 0.5,
+        "velocity": 100.0
+      },
+      {
+        "id": "dscale5-5",
+        "pitch": 74,
+        "position": 2.5,
+        "duration": 0.5,
+        "velocity": 100.0
+      }
+    ]
+  }
+}

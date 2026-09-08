@@ -1,0 +1,209 @@
+[
+  {
+    "name": "dscale7",
+    "index": 0,
+    "values": [
+      0.5,
+      0.3333333333333333,
+      0.5,
+      0,
+      0,
+      0.5,
+      0
+    ],
+    "base": {
+      "duration": 4,
+      "notes": 8,
+      "hash": "70fae8ab51dbed3957593e61101a779d22e970957d2b0bfc667205692cf871fb"
+    },
+    "delay": {
+      "duration": 4,
+      "notes": 8,
+      "hash": "70fae8ab51dbed3957593e61101a779d22e970957d2b0bfc667205692cf871fb"
+    }
+  },
+  {
+    "name": "dscale7",
+    "index": 1,
+    "values": [
+      0.72,
+      0.61,
+      0.23,
+      0.8,
+      0.6,
+      0.8,
+      0.51
+    ],
+    "base": {
+      "duration": 7.829047656302224,
+      "notes": 17,
+      "hash": "13c781840643b6206e710787635319b218d4083c86fc62b506789d473993f547"
+    },
+    "delay": {
+      "duration": 21.039619116688762,
+      "notes": 38,
+      "hash": "6136a050f23f53d1eb349eaa6e8f0ab7ca019290e65d7f765a0ac0f3606b9686"
+    }
+  },
+  {
+    "name": "dscale7",
+    "index": 2,
+    "values": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "base": {
+      "duration": 14.72923214896582,
+      "notes": 24,
+      "hash": "a7580602a60143795d0de15aa30c8550edec24433e18d06a17abca5e6b7fe117"
+    },
+    "delay": {
+      "duration": 67.31239348841986,
+      "notes": 66,
+      "hash": "aa9e44a3eadd9ce937e1edfb1a2b8837d7c966cd79bafd4b2e3ddce6c164807f"
+    }
+  },
+  {
+    "name": "dscale5",
+    "index": 0,
+    "values": [
+      0.5,
+      0.3333333333333333,
+      0.5,
+      0,
+      0,
+      0.5,
+      0
+    ],
+    "base": {
+      "duration": 3,
+      "notes": 6,
+      "hash": "514ada668b8f13bd75101d8650179cd0fb3dacbe6030edcf4d5fbf4a3d28e552"
+    },
+    "delay": {
+      "duration": 3,
+      "notes": 6,
+      "hash": "514ada668b8f13bd75101d8650179cd0fb3dacbe6030edcf4d5fbf4a3d28e552"
+    }
+  },
+  {
+    "name": "dscale5",
+    "index": 1,
+    "values": [
+      0.72,
+      0.61,
+      0.23,
+      0.8,
+      0.6,
+      0.8,
+      0.51
+    ],
+    "base": {
+      "duration": 5.818519688311662,
+      "notes": 13,
+      "hash": "76a25e2a1929e674df9e852c5579f120af05b0202620718e217c7a56ceedb310"
+    },
+    "delay": {
+      "duration": 14.954683622695676,
+      "notes": 30,
+      "hash": "6e3e0222592c0143753d025a3bad1575cb840cd2a0700d93eb1a01a01147902c"
+    }
+  },
+  {
+    "name": "dscale5",
+    "index": 2,
+    "values": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "base": {
+      "duration": 11.138268848822918,
+      "notes": 18,
+      "hash": "c8716cf55943e09e13fe350228ab5227401d91acd9078268245a62394e5840c7"
+    },
+    "delay": {
+      "duration": 54.66282732239864,
+      "notes": 46,
+      "hash": "4bacd0a1023601fe42a7e2fccceb884227096f70febb933758da42c96f58034e"
+    }
+  },
+  {
+    "name": "d7mel",
+    "index": 0,
+    "values": [
+      0.5,
+      0.3333333333333333,
+      0.5,
+      0,
+      0,
+      0.5,
+      0
+    ],
+    "base": {
+      "duration": 16,
+      "notes": 22,
+      "hash": "ec0e81248e8351d74e27ba4d1c699222b3a42ec1200230b3d8cb3bef96390771"
+    },
+    "delay": {
+      "duration": 16,
+      "notes": 22,
+      "hash": "ec0e81248e8351d74e27ba4d1c699222b3a42ec1200230b3d8cb3bef96390771"
+    }
+  },
+  {
+    "name": "d7mel",
+    "index": 1,
+    "values": [
+      0.72,
+      0.61,
+      0.23,
+      0.8,
+      0.6,
+      0.8,
+      0.51
+    ],
+    "base": {
+      "duration": 40.53416222884446,
+      "notes": 49,
+      "hash": "c88a8e0f5781d1a6fe1762c04ffef9a3bfd624f6d327c3002603b997e4c60563"
+    },
+    "delay": {
+      "duration": 99.91808843032709,
+      "notes": 108,
+      "hash": "18043ce9830b9cc6f994e1cd825f139f3cea7ea90f3dbb6272eadf62ba66f203"
+    }
+  },
+  {
+    "name": "d7mel",
+    "index": 2,
+    "values": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "base": {
+      "duration": 61.90642904082779,
+      "notes": 66,
+      "hash": "301f8ba87999da89f2fce1103db71b639f072289150dcba5b91e6325ad9d8700"
+    },
+    "delay": {
+      "duration": 277.84664398807615,
+      "notes": 184,
+      "hash": "514a999c59fbf8d63183684bc3bbe6eee173eb22f362d491c98e3d7ff796c17b"
+    }
+  }
+]

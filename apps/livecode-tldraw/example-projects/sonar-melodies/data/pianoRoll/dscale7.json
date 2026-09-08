@@ -1,0 +1,65 @@
+{
+  "type": "pianoRoll",
+  "name": "sonar/dscale7",
+  "savedAt": "2026-09-08T00:00:00.000Z",
+  "data": {
+    "notes": [
+      {
+        "id": "dscale7-0",
+        "pitch": 62,
+        "position": 0.0,
+        "duration": 0.5,
+        "velocity": 100.0
+      },
+      {
+        "id": "dscale7-1",
+        "pitch": 63,
+        "position": 0.5,
+        "duration": 0.5,
+        "velocity": 100.0
+      },
+      {
+        "id": "dscale7-2",
+        "pitch": 66,
+        "position": 1.0,
+        "duration": 0.5,
+        "velocity": 100.0
+      },
+      {
+        "id": "dscale7-3",
+        "pitch": 68,
+        "position": 1.5,
+        "duration": 0.5,
+        "velocity": 100.0
+      },
+      {
+        "id": "dscale7-4",
+        "pitch": 69,
+        "position": 2.0,
+        "duration": 0.5,
+        "velocity": 100.0
+      },
+      {
+        "id": "dscale7-5",
+        "pitch": 71,
+        "position": 2.5,
+        "duration": 0.5,
+        "velocity": 100.0
+      },
+      {
+        "id": "dscale7-6",
+        "pitch": 73,
+        "position": 3.0,
+        "duration": 0.5,
+        "velocity": 100.0
+      },
+      {
+        "id": "dscale7-7",
+        "pitch": 74,
+        "position": 3.5,
+        "duration": 0.5,
+        "velocity": 100.0
+      }
+    ]
+  }
+}
