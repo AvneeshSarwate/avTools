@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick, onUnmounted } from 'vue'
 import type { Core } from '../core'
 import type {
   TrackRuntime,
@@ -11,7 +11,7 @@ import type {
   EnumElement,
   FuncElementData,
   FuncArg,
-  PlayheadMarker,
+  PlayheadMarker
 } from '../types'
 import { useToast } from '../useToast'
 import EditSidebar from './EditSidebar.vue'
@@ -30,6 +30,7 @@ const props = defineProps<{
   currentTime: number
   playheadMarkers: readonly PlayheadMarker[]
   dataVersion: number
+  duration: number
   initialEnabledTrackIds?: Set<string>
 }>()
 
@@ -68,17 +69,17 @@ const allTracks = computed(() => {
 
 const numberTracks = computed(() => {
   const ids = editEnabledTrackIds.value
-  return allTracks.value.filter(t => t.def.fieldType === 'number' && ids.has(t.id))
+  return allTracks.value.filter((t) => t.def.fieldType === 'number' && ids.has(t.id))
 })
 
 const enumTracks = computed(() => {
   const ids = editEnabledTrackIds.value
-  return allTracks.value.filter(t => t.def.fieldType === 'enum' && ids.has(t.id))
+  return allTracks.value.filter((t) => t.def.fieldType === 'enum' && ids.has(t.id))
 })
 
 const funcTracks = computed(() => {
   const ids = editEnabledTrackIds.value
-  return allTracks.value.filter(t => t.def.fieldType === 'func' && ids.has(t.id))
+  return allTracks.value.filter((t) => t.def.fieldType === 'func' && ids.has(t.id))
 })
 
 // Precision editor helpers
@@ -100,7 +101,7 @@ function setExclusiveSelection(fieldType: TrackType, trackId: string, elementId:
   selectedElementByType.value = {
     number: fieldType === 'number' ? { trackId, elementId } : undefined,
     enum: fieldType === 'enum' ? { trackId, elementId } : undefined,
-    func: fieldType === 'func' ? { trackId, elementId } : undefined,
+    func: fieldType === 'func' ? { trackId, elementId } : undefined
   }
 }
 
@@ -123,15 +124,21 @@ onMounted(() => {
 })
 
 // Update lanes width on resize
-watch(lanesContainerRef, (el) => {
-  if (!el) return
-  const observer = new ResizeObserver((entries) => {
-    for (const entry of entries) {
-      lanesWidth.value = entry.contentRect.width
-    }
-  })
-  observer.observe(el)
-}, { immediate: true })
+watch(
+  lanesContainerRef,
+  (el, _old, onCleanup) => {
+    if (!el) return
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        lanesWidth.value = entry.contentRect.width
+        queuePrecisionPosition()
+      }
+    })
+    observer.observe(el)
+    onCleanup(() => observer.disconnect())
+  },
+  { immediate: true }
+)
 
 // Watch for window changes to trigger lane rebuilds
 watch(
@@ -147,9 +154,13 @@ watch(
 
 // Watch for selection changes to update precision button position
 watch(
-  () => [selectedElementByType.value.number, selectedElementByType.value.enum, selectedElementByType.value.func],
-  () => updatePrecisionBtnPosition(),
-  { deep: true }
+  () => [
+    selectedElementByType.value.number,
+    selectedElementByType.value.enum,
+    selectedElementByType.value.func
+  ],
+  () => queuePrecisionPosition(),
+  { deep: true, flush: 'post' }
 )
 
 function updatePrecisionBtnPosition() {
@@ -174,8 +185,9 @@ function updatePrecisionBtnPosition() {
   if (selectedElementByType.value.func && funcLaneRef.value) {
     const pos = funcLaneRef.value.getSelectedElementPosition()
     if (pos) {
-      const yOffset = (numberTracks.value.length > 0 ? NUMBER_LANE_HEIGHT : 0) +
-                      (enumTracks.value.length > 0 ? ENUM_LANE_HEIGHT : 0)
+      const yOffset =
+        (numberTracks.value.length > 0 ? NUMBER_LANE_HEIGHT : 0) +
+        (enumTracks.value.length > 0 ? ENUM_LANE_HEIGHT : 0)
       precisionBtnPosition.value = { x: pos.x, y: pos.y + yOffset, type: 'func' }
       return
     }
@@ -184,11 +196,56 @@ function updatePrecisionBtnPosition() {
   precisionBtnPosition.value = null
 }
 
+let precisionPositionPending = false
+let disposed = false
+onUnmounted(() => {
+  disposed = true
+})
+function queuePrecisionPosition() {
+  if (precisionPositionPending || disposed) return
+  precisionPositionPending = true
+  nextTick(() => {
+    precisionPositionPending = false
+    if (!disposed) updatePrecisionBtnPosition()
+  })
+}
+
 function incrementRenderVersion() {
   renderVersion.value++
-  // Update button position after render
-  setTimeout(updatePrecisionBtnPosition, 50)
+  queuePrecisionPosition()
 }
+
+// Incoming data can remove a selected point or change a track's kind.
+watch(
+  () => props.dataVersion,
+  () => {
+    for (const type of ['number', 'enum', 'func'] as TrackType[]) {
+      const front = props.core.getTrackById(frontTrackIdByType.value[type] ?? '')
+      if (!front || front.def.fieldType !== type) {
+        frontTrackIdByType.value[type] = allTracks.value.find(
+          (t) => t.def.fieldType === type && editEnabledTrackIds.value.has(t.id)
+        )?.id
+      }
+      const selection = selectedElementByType.value[type]
+      if (
+        selection &&
+        (props.core.getTrackById(selection.trackId)?.def.fieldType !== type ||
+          !props.core.getElement(selection.trackId, selection.elementId))
+      ) {
+        selectedElementByType.value[type] = undefined
+      }
+    }
+    if (
+      precision.value &&
+      (props.core.getTrackById(precision.value.trackId)?.def.fieldType !==
+        precision.value.fieldType ||
+        !props.core.getElement(precision.value.trackId, precision.value.elementId))
+    )
+      precision.value = null
+    queuePrecisionPosition()
+  },
+  { flush: 'post' }
+)
 
 function onAction(action: EditorAction) {
   switch (action.type) {
@@ -209,7 +266,6 @@ function onAction(action: EditorAction) {
     }
 
     case 'TRACK/DELETE': {
-      props.core.pushSnapshot()
       props.core.deleteTrack(action.trackId)
       editEnabledTrackIds.value.delete(action.trackId)
       // Clear front if deleted
@@ -229,8 +285,9 @@ function onAction(action: EditorAction) {
     }
 
     case 'TRACK/SET_BOUNDS': {
-      props.core.pushSnapshot()
-      props.core.setTrackBounds(action.trackId, action.low, action.high)
+      props.core.commitEdit(() =>
+        props.core.setTrackBounds(action.trackId, action.low, action.high)
+      )
       incrementRenderVersion()
       break
     }
@@ -249,9 +306,18 @@ function onAction(action: EditorAction) {
       break
 
     // Selection
+    case 'ELEMENT/TOGGLE_SELECTION': {
+      const selected = selectedElementByType.value[action.fieldType]
+      if (selected?.trackId === action.trackId && selected.elementId === action.elementId)
+        selectedElementByType.value[action.fieldType] = undefined
+      else setExclusiveSelection(action.fieldType, action.trackId, action.elementId)
+      queuePrecisionPosition()
+      break
+    }
+
     case 'ELEMENT/SELECT':
       setExclusiveSelection(action.fieldType, action.trackId, action.elementId)
-      setTimeout(updatePrecisionBtnPosition, 10)
+      queuePrecisionPosition()
       break
 
     case 'ELEMENT/DESELECT':
@@ -272,7 +338,7 @@ function onAction(action: EditorAction) {
         elementId: action.elementId,
         saved: { ...draft },
         draft,
-        dirty: false,
+        dirty: false
       }
       break
     }
@@ -301,10 +367,18 @@ function onAction(action: EditorAction) {
       precision.value = null
       break
 
+    case 'DRAG/CANCEL':
+      props.core.setDragPreview(null)
+      props.core.evaluateAtCurrentTime()
+      queuePrecisionPosition()
+      break
+
     // Number lane
     case 'NUMBER/ADD': {
-      props.core.pushSnapshot()
-      const elementId = props.core.addNumberElement(action.trackId, action.time, action.value)
+      let elementId: string | null = null
+      props.core.commitEdit(
+        () => !!(elementId = props.core.addNumberElement(action.trackId, action.time, action.value))
+      )
       if (elementId) {
         setExclusiveSelection('number', action.trackId, elementId)
       }
@@ -313,8 +387,7 @@ function onAction(action: EditorAction) {
     }
 
     case 'NUMBER/DELETE': {
-      props.core.pushSnapshot()
-      props.core.deleteElement(action.trackId, action.elementId)
+      props.core.commitEdit(() => props.core.deleteElement(action.trackId, action.elementId))
       if (selectedElementByType.value.number?.elementId === action.elementId) {
         selectedElementByType.value.number = undefined
       }
@@ -323,7 +396,7 @@ function onAction(action: EditorAction) {
     }
 
     case 'NUMBER/DRAG_START':
-      // Nothing special needed
+      // The lane owns the gesture baseline; history is written only on release.
       break
 
     case 'NUMBER/DRAG_PREVIEW':
@@ -332,25 +405,28 @@ function onAction(action: EditorAction) {
         trackId: action.trackId,
         elementId: action.elementId,
         time: action.time,
-        value: action.value,
+        value: action.value
       })
       props.core.evaluateAtCurrentTime()
       // Update precision button position during drag
-      setTimeout(updatePrecisionBtnPosition, 0)
+      queuePrecisionPosition()
       break
 
     case 'NUMBER/DRAG_END': {
       props.core.setDragPreview(null)
-      props.core.pushSnapshot()
-      props.core.updateNumberElement(action.trackId, action.elementId, action.time, action.value)
+      props.core.commitEdit(() =>
+        props.core.updateNumberElement(action.trackId, action.elementId, action.time, action.value)
+      )
       incrementRenderVersion()
       break
     }
 
     // Enum lane
     case 'ENUM/ADD': {
-      props.core.pushSnapshot()
-      const elementId = props.core.addEnumElement(action.trackId, action.time)
+      let elementId: string | null = null
+      props.core.commitEdit(
+        () => !!(elementId = props.core.addEnumElement(action.trackId, action.time))
+      )
       if (elementId) {
         setExclusiveSelection('enum', action.trackId, elementId)
       }
@@ -359,8 +435,7 @@ function onAction(action: EditorAction) {
     }
 
     case 'ENUM/DELETE': {
-      props.core.pushSnapshot()
-      props.core.deleteElement(action.trackId, action.elementId)
+      props.core.commitEdit(() => props.core.deleteElement(action.trackId, action.elementId))
       if (selectedElementByType.value.enum?.elementId === action.elementId) {
         selectedElementByType.value.enum = undefined
       }
@@ -373,19 +448,26 @@ function onAction(action: EditorAction) {
         fieldType: 'enum',
         trackId: action.trackId,
         elementId: action.elementId,
-        time: action.time,
+        time: action.time
       })
       props.core.evaluateAtCurrentTime()
       // Update precision button position during drag
-      setTimeout(updatePrecisionBtnPosition, 0)
+      queuePrecisionPosition()
       break
 
     case 'ENUM/DRAG_END': {
       props.core.setDragPreview(null)
-      props.core.pushSnapshot()
-      const result = props.core.updateEnumElement(action.trackId, action.elementId, action.time)
+      let result = { success: false, collision: false }
+      props.core.commitEdit(() => {
+        result = props.core.updateEnumElement(action.trackId, action.elementId, action.time)
+        return result.success
+      })
       if (result.collision) {
-        warning("Can't have elements at the same time")
+        warning(
+          result.success
+            ? 'Time adjusted to avoid another element'
+            : 'No room for another element within the timeline'
+        )
       }
       incrementRenderVersion()
       break
@@ -393,8 +475,10 @@ function onAction(action: EditorAction) {
 
     // Func lane
     case 'FUNC/ADD': {
-      props.core.pushSnapshot()
-      const elementId = props.core.addFuncElement(action.trackId, action.time)
+      let elementId: string | null = null
+      props.core.commitEdit(
+        () => !!(elementId = props.core.addFuncElement(action.trackId, action.time))
+      )
       if (elementId) {
         setExclusiveSelection('func', action.trackId, elementId)
       }
@@ -403,8 +487,7 @@ function onAction(action: EditorAction) {
     }
 
     case 'FUNC/DELETE': {
-      props.core.pushSnapshot()
-      props.core.deleteElement(action.trackId, action.elementId)
+      props.core.commitEdit(() => props.core.deleteElement(action.trackId, action.elementId))
       if (selectedElementByType.value.func?.elementId === action.elementId) {
         selectedElementByType.value.func = undefined
       }
@@ -415,14 +498,21 @@ function onAction(action: EditorAction) {
     case 'FUNC/DRAG_PREVIEW':
       // Func tracks don't update callbacks during drag (per plan)
       // But we still update the precision button position
-      setTimeout(updatePrecisionBtnPosition, 0)
+      queuePrecisionPosition()
       break
 
     case 'FUNC/DRAG_END': {
-      props.core.pushSnapshot()
-      const result = props.core.updateFuncElement(action.trackId, action.elementId, action.time)
+      let result = { success: false, collision: false }
+      props.core.commitEdit(() => {
+        result = props.core.updateFuncElement(action.trackId, action.elementId, action.time)
+        return result.success
+      })
       if (result.collision) {
-        warning("Can't have elements at the same time")
+        warning(
+          result.success
+            ? 'Time adjusted to avoid another element'
+            : 'No room for another element within the timeline'
+        )
       }
       incrementRenderVersion()
       break
@@ -430,7 +520,10 @@ function onAction(action: EditorAction) {
   }
 }
 
-function createDraftFromElement(track: TrackRuntime, element: NumberElement | EnumElement | FuncElementData): PrecisionDraft {
+function createDraftFromElement(
+  track: TrackRuntime,
+  element: NumberElement | EnumElement | FuncElementData
+): PrecisionDraft {
   const draft: PrecisionDraft = { time: element.time }
 
   if (track.def.fieldType === 'number') {
@@ -440,9 +533,9 @@ function createDraftFromElement(track: TrackRuntime, element: NumberElement | En
   } else if (track.def.fieldType === 'func') {
     const func = (element as FuncElementData).value
     draft.funcName = func.funcName
-    draft.funcArgs = func.args.map(arg => ({
+    draft.funcArgs = func.args.map((arg) => ({
       type: typeof arg === 'number' ? 'number' : 'text',
-      value: String(arg),
+      value: String(arg)
     })) as FuncArg[]
   }
 
@@ -454,32 +547,56 @@ function savePrecisionEdit() {
 
   const { fieldType, trackId, elementId, draft } = precision.value
 
-  props.core.pushSnapshot()
-
   if (fieldType === 'number') {
-    props.core.updateNumberElement(trackId, elementId, draft.time, draft.value ?? 0)
+    props.core.commitEdit(() =>
+      props.core.updateNumberElement(trackId, elementId, draft.time, draft.value ?? 0)
+    )
   } else if (fieldType === 'enum') {
-    const result = props.core.updateEnumElement(trackId, elementId, draft.time, draft.enumValue)
+    let result = { success: false, collision: false }
+    props.core.commitEdit(() => {
+      result = props.core.updateEnumElement(trackId, elementId, draft.time, draft.enumValue)
+      return result.success
+    })
     if (result.collision) {
-      warning("Can't have elements at the same time - time was adjusted")
+      warning(
+        result.success
+          ? 'Time adjusted to avoid another element'
+          : 'No room for another element within the timeline'
+      )
     }
   } else if (fieldType === 'func') {
     // Parse func args
-    const args: unknown[] = (draft.funcArgs || []).map(arg => {
+    const args: unknown[] = (draft.funcArgs || []).map((arg) => {
       if (arg.type === 'number') {
         const num = Number(arg.value)
         return isFinite(num) ? num : 0
       }
       return arg.value
     })
-    const result = props.core.updateFuncElement(trackId, elementId, draft.time, draft.funcName, args)
+    let result = { success: false, collision: false }
+    props.core.commitEdit(() => {
+      result = props.core.updateFuncElement(trackId, elementId, draft.time, draft.funcName, args)
+      return result.success
+    })
     if (result.collision) {
-      warning("Can't have elements at the same time - time was adjusted")
+      warning(
+        result.success
+          ? 'Time adjusted to avoid another element'
+          : 'No room for another element within the timeline'
+      )
     }
   }
 
-  // Update saved to current draft
-  precision.value.saved = { ...draft }
+  // Reflect clamping/collision resolution from the actual stored element.
+  const track = props.core.getTrackById(trackId)
+  const element = props.core.getElement(trackId, elementId)
+  if (!track || !element) {
+    precision.value = null
+    return
+  }
+  const saved = createDraftFromElement(track, element)
+  precision.value.draft = structuredClone(saved)
+  precision.value.saved = structuredClone(saved)
   precision.value.dirty = false
   incrementRenderVersion()
 }
@@ -489,7 +606,12 @@ function openPrecisionForSelected() {
   const type = precisionBtnPosition.value.type
   const sel = selectedElementByType.value[type]
   if (!sel) return
-  onAction({ type: 'PRECISION/OPEN', fieldType: type, trackId: sel.trackId, elementId: sel.elementId })
+  onAction({
+    type: 'PRECISION/OPEN',
+    fieldType: type,
+    trackId: sel.trackId,
+    elementId: sel.elementId
+  })
 }
 
 // Compute precision button style based on position
@@ -497,11 +619,11 @@ const precisionBtnStyle = computed(() => {
   if (!precisionBtnPosition.value) return {}
   const { x, y } = precisionBtnPosition.value
   // Position button to the right of the element, clamped to container bounds
-  const btnX = Math.min(Math.max(x + 16, 30), lanesWidth.value - 50)
-  const btnY = Math.max(y - 12, 4)
+  const btnX = Math.min(Math.max(x + 12, 4), lanesWidth.value - 24)
+  const btnY = Math.max(y - 9, 4)
   return {
     left: `${btnX}px`,
-    top: `${btnY}px`,
+    top: `${btnY}px`
   }
 })
 </script>
@@ -531,6 +653,8 @@ const precisionBtnStyle = computed(() => {
           :selected-element-id="selectedElementByType.number?.elementId"
           :selected-track-id="selectedElementByType.number?.trackId"
           :render-version="renderVersion"
+          :duration="duration"
+          @geometry="queuePrecisionPosition"
           @action="onAction"
         />
 
@@ -544,6 +668,8 @@ const precisionBtnStyle = computed(() => {
           :selected-element-id="selectedElementByType.enum?.elementId"
           :selected-track-id="selectedElementByType.enum?.trackId"
           :render-version="renderVersion"
+          :duration="duration"
+          @geometry="queuePrecisionPosition"
           @action="onAction"
         />
 
@@ -557,6 +683,8 @@ const precisionBtnStyle = computed(() => {
           :selected-element-id="selectedElementByType.func?.elementId"
           :selected-track-id="selectedElementByType.func?.trackId"
           :render-version="renderVersion"
+          :duration="duration"
+          @geometry="queuePrecisionPosition"
           @action="onAction"
         />
 
@@ -594,9 +722,16 @@ const precisionBtnStyle = computed(() => {
           @click="openPrecisionForSelected"
           title="Edit element"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+          >
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
           </svg>
         </button>
       </div>
@@ -621,7 +756,7 @@ const precisionBtnStyle = computed(() => {
 .edit-mode-view {
   display: flex;
   flex: 1;
-  background: #121416;
+  background: var(--ae-bg);
   align-items: flex-start;
   width: 100%;
   max-width: 100%;
@@ -638,8 +773,9 @@ const precisionBtnStyle = computed(() => {
   min-width: var(--sidebar-width);
   display: flex;
   flex-direction: column;
-  background: #141618;
-  border-right: 1px solid #2a2d30;
+  background: var(--ae-panel);
+  border-right: 1px solid var(--ae-border);
+  box-sizing: border-box;
 }
 
 .lanes-area {
@@ -661,30 +797,27 @@ const precisionBtnStyle = computed(() => {
   align-items: center;
   justify-content: center;
   height: 200px;
-  color: #555;
+  color: var(--ae-muted);
   font-size: 13px;
 }
 
 .precision-btn {
   position: absolute;
-  width: 26px;
-  height: 26px;
+  width: 18px;
+  height: 18px;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #3a7ca5;
+  background: var(--ae-accent);
   border: none;
-  border-radius: 4px;
-  color: #fff;
+  border-radius: 0;
+  color: var(--ae-on-accent);
   cursor: pointer;
   z-index: 100;
-  transition: background 0.15s ease, transform 0.1s ease;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 
 .precision-btn:hover {
-  background: #4a8cb5;
-  transform: scale(1.05);
+  background: var(--ae-accent-hover);
 }
 </style>

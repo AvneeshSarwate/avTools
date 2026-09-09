@@ -19,7 +19,8 @@
     "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix --ignore-path .gitignore",
     "format": "prettier --write src/",
     "alsParsing": "npx ts-node node_src/alsParsing.ts",
-    "oscBridge": "npx ts-node node_src/oscBridge.ts"
+    "oscBridge": "npx ts-node node_src/oscBridge.ts",
+    "test:animation-editor": "npm run buildAnimationEditor && node tests/animationEditorInteraction.smoke.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.67.0",

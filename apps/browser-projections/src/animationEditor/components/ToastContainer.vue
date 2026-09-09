@@ -10,17 +10,15 @@ function getToastClass(type: string): string {
 
 <template>
   <div class="toast-container" data-component="ToastContainer" data-region="toast-container">
-    <TransitionGroup name="toast">
-      <div
-        v-for="toast in toasts"
-        :key="toast.id"
-        :class="getToastClass(toast.type)"
-        :data-toast-type="toast.type"
-        @click="removeToast(toast.id)"
-      >
-        {{ toast.message }}
-      </div>
-    </TransitionGroup>
+    <div
+      v-for="toast in toasts"
+      :key="toast.id"
+      :class="getToastClass(toast.type)"
+      :data-toast-type="toast.type"
+      @click="removeToast(toast.id)"
+    >
+      {{ toast.message }}
+    </div>
   </div>
 </template>
 
@@ -38,46 +36,30 @@ function getToastClass(type: string): string {
 
 .toast {
   padding: 12px 20px;
-  border-radius: 6px;
+  border-radius: 0;
   font-size: 13px;
   font-family: system-ui, sans-serif;
-  color: #fff;
+  color: var(--ae-text);
+  background: var(--ae-panel);
+  border-left: 3px solid var(--ae-muted);
   cursor: pointer;
   pointer-events: auto;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   max-width: 300px;
 }
 
 .toast-info {
-  background: #3b82f6;
+  border-left-color: var(--ae-muted);
 }
 
 .toast-warning {
-  background: #f59e0b;
-  color: #000;
+  border-left-color: var(--ae-accent);
 }
 
 .toast-error {
-  background: #ef4444;
+  border-left-color: #d98a7b;
 }
 
 .toast-success {
-  background: #22c55e;
-}
-
-/* Transitions */
-.toast-enter-active,
-.toast-leave-active {
-  transition: all 0.3s ease;
-}
-
-.toast-enter-from {
-  opacity: 0;
-  transform: translateX(100px);
-}
-
-.toast-leave-to {
-  opacity: 0;
-  transform: translateX(100px);
+  border-left-color: #9eb48c;
 }
 </style>

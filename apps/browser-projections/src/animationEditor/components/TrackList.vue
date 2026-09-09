@@ -28,7 +28,7 @@ defineProps<{
 .empty-message {
   padding: 20px;
   text-align: center;
-  color: #666;
+  color: var(--ae-muted);
   font-size: 14px;
 }
 </style>

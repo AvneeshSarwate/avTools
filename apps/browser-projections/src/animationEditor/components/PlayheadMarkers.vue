@@ -60,7 +60,7 @@ const visibleMarkers = computed(() =>
   overflow: hidden;
   color: #091018;
   background: var(--marker-color);
-  border-radius: 3px;
+  border-radius: 0;
   font-size: 10px;
   font-weight: 600;
   line-height: 14px;

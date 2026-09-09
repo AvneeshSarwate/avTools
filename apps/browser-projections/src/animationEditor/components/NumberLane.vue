@@ -10,12 +10,14 @@ import {
   EDIT_NUMBER_POINT_RADIUS,
   EDIT_NUMBER_LINE_WIDTH,
   EDIT_NUMBER_LINE_WIDTH_FRONT,
+  EDIT_NUMBER_LINE_SNAP_DISTANCE,
   EDIT_NUMBER_BOUNDS_LINE_COLOR,
   SELECTION_COLOR,
   SELECTION_STROKE_WIDTH,
   FRONT_TRACK_OPACITY,
-  REFERENCE_TRACK_OPACITY,
+  REFERENCE_TRACK_OPACITY
 } from '../constants'
+import { createLaneDrag, bindLaneBackgroundClick } from '../laneDrag'
 import { timeToX, xToTime, clamp } from '../utils'
 
 const props = defineProps<{
@@ -26,16 +28,19 @@ const props = defineProps<{
   selectedElementId: string | undefined
   selectedTrackId: string | undefined
   renderVersion: number
+  duration: number
 }>()
 
 const emit = defineEmits<{
   action: [action: EditorAction]
+  geometry: []
 }>()
 
 const containerRef = ref<HTMLDivElement | null>(null)
 let stage: Konva.Stage | null = null
 let layer: Konva.Layer | null = null
 let resizeObserver: ResizeObserver | null = null
+let cancelBackgroundClick = () => {}
 
 // Map of element ID to Konva node (for front track only)
 const elementNodes = new Map<string, Konva.Circle>()
@@ -43,16 +48,27 @@ const elementNodes = new Map<string, Konva.Circle>()
 // Reference to the front track line for live updates during drag
 let frontTrackLine: Konva.Line | null = null
 
-// Drag state
-let dragElementIndex: number | null = null
-let dragTrack: TrackRuntime | null = null
+const trackLines = new Map<string, Konva.Line>()
+let boundsLines: Konva.Line[] = []
+const drag = createLaneDrag({
+  tracks: () => props.tracks,
+  frontTrackId: () => props.frontTrackId,
+  duration: () => props.duration,
+  onCancel: () => emit('action', { type: 'DRAG/CANCEL' })
+})
+
+function cancelDrag() {
+  cancelBackgroundClick()
+  drag.cancel()
+  syncScene()
+}
 
 const width = ref(0)
 const height = NUMBER_LANE_HEIGHT
 
 const frontTrack = computed(() => {
   if (!props.frontTrackId) return undefined
-  return props.tracks.find(t => t.id === props.frontTrackId)
+  return props.tracks.find((t) => t.id === props.frontTrackId)
 })
 
 function timeToXLocal(t: number): number {
@@ -77,34 +93,78 @@ function yToValue(y: number, low: number, high: number): number {
   return low + normalized * (high - low)
 }
 
-function rebuildScene() {
+function syncScene() {
   if (!layer || !stage) return
-
-  layer.destroyChildren()
-  elementNodes.clear()
-  frontTrackLine = null
-
-  const w = width.value
-  if (w <= 0) return
-
-  // Draw reference tracks first (non-front, lower opacity)
-  for (const track of props.tracks) {
-    if (track.id === props.frontTrackId) continue
-    drawTrackLine(track, false)
+  if (drag.active && !drag.valid()) drag.cancel()
+  const ids = new Set(props.tracks.map((t) => t.id))
+  for (const [id, line] of trackLines) {
+    if (!ids.has(id)) {
+      line.destroy()
+      trackLines.delete(id)
+    }
   }
+  const ordered = [...props.tracks].sort(
+    (a, b) => Number(a.id === props.frontTrackId) - Number(b.id === props.frontTrackId)
+  )
+  for (const track of ordered) drawTrackLine(track, track.id === props.frontTrackId)
+  frontTrackLine = props.frontTrackId ? (trackLines.get(props.frontTrackId) ?? null) : null
 
-  // Draw front track last
-  if (frontTrack.value) {
-    drawTrackLine(frontTrack.value, true)
-    drawFrontTrackPoints(frontTrack.value)
+  if (boundsLines.length === 0) {
+    boundsLines = [20, height - 20].map((y) => {
+      const line = new Konva.Line({
+        points: [0, y, width.value, y],
+        stroke: EDIT_NUMBER_BOUNDS_LINE_COLOR,
+        strokeWidth: 1,
+        dash: [4, 4],
+        listening: false
+      })
+      layer!.add(line)
+      return line
+    })
   }
+  boundsLines.forEach((line, i) => {
+    const y = i === 0 ? 20 : height - 20
+    line.points([0, y, width.value, y])
+    line.visible(!!frontTrack.value?.elementData.length)
+    line.moveToTop()
+  })
 
+  const visibleIds = new Set(
+    frontTrack.value?.elementData
+      .filter(
+        (e) =>
+          (e.time >= props.windowStart && e.time <= props.windowEnd) ||
+          e.id === drag.active?.elementId
+      )
+      .map((e) => e.id)
+  )
+  for (const [id, node] of elementNodes) {
+    if (!visibleIds.has(id) || node.getAttr('trackId') !== props.frontTrackId) {
+      node.destroy()
+      elementNodes.delete(id)
+    }
+  }
+  if (frontTrack.value) drawFrontTrackPoints(frontTrack.value)
+  if (drag.active && frontTrack.value) {
+    const node = drag.active.node
+    updateLinePreview(
+      frontTrack.value,
+      frontTrack.value.elementData.findIndex((e) => e.id === drag.active!.elementId),
+      node.x(),
+      node.y()
+    )
+  }
   layer.batchDraw()
+  emit('geometry')
 }
 
 function drawTrackLine(track: TrackRuntime, isFront: boolean) {
   const elements = track.elementData as NumberElement[]
-  if (elements.length === 0) return
+  if (elements.length === 0) {
+    trackLines.get(track.id)?.destroy()
+    trackLines.delete(track.id)
+    return
+  }
 
   const points: number[] = []
 
@@ -123,155 +183,116 @@ function drawTrackLine(track: TrackRuntime, isFront: boolean) {
   const endValue = evaluateAtTime(track, props.windowEnd)
   points.push(width.value, valueToY(endValue, track.low, track.high))
 
-  const line = new Konva.Line({
+  let line = trackLines.get(track.id)
+  if (!line) {
+    line = new Konva.Line({ listening: false, lineCap: 'round', lineJoin: 'round' })
+    layer!.add(line)
+    trackLines.set(track.id, line)
+  }
+  line.setAttrs({
     points,
     stroke: NUMBER_LINE_COLOR,
     strokeWidth: isFront ? EDIT_NUMBER_LINE_WIDTH_FRONT : EDIT_NUMBER_LINE_WIDTH,
-    opacity: isFront ? FRONT_TRACK_OPACITY : REFERENCE_TRACK_OPACITY,
-    lineCap: 'round',
-    lineJoin: 'round',
+    opacity: isFront ? FRONT_TRACK_OPACITY : REFERENCE_TRACK_OPACITY
   })
-
-  layer!.add(line)
-
-  // Store reference to front track line for live updates
-  if (isFront) {
-    frontTrackLine = line
-  }
-
-  // Draw bounds lines for front track
-  if (isFront) {
-    const lowY = valueToY(track.low, track.low, track.high)
-    const highY = valueToY(track.high, track.low, track.high)
-
-    const lowLine = new Konva.Line({
-      points: [0, lowY, width.value, lowY],
-      stroke: EDIT_NUMBER_BOUNDS_LINE_COLOR,
-      strokeWidth: 1,
-      dash: [4, 4],
-    })
-    layer!.add(lowLine)
-
-    const highLine = new Konva.Line({
-      points: [0, highY, width.value, highY],
-      stroke: EDIT_NUMBER_BOUNDS_LINE_COLOR,
-      strokeWidth: 1,
-      dash: [4, 4],
-    })
-    layer!.add(highLine)
-  }
+  line.moveToTop()
 }
 
 function drawFrontTrackPoints(track: TrackRuntime) {
-  const elements = track.elementData as NumberElement[]
-
-  for (let i = 0; i < elements.length; i++) {
-    const elem = elements[i]
-    if (elem.time < props.windowStart || elem.time > props.windowEnd) continue
-
-    const x = timeToXLocal(elem.time)
-    const y = valueToY(elem.value, track.low, track.high)
-    const isSelected = elem.id === props.selectedElementId && track.id === props.selectedTrackId
-
-    const circle = new Konva.Circle({
-      x,
-      y,
-      radius: EDIT_NUMBER_POINT_RADIUS,
-      fill: NUMBER_POINT_COLOR,
-      stroke: isSelected ? SELECTION_COLOR : undefined,
-      strokeWidth: isSelected ? SELECTION_STROKE_WIDTH : 0,
-      draggable: true,
-    })
-
-    // Store element info on the node
-    circle.setAttr('elementId', elem.id)
-    circle.setAttr('elementIndex', i)
-
-    // Event handlers
-    circle.on('click', (e) => {
-      if (e.evt.shiftKey) {
-        // Shift-click to delete
-        emit('action', { type: 'NUMBER/DELETE', trackId: track.id, elementId: elem.id })
-      } else {
-        // Regular click to select
-        emit('action', { type: 'ELEMENT/SELECT', fieldType: 'number', trackId: track.id, elementId: elem.id })
-      }
-    })
-
-    circle.on('dragstart', () => {
-      dragElementIndex = i
-      dragTrack = track
-      emit('action', { type: 'ELEMENT/SELECT', fieldType: 'number', trackId: track.id, elementId: elem.id })
-      emit('action', { type: 'NUMBER/DRAG_START', trackId: track.id, elementId: elem.id })
-    })
-
-    circle.on('dragmove', () => {
-      if (dragElementIndex === null || !dragTrack) return
-
-      const pos = circle.position()
-      let t = xToTimeLocal(pos.x)
-      let v = yToValue(pos.y, dragTrack.low, dragTrack.high)
-
-      // Clamp to window
-      t = clamp(t, props.windowStart, props.windowEnd)
-
-      // Clamp to neighbors
-      const elems = dragTrack.elementData as NumberElement[]
-      const prevTime = dragElementIndex > 0 ? elems[dragElementIndex - 1].time : 0
-      const nextTime = dragElementIndex < elems.length - 1 ? elems[dragElementIndex + 1].time : Infinity
-      t = clamp(t, prevTime, nextTime)
-
-      // Clamp value to bounds
-      v = clamp(v, dragTrack.low, dragTrack.high)
-
-      // Snap circle back to clamped position
-      const newX = timeToXLocal(t)
-      const newY = valueToY(v, dragTrack.low, dragTrack.high)
-      circle.position({ x: newX, y: newY })
-
-      // Update the line visually in real-time
-      updateLinePreview(dragTrack, dragElementIndex, newX, newY)
-
-      // Emit preview for live callbacks
-      emit('action', {
-        type: 'NUMBER/DRAG_PREVIEW',
-        trackId: dragTrack.id,
-        elementId: elem.id,
-        time: t,
-        value: v,
+  for (const elem of track.elementData as NumberElement[]) {
+    const active =
+      drag.active?.elementId === elem.id && drag.active.trackId === track.id ? drag.active : null
+    if (!active && (elem.time < props.windowStart || elem.time > props.windowEnd)) continue
+    let circle = elementNodes.get(elem.id)
+    if (!circle) {
+      circle = new Konva.Circle({
+        radius: EDIT_NUMBER_POINT_RADIUS,
+        fill: NUMBER_POINT_COLOR,
+        hitStrokeWidth: 4,
+        draggable: true
       })
+      circle.setAttr('trackId', track.id)
+      circle.setAttr('elementId', elem.id)
+      bindPointEvents(circle, track.id, elem.id)
+      layer!.add(circle)
+      elementNodes.set(elem.id, circle)
+    }
+    const selected = elem.id === props.selectedElementId && track.id === props.selectedTrackId
+    circle.setAttrs({
+      x: timeToXLocal(active?.time ?? elem.time),
+      y: valueToY(active?.value ?? elem.value, track.low, track.high),
+      stroke: selected ? SELECTION_COLOR : undefined,
+      strokeWidth: selected ? SELECTION_STROKE_WIDTH : 0
     })
+    circle.moveToTop()
+  }
+}
 
-    circle.on('dragend', () => {
-      if (dragElementIndex === null || !dragTrack) return
-
-      const pos = circle.position()
-      let t = xToTimeLocal(pos.x)
-      let v = yToValue(pos.y, dragTrack.low, dragTrack.high)
-
-      // Apply same clamping
-      t = clamp(t, props.windowStart, props.windowEnd)
-      const elems = dragTrack.elementData as NumberElement[]
-      const prevTime = dragElementIndex > 0 ? elems[dragElementIndex - 1].time : 0
-      const nextTime = dragElementIndex < elems.length - 1 ? elems[dragElementIndex + 1].time : Infinity
-      t = clamp(t, prevTime, nextTime)
-      v = clamp(v, dragTrack.low, dragTrack.high)
-
+function bindPointEvents(circle: Konva.Circle, trackId: string, elementId: string) {
+  circle.on('mousedown touchstart', () => drag.prepare(circle))
+  circle.on('click tap', (e) => {
+    e.cancelBubble = true
+    if (e.evt.shiftKey) emit('action', { type: 'NUMBER/DELETE', trackId, elementId })
+    else
+      emit('action', { type: 'ELEMENT/TOGGLE_SELECTION', fieldType: 'number', trackId, elementId })
+  })
+  circle.on('dragstart', () => {
+    const track = frontTrack.value
+    const elem = track?.elementData.find((e) => e.id === elementId)
+    if (!track || !elem) {
+      circle.stopDrag()
+      return
+    }
+    drag.begin(circle, track, elem)
+    emit('action', { type: 'ELEMENT/SELECT', fieldType: 'number', trackId, elementId })
+    emit('action', { type: 'NUMBER/DRAG_START', trackId, elementId })
+  })
+  circle.on('dragmove', () => {
+    if (!drag.valid()) {
+      cancelDrag()
+      return
+    }
+    const pos = drag.position()
+    const active = drag.active
+    const track = frontTrack.value
+    if (!pos || !active || !track) return
+    const elems = track.elementData
+    const index = elems.findIndex((e) => e.id === elementId)
+    const lowTime = Math.max(0, props.windowStart, elems[index - 1]?.time ?? 0)
+    const highTime = Math.min(
+      props.duration,
+      props.windowEnd,
+      elems[index + 1]?.time ?? props.duration
+    )
+    active.time = clamp(xToTimeLocal(pos.x), lowTime, highTime)
+    active.value = clamp(yToValue(pos.y, track.low, track.high), track.low, track.high)
+    circle.position({
+      x: timeToXLocal(active.time),
+      y: valueToY(active.value, track.low, track.high)
+    })
+    updateLinePreview(track, index, circle.x(), circle.y())
+    emit('action', {
+      type: 'NUMBER/DRAG_PREVIEW',
+      trackId,
+      elementId,
+      time: active.time,
+      value: active.value
+    })
+    emit('geometry')
+  })
+  circle.on('dragend', (event) => {
+    const finished = drag.finish(event)
+    if (finished) {
       emit('action', {
         type: 'NUMBER/DRAG_END',
-        trackId: dragTrack.id,
-        elementId: elem.id,
-        time: t,
-        value: v,
+        trackId,
+        elementId,
+        time: finished.time,
+        value: finished.value!
       })
-
-      dragElementIndex = null
-      dragTrack = null
-    })
-
-    layer!.add(circle)
-    elementNodes.set(elem.id, circle)
-  }
+    }
+    syncScene()
+  })
 }
 
 function updateLinePreview(track: TrackRuntime, dragIndex: number, newX: number, newY: number) {
@@ -340,7 +361,13 @@ function evaluateAtTime(track: TrackRuntime, t: number): number {
   return v1 + (v2 - v1) * alpha
 }
 
-function evaluateAtTimeWithOverride(track: TrackRuntime, t: number, overrideIndex: number, overrideX: number, overrideY: number): number {
+function evaluateAtTimeWithOverride(
+  track: TrackRuntime,
+  t: number,
+  overrideIndex: number,
+  overrideX: number,
+  overrideY: number
+): number {
   const elements = track.elementData as NumberElement[]
   if (elements.length === 0) return track.low
 
@@ -383,27 +410,43 @@ function evaluateAtTimeWithOverride(track: TrackRuntime, t: number, overrideInde
   return v1 + (v2 - v1) * alpha
 }
 
-function handleStageClick(e: Konva.KonvaEventObject<MouseEvent>) {
-  // Only handle clicks on empty space
-  if (e.target !== stage && e.target !== layer) return
+function handleStageClick() {
   if (!frontTrack.value) return
 
   const pos = stage!.getPointerPosition()
   if (!pos) return
 
-  const t = clamp(xToTimeLocal(pos.x), props.windowStart, props.windowEnd)
-  const v = clamp(yToValue(pos.y, frontTrack.value.low, frontTrack.value.high), frontTrack.value.low, frontTrack.value.high)
+  const t = clamp(
+    xToTimeLocal(pos.x),
+    Math.max(0, props.windowStart),
+    Math.min(props.duration, props.windowEnd)
+  )
+  let v = clamp(
+    yToValue(pos.y, frontTrack.value.low, frontTrack.value.high),
+    frontTrack.value.low,
+    frontTrack.value.high
+  )
+
+  // Insert on the existing curve near it, preserving both click time and curve shape.
+  const track = frontTrack.value
+  if (track.elementData.length) {
+    const curveValue = evaluateAtTime(track, t)
+    const curveY = valueToY(curveValue, track.low, track.high)
+    if (Math.abs(pos.y - curveY) <= EDIT_NUMBER_LINE_SNAP_DISTANCE)
+      v = clamp(curveValue, track.low, track.high)
+  }
 
   emit('action', {
     type: 'NUMBER/ADD',
     trackId: frontTrack.value.id,
     time: t,
-    value: v,
+    value: v
   })
 }
 
 function getSelectedElementPosition(): { x: number; y: number } | null {
   if (!props.selectedElementId || !props.selectedTrackId) return null
+  if (props.selectedTrackId !== props.frontTrackId) return null
   const node = elementNodes.get(props.selectedElementId)
   if (!node) return null
   return { x: node.x(), y: node.y() }
@@ -415,49 +458,60 @@ onMounted(() => {
   stage = new Konva.Stage({
     container: containerRef.value,
     width: containerRef.value.clientWidth,
-    height: height,
+    height: height
   })
 
   layer = new Konva.Layer()
   stage.add(layer)
 
-  stage.on('click', handleStageClick)
+  cancelBackgroundClick = bindLaneBackgroundClick(stage, handleStageClick)
+  window.addEventListener('blur', cancelDrag)
+  window.addEventListener('pointercancel', cancelDrag)
+  window.addEventListener('touchcancel', cancelDrag)
 
   resizeObserver = new ResizeObserver((entries) => {
     for (const entry of entries) {
       width.value = entry.contentRect.width
       if (stage) {
         stage.width(width.value)
-        rebuildScene()
+        syncScene()
       }
     }
   })
   resizeObserver.observe(containerRef.value)
 
   width.value = containerRef.value.clientWidth
-  rebuildScene()
+  syncScene()
 })
 
 onUnmounted(() => {
+  window.removeEventListener('blur', cancelDrag)
+  window.removeEventListener('pointercancel', cancelDrag)
+  window.removeEventListener('touchcancel', cancelDrag)
+  drag.cancel()
   resizeObserver?.disconnect()
   stage?.destroy()
 })
 
 // Watch for changes that require rebuild
 watch(
-  () => [props.renderVersion, props.windowStart, props.windowEnd, props.frontTrackId, props.tracks.length],
-  () => rebuildScene(),
-  { deep: false }
+  () => [
+    props.renderVersion,
+    props.windowStart,
+    props.windowEnd,
+    props.frontTrackId,
+    props.tracks.length,
+    props.duration
+  ],
+  () => syncScene(),
+  { flush: 'post' }
 )
 
-// Watch for selection changes (just update highlight)
-watch(
-  () => [props.selectedElementId, props.selectedTrackId],
-  () => rebuildScene()
-)
+// Selection only changes attributes; point identity survives every update.
+watch(() => [props.selectedElementId, props.selectedTrackId], syncScene, { flush: 'post' })
 
 defineExpose({
-  getSelectedElementPosition,
+  getSelectedElementPosition
 })
 </script>
 
@@ -476,7 +530,9 @@ defineExpose({
 .number-lane {
   height: v-bind('NUMBER_LANE_HEIGHT + "px"');
   background: v-bind('EDIT_LANE_BG_COLOR');
-  border-bottom: 1px solid #2a2d30;
+  border-bottom: 1px solid var(--ae-border);
+  box-sizing: border-box;
+  overflow: hidden;
   display: flex;
   width: 100%;
   min-width: 0;

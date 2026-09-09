@@ -3,15 +3,11 @@ import { ref, provide, onMounted, onUnmounted, computed, shallowRef, reactive, w
 import type {
   TrackDef,
   EditorMode,
-  TrackElement,
-  NumberElement,
-  EnumElement,
-  FuncElementData,
   PlayheadMarker,
 } from '../types'
 import { Core } from '../core'
 import { RenderScheduler } from '../renderScheduler'
-import { NAME_COLUMN_WIDTH } from '../constants'
+import { NAME_COLUMN_WIDTH, EDITOR_THEME } from '../constants'
 import TimeRibbon from './TimeRibbon.vue'
 import TrackList from './TrackList.vue'
 import Playhead from './Playhead.vue'
@@ -79,14 +75,18 @@ let lastStateSignature = ''
 // Core state
 const core = new Core(props.duration)
 const scheduler = new RenderScheduler()
+const timelineDuration = ref(core.duration)
 
 // Bumped on every core mutation so Vue recomputes derived state (e.g. hideEmptyTracks filter)
 const trackDataVersion = ref(0)
 
 // Wire up invalidation
-core.setInvalidateCallback(() => {
-  trackDataVersion.value++
-  scheduler.invalidate()
+core.setInvalidateCallback((kind) => {
+  if (kind === 'tracks') {
+    timelineDuration.value = core.duration
+    trackDataVersion.value++
+    scheduler.invalidate()
+  }
 })
 
 // Editor mode
@@ -131,6 +131,7 @@ const canvasAreaWidth = computed(() =>
 
 // Provide to children
 provide('core', core)
+provide('trackDataVersion', trackDataVersion)
 provide('scheduler', scheduler)
 provide('windowStart', windowStart)
 provide('windowEnd', windowEnd)
@@ -177,37 +178,7 @@ const filteredTrackIds = computed(() => {
 const ribbonSpacerWidth = computed(() => sidebarWidth.value)
 
 function applyTracks(tracks: TrackData[], trackOrder: string[]) {
-  for (const id of [...core.orderedTrackIds]) {
-    core.deleteTrack(id)
-  }
-
-  for (const trackId of trackOrder) {
-    const trackData = tracks.find(t => t.id === trackId)
-    if (!trackData) continue
-
-    const def: TrackDef = {
-      id: trackData.id,
-      name: trackData.name,
-      fieldType: trackData.fieldType,
-      data: trackData.elementData.map(elem => {
-        if (trackData.fieldType === 'number') {
-          const e = elem as NumberElement
-          return { id: e.id, time: e.time, element: e.value }
-        } else if (trackData.fieldType === 'enum') {
-          const e = elem as EnumElement
-          return { id: e.id, time: e.time, element: e.value }
-        } else {
-          const e = elem as FuncElementData
-          return { id: e.id, time: e.time, element: e.value }
-        }
-      }),
-      low: trackData.low,
-      high: trackData.high,
-      enumOptions: trackData.enumOptions ? [...trackData.enumOptions] : undefined
-    }
-
-    core.addTrack(def)
-  }
+  if (!core.reconcileTracks(tracks, trackOrder)) return
 
   trackIds.value = [...core.orderedTrackIds]
   applyConfiguredDuration(wsConfig.duration, { suppressWsState: true })
@@ -247,15 +218,18 @@ function applyConfiguredDuration(
   requestedDuration: number | undefined,
   options?: { suppressWsState?: boolean }
 ) {
+  const previousDuration = core.duration
+  const wasFullWindow = windowStart.value === 0 && windowEnd.value === previousDuration
   const baseDuration = requestedDuration ?? props.duration ?? core.duration
   const normalizedDuration = Number.isFinite(baseDuration) ? Math.max(0, baseDuration) : core.duration
   const nextDuration = Math.max(normalizedDuration, getTrackExtent())
 
   core.duration = nextDuration
+  timelineDuration.value = nextDuration
   currentTime.value = Math.min(currentTime.value, nextDuration)
   livePlayhead.value = Math.min(livePlayhead.value, nextDuration)
   windowStart.value = Math.min(windowStart.value, nextDuration)
-  windowEnd.value = nextDuration
+  windowEnd.value = wasFullWindow ? nextDuration : Math.min(windowEnd.value, nextDuration)
 
   if (options?.suppressWsState) {
     markStateSignature()
@@ -516,7 +490,7 @@ defineExpose({
     class="animation-editor"
     data-component="AnimationEditorView"
     :data-mode="mode"
-    :style="{ '--sidebar-width': sidebarWidth + 'px' }"
+    :style="{ ...EDITOR_THEME, '--sidebar-width': sidebarWidth + 'px' }"
   >
     <!-- Control header: mode toggle + mode-specific controls -->
     <div class="control-header" data-region="control-header">
@@ -564,7 +538,7 @@ defineExpose({
     <div class="editor-body" data-region="editor-body" ref="editorBodyRef">
       <!-- Time ribbon (always visible, controls zoom/pan) -->
       <TimeRibbon
-        :duration="core.duration"
+        :duration="timelineDuration"
         v-model:window-start="windowStart"
         v-model:window-end="windowEnd"
         :spacer-width="ribbonSpacerWidth"
@@ -602,6 +576,7 @@ defineExpose({
         :current-time="currentTime"
         :playhead-markers="playheadMarkers"
         :data-version="trackDataVersion"
+        :duration="timelineDuration"
         :initial-enabled-track-ids="selectedTrackIdsForEdit"
       />
 
@@ -627,8 +602,10 @@ defineExpose({
   display: flex;
   flex-direction: column;
   position: relative;
-  background: #121416;
-  color: #c8c8c8;
+  background: var(--ae-bg);
+  color: var(--ae-text);
+  color-scheme: dark;
+  font-variant-numeric: tabular-nums;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   height: 100%;
   width: 100%;
@@ -637,37 +614,51 @@ defineExpose({
   overflow: hidden;
 }
 
+.animation-editor :deep(button:focus-visible),
+.animation-editor :deep(input:focus-visible),
+.animation-editor :deep(select:focus-visible) {
+  outline: 2px solid var(--ae-accent);
+  outline-offset: 2px;
+}
+
+.animation-editor :deep(input[type="checkbox"]) {
+  accent-color: var(--ae-accent);
+}
+
+.animation-editor :deep(button:disabled) {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .control-header {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 16px;
-  background: #0e1012;
-  border-bottom: 1px solid #2a2d30;
+  padding: 8px 12px;
+  background: var(--ae-header);
+  border-bottom: 1px solid var(--ae-border);
   flex-shrink: 0;
 }
 
 .mode-toggle {
   padding: 6px 14px;
-  background: #3a7ca5;
+  background: var(--ae-accent);
   border: none;
-  border-radius: 4px;
-  color: #fff;
+  border-radius: 0;
+  color: var(--ae-on-accent);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s ease;
 }
 
 .mode-toggle:hover {
-  background: #4a8cb5;
+  background: var(--ae-accent-hover);
 }
 
 .mode-label {
   font-size: 11px;
-  color: #666;
-  text-transform: uppercase;
-  letter-spacing: 1px;
+  color: var(--ae-muted);
+  letter-spacing: 0;
   font-weight: 500;
 }
 
@@ -680,23 +671,22 @@ defineExpose({
 }
 
 .search-input {
-  width: 200px;
+  width: 180px;
   padding: 6px 10px;
-  background: #1a1c20;
-  border: 1px solid #2a2d30;
-  border-radius: 4px;
-  color: #c8c8c8;
+  background: var(--ae-input);
+  border: 1px solid var(--ae-border);
+  border-radius: 0;
+  color: var(--ae-text);
   font-size: 12px;
-  transition: border-color 0.15s ease;
 }
 
 .search-input:focus {
   outline: none;
-  border-color: #3a7ca5;
+  border-color: var(--ae-accent);
 }
 
 .search-input::placeholder {
-  color: #555;
+  color: var(--ae-muted);
 }
 
 .hide-empty-toggle {
@@ -704,7 +694,7 @@ defineExpose({
   align-items: center;
   gap: 4px;
   font-size: 11px;
-  color: #888;
+  color: var(--ae-muted);
   cursor: pointer;
   user-select: none;
 }
@@ -715,7 +705,7 @@ defineExpose({
 }
 
 .hide-empty-toggle:hover {
-  color: #aaa;
+  color: var(--ae-text);
 }
 
 .header-btn {
@@ -725,17 +715,16 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #1e2024;
-  border: 1px solid #2a2d30;
-  border-radius: 4px;
-  color: #888;
+  background: var(--ae-control);
+  border: 1px solid var(--ae-border);
+  border-radius: 0;
+  color: var(--ae-muted);
   cursor: pointer;
-  transition: all 0.15s ease;
 }
 
 .header-btn:hover {
-  background: #282c32;
-  color: #c8c8c8;
+  background: var(--ae-hover);
+  color: var(--ae-text);
 }
 
 .editor-body {
@@ -769,11 +758,10 @@ defineExpose({
   cursor: col-resize;
   z-index: 50;
   background: transparent;
-  transition: background 0.15s ease;
 }
 
 .sidebar-resize-handle:hover,
 .sidebar-resize-handle:active {
-  background: rgba(58, 124, 165, 0.5);
+  background: var(--ae-accent);
 }
 </style>

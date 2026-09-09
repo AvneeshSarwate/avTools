@@ -151,6 +151,7 @@ export type EditorAction =
   | { type: 'EDIT/REDO' }
   // Selection
   | { type: 'ELEMENT/SELECT'; fieldType: TrackType; trackId: string; elementId: string }
+  | { type: 'ELEMENT/TOGGLE_SELECTION'; fieldType: TrackType; trackId: string; elementId: string }
   | { type: 'ELEMENT/DESELECT'; fieldType: TrackType }
   // Precision editor
   | { type: 'PRECISION/OPEN'; fieldType: TrackType; trackId: string; elementId: string }
@@ -158,6 +159,7 @@ export type EditorAction =
   | { type: 'PRECISION/SAVE' }
   | { type: 'PRECISION/REVERT' }
   | { type: 'PRECISION/CLOSE' }
+  | { type: 'DRAG/CANCEL' }
   // Number lane
   | { type: 'NUMBER/ADD'; trackId: string; time: number; value: number }
   | { type: 'NUMBER/DELETE'; trackId: string; elementId: string }

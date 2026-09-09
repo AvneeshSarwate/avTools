@@ -100,7 +100,6 @@ Note: undo/redo used to live here as a `.sidebar-header` strip. They moved to `c
 | `sidebar-number-section`  | Number-tracks section (also `data-track-type="number"`)    |
 | `sidebar-enum-section`    | Enum-tracks section (also `data-track-type="enum"`)        |
 | `sidebar-func-section`    | Func-tracks section (also `data-track-type="func"`)        |
-| `sidebar-bounds-row`      | Low/High bounds inputs (number tracks, front track only)   |
 | `sidebar-empty-state`     | "Select tracks in view mode" placeholder                   |
 
 ### Lane components (`NumberLane`, `EnumLane`, `FuncLane`)
@@ -166,8 +165,8 @@ Grouped by flow.
 | Test ID        | Element                                                                          |
 |----------------|----------------------------------------------------------------------------------|
 | `track-delete` | Per-track × button — disambiguate with the ancestor `[data-track-id="..."]`      |
-| `bounds-low`   | Low bound input (front number track only)                                        |
-| `bounds-high`  | High bound input (front number track only)                                       |
+| `bounds-low`   | Low bound draft in the track settings popup                                        |
+| `bounds-high`  | High bound draft in the track settings popup                                       |
 
 ### Precision editor
 | Test ID                  | Element                                           |
@@ -252,8 +251,9 @@ Most scoped CSS classes were left unchanged. One rename was done to avoid ambigu
 document.querySelector('[data-component="AnimationEditorView"]').dataset.mode
 // → "view" or "edit"
 
-// The bounds-low input on a front number track
-document.querySelector('[data-component="EditSidebar"] [data-track-type="number"][data-front] [data-testid="bounds-low"]')
+// Open a number track’s settings, then find its Low input
+document.querySelector('[data-testid="track-settings"]').click()
+document.querySelector('[data-testid="bounds-low"]')
 
 // The view-mode checkbox for the 'rotation' track
 document.querySelector('[data-component="TrackRow"][data-track-id="rotation"] [data-testid="track-checkbox"]')
@@ -282,3 +282,21 @@ await page.locator('[data-component="TrackRow"][data-track-id="rotation"]')
          .getByTestId('track-checkbox').check()
 await page.getByTestId('precision-save').click()
 ```
+
+## Visual styling
+
+`EDITOR_THEME` in `constants.ts` supplies the `--ae-*` CSS variables on the editor root and demo wrapper. Canvas colors live alongside it. Keep surfaces neutral, controls square, and the warm accent reserved for selection, focus, and actions; track values use muted categorical colors. Preserve the separate overview and edit modes and the shared lane/sidebar dimensions when adjusting styling. The time ribbon must not shrink when the track list overflows.
+
+## Update and gesture lifecycle
+
+- Core invalidations distinguish `tracks` from `time`. Only committed track changes advance `trackDataVersion`; scrubbing updates the DOM playhead without rebuilding keyframes or serializing track data.
+- Incoming timelines reconcile tracks by ID, preserve surviving callbacks, and ignore identical data. Acknowledgements preserve the current time window.
+- Number points and enum/function marker groups retain their Konva node identity. `MarkerLane.vue` implements the shared enum/function rendering while preserving the `EnumLane`/`FuncLane` DOM selectors.
+- Every visible enum/function marker accepts presses, including reference tracks. Pressing one promotes its track to the foreground without replacing the group, so the same gesture can select or drag it. Bars, labels, and stems all bubble to that group; only an actual background click adds an element.
+- Reference enum/function markers fade as a group, including labels and stems. Number background clicks within eight vertical CSS pixels of the foreground curve insert at its interpolated value for the clicked time; farther clicks use the clicked value.
+- `laneDrag.ts` owns each gesture's baseline, preview, and pointer offset. Only a real release commits. Changed/deleted active points, changed number neighbours/bounds, a duration change, lost focus, pointer cancellation, or leaving edit mode cancel without writing data/history. Unrelated updates and viewport changes preserve the gesture.
+- Lanes emit `geometry` after reconciliation, resize, and drag movement. The parent positions the precision button after Vue's next update, without timing delays.
+- Track deletion is explicitly irreversible and does not add an undo entry. Point times are bounded by timeline duration; precision fields refresh from the stored result after saving.
+- Run `npm run test:animation-editor` in `apps/browser-projections` for browser regression checks, including the built custom element. Requires Playwright and an installed Chrome browser.
+
+Number-track rows expose `track-settings` (three-dot button). The `track-settings-popover` contains `bounds-low`, `bounds-high`, and `track-settings-apply`; Apply commits both bounds together, while Cancel, Escape, or outside-click dismisses the draft.

@@ -20,7 +20,11 @@ const windowEnd = inject<Ref<number>>('windowEnd')!
 const selectedTrackIdsForEdit = inject<Ref<Set<string>>>('selectedTrackIdsForEdit')!
 const toggleTrackSelection = inject<(trackId: string) => void>('toggleTrackSelection')!
 
-const track = computed(() => core.getTrackById(props.trackId))
+const trackDataVersion = inject<Ref<number>>('trackDataVersion')!
+const track = computed(() => {
+  void trackDataVersion.value
+  return core.getTrackById(props.trackId)
+})
 const isSelected = computed(() => selectedTrackIdsForEdit.value.has(props.trackId))
 
 function onCheckboxChange() {
@@ -64,25 +68,30 @@ function onCheckboxChange() {
   height: v-bind('TRACK_ROW_HEIGHT + "px"');
   width: 100%;
   min-width: 0;
-  border-bottom: 1px solid #2a2d30;
+  border-bottom: 1px solid var(--ae-border);
 }
 
 .name-cell {
   width: var(--sidebar-width);
   min-width: var(--sidebar-width);
   background: v-bind('NAME_BG_COLOR');
-  padding: 0 8px;
+  box-sizing: border-box;
+  padding: 0 12px;
   display: flex;
   align-items: center;
   gap: 8px;
   overflow: hidden;
 }
 
+.track-row[data-selected] .name-cell {
+  background: var(--ae-control);
+}
+
 .track-checkbox {
   flex-shrink: 0;
   width: 14px;
   height: 14px;
-  accent-color: #3a7ca5;
+  accent-color: var(--ae-accent);
   cursor: pointer;
 }
 
