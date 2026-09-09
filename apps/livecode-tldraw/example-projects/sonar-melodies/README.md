@@ -68,12 +68,17 @@ spread (base only). The echo has the same first six steps. `delayEnabled` is a
 convenience toggle. The original unused sliders 14/15 are omitted. `noteLength`
 retains slider 6 as an external rack control: it sends CC76 to the base output at
 trigger time, and only has an audible effect if the instrument maps that CC.
-It is not an extra note transform.
+It defaults to 0.5 (CC value 64), rather than the minimum. MIDI note-off timing
+remains 98% of the transformed piano-roll duration. It is not an extra note
+transform.
 
 Defaults are deliberately neutral and audible: transpose/rotation/easing 0.5,
-stretch 1/3, reverse/ornament/spread 0, and a two-beat echo. The original app
+stretch 1/3, reverse/ornament/spread 0, and delay off. When enabled, the
+echo defaults to two beats. The original app
 initialized every slider to zero, which heavily compresses/transposes a phrase.
-The ranges and mappings are unchanged.
+The ranges and mappings are unchanged. Existing live or saved params keep
+their values on Run/Replace; set `noteLength` to 0.5 and `delayEnabled` to false in an already-open pane
+to apply the new defaults there.
 
 All transform implementations, including the transforms outside this default
 chain, are copied into `transforms.orig.ts` and `easing.orig.ts`. Their only
