@@ -231,6 +231,7 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
             typeof pipelineDefaults
           >[]
         ) {
+          p.delayEnabled = true; // Exercise echo playback explicitly; it defaults off.
           p.base.stretch = 0.05;
           p.delay.stretch = 1 / 3;
           p.delayTime = 0;

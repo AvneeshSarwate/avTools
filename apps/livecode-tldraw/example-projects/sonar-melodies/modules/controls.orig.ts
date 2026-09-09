@@ -16,7 +16,7 @@ function declare(name: MelodyName) {
   return canvasParams(`sonar/${name}`, {
     ...pipelineDefaults(),
     // s6 was controlled by the Ableton rack, rather than the transform chain.
-    noteLength: 0,
+    noteLength: 0.5,
     oneShot: button({
       type: "sonar/trigger",
       body: { melody: name, mode: "oneShot" },

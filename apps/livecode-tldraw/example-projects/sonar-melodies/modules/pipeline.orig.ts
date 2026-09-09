@@ -26,7 +26,7 @@ export function pipelineDefaults() {
     base: { ...chainDefaults(), spread: 0 },
     delay: chainDefaults(),
     delayTime: 0.5,
-    delayEnabled: true,
+    delayEnabled: false,
   };
 }
 export type PipelineParams = ReturnType<typeof pipelineDefaults>;
