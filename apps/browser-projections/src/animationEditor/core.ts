@@ -13,9 +13,14 @@ import type {
   FuncElementData,
   WorldSnapshot,
   TrackSnapshot,
-  DragPreviewState,
+  DragPreviewState
 } from './types'
-import { DEFAULT_NUMBER_LOW, DEFAULT_NUMBER_HIGH, DEFAULT_TIMELINE_DURATION, TIME_COLLISION_EPS } from './constants'
+import {
+  DEFAULT_NUMBER_LOW,
+  DEFAULT_NUMBER_HIGH,
+  DEFAULT_TIMELINE_DURATION,
+  TIME_COLLISION_EPS
+} from './constants'
 import { upperBound, lerp, clamp } from './utils'
 
 let trackIdCounter = 0
@@ -44,7 +49,7 @@ export class Core {
   // Drag preview for live callbacks
   dragPreview: DragPreviewState | null = null
 
-  private onInvalidate: (() => void) | null = null
+  private onInvalidate: ((kind: 'tracks' | 'time') => void) | null = null
 
   constructor(duration?: number) {
     this.duration = duration ?? DEFAULT_TIMELINE_DURATION
@@ -53,12 +58,12 @@ export class Core {
   /**
    * Set the invalidation callback (called when rendering should update)
    */
-  setInvalidateCallback(cb: () => void): void {
+  setInvalidateCallback(cb: (kind: 'tracks' | 'time') => void): void {
     this.onInvalidate = cb
   }
 
-  private invalidate(): void {
-    this.onInvalidate?.()
+  private invalidate(kind: 'tracks' | 'time' = 'tracks'): void {
+    this.onInvalidate?.(kind)
   }
 
   // ===========================================================================
@@ -109,7 +114,7 @@ export class Core {
       elements,
       elementData,
       low,
-      high,
+      high
     }
 
     this.tracksByName.set(def.name, runtime)
@@ -128,6 +133,74 @@ export class Core {
     return true
   }
 
+  /** Apply authoritative data without replacing surviving runtime objects/callbacks.
+   * Identical acknowledgements are no-ops. Notify once, after the whole update.
+   */
+  reconcileTracks(
+    incoming: readonly (TrackSnapshot & Pick<TrackDef, 'enumOptions'>)[],
+    order: readonly string[]
+  ): boolean {
+    const byId = new Map(incoming.map((track) => [track.id, track]))
+    const nextOrder = [...new Set(order)].filter((id) => byId.has(id))
+    let changed = JSON.stringify(this.orderedTrackIds) !== JSON.stringify(nextOrder)
+    const nextTracks = new Map<string, TrackRuntime>()
+    for (const id of nextOrder) {
+      const data = byId.get(id)!
+      let track = this.tracksById.get(id)
+      const elements = structuredClone(data.elementData).sort((a, b) => a.time - b.time)
+      const sameType = track?.def.fieldType === data.fieldType
+      const unchanged =
+        sameType &&
+        track &&
+        track.def.name === data.name &&
+        track.low === data.low &&
+        track.high === data.high &&
+        JSON.stringify(track.def.enumOptions) === JSON.stringify(data.enumOptions) &&
+        JSON.stringify(track.elementData) === JSON.stringify(elements)
+      if (!unchanged) {
+        changed = true
+        const def: TrackDef = {
+          ...(sameType ? track!.def : {}),
+          id,
+          name: data.name,
+          fieldType: data.fieldType,
+          low: data.low,
+          high: data.high,
+          enumOptions: data.enumOptions ? [...data.enumOptions] : undefined,
+          data: elements.map((e) => {
+            if (typeof e.value === 'number') return { id: e.id, time: e.time, element: e.value }
+            if (typeof e.value === 'string') return { id: e.id, time: e.time, element: e.value }
+            return { id: e.id, time: e.time, element: e.value }
+          })
+        }
+        if (sameType && track) {
+          track.def = def
+          track.low = data.low
+          track.high = data.high
+          track.elementData = elements
+        } else {
+          track = {
+            id,
+            def,
+            low: data.low,
+            high: data.high,
+            elementData: elements,
+            times: [],
+            elements: []
+          }
+        }
+        this.rebuildArrays(track)
+      }
+      nextTracks.set(id, track!)
+    }
+    if (!changed) return false
+    this.tracksById = nextTracks
+    this.tracksByName = new Map([...nextTracks.values()].map((track) => [track.def.name, track]))
+    this.orderedTrackIds = nextOrder
+    this.invalidate()
+    return true
+  }
+
   /**
    * Delete a track by ID
    */
@@ -137,7 +210,7 @@ export class Core {
 
     this.tracksByName.delete(track.def.name)
     this.tracksById.delete(trackId)
-    this.orderedTrackIds = this.orderedTrackIds.filter(id => id !== trackId)
+    this.orderedTrackIds = this.orderedTrackIds.filter((id) => id !== trackId)
 
     this.invalidate()
     return true
@@ -162,7 +235,7 @@ export class Core {
    */
   getOrderedTracks(): TrackRuntime[] {
     return this.orderedTrackIds
-      .map(id => this.getTrackById(id))
+      .map((id) => this.getTrackById(id))
       .filter((t): t is TrackRuntime => t !== undefined)
   }
 
@@ -170,7 +243,7 @@ export class Core {
    * Get tracks by type
    */
   getTracksByType(fieldType: 'number' | 'enum' | 'func'): TrackRuntime[] {
-    return this.getOrderedTracks().filter(t => t.def.fieldType === fieldType)
+    return this.getOrderedTracks().filter((t) => t.def.fieldType === fieldType)
   }
 
   // ===========================================================================
@@ -207,8 +280,13 @@ export class Core {
     const track = this.tracksById.get(trackId)
     if (!track || track.def.fieldType !== 'number') return null
 
+    if (!Number.isFinite(time) || !Number.isFinite(value)) return null
     const id = generateElementId()
-    const elem: NumberElement = { id, time, value: clamp(value, track.low, track.high) }
+    const elem: NumberElement = {
+      id,
+      time: clamp(time, 0, this.duration),
+      value: clamp(value, track.low, track.high)
+    }
     track.elementData.push(elem)
     this.rebuildArrays(track)
     this.invalidate()
@@ -228,6 +306,7 @@ export class Core {
 
     // Check for collision
     const resolvedTime = this.resolveTimeCollision(track, time, null)
+    if (resolvedTime === null) return null
 
     const id = generateElementId()
     const elem: EnumElement = { id, time: resolvedTime, value }
@@ -246,12 +325,13 @@ export class Core {
 
     // Check for collision
     const resolvedTime = this.resolveTimeCollision(track, time, null)
+    if (resolvedTime === null) return null
 
     const id = generateElementId()
     const elem: FuncElementData = {
       id,
       time: resolvedTime,
-      value: { funcName: track.def.name, args: [] },
+      value: { funcName: track.def.name, args: [] }
     }
     track.elementData.push(elem)
     this.rebuildArrays(track)
@@ -266,7 +346,7 @@ export class Core {
     const track = this.tracksById.get(trackId)
     if (!track) return false
 
-    const idx = track.elementData.findIndex(e => e.id === elementId)
+    const idx = track.elementData.findIndex((e) => e.id === elementId)
     if (idx === -1) return false
 
     track.elementData.splice(idx, 1)
@@ -282,10 +362,16 @@ export class Core {
     const track = this.tracksById.get(trackId)
     if (!track || track.def.fieldType !== 'number') return false
 
-    const elem = track.elementData.find(e => e.id === elementId) as NumberElement | undefined
+    const elem = track.elementData.find((e) => e.id === elementId) as NumberElement | undefined
     if (!elem) return false
 
-    elem.time = time
+    if (!Number.isFinite(time) || !Number.isFinite(value)) return false
+    if (
+      elem.time === clamp(time, 0, this.duration) &&
+      elem.value === clamp(value, track.low, track.high)
+    )
+      return false
+    elem.time = clamp(time, 0, this.duration)
     elem.value = clamp(value, track.low, track.high)
     this.rebuildArrays(track)
     this.invalidate()
@@ -295,15 +381,21 @@ export class Core {
   /**
    * Update an enum element
    */
-  updateEnumElement(trackId: string, elementId: string, time: number, value?: string): { success: boolean; collision: boolean } {
+  updateEnumElement(
+    trackId: string,
+    elementId: string,
+    time: number,
+    value?: string
+  ): { success: boolean; collision: boolean } {
     const track = this.tracksById.get(trackId)
     if (!track || track.def.fieldType !== 'enum') return { success: false, collision: false }
 
-    const elem = track.elementData.find(e => e.id === elementId) as EnumElement | undefined
+    const elem = track.elementData.find((e) => e.id === elementId) as EnumElement | undefined
     if (!elem) return { success: false, collision: false }
 
     // Resolve collision
     const resolvedTime = this.resolveTimeCollision(track, time, elementId)
+    if (resolvedTime === null) return { success: false, collision: true }
     const collision = resolvedTime !== time
 
     elem.time = resolvedTime
@@ -326,11 +418,12 @@ export class Core {
     const track = this.tracksById.get(trackId)
     if (!track || track.def.fieldType !== 'func') return { success: false, collision: false }
 
-    const elem = track.elementData.find(e => e.id === elementId) as FuncElementData | undefined
+    const elem = track.elementData.find((e) => e.id === elementId) as FuncElementData | undefined
     if (!elem) return { success: false, collision: false }
 
     // Resolve collision
     const resolvedTime = this.resolveTimeCollision(track, time, elementId)
+    if (resolvedTime === null) return { success: false, collision: true }
     const collision = resolvedTime !== time
 
     elem.time = resolvedTime
@@ -365,26 +458,28 @@ export class Core {
    * Resolve time collision for enum/func tracks
    * Returns a time that doesn't collide with other elements
    */
-  private resolveTimeCollision(track: TrackRuntime, time: number, excludeElementId: string | null): number {
-    let resolved = time
-    let attempts = 0
-    const maxAttempts = 100
-
-    while (attempts < maxAttempts) {
-      let collision = false
-      for (const elem of track.elementData) {
-        if (excludeElementId && elem.id === excludeElementId) continue
-        if (Math.abs(elem.time - resolved) < TIME_COLLISION_EPS) {
-          collision = true
-          resolved = elem.time + TIME_COLLISION_EPS
-          break
-        }
-      }
-      if (!collision) break
-      attempts++
-    }
-
-    return Math.max(0, resolved)
+  private resolveTimeCollision(
+    track: TrackRuntime,
+    time: number,
+    excludeElementId: string | null
+  ): number | null {
+    if (!Number.isFinite(time)) return null
+    const requested = clamp(time, 0, this.duration)
+    const others = track.elementData.filter((e) => e.id !== excludeElementId)
+    const available = (t: number) =>
+      t >= 0 &&
+      t <= this.duration &&
+      others.every((e) => Math.abs(e.time - t) >= TIME_COLLISION_EPS - 1e-9)
+    if (available(requested)) return requested
+    // Nearest legal slot, preferring the right side on ties, within the timeline.
+    const candidates = [
+      0,
+      this.duration,
+      ...others.flatMap((e) => [e.time + TIME_COLLISION_EPS, e.time - TIME_COLLISION_EPS])
+    ]
+      .filter(available)
+      .sort((a, b) => Math.abs(a - requested) - Math.abs(b - requested) || b - a)
+    return candidates[0] ?? null
   }
 
   /**
@@ -407,7 +502,7 @@ export class Core {
   getElement(trackId: string, elementId: string): TrackElement | undefined {
     const track = this.tracksById.get(trackId)
     if (!track) return undefined
-    return track.elementData.find(e => e.id === elementId)
+    return track.elementData.find((e) => e.id === elementId)
   }
 
   // ===========================================================================
@@ -427,14 +522,23 @@ export class Core {
         fieldType: track.def.fieldType,
         elementData: JSON.parse(JSON.stringify(track.elementData)),
         low: track.low,
-        high: track.high,
+        high: track.high
       })
     }
 
     return {
       tracks,
-      trackOrder: [...this.orderedTrackIds],
+      trackOrder: [...this.orderedTrackIds]
     }
+  }
+
+  /** Record only successful edits; failed collision resolution leaves history intact. */
+  commitEdit(edit: () => boolean): boolean {
+    const snapshot = this.createSnapshot()
+    if (!edit()) return false
+    this.undoStack.push(snapshot)
+    this.redoStack = []
+    return true
   }
 
   /**
@@ -460,7 +564,7 @@ export class Core {
       }
     }
 
-    this.orderedTrackIds = [...snapshot.trackOrder]
+    this.orderedTrackIds = snapshot.trackOrder.filter((id) => this.tracksById.has(id))
     this.invalidate()
   }
 
@@ -524,7 +628,7 @@ export class Core {
       this.dragPreview.trackId === track.id
     ) {
       // Find the element and create modified arrays
-      const idx = track.elementData.findIndex(e => e.id === this.dragPreview!.elementId)
+      const idx = track.elementData.findIndex((e) => e.id === this.dragPreview!.elementId)
       if (idx !== -1) {
         times = [...track.times]
         elements = [...track.elements]
@@ -533,8 +637,8 @@ export class Core {
 
         // Re-sort if needed (simple bubble for single element)
         const sortedIndices = times.map((_, i) => i).sort((a, b) => times[a] - times[b])
-        times = sortedIndices.map(i => times[i])
-        elements = sortedIndices.map(i => elements[i])
+        times = sortedIndices.map((i) => times[i])
+        elements = sortedIndices.map((i) => elements[i])
       }
     }
 
@@ -578,7 +682,7 @@ export class Core {
       this.dragPreview.fieldType === 'enum' &&
       this.dragPreview.trackId === track.id
     ) {
-      const idx = track.elementData.findIndex(e => e.id === this.dragPreview!.elementId)
+      const idx = track.elementData.findIndex((e) => e.id === this.dragPreview!.elementId)
       if (idx !== -1) {
         times = [...track.times]
         elements = [...track.elements]
@@ -586,8 +690,8 @@ export class Core {
 
         // Re-sort
         const sortedIndices = times.map((_, i) => i).sort((a, b) => times[a] - times[b])
-        times = sortedIndices.map(i => times[i])
-        elements = sortedIndices.map(i => elements[i])
+        times = sortedIndices.map((i) => times[i])
+        elements = sortedIndices.map((i) => elements[i])
       }
     }
 
@@ -647,7 +751,7 @@ export class Core {
     }
 
     this.lastTime = t
-    this.invalidate()
+    this.invalidate('time')
   }
 
   /**
@@ -680,6 +784,6 @@ export class Core {
   jumpToTime(t: number): void {
     this.currentTime = t
     this.lastTime = t
-    this.invalidate()
+    this.invalidate('time')
   }
 }

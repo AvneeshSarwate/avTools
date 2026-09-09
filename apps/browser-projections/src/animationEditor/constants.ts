@@ -14,33 +14,49 @@ export const DEFAULT_TIMELINE_DURATION = 1
 export const DEFAULT_NUMBER_LOW = 0
 export const DEFAULT_NUMBER_HIGH = 1
 
+// Flat editor palette. Accent denotes selection/action; data colors remain separate.
+export const EDITOR_THEME = {
+  '--ae-bg': '#252624',
+  '--ae-panel': '#30312e',
+  '--ae-header': '#3b3c38',
+  '--ae-input': '#222320',
+  '--ae-control': '#484a44',
+  '--ae-hover': '#55574f',
+  '--ae-border': '#454740',
+  '--ae-text': '#e0e1d9',
+  '--ae-muted': '#b0b2a8',
+  '--ae-accent': '#e6b65c',
+  '--ae-accent-hover': '#f0c77c',
+  '--ae-on-accent': '#252624',
+} as const
+
 // Colors - Track backgrounds
-export const TRACK_BG_COLOR = '#1a1c20'
-export const TRACK_BG_COLOR_ALT = '#1e2024' // If you want alternating later
+export const TRACK_BG_COLOR = '#252624'
+export const TRACK_BG_COLOR_ALT = '#2a2b28' // If you want alternating later
 
 // Colors - Number tracks
-export const NUMBER_LINE_COLOR = '#4cc9f0'
-export const NUMBER_POINT_COLOR = '#f72585'
+export const NUMBER_LINE_COLOR = '#a8bdb6'
+export const NUMBER_POINT_COLOR = '#a8bdb6'
 export const NUMBER_POINT_RADIUS = 4
 
 // Colors - Playhead
-export const PLAYHEAD_COLOR = '#ff006e'
+export const PLAYHEAD_COLOR = '#e6b65c'
 export const PLAYHEAD_WIDTH = 2
 
 // Colors - Time ribbon
-export const RIBBON_BG_COLOR = '#1a1c20'
-export const RIBBON_VIEWPORT_COLOR = '#3a7ca5'
-export const RIBBON_HANDLE_COLOR = '#81c3d7'
+export const RIBBON_BG_COLOR = '#252624'
+export const RIBBON_VIEWPORT_COLOR = '#65695f'
+export const RIBBON_HANDLE_COLOR = '#b0b2a8'
 export const RIBBON_HANDLE_WIDTH = 8
 
 // Colors - Time ticks
-export const TICK_COLOR = '#555'
-export const TICK_LABEL_COLOR = '#888'
+export const TICK_COLOR = '#74776c'
+export const TICK_LABEL_COLOR = '#b0b2a8'
 export const TICK_HEIGHT = 8
 
 // Colors - Name column
-export const NAME_BG_COLOR = '#141618'
-export const NAME_TEXT_COLOR = '#c8c8c8'
+export const NAME_BG_COLOR = '#30312e'
+export const NAME_TEXT_COLOR = '#e0e1d9'
 export const NAME_FONT_SIZE = 12
 
 // Colors - Enum/Func tracks
@@ -64,10 +80,11 @@ export const ENUM_LANE_HEIGHT = 120
 export const FUNC_LANE_HEIGHT = 120
 
 // Edit mode - Number lane
-export const EDIT_NUMBER_POINT_RADIUS = 8
-export const EDIT_NUMBER_POINT_RADIUS_HOVER = 10
+export const EDIT_NUMBER_POINT_RADIUS = 6
+export const EDIT_NUMBER_POINT_RADIUS_HOVER = 8
 export const EDIT_NUMBER_LINE_WIDTH = 2
-export const EDIT_NUMBER_LINE_WIDTH_FRONT = 3
+export const EDIT_NUMBER_LINE_WIDTH_FRONT = 2
+export const EDIT_NUMBER_LINE_SNAP_DISTANCE = 8 // Vertical CSS pixels at the clicked time
 export const EDIT_NUMBER_BOUNDS_LINE_COLOR = 'rgba(255, 255, 255, 0.15)'
 
 // Edit mode - Marker (enum/func) styling
@@ -75,9 +92,10 @@ export const EDIT_MARKER_WIDTH = 4
 export const EDIT_MARKER_NOTCH_SIZE = 8
 export const EDIT_MARKER_BAR_WIDTH = 24
 export const EDIT_MARKER_BAR_HEIGHT_RATIO = 0.7 // Relative to lane height
+export const EDIT_REFERENCE_MARKER_OPACITY = 0.18
 
 // Edit mode - Selection
-export const SELECTION_COLOR = '#4cc9f0'
+export const SELECTION_COLOR = '#e6b65c'
 export const SELECTION_STROKE_WIDTH = 2
 
 // Edit mode - Front track vs reference track opacity
@@ -85,12 +103,12 @@ export const FRONT_TRACK_OPACITY = 1.0
 export const REFERENCE_TRACK_OPACITY = 0.3
 
 // Edit mode - Colors
-export const EDIT_LANE_BG_COLOR = '#161819'
-export const EDIT_LANE_BORDER_COLOR = '#2a2d30'
-export const EDIT_SIDEBAR_BG_COLOR = '#141618'
-export const EDIT_SIDEBAR_TRACK_BG = '#1a1c20'
-export const EDIT_SIDEBAR_TRACK_BG_HOVER = '#22252a'
-export const EDIT_SIDEBAR_TRACK_BG_ENABLED = '#1e2428'
+export const EDIT_LANE_BG_COLOR = '#252624'
+export const EDIT_LANE_BORDER_COLOR = '#454740'
+export const EDIT_SIDEBAR_BG_COLOR = '#30312e'
+export const EDIT_SIDEBAR_TRACK_BG = '#252624'
+export const EDIT_SIDEBAR_TRACK_BG_HOVER = '#3b3c38'
+export const EDIT_SIDEBAR_TRACK_BG_ENABLED = '#484a44'
 export const EDIT_SIDEBAR_SECTION_MAX_HEIGHT = 180  // Max height for scrollable sections
 
 // Edit mode - Precision editor

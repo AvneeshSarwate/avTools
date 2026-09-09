@@ -47,10 +47,10 @@ export function hashStringToColor(str: string): string {
   }
 
   // Use hash to generate HSL values
-  // Hue: 0-360, Saturation: 50-80%, Lightness: 35-55%
+  // Hue: 0-360, Saturation: 22-34%, Lightness: 34-42%
   const hue = Math.abs(hash) % 360
-  const saturation = 50 + (Math.abs(hash >> 8) % 30)
-  const lightness = 35 + (Math.abs(hash >> 16) % 20)
+  const saturation = 22 + (Math.abs(hash >> 8) % 12)
+  const lightness = 34 + (Math.abs(hash >> 16) % 8)
 
   return `hsl(${hue}, ${saturation}%, ${lightness}%)`
 }

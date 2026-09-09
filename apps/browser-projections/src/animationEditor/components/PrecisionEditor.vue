@@ -47,14 +47,14 @@ function close() {
 
 function onTimeChange(e: Event) {
   const value = parseFloat((e.target as HTMLInputElement).value)
-  if (!isNaN(value) && value >= 0) {
+  if (Number.isFinite(value)) {
     updateDraft({ time: value })
   }
 }
 
 function onValueChange(e: Event) {
   const value = parseFloat((e.target as HTMLInputElement).value)
-  if (!isNaN(value)) {
+  if (Number.isFinite(value)) {
     updateDraft({ value })
   }
 }
@@ -272,10 +272,10 @@ function handleBackdropClick(e: MouseEvent) {
 
 .modal {
   width: v-bind('PRECISION_MODAL_WIDTH + "px"');
-  background: #1a1c20;
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  border: 1px solid #2a2d30;
+  background: var(--ae-panel);
+  max-width: calc(100vw - 32px);
+  border-radius: 0;
+  border: 1px solid var(--ae-border);
 }
 
 .modal-header {
@@ -283,27 +283,33 @@ function handleBackdropClick(e: MouseEvent) {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid #2a2d30;
+  border-bottom: 1px solid var(--ae-border);
 }
 
 .header-content {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 4px;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
 }
 
 .header-title {
   font-size: 13px;
   font-weight: 500;
-  color: #e0e0e0;
+  color: var(--ae-text);
 }
 
 .track-badge {
   font-size: 11px;
-  color: #888;
-  background: #252830;
-  padding: 2px 8px;
-  border-radius: 3px;
+  color: var(--ae-muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0;
+  border-radius: 0;
 }
 
 .close-btn {
@@ -315,15 +321,14 @@ function handleBackdropClick(e: MouseEvent) {
   justify-content: center;
   background: transparent;
   border: none;
-  color: #666;
+  color: var(--ae-muted);
   cursor: pointer;
-  border-radius: 4px;
-  transition: all 0.15s ease;
+  border-radius: 0;
 }
 
 .close-btn:hover {
-  background: #2a2d30;
-  color: #c8c8c8;
+  background: var(--ae-border);
+  color: var(--ae-text);
 }
 
 .modal-body {
@@ -341,7 +346,7 @@ function handleBackdropClick(e: MouseEvent) {
   flex-shrink: 0;
   width: 60px;
   font-size: 11px;
-  color: #888;
+  color: var(--ae-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -349,17 +354,16 @@ function handleBackdropClick(e: MouseEvent) {
 .input {
   flex: 1;
   padding: 6px 10px;
-  background: #141618;
-  border: 1px solid #2a2d30;
-  border-radius: 4px;
-  color: #c8c8c8;
+  background: var(--ae-panel);
+  border: 1px solid var(--ae-border);
+  border-radius: 0;
+  color: var(--ae-text);
   font-size: 13px;
-  transition: border-color 0.15s ease;
 }
 
 .input:focus {
   outline: none;
-  border-color: #3a7ca5;
+  border-color: var(--ae-accent);
 }
 
 .input.select {
@@ -369,7 +373,7 @@ function handleBackdropClick(e: MouseEvent) {
 .args-section {
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid #2a2d30;
+  border-top: 1px solid var(--ae-border);
 }
 
 .args-header {
@@ -381,7 +385,7 @@ function handleBackdropClick(e: MouseEvent) {
 
 .args-label {
   font-size: 11px;
-  color: #888;
+  color: var(--ae-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -389,18 +393,17 @@ function handleBackdropClick(e: MouseEvent) {
 .add-arg-btn {
   padding: 4px 10px;
   background: transparent;
-  border: 1px solid #2a2d30;
-  border-radius: 3px;
-  color: #888;
+  border: 1px solid var(--ae-border);
+  border-radius: 0;
+  color: var(--ae-muted);
   font-size: 11px;
   cursor: pointer;
-  transition: all 0.15s ease;
 }
 
 .add-arg-btn:hover {
-  background: #252830;
-  color: #c8c8c8;
-  border-color: #3a3d42;
+  background: var(--ae-control);
+  color: var(--ae-text);
+  border-color: var(--ae-border);
 }
 
 .args-list {
@@ -418,10 +421,10 @@ function handleBackdropClick(e: MouseEvent) {
 .arg-type {
   width: 70px;
   padding: 5px 6px;
-  background: #141618;
-  border: 1px solid #2a2d30;
-  border-radius: 3px;
-  color: #c8c8c8;
+  background: var(--ae-panel);
+  border: 1px solid var(--ae-border);
+  border-radius: 0;
+  color: var(--ae-text);
   font-size: 11px;
   cursor: pointer;
 }
@@ -429,17 +432,17 @@ function handleBackdropClick(e: MouseEvent) {
 .arg-value {
   flex: 1;
   padding: 5px 8px;
-  background: #141618;
-  border: 1px solid #2a2d30;
-  border-radius: 3px;
-  color: #c8c8c8;
+  background: var(--ae-panel);
+  border: 1px solid var(--ae-border);
+  border-radius: 0;
+  color: var(--ae-text);
   font-size: 12px;
 }
 
 .arg-value:focus,
 .arg-type:focus {
   outline: none;
-  border-color: #3a7ca5;
+  border-color: var(--ae-accent);
 }
 
 .remove-arg-btn {
@@ -448,11 +451,10 @@ function handleBackdropClick(e: MouseEvent) {
   padding: 0;
   background: transparent;
   border: none;
-  color: #555;
+  color: var(--ae-muted);
   font-size: 14px;
   cursor: pointer;
-  border-radius: 3px;
-  transition: all 0.15s ease;
+  border-radius: 0;
 }
 
 .remove-arg-btn:hover {
@@ -462,7 +464,7 @@ function handleBackdropClick(e: MouseEvent) {
 
 .no-args {
   font-size: 11px;
-  color: #555;
+  color: var(--ae-muted);
   text-align: center;
   padding: 8px;
 }
@@ -472,27 +474,26 @@ function handleBackdropClick(e: MouseEvent) {
   justify-content: flex-end;
   gap: 8px;
   padding: 10px 16px;
-  border-top: 1px solid #2a2d30;
+  border-top: 1px solid var(--ae-border);
 }
 
 .btn {
   padding: 6px 14px;
-  border-radius: 4px;
+  border-radius: 0;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   border: none;
-  transition: all 0.15s ease;
 }
 
 .btn-secondary {
-  background: #252830;
-  color: #b0b0b0;
+  background: var(--ae-control);
+  color: var(--ae-muted);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: #2d3038;
-  color: #e0e0e0;
+  background: var(--ae-hover);
+  color: var(--ae-text);
 }
 
 .btn-secondary:disabled {
@@ -501,11 +502,11 @@ function handleBackdropClick(e: MouseEvent) {
 }
 
 .btn-primary {
-  background: #3a7ca5;
-  color: #fff;
+  background: var(--ae-accent);
+  color: var(--ae-on-accent);
 }
 
 .btn-primary:hover {
-  background: #4a8cb5;
+  background: var(--ae-accent-hover);
 }
 </style>
