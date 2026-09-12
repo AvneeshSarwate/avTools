@@ -205,6 +205,7 @@ Choosing a sparse store implementation is platform work following the
 | Minimal manifest, module imports, shared mutable state | [`basic-multi-module`](../../apps/livecode-tldraw/example-projects/basic-multi-module/) |
 | Natural completion, Replace, graceful `stop()`, Panic behavior | [`feature-lifecycle-basics`](../../apps/livecode-tldraw/example-projects/feature-lifecycle-basics/README.md) |
 | Synth sound design, piano-roll audio, sparse automation, native preset exchange | [`six-sines-sound-design`](../../apps/livecode-tldraw/example-projects/six-sines-sound-design/README.md) |
+| Cursor-latched chords, per-note macro modulation, editable looping MSEGs | [`six-sines-cursor-chords`](../../apps/livecode-tldraw/example-projects/six-sines-cursor-chords/README.md) |
 | Nested live params, metadata, code writes, scopes | [`feature-params-basics`](../../apps/livecode-tldraw/example-projects/feature-params-basics/README.md) |
 | Create/read/play piano rolls and use MIDI | [`feature-piano-roll-flows`](../../apps/livecode-tldraw/example-projects/feature-piano-roll-flows/README.md) |
 | Durable timelines, sampling, function cues, animation playheads | [`feature-animation-timeline`](../../apps/livecode-tldraw/example-projects/feature-animation-timeline/README.md) |

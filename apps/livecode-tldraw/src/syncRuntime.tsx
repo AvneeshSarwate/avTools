@@ -90,6 +90,7 @@ export interface SyncActions {
   ): Promise<void>;
   serverBaseUrl: string;
   setServerBaseUrl(next: string): void;
+  setRollCursor(name: string, position: number, options?: {originId?:string}): Promise<PianoRollSetResult>;
   setRoll(
     name: string,
     data: PianoRollData,
@@ -172,6 +173,7 @@ export interface PianoRollsSyncApi {
   rolls: Record<string, PianoRollObject>;
   latestSeq: number | null;
   setRoll: SyncActions["setRoll"];
+  setRollCursor: SyncActions["setRollCursor"];
   undoRoll: SyncActions["undoRoll"];
   redoRoll: SyncActions["redoRoll"];
 }
@@ -179,7 +181,7 @@ export interface PianoRollsSyncApi {
 export function usePianoRollsSync(name?: string | null): PianoRollsSyncApi {
   const slice = useSyncSlice("pianoRoll", name);
   const { connectionStatus, connectionError } = useSyncConnection();
-  const { setRoll, undoRoll, redoRoll } = useSyncActions();
+  const { setRoll, setRollCursor, undoRoll, redoRoll } = useSyncActions();
   return useMemo(
     () => ({
       connectionStatus,
@@ -187,10 +189,11 @@ export function usePianoRollsSync(name?: string | null): PianoRollsSyncApi {
       rolls: slice.entities,
       latestSeq: slice.latestSeq,
       setRoll,
+      setRollCursor,
       undoRoll,
       redoRoll,
     }),
-    [connectionError, connectionStatus, redoRoll, setRoll, slice, undoRoll],
+    [connectionError, connectionStatus, redoRoll, setRoll, setRollCursor, slice, undoRoll],
   );
 }
 
@@ -499,6 +502,11 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
     [store],
   );
 
+  const setRollCursor = useCallback(async (name: string, position: number, options: {originId?:string} = {}) => {
+    const body = {name,position,...options};
+    return await engineAction<PianoRollSetResult>({kind:"pianoRollCursorSet",request:body},serverBaseUrlRef.current,"/piano-roll/cursor",body);
+  }, []);
+
   const setRoll = useCallback(
     async (
       name: string,
@@ -690,6 +698,7 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
       serverBaseUrl,
       setServerBaseUrl,
       setRoll,
+      setRollCursor,
       undoRoll,
       redoRoll,
       setParams,
@@ -707,6 +716,7 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
       setSixSinesPreset,
       setParams,
       setRoll,
+      setRollCursor,
       setServerBaseUrl,
       undoRoll,
     ],

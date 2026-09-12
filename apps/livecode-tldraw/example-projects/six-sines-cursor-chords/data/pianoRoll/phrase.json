@@ -1,0 +1,122 @@
+{
+  "type": "pianoRoll",
+  "name": "cursor-chords/chords",
+  "savedAt": "2026-09-12T00:00:00Z",
+  "data": {
+    "notes": [
+      {
+        "id": "chord-0-48",
+        "pitch": 48,
+        "position": 0,
+        "duration": 4,
+        "velocity": 92
+      },
+      {
+        "id": "chord-0-55",
+        "pitch": 55,
+        "position": 0,
+        "duration": 4,
+        "velocity": 92
+      },
+      {
+        "id": "chord-0-60",
+        "pitch": 60,
+        "position": 0,
+        "duration": 4,
+        "velocity": 92
+      },
+      {
+        "id": "chord-0-64",
+        "pitch": 64,
+        "position": 0,
+        "duration": 4,
+        "velocity": 92
+      },
+      {
+        "id": "chord-1-48",
+        "pitch": 48,
+        "position": 4,
+        "duration": 4,
+        "velocity": 92
+      },
+      {
+        "id": "chord-1-57",
+        "pitch": 57,
+        "position": 4,
+        "duration": 4,
+        "velocity": 92
+      },
+      {
+        "id": "chord-1-60",
+        "pitch": 60,
+        "position": 4,
+        "duration": 4,
+        "velocity": 92
+      },
+      {
+        "id": "chord-1-65",
+        "pitch": 65,
+        "position": 4,
+        "duration": 4,
+        "velocity": 92
+      },
+      {
+        "id": "chord-2-50",
+        "pitch": 50,
+        "position": 8,
+        "duration": 4,
+        "velocity": 92
+      },
+      {
+        "id": "chord-2-57",
+        "pitch": 57,
+        "position": 8,
+        "duration": 4,
+        "velocity": 92
+      },
+      {
+        "id": "chord-2-62",
+        "pitch": 62,
+        "position": 8,
+        "duration": 4,
+        "velocity": 92
+      },
+      {
+        "id": "chord-2-65",
+        "pitch": 65,
+        "position": 8,
+        "duration": 4,
+        "velocity": 92
+      },
+      {
+        "id": "chord-3-43",
+        "pitch": 43,
+        "position": 12,
+        "duration": 4,
+        "velocity": 92
+      },
+      {
+        "id": "chord-3-55",
+        "pitch": 55,
+        "position": 12,
+        "duration": 4,
+        "velocity": 92
+      },
+      {
+        "id": "chord-3-59",
+        "pitch": 59,
+        "position": 12,
+        "duration": 4,
+        "velocity": 92
+      },
+      {
+        "id": "chord-3-62",
+        "pitch": 62,
+        "position": 12,
+        "duration": 4,
+        "velocity": 92
+      }
+    ],
+    "playStartPosition": 0
+  }
+}

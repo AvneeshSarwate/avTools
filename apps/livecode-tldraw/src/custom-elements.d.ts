@@ -25,12 +25,14 @@ export type PianoRollPlayheadMarker = PlayheadMarker;
  * React creates it: a ref can be read before the definition lands.
  */
 export interface PianoRollComponentElement extends HTMLElement {
+  getPlayStartPosition?: () => number;
+  setPlayStartPosition?: (position: number) => void;
   width?: number;
   height?: number;
   initialNotes?: Array<[string, NoteData]>;
   interactive?: boolean;
   showControlPanel?: boolean;
-  setNotes?: (notes: NoteDataInput[]) => void;
+  setNotes?: (notes: NoteDataInput[], options?: {silent?:boolean}) => void;
   setPlayheadMarkers?: (markers: PlayheadMarker[]) => void;
   getPlayheadMarkers?: () => PlayheadMarker[];
   fitZoomToNotes?: () => void;

@@ -20,6 +20,8 @@ export interface ParamsFieldMeta {
   /** Static momentary-button message. The UI adds body.state on each edge. */
   button?: LivecodeEvent<Record<string, unknown>>;
   label?: string;
+  /** Dropdown labels mapped to stored primitive values. */
+  options?: Record<string, ParamsPrimitive>;
   min?: number;
   max?: number;
   step?: number;

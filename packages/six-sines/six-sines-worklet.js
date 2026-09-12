@@ -107,6 +107,9 @@ class SixSinesProcessor extends AudioWorkletProcessor {
       } else if (message?.type === "loadPreset") {
         if (!this.ready) throw new Error("cannot load a replacement preset before ready");
         this.loadPreset(new Uint8Array(message.bytes));
+        // A replacement patch starts a new performance; old queued edits/notes must not leak in.
+        this.immediateQueue.head = this.immediateQueue.count = 0;
+        this.scheduledQueue.head = this.scheduledQueue.count = 0;
         this.port.postMessage({ type: "presetLoaded", requestId: message.requestId });
       } else if (message?.type === "stats") {
         this.postStats(message.requestId);

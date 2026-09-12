@@ -493,6 +493,7 @@ function toBindingParams(
   if (!meta) return undefined
   const params: Record<string, unknown> = {}
   if (meta.label !== undefined) params.label = meta.label
+  if (meta.options !== undefined) params.options = meta.options
   if (meta.min !== undefined) params.min = meta.min
   if (meta.max !== undefined) params.max = meta.max
   if (meta.step !== undefined) params.step = meta.step
