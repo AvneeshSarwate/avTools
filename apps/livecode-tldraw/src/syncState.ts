@@ -68,7 +68,11 @@ export function applySyncMessageToState(
       if (!isSyncEntityType(entityType)) continue;
       const next: Record<string, unknown> = {};
       for (const entity of entities) {
-        next[entityName(entity as NamedEntity)] = entity;
+        const name = entityName(entity as NamedEntity);
+        const previous = (
+          state[entityType].entities as Record<string, unknown>
+        )[name];
+        next[name] = equalSyncValue(previous, entity) ? previous : entity;
       }
       state[entityType] = {
         entities: next,
@@ -96,7 +100,12 @@ export function applySyncMessageToState(
           change.patches,
         );
       } else if (change.entity === null) delete entities[change.name];
-      else entities[change.name] = change.entity;
+      else {
+        const previous = entities[change.name];
+        entities[change.name] = equalSyncValue(previous, change.entity)
+          ? previous
+          : change.entity;
+      }
     }
     for (const [entityType, entities] of touched) {
       state[entityType] = { entities, latestSeq: message.seq } as never;
@@ -121,6 +130,7 @@ export function materializeEntityPatches(
   patches: readonly EntityPatch[],
 ): unknown {
   let root = entity;
+  let changed = false;
   const copies = new WeakMap<object, Record<string, unknown>>();
   function copy(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== "object") {
@@ -128,11 +138,9 @@ export function materializeEntityPatches(
     }
     const existing = copies.get(value);
     if (existing) return existing;
-    const result =
-      (Array.isArray(value) ? value.slice() : { ...value }) as Record<
-        string,
-        unknown
-      >;
+    const result = (
+      Array.isArray(value) ? value.slice() : { ...value }
+    ) as Record<string, unknown>;
     copies.set(value, result);
     copies.set(result, result);
     return result;
@@ -150,7 +158,10 @@ export function materializeEntityPatches(
       if (patch.op === "delete") {
         throw new Error("Cannot delete entity root with a patch");
       }
-      root = patch.value;
+      if (!equalSyncValue(root, patch.value)) {
+        root = patch.value;
+        changed = true;
+      }
       continue;
     }
     root = copy(root);
@@ -164,8 +175,44 @@ export function materializeEntityPatches(
       parent = child;
     }
     const key = patch.path[patch.path.length - 1]!;
-    if (patch.op === "delete") delete parent[key];
-    else set(parent, key, patch.value);
+    if (patch.op === "delete") {
+      if (Object.hasOwn(parent, key)) {
+        delete parent[key];
+        changed = true;
+      }
+    } else if (
+      !Object.hasOwn(parent, key) ||
+      !equalSyncValue(parent[key], patch.value)
+    ) {
+      set(parent, key, patch.value);
+      changed = true;
+    }
   }
-  return root;
+  return changed ? root : entity;
+}
+
+/** Full snapshots can repeat without changing state; revisions alone are not sufficient. */
+export function equalSyncValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (
+    !a ||
+    !b ||
+    typeof a !== "object" ||
+    typeof b !== "object" ||
+    Array.isArray(a) !== Array.isArray(b)
+  )
+    return false;
+  const ak = Object.keys(a),
+    bk = Object.keys(b);
+  if (ak.length !== bk.length) return false;
+  if (Array.isArray(a) && Array.isArray(b) && a.length !== b.length)
+    return false;
+  return ak.every(
+    (key) =>
+      Object.hasOwn(b, key) &&
+      equalSyncValue(
+        (a as Record<string, unknown>)[key],
+        (b as Record<string, unknown>)[key],
+      ),
+  );
 }

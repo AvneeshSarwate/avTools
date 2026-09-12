@@ -121,12 +121,13 @@ failure. Existing happy-path and reset tests do not establish this guarantee.
 
 ## P2: sync and long-process state have personal-scale bounds
 
-Sync subscriptions are per type, not name. Six Sines ships sparse changes;
+Wire subscriptions are per type, not name; React subscriptions within the
+client are scoped to bound entity names. Six Sines ships sparse changes;
 other kinds still ship changed entities whole, and params/signals still sample
 whole values. Sparse support is not a global migration or an automatic size
 optimization. Resets, project capture, bulk edits, and initial snapshots still
-traverse full state. The client also republishes the full module view map when
-run/wait/lookup state changes.
+traverse full state. Aggregate client consumers still inspect whole-kind maps;
+bound editors retain their entity/module view identity across unrelated updates.
 
 A tracked kind that admits raw subtree assignment retains selective scans of
 reachable external regions, including later growth. Correctness has no size

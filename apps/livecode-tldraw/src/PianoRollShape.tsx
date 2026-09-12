@@ -1,5 +1,6 @@
 import {
   type SyntheticEvent,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -23,9 +24,13 @@ import type {
   NoteData,
   PianoRollData,
 } from '@avtools/livecode-protocol'
-import { usePianoRollsSync, useSignalsSync } from './syncRuntime'
+import { usePianoRollsSync } from './syncRuntime'
 import { PIANO_ROLL_ENTITY_TYPE } from './serverRequests'
-import { signalPlayheadMarkers } from './signalPlayheadMarkers'
+import { useSignalPlayheadMarkers } from './useSignalPlayheadMarkers'
+import {
+  type AppliedPianoRollView,
+  decidePianoRollHydration,
+} from './pianoRollHydration'
 
 export const PIANO_ROLL_SHAPE_TYPE = 'piano-roll-view'
 // The Vue component's default stage contract; the browser E2E asserts the
@@ -155,37 +160,40 @@ export function createPianoRollShape(
 }
 
 function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
-  const runtime = usePianoRollsSync()
-  const signalsRuntime = useSignalsSync()
+  const runtime = usePianoRollsSync(shape.props.rollName)
+  const { redoRoll, setRoll, undoRoll } = runtime
   const roll = runtime.rolls[shape.props.rollName]
+  const hasRoll = roll !== undefined
   const elementRef = useRef<PianoRollElement | null>(null)
-  const lastAppliedRevRef = useRef<number | null>(null)
+  const lastAppliedRollRef = useRef<AppliedPianoRollView | null>(null)
   const lastMarkerKeyRef = useRef<string | null>(null)
   const [writeError, setWriteError] = useState<string | null>(null)
   const originId = useMemo(() => `piano-roll-view-${shape.id}`, [shape.id])
+  const setElementRef = useCallback((element: PianoRollElement | null) => {
+    elementRef.current = element
+    if (!element) return
+    element.width = PIANO_ROLL_STAGE_WIDTH
+    element.height = PIANO_ROLL_STAGE_HEIGHT
+    element.interactive = shape.props.interactive
+    element.showControlPanel = shape.props.showControlPanel
+  }, [shape.props.interactive, shape.props.showControlPanel])
 
   // Every live signal anchored at this roll, as marker lines. Ended signals and
   // a dropped signals socket both render as no markers at all: a marker frozen
   // where a stopped process left it would read as a still-playing one.
-  const markers = useMemo(
-    () =>
-      signalsRuntime.connectionStatus === 'open'
-        ? signalPlayheadMarkers(
-          signalsRuntime.signals,
-          PIANO_ROLL_ENTITY_TYPE,
-          shape.props.rollName,
-        )
-        : [],
-    [
-      signalsRuntime.connectionStatus,
-      signalsRuntime.signals,
-      shape.props.rollName,
-    ],
+  const markers = useSignalPlayheadMarkers(
+    PIANO_ROLL_ENTITY_TYPE,
+    shape.props.rollName,
   )
 
   useEffect(() => {
     const el = elementRef.current
-    if (!el) return
+    if (!el) {
+      // A missing roll removes the custom element. Ensure a later recreation
+      // receives its markers even if their values did not change meanwhile.
+      lastMarkerKeyRef.current = null
+      return
+    }
     // The provider already coalesces snapshots to one per frame; this key skips
     // the redraw a re-pushed identical marker set would otherwise cost.
     const key = JSON.stringify(markers)
@@ -210,17 +218,21 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
 
   useEffect(() => {
     const el = elementRef.current
-    if (!el) return
-    el.width = PIANO_ROLL_STAGE_WIDTH
-    el.height = PIANO_ROLL_STAGE_HEIGHT
-    el.interactive = shape.props.interactive
-    el.showControlPanel = shape.props.showControlPanel
-  }, [shape.props.interactive, shape.props.showControlPanel])
-
-  useEffect(() => {
-    const el = elementRef.current
-    if (!el || !roll) return
-    if (lastAppliedRevRef.current === roll.rev) return
+    if (!el || !roll) {
+      // Deletion unmounts the element. A recreated entity can reuse the same
+      // revision and must still hydrate the replacement element.
+      lastAppliedRollRef.current = null
+      return
+    }
+    const lastApplied = lastAppliedRollRef.current
+    const decision = decidePianoRollHydration(
+      lastApplied,
+      shape.props.rollName,
+      el,
+      roll,
+      originId,
+    )
+    if (decision.kind === 'ignore') return
     // Suppress echoes of this view's own edits independently of HTTP-response
     // timing: the websocket snapshot carrying the new rev can arrive before
     // /piano-roll/set resolves, so we cannot key suppression on a recorded rev.
@@ -230,19 +242,19 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
     // apply here. Accepted divergence: server-side note normalization (assigned
     // ids, velocity defaults) is not echoed back into the originating view; the
     // next foreign-origin application syncs it.
-    // Initial application (lastAppliedRevRef.current === null) always runs, so a
+    // Initial application (lastAppliedRollRef.current === null) always runs, so a
     // page reload restores the latest state even when updatedBy === originId
     // (originId is persistent, derived from the shape id).
-    if (roll.updatedBy === originId && lastAppliedRevRef.current !== null) {
-      lastAppliedRevRef.current = roll.rev
+    if (decision.kind === 'accept') {
+      lastAppliedRollRef.current = decision.applied
       return
     }
-    lastAppliedRevRef.current = roll.rev
+    lastAppliedRollRef.current = decision.applied
     el.setNotes?.(roll.data.notes)
     if (roll.rev === 1) {
       window.setTimeout(() => el.fitZoomToNotes?.(), 0)
     }
-  }, [roll])
+  }, [originId, roll, shape.props.rollName])
 
   useEffect(() => {
     const el = elementRef.current
@@ -255,11 +267,10 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
       const data: PianoRollData = {
         notes: notesEntries.map(([, note]) => note),
       }
-      void runtime
-        .setRoll(shape.props.rollName, data, {
-          originId,
-          label: `Edit ${shape.props.rollName}`,
-        })
+      void setRoll(shape.props.rollName, data, {
+        originId,
+        label: `Edit ${shape.props.rollName}`,
+      })
         .then((result) => {
           if (result.ok) {
             setWriteError(null)
@@ -275,7 +286,7 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
 
     el.addEventListener('notes-update', handleNotesUpdate)
     return () => el.removeEventListener('notes-update', handleNotesUpdate)
-  }, [originId, runtime, shape.props.interactive, shape.props.rollName])
+  }, [hasRoll, originId, setRoll, shape.props.interactive, shape.props.rollName])
 
   const stopCanvasEvent = (event: SyntheticEvent) => {
     event.stopPropagation()
@@ -307,7 +318,7 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
             type="button"
             disabled={!roll?.canUndo}
             onClick={() =>
-              void runtime.undoRoll(shape.props.rollName, `${originId}:history`)
+              void undoRoll(shape.props.rollName, `${originId}:history`)
             }
           >
             Undo object
@@ -316,7 +327,7 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
             type="button"
             disabled={!roll?.canRedo}
             onClick={() =>
-              void runtime.redoRoll(shape.props.rollName, `${originId}:history`)
+              void redoRoll(shape.props.rollName, `${originId}:history`)
             }
           >
             Redo object
@@ -339,7 +350,7 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
             style={{ width: PIANO_ROLL_EMBED_WIDTH }}
           >
             <piano-roll-component
-              ref={elementRef}
+              ref={setElementRef}
               style={{
                 width: PIANO_ROLL_EMBED_WIDTH,
                 minHeight: PIANO_ROLL_EMBED_MIN_HEIGHT,

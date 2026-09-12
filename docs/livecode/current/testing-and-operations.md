@@ -58,6 +58,11 @@ file list rather than maintaining it here.
   `protocol_smoke_test.ts`, `execution_plane_state_test.ts`,
   `engine_attach_replay_test.ts`, and the topology E2E scripts.
 - Project graph/targets/LSP: project shadow, browser-target, and LSP tests.
+- React entity subscription isolation: `npm run test:sync-rendering` in
+  `apps/livecode-tldraw` mounts real React subscribers in Chromium, including the
+  runtime provider and actual tldraw shapes. It checks all nine kinds, resets,
+  patches, rebinding, module/document selection, and connection-context isolation.
+  It runs in the full gate; hydration decision tests run in the unit gate.
 - Visible canvas/reconnect/save behavior: `apps/livecode-tldraw/tests/livecodeTldraw.e2e.mjs`.
 
 `browser_engine_slice.e2e.mjs` also checks that the host's first ready status

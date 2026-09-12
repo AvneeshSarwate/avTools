@@ -20,6 +20,11 @@ import type {
   DrawingEntity,
 } from "@avtools/livecode-protocol";
 import type { HandwritingCanvasElement } from "./custom-elements";
+import {
+  type AppliedDrawingView,
+  decideDrawingHydration,
+  drawingDocumentJson,
+} from "./drawingViewHydration";
 import { DRAWING_ENTITY_TYPE } from "./serverRequests";
 import { useDrawingsSync } from "./syncRuntime";
 
@@ -127,41 +132,70 @@ export function createDrawingShape(
  * through sync (so an in-progress edit is not rebuilt underneath the user).
  */
 function DrawingShapeComponent({ shape }: { shape: DrawingShape }) {
-  const runtime = useDrawingsSync();
+  const runtime = useDrawingsSync(shape.props.drawingName);
   const entity = runtime.drawings[shape.props.drawingName];
   const hasEntity = entity !== undefined;
   const setDrawing = runtime.setDrawing;
   const elementRef = useRef<HandwritingCanvasElement | null>(null);
-  const latestEntityRef = useRef<DrawingEntity | null>(entity ?? null);
-  // The rev the element currently shows; null until the first hydration, and
-  // no edit is written before that (a fresh view must never overwrite the
-  // entity with its own empty scene).
-  const appliedRevRef = useRef<number | null>(null);
+  const bindingRef = useRef<
+    {
+      drawingName: string;
+      element: HandwritingCanvasElement;
+      latestEntity: DrawingEntity;
+    } | null
+  >(null);
+  // The accepted document currently shown by this particular element. A new
+  // element or drawing binding must hydrate even when its rev happens to match
+  // the previous one.
+  const appliedRef = useRef<AppliedDrawingView | null>(null);
   const lastSentJsonRef = useRef<string | null>(null);
   const writeQueueRef = useRef(Promise.resolve());
   const [writeError, setWriteError] = useState<string | null>(null);
   const originId = useMemo(() => `drawing-view-${shape.id}`, [shape.id]);
 
   useEffect(() => {
-    latestEntityRef.current = entity ?? null;
     const element = elementRef.current;
-    if (!entity || !element) return;
-    if (appliedRevRef.current === entity.rev) return;
-    // Our own accepted write comes back through sync; the element already
-    // holds it, so re-hydrating would only destroy the user's selection.
-    if (entity.updatedBy === originId && appliedRevRef.current !== null) {
-      appliedRevRef.current = entity.rev;
+    if (!entity || !element) {
+      bindingRef.current = null;
+      appliedRef.current = null;
+      return;
+    }
+    let binding = bindingRef.current;
+    if (
+      !binding || binding.drawingName !== shape.props.drawingName ||
+      binding.element !== element
+    ) {
+      binding = {
+        drawingName: shape.props.drawingName,
+        element,
+        latestEntity: entity,
+      };
+      bindingRef.current = binding;
+    } else {
+      binding.latestEntity = entity;
+    }
+    const decision = decideDrawingHydration(
+      appliedRef.current,
+      shape.props.drawingName,
+      element,
+      entity,
+      originId,
+    );
+    if (decision.kind === "ignore") return;
+    if (decision.kind === "accept") {
+      appliedRef.current = decision.applied;
+      lastSentJsonRef.current = decision.applied.documentJson;
       return;
     }
     try {
       element.setDrawingDocument?.(entity.data);
-      appliedRevRef.current = entity.rev;
-      lastSentJsonRef.current = JSON.stringify(entity.data);
+      appliedRef.current = decision.applied;
+      lastSentJsonRef.current = decision.applied.documentJson;
       setWriteError(null);
     } catch (error) {
       setWriteError(error instanceof Error ? error.message : String(error));
     }
-  }, [entity, originId]);
+  }, [entity, originId, shape.props.drawingName]);
 
   useEffect(() => {
     const element = elementRef.current;
@@ -180,14 +214,14 @@ function DrawingShapeComponent({ shape }: { shape: DrawingShape }) {
     const onDocumentUpdate = (event: Event) => {
       const data = (event as CustomEvent<[DrawingDocument]>).detail?.[0];
       if (!data || !shape.props.interactive) return;
-      if (appliedRevRef.current === null) return;
-      const json = JSON.stringify(data);
+      const binding = bindingRef.current;
+      if (!binding || binding.element !== element) return;
+      const json = drawingDocumentJson(data);
       if (json === lastSentJsonRef.current) return;
       lastSentJsonRef.current = json;
-      const baseRev = latestEntityRef.current?.rev;
+      const baseRev = binding.latestEntity.rev;
       writeQueueRef.current = writeQueueRef.current.then(async () => {
-        const current = latestEntityRef.current;
-        if (!current || baseRev === undefined) return;
+        const current = binding.latestEntity;
         try {
           const expectedRev = current.updatedBy === originId
             ? current.rev
@@ -197,23 +231,48 @@ function DrawingShapeComponent({ shape }: { shape: DrawingShape }) {
             expectedRev,
           });
           if (result.ok) {
-            latestEntityRef.current = result.drawing;
-            appliedRevRef.current = result.drawing.rev;
-            setWriteError(null);
+            binding.latestEntity = result.drawing;
+            if (bindingRef.current === binding) {
+              appliedRef.current = {
+                drawingName: binding.drawingName,
+                element,
+                rev: result.drawing.rev,
+                documentJson: drawingDocumentJson(result.drawing.data),
+              };
+              setWriteError(null);
+            }
           } else {
             const truth = result.current ?? current;
-            latestEntityRef.current = truth;
-            element.setDrawingDocument?.(truth.data);
-            appliedRevRef.current = truth.rev;
-            lastSentJsonRef.current = JSON.stringify(truth.data);
-            setWriteError(result.error);
+            binding.latestEntity = truth;
+            if (bindingRef.current === binding) {
+              element.setDrawingDocument?.(truth.data);
+              const documentJson = drawingDocumentJson(truth.data);
+              appliedRef.current = {
+                drawingName: binding.drawingName,
+                element,
+                rev: truth.rev,
+                documentJson,
+              };
+              lastSentJsonRef.current = documentJson;
+              setWriteError(result.error);
+            }
           }
         } catch (error) {
-          const truth = latestEntityRef.current ?? current;
-          element.setDrawingDocument?.(truth.data);
-          appliedRevRef.current = truth.rev;
-          lastSentJsonRef.current = JSON.stringify(truth.data);
-          setWriteError(error instanceof Error ? error.message : String(error));
+          const truth = binding.latestEntity;
+          if (bindingRef.current === binding) {
+            element.setDrawingDocument?.(truth.data);
+            const documentJson = drawingDocumentJson(truth.data);
+            appliedRef.current = {
+              drawingName: binding.drawingName,
+              element,
+              rev: truth.rev,
+              documentJson,
+            };
+            lastSentJsonRef.current = documentJson;
+            setWriteError(
+              error instanceof Error ? error.message : String(error),
+            );
+          }
         }
       });
     };

@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, type SyntheticEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  type SyntheticEvent,
+} from 'react'
 import {
   BaseBoxShapeUtil,
   createShapeId,
@@ -17,9 +23,18 @@ import type {
   ParamsValues,
   LivecodeEvent,
 } from '@avtools/livecode-protocol'
-import { useParamsSync, useSyncActions } from './syncRuntime'
+import {
+  useParamsSync,
+  useSyncActions,
+  useSyncEntityNames,
+} from './syncRuntime'
 import { emitEvent } from './serverRequests'
 import { bindParamButton } from './paramButton'
+import {
+  applyChangedParamValues,
+  retainParamPaneLayout,
+  type ParamPaneLayoutSnapshot,
+} from './paramPaneUpdates'
 
 export const PARAM_PANE_SHAPE_TYPE = 'param-pane'
 const DEFAULT_PARAM_PANE_WIDTH = 320
@@ -53,6 +68,8 @@ interface BindingEntry {
   localRev: number
   /** Unresolved /params/set calls for this leaf. */
   inFlight: number
+  /** Tweakpane emits change events even during an incoming truth refresh. */
+  applyingTruth: boolean
 }
 
 export class ParamPaneShapeUtil extends BaseBoxShapeUtil<ParamPaneShape> {
@@ -98,9 +115,11 @@ export class ParamPaneShapeUtil extends BaseBoxShapeUtil<ParamPaneShape> {
 
 export function createParamPaneShape(
   editor: Editor,
-  options:
-    & Partial<ParamPaneShape['props']>
-    & { x?: number; y?: number; id?: ParamPaneShape['id'] } = {},
+  options: Partial<ParamPaneShape['props']> & {
+    x?: number
+    y?: number
+    id?: ParamPaneShape['id']
+  } = {},
 ) {
   const id = options.id ?? createShapeId()
   const paramsName = options.paramsName ?? 'params'
@@ -122,7 +141,7 @@ export function createParamPaneShape(
 }
 
 function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
-  const runtime = useParamsSync()
+  const runtime = useParamsSync(shape.props.paramsName)
   const { serverBaseUrl } = useSyncActions()
   const entity = runtime.params[shape.props.paramsName]
   const bodyRef = useRef<HTMLDivElement | null>(null)
@@ -134,6 +153,7 @@ function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
   const activeEntryRef = useRef<BindingEntry | null>(null)
   const latestEntityRef = useRef<ParamsEntity | null>(null)
   const runtimeRef = useRef(runtime)
+  const layoutRef = useRef<ParamPaneLayoutSnapshot | null>(null)
   const originId = useMemo(() => `param-pane-${shape.id}`, [shape.id])
   const paramsName = shape.props.paramsName
 
@@ -154,28 +174,31 @@ function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
     runtimeRef.current = runtime
   })
 
-  // Rebuilding bindings is only correct when the value shape or the meta
-  // changed; a rev advance just refreshes values.
-  const structureKey = useMemo(
-    () =>
-      entity
-        ? `${entity.values === null ? 'unavailable' : describeStructure(entity.values)}|${JSON.stringify(entity.meta ?? {})}`
-        : '',
-    [entity],
+  // Preserve one dependency token while scalar values change. The comparison
+  // short-circuits unchanged branches retained by syncState patch materialization.
+  const bindingLayout = retainParamPaneLayout(
+    layoutRef.current,
+    entity?.values,
+    entity?.meta,
   )
+  layoutRef.current = bindingLayout
 
   const applyEntity = useCallback((next: ParamsEntity | null) => {
     if (!next?.values) return
-    for (const entry of entriesRef.current) {
-      if (isEntryBusy(entry, activeEntryRef.current)) continue
-      // A generation this pane produced (or an older one) must never be written
-      // back over the value the user is looking at.
-      if (next.rev <= entry.localRev) continue
-      const value = readLeaf(next.values, entry.path)
-      if (value === undefined || value === null || isPlainObject(value)) continue
-      entry.target[entry.key] = value
-      entry.binding.refresh()
-    }
+    applyChangedParamValues(
+      entriesRef.current,
+      next.values,
+      next.rev,
+      (entry) => isEntryBusy(entry, activeEntryRef.current),
+      (entry) => {
+        entry.applyingTruth = true
+        try {
+          entry.binding.refresh()
+        } finally {
+          entry.applyingTruth = false
+        }
+      },
+    )
   }, [])
 
   const handleLeafChange = useCallback(
@@ -206,10 +229,20 @@ function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
     const entries: BindingEntry[] = []
     const cleanups: Array<() => void> = []
     const pane = new Pane({ container })
-    buildBindings(pane, draft, current.meta, [], entries, handleLeafChange,
-      event => { emitEvent(serverBaseUrl, event).catch(error => {
-        console.error('[livecode-tldraw] button event failed', error)
-      }) }, cleanups)
+    buildBindings(
+      pane,
+      draft,
+      current.meta,
+      [],
+      entries,
+      handleLeafChange,
+      (event) => {
+        emitEvent(serverBaseUrl, event).catch((error) => {
+          console.error('[livecode-tldraw] button event failed', error)
+        })
+      },
+      cleanups,
+    )
 
     draftRef.current = draft
     entriesRef.current = entries
@@ -218,13 +251,13 @@ function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
     activeEntryRef.current = null
 
     return () => {
-      cleanups.forEach(cleanup => cleanup())
+      cleanups.forEach((cleanup) => cleanup())
       pane.dispose()
       paneRef.current = null
       entriesRef.current = []
       activeEntryRef.current = null
     }
-  }, [handleLeafChange, structureKey, serverBaseUrl])
+  }, [bindingLayout.token, handleLeafChange, serverBaseUrl])
 
   // The shape body stops bubbling, so gesture ends are observed in the capture
   // phase. Releasing a control resumes refreshes and catches it up. Enter ends
@@ -271,11 +304,6 @@ function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
     applyEntity(entity)
   }, [applyEntity, entity, originId])
 
-  const knownNames = useMemo(
-    () => Object.keys(runtime.params).sort(),
-    [runtime.params],
-  )
-
   const stopCanvasEvent = (event: SyntheticEvent) => {
     event.stopPropagation()
   }
@@ -319,8 +347,11 @@ function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
         onKeyDownCapture={(event) => {
           // Event buttons handle keys at the native target; other bindings keep
           // the existing canvas keyboard shield.
-          if (!(event.target instanceof Element) ||
-              !event.target.closest('[data-param-event-button]')) stopCanvasEvent(event)
+          if (
+            !(event.target instanceof Element) ||
+            !event.target.closest('[data-param-event-button]')
+          )
+            stopCanvasEvent(event)
         }}
       >
         <div ref={containerRef} className="param-pane-shape__pane" />
@@ -333,15 +364,20 @@ function ParamPaneShapeComponent({ shape }: { shape: ParamPaneShape }) {
           <div className="param-pane-shape__empty">
             Waiting for <code>{paramsName}</code>: declare it with{' '}
             <code>canvasParams(...)</code> in a running module.
-            {knownNames.length > 0 ? (
-              <span>known params: {knownNames.join(', ')}</span>
+            <KnownParamNames />
+            {runtime.connectionError ? (
+              <span>{runtime.connectionError}</span>
             ) : null}
-            {runtime.connectionError ? <span>{runtime.connectionError}</span> : null}
           </div>
         )}
       </div>
     </HTMLContainer>
   )
+}
+
+function KnownParamNames() {
+  const names = useSyncEntityNames('params')
+  return names.length > 0 ? <span>known params: {names.join(', ')}</span> : null
 }
 
 function buildBindings(
@@ -354,7 +390,10 @@ function buildBindings(
   sendEvent: (event: LivecodeEvent) => void,
   cleanups: Array<() => void>,
 ) {
-  for (const key of new Set([...Object.keys(target), ...Object.keys(meta ?? {})])) {
+  for (const key of new Set([
+    ...Object.keys(target),
+    ...Object.keys(meta ?? {}),
+  ])) {
     const value = target[key]
     const fieldMeta = meta?.[key]
 
@@ -363,7 +402,8 @@ function buildBindings(
       if (buttonMeta?.button) {
         const blade = container.addButton({ title: buttonMeta.label ?? key })
         const element = blade.element.querySelector('button')
-        if (element) cleanups.push(bindParamButton(element, buttonMeta.button, sendEvent))
+        if (element)
+          cleanups.push(bindParamButton(element, buttonMeta.button, sendEvent))
       }
       continue
     }
@@ -399,11 +439,14 @@ function buildBindings(
       ),
       localRev: 0,
       inFlight: 0,
+      applyingTruth: false,
     }
     entry.binding.on('change', (event) => {
+      if (entry.applyingTruth) return
       const next = event.value
       if (
-        typeof next === 'number' || typeof next === 'string' ||
+        typeof next === 'number' ||
+        typeof next === 'string' ||
         typeof next === 'boolean'
       ) {
         onChange(entry, next)
@@ -481,37 +524,6 @@ function makeLeafPatch(path: string[], value: ParamsPrimitive): ParamsValues {
   }
   node[path[path.length - 1]] = value
   return patch
-}
-
-function readLeaf(
-  values: ParamsValues,
-  path: string[],
-): ParamsPrimitive | ParamsValues | undefined {
-  let node: ParamsPrimitive | ParamsValues | undefined = values
-  for (const key of path) {
-    if (!isPlainObject(node)) return undefined
-    node = node[key]
-  }
-  return node
-}
-
-// Order-insensitive description of the key tree and leaf kinds: the only shape
-// facts a tweakpane binding set depends on.
-function describeStructure(values: ParamsValues): string {
-  const parts: string[] = []
-  const walk = (node: ParamsValues, prefix: string) => {
-    for (const key of Object.keys(node).sort()) {
-      const value = node[key]
-      if (isPlainObject(value)) {
-        parts.push(`${prefix}${key}:{}`)
-        walk(value, `${prefix}${key}.`)
-      } else {
-        parts.push(`${prefix}${key}:${value === null ? 'null' : typeof value}`)
-      }
-    }
-  }
-  walk(values, '')
-  return parts.join(',')
 }
 
 function isPlainObject(value: unknown): value is ParamsValues {

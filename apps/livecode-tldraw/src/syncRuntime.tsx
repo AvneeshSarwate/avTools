@@ -1,5 +1,5 @@
 // Resets replace a per-type map, and a sequence gap recovers by resubscribing.
-// Separate React contexts keep high-frequency entity kinds isolated.
+// A stable external store publishes frames to entity-specific subscribers.
 
 import {
   type Context,
@@ -40,7 +40,6 @@ import type { ReconnectingSocketController } from "./reconnectingSocket";
 import { engineAction, serverWebSocketUrl } from "./serverRequests";
 import {
   applySyncMessageToState,
-  emptySyncSlice,
   emptySyncState,
   type SyncEntityTypeKey,
   type SyncSlice,
@@ -56,6 +55,10 @@ import {
 } from "./syncTransport";
 import { readBootParam } from "./bootParams";
 
+import { SyncStore } from "./syncStore";
+import { SyncStoreProvider, useSyncSlice } from "./syncSubscriptions";
+export { useSyncEntityNames, useSyncSelector } from "./syncSubscriptions";
+
 export type { SyncSlice } from "./syncState";
 
 export type SyncConnectionStatus = "closed" | "connecting" | "open" | "error";
@@ -68,16 +71,10 @@ export type SyncConnectionStatus = "closed" | "connecting" | "open" | "error";
  */
 export { SYNC_ENTITY_TYPES };
 
-/**
- * One entity kind's current state, plus the `seq` of the message that last
- * touched it. Per-slice rather than global so a component showing a sequence
- * number re-renders on its OWN traffic, the way the four channels behaved.
- */
+/** Connection lifecycle is independent of high-frequency entity traffic. */
 export interface SyncConnection {
   connectionStatus: SyncConnectionStatus;
   connectionError: string | null;
-  /** The `seq` of the newest message on this socket, whatever it carried. */
-  latestSeq: number | null;
 }
 
 export interface SyncActions {
@@ -135,21 +132,6 @@ export interface SyncLifecycleListener {
   onError?: (message: string) => void;
 }
 
-const SixSinesContext =
-  createContext<SyncSlice<SixSinesEntity>>(emptySyncSlice());
-const PianoRollsContext =
-  createContext<SyncSlice<PianoRollObject>>(emptySyncSlice());
-const ParamsContext = createContext<SyncSlice<ParamsEntity>>(emptySyncSlice());
-const AnimationTimelinesContext =
-  createContext<SyncSlice<AnimationTimelineEntity>>(emptySyncSlice());
-const DrawingsContext =
-  createContext<SyncSlice<DrawingEntity>>(emptySyncSlice());
-const SignalsContext = createContext<SyncSlice<SignalEntity>>(emptySyncSlice());
-const RunsContext = createContext<SyncSlice<RunEntity>>(emptySyncSlice());
-const ModuleWaitsContext =
-  createContext<SyncSlice<ModuleWaitsEntity>>(emptySyncSlice());
-const ModuleLookupsContext =
-  createContext<SyncSlice<ModuleLookupsEntity>>(emptySyncSlice());
 const SyncConnectionContext = createContext<SyncConnection | null>(null);
 const SyncActionsContext = createContext<SyncActions | null>(null);
 const SyncLifecycleContext = createContext<SyncLifecycle | null>(null);
@@ -171,8 +153,8 @@ export function useSyncLifecycle(): SyncLifecycle {
   return useRequiredContext(SyncLifecycleContext, "useSyncLifecycle");
 }
 
-export function useSixSinesSync() {
-  const slice = useContext(SixSinesContext);
+export function useSixSinesSync(name?: string | null) {
+  const slice = useSyncSlice("sixSines", name);
   const connection = useSyncConnection();
   const { setSixSinesParameters, setSixSinesPreset } = useSyncActions();
   return {
@@ -194,8 +176,8 @@ export interface PianoRollsSyncApi {
   redoRoll: SyncActions["redoRoll"];
 }
 
-export function usePianoRollsSync(): PianoRollsSyncApi {
-  const slice = useContext(PianoRollsContext);
+export function usePianoRollsSync(name?: string | null): PianoRollsSyncApi {
+  const slice = useSyncSlice("pianoRoll", name);
   const { connectionStatus, connectionError } = useSyncConnection();
   const { setRoll, undoRoll, redoRoll } = useSyncActions();
   return useMemo(
@@ -220,8 +202,8 @@ export interface ParamsSyncApi {
   setParams: SyncActions["setParams"];
 }
 
-export function useParamsSync(): ParamsSyncApi {
-  const slice = useContext(ParamsContext);
+export function useParamsSync(name?: string | null): ParamsSyncApi {
+  const slice = useSyncSlice("params", name);
   const { connectionStatus, connectionError } = useSyncConnection();
   const { setParams } = useSyncActions();
   return useMemo(
@@ -244,8 +226,10 @@ export interface AnimationTimelinesSyncApi {
   setTimeline: SyncActions["setAnimationTimeline"];
 }
 
-export function useAnimationTimelinesSync(): AnimationTimelinesSyncApi {
-  const slice = useContext(AnimationTimelinesContext);
+export function useAnimationTimelinesSync(
+  name?: string | null,
+): AnimationTimelinesSyncApi {
+  const slice = useSyncSlice("animationTimeline", name);
   const { connectionStatus, connectionError } = useSyncConnection();
   const { setAnimationTimeline } = useSyncActions();
   return useMemo(
@@ -268,8 +252,8 @@ export interface DrawingsSyncApi {
   setDrawing: SyncActions["setDrawing"];
 }
 
-export function useDrawingsSync(): DrawingsSyncApi {
-  const slice = useContext(DrawingsContext);
+export function useDrawingsSync(name?: string | null): DrawingsSyncApi {
+  const slice = useSyncSlice("drawing", name);
   const { connectionStatus, connectionError } = useSyncConnection();
   const { setDrawing } = useSyncActions();
   return useMemo(
@@ -292,8 +276,8 @@ export interface SignalsSyncApi {
 }
 
 /** Read-only by construction: signals are published by running code. */
-export function useSignalsSync(): SignalsSyncApi {
-  const slice = useContext(SignalsContext);
+export function useSignalsSync(name?: string | null): SignalsSyncApi {
+  const slice = useSyncSlice("signal", name);
   const { connectionStatus, connectionError } = useSyncConnection();
   return useMemo(
     () => ({
@@ -311,8 +295,8 @@ export interface RunsSyncApi {
   latestSeq: number | null;
 }
 
-export function useRunsSync(): RunsSyncApi {
-  const slice = useContext(RunsContext);
+export function useRunsSync(name?: string | null): RunsSyncApi {
+  const slice = useSyncSlice("run", name);
   return useMemo(
     () => ({ runs: slice.entities, latestSeq: slice.latestSeq }),
     [slice],
@@ -328,9 +312,9 @@ export interface ModuleVizSyncApi {
 }
 
 /** Runtime observation state consumed by the editor's inline decorations. */
-export function useModuleVizSync(): ModuleVizSyncApi {
-  const waits = useContext(ModuleWaitsContext);
-  const lookups = useContext(ModuleLookupsContext);
+export function useModuleVizSync(moduleId?: string | null): ModuleVizSyncApi {
+  const waits = useSyncSlice("moduleWaits", moduleId);
+  const lookups = useSyncSlice("moduleLookups", moduleId);
   return useMemo(
     () => ({
       moduleWaits: waits.entities,
@@ -370,8 +354,7 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
   const [connectionStatus, setConnectionStatus] =
     useState<SyncConnectionStatus>("connecting");
   const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [latestSeq, setLatestSeq] = useState<number | null>(null);
-  const [state, setState] = useState<SyncState>(emptySyncState);
+  const [store] = useState(() => new SyncStore());
 
   // The authoritative maps live in a ref and are mutated as messages land; React
   // state is a per-frame projection of them. Nothing downstream needs to see two
@@ -388,14 +371,9 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
     rafRef.current = null;
     const dirty = dirtyTypesRef.current;
     if (dirty.size === 0) return;
-    const changed: Partial<SyncState> = {};
-    for (const entityType of dirty) {
-      changed[entityType] = pendingRef.current[entityType] as never;
-    }
     dirty.clear();
-    setState((current) => ({ ...current, ...changed }));
-    setLatestSeq(lastSeqRef.current);
-  }, []);
+    store.publish({ ...pendingRef.current });
+  }, [store]);
 
   const scheduleFlush = useCallback(() => {
     if (rafRef.current !== null) return;
@@ -505,19 +483,21 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
     };
   }, [serverBaseUrl]);
 
-  const setServerBaseUrl = useCallback((next: string) => {
-    const normalized = next.trim().replace(/\/+$/, "");
-    if (serverBaseUrlRef.current === normalized) return;
-    serverBaseUrlRef.current = normalized;
-    // A different server is a different world: drop every map rather than let
-    // the old server's entities linger until the new one's resets land.
-    pendingRef.current = emptySyncState();
-    dirtyTypesRef.current.clear();
-    lastSeqRef.current = null;
-    setState(emptySyncState());
-    setLatestSeq(null);
-    setServerBaseUrlState(normalized);
-  }, []);
+  const setServerBaseUrl = useCallback(
+    (next: string) => {
+      const normalized = next.trim().replace(/\/+$/, "");
+      if (serverBaseUrlRef.current === normalized) return;
+      serverBaseUrlRef.current = normalized;
+      // A different server is a different world: drop every map rather than let
+      // the old server's entities linger until the new one's resets land.
+      pendingRef.current = emptySyncState();
+      dirtyTypesRef.current.clear();
+      lastSeqRef.current = null;
+      store.publish(emptySyncState());
+      setServerBaseUrlState(normalized);
+    },
+    [store],
+  );
 
   const setRoll = useCallback(
     async (
@@ -701,8 +681,8 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
   }
 
   const connection = useMemo<SyncConnection>(
-    () => ({ connectionStatus, connectionError, latestSeq }),
-    [connectionError, connectionStatus, latestSeq],
+    () => ({ connectionStatus, connectionError }),
+    [connectionError, connectionStatus],
   );
 
   const actions = useMemo<SyncActions>(
@@ -736,29 +716,7 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
     <SyncLifecycleContext.Provider value={lifecycleRef.current}>
       <SyncActionsContext.Provider value={actions}>
         <SyncConnectionContext.Provider value={connection}>
-          <PianoRollsContext.Provider value={state.pianoRoll}>
-            <ParamsContext.Provider value={state.params}>
-              <AnimationTimelinesContext.Provider
-                value={state.animationTimeline}
-              >
-                <SignalsContext.Provider value={state.signal}>
-                  <RunsContext.Provider value={state.run}>
-                    <ModuleWaitsContext.Provider value={state.moduleWaits}>
-                      <ModuleLookupsContext.Provider
-                        value={state.moduleLookups}
-                      >
-                        <DrawingsContext.Provider value={state.drawing}>
-                          <SixSinesContext.Provider value={state.sixSines}>
-                            {children}
-                          </SixSinesContext.Provider>
-                        </DrawingsContext.Provider>
-                      </ModuleLookupsContext.Provider>
-                    </ModuleWaitsContext.Provider>
-                  </RunsContext.Provider>
-                </SignalsContext.Provider>
-              </AnimationTimelinesContext.Provider>
-            </ParamsContext.Provider>
-          </PianoRollsContext.Provider>
+          <SyncStoreProvider store={store}>{children}</SyncStoreProvider>
         </SyncConnectionContext.Provider>
       </SyncActionsContext.Provider>
     </SyncLifecycleContext.Provider>

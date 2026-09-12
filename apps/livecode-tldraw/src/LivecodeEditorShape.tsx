@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import {
   BaseBoxShapeUtil,
   createShapeId,
@@ -18,6 +18,11 @@ import { DEFAULT_LIVECODE_SOURCE } from "./defaultSource";
 import { livecodeDocumentUri } from "./denoLsp";
 import type { SourceRange, WaitCallsiteKind } from "./livecodeProtocol";
 import { useLivecodeRuntime } from "./livecodeRuntime";
+import {
+  type ModuleLookupValues,
+  retainModuleLookupValues,
+} from "./moduleLookupView";
+import { reconcileActiveWaitRanges } from "./moduleWaitRendering";
 import { createEntityView, entityRefForCanvasView } from "./canvasViews";
 import {
   createSignalScopeShape,
@@ -41,6 +46,7 @@ const DECLARATION_ENTITY_TYPES: Partial<
   canvasDrawing: DRAWING_ENTITY_TYPE,
   canvasSignal: "signal",
 };
+const EMPTY_MODULE_LOOKUPS: ModuleLookupValues = {};
 
 declare module "tldraw" {
   export interface TLGlobalShapePropsMap {
@@ -167,26 +173,30 @@ function LivecodeEditorShapeComponent(
   { shape }: LivecodeEditorShapeComponentProps,
 ) {
   const editor = useEditor();
-  const runtime = useLivecodeRuntime();
-  const { setModuleSource } = runtime;
-  const moduleState = runtime.modules[shape.props.moduleId];
   const documentUri = useMemo(
     () =>
       shape.props.projectSourceUri ?? livecodeDocumentUri(shape.props.moduleId),
     [shape.props.moduleId, shape.props.projectSourceUri],
   );
+  const runtime = useLivecodeRuntime(shape.props.moduleId, documentUri);
+  const { setModuleSource } = runtime;
+  const moduleState = runtime.modules[shape.props.moduleId];
 
-  const activeRanges = useMemo<SourceRange[]>(() => {
-    if (!moduleState?.manifest) return [];
-    const active = new Set(moduleState.activeIds);
-    return moduleState.manifest.callsites
-      .filter((callsite) => active.has(callsite.id))
-      .map((callsite) => callsite.range);
-  }, [moduleState?.activeIds, moduleState?.manifest]);
+  const previousActiveRangesRef = useRef<SourceRange[] | null>(null);
+  const activeRanges = reconcileActiveWaitRanges(
+    previousActiveRangesRef.current,
+    moduleState,
+  );
+  previousActiveRangesRef.current = activeRanges;
+  const previousLookupsRef = useRef<ModuleLookupValues>(EMPTY_MODULE_LOOKUPS);
+  const lookups = retainModuleLookupValues(
+    previousLookupsRef.current,
+    moduleState?.pianoRollLookups ?? EMPTY_MODULE_LOOKUPS,
+  );
+  previousLookupsRef.current = lookups;
 
   const entityCallsites = useMemo<EntityCallDecoration[]>(() => {
     if (!moduleState?.manifest) return [];
-    const lookups = moduleState.pianoRollLookups ?? {};
     const out: EntityCallDecoration[] = [];
     for (const callsite of moduleState.manifest.callsites) {
       if (!callsite.nameArgRange) continue;
@@ -217,7 +227,7 @@ function LivecodeEditorShapeComponent(
       }
     }
     return out;
-  }, [moduleState?.manifest, moduleState?.pianoRollLookups]);
+  }, [lookups, moduleState?.manifest]);
 
   const openEntity = useCallback(
     (entityType: EntityCallDecorationType, entityName: string) => {

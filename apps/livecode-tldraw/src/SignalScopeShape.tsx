@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type SyntheticEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react'
 import {
   BaseBoxShapeUtil,
   createShapeId,
@@ -9,6 +9,10 @@ import {
   TLShape,
 } from 'tldraw'
 import { useParamsSync, useSignalsSync } from './syncRuntime'
+import {
+  advanceSignalScopeSamples,
+  type SignalScopeSample,
+} from './signalRendering'
 
 export const SIGNAL_SCOPE_SHAPE_TYPE = 'signal-scope'
 const DEFAULT_SCOPE_WIDTH = 280
@@ -160,17 +164,17 @@ interface ScopeReading {
   unserializable: boolean
 }
 
-interface ScopeSample {
-  t: number
-  v: number
-}
-
 function SignalScopeShapeComponent({ shape }: { shape: SignalScopeShape }) {
-  const signalsRuntime = useSignalsSync()
-  const paramsRuntime = useParamsSync()
   const { sourceType, name, path, windowSec } = shape.props
+  const signalsRuntime = useSignalsSync(sourceType === 'signal' ? name : null)
+  const paramsRuntime = useParamsSync(sourceType === 'params' ? name : null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const samplesRef = useRef<ScopeSample[]>([])
+  const samplesRef = useRef<SignalScopeSample[]>([])
+  const paintDirtyRef = useRef(true)
+  const viewportNowRef = useRef<number | null>(null)
+  const wakePaintLoopRef = useRef<(() => void) | null>(null)
+  const hasSamplesRef = useRef(false)
+  const [hasSamples, setHasSamples] = useState(false)
   const readingRef = useRef<ScopeReading>({
     value: null,
     present: false,
@@ -196,32 +200,94 @@ function SignalScopeShapeComponent({ shape }: { shape: SignalScopeShape }) {
   // A rebind is a new subject: never carry the old source's trace into it.
   useEffect(() => {
     samplesRef.current = []
+    viewportNowRef.current = null
+    paintDirtyRef.current = true
+    if (hasSamplesRef.current) {
+      hasSamplesRef.current = false
+      setHasSamples(false)
+    }
+    wakePaintLoopRef.current?.()
   }, [name, pathSegments, sourceType])
 
   useEffect(() => {
     let frame = 0
+    let mounted = true
+    const schedule = () => {
+      if (mounted && frame === 0) frame = window.requestAnimationFrame(tick)
+    }
     const tick = () => {
-      frame = window.requestAnimationFrame(tick)
+      frame = 0
       const current = readingRef.current
       const samples = samplesRef.current
+      const now = performance.now()
+      const advancing = current.live && !current.ended
       // Per-RAF latest-value sampling: a constant signal draws a continuous
-      // line, and nothing here depends on how often the transport ships. An
-      // ended source (or a dropped socket) simply stops appending, which
-      // freezes the trace where the run left it.
-      if (current.value !== null && current.live && !current.ended) {
-        samples.push({ t: performance.now(), v: current.value })
-        const cutoff = performance.now() - windowSecRef.current * 1_000
-        let drop = 0
-        while (drop < samples.length && samples[drop].t < cutoff) drop += 1
-        if (drop > 0) samples.splice(0, drop)
-        if (samples.length > MAX_SCOPE_SAMPLES) {
-          samples.splice(0, samples.length - MAX_SCOPE_SAMPLES)
-        }
+      // line. Live non-numeric gaps still advance and prune prior history.
+      const samplesChanged = advancing
+        ? advanceSignalScopeSamples(
+          samples,
+          now,
+          windowSecRef.current,
+          current.value,
+          MAX_SCOPE_SAMPLES,
+        )
+        : false
+      const nextHasSamples = samples.length > 0
+      if (samplesChanged && hasSamplesRef.current !== nextHasSamples) {
+        hasSamplesRef.current = nextHasSamples
+        setHasSamples(nextHasSamples)
       }
-      drawScope(canvasRef.current, samples, windowSecRef.current)
+
+      if (advancing) viewportNowRef.current = now
+      const viewportNow = viewportNowRef.current ?? now
+      if (
+        paintDirtyRef.current || samplesChanged ||
+        (advancing && samples.length > 0)
+      ) {
+        drawScope(
+          canvasRef.current,
+          samples,
+          windowSecRef.current,
+          viewportNow,
+        )
+        paintDirtyRef.current = false
+      }
+
+      if (advancing && (current.value !== null || samples.length > 0)) schedule()
     }
-    frame = window.requestAnimationFrame(tick)
-    return () => window.cancelAnimationFrame(frame)
+    wakePaintLoopRef.current = schedule
+    schedule()
+    return () => {
+      mounted = false
+      wakePaintLoopRef.current = null
+      if (frame !== 0) window.cancelAnimationFrame(frame)
+    }
+  }, [])
+
+  // Entity/status/window changes restart an idle loop for one required paint.
+  useEffect(() => {
+    paintDirtyRef.current = true
+    wakePaintLoopRef.current?.()
+  }, [reading.ended, reading.live, reading.present, reading.unserializable, reading.value, windowSec])
+
+  // A static frozen scope still needs a fresh backing store after resize or a
+  // device-pixel-ratio change.
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const invalidate = () => {
+      paintDirtyRef.current = true
+      wakePaintLoopRef.current?.()
+    }
+    const observer = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(invalidate)
+    observer?.observe(canvas)
+    window.addEventListener('resize', invalidate)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', invalidate)
+    }
   }, [])
 
   useEffect(() => {
@@ -285,7 +351,7 @@ function SignalScopeShapeComponent({ shape }: { shape: SignalScopeShape }) {
         onWheel={stopCanvasEvent}
       >
         <canvas ref={canvasRef} className="signal-scope-shape__canvas" />
-        {reading.value === null && samplesRef.current.length === 0
+        {reading.value === null && !hasSamples
           ? (
             <div className="signal-scope-shape__empty">
               {reading.unserializable
@@ -353,8 +419,9 @@ function readNumericAtPath(value: unknown, pathSegments: string[]): number | nul
  */
 function drawScope(
   canvas: HTMLCanvasElement | null,
-  samples: ScopeSample[],
+  samples: SignalScopeSample[],
   windowSec: number,
+  now: number,
 ) {
   if (!canvas) return
   const width = canvas.clientWidth
@@ -385,7 +452,6 @@ function drawScope(
     max += pad
   }
 
-  const now = performance.now()
   const spanMs = windowSec * 1_000
   const toX = (t: number) => width - ((now - t) / spanMs) * width
   const toY = (v: number) => height - ((v - min) / (max - min)) * (height - 4) - 2

@@ -95,9 +95,10 @@ hydration baseline, not suppression of the editing client's echo.
 
 ## 5. Add the client slice and view
 
-Add the typed slice to `syncState.ts` and its context/hooks to
-`syncRuntime.tsx`; separate contexts keep high-rate kinds isolated. Resets
-replace maps and views must tolerate a missing/deleted entity. Use the shared
+Add the typed slice to `syncState.ts` and a typed hook using the shared external
+store in `syncRuntime.tsx`. Bind the hook to the shape's entity name; a whole-kind
+subscription would rerender sibling views. Resets replace maps while retaining
+unchanged entity identities, and views must tolerate a missing/deleted entity. Use the shared
 patch materializer rather than reproducing transport logic per view; keep the
 component's hydration silent and its user-edit boundary explicit. The
 [client document](client.md#state-layers-and-provider-order) owns this pattern.
@@ -115,6 +116,9 @@ durable round-trip if applicable, real sync reset/change/null-deletion, canvas
 codec collect/restore, and browser server-to-view plus view-to-engine flow. A
 user-visible kind also needs one checked-in example project used by both its
 manual README and E2E; copy it before destructive automation.
+
+Test that changing one entity renders its bound subscriber and leaves other
+names and kinds untouched; include deletion, recreation, and rebinding.
 
 For sparse kinds also test initial baseline, ordered patches, snapshot reads
 between writes and collection, late/reconnecting views, deletion/recreation,
