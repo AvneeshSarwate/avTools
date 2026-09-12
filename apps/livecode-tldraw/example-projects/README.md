@@ -27,6 +27,7 @@ layout churn you did not mean to keep.
 | Project | Purpose |
 | --- | --- |
 | `basic-multi-module` | Minimal known-green template for agent-authored projects: three modules sharing imported mutable state. |
+| `six-sines-sound-design` | Piano roll plus the Vue Six Sines editor, a tracked synth entity, native preset sharing, and six optional 60 Hz output-pan LFOs. Use either browser-engine topology. |
 | `browser-six-sines-piano-roll` | Browser-engine AudioWorklet example: a canvas-visible project helper plays an editable piano roll through the packaged Six Sines Wasm synth, with note-identity and per-note modulation helpers. |
 | `minimal-p5gpu` | **Deliberately-broken diagnostics fixture** (`sped`/`speed` mismatch). It exists to show failing project diagnostics; do not "fix" it and do not use it as a smoke test. |
 | `sonar-melodies` | Sonar port: three source rolls, independent base/echo pipelines and tldraw trigger buttons; project-local transforms and MIDI sound output. |

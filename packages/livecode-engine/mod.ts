@@ -5,6 +5,7 @@
 // per docs/livecode/history/browser-engine-plan-2026-08.md) wrap this package
 // with transports and capabilities.
 export * from "./engine.ts";
+export * from "./six_sines_store.ts";
 export * from "./entity_store.ts";
 export * from "./entity_registry.ts";
 export * from "./entity_kinds.ts";

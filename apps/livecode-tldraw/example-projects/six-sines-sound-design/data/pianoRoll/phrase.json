@@ -1,0 +1,65 @@
+{
+  "type": "pianoRoll",
+  "name": "sound-design/phrase",
+  "savedAt": "2026-09-11T00:00:00.000Z",
+  "data": {
+    "notes": [
+      {
+        "id": "n0",
+        "pitch": 48,
+        "position": 0,
+        "duration": 0.8,
+        "velocity": 100
+      },
+      {
+        "id": "n1",
+        "pitch": 55,
+        "position": 1,
+        "duration": 0.8,
+        "velocity": 100
+      },
+      {
+        "id": "n2",
+        "pitch": 60,
+        "position": 2,
+        "duration": 0.8,
+        "velocity": 100
+      },
+      {
+        "id": "n3",
+        "pitch": 58,
+        "position": 3,
+        "duration": 0.8,
+        "velocity": 100
+      },
+      {
+        "id": "n4",
+        "pitch": 48,
+        "position": 4,
+        "duration": 0.8,
+        "velocity": 100
+      },
+      {
+        "id": "n5",
+        "pitch": 55,
+        "position": 5,
+        "duration": 0.8,
+        "velocity": 100
+      },
+      {
+        "id": "n6",
+        "pitch": 63,
+        "position": 6,
+        "duration": 0.8,
+        "velocity": 100
+      },
+      {
+        "id": "n7",
+        "pitch": 60,
+        "position": 7,
+        "duration": 0.8,
+        "velocity": 100
+      }
+    ]
+  }
+}

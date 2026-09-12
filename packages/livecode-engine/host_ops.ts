@@ -28,6 +28,7 @@ import { emit } from "./events.ts";
 import { makeParamsSnapshot, setParamsValues } from "./params_store.ts";
 import { makeSignalsSnapshot } from "./signals_store.ts";
 import { setAnimationTimeline } from "./animation_timeline_store.ts";
+import { setSixSinesParameters, setSixSinesPreset } from "./six_sines_store.ts";
 import { setDrawing } from "./drawing_store.ts";
 
 function resolveEntityRequest(
@@ -142,6 +143,30 @@ export async function executeEngineOp(
   op: EngineOp,
 ): Promise<unknown> {
   switch (op.kind) {
+    case "sixSinesParametersSet":
+      return setSixSinesParameters(
+        op.request.name,
+        op.request.changes,
+        op.request,
+      );
+    case "sixSinesPresetSet":
+      return setSixSinesPreset(op.request.name, op.request.data, op.request);
+    case "entityPatch": {
+      const resolved = resolveEntityRequest(op.request.type, op.request.name);
+      if ("error" in resolved) return { ok: false, ...resolved };
+      if (!resolved.descriptor.patch) {
+        return {
+          ok: false,
+          error: "Entity kind does not support patches",
+          status: 422,
+        };
+      }
+      return resolved.descriptor.patch(
+        resolved.name,
+        op.request.patches,
+        op.request,
+      );
+    }
     case "launch":
       return await engine.launchModule(op.request, op.prepared ?? undefined);
     case "stop":

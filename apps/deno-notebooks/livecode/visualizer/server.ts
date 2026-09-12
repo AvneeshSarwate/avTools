@@ -30,6 +30,7 @@ import type {
   HealthResponse,
   LaunchModuleRequest,
   LaunchModuleResponse,
+  LivecodeEvent,
   LivecodeProjectManifest,
   OpenProjectRequest,
   PianoRollHistoryRequest,
@@ -54,7 +55,6 @@ import type {
   SetAnimationTimelineRequest,
   SetDrawingRequest,
   SetParamsRequest,
-  LivecodeEvent,
   SetPianoRollRequest,
   StopModuleRequest,
   SyncClientMessage,
@@ -762,6 +762,22 @@ export async function createLivecodeVisualizerServer(
     request: Request,
     url: URL,
   ): Promise<Response | null> {
+    if (
+      request.method === "POST" &&
+      (url.pathname === "/entities/patch" ||
+        url.pathname === "/six-sines/preset" ||
+        url.pathname === "/six-sines/parameters")
+    ) {
+      const body = await request.json();
+      const result = await plane.execute(
+        url.pathname === "/entities/patch"
+          ? { kind: "entityPatch", request: body }
+          : url.pathname === "/six-sines/parameters"
+          ? { kind: "sixSinesParametersSet", request: body }
+          : { kind: "sixSinesPresetSet", request: body },
+      ) as import("@avtools/livecode-protocol").SixSinesWriteResult;
+      return json(result, { status: result.ok ? 200 : result.status });
+    }
     if (request.method === "POST" && url.pathname === "/entities/create") {
       const requestBody = await request.json() as EntityCreateRequest;
       return await entityActionResponse(
@@ -2222,8 +2238,9 @@ export async function createLivecodeVisualizerServer(
       for (const entry of entries) {
         changes.push({
           entityType,
-          name: entry.name,
-          entity: entry.entity as SyncEntity | null,
+          ...entry as import("@avtools/livecode-protocol").EntityDelta<
+            SyncEntity
+          >,
         });
       }
     }

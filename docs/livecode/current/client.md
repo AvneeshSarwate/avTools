@@ -26,6 +26,23 @@ every roll or params pane. Incoming messages are accumulated in refs and
 published once per animation frame. Do not collapse the slices into one context
 or publish directly on every approximately 33 ms engine tick.
 
+`syncState.ts` materializes full values and ordered patches into the same
+per-kind entity maps. It copies changed ancestors and retains untouched
+branches; components continue receiving state, not wire envelopes. Do not
+mutate these published objects, even when same-tab delivery shares references.
+A patch optimization does not require every component to implement a patch
+protocol or a reactive subscription graph.
+
+For an expensive editor, follow
+[`SixSinesShape.tsx`](../../../apps/livecode-tldraw/src/SixSinesShape.tsx): full
+hydrate on a new baseline, silently apply changed values, and send user edits
+through explicit engine operations. The Vue element owns ordinary reactive
+state; the wrapper owns transport and accepted truth. Full preset loading on
+every scalar update would defeat the optimization and reset editor state.
+The tracker package's in-place patch helper is not interchangeable with the
+client's immutable materializer; use it only when the adapter owns a mutable
+receiver and adopts its returned root.
+
 Socket open/close edges are also delivered through listeners rather than
 inferred from React state. A close and reopen can be batched into one commit;
 losing the edge would skip the recovery sequence.
@@ -166,13 +183,22 @@ Domain bridges retain distinct semantics:
 
 After changing the Vue piano-roll, animation-editor, or handwriting-canvas
 component, rebuild its checked-in/ignored bundle before testing this app.
-`setupLivecode` is the one-shot path that prepares all component bundles.
+`setupLivecode` prepares these locally sourced component bundles.
+
+The Six Sines element is compiled from the sibling synth repository and copied
+to `packages/six-sines/ui`; `setupLivecode` does not rebuild that external
+source. Follow its [distribution instructions](../../../packages/six-sines/README.md#vue-preset-editor-webcomponent)
+when updating it. Its entity view works across tabs; only DOM canvas mirroring
+requires the engine and view to share a realm. Audio objects remain in engine
+module state, never in the editor or durable entity.
 
 ## DOM event boundary
 
 Interactive DOM inside a tldraw shape must stop pointer/touch/wheel propagation
 before tldraw interprets the gesture; text inputs must also shield relevant key
-events. Headers remain draggable while component bodies are interactive.
+events. Stop keyboard bubbling after the embedded component receives it;
+a capture-phase stop on its ancestor prevents the component's own handlers
+from running. Headers remain draggable while component bodies are interactive.
 Widgets stop pointerdown and click. Components needing document-wide drag
 tracking should use pointer capture or capture-phase listeners, because the
 shape boundary intentionally blocks normal bubbling.

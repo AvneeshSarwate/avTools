@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "name": "six-sines-sound-design",
+  "engineTarget": "browser",
+  "modules": [
+    {
+      "id": "sound-design/instrument",
+      "path": "modules/instrument.ts",
+      "sourcePath": "modules/instrument.orig.ts",
+      "runtimePath": "modules/instrument.ts",
+      "kind": "runnable",
+      "title": "Audio instance and parameter bridge",
+      "sourceVersion": 2,
+      "x": 40,
+      "y": 40,
+      "w": 640,
+      "h": 660
+    },
+    {
+      "id": "sound-design/player",
+      "path": "modules/player.ts",
+      "sourcePath": "modules/player.orig.ts",
+      "runtimePath": "modules/player.ts",
+      "kind": "runnable",
+      "title": "Play the piano roll",
+      "sourceVersion": 2,
+      "x": 40,
+      "y": 770,
+      "w": 640,
+      "h": 500
+    },
+    {
+      "id": "sound-design/pan-lfos",
+      "path": "modules/pan-lfos.ts",
+      "sourcePath": "modules/pan-lfos.orig.ts",
+      "runtimePath": "modules/pan-lfos.ts",
+      "kind": "runnable",
+      "title": "Optional 60 Hz pan LFOs",
+      "sourceVersion": 2,
+      "x": 40,
+      "y": 1500,
+      "w": 640,
+      "h": 650
+    }
+  ],
+  "canvas": {
+    "sixSinesViews": [
+      {
+        "id": "shape:sound-design-synth",
+        "synthName": "sound-design/lead",
+        "x": 740,
+        "y": 40,
+        "w": 1260,
+        "h": 1140
+      }
+    ],
+    "pianoRollViews": [
+      {
+        "id": "shape:sound-design-phrase",
+        "rollName": "sound-design/phrase",
+        "x": 740,
+        "y": 1240,
+        "w": 720,
+        "h": 560
+      }
+    ],
+    "paramPaneViews": [
+      {
+        "id": "shape:sound-design-controls",
+        "paramsName": "sound-design/controls",
+        "x": 1510,
+        "y": 1240,
+        "w": 480,
+        "h": 560
+      }
+    ],
+    "animationEditorViews": [],
+    "drawingViews": [],
+    "scopeViews": [],
+    "canvasSurfaceViews": []
+  },
+  "data": [
+    {
+      "type": "sixSines",
+      "name": "sound-design/lead",
+      "path": "data/sixSines/lead.json"
+    },
+    {
+      "type": "pianoRoll",
+      "name": "sound-design/phrase",
+      "path": "data/pianoRoll/phrase.json"
+    },
+    {
+      "type": "params",
+      "name": "sound-design/controls",
+      "path": "data/params/controls.json"
+    }
+  ]
+}

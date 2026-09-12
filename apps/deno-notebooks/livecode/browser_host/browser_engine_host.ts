@@ -243,8 +243,9 @@ export function startBrowserEngineHost(
           for (const entry of entries) {
             changes.push({
               entityType,
-              name: entry.name,
-              entity: entry.entity as SyncEntity | null,
+              ...entry as import("@avtools/livecode-protocol").EntityDelta<
+                SyncEntity
+              >,
             });
           }
         }

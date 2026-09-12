@@ -51,8 +51,8 @@ that initialization; a replacing socket invalidates the prior transition.
 - The project manifest owns module metadata/layout, canvas-view layout, and
   references to saved entity files. It does not own live execution.
 - The engine owns active/pending runs and all named entities. Piano rolls,
-  params, animation timelines, and drawings are durable only when explicitly
-  captured by project save. Signals, run state, waits, and lookups are
+  params, animation timelines, drawings, and Six Sines state reach disk only
+  when explicitly captured by project save. Signals, run state, waits, and lookups are
   ephemeral.
 - tldraw owns transient canvas shapes and editor buffers. A transient canvas is
   memory-only unless saved as `.tldr`.
@@ -64,6 +64,45 @@ that initialization; a replacing socket invalidates the prior transition.
 “Engine memory” means Deno memory locally and the engine tab's memory remotely
 or in a bake. Closing that tab kills its runs and unsaved entities; with the
 engine in the UI's own tab, so does reloading the UI.
+
+## Mutable entities and write tracking
+
+Optimization belongs to the store implementation. Creative code uses the
+kind's ordinary live-object or commit API regardless of how changes are
+collected; it should not mark dirty paths, drain a tracker, subscribe a view,
+or branch on an optimization mode. There is currently no automatic size
+threshold or common optimized-mode flag: Six Sines is the sparse reference
+kind; params/signals still sample values and piano rolls still use explicit
+whole-object commits. Choosing tracking does not migrate those contracts.
+
+A live handle and a snapshot are different authoring surfaces. Declarations
+such as `canvasParams` and `registerSixSines` return live objects; getters such
+as `getPianoRoll` and `getSixSines` return detached snapshots. Mutating a
+snapshot does not edit the entity. Destructuring a scalar captures a value;
+holding a nested object retains that particular object, not a binding to a
+path. Replacing/removing that subtree can detach the reference. Reconciliation
+preserves matching containers where the kind promises it, but cannot retarget
+an old handle after deletion and recreation of the named entity. Reacquire
+handles across that lifetime boundary. See the owning stores for their
+redeclaration and load policies; tracking is not a new universal policy.
+
+`tracked-state` intercepts owned writes without read subscriptions, computed
+values, or callbacks on assignment. The existing engine tick drains changes;
+views and optional runtime bridges receive coalesced committed state. Opening
+a view must not enable collection or make the piece run. A bridge reacting on
+that tick is not an audio-rate clock or a lossless stream of every assignment;
+put order-sensitive execution in ordinary code and use explicit event/actions
+for discrete intent.
+
+For large state, sparse edits are the normal path and bulk replacement is an
+explicit kind operation. The tracker preserves outside references on raw
+subtree assignment, so those reachable external regions require subsequent
+selective scanning. It does not silently stop tracking if a region grows.
+This preserves correctness, not constant-time performance; the exact ownership
+and cost rules live in the [package contract](../../../packages/tracked-state/README.md).
+New integrations must account for that fallback, not equate "no intercepted
+write" with "unchanged." Follow the
+[entity-kind recipe](adding-an-entity-kind.md#3-implement-and-register-the-store).
 
 ## Edit, analyze, and run
 

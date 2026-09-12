@@ -1,0 +1,246 @@
+{
+  "runtime": "v22.20.0",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "cpu": "Apple M1 Max",
+  "iterations": 200,
+  "parameterCount": 2554,
+  "fixture": "/Users/avneeshsarwate/agentCombine/browserSynthPorts/six-sines/browser-ui/src/data/schema.json",
+  "units": "milliseconds per named operation",
+  "heapCaveat": "Heap deltas include preparation and GC; not allocation counts or retained-size measurements. Timings include JIT/GC outliers, timer overhead, and no forced GC.",
+  "results": [
+    {
+      "name": "plain: 50 assignments",
+      "p50": 0.003292000000001849,
+      "p95": 0.003457999999994854,
+      "p99": 0.008416999999994346,
+      "max": 0.013416999999989798,
+      "heapDeltaBytes": 44760
+    },
+    {
+      "name": "1 entities: idle drain",
+      "p50": 0.00016700000000469117,
+      "p95": 0.00033299999999769625,
+      "p99": 0.0027910000000019863,
+      "max": 0.07908299999999713,
+      "heapDeltaBytes": 107712
+    },
+    {
+      "name": "1 entities: 50 tracked assignments each",
+      "p50": 0.015917000000001735,
+      "p95": 0.018000000000000682,
+      "p99": 0.0942500000000166,
+      "max": 0.18175000000000807,
+      "heapDeltaBytes": -2180864
+    },
+    {
+      "name": "1 entities: drain 50 dirty keys each",
+      "p50": 0.008499999999997954,
+      "p95": 0.01054200000001515,
+      "p99": 0.08462500000001683,
+      "max": 0.09454199999998991,
+      "heapDeltaBytes": -2528616
+    },
+    {
+      "name": "1 entities: write + drain + JSON + apply",
+      "p50": 0.04154199999999264,
+      "p95": 0.05279199999998241,
+      "p99": 0.15279199999997672,
+      "max": 0.15383299999999167,
+      "heapDeltaBytes": 306056
+    },
+    {
+      "name": "1 entities: 20x50 automation + drain",
+      "p50": 0.2834999999999752,
+      "p95": 0.34379200000000765,
+      "p99": 0.37512499999999704,
+      "max": 0.37712499999997817,
+      "heapDeltaBytes": 848816
+    },
+    {
+      "name": "1 entities: full snapshots",
+      "p50": 0.9453330000000051,
+      "p95": 1.0566249999999968,
+      "p99": 1.0987079999999878,
+      "max": 1.1051249999999868,
+      "heapDeltaBytes": 1827496
+    },
+    {
+      "name": "1 entities: unchanged reconcile",
+      "p50": 4.8787499999998545,
+      "p95": 5.132082999999966,
+      "p99": 5.282583000000159,
+      "max": 5.392124999999851,
+      "heapDeltaBytes": 3200960
+    },
+    {
+      "name": "1 entities: tiny merge + drain",
+      "p50": 0.006791000000021086,
+      "p95": 0.009999999999990905,
+      "p99": 0.016458999999940715,
+      "max": 0.21504200000003948,
+      "heapDeltaBytes": -9566248
+    },
+    {
+      "name": "1 entities: changed reconcile + drain",
+      "p50": 4.8272500000002765,
+      "p95": 5.088125000000218,
+      "p99": 5.202916999999616,
+      "max": 5.392291999999998,
+      "heapDeltaBytes": -4890720
+    },
+    {
+      "name": "10 entities: idle drain",
+      "p50": 0.0007080000000314612,
+      "p95": 0.0009589999999661813,
+      "p99": 0.0012499999997999112,
+      "max": 0.0012500000002546585,
+      "heapDeltaBytes": 11712
+    },
+    {
+      "name": "10 entities: 50 tracked assignments each",
+      "p50": 0.15025000000014188,
+      "p95": 0.16129199999977573,
+      "p99": 0.3402080000000751,
+      "max": 0.3730829999999514,
+      "heapDeltaBytes": 2617112
+    },
+    {
+      "name": "10 entities: drain 50 dirty keys each",
+      "p50": 0.06683300000031522,
+      "p95": 0.08129200000030323,
+      "p99": 0.23729099999991377,
+      "max": 0.24812500000007276,
+      "heapDeltaBytes": 2627624
+    },
+    {
+      "name": "10 entities: write + drain + JSON + apply",
+      "p50": 0.41229199999997945,
+      "p95": 0.5627079999999296,
+      "p99": 0.6572500000002037,
+      "max": 0.6975410000000011,
+      "heapDeltaBytes": -7177000
+    },
+    {
+      "name": "10 entities: 20x50 automation + drain",
+      "p50": 2.9480419999999867,
+      "p95": 3.147374999999556,
+      "p99": 3.21820900000057,
+      "max": 3.285957999999482,
+      "heapDeltaBytes": -6124784
+    },
+    {
+      "name": "10 entities: full snapshots",
+      "p50": 9.543875000000298,
+      "p95": 9.878332999999657,
+      "p99": 10.056041999999252,
+      "max": 10.118833999999879,
+      "heapDeltaBytes": 781608
+    },
+    {
+      "name": "10 entities: unchanged reconcile",
+      "p50": 49.357458000002225,
+      "p95": 50.95704199999818,
+      "p99": 51.75133300000016,
+      "max": 51.81474999999773,
+      "heapDeltaBytes": 14548912
+    },
+    {
+      "name": "10 entities: tiny merge + drain",
+      "p50": 0.06187499999941792,
+      "p95": 0.0715829999971902,
+      "p99": 0.28754099999787286,
+      "max": 0.32154200000150013,
+      "heapDeltaBytes": 6954464
+    },
+    {
+      "name": "10 entities: changed reconcile + drain",
+      "p50": 48.767416999999114,
+      "p95": 50.119291999999405,
+      "p99": 51.0202500000014,
+      "max": 52.06312500000058,
+      "heapDeltaBytes": -8180128
+    },
+    {
+      "name": "full JSON stringify baseline",
+      "p50": 0.28866699999343837,
+      "p95": 0.3080000000045402,
+      "p99": 0.3656249999985448,
+      "max": 0.49087499999586726,
+      "heapDeltaBytes": -7190224
+    },
+    {
+      "name": "registration clone + graph adoption",
+      "p50": 1.451333999997587,
+      "p95": 2.2827499999984866,
+      "p99": 2.6765420000010636,
+      "max": 3.224957999998878,
+      "heapDeltaBytes": -6739968
+    },
+    {
+      "name": "array 100: point write + drain + apply",
+      "p50": 0.0083329999979469,
+      "p95": 0.00891599999886239,
+      "p99": 0.01241699999809498,
+      "max": 0.04141700000036508,
+      "heapDeltaBytes": 3554088
+    },
+    {
+      "name": "array 100: reverse mutation only",
+      "p50": 0.03949999999895226,
+      "p95": 0.042083000000275206,
+      "p99": 0.06704199999512639,
+      "max": 0.07200000000011642,
+      "heapDeltaBytes": 9249584
+    },
+    {
+      "name": "array 100: front splice + drain",
+      "p50": 0.0035839999982272275,
+      "p95": 0.004124999999476131,
+      "p99": 0.006958999998460058,
+      "max": 0.007541999999375548,
+      "heapDeltaBytes": 2057032
+    },
+    {
+      "name": "array 100: sort + drain",
+      "p50": 0.03899999999703141,
+      "p95": 0.04220799999893643,
+      "p99": 0.04420799999934388,
+      "max": 0.044708999994327314,
+      "heapDeltaBytes": 2192296
+    },
+    {
+      "name": "array 10000: point write + drain + apply",
+      "p50": 0.33737500000279397,
+      "p95": 0.47837499999877764,
+      "p99": 0.512750000001688,
+      "max": 0.5464580000043497,
+      "heapDeltaBytes": -5544744
+    },
+    {
+      "name": "array 10000: reverse mutation only",
+      "p50": 3.668083000004117,
+      "p95": 3.840582999997423,
+      "p99": 3.931709000004048,
+      "max": 3.9608339999977034,
+      "heapDeltaBytes": -2570488
+    },
+    {
+      "name": "array 10000: front splice + drain",
+      "p50": 0.1663750000006985,
+      "p95": 0.19254100000398466,
+      "p99": 0.31070899999758694,
+      "max": 0.31595799999922747,
+      "heapDeltaBytes": 5527016
+    },
+    {
+      "name": "array 10000: sort + drain",
+      "p50": 3.849207999999635,
+      "p95": 4.031624999995984,
+      "p99": 4.229958000003535,
+      "max": 4.256582999994862,
+      "heapDeltaBytes": 12661688
+    }
+  ],
+  "sink": 22975140
+}

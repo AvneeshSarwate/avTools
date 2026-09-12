@@ -1,0 +1,94 @@
+{
+  "runtime": "v26.8.1",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "cpu": "Apple M1 Max",
+  "iterations": 1000,
+  "parameterCount": 2554,
+  "fixture": "../../browser-ui/src/data/schema.json",
+  "units": "milliseconds per named operation",
+  "heapCaveat": "Heap deltas include preparation and GC; not allocation counts or retained-size measurements. Timings include JIT/GC outliers, timer overhead, and no forced GC.",
+  "results": [
+    {
+      "name": "hybrid 1 entities owned only: idle drain",
+      "p50": 0.00016700000000469117,
+      "p95": 0.00025000000002251,
+      "p99": 0.001207999999991216,
+      "max": 0.004208000000005541,
+      "heapDeltaBytes": 892624
+    },
+    {
+      "name": "hybrid 1 entities owned only: 50 writes + drain + JSON + apply",
+      "p50": 0.0493330000000185,
+      "p95": 0.06887499999999136,
+      "p99": 0.08979199999998855,
+      "max": 0.8056669999999997,
+      "heapDeltaBytes": 7850816
+    },
+    {
+      "name": "hybrid 1 entities small external subtree: idle drain",
+      "p50": 0.0017090000000052896,
+      "p95": 0.004457999999999629,
+      "p99": 0.007542000000000826,
+      "max": 0.15587500000000887,
+      "heapDeltaBytes": -9085296
+    },
+    {
+      "name": "hybrid 1 entities small external subtree: 50 writes + drain + JSON + apply",
+      "p50": 0.05320899999998119,
+      "p95": 0.06183299999997871,
+      "p99": 0.09749999999999659,
+      "max": 0.2504169999999988,
+      "heapDeltaBytes": 11043616
+    },
+    {
+      "name": "hybrid 10 entities owned only: idle drain",
+      "p50": 0.00045799999998052954,
+      "p95": 0.0013329999999882602,
+      "p99": 0.0027499999999918145,
+      "max": 0.5162500000000136,
+      "heapDeltaBytes": -11778896
+    },
+    {
+      "name": "hybrid 10 entities owned only: 50 writes + drain + JSON + apply",
+      "p50": 0.4657079999999496,
+      "p95": 0.5498750000000427,
+      "p99": 0.744624999999985,
+      "max": 0.8440420000000586,
+      "heapDeltaBytes": -19565032
+    },
+    {
+      "name": "hybrid 10 entities small external subtree: idle drain",
+      "p50": 0.015249999999923602,
+      "p95": 0.016917000000034932,
+      "p99": 0.028957999999988715,
+      "max": 0.6641660000000229,
+      "heapDeltaBytes": -27417640
+    },
+    {
+      "name": "hybrid 10 entities small external subtree: 50 writes + drain + JSON + apply",
+      "p50": 0.5185420000000249,
+      "p95": 0.6222920000000158,
+      "p99": 0.8937499999999545,
+      "max": 0.9753329999998641,
+      "heapDeltaBytes": 12398712
+    },
+    {
+      "name": "hybrid externally grown 10001-field subtree: raw edit + drain",
+      "p50": 2.9432919999999285,
+      "p95": 3.2390410000002703,
+      "p99": 3.3482920000005834,
+      "max": 6.730959000000439,
+      "heapDeltaBytes": -17441552
+    },
+    {
+      "name": "hybrid detached 10001-field subtree: raw edit + drain",
+      "p50": 0.0003329999999550637,
+      "p95": 0.0003750000005311449,
+      "p99": 0.0010830000001078588,
+      "max": 0.24037500000031287,
+      "heapDeltaBytes": -45575336
+    }
+  ],
+  "sink": 59941049
+}

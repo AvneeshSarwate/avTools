@@ -103,12 +103,38 @@ maps, so Deno positions can point into generated coordinates. New detector work
 should add explicit confidence/unsupported cases rather than silently widening
 heuristics.
 
+## P1: sparse sync recovery still applies before checking the baseline
+
+[`syncRuntime.tsx`](../../../apps/livecode-tldraw/src/syncRuntime.tsx) calls
+`applySyncMessageToState` before checking sequence gaps
+or a first message without a reset.
+[`syncState.ts`](../../../apps/livecode-tldraw/src/syncState.ts) rejects patches whose
+entity or parent path is absent. A lost structural update or a first delta
+before a baseline can therefore throw before the resubscribe code executes;
+if parents happen to exist, a gap can instead publish incomplete state until
+reset. The old full-entity recovery order is not sufficient for sparse deltas.
+
+Recovery must check baseline/sequence before applying dependent patches and
+request full resets on materialization failure. This is an unresolved
+source-level finding from the documentation audit, not a reproduced browser
+failure. Existing happy-path and reset tests do not establish this guarantee.
+
 ## P2: sync and long-process state have personal-scale bounds
 
-Sync subscriptions are per type, not name, and each changed entity ships whole.
-Large values changing every tick therefore serialize at full approximately
-30 Hz even if a page shows one name. The client also republishes the full module
-view map when run/wait/lookup state changes.
+Sync subscriptions are per type, not name. Six Sines ships sparse changes;
+other kinds still ship changed entities whole, and params/signals still sample
+whole values. Sparse support is not a global migration or an automatic size
+optimization. Resets, project capture, bulk edits, and initial snapshots still
+traverse full state. The client also republishes the full module view map when
+run/wait/lookup state changes.
+
+A tracked kind that admits raw subtree assignment retains selective scans of
+reachable external regions, including later growth. Correctness has no size
+cutoff; performance has no universal bound. Shared aliases and structural
+array edits can also expand a small-looking operation. Consult the
+[tracker's cost contract](../../../packages/tracked-state/README.md#work-and-lifetime-costs)
+before extending the sparse exemplar to richer shapes; do not generalize a
+flat-parameter measurement to every entity.
 
 Same-tab observation avoids a transport copy for the local UI, but the browser
 host still posts every nonempty sync tick to `BroadcastChannel` and, when

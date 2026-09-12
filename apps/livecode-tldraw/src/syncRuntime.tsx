@@ -13,6 +13,8 @@ import {
   useState,
 } from "react";
 import type {
+  SixSinesData,
+  SixSinesEntity,
   AnimationTimelineData,
   AnimationTimelineEntity,
   AnimationTimelineSetResult,
@@ -79,6 +81,16 @@ export interface SyncConnection {
 }
 
 export interface SyncActions {
+  setSixSinesParameters(
+    name: string,
+    changes: Array<{ id: number; value: number }>,
+    options?: { originId?: string },
+  ): Promise<void>;
+  setSixSinesPreset(
+    name: string,
+    data: SixSinesData,
+    options?: { originId?: string },
+  ): Promise<void>;
   serverBaseUrl: string;
   setServerBaseUrl(next: string): void;
   setRoll(
@@ -123,26 +135,21 @@ export interface SyncLifecycleListener {
   onError?: (message: string) => void;
 }
 
-const PianoRollsContext = createContext<SyncSlice<PianoRollObject>>(
-  emptySyncSlice(),
-);
+const SixSinesContext =
+  createContext<SyncSlice<SixSinesEntity>>(emptySyncSlice());
+const PianoRollsContext =
+  createContext<SyncSlice<PianoRollObject>>(emptySyncSlice());
 const ParamsContext = createContext<SyncSlice<ParamsEntity>>(emptySyncSlice());
-const AnimationTimelinesContext = createContext<
-  SyncSlice<AnimationTimelineEntity>
->(emptySyncSlice());
-const DrawingsContext = createContext<SyncSlice<DrawingEntity>>(
-  emptySyncSlice(),
-);
-const SignalsContext = createContext<SyncSlice<SignalEntity>>(
-  emptySyncSlice(),
-);
+const AnimationTimelinesContext =
+  createContext<SyncSlice<AnimationTimelineEntity>>(emptySyncSlice());
+const DrawingsContext =
+  createContext<SyncSlice<DrawingEntity>>(emptySyncSlice());
+const SignalsContext = createContext<SyncSlice<SignalEntity>>(emptySyncSlice());
 const RunsContext = createContext<SyncSlice<RunEntity>>(emptySyncSlice());
-const ModuleWaitsContext = createContext<SyncSlice<ModuleWaitsEntity>>(
-  emptySyncSlice(),
-);
-const ModuleLookupsContext = createContext<SyncSlice<ModuleLookupsEntity>>(
-  emptySyncSlice(),
-);
+const ModuleWaitsContext =
+  createContext<SyncSlice<ModuleWaitsEntity>>(emptySyncSlice());
+const ModuleLookupsContext =
+  createContext<SyncSlice<ModuleLookupsEntity>>(emptySyncSlice());
 const SyncConnectionContext = createContext<SyncConnection | null>(null);
 const SyncActionsContext = createContext<SyncActions | null>(null);
 const SyncLifecycleContext = createContext<SyncLifecycle | null>(null);
@@ -162,6 +169,19 @@ export function useSyncActions(): SyncActions {
 
 export function useSyncLifecycle(): SyncLifecycle {
   return useRequiredContext(SyncLifecycleContext, "useSyncLifecycle");
+}
+
+export function useSixSinesSync() {
+  const slice = useContext(SixSinesContext);
+  const connection = useSyncConnection();
+  const { setSixSinesParameters, setSixSinesPreset } = useSyncActions();
+  return {
+    ...connection,
+    synths: slice.entities,
+    latestSeq: slice.latestSeq,
+    setSixSinesParameters,
+    setSixSinesPreset,
+  };
 }
 
 export interface PianoRollsSyncApi {
@@ -341,14 +361,14 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
   const isLocalDevelopment = ["localhost", "127.0.0.1", "::1"].includes(
     window.location.hostname,
   );
-  const initialServerUrl = readBootParam("serverBaseUrl") ??
+  const initialServerUrl =
+    readBootParam("serverBaseUrl") ??
     (isLocalDevelopment ? "http://localhost:7777" : window.location.origin);
 
   const [serverBaseUrl, setServerBaseUrlState] = useState(initialServerUrl);
   const serverBaseUrlRef = useRef(initialServerUrl);
-  const [connectionStatus, setConnectionStatus] = useState<
-    SyncConnectionStatus
-  >("connecting");
+  const [connectionStatus, setConnectionStatus] =
+    useState<SyncConnectionStatus>("connecting");
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [latestSeq, setLatestSeq] = useState<number | null>(null);
   const [state, setState] = useState<SyncState>(emptySyncState);
@@ -417,48 +437,53 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
     [scheduleFlush, subscribe],
   );
 
-  const transportCallbacks = useMemo<SyncTransportCallbacks>(() => ({
-    onOpen: (port) => {
-      openRef.current = true;
-      // A fresh transport is owed no state. Subscribe is both registration and
-      // the full reset that hydrates this client.
-      lastSeqRef.current = null;
-      subscribe(port);
-      setConnectionStatus("open");
-      setConnectionError(null);
-      for (const listener of [...listenersRef.current]) listener.onOpen?.();
-    },
-    onMessage: applyMessage,
-    onClose: () => {
-      openRef.current = false;
-      setConnectionStatus((current) =>
-        current === "error" ? current : "closed"
-      );
-      for (const listener of [...listenersRef.current]) listener.onClose?.();
-    },
-    onError: (message) => {
-      openRef.current = false;
-      setConnectionError(message);
-      setConnectionStatus("error");
-      for (const listener of [...listenersRef.current]) {
-        listener.onError?.(message);
-      }
-    },
-  }), [applyMessage, subscribe]);
+  const transportCallbacks = useMemo<SyncTransportCallbacks>(
+    () => ({
+      onOpen: (port) => {
+        openRef.current = true;
+        // A fresh transport is owed no state. Subscribe is both registration and
+        // the full reset that hydrates this client.
+        lastSeqRef.current = null;
+        subscribe(port);
+        setConnectionStatus("open");
+        setConnectionError(null);
+        for (const listener of [...listenersRef.current]) listener.onOpen?.();
+      },
+      onMessage: applyMessage,
+      onClose: () => {
+        openRef.current = false;
+        setConnectionStatus((current) =>
+          current === "error" ? current : "closed",
+        );
+        for (const listener of [...listenersRef.current]) listener.onClose?.();
+      },
+      onError: (message) => {
+        openRef.current = false;
+        setConnectionError(message);
+        setConnectionStatus("error");
+        for (const listener of [...listenersRef.current]) {
+          listener.onError?.(message);
+        }
+      },
+    }),
+    [applyMessage, subscribe],
+  );
 
   if (controllerRef.current === null) {
-    controllerRef.current = configuredSyncTransport === "inprocess"
-      ? createInProcessSyncTransport(transportCallbacks, {
-        // A serverless bake (`serverBaseUrl=none`) has no server link to
-        // wait for; otherwise "open" means this tab's engine is attached.
-        requireUplink: initialServerUrl.trim().replace(/\/+$/, "") !== "none",
-      })
-      : configuredSyncTransport === "broadcast"
-      ? createBroadcastSyncTransport(transportCallbacks)
-      : createWebSocketSyncTransport(
-        () => serverWebSocketUrl(serverBaseUrlRef.current, "/sync"),
-        transportCallbacks,
-      );
+    controllerRef.current =
+      configuredSyncTransport === "inprocess"
+        ? createInProcessSyncTransport(transportCallbacks, {
+            // A serverless bake (`serverBaseUrl=none`) has no server link to
+            // wait for; otherwise "open" means this tab's engine is attached.
+            requireUplink:
+              initialServerUrl.trim().replace(/\/+$/, "") !== "none",
+          })
+        : configuredSyncTransport === "broadcast"
+          ? createBroadcastSyncTransport(transportCallbacks)
+          : createWebSocketSyncTransport(
+              () => serverWebSocketUrl(serverBaseUrlRef.current, "/sync"),
+              transportCallbacks,
+            );
   }
 
   // Connects at MOUNT, not at Connect: piano-roll, params, and signals data has
@@ -581,6 +606,49 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
     [],
   );
 
+  const setSixSinesParameters = useCallback(
+    async (
+      name: string,
+      changes: Array<{ id: number; value: number }>,
+      options: { originId?: string } = {},
+    ) => {
+      const request = {
+        name,
+        changes: Object.fromEntries(
+          changes.map((change) => [String(change.id), change.value]),
+        ),
+        originId: options.originId,
+      };
+      const result = await engineAction<{ ok: boolean; error?: string }>(
+        { kind: "sixSinesParametersSet", request },
+        serverBaseUrlRef.current,
+        "/six-sines/parameters",
+        request,
+      );
+      if (!result.ok)
+        throw new Error(result.error ?? "Six Sines parameter edit rejected");
+    },
+    [],
+  );
+  const setSixSinesPreset = useCallback(
+    async (
+      name: string,
+      data: SixSinesData,
+      options: { originId?: string } = {},
+    ) => {
+      const request = { name, data, originId: options.originId };
+      const result = await engineAction<{ ok: boolean; error?: string }>(
+        { kind: "sixSinesPresetSet", request },
+        serverBaseUrlRef.current,
+        "/six-sines/preset",
+        request,
+      );
+      if (!result.ok)
+        throw new Error(result.error ?? "Six Sines preset edit rejected");
+    },
+    [],
+  );
+
   const setDrawing = useCallback(
     async (
       name: string,
@@ -647,12 +715,16 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
       setParams,
       setAnimationTimeline,
       setDrawing,
+      setSixSinesParameters,
+      setSixSinesPreset,
     }),
     [
       redoRoll,
       serverBaseUrl,
       setAnimationTimeline,
       setDrawing,
+      setSixSinesParameters,
+      setSixSinesPreset,
       setParams,
       setRoll,
       setServerBaseUrl,
@@ -676,7 +748,9 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
                         value={state.moduleLookups}
                       >
                         <DrawingsContext.Provider value={state.drawing}>
-                          {children}
+                          <SixSinesContext.Provider value={state.sixSines}>
+                            {children}
+                          </SixSinesContext.Provider>
                         </DrawingsContext.Provider>
                       </ModuleLookupsContext.Provider>
                     </ModuleWaitsContext.Provider>

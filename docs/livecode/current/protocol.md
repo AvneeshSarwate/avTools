@@ -28,9 +28,8 @@ only an interface.
 
 ## Sync semantics
 
-`/sync` is one subscribed channel for piano rolls, params, animation timelines,
-drawings, signals, runs, waits, and lookups. In served/baked browser-engine
-topologies the equivalent envelopes may use `BroadcastChannel`.
+`/sync` is one subscribed channel for the registered entity kinds. In
+served/baked browser-engine topologies the equivalent envelopes may use `BroadcastChannel`.
 
 `drawing.ts` is the one file here that imports another package: the document
 type, its validation, and its Konva-free bake are owned by
@@ -43,13 +42,27 @@ The invariants in `sync.ts` matter more than the transport:
   for each requested type. A reset replaces the client's map.
 - `seq` is per connection and exists only to detect gaps. There is no replay;
   recovery is resubscription.
-- Changes are per named entity, but a changed entity ships whole. A null entity
-  means deletion. There are no note/leaf patches.
+- Each named change is either a full entity, a null deletion, or a patch batch
+  against the current entity. Full resets establish the baseline; new entities
+  need a full value before patches. Paths are segment arrays relative to the
+  entity, not to the kind's inner data value.
+  [`patch.ts`](../../../packages/livecode-protocol/patch.ts) owns the exact shape.
+- Patch batches depend on earlier accepted state. Preserve their order and
+  apply every batch before coalescing a UI render. Dropping an earlier batch
+  because a newer one mentions the same name loses unrelated edits. A gap or
+  missing baseline requires a full reset, not guessed parents or replay of
+  the last delta. Current recovery has a documented
+  [apply-before-gap limitation](known-risks.md#p1-sparse-sync-recovery-still-applies-before-checking-the-baseline).
 - Subscriptions are type-level, not name-level.
 - Snapshot reads must not consume the engine's pending changed-name gates.
 
 The engine collects changes once per tick, then fans that same result to
 subscribers. Do not let a socket or HTTP read independently drain a store.
+These are latest-state deltas, not an edit history, trigger stream, or promise
+that every intermediate assignment is delivered. Transport selection does not
+change these rules: WebSocket, BroadcastChannel, and same-realm observers must
+all respect payload ownership and baseline ordering. Tracking is currently
+used by Six Sines; the other kinds retain their existing snapshot behavior.
 
 ## Run and observation identities
 
@@ -76,6 +89,7 @@ These differences are deliberate; a generic entity layer must not erase them:
 | Piano roll | Whole normalized set is an upsert; optional compare-and-set and bounded undo/redo. | Durable; explicit project save. |
 | Params | Leaf merge into an existing declared/live object; unknown/type-mismatched leaves are ignored and logged. | Durable values plus meta; explicit save. |
 | Animation timeline | Whole validated replacement of an existing entity, normally compare-and-set. Sampling/callback execution is not stored. | Durable data only; explicit save. |
+| Six Sines | Live numeric parameter assignments or validated small UI sets; explicit bulk preset reconciliation preserves the held values container. Observation is sparse after the initial full entity. | Durable base preset XML plus current numeric values; explicit save. |
 | Signal | Code publishes a latest value and anchors; there is no client set operation. | Ephemeral, no history/save/CRUD; ends with its owner run. |
 
 Params and signal revisions count observed value generations. Meta, anchors,
@@ -88,6 +102,13 @@ Signal anchors are `{type, name, path?}` references. Current playhead consumers
 ignore `path`. Signal logical timestamps are assigned when the sampler adopts a
 value, so they are tick-granularity ordering keys, not exact write-time clocks.
 A redeclaration clears `ended`; later writes alone do not.
+
+An incoming generic entity patch is opt-in per kind, not the inverse of every
+outgoing patch. Six Sines accepts parameter sets, not arbitrary metadata edits;
+its revision advances on accepted mutations, not on display frames. Its store
+validates numeric ID shape and finite values; native parameter membership,
+ranges, and preset-format compatibility belong to the editor/engine boundary.
+Use the paired schema when making a custom control.
 
 Generic create/duplicate/delete addresses registered durable types by
 `{type,name}`. It does not rename entities or manipulate views. A view and its

@@ -63,8 +63,16 @@ export interface BakedProjectFile {
   data: EngineEntityLoadEntry[];
 }
 
-
 export type EngineOp =
+  | {
+    kind: "sixSinesParametersSet";
+    request: import("./six_sines.ts").SetSixSinesParametersRequest;
+  }
+  | { kind: "entityPatch"; request: import("./entities.ts").EntityPatchRequest }
+  | {
+    kind: "sixSinesPresetSet";
+    request: import("./six_sines.ts").SetSixSinesPresetRequest;
+  }
   | { kind: "emitEvent"; event: LivecodeEvent }
   | {
     kind: "launch";

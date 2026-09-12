@@ -19,9 +19,10 @@ architecture reading order in `README.md` is for platform development.
   Panic are explicit actions.
 - A module ID is one lifecycle slot. Run refuses an occupied slot; Replace is
   explicit consent to stop its current run and launch the new preparation.
-- The engine owns running modules and named entities. Reloading the UI does not
-  stop sound. Conversely, switching projects does not stop the prior project's
-  modules or clear its entities.
+- The engine owns running modules and named entities. Reloading a separate UI
+  tab does not stop sound; reloading a same-tab engine does. Conversely,
+  switching projects does not stop the prior project's modules or clear its
+  entities.
 - Canvas shapes are views. Removing a view does not delete its entity, and an
   entity can have several views.
 
@@ -163,6 +164,7 @@ These bare imports are the intentionally supported livecode surface:
 | `canvas-signals` | `signal(name)` publishes ephemeral monitor/playhead values and optional entity anchors. Signals end with their owner run and are not a cross-module data API. | Deno and browser |
 | `animation-timeline` | Declare and sample durable number, enum, and function tracks. | Deno and browser |
 | `@avtools/music-types` | Shared `AbletonClip`, `Scale`, and curve data utilities; browser alias shares class identity with piano-roll helpers. | Deno and browser |
+| `six-sines-store` | Named synth parameter state; live registration, snapshots, explicit preset/parameter edits. The audio instance stays in engine module state. | Deno and browser (state); browser for the packaged AudioWorklet |
 | `piano-roll-store` | Read or update named piano-roll entities. | Deno and browser |
 | `piano-roll-helpers` | Convert clips, write roll data, and play a roll through logical time and optional MIDI output. | Deno and browser |
 | `midi-helpers` | Discover/select outputs, send notes/CC, and panic. Browser MIDI may require a focused user gesture and permission. | Deno and browser |
@@ -183,10 +185,18 @@ not only through diagnostics.
 | Kind | Authoring rule |
 | --- | --- |
 | Imported module state | Ordinary shared JavaScript state. Useful within one engine, but dependency modules may remain cached across entry-module replacement. |
-| Params, piano rolls, animation timelines | Durable engine entities. Values outlive the declaring run and reach disk only through explicit project save. |
+| Registered durable entities | Durable engine entities. Values outlive the declaring run and reach disk only through explicit project save. |
 | Signals | Ephemeral latest-value observations. They end with their owner run and are never saved or read by other modules for coordination. |
 | Waits, run state, lookup annotations | Ephemeral visualization/runtime state. Never project data. |
 | Canvas views | Bindings and layout can be project-persisted; deleting a view does not delete its entity. Arbitrary tldraw shapes require a separate `.tldr` save. |
+
+Use the kind's live handle for ordinary code edits and its explicit setter for
+whole documents/presets. Do not add dirty calls, UI subscriptions, or tracker
+drains to a piece. Some getters return snapshots rather than live state; for
+reference lifetime and destructuring rules, see
+[state ownership](current/system-architecture.md#mutable-entities-and-write-tracking).
+Choosing a sparse store implementation is platform work following the
+[entity recipe](current/adding-an-entity-kind.md), not a second authoring API.
 
 ## Reference projects by task
 
@@ -194,6 +204,7 @@ not only through diagnostics.
 | --- | --- |
 | Minimal manifest, module imports, shared mutable state | [`basic-multi-module`](../../apps/livecode-tldraw/example-projects/basic-multi-module/) |
 | Natural completion, Replace, graceful `stop()`, Panic behavior | [`feature-lifecycle-basics`](../../apps/livecode-tldraw/example-projects/feature-lifecycle-basics/README.md) |
+| Synth sound design, piano-roll audio, sparse automation, native preset exchange | [`six-sines-sound-design`](../../apps/livecode-tldraw/example-projects/six-sines-sound-design/README.md) |
 | Nested live params, metadata, code writes, scopes | [`feature-params-basics`](../../apps/livecode-tldraw/example-projects/feature-params-basics/README.md) |
 | Create/read/play piano rolls and use MIDI | [`feature-piano-roll-flows`](../../apps/livecode-tldraw/example-projects/feature-piano-roll-flows/README.md) |
 | Durable timelines, sampling, function cues, animation playheads | [`feature-animation-timeline`](../../apps/livecode-tldraw/example-projects/feature-animation-timeline/README.md) |

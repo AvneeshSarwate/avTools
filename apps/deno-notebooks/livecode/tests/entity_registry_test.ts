@@ -72,7 +72,7 @@ function resetStores(): void {
 Deno.test("the registry exposes the built-in durable types", () => {
   assertEquals(
     listDurableEntityTypes().map((descriptor) => descriptor.typeId),
-    ["animationTimeline", "drawing", "params", "pianoRoll"],
+    ["animationTimeline", "drawing", "params", "pianoRoll", "sixSines"],
   );
   assertEquals(getDurableEntityType("nope"), undefined);
 });

@@ -145,3 +145,24 @@ Deno.test("remote event operations preserve individual down/up messages", async 
     })));
   } finally { await plane.close(); }
 });
+
+Deno.test("remote execution forwards sparse patches without materializing or dropping them", async () => {
+  const changes: unknown[] = [];
+  const plane = createRemoteExecutionPlane({
+    log: () => {},
+    onSyncChanges: (batch) => changes.push(batch),
+    onEngineResets: () => {},
+  });
+  const socket = new FakeEngineSocket();
+  plane.attachEngineSocket(socket.asWebSocket());
+  hello(socket);
+  await waitFor(() => plane.hasEngine(), "remote engine ready");
+  const batch: import("@avtools/livecode-protocol").SyncEntityChange[] = [{
+    entityType: "sixSines",
+    name: "remote",
+    patches: [{ op: "set", path: ["data", "values", "1"], value: 0.5 }],
+  }];
+  socket.receive({ type: "engineSync", changes: batch });
+  assertEquals(changes, [batch]);
+  await plane.close();
+});
