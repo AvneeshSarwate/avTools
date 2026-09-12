@@ -1,9 +1,10 @@
+import { sixSinesUiAssets } from "./sixSinesUiAssets";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 
-const livecodeServerTarget = process.env.LIVECODE_SERVER_TARGET ??
-  "http://localhost:7777";
+const livecodeServerTarget =
+  process.env.LIVECODE_SERVER_TARGET ?? "http://localhost:7777";
 
 const livecodeRoutePrefixes = [
   "/health",
@@ -17,6 +18,7 @@ const livecodeRoutePrefixes = [
   "/entities",
   "/piano-roll",
   "/params",
+  "/six-sines",
   "/events",
   "/animation-timeline",
   "/signals",
@@ -42,10 +44,7 @@ function projectsLandingPage(): Plugin {
           return;
         }
         response.statusCode = 302;
-        response.setHeader(
-          "location",
-          `/projects.html${url.search}`,
-        );
+        response.setHeader("location", `/projects.html${url.search}`);
         response.end();
       });
     },
@@ -53,7 +52,7 @@ function projectsLandingPage(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [projectsLandingPage(), react()],
+  plugins: [projectsLandingPage(), react(), sixSinesUiAssets()],
   server: {
     host: "0.0.0.0",
     strictPort: true,

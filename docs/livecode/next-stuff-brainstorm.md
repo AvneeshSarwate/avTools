@@ -26,6 +26,14 @@ browser-engine timing hardening: a Worker-backed time source for core-timing - b
 
 
 
+figure out a pattern for optimizing UI<=>engine communication for entities with large state
+- needs to be super formulaic, some thing so easy that, when a non technical user is making a new entity+UI, the agent can test/detect if the entity will be big, and then just add some standard boilerplate to set up optimized entities
+- important that engine side creative code for accessing store does not change based on whether the entity is communicating in the optimized mode or not
+
+
+related to optimizing UI<=>engine communication, maybe need to simplify/clean up/standardize the api+semantics of when engine code grabs a live value vs a snapshot from the store
+
+
 smaller things
 - should browser component internal canvas also stretch to fit tldraw shape component like animation editor?
 - should UI state like scroll/zoom of piano roll and animation editor get persisted to doc?

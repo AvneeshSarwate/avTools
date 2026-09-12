@@ -8,6 +8,14 @@ export interface DurableEntityRef {
   name: string;
 }
 
+export interface EntityPatchRequest {
+  type: string;
+  name: string;
+  patches: import("./patch.ts").EntityPatch[];
+  originId?: string;
+  expectedRev?: number;
+}
+
 export interface EntityCreateRequest {
   type: string;
   name: string;
@@ -41,3 +49,10 @@ export type EntityMutationResponse =
 export type EntityCreateResponse = EntityMutationResponse;
 export type EntityDuplicateResponse = EntityMutationResponse;
 export type EntityDeleteResponse = EntityMutationResponse;
+
+/** Small acknowledgement shared by registered sparse patch handlers. */
+export type EntityPatchResult = { ok: true; rev: number } | {
+  ok: false;
+  error: string;
+  status: number;
+};

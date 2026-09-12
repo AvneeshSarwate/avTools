@@ -89,7 +89,17 @@ export interface ProjectCanvasSurfaceView {
   h: number;
 }
 
+export interface ProjectCanvasSixSinesView {
+  id: string;
+  synthName: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface ProjectCanvasState {
+  sixSinesViews?: ProjectCanvasSixSinesView[];
   pianoRollViews?: ProjectCanvasPianoRollView[];
   paramPaneViews?: ProjectCanvasParamPaneView[];
   animationEditorViews?: ProjectCanvasAnimationEditorView[];
@@ -220,9 +230,8 @@ interface ProjectSaveEntityIdentity {
   path: string;
 }
 
-export type ProjectSaveEntityResult =
-  & ProjectSaveEntityIdentity
-  & ({ ok: true } | { ok: false; error: string });
+export type ProjectSaveEntityResult = ProjectSaveEntityIdentity &
+  ({ ok: true } | { ok: false; error: string });
 
 /** An entity save deliberately skipped, with the reason for the operator. */
 export interface ProjectSaveSkippedEntity {

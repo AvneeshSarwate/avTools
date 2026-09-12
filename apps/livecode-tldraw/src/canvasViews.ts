@@ -1,3 +1,10 @@
+import {
+  SIX_SINES_SHAPE_TYPE,
+  SIX_SINES_ENTITY_TYPE,
+  SixSinesShapeUtil,
+  createSixSinesShape,
+  type SixSinesShape,
+} from "./SixSinesShape";
 import type {
   DurableEntityRef,
   ProjectCanvasState,
@@ -59,6 +66,7 @@ import {
 
 interface CanvasViewCodec extends CanvasViewDispatchCodec {
   shapeUtil:
+    | typeof SixSinesShapeUtil
     | typeof PianoRollShapeUtil
     | typeof ParamPaneShapeUtil
     | typeof AnimationEditorShapeUtil
@@ -77,7 +85,7 @@ interface CanvasViewCodec extends CanvasViewDispatchCodec {
 
 export function rebindCanvasViewEntity(shape: TLShape, name: string): TLShape {
   const codec = CANVAS_VIEW_CODECS.find((candidate) =>
-    candidate.isShape(shape)
+    candidate.isShape(shape),
   );
   if (!codec?.rebindEntity) throw new Error(`Cannot rebind ${shape.type}`);
   return codec.rebindEntity(shape, name);
@@ -85,17 +93,54 @@ export function rebindCanvasViewEntity(shape: TLShape, name: string): TLShape {
 
 export const CANVAS_VIEW_CODECS: readonly CanvasViewCodec[] = [
   {
+    shapeUtil: SixSinesShapeUtil,
+    isShape: isSixSinesShape,
+    entityType: SIX_SINES_ENTITY_TYPE,
+    rebindEntity: (shape, name) =>
+      ({
+        ...shape,
+        props: { ...shape.props, synthName: name, title: `Six Sines: ${name}` },
+      }) as SixSinesShape,
+    entityRef: (shape) => ({
+      type: SIX_SINES_ENTITY_TYPE,
+      name: (shape as SixSinesShape).props.synthName,
+    }),
+    createEntityView: (editor, name, position) =>
+      String(createSixSinesShape(editor, { ...position, synthName: name })),
+    collect: (shapes) => ({
+      sixSinesViews: shapes.filter(isSixSinesShape).map((shape) => ({
+        id: shape.id,
+        synthName: shape.props.synthName,
+        x: shape.x,
+        y: shape.y,
+        w: shape.props.w,
+        h: shape.props.h,
+      })),
+    }),
+    restore(editor, canvas) {
+      for (const view of canvas.sixSinesViews ?? []) {
+        const id = view.id as SixSinesShape["id"];
+        if (!editor.getShape(id)) createSixSinesShape(editor, { ...view, id });
+      }
+    },
+    hasChanged: (before, after) =>
+      hasBoxChanged(before as SixSinesShape, after as SixSinesShape) ||
+      (before as SixSinesShape).props.synthName !==
+        (after as SixSinesShape).props.synthName,
+  },
+  {
     shapeUtil: PianoRollShapeUtil,
     isShape: isPianoRollShape,
     entityType: PIANO_ROLL_ENTITY_TYPE,
-    rebindEntity: (shape, name) => ({
-      ...shape,
-      props: {
-        ...shape.props,
-        rollName: name,
-        title: `piano roll: ${name}`,
-      },
-    } as PianoRollShape),
+    rebindEntity: (shape, name) =>
+      ({
+        ...shape,
+        props: {
+          ...shape.props,
+          rollName: name,
+          title: `piano roll: ${name}`,
+        },
+      }) as PianoRollShape,
     entityRef: (shape) => ({
       type: PIANO_ROLL_ENTITY_TYPE,
       name: (shape as PianoRollShape).props.rollName,
@@ -137,14 +182,15 @@ export const CANVAS_VIEW_CODECS: readonly CanvasViewCodec[] = [
     shapeUtil: ParamPaneShapeUtil,
     isShape: isParamPaneShape,
     entityType: PARAMS_ENTITY_TYPE,
-    rebindEntity: (shape, name) => ({
-      ...shape,
-      props: {
-        ...shape.props,
-        paramsName: name,
-        title: `params: ${name}`,
-      },
-    } as ParamPaneShape),
+    rebindEntity: (shape, name) =>
+      ({
+        ...shape,
+        props: {
+          ...shape.props,
+          paramsName: name,
+          title: `params: ${name}`,
+        },
+      }) as ParamPaneShape,
     entityRef: (shape) => ({
       type: PARAMS_ENTITY_TYPE,
       name: (shape as ParamPaneShape).props.paramsName,
@@ -186,14 +232,15 @@ export const CANVAS_VIEW_CODECS: readonly CanvasViewCodec[] = [
     shapeUtil: AnimationEditorShapeUtil,
     isShape: isAnimationEditorShape,
     entityType: ANIMATION_TIMELINE_ENTITY_TYPE,
-    rebindEntity: (shape, name) => ({
-      ...shape,
-      props: {
-        ...shape.props,
-        animationName: name,
-        title: `animation: ${name}`,
-      },
-    } as AnimationEditorShape),
+    rebindEntity: (shape, name) =>
+      ({
+        ...shape,
+        props: {
+          ...shape.props,
+          animationName: name,
+          title: `animation: ${name}`,
+        },
+      }) as AnimationEditorShape,
     entityRef: (shape) => ({
       type: ANIMATION_TIMELINE_ENTITY_TYPE,
       name: (shape as AnimationEditorShape).props.animationName,
@@ -206,16 +253,16 @@ export const CANVAS_VIEW_CODECS: readonly CanvasViewCodec[] = [
         }),
       ),
     collect: (shapes) => ({
-      animationEditorViews: shapes.filter(isAnimationEditorShape).map((
-        shape,
-      ) => ({
-        id: shape.id,
-        animationName: shape.props.animationName,
-        x: shape.x,
-        y: shape.y,
-        w: shape.props.w,
-        h: shape.props.h,
-      })),
+      animationEditorViews: shapes
+        .filter(isAnimationEditorShape)
+        .map((shape) => ({
+          id: shape.id,
+          animationName: shape.props.animationName,
+          x: shape.x,
+          y: shape.y,
+          w: shape.props.w,
+          h: shape.props.h,
+        })),
     }),
     restore(editor, canvas) {
       for (const view of canvas.animationEditorViews ?? []) {
@@ -235,22 +282,24 @@ export const CANVAS_VIEW_CODECS: readonly CanvasViewCodec[] = [
     hasChanged: (before, after) => {
       const a = before as AnimationEditorShape;
       const b = after as AnimationEditorShape;
-      return hasBoxChanged(a, b) ||
-        a.props.animationName !== b.props.animationName;
+      return (
+        hasBoxChanged(a, b) || a.props.animationName !== b.props.animationName
+      );
     },
   },
   {
     shapeUtil: DrawingShapeUtil,
     isShape: isDrawingShape,
     entityType: DRAWING_ENTITY_TYPE,
-    rebindEntity: (shape, name) => ({
-      ...shape,
-      props: {
-        ...shape.props,
-        drawingName: name,
-        title: `drawing: ${name}`,
-      },
-    } as DrawingShape),
+    rebindEntity: (shape, name) =>
+      ({
+        ...shape,
+        props: {
+          ...shape.props,
+          drawingName: name,
+          title: `drawing: ${name}`,
+        },
+      }) as DrawingShape,
     entityRef: (shape) => ({
       type: DRAWING_ENTITY_TYPE,
       name: (shape as DrawingShape).props.drawingName,
@@ -285,8 +334,7 @@ export const CANVAS_VIEW_CODECS: readonly CanvasViewCodec[] = [
     hasChanged: (before, after) => {
       const a = before as DrawingShape;
       const b = after as DrawingShape;
-      return hasBoxChanged(a, b) ||
-        a.props.drawingName !== b.props.drawingName;
+      return hasBoxChanged(a, b) || a.props.drawingName !== b.props.drawingName;
     },
   },
   {
@@ -326,11 +374,13 @@ export const CANVAS_VIEW_CODECS: readonly CanvasViewCodec[] = [
     hasChanged: (before, after) => {
       const a = before as SignalScopeShape;
       const b = after as SignalScopeShape;
-      return hasBoxChanged(a, b) ||
+      return (
+        hasBoxChanged(a, b) ||
         a.props.sourceType !== b.props.sourceType ||
         a.props.name !== b.props.name ||
         a.props.path !== b.props.path ||
-        a.props.windowSec !== b.props.windowSec;
+        a.props.windowSec !== b.props.windowSec
+      );
     },
   },
   {
@@ -364,14 +414,13 @@ export const CANVAS_VIEW_CODECS: readonly CanvasViewCodec[] = [
     hasChanged: (before, after) => {
       const a = before as CanvasSurfaceShape;
       const b = after as CanvasSurfaceShape;
-      return hasBoxChanged(a, b) ||
-        a.props.surfaceName !== b.props.surfaceName;
+      return hasBoxChanged(a, b) || a.props.surfaceName !== b.props.surfaceName;
     },
   },
 ];
 
-export const CANVAS_VIEW_SHAPE_UTILS = CANVAS_VIEW_CODECS.map((codec) =>
-  codec.shapeUtil
+export const CANVAS_VIEW_SHAPE_UTILS = CANVAS_VIEW_CODECS.map(
+  (codec) => codec.shapeUtil,
 );
 
 export function collectCanvasViews(
@@ -421,8 +470,9 @@ export function createEntityView(
   name: string,
   position?: { x: number; y: number },
 ): string {
-  const codec = CANVAS_VIEW_CODECS.find((candidate) =>
-    candidate.entityType === entityType && candidate.createEntityView
+  const codec = CANVAS_VIEW_CODECS.find(
+    (candidate) =>
+      candidate.entityType === entityType && candidate.createEntityView,
   );
   if (!codec?.createEntityView) {
     throw new Error(
@@ -437,8 +487,9 @@ export function createAdjacentEntityView(
   entityType: string,
   name: string,
 ): void {
-  const codec = CANVAS_VIEW_CODECS.find((candidate) =>
-    candidate.entityType === entityType && candidate.createEntityView
+  const codec = CANVAS_VIEW_CODECS.find(
+    (candidate) =>
+      candidate.entityType === entityType && candidate.createEntityView,
   );
   if (!codec?.createEntityView) {
     throw new Error(
@@ -446,12 +497,13 @@ export function createAdjacentEntityView(
     );
   }
   const source = editor.getOnlySelectedShape();
-  const sourceCodec = CANVAS_VIEW_CODECS.find((candidate) =>
-    candidate.entityRef && candidate.isShape(source)
+  const sourceCodec = CANVAS_VIEW_CODECS.find(
+    (candidate) => candidate.entityRef && candidate.isShape(source),
   );
-  const sourceBox = sourceCodec && source
-    ? source as { x: number; y: number; props: { w: number } }
-    : null;
+  const sourceBox =
+    sourceCodec && source
+      ? (source as { x: number; y: number; props: { w: number } })
+      : null;
   const position = sourceBox
     ? { x: sourceBox.x + sourceBox.props.w + 40, y: sourceBox.y }
     : undefined;
@@ -462,14 +514,20 @@ function hasBoxChanged(
   before: { x: number; y: number; props: { w: number; h: number } },
   after: { x: number; y: number; props: { w: number; h: number } },
 ): boolean {
-  return before.x !== after.x || before.y !== after.y ||
-    before.props.w !== after.props.w || before.props.h !== after.props.h;
+  return (
+    before.x !== after.x ||
+    before.y !== after.y ||
+    before.props.w !== after.props.w ||
+    before.props.h !== after.props.h
+  );
 }
 
 function hasShapeType(value: unknown, type: string): boolean {
   return Boolean(
-    value && typeof value === "object" && "type" in value &&
-      (value as { type?: unknown }).type === type,
+    value &&
+    typeof value === "object" &&
+    "type" in value &&
+    (value as { type?: unknown }).type === type,
   );
 }
 
@@ -495,4 +553,13 @@ function isSignalScopeShape(value: unknown): value is SignalScopeShape {
 
 function isCanvasSurfaceShape(value: unknown): value is CanvasSurfaceShape {
   return hasShapeType(value, CANVAS_SURFACE_SHAPE_TYPE);
+}
+
+export function isSixSinesShape(value: unknown): value is SixSinesShape {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "type" in value &&
+    value.type === SIX_SINES_SHAPE_TYPE
+  );
 }

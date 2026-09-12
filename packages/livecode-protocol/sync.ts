@@ -4,13 +4,15 @@
  *
  * Two properties define the contract:
  *
- *   1. Per-ENTITY granularity. A changed entity ships whole and `entity: null`
- *      means deleted; there are no sub-entity diffs in v1.
+ *   1. Per-ENTITY granularity. A change carries an entity, sparse patches, or `entity: null`
+ *      for deletion. Patches require an initial full reset.
  *   2. `seq` is a per-socket monotonic counter for gap DETECTION only. There is
  *      no replay buffer: a detected gap (or a reconnect) is recovered by
  *      resubscribing, which replies with fresh `resets`.
  */
 
+import type { SixSinesEntity } from "./six_sines.ts";
+import type { EntityDelta } from "./patch.ts";
 import type { ParamsEntity } from "./params.ts";
 import type { PianoRollObject } from "./piano_roll.ts";
 import type { AnimationTimelineEntity } from "./animation_timeline.ts";
@@ -27,6 +29,7 @@ import type { SignalEntity } from "./signals.ts";
  * per-name scoping is deferred and the envelope already admits it.
  */
 export const SYNC_ENTITY_TYPES = [
+  "sixSines",
   "pianoRoll",
   "params",
   "animationTimeline",
@@ -41,6 +44,7 @@ export type SyncEntityTypeId = (typeof SYNC_ENTITY_TYPES)[number];
 
 /** The payload each entity kind ships. Keyed by the wire type id. */
 export interface SyncEntityByType {
+  sixSines: SixSinesEntity;
   pianoRoll: PianoRollObject;
   params: ParamsEntity;
   animationTimeline: AnimationTimelineEntity;
@@ -65,12 +69,10 @@ export interface SyncSubscribeMessage {
 
 export type SyncClientMessage = SyncSubscribeMessage;
 
-export interface SyncEntityChange<E = SyncEntity> {
+export type SyncEntityChange<E = SyncEntity> = EntityDelta<E> & {
   entityType: string;
-  name: string;
-  /** `null` means the entity was deleted. */
-  entity: E | null;
-}
+};
+export type SyncDelta<E = SyncEntity> = SyncEntityChange<E>;
 
 export interface SyncMessage<E = SyncEntity> {
   type: "sync";

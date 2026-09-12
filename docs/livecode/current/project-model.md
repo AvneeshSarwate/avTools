@@ -73,7 +73,7 @@ and their handlers in
 
 ## Durable entity persistence
 
-Piano rolls, params, animation timelines, and drawings live in engine memory.
+Registered durable entities live in engine memory.
 Only an explicit project save captures them; code writes never touch disk and shutdown
 does not auto-save. Save first captures all durable registered stores, writes
 one JSON file per entity, and rewrites manifest data entries. The save is not
@@ -86,7 +86,11 @@ an entity followed by save removes its manifest entry but deliberately leaves
 the old data file, matching manifest-only module removal. Piano-roll undo/redo
 history is never serialized; loading disk truth clears it. Params save their
 metadata and load mutates held live objects in place so running code does not
-retain a detached value.
+retain a detached value. Tracking patches are transport, not a persisted log:
+save captures complete current domain state without draining pending changes.
+For Six Sines this is base preset XML plus parameter overrides; exporting a
+native preset must fold those overrides into XML. Audio nodes, tracker metadata,
+listeners, and editor undo state are not project data.
 
 Save aborts before writes if a current durable value cannot serialize. An
 untouched demo roll is deliberately skipped. Open, in contrast, skips/logs an

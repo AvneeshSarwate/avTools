@@ -21,4 +21,6 @@ export type * from "./runtime.ts";
 export type * from "./saved_entities.ts";
 export type * from "./signals.ts";
 export type * from "./sync.ts";
+export type * from "./six_sines.ts";
+export type * from "./patch.ts";
 export { SYNC_ENTITY_TYPES } from "./sync.ts";

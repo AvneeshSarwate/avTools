@@ -45,6 +45,7 @@ interface PageState {
   health: HealthResponse | null;
   projects: ProjectsListResponse | null;
   projectsError: string | null;
+  projectQuery: string;
   openPhase: OpenPhase;
   errorMessage: string | null;
 }
@@ -54,6 +55,7 @@ const state: PageState = {
   health: null,
   projects: null,
   projectsError: null,
+  projectQuery: "",
   openPhase: { kind: "idle" },
   errorMessage: null,
 };
@@ -623,6 +625,29 @@ function renderProjects(): HTMLElement {
     container.appendChild(el("p", "hint", "Loading projects…"));
     return container;
   }
+  const searchLabel = el("label", "project-search-label", "Search projects");
+  const searchInput = el("input", "project-search") as HTMLInputElement;
+  searchInput.type = "search";
+  searchInput.placeholder = "Filter by project name…";
+  searchInput.value = state.projectQuery;
+  searchInput.setAttribute("aria-label", "Search projects by name");
+  searchInput.autocomplete = "off";
+  searchInput.spellcheck = false;
+  searchInput.addEventListener("input", () => {
+    state.projectQuery = searchInput.value;
+    render();
+    const nextInput = document.querySelector<HTMLInputElement>(
+      ".project-search",
+    );
+    nextInput?.focus();
+    nextInput?.setSelectionRange(
+      state.projectQuery.length,
+      state.projectQuery.length,
+    );
+  });
+  searchLabel.appendChild(searchInput);
+  container.appendChild(searchLabel);
+
   if (state.projects.projects.length === 0) {
     container.appendChild(
       el(
@@ -636,8 +661,28 @@ function renderProjects(): HTMLElement {
     return container;
   }
 
+  const matchingProjects = state.projects.projects
+    .map((project, index) => ({
+      project,
+      index,
+      score: fuzzyProjectNameScore(state.projectQuery, project.name),
+    }))
+    .filter((entry): entry is {
+      project: ProjectIndexEntry;
+      index: number;
+      score: number;
+    } => entry.score !== null)
+    .sort((a, b) => a.score - b.score || a.index - b.index);
+
+  if (matchingProjects.length === 0) {
+    container.appendChild(
+      el("p", "hint", `No projects match “${state.projectQuery.trim()}”.`),
+    );
+    return container;
+  }
+
   const list = el("ul", "project-list");
-  for (const project of state.projects.projects) {
+  for (const { project } of matchingProjects) {
     list.appendChild(renderProjectCard(project));
   }
   container.appendChild(list);
@@ -649,6 +694,53 @@ function renderProjects(): HTMLElement {
   );
   container.appendChild(roots);
   return container;
+}
+
+/** Return a lower score for a closer fuzzy name match, or null when it misses. */
+function fuzzyProjectNameScore(query: string, name: string): number | null {
+  const needle = query.trim().toLocaleLowerCase();
+  const haystack = name.toLocaleLowerCase();
+  if (!needle) return 0;
+
+  const substringStart = haystack.indexOf(needle);
+  if (substringStart !== -1) {
+    return substringStart / Math.max(1, haystack.length);
+  }
+
+  let cursor = 0;
+  let gaps = 0;
+  let matched = 0;
+  for (const character of needle) {
+    const match = haystack.indexOf(character, cursor);
+    if (match === -1) break;
+    gaps += match - cursor;
+    cursor = match + 1;
+    matched += 1;
+  }
+  if (matched === needle.length) {
+    return 1 + gaps / Math.max(1, haystack.length);
+  }
+
+  const distance = editDistance(needle, haystack);
+  const allowedDistance = Math.max(1, Math.floor(needle.length * 0.35));
+  return distance <= allowedDistance ? 2 + distance : null;
+}
+
+function editDistance(left: string, right: string): number {
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex++) {
+    const current = [leftIndex];
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex++) {
+      current[rightIndex] = Math.min(
+        current[rightIndex - 1] + 1,
+        previous[rightIndex] + 1,
+        previous[rightIndex - 1] +
+          (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[right.length];
 }
 
 function renderProjectCard(project: ProjectIndexEntry): HTMLElement {
@@ -785,6 +877,15 @@ style.textContent = `
   }
   .banner.error { background: #3a2226; border: 1px solid #6b2f2f; }
   .banner.busy { background: #23303a; border: 1px solid #2f4f6b; }
+  .project-search-label {
+    display: grid; gap: 6px; margin-bottom: 14px; color: #b9b9c4;
+    font-size: 12px;
+  }
+  .project-search {
+    width: 100%; max-width: 420px; background: #232329; color: #e8e8ec;
+    border: 1px solid #3a3a44; border-radius: 6px; padding: 8px 10px;
+    font-size: 14px;
+  }
   .project-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
   .project-card {
     background: #1f1f26; border: 1px solid #2e2e37; border-radius: 10px;

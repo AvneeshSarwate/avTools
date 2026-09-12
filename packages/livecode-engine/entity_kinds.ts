@@ -5,6 +5,7 @@ import {
   paramsEntityType,
   pianoRollEntityType,
   registerDurableEntityType,
+  sixSinesEntityType,
 } from "./entity_registry.ts";
 import {
   ANIMATION_TIMELINE_ENTITY_TYPE,
@@ -39,7 +40,14 @@ export interface EntityKindRegistration<E = unknown> {
   durable?: DurableEntityTypeBehavior;
 }
 
+import { collectSixSinesChanges, listSixSines } from "./six_sines_store.ts";
+
 export const BUILTIN_ENTITY_KINDS: EntityKindRegistration[] = [
+  {
+    typeId: "sixSines",
+    sync: { collectChanges: collectSixSinesChanges, snapshotAll: listSixSines },
+    durable: sixSinesEntityType,
+  },
   {
     typeId: PIANO_ROLL_ENTITY_TYPE,
     sync: {

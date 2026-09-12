@@ -32,13 +32,29 @@ Read these in order:
 9. `docs/livecode/current/testing-and-operations.md`
 10. `docs/livecode/current/known-risks.md`
 
-`current/adding-an-entity-kind.md` is an on-demand recipe, not bootstrap
-reading.
+[`current/adding-an-entity-kind.md`](current/adding-an-entity-kind.md) is an
+on-demand recipe, not bootstrap reading.
 
 After the bootstrap, inspect the source files linked by the document nearest to
 your change. For a cross-boundary change, begin in `packages/livecode-protocol`
 and follow both consumers; the shared types are compile-time contracts, not
 runtime validation.
+
+## Find a state/communication contract
+
+- Live handles, snapshots, reference lifetime, and what optimization changes:
+  [state ownership](current/system-architecture.md#mutable-entities-and-write-tracking).
+- Implementing a large mutable entity with predictable boilerplate:
+  [entity-kind recipe](current/adding-an-entity-kind.md#3-implement-and-register-the-store).
+- Patch ordering, full resets, and topology-independent delivery:
+  [sync semantics](current/protocol.md#sync-semantics).
+- Adapting a UI without making component code understand the wire protocol:
+  [client state layers](current/client.md#state-layers-and-provider-order).
+
+The tracker package's [README](../../packages/tracked-state/README.md) owns its
+value-model, aliasing, selective-scan, and cost details; the pages above own
+how it participates in the engine. Read the package contract when extending a
+store, not as a prerequisite to writing a piece.
 
 ## Authority
 
@@ -99,6 +115,11 @@ Boundary ownership:
 - `packages/livecode-protocol` is the one shared wire-type source.
 - `packages/livecode-engine` is the portable execution plane: lifecycle,
   stores, sync sources, and runtime instrumentation.
+- `packages/tracked-state` is the dependency-free mutable-state tracking
+  primitive. It owns neither entity lifecycle nor engine/UI communication.
+- `packages/six-sines` contains the browser sound engine and compiled Vue
+  preset editor; its [README](../../packages/six-sines/README.md) owns the
+  distribution boundary and points to the sound-design example.
 - `packages/core-timing` owns `TimeContext`, logical time, cancellation, and
   structured concurrency. Its API contract is in
   `packages/core-timing/offline_time_context.ts`.

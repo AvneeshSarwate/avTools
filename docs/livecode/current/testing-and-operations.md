@@ -73,6 +73,15 @@ resumes an example's rendered scene. The in-process form against a live server
 is not E2E-covered. `browser_host_import_map_test.ts` keeps the client and
 engine-page import maps identical.
 
+For tracking work, the [package verification guide](../../../packages/tracked-state/README.md#verification-and-benchmarks)
+owns library tests and benchmarks; these are separate from the livecode test
+tasks. Library correctness does not prove engine gate/drain integration or
+client baseline recovery. Use the sparse reference kind and
+[entity recipe's seam checks](adding-an-entity-kind.md#6-prove-the-seams).
+The Six Sines example has same-tab manual browser validation; its separate-tab
+workflow and gap recovery are not established by that check. Node benchmarks
+and small wire payloads are not browser engine/audio deadline guarantees.
+
 The tldraw E2E is broad but monolithic; it is not a substitute for deterministic
 unit/server coverage of a race or validation rule. Prefer condition-based
 polling over sleeps. Tests that assert generated-code spelling should do so only

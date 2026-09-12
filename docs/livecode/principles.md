@@ -39,6 +39,8 @@ destination the current code has not reached; concrete behavior lives in
 
 - **Normal files are a product boundary.** Source must remain ordinary filesystem code that agents and external editors can naturally read and write. The environment observes discrepancies between disk, editor, generated, and running state. [Project design](history/project-modules-design.md)
 
+- **Optimize synchronization without changing creative code.** Inspectable named state and ordinary assignments remain the authoring model when a kind uses write tracking. Optimization setup belongs in a small repeatable store/UI adapter, not manual dirty calls or implicit read-triggered effects in a piece. Large bulk operations may use explicit APIs; unexpectedly expensive supported mutations must not silently lose updates. Current scope and reference-lifetime limits are in [state ownership](current/system-architecture.md#mutable-entities-and-write-tracking).
+
 - **A little boilerplate beats magic.** Explicit initialization and lifecycle conventions are preferable when they make module behavior understandable. [Client brainstorm](history/source-notes/client-brainstorm.md)
 
 - **Cross-module synchronization is musical, not metric.** Coordination should support arbitrary generative phase relationships; it should not impose quantized launch, ownership by a conductor, or clean downbeat assumptions. [Stability review](history/stability-review-2026-07.md)
@@ -69,10 +71,10 @@ Think of the environment as four cooperating planes:
    and shape persistence.
 2. **Editor semantics:** CodeMirror owns editor state and Deno LSP owns
    diagnostics, completion, hover, and other language features.
-3. **Execution and observation:** Deno owns analysis, generated files, imports,
-   logical-time execution, native capabilities, lifecycle truth, and the sync
-   transport.
-4. **Domain state:** server-side stores own named musical/visual entities.
+3. **Execution and observation:** the coordination server owns analysis and
+   generated files; the selected engine owns imports, logical-time execution,
+   host capabilities, lifecycle truth, and change collection.
+4. **Domain state:** engine-side stores own named musical/visual entities.
    Shapes are views onto those entities, not their canonical storage.
 
 Browser UI tabs are control and visualization chrome. User code executes in
@@ -162,7 +164,9 @@ serialized entity actions over one entity store. Still ahead:
   `current/known-risks.md`);
 - accurate source mapping for diagnostics produced from transformed shadow
   files;
-- per-name sync subscriptions and sub-entity diffs, when scale demands them.
+- per-name sync subscriptions and broader adoption of sparse updates where
+  scale demands them; Six Sines now uses tracked sub-entity patches, while
+  other kinds retain their existing contracts.
 
 Avoid building new parallel infrastructure that makes these migrations harder.
 For architecture-sized work, write a design note in `history/` and confirm the

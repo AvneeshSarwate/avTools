@@ -30,6 +30,7 @@ const REPO_ROOT = resolve(HERE, "../../../..");
 /** Alias entries served next to the page; the import map points bare
  * specifiers user modules keep after transform at these bundles. */
 const ALIAS_ENTRIES: Record<string, string> = {
+  "six_sines_store": 'export * from "six-sines-store";\n',
   "canvas_signals": 'export { signal } from "canvas-signals";\n',
   "canvas_events": 'export * from "canvas-events";\n',
   "canvas_params": 'export * from "canvas-params";\n',
@@ -69,6 +70,7 @@ const ALIAS_ENTRIES: Record<string, string> = {
  * map; `browser_host_import_map_test.ts` keeps the two copies in agreement.
  */
 export const MODULE_IMPORT_MAP: Readonly<Record<string, string>> = {
+  "six-sines-store": "six_sines_store.js",
   "canvas-signals": "canvas_signals.js",
   "canvas-events": "canvas_events.js",
   "canvas-params": "canvas_params.js",

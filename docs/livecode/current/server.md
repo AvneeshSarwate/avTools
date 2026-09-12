@@ -77,12 +77,14 @@ The engine has one `SyncSourceRegistry` and one approximately 33 ms collector.
 Each source provides two operations with deliberately different effects:
 
 - `collectChanges()` is the sole consumer of its change gate;
-- `snapshotAll()` is read-only and may be called for subscriptions, HTTP reads,
-  remote-engine hello, or detach recovery without swallowing a future update.
+- `snapshotAll()` is an observation, not an acknowledgement: subscriptions,
+  HTTP reads, remote-engine hello, and recovery must not swallow future
+  updates. A tracker may discover external drift while making a snapshot;
+  it must retain that drift for the next collection.
 
 Store-backed kinds are registered once in
 `packages/livecode-engine/entity_kinds.ts`. Piano rolls, params, animation
-timelines, and drawings add a durable descriptor; signals omit it and therefore
+timelines, drawings, and Six Sines add a durable descriptor; signals omit it and therefore
 cannot be saved or reached through generic entity CRUD. Run/wait/lookup sources are wired
 separately because their state is engine/runtime-owned rather than a named
 domain store.
@@ -91,7 +93,12 @@ Change tracking is per entity name. A deletion ships as a null entity; meta,
 anchor, availability, and ended-state changes must mark the name even when the
 value revision does not change. Params and signals also sample caller-held live
 objects every tick, even with no subscribers, because direct code mutation
-bypasses route setters.
+bypasses route setters. Six Sines instead collects tracked parameter patches.
+The source owns detection and revision policy; the host forwards its complete
+batch without expanding every patch into a full snapshot. Full resets and
+capture operations still read complete state. Wire rules are in
+[protocol.md](protocol.md#sync-semantics); the tracker integration obligations
+are in the [entity-kind recipe](adding-an-entity-kind.md#3-implement-and-register-the-store).
 
 ## Project coordination
 

@@ -2,8 +2,13 @@
   color: #e8ece9;
   background: #171a18;
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", sans-serif;
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -890,4 +895,38 @@ input {
   color: #9ca8a2;
   font-size: 12px;
   text-align: center;
+}
+
+.six-sines-shape {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #56565d;
+  border-radius: 10px;
+  background: #18181a;
+  color: #ddd;
+}
+.six-sines-shape__header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 44px;
+  padding: 0 14px;
+  background: #242428;
+}
+.six-sines-shape__header > span {
+  font-size: 12px;
+  opacity: 0.8;
+}
+.six-sines-shape__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  pointer-events: all;
+}
+.six-sines-shape__body six-sines-editor {
+  display: block;
+  min-width: 1180px;
+  width: 100%;
+  height: 100%;
 }

@@ -55,6 +55,11 @@ import type {
 export interface DurableEntityTypeDescriptor {
   /** Stable wire id. Assumed space-free: saved-state keys are `type name`. */
   typeId: string;
+  patch?(
+    name: string,
+    patches: import("@avtools/livecode-protocol").EntityPatch[],
+    options: { originId?: string; expectedRev?: number },
+  ): import("@avtools/livecode-protocol").EntityPatchResult;
   listNames(): string[];
   exists(name: string): boolean;
   /** Rejects an existing name. */
@@ -265,6 +270,58 @@ export const animationTimelineEntityType: DurableEntityTypeBehavior = {
     loadAnimationTimeline(name, saved.data as AnimationTimelineData);
   },
   latestJson: (name) => latestAnimationTimelineJson(name),
+};
+
+import {
+  getSixSines,
+  latestSixSinesJson,
+  listSixSinesNames,
+  loadSixSines,
+  patchSixSines,
+  registerSixSines,
+  removeSixSines,
+} from "./six_sines_store.ts";
+export const sixSinesEntityType: DurableEntityTypeBehavior = {
+  listNames: listSixSinesNames,
+  exists: (name) => getSixSines(name) !== null,
+  create(name) {
+    if (getSixSines(name)) {
+      throw new Error(`Six Sines "${name}" already exists`);
+    }
+    registerSixSines(name, {
+      preset: '<patch id="org.baconpaul.six-sines" version="12" name="Init"><params/></patch>',
+      values: {},
+    });
+  },
+  duplicate(source, target) {
+    const entity = getSixSines(source);
+    if (!entity) throw new Error(`No Six Sines "${source}"`);
+    if (getSixSines(target)) {
+      throw new Error(`Six Sines "${target}" already exists`);
+    }
+    registerSixSines(target, entity.data);
+  },
+  remove: removeSixSines,
+  serialize(name) {
+    const entity = getSixSines(name);
+    return entity
+      ? {
+        type: "sixSines",
+        name: entity.name,
+        savedAt: new Date().toISOString(),
+        data: entity.data,
+      }
+      : null;
+  },
+  deserialize(name, value) {
+    const saved = requireJsonObject(value, "Saved Six Sines");
+    loadSixSines(
+      name,
+      saved.data as import("@avtools/livecode-protocol").SixSinesData,
+    );
+  },
+  latestJson: latestSixSinesJson,
+  patch: patchSixSines,
 };
 
 export const drawingEntityType: DurableEntityTypeBehavior = {

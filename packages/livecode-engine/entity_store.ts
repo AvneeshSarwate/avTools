@@ -38,10 +38,9 @@ interface EntityTypeStore {
  * One entity's delivery on the sync transport: the whole entity, or `null`
  * when it was deleted. Type wrappers return arrays of these from their tick.
  */
-export interface EntityChange<E> {
-  name: string;
-  entity: E | null;
-}
+export type EntityChange<E> = import("@avtools/livecode-protocol").EntityDelta<
+  E
+>;
 
 /** One tick's worth of per-name changes for one entity type. */
 export interface EntityChangeSet {
