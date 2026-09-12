@@ -21,8 +21,9 @@ import type {
 } from "@avtools/livecode-protocol";
 import type { AnimationEditorComponentElement } from "./custom-elements";
 import { ANIMATION_TIMELINE_ENTITY_TYPE } from "./serverRequests";
-import { signalPlayheadMarkers } from "./signalPlayheadMarkers";
-import { useAnimationTimelinesSync, useSignalsSync } from "./syncRuntime";
+import { shouldHydrateAnimationEditor } from "./animationEditorHydration";
+import { useAnimationTimelinesSync } from "./syncRuntime";
+import { useSignalPlayheadMarkers } from "./useSignalPlayheadMarkers";
 
 export const ANIMATION_EDITOR_SHAPE_TYPE = "animation-editor-view";
 export { ANIMATION_TIMELINE_ENTITY_TYPE };
@@ -120,10 +121,13 @@ function AnimationEditorShapeComponent({
 }: {
   shape: AnimationEditorShape;
 }) {
-  const runtime = useAnimationTimelinesSync();
-  const signalsRuntime = useSignalsSync();
+  const runtime = useAnimationTimelinesSync(shape.props.animationName);
   const timeline = runtime.timelines[shape.props.animationName];
   const hasTimeline = timeline !== undefined;
+  const markers = useSignalPlayheadMarkers(
+    ANIMATION_TIMELINE_ENTITY_TYPE,
+    shape.props.animationName,
+  );
   const setTimeline = runtime.setTimeline;
   const elementRef = useRef<AnimationEditorComponentElement | null>(null);
   const latestEntityRef = useRef<AnimationTimelineEntity | null>(
@@ -131,30 +135,51 @@ function AnimationEditorShapeComponent({
   );
   const writeQueueRef = useRef(Promise.resolve());
   const lastMarkerKeyRef = useRef<string | null>(null);
+  const appliedRevRef = useRef<number | null>(null);
   const [writeError, setWriteError] = useState<string | null>(null);
   const originId = useMemo(() => `animation-editor-view-${shape.id}`, [
     shape.id,
   ]);
-  const markers = useMemo(
-    () =>
-      signalsRuntime.connectionStatus === "open"
-        ? signalPlayheadMarkers(
-          signalsRuntime.signals,
-          ANIMATION_TIMELINE_ENTITY_TYPE,
-          shape.props.animationName,
-        )
-        : [],
-    [
-      signalsRuntime.connectionStatus,
-      signalsRuntime.signals,
-      shape.props.animationName,
-    ],
-  );
+  const bindingRef = useRef({
+    name: shape.props.animationName,
+    hasTimeline,
+    active: true,
+  });
+  if (
+    bindingRef.current.name !== shape.props.animationName ||
+    bindingRef.current.hasTimeline !== hasTimeline
+  ) {
+    bindingRef.current.active = false;
+    bindingRef.current = {
+      name: shape.props.animationName,
+      hasTimeline,
+      active: true,
+    };
+  }
+  const binding = bindingRef.current;
+
+  useEffect(() => {
+    binding.active = true;
+    appliedRevRef.current = null;
+    lastMarkerKeyRef.current = null;
+    return () => {
+      binding.active = false;
+    };
+  }, [binding]);
 
   useEffect(() => {
     latestEntityRef.current = timeline ?? null;
-    if (timeline) elementRef.current?.setTimeline?.(timeline.data);
-  }, [timeline]);
+    const element = elementRef.current;
+    if (!timeline || !element) return;
+    if (
+      !shouldHydrateAnimationEditor(timeline, appliedRevRef.current, originId)
+    ) {
+      appliedRevRef.current = timeline.rev;
+      return;
+    }
+    element.setTimeline?.(timeline.data);
+    appliedRevRef.current = timeline.rev;
+  }, [timeline, originId, binding]);
 
   useEffect(() => {
     const element = elementRef.current;
@@ -163,13 +188,13 @@ function AnimationEditorShapeComponent({
     if (lastMarkerKeyRef.current === key) return;
     lastMarkerKeyRef.current = key;
     element.setPlayheadMarkers?.(markers);
-  }, [markers, timeline]);
+  }, [markers, binding]);
 
   useEffect(() => {
     const element = elementRef.current;
     if (!element) return;
     element.interactive = shape.props.interactive;
-  }, [shape.props.interactive, timeline]);
+  }, [shape.props.interactive, binding]);
 
   useEffect(() => {
     const element = elementRef.current;
@@ -180,6 +205,7 @@ function AnimationEditorShapeComponent({
       if (!data || !shape.props.interactive) return;
       const baseRev = latestEntityRef.current?.rev;
       writeQueueRef.current = writeQueueRef.current.then(async () => {
+        if (!binding.active || bindingRef.current !== binding) return;
         const current = latestEntityRef.current;
         if (!current || baseRev === undefined) return;
         try {
@@ -190,17 +216,26 @@ function AnimationEditorShapeComponent({
             originId,
             expectedRev,
           });
+          if (!binding.active || bindingRef.current !== binding) return;
           if (result.ok) {
             latestEntityRef.current = result.timeline;
-            element.setTimeline?.(result.timeline.data);
+            if (appliedRevRef.current !== result.timeline.rev) {
+              element.setTimeline?.(result.timeline.data);
+            }
+            appliedRevRef.current = result.timeline.rev;
             setWriteError(null);
           } else {
-            latestEntityRef.current = result.current ?? current;
-            element.setTimeline?.((result.current ?? current).data);
+            const truth = result.current ?? current;
+            latestEntityRef.current = truth;
+            element.setTimeline?.(truth.data);
+            appliedRevRef.current = truth.rev;
             setWriteError(result.error);
           }
         } catch (error) {
-          element.setTimeline?.(latestEntityRef.current?.data ?? current.data);
+          if (!binding.active || bindingRef.current !== binding) return;
+          const truth = latestEntityRef.current ?? current;
+          element.setTimeline?.(truth.data);
+          appliedRevRef.current = truth.rev;
           setWriteError(error instanceof Error ? error.message : String(error));
         }
       });
@@ -210,6 +245,7 @@ function AnimationEditorShapeComponent({
     return () =>
       element.removeEventListener("timeline-change", onTimelineChange);
   }, [
+    binding,
     hasTimeline,
     originId,
     setTimeline,
@@ -254,6 +290,7 @@ function AnimationEditorShapeComponent({
         {timeline
           ? (
             <animation-editor-component
+              key={shape.props.animationName}
               ref={elementRef}
               data-animation-name={shape.props.animationName}
               style={{ width: "100%", height: "100%", display: "block" }}

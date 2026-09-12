@@ -124,8 +124,8 @@ same button becomes Replace, and only that explicit gesture sends
 At execution time, generated wrappers update wait counts, resolved piano-roll
 names, and signal ownership. One approximately 33 ms engine tick drains all
 changed sync sources once. The host fans the result out; the client applies it
-to isolated per-kind stores and coalesces React publication to one animation
-frame. This two-stage batching is the hot-path boundary.
+to per-kind maps and coalesces publication to one animation frame. Bound React
+views subscribe by entity name, so unrelated entities do not invalidate them. This two-stage batching is the hot-path boundary.
 
 ## Connection domains
 

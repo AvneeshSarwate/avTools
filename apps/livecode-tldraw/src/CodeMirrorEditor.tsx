@@ -21,6 +21,7 @@ import { basicSetup } from 'codemirror'
 import { useEffect, useMemo, useRef } from 'react'
 import { createDenoLspExtensions } from './denoLsp'
 import type { SourceRange } from './livecodeProtocol'
+import { equalWaitRangeGeometry } from './moduleWaitRendering'
 
 const setWaitDecorationsEffect = StateEffect.define<SourceRange[]>()
 const setEntityDecorationsEffect = StateEffect.define<EntityCallDecoration[]>()
@@ -278,6 +279,8 @@ export function CodeMirrorEditor({
   const onChangeRef = useRef(onChange)
   const editableCompartmentRef = useRef(new Compartment())
   const lspCompartmentRef = useRef(new Compartment())
+  const appliedWaitRangesRef = useRef<SourceRange[] | null>(null)
+  const appliedEntityCallsitesRef = useRef<EntityCallDecoration[] | null>(null)
   onChangeRef.current = onChange
 
   const extensions = useMemo<Extension[]>(
@@ -323,6 +326,8 @@ export function CodeMirrorEditor({
       extensions,
     })
     viewRef.current = view
+    appliedWaitRangesRef.current = null
+    appliedEntityCallsitesRef.current = null
     ensureDebugApi()
     debugEditorViews.set(documentUri, view)
     return () => {
@@ -330,6 +335,8 @@ export function CodeMirrorEditor({
       entityOpenListeners.delete(view)
       view.destroy()
       viewRef.current = null
+      appliedWaitRangesRef.current = null
+      appliedEntityCallsitesRef.current = null
     }
   }, [documentUri, extensions])
 
@@ -341,7 +348,7 @@ export function CodeMirrorEditor({
     } else {
       entityOpenListeners.delete(view)
     }
-  }, [onOpenEntity])
+  }, [documentUri, onOpenEntity])
 
   useEffect(() => {
     const view = viewRef.current
@@ -372,16 +379,33 @@ export function CodeMirrorEditor({
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
+    if (
+      appliedWaitRangesRef.current &&
+      equalWaitRangeGeometry(appliedWaitRangesRef.current, activeRanges)
+    ) {
+      return
+    }
     view.dispatch({ effects: setWaitDecorationsEffect.of(activeRanges) })
-  }, [activeRanges])
+    appliedWaitRangesRef.current = activeRanges
+  }, [activeRanges, documentUri])
 
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
+    if (
+      appliedEntityCallsitesRef.current &&
+      equalEntityCallDecorations(
+        appliedEntityCallsitesRef.current,
+        entityCallsites,
+      )
+    ) {
+      return
+    }
     view.dispatch({
       effects: setEntityDecorationsEffect.of(entityCallsites),
     })
-  }, [entityCallsites])
+    appliedEntityCallsitesRef.current = entityCallsites
+  }, [documentUri, entityCallsites])
 
   useEffect(() => {
     const view = viewRef.current
@@ -391,9 +415,23 @@ export function CodeMirrorEditor({
         EditorView.editable.of(!readOnly),
       ),
     })
-  }, [readOnly])
+  }, [documentUri, readOnly])
 
   return <div ref={hostRef} className="livecode-codemirror" />
+}
+
+function equalEntityCallDecorations(
+  previous: readonly EntityCallDecoration[],
+  next: readonly EntityCallDecoration[],
+): boolean {
+  if (previous.length !== next.length) return false
+  return previous.every((entry, index) => {
+    const candidate = next[index]
+    return entry.at === candidate.at &&
+      entry.entityType === candidate.entityType &&
+      entry.entityName === candidate.entityName &&
+      entry.tentative === candidate.tentative
+  })
 }
 
 function clampPosition(docLength: number, value: number) {

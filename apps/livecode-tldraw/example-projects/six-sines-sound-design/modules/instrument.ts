@@ -258,7 +258,7 @@ export async function playPianoRollWithSixSines(
     if (startupPolls++ >= 100) {
       throw new Error("Timed out waiting for the Six Sines AudioWorklet");
     }
-    await __tcvVisualizedAwait("sound-design/instrument", "c15dc089-0c05-4c11-85d8-793b7b8e0784", ctx.waitSec(0.05));
+    await __tcvVisualizedAwait("sound-design/instrument", "d2c70c63-f9c3-4ae9-b368-55ee96969981", ctx.waitSec(0.05));
   }
   if (state === "failed") throw initializationError;
 
@@ -276,7 +276,7 @@ export async function playPianoRollWithSixSines(
 
   for (const note of notes) {
     const waitBeats = Math.max(0, note.position - cursorBeat);
-    if (waitBeats > 0) await __tcvVisualizedAwait("sound-design/instrument", "ba123c40-f767-4a07-9c1d-bc52961324cb", ctx.waitSec(waitBeats * secondsPerBeat));
+    if (waitBeats > 0) await __tcvVisualizedAwait("sound-design/instrument", "ea1728f2-db31-4e79-b801-4eb6d6dce963", ctx.waitSec(waitBeats * secondsPerBeat));
 
     const velocity127 = options.velocity ?? note.velocity ?? 100;
     const noteId = noteOnSixSines(note.pitch, velocity127 / 127);
@@ -289,7 +289,7 @@ export async function playPianoRollWithSixSines(
     };
     const handle = ctx.branch(async (noteCtx) => {
       try {
-        await __tcvVisualizedAwait("sound-design/instrument", "193112f0-8f58-4439-b4c0-fe4f251abe79", noteCtx.waitSec(durationSec));
+        await __tcvVisualizedAwait("sound-design/instrument", "6f40932c-73d9-4dd4-b4cf-57875288285e", noteCtx.waitSec(durationSec));
       } finally {
         release();
       }
@@ -299,7 +299,7 @@ export async function playPianoRollWithSixSines(
   }
 
   const tailBeats = Math.max(0, clipDuration - cursorBeat);
-  if (tailBeats > 0) await __tcvVisualizedAwait("sound-design/instrument", "389f1dd4-e2a0-4c2c-8126-bfbd086bfb04", ctx.waitSec(tailBeats * secondsPerBeat));
+  if (tailBeats > 0) await __tcvVisualizedAwait("sound-design/instrument", "491c7759-4c9b-486f-99f6-24dc6c8bd724", ctx.waitSec(tailBeats * secondsPerBeat));
 }
 
 /** Panic, dispose the worklet, and close the owning AudioContext. Idempotent. */
@@ -331,7 +331,7 @@ export function stopSixSines(): void {
  */
 export async function runFunc(ctx: TimeContext) {
   console.log("[six-sines] helper module; run the Six Sines loop player");
-  await __tcvVisualizedAwait("sound-design/instrument", "2996b341-c6d9-4429-b6e8-2a723a8e87b1", ctx.waitSec(0.05));
+  await __tcvVisualizedAwait("sound-design/instrument", "87d27af6-abdf-43cf-8f09-204c92a4bce9", ctx.waitSec(0.05));
 }
 const describeSixSinesHelpers = runFunc;
 

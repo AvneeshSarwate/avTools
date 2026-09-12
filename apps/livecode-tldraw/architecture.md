@@ -20,7 +20,7 @@ and the end-to-end topology and flows are in
 | Project, baked-project, and `.tldr` canvas helpers | `src/projectCanvas.ts` |
 | Browser automation/client-control bridge | `src/clientControlBridge.ts` |
 | Projects index page (server discovery, project list, topology-aware open) | `projects.html`, `src/projectsIndex.ts` |
-| Sync provider, per-kind contexts, typed hooks, and HTTP writes | `src/syncRuntime.tsx` |
+| Sync provider, entity-scoped subscriptions, typed hooks, and writes | `src/syncRuntime.tsx`, `src/syncStore.ts`, `src/syncSubscriptions.tsx` |
 | Sync map reduction and WebSocket/BroadcastChannel adapters | `src/syncState.ts`, `src/syncTransport.ts` |
 | Runtime provider, connect/recovery, analysis, launch, and project synchronization | `src/livecodeRuntime.tsx`, `src/buildLifecycle.ts`, `src/runCorrelation.ts` |
 | Livecode shape and utility | `src/LivecodeEditorShape.tsx` |
@@ -47,6 +47,7 @@ npm run dev
 npm run type-check
 npm run build
 npm run test:e2e
+npm run test:sync-rendering
 ```
 
 The E2E runner starts its own Deno server and Vite process, then drives Chromium.

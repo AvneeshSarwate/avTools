@@ -32,7 +32,7 @@ export async function runFunc(ctx: TimeContext) {
           centers.delete(id);
         }
       }
-      await __tcvVisualizedAwait("sound-design/pan-lfos", "79d4f830-312a-459d-a87b-66768d01c919", ctx.waitSec(1 / 60));
+      await __tcvVisualizedAwait("sound-design/pan-lfos", "d81af08d-9829-4017-9856-05401b5df5cf", ctx.waitSec(1 / 60));
     }
   } finally {
     ctx.abortController.signal.removeEventListener("abort", restore);

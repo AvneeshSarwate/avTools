@@ -3273,5 +3273,7 @@ async function runEventButtonsCase() {
   presses++; releases++
   await counts(false)
   assert(shapeId, 'event pane exists')
+  await stopModule(firstModuleId)
+  await waitForServerRunState(firstModuleId, false, 'event button fixture stopped')
   console.log('PASS event buttons: metadata, pointer edges, keyboard, focus loss, nested buttons')
 }

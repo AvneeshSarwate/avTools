@@ -4,9 +4,11 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type { LSClient } from "@valtown/codemirror-ls";
 import {
@@ -49,6 +51,8 @@ import {
   rejectRunLaunch,
   type RunCorrelation,
 } from "./runCorrelation";
+import { RuntimeViewStore, type ScopedRuntimeApi } from "./runtimeViewStore";
+import { retainModuleLookupValues } from "./moduleLookupView";
 import {
   maxSeq,
   useModuleVizSync,
@@ -63,12 +67,7 @@ const PROJECT_DIAGNOSTICS_POLL_MS = 2_500;
 export type ConnectionStatus = "closed" | "connecting" | "open" | "error";
 export type { BuildStatus } from "./buildLifecycle";
 export type RunStatus =
-  | "idle"
-  | "running"
-  | "stopping"
-  | "stopped"
-  | "error"
-  | "unknown";
+  "idle" | "running" | "stopping" | "stopped" | "error" | "unknown";
 
 export interface RunModuleOptions {
   /** Ask the server to stop this module's running run and start this one. */
@@ -128,16 +127,32 @@ export interface LivecodeRuntimeApi {
   stopModule(moduleId: string): Promise<void>;
 }
 
-const LivecodeRuntimeContext = createContext<LivecodeRuntimeApi | null>(null);
+const LivecodeRuntimeContext = createContext<RuntimeViewStore | null>(null);
 
-export function useLivecodeRuntime() {
-  const runtime = useContext(LivecodeRuntimeContext);
-  if (!runtime) {
+export function useLivecodeRuntime(): LivecodeRuntimeApi;
+export function useLivecodeRuntime(
+  moduleId: string,
+  documentUri?: string,
+): ScopedRuntimeApi;
+export function useLivecodeRuntime(
+  moduleId?: string,
+  documentUri?: string,
+): ScopedRuntimeApi {
+  const store = useContext(LivecodeRuntimeContext);
+  if (!store) {
     throw new Error(
       "useLivecodeRuntime must be used inside LivecodeRuntimeProvider",
     );
   }
-  return runtime;
+  const read = useCallback(
+    () => store.getSnapshot(moduleId, documentUri),
+    [documentUri, moduleId, store],
+  );
+  const subscribe = useCallback(
+    (listener: () => void) => store.subscribe(listener, moduleId, documentUri),
+    [documentUri, moduleId, store],
+  );
+  return useSyncExternalStore(subscribe, read, read);
 }
 
 export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
@@ -150,6 +165,14 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
   const serverBaseUrl = syncActions.serverBaseUrl;
   const runsRef = useRef(runs);
   runsRef.current = runs;
+  const moduleWaitsRef = useRef(moduleWaits);
+  moduleWaitsRef.current = moduleWaits;
+  const moduleLookupsRef = useRef(moduleLookups);
+  moduleLookupsRef.current = moduleLookups;
+  const runsSeqRef = useRef(runsSeq);
+  runsSeqRef.current = runsSeq;
+  const vizSeqRef = useRef(vizSeq);
+  vizSeqRef.current = vizSeq;
 
   const serverBaseUrlRef = useRef(serverBaseUrl);
   serverBaseUrlRef.current = serverBaseUrl;
@@ -160,9 +183,8 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
   // Connect if the socket is already open.
   const [armed, setArmed] = useState(false);
   const armedRef = useRef(false);
-  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>(
-    "closed",
-  );
+  const [connectionStatus, setConnectionStatus] =
+    useState<ConnectionStatus>("closed");
   const connectionStatusRef = useRef<ConnectionStatus>("closed");
   const [lspStatus, setLspStatus] = useState<LspStatus>("closed");
   const [lspSessionId, setLspSessionId] = useState<string | null>(null);
@@ -172,14 +194,17 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
   >({});
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [projectDiagnostics, setProjectDiagnostics] = useState<
-    ProjectShadowCheckResponse | null
-  >(null);
+  const [projectDiagnostics, setProjectDiagnostics] =
+    useState<ProjectShadowCheckResponse | null>(null);
   const [projectDiagnosticsError, setProjectDiagnosticsError] = useState<
     string | null
   >(null);
   const [modules, setModules] = useState<Record<string, ModuleViewState>>({});
+  const [viewStore] = useState(() => new RuntimeViewStore());
   const modulesRef = useRef(new Map<string, ModuleRecord>());
+  const appliedRunsRef = useRef(new Map<string, RunEntity | undefined>());
+  const appliedWaitsRef = useRef(new Map<string, unknown>());
+  const appliedLookupsRef = useRef(new Map<string, unknown>());
   const connectRef = useRef<() => Promise<void>>(async () => {});
   const disconnectRef = useRef<() => void>(() => {});
   const pendingStopsRef = useRef<string[]>([]);
@@ -193,16 +218,28 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
   const openSequenceRef = useRef(0);
 
   const publishModule = useCallback((record: ModuleRecord) => {
-    const view = toViewState(record);
-    setModules((current) => ({ ...current, [record.moduleId]: view }));
+    setModules((current) => {
+      const prior = current[record.moduleId];
+      if (prior && viewMatchesRecord(prior, record)) return current;
+      return { ...current, [record.moduleId]: toViewState(record) };
+    });
   }, []);
 
   const publishAllModules = useCallback(() => {
-    const next: Record<string, ModuleViewState> = {};
-    for (const record of modulesRef.current.values()) {
-      next[record.moduleId] = toViewState(record);
-    }
-    setModules(next);
+    setModules((current) => {
+      let changed = Object.keys(current).length !== modulesRef.current.size;
+      const next: Record<string, ModuleViewState> = {};
+      for (const record of modulesRef.current.values()) {
+        const prior = current[record.moduleId];
+        if (prior && viewMatchesRecord(prior, record)) {
+          next[record.moduleId] = prior;
+        } else {
+          next[record.moduleId] = toViewState(record);
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
   }, []);
 
   const setConnectionStatusRef = useCallback((next: ConnectionStatus) => {
@@ -211,6 +248,9 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
   }, []);
 
   const markModulesUnknown = useCallback(() => {
+    appliedRunsRef.current.clear();
+    appliedWaitsRef.current.clear();
+    appliedLookupsRef.current.clear();
     for (const record of modulesRef.current.values()) {
       cancelQueuedBuild(record);
       record.build = { phase: "disconnected" };
@@ -222,16 +262,19 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     publishAllModules();
   }, [publishAllModules]);
 
-  const setServerBaseUrl = useCallback((next: string) => {
-    const normalized = normalizeServerBaseUrl(next);
-    if (serverBaseUrlRef.current === normalized) return;
-    const reconnectAfterChange = connectionStatusRef.current !== "closed";
-    disconnectRef.current();
-    // The sync provider owns the URL and its socket, so it is what actually
-    // re-points; this side only has to re-arm if it was armed before.
-    reconnectAfterUrlChangeRef.current = reconnectAfterChange;
-    syncActions.setServerBaseUrl(normalized);
-  }, [syncActions]);
+  const setServerBaseUrl = useCallback(
+    (next: string) => {
+      const normalized = normalizeServerBaseUrl(next);
+      if (serverBaseUrlRef.current === normalized) return;
+      const reconnectAfterChange = connectionStatusRef.current !== "closed";
+      disconnectRef.current();
+      // The sync provider owns the URL and its socket, so it is what actually
+      // re-points; this side only has to re-arm if it was armed before.
+      reconnectAfterUrlChangeRef.current = reconnectAfterChange;
+      syncActions.setServerBaseUrl(normalized);
+    },
+    [syncActions],
+  );
 
   useEffect(() => {
     if (!reconnectAfterUrlChangeRef.current) return;
@@ -300,8 +343,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       );
       if (!response.ok) {
         throw new Error(
-          `/project/diagnostics failed with ${response.status}: ${await response
-            .text()}`,
+          `/project/diagnostics failed with ${response.status}: ${await response.text()}`,
         );
       }
       const diagnostics = (await response.json()) as ProjectShadowCheckResponse;
@@ -320,8 +362,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     const response = await fetch(`${serverBaseUrlRef.current}/runtime/state`);
     if (!response.ok) {
       throw new Error(
-        `/runtime/state failed with ${response.status}: ${await response
-          .text()}`,
+        `/runtime/state failed with ${response.status}: ${await response.text()}`,
       );
     }
     const state = (await response.json()) as RuntimeStateResponse;
@@ -364,7 +405,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     pendingStopsRef.current = [];
     await Promise.all(
       pending.map((moduleId) =>
-        postJson("/runtime/stop", { moduleId }).catch(() => undefined)
+        postJson("/runtime/stop", { moduleId }).catch(() => undefined),
       ),
     );
   }, [postJson]);
@@ -392,16 +433,16 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
 
       const analyzeRequest = record.projectModulePath
         ? {
-          moduleId: record.moduleId,
-          sourceVersion,
-          projectModulePath: record.projectModulePath,
-        }
+            moduleId: record.moduleId,
+            sourceVersion,
+            projectModulePath: record.projectModulePath,
+          }
         : {
-          moduleId: record.moduleId,
-          sourceVersion,
-          sourceUri: `livecode-editor://${record.moduleId}.ts`,
-          sourceText,
-        };
+            moduleId: record.moduleId,
+            sourceVersion,
+            sourceUri: `livecode-editor://${record.moduleId}.ts`,
+            sourceText,
+          };
 
       const promise = (async () => {
         if (record.projectModulePath) {
@@ -459,9 +500,8 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
           record.diagnostics = [];
           record.activeIds = [];
           record.pianoRollLookups = {};
-          record.latestError = error instanceof Error
-            ? error.message
-            : String(error);
+          record.latestError =
+            error instanceof Error ? error.message : String(error);
           publishModule(record);
           return null;
         });
@@ -679,20 +719,47 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
   // letting server truth quietly overwrite that would make Disconnect a lie.
   useEffect(() => {
     if (!armed || connectionStatusRef.current !== "open") return;
-    const seq = maxSeq(runsSeq, vizSeq);
     for (const record of modulesRef.current.values()) {
-      record.activeIds = moduleWaits[record.moduleId]?.callsiteIds ?? [];
-      record.pianoRollLookups = moduleLookups[record.moduleId]?.lookups ?? {};
-      applyRunEntity(record, runs[record.moduleId]);
-      record.lastSnapshotSeq = seq;
+      const moduleId = record.moduleId;
+      const runChanged = updateAppliedEntity(
+        appliedRunsRef.current,
+        moduleId,
+        runs[moduleId],
+      );
+      const waitsChanged = updateAppliedEntity(
+        appliedWaitsRef.current,
+        moduleId,
+        moduleWaits[moduleId],
+      );
+      const lookupsChanged = updateAppliedEntity(
+        appliedLookupsRef.current,
+        moduleId,
+        moduleLookups[moduleId],
+      );
+      if (!runChanged && !waitsChanged && !lookupsChanged) continue;
+      if (waitsChanged) {
+        record.activeIds =
+          moduleWaits[moduleId]?.callsiteIds ?? EMPTY_ACTIVE_IDS;
+      }
+      if (lookupsChanged) {
+        record.pianoRollLookups = retainModuleLookupValues(
+          record.pianoRollLookups,
+          moduleLookups[moduleId]?.lookups ?? EMPTY_PIANO_ROLL_LOOKUPS,
+        );
+      }
+      if (runChanged) applyRunEntity(record, runs[moduleId]);
+      record.lastSnapshotSeq = maxSeq(
+        runChanged ? runsSeq : null,
+        waitsChanged || lookupsChanged ? vizSeq : null,
+      );
+      publishModule(record);
     }
-    publishAllModules();
   }, [
     armed,
     connectionStatus,
     moduleLookups,
     moduleWaits,
-    publishAllModules,
+    publishModule,
     runs,
     runsSeq,
     vizSeq,
@@ -718,6 +785,22 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       if (existing) return;
       const record = makeModuleRecord(moduleId, sourceText, projectModulePath);
       modulesRef.current.set(moduleId, record);
+      if (armedRef.current && connectionStatusRef.current === "open") {
+        hydrateCurrentSyncView(
+          record,
+          runsRef.current,
+          moduleWaitsRef.current,
+          moduleLookupsRef.current,
+          runsSeqRef.current,
+          vizSeqRef.current,
+        );
+      }
+      appliedRunsRef.current.set(moduleId, runsRef.current[moduleId]);
+      appliedWaitsRef.current.set(moduleId, moduleWaitsRef.current[moduleId]);
+      appliedLookupsRef.current.set(
+        moduleId,
+        moduleLookupsRef.current[moduleId],
+      );
       publishModule(record);
       if (connectionStatusRef.current === "open") {
         scheduleAnalyze(record, 0);
@@ -732,6 +815,9 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       if (!record) return;
       cancelQueuedBuild(record);
       modulesRef.current.delete(moduleId);
+      appliedRunsRef.current.delete(moduleId);
+      appliedWaitsRef.current.delete(moduleId);
+      appliedLookupsRef.current.delete(moduleId);
       setModules((current) => {
         const next = { ...current };
         delete next[moduleId];
@@ -778,8 +864,8 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       const build = await ensureBuild(record);
       if (!build) {
         record.runStatus = "error";
-        record.latestError = record.latestError ??
-          "module did not analyze successfully";
+        record.latestError =
+          record.latestError ?? "module did not analyze successfully";
         publishModule(record);
         return;
       }
@@ -805,19 +891,16 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
         }
 
         record.runCorrelation = beginRunLaunch();
-        const launch = await postJson<LaunchModuleResponse>(
-          "/runtime/launch",
-          {
-            moduleId: build.moduleId,
-            transformedModuleUri: build.transformedModuleUri,
-            generatedRunId: build.generatedRunId,
-            sourceHash: build.sourceHash,
-            projectSourceHash: build.projectSourceHash,
-            projectModulePath: build.projectModulePath,
-            manifest: build.manifest,
-            ...(options.replaceRunning ? { replaceRunning: true } : {}),
-          } satisfies LaunchModuleRequest,
-        );
+        const launch = await postJson<LaunchModuleResponse>("/runtime/launch", {
+          moduleId: build.moduleId,
+          transformedModuleUri: build.transformedModuleUri,
+          generatedRunId: build.generatedRunId,
+          sourceHash: build.sourceHash,
+          projectSourceHash: build.projectSourceHash,
+          projectModulePath: build.projectModulePath,
+          manifest: build.manifest,
+          ...(options.replaceRunning ? { replaceRunning: true } : {}),
+        } satisfies LaunchModuleRequest);
         record.runCorrelation = acknowledgeRunLaunch(launch.runToken);
         record.runToken = launch.runToken;
         record.runStatus = "running";
@@ -827,9 +910,8 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       } catch (error) {
         record.runStatus = "error";
         record.runCorrelation = rejectRunLaunch();
-        record.latestError = error instanceof Error
-          ? error.message
-          : String(error);
+        record.latestError =
+          error instanceof Error ? error.message : String(error);
         publishModule(record);
       }
     },
@@ -857,9 +939,8 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
         record.latestError = null;
       } catch (error) {
         record.runStatus = "error";
-        record.latestError = error instanceof Error
-          ? error.message
-          : String(error);
+        record.latestError =
+          error instanceof Error ? error.message : String(error);
       }
       publishModule(record);
     },
@@ -917,8 +998,11 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     ],
   );
 
+  viewStore.initialize(value);
+  useLayoutEffect(() => viewStore.publish(value), [value, viewStore]);
+
   return (
-    <LivecodeRuntimeContext.Provider value={value}>
+    <LivecodeRuntimeContext.Provider value={viewStore}>
       {children}
     </LivecodeRuntimeContext.Provider>
   );
@@ -1003,22 +1087,90 @@ function toViewState(record: ModuleRecord): ModuleViewState {
   };
 }
 
+const EMPTY_ACTIVE_IDS: string[] = Object.freeze([]) as unknown as string[];
+const EMPTY_PIANO_ROLL_LOOKUPS: Record<string, string> = Object.freeze({});
+
+function viewMatchesRecord(
+  view: ModuleViewState,
+  record: ModuleRecord,
+): boolean {
+  return (
+    view.moduleId === record.moduleId &&
+    view.projectModulePath === record.projectModulePath &&
+    view.sourceText === record.sourceText &&
+    view.sourceVersion === record.sourceVersion &&
+    view.buildStatus === buildStatusOf(record.build) &&
+    view.runStatus === record.runStatus &&
+    view.diagnostics === record.diagnostics &&
+    view.manifest === record.manifest &&
+    view.history === record.history &&
+    view.activeIds === record.activeIds &&
+    view.pianoRollLookups === record.pianoRollLookups &&
+    view.lastSnapshotSeq === record.lastSnapshotSeq &&
+    view.latestError === record.latestError &&
+    view.runToken === record.runToken &&
+    view.executionCount === record.executionCount
+  );
+}
+
+function updateAppliedEntity<T>(
+  applied: Map<string, T | undefined>,
+  moduleId: string,
+  entity: T | undefined,
+): boolean {
+  if (!applied.has(moduleId)) {
+    applied.set(moduleId, entity);
+    return entity !== undefined;
+  }
+  if (Object.is(applied.get(moduleId), entity)) return false;
+  applied.set(moduleId, entity);
+  return true;
+}
+
+function hydrateCurrentSyncView(
+  record: ModuleRecord,
+  runs: Record<string, RunEntity>,
+  waits: Record<string, { callsiteIds: string[] }>,
+  lookups: Record<string, { lookups: Record<string, string> }>,
+  runsSeq: number | null,
+  vizSeq: number | null,
+): void {
+  const run = runs[record.moduleId];
+  const moduleWaits = waits[record.moduleId];
+  const moduleLookups = lookups[record.moduleId];
+  if (run) applyRunEntity(record, run);
+  if (moduleWaits) record.activeIds = moduleWaits.callsiteIds;
+  if (moduleLookups) {
+    record.pianoRollLookups = retainModuleLookupValues(
+      record.pianoRollLookups,
+      moduleLookups.lookups,
+    );
+  }
+  if (run || moduleWaits || moduleLookups) {
+    record.lastSnapshotSeq = maxSeq(
+      run ? runsSeq : null,
+      moduleWaits || moduleLookups ? vizSeq : null,
+    );
+  }
+}
+
 function summarizeProjectDiagnostics(
   moduleId: string,
   diagnostics: ProjectShadowCheckResponse,
 ) {
-  const moduleDiagnostics = diagnostics.modules.find((moduleEntry) =>
-    moduleEntry.moduleId === moduleId
+  const moduleDiagnostics = diagnostics.modules.find(
+    (moduleEntry) => moduleEntry.moduleId === moduleId,
   );
-  const directDiagnostic = moduleDiagnostics?.diagnostics[0] ??
+  const directDiagnostic =
+    moduleDiagnostics?.diagnostics[0] ??
     moduleDiagnostics?.dependencyDiagnostics[0] ??
     diagnostics.diagnostics[0];
   const count = diagnostics.diagnostics.length;
   if (!directDiagnostic) {
     return `project typecheck failed (${count} diagnostics)`;
   }
-  const location = directDiagnostic.path ?? directDiagnostic.moduleId ??
-    "project";
+  const location =
+    directDiagnostic.path ?? directDiagnostic.moduleId ?? "project";
   return `project typecheck failed (${count} diagnostics): ${location} ${directDiagnostic.code}: ${directDiagnostic.message}`;
 }
 

@@ -1,6 +1,6 @@
 # Current Client Architecture
 
-Status: checked against `apps/livecode-tldraw/src` on 2026-08-26.
+Status: sync subscription boundaries checked against `apps/livecode-tldraw/src` on 2026-09-11.
 
 Use `apps/livecode-tldraw/architecture.md` for the local file index. This
 document explains how the client's state machines and registries meet; component
@@ -21,10 +21,22 @@ props and UI details belong in source.
   `projectCanvas.ts`, and `clientControlBridge.ts` own the corresponding UI,
   canvas/project helpers, and automation bridge.
 
-Entity kinds have separate React contexts so high-rate signals do not rerender
-every roll or params pane. Incoming messages are accumulated in refs and
-published once per animation frame. Do not collapse the slices into one context
-or publish directly on every approximately 33 ms engine tick.
+`syncStore.ts` holds the UI copy behind a stable context; `syncSubscriptions.tsx`
+uses React external-store subscriptions. A bound shape must pass its entity name
+to its typed sync hook. A change to another entity, including one of the same
+kind, must not invalidate that subscription. Omitting the name subscribes to the
+whole kind; reserve that for aggregate consumers. Passing `null` disables a
+subscription when a view switches between kinds.
+
+Use names-only subscriptions for menus. For derived cross-entity views such as
+playheads, use a selector with equality on the displayed result; unrelated
+signals must not invalidate the editor. Connection status is separate from sync
+sequence numbers. Incoming messages are applied in order and published once per
+animation frame, retaining unchanged entity identities, including identical
+resets. Do not put changing entity maps or a global sequence back into a shared
+React context. These guarantees isolate sync-driven updates; selection, local
+interaction, connection changes, and a view's explicit additional dependencies
+can still legitimately render it.
 
 `syncState.ts` materializes full values and ordered patches into the same
 per-kind entity maps. It copies changed ancestors and retains untouched
@@ -32,6 +44,12 @@ branches; components continue receiving state, not wire envelopes. Do not
 mutate these published objects, even when same-tab delivery shares references.
 A patch optimization does not require every component to implement a patch
 protocol or a reactive subscription graph.
+
+Code editors use `useLivecodeRuntime(moduleId, documentUri)` to select their
+module view and diagnostics. The runtime adapter retains unchanged module
+records when applying run/wait/lookup batches; wait and lookup decoration
+updates additionally compare their visible result before dispatching to
+CodeMirror. The unscoped hook is for aggregate app controls.
 
 For an expensive editor, follow
 [`SixSinesShape.tsx`](../../../apps/livecode-tldraw/src/SixSinesShape.tsx): full

@@ -19,6 +19,12 @@ registerSixSinesEditor();
 import type { SixSinesEditorElement } from "../../../packages/six-sines/ui/six-sines-editor.js";
 import type { SixSinesData } from "@avtools/livecode-protocol";
 import { useSixSinesSync } from "./syncRuntime";
+import {
+  planSixSinesHydration,
+  recordDisplayedSixSinesParameters,
+  sixSinesHydrationState,
+  type SixSinesHydrationState,
+} from "./sixSinesHydration";
 
 export const SIX_SINES_SHAPE_TYPE = "six-sines-view";
 export const SIX_SINES_ENTITY_TYPE = "sixSines";
@@ -101,10 +107,10 @@ export function createSixSinesShape(
   return id;
 }
 function SixSinesView({ shape }: { shape: SixSinesShape }) {
-  const runtime = useSixSinesSync();
+  const runtime = useSixSinesSync(shape.props.synthName);
   const entity = runtime.synths[shape.props.synthName];
   const elementRef = useRef<SixSinesEditorElement | null>(null);
-  const applied = useRef<SixSinesData | null>(null);
+  const applied = useRef<SixSinesHydrationState | null>(null);
   const latest = useRef(entity);
   latest.current = entity;
   const lane = useRef<Promise<unknown>>(Promise.resolve());
@@ -116,18 +122,10 @@ function SixSinesView({ shape }: { shape: SixSinesShape }) {
   function applyTruth(data: SixSinesData, force = false) {
     const el = elementRef.current;
     if (!el) return;
-    const prior = applied.current;
-    const reload =
-      force ||
-      !prior ||
-      prior.preset !== data.preset ||
-      Object.keys(prior.values).some((id) => !(id in data.values));
-    if (reload) el.loadPreset(data.preset);
-    const changes = Object.entries(data.values)
-      .filter(([id, value]) => reload || prior?.values[id] !== value)
-      .map(([id, value]) => ({ id: Number(id), value }));
-    if (changes.length) el.setParameters(changes);
-    applied.current = data;
+    const plan = planSixSinesHydration(applied.current, data, force);
+    if (plan.reloadPreset) el.loadPreset(data.preset);
+    if (plan.changes.length) el.setParameters(plan.changes);
+    applied.current = plan.next;
   }
   useEffect(() => {
     applied.current = null;
@@ -155,12 +153,14 @@ function SixSinesView({ shape }: { shape: SixSinesShape }) {
       const { changes } = (
         event as CustomEvent<{ changes: Array<{ id: number; value: number }> }>
       ).detail;
+      recordDisplayedSixSinesParameters(applied.current, changes);
       enqueue(() =>
         setSixSinesParameters(shape.props.synthName, changes, { originId }),
       );
     };
     const preset = (event: Event) => {
       const data = (event as CustomEvent<SixSinesData>).detail;
+      applied.current = sixSinesHydrationState(data);
       enqueue(() =>
         setSixSinesPreset(shape.props.synthName, data, { originId }),
       );

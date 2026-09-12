@@ -3,13 +3,7 @@ import { type Editor, useValue } from "tldraw";
 import { createLivecodeShape } from "./LivecodeEditorShape";
 import type { DurableEntityRef, ProjectSaveResponse } from "./livecodeProtocol";
 import { useLivecodeRuntime } from "./livecodeRuntime";
-import {
-  useAnimationTimelinesSync,
-  useDrawingsSync,
-  useParamsSync,
-  usePianoRollsSync,
-  useSignalsSync,
-} from "./syncRuntime";
+import { useSyncEntityNames, useSyncSelector } from "./syncRuntime";
 import {
   createSignalScopeShape,
   type SignalScopeSourceType,
@@ -55,11 +49,11 @@ export function TopBar({
   onOpenTldrawFile: (file: File) => Promise<void>;
 }) {
   const runtime = useLivecodeRuntime();
-  const paramsRuntime = useParamsSync();
-  const pianoRollRuntime = usePianoRollsSync();
-  const animationRuntime = useAnimationTimelinesSync();
-  const drawingsRuntime = useDrawingsSync();
-  const signalsRuntime = useSignalsSync();
+  const knownParamsNames = useSyncEntityNames("params");
+  const knownRollNames = useSyncEntityNames("pianoRoll");
+  const knownAnimationNames = useSyncEntityNames("animationTimeline");
+  const knownDrawingNames = useSyncEntityNames("drawing");
+  const knownSignalNames = useSyncEntityNames("signal");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [scopeDraft, setScopeDraft] = useState<string | null>(null);
   const [canvasSurfaceDraft, setCanvasSurfaceDraft] = useState<string | null>(
@@ -76,34 +70,21 @@ export function TopBar({
     runtime.serverBaseUrl,
     projectPath,
   );
-  const knownParamsNames = useMemo(
-    () => Object.keys(paramsRuntime.params).sort(),
-    [paramsRuntime.params],
-  );
-  const knownRollNames = useMemo(
-    () => Object.keys(pianoRollRuntime.rolls).sort(),
-    [pianoRollRuntime.rolls],
-  );
-  const knownAnimationNames = useMemo(
-    () => Object.keys(animationRuntime.timelines).sort(),
-    [animationRuntime.timelines],
-  );
-  const knownDrawingNames = useMemo(
-    () => Object.keys(drawingsRuntime.drawings).sort(),
-    [drawingsRuntime.drawings],
-  );
-  // Everything a scope can bind to, in the one syntax the input accepts: signal
-  // names as they are, param leaves as `params:<name>.<field>`. Ended signals
-  // stay listed — a stopped run's trace is still worth looking at — but say so.
-  const scopeSourceOptions = useMemo(
-    () => [
-      ...Object.values(signalsRuntime.signals)
+  const signalOptions = useSyncSelector(
+    "signal",
+    (signals) =>
+      Object.values(signals)
         .map((signal) => ({
           value: signal.name,
           label: signal.ended ? `${signal.name} (ended)` : signal.name,
         }))
         .sort((a, b) => a.value.localeCompare(b.value)),
-      ...Object.values(paramsRuntime.params)
+    equalSourceOptions,
+  );
+  const paramOptions = useSyncSelector(
+    "params",
+    (params) =>
+      Object.values(params)
         .flatMap((entity) =>
           listParamsLeafPaths(entity.values).map((leafPath) => ({
             value: `${PARAMS_ENTITY_TYPE}:${entity.name}.${leafPath}`,
@@ -111,12 +92,16 @@ export function TopBar({
           }))
         )
         .sort((a, b) => a.value.localeCompare(b.value)),
-    ],
-    [paramsRuntime.params, signalsRuntime.signals],
+    equalSourceOptions,
   );
-  const moduleCount = useMemo(() => Object.keys(runtime.modules).length, [
-    runtime.modules,
-  ]);
+  const scopeSourceOptions = useMemo(
+    () => [...signalOptions, ...paramOptions],
+    [signalOptions, paramOptions],
+  );
+  const moduleCount = useMemo(
+    () => Object.keys(runtime.modules).length,
+    [runtime.modules],
+  );
   const selectionKey = selection ? `${selection.type} ${selection.name}` : "";
 
   // Entity actions are ordinary serialized POSTs; a rejection is the server's
@@ -146,12 +131,12 @@ export function TopBar({
     return () => window.clearTimeout(timer);
   }, [deleteArmedName]);
 
-  const dependencyIssueCount = runtime.projectDiagnostics?.modules.filter((
-    moduleEntry,
-  ) => moduleEntry.hasDependencyWarnings).length ?? 0;
-  const changedDependencyCount = runtime.projectDiagnostics?.modules.filter((
-    moduleEntry,
-  ) => moduleEntry.changedDependencies.length > 0).length ?? 0;
+  const dependencyIssueCount = runtime.projectDiagnostics?.modules.filter(
+    (moduleEntry) => moduleEntry.hasDependencyWarnings,
+  ).length ?? 0;
+  const changedDependencyCount = runtime.projectDiagnostics?.modules.filter(
+    (moduleEntry) => moduleEntry.changedDependencies.length > 0,
+  ).length ?? 0;
 
   return (
     <div
@@ -344,7 +329,7 @@ export function TopBar({
                     event.preventDefault();
                     const source = parseScopeSource(
                       scopeDraft,
-                      Object.keys(signalsRuntime.signals),
+                      knownSignalNames,
                     );
                     if (!editor || !source) return;
                     createSignalScopeShape(editor, source);
@@ -559,12 +544,14 @@ export function TopBar({
                   setSaveNotice(null);
                   void runEntityAction(async () => {
                     if (!editor) throw new Error("No canvas is mounted yet");
-                    setSaveNotice(describeProjectSave(
-                      await saveProjectWithCanvas(
-                        editor,
-                        runtime.serverBaseUrl,
+                    setSaveNotice(
+                      describeProjectSave(
+                        await saveProjectWithCanvas(
+                          editor,
+                          runtime.serverBaseUrl,
+                        ),
                       ),
-                    ));
+                    );
                   });
                 }}
               >
@@ -641,7 +628,7 @@ function EntityViewCreator({
   submitLabel: string;
   placeholder: string;
   datalistId: string;
-  knownNames: string[];
+  knownNames: readonly string[];
   initialName?: string;
   onAdd(name: string): Promise<boolean>;
 }) {
@@ -667,9 +654,11 @@ function EntityViewCreator({
         const name = draft.trim();
         if (!editor || !name || submitting) return;
         setSubmitting(true);
-        void onAdd(name).then((ok) => {
-          if (ok) setDraft(null);
-        }).finally(() => setSubmitting(false));
+        void onAdd(name)
+          .then((ok) => {
+            if (ok) setDraft(null);
+          })
+          .finally(() => setSubmitting(false));
       }}
     >
       <input
@@ -729,7 +718,7 @@ function selectedEntityRef(editor: Editor | null): DurableEntityRef | null {
  */
 function parseScopeSource(
   text: string,
-  knownSignalNames: string[],
+  knownSignalNames: readonly string[],
 ): { sourceType: SignalScopeSourceType; name: string; path: string } | null {
   // The datalist labels ended signals; accept the label back as the name.
   const trimmed = text.trim().replace(/\s*\(ended\)$/, "");
@@ -785,7 +774,9 @@ function describeProjectSave(result: ProjectSaveResponse): string {
     `saved ${result.data.length - failed.length}`,
     failed.length > 0 ? `${failed.length} failed` : null,
     result.skipped.length > 0 ? `${result.skipped.length} skipped` : null,
-  ].filter((part) => part !== null).join(" | ");
+  ]
+    .filter((part) => part !== null)
+    .join(" | ");
 }
 
 /**
@@ -896,4 +887,16 @@ function InProcessEnginePill() {
         </span>
       );
   }
+}
+
+function equalSourceOptions(
+  a: readonly { value: string; label: string }[],
+  b: readonly { value: string; label: string }[],
+): boolean {
+  return (
+    a.length === b.length &&
+    a.every(
+      (item, i) => item.value === b[i]?.value && item.label === b[i]?.label,
+    )
+  );
 }
