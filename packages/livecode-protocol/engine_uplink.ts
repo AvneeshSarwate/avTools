@@ -10,7 +10,7 @@
 
 import type { LivecodeEvent } from "./events.ts";
 import type { LaunchModuleRequest } from "./runtime.ts";
-import type { SetPianoRollRequest } from "./piano_roll.ts";
+import type { SetPianoRollRequest, SetPianoRollCursorRequest } from "./piano_roll.ts";
 import type { SetParamsRequest } from "./params.ts";
 import type { SetAnimationTimelineRequest } from "./animation_timeline.ts";
 import type { SetDrawingRequest } from "./drawing.ts";
@@ -86,6 +86,7 @@ export type EngineOp =
   | { kind: "runtimeStatus" }
   | { kind: "runtimeState" }
   | { kind: "pianoRollList" }
+  | { kind: "pianoRollCursorSet"; request: SetPianoRollCursorRequest }
   | { kind: "pianoRollSet"; request: SetPianoRollRequest }
   | {
     kind: "pianoRollHistory";

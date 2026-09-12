@@ -46,6 +46,7 @@ export const SixSinesEventType: Readonly<{
   paramValue: 4;
   paramMod: 5;
   allNotesOff: 6;
+  midi1: 7;
 }>;
 
 export const ClapNoteExpression: Readonly<{
@@ -85,6 +86,7 @@ export class SixSinesNode {
   paramMod(event: SixSinesIdentity & SixSinesWhen &
     { noteId: number; paramId: number; amount: number }): Promise<unknown>;
   allNotesOff(when?: SixSinesWhen): Promise<unknown>;
+  midi1(data: ArrayLike<number>, when?: SixSinesWhen): Promise<unknown>;
   loadPreset(preset: ArrayBuffer | ArrayBufferView | Blob): Promise<unknown>;
   getParameterInfo(): Promise<SixSinesParameterInfo[]>;
   stats(): Promise<Record<string, number | string>>;

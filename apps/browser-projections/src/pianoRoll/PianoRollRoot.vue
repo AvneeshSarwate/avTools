@@ -104,6 +104,7 @@ const shellMinWidth = computed(() => Math.round(minWidth.value + stageInset.valu
 const wsController = shallowRef<PianoRollWebSocketController | null>(null)
 
 const emit = defineEmits<{
+  (event: 'cursor-change', position: number): void
   (event: 'notes-update', notes: Array<[string, NoteData]>): void
 }>()
 
@@ -304,6 +305,7 @@ watch(mpeMode, (enabled) => {
 })
 
 type EmitStateOptions = {
+  silent?: boolean
   source?: UpdateSource
   suppressWsNotes?: boolean
 }
@@ -312,7 +314,8 @@ const emitStateUpdate = (options: EmitStateOptions = {}) => {
   const source = options.source ?? 'notes'
   syncUiCounters()
   const notesArray = Array.from(state.notes.entries())
-  emit('notes-update', notesArray)
+  if (!options.silent && source === 'notes') emit('notes-update', notesArray)
+  if (source === 'playhead') emit('cursor-change', state.queuePlayhead.position)
   props.syncState?.(state)
 
   // Send via WebSocket if connected
@@ -581,6 +584,14 @@ const setLivePlayheadPosition = (position: number) => {
   state.needsRedraw = true
 }
 
+/** Silent hydration of the committed edit cursor (independent of live markers). */
+const setPlayStartPosition = (position: number) => {
+  if (!Number.isFinite(position) || position < 0) throw new Error('Invalid piano-roll cursor')
+  state.grid.maxLength = Math.max(state.grid.maxLength, position)
+  state.queuePlayhead.position = position
+  state.needsRedraw = true
+}
+
 const getPlayStartPosition = (): number => {
   return state.queuePlayhead.position
 }
@@ -616,6 +627,7 @@ defineExpose({
   setPlayheadMarkers,
   getPlayheadMarkers,
   getPlayStartPosition,
+  setPlayStartPosition,
   fitZoomToNotes
 })
 </script>

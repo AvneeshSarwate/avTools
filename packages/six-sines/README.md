@@ -73,3 +73,5 @@ The livecode integration uses `six-sines-store` for a tracked `sixSines` entity
 and `SixSinesShape.tsx` for a tldraw view. See
 [`six-sines-sound-design`](../../apps/livecode-tldraw/example-projects/six-sines-sound-design/README.md)
 for piano-roll playback, preset sharing, and optional 60 Hz pan automation.
+
+Macro Level per-note offsets feed both Macro Amplitude and Macro Modulated sources. Amplitude is the clamped knob plus host offset; Modulated additionally applies the macro envelope/LFO. A per-note offset never changes the stored/global knob value.

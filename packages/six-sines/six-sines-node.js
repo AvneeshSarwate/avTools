@@ -1,3 +1,4 @@
+// @ts-self-types="./six-sines-node.d.ts"
 const registeredWorklets = new WeakMap();
 
 export const SixSinesEventType = Object.freeze({
@@ -7,6 +8,7 @@ export const SixSinesEventType = Object.freeze({
   paramValue: 4,
   paramMod: 5,
   allNotesOff: 6,
+  midi1: 7,
 });
 
 export const ClapNoteExpression = Object.freeze({
@@ -202,9 +204,21 @@ export class SixSinesNode {
     return this.deliver([{ type: SixSinesEventType.allNotesOff, ...when }]);
   }
 
+  midi1(data, when = {}) {
+    const status = data[0];
+    const length = (status & 0xf0) === 0xc0 || (status & 0xf0) === 0xd0 ? 2 : 3;
+    if (!Number.isInteger(status) || status < 0x80 || status >= 0xf0 || data.length < length ||
+        Array.from(data).slice(1, length).some(b => !Number.isInteger(b) || b < 0 || b > 127)) {
+      return Promise.reject(new Error("midi1 requires a complete MIDI channel message"));
+    }
+    return this.deliver([{ type: SixSinesEventType.midi1, port: 0,
+      paramId: status | (data[1] << 8) | ((length === 3 ? data[2] : 0) << 16), ...when }]);
+  }
+
   async loadPreset(preset) {
     const bytes = await bytesFrom(preset, undefined, "Six Sines preset");
     if (!bytes) throw new Error("loadPreset requires an ArrayBuffer, typed array, Blob, or File");
+    this.lastQueuedFrame = -Infinity;
     return this.request("loadPreset", { bytes });
   }
 

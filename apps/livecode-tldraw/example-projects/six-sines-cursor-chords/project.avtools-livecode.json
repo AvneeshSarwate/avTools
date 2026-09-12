@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "name": "six-sines-cursor-chords",
+  "engineTarget": "browser",
+  "modules": [
+    {
+      "id": "cursor-chords/instrument",
+      "path": "modules/instrument.ts",
+      "sourcePath": "modules/instrument.orig.ts",
+      "runtimePath": "modules/instrument.ts",
+      "kind": "runnable",
+      "title": "Synth instance and preset bridge",
+      "sourceVersion": 2,
+      "x": 40,
+      "y": 40,
+      "w": 640,
+      "h": 660
+    },
+    {
+      "id": "cursor-chords/player",
+      "path": "modules/player.ts",
+      "sourcePath": "modules/player.orig.ts",
+      "runtimePath": "modules/player.ts",
+      "kind": "runnable",
+      "title": "Cursor chord player + per-note macro LFOs",
+      "sourceVersion": 2,
+      "x": 40,
+      "y": 770,
+      "w": 640,
+      "h": 950
+    }
+  ],
+  "canvas": {
+    "sixSinesViews": [
+      {
+        "id": "shape:cursor-chords-synth",
+        "synthName": "cursor-chords/synth",
+        "x": 740,
+        "y": 40,
+        "w": 1260,
+        "h": 1140
+      }
+    ],
+    "pianoRollViews": [
+      {
+        "id": "shape:cursor-chords-phrase",
+        "rollName": "cursor-chords/chords",
+        "x": 740,
+        "y": 1240,
+        "w": 720,
+        "h": 560
+      }
+    ],
+    "paramPaneViews": [
+      {
+        "id": "shape:cursor-chords-controls",
+        "paramsName": "cursor-chords/controls",
+        "x": 1510,
+        "y": 1240,
+        "w": 480,
+        "h": 930
+      }
+    ],
+    "animationEditorViews": [
+      {
+        "id": "shape:cursor-chords-ramps",
+        "animationName": "cursor-chords/ramps",
+        "x": 740,
+        "y": 1860,
+        "w": 720,
+        "h": 560
+      }
+    ],
+    "drawingViews": [],
+    "scopeViews": [],
+    "canvasSurfaceViews": []
+  },
+  "data": [
+    {
+      "type": "sixSines",
+      "name": "cursor-chords/synth",
+      "path": "data/sixSines/lead.json"
+    },
+    {
+      "type": "pianoRoll",
+      "name": "cursor-chords/chords",
+      "path": "data/pianoRoll/phrase.json"
+    },
+    {
+      "type": "params",
+      "name": "cursor-chords/controls",
+      "path": "data/params/controls.json"
+    },
+    {
+      "type": "animationTimeline",
+      "name": "cursor-chords/ramps",
+      "path": "data/animationTimeline/ramps.json"
+    }
+  ]
+}

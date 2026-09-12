@@ -176,9 +176,15 @@ Domain bridges retain distinct semantics:
 - Piano-roll and animation-editor custom elements receive accepted engine
   truth. Writes are serialized; animation replaces a whole timeline with
   compare-and-set. A component must not treat its optimistic edit as canonical.
+  The piano-roll green start cursor is durable `data.playStartPosition`, default
+  zero. Its dedicated `pianoRollCursorSet` operation preserves current notes and
+  does not add undo history; note history preserves the current cursor. Cursor
+  hydration is silent and must not reload notes or reset selection. Live signal
+  markers remain separate, ephemeral observations.
 - Params panes edit a live declared object through leaf merges. Creating a pane
   does not create a schema; a not-yet-declared entity can correctly render
-  empty/unavailable.
+  empty/unavailable. Leaf metadata may provide `options: {label: primitive}`
+  for a dropdown; the live value and partial-write API remain ordinary primitives.
 - The drawing view hydrates the handwriting-canvas element from the entity's
   lossless document and writes committed edits back whole with compare-and-set.
   The element must not emit `document-update` while a document is being pushed

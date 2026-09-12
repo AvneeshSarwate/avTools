@@ -90,7 +90,11 @@ export function setPianoRoll(
   options: SetPianoRollOptions = {},
 ): PianoRollSetResult {
   const entityName = normalizeName(name);
-  const shaped = shapeData(data);
+  const previousCursor = recordFor(entityName)?.value.playStartPosition;
+  const shaped = shapeData({
+    ...data,
+    playStartPosition: data.playStartPosition ?? previousCursor,
+  });
   const serialized = serializeEntityValue(shaped);
   const existing = getEntityRecord<PianoRollData>(
     PIANO_ROLL_ENTITY_TYPE,
@@ -145,6 +149,30 @@ export function setPianoRoll(
     { updatedBy: options.originId ?? source, valueJson: shapedJson },
   );
   return { ok: true, roll: toObject(record) };
+}
+
+/** Commit only the start cursor against current notes; never adds an undo entry. */
+export function setPianoRollCursor(
+  name: string,
+  position: number,
+  options: { originId?: string } = {},
+): PianoRollSetResult {
+  const record = recordFor(name);
+  if (!record) {
+    return { ok: false, error: `Piano roll "${name}" does not exist` };
+  }
+  if (!Number.isFinite(position) || position < 0) {
+    return {
+      ok: false,
+      error: "Piano-roll cursor must be a finite, non-negative beat position",
+      current: toObject(record),
+    };
+  }
+  return setPianoRoll(name, { ...record.value, playStartPosition: position }, {
+    originId: options.originId,
+    source: "client",
+    undoable: false,
+  });
 }
 
 export function undoPianoRoll(
@@ -346,7 +374,10 @@ function applyHistoryEntry(
   entry: HistoryEntry,
   updatedBy: string,
 ): void {
+  const cursor = record.value.playStartPosition;
   record.value = cloneRollData(entry.data);
+  if (cursor === undefined) delete record.value.playStartPosition;
+  else record.value.playStartPosition = cursor;
   commitEntityWrite(record, {
     updatedBy,
     valueJson: safeStringifyEntityValue(record.value),
@@ -363,6 +394,16 @@ function shapeData(data: PianoRollData): PianoRollData {
   const shaped: PianoRollData = {
     notes: data.notes.map((note, index) => normalizeNote(note, index)),
   };
+  if (data.playStartPosition !== undefined) {
+    if (
+      !Number.isFinite(data.playStartPosition) || data.playStartPosition < 0
+    ) {
+      throw new Error(
+        "Piano-roll cursor must be a finite, non-negative beat position",
+      );
+    }
+    shaped.playStartPosition = data.playStartPosition;
+  }
   if (data.viewport !== undefined) shaped.viewport = data.viewport;
   if (data.grid !== undefined) shaped.grid = data.grid;
   return shaped;

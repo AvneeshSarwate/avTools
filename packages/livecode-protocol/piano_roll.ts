@@ -37,6 +37,8 @@ export interface NoteData extends NoteDataInput {
 }
 
 export interface PianoRollData {
+  /** Committed playback-start cursor in beats. Older documents default to zero. */
+  playStartPosition?: number;
   notes: NoteDataInput[];
   viewport?: {
     scrollX: number;
@@ -79,6 +81,12 @@ export interface SetPianoRollRequest {
   source?: PianoRollUpdateSource;
   undoable?: boolean;
   expectedRev?: number;
+}
+
+export interface SetPianoRollCursorRequest {
+  name: string;
+  position: number;
+  originId?: string;
 }
 
 export interface PianoRollHistoryRequest {

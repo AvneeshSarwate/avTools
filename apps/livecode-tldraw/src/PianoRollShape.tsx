@@ -161,10 +161,11 @@ export function createPianoRollShape(
 
 function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
   const runtime = usePianoRollsSync(shape.props.rollName)
-  const { redoRoll, setRoll, undoRoll } = runtime
+  const { redoRoll, setRoll, setRollCursor, undoRoll } = runtime
   const roll = runtime.rolls[shape.props.rollName]
   const hasRoll = roll !== undefined
   const elementRef = useRef<PianoRollElement | null>(null)
+  const cursorWriteLane = useRef(Promise.resolve())
   const lastAppliedRollRef = useRef<AppliedPianoRollView | null>(null)
   const lastMarkerKeyRef = useRef<string | null>(null)
   const [writeError, setWriteError] = useState<string | null>(null)
@@ -224,6 +225,7 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
       lastAppliedRollRef.current = null
       return
     }
+    el.setPlayStartPosition?.(roll.data.playStartPosition ?? 0)
     const lastApplied = lastAppliedRollRef.current
     const decision = decidePianoRollHydration(
       lastApplied,
@@ -250,7 +252,7 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
       return
     }
     lastAppliedRollRef.current = decision.applied
-    el.setNotes?.(roll.data.notes)
+    el.setNotes?.(roll.data.notes, { silent: true })
     if (roll.rev === 1) {
       window.setTimeout(() => el.fitZoomToNotes?.(), 0)
     }
@@ -277,16 +279,38 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
             return
           }
           setWriteError(result.error)
-          if (result.current) el.setNotes?.(result.current.data.notes)
+          if (result.current) el.setNotes?.(result.current.data.notes, { silent: true })
         })
         .catch((error: unknown) => {
           setWriteError(error instanceof Error ? error.message : String(error))
         })
     }
 
+    const handleCursorChange = (event: Event) => {
+      const position = (event as CustomEvent<[number]>).detail?.[0]
+      if (!shape.props.interactive || !Number.isFinite(position)) return
+      cursorWriteLane.current = cursorWriteLane.current.catch(() => {}).then(async () => {
+        const result = await setRollCursor(shape.props.rollName, position, { originId })
+        if (elementRef.current !== el) return
+        if (!result.ok) {
+          setWriteError(result.error)
+          if (result.current) {
+            el.setPlayStartPosition?.(result.current.data.playStartPosition ?? 0)
+          }
+        } else setWriteError(null)
+      }).catch((error: unknown) => {
+        if (elementRef.current === el) {
+          setWriteError(error instanceof Error ? error.message : String(error))
+        }
+      })
+    }
+    el.addEventListener('cursor-change', handleCursorChange)
     el.addEventListener('notes-update', handleNotesUpdate)
-    return () => el.removeEventListener('notes-update', handleNotesUpdate)
-  }, [hasRoll, originId, setRoll, shape.props.interactive, shape.props.rollName])
+    return () => {
+      el.removeEventListener('cursor-change', handleCursorChange)
+      el.removeEventListener('notes-update', handleNotesUpdate)
+    }
+  }, [hasRoll, originId, setRoll, setRollCursor, shape.props.interactive, shape.props.rollName])
 
   const stopCanvasEvent = (event: SyntheticEvent) => {
     event.stopPropagation()

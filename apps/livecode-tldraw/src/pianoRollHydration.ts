@@ -24,11 +24,13 @@ export function decidePianoRollHydration(
   if (sameBinding && applied.entity === entity) return { kind: "ignore" };
 
   const next: AppliedPianoRollView = { rollName, element, entity };
-  // A mounted element already holds its own edit. Immutable sync snapshots
-  // also retain the data branch for metadata-only changes.
+  // A mounted element already holds its own note edit. Cursor-only updates
+  // must also preserve the current note selection and viewport.
   if (
     sameBinding &&
-    (entity.updatedBy === originId || applied.entity.data === entity.data)
+    (entity.updatedBy === originId ||
+      JSON.stringify(applied.entity.data.notes) ===
+        JSON.stringify(entity.data.notes))
   ) {
     return { kind: "accept", applied: next };
   }

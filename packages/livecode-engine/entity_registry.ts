@@ -176,7 +176,7 @@ export const pianoRollEntityType: DurableEntityTypeBehavior = {
       }
     }
     requirePianoRollSet(
-      setPianoRoll(name, rollData as unknown as PianoRollData, {
+      setPianoRoll(name, {...rollData, playStartPosition: rollData.playStartPosition ?? 0} as unknown as PianoRollData, {
         label: "Load project",
         source: "server",
         undoable: false,

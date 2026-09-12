@@ -22,6 +22,7 @@ import {
   makePianoRollSnapshot,
   redoPianoRoll,
   setPianoRoll,
+  setPianoRollCursor,
   undoPianoRoll,
 } from "./piano_roll_store.ts";
 import { emit } from "./events.ts";
@@ -208,6 +209,8 @@ export async function executeEngineOp(
       };
     case "pianoRollList":
       return makePianoRollSnapshot();
+    case "pianoRollCursorSet":
+      return setPianoRollCursor(op.request.name, op.request.position, {originId:op.request.originId});
     case "pianoRollSet":
       return setPianoRoll(op.request.name, op.request.data, {
         label: op.request.label,
