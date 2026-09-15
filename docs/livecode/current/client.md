@@ -222,7 +222,13 @@ Interactive DOM inside a tldraw shape must stop pointer/touch/wheel propagation
 before tldraw interprets the gesture; text inputs must also shield relevant key
 events. Stop keyboard bubbling after the embedded component receives it;
 a capture-phase stop on its ancestor prevents the component's own handlers
-from running. Headers remain draggable while component bodies are interactive.
+from running. A body whose component owns keyboard gestures (the piano roll's
+arrow-key note moves, delete, undo, copy/paste) needs a native bubble-phase
+`keydown`/`keyup` listener on the body, not a React handler of either phase:
+React delegates at the app root, above tldraw's `.tl-container`, where tldraw's
+own native keydown listener lives, so `onKeyDownCapture` stops the key before
+the component sees it and `onKeyDown` stops it only after tldraw has acted on
+it. Headers remain draggable while component bodies are interactive.
 Widgets stop pointerdown and click. Components needing document-wide drag
 tracking should use pointer capture or capture-phase listeners, because the
 shape boundary intentionally blocks normal bubbling.

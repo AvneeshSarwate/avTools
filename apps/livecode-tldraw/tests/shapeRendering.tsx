@@ -264,6 +264,66 @@ export async function runShapeRendering(
           edits.some((edit) => edit.name === "b"),
         "both existing and recreated rolls send edits to their bound entity",
       );
+      // tldraw's keydown listener sits natively on `.tl-container`, an ancestor
+      // of the shape, while React delegates every handler at the app root above
+      // it: a capture-phase React stop never lets the key down to the roll, and
+      // a bubble-phase one arrives after tldraw already nudged the shape. The
+      // shield has to be a native bubble listener on the shape body, so a key
+      // pressed inside the roll drives the roll and nothing else.
+      const stage = (elements[0] as any).shadowRoot?.querySelector(
+        ".piano-roll-container",
+      ) as HTMLElement | null;
+      assert(stage, "piano roll exposes its focusable stage container");
+      const tlContainer = document.querySelector(".tl-container")!;
+      let reachedRoll = 0;
+      let reachedCanvas = 0;
+      const countRoll = () => reachedRoll++;
+      const countCanvas = () => reachedCanvas++;
+      stage!.addEventListener("keydown", countRoll);
+      tlContainer.addEventListener("keydown", countCanvas);
+      // Paste is the one roll shortcut a test can drive without synthesizing a
+      // note selection on the Konva stage; it walks the same command stack that
+      // the arrow keys use, so the edit it emits proves the whole chain.
+      sessionStorage.setItem(
+        "copiedPianoRollNotes",
+        JSON.stringify({
+          notes: [{ id: "c", pitch: 64, position: 0, duration: 1 }],
+        }),
+      );
+      const editsBeforeKey = edits.length;
+      try {
+        stage!.focus();
+        stage!.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "v",
+            ctrlKey: true,
+            bubbles: true,
+            composed: true,
+            cancelable: true,
+          }),
+        );
+        await settle();
+      } finally {
+        stage!.removeEventListener("keydown", countRoll);
+        tlContainer.removeEventListener("keydown", countCanvas);
+        sessionStorage.removeItem("copiedPianoRollNotes");
+      }
+      assert(
+        reachedRoll === 1,
+        "keys pressed in the shape reach the roll's own handlers",
+      );
+      assert(
+        reachedCanvas === 0,
+        "the shape body stops keys before tldraw's container listener",
+      );
+      assert(
+        edits
+          .slice(editsBeforeKey)
+          .some((edit) =>
+            edit.data?.notes?.some((note: any) => note.pitch === 64),
+          ),
+        "a key-driven roll edit reaches its bound entity",
+      );
     } finally {
       window.fetch = originalFetch;
     }

@@ -165,6 +165,7 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
   const roll = runtime.rolls[shape.props.rollName]
   const hasRoll = roll !== undefined
   const elementRef = useRef<PianoRollElement | null>(null)
+  const bodyRef = useRef<HTMLDivElement | null>(null)
   const cursorWriteLane = useRef(Promise.resolve())
   const lastAppliedRollRef = useRef<AppliedPianoRollView | null>(null)
   const lastMarkerKeyRef = useRef<string | null>(null)
@@ -312,6 +313,26 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
     }
   }, [hasRoll, originId, setRoll, setRollCursor, shape.props.interactive, shape.props.rollName])
 
+  // Keyboard shield for the canvas, as a native bubble-phase listener on the
+  // body. Both phases of a React handler would be wrong here: React delegates
+  // to the app root, above tldraw's `.tl-container`, so an `onKeyDownCapture`
+  // stop kills the event before it ever descends to the roll's own handler
+  // (arrow-key note moves, delete, undo, copy/paste), while an `onKeyDown` stop
+  // runs only after tldraw's native container listener has already nudged the
+  // shape. A listener on the body sits between the two: the embedded component
+  // sees the key first, then propagation ends short of tldraw.
+  useEffect(() => {
+    const body = bodyRef.current
+    if (!body) return
+    const shieldKey = (event: KeyboardEvent) => event.stopPropagation()
+    body.addEventListener('keydown', shieldKey)
+    body.addEventListener('keyup', shieldKey)
+    return () => {
+      body.removeEventListener('keydown', shieldKey)
+      body.removeEventListener('keyup', shieldKey)
+    }
+  }, [])
+
   const stopCanvasEvent = (event: SyntheticEvent) => {
     event.stopPropagation()
   }
@@ -359,13 +380,13 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
         </div>
       </div>
       <div
+        ref={bodyRef}
         className="piano-roll-shape__body"
         onPointerDown={stopCanvasEvent}
         onPointerMove={stopCanvasEvent}
         onPointerUp={stopCanvasEvent}
         onPointerCancel={stopCanvasEvent}
         onTouchStart={stopCanvasEvent}
-        onKeyDownCapture={stopCanvasEvent}
         onWheel={stopCanvasEvent}
       >
         {roll ? (
