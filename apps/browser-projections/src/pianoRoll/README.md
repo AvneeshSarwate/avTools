@@ -153,6 +153,22 @@ import '@/pianoRoll/web-component.ts'
 }
 ```
 
+### Metadata
+
+Metadata is free-form JSON per note, with one typed key: a top-level
+`color` must be a six-digit hex string (`"#ababab"`) and becomes the note's
+fill; a selected colored note keeps its fill and shows selection as a heavy
+stroke. Invalid colors fall back to the default fill. Rules for known keys
+live in `noteMetadataRules.ts`.
+
+The Metadata panel edits every selected note at once. `metadataGroupEdit.ts`
+merges the selection into one tree whose leaves are `shared`, `mixed`,
+`partial` (`n of N`), or `conflict` (object in some notes, value in others);
+arrays are atomic. Edits are path operations applied to every note as one undo
+step. Setting a path where notes hold a different value is allowed and flagged
+as overwriting; a rule violation blocks Save. Raw mode edits the document of
+fields shared by all selected notes and diffs it back into path operations.
+
 ## Performance
 
 - **Culling**: Only renders notes in visible viewport

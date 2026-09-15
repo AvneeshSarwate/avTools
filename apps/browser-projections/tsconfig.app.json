@@ -11,6 +11,7 @@
   ],
   "exclude": [
     "src/**/__tests__/*",
+    "src/**/*_test.ts",
     "src/sketches/tldraw_test/**",
     "src/sketches/tldraw_sketch0/**",
     "src/sketches/nov21demo/**",
