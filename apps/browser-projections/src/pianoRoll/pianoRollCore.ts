@@ -1,5 +1,6 @@
 import Konva from 'konva'
 import type { PianoRollState, NoteData, MpePitchPoint } from './pianoRollState'
+import { labelColorFor, noteFillColor } from './noteMetadataRules'
 import {
   uid,
   screenToPitchPosition,
@@ -257,13 +258,14 @@ export function renderVisibleNotes(state: PianoRollState) {
     const displayDuration = getNoteDisplayDuration(state, id, note.duration)
     const width = displayDuration * quarterNoteWidth
     const isHidden = state.interaction.hiddenNoteIds.has(id)
+    const fill = noteFillColor(note.metadata, state.grid.noteColor)
 
     const rect = new Konva.Rect({
       x: screen.x,
       y: screen.y,
       width,
       height: noteHeight,
-      fill: state.grid.noteColor,
+      fill,
       stroke: '#000',
       strokeWidth: 1,
       opacity: isHidden ? 0.3 : 1.0,
@@ -279,7 +281,7 @@ export function renderVisibleNotes(state: PianoRollState) {
       y: screen.y + 2,
       text: labelText,
       fontSize: 14,
-      fill: '#000',
+      fill: labelColorFor(fill),
       listening: false
     })
     notesLayer.add(label)
@@ -301,15 +303,19 @@ export function renderVisibleNotes(state: PianoRollState) {
     // Selected notes use their actual duration (not truncated)
     const width = note.duration * quarterNoteWidth
     const isHidden = state.interaction.hiddenNoteIds.has(id)
+    // A note with its own color keeps it while selected and shows selection
+    // through a heavy stroke instead; the default swaps the fill as before.
+    const ownColor = noteFillColor(note.metadata, '')
+    const fill = ownColor || state.grid.selectedNoteColor
 
     const rect = new Konva.Rect({
       x: screen.x,
       y: screen.y,
       width,
       height: noteHeight,
-      fill: state.grid.selectedNoteColor,
-      stroke: '#000',
-      strokeWidth: 1,
+      fill,
+      stroke: ownColor ? state.grid.selectedNoteColor : '#000',
+      strokeWidth: ownColor ? 3 : 1,
       opacity: isHidden ? 0.3 : 1.0,
       listening: true
     })
@@ -323,7 +329,7 @@ export function renderVisibleNotes(state: PianoRollState) {
       y: screen.y + 2,
       text: labelText,
       fontSize: 14,
-      fill: '#000',
+      fill: labelColorFor(fill),
       listening: false
     })
     notesLayer.add(label)
