@@ -42,12 +42,18 @@ try {
     if (iteration === 2) {
       const restored = await docker('exec', name, 'cat', '/workspace/avTools/.startup-smoke-marker');
       if (restored !== name) throw new Error('Checkpoint did not restore the marker');
+      const restoredPrivate = await docker('exec', name, 'cat', '/root/.ssh/.startup-smoke-marker');
+      if (restoredPrivate !== name) throw new Error('Credential checkpoint did not restore the marker');
     }
     await docker('exec', name, 'node', '-e',
       `require('fs').writeFileSync('/workspace/avTools/.startup-smoke-marker', ${JSON.stringify(name)})`);
     // Serialize with the supervisor's background checkpoint writer.
     await docker('exec', name, 'flock', '--wait', '120', '/workspace/.livecode-runtime/repo-persist.lock',
       'node', '/opt/livecode/checkpoint.mjs', 'save', '/workspace/avTools', '/data/livecode', '/workspace/.livecode-runtime');
+    await docker('exec', name, 'node', '-e',
+      `require('fs').writeFileSync('/root/.ssh/.startup-smoke-marker', ${JSON.stringify(name)})`);
+    await docker('exec', name, 'flock', '--wait', '120', '/workspace/.livecode-runtime/credential-persist.lock',
+      'node', '/opt/livecode/credential-state.mjs', 'save', '/root', '/data/livecode', '/workspace/.livecode-runtime');
     const phases = await docker('exec', name, 'cat', '/workspace/.livecode-runtime/boot-timings.jsonl');
     const timings = phases.split('\n').map(JSON.parse);
     const credentials = timings.find(event => event.event === 'credentials.restored');
