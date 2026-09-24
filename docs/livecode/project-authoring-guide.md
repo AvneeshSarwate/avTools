@@ -167,7 +167,7 @@ These bare imports are the intentionally supported livecode surface:
 | `six-sines-store` | Named synth parameter state; live registration, snapshots, explicit preset/parameter edits. The audio instance stays in engine module state. | Deno and browser (state); browser for the packaged AudioWorklet |
 | `piano-roll-store` | Read or update named piano-roll entities. | Deno and browser |
 | `piano-roll-helpers` | Convert clips, write roll data, and play a roll through logical time and optional MIDI output. | Deno and browser |
-| `midi-helpers` | Discover/select outputs, send notes/CC, and panic. Browser MIDI may require a focused user gesture and permission. | Deno and browser |
+| `midi-helpers` | Discover/select outputs, send notes/CC, and panic; list and open inputs (`listMidiInputs`, `openMidiInput(name, ctx)`). Browser MIDI may require a focused user gesture and permission. | Deno and browser |
 | `canvas-surface` | `canvasSurface(name)` returns a named container/canvas under `#livecode-stage` for Canvas 2D or as a p5 parent; a canvas view shape mirrors it when the engine runs in the UI tab. | Browser engine |
 | `p5`, `three` | Browser graphics rendered in the engine tab (or into a `canvasSurface`). | Browser engine |
 
@@ -208,6 +208,7 @@ Choosing a sparse store implementation is platform work following the
 | Cursor-latched chords, per-note macro modulation, editable looping MSEGs | [`six-sines-cursor-chords`](../../apps/livecode-tldraw/example-projects/six-sines-cursor-chords/README.md) |
 | Nested live params, metadata, code writes, scopes | [`feature-params-basics`](../../apps/livecode-tldraw/example-projects/feature-params-basics/README.md) |
 | Create/read/play piano rolls and use MIDI | [`feature-piano-roll-flows`](../../apps/livecode-tldraw/example-projects/feature-piano-roll-flows/README.md) |
+| Record MIDI input into a piano roll | [`feature-midi-recording`](../../apps/livecode-tldraw/example-projects/feature-midi-recording/README.md) |
 | Durable timelines, sampling, function cues, animation playheads | [`feature-animation-timeline`](../../apps/livecode-tldraw/example-projects/feature-animation-timeline/README.md) |
 | Ephemeral signals, scopes, and one-to-many playhead anchors | [`feature-signals-and-scopes`](../../apps/livecode-tldraw/example-projects/feature-signals-and-scopes/README.md) |
 | Combined durable save/reopen and multiple entity/view types | [`feature-studio-combined`](../../apps/livecode-tldraw/example-projects/feature-studio-combined/README.md) |

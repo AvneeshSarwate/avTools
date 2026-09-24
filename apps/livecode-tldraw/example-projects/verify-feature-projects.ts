@@ -923,6 +923,59 @@ async function verifyDrawingP5(): Promise<void> {
 
 // ---------------------------------------------------------------------------
 
+async function verifyMidiRecording(): Promise<void> {
+  console.log("\n=== feature-midi-recording ===");
+  await openProject("feature-midi-recording");
+
+  // Note capture needs a MIDI device (see the project README); headlessly this
+  // covers the declaration, the recording toggle edges, and cleanup.
+  const recorder = await launchModule("midi-recording/recorder");
+  assert(recorder.launchStatus === 200, "recorder launch accepted");
+  await waitForRun("midi-recording/recorder", "running");
+
+  const entity = await waitUntil(
+    "midi-recording params entity is listed",
+    () => paramsEntity("midi-recording"),
+  );
+  assert(
+    entity.values.recording === false && entity.values.input === "" &&
+      entity.values.trimStartSilence === true &&
+      entity.values.trimEndSilence === true,
+    "declared defaults are visible",
+  );
+  assert(
+    entity.meta?.input?.options?.["(none)"] === "",
+    "input selector lists the (none) option",
+  );
+
+  for (const recording of [true, false]) {
+    await post("/params/set", {
+      name: "midi-recording",
+      values: { recording },
+      originId: "verify-runner",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  await waitUntil(
+    "an empty take reports and leaves the roll unwritten",
+    async () => {
+      const current = await paramsEntity("midi-recording");
+      return current.values.status === "no notes recorded; roll unchanged" &&
+        !(await roll("midi-recording/take"));
+    },
+  );
+
+  await post("/runtime/stop", { moduleId: "midi-recording/recorder" });
+  await waitForRun(
+    "midi-recording/recorder",
+    "stopped",
+    recorder.generatedRunId,
+  );
+  projectSummaries.push(
+    "feature-midi-recording: declaration, toggle edges, empty take, stop",
+  );
+}
+
 async function main(): Promise<number> {
   console.log("starting livecode server (port 0)...");
   const child = new Deno.Command("deno", {
@@ -993,6 +1046,7 @@ async function main(): Promise<number> {
     await verifyLifecycleBasics();
     await verifyStudioCombined();
     await verifyDrawingP5();
+    await verifyMidiRecording();
 
     console.log(`\nALL PROJECTS VERIFIED (${checksPassed} checks)`);
     for (const line of projectSummaries) console.log(`  - ${line}`);
