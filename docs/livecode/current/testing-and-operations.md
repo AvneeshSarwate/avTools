@@ -135,8 +135,8 @@ For the Cloudflare remote dev box, see
 for packed R2 checkpoint migration/recovery, offline checks, and startup timing.
 Its Deno session files are disposable local artifacts; canonical projects, Git
 state, and credentials persist separately. Older container boot scripts cannot
-read packed checkpoints, so rollback requires exporting the latest workspace to
-the legacy mirror first.
+read packed checkpoints, so rollback requires exporting the latest workspace
+and private agent state to their legacy mirrors first.
 
 Cold Deno caches require network access to JSR and npm. The server uses broad
 permissions plus unstable WebGPU/FFI flags; a healthy ordinary test process may

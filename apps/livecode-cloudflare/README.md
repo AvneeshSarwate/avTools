@@ -11,8 +11,8 @@ operator's explicit Vite/HMR correction:
 - `/__cloud/terminal/` is an Access-protected xterm in the full Git worktree;
 - the browser remains the remote execution engine, so the hot timing loop does
   not cross the WAN;
-- R2 mirrors the Git worktree, project files, `~/.claude`, `~/.codex`, and
-  `~/.ssh`.
+- R2 holds packed checkpoints of the Git worktree, project files, and the
+  private `~/.claude`, `~/.codex`, and `~/.ssh` directories.
 
 The deployed URL is:
 
@@ -55,8 +55,8 @@ codex login --device-auth
 The boot supervisor detects the resulting credential and starts
 `claude remote-control --name livecode-cloud --spawn same-dir --capacity 1`.
 The terminal header reports `needs-auth` until this is complete. Credential
-rotations and Codex login state are copied to R2 on file changes, with a
-30-second fallback sync, and restored after container replacement.
+rotations and Codex login state are packed into separate, checksum-verified R2
+checkpoints, with a 30-second fallback save, and restored after replacement.
 
 For GitHub pushes, create a repository-scoped deploy key in the terminal:
 
@@ -70,6 +70,35 @@ keys and enable write access if this box should push. No GitHub account token is
 stored in the container.
 
 ## Runtime and persistence
+
+### Remote diagnostics
+
+From this directory, run `npm run diagnose:remote` to inspect the deployed
+container and compare its `/data` mount with checkpoint manifests read directly
+from R2. The command uses a temporary Wrangler remote preview with a binding to
+the deployed `livecode` Durable Object; it does not change the public Worker or
+require the browser terminal. It reports checkpoint names and timestamps only,
+not credential contents. A `data_mount` value of `0` means `/data` is mounted;
+`32` means it is plain local disk. The command requires Wrangler login for the
+Cloudflare account that owns Livecode.
+Run `npm run diagnose:remote -- --wake` to request the deployed Worker's startup
+route through a private service binding, even when Cloudflare Access blocks the
+public URL from the CLI.
+For an incident where a previously bad boot must be discarded after the mount
+is repaired, `npm run diagnose:remote -- --restart-boot` kills that boot
+supervisor without saving its local state and starts a fresh boot from R2.
+
+Startup verifies the `/data` mount before restoring or saving state. If the
+Sandbox SDK retained a stale mount record from a replaced container, Livecode
+clears that record only after confirming the mount is absent, then remounts R2.
+Ready requests check the mount periodically and retry this repair if it drops.
+Checkpoint saves also refuse to run when `/data` is not mounted.
+For the one-time legacy credential import, run `npm run migrate:credentials:local`
+from this directory while the cloud boot is paused. It uses a temporary,
+R2-bound Wrangler preview to download legacy objects in batches, builds and
+verifies packed checkpoints in a restricted local temporary directory, uploads
+each archive before its manifest, then removes the local credential files.
+It refuses to replace an existing packed checkpoint.
 
 ### Browser code editor
 
@@ -155,6 +184,25 @@ before declaring readiness (which gates terminals). Restore failures fail boot;
 partially restored credentials are never synced back. `credentials.restored`
 reports total restore time; `waiting_for_credentials` reports only the remaining
 critical-path wait after workspace recovery.
+
+Each private directory has its own whole-object checkpoint, using the same
+current/previous manifests and checksum validation as the workspace. Local
+files are scanned and compressed locally; the R2 mount sees archive and
+manifest objects, not each private file. On the first upgraded boot, any
+directory without a checkpoint is imported from its legacy per-file R2 mirror
+and immediately checkpointed. That one-time migration can still be slow.
+After a checkpoint exists, an invalid checkpoint fails boot or uses its valid
+previous generation; it never silently restores the stale legacy mirror.
+Legacy objects remain intact for manual rollback but receive no further writes.
+An older image cannot read new private checkpoints, so rolling back the image
+also requires exporting the latest private state to the legacy layout.
+
+Deployed 2026-09-24 UTC as Worker version
+`ae3ebffc-c506-49a2-9ddd-043615db8f11` and container application version 15,
+image `sha256:605db70f19856bedf4958e65e588289c0b50112cd4ff9731699bd842766a9cd5`.
+The two-boot local container smoke test restored private SSH state and the
+workspace. The first live credential migration and post-migration wake still
+need measurement; publishing the image alone does not start the boot script.
 
 The Docker image also bakes a browser-engine asset cache. The asset builder
 checks the optional R2 cache (`livecode/browser-host-cache`), then the baked

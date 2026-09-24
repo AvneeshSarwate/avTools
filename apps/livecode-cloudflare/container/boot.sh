@@ -26,6 +26,11 @@ mkdir -p \
   /root/.ssh \
   /workspace
 
+if ! mountpoint -q /data; then
+  echo "[livecode] refusing to boot without the R2 /data mount" >&2
+  exit 1
+fi
+
 boot_phase=initializing
 boot_started_ms=$(date +%s%3N)
 phase_started_ms=$boot_started_ms
@@ -55,13 +60,12 @@ write_boot_status() {
 
 write_boot_status initializing
 
-# Credentials are independent of the worktree. Start their restore now, but
-# join it before any credential watcher, agent, or ready/terminal access.
+# Credentials are independent of the worktree. Restore packed checkpoints in
+# parallel with workspace recovery, but join before agents or terminal access.
 (
   credential_started_ms=$(date +%s%3N)
-  rsync --archive "$claude_state_root/" /root/.claude/
-  rsync --archive "$codex_state_root/" /root/.codex/
-  rsync --archive "$ssh_state_root/" /root/.ssh/
+  node /opt/livecode/credential-state.mjs restore \
+    /root "$persistent_root" "$runtime_state_root"
   chmod 0700 /root/.claude /root/.codex /root/.ssh
   find /root/.claude /root/.codex /root/.ssh -type f -exec chmod 0600 {} +
   credential_finished_ms=$(date +%s%3N)
@@ -186,7 +190,9 @@ fi
 
 persist_repo() {
   (
+    mountpoint -q /data || { echo "[livecode] R2 /data mount lost; workspace checkpoint skipped" >&2; exit 1; }
     flock --wait 120 9 || exit 1
+    mountpoint -q /data || exit 1
     node /opt/livecode/checkpoint.mjs save \
       "$workspace_root" "$persistent_root" "$runtime_state_root"
   ) 9> "$repo_persist_lock"
@@ -194,15 +200,16 @@ persist_repo() {
 
 persist_credentials() {
   (
+    mountpoint -q /data || { echo "[livecode] R2 /data mount lost; credential checkpoint skipped" >&2; exit 1; }
     flock --wait 120 9
-    rsync --archive --delete /root/.claude/ "$claude_state_root/"
-    rsync --archive --delete /root/.codex/ "$codex_state_root/"
-    rsync --archive --delete /root/.ssh/ "$ssh_state_root/"
+    mountpoint -q /data || exit 1
+    node /opt/livecode/credential-state.mjs save \
+      /root "$persistent_root" "$runtime_state_root"
   ) 9> "$credential_persist_lock"
 }
 
 persist_all() {
-  echo "[livecode] persisting workspace and credentials to R2"
+  echo "[livecode] persisting workspace and credential checkpoints to R2"
   persist_repo || echo "[livecode] workspace persistence failed" >&2
   persist_credentials || echo "[livecode] credential persistence failed" >&2
 }

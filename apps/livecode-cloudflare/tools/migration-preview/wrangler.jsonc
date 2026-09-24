@@ -1,0 +1,9 @@
+{
+  "name": "livecode-credential-migration-preview",
+  "main": "index.js",
+  "compatibility_date": "2026-08-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "r2_buckets": [
+    { "binding": "LIVECODE_STATE", "bucket_name": "avtools-livecode-state" }
+  ]
+}

@@ -134,6 +134,8 @@ export class Sandbox extends SandboxBase<Env> {
 
   #generation = 0;
   #attempt = 0;
+  #lastStateMountCheck = 0;
+  #stateMountPresent = false;
   #startup: DevBoxStatus = {
     state: "idle",
     phase: "idle",
@@ -188,6 +190,46 @@ export class Sandbox extends SandboxBase<Env> {
 
   async getDevBoxStatus(): Promise<DevBoxStatus> {
     return this.#snapshot();
+  }
+
+  async stateMountPresent(maxAgeMs = 0): Promise<boolean> {
+    if (maxAgeMs > 0 && Date.now() - this.#lastStateMountCheck < maxAgeMs) {
+      return this.#stateMountPresent;
+    }
+    const process = await this.exec(["mountpoint", "-q", "/data"]);
+    let status = await process.capability.status();
+    for (let attempt = 0; status.state === "running" && attempt < 20; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      status = await process.capability.status();
+    }
+    if (status.state === "running") throw new Error("Timed out checking the /data mount");
+    if (status.state === "error") throw new Error(status.error.message);
+    this.#stateMountPresent = status.exit.code === 0;
+    this.#lastStateMountCheck = Date.now();
+    return this.#stateMountPresent;
+  }
+
+  async forgetStaleStateMount(): Promise<void> {
+    if (await this.stateMountPresent()) {
+      throw new Error("Refusing to forget an active /data mount");
+    }
+    // The SDK can retain a mount record after the container holding its FUSE
+    // process is replaced. Its unmountBucket() cannot clear that stale record:
+    // fusermount returns EINVAL because the new container has no mount.
+    const mounts = (this as unknown as {
+      bucketMounts?: {
+        registry?: {
+          get(path: string): { bucket?: string } | undefined;
+          delete(path: string): boolean;
+        };
+      };
+    }).bucketMounts?.registry;
+    const mount = mounts?.get("/data");
+    if (!mounts || !mount || mount.bucket !== "LIVECODE_STATE") {
+      throw new Error("Expected stale LIVECODE_STATE mount record was not found");
+    }
+    mounts.delete("/data");
+    startupLog("warn", "startup.mount.stale_record_cleared", { mountPath: "/data" });
   }
 
   async markDevBoxStarting(
@@ -412,6 +454,9 @@ type LivecodeSandbox = ReturnType<typeof getSandbox<Sandbox>>;
 
 async function mountStateBucket(sandbox: LivecodeSandbox): Promise<void> {
   // ContainerProxy turns this binding name into credential-free R2 access.
+  // A DO code reset can lose the SDK registry while the container keeps its
+  // FUSE mount. Check the container first to avoid stacking another mount.
+  if (await sandbox.stateMountPresent()) return;
   try {
     await sandbox.mountBucket("LIVECODE_STATE", "/data", {
       s3fsOptions: ["nonempty"],
@@ -423,6 +468,13 @@ async function mountStateBucket(sandbox: LivecodeSandbox): Promise<void> {
     );
     if (!alreadyMounted) throw error;
   }
+  if (await sandbox.stateMountPresent()) return;
+  await sandbox.forgetStaleStateMount();
+  await sandbox.mountBucket("LIVECODE_STATE", "/data", {
+    s3fsOptions: ["nonempty"],
+  });
+  if (await sandbox.stateMountPresent()) return;
+  throw new Error("R2 mount is absent after mountBucket returned successfully");
 }
 
 async function readBootStatus(
@@ -606,6 +658,17 @@ async function ensureDevBoxStarted(
 ): Promise<DevBoxStatus> {
   const claim = await sandbox.claimDevBoxStart(retryFailed);
   if (!claim.owner) {
+    if (claim.status.state === "ready" && !(await sandbox.stateMountPresent(2_000))) {
+      try {
+        await mountStateBucket(sandbox);
+      } catch (error) {
+        return sandbox.markDevBoxFailed(
+          claim.status.generation,
+          errorDetails(error),
+          "state_mount_lost",
+        );
+      }
+    }
     if (claim.status.state === "starting" && claim.status.processId) {
       return inspectBootProcess(sandbox, claim.status);
     }
