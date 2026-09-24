@@ -1,9 +1,7 @@
-import { MidiAccess as NativeMidiIo } from "../../../apps/deno-notebooks/midi/mod.ts";
 import { openMidiAccess } from "../mod.ts";
 import { selectLoopbackPort } from "./iac_test_helpers.ts";
 
 const requestedName = Deno.args[0];
-const io = NativeMidiIo.open();
 const midi = await openMidiAccess();
 
 if (midi.backend !== "native") {
@@ -11,7 +9,7 @@ if (midi.backend !== "native") {
 }
 
 const outputPort = selectLoopbackPort(midi.listOutputs(), requestedName);
-const inputPort = io.listInputs().find((port) =>
+const inputPort = midi.listInputs().find((port) =>
   port.id === outputPort.id || port.name === outputPort.name
 );
 if (!inputPort) {
@@ -19,18 +17,23 @@ if (!inputPort) {
 }
 
 console.log(`IAC native loopback: ${outputPort.name}`);
-const input = io.openInput(inputPort.id, { rateHz: 250, keepAlive: false });
+const input = await midi.openInput(inputPort.id);
 const output = await midi.openOutput(outputPort.id);
 const received: string[] = [];
+const expected = ["noteOn:60:101", "cc:74:1", "cc:74:2", "noteOff:60:45"];
 
 const done = new Promise<void>((resolve, reject) => {
   const timeout = setTimeout(
-    () => reject(new Error("Timed out waiting for IAC note-on/note-off")),
+    () => reject(new Error(`Timed out; received ${received.join(",")}`)),
     3_000,
   );
-  input.onNote((event) => {
-    received.push(`${event.on ? "on" : "off"}:${event.noteNum}`);
-    if (!event.on && event.noteNum === 60) {
+  input.onMessage((event) => {
+    if (event.type === "noteOn" || event.type === "noteOff") {
+      received.push(`${event.type}:${event.note}:${event.velocity}`);
+    } else if (event.type === "cc") {
+      received.push(`cc:${event.controller}:${event.value}`);
+    }
+    if (event.type === "noteOff" && event.note === 60) {
       clearTimeout(timeout);
       resolve();
     }
@@ -39,13 +42,18 @@ const done = new Promise<void>((resolve, reject) => {
 
 try {
   output.noteOn(0, 60, 101);
+  // Two CCs inside one dispatch tick: both must arrive (no coalescing).
+  output.cc(0, 74, 1);
+  output.cc(0, 74, 2);
   await new Promise((resolve) => setTimeout(resolve, 80));
   output.noteOff(0, 60, 45);
   await done;
+  if (received.join(",") !== expected.join(",")) {
+    throw new Error(
+      `Expected ${expected.join(",")}, got ${received.join(",")}`,
+    );
+  }
   console.log(`PASS ${received.join(",")}`);
 } finally {
-  input.close();
-  output.close();
   midi.close();
-  io.close();
 }

@@ -1,5 +1,5 @@
 import { assertEquals, assertThrows } from "jsr:@std/assert@1";
-import type { IMIDIAccess, IMIDIOutput } from "@midival/core";
+import type { IMIDIAccess, IMIDIInput, IMIDIOutput } from "@midival/core";
 import { openMidiAccess } from "../browser.ts";
 
 Deno.test("browser backend wraps MIDIVal while preserving the shared API", async () => {
@@ -63,4 +63,64 @@ Deno.test("browser backend wraps MIDIVal while preserving the shared API", async
   assertEquals(closeCount, 1);
   assertThrows(() => output.noteOn(0, 60));
   assertThrows(() => midi.listOutputs());
+});
+
+Deno.test("browser backend decodes MIDIVal input into shared events", async () => {
+  type RawCallback = (
+    message: { receivedTime: number; data: Uint8Array },
+  ) => void;
+  const callbacks = new Set<RawCallback>();
+  const inputPort = {
+    id: "browser-input",
+    name: "Browser Input",
+    manufacturer: "",
+    onMessage: (callback: RawCallback) => {
+      callbacks.add(callback);
+      return Promise.resolve(() => callbacks.delete(callback));
+    },
+  } satisfies IMIDIInput;
+  const access = {
+    connect: () => Promise.resolve(),
+    inputs: [inputPort],
+    outputs: [],
+    onInputConnected: () => () => {},
+    onInputDisconnected: () => () => {},
+    onOutputConnected: () => () => {},
+    onOutputDisconnected: () => () => {},
+  } satisfies IMIDIAccess;
+  // MIDIVal's browser wrapper passes the DOM MIDIMessageEvent, which has
+  // `timeStamp` (not the `receivedTime` its types declare).
+  const deliver = (time: number, bytes: number[]) => {
+    for (const cb of callbacks) {
+      cb({ timeStamp: time, data: Uint8Array.from(bytes) } as unknown as {
+        receivedTime: number;
+        data: Uint8Array;
+      });
+    }
+  };
+
+  const midi = await openMidiAccess({ access });
+  assertEquals(midi.listInputs(), [{
+    id: "browser-input",
+    name: "Browser Input",
+    manufacturer: null,
+  }]);
+
+  const input = await midi.openInput("browser-input");
+  const received: unknown[] = [];
+  input.onMessage((event) => received.push(event));
+  deliver(10, [0x91, 64, 90]);
+  deliver(11, [0xF8]); // clock is dropped
+  deliver(12, [0xE1, 0, 96]);
+  deliver(13, [0x91, 64, 0]);
+  assertEquals(received, [
+    { type: "noteOn", channel: 1, note: 64, velocity: 90, timeMs: 10 },
+    { type: "pitchBend", channel: 1, bend: 4096, timeMs: 12 },
+    { type: "noteOff", channel: 1, note: 64, velocity: 0, timeMs: 13 },
+  ]);
+
+  midi.close();
+  assertEquals(input.closed, true);
+  assertEquals(callbacks.size, 0);
+  assertThrows(() => midi.listInputs());
 });
