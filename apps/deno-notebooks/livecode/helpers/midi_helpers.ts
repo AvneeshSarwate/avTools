@@ -1,9 +1,17 @@
+import type { TimeContext } from "@avtools/core-timing";
 import {
   detectMidiBackend,
   type MidiAccess,
+  type MidiInput,
   openMidiAccess,
 } from "@avtools/midi";
 import { clampMidi } from "./midi_math.ts";
+
+export type {
+  MidiInput,
+  MidiInputEvent,
+  MidiInputEventType,
+} from "@avtools/midi";
 
 /**
  * Port identity as this module exposes it. Structurally compatible with both
@@ -127,6 +135,7 @@ let access: MidiAccess | null = null;
 let outputPorts: LivecodePortInfo[] = [];
 let initPromise: Promise<void> | null = null;
 const openedOutputs = new Map<string, LivecodeMidiOutput>();
+const openedInputs = new Set<MidiInput>();
 const midiDevicesByName = Object.create(null) as Record<
   string,
   LivecodeMidiOutput
@@ -235,6 +244,71 @@ function findOpenedDevice(name: string): LivecodeMidiOutput | undefined {
 
 export const requireMidiDevice = getMidiDevice;
 
+/**
+ * Input ports visible right now. Unlike outputs, inputs are listed live on
+ * every call (so a hot-plugged controller appears) and are opened on demand.
+ * Empty until MIDI access has opened (see `initMidi`).
+ */
+export function listMidiInputs(): LivecodePortInfo[] {
+  if (!access) return [];
+  try {
+    return access.listInputs();
+  } catch (error) {
+    console.warn("[midi-helpers] failed to list MIDI inputs", error);
+    return [];
+  }
+}
+
+/**
+ * Open an input by exact id or name, falling back to the first name that
+ * contains `nameOrId` (the same matching as outputs). Every call opens a
+ * separate listener; close it when done. Passing `ctx` closes it when that
+ * context is cancelled, which covers Stop, Replace and Panic.
+ */
+export async function openMidiInput(
+  nameOrId: string,
+  ctx?: TimeContext,
+): Promise<MidiInput> {
+  if (!access) {
+    throw new Error(
+      `MIDI input not found: "${nameOrId}" (MIDI is not initialized; browser hosts must call initMidi() from a user gesture first)`,
+    );
+  }
+  const ports = listMidiInputs();
+  const port =
+    ports.find((candidate) =>
+      candidate.id === nameOrId || candidate.name === nameOrId
+    ) ?? ports.find((candidate) => candidate.name.includes(nameOrId));
+  if (!port) {
+    const available = ports.map((candidate) => `"${candidate.name}"`)
+      .join(", ");
+    throw new Error(
+      `MIDI input not found: "${nameOrId}". Available inputs: ${
+        available || "none"
+      }`,
+    );
+  }
+  const input = await access.openInput(port.id);
+  for (const opened of openedInputs) {
+    if (opened.closed) openedInputs.delete(opened);
+  }
+  openedInputs.add(input);
+  if (ctx) {
+    // close() is idempotent, so a manual close before cancellation is fine.
+    if (ctx.isCanceled) input.close();
+    else {
+      ctx.abortController.signal.addEventListener(
+        "abort",
+        () => input.close(),
+        {
+          once: true,
+        },
+      );
+    }
+  }
+  return input;
+}
+
 export function panicMidi(): void {
   const entries = [...soundingNotes.values()];
   const channelsByDevice = new Map<LivecodeMidiOutput, Set<number>>();
@@ -268,6 +342,8 @@ export function closeMidiDevices() {
     output.close();
   }
   openedOutputs.clear();
+  for (const input of [...openedInputs]) input.close();
+  openedInputs.clear();
   for (const name of Object.keys(midiDevicesByName)) {
     delete midiDevicesByName[name];
   }
