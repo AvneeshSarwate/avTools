@@ -940,7 +940,8 @@ async function verifyMidiRecording(): Promise<void> {
   assert(
     entity.values.recording === false && entity.values.input === "" &&
       entity.values.trimStartSilence === true &&
-      entity.values.trimEndSilence === true,
+      entity.values.trimEndSilence === true &&
+      entity.values.bendRange === 48,
     "declared defaults are visible",
   );
   assert(

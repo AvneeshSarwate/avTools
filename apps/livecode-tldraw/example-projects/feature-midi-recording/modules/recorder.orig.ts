@@ -10,6 +10,10 @@ import { setPianoRollClip } from "piano-roll-helpers";
 
 const ROLL = "midi-recording/take";
 const NO_INPUT = "";
+/** The piano roll's drawable pitch-curve range, in semitones either way. */
+const ROLL_PITCH_RANGE = 24;
+/** Curve points closer than this to the thinned line are dropped. */
+const PITCH_TOLERANCE_SEMITONES = 0.05;
 
 /**
  * The input selector's options are the ports visible right now, so the
@@ -25,6 +29,7 @@ function declareParams(inputNames: string[]) {
     recording: false,
     trimStartSilence: true,
     trimEndSilence: true,
+    bendRange: 48,
     status: "idle",
     lengthBeats: 0,
   }, {
@@ -32,15 +37,29 @@ function declareParams(inputNames: string[]) {
     recording: { label: "recording" },
     trimStartSilence: { label: "trim start silence" },
     trimEndSilence: { label: "trim end silence" },
+    bendRange: {
+      label: "bend range (semitones)",
+      min: 1,
+      max: 96,
+      step: 1,
+    },
     status: { label: "status" },
     lengthBeats: { label: "take length (beats)" },
   });
 }
 
+interface BendSample {
+  sec: number;
+  /** Raw 14-bit bend, -8192..8191; scaled by the bend range at take end. */
+  bend: number;
+}
+
 interface HeldNote {
+  channel: number;
   pitch: number;
   velocity: number;
   onSec: number;
+  bends: BendSample[];
 }
 
 interface RecordedNote extends HeldNote {
@@ -82,30 +101,57 @@ export default async function run(ctx: TimeContext) {
     return deviceSec + clockOffsetSec;
   };
 
+  // Pitch bend is per channel. With MPE each note has its own channel, so
+  // this is per-note pitch; on an ordinary keyboard a channel's bend applies
+  // to every note held on it. Tracked even between takes, because MPE
+  // controllers send a note's initial bend just before its note-on.
+  const channelBend = new Array<number>(16).fill(0);
+
   const onEvent = (event: MidiInputEvent) => {
-    if (event.type !== "noteOn" && event.type !== "noteOff") return;
+    if (
+      event.type !== "noteOn" && event.type !== "noteOff" &&
+      event.type !== "pitchBend"
+    ) return;
     const at = eventSec(event);
+    if (event.type === "pitchBend") channelBend[event.channel] = event.bend;
     if (!take) return;
     const sec = Math.max(take.startSec, at);
+
+    if (event.type === "pitchBend") {
+      for (const held of take.held.values()) {
+        if (held.channel === event.channel) {
+          held.bends.push({ sec, bend: event.bend });
+        }
+      }
+      return;
+    }
+
     const key = `${event.channel}:${event.note}`;
     const held = take.held.get(key);
     if (held) {
-      take.notes.push({ ...held, offSec: sec });
+      endNote(take, held, sec);
       take.held.delete(key);
     }
     if (event.type === "noteOn") {
       take.held.set(key, {
+        channel: event.channel,
         pitch: event.note,
         velocity: event.velocity,
         onSec: sec,
+        bends: [{ sec, bend: channelBend[event.channel] }],
       });
     }
+  };
+
+  const endNote = (into: Take, held: HeldNote, offSec: number) => {
+    held.bends.push({ sec: offSec, bend: channelBend[held.channel] });
+    into.notes.push({ ...held, offSec });
   };
 
   const finishTake = (finished: Take) => {
     const endSec = now();
     for (const held of finished.held.values()) {
-      finished.notes.push({ ...held, offSec: endSec });
+      endNote(finished, held, endSec);
     }
     if (finished.notes.length === 0) {
       params.status = "no notes recorded; roll unchanged";
@@ -128,6 +174,7 @@ export default async function run(ctx: TimeContext) {
         position: beats(note.onSec) - startBeat,
         duration: Math.max(0.001, beats(note.offSec) - beats(note.onSec)),
         velocity: note.velocity,
+        mpePitch: pitchCurve(note, params.bendRange, beats),
       })),
     });
     // The roll stores notes only and has no length field, so the take's loop
@@ -178,4 +225,67 @@ export default async function run(ctx: TimeContext) {
   } finally {
     input?.close();
   }
+}
+
+/**
+ * The roll's per-note pitch curve: `time` is 0..1 across the note and
+ * `pitchOffset` is semitones from the note's pitch. Returns undefined for a
+ * note that never bent. Samples are thinned because every point becomes a
+ * draggable handle in the roll.
+ */
+function pitchCurve(
+  note: RecordedNote,
+  bendRange: number,
+  beats: (sec: number) => number,
+): { points: { time: number; pitchOffset: number }[] } | undefined {
+  const onBeat = beats(note.onSec);
+  const span = beats(note.offSec) - onBeat;
+  const points = note.bends.map(({ sec, bend }) => ({
+    time: span > 0 ? Math.min(1, Math.max(0, (beats(sec) - onBeat) / span)) : 0,
+    pitchOffset: Math.max(
+      -ROLL_PITCH_RANGE,
+      Math.min(ROLL_PITCH_RANGE, (bend / 8192) * bendRange),
+    ),
+  }));
+  if (points.every((point) => Math.abs(point.pitchOffset) < 0.01)) {
+    return undefined;
+  }
+  return { points: simplifyCurve(points, PITCH_TOLERANCE_SEMITONES) };
+}
+
+/**
+ * Ramer-Douglas-Peucker on pitch error: keep a point only when dropping it
+ * would move the line drawn between its neighbours by more than `tolerance`
+ * semitones. Endpoints are always kept.
+ */
+function simplifyCurve<T extends { time: number; pitchOffset: number }>(
+  points: T[],
+  tolerance: number,
+): T[] {
+  if (points.length <= 2) return points;
+  const keep = new Array<boolean>(points.length).fill(false);
+  keep[0] = keep[points.length - 1] = true;
+  const stack: [number, number][] = [[0, points.length - 1]];
+  while (stack.length > 0) {
+    const [from, to] = stack.pop()!;
+    const a = points[from];
+    const b = points[to];
+    let worst = -1;
+    let worstError = tolerance;
+    for (let i = from + 1; i < to; i++) {
+      const p = points[i];
+      const t = b.time > a.time ? (p.time - a.time) / (b.time - a.time) : 0;
+      const expected = a.pitchOffset + t * (b.pitchOffset - a.pitchOffset);
+      const error = Math.abs(p.pitchOffset - expected);
+      if (error > worstError) {
+        worst = i;
+        worstError = error;
+      }
+    }
+    if (worst >= 0) {
+      keep[worst] = true;
+      stack.push([from, worst], [worst, to]);
+    }
+  }
+  return points.filter((_, i) => keep[i]);
 }

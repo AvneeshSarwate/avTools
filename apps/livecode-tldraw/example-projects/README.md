@@ -34,7 +34,7 @@ layout churn you did not mean to keep.
 | `feature-event-buttons` | Global `canvas-events` handlers and inferred params with momentary `button({type, body})` declarations; pointer/keyboard down and up. |
 | `feature-params-basics` | `canvasParams` slice: nested groups, meta bounds/labels, a `graph: true` field, code-driven automation writes, loop-rate reads, `/params/set`. |
 | `feature-piano-roll-flows` | Piano-roll slice: module write-back (`setPianoRollClip`), live playback (`playPianoRoll`), multiple views of one roll, entity CRUD via topbar and HTTP. |
-| `feature-midi-recording` | MIDI input slice: a params input selector refreshed from live ports, a recording toggle, and start/end silence trimming, writing each take to one piano roll. Runs on either engine. |
+| `feature-midi-recording` | MIDI input slice: a params input selector refreshed from live ports, a recording toggle, and start/end silence trimming, writing each take, with per-note pitch bend, to one piano roll. Runs on either engine. |
 | `feature-animation-timeline` | Durable animation slice **with checked-in `data/`**: number/enum/function tracks, restored editor view, signal playhead, loop-rate sampling into a saved scope, whole-timeline CAS, and save/reopen. This is also the browser E2E's project fixture. |
 | `feature-signals-and-scopes` | Ephemeral-signal slice: one playhead sent to two restored rolls, two playheads on one melody (both marker value shapes), numeric signal + scopes, and sticky `ended`. |
 | `feature-lifecycle-basics` | Lifecycle slice: natural completion, Replace-while-running with state continuity, observable `stop()` hook, 409 without replacement consent. |
