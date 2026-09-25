@@ -18,7 +18,7 @@ import { freehandStrokes } from './canvasState';
 import { getPointsBounds } from './canvasUtils';
 import { CommandStack } from './commandStack';
 import { ensureHighlightLayer, createMetadataToolkit } from './metadata';
-import { clearPolygonSelection as clearPolygonSelectionImpl, updatePolygonControlPoints as updatePolygonControlPointsImpl, deserializePolygonState, handlePolygonClick as handlePolygonClickImpl, handlePolygonMouseMove as handlePolygonMouseMoveImpl, handlePolygonEditMouseMove as handlePolygonEditMouseMoveImpl, finishPolygon as finishPolygonImpl, clearCurrentPolygon as clearCurrentPolygonImpl, serializePolygonState, updateBakedPolygonData, initPolygonLayers, setupPolygonModeWatcher as setupPolygonModeWatcherImpl } from './polygonTool';
+import { clearPolygonSelection as clearPolygonSelectionImpl, updatePolygonControlPoints as updatePolygonControlPointsImpl, deserializePolygonState, handlePolygonClick as handlePolygonClickImpl, handlePolygonMouseMove as handlePolygonMouseMoveImpl, handlePolygonEditMouseMove as handlePolygonEditMouseMoveImpl, finishPolygon as finishPolygonImpl, clearCurrentPolygon as clearCurrentPolygonImpl, serializePolygonState, updateBakedPolygonData, initPolygonLayers, setupPolygonModeWatcher as setupPolygonModeWatcherImpl, setPolygonTension as setPolygonTensionImpl } from './polygonTool';
 import { handleCirclePointerDown as handleCirclePointerDownImpl, handleCirclePointerMove as handleCirclePointerMoveImpl, handleCirclePointerUp as handleCirclePointerUpImpl, serializeCircleState, deserializeCircleState, updateBakedCircleData as updateBakedCircleDataCircle, initCircleLayers } from './circleTool';
 import { initAVLayer, refreshAnciliaryViz } from './ancillaryVisualizations';
 import { initializeTransformer } from './transformerManager';
@@ -307,6 +307,22 @@ const duplicateSelectionStateful = () => duplicateSelectionImpl(canvasState)
 const deleteSelectionStateful = () => deleteSelectionImpl(canvasState)
 const canGroupSelectionStateful = computed<boolean>(() => canGroupSelectionImpl(canvasState))
 const canUngroupSelectionStateful = computed<boolean>(() => canUngroupSelectionImpl(canvasState))
+
+// Curve tension of the selected polygons. Konva attrs are not reactive, so the
+// shown value is tracked here and reread whenever the selection changes.
+const selectedPolygonLines = computed(() => Array.from(canvasState.selection.items)
+  .filter(item => item.type === 'polygon' && item.konvaNode instanceof Konva.Line)
+  .map(item => item.konvaNode as Konva.Line))
+const selectedPolygonTension = ref(0)
+watch(selectedPolygonLines, (lines) => { selectedPolygonTension.value = lines[0]?.tension() ?? 0 }, { immediate: true })
+const readRange = (event: Event) => Number((event.target as HTMLInputElement).value)
+const commitSelectedPolygonTension = (event: Event) => {
+  selectedPolygonTension.value = readRange(event)
+  setPolygonTensionImpl(canvasState, selectedPolygonLines.value, selectedPolygonTension.value)
+  // A curve's bounds differ from its straight outline's.
+  canvasState.layers.transformer?.forceUpdate()
+  metadataToolkit.updateMetadataHighlight(selectionStore.getActiveSingleNode(canvasState) ?? undefined)
+}
 
 // Stateful wrappers for freehand helpers
 const clearFreehandSelection = () => clearFreehandSelectionImpl(canvasState)
@@ -1100,6 +1116,16 @@ onUnmounted(() => {
             🗑️ Delete
           </button>
         </div>
+        <template v-if="selectedPolygonLines.length > 0">
+          <span class="separator">|</span>
+          <label class="info" title="Curve tension of the selected polygons (0 = straight edges)">
+            Curve
+            <input type="range" min="0" max="1" step="0.05" :value="selectedPolygonTension"
+              @input="selectedPolygonTension = readRange($event)" @change="commitSelectedPolygonTension"
+              :disabled="canvasState.freehand.isAnimating.value" />
+            {{ selectedPolygonTension.toFixed(2) }}
+          </label>
+        </template>
         <span class="separator">|</span>
         <button @click="metadataEditorVisible = !metadataEditorVisible" :class="{ active: metadataEditorVisible }"
           :disabled="canvasState.freehand.isAnimating.value">
@@ -1147,6 +1173,13 @@ onUnmounted(() => {
             🗑️ Cancel Shape
           </button>
         </div>
+        <span class="separator">|</span>
+        <label class="info" title="Curve tension for new shapes (0 = straight edges); change existing shapes from the Select tool">
+          Curve
+          <input type="range" min="0" max="1" step="0.05" v-model.number="canvasState.polygon.tension.value"
+            :disabled="canvasState.freehand.isAnimating.value" />
+          {{ canvasState.polygon.tension.value.toFixed(2) }}
+        </label>
         <span class="separator">|</span>
         <span v-if="canvasState.polygon.isDrawing.value" class="info">Drawing: {{ canvasState.polygon.currentPoints.value.length / 2 }} points</span>
       </template>

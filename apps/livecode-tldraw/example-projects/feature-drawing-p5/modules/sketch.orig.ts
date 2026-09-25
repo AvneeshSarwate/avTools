@@ -40,14 +40,36 @@ export default async function (ctx: TimeContext) {
       sketch.background(18, 22, 34);
       sketch.scale(SCALE);
 
-      // Polygons: filled outlines.
+      // Polygons: filled outlines. A curved polygon (drawn with the polygon
+      // tool's Curve slider above 0) carries world-space Bézier `segments`,
+      // which p5 draws exactly; a straight one has only `points`.
       sketch.stroke(120, 200, 255);
       sketch.strokeWeight(2);
       sketch.fill(120, 200, 255, 40);
       for (const polygon of render.polygon) {
         sketch.beginShape();
-        for (const point of polygon.points) sketch.vertex(point.x, point.y);
-        sketch.endShape(sketch.CLOSE);
+        if (polygon.segments) {
+          const [first] = polygon.segments;
+          sketch.vertex(first.from.x, first.from.y);
+          for (const s of polygon.segments) {
+            if (s.type === "quadratic") {
+              sketch.quadraticVertex(s.control.x, s.control.y, s.to.x, s.to.y);
+            } else {
+              sketch.bezierVertex(
+                s.control1.x,
+                s.control1.y,
+                s.control2.x,
+                s.control2.y,
+                s.to.x,
+                s.to.y,
+              );
+            }
+          }
+          sketch.endShape();
+        } else {
+          for (const point of polygon.points) sketch.vertex(point.x, point.y);
+          sketch.endShape(sketch.CLOSE);
+        }
       }
 
       // Circles: an ellipse per baked circle, colored from metadata when present.

@@ -32,9 +32,13 @@ alone also runs engine-on-server; only the sketch needs the tab.
 5. Draw a freehand stroke in the view (freehand tool). It appears in the p5
    canvas on the next frame. Drag the circle with the select tool: the p5
    circle follows.
-6. Run **circle writer** again. The circle snaps back to its coded position;
+6. Pick the polygon tool, drag its **Curve** slider above 0, and draw a new
+   shape. It appears in the p5 canvas curved the same way, drawn from the
+   baked `segments`. With the select tool, select it and move the toolbar's
+   **Curve** slider: the p5 curve follows, and undo restores it.
+7. Run **circle writer** again. The circle snaps back to its coded position;
    your strokes stay.
-7. Click **Save project**, draw another stroke without saving, then reload the
+8. Click **Save project**, draw another stroke without saving, then reload the
    same URL. The saved circle and earlier stroke return; the later stroke
    disappears.
 

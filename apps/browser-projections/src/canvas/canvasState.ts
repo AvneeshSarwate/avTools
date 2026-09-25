@@ -3,6 +3,7 @@ import Konva from 'konva'
 import type { CanvasItem } from './CanvasItem'
 import { CommandStack } from './commandStack'
 import type { ZodTypeAny } from 'zod'
+import type { PolygonCurveSegment } from '@avtools/drawing-document'
 
 export type MetadataSchemaEntry = { name: string; schema: ZodTypeAny }
 
@@ -31,6 +32,8 @@ export type FlattenedPolygon = {
   type: 'polygon'
   id: string
   points: { x: number, y: number }[]
+  /** Bézier segments of a curved (non-zero tension) polygon; absent when straight. */
+  segments?: PolygonCurveSegment[]
   metadata?: any
 }
 
@@ -205,6 +208,8 @@ export interface CanvasRuntimeState {
     isDrawing: Ref<boolean>
     currentPoints: Ref<number[]>
     mode: Ref<'draw' | 'edit'>
+    /** Curve tension for new shapes; 0 draws straight edges. */
+    tension: Ref<number>
     dragStartState: string | null
     proximityThreshold: number
     serializedState: string
@@ -341,6 +346,7 @@ export const createCanvasRuntimeState = (): CanvasRuntimeState => {
       isDrawing: ref(false),
       currentPoints: ref([]),
       mode: ref('draw'),
+      tension: ref(0),
       dragStartState: null,
       proximityThreshold: 10,
       serializedState: '',

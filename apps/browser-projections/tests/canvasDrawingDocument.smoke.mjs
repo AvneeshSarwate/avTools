@@ -24,7 +24,8 @@ if (!existsSync(BUNDLE)) {
 
 // A document exercising everything the baked format erases: layer and group
 // transforms, nested groups on two layers, stroke timing, an open polygon,
-// metadata, and an ellipse produced by scale plus rotation.
+// metadata, an ellipse produced by scale plus rotation, and curved polygons
+// under non-uniform scale and skew (whose curve must be computed locally).
 const input = normalizeDrawingDocument({
   freehand: {
     transform: { x: 4, scaleX: 1.5 },
@@ -52,7 +53,10 @@ const input = normalizeDrawingDocument({
     nodes: [
       { type: 'polygon', id: 'poly-1', creationTime: 4000, closed: true, points: [300, 50, 350, 60, 330, 110], transform: { x: -10, scaleX: 1.2 }, metadata: { kind: 'zone' } },
       { type: 'polygon', id: 'poly-open', creationTime: 4500, closed: false, points: [10, 200, 60, 210, 40, 260] },
+      { type: 'polygon', id: 'curve-closed', creationTime: 4600, closed: true, tension: 0.5, points: [200, 300, 260, 290, 280, 350, 220, 370], transform: { x: 15, scaleX: 1.8, scaleY: 0.6, rotation: 20, skewX: 0.1 } },
+      { type: 'polygon', id: 'curve-open', creationTime: 4700, closed: false, tension: 0.35, points: [20, 300, 70, 330, 110, 290, 150, 340] },
     ],
+    transform: { y: 6, scaleY: 1.1 },
   },
   circle: {
     transform: { y: 3 },
@@ -128,13 +132,24 @@ const result = await page.evaluate(async (input) => {
   const doc4 = clone(el.getDrawingDocument())
 
   const itemCount = el.canvasState.canvasItems.size
-  return { doc1, render1, updatesAfterHydrate, emptied, doc2, rejected, doc3, updatesAfterEdit, doc4, itemCount }
+
+  // Tension survives the Konva-JSON path undo/redo uses.
+  el.canvasState.command.executeCommand('smoke: straighten curve', () => {
+    el.canvasState.stage.findOne('#curve-open').tension(0)
+  })
+  await wait(50)
+  const straightened = clone(el.getDrawingDocument())
+  el.canvasState.command.stack.undo()
+  await wait(50)
+  const undone = clone(el.getDrawingDocument())
+
+  return { doc1, render1, updatesAfterHydrate, emptied, doc2, rejected, doc3, updatesAfterEdit, doc4, itemCount, straightened, undone }
 }, input)
 
 await browser.close()
 
 if (result.error) { console.error(result.error); process.exit(1) }
-const { doc1, render1, updatesAfterHydrate, emptied, doc2, rejected, doc3, updatesAfterEdit, doc4, itemCount } = result
+const { doc1, render1, updatesAfterHydrate, emptied, doc2, rejected, doc3, updatesAfterEdit, doc4, itemCount, straightened, undone } = result
 
 check(JSON.stringify(doc1) === JSON.stringify(input), 'document round trip is not exact')
 check(updatesAfterHydrate === 0, `hydration emitted document-update ${updatesAfterHydrate} times`)
@@ -152,8 +167,12 @@ check(rejected && rejected.includes('version'), `invalid document was not reject
 check(JSON.stringify(doc3) === JSON.stringify(doc2), 'a rejected document altered the scene')
 check(updatesAfterEdit >= 1, 'an edit did not emit document-update')
 check(doc4.freehand.nodes.length === input.freehand.nodes.length - 1, 'edited document does not reflect the deletion')
-// 3 strokes + 2 freehand groups + 2 polygons + 2 circles + 1 circle group, minus the deleted stroke.
-check(itemCount === 9, `canvasItems registered after edit: ${itemCount} (expected 9)`)
+// 3 strokes + 2 freehand groups + 4 polygons + 2 circles + 1 circle group, minus the deleted stroke.
+check(itemCount === 11, `canvasItems registered after edit: ${itemCount} (expected 11)`)
+check(input.version === 2, `a document with curves should normalize to version 2, got ${input.version}`)
+const curveOpen = (doc) => doc.polygon.nodes.find((n) => n.id === 'curve-open')
+check(curveOpen(straightened) && !('tension' in curveOpen(straightened)), 'a zero tension was not dropped from the document')
+check(curveOpen(undone)?.tension === 0.35, `undo did not restore tension: ${JSON.stringify(curveOpen(undone))}`)
 
 // Konva bake vs. package bake.
 const expected = bakeDrawingDocument(input)
@@ -180,7 +199,20 @@ render1.polygon.forEach((p, i) => {
   const q = expected.polygon[i]
   check(q && p.id === q.id && p.points.every((pt, j) => near(pt.x, q.points[j].x, 1e-6) && near(pt.y, q.points[j].y, 1e-6)), `polygon ${p.id} differs`)
   check(JSON.stringify(p.metadata) === JSON.stringify(q?.metadata), `polygon ${p.id} metadata differs`)
+  // Curved polygons: the canvas's segments come from Konva's getTensionPoints,
+  // the package's from its port, so this checks the port against real Konva.
+  check((p.segments === undefined) === (q?.segments === undefined), `polygon ${p.id} segments presence differs`)
+  if (p.segments && q?.segments) {
+    check(p.segments.length === q.segments.length, `polygon ${p.id} segment count ${p.segments.length} != ${q.segments.length}`)
+    p.segments.forEach((seg, j) => {
+      const other = q.segments[j]
+      const keys = seg.type === 'quadratic' ? ['from', 'control', 'to'] : ['from', 'control1', 'control2', 'to']
+      check(other && other.type === seg.type && keys.every((k) => near(seg[k].x, other[k].x, 1e-6) && near(seg[k].y, other[k].y, 1e-6)),
+        `polygon ${p.id} segment ${j}: canvas ${JSON.stringify(seg)} vs bake ${JSON.stringify(other)}`)
+    })
+  }
 })
+check(expected.polygon.filter((p) => p.segments).length === 2, 'expected two curved polygons in the bake')
 check(render1.circle.length === expected.circle.length, 'circle count differs')
 render1.circle.forEach((c, i) => {
   const q = expected.circle[i]

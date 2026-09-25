@@ -189,8 +189,14 @@ Domain bridges retain distinct semantics:
   lossless document and writes committed edits back whole with compare-and-set.
   The element must not emit `document-update` while a document is being pushed
   in, and the view must not write before its first hydration; either breaks the
-  loop (an echo, or a fresh view erasing the entity). The element's baked
-  `state-update` snapshot is not the entity value.
+  loop (an echo, or a fresh view erasing the entity). A hydration that throws
+  counts as no hydration: the view blocks writes until one succeeds. The
+  element's baked `state-update` snapshot is not the entity value.
+- Curved polygons are Konva `Line` tension, set from the polygon toolbar for
+  new shapes or the select toolbar for selected ones. The bake reports them as
+  world-space Bézier `segments`, computed in the node's local space and then
+  transformed (Konva's curve is not preserved by non-uniform scale or skew, so
+  it cannot be rebuilt from the baked vertices).
 - Signal playhead markers are derived by `signalPlayheadMarkers.ts` from signal
   anchors. Piano-roll anchors interpret position in beats; animation anchors
   interpret it in seconds. One signal sent to both must choose compatible units.
