@@ -48,7 +48,7 @@ expressions for that ID:
 
 Six Sines feeds pressure and brightness to its **MPE Pressure** and **MPE
 Timbre** / **Timbre (Bipolar)** mod sources. That needs the packaged build from
-the six-sines `claude/note-expression-pressure-brightness` branch (see
+six-sines commit `4a321fcb2bfb` or later on `browser-audio-worklet` (see
 [`packages/six-sines/README.md`](../../../../packages/six-sines/README.md));
 the synth's own MIDI MPE mode cannot be enabled in the headless build.
 
