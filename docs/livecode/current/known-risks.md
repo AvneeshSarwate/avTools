@@ -103,21 +103,19 @@ maps, so Deno positions can point into generated coordinates. New detector work
 should add explicit confidence/unsupported cases rather than silently widening
 heuristics.
 
-## P1: sparse sync recovery still applies before checking the baseline
+## P2: sparse sync recovery still applies before checking the baseline
 
 [`syncRuntime.tsx`](../../../apps/livecode-tldraw/src/syncRuntime.tsx) calls
 `applySyncMessageToState` before checking sequence gaps
 or a first message without a reset.
 [`syncState.ts`](../../../apps/livecode-tldraw/src/syncState.ts) rejects patches whose
-entity or parent path is absent. A lost structural update or a first delta
-before a baseline can therefore throw before the resubscribe code executes;
-if parents happen to exist, a gap can instead publish incomplete state until
-reset. The old full-entity recovery order is not sufficient for sparse deltas.
-
-Recovery must check baseline/sequence before applying dependent patches and
-request full resets on materialization failure. This is an unresolved
-source-level finding from the documentation audit, not a reproduced browser
-failure. Existing happy-path and reset tests do not establish this guarantee.
+entity or parent path is absent, and since 2026-09 a rejected message
+resubscribes instead of throwing past the recovery code. What remains: if
+parents happen to exist, a gap can still publish incomplete state until the
+resubscribe's reset lands a moment later. Recovery that checks
+baseline/sequence before applying dependent patches would close that window.
+Drawings now ship sparse patches at up to 30 per second during a gesture, so
+this path is exercised far more than it was with Six Sines alone.
 
 ## P2: sync and long-process state have personal-scale bounds
 
