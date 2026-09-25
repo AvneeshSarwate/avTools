@@ -393,6 +393,8 @@ try {
     await runEventButtonsCase()
   } else if (process.env.LIVECODE_E2E_CASE === 'duplicate') {
     await runCanvasDuplicateActionCase()
+  } else if (process.env.LIVECODE_E2E_CASE === 'drawing') {
+    await runDrawingFixtureCase(viteBaseUrl)
   } else {
     await runResponsiveTopbarCase()
 
@@ -1924,9 +1926,10 @@ async function runProjectOpenRestoresSavedTruthCase() {
  * project: the saved document restores into the engine and into the canvas
  * view, the declaration widget focuses that view, the writer module's code
  * write reaches the view, a committed edit inside the view reaches the engine
- * with the view's origin, and an HTTP compare-and-set write re-hydrates the
- * view. The project is browser-target, but only the writer runs here and it
- * needs no DOM; the p5 sketch stays a manual step.
+ * with the view's origin, an HTTP compare-and-set write re-hydrates the
+ * view, and a stroke drawn with the mouse streams to the engine while the
+ * pointer is still down. The project is browser-target, but only the writer
+ * runs here and it needs no DOM; the p5 sketch stays a manual step.
  */
 async function runDrawingFixtureCase(viteBaseUrl) {
   const fixtureRoot = path.join(tldrawAppRoot, 'example-projects/feature-drawing-p5')
@@ -2130,6 +2133,92 @@ async function runDrawingFixtureCase(viteBaseUrl) {
       ?.unsaved,
     false,
     'restoring the saved document clears the unsaved comparison'
+  )
+
+  // View -> engine while the pointer is down: a freehand stroke streams as
+  // node patches under the view's origin, then commits whole on mouse-up.
+  const canvas = page.locator('handwriting-canvas').first()
+  await canvas.locator('select.tool-dropdown').selectOption('freehand')
+  const stageRect = await page.evaluate(({ name }) => {
+    const element = Array.from(document.querySelectorAll('handwriting-canvas')).find(
+      (candidate) => candidate.dataset.drawingName === name
+    )
+    const rect = element.canvasState.stage.container().getBoundingClientRect()
+    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+  }, { name: drawingName })
+  const viewport = page.viewportSize()
+  assert(
+    stageRect.width > 100 && stageRect.x >= 0 && stageRect.y >= 0 &&
+      stageRect.x + stageRect.width <= viewport.width && stageRect.y + stageRect.height <= viewport.height,
+    `the drawing stage is on screen for a mouse gesture (${JSON.stringify(stageRect)})`
+  )
+  const streamedFrom = await waitForPageValue(
+    ({ name }) => window.__livecodeSyncDebug?.getEntities('drawing')?.[name] ?? null,
+    'drawing entity before the gesture',
+    scaled(5_000),
+    { name: drawingName }
+  )
+  const start = { x: stageRect.x + stageRect.width * 0.1, y: stageRect.y + stageRect.height * 0.8 }
+  await page.mouse.move(start.x, start.y)
+  await page.mouse.down()
+  const steps = 40
+  let streamed = null
+  for (let i = 1; i <= steps; i++) {
+    await page.mouse.move(
+      start.x + (stageRect.width * 0.6 * i) / steps,
+      start.y - (stageRect.height * 0.3 * i) / steps
+    )
+    await sleep(15)
+    if (i === steps) break
+    streamed = await page.evaluate(
+      ({ name, rev }) => {
+        const entity = window.__livecodeSyncDebug?.getEntities('drawing')?.[name]
+        return entity && entity.rev > rev ? entity : null
+      },
+      { name: drawingName, rev: streamedFrom.rev }
+    )
+    if (streamed && i > steps / 2) break
+  }
+  assert(streamed, 'the stroke reached the engine while the pointer was still down')
+  assert(
+    streamed.updatedBy.startsWith('drawing-view-'),
+    `streamed patches carry the view origin (${streamed.updatedBy})`
+  )
+  const streamedStroke = streamed.data.freehand.nodes.find((node) => node.id !== 'saved-stroke')
+  assert(
+    streamedStroke && streamedStroke.type === 'stroke' && streamedStroke.points.length >= 4,
+    'the in-progress stroke is in the engine document'
+  )
+  await page.mouse.up()
+  const committed = await waitForPageValue(
+    ({ name, rev, id }) => {
+      const entity = window.__livecodeSyncDebug?.getEntities('drawing')?.[name]
+      const stroke = entity?.data.freehand.nodes.find((node) => node.id === id)
+      return entity && entity.rev > rev && stroke
+        ? { rev: entity.rev, points: stroke.points.length }
+        : null
+    },
+    'the finished stroke commits after the streamed revisions',
+    scaled(15_000),
+    { name: drawingName, rev: streamed.rev, id: streamedStroke.id }
+  )
+  assert(committed.points >= streamedStroke.points.length, 'the commit carries the whole stroke')
+  await waitForPageValue(
+    ({ name, id, points }) => {
+      const element = Array.from(document.querySelectorAll('handwriting-canvas')).find(
+        (candidate) => candidate.dataset.drawingName === name
+      )
+      const stroke = element?.getDrawingDocument?.().freehand.nodes.find((node) => node.id === id)
+      return stroke && stroke.points.length === points ? true : null
+    },
+    'the view and the engine agree on the stroke',
+    scaled(5_000),
+    { name: drawingName, id: streamedStroke.id, points: committed.points }
+  )
+  assertEqual(
+    await page.locator('.drawing-shape .entity-error-badge').count(),
+    0,
+    'no drawing write was rejected during the gesture'
   )
 }
 

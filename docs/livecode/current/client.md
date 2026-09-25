@@ -192,6 +192,18 @@ Domain bridges retain distinct semantics:
   loop (an echo, or a fresh view erasing the entity). A hydration that throws
   counts as no hydration: the view blocks writes until one succeeds. The
   element's baked `state-update` snapshot is not the entity value.
+- During a gesture (drag, transform, drawing) the element emits
+  `document-preview` batches of node upserts/deletes by id, at most every
+  33 ms, bracketed by `interaction-start`/`interaction-end`. The view streams
+  them as `drawingPatch` actions without compare-and-set (one in flight,
+  later batches coalesced per node) over the sync socket, so the committed
+  `document-update` that ends the gesture stays the last write on the lane;
+  that commit waits for the last preview's acknowledgement and expects its
+  revision. A foreign change arriving mid-gesture is applied when the
+  gesture ends rather than rebuilding the scene under the pointer. Previews
+  never enter the element's undo stack. A second view of the same drawing is
+  still rebuilt per streamed revision; a non-destructive per-node apply is
+  the follow-up if that matters.
 - Curved polygons are Konva `Line` tension, set from the polygon toolbar for
   new shapes or the select toolbar for selected ones. The bake reports them as
   world-space Bézier `segments`, computed in the node's local space and then

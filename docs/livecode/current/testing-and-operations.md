@@ -14,10 +14,11 @@ deno task livecode:server
 From `apps/livecode-tldraw`, run `npm run setupLivecode` once after checkout or
 after a bundled web component changes, then `npm run dev`.
 
-The drawing-document round trip and the parity between the element's Konva
+The drawing-document round trip, the parity between the element's Konva
 bake and the package's Konva-free bake (including curved polygons, where the
 package's port of Konva's curve maths is compared with Konva's own
-`getTensionPoints`) are checked by `npm run test:canvas` in
+`getTensionPoints`), and the in-gesture `document-preview` stream are checked
+by `npm run test:canvas` in
 `apps/browser-projections`, against the built bundle. It is not part of any
 `deno task`; run it after changing the canvas element or
 `packages/drawing-document`.
