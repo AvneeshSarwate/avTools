@@ -10,9 +10,8 @@ Source:
 - Original synthesizer: [baconpaul/six-sines](https://github.com/baconpaul/six-sines)
 - Browser-port fork: [AvneeshSarwate/six-sines](https://github.com/AvneeshSarwate/six-sines)
 - Port branch: [`browser-audio-worklet`](https://github.com/AvneeshSarwate/six-sines/tree/browser-audio-worklet)
-- Packaged commit: [`4a321fcb2bfb`](https://github.com/AvneeshSarwate/six-sines/commit/4a321fcb2bfb) on
-  [`claude/note-expression-pressure-brightness`](https://github.com/AvneeshSarwate/six-sines/tree/claude/note-expression-pressure-brightness)
-  (the port branch plus per-note pressure/brightness note expressions; see below)
+- Packaged commit: [`4a321fcb2bfb`](https://github.com/AvneeshSarwate/six-sines/commit/4a321fcb2bfb)
+  (adds per-note pressure/brightness note expressions; see below)
 
 `six-sines-node.js` is the public module. Its adjacent `.d.ts` provides TypeScript declarations;
 `six-sines-worklet.js`, `six-sines.js`, and `six-sines.wasm` are runtime assets and must remain
