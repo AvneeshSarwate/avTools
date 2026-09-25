@@ -44,6 +44,7 @@ layout churn you did not mean to keep.
 | `timing-composition` | Follow-up gallery on organizing timed code: phrases as functions chosen by `if/else`, one behavior reused across voices with per-voice params folders, a pane checkbox as a momentary trigger launching overlapping branches, `seq`/`repeat`/`par` combinators building a score, and a mode manager that fades, cancels, and swaps long-running behaviors. |
 | `feature-canvas-surface` | Single-page demo slice (browser-engine target, meant to be baked): two independent modules draw into named `canvasSurface`s with Canvas 2D and p5, canvas view shapes mirror them next to the code, and each module has a `running` params toggle because a bake cannot start/stop modules. |
 | `feature-drawing-p5` | Durable drawing slice **with checked-in `data/`** (browser-engine target): restored canvas view, a module that upserts a circle into the drawing from code, a p5 sketch drawing the baked render data in the engine tab, whole-document CAS, and save/reopen. |
+| `feature-drawing-intersections` | The drawing's in-gesture stream **with checked-in `data/`** (browser-engine target, `engine=inprocess`): a p5 sketch repaints on every revision, the mid-drag previews included, painting only where polygons and circles overlap with the average of their `metadata.color`s (white when missing), curved edges from the baked `segments`. |
 
 ## Feature coverage matrix (feature-* projects)
 
