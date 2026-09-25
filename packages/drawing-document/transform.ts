@@ -48,7 +48,7 @@ export function multiplyMatrices(
 
 /**
  * The matrix for one node's transform, composed exactly as
- * `Konva.Node.getTransform` does: translate, rotate, scale, skew, then the
+ * `Konva.Node.getTransform` does: translate, rotate, skew, scale, then the
  * negative offset.
  */
 export function transformToMatrix(
@@ -67,8 +67,8 @@ export function transformToMatrix(
 
   if (x !== 0 || y !== 0) translate(m, x, y);
   if (rotation !== 0) rotate(m, (rotation * Math.PI) / 180);
-  if (scaleX !== 1 || scaleY !== 1) scale(m, scaleX, scaleY);
   if (skewX !== 0 || skewY !== 0) skew(m, skewX, skewY);
+  if (scaleX !== 1 || scaleY !== 1) scale(m, scaleX, scaleY);
   if (offsetX !== 0 || offsetY !== 0) translate(m, -offsetX, -offsetY);
   return [m[0], m[1], m[2], m[3], m[4], m[5]];
 }
