@@ -56,8 +56,8 @@ import type {
   SetAnimationTimelineRequest,
   SetDrawingRequest,
   SetParamsRequest,
-  SetPianoRollCursorRequest,
   SetPianoRollRequest,
+  SetPianoRollCursorRequest,
   StopModuleRequest,
   SyncActionMessage,
   SyncActionResultMessage,
@@ -820,12 +820,7 @@ export async function createLivecodeVisualizerServer(
     }
     if (request.method === "POST" && url.pathname === "/piano-roll/cursor") {
       const requestBody = await request.json() as SetPianoRollCursorRequest;
-      return json(
-        await plane.execute({
-          kind: "pianoRollCursorSet",
-          request: requestBody,
-        }),
-      );
+      return json(await plane.execute({kind:"pianoRollCursorSet",request:requestBody}));
     }
     if (request.method === "POST" && url.pathname === "/piano-roll/set") {
       const requestBody = await request.json() as SetPianoRollRequest;

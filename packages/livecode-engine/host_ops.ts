@@ -210,9 +210,7 @@ export async function executeEngineOp(
     case "pianoRollList":
       return makePianoRollSnapshot();
     case "pianoRollCursorSet":
-      return setPianoRollCursor(op.request.name, op.request.position, {
-        originId: op.request.originId,
-      });
+      return setPianoRollCursor(op.request.name, op.request.position, {originId:op.request.originId});
     case "pianoRollSet":
       return setPianoRoll(op.request.name, op.request.data, {
         label: op.request.label,

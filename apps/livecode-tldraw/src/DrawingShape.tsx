@@ -21,7 +21,10 @@ import type {
   DrawingNodeDelete,
   DrawingNodeUpsert,
 } from "@avtools/livecode-protocol";
-import type { HandwritingCanvasElement } from "./custom-elements";
+import type {
+  HandwritingCanvasElement,
+  HandwritingCanvasPreview,
+} from "./custom-elements";
 import {
   type AppliedDrawingView,
   canWriteFromDrawingView,
@@ -124,12 +127,6 @@ export function createDrawingShape(
   });
   editor.select(id);
   return id;
-}
-
-/** The element's `document-preview` payload: node edits during a gesture. */
-interface DrawingPreviewDetail {
-  upserts: DrawingNodeUpsert[];
-  deletes: DrawingNodeDelete[];
 }
 
 /**
@@ -292,7 +289,8 @@ function DrawingShapeComponent({ shape }: { shape: DrawingShape }) {
     };
 
     const onDocumentPreview = (event: Event) => {
-      const detail = (event as CustomEvent<[DrawingPreviewDetail]>).detail?.[0];
+      const detail = (event as CustomEvent<[HandwritingCanvasPreview]>).detail
+        ?.[0];
       if (!detail || !writable()) return;
       const pending = pendingPreviewRef.current;
       for (const upsert of detail.upserts) {

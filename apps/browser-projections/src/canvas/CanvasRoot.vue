@@ -374,9 +374,7 @@ const setCanvasState = (stateString: string) => restoreCanvasState(stateString)
 // document-update. Playback restarts only when a stroke changed.
 const setDrawingDocument = (doc: DrawingDocument) => {
   const wasAnimating = canvasState.freehand.currentPlaybackTime.value > 0
-  const result = reconcileDrawingDocument(canvasState, doc)
-  const freehand = result.layers.freehand
-  if (freehand.upserted.length || freehand.removed.length || freehand.transformChanged || freehand.reordered) {
+  if (reconcileDrawingDocument(canvasState, doc).has('freehand')) {
     canvasState.freehand.currentPlaybackTime.value = 0
     canvasState.freehand.isAnimating.value = false
     if (wasAnimating) handleTimeUpdate(0)
