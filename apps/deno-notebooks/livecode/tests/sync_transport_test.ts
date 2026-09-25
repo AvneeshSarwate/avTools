@@ -257,6 +257,8 @@ Deno.test("drawings reset, change, and delete on the shared transport", async ()
       assertEquals(initial.name, "sync/drawing");
       assertEquals(initial.data.circle.nodes[0].transform, { x: 10 });
 
+      // A whole-document set ships as sparse patches: the one changed node by
+      // index, then the revision fields (the Six Sines wire shape).
       const before = client.messages.length;
       await postJson(`${baseUrl}/drawing/set`, {
         name: "sync/drawing",
@@ -267,9 +269,70 @@ Deno.test("drawings reset, change, and delete on the shared transport", async ()
         before,
         "drawing",
         (change) =>
-          (change.entity as DrawingEntity | null)?.rev === initial.rev + 1,
+          change.patches?.some((patch) =>
+            patch.path.join("/") === "rev" && patch.op === "set" &&
+            patch.value === initial.rev + 1
+          ) ?? false,
         "the drawing edit",
       );
+      const setPatch = client.changesSince(before, "drawing")
+        .find((change) => change.patches)!;
+      assertEquals(
+        setPatch.patches!.map((patch) => patch.path.join("/")),
+        ["data/circle/nodes/0", "rev", "updatedAt", "updatedBy"],
+      );
+
+      // A node-level patch (the in-gesture stream) ships the same way.
+      const beforePatch = client.messages.length;
+      const patched = await postJson<{ ok: boolean; rev: number }>(
+        `${baseUrl}/drawing/patch`,
+        {
+          name: "sync/drawing",
+          originId: "view",
+          upserts: [{
+            layer: "circle",
+            node: {
+              type: "circle",
+              id: "c",
+              radius: 5,
+              creationTime: 1,
+              transform: { x: 25, y: 0 },
+            },
+          }],
+        },
+      );
+      assertEquals(patched, { ok: true, rev: initial.rev + 2 });
+      await client.waitForChange(
+        beforePatch,
+        "drawing",
+        (change) =>
+          change.patches?.some((patch) =>
+            patch.path.join("/") === "updatedBy" && patch.op === "set" &&
+            patch.value === "view"
+          ) ?? false,
+        "the drawing node patch",
+      );
+      const nodePatch = client.changesSince(beforePatch, "drawing")
+        .find((change) => change.patches)!;
+      assertEquals(nodePatch.patches![0].path, [
+        "data",
+        "circle",
+        "nodes",
+        "0",
+      ]);
+      const rejected = await fetch(`${baseUrl}/drawing/patch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "sync/drawing",
+          upserts: [{
+            layer: "polygon",
+            node: { type: "group", id: "g", children: [] },
+          }],
+        }),
+      });
+      assertEquals(rejected.status, 422);
+      await rejected.json();
 
       // A stale compare-and-set is refused with the current entity attached.
       const stale = await postJson<{ ok: boolean; current?: DrawingEntity }>(
@@ -281,7 +344,7 @@ Deno.test("drawings reset, change, and delete on the shared transport", async ()
         },
       );
       assertEquals(stale.ok, false);
-      assertEquals(stale.current?.rev, initial.rev + 1);
+      assertEquals(stale.current?.rev, initial.rev + 2);
 
       const beforeDelete = client.messages.length;
       await postJson(`${baseUrl}/entities/delete`, {
