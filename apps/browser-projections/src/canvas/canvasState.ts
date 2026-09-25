@@ -62,25 +62,28 @@ export type CanvasRenderData = {
 
 export type CanvasStateSnapshotBase = {
   freehand: {
-    serializedState: string
     bakedRenderData: FreehandRenderData
     bakedGroupMap: Record<string, number[]>
   }
   polygon: {
-    serializedState: string
     bakedRenderData: PolygonRenderData
   }
   circle: {
-    serializedState: string
     bakedRenderData: CircleRenderData
     bakedGroupMap: Record<string, number[]>
   }
 }
 
+/**
+ * What `state-update` carries: every layer's baked render data, which
+ * top-level nodes were added/deleted/changed since the previous emission,
+ * and the whole document as a string (what `setCanvasState` restores).
+ */
 export type CanvasStateSnapshot = CanvasStateSnapshotBase & {
   added: CanvasStateSnapshotBase
   deleted: CanvasStateSnapshotBase
   changed: CanvasStateSnapshotBase
+  documentState: string
 }
 
 export interface FreehandStrokeRuntime {
@@ -205,7 +208,6 @@ export interface CanvasRuntimeState {
     maxInterStrokeDelay: number
     isAnimating: Ref<boolean>
     freehandDragStartState: string | null
-    serializedState: string
     bakedRenderData: FreehandRenderData
     bakedGroupMap: Record<string, number[]>
   }
@@ -219,7 +221,6 @@ export interface CanvasRuntimeState {
     tension: Ref<number>
     dragStartState: string | null
     proximityThreshold: number
-    serializedState: string
     bakedRenderData: PolygonRenderData
   }
   circle: {
@@ -231,7 +232,6 @@ export interface CanvasRuntimeState {
     currentId: string | null
     currentCreationTime: number
     dragStartState: string | null
-    serializedState: string
     bakedRenderData: CircleRenderData
     bakedGroupMap: Record<string, number[]>
   }
@@ -356,7 +356,6 @@ export const createCanvasRuntimeState = (): CanvasRuntimeState => {
       maxInterStrokeDelay: 300,
       isAnimating: ref(false),
       freehandDragStartState: null,
-      serializedState: '',
       bakedRenderData: [],
       bakedGroupMap: {}
     },
@@ -369,7 +368,6 @@ export const createCanvasRuntimeState = (): CanvasRuntimeState => {
       tension: ref(0),
       dragStartState: null,
       proximityThreshold: 10,
-      serializedState: '',
       bakedRenderData: []
     },
     circle: {
@@ -380,7 +378,6 @@ export const createCanvasRuntimeState = (): CanvasRuntimeState => {
       currentId: null,
       currentCreationTime: 0,
       dragStartState: null,
-      serializedState: '',
       bakedRenderData: [],
       bakedGroupMap: {}
     },

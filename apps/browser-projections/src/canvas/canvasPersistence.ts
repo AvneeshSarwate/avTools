@@ -1,72 +1,10 @@
-import { restoreFreehandState } from './freehandTool'
-import { restorePolygonState } from './polygonTool'
-import { restoreCircleState } from './circleTool'
 import type { CanvasRuntimeState } from './canvasState'
 import { reconcileDrawingDocument, serializeDrawingDocument } from './drawingDocument'
+import { convertLegacyCanvasState, isLegacyCanvasState } from './legacyCanvasState'
 export { collectCanvasRenderData } from './canvasBake'
 
 export interface CanvasPersistenceOptions {
   handleTimeUpdate?: (time: number) => void
-}
-
-interface NormalizedCanvasState {
-  freehand?: string
-  polygon?: string
-  circle?: string
-}
-
-const parseStateString = (stateString: string | null | undefined) => {
-  if (!stateString) return null
-  try {
-    return JSON.parse(stateString)
-  } catch (error) {
-    console.warn('Failed to parse state string:', error)
-    return null
-  }
-}
-
-const normalizeParsedState = (parsed: any): NormalizedCanvasState => {
-  if (!parsed || typeof parsed !== 'object') {
-    return {}
-  }
-
-  if ('freehand' in parsed || 'polygon' in parsed || 'circle' in parsed) {
-    const result: NormalizedCanvasState = {}
-
-    if (parsed.freehand !== undefined) {
-      result.freehand = typeof parsed.freehand === 'string'
-        ? parsed.freehand
-        : JSON.stringify(parsed.freehand)
-    }
-
-    if (parsed.polygon !== undefined) {
-      result.polygon = typeof parsed.polygon === 'string'
-        ? parsed.polygon
-        : JSON.stringify(parsed.polygon)
-    }
-
-    if (parsed.circle !== undefined) {
-      result.circle = typeof parsed.circle === 'string'
-        ? parsed.circle
-        : JSON.stringify(parsed.circle)
-    }
-
-    return result
-  }
-
-  if ('layer' in parsed && (parsed.strokes || parsed.strokeGroups)) {
-    return { freehand: JSON.stringify(parsed) }
-  }
-
-  if ('layer' in parsed && (parsed.polygons || parsed.polygonGroups)) {
-    return { polygon: JSON.stringify(parsed) }
-  }
-
-  if ('layer' in parsed && parsed.circles) {
-    return { circle: JSON.stringify(parsed) }
-  }
-
-  return {}
 }
 
 /**
@@ -82,9 +20,8 @@ const isDocumentPayload = (parsed: any): boolean =>
   )
 
 /**
- * Restore a string from `serializeCanvasState`. Older strings (Konva's own
- * serialization per tool, the format before documents) are still accepted
- * and rebuilt whole through the legacy per-tool restore.
+ * Restore a string from `serializeCanvasState`. The format that predates
+ * documents (Konva's own serialization per tool) is converted on the way in.
  */
 export const deserializeCanvasState = (
   canvasState: CanvasRuntimeState,
@@ -101,39 +38,24 @@ export const deserializeCanvasState = (
     return false
   }
 
-  if (isDocumentPayload(parsed)) {
-    const wasAnimating = canvasState.freehand.currentPlaybackTime.value > 0
-    canvasState.freehand.currentPlaybackTime.value = 0
-    canvasState.freehand.isAnimating.value = false
-    try {
-      reconcileDrawingDocument(canvasState, parsed)
-    } catch (error) {
-      console.warn('Failed to restore canvas state:', error)
-      return false
-    }
-    if (wasAnimating) options.handleTimeUpdate?.(0)
-    return true
-  }
-
-  const { freehand, polygon, circle } = normalizeParsedState(parsed)
-
-  if (!freehand && !polygon && !circle) {
-    console.warn('Canvas state payload missing freehand, polygon, and circle data')
+  let document: unknown
+  if (isDocumentPayload(parsed)) document = parsed
+  else if (isLegacyCanvasState(parsed)) document = convertLegacyCanvasState(parsed)
+  else {
+    console.warn('Canvas state payload is neither a document nor a legacy canvas state')
     return false
   }
 
-  if (freehand) {
-    restoreFreehandState(canvasState, freehand, { handleTimeUpdate: options.handleTimeUpdate })
+  const wasAnimating = canvasState.freehand.currentPlaybackTime.value > 0
+  canvasState.freehand.currentPlaybackTime.value = 0
+  canvasState.freehand.isAnimating.value = false
+  try {
+    reconcileDrawingDocument(canvasState, document as never)
+  } catch (error) {
+    console.warn('Failed to restore canvas state:', error)
+    return false
   }
-
-  if (polygon) {
-    restorePolygonState(canvasState, polygon)
-  }
-
-  if (circle) {
-    restoreCircleState(canvasState, circle)
-  }
-
+  if (wasAnimating) options.handleTimeUpdate?.(0)
   return true
 }
 

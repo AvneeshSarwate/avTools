@@ -56,16 +56,13 @@ const CircleRenderDataSchema = z.array(FlattenedCircleSchema)
 
 const CanvasStateSnapshotBaseSchema = z.object({
   freehand: z.object({
-    serializedState: z.string(),
     bakedRenderData: FreehandRenderDataSchema,
     bakedGroupMap: z.record(z.string(), z.array(z.number()))
   }),
   polygon: z.object({
-    serializedState: z.string(),
     bakedRenderData: PolygonRenderDataSchema
   }),
   circle: z.object({
-    serializedState: z.string(),
     bakedRenderData: CircleRenderDataSchema,
     bakedGroupMap: z.record(z.string(), z.array(z.number()))
   })
@@ -74,22 +71,13 @@ const CanvasStateSnapshotBaseSchema = z.object({
 const CanvasStateSnapshotSchema = CanvasStateSnapshotBaseSchema.extend({
   added: CanvasStateSnapshotBaseSchema,
   deleted: CanvasStateSnapshotBaseSchema,
-  changed: CanvasStateSnapshotBaseSchema
+  changed: CanvasStateSnapshotBaseSchema,
+  documentState: z.string()
 })
 
 // Incoming message schemas (commands from server to component)
 const SetCanvasStateMessageSchema = z.object({
   type: z.literal('setCanvasState'),
-  state: z.string()
-})
-
-const SetFreehandStateMessageSchema = z.object({
-  type: z.literal('setFreehandState'),
-  state: z.string()
-})
-
-const SetPolygonStateMessageSchema = z.object({
-  type: z.literal('setPolygonState'),
   state: z.string()
 })
 
@@ -124,8 +112,6 @@ const SetToolMessageSchema = z.object({
 // Union of all incoming message types
 export const IncomingMessageSchema = z.discriminatedUnion('type', [
   SetCanvasStateMessageSchema,
-  SetFreehandStateMessageSchema,
-  SetPolygonStateMessageSchema,
   UndoMessageSchema,
   RedoMessageSchema,
   GetCanvasStateMessageSchema,
@@ -170,8 +156,6 @@ export class CanvasWebSocketController {
 
   private handlers: {
     onSetCanvasState?: (state: string) => void
-    onSetFreehandState?: (state: string) => void
-    onSetPolygonState?: (state: string) => void
     onUndo?: () => void
     onRedo?: () => void
     onGetCanvasState?: (requestId?: string) => void
@@ -258,12 +242,6 @@ export class CanvasWebSocketController {
     switch (message.type) {
       case 'setCanvasState':
         this.handlers.onSetCanvasState?.(message.state)
-        break
-      case 'setFreehandState':
-        this.handlers.onSetFreehandState?.(message.state)
-        break
-      case 'setPolygonState':
-        this.handlers.onSetPolygonState?.(message.state)
         break
       case 'undo':
         this.handlers.onUndo?.()

@@ -293,12 +293,6 @@ export const reconcileDrawingDocument = (state: CanvasRuntimeState, input: Drawi
     }
     if (result.changed) {
       stage.batchDraw()
-      // The per-tool hot-reload caches (Konva's serialization of each layer)
-      // cost more than the reconcile itself; they are only a short-circuit for
-      // the canvas websocket bridge, so they are simply invalidated here.
-      state.freehand.serializedState = ''
-      state.polygon.serializedState = ''
-      state.circle.serializedState = ''
       // The bake callbacks emit state-update (sketches rely on it) but, while
       // hydrating, not document-update.
       if (result.layers.freehand.upserted.length || result.layers.freehand.removed.length || result.layers.freehand.transformChanged || result.layers.freehand.reordered) updateBakedFreehandData(state)
