@@ -171,7 +171,7 @@ Deno.test("normalization rejects malformed documents without partial results", (
   }
 });
 
-Deno.test("transformToMatrix composes translate, rotate, scale, skew, and offset like Konva", () => {
+Deno.test("transformToMatrix composes translate, rotate, skew, scale, and offset like Konva", () => {
   assertEquals(transformToMatrix(undefined), [1, 0, 0, 1, 0, 0]);
   const m = transformToMatrix({ x: 10, y: 20, rotation: 90, scaleX: 2 });
   // Rotating (1, 0) by 90 degrees then scaling x by 2: local (1,0) -> (10, 22).
@@ -181,6 +181,19 @@ Deno.test("transformToMatrix composes translate, rotate, scale, skew, and offset
   assertEquals(offset, [1, 0, 0, 1, -5, -5]);
   const skew = transformToMatrix({ skewX: 1 });
   assertEquals(skew, [1, 0, 1, 1, 0, 0]);
+  // Skew applies before scale: Konva 9.3's getTransform() gives these for
+  // skew combined with a non-uniform scale and a rotation.
+  const skewed = transformToMatrix({ skewX: 0.1, scaleY: 0.6 });
+  [1, 0, 0.06, 0.6, 0, 0].forEach((value, i) => near(skewed[i], value));
+  const full = transformToMatrix({
+    x: 15,
+    scaleX: 1.8,
+    scaleY: 0.6,
+    rotation: 20,
+    skewX: 0.1,
+  });
+  [1.6914, 0.6156, -0.1488, 0.5843, 15, 0]
+    .forEach((value, i) => near(full[i], value, 1e-4));
 });
 
 Deno.test("baking strokes applies group and layer transforms and keeps timing", () => {
