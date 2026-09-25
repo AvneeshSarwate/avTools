@@ -146,10 +146,12 @@ export const generateBakedPolygonData = (
 }
 
 // Function to update baked polygon data in app state
+// Baked data is derived from the document lazily (canvasBake.ts); this entry
+// point, called after every polygon edit, marks it stale and notifies.
 export const updateBakedPolygonData = (
   canvasState: CanvasRuntimeState
 ) => {
-  canvasState.polygon.bakedRenderData = generateBakedPolygonData(canvasState)
+  canvasState.bake.dirty = true
   canvasState.callbacks.syncAppState?.(canvasState)
 }
 

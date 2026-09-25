@@ -1,8 +1,9 @@
 import { restoreFreehandState } from './freehandTool'
 import { restorePolygonState } from './polygonTool'
 import { restoreCircleState } from './circleTool'
-import type { CanvasRenderData, CanvasRuntimeState } from './canvasState'
+import type { CanvasRuntimeState } from './canvasState'
 import { reconcileDrawingDocument, serializeDrawingDocument } from './drawingDocument'
+export { collectCanvasRenderData } from './canvasBake'
 
 export interface CanvasPersistenceOptions {
   handleTimeUpdate?: (time: number) => void
@@ -67,12 +68,6 @@ const normalizeParsedState = (parsed: any): NormalizedCanvasState => {
 
   return {}
 }
-
-export const collectCanvasRenderData = (state: CanvasRuntimeState): CanvasRenderData => ({
-  freehand: state.freehand.bakedRenderData,
-  polygon: state.polygon.bakedRenderData,
-  circle: state.circle.bakedRenderData
-})
 
 /**
  * The canvas state as one opaque string: the drawing document as JSON. It is

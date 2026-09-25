@@ -1,10 +1,10 @@
 <!-- eslint-disable @typescript-eslint/no-unused-vars -->
 <script setup lang="ts">
-import { createCanvasRuntimeState, type CanvasRuntimeState, type CanvasStateSnapshot, type CanvasStateSnapshotBase, type FreehandRenderData, type PolygonRenderData } from './canvasState';
-import { diff, type IChange } from 'json-diff-ts';
+import { createCanvasRuntimeState, type CanvasRuntimeState, type CanvasStateSnapshot } from './canvasState';
+import { createStateSnapshot, ensureBaked, type EmittedSnapshot } from './canvasBake';
 import * as selectionStore from './selectionStore';
 import { getCanvasItem } from './CanvasItem';
-import { computed, onMounted, onUnmounted, reactive, ref, shallowRef, toRaw, watch } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue';
 import { CanvasWebSocketController } from './canvasWebSocket';
 import { singleKeydownEvent } from './keyboard';
 import Konva from 'konva';
@@ -13,13 +13,13 @@ import HierarchicalMetadataEditor from './HierarchicalMetadataEditor.vue';
 import VisualizationToggles from './VisualizationToggles.vue';
 import SnapshotsPanel from './SnapshotsPanel.vue';
 import PopoutWindow from '@/components/PopoutWindow.vue';
-import { clearFreehandSelection as clearFreehandSelectionImpl, createStrokeShape as createStrokeShapeImpl, deserializeFreehandState, getStrokePath, serializeFreehandState, updateBakedFreehandData, updateFreehandDraggableStates as updateFreehandDraggableStatesImpl, updateTimelineState as updateTimelineStateImpl, type FreehandStroke, handleTimeUpdate as handleTimeUpdateImpl, maxInterStrokeDelay, initFreehandLayers } from './freehandTool';
+import { clearFreehandSelection as clearFreehandSelectionImpl, createStrokeShape as createStrokeShapeImpl, deserializeFreehandState, getStrokePath, serializeFreehandState, updateBakedFreehandData, updateFreehandDraggableStates as updateFreehandDraggableStatesImpl, updateTimelineState as updateTimelineStateImpl, type FreehandStroke, handleTimeUpdate as handleTimeUpdateImpl, maxInterStrokeDelay, initFreehandLayers, generateBakedStrokeData } from './freehandTool';
 import { freehandStrokes } from './canvasState';
 import { getPointsBounds } from './canvasUtils';
 import { CommandStack } from './commandStack';
 import { ensureHighlightLayer, createMetadataToolkit } from './metadata';
-import { clearPolygonSelection as clearPolygonSelectionImpl, updatePolygonControlPoints as updatePolygonControlPointsImpl, deserializePolygonState, handlePolygonClick as handlePolygonClickImpl, handlePolygonMouseMove as handlePolygonMouseMoveImpl, handlePolygonEditMouseMove as handlePolygonEditMouseMoveImpl, finishPolygon as finishPolygonImpl, clearCurrentPolygon as clearCurrentPolygonImpl, serializePolygonState, updateBakedPolygonData, initPolygonLayers, setupPolygonModeWatcher as setupPolygonModeWatcherImpl, setPolygonTension as setPolygonTensionImpl } from './polygonTool';
-import { handleCirclePointerDown as handleCirclePointerDownImpl, handleCirclePointerMove as handleCirclePointerMoveImpl, handleCirclePointerUp as handleCirclePointerUpImpl, serializeCircleState, deserializeCircleState, updateBakedCircleData as updateBakedCircleDataCircle, initCircleLayers } from './circleTool';
+import { clearPolygonSelection as clearPolygonSelectionImpl, updatePolygonControlPoints as updatePolygonControlPointsImpl, deserializePolygonState, handlePolygonClick as handlePolygonClickImpl, handlePolygonMouseMove as handlePolygonMouseMoveImpl, handlePolygonEditMouseMove as handlePolygonEditMouseMoveImpl, finishPolygon as finishPolygonImpl, clearCurrentPolygon as clearCurrentPolygonImpl, serializePolygonState, updateBakedPolygonData, initPolygonLayers, setupPolygonModeWatcher as setupPolygonModeWatcherImpl, setPolygonTension as setPolygonTensionImpl, generateBakedPolygonData } from './polygonTool';
+import { handleCirclePointerDown as handleCirclePointerDownImpl, handleCirclePointerMove as handleCirclePointerMoveImpl, handleCirclePointerUp as handleCirclePointerUpImpl, serializeCircleState, deserializeCircleState, updateBakedCircleData as updateBakedCircleDataCircle, initCircleLayers, generateBakedCircleData } from './circleTool';
 import { initAVLayer, refreshAnciliaryViz } from './ancillaryVisualizations';
 import { initializeTransformer } from './transformerManager';
 import {
@@ -140,173 +140,37 @@ const snapshotItems = canvasState.snapshots.items
 const snapshotSelectedId = canvasState.snapshots.selectedId
 const popped = ref(false)
 
-//vue specific - comma needed in <T,> to disambigate generics from html parsing
-const cloneValue = <T,>(value: T): T => {
-  if (value === undefined || value === null) {
-    return value
-  }
-  if (typeof structuredClone === 'function') {
-    return structuredClone(value)
-  }
-  return JSON.parse(JSON.stringify(value))
-}
-
-const snapshotFreehandRenderData = (data: FreehandRenderData | undefined) => {
-  if (!data) return [] as FreehandRenderData
-  return (cloneValue(toRaw(data)) ?? []) as FreehandRenderData
-}
-
-const snapshotPolygonRenderData = (data: PolygonRenderData | undefined) => {
-  if (!data) return [] as PolygonRenderData
-  return (cloneValue(toRaw(data)) ?? []) as PolygonRenderData
-}
-
-const snapshotGroupMap = (map: Record<string, number[]> | undefined) => {
-  if (!map) return {} as Record<string, number[]>
-  return (cloneValue(toRaw(map)) ?? {}) as Record<string, number[]>
-}
-
-// Store the previous snapshot for diffing (per-instance via ref)
-const previousSnapshot = ref<CanvasStateSnapshotBase | null>(null)
-
-const createEmptySnapshotBase = (): CanvasStateSnapshotBase => ({
-  freehand: { serializedState: '', bakedRenderData: [], bakedGroupMap: {} },
-  polygon: { serializedState: '', bakedRenderData: [] },
-  circle: { serializedState: '', bakedRenderData: [], bakedGroupMap: {} }
-})
-
-const createSnapshotBase = (state: CanvasRuntimeState): CanvasStateSnapshotBase => {
-  const freehandRenderData = snapshotFreehandRenderData(state.freehand.bakedRenderData)
-  const freehandGroupMap = snapshotGroupMap(state.freehand.bakedGroupMap)
-  const polygonRenderData = snapshotPolygonRenderData(state.polygon.bakedRenderData)
-  const circleRenderData = cloneValue(toRaw(state.circle.bakedRenderData)) ?? []
-  const circleGroupMap = snapshotGroupMap(state.circle.bakedGroupMap)
-
-  return {
-    freehand: {
-      serializedState: state.freehand.serializedState ?? '',
-      bakedRenderData: freehandRenderData ?? [],
-      bakedGroupMap: freehandGroupMap ?? {},
-    },
-    polygon: {
-      serializedState: state.polygon.serializedState ?? '',
-      bakedRenderData: polygonRenderData ?? [],
-    },
-    circle: {
-      serializedState: state.circle.serializedState ?? '',
-      bakedRenderData: circleRenderData ?? [],
-      bakedGroupMap: circleGroupMap ?? {},
-    },
-  }
-}
-
-// Extract items from diff changes by type
-const extractChangesFromDiff = (
-  changes: IChange[],
-  currentBase: CanvasStateSnapshotBase
-): { added: CanvasStateSnapshotBase; deleted: CanvasStateSnapshotBase; changed: CanvasStateSnapshotBase } => {
-  const added = createEmptySnapshotBase()
-  const deleted = createEmptySnapshotBase()
-  const changed = createEmptySnapshotBase()
-
-  const renderDataPaths = ['freehand.bakedRenderData', 'polygon.bakedRenderData', 'circle.bakedRenderData'] as const
-  type RenderDataPath = (typeof renderDataPaths)[number]
-
-  const pushToResult = (result: CanvasStateSnapshotBase, path: RenderDataPath, item: any) => {
-    if (path === 'freehand.bakedRenderData') result.freehand.bakedRenderData.push(item)
-    else if (path === 'polygon.bakedRenderData') result.polygon.bakedRenderData.push(item)
-    else if (path === 'circle.bakedRenderData') result.circle.bakedRenderData.push(item)
-  }
-
-  const getCollectionByPath = (path: RenderDataPath): any[] => {
-    if (path === 'freehand.bakedRenderData') return currentBase.freehand.bakedRenderData
-    if (path === 'polygon.bakedRenderData') return currentBase.polygon.bakedRenderData
-    return currentBase.circle.bakedRenderData
-  }
-
-  const processChange = (change: IChange, parentPath: string = '') => {
-    const currentPath = parentPath ? `${parentPath}.${change.key}` : change.key
-
-    if (renderDataPaths.includes(currentPath as RenderDataPath) && change.changes) {
-      const path = currentPath as RenderDataPath
-      const collection = getCollectionByPath(path)
-
-      for (const itemChange of change.changes) {
-        if (itemChange.type === 'ADD') {
-          const value = itemChange.value ?? itemChange.oldValue
-          if (value) pushToResult(added, path, value)
-        } else if (itemChange.type === 'REMOVE') {
-          const value = itemChange.value ?? itemChange.oldValue
-          if (value) pushToResult(deleted, path, value)
-        } else if (itemChange.type === 'UPDATE') {
-          // For keyed arrays, itemChange.key is the id - look up full object from current snapshot
-          const id = itemChange.key
-          const updatedItem = collection.find((x: any) => x.id === id)
-          if (updatedItem) pushToResult(changed, path, updatedItem)
-        }
-      }
-    } else if (change.changes) {
-      for (const nestedChange of change.changes) {
-        processChange(nestedChange, currentPath)
-      }
-    }
-  }
-
-  for (const change of changes) {
-    processChange(change)
-  }
-
-  return { added, deleted, changed }
-}
-
-const createSnapshot = (state: CanvasRuntimeState): CanvasStateSnapshot => {
-  const currentBase = createSnapshotBase(state)
-  
-  // Compute diff against previous snapshot
-  const diffOptions = {
-    embeddedObjKeys: {
-      'freehand.bakedRenderData': 'id',
-      'freehand.bakedRenderData.children': 'id',
-      'polygon.bakedRenderData': 'id',
-      'circle.bakedRenderData': 'id'
-    }
-  }
-  
-  const prev = previousSnapshot.value
-  const changes = prev 
-    ? diff(prev, currentBase, diffOptions)
-    : []
-  
-  const { added, deleted, changed } = prev
-    ? extractChangesFromDiff(changes, currentBase)
-    : { added: createEmptySnapshotBase(), deleted: createEmptySnapshotBase(), changed: createEmptySnapshotBase() }
-  
-  // Store current as previous for next diff
-  previousSnapshot.value = cloneValue(currentBase)
-
-  return {
-    ...currentBase,
-    added,
-    deleted,
-    changed
-  }
-}
+// The last state-update emission, for the next one's added/deleted/changed.
+let lastEmitted: EmittedSnapshot | null = null
+let lastDocumentUpdateJson: string | null = null
 
 const emitStateUpdate = (state: CanvasRuntimeState) => {
+  if (!state.stage) return
   if (props.mode !== 'document') {
-    const snapshot = createSnapshot(state)
-    props.syncState?.(snapshot)
-    emit('state-update', snapshot)
+    // Nothing is emitted when the document did not change since the last
+    // emission (an edit notifies once per layer it touched; a selection
+    // change notifies too).
+    const { snapshot, emitted, changed } = createStateSnapshot(state, lastEmitted)
+    if (changed) {
+      lastEmitted = emitted
+      props.syncState?.(snapshot)
+      emit('state-update', snapshot)
 
-    // Send via WebSocket if connected
-    if (wsController.value?.isConnected) {
-      wsController.value.sendStateUpdate(snapshot)
+      // Send via WebSocket if connected
+      if (wsController.value?.isConnected) {
+        wsController.value.sendStateUpdate(snapshot)
+      }
     }
   }
 
-  // Never during hydration: a pushed document is not an edit.
-  if (state.stage && !state.hydrating) {
-    emit('document-update', serializeDrawingDocument(state))
+  // Never during hydration: a pushed document is not an edit. Once per
+  // distinct document, however many notifications an edit produced.
+  if (!state.hydrating) {
+    const { document, json } = ensureBaked(state)
+    if (json !== lastDocumentUpdateJson) {
+      lastDocumentUpdateJson = json
+      emit('document-update', document)
+    }
   }
 }
 
@@ -521,6 +385,12 @@ const setDrawingDocument = (doc: DrawingDocument) => {
 }
 const getDrawingDocument = (): DrawingDocument => serializeDrawingDocument(canvasState)
 const getCanvasRenderData = () => collectCanvasRenderDataImpl(canvasState)
+// The Konva-walking bake, for tests that check the document bake against it.
+const getKonvaRenderData = () => ({
+  freehand: generateBakedStrokeData(canvasState).data,
+  polygon: generateBakedPolygonData(canvasState),
+  circle: generateBakedCircleData(canvasState).data
+})
 
 defineExpose({
   canvasState,
@@ -528,7 +398,8 @@ defineExpose({
   getCanvasState: captureCanvasState,
   setDrawingDocument,
   getDrawingDocument,
-  getCanvasRenderData
+  getCanvasRenderData,
+  getKonvaRenderData
 })
 
 const updateCanvasGrid = () => {

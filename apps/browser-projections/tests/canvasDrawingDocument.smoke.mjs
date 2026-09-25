@@ -102,7 +102,11 @@ const result = await page.evaluate(async (input) => {
   el.setDrawingDocument(clone(input))
   await wait(50)
   const doc1 = clone(el.getDrawingDocument())
-  const render1 = clone(el.getCanvasRenderData())
+  // The Konva-walking bake (what Konva actually holds) is what the parity
+  // check below compares with the package bake; getCanvasRenderData() is the
+  // package bake of the element's own document and must equal it exactly.
+  const render1 = clone(el.getKonvaRenderData())
+  const renderFromDocument = clone(el.getCanvasRenderData())
   const updatesAfterHydrate = documentUpdates
 
   // getCanvasState() is the document as a string, and setCanvasState still
@@ -160,6 +164,11 @@ const result = await page.evaluate(async (input) => {
 
   // A document that differs in one node rebuilds that node only: every other
   // Konva node keeps its identity, and a selection on one of them survives.
+  // In simple mode it also produces exactly one state-update, whose diff
+  // names that node alone.
+  let stateUpdates = []
+  const onStateUpdate = (e) => stateUpdates.push(e.detail[0])
+  el.addEventListener('state-update', onStateUpdate)
   const freehandGroup = el.canvasState.groups.freehandShape
   const keepItem = el.canvasState.canvasItems.get('group_1')
   el.canvasState.selection.items.add(keepItem)
@@ -173,6 +182,13 @@ const result = await page.evaluate(async (input) => {
   const selectionKept = el.canvasState.selection.items.has(keepItem)
   const polyRebuilt = el.canvasState.stage.findOne('#poly-1')?.points()[0] === nudged.polygon.nodes.find((n) => n.id === 'poly-1').points[0]
   el.canvasState.selection.items.delete(keepItem)
+  el.removeEventListener('state-update', onStateUpdate)
+  const nudgeUpdates = stateUpdates.map((u) => ({
+    changed: ['freehand', 'polygon', 'circle'].map((l) => u.changed[l].bakedRenderData.map((i) => i.id)),
+    added: ['freehand', 'polygon', 'circle'].map((l) => u.added[l].bakedRenderData.map((i) => i.id)),
+    deleted: ['freehand', 'polygon', 'circle'].map((l) => u.deleted[l].bakedRenderData.map((i) => i.id)),
+    polygons: u.polygon.bakedRenderData.length,
+  }))
 
   // Tension survives the document undo/redo path.
   el.canvasState.command.executeCommand('smoke: straighten curve', () => {
@@ -184,7 +200,7 @@ const result = await page.evaluate(async (input) => {
   await wait(50)
   const undone = clone(el.getDrawingDocument())
 
-  return { doc1, render1, updatesAfterHydrate, emptied, doc2, doc2b, stateIsDocument, rejected, doc3, updatesAfterEdit, doc4, itemCount, identityKept, selectionKept, polyRebuilt, straightened, undone }
+  return { doc1, render1, renderFromDocument, updatesAfterHydrate, emptied, doc2, doc2b, stateIsDocument, rejected, doc3, updatesAfterEdit, doc4, itemCount, identityKept, selectionKept, polyRebuilt, nudgeUpdates, straightened, undone }
 }, input)
 
 // In-gesture previews: a drawn stroke and a select-tool drag each stream
@@ -242,7 +258,8 @@ check(dragLog.some((e) => e.kind === 'update') && dragLog.at(-1).kind === 'end',
 await browser.close()
 
 if (result.error) { console.error(result.error); process.exit(1) }
-const { doc1, render1, updatesAfterHydrate, emptied, doc2, doc2b, stateIsDocument, rejected, doc3, updatesAfterEdit, doc4, itemCount, identityKept, selectionKept, polyRebuilt, straightened, undone } = result
+const { doc1, render1, renderFromDocument, updatesAfterHydrate, emptied, doc2, doc2b, stateIsDocument, rejected, doc3, updatesAfterEdit, doc4, itemCount, identityKept, selectionKept, polyRebuilt, nudgeUpdates, straightened, undone } = result
+check(JSON.stringify(nudgeUpdates) === JSON.stringify([{ changed: [[], ['poly-1'], []], added: [[], [], []], deleted: [[], [], []], polygons: 4 }]), `one-node change emitted ${JSON.stringify(nudgeUpdates)}`)
 check(identityKept, 'a one-node document change rebuilt untouched nodes')
 check(selectionKept, 'a one-node document change dropped the selection')
 check(polyRebuilt, 'the changed node was not rebuilt')
@@ -272,8 +289,11 @@ const curveOpen = (doc) => doc.polygon.nodes.find((n) => n.id === 'curve-open')
 check(curveOpen(straightened) && !('tension' in curveOpen(straightened)), 'a zero tension was not dropped from the document')
 check(curveOpen(undone)?.tension === 0.35, `undo did not restore tension: ${JSON.stringify(curveOpen(undone))}`)
 
-// Konva bake vs. package bake.
+// Konva bake vs. package bake; and the element's own render data is the package bake.
 const expected = bakeDrawingDocument(input)
+for (const layer of ['freehand', 'polygon', 'circle']) {
+  check(JSON.stringify(renderFromDocument[layer]) === JSON.stringify(expected[layer]), `getCanvasRenderData.${layer} is not the package bake of the document`)
+}
 const flatStrokes = (groups, out = []) => {
   for (const g of groups) for (const c of g.children) c.type === 'stroke' ? out.push(c) : flatStrokes([c], out)
   return out

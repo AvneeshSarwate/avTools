@@ -3,7 +3,7 @@ import Konva from 'konva'
 import type { CanvasItem } from './CanvasItem'
 import { CommandStack } from './commandStack'
 import type { ZodTypeAny } from 'zod'
-import type { PolygonCurveSegment } from '@avtools/drawing-document'
+import type { DrawingDocument, PolygonCurveSegment } from '@avtools/drawing-document'
 
 export type MetadataSchemaEntry = { name: string; schema: ZodTypeAny }
 
@@ -285,6 +285,12 @@ export interface CanvasRuntimeState {
     items: Ref<CanvasSnapshot[]>
     selectedId: Ref<string | null>
   }
+  /** The document-derived bake cache (see canvasBake.ts). */
+  bake: {
+    dirty: boolean
+    document: DrawingDocument | null
+    json: string
+  }
 }
 
 export const createCanvasRuntimeState = (): CanvasRuntimeState => {
@@ -415,7 +421,8 @@ export const createCanvasRuntimeState = (): CanvasRuntimeState => {
       showPanel: ref(false),
       items: ref([]),
       selectedId: ref(null)
-    }
+    },
+    bake: { dirty: true, document: null, json: '' }
   }
 }
 

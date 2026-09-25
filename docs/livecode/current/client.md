@@ -210,11 +210,15 @@ Domain bridges retain distinct semantics:
   Underneath, one core: the document is the element's truth and
   `setDrawingDocument` reconciles the scene to it by top-level node id,
   rebuilding only nodes that differ (untouched Konva nodes keep identity and
-  selection), and the undo stack stores documents. A second view of the
-  same drawing therefore follows a streamed gesture at a few milliseconds
-  per revision. `getCanvasState()`/`setCanvasState()` are that document as
-  a string; the older per-tool Konva serialization is still accepted on
-  input.
+  selection), and the undo stack stores documents. The element's baked
+  render data is the package's Konva-free bake of that document, computed
+  lazily once per document change (`canvasBake.ts`); the `state-update`
+  diff compares top-level nodes by canonical JSON, and neither
+  `state-update` nor `document-update` fires when the document did not
+  change. A second view of the same drawing therefore follows a streamed
+  gesture at a few milliseconds per revision. `getCanvasState()` /
+  `setCanvasState()` are that document as a string; the older per-tool
+  Konva serialization is still accepted on input.
 - Curved polygons are Konva `Line` tension, set from the polygon toolbar for
   new shapes or the select toolbar for selected ones. The bake reports them as
   world-space Bézier `segments`, computed in the node's local space and then

@@ -938,7 +938,8 @@ export const handleTimeUpdate = (state: CanvasRuntimeState, time: number) => {
 
 
 // Function to generate baked stroke data for external rendering (p5, three.js, etc.)
-const generateBakedStrokeData = (
+/** The Konva-walking bake, kept to check the document bake against what Konva holds. */
+export const generateBakedStrokeData = (
   canvasState: CanvasRuntimeState
 ): { data: FreehandRenderData, groupMap: Record<string, number[]> } => {
   const freehandShapeGroup = canvasState.groups.freehandShape
@@ -1073,12 +1074,12 @@ const generateBakedStrokeData = (
 }
 
 // Function to update baked data in app state
+// Baked data is derived from the document lazily (canvasBake.ts); this entry
+// point, called after every freehand edit, marks it stale and notifies.
 export const updateBakedFreehandData = (
   canvasState: CanvasRuntimeState
 ) => {
-  const result = generateBakedStrokeData(canvasState)
-  canvasState.freehand.bakedRenderData = result.data
-  canvasState.freehand.bakedGroupMap = result.groupMap
+  canvasState.bake.dirty = true
   canvasState.callbacks.syncAppState?.(canvasState)
 }
 
