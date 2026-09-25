@@ -4,7 +4,7 @@ import Konva from "konva"
 import getStroke from "perfect-freehand"
 import { type ShallowReactive, shallowReactive, ref, computed, watch } from "vue"
 import type { FreehandRenderData, FlattenedStroke, FlattenedStrokeGroup } from "./canvasState"
-import { executeCommand, pushCommandWithStates } from "../canvas/commands"
+import { captureCommandState, executeCommand, pushCommandWithStates } from "../canvas/commands"
 
 
 // Import shared utilities
@@ -439,13 +439,13 @@ export const restoreFreehandState = (
 
 // Transform tracking for drag operations
 export const startFreehandDragTracking = (state: CanvasRuntimeState) => {
-  state.freehand.freehandDragStartState = getCurrentFreehandStateString(state)
+  state.freehand.freehandDragStartState = captureCommandState(state)
 }
 
 export const finishFreehandDragTracking = (state: CanvasRuntimeState, nodeName: string) => {
   if (!state.freehand.freehandDragStartState) return
 
-  const endState = getCurrentFreehandStateString(state)
+  const endState = captureCommandState(state)
   if (state.freehand.freehandDragStartState !== endState) {
     // Use the global command system instead of the redundant freehand-specific one
     pushCommandWithStates(

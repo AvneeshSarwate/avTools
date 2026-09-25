@@ -23,6 +23,15 @@ export const pushCommandWithStates = (
   state.command.pushCommand(name, beforeState, afterState)
 }
 
+/** The state string the undo stack stores: the whole document as JSON. */
+export const captureCommandState = (state: CanvasRuntimeState): string => {
+  if (!state.command.captureState) {
+    console.warn('captureCommandState called before setup - returning empty state')
+    return ''
+  }
+  return state.command.captureState()
+}
+
 // Setup functions for CanvasRoot.vue to call
 export const setCommandExecutor = (state: CanvasRuntimeState, fn: (name: string, action: () => void) => void) => {
   state.command.executeCommand = fn

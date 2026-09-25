@@ -442,6 +442,7 @@ function DrawingShapeComponent({ shape }: { shape: DrawingShape }) {
           ? (
             <handwriting-canvas
               ref={elementRef}
+              mode="document"
               data-drawing-name={shape.props.drawingName}
             />
           )

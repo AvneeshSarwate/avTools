@@ -55,6 +55,8 @@ export interface AnimationEditorComponentElement extends HTMLElement {
 export interface HandwritingCanvasElement extends HTMLElement {
   width?: number | string;
   height?: number | string;
+  /** "document": the host owns the document and `state-update` is not emitted. */
+  mode?: "simple" | "document";
   showTimeline?: boolean;
   showVisualizations?: boolean;
   showSnapshots?: boolean;
@@ -77,7 +79,9 @@ declare module "react" {
         AnimationEditorComponentElement
       >;
       "handwriting-canvas": React.DetailedHTMLProps<
-        React.HTMLAttributes<HandwritingCanvasElement>,
+        React.HTMLAttributes<HandwritingCanvasElement> & {
+          mode?: "simple" | "document";
+        },
         HandwritingCanvasElement
       >;
     }

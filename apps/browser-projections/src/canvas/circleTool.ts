@@ -2,9 +2,7 @@
 /* eslint-disable prefer-const */
 import Konva from "konva"
 import type { CircleRenderData, FlattenedCircle, CircleShapeRuntime } from "./canvasState"
-import { executeCommand, pushCommandWithStates } from "./commands"
-import { getCurrentFreehandStateString } from './freehandTool'
-import { getCurrentPolygonStateString } from './polygonTool'
+import { captureCommandState, executeCommand, pushCommandWithStates } from "./commands"
 import { uid } from './canvasUtils'
 import { createCircleItem, createGroupItem, getCanvasItem, removeCanvasItem } from './CanvasItem'
 import * as selectionStore from './selectionStore'
@@ -46,23 +44,13 @@ export const attachCircleHandlers = (state: CanvasRuntimeState, node: Konva.Circ
 
 // Circle drag tracking for undo/redo
 export const startCircleDragTracking = (state: CanvasRuntimeState) => {
-  // Capture combined state for unified undo/redo
-  const before = JSON.stringify({
-    freehand: getCurrentFreehandStateString(state),
-    polygon: getCurrentPolygonStateString(state),
-    circle: getCurrentCircleStateString(state)
-  })
-  state.circle.dragStartState = before
+  state.circle.dragStartState = captureCommandState(state)
 }
 
 export const finishCircleDragTracking = (state: CanvasRuntimeState, nodeName: string) => {
   if (!state.circle.dragStartState) return
 
-  const endCombined = JSON.stringify({
-    freehand: getCurrentFreehandStateString(state),
-    polygon: getCurrentPolygonStateString(state),
-    circle: getCurrentCircleStateString(state)
-  })
+  const endCombined = captureCommandState(state)
   if (state.circle.dragStartState !== endCombined) {
     // Push into unified command stack with combined state
     pushCommandWithStates(state, `Transform ${nodeName}`, state.circle.dragStartState, endCombined)

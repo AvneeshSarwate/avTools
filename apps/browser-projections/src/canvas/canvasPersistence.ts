@@ -1,7 +1,8 @@
-import { getCurrentFreehandStateString, restoreFreehandState } from './freehandTool'
-import { getCurrentPolygonStateString, restorePolygonState } from './polygonTool'
-import { getCurrentCircleStateString, restoreCircleState } from './circleTool'
+import { restoreFreehandState } from './freehandTool'
+import { restorePolygonState } from './polygonTool'
+import { restoreCircleState } from './circleTool'
 import type { CanvasRenderData, CanvasRuntimeState } from './canvasState'
+import { reconcileDrawingDocument, serializeDrawingDocument } from './drawingDocument'
 
 export interface CanvasPersistenceOptions {
   handleTimeUpdate?: (time: number) => void
@@ -73,25 +74,23 @@ export const collectCanvasRenderData = (state: CanvasRuntimeState): CanvasRender
   circle: state.circle.bakedRenderData
 })
 
-export const serializeCanvasState = (state: CanvasRuntimeState): string => {
-  const freehandString = getCurrentFreehandStateString(state)
-  const polygonString = getCurrentPolygonStateString(state)
-  const circleString = getCurrentCircleStateString(state)
+/**
+ * The canvas state as one opaque string: the drawing document as JSON. It is
+ * what the undo stack, snapshots, downloads, and `getCanvasState()` hold.
+ */
+export const serializeCanvasState = (state: CanvasRuntimeState): string =>
+  JSON.stringify(serializeDrawingDocument(state))
 
-  const freehand = parseStateString(freehandString)
-  const polygon = parseStateString(polygonString)
-  const circle = parseStateString(circleString)
+const isDocumentPayload = (parsed: any): boolean =>
+  !!parsed && typeof parsed === 'object' && ['freehand', 'polygon', 'circle'].some(
+    (layer) => parsed[layer] && typeof parsed[layer] === 'object' && Array.isArray(parsed[layer].nodes)
+  )
 
-  const payload = {
-    version: 1,
-    freehand,
-    polygon,
-    circle
-  }
-
-  return JSON.stringify(payload)
-}
-
+/**
+ * Restore a string from `serializeCanvasState`. Older strings (Konva's own
+ * serialization per tool, the format before documents) are still accepted
+ * and rebuilt whole through the legacy per-tool restore.
+ */
 export const deserializeCanvasState = (
   canvasState: CanvasRuntimeState,
   serialized: string,
@@ -105,6 +104,20 @@ export const deserializeCanvasState = (
   } catch (error) {
     console.warn('Failed to parse canvas state JSON:', error)
     return false
+  }
+
+  if (isDocumentPayload(parsed)) {
+    const wasAnimating = canvasState.freehand.currentPlaybackTime.value > 0
+    canvasState.freehand.currentPlaybackTime.value = 0
+    canvasState.freehand.isAnimating.value = false
+    try {
+      reconcileDrawingDocument(canvasState, parsed)
+    } catch (error) {
+      console.warn('Failed to restore canvas state:', error)
+      return false
+    }
+    if (wasAnimating) options.handleTimeUpdate?.(0)
+    return true
   }
 
   const { freehand, polygon, circle } = normalizeParsedState(parsed)
