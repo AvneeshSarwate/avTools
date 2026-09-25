@@ -13,13 +13,13 @@ import HierarchicalMetadataEditor from './HierarchicalMetadataEditor.vue';
 import VisualizationToggles from './VisualizationToggles.vue';
 import SnapshotsPanel from './SnapshotsPanel.vue';
 import PopoutWindow from '@/components/PopoutWindow.vue';
-import { clearFreehandSelection as clearFreehandSelectionImpl, createStrokeShape as createStrokeShapeImpl, deserializeFreehandState, getStrokePath, serializeFreehandState, updateBakedFreehandData, updateFreehandDraggableStates as updateFreehandDraggableStatesImpl, updateTimelineState as updateTimelineStateImpl, type FreehandStroke, handleTimeUpdate as handleTimeUpdateImpl, maxInterStrokeDelay, initFreehandLayers, generateBakedStrokeData } from './freehandTool';
+import { clearFreehandSelection as clearFreehandSelectionImpl, createStrokeShape as createStrokeShapeImpl, getStrokePath, updateBakedFreehandData, updateFreehandDraggableStates as updateFreehandDraggableStatesImpl, updateTimelineState as updateTimelineStateImpl, type FreehandStroke, handleTimeUpdate as handleTimeUpdateImpl, maxInterStrokeDelay, initFreehandLayers, generateBakedStrokeData } from './freehandTool';
 import { freehandStrokes } from './canvasState';
 import { getPointsBounds } from './canvasUtils';
 import { CommandStack } from './commandStack';
 import { ensureHighlightLayer, createMetadataToolkit } from './metadata';
-import { clearPolygonSelection as clearPolygonSelectionImpl, updatePolygonControlPoints as updatePolygonControlPointsImpl, deserializePolygonState, handlePolygonClick as handlePolygonClickImpl, handlePolygonMouseMove as handlePolygonMouseMoveImpl, handlePolygonEditMouseMove as handlePolygonEditMouseMoveImpl, finishPolygon as finishPolygonImpl, clearCurrentPolygon as clearCurrentPolygonImpl, serializePolygonState, updateBakedPolygonData, initPolygonLayers, setupPolygonModeWatcher as setupPolygonModeWatcherImpl, setPolygonTension as setPolygonTensionImpl, generateBakedPolygonData } from './polygonTool';
-import { handleCirclePointerDown as handleCirclePointerDownImpl, handleCirclePointerMove as handleCirclePointerMoveImpl, handleCirclePointerUp as handleCirclePointerUpImpl, serializeCircleState, deserializeCircleState, updateBakedCircleData as updateBakedCircleDataCircle, initCircleLayers, generateBakedCircleData } from './circleTool';
+import { clearPolygonSelection as clearPolygonSelectionImpl, updatePolygonControlPoints as updatePolygonControlPointsImpl, handlePolygonClick as handlePolygonClickImpl, handlePolygonMouseMove as handlePolygonMouseMoveImpl, handlePolygonEditMouseMove as handlePolygonEditMouseMoveImpl, finishPolygon as finishPolygonImpl, clearCurrentPolygon as clearCurrentPolygonImpl, updateBakedPolygonData, initPolygonLayers, setupPolygonModeWatcher as setupPolygonModeWatcherImpl, setPolygonTension as setPolygonTensionImpl, generateBakedPolygonData } from './polygonTool';
+import { handleCirclePointerDown as handleCirclePointerDownImpl, handleCirclePointerMove as handleCirclePointerMoveImpl, handleCirclePointerUp as handleCirclePointerUpImpl, updateBakedCircleData as updateBakedCircleDataCircle, initCircleLayers, generateBakedCircleData } from './circleTool';
 import { initAVLayer, refreshAnciliaryViz } from './ancillaryVisualizations';
 import { initializeTransformer } from './transformerManager';
 import {
@@ -45,8 +45,8 @@ const DEFAULT_GRID_SIZE = 20
 // ==================== common stuff ====================
 const props = withDefaults(defineProps<{
   syncState?: (state: CanvasStateSnapshot) => void
-  initialFreehandState?: string
-  initialPolygonState?: string
+  /** A canvas state string (`getCanvasState()`), applied on mount and whenever it changes; the pre-document format is accepted too. */
+  initialState?: string
   width?: number | string
   height?: number | string
   showTimeline?: boolean
@@ -65,8 +65,7 @@ const props = withDefaults(defineProps<{
    */
   mode?: 'simple' | 'document'
 }>(), {
-  initialFreehandState: '',
-  initialPolygonState: '',
+  initialState: '',
   width: 1000,
   height: 500,
   showTimeline: false,
@@ -706,26 +705,13 @@ onMounted(async () => {
     // Initialize cursor
     canvasState.callbacks.updateCursor?.()
 
-    const applyFreehandState = (stateString: string) => {
-      if (!stateString || stateString === canvasState.freehand.serializedState) return
-      deserializeFreehandState(canvasState, stateString)
+    // The host's state string (a sketch keeps one across hot reloads).
+    const applyInitialState = (stateString: string) => {
+      if (!stateString || stateString === captureCanvasState()) return
+      restoreCanvasState(stateString)
     }
-
-    const applyPolygonState = (stateString: string) => {
-      if (!stateString || stateString === canvasState.polygon.serializedState) return
-      deserializePolygonState(canvasState, stateString)
-    }
-
-    applyFreehandState(props.initialFreehandState)
-    applyPolygonState(props.initialPolygonState)
-
-    watch(() => props.initialFreehandState, (stateString) => {
-      applyFreehandState(stateString)
-    })
-
-    watch(() => props.initialPolygonState, (stateString) => {
-      applyPolygonState(stateString)
-    })
+    applyInitialState(props.initialState)
+    watch(() => props.initialState, (stateString) => applyInitialState(stateString))
 
     watch(
       () => canvasState.grid.visible.value,
@@ -943,16 +929,6 @@ onMounted(async () => {
         onSetCanvasState: (stateString) => {
           restoreCanvasState(stateString)
         },
-        onSetFreehandState: (stateString) => {
-          if (stateString && stateString !== canvasState.freehand.serializedState) {
-            deserializeFreehandState(canvasState, stateString)
-          }
-        },
-        onSetPolygonState: (stateString) => {
-          if (stateString && stateString !== canvasState.polygon.serializedState) {
-            deserializePolygonState(canvasState, stateString)
-          }
-        },
         onUndo: () => undo(),
         onRedo: () => redo(),
         onGetCanvasState: (requestId) => {
@@ -984,11 +960,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   console.log("disposing livecoded resources")
-
-  // Save state before unmounting (for hot reload)
-  serializeFreehandState(canvasState)
-  serializePolygonState(canvasState)
-  serializeCircleState(canvasState)
 
   disposeEscapeListener?.()
   disposeEscapeListener = undefined

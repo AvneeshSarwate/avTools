@@ -79,23 +79,20 @@ const indexLayer = (document: DrawingDocument, layer: DrawingLayerName): Emitted
 }
 
 const emptyBase = (): CanvasStateSnapshotBase => ({
-  freehand: { serializedState: '', bakedRenderData: [], bakedGroupMap: {} },
-  polygon: { serializedState: '', bakedRenderData: [] },
-  circle: { serializedState: '', bakedRenderData: [], bakedGroupMap: {} }
+  freehand: { bakedRenderData: [], bakedGroupMap: {} },
+  polygon: { bakedRenderData: [] },
+  circle: { bakedRenderData: [], bakedGroupMap: {} }
 })
 
 const currentBase = (state: CanvasRuntimeState): CanvasStateSnapshotBase => ({
   freehand: {
-    serializedState: state.freehand.serializedState ?? '',
     bakedRenderData: state.freehand.bakedRenderData,
     bakedGroupMap: state.freehand.bakedGroupMap
   },
   polygon: {
-    serializedState: state.polygon.serializedState ?? '',
     bakedRenderData: state.polygon.bakedRenderData
   },
   circle: {
-    serializedState: state.circle.serializedState ?? '',
     bakedRenderData: state.circle.bakedRenderData,
     bakedGroupMap: state.circle.bakedGroupMap
   }
@@ -130,7 +127,7 @@ export const createStateSnapshot = (
   state: CanvasRuntimeState,
   previous: EmittedSnapshot | null
 ): { snapshot: CanvasStateSnapshot; emitted: EmittedSnapshot; changed: boolean } => {
-  const { document } = ensureBaked(state)
+  const { document, json } = ensureBaked(state)
   const base = currentBase(state)
   const layers = {
     freehand: indexLayer(document, 'freehand'),
@@ -159,7 +156,7 @@ export const createStateSnapshot = (
     if (before && previous) pushItems(deleted, layer, bakedItemsFor(layer, deletedIds, before, previous.base))
   }
   return {
-    snapshot: { ...base, added, deleted, changed },
+    snapshot: { ...base, added, deleted, changed, documentState: json },
     emitted: { layers, base },
     changed: any
   }

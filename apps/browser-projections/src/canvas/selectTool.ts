@@ -6,8 +6,8 @@ import { polygonShapes, freehandStrokes, freehandStrokeGroups, circleShapes, typ
 
 import { executeCommand } from './commands'
 import { deepCloneWithNewIds, updateBakedFreehandData, updateTimelineState, refreshStrokeConnections, updateFreehandDraggableStates } from './freehandTool'
-import { attachPolygonHandlers, serializePolygonState, updateBakedPolygonData } from './polygonTool'
-import { attachCircleHandlers, serializeCircleState, updateBakedCircleData } from './circleTool'
+import { attachPolygonHandlers, updateBakedPolygonData } from './polygonTool'
+import { attachCircleHandlers, updateBakedCircleData } from './circleTool'
 import { hasAncestorConflict } from './canvasUtils'
 import { uid } from './canvasUtils'
 import { captureCommandState, pushCommandWithStates } from './commands'
@@ -538,8 +538,6 @@ export function duplicateSelection(state: CanvasRuntimeState) {
       updateBakedFreehandData(state)
       updateBakedPolygonData(state)
       updateBakedCircleData(state)
-      serializePolygonState(state)
-      serializeCircleState(state)
     })
   })
 }
@@ -607,8 +605,6 @@ export function deleteSelection(state: CanvasRuntimeState) {
     updateBakedFreehandData(state)
     updateBakedPolygonData(state)
     updateBakedCircleData(state)
-    serializePolygonState(state)
-    serializeCircleState(state)
 
     // Ancillary viz cleanup (best-effort)
     import('./ancillaryVisualizations').then(({ refreshAnciliaryViz }) => refreshAnciliaryViz(state)).catch(() => {})

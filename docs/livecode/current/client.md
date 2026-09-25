@@ -217,8 +217,11 @@ Domain bridges retain distinct semantics:
   `state-update` nor `document-update` fires when the document did not
   change. A second view of the same drawing therefore follows a streamed
   gesture at a few milliseconds per revision. `getCanvasState()` /
-  `setCanvasState()` are that document as a string; the older per-tool
-  Konva serialization is still accepted on input.
+  `setCanvasState()` are that document as a string, and `state-update`
+  carries it as `documentState`; the format that predates documents
+  (Konva's own serialization per tool, still in older saves and the
+  sketches' preset files) is converted on input by `legacyCanvasState.ts`
+  and never produced.
 - Curved polygons are Konva `Line` tension, set from the polygon toolbar for
   new shapes or the select toolbar for selected ones. The bake reports them as
   world-space Bézier `segments`, computed in the node's local space and then
