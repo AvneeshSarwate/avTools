@@ -260,6 +260,8 @@ export interface CanvasRuntimeState {
     stack?: CommandStack
     executeCommand?: (name: string, action: () => void) => void
     pushCommand?: (name: string, beforeState: string, afterState: string) => void
+    /** The undo stack's state string (the document as JSON), for tools that capture before/after a gesture. */
+    captureState?: () => string
   }
   metadata: {
     activeNode: Ref<Konva.Node | null>

@@ -201,9 +201,20 @@ Domain bridges retain distinct semantics:
   that commit waits for the last preview's acknowledgement and expects its
   revision. A foreign change arriving mid-gesture is applied when the
   gesture ends rather than rebuilding the scene under the pointer. Previews
-  never enter the element's undo stack. A second view of the same drawing is
-  still rebuilt per streamed revision; a non-destructive per-node apply is
-  the follow-up if that matters.
+  never enter the element's undo stack.
+- The element serves two surfaces, chosen at instantiation with
+  `mode="simple"` (default) or `mode="document"`; the view uses the latter.
+  Simple mode emits `state-update` (baked render data plus an
+  added/changed/deleted diff) for sketches that draw from the element;
+  document mode does not, so a change costs only the nodes it touches.
+  Underneath, one core: the document is the element's truth and
+  `setDrawingDocument` reconciles the scene to it by top-level node id,
+  rebuilding only nodes that differ (untouched Konva nodes keep identity and
+  selection), and the undo stack stores documents. A second view of the
+  same drawing therefore follows a streamed gesture at a few milliseconds
+  per revision. `getCanvasState()`/`setCanvasState()` are that document as
+  a string; the older per-tool Konva serialization is still accepted on
+  input.
 - Curved polygons are Konva `Line` tension, set from the polygon toolbar for
   new shapes or the select toolbar for selected ones. The bake reports them as
   world-space Bézier `segments`, computed in the node's local space and then

@@ -5,8 +5,7 @@ import { type ShallowReactive, shallowReactive, ref, watch } from "vue"
 import { isCurvedPolygon, mapCurveSegment, tensionPointsToSegments } from "@avtools/drawing-document"
 import { findClosestPolygonLineAtPoint, polygonSpanMidpoint, polygonSpans, type PolygonSpans } from "./polygonGeometry"
 import type { PolygonRenderData, FlattenedPolygon } from "./canvasState"
-import { executeCommand, pushCommandWithStates } from "./commands"
-import { getCurrentFreehandStateString } from './freehandTool'
+import { captureCommandState, executeCommand, pushCommandWithStates } from "./commands"
 import { uid } from './canvasUtils'
 import { createPolygonItem, createGroupItem, getCanvasItem, removeCanvasItem } from './CanvasItem'
 import * as selectionStore from './selectionStore'
@@ -208,21 +207,13 @@ export const restorePolygonState = (
 // Polygon drag tracking now handled via global state
 
 export const startPolygonDragTracking = (state: CanvasRuntimeState) => {
-  // Capture combined state for unified undo/redo
-  const before = JSON.stringify({
-    freehand: getCurrentFreehandStateString(state),
-    polygon: getCurrentPolygonStateString(state)
-  })
-  state.polygon.dragStartState = before
+  state.polygon.dragStartState = captureCommandState(state)
 }
 
 export const finishPolygonDragTracking = (state: CanvasRuntimeState, nodeName: string) => {
   if (!state.polygon.dragStartState) return
 
-  const endCombined = JSON.stringify({
-    freehand: getCurrentFreehandStateString(state),
-    polygon: getCurrentPolygonStateString(state)
-  })
+  const endCombined = captureCommandState(state)
   if (state.polygon.dragStartState !== endCombined) {
     // Push into unified command stack with combined state
     pushCommandWithStates(state, `Transform ${nodeName}`, state.polygon.dragStartState, endCombined)

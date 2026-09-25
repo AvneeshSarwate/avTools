@@ -35,7 +35,7 @@ import {
   deleteSelection as deleteSelectionImpl
 } from './selectTool';
 import { downloadCanvasState as downloadCanvasStateImpl, uploadCanvasState as uploadCanvasStateImpl, serializeCanvasState as serializeCanvasStateImpl, deserializeCanvasState as deserializeCanvasStateImpl, collectCanvasRenderData as collectCanvasRenderDataImpl } from './canvasPersistence';
-import { hydrateDrawingDocument, serializeDrawingDocument } from './drawingDocument';
+import { reconcileDrawingDocument, serializeDrawingDocument } from './drawingDocument';
 import { installDocumentPreview, type DocumentPreview, type DocumentPreviewController } from './documentPreview';
 import type { DrawingDocument } from '@avtools/drawing-document';
 import type { ZodTypeAny } from 'zod';
@@ -55,6 +55,15 @@ const props = withDefaults(defineProps<{
   showRescale?: boolean
   metadataSchemas?: { name: string; schema: ZodTypeAny }[]
   wsAddress?: string
+  /**
+   * Which surface the element serves. "simple" (default): every edit emits
+   * `state-update` with the baked render data and an added/changed/deleted
+   * diff, for sketches that draw from the element. "document": the host
+   * owns the document (`setDrawingDocument`, `document-update`,
+   * `document-preview`) and `state-update` is not emitted, so a change costs
+   * only the nodes it touches.
+   */
+  mode?: 'simple' | 'document'
 }>(), {
   initialFreehandState: '',
   initialPolygonState: '',
@@ -65,6 +74,7 @@ const props = withDefaults(defineProps<{
   showSnapshots: false,
   showRescale: false,
   metadataSchemas: () => [],
+  mode: 'simple',
 })
 
 // WebSocket-overridable config
@@ -283,13 +293,15 @@ const createSnapshot = (state: CanvasRuntimeState): CanvasStateSnapshot => {
 }
 
 const emitStateUpdate = (state: CanvasRuntimeState) => {
-  const snapshot = createSnapshot(state)
-  props.syncState?.(snapshot)
-  emit('state-update', snapshot)
+  if (props.mode !== 'document') {
+    const snapshot = createSnapshot(state)
+    props.syncState?.(snapshot)
+    emit('state-update', snapshot)
 
-  // Send via WebSocket if connected
-  if (wsController.value?.isConnected) {
-    wsController.value.sendStateUpdate(snapshot)
+    // Send via WebSocket if connected
+    if (wsController.value?.isConnected) {
+      wsController.value.sendStateUpdate(snapshot)
+    }
   }
 
   // Never during hydration: a pushed document is not an edit.
@@ -445,6 +457,7 @@ canvasState.command.executeCommand = executeCommand
 canvasState.command.pushCommand = (name: string, beforeState: string, afterState: string) => {
   commandStack.pushCommand(name, beforeState, afterState)
 }
+canvasState.command.captureState = captureCanvasState
 
 const rescaleCanvas720To1080 = () => {
   const stage = canvasState.stage
@@ -493,14 +506,18 @@ const setAnimatingState = (animating: boolean) => {
 
 // Imperative surface for hosts that embed the custom element (no Vue props).
 const setCanvasState = (stateString: string) => restoreCanvasState(stateString)
-// Replace the scene with a document. Throws on an invalid document, leaving
-// the scene as it was; never emits document-update.
+// Bring the scene to a document, rebuilding only the nodes that differ.
+// Throws on an invalid document, leaving the scene as it was; never emits
+// document-update. Playback restarts only when a stroke changed.
 const setDrawingDocument = (doc: DrawingDocument) => {
   const wasAnimating = canvasState.freehand.currentPlaybackTime.value > 0
-  canvasState.freehand.currentPlaybackTime.value = 0
-  canvasState.freehand.isAnimating.value = false
-  hydrateDrawingDocument(canvasState, doc)
-  if (wasAnimating) handleTimeUpdate(0)
+  const result = reconcileDrawingDocument(canvasState, doc)
+  const freehand = result.layers.freehand
+  if (freehand.upserted.length || freehand.removed.length || freehand.transformChanged || freehand.reordered) {
+    canvasState.freehand.currentPlaybackTime.value = 0
+    canvasState.freehand.isAnimating.value = false
+    if (wasAnimating) handleTimeUpdate(0)
+  }
 }
 const getDrawingDocument = (): DrawingDocument => serializeDrawingDocument(canvasState)
 const getCanvasRenderData = () => collectCanvasRenderDataImpl(canvasState)
