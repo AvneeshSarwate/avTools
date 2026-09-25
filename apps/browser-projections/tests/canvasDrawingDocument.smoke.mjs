@@ -146,6 +146,55 @@ const result = await page.evaluate(async (input) => {
   return { doc1, render1, updatesAfterHydrate, emptied, doc2, rejected, doc3, updatesAfterEdit, doc4, itemCount, straightened, undone }
 }, input)
 
+// In-gesture previews: a drawn stroke and a select-tool drag each stream
+// node-level `document-preview` batches under the id the commit then uses,
+// throttled to the sync tick, with the committed `document-update` last.
+await page.evaluate(() => {
+  if (!crypto.randomUUID) crypto.randomUUID = () => Math.random().toString(16).slice(2)
+  const el = document.querySelector('handwriting-canvas')
+  window.__log = []
+  el.addEventListener('document-preview', (e) => window.__log.push({ t: performance.now(), kind: 'preview', upserts: e.detail[0].upserts.map((u) => `${u.layer}:${u.node.id}`) }))
+  el.addEventListener('document-update', (e) => window.__log.push({ t: performance.now(), kind: 'update', ids: e.detail[0].freehand.nodes.map((n) => n.id) }))
+  el.addEventListener('interaction-start', () => window.__log.push({ kind: 'start' }))
+  el.addEventListener('interaction-end', () => window.__log.push({ kind: 'end' }))
+})
+const stageBox = await page.evaluate(() => {
+  const r = document.querySelector('handwriting-canvas').canvasState.stage.container().getBoundingClientRect()
+  return { x: r.x, y: r.y }
+})
+const readLog = () => page.evaluate(() => { const l = window.__log; window.__log = []; return l })
+const gesture = async (from, steps) => {
+  await page.mouse.move(stageBox.x + from[0], stageBox.y + from[1])
+  await page.mouse.down()
+  for (let i = 1; i <= steps; i++) { await page.mouse.move(stageBox.x + from[0] + i * 6, stageBox.y + from[1] + i * 2); await page.waitForTimeout(12) }
+  await page.mouse.up()
+  await page.waitForTimeout(80)
+}
+await page.locator('handwriting-canvas').locator('select.tool-dropdown').selectOption('freehand')
+await readLog()
+// The stage is 500x400: keep the whole gesture inside it.
+await gesture([60, 300], 25)
+const strokeLog = await readLog()
+const strokePreviews = strokeLog.filter((e) => e.kind === 'preview')
+const strokeIds = new Set(strokePreviews.flatMap((e) => e.upserts))
+check(strokePreviews.length >= 3, `drawing a stroke streamed ${strokePreviews.length} previews`)
+check(strokeIds.size === 1 && [...strokeIds][0].startsWith('freehand:stroke-'), `stroke previews share one id: ${[...strokeIds]}`)
+check(strokePreviews.slice(1).every((e, i) => e.t - strokePreviews[i].t >= 30), 'stroke previews are throttled to the sync tick')
+const lastPreviewAt = strokeLog.indexOf(strokePreviews.at(-1))
+const commit = strokeLog.slice(lastPreviewAt).find((e) => e.kind === 'update')
+check(commit && commit.ids.includes([...strokeIds][0].slice('freehand:'.length)), 'the commit after the last preview carries the previewed id')
+check(strokeLog.indexOf(strokePreviews[0]) > strokeLog.findIndex((e) => e.kind === 'start') && strokeLog.at(-1).kind === 'end', `gesture edges bracket the stream: ${strokeLog.map((e) => e.kind).join(' ')}`)
+
+await page.locator('handwriting-canvas').locator('select.tool-dropdown').selectOption('select')
+await page.mouse.click(stageBox.x + 120, stageBox.y + 320)
+await page.waitForTimeout(60)
+await readLog()
+await gesture([120, 320], 12)
+const dragLog = await readLog()
+const dragPreviews = dragLog.filter((e) => e.kind === 'preview')
+check(dragPreviews.length >= 2 && dragPreviews.every((e) => e.upserts.length === 1 && e.upserts[0] === [...strokeIds][0]), `moving the stroke streamed it: ${JSON.stringify(dragPreviews.map((e) => e.upserts))}`)
+check(dragLog.some((e) => e.kind === 'update') && dragLog.at(-1).kind === 'end', 'the move committed and ended the gesture')
+
 await browser.close()
 
 if (result.error) { console.error(result.error); process.exit(1) }

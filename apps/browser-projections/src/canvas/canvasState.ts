@@ -174,6 +174,10 @@ export interface CanvasRuntimeState {
     refreshAncillaryViz?: () => void
     syncAppState?: (state: CanvasRuntimeState) => void
     updateCursor?: () => void
+    /** Nodes a tool moved itself (not through Konva drag events), for in-gesture previews. */
+    previewNodes?: (nodes: Konva.Node[]) => void
+    /** The gesture behind `previewNodes` ended (its commit has been pushed). */
+    previewGestureEnd?: () => void
   }
   keyboardDisposables: Array<() => void>
   freehand: {
@@ -190,6 +194,9 @@ export interface CanvasRuntimeState {
     currentPoints: number[]
     currentTimestamps: number[]
     drawingStartTime: number
+    /** Id and creation time of the stroke being drawn, fixed at pointer down so previews and the commit agree. */
+    currentStrokeId: string | null
+    currentCreationTime: number
     selectedStrokesForTimeline: Ref<Set<string>>
     timelineDuration: Ref<number>
     currentPlaybackTime: Ref<number>
@@ -220,6 +227,9 @@ export interface CanvasRuntimeState {
     isDrawing: Ref<boolean>
     currentCenter: Ref<{ x: number, y: number } | null>
     currentRadius: Ref<number>
+    /** Id and creation time of the circle being drawn, fixed at pointer down so previews and the commit agree. */
+    currentId: string | null
+    currentCreationTime: number
     dragStartState: string | null
     serializedState: string
     bakedRenderData: CircleRenderData
@@ -328,6 +338,8 @@ export const createCanvasRuntimeState = (): CanvasRuntimeState => {
       currentPoints: [],
       currentTimestamps: [],
       drawingStartTime: 0,
+      currentStrokeId: null,
+      currentCreationTime: 0,
       selectedStrokesForTimeline: ref(new Set()),
       timelineDuration: ref(0),
       currentPlaybackTime: ref(0),
@@ -357,6 +369,8 @@ export const createCanvasRuntimeState = (): CanvasRuntimeState => {
       isDrawing: ref(false),
       currentCenter: ref(null),
       currentRadius: ref(0),
+      currentId: null,
+      currentCreationTime: 0,
       dragStartState: null,
       serializedState: '',
       bakedRenderData: [],

@@ -221,6 +221,8 @@ export const handleCirclePointerDown = (state: CanvasRuntimeState, pos: { x: num
   state.circle.isDrawing.value = true
   state.circle.currentCenter.value = pos
   state.circle.currentRadius.value = 0
+  state.circle.currentId = uid('circle_')
+  state.circle.currentCreationTime = Date.now()
   
   // Clear any existing preview
   circlePreviewGroup.destroyChildren()
@@ -278,11 +280,11 @@ export const handleCirclePointerUp = (state: CanvasRuntimeState) => {
   if (!center || radius < 2) return
 
   executeCommand(state, 'Create Circle', () => {
-    createCircleNode(state, uid('circle_'), {
+    createCircleNode(state, state.circle.currentId ?? uid('circle_'), {
       x: center.x,
       y: center.y,
       radius,
-      creationTime: Date.now()
+      creationTime: state.circle.currentCreationTime || Date.now()
     })
 
     // Reset drawing state

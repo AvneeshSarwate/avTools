@@ -297,6 +297,7 @@ function updateSelectionDrag(state: CanvasRuntimeState, stage: Konva.Stage) {
   state.selection.selectionDragState.startNodePositions.forEach((startPos, node) => {
     node.absolutePosition({ x: startPos.x + dx, y: startPos.y + dy })
   })
+  state.callbacks.previewNodes?.([...state.selection.selectionDragState.startNodePositions.keys()])
 
   // Redraw affected layers
   const layers = new Set<Konva.Layer>()
@@ -326,6 +327,7 @@ function finishSelectionDrag(state: CanvasRuntimeState) {
     // Push command with captured states so undo/redo works
     pushCommandWithStates(state, 'Move Selection', state.selection.selectionDragState.beforeState, afterState)
   }
+  state.callbacks.previewGestureEnd?.()
 
   state.selection.selectionDragState.isDragging = false
   state.selection.selectionDragState.startNodePositions.clear()

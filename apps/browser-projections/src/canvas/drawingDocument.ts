@@ -88,7 +88,8 @@ const serializeLayer = (state: CanvasRuntimeState, layer: DrawingLayerName, cont
   return { transform: readTransform(container), nodes }
 }
 
-const serializeNode = (state: CanvasRuntimeState, layer: DrawingLayerName, konvaNode: Konva.Node): DrawingNode | null => {
+/** One Konva node (and, for a group, its subtree) as a document node; null for anything the layer does not hold. */
+export const serializeNode = (state: CanvasRuntimeState, layer: DrawingLayerName, konvaNode: Konva.Node): DrawingNode | null => {
   if (konvaNode instanceof Konva.Group) {
     if (layer === 'polygon') return null
     const children: DrawingNode[] = []

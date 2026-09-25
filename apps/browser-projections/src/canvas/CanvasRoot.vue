@@ -36,6 +36,7 @@ import {
 } from './selectTool';
 import { downloadCanvasState as downloadCanvasStateImpl, uploadCanvasState as uploadCanvasStateImpl, serializeCanvasState as serializeCanvasStateImpl, deserializeCanvasState as deserializeCanvasStateImpl, collectCanvasRenderData as collectCanvasRenderDataImpl } from './canvasPersistence';
 import { hydrateDrawingDocument, serializeDrawingDocument } from './drawingDocument';
+import { installDocumentPreview, type DocumentPreview, type DocumentPreviewController } from './documentPreview';
 import type { DrawingDocument } from '@avtools/drawing-document';
 import type { ZodTypeAny } from 'zod';
 
@@ -91,7 +92,18 @@ const emit = defineEmits<{
   (event: 'state-update', state: CanvasStateSnapshot): void
   /** The lossless document after each committed edit; never fired while a document is being loaded. */
   (event: 'document-update', document: DrawingDocument): void
+  /**
+   * Node-level changes during a gesture (drag, transform, drawing), at most
+   * every 33 ms, for hosts that stream them. The gesture's committed
+   * `document-update` still follows and is the write of record.
+   */
+  (event: 'document-preview', preview: DocumentPreview): void
+  /** A gesture began / ended; a host should not rebuild the scene in between. */
+  (event: 'interaction-start'): void
+  (event: 'interaction-end'): void
 }>()
+
+let documentPreview: DocumentPreviewController | null = null
 
 const resolution = computed(() => {
   const width = Number(effectiveWidth.value)
@@ -287,6 +299,33 @@ const emitStateUpdate = (state: CanvasRuntimeState) => {
 }
 
 canvasState.callbacks.syncAppState = emitStateUpdate
+
+// Provisional nodes for the shape being drawn, under the id its commit will use.
+const previewCurrentStroke = () => {
+  const id = canvasState.freehand.currentStrokeId
+  if (!documentPreview || !id || canvasState.freehand.currentPoints.length < 4) return
+  documentPreview.previewNode('freehand', {
+    type: 'stroke',
+    id,
+    points: [...canvasState.freehand.currentPoints],
+    timestamps: [...canvasState.freehand.currentTimestamps],
+    creationTime: canvasState.freehand.currentCreationTime,
+    isFreehand: true
+  })
+}
+const previewCurrentCircle = () => {
+  const id = canvasState.circle.currentId
+  const center = canvasState.circle.currentCenter.value
+  const radius = canvasState.circle.currentRadius.value
+  if (!documentPreview || !id || !center || radius < 2) return
+  documentPreview.previewNode('circle', {
+    type: 'circle',
+    id,
+    radius,
+    creationTime: canvasState.circle.currentCreationTime,
+    transform: { x: center.x, y: center.y }
+  })
+}
 
 watch(
   () => props.syncState,
@@ -756,6 +795,13 @@ onMounted(async () => {
     // Initialize ancillary visualizations layer
     initAVLayer(canvasState)
 
+    documentPreview = installDocumentPreview(canvasState, {
+      onPreview: (preview) => emit('document-preview', preview),
+      onInteraction: (active) => { if (active) emit('interaction-start'); else emit('interaction-end') }
+    })
+    canvasState.callbacks.previewNodes = (nodes) => documentPreview?.previewKonvaNodes(nodes)
+    canvasState.callbacks.previewGestureEnd = () => documentPreview?.finish()
+
 
     // Selection rectangle is created by core/selectTool.initializeSelectTool
 
@@ -855,6 +901,8 @@ onMounted(async () => {
         canvasState.freehand.currentPoints = [pos.x, pos.y]
         canvasState.freehand.drawingStartTime = performance.now()
         canvasState.freehand.currentTimestamps = [0]
+        canvasState.freehand.currentCreationTime = Date.now()
+        canvasState.freehand.currentStrokeId = `stroke-${canvasState.freehand.currentCreationTime}`
 
         // Clear selection when starting to draw
         selectionStore.clear(canvasState)
@@ -896,6 +944,7 @@ onMounted(async () => {
           })
           freehandDrawingGroup?.add(previewPath)
           freehandDrawingGroup?.getLayer()?.batchDraw()
+          previewCurrentStroke()
         }
       } else if (activeTool.value === 'polygon') {
         if (canvasState.polygon.mode.value === 'draw' && canvasState.polygon.isDrawing.value) {
@@ -907,6 +956,7 @@ onMounted(async () => {
       } else if (activeTool.value === 'circle') {
         if (canvasState.circle.isDrawing.value) {
           handleCirclePointerMove()
+          previewCurrentCircle()
         }
       }
     })
@@ -920,9 +970,9 @@ onMounted(async () => {
         if (canvasState.freehand.currentPoints.length > 2) {
           executeCommand('Draw Stroke', () => {
             const freehandShapeGroup = canvasState.groups.freehandShape
-            // Create new stroke
-            const creationTime = Date.now()
-            const strokeId = `stroke-${creationTime}`
+            // Create new stroke, under the id previews already used
+            const creationTime = canvasState.freehand.currentCreationTime || Date.now()
+            const strokeId = canvasState.freehand.currentStrokeId ?? `stroke-${creationTime}`
 
             // Get bounds for normalization
             const bounds = getPointsBounds(canvasState.freehand.currentPoints)
@@ -958,10 +1008,21 @@ onMounted(async () => {
           })
         }
 
+        else if (canvasState.freehand.currentStrokeId) {
+          documentPreview?.discard('freehand', canvasState.freehand.currentStrokeId)
+        }
         canvasState.freehand.currentPoints = []
         canvasState.freehand.currentTimestamps = []
+        canvasState.freehand.currentStrokeId = null
+        documentPreview?.finish()
       } else if (activeTool.value === 'circle' && canvasState.circle.isDrawing.value) {
+        const circleId = canvasState.circle.currentId
         handleCirclePointerUp()
+        if (circleId && !canvasState.circle.shapes.has(circleId)) {
+          documentPreview?.discard('circle', circleId)
+        }
+        canvasState.circle.currentId = null
+        documentPreview?.finish()
       } else {
         // Delegate to select tool for all other cases
         handleSelectPointerUpStateful(stageInstance, e)
@@ -1044,6 +1105,8 @@ onUnmounted(() => {
   disposeEscapeListener?.()
   disposeEscapeListener = undefined
   canvasState.keyboardDisposables.splice(0).forEach((dispose) => dispose())
+  documentPreview?.dispose()
+  documentPreview = null
 
   // Clean up WebSocket
   wsController.value?.disconnect()
