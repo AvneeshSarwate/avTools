@@ -10,7 +10,9 @@ Source:
 - Original synthesizer: [baconpaul/six-sines](https://github.com/baconpaul/six-sines)
 - Browser-port fork: [AvneeshSarwate/six-sines](https://github.com/AvneeshSarwate/six-sines)
 - Port branch: [`browser-audio-worklet`](https://github.com/AvneeshSarwate/six-sines/tree/browser-audio-worklet)
-- Packaged commit: [`20bd35bfef0c`](https://github.com/AvneeshSarwate/six-sines/commit/20bd35bfef0c27d08aa398b031e17cb84b77a08b)
+- Packaged commit: [`4a321fcb2bfb`](https://github.com/AvneeshSarwate/six-sines/commit/4a321fcb2bfb) on
+  [`claude/note-expression-pressure-brightness`](https://github.com/AvneeshSarwate/six-sines/tree/claude/note-expression-pressure-brightness)
+  (the port branch plus per-note pressure/brightness note expressions; see below)
 
 `six-sines-node.js` is the public module. Its adjacent `.d.ts` provides TypeScript declarations;
 `six-sines-worklet.js`, `six-sines.js`, and `six-sines.wasm` are runtime assets and must remain
@@ -75,3 +77,14 @@ and `SixSinesShape.tsx` for a tldraw view. See
 for piano-roll playback, preset sharing, and optional 60 Hz pan automation.
 
 Macro Level per-note offsets feed both Macro Amplitude and Macro Modulated sources. Amplitude is the clamped knob plus host offset; Modulated additionally applies the macro envelope/LFO. A per-note offset never changes the stored/global knob value.
+
+## Per-note MPE expression
+
+`noteExpression({ noteId, key, expressionId, value })` addresses one voice.
+`ClapNoteExpression.tuning` is semitones; `pressure` and `brightness` are 0..1
+and drive the synth's **MPE Pressure** and **MPE Timbre** / **Timbre (Bipolar)**
+mod sources, so the factory `MPE` presets respond per note. (The synth's MIDI
+MPE mode lives in host state that this headless build cannot set, so raw MPE
+MIDI through `midi1()` only reaches the whole synth; use note expressions.)
+`node packages/six-sines/tests/note-expression.mjs` checks this against actual
+PCM with the packaged `Exp Bowed Glass` preset.

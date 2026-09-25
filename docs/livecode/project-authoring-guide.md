@@ -209,6 +209,7 @@ Choosing a sparse store implementation is platform work following the
 | Nested live params, metadata, code writes, scopes | [`feature-params-basics`](../../apps/livecode-tldraw/example-projects/feature-params-basics/README.md) |
 | Create/read/play piano rolls and use MIDI | [`feature-piano-roll-flows`](../../apps/livecode-tldraw/example-projects/feature-piano-roll-flows/README.md) |
 | Record MIDI input into a piano roll | [`feature-midi-recording`](../../apps/livecode-tldraw/example-projects/feature-midi-recording/README.md) |
+| Play recorded MPE expression on Six Sines | [`feature-midi-recording-six-sines`](../../apps/livecode-tldraw/example-projects/feature-midi-recording-six-sines/README.md) |
 | Durable timelines, sampling, function cues, animation playheads | [`feature-animation-timeline`](../../apps/livecode-tldraw/example-projects/feature-animation-timeline/README.md) |
 | Ephemeral signals, scopes, and one-to-many playhead anchors | [`feature-signals-and-scopes`](../../apps/livecode-tldraw/example-projects/feature-signals-and-scopes/README.md) |
 | Combined durable save/reopen and multiple entity/view types | [`feature-studio-combined`](../../apps/livecode-tldraw/example-projects/feature-studio-combined/README.md) |
