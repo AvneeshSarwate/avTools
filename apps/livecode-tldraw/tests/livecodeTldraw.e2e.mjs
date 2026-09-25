@@ -2190,31 +2190,27 @@ async function runDrawingFixtureCase(viteBaseUrl) {
     'the in-progress stroke is in the engine document'
   )
   await page.mouse.up()
+  // Mouse-up commits the whole document. When the last streamed preview
+  // already carried the finished stroke that commit is a no-op, so what must
+  // hold is convergence: the engine's stroke is the element's stroke.
   const committed = await waitForPageValue(
-    ({ name, rev, id }) => {
-      const entity = window.__livecodeSyncDebug?.getEntities('drawing')?.[name]
-      const stroke = entity?.data.freehand.nodes.find((node) => node.id === id)
-      return entity && entity.rev > rev && stroke
-        ? { rev: entity.rev, points: stroke.points.length }
-        : null
-    },
-    'the finished stroke commits after the streamed revisions',
-    scaled(15_000),
-    { name: drawingName, rev: streamed.rev, id: streamedStroke.id }
-  )
-  assert(committed.points >= streamedStroke.points.length, 'the commit carries the whole stroke')
-  await waitForPageValue(
-    ({ name, id, points }) => {
+    ({ name, id }) => {
       const element = Array.from(document.querySelectorAll('handwriting-canvas')).find(
         (candidate) => candidate.dataset.drawingName === name
       )
-      const stroke = element?.getDrawingDocument?.().freehand.nodes.find((node) => node.id === id)
-      return stroke && stroke.points.length === points ? true : null
+      const shown = element?.getDrawingDocument?.().freehand.nodes.find((node) => node.id === id)
+      const entity = window.__livecodeSyncDebug?.getEntities('drawing')?.[name]
+      const held = entity?.data.freehand.nodes.find((node) => node.id === id)
+      return shown && held && JSON.stringify(shown) === JSON.stringify(held)
+        ? { rev: entity.rev, points: held.points.length }
+        : null
     },
-    'the view and the engine agree on the stroke',
-    scaled(5_000),
-    { name: drawingName, id: streamedStroke.id, points: committed.points }
+    'the engine converges on the finished stroke',
+    scaled(15_000),
+    { name: drawingName, id: streamedStroke.id }
   )
+  assert(committed.rev >= streamed.rev, 'the finished document keeps the streamed revisions')
+  assert(committed.points >= streamedStroke.points.length, 'the finished stroke has every streamed point')
   assertEqual(
     await page.locator('.drawing-shape .entity-error-badge').count(),
     0,
