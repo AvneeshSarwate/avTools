@@ -21,6 +21,20 @@ export interface MpePitchData {
   points: MpePitchPoint[];
 }
 
+/**
+ * One breakpoint of a per-note 0..127 expression curve (MPE pressure, or
+ * timbre/CC74). `time` is 0..1 across the note, like `MpePitchPoint`.
+ */
+export interface MpeValuePoint {
+  time: number;
+  value: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface MpeValueData {
+  points: MpeValuePoint[];
+}
+
 export interface NoteDataInput {
   id?: string;
   pitch: number;
@@ -28,6 +42,8 @@ export interface NoteDataInput {
   duration: number;
   velocity?: number;
   mpePitch?: MpePitchData;
+  mpePressure?: MpeValueData;
+  mpeTimbre?: MpeValueData;
   metadata?: Record<string, unknown>;
 }
 

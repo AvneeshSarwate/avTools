@@ -34,13 +34,19 @@ import {
 
 export const PIANO_ROLL_SHAPE_TYPE = 'piano-roll-view'
 // The Vue component's default stage contract; the browser E2E asserts the
-// rendered Konva container so these values cannot silently drift apart.
+// rendered Konva container so these values cannot silently drift apart. The
+// stage follows the shape: a resized view grows or shrinks it by the same
+// amount (see stageSizeFor), so the default shape gets exactly this size.
 const PIANO_ROLL_STAGE_WIDTH = 640
 const PIANO_ROLL_STAGE_HEIGHT = 360
-const PIANO_ROLL_EMBED_WIDTH = PIANO_ROLL_STAGE_WIDTH + 42
-const PIANO_ROLL_EMBED_MIN_HEIGHT = PIANO_ROLL_STAGE_HEIGHT + 76
-// At the default host width, the component's controls and scrollbars add 127px.
-const PIANO_ROLL_EMBED_NATURAL_HEIGHT = PIANO_ROLL_STAGE_HEIGHT + 127
+const PIANO_ROLL_MIN_STAGE_WIDTH = 320
+const PIANO_ROLL_MIN_STAGE_HEIGHT = 160
+const PIANO_ROLL_CHROME_WIDTH = 42
+const PIANO_ROLL_EMBED_WIDTH = PIANO_ROLL_STAGE_WIDTH + PIANO_ROLL_CHROME_WIDTH
+const PIANO_ROLL_EMBED_MIN_CHROME = 76
+// At the default host width, the component's controls and scrollbars add 144px
+// (the control row wraps once at a 640px stage).
+const PIANO_ROLL_EMBED_NATURAL_HEIGHT = PIANO_ROLL_STAGE_HEIGHT + 144
 const SHAPE_BORDER = 2
 const BODY_PADDING = 16
 const HEADER_HEIGHT = 52
@@ -48,6 +54,20 @@ const DEFAULT_PIANO_ROLL_WIDTH =
   PIANO_ROLL_EMBED_WIDTH + BODY_PADDING + SHAPE_BORDER
 const DEFAULT_PIANO_ROLL_HEIGHT =
   PIANO_ROLL_EMBED_NATURAL_HEIGHT + HEADER_HEIGHT + BODY_PADDING + SHAPE_BORDER
+
+/** Konva stage size for a shape: the default stage plus the shape's growth. */
+function stageSizeFor(w: number, h: number): { width: number; height: number } {
+  return {
+    width: Math.max(
+      PIANO_ROLL_MIN_STAGE_WIDTH,
+      Math.round(PIANO_ROLL_STAGE_WIDTH + (w - DEFAULT_PIANO_ROLL_WIDTH)),
+    ),
+    height: Math.max(
+      PIANO_ROLL_MIN_STAGE_HEIGHT,
+      Math.round(PIANO_ROLL_STAGE_HEIGHT + (h - DEFAULT_PIANO_ROLL_HEIGHT)),
+    ),
+  }
+}
 
 declare module 'tldraw' {
   export interface TLGlobalShapePropsMap {
@@ -171,14 +191,15 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
   const lastMarkerKeyRef = useRef<string | null>(null)
   const [writeError, setWriteError] = useState<string | null>(null)
   const originId = useMemo(() => `piano-roll-view-${shape.id}`, [shape.id])
+  const stageSize = stageSizeFor(shape.props.w, shape.props.h)
   const setElementRef = useCallback((element: PianoRollElement | null) => {
     elementRef.current = element
     if (!element) return
-    element.width = PIANO_ROLL_STAGE_WIDTH
-    element.height = PIANO_ROLL_STAGE_HEIGHT
+    element.width = stageSize.width
+    element.height = stageSize.height
     element.interactive = shape.props.interactive
     element.showControlPanel = shape.props.showControlPanel
-  }, [shape.props.interactive, shape.props.showControlPanel])
+  }, [shape.props.interactive, shape.props.showControlPanel, stageSize.width, stageSize.height])
 
   // Every live signal anchored at this roll, as marker lines. Ended signals and
   // a dropped signals socket both render as no markers at all: a marker frozen
@@ -392,13 +413,13 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
         {roll ? (
           <div
             className="piano-roll-shape__viewport"
-            style={{ width: PIANO_ROLL_EMBED_WIDTH }}
+            style={{ width: stageSize.width + PIANO_ROLL_CHROME_WIDTH }}
           >
             <piano-roll-component
               ref={setElementRef}
               style={{
-                width: PIANO_ROLL_EMBED_WIDTH,
-                minHeight: PIANO_ROLL_EMBED_MIN_HEIGHT,
+                width: stageSize.width + PIANO_ROLL_CHROME_WIDTH,
+                minHeight: stageSize.height + PIANO_ROLL_EMBED_MIN_CHROME,
               }}
             />
           </div>

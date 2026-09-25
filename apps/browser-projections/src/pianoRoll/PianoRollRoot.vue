@@ -21,11 +21,13 @@ import {
   restoreState
 } from './pianoRollCore'
 import { executeOverlapChanges } from './pianoRollUtils'
+import { renderLanes } from './pianoRollLanes'
 import {
   applyHorizontalZoom,
   applyVerticalZoom,
   fitZoomToNotes as fitZoomToNotesHelper,
   getHorizontalViewportRange,
+  getLaneAreaHeight,
   getVerticalViewportRange,
   updateScrollBounds
 } from './pianoRollViewport'
@@ -49,12 +51,17 @@ const props = withDefaults(defineProps<{
   showControlPanel?: boolean
   interactive?: boolean
   wsAddress?: string
+  /** Initial visibility of the expression lanes; the control panel toggles them after. */
+  showPressureLane?: boolean
+  showTimbreLane?: boolean
 }>(), {
   width: 640,
   height: 360,
   initialNotes: () => [],
   showControlPanel: true,
-  interactive: true
+  interactive: true,
+  showPressureLane: false,
+  showTimbreLane: false
 })
 
 // WebSocket-overridable config
@@ -97,6 +104,14 @@ const scale = computed(() => {
 
 const scaledWidth = computed(() => Math.round(maxWidth.value * scale.value))
 const scaledHeight = computed(() => Math.round(maxHeight.value * scale.value))
+// The vertical scrollbar spans only the notes; the lanes sit below them.
+const noteAreaHeight = computed(() => {
+  // Read the reactive lane fields so this recomputes when they change.
+  void state.lanes.showPressure
+  void state.lanes.showTimbre
+  void state.lanes.laneHeight
+  return Math.max(0, scaledHeight.value - getLaneAreaHeight(state, scaledHeight.value))
+})
 const minWidth = computed(() => Math.round(maxWidth.value * MIN_SCALE))
 const shellMaxWidth = computed(() => Math.round(maxWidth.value + stageInset.value))
 const shellMinWidth = computed(() => Math.round(minWidth.value + stageInset.value))
@@ -114,6 +129,9 @@ const state: PianoRollState = createPianoRollState()
 state.viewport = reactive(state.viewport) as PianoRollState['viewport']
 state.grid = reactive(state.grid) as PianoRollState['grid']
 state.mpe = reactive(state.mpe) as PianoRollState['mpe']
+state.lanes = reactive(state.lanes) as PianoRollState['lanes']
+state.lanes.showPressure = props.showPressureLane
+state.lanes.showTimbre = props.showTimbreLane
 
 // Refs
 const konvaContainer = ref<HTMLDivElement>()
@@ -293,6 +311,15 @@ watch(gridSubdivision, (newValue) => {
   props.syncState?.(state)
 })
 
+watch(
+  () => [state.lanes.showPressure, state.lanes.showTimbre, state.lanes.laneHeight],
+  () => {
+    if (!state.lanes.showPressure && !state.lanes.showTimbre) state.lanes.selectedHandles = null
+    state.needsRedraw = true
+    enforceScrollBounds()
+  }
+)
+
 watch(mpeMode, (enabled) => {
   state.mpe.enabled = enabled
   if (enabled) {
@@ -452,6 +479,7 @@ const stageManager = new StageManager({
   renderGrid,
   renderVisibleNotes,
   renderResizeHandles,
+  renderLanes,
   updateQueuePlayheadPosition,
   updateLivePlayheadPosition,
   updatePlayheadMarkers,
@@ -646,6 +674,22 @@ defineExpose({
         >
           MPE
         </button>
+        <button
+          class="lane-toggle"
+          :class="{ active: state.lanes.showPressure }"
+          title="Show the per-note pressure lane"
+          @click="state.lanes.showPressure = !state.lanes.showPressure"
+        >
+          Pressure
+        </button>
+        <button
+          class="lane-toggle"
+          :class="{ active: state.lanes.showTimbre }"
+          title="Show the per-note timbre (CC74) lane"
+          @click="state.lanes.showTimbre = !state.lanes.showTimbre"
+        >
+          Timbre
+        </button>
         <span class="separator">|</span>
         <button
           class="metadata-toggle"
@@ -699,7 +743,7 @@ defineExpose({
           ref="verticalTrack"
           class="scrollbar vertical"
           :class="{ 'is-disabled': !isInteractive }"
-          :style="{ height: scaledHeight + 'px' }"
+          :style="{ height: noteAreaHeight + 'px' }"
           @pointerdown.self="onVerticalTrackPointerDown"
         >
           <div class="scrollbar-thumb vertical-thumb" :style="verticalThumbStyle">
@@ -802,6 +846,7 @@ defineExpose({
 
 .metadata-toggle,
 .mpe-point-toggle,
+.lane-toggle,
 .mpe-toggle {
   display: flex;
   align-items: center;
@@ -810,6 +855,7 @@ defineExpose({
 
 .metadata-toggle.active,
 .mpe-point-toggle.active,
+.lane-toggle.active,
 .mpe-toggle.active {
   background: #333;
   border-color: #333;

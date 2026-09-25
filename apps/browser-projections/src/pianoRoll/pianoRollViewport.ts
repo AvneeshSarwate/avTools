@@ -1,4 +1,4 @@
-import type { PianoRollState } from './pianoRollState'
+import { EXPRESSION_LANES, type ExpressionLane, type PianoRollState } from './pianoRollState'
 import {
   DEFAULT_FIT_BOTTOM_NOTE,
   MIN_FIT_HORIZONTAL_BEATS,
@@ -17,8 +17,41 @@ export const getStageWidth = (state: PianoRollState, fallbackWidth: number) => {
   return state.stage?.width() ?? fallbackWidth
 }
 
-export const getStageHeight = (state: PianoRollState, fallbackHeight: number) => {
-  return state.stage?.height() ?? fallbackHeight
+/** Height of the draggable bar between the notes and the expression lanes. */
+export const LANE_SPLITTER_HEIGHT = 6
+export const MIN_LANE_HEIGHT = 24
+/** The notes keep at least this much height however tall the lanes are dragged. */
+export const MIN_NOTE_AREA_HEIGHT = 60
+
+export const isLaneVisible = (state: PianoRollState, lane: ExpressionLane) =>
+  lane === 'pressure' ? state.lanes.showPressure : state.lanes.showTimbre
+
+export const getVisibleLanes = (state: PianoRollState): ExpressionLane[] =>
+  EXPRESSION_LANES.filter((lane) => isLaneVisible(state, lane))
+
+/** Per-lane height after fitting the requested height into the stage. */
+export const getEffectiveLaneHeight = (state: PianoRollState, totalHeight: number) => {
+  const count = getVisibleLanes(state).length
+  if (count === 0) return 0
+  const maxPerLane = (totalHeight - MIN_NOTE_AREA_HEIGHT - LANE_SPLITTER_HEIGHT) / count
+  const floor = Math.max(12, Math.min(MIN_LANE_HEIGHT, maxPerLane))
+  return Math.max(floor, Math.min(state.lanes.laneHeight, maxPerLane))
+}
+
+export const getLaneAreaHeight = (state: PianoRollState, totalHeight: number) => {
+  const count = getVisibleLanes(state).length
+  if (count === 0) return 0
+  return LANE_SPLITTER_HEIGHT + count * getEffectiveLaneHeight(state, totalHeight)
+}
+
+/**
+ * Height of the note grid: the stage minus the expression lanes below it. All
+ * vertical scrolling, zooming and visibility math uses this, never the raw
+ * stage height, so the lanes never hide notes.
+ */
+export const getNoteAreaHeight = (state: PianoRollState, fallbackHeight: number) => {
+  const total = state.stage?.height() ?? fallbackHeight
+  return Math.max(0, total - getLaneAreaHeight(state, total))
 }
 
 export const getHorizontalContentWidth = (state: PianoRollState) => {
@@ -49,7 +82,7 @@ export const getHorizontalViewportRange = (state: PianoRollState, fallbackWidth:
 
 export const getVerticalViewportRange = (state: PianoRollState, fallbackHeight: number) => {
   const noteHeight = state.grid.noteHeight
-  const stageHeight = getStageHeight(state, fallbackHeight)
+  const stageHeight = getNoteAreaHeight(state, fallbackHeight)
   const topIndex = noteHeight === 0 ? 0 : state.viewport.scrollY / noteHeight
   const bottomIndex = topIndex + (stageHeight / (noteHeight || 1))
   return { topIndex, bottomIndex }
@@ -62,7 +95,7 @@ export const updateScrollBounds = (
   notifyViewportChange: () => void
 ) => {
   const stageWidth = getStageWidth(state, fallbackWidth)
-  const stageHeight = getStageHeight(state, fallbackHeight)
+  const stageHeight = getNoteAreaHeight(state, fallbackHeight)
 
   const maxScrollX = Math.max(0, getHorizontalContentWidth(state) - stageWidth)
   const clampedScrollX = clamp(state.viewport.scrollX, 0, maxScrollX)
@@ -114,7 +147,7 @@ export const applyVerticalZoom = (
   if (!Number.isFinite(newNoteHeight) || newNoteHeight <= 0) return
   setVerticalZoom(state, newNoteHeight)
 
-  const stageHeight = getStageHeight(state, fallbackHeight)
+  const stageHeight = getNoteAreaHeight(state, fallbackHeight)
   const visibleSpan = stageHeight / state.grid.noteHeight
   const maxTopIndex = Math.max(0, TOTAL_PITCHES - visibleSpan)
   const clampedTopIndex = clamp(newTopIndex, 0, maxTopIndex)
@@ -132,7 +165,7 @@ export const fitZoomToNotes = (
   notifyViewportChange: () => void
 ) => {
   const stageWidth = getStageWidth(state, fallbackWidth)
-  const stageHeight = getStageHeight(state, fallbackHeight)
+  const stageHeight = getNoteAreaHeight(state, fallbackHeight)
   if (stageWidth <= 0 || stageHeight <= 0) return
 
   const notes = Array.from(state.notes.values())

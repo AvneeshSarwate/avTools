@@ -1,7 +1,7 @@
 import type { Ref } from 'vue'
 import type { PianoRollState } from './pianoRollState'
 import { MIN_HORIZONTAL_SPAN, MIN_VERTICAL_SPAN, TOTAL_PITCHES } from './pianoRollConstants'
-import { clamp, getStageHeight, getStageWidth } from './pianoRollViewport'
+import { clamp, getNoteAreaHeight, getStageWidth } from './pianoRollViewport'
 
 export type HorizontalDragMode = 'move' | 'resize-start' | 'resize-end'
 export type VerticalDragMode = 'move' | 'resize-start' | 'resize-end'
@@ -266,7 +266,7 @@ export class VerticalScrollbarController {
     if (total <= 0) return { start: 0, size: 1 }
 
     const noteHeight = this.options.state.grid.noteHeight
-    const stageHeight = getStageHeight(this.options.state, this.options.getFallbackHeight())
+    const stageHeight = getNoteAreaHeight(this.options.state, this.options.getFallbackHeight())
     if (noteHeight <= 0 || stageHeight <= 0) return { start: 0, size: 1 }
 
     const topIndex = this.options.state.viewport.scrollY / noteHeight
@@ -306,7 +306,7 @@ export class VerticalScrollbarController {
 
     const { topIndex, bottomIndex } = this.options.getViewportRange()
     const span = Math.max(MIN_VERTICAL_SPAN, bottomIndex - topIndex)
-    const stageHeight = getStageHeight(this.options.state, this.options.getFallbackHeight())
+    const stageHeight = getNoteAreaHeight(this.options.state, this.options.getFallbackHeight())
     if (stageHeight <= 0) return
 
     const topNormalized = topIndex / TOTAL_PITCHES

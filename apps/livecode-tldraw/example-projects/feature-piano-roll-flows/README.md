@@ -42,8 +42,10 @@ http://localhost:5173/?projectPath=<absolute path to this directory>
    next pass. Stop cleanly ends any sounding note.
 6. **Entity widgets.** Each `🎹` just inside a piano-roll helper call selects
    or zooms to the named roll in its tooltip, or creates one beside the code
-   shape. Each restored or newly created view is 700 by 557 around the Vue
-   component's unscaled 640 by 360 internal canvas, with no initial clipping.
+   shape. A newly created view is 700 by 574 around the Vue component's
+   unscaled 640 by 360 internal canvas, with no initial clipping. Resizing a
+   view resizes that canvas by the same amount, so a taller view shows more
+   pitches (and more room for the Pressure/Timbre lanes).
 7. **Replace while running.** With the player running, change
    `secondsPerBeat: 0.25` to `0.125` in its source. The Run button now reads
    **Replace**; click it. The tempo doubles at the swap and the other modules

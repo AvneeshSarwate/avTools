@@ -812,7 +812,7 @@ export default async function(ctx: TimeContext) {
   )
   assertEqual(
     created.props.h,
-    557,
+    574,
     'default piano-roll shape height fits its component'
   )
   const pianoShape = page.locator('.piano-roll-shape').first()

@@ -14,6 +14,11 @@ const NO_INPUT = "";
 const ROLL_PITCH_RANGE = 24;
 /** Curve points closer than this to the thinned line are dropped. */
 const PITCH_TOLERANCE_SEMITONES = 0.05;
+/** The same for pressure and timbre, in 0..127 steps. */
+const VALUE_TOLERANCE = 1;
+/** MPE rest values; a curve that never leaves them is not written. */
+const REST_PRESSURE = 0;
+const REST_TIMBRE = 64;
 
 /**
  * The input selector's options are the ports visible right now, so the
@@ -48,10 +53,10 @@ function declareParams(inputNames: string[]) {
   });
 }
 
-interface BendSample {
+interface Sample {
   sec: number;
-  /** Raw 14-bit bend, -8192..8191; scaled by the bend range at take end. */
-  bend: number;
+  /** Raw value: 14-bit bend (-8192..8191, scaled at take end) or 0..127. */
+  value: number;
 }
 
 interface HeldNote {
@@ -59,7 +64,9 @@ interface HeldNote {
   pitch: number;
   velocity: number;
   onSec: number;
-  bends: BendSample[];
+  bends: Sample[];
+  pressures: Sample[];
+  timbres: Sample[];
 }
 
 interface RecordedNote extends HeldNote {
@@ -101,26 +108,47 @@ export default async function run(ctx: TimeContext) {
     return deviceSec + clockOffsetSec;
   };
 
-  // Pitch bend is per channel. With MPE each note has its own channel, so
-  // this is per-note pitch; on an ordinary keyboard a channel's bend applies
-  // to every note held on it. Tracked even between takes, because MPE
-  // controllers send a note's initial bend just before its note-on.
+  // Pitch bend, channel pressure and timbre (CC74) are per channel. With MPE
+  // each note has its own channel, so they are per-note expression; on an
+  // ordinary keyboard a channel's value applies to every note held on it.
+  // Tracked even between takes, because MPE controllers send a note's initial
+  // values just before its note-on. Poly pressure targets one note directly.
   const channelBend = new Array<number>(16).fill(0);
+  const channelPressure = new Array<number>(16).fill(REST_PRESSURE);
+  const channelTimbre = new Array<number>(16).fill(REST_TIMBRE);
 
   const onEvent = (event: MidiInputEvent) => {
+    const isTimbre = event.type === "cc" && event.controller === 74;
     if (
       event.type !== "noteOn" && event.type !== "noteOff" &&
-      event.type !== "pitchBend"
+      event.type !== "pitchBend" && event.type !== "channelPressure" &&
+      event.type !== "polyPressure" && !isTimbre
     ) return;
     const at = eventSec(event);
     if (event.type === "pitchBend") channelBend[event.channel] = event.bend;
+    if (event.type === "channelPressure") {
+      channelPressure[event.channel] = event.pressure;
+    }
+    if (event.type === "cc") channelTimbre[event.channel] = event.value;
     if (!take) return;
     const sec = Math.max(take.startSec, at);
 
-    if (event.type === "pitchBend") {
+    if (event.type === "polyPressure") {
+      take.held.get(`${event.channel}:${event.note}`)?.pressures.push({
+        sec,
+        value: event.pressure,
+      });
+      return;
+    }
+    if (event.type !== "noteOn" && event.type !== "noteOff") {
       for (const held of take.held.values()) {
-        if (held.channel === event.channel) {
-          held.bends.push({ sec, bend: event.bend });
+        if (held.channel !== event.channel) continue;
+        if (event.type === "pitchBend") {
+          held.bends.push({ sec, value: event.bend });
+        } else if (event.type === "channelPressure") {
+          held.pressures.push({ sec, value: event.pressure });
+        } else if (event.type === "cc") {
+          held.timbres.push({ sec, value: event.value });
         }
       }
       return;
@@ -138,13 +166,19 @@ export default async function run(ctx: TimeContext) {
         pitch: event.note,
         velocity: event.velocity,
         onSec: sec,
-        bends: [{ sec, bend: channelBend[event.channel] }],
+        bends: [{ sec, value: channelBend[event.channel] }],
+        pressures: [{ sec, value: channelPressure[event.channel] }],
+        timbres: [{ sec, value: channelTimbre[event.channel] }],
       });
     }
   };
 
   const endNote = (into: Take, held: HeldNote, offSec: number) => {
-    held.bends.push({ sec: offSec, bend: channelBend[held.channel] });
+    const last = <T extends Sample>(samples: T[]) =>
+      samples[samples.length - 1];
+    held.bends.push({ sec: offSec, value: channelBend[held.channel] });
+    held.pressures.push({ sec: offSec, value: last(held.pressures).value });
+    held.timbres.push({ sec: offSec, value: last(held.timbres).value });
     into.notes.push({ ...held, offSec });
   };
 
@@ -175,6 +209,8 @@ export default async function run(ctx: TimeContext) {
         duration: Math.max(0.001, beats(note.offSec) - beats(note.onSec)),
         velocity: note.velocity,
         mpePitch: pitchCurve(note, params.bendRange, beats),
+        mpePressure: valueCurve(note, note.pressures, REST_PRESSURE, beats),
+        mpeTimbre: valueCurve(note, note.timbres, REST_TIMBRE, beats),
       })),
     });
     // The roll stores notes only and has no length field, so the take's loop
@@ -227,38 +263,65 @@ export default async function run(ctx: TimeContext) {
   }
 }
 
+/** Sample times as 0..1 across the note, the roll's curve time axis. */
+function curveTimes(
+  note: RecordedNote,
+  samples: Sample[],
+  beats: (sec: number) => number,
+): { time: number; value: number }[] {
+  const onBeat = beats(note.onSec);
+  const span = beats(note.offSec) - onBeat;
+  return samples.map(({ sec, value }) => ({
+    time: span > 0 ? Math.min(1, Math.max(0, (beats(sec) - onBeat) / span)) : 0,
+    value,
+  }));
+}
+
 /**
- * The roll's per-note pitch curve: `time` is 0..1 across the note and
- * `pitchOffset` is semitones from the note's pitch. Returns undefined for a
- * note that never bent. Samples are thinned because every point becomes a
- * draggable handle in the roll.
+ * The roll's per-note pitch curve: `pitchOffset` is semitones from the note's
+ * pitch. Returns undefined for a note that never bent. Samples are thinned
+ * because every point becomes a draggable handle in the roll.
  */
 function pitchCurve(
   note: RecordedNote,
   bendRange: number,
   beats: (sec: number) => number,
 ): { points: { time: number; pitchOffset: number }[] } | undefined {
-  const onBeat = beats(note.onSec);
-  const span = beats(note.offSec) - onBeat;
-  const points = note.bends.map(({ sec, bend }) => ({
-    time: span > 0 ? Math.min(1, Math.max(0, (beats(sec) - onBeat) / span)) : 0,
-    pitchOffset: Math.max(
+  const points = curveTimes(note, note.bends, beats).map(({ time, value }) => ({
+    time,
+    value: Math.max(
       -ROLL_PITCH_RANGE,
-      Math.min(ROLL_PITCH_RANGE, (bend / 8192) * bendRange),
+      Math.min(ROLL_PITCH_RANGE, (value / 8192) * bendRange),
     ),
   }));
-  if (points.every((point) => Math.abs(point.pitchOffset) < 0.01)) {
-    return undefined;
-  }
-  return { points: simplifyCurve(points, PITCH_TOLERANCE_SEMITONES) };
+  if (points.every((point) => Math.abs(point.value) < 0.01)) return undefined;
+  return {
+    points: simplifyCurve(points, PITCH_TOLERANCE_SEMITONES).map((point) => ({
+      time: point.time,
+      pitchOffset: point.value,
+    })),
+  };
+}
+
+/** A 0..127 pressure or timbre curve; undefined when it never left `rest`. */
+function valueCurve(
+  note: RecordedNote,
+  samples: Sample[],
+  rest: number,
+  beats: (sec: number) => number,
+): { points: { time: number; value: number }[] } | undefined {
+  if (samples.every((sample) => sample.value === rest)) return undefined;
+  return {
+    points: simplifyCurve(curveTimes(note, samples, beats), VALUE_TOLERANCE),
+  };
 }
 
 /**
- * Ramer-Douglas-Peucker on pitch error: keep a point only when dropping it
- * would move the line drawn between its neighbours by more than `tolerance`
- * semitones. Endpoints are always kept.
+ * Ramer-Douglas-Peucker on value error: keep a point only when dropping it
+ * would move the line drawn between its neighbours by more than `tolerance`.
+ * Endpoints are always kept.
  */
-function simplifyCurve<T extends { time: number; pitchOffset: number }>(
+function simplifyCurve<T extends { time: number; value: number }>(
   points: T[],
   tolerance: number,
 ): T[] {
@@ -275,8 +338,8 @@ function simplifyCurve<T extends { time: number; pitchOffset: number }>(
     for (let i = from + 1; i < to; i++) {
       const p = points[i];
       const t = b.time > a.time ? (p.time - a.time) / (b.time - a.time) : 0;
-      const expected = a.pitchOffset + t * (b.pitchOffset - a.pitchOffset);
-      const error = Math.abs(p.pitchOffset - expected);
+      const expected = a.value + t * (b.value - a.value);
+      const error = Math.abs(p.value - expected);
       if (error > worstError) {
         worst = i;
         worstError = error;

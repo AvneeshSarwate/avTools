@@ -22,6 +22,13 @@ const MpePitchPointSchema = z.object({
 const MpePitchSchema = z.object({
   points: z.array(MpePitchPointSchema)
 }).optional()
+const MpeValueSchema = z.object({
+  points: z.array(z.object({
+    time: z.number(),
+    value: z.number(),
+    metadata: MetadataSchema
+  }))
+}).optional()
 
 // Base note schema matching NoteDataInput (incoming notes may lack id/velocity)
 const NoteDataInputSchema = z.object({
@@ -31,6 +38,8 @@ const NoteDataInputSchema = z.object({
   duration: z.number().positive(),
   velocity: z.number().int().min(0).max(127).optional(),
   mpePitch: MpePitchSchema,
+  mpePressure: MpeValueSchema,
+  mpeTimbre: MpeValueSchema,
   metadata: MetadataSchema
 })
 
@@ -42,6 +51,8 @@ const NoteDataSchema = z.object({
   duration: z.number().positive(),
   velocity: z.number().int().min(0).max(127),
   mpePitch: MpePitchSchema,
+  mpePressure: MpeValueSchema,
+  mpeTimbre: MpeValueSchema,
   metadata: MetadataSchema
 })
 

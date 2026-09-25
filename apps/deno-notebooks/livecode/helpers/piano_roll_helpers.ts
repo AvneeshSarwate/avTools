@@ -92,6 +92,16 @@ export function clipToPianoRollData(clip: AbletonClip): PianoRollData {
             points: converted.mpePitch.points.map((point) => ({ ...point })),
           }
           : undefined,
+        mpePressure: converted.mpePressure
+          ? {
+            points: converted.mpePressure.points.map((point) => ({ ...point })),
+          }
+          : undefined,
+        mpeTimbre: converted.mpeTimbre
+          ? {
+            points: converted.mpeTimbre.points.map((point) => ({ ...point })),
+          }
+          : undefined,
       };
     }),
   };
