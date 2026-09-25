@@ -437,8 +437,8 @@ export const generateBakedCircleData = (
 export const updateBakedCircleData = (
   canvasState: CanvasRuntimeState
 ) => {
-  const result = generateBakedCircleData(canvasState)
-  canvasState.circle.bakedRenderData = result.data
-  canvasState.circle.bakedGroupMap = result.groupMap
+  // Baked data is derived from the document lazily (canvasBake.ts); mark it
+  // stale and notify.
+  canvasState.bake.dirty = true
   canvasState.callbacks.syncAppState?.(canvasState)
 }
