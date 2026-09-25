@@ -155,8 +155,9 @@ export interface FlattenedPolygon {
   /**
    * World-space Bézier segments of a curved polygon, exactly as the canvas
    * draws it; absent when the edges are straight. Draw them directly (canvas
-   * `quadraticCurveTo`/`bezierCurveTo`, p5 `quadraticVertex`/`bezierVertex`)
-   * or flatten them with `sampleCurveSegments`.
+   * `quadraticCurveTo`/`bezierCurveTo`; p5 2.x `bezierOrder` then one
+   * `bezierVertex` per control point and anchor) or flatten them with
+   * `sampleCurveSegments`.
    */
   segments?: PolygonCurveSegment[];
   metadata?: Record<string, unknown>;

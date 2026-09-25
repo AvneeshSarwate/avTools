@@ -1,0 +1,60 @@
+{
+  "type": "drawing",
+  "name": "drawing-intersections_shapes",
+  "savedAt": "2026-09-25T00:00:00.000Z",
+  "data": {
+    "version": 2,
+    "freehand": {
+      "nodes": []
+    },
+    "polygon": {
+      "nodes": [
+        {
+          "type": "polygon",
+          "id": "red-quad",
+          "points": [150, 80, 450, 60, 480, 300, 200, 340],
+          "closed": true,
+          "creationTime": 1,
+          "metadata": { "name": "red-quad", "color": [255, 80, 80] }
+        },
+        {
+          "type": "polygon",
+          "id": "blue-blob",
+          "points": [350, 150, 650, 120, 700, 380, 420, 420, 300, 300],
+          "closed": true,
+          "tension": 0.5,
+          "creationTime": 2,
+          "metadata": { "name": "blue-blob", "color": [80, 120, 255] }
+        },
+        {
+          "type": "polygon",
+          "id": "uncolored-triangle",
+          "points": [550, 60, 850, 90, 800, 280],
+          "closed": true,
+          "creationTime": 3,
+          "metadata": { "name": "uncolored-triangle" }
+        }
+      ]
+    },
+    "circle": {
+      "nodes": [
+        {
+          "type": "circle",
+          "id": "green-circle",
+          "radius": 130,
+          "creationTime": 4,
+          "transform": { "x": 500, "y": 250 },
+          "metadata": { "name": "green-circle", "color": [80, 220, 120] }
+        },
+        {
+          "type": "circle",
+          "id": "yellow-circle",
+          "radius": 110,
+          "creationTime": 5,
+          "transform": { "x": 720, "y": 300 },
+          "metadata": { "name": "yellow-circle", "color": [250, 220, 60] }
+        }
+      ]
+    }
+  }
+}

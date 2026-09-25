@@ -42,7 +42,8 @@ export default async function (ctx: TimeContext) {
 
       // Polygons: filled outlines. A curved polygon (drawn with the polygon
       // tool's Curve slider above 0) carries world-space Bézier `segments`,
-      // which p5 draws exactly; a straight one has only `points`.
+      // which p5 draws exactly (p5 2.x: one bezierVertex call per control
+      // point and anchor, after bezierOrder); a straight one has only `points`.
       sketch.stroke(120, 200, 255);
       sketch.strokeWeight(2);
       sketch.fill(120, 200, 255, 40);
@@ -53,17 +54,14 @@ export default async function (ctx: TimeContext) {
           sketch.vertex(first.from.x, first.from.y);
           for (const s of polygon.segments) {
             if (s.type === "quadratic") {
-              sketch.quadraticVertex(s.control.x, s.control.y, s.to.x, s.to.y);
+              sketch.bezierOrder(2);
+              sketch.bezierVertex(s.control.x, s.control.y);
             } else {
-              sketch.bezierVertex(
-                s.control1.x,
-                s.control1.y,
-                s.control2.x,
-                s.control2.y,
-                s.to.x,
-                s.to.y,
-              );
+              sketch.bezierOrder(3);
+              sketch.bezierVertex(s.control1.x, s.control1.y);
+              sketch.bezierVertex(s.control2.x, s.control2.y);
             }
+            sketch.bezierVertex(s.to.x, s.to.y);
           }
           sketch.endShape();
         } else {
