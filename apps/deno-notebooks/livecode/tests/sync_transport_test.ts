@@ -25,6 +25,7 @@ import type {
   AnalyzeSuccess,
   AnimationTimelineEntity,
   DrawingEntity,
+  DrawingSetResult,
   ModuleLookupsEntity,
   ModuleWaitsEntity,
   ParamsEntity,
@@ -357,6 +358,112 @@ Deno.test("drawings reset, change, and delete on the shared transport", async ()
         (change) => change.name === "sync/drawing" && change.entity === null,
         "the drawing deletion",
       );
+    } finally {
+      client.close();
+    }
+  });
+});
+
+Deno.test("engine actions ride the sync socket, ordered, without touching seq", async () => {
+  await withServer("tcv-sync-action-", async ({ baseUrl }) => {
+    await postJson(`${baseUrl}/entities/create`, {
+      type: "drawing",
+      name: "sync/action",
+    });
+    const client = await SyncClient.open(baseUrl);
+    try {
+      const reset = await client.subscribe(["drawing"]);
+      const initial = (reset.resets?.drawing as DrawingEntity[])[0];
+      const circle = (x: number) => ({
+        type: "circle",
+        id: "c",
+        radius: 5,
+        creationTime: 1,
+        transform: { x, y: 0 },
+      });
+      // A burst of patches then a whole-document set, all on one ordered
+      // lane: the set lands last, so no earlier patch can resurrect a stale
+      // node the way a straggling POST could.
+      const ids = ["p1", "p2", "p3", "set"];
+      client.socket.send(JSON.stringify({
+        type: "action",
+        requestId: "p1",
+        op: {
+          kind: "drawingPatch",
+          request: {
+            name: "sync/action",
+            upserts: [{ layer: "circle", node: circle(1) }],
+          },
+        },
+      }));
+      client.socket.send(JSON.stringify({
+        type: "action",
+        requestId: "p2",
+        op: {
+          kind: "drawingPatch",
+          request: {
+            name: "sync/action",
+            upserts: [{ layer: "circle", node: circle(2) }],
+          },
+        },
+      }));
+      client.socket.send(JSON.stringify({
+        type: "action",
+        requestId: "p3",
+        op: {
+          kind: "drawingPatch",
+          request: {
+            name: "sync/action",
+            upserts: [{ layer: "circle", node: circle(3) }],
+          },
+        },
+      }));
+      client.socket.send(JSON.stringify({
+        type: "action",
+        requestId: "set",
+        op: {
+          kind: "drawingSet",
+          request: {
+            name: "sync/action",
+            data: {
+              version: 1,
+              freehand: { nodes: [] },
+              polygon: { nodes: [] },
+              circle: { nodes: [circle(9)] },
+            },
+          },
+        },
+      }));
+      await waitFor(
+        () => client.actionResults().length === ids.length,
+        "four action results",
+        5_000,
+      );
+      const results = client.actionResults();
+      assertEquals(results.map((r) => r.requestId), ids);
+      assertEquals(
+        results.slice(0, 3).map((r) => r.ok && (r.body as { rev: number }).rev),
+        [initial.rev + 1, initial.rev + 2, initial.rev + 3],
+      );
+      const set = results[3];
+      assert(set.ok);
+      assertEquals(
+        (set.body as DrawingSetResult & { ok: true }).drawing.data.circle
+          .nodes[0].transform,
+        { x: 9 },
+      );
+      // Sync messages keep their own gap-free seq; action replies carry none.
+      const seqs = client.messages.map((m) => m.seq);
+      assertEquals(seqs, seqs.map((_, i) => seqs[0] + i));
+      // A malformed action answers with ok: false rather than silence.
+      client.socket.send(JSON.stringify({ type: "action", requestId: "bad" }));
+      await waitFor(
+        () => client.actionResults().length === ids.length + 1,
+        "error reply",
+        5_000,
+      );
+      const bad = client.actionResults().at(-1)!;
+      assertEquals([bad.requestId, bad.ok], ["bad", false]);
     } finally {
       client.close();
     }

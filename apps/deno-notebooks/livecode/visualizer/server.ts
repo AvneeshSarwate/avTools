@@ -59,6 +59,8 @@ import type {
   SetPianoRollCursorRequest,
   SetPianoRollRequest,
   StopModuleRequest,
+  SyncActionMessage,
+  SyncActionResultMessage,
   SyncClientMessage,
   SyncEntity,
   SyncEntityChange,
@@ -2322,6 +2324,10 @@ export async function createLivecodeVisualizerServer(
       });
       return;
     }
+    if (message?.type === "action") {
+      await handleSyncAction(state, message);
+      return;
+    }
     if (message?.type !== "subscribe") return;
 
     const entityTypes = Array.isArray(message.entityTypes)
@@ -2351,6 +2357,48 @@ export async function createLivecodeVisualizerServer(
       });
     }
     sendSyncMessage(state, { resets });
+  }
+
+  /**
+   * An engine op sent over the sync socket. The reply carries the op's result
+   * body as-is (a rejected edit is an `ok: false` body, as the in-process
+   * transports deliver it) and does not advance `seq`: it is not sync state.
+   */
+  async function handleSyncAction(
+    state: SyncSocketState,
+    message: SyncActionMessage,
+  ): Promise<void> {
+    const requestId = typeof message.requestId === "string"
+      ? message.requestId
+      : "";
+    let reply: SyncActionResultMessage;
+    try {
+      if (!requestId || !message.op || typeof message.op.kind !== "string") {
+        throw new Error("action needs a requestId and an op");
+      }
+      reply = {
+        type: "actionResult",
+        requestId,
+        ok: true,
+        body: await plane.execute(message.op),
+      };
+    } catch (error) {
+      reply = {
+        type: "actionResult",
+        requestId,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+    if (state.socket.readyState !== WebSocket.OPEN) return;
+    try {
+      state.socket.send(JSON.stringify(reply));
+    } catch (error) {
+      void log({
+        type: "syncActionReplyFailed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   function sendSyncMessage(

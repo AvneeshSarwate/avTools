@@ -1,8 +1,10 @@
 import {
   type BrowserEngineHostStatus,
   SYNC_ENTITY_TYPES,
+  type SyncActionResultMessage,
+  type SyncClientMessage,
   type SyncMessage,
-  type SyncSubscribeMessage,
+  type SyncServerMessage,
 } from "@avtools/livecode-protocol";
 import {
   createReconnectingSocket,
@@ -28,12 +30,15 @@ export const configuredSyncTransport: "ws" | "broadcast" | "inprocess" =
 
 export interface SyncPort {
   isOpen(): boolean;
-  sendMessage(message: SyncSubscribeMessage): void;
+  sendMessage(message: SyncClientMessage): void;
+  /** Whether this port answers `action` messages; only the socket does. */
+  carriesActions: boolean;
 }
 
 export interface SyncTransportCallbacks {
   onOpen(port: SyncPort): void;
   onMessage(message: SyncMessage, port: SyncPort): void;
+  onActionResult?(message: SyncActionResultMessage): void;
   onClose(): void;
   onError(message: string): void;
 }
@@ -51,6 +56,7 @@ export function createBroadcastSyncTransport(
       const port: SyncPort = {
         isOpen: () => channel === active,
         sendMessage: (message) => active.postMessage(message),
+        carriesActions: false,
       };
       active.onmessage = (event) => {
         const message = event.data as SyncMessage | undefined;
@@ -74,11 +80,15 @@ export function createWebSocketSyncTransport(
     makeUrl,
     onOpen: (socket) => callbacks.onOpen(webSocketPort(socket)),
     onMessage: (event, socket) => {
-      let message: SyncMessage;
+      let message: SyncServerMessage;
       try {
-        message = JSON.parse(event.data as string) as SyncMessage;
+        message = JSON.parse(event.data as string) as SyncServerMessage;
       } catch (error) {
         console.error("[livecode-tldraw] malformed sync message", error);
+        return;
+      }
+      if (message.type === "actionResult") {
+        callbacks.onActionResult?.(message);
         return;
       }
       if (message.type !== "sync") return;
@@ -93,6 +103,7 @@ function webSocketPort(socket: WebSocket): SyncPort {
   return {
     isOpen: () => socket.readyState === WebSocket.OPEN,
     sendMessage: (message) => socket.send(JSON.stringify(message)),
+    carriesActions: true,
   };
 }
 
@@ -135,6 +146,7 @@ export function createInProcessSyncTransport(
         const engineRunning = () => host.status().lock === "engine";
         const port: SyncPort = {
           isOpen: () => !active.closed && engineRunning(),
+          carriesActions: false,
           sendMessage: (message) => {
             if (message.type !== "subscribe" || active.closed) return;
             entityTypes = new Set(message.entityTypes);

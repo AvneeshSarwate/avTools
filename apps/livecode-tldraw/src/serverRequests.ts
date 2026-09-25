@@ -117,15 +117,32 @@ export async function captureBakedEntities(): Promise<{
   return { entities, skippedCount: rows.length - entities.length };
 }
 
+/**
+ * The sync socket's action lane, installed by the sync provider while its
+ * socket is open. Actions that ask for it (`preferSocket`) go over the socket
+ * instead of a POST: the socket is ordered, so a stream of drawing edits and
+ * the commit behind them cannot overtake each other, and it answers with the
+ * op's result body as-is, like the in-process transports.
+ */
+export type SocketActionSender = (op: EngineOp) => Promise<unknown>;
+let socketActionSender: SocketActionSender | null = null;
+export function setSocketActionSender(sender: SocketActionSender | null): void {
+  socketActionSender = sender;
+}
+
 /** Perform one engine action over the configured transport. */
 export async function engineAction<T>(
   op: EngineOp,
   serverBaseUrl: string,
   httpPath: string,
   httpBody: unknown,
+  options: { preferSocket?: boolean } = {},
 ): Promise<T> {
   if (ACTIONS_TRANSPORT !== "http") {
     return await localEngineAction(op) as T;
+  }
+  if (options.preferSocket && socketActionSender) {
+    return await socketActionSender(op) as T;
   }
   return await postServerJson<T>(serverBaseUrl, httpPath, httpBody);
 }
