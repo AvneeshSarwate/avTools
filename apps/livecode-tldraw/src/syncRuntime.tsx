@@ -20,6 +20,10 @@ import type {
   AnimationTimelineSetResult,
   DrawingDocument,
   DrawingEntity,
+  DrawingNodeDelete,
+  DrawingNodeUpsert,
+  DrawingPatchRequest,
+  DrawingPatchResult,
   DrawingSetResult,
   ModuleLookupsEntity,
   ModuleWaitsEntity,
@@ -37,7 +41,14 @@ import type {
 } from "@avtools/livecode-protocol";
 import { SYNC_ENTITY_TYPES } from "@avtools/livecode-protocol";
 import type { ReconnectingSocketController } from "./reconnectingSocket";
-import { engineAction, serverWebSocketUrl } from "./serverRequests";
+
+/** Same bound as the BroadcastChannel action lane. */
+const SOCKET_ACTION_TIMEOUT_MS = 10_000;
+import {
+  engineAction,
+  serverWebSocketUrl,
+  setSocketActionSender,
+} from "./serverRequests";
 import {
   applySyncMessageToState,
   emptySyncState,
@@ -113,6 +124,12 @@ export interface SyncActions {
     data: DrawingDocument,
     options?: { originId?: string; expectedRev?: number },
   ): Promise<DrawingSetResult>;
+  /** Node-level edits: the in-gesture stream. Same ordered lane as setDrawing. */
+  patchDrawing(
+    name: string,
+    edits: { upserts?: DrawingNodeUpsert[]; deletes?: DrawingNodeDelete[] },
+    options?: { originId?: string; expectedRev?: number },
+  ): Promise<DrawingPatchResult>;
 }
 
 /**
@@ -253,12 +270,13 @@ export interface DrawingsSyncApi {
   drawings: Record<string, DrawingEntity>;
   latestSeq: number | null;
   setDrawing: SyncActions["setDrawing"];
+  patchDrawing: SyncActions["patchDrawing"];
 }
 
 export function useDrawingsSync(name?: string | null): DrawingsSyncApi {
   const slice = useSyncSlice("drawing", name);
   const { connectionStatus, connectionError } = useSyncConnection();
-  const { setDrawing } = useSyncActions();
+  const { setDrawing, patchDrawing } = useSyncActions();
   return useMemo(
     () => ({
       connectionStatus,
@@ -266,8 +284,9 @@ export function useDrawingsSync(name?: string | null): DrawingsSyncApi {
       drawings: slice.entities,
       latestSeq: slice.latestSeq,
       setDrawing,
+      patchDrawing,
     }),
-    [connectionError, connectionStatus, setDrawing, slice],
+    [connectionError, connectionStatus, patchDrawing, setDrawing, slice],
   );
 }
 
@@ -396,7 +415,17 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
       const previousSeq = lastSeqRef.current;
       lastSeqRef.current = message.seq;
 
-      const dirty = applySyncMessageToState(pendingRef.current, message);
+      let dirty: Iterable<SyncEntityTypeKey>;
+      try {
+        dirty = applySyncMessageToState(pendingRef.current, message);
+      } catch (error) {
+        // A sparse change whose baseline this client lacks (a lost reset, a
+        // delta before any reset). The resubscribe's resets replace the
+        // affected maps whole, so nothing partial survives.
+        console.warn("[livecode-tldraw] sync message not applicable", error);
+        subscribe(port);
+        return;
+      }
       for (const entityType of dirty) {
         dirtyTypesRef.current.add(entityType);
       }
@@ -418,10 +447,57 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
     [scheduleFlush, subscribe],
   );
 
+  // Actions in flight over the sync socket, by requestId. Rejected on close:
+  // the socket's reconnect is a new world and a reply will never come.
+  const pendingActionsRef = useRef(
+    new Map<
+      string,
+      { resolve: (body: unknown) => void; reject: (error: Error) => void }
+    >(),
+  );
+  const rejectPendingActions = useCallback((reason: string) => {
+    const pending = pendingActionsRef.current;
+    for (const entry of pending.values()) entry.reject(new Error(reason));
+    pending.clear();
+  }, []);
+
   const transportCallbacks = useMemo<SyncTransportCallbacks>(
     () => ({
       onOpen: (port) => {
         openRef.current = true;
+        if (port.carriesActions) {
+          setSocketActionSender((op) =>
+            new Promise((resolve, reject) => {
+              if (!port.isOpen()) {
+                reject(new Error("sync socket is not open"));
+                return;
+              }
+              const requestId = crypto.randomUUID();
+              const timer = window.setTimeout(() => {
+                if (pendingActionsRef.current.delete(requestId)) {
+                  reject(new Error(`engine action ${op.kind} timed out`));
+                }
+              }, SOCKET_ACTION_TIMEOUT_MS);
+              pendingActionsRef.current.set(requestId, {
+                resolve: (body) => {
+                  window.clearTimeout(timer);
+                  resolve(body);
+                },
+                reject: (error) => {
+                  window.clearTimeout(timer);
+                  reject(error);
+                },
+              });
+              try {
+                port.sendMessage({ type: "action", requestId, op });
+              } catch (error) {
+                pendingActionsRef.current.delete(requestId);
+                window.clearTimeout(timer);
+                reject(error instanceof Error ? error : new Error(String(error)));
+              }
+            })
+          );
+        }
         // A fresh transport is owed no state. Subscribe is both registration and
         // the full reset that hydrates this client.
         lastSeqRef.current = null;
@@ -431,8 +507,17 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
         for (const listener of [...listenersRef.current]) listener.onOpen?.();
       },
       onMessage: applyMessage,
+      onActionResult: (message) => {
+        const entry = pendingActionsRef.current.get(message.requestId);
+        if (!entry) return;
+        pendingActionsRef.current.delete(message.requestId);
+        if (message.ok) entry.resolve(message.body);
+        else entry.reject(new Error(message.error));
+      },
       onClose: () => {
         openRef.current = false;
+        setSocketActionSender(null);
+        rejectPendingActions("sync socket closed");
         setConnectionStatus((current) =>
           current === "error" ? current : "closed",
         );
@@ -440,6 +525,8 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
       },
       onError: (message) => {
         openRef.current = false;
+        setSocketActionSender(null);
+        rejectPendingActions(message);
         setConnectionError(message);
         setConnectionStatus("error");
         for (const listener of [...listenersRef.current]) {
@@ -447,7 +534,7 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
         }
       },
     }),
-    [applyMessage, subscribe],
+    [applyMessage, rejectPendingActions, subscribe],
   );
 
   if (controllerRef.current === null) {
@@ -654,6 +741,31 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
         serverBaseUrlRef.current,
         "/drawing/set",
         body,
+        { preferSocket: true },
+      );
+    },
+    [],
+  );
+
+  const patchDrawing = useCallback(
+    async (
+      name: string,
+      edits: { upserts?: DrawingNodeUpsert[]; deletes?: DrawingNodeDelete[] },
+      options: { originId?: string; expectedRev?: number } = {},
+    ) => {
+      const body: DrawingPatchRequest = {
+        name,
+        upserts: edits.upserts,
+        deletes: edits.deletes,
+        originId: options.originId,
+        expectedRev: options.expectedRev,
+      };
+      return await engineAction<DrawingPatchResult>(
+        { kind: "drawingPatch", request: body },
+        serverBaseUrlRef.current,
+        "/drawing/patch",
+        body,
+        { preferSocket: true },
       );
     },
     [],
@@ -704,10 +816,12 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
       setParams,
       setAnimationTimeline,
       setDrawing,
+      patchDrawing,
       setSixSinesParameters,
       setSixSinesPreset,
     }),
     [
+      patchDrawing,
       redoRoll,
       serverBaseUrl,
       setAnimationTimeline,
