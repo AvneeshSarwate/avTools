@@ -977,6 +977,48 @@ async function verifyMidiRecording(): Promise<void> {
   );
 }
 
+async function verifyMidiRecordingSixSines(): Promise<void> {
+  console.log("\n=== feature-midi-recording-six-sines ===");
+  // The player needs the engine tab's AudioWorklet, so only the recorder runs
+  // here; the project still has to open and type-check clean under the
+  // browser lib, and the MPE preset has to restore from checked-in data.
+  await openProject("feature-midi-recording-six-sines");
+
+  const synth = await waitUntil(
+    "six sines synth restored from checked-in data",
+    async () =>
+      (await syncEntities("sixSines")).find((entity) =>
+        entity.name === "six-sines-recording/synth"
+      ),
+  );
+  assert(
+    typeof synth.data?.preset === "string" &&
+      synth.data.preset.includes('name="Exp Bowed Glass R2"'),
+    "restored synth carries the MPE factory preset",
+  );
+
+  const recorder = await launchModule("six-sines-recording/recorder");
+  assert(recorder.launchStatus === 200, "recorder launch accepted");
+  await waitForRun("six-sines-recording/recorder", "running");
+  const entity = await waitUntil(
+    "six-sines-recording params entity is listed",
+    () => paramsEntity("six-sines-recording"),
+  );
+  assert(
+    entity.meta?.input?.options?.["(none)"] === "",
+    "input selector lists the (none) option",
+  );
+  await post("/runtime/stop", { moduleId: "six-sines-recording/recorder" });
+  await waitForRun(
+    "six-sines-recording/recorder",
+    "stopped",
+    recorder.generatedRunId,
+  );
+  projectSummaries.push(
+    "feature-midi-recording-six-sines: browser-lib check, MPE preset restore, recorder run/stop",
+  );
+}
+
 async function main(): Promise<number> {
   console.log("starting livecode server (port 0)...");
   const child = new Deno.Command("deno", {
@@ -1048,6 +1090,7 @@ async function main(): Promise<number> {
     await verifyStudioCombined();
     await verifyDrawingP5();
     await verifyMidiRecording();
+    await verifyMidiRecordingSixSines();
 
     console.log(`\nALL PROJECTS VERIFIED (${checksPassed} checks)`);
     for (const line of projectSummaries) console.log(`  - ${line}`);

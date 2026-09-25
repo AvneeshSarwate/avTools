@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "name": "feature-midi-recording-six-sines",
+  "engineTarget": "browser",
+  "modules": [
+    {
+      "id": "six-sines-recording/recorder",
+      "path": "modules/recorder.ts",
+      "sourcePath": "modules/recorder.orig.ts",
+      "runtimePath": "modules/recorder.ts",
+      "kind": "runnable",
+      "title": "MIDI recorder",
+      "sourceVersion": 1,
+      "x": 80,
+      "y": 80,
+      "w": 680,
+      "h": 900
+    },
+    {
+      "id": "six-sines-recording/player",
+      "path": "modules/player.ts",
+      "sourcePath": "modules/player.orig.ts",
+      "runtimePath": "modules/player.ts",
+      "kind": "runnable",
+      "title": "take player (Six Sines)",
+      "sourceVersion": 1,
+      "x": 80,
+      "y": 1040,
+      "w": 680,
+      "h": 760
+    },
+    {
+      "id": "six-sines-recording/instrument",
+      "path": "modules/instrument.ts",
+      "sourcePath": "modules/instrument.orig.ts",
+      "runtimePath": "modules/instrument.ts",
+      "kind": "runnable",
+      "title": "Six Sines audio bridge",
+      "sourceVersion": 1,
+      "x": 80,
+      "y": 1860,
+      "w": 680,
+      "h": 600
+    }
+  ],
+  "canvas": {
+    "paramPaneViews": [
+      {
+        "id": "shape:six-sines-recording-params",
+        "paramsName": "six-sines-recording",
+        "x": 820,
+        "y": 80,
+        "w": 340,
+        "h": 300
+      },
+      {
+        "id": "shape:six-sines-recording-playback",
+        "paramsName": "six-sines-recording/playback",
+        "x": 1200,
+        "y": 80,
+        "w": 340,
+        "h": 200
+      }
+    ],
+    "pianoRollViews": [
+      {
+        "id": "shape:six-sines-recording-take",
+        "rollName": "six-sines-recording/take",
+        "x": 820,
+        "y": 420,
+        "w": 720,
+        "h": 700
+      }
+    ],
+    "sixSinesViews": [
+      {
+        "id": "shape:six-sines-recording-synth",
+        "synthName": "six-sines-recording/synth",
+        "x": 1600,
+        "y": 80,
+        "w": 1260,
+        "h": 1140
+      }
+    ]
+  },
+  "data": [
+    {
+      "type": "sixSines",
+      "name": "six-sines-recording/synth",
+      "path": "data/sixSines/synth.json"
+    }
+  ]
+}

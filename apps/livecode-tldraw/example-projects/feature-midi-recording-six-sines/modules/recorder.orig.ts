@@ -1,0 +1,355 @@
+import type { TimeContext } from "@avtools/core-timing";
+import { canvasParams } from "canvas-params";
+import {
+  listMidiInputs,
+  type MidiInput,
+  type MidiInputEvent,
+  openMidiInput,
+} from "midi-helpers";
+import { setPianoRollClip } from "piano-roll-helpers";
+
+const ROLL = "six-sines-recording/take";
+const NO_INPUT = "";
+/** The piano roll's drawable pitch-curve range, in semitones either way. */
+const ROLL_PITCH_RANGE = 24;
+/** Curve points closer than this to the thinned line are dropped. */
+const PITCH_TOLERANCE_SEMITONES = 0.05;
+/** The same for pressure and timbre, in 0..127 steps. */
+const VALUE_TOLERANCE = 1;
+/** MPE rest values; a curve that never leaves them is not written. */
+const REST_PRESSURE = 0;
+const REST_TIMBRE = 64;
+
+/**
+ * The input selector's options are the ports visible right now, so the
+ * declaration is repeated whenever that list changes (a hot-plugged device,
+ * or browser MIDI permission arriving after launch). Redeclaring keeps the
+ * current values and replaces only the dropdown options.
+ */
+function declareParams(inputNames: string[]) {
+  const options: Record<string, string> = { "(none)": NO_INPUT };
+  for (const name of inputNames) options[name] = name;
+  return canvasParams("six-sines-recording", {
+    input: NO_INPUT,
+    recording: false,
+    trimStartSilence: true,
+    trimEndSilence: true,
+    bendRange: 48,
+    status: "idle",
+    lengthBeats: 0,
+  }, {
+    input: { label: "MIDI input", options },
+    recording: { label: "recording" },
+    trimStartSilence: { label: "trim start silence" },
+    trimEndSilence: { label: "trim end silence" },
+    bendRange: {
+      label: "bend range (semitones)",
+      min: 1,
+      max: 96,
+      step: 1,
+    },
+    status: { label: "status" },
+    lengthBeats: { label: "take length (beats)" },
+  });
+}
+
+interface Sample {
+  sec: number;
+  /** Raw value: 14-bit bend (-8192..8191, scaled at take end) or 0..127. */
+  value: number;
+}
+
+interface HeldNote {
+  channel: number;
+  pitch: number;
+  velocity: number;
+  onSec: number;
+  bends: Sample[];
+  pressures: Sample[];
+  timbres: Sample[];
+}
+
+interface RecordedNote extends HeldNote {
+  offSec: number;
+}
+
+interface Take {
+  startSec: number;
+  held: Map<string, HeldNote>;
+  notes: RecordedNote[];
+}
+
+/**
+ * Same recorder as the engine-agnostic `feature-midi-recording` project, under
+ * this project's entity names. Records note on/off from the selected input into `six-sines-recording/take`.
+ * Toggle `recording` on to start a take and off to write it to the roll.
+ * Leave this module running while recording; Stop discards an unfinished take.
+ */
+export default async function run(ctx: TimeContext) {
+  let inputNames = listMidiInputs().map((port) => port.name);
+  let params = declareParams(inputNames);
+
+  let input: MidiInput | null = null;
+  let openedName = NO_INPUT;
+  let take: Take | null = null;
+  let wasRecording = false;
+  // A take can only start from an edge seen by this run, not a stale toggle.
+  params.recording = false;
+
+  // Device timestamps are on the backend's own clock. The smallest observed
+  // (engine now - device time) is the best estimate of the offset between the
+  // two clocks: any extra is delivery delay (a busy engine thread, the native
+  // bridge's dispatch tick). Mapping through it keeps a burst delivered late
+  // at its true spacing instead of stamping it with arrival time.
+  let clockOffsetSec = Infinity;
+  const now = () => ctx.scheduler.now();
+  const eventSec = (event: MidiInputEvent) => {
+    const deviceSec = event.timeMs / 1000;
+    clockOffsetSec = Math.min(clockOffsetSec, now() - deviceSec);
+    return deviceSec + clockOffsetSec;
+  };
+
+  // Pitch bend, channel pressure and timbre (CC74) are per channel. With MPE
+  // each note has its own channel, so they are per-note expression; on an
+  // ordinary keyboard a channel's value applies to every note held on it.
+  // Tracked even between takes, because MPE controllers send a note's initial
+  // values just before its note-on. Poly pressure targets one note directly.
+  const channelBend = new Array<number>(16).fill(0);
+  const channelPressure = new Array<number>(16).fill(REST_PRESSURE);
+  const channelTimbre = new Array<number>(16).fill(REST_TIMBRE);
+
+  const onEvent = (event: MidiInputEvent) => {
+    const isTimbre = event.type === "cc" && event.controller === 74;
+    if (
+      event.type !== "noteOn" && event.type !== "noteOff" &&
+      event.type !== "pitchBend" && event.type !== "channelPressure" &&
+      event.type !== "polyPressure" && !isTimbre
+    ) return;
+    const at = eventSec(event);
+    if (event.type === "pitchBend") channelBend[event.channel] = event.bend;
+    if (event.type === "channelPressure") {
+      channelPressure[event.channel] = event.pressure;
+    }
+    if (event.type === "cc") channelTimbre[event.channel] = event.value;
+    if (!take) return;
+    const sec = Math.max(take.startSec, at);
+
+    if (event.type === "polyPressure") {
+      take.held.get(`${event.channel}:${event.note}`)?.pressures.push({
+        sec,
+        value: event.pressure,
+      });
+      return;
+    }
+    if (event.type !== "noteOn" && event.type !== "noteOff") {
+      for (const held of take.held.values()) {
+        if (held.channel !== event.channel) continue;
+        if (event.type === "pitchBend") {
+          held.bends.push({ sec, value: event.bend });
+        } else if (event.type === "channelPressure") {
+          held.pressures.push({ sec, value: event.pressure });
+        } else if (event.type === "cc") {
+          held.timbres.push({ sec, value: event.value });
+        }
+      }
+      return;
+    }
+
+    const key = `${event.channel}:${event.note}`;
+    const held = take.held.get(key);
+    if (held) {
+      endNote(take, held, sec);
+      take.held.delete(key);
+    }
+    if (event.type === "noteOn") {
+      take.held.set(key, {
+        channel: event.channel,
+        pitch: event.note,
+        velocity: event.velocity,
+        onSec: sec,
+        bends: [{ sec, value: channelBend[event.channel] }],
+        pressures: [{ sec, value: channelPressure[event.channel] }],
+        timbres: [{ sec, value: channelTimbre[event.channel] }],
+      });
+    }
+  };
+
+  const endNote = (into: Take, held: HeldNote, offSec: number) => {
+    const last = <T extends Sample>(samples: T[]) =>
+      samples[samples.length - 1];
+    held.bends.push({ sec: offSec, value: channelBend[held.channel] });
+    held.pressures.push({ sec: offSec, value: last(held.pressures).value });
+    held.timbres.push({ sec: offSec, value: last(held.timbres).value });
+    into.notes.push({ ...held, offSec });
+  };
+
+  const finishTake = (finished: Take) => {
+    const endSec = now();
+    for (const held of finished.held.values()) {
+      endNote(finished, held, endSec);
+    }
+    if (finished.notes.length === 0) {
+      params.status = "no notes recorded; roll unchanged";
+      return;
+    }
+
+    const beats = (sec: number) => ctx.tempo.beatsAtTime(sec);
+    const notes = finished.notes.sort((a, b) => a.onSec - b.onSec);
+    const startBeat = params.trimStartSilence
+      ? beats(notes[0].onSec)
+      : beats(finished.startSec);
+    const endBeat = params.trimEndSilence
+      ? Math.max(...notes.map((note) => beats(note.offSec)))
+      : beats(endSec);
+
+    setPianoRollClip(ROLL, {
+      notes: notes.map((note, index) => ({
+        id: `take-${index}`,
+        pitch: note.pitch,
+        position: beats(note.onSec) - startBeat,
+        duration: Math.max(0.001, beats(note.offSec) - beats(note.onSec)),
+        velocity: note.velocity,
+        mpePitch: pitchCurve(note, params.bendRange, beats),
+        mpePressure: valueCurve(note, note.pressures, REST_PRESSURE, beats),
+        mpeTimbre: valueCurve(note, note.timbres, REST_TIMBRE, beats),
+      })),
+    });
+    // The roll stores notes only and has no length field, so the take's loop
+    // length (which is what trimming the end changes) is reported here.
+    params.lengthBeats = Math.round((endBeat - startBeat) * 1000) / 1000;
+    params.status = `wrote ${notes.length} notes`;
+  };
+
+  try {
+    while (true) {
+      const names = listMidiInputs().map((port) => port.name);
+      if (names.join("\n") !== inputNames.join("\n")) {
+        inputNames = names;
+        params = declareParams(inputNames);
+      }
+
+      if (params.input !== openedName) {
+        input?.close();
+        input = null;
+        openedName = params.input;
+        clockOffsetSec = Infinity;
+        if (openedName !== NO_INPUT) {
+          try {
+            input = await openMidiInput(openedName, ctx);
+            input.onMessage(onEvent);
+            if (!take) params.status = `listening to ${openedName}`;
+          } catch (error) {
+            params.status = `could not open ${openedName}`;
+            console.warn("[six-sines-recording]", error);
+          }
+        } else if (!take) {
+          params.status = "idle";
+        }
+      }
+
+      if (params.recording && !wasRecording) {
+        take = { startSec: now(), held: new Map(), notes: [] };
+        params.status = input ? "recording" : "recording (no input selected)";
+      } else if (!params.recording && wasRecording && take) {
+        const finished = take;
+        take = null;
+        finishTake(finished);
+      }
+      wasRecording = params.recording;
+
+      await ctx.waitSec(1 / 60);
+    }
+  } finally {
+    input?.close();
+  }
+}
+
+/** Sample times as 0..1 across the note, the roll's curve time axis. */
+function curveTimes(
+  note: RecordedNote,
+  samples: Sample[],
+  beats: (sec: number) => number,
+): { time: number; value: number }[] {
+  const onBeat = beats(note.onSec);
+  const span = beats(note.offSec) - onBeat;
+  return samples.map(({ sec, value }) => ({
+    time: span > 0 ? Math.min(1, Math.max(0, (beats(sec) - onBeat) / span)) : 0,
+    value,
+  }));
+}
+
+/**
+ * The roll's per-note pitch curve: `pitchOffset` is semitones from the note's
+ * pitch. Returns undefined for a note that never bent. Samples are thinned
+ * because every point becomes a draggable handle in the roll.
+ */
+function pitchCurve(
+  note: RecordedNote,
+  bendRange: number,
+  beats: (sec: number) => number,
+): { points: { time: number; pitchOffset: number }[] } | undefined {
+  const points = curveTimes(note, note.bends, beats).map(({ time, value }) => ({
+    time,
+    value: Math.max(
+      -ROLL_PITCH_RANGE,
+      Math.min(ROLL_PITCH_RANGE, (value / 8192) * bendRange),
+    ),
+  }));
+  if (points.every((point) => Math.abs(point.value) < 0.01)) return undefined;
+  return {
+    points: simplifyCurve(points, PITCH_TOLERANCE_SEMITONES).map((point) => ({
+      time: point.time,
+      pitchOffset: point.value,
+    })),
+  };
+}
+
+/** A 0..127 pressure or timbre curve; undefined when it never left `rest`. */
+function valueCurve(
+  note: RecordedNote,
+  samples: Sample[],
+  rest: number,
+  beats: (sec: number) => number,
+): { points: { time: number; value: number }[] } | undefined {
+  if (samples.every((sample) => sample.value === rest)) return undefined;
+  return {
+    points: simplifyCurve(curveTimes(note, samples, beats), VALUE_TOLERANCE),
+  };
+}
+
+/**
+ * Ramer-Douglas-Peucker on value error: keep a point only when dropping it
+ * would move the line drawn between its neighbours by more than `tolerance`.
+ * Endpoints are always kept.
+ */
+function simplifyCurve<T extends { time: number; value: number }>(
+  points: T[],
+  tolerance: number,
+): T[] {
+  if (points.length <= 2) return points;
+  const keep = new Array<boolean>(points.length).fill(false);
+  keep[0] = keep[points.length - 1] = true;
+  const stack: [number, number][] = [[0, points.length - 1]];
+  while (stack.length > 0) {
+    const [from, to] = stack.pop()!;
+    const a = points[from];
+    const b = points[to];
+    let worst = -1;
+    let worstError = tolerance;
+    for (let i = from + 1; i < to; i++) {
+      const p = points[i];
+      const t = b.time > a.time ? (p.time - a.time) / (b.time - a.time) : 0;
+      const expected = a.value + t * (b.value - a.value);
+      const error = Math.abs(p.value - expected);
+      if (error > worstError) {
+        worst = i;
+        worstError = error;
+      }
+    }
+    if (worst >= 0) {
+      keep[worst] = true;
+      stack.push([from, worst], [worst, to]);
+    }
+  }
+  return points.filter((_, i) => keep[i]);
+}
