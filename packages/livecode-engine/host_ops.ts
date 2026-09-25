@@ -30,7 +30,7 @@ import { makeParamsSnapshot, setParamsValues } from "./params_store.ts";
 import { makeSignalsSnapshot } from "./signals_store.ts";
 import { setAnimationTimeline } from "./animation_timeline_store.ts";
 import { setSixSinesParameters, setSixSinesPreset } from "./six_sines_store.ts";
-import { setDrawing } from "./drawing_store.ts";
+import { patchDrawing, setDrawing } from "./drawing_store.ts";
 
 function resolveEntityRequest(
   typeId: unknown,
@@ -210,7 +210,9 @@ export async function executeEngineOp(
     case "pianoRollList":
       return makePianoRollSnapshot();
     case "pianoRollCursorSet":
-      return setPianoRollCursor(op.request.name, op.request.position, {originId:op.request.originId});
+      return setPianoRollCursor(op.request.name, op.request.position, {
+        originId: op.request.originId,
+      });
     case "pianoRollSet":
       return setPianoRoll(op.request.name, op.request.data, {
         label: op.request.label,
@@ -239,6 +241,11 @@ export async function executeEngineOp(
       });
     case "drawingSet":
       return setDrawing(op.request.name, op.request.data, {
+        originId: op.request.originId,
+        expectedRev: op.request.expectedRev,
+      });
+    case "drawingPatch":
+      return patchDrawing(op.request.name, op.request, {
         originId: op.request.originId,
         expectedRev: op.request.expectedRev,
       });

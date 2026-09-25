@@ -21,6 +21,7 @@ import type {
   ClientControlRequest,
   ClientControlResultMessage,
   CreateProjectRequest,
+  DrawingPatchRequest,
   EngineModeChangeRequest,
   EngineModeChangeResponse,
   EntityCreateRequest,
@@ -55,8 +56,8 @@ import type {
   SetAnimationTimelineRequest,
   SetDrawingRequest,
   SetParamsRequest,
-  SetPianoRollRequest,
   SetPianoRollCursorRequest,
+  SetPianoRollRequest,
   StopModuleRequest,
   SyncClientMessage,
   SyncEntity,
@@ -68,6 +69,7 @@ import type {
 } from "./protocol.ts";
 import type {
   AnimationTimelineSetResult,
+  DrawingPatchResult,
   DrawingSetResult,
   EngineEntityActionResult,
   EngineEntityCapture,
@@ -816,7 +818,12 @@ export async function createLivecodeVisualizerServer(
     }
     if (request.method === "POST" && url.pathname === "/piano-roll/cursor") {
       const requestBody = await request.json() as SetPianoRollCursorRequest;
-      return json(await plane.execute({kind:"pianoRollCursorSet",request:requestBody}));
+      return json(
+        await plane.execute({
+          kind: "pianoRollCursorSet",
+          request: requestBody,
+        }),
+      );
     }
     if (request.method === "POST" && url.pathname === "/piano-roll/set") {
       const requestBody = await request.json() as SetPianoRollRequest;
@@ -892,6 +899,14 @@ export async function createLivecodeVisualizerServer(
           request: requestBody,
         }) as DrawingSetResult,
       );
+    }
+    if (request.method === "POST" && url.pathname === "/drawing/patch") {
+      const requestBody = await request.json() as DrawingPatchRequest;
+      const result = await plane.execute({
+        kind: "drawingPatch",
+        request: requestBody,
+      }) as DrawingPatchResult;
+      return json(result, { status: result.ok ? 200 : result.status });
     }
     if (request.method === "GET" && url.pathname === "/signals/list") {
       return json(

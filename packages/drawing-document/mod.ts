@@ -437,10 +437,48 @@ export function normalizeDrawingDocument(
   const freehand = normalizeLayer("freehand");
   const polygon = normalizeLayer("polygon");
   const circle = normalizeLayer("circle");
+  return {
+    version: drawingDocumentVersion(polygon),
+    freehand,
+    polygon,
+    circle,
+  };
+}
+
+/** The version a canonical document with this polygon layer carries. */
+export function drawingDocumentVersion(
+  polygon: DrawingLayer,
+): DrawingDocumentVersion {
   const curved = polygon.nodes.some((node) =>
     node.type === "polygon" && node.tension !== undefined
   );
-  return { version: curved ? 2 : 1, freehand, polygon, circle };
+  return curved ? 2 : 1;
+}
+
+/**
+ * Validate and canonicalize one node for `layer` on its own: the same rules
+ * as `normalizeDrawingDocument`, with id uniqueness checked only within the
+ * node. A caller inserting it into a document owns the document-wide check
+ * (`listDrawingNodeIds`).
+ */
+export function normalizeDrawingNode(
+  input: unknown,
+  layer: DrawingLayerName,
+  label = "Drawing node",
+): DrawingNode {
+  return normalizeNode(input, layer, label, new Set());
+}
+
+/** Every id in the subtree(s), depth first. */
+export function listDrawingNodeIds(
+  nodes: readonly DrawingNode[],
+  into: Set<string> = new Set(),
+): Set<string> {
+  for (const node of nodes) {
+    into.add(node.id);
+    if (node.type === "group") listDrawingNodeIds(node.children, into);
+  }
+  return into;
 }
 
 function normalizeNode(

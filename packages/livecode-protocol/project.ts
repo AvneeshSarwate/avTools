@@ -230,8 +230,9 @@ interface ProjectSaveEntityIdentity {
   path: string;
 }
 
-export type ProjectSaveEntityResult = ProjectSaveEntityIdentity &
-  ({ ok: true } | { ok: false; error: string });
+export type ProjectSaveEntityResult =
+  & ProjectSaveEntityIdentity
+  & ({ ok: true } | { ok: false; error: string });
 
 /** An entity save deliberately skipped, with the reason for the operator. */
 export interface ProjectSaveSkippedEntity {
