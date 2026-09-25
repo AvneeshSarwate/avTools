@@ -127,6 +127,7 @@ const serializeNode = (state: CanvasRuntimeState, layer: DrawingLayerName, konva
       id: konvaNode.id() || uid('poly_'),
       points: [...konvaNode.points()],
       closed: konvaNode.closed(),
+      ...(konvaNode.tension() !== 0 && { tension: konvaNode.tension() }),
       creationTime: runtime?.creationTime ?? 0,
       transform: readTransform(konvaNode)
     }
@@ -252,7 +253,7 @@ const buildFreehandNode = (state: CanvasRuntimeState, node: DrawingNode, parent:
 }
 
 const buildPolygonNode = (state: CanvasRuntimeState, node: DrawingPolygonNode, parent: Konva.Container) => {
-  const line = createPolygonNode(state, node.id, [...node.points], node.creationTime, parent)
+  const line = createPolygonNode(state, node.id, [...node.points], node.creationTime, parent, node.tension ?? 0)
   if (!node.closed) {
     line.closed(false)
     const runtime = state.polygon.shapes.get(node.id)

@@ -9,13 +9,19 @@ export {
 export {
   bakeDrawingDocument,
   createEmptyDrawingDocument,
+  evaluateCurveSegment,
   findDrawingNode,
   makeCircleNode,
   makeGroupNode,
   makePolygonNode,
   makeStrokeNode,
   removeDrawingNode,
+  sampleCurveSegments,
   upsertDrawingNode,
+} from "@avtools/drawing-document";
+export type {
+  CurvePoint,
+  PolygonCurveSegment,
 } from "@avtools/drawing-document";
 export type {
   CircleRenderData,

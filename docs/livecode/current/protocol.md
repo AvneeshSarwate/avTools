@@ -35,6 +35,9 @@ served/baked browser-engine topologies the equivalent envelopes may use `Broadca
 type, its validation, and its Konva-free bake are owned by
 `packages/drawing-document` so the canvas element and the engine share them.
 The wire carries the lossless document, never the baked render data.
+A document is version 1 unless a polygon has a non-zero `tension` (a curve),
+which makes it version 2; code that predates curves then rejects it rather
+than silently dropping the tensions on its next whole-document write.
 
 The invariants in `sync.ts` matter more than the transport:
 
