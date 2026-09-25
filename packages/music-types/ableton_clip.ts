@@ -11,6 +11,13 @@ export type PianoRollMpePoint = {
   rooted?: boolean;
 };
 
+/** One 0..127 expression breakpoint (pressure or timbre); `time` is 0..1 of the note. */
+export type PianoRollMpeValuePoint = {
+  time: number;
+  value: number;
+  metadata?: any;
+};
+
 export type PianoRollNoteLike = {
   id?: string;
   pitch: number;
@@ -18,6 +25,8 @@ export type PianoRollNoteLike = {
   duration: number;
   velocity: number;
   mpePitch?: { points: ReadonlyArray<PianoRollMpePoint> };
+  mpePressure?: { points: ReadonlyArray<PianoRollMpeValuePoint> };
+  mpeTimbre?: { points: ReadonlyArray<PianoRollMpeValuePoint> };
   metadata?: any;
 };
 
@@ -188,6 +197,36 @@ function shiftForTime(time: number, segments: RootedPitchSegment[]): number {
   return last.shiftAbs;
 }
 
+function valuePointsToCurve(
+  points: ReadonlyArray<PianoRollMpeValuePoint> | undefined,
+  duration: number,
+): CurveValue[] | undefined {
+  if (!points?.length) return undefined;
+  return points.map((point) => ({
+    timeOffset: duration * clamp01(point.time),
+    value: point.value,
+    x1: 0.5,
+    y1: 0.5,
+    x2: 0.5,
+    y2: 0.5,
+    metadata: point.metadata,
+  }));
+}
+
+function curveToValuePoints(
+  curve: CurveValue[] | undefined,
+  duration: number,
+): { points: PianoRollMpeValuePoint[] } | undefined {
+  if (!curve?.length) return undefined;
+  return {
+    points: curve.map((point) => ({
+      time: duration > 0 ? clamp01(point.timeOffset / duration) : 0,
+      value: point.value,
+      metadata: point.metadata,
+    })),
+  };
+}
+
 export function pianoRollNoteToAbletonNote(note: PianoRollNoteLike): AbletonNote {
   const curvePoints = note.mpePitch?.points ?? [];
   const pitchCurve = curvePoints.length
@@ -213,6 +252,8 @@ export function pianoRollNoteToAbletonNote(note: PianoRollNoteLike): AbletonNote
     isEnabled: true,
     metadata: note.metadata,
     pitchCurve,
+    pressureCurve: valuePointsToCurve(note.mpePressure?.points, note.duration ?? 0),
+    timbreCurve: valuePointsToCurve(note.mpeTimbre?.points, note.duration ?? 0),
   };
 }
 
@@ -235,6 +276,8 @@ export function abletonNoteToPianoRollNote(note: AbletonNote, id?: string): Pian
     duration: note.duration,
     velocity: note.velocity,
     mpePitch: points ? { points } : undefined,
+    mpePressure: curveToValuePoints(note.pressureCurve, duration),
+    mpeTimbre: curveToValuePoints(note.timbreCurve, duration),
     metadata: note.metadata,
   };
 }

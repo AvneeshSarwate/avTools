@@ -16,6 +16,9 @@ A Konva.js-based piano roll editor with immediate-mode rendering, wrapped in a V
 - **Resize handles**: Resize note start or end (affects entire selection)
 - **Auto-fit viewport**: `fitZoomToNotes()` zooms and scrolls to the active note bounds with sensible minimums
 - **Overlap resolution**: Moves and pastes truncate or remove colliding notes automatically
+- **MPE expression**: per-note pitch curves drawn on the notes (MPE mode), plus
+  Pressure and Timbre (CC74) lanes under the grid, each toggled on its own.
+  See "Expression lanes" below.
 
 ## Architecture
 
@@ -39,7 +42,11 @@ A Konva.js-based piano roll editor with immediate-mode rendering, wrapped in a V
    - Note rectangles with labels
    - Resize handles (circles at start/end of selected notes)
 
-3. **Overlay Layer** (UI elements)
+3. **Lanes Layer** (`pianoRollLanes.ts`)
+   - Pressure/Timbre lanes and the splitter above them, clipped to the strip
+     below the note grid
+
+4. **Overlay Layer** (UI elements)
    - Selection rectangle (marquee)
    - Cursor line
 
@@ -183,3 +190,23 @@ fields shared by all selected notes and diffs it back into path operations.
 3. **Snapshot-based undo/redo**: Entire state serialized as JSON for commands
 4. **No explicit modes**: Interactions determined by click target
 5. **RAF-based rendering**: Redraw triggered by `needsRedraw` flag
+
+## Expression lanes
+
+Pressure and timbre are stored per note as `mpePressure` / `mpeTimbre`:
+`{ points: [{ time, value }] }`, `time` 0..1 across the note (like
+`mpePitch`) and `value` 0..127. They map to `AbletonNote.pressureCurve` /
+`timbreCurve` in `@avtools/music-types`.
+
+The lanes share the stage with the notes. Everything vertical (scroll bounds,
+zoom, visibility, the vertical scrollbar) uses `getNoteAreaHeight`, the stage
+height minus the lanes, never the raw stage height. Stage-level note handlers
+ignore pointer positions inside the lane strip, because a lane click can
+destroy the node under the pointer and Konva then reports the stage as target.
+
+Editing, modeled on Ableton's Note Expression lanes: select a note (in the grid
+or by clicking its dimmed curve); click its line to add a point; drag points
+(Shift for fine steps; selected points move together); double-click or Delete
+to remove; drag the bar above the lanes to resize them. All edits go through
+the command stack. `showPressureLane` / `showTimbreLane` props set the initial
+visibility.

@@ -10,6 +10,7 @@ export interface StageManagerDependencies {
   renderGrid: (state: PianoRollState) => void
   renderVisibleNotes: (state: PianoRollState) => void
   renderResizeHandles: (state: PianoRollState) => void
+  renderLanes: (state: PianoRollState) => void
   updateQueuePlayheadPosition: (state: PianoRollState) => void
   updateLivePlayheadPosition: (state: PianoRollState) => void
   updatePlayheadMarkers: (state: PianoRollState) => void
@@ -38,6 +39,7 @@ export class StageManager {
       this.deps.renderGrid(this.deps.state)
       this.deps.renderVisibleNotes(this.deps.state)
       this.deps.renderResizeHandles(this.deps.state)
+      this.deps.renderLanes(this.deps.state)
       this.deps.updateQueuePlayheadPosition(this.deps.state)
       this.deps.updateLivePlayheadPosition(this.deps.state)
       this.deps.updatePlayheadMarkers(this.deps.state)

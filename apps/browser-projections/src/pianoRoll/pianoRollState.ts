@@ -9,6 +9,8 @@ export type NoteData = {
   duration: number  // in quarter notes
   velocity: number
   mpePitch?: MpePitchData
+  mpePressure?: MpeValueData
+  mpeTimbre?: MpeValueData
   metadata?: any
 }
 
@@ -22,6 +24,27 @@ export type MpePitchPoint = {
 export type MpePitchData = {
   points: MpePitchPoint[]
 }
+
+/** A 0..127 expression breakpoint (pressure or timbre); `time` is 0..1 of the note. */
+export type MpeValuePoint = {
+  time: number
+  value: number
+  metadata?: any
+}
+
+export type MpeValueData = {
+  points: MpeValuePoint[]
+}
+
+/** Expression lanes drawn under the notes. Pitch stays on the notes themselves. */
+export type ExpressionLane = 'pressure' | 'timbre'
+
+export const EXPRESSION_LANES: readonly ExpressionLane[] = ['pressure', 'timbre']
+
+export const EXPRESSION_LANE_FIELD = {
+  pressure: 'mpePressure',
+  timbre: 'mpeTimbre'
+} as const satisfies Record<ExpressionLane, keyof NoteData>
 
 /**
  * One externally published playhead line. Unlike the single live playhead, any
@@ -42,6 +65,8 @@ export type NoteDataInput = {
   duration: number
   velocity?: number
   mpePitch?: MpePitchData
+  mpePressure?: MpeValueData
+  mpeTimbre?: MpeValueData
   metadata?: any
 }
 
@@ -112,6 +137,25 @@ export interface PianoRollState {
     createEmptyOverlapAdjustments: () => { toDelete: Set<string>, toTruncate: Map<string, number> }
 
     // MPE pitch point drag state
+    // Expression lane point drag state (see pianoRollLanes.ts)
+    laneDrag?: {
+      lane: ExpressionLane
+      noteId: string
+      pointIndex: number
+      beforeState: string
+      selectedIndices: number[]
+      startPointer: { x: number, y: number }
+      startPoints: MpeValuePoint[]
+      fineMode?: boolean
+      tooltip?: NonNullable<PianoRollState['interaction']['mpeDrag']>['tooltip']
+    }
+
+    // Dragging the splitter between the notes and the expression lanes
+    laneResize?: {
+      startY: number
+      startLaneHeight: number
+    }
+
     mpeDrag?: {
       noteId: string
       pointIndex: number
@@ -144,6 +188,7 @@ export interface PianoRollState {
     grid?: Konva.Layer
     notes?: Konva.Layer
     overlay?: Konva.Layer
+    lanes?: Konva.Layer
   }
 
   // Rendering cache to avoid unnecessary redraws
@@ -189,6 +234,15 @@ export interface PianoRollState {
   mpe: {
     enabled: boolean
     selectedHandles: Set<number>
+  }
+
+  // Pressure/timbre expression lanes below the notes. Each lane is shown
+  // independently; `laneHeight` is per visible lane, in stage px.
+  lanes: {
+    showPressure: boolean
+    showTimbre: boolean
+    laneHeight: number
+    selectedHandles: { lane: ExpressionLane, noteId: string, indices: Set<number> } | null
   }
 }
 
@@ -272,7 +326,8 @@ export const createPianoRollState = (): PianoRollState => {
     layers: {
       grid: undefined,
       notes: undefined,
-      overlay: undefined
+      overlay: undefined,
+      lanes: undefined
     },
 
     renderCache: {
@@ -310,6 +365,13 @@ export const createPianoRollState = (): PianoRollState => {
     mpe: {
       enabled: false,
       selectedHandles: new Set()
+    },
+
+    lanes: {
+      showPressure: false,
+      showTimbre: false,
+      laneHeight: 56,
+      selectedHandles: null
     }
   }
 }

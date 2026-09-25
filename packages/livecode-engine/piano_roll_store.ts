@@ -419,6 +419,8 @@ function normalizeNote(note: NoteDataInput, index: number): NoteData {
     velocity: note.velocity ?? 100,
   };
   if (normalized.mpePitch === undefined) delete normalized.mpePitch;
+  if (normalized.mpePressure === undefined) delete normalized.mpePressure;
+  if (normalized.mpeTimbre === undefined) delete normalized.mpeTimbre;
   if (normalized.metadata === undefined) delete normalized.metadata;
   return normalized;
 }

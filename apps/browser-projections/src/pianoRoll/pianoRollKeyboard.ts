@@ -1,4 +1,5 @@
 import type { PianoRollState, NoteData } from './pianoRollState'
+import { deleteSelectedLanePoints } from './pianoRollLanes'
 
 export interface KeyboardControllerOptions {
   state: PianoRollState
@@ -75,6 +76,11 @@ export const createKeyboardController = ({
 
     if (e.key === 'Backspace' || e.key === 'Delete') {
       e.preventDefault()
+      // Selected pressure/timbre points take precedence over their note.
+      if (deleteSelectedLanePoints(state)) {
+        updateCommandStackButtons()
+        return
+      }
       if (state.mpe.enabled) {
         deleteSelectedMpePoints()
         return

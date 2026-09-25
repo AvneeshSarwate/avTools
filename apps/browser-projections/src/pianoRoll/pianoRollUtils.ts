@@ -1,4 +1,5 @@
 import type { PianoRollState, NoteData } from './pianoRollState'
+import { getNoteAreaHeight } from './pianoRollViewport'
 
 // Generate unique ID
 export const uid = (prefix = 'note_') => `${prefix}${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -63,7 +64,7 @@ export function isNoteVisible(note: NoteData, state: PianoRollState): boolean {
   if (!stage) return false
 
   const viewportWidth = stage.width()
-  const viewportHeight = stage.height()
+  const viewportHeight = getNoteAreaHeight(state, stage.height())
 
   const visibleTimeStart = scrollX / quarterNoteWidth
   const visibleTimeEnd = (scrollX + viewportWidth) / quarterNoteWidth

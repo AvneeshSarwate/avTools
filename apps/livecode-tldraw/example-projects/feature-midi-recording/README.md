@@ -1,7 +1,7 @@
 # feature-midi-recording
 
-Records notes, with per-note pitch bend, from a MIDI input into one piano
-roll, using the isomorphic
+Records notes, with per-note pitch bend, pressure and timbre (CC74), from a
+MIDI input into one piano roll, using the isomorphic
 `@avtools/midi` input through `midi-helpers`. It has no `engineTarget`, so the
 same project runs on the Deno engine (native midir bridge) and the browser
 engine (Web MIDI). Open it in both to compare.
@@ -24,19 +24,30 @@ The piano roll stores notes only and has no clip-length field. Trimming the end
 therefore changes only the reported **take length**, which is what a looping
 player would use. Trimming the start moves the notes.
 
-## Pitch bend
+## Expression
 
-Bend is written to each note's pitch curve in the roll (`mpePitch`: `time`
-0..1 across the note, `pitchOffset` in semitones). Bend is tracked per
-channel: with MPE every note has its own channel, so each note gets its own
-curve, and a note's curve starts at the bend its channel had at note-on
-(MPE controllers send it just before). On a non-MPE keyboard, a channel's bend
-applies to every note held on that channel.
+Each note gets up to three curves, all with `time` 0..1 across the note:
 
-Samples are thinned to the points needed to stay within 0.05 semitones of the
-played curve, because each point becomes a draggable handle. Offsets are
-clamped to the roll's ±24 semitone range. MPE zone-wide bend on the master
-channel, pressure and CC74 are not recorded.
+| Roll field | Source | Values | Shown |
+| --- | --- | --- | --- |
+| `mpePitch` | pitch bend | `pitchOffset` in semitones, scaled by **bend range** | on the note (MPE mode) |
+| `mpePressure` | channel pressure, or poly pressure for that key | `value` 0..127 | Pressure lane |
+| `mpeTimbre` | CC74 | `value` 0..127 | Timbre lane |
+
+Toggle the roll's **Pressure** and **Timbre** buttons to see and edit those
+lanes.
+
+Everything except poly pressure is tracked per channel: with MPE every note has
+its own channel, so each note gets its own curves, and a note's curves start at
+the values its channel had at note-on (MPE controllers send them just before).
+On a non-MPE keyboard, a channel's value applies to every note held on it.
+
+Samples are thinned to the points needed to stay within 0.05 semitones (pitch)
+or 1 step (pressure, timbre) of the played curve, because each point becomes a
+draggable handle. A curve that never leaves its rest value (no bend, zero
+pressure, timbre 64) is not written. Pitch offsets are clamped to the roll's
+±24 semitone range. MPE zone-wide messages on the master channel are not
+recorded.
 
 ## Timing
 
@@ -51,8 +62,9 @@ played spacing.
    press a key in the engine tab if the MIDI status line asks for permission.
 2. Pick your controller in **MIDI input**. The status reads `listening to …`.
 3. Toggle **recording** on, wait a moment, play a phrase, pause, toggle off.
-   The roll shows the phrase; the status reads `wrote N notes`. Slide a finger
-   while holding a note: that note shows a pitch curve.
+   The roll shows the phrase; the status reads `wrote N notes`. Slide, press
+   and move a finger vertically while holding a note: with MPE mode on, the note
+   shows a pitch curve, and the Pressure and Timbre lanes show its curves.
 4. Repeat with each trim toggle off. Start trimming moves the first note;
    end trimming changes the take length.
 5. Stop the module mid-take. The unfinished take is discarded and the input is
