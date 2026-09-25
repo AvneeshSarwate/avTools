@@ -265,21 +265,13 @@ export function patchDrawing(
   }
   // Ids that remain after this batch: everything except the nodes (and their
   // subtrees) this batch replaces or removes on the same layer.
-  const replacedByLayer = new Map<DrawingLayerName, Set<string>>();
-  const markReplaced = (layer: DrawingLayerName, id: string) => {
-    let set = replacedByLayer.get(layer);
-    if (!set) replacedByLayer.set(layer, set = new Set());
-    set.add(id);
-  };
-  for (const { layer, node } of normalized) markReplaced(layer, node.id);
-  for (const del of deletes) markReplaced(del.layer, del.id);
   const otherIds = new Set<string>();
   for (const layer of LAYERS) {
-    collectIdsExcluding(
-      doc[layer].nodes,
-      replacedByLayer.get(layer) ?? new Set(),
-      otherIds,
-    );
+    const replaced = new Set([
+      ...normalized.filter((u) => u.layer === layer).map((u) => u.node.id),
+      ...deletes.filter((d) => d.layer === layer).map((d) => d.id),
+    ]);
+    collectIdsExcluding(doc[layer].nodes, replaced, otherIds);
   }
   const incomingIds = new Set<string>();
   for (const { node } of normalized) {

@@ -158,20 +158,6 @@ export const serializeNode = (state: CanvasRuntimeState, layer: DrawingLayerName
 
 // ==================== reconcile ====================
 
-export interface ReconcileLayerResult {
-  /** Ids of top-level nodes created or rebuilt. */
-  upserted: string[]
-  /** Ids of top-level nodes removed. */
-  removed: string[]
-  transformChanged: boolean
-  reordered: boolean
-}
-
-export interface ReconcileResult {
-  changed: boolean
-  layers: Record<DrawingLayerName, ReconcileLayerResult>
-}
-
 const LAYER_NAMES: readonly DrawingLayerName[] = ['freehand', 'polygon', 'circle']
 
 const layerGroup = (state: CanvasRuntimeState, layer: DrawingLayerName): Konva.Group | undefined =>
@@ -207,36 +193,34 @@ const forgetSubtree = (state: CanvasRuntimeState, layer: DrawingLayerName, root:
   root.destroy()
 }
 
+const isSelected = (state: CanvasRuntimeState, id: string): boolean => {
+  const item = state.canvasItems.get(id)
+  return item !== undefined && state.selection.items.has(item)
+}
+
 /**
  * Bring the scene to `input`, touching only what differs: each layer's
  * top-level nodes are compared by id and canonical JSON, and only changed
  * ones are rebuilt (a nested change rebuilds its top-level group). Untouched
  * Konva nodes keep their identity and selection; a rebuilt node that was
- * selected is reselected. Runs with `state.hydrating` set, so nothing in
- * here emits `document-update`. Throws on an invalid document before
- * touching the scene.
+ * selected is reselected. Returns the layers that changed. Runs with
+ * `state.hydrating` set, so nothing in here emits `document-update`. Throws
+ * on an invalid document before touching the scene.
  */
-export const reconcileDrawingDocument = (state: CanvasRuntimeState, input: DrawingDocument): ReconcileResult => {
+export const reconcileDrawingDocument = (state: CanvasRuntimeState, input: DrawingDocument): Set<DrawingLayerName> => {
   const doc = normalizeDrawingDocument(input)
   const stage = state.stage
   if (!stage || !state.groups.freehandShape || !state.groups.polygonShapes || !state.groups.circleShapes) {
     throw new Error('Cannot hydrate a drawing before the canvas has mounted')
   }
   const current = serializeDrawingDocument(state)
-  const result: ReconcileResult = {
-    changed: false,
-    layers: {
-      freehand: { upserted: [], removed: [], transformChanged: false, reordered: false },
-      polygon: { upserted: [], removed: [], transformChanged: false, reordered: false },
-      circle: { upserted: [], removed: [], transformChanged: false, reordered: false }
-    }
-  }
+  const changedLayers = new Set<DrawingLayerName>()
 
   state.hydrating = true
   try {
     for (const layer of LAYER_NAMES) {
       const group = layerGroup(state, layer)!
-      const summary = result.layers[layer]
+      let changed = false
       const currentJson = new Map(current[layer].nodes.map((node) => [node.id, JSON.stringify(node)]))
       const nextIds = new Set(doc[layer].nodes.map((node) => node.id))
       const children = new Map<string, Konva.Node>()
@@ -248,21 +232,20 @@ export const reconcileDrawingDocument = (state: CanvasRuntimeState, input: Drawi
       for (const [id, child] of children) {
         if (!nextIds.has(id)) {
           forgetSubtree(state, layer, child)
-          summary.removed.push(id)
+          changed = true
         }
       }
       for (const node of doc[layer].nodes) {
         if (currentJson.get(node.id) === JSON.stringify(node)) continue
         const existing = children.get(node.id)
+        const wasSelected = existing !== undefined && isSelected(state, node.id)
         if (existing) forgetSubtree(state, layer, existing)
-        const wasSelected = existing !== undefined && summary.removed.indexOf(node.id) === -1 &&
-          [...state.selection.items].some((item) => item.id === node.id)
         buildNode(state, layer, node, group)
         if (layer === 'freehand' && node.type === 'group') {
           const built = group.findOne(`#${node.id}`)
           if (built instanceof Konva.Group) attachHandlersRecursively(state, built)
         }
-        summary.upserted.push(node.id)
+        changed = true
         if (wasSelected) {
           const item = state.canvasItems.get(node.id)
           if (item) selectionStore.add(state, item, true)
@@ -270,17 +253,16 @@ export const reconcileDrawingDocument = (state: CanvasRuntimeState, input: Drawi
       }
       if (JSON.stringify(current[layer].transform) !== JSON.stringify(doc[layer].transform)) {
         applyTransform(group, doc[layer].transform)
-        summary.transformChanged = true
+        changed = true
       }
       const order = doc[layer].nodes.map((node) => node.id)
       const actual = group.getChildren().map((child) => child.id())
       if (order.some((id, index) => actual[index] !== id)) {
         order.forEach((id, index) => group.findOne(`#${id}`)?.zIndex(index))
-        summary.reordered = true
+        changed = true
       }
-      const layerChanged = summary.upserted.length > 0 || summary.removed.length > 0 || summary.transformChanged || summary.reordered
-      if (!layerChanged) continue
-      result.changed = true
+      if (!changed) continue
+      changedLayers.add(layer)
       if (layer === 'freehand') {
         updateFreehandDraggableStates(state)
         updateTimelineState(state)
@@ -291,23 +273,19 @@ export const reconcileDrawingDocument = (state: CanvasRuntimeState, input: Drawi
         }
       }
     }
-    if (result.changed) {
+    if (changedLayers.size > 0) {
       stage.batchDraw()
       // The bake callbacks emit state-update (sketches rely on it) but, while
       // hydrating, not document-update.
-      if (result.layers.freehand.upserted.length || result.layers.freehand.removed.length || result.layers.freehand.transformChanged || result.layers.freehand.reordered) updateBakedFreehandData(state)
-      if (result.layers.polygon.upserted.length || result.layers.polygon.removed.length || result.layers.polygon.transformChanged || result.layers.polygon.reordered) updateBakedPolygonData(state)
-      if (result.layers.circle.upserted.length || result.layers.circle.removed.length || result.layers.circle.transformChanged || result.layers.circle.reordered) updateBakedCircleData(state)
+      if (changedLayers.has('freehand')) updateBakedFreehandData(state)
+      if (changedLayers.has('polygon')) updateBakedPolygonData(state)
+      if (changedLayers.has('circle')) updateBakedCircleData(state)
     }
   } finally {
     state.hydrating = false
   }
-  return result
+  return changedLayers
 }
-
-/** Replace the whole scene with `input`; the same as reconciling to it. */
-export const hydrateDrawingDocument = (state: CanvasRuntimeState, input: DrawingDocument): ReconcileResult =>
-  reconcileDrawingDocument(state, input)
 
 const buildFreehandNode = (state: CanvasRuntimeState, node: DrawingNode, parent: Konva.Container) => {
   if (node.type === 'group') {

@@ -1,3 +1,4 @@
+import type { DrawingDocument } from '@avtools/drawing-document'
 import type { CanvasRuntimeState } from './canvasState'
 import { reconcileDrawingDocument, serializeDrawingDocument } from './drawingDocument'
 import { convertLegacyCanvasState, isLegacyCanvasState } from './legacyCanvasState'
@@ -14,10 +15,12 @@ export interface CanvasPersistenceOptions {
 export const serializeCanvasState = (state: CanvasRuntimeState): string =>
   JSON.stringify(serializeDrawingDocument(state))
 
-const isDocumentPayload = (parsed: any): boolean =>
-  !!parsed && typeof parsed === 'object' && ['freehand', 'polygon', 'circle'].some(
-    (layer) => parsed[layer] && typeof parsed[layer] === 'object' && Array.isArray(parsed[layer].nodes)
-  )
+// A shape sniff, not validation: reconciling the document validates it.
+const isDocumentPayload = (parsed: unknown): parsed is DrawingDocument =>
+  !!parsed && typeof parsed === 'object' && ['freehand', 'polygon', 'circle'].some((layer) => {
+    const section = (parsed as Record<string, unknown>)[layer]
+    return !!section && typeof section === 'object' && Array.isArray((section as { nodes?: unknown }).nodes)
+  })
 
 /**
  * Restore a string from `serializeCanvasState`. The format that predates
@@ -30,7 +33,7 @@ export const deserializeCanvasState = (
 ): boolean => {
   if (!serialized) return false
 
-  let parsed: any
+  let parsed: unknown
   try {
     parsed = JSON.parse(serialized)
   } catch (error) {
@@ -38,7 +41,7 @@ export const deserializeCanvasState = (
     return false
   }
 
-  let document: unknown
+  let document: DrawingDocument
   if (isDocumentPayload(parsed)) document = parsed
   else if (isLegacyCanvasState(parsed)) document = convertLegacyCanvasState(parsed)
   else {
@@ -50,7 +53,7 @@ export const deserializeCanvasState = (
   canvasState.freehand.currentPlaybackTime.value = 0
   canvasState.freehand.isAnimating.value = false
   try {
-    reconcileDrawingDocument(canvasState, document as never)
+    reconcileDrawingDocument(canvasState, document)
   } catch (error) {
     console.warn('Failed to restore canvas state:', error)
     return false

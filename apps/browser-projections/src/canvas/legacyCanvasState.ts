@@ -62,7 +62,7 @@ const entries = (list: Array<[string, Record<string, unknown>]> | undefined): Ma
   new Map(Array.isArray(list) ? list.filter((entry) => Array.isArray(entry) && typeof entry[0] === 'string') : [])
 
 /** Whether a parsed payload is the pre-document format (any of its shapes). */
-export const isLegacyCanvasState = (parsed: unknown): boolean => {
+export const isLegacyCanvasState = (parsed: unknown): parsed is Record<string, unknown> => {
   if (!parsed || typeof parsed !== 'object') return false
   const record = parsed as Record<string, unknown>
   if ('layer' in record) return true

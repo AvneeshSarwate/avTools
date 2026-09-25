@@ -98,23 +98,22 @@ const currentBase = (state: CanvasRuntimeState): CanvasStateSnapshotBase => ({
   }
 })
 
-// The baked items a set of top-level nodes accounts for. Freehand and polygon
-// bake one top-level item per node under the node's id; circles bake flat,
-// so a group's circles are found through its subtree ids.
-const bakedItemsFor = (layer: DrawingLayerName, ids: string[], index: EmittedLayer, base: CanvasStateSnapshotBase): any[] => {
-  if (layer === 'circle') {
-    const wanted = new Set(ids.flatMap((id) => index.subtreeIds.get(id) ?? [id]))
-    return base.circle.bakedRenderData.filter((item) => wanted.has(item.id))
-  }
-  const wanted = new Set(ids)
-  const items: Array<{ id: string }> = layer === 'freehand' ? base.freehand.bakedRenderData : base.polygon.bakedRenderData
-  return items.filter((item) => wanted.has(item.id))
-}
+const byId = <T extends { id: string }>(items: T[], ids: ReadonlySet<string>): T[] => items.filter((item) => ids.has(item.id))
 
-const pushItems = (target: CanvasStateSnapshotBase, layer: DrawingLayerName, items: any[]) => {
-  if (layer === 'freehand') target.freehand.bakedRenderData.push(...items)
-  else if (layer === 'polygon') target.polygon.bakedRenderData.push(...items)
-  else target.circle.bakedRenderData.push(...items)
+// Fill one layer of `target` with the baked items a set of top-level nodes
+// accounts for. Freehand and polygon bake one item per top-level node under
+// its id; circles bake flat, so a group's circles are found through its
+// subtree ids.
+const fillLayer = (
+  target: CanvasStateSnapshotBase,
+  layer: DrawingLayerName,
+  ids: string[],
+  index: EmittedLayer,
+  from: CanvasStateSnapshotBase
+) => {
+  if (layer === 'freehand') target.freehand.bakedRenderData = byId(from.freehand.bakedRenderData, new Set(ids))
+  else if (layer === 'polygon') target.polygon.bakedRenderData = byId(from.polygon.bakedRenderData, new Set(ids))
+  else target.circle.bakedRenderData = byId(from.circle.bakedRenderData, new Set(ids.flatMap((id) => index.subtreeIds.get(id) ?? [id])))
 }
 
 /**
@@ -137,7 +136,7 @@ export const createStateSnapshot = (
   const added = emptyBase()
   const deleted = emptyBase()
   const changed = emptyBase()
-  let any = previous === null
+  let differs = previous === null
   for (const layer of LAYERS) {
     const now = layers[layer]
     const before = previous?.layers[layer]
@@ -150,14 +149,14 @@ export const createStateSnapshot = (
       else if (prior !== json) changedIds.push(id)
     }
     if (before) for (const id of before.nodeJson.keys()) if (!now.nodeJson.has(id)) deletedIds.push(id)
-    if (addedIds.length || changedIds.length || deletedIds.length) any = true
-    pushItems(added, layer, bakedItemsFor(layer, addedIds, now, base))
-    pushItems(changed, layer, bakedItemsFor(layer, changedIds, now, base))
-    if (before && previous) pushItems(deleted, layer, bakedItemsFor(layer, deletedIds, before, previous.base))
+    if (addedIds.length || changedIds.length || deletedIds.length) differs = true
+    fillLayer(added, layer, addedIds, now, base)
+    fillLayer(changed, layer, changedIds, now, base)
+    if (before && previous) fillLayer(deleted, layer, deletedIds, before, previous.base)
   }
   return {
     snapshot: { ...base, added, deleted, changed, documentState: json },
     emitted: { layers, base },
-    changed: any
+    changed: differs
   }
 }

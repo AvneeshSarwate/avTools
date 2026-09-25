@@ -2,10 +2,6 @@ import { evaluateCurveSegment, polygonCurveSegments, sampleCurveSegments } from 
 
 export type Point = { x: number; y: number }
 
-/** A polygon's edges, each as a polyline; edge `i` runs from vertex `i` to vertex `i + 1`. */
-export type PolygonSpans = {
-  spans: Point[][]
-}
 
 const SAMPLES_PER_CURVED_SPAN = 16
 
@@ -47,8 +43,9 @@ const vertex = (points: number[], index: number): Point => {
 }
 
 /**
- * The edges a polygon draws, in the same space as `points`: straight edges as
- * two-point polylines, curved ones sampled. An open polygon has no closing edge.
+ * The edges a polygon draws, in the same space as `points`: edge `i` runs from
+ * vertex `i` to vertex `i + 1`, straight edges as two-point polylines, curved
+ * ones sampled. An open polygon has no closing edge.
  */
 export function polygonSpans(points: number[], tension: number, closed: boolean): Point[][] {
   const curve = edgeCurve(points, tension, closed)
@@ -69,15 +66,16 @@ export function polygonSpanMidpoint(points: number[], tension: number, closed: b
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
 }
 
+/** The nearest edge among polygons given as `polygonSpans` output. */
 export function findClosestPolygonLineAtPoint(
-  polygons: PolygonSpans[],
+  polygons: Point[][][],
   point: Point
 ): { polygonIndex: number; lineIndex: number; distance: number } {
   let closestPolygonIndex = -1
   let closestLineIndex = -1
   let closestDistance = Infinity
   for (let i = 0; i < polygons.length; i++) {
-    const { spans } = polygons[i]
+    const spans = polygons[i]
     for (let j = 0; j < spans.length; j++) {
       const span = spans[j]
       for (let k = 0; k < span.length - 1; k++) {

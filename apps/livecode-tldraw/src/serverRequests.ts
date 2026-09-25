@@ -124,7 +124,7 @@ export async function captureBakedEntities(): Promise<{
  * the commit behind them cannot overtake each other, and it answers with the
  * op's result body as-is, like the in-process transports.
  */
-export type SocketActionSender = (op: EngineOp) => Promise<unknown>;
+type SocketActionSender = (op: EngineOp) => Promise<unknown>;
 let socketActionSender: SocketActionSender | null = null;
 export function setSocketActionSender(sender: SocketActionSender | null): void {
   socketActionSender = sender;

@@ -41,9 +41,6 @@ import type {
 } from "@avtools/livecode-protocol";
 import { SYNC_ENTITY_TYPES } from "@avtools/livecode-protocol";
 import type { ReconnectingSocketController } from "./reconnectingSocket";
-
-/** Same bound as the BroadcastChannel action lane. */
-const SOCKET_ACTION_TIMEOUT_MS = 10_000;
 import {
   engineAction,
   serverWebSocketUrl,
@@ -68,9 +65,13 @@ import { readBootParam } from "./bootParams";
 
 import { SyncStore } from "./syncStore";
 import { SyncStoreProvider, useSyncSlice } from "./syncSubscriptions";
+
 export { useSyncEntityNames, useSyncSelector } from "./syncSubscriptions";
 
 export type { SyncSlice } from "./syncState";
+
+/** Same bound as the BroadcastChannel action lane. */
+const SOCKET_ACTION_TIMEOUT_MS = 10_000;
 
 export type SyncConnectionStatus = "closed" | "connecting" | "open" | "error";
 

@@ -3,7 +3,7 @@
 import Konva from "konva"
 import { type ShallowReactive, shallowReactive, ref, watch } from "vue"
 import { isCurvedPolygon, mapCurveSegment, tensionPointsToSegments } from "@avtools/drawing-document"
-import { findClosestPolygonLineAtPoint, polygonSpanMidpoint, polygonSpans, type PolygonSpans } from "./polygonGeometry"
+import { findClosestPolygonLineAtPoint, polygonSpanMidpoint, polygonSpans, type Point } from "./polygonGeometry"
 import type { PolygonRenderData, FlattenedPolygon } from "./canvasState"
 import { captureCommandState, executeCommand, pushCommandWithStates } from "./commands"
 import { uid } from './canvasUtils'
@@ -194,13 +194,13 @@ export const attachPolygonHandlers = (state: CanvasRuntimeState, node: Konva.Lin
 }
 
 // Every polygon's edges in world space, in `polygonShapes` order.
-const worldPolygonSpans = (state: CanvasRuntimeState): PolygonSpans[] =>
+const worldPolygonSpans = (state: CanvasRuntimeState): Point[][][] =>
   Array.from(polygonShapes(state).values()).map(p => {
     const line = p.konvaShape
     const spans = polygonSpans(p.points, line?.tension() ?? 0, line?.closed() ?? p.closed)
-    if (!line) return { spans }
+    if (!line) return spans
     const t = line.getAbsoluteTransform()
-    return { spans: spans.map(span => span.map(point => t.point(point))) }
+    return spans.map(span => span.map(point => t.point(point)))
   })
 
 /** Set the curve tension of polygon lines as one undoable edit. */

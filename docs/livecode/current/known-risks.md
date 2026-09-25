@@ -213,6 +213,20 @@ frame time: Canvas 2D and p5 2D sources are fine, but a WebGL source that does
 not preserve its drawing buffer can read blank. Surface discovery is DOM
 polling, not an entity; the topbar's name list is whatever exists right now.
 
+## P2: a streamed drawing gesture costs a second view O(document) per revision
+
+`setDrawingDocument` on the canvas element rebuilds only the nodes that
+differ, but deciding what differs serializes the whole scene and compares
+every top-level node's JSON, so a second view of a drawing pays a floor per
+streamed revision that grows with the document (about 1 ms at a thousand
+points, 14 ms at twenty thousand) before any rebuild. At thirty revisions a
+second a large drawing can saturate that view's main thread. Caching
+canonical JSON per Konva node would remove the floor; it has not been needed
+at personal scale. Separately, the drawing view uses the built element bundle
+in `apps/livecode-tldraw`: a stale bundle from before `mode="document"`
+ignores the attribute and emits `state-update` for every change, which is
+correct but slow, so run `npm run setupLivecode` after the element changes.
+
 ## P2: the workspace deliberately holds two p5 majors
 
 `browser-projections` pins p5 `^1` while the root map and the livecode graph
