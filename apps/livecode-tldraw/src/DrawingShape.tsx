@@ -22,6 +22,7 @@ import type {
 import type { HandwritingCanvasElement } from "./custom-elements";
 import {
   type AppliedDrawingView,
+  canWriteFromDrawingView,
   decideDrawingHydration,
   drawingDocumentJson,
 } from "./drawingViewHydration";
@@ -193,6 +194,9 @@ function DrawingShapeComponent({ shape }: { shape: DrawingShape }) {
       lastSentJsonRef.current = decision.applied.documentJson;
       setWriteError(null);
     } catch (error) {
+      // The element no longer shows accepted truth; block writes until a
+      // later hydration succeeds.
+      appliedRef.current = null;
       setWriteError(error instanceof Error ? error.message : String(error));
     }
   }, [entity, originId, shape.props.drawingName]);
@@ -216,6 +220,13 @@ function DrawingShapeComponent({ shape }: { shape: DrawingShape }) {
       if (!data || !shape.props.interactive) return;
       const binding = bindingRef.current;
       if (!binding || binding.element !== element) return;
+      if (
+        !canWriteFromDrawingView(
+          appliedRef.current,
+          binding.drawingName,
+          element,
+        )
+      ) return;
       const json = drawingDocumentJson(data);
       if (json === lastSentJsonRef.current) return;
       lastSentJsonRef.current = json;

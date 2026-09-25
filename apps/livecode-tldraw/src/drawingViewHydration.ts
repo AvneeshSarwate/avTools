@@ -53,6 +53,20 @@ export function decideDrawingHydration(
   return { kind: "hydrate", applied: next };
 }
 
+/**
+ * A view may write only once its element shows accepted truth. Until then
+ * (including after a hydration that threw) the element's scene is empty or
+ * stale, and writing it would replace the entity.
+ */
+export function canWriteFromDrawingView(
+  applied: AppliedDrawingView | null,
+  drawingName: string,
+  element: object,
+): boolean {
+  return applied !== null && applied.drawingName === drawingName &&
+    applied.element === element;
+}
+
 export function drawingDocumentJson(data: DrawingDocument): string {
   return JSON.stringify(data);
 }
