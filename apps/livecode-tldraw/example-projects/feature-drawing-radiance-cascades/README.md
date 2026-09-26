@@ -212,7 +212,9 @@ drawing it looks the same as the default. It halves the angular resolution
 the stored levels keep, and `tools/worst_cases.ts` builds six synthetic
 scenes to show where that bites, rendering each under the reference,
 bilinear, pre-average all and pre-average from c1 and writing 2x2 grids
-to `.output/worst-<scene>-grid.png`: with ten small point lights or a
+to `.output/worst-<scene>-grid.png` and a viewer, `.output/worst-cases.html`
+(scene tabs, keys to flick between variants, a wipe slider; open it from
+the file system): with ten small point lights or a
 picket fence, the pre-averaged frames show low-frequency mottling that the
 bilinear frame does not; thin distant emitters and a narrow slit are
 blotchier (the slit is a failure for cascades in any form); dense
