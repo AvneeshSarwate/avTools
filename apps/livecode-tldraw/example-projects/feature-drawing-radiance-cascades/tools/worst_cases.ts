@@ -1,8 +1,11 @@
 /**
- * Synthetic stress scenes for the merge and pre-averaging levers (Deno
- * WebGPU): each is built to expose lost angular resolution (small distant
- * lights, fine shadow stripes, a slit beam, thin far emitters, dense
- * occluders, stacked tinted glass). For each scene it renders the
+ * Synthetic scenes for the merge and pre-averaging levers (Deno WebGPU):
+ * the worst cases expose lost angular resolution (small distant lights,
+ * fine shadow stripes, a slit beam, thin far emitters, dense occluders,
+ * stacked tinted glass); the average cases are what a drawing session
+ * tends to produce (a room with a sun and a lamp, doodled shapes, a few
+ * coloured lamps, glass in a lit room, hatched occluders). For each scene
+ * it renders the
  * brute-force reference and the configured variants, prints frame time
  * and RMS, writes every image to `.output/worst-<scene>-<variant>.png`
  * and a 2x2 grid `.output/worst-<scene>-grid.png` (reference, then the
@@ -14,7 +17,8 @@
  *   cd apps/deno-notebooks
  *   deno run --unstable-webgpu -A --no-lock --config deno.json \
  *     ../livecode-tldraw/example-projects/feature-drawing-radiance-cascades/tools/worst_cases.ts \
- *     [--scale 1] [--frames 20] [--backend compute] [--scenes points,fence] [--html-only]
+ *     [--scale 1] [--frames 20] [--backend compute] [--set worst|average|all]
+ *     [--scenes points,fence] [--html-only]
  *
  * `--html-only` rewrites the page from the saved `worst-cases.json` without
  * rendering.
@@ -45,6 +49,7 @@ const scale = Number(arg("scale", "1"));
 const frames = Number(arg("frames", "20"));
 const backend = arg("backend", "compute") as RendererBackend;
 const only = arg("scenes", "").split(",").filter(Boolean);
+const set = arg("set", "all");
 const STAGE_W = 1000;
 const STAGE_H = 500;
 const width = Math.round(STAGE_W * scale);
@@ -131,6 +136,108 @@ const emitter = (strokeWidth: number, emission: number[]): Meta => ({
 });
 
 const SCENES: Record<string, () => DrawingRenderData> = {
+  // ---------------------------------------------------------- average cases
+
+  /** A room: a warm sun and a cool lamp, two walls with a gap, a boulder, a glass disc. */
+  room() {
+    const b = builder();
+    b.circle(180, 110, 36, emitter(8, [5, 4, 2.5]));
+    b.circle(820, 300, 14, emitter(5, [0.6, 1.6, 6]));
+    b.line([420, 60], [420, 220], opaque(6, 0.95));
+    b.line([420, 290], [420, 460], opaque(6, 0.95));
+    b.circle(640, 380, 42, opaque(10, 0.6), 30);
+    b.circle(300, 360, 55, {
+      strokeWidth: 14,
+      transmittance: [0.95, 0.55, 0.6],
+      albedo: [0.1, 0.1, 0.1],
+    }, 40);
+    b.line([0, 495], [1000, 495], opaque(4, 0.9));
+    return b.data;
+  },
+  /** Doodled loops as occluders, one sun and one ember stroke: a drawing session. */
+  doodles() {
+    const b = builder();
+    const random = rng(3);
+    b.circle(110, 90, 32, emitter(8, [5, 4, 2.5]));
+    for (let s = 0; s < 8; s++) {
+      const cx = 250 + random() * 650;
+      const cy = 80 + random() * 340;
+      const rx = 25 + random() * 50;
+      const ry = 25 + random() * 50;
+      const points: { x: number; y: number }[] = [];
+      for (let i = 0; i <= 40; i++) {
+        const a = (i / 40) * Math.PI * 2;
+        const wobble = 1 + 0.12 * Math.sin(a * 3 + s);
+        points.push({
+          x: cx + Math.cos(a) * rx * wobble,
+          y: cy + Math.sin(a) * ry * wobble,
+        });
+      }
+      b.stroke(points, opaque(4, 0.4 + random() * 0.5));
+    }
+    const ember: { x: number; y: number }[] = [];
+    for (let i = 0; i < 20; i++) {
+      ember.push({ x: 700 + i * 12, y: 440 + Math.sin(i * 0.8) * 14 });
+    }
+    b.stroke(ember, emitter(3, [4, 1.2, 0.3]));
+    return b.data;
+  },
+  /** Four medium coloured lamps and six discs of assorted sizes. */
+  lamps() {
+    const b = builder();
+    const random = rng(11);
+    const colors = [[5, 4, 2.5], [1, 2, 6], [6, 1.5, 1], [1.5, 6, 2]];
+    const spots = [[120, 100], [880, 90], [140, 420], [860, 410]];
+    for (let i = 0; i < 4; i++) {
+      b.circle(spots[i][0], spots[i][1], 10 + i * 2, emitter(6, colors[i]));
+    }
+    for (let i = 0; i < 6; i++) {
+      b.circle(
+        300 + random() * 400,
+        100 + random() * 300,
+        10 + random() * 30,
+        opaque(6 + random() * 6, 0.3 + random() * 0.6),
+      );
+    }
+    return b.data;
+  },
+  /** One big emitter, three separate tinted glass shapes, a few occluder lines. */
+  glassroom() {
+    const b = builder();
+    b.circle(120, 250, 40, emitter(10, [6, 6, 6]));
+    const tints = [[0.95, 0.5, 0.5], [0.5, 0.95, 0.5], [0.5, 0.5, 0.95]];
+    for (let i = 0; i < 3; i++) {
+      b.circle(360 + i * 210, 250 + (i % 2 ? 90 : -90), 60, {
+        strokeWidth: 14,
+        transmittance: tints[i],
+        albedo: [0.1, 0.1, 0.1],
+      }, 45);
+    }
+    b.line([600, 200], [700, 300], opaque(5, 0.8));
+    b.line([850, 80], [900, 180], opaque(5, 0.8));
+    b.line([0, 490], [1000, 490], opaque(4, 0.9));
+    return b.data;
+  },
+  /** Hand-drawn hatching as occluders under a wide emitter: moderately fine shadows. */
+  hatch() {
+    const b = builder();
+    const random = rng(5);
+    b.line([250, 40], [750, 40], emitter(6, [5, 4, 2.5]));
+    for (let i = 0; i < 14; i++) {
+      const x = 260 + i * 36 + random() * 8;
+      const points: { x: number; y: number }[] = [];
+      for (let k = 0; k <= 8; k++) {
+        points.push({ x: x + k * 6 + (random() - 0.5) * 4, y: 190 + k * 12 });
+      }
+      b.stroke(points, opaque(3, 0.7));
+    }
+    b.circle(700, 380, 30, opaque(8, 0.5));
+    b.line([0, 495], [1000, 495], opaque(4, 0.9));
+    return b.data;
+  },
+
+  // ------------------------------------------------------------ worst cases
+
   /** Ten tiny lights and thin bars: many small distant sources, fine multi-shadows. */
   points() {
     const b = builder();
@@ -333,8 +440,12 @@ console.log(
 
 const results: ViewerResult[] = [];
 
+const AVERAGE = new Set(["room", "doodles", "lamps", "glassroom", "hatch"]);
+const sceneSet = (name: string) => AVERAGE.has(name) ? "average" : "worst";
+
 for (const [sceneName, make] of Object.entries(SCENES)) {
   if (only.length && !only.includes(sceneName)) continue;
+  if (set !== "all" && sceneSet(sceneName) !== set) continue;
   const scene = buildStrokeScene(make(), { scale });
   renderer.setScene(scene);
   renderer.configure({ ...DEFAULT_CONFIG, ...base });
@@ -344,9 +455,12 @@ for (const [sceneName, make] of Object.entries(SCENES)) {
   const reference = await readback(device, renderer.reference.texture);
   const referencePixels = toPixels(reference, width, height);
   await savePng(`worst-${sceneName}-reference`, referencePixels, width, height);
-  console.log(`\n${sceneName}: ${scene.segmentCount} segments`);
+  console.log(
+    `\n${sceneName} (${sceneSet(sceneName)}): ${scene.segmentCount} segments`,
+  );
   const result: ViewerResult = {
     scene: sceneName,
+    set: sceneSet(sceneName),
     segments: scene.segmentCount,
     variants: [{
       name: "reference",

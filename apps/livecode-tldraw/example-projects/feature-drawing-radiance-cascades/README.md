@@ -209,19 +209,26 @@ leak ring inside the boulder's edge, blotches on the glass), even where its
 RMS reads fine, so the far levels are not where the fix is dispensable.
 Pre-averaging keeps the fix and costs 40% less, and on the checked-in
 drawing it looks the same as the default. It halves the angular resolution
-the stored levels keep, and `tools/worst_cases.ts` builds six synthetic
-scenes to show where that bites, rendering each under the reference,
-bilinear, pre-average all and pre-average from c1 and writing 2x2 grids
-to `.output/worst-<scene>-grid.png` and a viewer, `.output/worst-cases.html`
-(scene tabs, keys to flick between variants, a wipe slider; open it from
-the file system): with ten small point lights or a
+the stored levels keep, and `tools/worst_cases.ts` builds eleven synthetic
+scenes to show where that bites (`--set worst|average|all`), rendering
+each under the reference, bilinear, pre-average all and pre-average from
+c1 and writing 2x2 grids to `.output/worst-<scene>-grid.png` and a viewer,
+`.output/worst-cases.html` (scene tabs, keys to flick between variants, a
+wipe slider; open it from the file system). The six worst cases: with ten small point lights or a
 picket fence, the pre-averaged frames show low-frequency mottling that the
 bilinear frame does not; thin distant emitters and a narrow slit are
 blotchier (the slit is a failure for cascades in any form); dense
-scribbled occluders and stacked tinted glass look the same. So
-pre-averaging is a safe default for scenes lit by a few broad sources and
-a visible loss for many small or thin ones; the sweep and the worst cases
-both take `--drawing` / scene selection to decide per input.
+scribbled occluders and stacked tinted glass look the same. The five
+average cases (a room with a sun and a lamp, doodled shapes, four coloured
+lamps, glass in a lit room, hand-drawn hatching), at 35 to 45% less time:
+doodles and the glass room look the same; the room shows a faint mottling
+in its lit space; four medium lamps show a fine grain across the field;
+hatching smears the individual stroke shadows into bands. So pre-averaging
+is safe for a scene lit by one or two broad sources over simple occluders,
+and a visible loss as soon as there are several lights or fine occluder
+detail; switch it per project (it is one config field, `preAverageFrom`,
+changeable at any time; the level buffers reallocate once), and the sweep
+and the scenes both take `--drawing` / scene selection to decide per input.
 
 The two backends are compared in the browser with
 `tools/browser_bench.sh`, which bundles `tools/browser_bench.ts` with
