@@ -20,6 +20,7 @@ import { dirname, fromFileUrl, join } from "jsr:@std/path@1";
 import { encodePNG } from "@img/png";
 import {
   buildStrokeScene,
+  DisplayPass,
   type RadianceCascadeConfig,
   RadianceCascadeRenderer,
 } from "../lib/radiance-cascades/mod.ts";
@@ -94,6 +95,34 @@ async function readback(texture: GPUTexture): Promise<Float32Array> {
     for (let i = 0; i < texture.width * 4; i++) {
       out[y * texture.width * 4 + i] = halfToFloat(halves[y * rowHalves + i]);
     }
+  }
+  buffer.unmap();
+  buffer.destroy();
+  return out;
+}
+
+/** Read an 8-bit RGBA texture back. */
+async function readbackBytes(texture: GPUTexture): Promise<Uint8Array> {
+  const bytesPerRow = Math.ceil((texture.width * 4) / 256) * 256;
+  const buffer = device.createBuffer({
+    size: bytesPerRow * texture.height,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  });
+  const encoder = device.createCommandEncoder();
+  encoder.copyTextureToBuffer(
+    { texture },
+    { buffer, bytesPerRow },
+    { width: texture.width, height: texture.height },
+  );
+  device.queue.submit([encoder.finish()]);
+  await buffer.mapAsync(GPUMapMode.READ);
+  const rows = new Uint8Array(buffer.getMappedRange());
+  const out = new Uint8Array(texture.width * texture.height * 4);
+  for (let y = 0; y < texture.height; y++) {
+    out.set(
+      rows.subarray(y * bytesPerRow, y * bytesPerRow + texture.width * 4),
+      y * texture.width * 4,
+    );
   }
   buffer.unmap();
   buffer.destroy();
@@ -309,6 +338,41 @@ for (const [index, cascade] of cascadeEffects.entries()) {
   );
 }
 console.log(`debug views: ${cascadeEffects.length} cascades, raw+merged each`);
+
+// The display pass (what the canvas shows) into an offscreen target: ACES on
+// the irradiance must light the sun's neighbourhood and leave the boulder dark.
+const display = new DisplayPass(device, "rgba8unorm");
+const shown = device.createTexture({
+  size: { width, height },
+  format: "rgba8unorm",
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+});
+await timed(
+  "display",
+  () =>
+    display.draw(renderer.irradiance.output, shown.createView(), [
+      width,
+      height,
+    ], {
+      mode: "hdr",
+      exposure: 1,
+      toneMap: "aces",
+    }),
+);
+const shownBytes = await readbackBytes(shown);
+const byteAt = (x: number, y: number) =>
+  shownBytes[(Math.round(y * scale) * width + Math.round(x * scale)) * 4];
+console.log(
+  `display (ACES): near sun ${byteAt(250, 130)}, inside boulder ${
+    byteAt(660, 350)
+  }`,
+);
+if (!(byteAt(250, 130) > 128 && byteAt(660, 350) < 40)) {
+  failures++;
+  console.log("  FAIL: display pass output is not the lit scene");
+}
+display.dispose();
+shown.destroy();
 
 renderer.dispose();
 console.log(failures ? `FAILED (${failures})` : "PASS");

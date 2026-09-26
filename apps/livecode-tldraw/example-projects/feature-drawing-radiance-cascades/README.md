@@ -52,14 +52,27 @@ glass loop, a blue lamp, a mossy opaque boulder, and an ember freehand stroke.
 - **light**: sky radiance for rays that leave the top cascade, and bounce
   strength (last frame's irradiance at the outline, cosine-weighted over the
   outward hemisphere, times albedo, fed back as emission).
-- **render**: render scale, exposure, and the view: final irradiance, the
-  brute-force reference, any cascade's merged or raw radiance (direction
+- **render**: render scale, exposure, tone map (ACES, or a soft curve), and
+  the view: final irradiance, the brute-force reference, any cascade's merged or raw radiance (direction
   tiles), or the scene's emission, emission + bounce, transmittance, albedo,
   or distance field.
 
 The output is per-pixel irradiance, including in empty space, as an
 `rgba16float` texture (`renderer.irradiance`, a shader-fx effect that chains
 into the generated-raw post effects).
+
+## Compared with the Shadertoy "2D Volumetric Radiance Cascades"
+
+That shader (wfyyDz) merges the same way (bilinear fix, per-direction
+storage) but spends its cascades differently: one ray per 1 px probe at
+cascade 0, rays and intervals both quadrupling, and a 0.2 px base interval,
+so every level ends with about 5 px between rays at any distance. Against
+the brute-force reference on this drawing that configuration (cascade-0
+rays 1, branching 4, base interval 0.8 here, since intervals are summed) is
+softer but less faithful: 0.0063 RMS and 54 ms against the default's
+0.0037 and 45 ms. Shorter base intervals alone (1 px, 0.5 px) lose
+fidelity the same way. It is one pane change away if the softer look is
+wanted; its ACES tone map is the default here.
 
 ## Verification, cheapest first
 
