@@ -220,9 +220,9 @@ wanted; its ACES tone map is the default here.
    0.005, parallax fix 28 ms and 0.0125, reference at 256 rays/px 119 ms
    (single frames, GPU idle before each; `tools/bench.ts` measures pipelined
    frames, the number the frame rate follows). Per-ray storage at 1 px
-   spacing is memory-hungry (about 380 MB of cascade textures at this size;
-   the compute backend needs about a quarter of that); pre-averaging halves
-   it, render scale 0.5 quarters it. The parallax fix drifts from the
+   spacing is memory-hungry (about 260 MB of cascade textures at this size,
+   390 MB with the raw debug views on; the compute backend needs about a
+   third of that); pre-averaging halves it, render scale 0.5 quarters it. The parallax fix drifts from the
    reference below `--scale 0.5` in both backends (its intervals get shorter
    than its probe spacing), which the check reports.
 3. **Benchmark** (Deno WebGPU): `tools/bench.ts` with the same invocation as
