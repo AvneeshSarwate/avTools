@@ -587,6 +587,13 @@ override TX: u32 = 16u;
 override TY: u32 = 16u;
 override DW: u32 = 1u;
 override REDUCE: bool = false;
+// Specialized per pipeline so the compiler prunes the other merge modes and
+// paths; register pressure decides how many SIMD groups hide the marcher's
+// dependent-load latency.
+override MERGE_MODE: u32 = 1u;
+override IS_TOP: bool = false;
+override PRE_AVERAGE: bool = false;
+override DISTANCE_FIELD: bool = true;
 override USE_PATCH: bool = false;
 override PATCH_W: u32 = 1u;
 override PATCH_H: u32 = 1u;
@@ -781,12 +788,12 @@ fn sceneMedium(texel: vec2i) -> Medium {
 }
 
 fn marchParams() -> MarchParams {
-  return MarchParams(u.sceneSize, u.useDistanceField != 0u, u.stepSize, u.maxSteps);
+  return MarchParams(u.sceneSize, DISTANCE_FIELD, u.stepSize, u.maxSteps);
 }
 
 /// The distance field where a probe's rays start, shared by all of them.
 fn startDistanceAt(start: vec2f) -> f32 {
-  if (u.useDistanceField == 0u || !inBounds(start, u.sceneSize)) {
+  if (!DISTANCE_FIELD || !inBounds(start, u.sceneSize)) {
     return -1.0;
   }
   return sceneDistance(vec2i(floor(start)));
@@ -849,7 +856,7 @@ fn castMerged(center: vec2f, d: i32, start: vec2f, startDistance: f32) -> Merged
   let t0 = u.intervalStart;
   let t1 = u.intervalEnd;
   let overlapEnd = center + w * (t0 + (t1 - t0) * u.intervalOverlap);
-  if (u.isTop != 0u) {
+  if (IS_TOP) {
     let hit = march(start, overlapEnd, mp, startDistance);
     return Merged(hit.L + hit.T * u.sky.rgb, hit.T, hit.L);
   }
@@ -861,7 +868,7 @@ fn castMerged(center: vec2f, d: i32, start: vec2f, startDistance: f32) -> Merged
   let B = i32(u.branching);
   let childCount = select(1, B, upperPerDir);
 
-  if (u.mergeMode == 1u) {
+  if (MERGE_MODE == 1u) {
     // Children outer, corners inner: a child direction is computed once and
     // the weighted sum is the same in either order.
     var L = vec3f(0.0);
@@ -890,7 +897,7 @@ fn castMerged(center: vec2f, d: i32, start: vec2f, startDistance: f32) -> Merged
   var upT = vec3f(0.0);
   for (var c = 0; c < 4; c++) {
     let q = upperProbe(base, c);
-    if (u.mergeMode == 2u) {
+    if (MERGE_MODE == 2u) {
       let qCenter = (vec2f(q) + 0.5) * u.upperSpacing;
       let v = overlapEnd - qCenter;
       let nominal = TAU_F * (f32(d) + 0.5) / rayCount;
@@ -930,7 +937,7 @@ fn castMerged(center: vec2f, d: i32, start: vec2f, startDistance: f32) -> Merged
 
 // One stored direction of a probe: its \`group\` rays merged and averaged.
 fn castStored(center: vec2f, stored: u32, group: u32) -> Merged {
-  let startDir = select(rayDir(stored), storedDir(stored), u.preAverage != 0u);
+  let startDir = select(rayDir(stored), storedDir(stored), PRE_AVERAGE);
   let start = center + startDir * u.intervalStart;
   let startDistance = startDistanceAt(start);
   var L = vec3f(0.0);
@@ -987,7 +994,7 @@ fn main(
   // Workgroup memory: the upper probes and directions this tile merges with.
   // A stored direction s of this level reads upper directions
   // [s * G, (s + 1) * G): its G = group * childCount children.
-  let group = select(1u, u.branching, u.preAverage != 0u);
+  let group = select(1u, u.branching, PRE_AVERAGE);
   let upperPerDir = u.upperStoredDirs >= u.upperRayCount;
   let G = group * select(1u, u.branching, upperPerDir);
   footDir0 = select(dir0 * G, 0u, REDUCE);
@@ -996,7 +1003,7 @@ fn main(
     vec2i(0),
     max(vec2i(0), vec2i(u.upperProbeCount) - vec2i(i32(FOOT_X), i32(FOOT_Y))),
   );
-  if (USE_FOOT && u.isTop == 0u) {
+  if (USE_FOOT && !IS_TOP) {
     let n = FOOT_X * FOOT_Y * FOOT_D;
     for (var i = li; i < n; i += lanes) {
       let dd = i % FOOT_D;
