@@ -34,6 +34,10 @@ override MERGE_MODE: u32 = 1u;
 override IS_TOP: bool = false;
 override PRE_AVERAGE: bool = false;
 override DISTANCE_FIELD: bool = true;
+/// Bundle-trace the bilinear-fix corner rays (far levels; renderer.ts, bundleWorthIt).
+override BUNDLE: bool = false;
+/// March the four corner rays in lockstep (march4) for memory-level parallelism.
+override INTERLEAVE: bool = true;
 override USE_PATCH: bool = false;
 override PATCH_W: u32 = 1u;
 override PATCH_H: u32 = 1u;
@@ -225,15 +229,62 @@ fn castMerged(center: vec2f, d: i32, start: vec2f, startDistance: f32) -> Merged
       let stored = select(d, d * B + k, upperPerDir);
       let wc = select(w, upperRayDir(u32(d * B + k)), upperPerDir);
       let end = wc * t1;
-      for (var c = 0; c < 4; c++) {
-        let q = upperProbe(base, c);
-        let qCenter = (vec2f(q) + 0.5) * u.upperSpacing;
-        let hit = march(start, qCenter + end, mp, startDistance);
-        let up = upperSample(q, u32(stored));
-        let scale = weights[c] / f32(childCount);
-        L += (hit.L + hit.T * up.L) * scale;
-        T += hit.T * up.T * scale;
-        raw += hit.L * scale;
+      // Far levels: the four corner rays share the origin and diverge
+      // slowly, so their free-space prefix is traced once.
+      var bundle = Bundle(0.0, startDistance);
+      if (BUNDLE) {
+        var meanDir = vec2f(0.0);
+        var maxT = 1e30;
+        for (var c = 0; c < 4; c++) {
+          let e = (vec2f(upperProbe(base, c)) + 0.5) * u.upperSpacing + end;
+          let len = length(e - start);
+          meanDir += (e - start) / max(len, 1e-6);
+          maxT = min(maxT, len);
+        }
+        meanDir = normalize(meanDir);
+        var spread = 0.0;
+        for (var c = 0; c < 4; c++) {
+          let e = (vec2f(upperProbe(base, c)) + 0.5) * u.upperSpacing + end;
+          spread = max(spread, length(normalize(e - start) - meanDir));
+        }
+        bundle = marchBundle(start, meanDir, spread, maxT, mp, startDistance);
+      }
+      if (INTERLEAVE && !BUNDLE) {
+        let q0 = upperProbe(base, 0);
+        let q1 = upperProbe(base, 1);
+        let q2 = upperProbe(base, 2);
+        let q3 = upperProbe(base, 3);
+        let h = march4(
+          start,
+          (vec2f(q0) + 0.5) * u.upperSpacing + end,
+          (vec2f(q1) + 0.5) * u.upperSpacing + end,
+          (vec2f(q2) + 0.5) * u.upperSpacing + end,
+          (vec2f(q3) + 0.5) * u.upperSpacing + end,
+          mp,
+          startDistance,
+        );
+        let inv = 1.0 / f32(childCount);
+        let u0 = upperSample(q0, u32(stored));
+        let u1 = upperSample(q1, u32(stored));
+        let u2 = upperSample(q2, u32(stored));
+        let u3 = upperSample(q3, u32(stored));
+        L += ((h.L0 + h.T0 * u0.L) * weights[0] + (h.L1 + h.T1 * u1.L) * weights[1]
+          + (h.L2 + h.T2 * u2.L) * weights[2] + (h.L3 + h.T3 * u3.L) * weights[3]) * inv;
+        T += (h.T0 * u0.T * weights[0] + h.T1 * u1.T * weights[1]
+          + h.T2 * u2.T * weights[2] + h.T3 * u3.T * weights[3]) * inv;
+        raw += (h.L0 * weights[0] + h.L1 * weights[1] + h.L2 * weights[2] + h.L3 * weights[3]) * inv;
+      } else {
+        for (var c = 0; c < 4; c++) {
+          let q = upperProbe(base, c);
+          let qCenter = (vec2f(q) + 0.5) * u.upperSpacing;
+          let e = qCenter + end;
+          let hit = march(start + normalize(e - start) * bundle.t, e, mp, bundle.originDistance);
+          let up = upperSample(q, u32(stored));
+          let scale = weights[c] / f32(childCount);
+          L += (hit.L + hit.T * up.L) * scale;
+          T += hit.T * up.T * scale;
+          raw += hit.L * scale;
+        }
       }
     }
     return Merged(L, T, raw);

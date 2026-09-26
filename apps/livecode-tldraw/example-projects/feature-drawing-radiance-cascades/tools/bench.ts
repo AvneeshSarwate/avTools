@@ -68,6 +68,13 @@ export const VARIANTS: Variant[] = [
     backend: "compute",
     compute: { bounceBand: false },
   },
+  { name: "compute noBundle", backend: "compute", compute: { bundle: false } },
+  { name: "compute bundle", backend: "compute", compute: { bundle: true } },
+  {
+    name: "compute noInterleave",
+    backend: "compute",
+    compute: { interleave: false },
+  },
   {
     name: "compute unfused",
     backend: "compute",
@@ -156,17 +163,20 @@ for (const variant of VARIANTS) {
   for (let i = 0; i < frames; i++) renderer.render();
   await device.queue.onSubmittedWorkDone();
   const throughput = (performance.now() - started) / frames;
-  for (let i = 0; i < frames + 3; i++) {
+  // Per-pass timings, also from a busy GPU (a frame run on an idle GPU
+  // reports inflated, clock-ramping pass times): yield between submits so
+  // the readbacks resolve while the queue stays ahead.
+  for (let i = 0; i < frames; i++) {
     renderer.render();
-    await device.queue.onSubmittedWorkDone();
-    for (let j = 0; j < 10 && !renderer.timings; j++) {
-      await new Promise((r) => setTimeout(r, 2));
-    }
-    if (i < 3) continue; // warm-up
-    for (const [label, ms] of Object.entries(renderer.timings ?? {})) {
-      samples.set(label, [...(samples.get(label) ?? []), ms]);
+    await new Promise((r) => setTimeout(r, 0));
+    const timings = renderer.timings;
+    if (i >= 3 && timings) {
+      for (const [label, ms] of Object.entries(timings)) {
+        samples.set(label, [...(samples.get(label) ?? []), ms]);
+      }
     }
   }
+  await device.queue.onSubmittedWorkDone();
   const error = await device.popErrorScope();
   if (error) console.log(`${variant.name}: ERROR ${error.message}`);
   const parts = [...samples.entries()]
