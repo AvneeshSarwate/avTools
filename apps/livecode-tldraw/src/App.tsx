@@ -71,6 +71,11 @@ function LivecodeTldrawPage() {
   // comes from the bake's static baked.json instead of project routes.
   const bakedMode = isBakedServerBaseUrl(runtime.serverBaseUrl);
   const projectLoadedRef = useRef(false);
+  // Set for the whole async load: this effect re-runs whenever the runtime
+  // context changes, and every re-run before the first load finished used to
+  // start another `/project/open`, each of which reloads the saved entities
+  // and rejects any edit made against the previous revision.
+  const projectLoadingRef = useRef(false);
   const canvasLoadedRef = useRef(false);
   const bakedLoadedRef = useRef(false);
   const suppressStoreListenerRef = useRef(false);
@@ -268,7 +273,11 @@ function LivecodeTldrawPage() {
   }, [canvasUrl, editor, projectPath, syncLivecodeShapesToRuntime]);
 
   useEffect(() => {
-    if (!editor || !projectPath || projectLoadedRef.current) return;
+    if (
+      !editor || !projectPath || projectLoadedRef.current ||
+      projectLoadingRef.current
+    ) return;
+    projectLoadingRef.current = true;
 
     void (async () => {
       // With the engine in this tab, project open replays saved entities into
@@ -276,10 +285,10 @@ function LivecodeTldrawPage() {
       try {
         await waitForInProcessEngineAttached();
       } catch (error) {
+        projectLoadingRef.current = false;
         console.error("[livecode-tldraw] in-process engine unavailable", error);
         return;
       }
-      if (projectLoadedRef.current) return;
       suppressStoreListenerRef.current = true;
       try {
         await loadProjectIntoCanvas(editor, runtime.serverBaseUrl, projectPath);
@@ -291,6 +300,7 @@ function LivecodeTldrawPage() {
         projectLoadedRef.current = false;
         console.error("[livecode-tldraw] failed to load project", error);
       } finally {
+        projectLoadingRef.current = false;
         suppressStoreListenerRef.current = false;
         syncLivecodeShapesToRuntime();
       }

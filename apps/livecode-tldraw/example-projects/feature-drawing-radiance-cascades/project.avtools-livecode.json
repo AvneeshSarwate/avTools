@@ -10,7 +10,7 @@
       "runtimePath": "modules/sketch.ts",
       "kind": "runnable",
       "title": "radiance cascades (lights the drawing's outlines)",
-      "sourceVersion": 2,
+      "sourceVersion": 1,
       "x": 80,
       "y": 80,
       "w": 560,

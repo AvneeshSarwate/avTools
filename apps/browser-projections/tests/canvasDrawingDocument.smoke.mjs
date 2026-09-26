@@ -1,6 +1,8 @@
 // Headless check of the handwriting-canvas web component's document surface:
 //   document -> Konva scene -> document is exact,
 //   the component's Konva bake agrees with the Konva-free package bake,
+//   a stroke's outline covers its stored points and no shape scales its stroke,
+//   a transformer resize folds a stroke's scale into its points,
 //   hydration never emits `document-update`,
 //   and the legacy serialized-state round trip yields the same document.
 //
@@ -203,6 +205,33 @@ const result = await page.evaluate(async (input) => {
   return { doc1, render1, renderFromDocument, updatesAfterHydrate, emptied, doc2, doc2b, stateIsDocument, rejected, doc3, updatesAfterEdit, doc4, itemCount, identityKept, selectionKept, polyRebuilt, nudgeUpdates, straightened, undone }
 }, input)
 
+// The outline the canvas draws must cover the points the document stores (a
+// sparse stroke shrank under perfect-freehand's streamline smoothing), and no
+// shape may scale its stroke, or the selection highlight and outlines thicken
+// under the transformer.
+const fidelity = await page.evaluate((input) => {
+  const el = document.querySelector('handwriting-canvas')
+  el.setDrawingDocument(input)
+  const st = el.canvasState
+  const strokes = []
+  const walk = (items) => { for (const it of items) { if (it.type === 'stroke') strokes.push(it); else walk(it.children) } }
+  walk(el.getKonvaRenderData().freehand)
+  const outlines = strokes.map((s) => {
+    const rect = st.stage.findOne('#' + s.id).getClientRect({ skipStroke: true, relativeTo: st.stage })
+    const xs = s.points.map((p) => p.x), ys = s.points.map((p) => p.y)
+    return { id: s.id, rect: [rect.x, rect.y, rect.x + rect.width, rect.y + rect.height], points: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] }
+  })
+  const scaledStrokes = [st.groups.freehandShape, st.groups.polygonShapes, st.groups.circleShapes]
+    .flatMap((g) => g.find('Path, Line, Circle')).filter((n) => n.strokeScaleEnabled()).map((n) => n.id())
+  return { outlines, scaledStrokes, ignoreStroke: st.layers.transformer.ignoreStroke() }
+}, input)
+for (const o of fidelity.outlines) {
+  const eps = 1e-6
+  check(o.rect[0] <= o.points[0] + eps && o.rect[1] <= o.points[1] + eps && o.rect[2] >= o.points[2] - eps && o.rect[3] >= o.points[3] - eps, `outline of ${o.id} does not cover its points: outline ${o.rect.map((v) => v.toFixed(1))}, points ${o.points.map((v) => v.toFixed(1))}`)
+}
+check(fidelity.scaledStrokes.length === 0, `shapes scale their strokes: ${fidelity.scaledStrokes}`)
+check(fidelity.ignoreStroke, 'the transformer box includes strokes')
+
 // In-gesture previews: a drawn stroke and a select-tool drag each stream
 // node-level `document-preview` batches under the id the commit then uses,
 // throttled to the sync tick, with the committed `document-update` last.
@@ -280,6 +309,61 @@ const rotateLog = await readLog()
 const rotatePreviews = rotateLog.filter((e) => e.kind === 'preview')
 check(rotatePreviews.length >= 2 && rotatePreviews.every((e) => e.upserts[0] === [...strokeIds][0]), `rotating the stroke streamed it: ${rotatePreviews.length} previews`)
 check(rotateLog.some((e) => e.kind === 'update') && rotateLog.at(-1).kind === 'end', 'the rotation committed and ended the gesture')
+
+// A resize streams like a rotation, then folds the scale into the stroke's
+// points: the path and the committed node carry no scale, the stroke grew,
+// and its outline still covers the points the package bakes from the commit.
+// Resize anchors sit outside the padded box, so grab a corner anchor's client
+// rect centre (one still inside the stage after the rotation) and pull it
+// away from the box centre, which grows both dimensions.
+const resizeStart = await page.evaluate(() => {
+  const el = document.querySelector('handwriting-canvas')
+  const st = el.canvasState
+  const tr = st.layers.transformer
+  const node = st.groups.freehandShape.getChildren()[0]
+  const box = tr.getClientRect()
+  const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  for (const name of ['top-right', 'bottom-right', 'top-left', 'bottom-left']) {
+    const r = tr.findOne('.' + name).getClientRect()
+    const c = { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+    if (c.x < 8 || c.y < 8 || c.x > st.stage.width() - 8 || c.y > st.stage.height() - 8) continue
+    const len = Math.hypot(c.x - center.x, c.y - center.y)
+    const rect = node.getClientRect({ skipStroke: true, relativeTo: st.stage })
+    return { anchor: name, x: c.x, y: c.y, dx: (c.x - center.x) / len, dy: (c.y - center.y) / len, width: rect.width, height: rect.height }
+  }
+  return null
+})
+check(resizeStart, 'no resize anchor lies inside the stage')
+await readLog()
+await page.mouse.move(stageBox.x + resizeStart.x, stageBox.y + resizeStart.y)
+await page.mouse.down()
+for (let i = 1; i <= 10; i++) {
+  await page.mouse.move(stageBox.x + resizeStart.x + resizeStart.dx * i * 4, stageBox.y + resizeStart.y + resizeStart.dy * i * 4)
+  await page.waitForTimeout(25)
+}
+await page.mouse.up()
+await page.waitForTimeout(80)
+const resizeLog = await readLog()
+const resizePreviews = resizeLog.filter((e) => e.kind === 'preview')
+check(resizePreviews.length >= 2 && resizePreviews.every((e) => e.upserts[0] === [...strokeIds][0]), `resizing the stroke streamed it: ${resizePreviews.length} previews`)
+check(resizeLog.some((e) => e.kind === 'update') && resizeLog.at(-1).kind === 'end', 'the resize committed and ended the gesture')
+const resized = await page.evaluate(() => {
+  const el = document.querySelector('handwriting-canvas')
+  const st = el.canvasState
+  const node = st.groups.freehandShape.getChildren()[0]
+  const rect = node.getClientRect({ skipStroke: true, relativeTo: st.stage })
+  return { scale: [node.scaleX(), node.scaleY()], doc: JSON.parse(JSON.stringify(el.getDrawingDocument())), rect: [rect.x, rect.y, rect.x + rect.width, rect.y + rect.height], width: rect.width, height: rect.height }
+})
+const resizedNode = resized.doc.freehand.nodes[0]
+check(resized.scale[0] === 1 && resized.scale[1] === 1, `the resize left scale on the path: ${resized.scale}`)
+check(resizedNode.transform?.scaleX === undefined && resizedNode.transform?.scaleY === undefined, `the resize left scale in the document: ${JSON.stringify(resizedNode.transform)}`)
+check(resized.width > resizeStart.width + 5 && resized.height > resizeStart.height + 5, `the resize did not grow the stroke: ${resizeStart.width}x${resizeStart.height} -> ${resized.width}x${resized.height}`)
+{
+  const baked = bakeDrawingDocument(resized.doc).freehand[0].children[0].points
+  const xs = baked.map((p) => p.x), ys = baked.map((p) => p.y)
+  const eps = 1e-6
+  check(resized.rect[0] <= Math.min(...xs) + eps && resized.rect[1] <= Math.min(...ys) + eps && resized.rect[2] >= Math.max(...xs) - eps && resized.rect[3] >= Math.max(...ys) - eps, `after the resize the outline does not cover the baked points: outline ${resized.rect.map((v) => v.toFixed(1))}, points ${[Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)].map((v) => v.toFixed(1))}`)
+}
 
 await browser.close()
 

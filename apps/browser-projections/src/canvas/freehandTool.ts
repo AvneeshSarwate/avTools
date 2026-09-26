@@ -429,7 +429,16 @@ export const updateFreehandDraggableStates = (state: CanvasRuntimeState) => {
   }
 }
 
-// Helper function to convert points to perfect-freehand stroke
+/** The perfect-freehand outline width, in stage pixels, of an unscaled stroke. */
+export const STROKE_OUTLINE_SIZE = 8
+
+// The outline the canvas draws for a stroke. It must follow the stored points
+// exactly: those points are what the document holds and what the engine
+// renders, so any smoothing that moves the centreline (perfect-freehand's
+// `streamline`, meant for live pointer input) would make the canvas show a
+// different shape from the store; sparse strokes written from code shrank
+// visibly under it. `last` closes the end cap so the outline covers the final
+// point too.
 export const getStrokePath = (points: number[], normalize: boolean = false): string => {
   if (points.length < 4) return ''
 
@@ -441,11 +450,12 @@ export const getStrokePath = (points: number[], normalize: boolean = false): str
 
   // Get stroke outline using perfect-freehand
   const strokePoints = getStroke(inputPoints, {
-    size: 8,
+    size: STROKE_OUTLINE_SIZE,
     thinning: 0.5,
     smoothing: 0.5,
-    streamline: 0.5,
+    streamline: 0,
     simulatePressure: true,
+    last: true,
   })
 
   // Convert to SVG path
@@ -493,6 +503,8 @@ export const createStrokeShape = (state: CanvasRuntimeState, points: number[], i
     data: getStrokePath(normalizedPoints),
     fill: 'black',
     strokeWidth: 0,
+    // The selection highlight is a stroke; keep it the same width at any scale.
+    strokeScaleEnabled: false,
     id: id,
     x: bounds.minX,
     y: bounds.minY,
@@ -515,6 +527,76 @@ export const createStrokeShape = (state: CanvasRuntimeState, points: number[], i
   createStrokeItem(state, path)
 
   return path
+}
+
+/**
+ * Fold a stroke's scale and skew into its points, leaving position and
+ * rotation as the node's transform, and regenerate the outline from the new
+ * points at the fixed outline size. A resized stroke therefore keeps its
+ * thickness, as it does in the engine, which draws every stroke at its
+ * metadata width. Konva's local matrix is translate · rotate · scale · skew,
+ * so scale · skew is what moves into the points; the points are then
+ * re-normalized to their new minimum corner, which sits at rotate(corner)
+ * from the old position. Returns whether anything changed.
+ */
+export const bakeStrokeScale = (state: CanvasRuntimeState, path: Konva.Path): boolean => {
+  const stroke = state.freehand.strokes.get(path.id())
+  if (!stroke) return false
+  const sx = path.scaleX()
+  const sy = path.scaleY()
+  const kx = path.skewX()
+  const ky = path.skewY()
+  if (sx === 1 && sy === 1 && kx === 0 && ky === 0) return false
+
+  const bounds = getPointsBounds(stroke.points)
+  const scaled: number[] = []
+  for (let i = 0; i < stroke.points.length; i += 2) {
+    const px = stroke.points[i] - bounds.minX
+    const py = stroke.points[i + 1] - bounds.minY
+    // Konva's skew matrix is [1, skewY, skewX, 1]: skew first, then scale.
+    scaled.push((px + kx * py) * sx, (ky * px + py) * sy)
+  }
+  const next = getPointsBounds(scaled)
+  const normalized = scaled.map((value, index) => value - (index % 2 === 0 ? next.minX : next.minY))
+  const radians = (path.rotation() * Math.PI) / 180
+  const cos = Math.cos(radians)
+  const sin = Math.sin(radians)
+  const x = path.x() + next.minX * cos - next.minY * sin
+  const y = path.y() + next.minX * sin + next.minY * cos
+
+  stroke.points = normalized.map((value, index) => value + (index % 2 === 0 ? x : y))
+  stroke.originalPath = getStrokePath(normalized)
+  path.setAttrs({ x, y, scaleX: 1, scaleY: 1, skewX: 0, skewY: 0, data: stroke.originalPath })
+  return true
+}
+
+/**
+ * The same for a stroke or a group of strokes under the transformer: a
+ * group's scale and skew move into each child's local transform (their
+ * absolute placement is preserved) and from there into stroke points.
+ */
+export const bakeFreehandNodeScale = (state: CanvasRuntimeState, node: Konva.Node): boolean => {
+  if (node instanceof Konva.Path) return bakeStrokeScale(state, node)
+  if (!(node instanceof Konva.Group)) return false
+  if (node.scaleX() === 1 && node.scaleY() === 1 && node.skewX() === 0 && node.skewY() === 0) return false
+  const children = node.getChildren().slice()
+  const absolutes = children.map((child) => child.getAbsoluteTransform().copy())
+  node.setAttrs({ scaleX: 1, scaleY: 1, skewX: 0, skewY: 0 })
+  const parentInverse = node.getAbsoluteTransform().copy().invert()
+  children.forEach((child, index) => {
+    const local = parentInverse.copy().multiply(absolutes[index]).decompose()
+    child.setAttrs({
+      x: local.x,
+      y: local.y,
+      scaleX: local.scaleX,
+      scaleY: local.scaleY,
+      rotation: local.rotation,
+      skewX: local.skewX,
+      skewY: local.skewY
+    })
+    bakeFreehandNodeScale(state, child)
+  })
+  return true
 }
 
 // Handle timeline updates and stroke animation - restored full logic

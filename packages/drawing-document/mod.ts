@@ -65,7 +65,10 @@ export interface DrawingStrokeNode extends DrawingNodeBase {
    * The canvas positions a stroke at the minimum x/y of these points and draws
    * the points relative to that corner, so a stroke's `transform.x`/`y`
    * DEFAULT TO THAT MINIMUM rather than to zero; every other transform field
-   * defaults as usual.
+   * defaults as usual. The canvas draws a stroke as a fixed-width outline of
+   * these points, so when a stroke is resized there it folds the scale into
+   * the points and keeps only position and rotation as the transform; code
+   * may still write any transform, which the bake applies as written.
    */
   points: number[];
   /** Milliseconds since the stroke started, one entry per point pair. */

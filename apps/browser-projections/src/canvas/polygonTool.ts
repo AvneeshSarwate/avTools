@@ -448,6 +448,7 @@ export const createPolygonNode = (
     points: polygon.points,
     stroke: '#000',
     strokeWidth: 2,
+    strokeScaleEnabled: false, // the outline and the selection highlight keep their width under scale
     fill: 'rgba(0, 100, 255, 0.1)',
     closed: true,
     tension,
