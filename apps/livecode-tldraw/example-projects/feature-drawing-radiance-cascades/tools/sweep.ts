@@ -20,6 +20,7 @@ import { dirname, fromFileUrl, join } from "jsr:@std/path@1";
 import {
   buildStrokeScene,
   createRadianceRenderer,
+  DEFAULT_CONFIG,
   type RadianceCascadeConfig,
   radianceDeviceDescriptor,
   type RendererBackend,
@@ -147,7 +148,13 @@ console.log(
 
 const rows: { name: string; ms: number; rms: number; plan: string }[] = [];
 for (const point of POINTS) {
-  const plan = renderer.configure({ ...base, ...point.config });
+  // From the full defaults: configure() merges, and a point must not inherit
+  // the previous point's settings.
+  const plan = renderer.configure({
+    ...DEFAULT_CONFIG,
+    ...base,
+    ...point.config,
+  });
   for (let i = 0; i < 3; i++) renderer.render();
   await device.queue.onSubmittedWorkDone();
   const started = performance.now();
@@ -164,8 +171,6 @@ for (const point of POINTS) {
       rms.toFixed(4)
     }${warnings}`,
   );
-  // Reset any level-structural change before the next point.
-  renderer.configure(base);
 }
 const error = await device.popErrorScope();
 if (error) console.log(`ERROR: ${error.message}`);
