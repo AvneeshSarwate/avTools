@@ -97,6 +97,7 @@ import {
   analyzeProjectShadow,
   buildProjectImportGraph,
   collectTransitiveDependencies,
+  hashProjectLibraryClosure,
 } from "./project_shadow_analysis.ts";
 import {
   clearModulePianoRollLookups,
@@ -2161,8 +2162,14 @@ export async function createLivecodeVisualizerServer(
     // be at runtime. The target is part of the cache key so a retargeted
     // project cannot reuse the other world's verdict.
     const engineTarget = effectiveEngineTarget(state);
+    // Project library files (relative imports that are not manifest modules)
+    // are part of the checked world too, so their edits must miss the cache.
+    const libraryHash = await hashProjectLibraryClosure({
+      projectRoot: state.root,
+      modules: sourceModules,
+    });
     const diagnosticsKey =
-      `${state.generation}:${engineTarget}:${projectSourceHash}`;
+      `${state.generation}:${engineTarget}:${projectSourceHash}:${libraryHash}`;
     if (lastDiagnostics?.diagnosticsKey === diagnosticsKey) {
       return lastDiagnostics.response;
     }

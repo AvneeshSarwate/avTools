@@ -13,6 +13,10 @@ export const BROWSER_CHECK_LIB = [
   "dom",
   "dom.iterable",
   "dom.asynciterable",
+  // WebGPU is a browser API, but TypeScript's dom lib lacks the usage-flag
+  // namespaces (`GPUTextureUsage`, `GPUShaderStage`, ...). Deno's WebGPU lib
+  // declares the standard surface and adds no `Deno` global.
+  "deno.webgpu",
 ];
 
 // One OS-temp home for the config, created lazily and reused for the process

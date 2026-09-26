@@ -126,10 +126,12 @@ async function analyzeProjectShadowInDirectory(
     );
     shadowPathByModule.set(moduleRecord.id, shadowPath);
     moduleByShadowPath.set(shadowPath, moduleRecord);
-    const shadowSource = rewriteExternalRelativeImports({
+    const shadowSource = rewriteNonModuleRelativeImports({
       projectRoot: request.projectRoot,
       sourcePath: moduleRecord.absoluteSourcePath,
       sourceText: moduleRecord.sourceText,
+      moduleByRuntimePath,
+      moduleBySourcePath,
     });
     const result = analyzeAndTransformTimedModule({
       moduleId: moduleRecord.id,
@@ -216,6 +218,63 @@ async function analyzeProjectShadowInDirectory(
   };
 }
 
+/**
+ * Hash of every project library file the modules reach through relative
+ * imports (transitively, through other library files), so a diagnostics
+ * cache keyed on module sources alone cannot outlive a library edit. Manifest
+ * modules are hashed by the caller; missing files hash as absent.
+ */
+export async function hashProjectLibraryClosure(request: {
+  projectRoot: string;
+  modules: ProjectSourceModule[];
+}): Promise<string> {
+  const moduleByRuntimePath = new Map(
+    request.modules.map((moduleRecord) => [
+      normalize(join(request.projectRoot, moduleRecord.runtimePath)),
+      moduleRecord,
+    ]),
+  );
+  const moduleBySourcePath = new Map(
+    request.modules.map((moduleRecord) => [
+      normalize(join(request.projectRoot, moduleRecord.sourcePath)),
+      moduleRecord,
+    ]),
+  );
+  const hashes = new Map<string, string>();
+  const pending: Array<{ path: string; text: string }> = request.modules.map(
+    (moduleRecord) => ({
+      path: moduleRecord.absoluteSourcePath,
+      text: moduleRecord.sourceText,
+    }),
+  );
+  while (pending.length > 0) {
+    const { path, text } = pending.pop()!;
+    for (const ref of collectModuleSpecifiers(text, path)) {
+      const resolved = resolveProjectImport({
+        projectRoot: request.projectRoot,
+        sourcePath: path,
+        specifier: ref.specifier,
+        moduleByRuntimePath,
+        moduleBySourcePath,
+      });
+      if (!resolved || resolved.module || hashes.has(resolved.path)) continue;
+      if (!resolved.exists) {
+        hashes.set(resolved.path, "absent");
+        continue;
+      }
+      const libraryText = await Deno.readTextFile(resolved.path);
+      hashes.set(resolved.path, await hashText(libraryText));
+      pending.push({ path: resolved.path, text: libraryText });
+    }
+  }
+  return await hashText(
+    [...hashes.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([path, hash]) => `${path}:${hash}`)
+      .join("\n"),
+  );
+}
+
 export function buildProjectImportGraph(request: {
   projectRoot: string;
   modules: ProjectSourceModule[];
@@ -266,7 +325,7 @@ export function buildProjectImportGraph(request: {
         kind: specifierRef.kind,
         resolvedPath: resolved.path,
         external: resolved.external,
-        unresolved: !resolved.module && !resolved.external,
+        unresolved: !resolved.exists,
       });
       if (resolved.module) {
         dependenciesByModule.get(moduleRecord.id)?.add(resolved.module.id);
@@ -319,23 +378,38 @@ function collectModuleSpecifiers(
   return refs.sort((a, b) => a.start - b.start);
 }
 
-function rewriteExternalRelativeImports(request: {
+/**
+ * Only manifest modules are mirrored into the shadow tree, so a relative
+ * import resolves there only when it names one. Every other relative import —
+ * a project library file (see "Project libraries are normal code" in
+ * `docs/livecode/principles.md`) or a path outside the project — is pointed at
+ * the real file so `deno check` follows it in place.
+ */
+function rewriteNonModuleRelativeImports(request: {
   projectRoot: string;
   sourcePath: string;
   sourceText: string;
+  moduleByRuntimePath: Map<string, ProjectSourceModule>;
+  moduleBySourcePath: Map<string, ProjectSourceModule>;
 }): string {
   const refs = collectModuleSpecifiers(request.sourceText, request.sourcePath);
   const replacements: Array<{ start: number; end: number; value: string }> = [];
   for (const ref of refs) {
     if (!isRelativeSpecifier(ref.specifier)) continue;
-    const resolved = normalize(
-      join(dirname(request.sourcePath), ref.specifier),
-    );
-    if (isInsidePath(resolved, request.projectRoot)) continue;
+    const resolved = resolveProjectImport({
+      projectRoot: request.projectRoot,
+      sourcePath: request.sourcePath,
+      specifier: ref.specifier,
+      moduleByRuntimePath: request.moduleByRuntimePath,
+      moduleBySourcePath: request.moduleBySourcePath,
+    });
+    if (resolved?.module) continue;
     replacements.push({
       start: ref.start,
       end: ref.end,
-      value: JSON.stringify(pathToFileUrl(resolved)),
+      value: JSON.stringify(
+        pathToFileUrl(join(dirname(request.sourcePath), ref.specifier)),
+      ),
     });
   }
   if (replacements.length === 0) return request.sourceText;
@@ -354,7 +428,12 @@ function resolveProjectImport(request: {
   specifier: string;
   moduleByRuntimePath: Map<string, ProjectSourceModule>;
   moduleBySourcePath: Map<string, ProjectSourceModule>;
-}): { path: string; module?: ProjectSourceModule; external: boolean } | null {
+}): {
+  path: string;
+  module?: ProjectSourceModule;
+  external: boolean;
+  exists: boolean;
+} | null {
   if (!isRelativeSpecifier(request.specifier)) return null;
   const base = normalize(join(dirname(request.sourcePath), request.specifier));
   const candidates = candidateImportPaths(base);
@@ -363,14 +442,31 @@ function resolveProjectImport(request: {
     const moduleRecord = request.moduleByRuntimePath.get(normalized) ??
       request.moduleBySourcePath.get(normalized);
     if (moduleRecord) {
-      return { path: normalized, module: moduleRecord, external: false };
+      return {
+        path: normalized,
+        module: moduleRecord,
+        external: false,
+        exists: true,
+      };
     }
   }
-  const resolved = normalize(candidates[0]);
+  // Not a manifest module: a project library file, or a path outside the
+  // project. Report the candidate that exists so the edge is a real file.
+  const existing = candidates.find((candidate) => fileExists(candidate));
+  const resolved = normalize(existing ?? candidates[0]);
   return {
     path: resolved,
     external: !isInsidePath(resolved, request.projectRoot),
+    exists: existing !== undefined,
   };
+}
+
+function fileExists(path: string): boolean {
+  try {
+    return Deno.statSync(path).isFile;
+  } catch {
+    return false;
+  }
 }
 
 function candidateImportPaths(path: string): string[] {

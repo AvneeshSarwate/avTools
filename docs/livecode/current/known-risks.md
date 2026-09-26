@@ -71,7 +71,8 @@ request validation, and imported-path constraints.
 ## P1: browser target checking over-promises module delivery
 
 The browser engine serves relative project files, the generated runtime, and a
-fixed alias-bundle set (the livecode helpers plus `three` and `p5`).
+fixed alias-bundle set (the livecode helpers plus `three`, `p5`, and
+`@avtools/shader-fx/raw`).
 Browser-target shadow checking resolves the wider repository import map, so a
 module can typecheck successfully and then fail at browser import on an
 unserved bare specifier. Either expand bundling (add the specifier to

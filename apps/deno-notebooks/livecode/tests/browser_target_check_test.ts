@@ -28,6 +28,8 @@ const PORTABLE_ENTRYPOINTS = [
   // host_ops, sync sources, registry), and `deno bundle` does not typecheck —
   // this gate is the only thing keeping a stray host global out.
   "packages/livecode-engine/mod.ts",
+  // Served to browser modules as the `@avtools/shader-fx/raw` alias.
+  "packages/shader-fx/raw/mod.ts",
 ];
 
 async function writeConfig(): Promise<string> {
