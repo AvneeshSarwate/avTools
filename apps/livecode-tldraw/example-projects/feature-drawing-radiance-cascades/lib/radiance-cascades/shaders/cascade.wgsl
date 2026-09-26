@@ -37,6 +37,8 @@ struct CascadeUniforms {
 // a uniform flag would keep both paths' registers live in every level.
 override BUNDLE: bool = false;
 override INTERLEAVE: bool = false;
+/// The merge mode, a pipeline constant so the other modes' paths are pruned.
+override MERGE_MODE: u32 = 1u;
 @group(0) @binding(0) var<uniform> u: CascadeUniforms;
 @group(0) @binding(1) var emissionTex: texture_2d<f32>;
 @group(0) @binding(2) var transmittanceTex: texture_2d<f32>;
@@ -121,7 +123,7 @@ fn castMerged(center: vec2f, d: i32, start: vec2f, startDistance: f32) -> Merged
   let upperPerDir = u.upperStoredDirs >= u.upperRayCount - 0.5;
   let B = i32(u.branching);
   let childCount = select(1, B, upperPerDir);
-  let mode = i32(u.mergeMode);
+  let mode = i32(MERGE_MODE);
 
   if (mode == 1) {
     // Bilinear fix: one ray per upper probe, from this interval's start to

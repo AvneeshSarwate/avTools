@@ -415,8 +415,11 @@ export class CascadeEffect extends PassEffect {
   readonly radianceView: GPUTextureView;
   readonly transmittanceView: GPUTextureView;
   output: GPUTextureView;
-  private readonly pipeline: GPURenderPipeline;
+  private pipeline: GPURenderPipeline;
   private rawPipeline: GPURenderPipeline | null = null;
+  /** The merge mode the pipelines were specialized for. */
+  private pipelineMode = -1;
+  private readonly pipelineCache = new Map<string, GPURenderPipeline>();
   private rawTexture: GPUTexture | null = null;
   private rawTextureView: GPUTextureView | null = null;
   private readonly uniformBuffer: GPUBuffer;
@@ -435,14 +438,8 @@ export class CascadeEffect extends PassEffect {
     this.level = level;
     this.effectName = `RadianceCascade${level.index}`;
     this.inputs = upper ? { emission, scene, upper } : { emission, scene };
-    this.pipeline = createFullscreenPipeline(
-      device,
-      `rc-cascade-${level.index}`,
-      CASCADE_WGSL,
-      [HDR_FORMAT, HDR_FORMAT],
-      "fsMerged",
-      this.pipelineConstants(),
-    );
+    this.pipeline = this.cascadePipeline(false, 1);
+    this.pipelineMode = 1;
     this.uniformBuffer = device.createBuffer({
       label: `rc-cascade-${level.index}-uniforms`,
       size: CASCADE_UNIFORM_FLOATS * 4,
@@ -485,14 +482,7 @@ export class CascadeEffect extends PassEffect {
     if (enabled === (this.rawTexture !== null)) return;
     if (enabled) {
       const [width, height] = this.level.textureSize;
-      this.rawPipeline ??= createFullscreenPipeline(
-        this.device,
-        `rc-cascade-${this.level.index}-raw`,
-        CASCADE_WGSL,
-        [HDR_FORMAT, HDR_FORMAT, HDR_FORMAT],
-        "fs",
-        this.pipelineConstants(),
-      );
+      this.rawPipeline = this.cascadePipeline(true, this.pipelineMode);
       this.rawTexture = createTargetTexture(
         this.device,
         width,
@@ -515,16 +505,43 @@ export class CascadeEffect extends PassEffect {
     return upper instanceof CascadeEffect ? upper : null;
   }
 
-  /** Level-static specializations (renderer.ts, bundleWorthIt / interleaveWorthIt). */
-  private pipelineConstants(): Record<string, number> {
-    return {
+  /**
+   * A pipeline specialized for this level (renderer.ts, bundleWorthIt /
+   * interleaveWorthIt) and a merge mode, cached: a mode as a uniform would
+   * keep every mode's registers live.
+   */
+  private cascadePipeline(raw: boolean, mode: number): GPURenderPipeline {
+    const constants = {
       BUNDLE: bundleWorthIt(this.level, this.upper?.level ?? null) ? 1 : 0,
       INTERLEAVE: interleaveWorthIt(this.level) ? 1 : 0,
+      MERGE_MODE: mode,
     };
+    const key = JSON.stringify([raw, constants]);
+    let pipeline = this.pipelineCache.get(key);
+    if (!pipeline) {
+      pipeline = createFullscreenPipeline(
+        this.device,
+        `rc-cascade-${this.level.index}${raw ? "-raw" : ""} ${key}`,
+        CASCADE_WGSL,
+        raw ? [HDR_FORMAT, HDR_FORMAT, HDR_FORMAT] : [HDR_FORMAT, HDR_FORMAT],
+        raw ? "fs" : "fsMerged",
+        constants,
+      );
+      this.pipelineCache.set(key, pipeline);
+    }
+    return pipeline;
   }
 
   setRuntime(runtime: CascadeRuntime): void {
     this.runtime = runtime;
+    if (runtime.mergeMode !== this.pipelineMode) {
+      this.pipelineMode = runtime.mergeMode;
+      this.pipeline = this.cascadePipeline(false, runtime.mergeMode);
+      if (this.rawPipeline) {
+        this.rawPipeline = this.cascadePipeline(true, runtime.mergeMode);
+      }
+      this.bindGroup = null;
+    }
   }
 
   private writeUniforms(runtime: CascadeRuntime): void {

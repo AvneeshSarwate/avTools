@@ -84,51 +84,81 @@ passes, and agree to 0.002 RMS or better on every check (the compute
 backend's distance lower bound moves where sphere tracing lands within half a
 pixel of a surface, and the stores are f16 as the textures were).
 
+### Performance model and what it predicted
+
+A cascade pass is a sphere-tracing loop whose next texel address depends on
+the previous distance load: each lane is a serial chain of dependent
+texture loads. The distance texture (2 MB) is cache-resident, so the loop
+is bound by load latency, not bandwidth, and the GPU hides that latency
+only through occupancy: independent SIMD groups per core, which register
+pressure and workgroup memory cap. Lanes are neighbouring probes marching
+one direction, so divergence inside a SIMD group is already low. Every
+result below follows from that:
+
+- Register pressure decides occupancy, so anything compiled into a kernel
+  costs even when it never runs: specializing pipelines by merge mode, top
+  level, pre-averaging and distance field (compute) took 9%; a lockstep
+  march behind a *uniform* flag cost the fragment backend 15% on the levels
+  that never took the branch, and went away once the flags became
+  per-level pipeline constants there too.
+- Workgroup memory and barriers lower occupancy: the staged upper footprint
+  and the staged scene patch both lost, as did 256-lane groups; 64 lanes
+  won. The direction-lanes cascade 0 with a workgroup-memory reduction was
+  1.4 ms slower than one lane per probe looping over directions in
+  registers.
+- ALU and bandwidth are not the limiter: a precomputed direction table in
+  place of sin/cos gained about 2% (so no cosine approximation could gain
+  more), and 16-byte store entries for single vector loads gained nothing.
+- Shortening the dependent chain does pay: taking `tau^1 = tau` and a
+  unit emission factor on whole-pixel steps (three `pow` and a division
+  gone), sharing the start distance among a probe's eight rays, and
+  clipping a ray to the scene once instead of per step took 12% off both
+  backends; for the far levels (long, slowly diverging rays) tracing the
+  four corner rays' free-space prefix once as a bundle won 0.7 ms in the
+  fragment backend, but lost 0.5 ms in the compute backend, whose far
+  levels already have the occupancy to hide latency and pay the setup;
+  for cascade 0 (2 px rays, one to three steps each) marching the four
+  corner rays in lockstep so four loads are in flight per lane took
+  cascade 0 from 6.5 to 3.6 ms, and lost on longer levels to bookkeeping
+  and rays finishing apart. Both are gated per level by interval length
+  (`bundleWorthIt`, `interleaveWorthIt` in `renderer.ts`).
+- The bounce band's global atomic costs nothing measurable, and a
+  free-space early-out before the lockstep march changed nothing (it
+  already exits on its first iteration there).
+
+Per-pass GPU times must come from a busy GPU: a frame rendered after an
+idle wait reports inflated, clock-ramping pass times (`tools/bench.ts`
+harvests them from pipelined frames). Chrome (Dawn/Tint) compiles every
+program and runs both backends faster than Deno (wgpu/naga) on the same
+GPU. Not used: subgroup operations (`subgroups` compiles in Chrome, not in
+Deno's naga); a subgroup reduction of cascade 0 is the obvious next
+browser-only experiment.
+
 ### Measured (Apple M1 Max, 1000x500, `tools/bench.ts` and the browser bench)
 
-Pipelined wall-clock per frame, with the exclusive GPU time of each pass
-(ms; the bilinear fix, then vanilla):
+Pipelined wall-clock per frame, with the GPU time of each pass from busy
+frames (ms; the bilinear fix, then vanilla):
 
 | bilinear fix | frame | c4 | c3 | c2 | c1 | c0 (+ gather) |
 | --- | --- | --- | --- | --- | --- | --- |
-| fragment, Deno | 31.4 | 8.0 | 8.4 | 4.4 | 3.8 | 5.5 + 0.5 |
-| compute, Deno | 25.8 | 5.2 | 7.0 | 5.0 | 3.9 | 5.9 |
-| fragment, Chrome 153 | 29.0 | 8.0 | 8.3 | 4.0 | 3.3 | 4.7 + 0.4 |
-| compute, Chrome 153 | 22.6 | 4.5 | 5.7 | 3.9 | 3.3 | 4.7 |
+| fragment, Deno | 24.5 | 6.3 | 6.7 | 3.7 | 2.9 | 3.7 + 0.5 |
+| compute, Deno | 17.9 | 3.7 | 4.7 | 3.1 | 2.6 | 3.6 |
+| fragment, Chrome 153 | 23.1 | 6.2 | 6.7 | 3.5 | 2.7 | 3.2 + 0.4 |
+| compute, Chrome 153 | 15.5 | 3.3 | 4.1 | 2.6 | 2.1 | 2.9 |
 
 | vanilla | frame | c4 | c3 | c2 | c1 | c0 (+ gather) |
 | --- | --- | --- | --- | --- | --- | --- |
-| fragment, Deno | 9.6 | 1.9 | 2.0 | 1.8 | 2.6 | 4.8 + 0.8 |
-| compute, Deno | 8.7 | 1.4 | 1.8 | 1.9 | 2.7 | 4.9 |
-| fragment, Chrome 153 | 7.5 | 1.1 | 1.2 | 0.9 | 1.3 | 2.4 + 0.4 |
-| compute, Chrome 153 | 6.2 | 0.7 | 0.9 | 0.9 | 1.2 | 2.1 |
+| fragment, Deno | 7.8 | 1.4 | 1.5 | 1.4 | 1.9 | 4.0 + 0.8 |
+| compute, Deno | 6.0 | 0.6 | 0.9 | 0.9 | 1.4 | 2.7 |
+| fragment, Chrome 153 | 6.7 | 1.0 | 1.1 | 0.8 | 1.1 | 2.1 + 0.4 |
+| compute, Chrome 153 | 3.8 | 0.4 | 0.6 | 0.5 | 0.8 | 1.2 |
 
-So the compute backend is 18 to 22% faster with the bilinear fix and 10 to
-17% faster vanilla, at about a third of the cascade memory, and the two agree
-to 0.002 RMS. Chrome (Dawn/Tint) compiles every program and runs faster than
-Deno (wgpu/naga) on the same GPU, most visibly at cascade 0. (The fragment
-rows are with its raw debug target off, see below, which took about 1.5 ms
-off its bilinear-fix frame.)
-
-What the sweep in `bench.ts` decided (all within the run-to-run noise of
-about 5% unless noted):
-
-- 64-lane workgroups with square 8x8 probe tiles for the upper levels; 32 to
-  128 lanes are equal, 256 is 15% slower, 512 much slower, and Metal runs
-  nothing for a 1024-lane workgroup of this kernel (`workgroupLanes`,
-  `reduceLanes`, `tileWidth`).
-- The stagings lose on this GPU: the upper footprint adds about 2.7 ms to
-  cascade 0 and the scene patch 7 to 10 ms, since the texture cache already
-  serves the re-reads and the load phase plus barrier lowers occupancy.
-- The first fused cascade 0 (a probe tile times all 16 directions as lanes,
-  reduced in workgroup memory) cost 7.4 ms against 5.3 + 0.7 ms for storing
-  it and gathering; one lane per probe looping over its directions brought
-  it to parity at 6.0 ms with nothing stored.
-- The bounce band's global atomic counter costs nothing measurable.
-- Not used: subgroup operations. Chrome's WebGPU has the `subgroups`
-  feature (the browser bench confirms it compiles) but Deno's naga does not,
-  so nothing here depends on it; a subgroup reduction is the obvious next
-  experiment for cascade 0 in the browser.
+Against the original fragment renderer (Chrome: 30.5 ms bilinear fix,
+8.0 ms vanilla) the compute backend is 2.0x and 2.1x faster; the fragment
+backend itself, which shares the marcher and the per-level pipeline
+constants, is 1.3x and 1.2x faster than it was. The two agree to 0.0012 RMS
+or better on every check and the compute backend uses about a third of the
+cascade memory.
 
 The two backends are compared in the browser with
 `tools/browser_bench.sh`, which bundles `tools/browser_bench.ts` with
