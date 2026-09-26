@@ -301,28 +301,25 @@ fn castMerged(center: vec2f, d: i32, start: vec2f, startDistance: f32) -> Merged
     // Bilinear fix: one ray per upper probe, from this interval's start to
     // the point where that probe's child interval starts, merged with that
     // probe alone; the four merged results are then bilinearly weighted.
+    // Children outer, corners inner: a child direction is computed once and
+    // the weighted sum is the same in either order.
     var L = vec3f(0.0);
     var T = vec3f(0.0);
     var raw = vec3f(0.0);
-    for (var c = 0; c < 4; c++) {
-      let q = upperProbe(base, c);
-      let qCenter = (vec2f(q) + 0.5) * u.upperSpacing;
-      var Lc = vec3f(0.0);
-      var Tc = vec3f(0.0);
-      var rawc = vec3f(0.0);
-      for (var k = 0; k < childCount; k++) {
-        let stored = select(d, d * B + k, upperPerDir);
-        let wc = select(w, dirOf(f32(d * B + k), u.upperRayCount), upperPerDir);
-        let hit = march(start, qCenter + wc * t1, mp, startDistance);
+    for (var k = 0; k < childCount; k++) {
+      let stored = select(d, d * B + k, upperPerDir);
+      let wc = select(w, dirOf(f32(d * B + k), u.upperRayCount), upperPerDir);
+      let end = wc * t1;
+      for (var c = 0; c < 4; c++) {
+        let q = upperProbe(base, c);
+        let qCenter = (vec2f(q) + 0.5) * u.upperSpacing;
+        let hit = march(start, qCenter + end, mp, startDistance);
         let up = upperSample(q, stored);
-        Lc += hit.L + hit.T * up.L;
-        Tc += hit.T * up.T;
-        rawc += hit.L;
+        let scale = weights[c] / f32(childCount);
+        L += (hit.L + hit.T * up.L) * scale;
+        T += hit.T * up.T * scale;
+        raw += hit.L * scale;
       }
-      let scale = weights[c] / f32(childCount);
-      L += Lc * scale;
-      T += Tc * scale;
-      raw += rawc * scale;
     }
     return Merged(L, T, raw);
   }
@@ -832,28 +829,25 @@ fn castMerged(center: vec2f, d: i32, start: vec2f, startDistance: f32) -> Merged
   let upperRayCount = f32(u.upperRayCount);
 
   if (u.mergeMode == 1u) {
+    // Children outer, corners inner: a child direction is computed once and
+    // the weighted sum is the same in either order.
     var L = vec3f(0.0);
     var T = vec3f(0.0);
     var raw = vec3f(0.0);
-    for (var c = 0; c < 4; c++) {
-      let q = upperProbe(base, c);
-      let qCenter = (vec2f(q) + 0.5) * u.upperSpacing;
-      var Lc = vec3f(0.0);
-      var Tc = vec3f(0.0);
-      var rawc = vec3f(0.0);
-      for (var k = 0; k < childCount; k++) {
-        let stored = select(d, d * B + k, upperPerDir);
-        let wc = select(w, dirOf(f32(d * B + k), upperRayCount), upperPerDir);
-        let hit = march(start, qCenter + wc * t1, mp, startDistance);
+    for (var k = 0; k < childCount; k++) {
+      let stored = select(d, d * B + k, upperPerDir);
+      let wc = select(w, dirOf(f32(d * B + k), upperRayCount), upperPerDir);
+      let end = wc * t1;
+      for (var c = 0; c < 4; c++) {
+        let q = upperProbe(base, c);
+        let qCenter = (vec2f(q) + 0.5) * u.upperSpacing;
+        let hit = march(start, qCenter + end, mp, startDistance);
         let up = upperSample(q, u32(stored));
-        Lc += hit.L + hit.T * up.L;
-        Tc += hit.T * up.T;
-        rawc += hit.L;
+        let scale = weights[c] / f32(childCount);
+        L += (hit.L + hit.T * up.L) * scale;
+        T += hit.T * up.T * scale;
+        raw += hit.L * scale;
       }
-      let scale = weights[c] / f32(childCount);
-      L += Lc * scale;
-      T += Tc * scale;
-      raw += rawc * scale;
     }
     return Merged(L, T, raw);
   }
