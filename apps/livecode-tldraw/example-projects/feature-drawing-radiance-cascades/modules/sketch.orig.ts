@@ -9,6 +9,7 @@ import {
   type MergeMode,
   type RadianceCascadeConfig,
   RadianceCascadeRenderer,
+  type ToneMap,
 } from "../lib/radiance-cascades/mod.ts";
 
 /**
@@ -32,6 +33,7 @@ export const params = canvasParams(
     render: {
       scale: 1,
       exposure: 1,
+      toneMap: "aces",
       view: "irradiance",
       debugCascade: 0,
     },
@@ -54,6 +56,10 @@ export const params = canvasParams(
     render: {
       scale: { label: "render scale", min: 0.25, max: 2, step: 0.25 },
       exposure: { label: "exposure", min: 0.05, max: 8, step: 0.05 },
+      toneMap: {
+        label: "tone map",
+        options: { ACES: "aces", "soft (1 - 1/(1+x)^2.5)": "soft" },
+      },
       view: {
         label: "view",
         options: {
@@ -272,11 +278,11 @@ function startRenderer(surface: ReturnType<typeof canvasSurface>): Running {
         : view === "cascadeRaw"
         ? cascade.raw
         : views[view] ?? views.irradiance;
-      presenter.present(
-        source,
-        VIEW_MODES[view] ?? "hdr",
-        params.render.exposure,
-      );
+      presenter.present(source, {
+        mode: VIEW_MODES[view] ?? "hdr",
+        exposure: params.render.exposure,
+        toneMap: params.render.toneMap as ToneMap,
+      });
     };
     frame = requestAnimationFrame(tick);
   };
