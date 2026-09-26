@@ -25,8 +25,10 @@ import {
   type StrokeScene,
 } from "../geometry.ts";
 import {
+  bundleWorthIt,
   type CascadePlan,
   DEFAULT_CONFIG,
+  interleaveWorthIt,
   MERGE_MODES,
   planCascades,
   type RadianceCascadeConfig,
@@ -692,7 +694,8 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
 
   private levelPipeline(
     plan: ComputeLevelPlan,
-    isTop: boolean,
+    level: CascadeLevel,
+    upper: CascadeLevel | null,
     runtime: CascadeRuntime,
   ): GPUComputePipeline {
     const [tx, ty, dw] = plan.workgroup;
@@ -702,7 +705,9 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
       DW: dw,
       REDUCE: plan.reduce ? 1 : 0,
       MERGE_MODE: runtime.mergeMode,
-      IS_TOP: isTop ? 1 : 0,
+      IS_TOP: upper ? 0 : 1,
+      BUNDLE: this.options.bundle && bundleWorthIt(level, upper) ? 1 : 0,
+      INTERLEAVE: this.options.interleave && interleaveWorthIt(level) ? 1 : 0,
       PRE_AVERAGE: runtime.preAverage ? 1 : 0,
       DISTANCE_FIELD: runtime.useDistanceField ? 1 : 0,
       USE_PATCH: plan.patch ? 1 : 0,
@@ -774,7 +779,8 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
         plan: cplan,
         pipeline: this.levelPipeline(
           cplan,
-          i === plan.levels.length - 1,
+          level,
+          plan.levels[i + 1] ?? null,
           runtime,
         ),
         uniform: device.createBuffer({
@@ -836,7 +842,8 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
       state.plan = computePlans[i];
       state.pipeline = this.levelPipeline(
         state.plan,
-        i === this.levels.length - 1,
+        state.level,
+        this.levels[i + 1]?.level ?? null,
         runtime,
       );
       state.bindGroup = null;

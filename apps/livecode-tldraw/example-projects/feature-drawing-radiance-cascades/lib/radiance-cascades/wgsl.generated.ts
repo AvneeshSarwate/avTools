@@ -129,7 +129,15 @@ struct CascadeUniforms {
   stepSize: f32,
   intervalOverlap: f32,
   maxSteps: f32,
+  pad0: f32,
+  pad1: f32,
+  pad2: f32,
+  pad3: f32,
 };
+// Per-level pipeline constants (renderer.ts, bundleWorthIt / interleaveWorthIt):
+// a uniform flag would keep both paths' registers live in every level.
+override BUNDLE: bool = false;
+override INTERLEAVE: bool = false;
 @group(0) @binding(0) var<uniform> u: CascadeUniforms;
 @group(0) @binding(1) var emissionTex: texture_2d<f32>;
 @group(0) @binding(2) var transmittanceTex: texture_2d<f32>;
@@ -231,6 +239,195 @@ fn march(origin: vec2f, to: vec2f, mp: MarchParams, originDistance: f32) -> Hit 
   return Hit(L, T);
 }
 
+/// The free-space prefix shared by rays from one origin: while the free
+/// sphere at a point of the mean ray still covers every ray (their unit
+/// directions are within \`spread\`, a chord length, of \`meanDir\`), advance
+/// all of them at once. Nothing accumulates in free space, so a ray marching
+/// on from its point at \`t\` gets what it would have marching from the
+/// origin, with a fraction of the dependent distance loads.
+struct Bundle {
+  t: f32,
+  /// A lower bound on the distance field at every ray's point at \`t\`.
+  originDistance: f32,
+};
+
+fn marchBundle(origin: vec2f, meanDir: vec2f, spread: f32, maxT: f32, mp: MarchParams, originDistance: f32) -> Bundle {
+  if (!mp.useDistanceField || maxT <= 0.0 || !inBounds(origin, mp.sceneSize)) {
+    return Bundle(0.0, originDistance);
+  }
+  var t = 0.0;
+  var d = originDistance;
+  for (var i = 0; i < mp.maxSteps; i++) {
+    let c = origin + meanDir * t;
+    if (i > 0 || d < 0.0) {
+      if (!inBounds(c, mp.sceneSize)) {
+        return Bundle(t, -1.0);
+      }
+      d = sceneDistance(vec2i(floor(c)));
+    }
+    // Every ray's point at t is within t * spread of c.
+    let bound = d - t * spread;
+    if (bound <= 0.5) {
+      return Bundle(t, bound);
+    }
+    // Points at t' <= t + step stay inside the sphere of radius d at c:
+    // t' * spread + (t' - t) < d.
+    let step = bound / (1.0 + spread);
+    if (t + step >= maxT) {
+      return Bundle(maxT, -1.0);
+    }
+    t += step;
+  }
+  return Bundle(t, -1.0);
+}
+
+/// Four rays from one origin marched in lockstep: each iteration advances
+/// every unfinished ray one step, so a lane has up to four independent
+/// distance loads in flight instead of a serial chain. Same result as four
+/// \`march\` calls.
+struct Hit4 {
+  L0: vec3f, T0: vec3f,
+  L1: vec3f, T1: vec3f,
+  L2: vec3f, T2: vec3f,
+  L3: vec3f, T3: vec3f,
+};
+
+fn rayExit(origin: vec2f, dir: vec2f, len: f32, size: vec2f) -> f32 {
+  let invDir = 1.0 / dir;
+  let far = max((vec2f(0.0) - origin) * invDir, (size - origin) * invDir);
+  return min(len, min(select(far.x, 1e30, dir.x == 0.0), select(far.y, 1e30, dir.y == 0.0)));
+}
+
+fn march4(origin: vec2f, to0: vec2f, to1: vec2f, to2: vec2f, to3: vec2f, mp: MarchParams, originDistance: f32) -> Hit4 {
+  var out = Hit4(
+    vec3f(0.0), vec3f(1.0), vec3f(0.0), vec3f(1.0),
+    vec3f(0.0), vec3f(1.0), vec3f(0.0), vec3f(1.0),
+  );
+  if (!inBounds(origin, mp.sceneSize)) {
+    return out;
+  }
+  let d0 = to0 - origin;
+  let d1 = to1 - origin;
+  let d2 = to2 - origin;
+  let d3 = to3 - origin;
+  let len = vec4f(length(d0), length(d1), length(d2), length(d3));
+  let dir0 = d0 / max(len.x, 1e-6);
+  let dir1 = d1 / max(len.y, 1e-6);
+  let dir2 = d2 / max(len.z, 1e-6);
+  let dir3 = d3 / max(len.w, 1e-6);
+  let tExit = vec4f(
+    rayExit(origin, dir0, len.x, mp.sceneSize),
+    rayExit(origin, dir1, len.y, mp.sceneSize),
+    rayExit(origin, dir2, len.z, mp.sceneSize),
+    rayExit(origin, dir3, len.w, mp.sceneSize),
+  );
+  var t = vec4f(0.0);
+  if (mp.useDistanceField && originDistance > 0.5) {
+    t = vec4f(originDistance);
+  }
+  // A ray is done once t >= tExit or its transmittance is gone.
+  var done = t >= tExit;
+  for (var i = 0; i < mp.maxSteps; i++) {
+    if (all(done)) { break; }
+    let p0 = origin + dir0 * t.x;
+    let p1 = origin + dir1 * t.y;
+    let p2 = origin + dir2 * t.z;
+    let p3 = origin + dir3 * t.w;
+    let x0 = vec2i(floor(p0));
+    let x1 = vec2i(floor(p1));
+    let x2 = vec2i(floor(p2));
+    let x3 = vec2i(floor(p3));
+    // The four loads are independent: issue them together.
+    var dist = vec4f(0.0);
+    if (mp.useDistanceField) {
+      dist = vec4f(
+        select(0.0, sceneDistance(x0), !done.x),
+        select(0.0, sceneDistance(x1), !done.y),
+        select(0.0, sceneDistance(x2), !done.z),
+        select(0.0, sceneDistance(x3), !done.w),
+      );
+    }
+    let skip = dist > vec4f(0.5);
+    // Ray 0.
+    if (!done.x) {
+      if (skip.x) { t.x += max(dist.x, 0.5); }
+      else {
+        let ds = min(mp.stepSize, len.x - t.x);
+        let m = sceneMedium(x0);
+        let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
+        if (ds == 1.0) { out.L0 += out.T0 * m.E; out.T0 *= tau; }
+        else {
+          let tauDs = pow(tau, vec3f(ds));
+          let clear = tau > vec3f(0.999);
+          out.L0 += out.T0 * m.E * select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
+          out.T0 *= tauDs;
+        }
+        if (max(out.T0.r, max(out.T0.g, out.T0.b)) < 0.002) { out.T0 = vec3f(0.0); done.x = true; }
+        t.x += ds;
+      }
+      done.x = done.x || t.x >= tExit.x;
+    }
+    // Ray 1.
+    if (!done.y) {
+      if (skip.y) { t.y += max(dist.y, 0.5); }
+      else {
+        let ds = min(mp.stepSize, len.y - t.y);
+        let m = sceneMedium(x1);
+        let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
+        if (ds == 1.0) { out.L1 += out.T1 * m.E; out.T1 *= tau; }
+        else {
+          let tauDs = pow(tau, vec3f(ds));
+          let clear = tau > vec3f(0.999);
+          out.L1 += out.T1 * m.E * select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
+          out.T1 *= tauDs;
+        }
+        if (max(out.T1.r, max(out.T1.g, out.T1.b)) < 0.002) { out.T1 = vec3f(0.0); done.y = true; }
+        t.y += ds;
+      }
+      done.y = done.y || t.y >= tExit.y;
+    }
+    // Ray 2.
+    if (!done.z) {
+      if (skip.z) { t.z += max(dist.z, 0.5); }
+      else {
+        let ds = min(mp.stepSize, len.z - t.z);
+        let m = sceneMedium(x2);
+        let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
+        if (ds == 1.0) { out.L2 += out.T2 * m.E; out.T2 *= tau; }
+        else {
+          let tauDs = pow(tau, vec3f(ds));
+          let clear = tau > vec3f(0.999);
+          out.L2 += out.T2 * m.E * select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
+          out.T2 *= tauDs;
+        }
+        if (max(out.T2.r, max(out.T2.g, out.T2.b)) < 0.002) { out.T2 = vec3f(0.0); done.z = true; }
+        t.z += ds;
+      }
+      done.z = done.z || t.z >= tExit.z;
+    }
+    // Ray 3.
+    if (!done.w) {
+      if (skip.w) { t.w += max(dist.w, 0.5); }
+      else {
+        let ds = min(mp.stepSize, len.w - t.w);
+        let m = sceneMedium(x3);
+        let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
+        if (ds == 1.0) { out.L3 += out.T3 * m.E; out.T3 *= tau; }
+        else {
+          let tauDs = pow(tau, vec3f(ds));
+          let clear = tau > vec3f(0.999);
+          out.L3 += out.T3 * m.E * select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
+          out.T3 *= tauDs;
+        }
+        if (max(out.T3.r, max(out.T3.g, out.T3.b)) < 0.002) { out.T3 = vec3f(0.0); done.w = true; }
+        t.w += ds;
+      }
+      done.w = done.w || t.w >= tExit.w;
+    }
+  }
+  return out;
+}
+
 
 fn sceneDistance(texel: vec2i) -> f32 {
   return textureLoad(distanceTex, texel, 0).r;
@@ -322,15 +519,64 @@ fn castMerged(center: vec2f, d: i32, start: vec2f, startDistance: f32) -> Merged
       let stored = select(d, d * B + k, upperPerDir);
       let wc = select(w, dirOf(f32(d * B + k), u.upperRayCount), upperPerDir);
       let end = wc * t1;
-      for (var c = 0; c < 4; c++) {
-        let q = upperProbe(base, c);
-        let qCenter = (vec2f(q) + 0.5) * u.upperSpacing;
-        let hit = march(start, qCenter + end, mp, startDistance);
-        let up = upperSample(q, stored);
-        let scale = weights[c] / f32(childCount);
-        L += (hit.L + hit.T * up.L) * scale;
-        T += hit.T * up.T * scale;
-        raw += hit.L * scale;
+      // Far levels: the four corner rays share the origin and diverge
+      // slowly, so their free-space prefix is traced once (renderer.ts,
+      // bundleWorthIt).
+      var bundle = Bundle(0.0, startDistance);
+      if (BUNDLE) {
+        var meanDir = vec2f(0.0);
+        var maxT = 1e30;
+        for (var c = 0; c < 4; c++) {
+          let e = (vec2f(upperProbe(base, c)) + 0.5) * u.upperSpacing + end;
+          let len = length(e - start);
+          meanDir += (e - start) / max(len, 1e-6);
+          maxT = min(maxT, len);
+        }
+        meanDir = normalize(meanDir);
+        var spread = 0.0;
+        for (var c = 0; c < 4; c++) {
+          let e = (vec2f(upperProbe(base, c)) + 0.5) * u.upperSpacing + end;
+          spread = max(spread, length(normalize(e - start) - meanDir));
+        }
+        bundle = marchBundle(start, meanDir, spread, maxT, mp, startDistance);
+      }
+      if (INTERLEAVE && !BUNDLE) {
+        // Short levels: the four corner rays in lockstep.
+        let q0 = upperProbe(base, 0);
+        let q1 = upperProbe(base, 1);
+        let q2 = upperProbe(base, 2);
+        let q3 = upperProbe(base, 3);
+        let h = march4(
+          start,
+          (vec2f(q0) + 0.5) * u.upperSpacing + end,
+          (vec2f(q1) + 0.5) * u.upperSpacing + end,
+          (vec2f(q2) + 0.5) * u.upperSpacing + end,
+          (vec2f(q3) + 0.5) * u.upperSpacing + end,
+          mp,
+          startDistance,
+        );
+        let inv = 1.0 / f32(childCount);
+        let u0 = upperSample(q0, stored);
+        let u1 = upperSample(q1, stored);
+        let u2 = upperSample(q2, stored);
+        let u3 = upperSample(q3, stored);
+        L += ((h.L0 + h.T0 * u0.L) * weights[0] + (h.L1 + h.T1 * u1.L) * weights[1]
+          + (h.L2 + h.T2 * u2.L) * weights[2] + (h.L3 + h.T3 * u3.L) * weights[3]) * inv;
+        T += (h.T0 * u0.T * weights[0] + h.T1 * u1.T * weights[1]
+          + h.T2 * u2.T * weights[2] + h.T3 * u3.T * weights[3]) * inv;
+        raw += (h.L0 * weights[0] + h.L1 * weights[1] + h.L2 * weights[2] + h.L3 * weights[3]) * inv;
+      } else {
+        for (var c = 0; c < 4; c++) {
+          let q = upperProbe(base, c);
+          let qCenter = (vec2f(q) + 0.5) * u.upperSpacing;
+          let e = qCenter + end;
+          let hit = march(start + normalize(e - start) * bundle.t, e, mp, bundle.originDistance);
+          let up = upperSample(q, stored);
+          let scale = weights[c] / f32(childCount);
+          L += (hit.L + hit.T * up.L) * scale;
+          T += hit.T * up.T * scale;
+          raw += hit.L * scale;
+        }
       }
     }
     return Merged(L, T, raw);
@@ -594,6 +840,10 @@ override MERGE_MODE: u32 = 1u;
 override IS_TOP: bool = false;
 override PRE_AVERAGE: bool = false;
 override DISTANCE_FIELD: bool = true;
+/// Bundle-trace the bilinear-fix corner rays (far levels; renderer.ts, bundleWorthIt).
+override BUNDLE: bool = false;
+/// March the four corner rays in lockstep (march4) for memory-level parallelism.
+override INTERLEAVE: bool = true;
 override USE_PATCH: bool = false;
 override PATCH_W: u32 = 1u;
 override PATCH_H: u32 = 1u;
@@ -765,6 +1015,195 @@ fn march(origin: vec2f, to: vec2f, mp: MarchParams, originDistance: f32) -> Hit 
   return Hit(L, T);
 }
 
+/// The free-space prefix shared by rays from one origin: while the free
+/// sphere at a point of the mean ray still covers every ray (their unit
+/// directions are within \`spread\`, a chord length, of \`meanDir\`), advance
+/// all of them at once. Nothing accumulates in free space, so a ray marching
+/// on from its point at \`t\` gets what it would have marching from the
+/// origin, with a fraction of the dependent distance loads.
+struct Bundle {
+  t: f32,
+  /// A lower bound on the distance field at every ray's point at \`t\`.
+  originDistance: f32,
+};
+
+fn marchBundle(origin: vec2f, meanDir: vec2f, spread: f32, maxT: f32, mp: MarchParams, originDistance: f32) -> Bundle {
+  if (!mp.useDistanceField || maxT <= 0.0 || !inBounds(origin, mp.sceneSize)) {
+    return Bundle(0.0, originDistance);
+  }
+  var t = 0.0;
+  var d = originDistance;
+  for (var i = 0; i < mp.maxSteps; i++) {
+    let c = origin + meanDir * t;
+    if (i > 0 || d < 0.0) {
+      if (!inBounds(c, mp.sceneSize)) {
+        return Bundle(t, -1.0);
+      }
+      d = sceneDistance(vec2i(floor(c)));
+    }
+    // Every ray's point at t is within t * spread of c.
+    let bound = d - t * spread;
+    if (bound <= 0.5) {
+      return Bundle(t, bound);
+    }
+    // Points at t' <= t + step stay inside the sphere of radius d at c:
+    // t' * spread + (t' - t) < d.
+    let step = bound / (1.0 + spread);
+    if (t + step >= maxT) {
+      return Bundle(maxT, -1.0);
+    }
+    t += step;
+  }
+  return Bundle(t, -1.0);
+}
+
+/// Four rays from one origin marched in lockstep: each iteration advances
+/// every unfinished ray one step, so a lane has up to four independent
+/// distance loads in flight instead of a serial chain. Same result as four
+/// \`march\` calls.
+struct Hit4 {
+  L0: vec3f, T0: vec3f,
+  L1: vec3f, T1: vec3f,
+  L2: vec3f, T2: vec3f,
+  L3: vec3f, T3: vec3f,
+};
+
+fn rayExit(origin: vec2f, dir: vec2f, len: f32, size: vec2f) -> f32 {
+  let invDir = 1.0 / dir;
+  let far = max((vec2f(0.0) - origin) * invDir, (size - origin) * invDir);
+  return min(len, min(select(far.x, 1e30, dir.x == 0.0), select(far.y, 1e30, dir.y == 0.0)));
+}
+
+fn march4(origin: vec2f, to0: vec2f, to1: vec2f, to2: vec2f, to3: vec2f, mp: MarchParams, originDistance: f32) -> Hit4 {
+  var out = Hit4(
+    vec3f(0.0), vec3f(1.0), vec3f(0.0), vec3f(1.0),
+    vec3f(0.0), vec3f(1.0), vec3f(0.0), vec3f(1.0),
+  );
+  if (!inBounds(origin, mp.sceneSize)) {
+    return out;
+  }
+  let d0 = to0 - origin;
+  let d1 = to1 - origin;
+  let d2 = to2 - origin;
+  let d3 = to3 - origin;
+  let len = vec4f(length(d0), length(d1), length(d2), length(d3));
+  let dir0 = d0 / max(len.x, 1e-6);
+  let dir1 = d1 / max(len.y, 1e-6);
+  let dir2 = d2 / max(len.z, 1e-6);
+  let dir3 = d3 / max(len.w, 1e-6);
+  let tExit = vec4f(
+    rayExit(origin, dir0, len.x, mp.sceneSize),
+    rayExit(origin, dir1, len.y, mp.sceneSize),
+    rayExit(origin, dir2, len.z, mp.sceneSize),
+    rayExit(origin, dir3, len.w, mp.sceneSize),
+  );
+  var t = vec4f(0.0);
+  if (mp.useDistanceField && originDistance > 0.5) {
+    t = vec4f(originDistance);
+  }
+  // A ray is done once t >= tExit or its transmittance is gone.
+  var done = t >= tExit;
+  for (var i = 0; i < mp.maxSteps; i++) {
+    if (all(done)) { break; }
+    let p0 = origin + dir0 * t.x;
+    let p1 = origin + dir1 * t.y;
+    let p2 = origin + dir2 * t.z;
+    let p3 = origin + dir3 * t.w;
+    let x0 = vec2i(floor(p0));
+    let x1 = vec2i(floor(p1));
+    let x2 = vec2i(floor(p2));
+    let x3 = vec2i(floor(p3));
+    // The four loads are independent: issue them together.
+    var dist = vec4f(0.0);
+    if (mp.useDistanceField) {
+      dist = vec4f(
+        select(0.0, sceneDistance(x0), !done.x),
+        select(0.0, sceneDistance(x1), !done.y),
+        select(0.0, sceneDistance(x2), !done.z),
+        select(0.0, sceneDistance(x3), !done.w),
+      );
+    }
+    let skip = dist > vec4f(0.5);
+    // Ray 0.
+    if (!done.x) {
+      if (skip.x) { t.x += max(dist.x, 0.5); }
+      else {
+        let ds = min(mp.stepSize, len.x - t.x);
+        let m = sceneMedium(x0);
+        let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
+        if (ds == 1.0) { out.L0 += out.T0 * m.E; out.T0 *= tau; }
+        else {
+          let tauDs = pow(tau, vec3f(ds));
+          let clear = tau > vec3f(0.999);
+          out.L0 += out.T0 * m.E * select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
+          out.T0 *= tauDs;
+        }
+        if (max(out.T0.r, max(out.T0.g, out.T0.b)) < 0.002) { out.T0 = vec3f(0.0); done.x = true; }
+        t.x += ds;
+      }
+      done.x = done.x || t.x >= tExit.x;
+    }
+    // Ray 1.
+    if (!done.y) {
+      if (skip.y) { t.y += max(dist.y, 0.5); }
+      else {
+        let ds = min(mp.stepSize, len.y - t.y);
+        let m = sceneMedium(x1);
+        let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
+        if (ds == 1.0) { out.L1 += out.T1 * m.E; out.T1 *= tau; }
+        else {
+          let tauDs = pow(tau, vec3f(ds));
+          let clear = tau > vec3f(0.999);
+          out.L1 += out.T1 * m.E * select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
+          out.T1 *= tauDs;
+        }
+        if (max(out.T1.r, max(out.T1.g, out.T1.b)) < 0.002) { out.T1 = vec3f(0.0); done.y = true; }
+        t.y += ds;
+      }
+      done.y = done.y || t.y >= tExit.y;
+    }
+    // Ray 2.
+    if (!done.z) {
+      if (skip.z) { t.z += max(dist.z, 0.5); }
+      else {
+        let ds = min(mp.stepSize, len.z - t.z);
+        let m = sceneMedium(x2);
+        let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
+        if (ds == 1.0) { out.L2 += out.T2 * m.E; out.T2 *= tau; }
+        else {
+          let tauDs = pow(tau, vec3f(ds));
+          let clear = tau > vec3f(0.999);
+          out.L2 += out.T2 * m.E * select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
+          out.T2 *= tauDs;
+        }
+        if (max(out.T2.r, max(out.T2.g, out.T2.b)) < 0.002) { out.T2 = vec3f(0.0); done.z = true; }
+        t.z += ds;
+      }
+      done.z = done.z || t.z >= tExit.z;
+    }
+    // Ray 3.
+    if (!done.w) {
+      if (skip.w) { t.w += max(dist.w, 0.5); }
+      else {
+        let ds = min(mp.stepSize, len.w - t.w);
+        let m = sceneMedium(x3);
+        let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
+        if (ds == 1.0) { out.L3 += out.T3 * m.E; out.T3 *= tau; }
+        else {
+          let tauDs = pow(tau, vec3f(ds));
+          let clear = tau > vec3f(0.999);
+          out.L3 += out.T3 * m.E * select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
+          out.T3 *= tauDs;
+        }
+        if (max(out.T3.r, max(out.T3.g, out.T3.b)) < 0.002) { out.T3 = vec3f(0.0); done.w = true; }
+        t.w += ds;
+      }
+      done.w = done.w || t.w >= tExit.w;
+    }
+  }
+  return out;
+}
+
 
 fn sceneDistance(texel: vec2i) -> f32 {
   if (inPatch(texel)) {
@@ -878,15 +1317,62 @@ fn castMerged(center: vec2f, d: i32, start: vec2f, startDistance: f32) -> Merged
       let stored = select(d, d * B + k, upperPerDir);
       let wc = select(w, upperRayDir(u32(d * B + k)), upperPerDir);
       let end = wc * t1;
-      for (var c = 0; c < 4; c++) {
-        let q = upperProbe(base, c);
-        let qCenter = (vec2f(q) + 0.5) * u.upperSpacing;
-        let hit = march(start, qCenter + end, mp, startDistance);
-        let up = upperSample(q, u32(stored));
-        let scale = weights[c] / f32(childCount);
-        L += (hit.L + hit.T * up.L) * scale;
-        T += hit.T * up.T * scale;
-        raw += hit.L * scale;
+      // Far levels: the four corner rays share the origin and diverge
+      // slowly, so their free-space prefix is traced once.
+      var bundle = Bundle(0.0, startDistance);
+      if (BUNDLE) {
+        var meanDir = vec2f(0.0);
+        var maxT = 1e30;
+        for (var c = 0; c < 4; c++) {
+          let e = (vec2f(upperProbe(base, c)) + 0.5) * u.upperSpacing + end;
+          let len = length(e - start);
+          meanDir += (e - start) / max(len, 1e-6);
+          maxT = min(maxT, len);
+        }
+        meanDir = normalize(meanDir);
+        var spread = 0.0;
+        for (var c = 0; c < 4; c++) {
+          let e = (vec2f(upperProbe(base, c)) + 0.5) * u.upperSpacing + end;
+          spread = max(spread, length(normalize(e - start) - meanDir));
+        }
+        bundle = marchBundle(start, meanDir, spread, maxT, mp, startDistance);
+      }
+      if (INTERLEAVE && !BUNDLE) {
+        let q0 = upperProbe(base, 0);
+        let q1 = upperProbe(base, 1);
+        let q2 = upperProbe(base, 2);
+        let q3 = upperProbe(base, 3);
+        let h = march4(
+          start,
+          (vec2f(q0) + 0.5) * u.upperSpacing + end,
+          (vec2f(q1) + 0.5) * u.upperSpacing + end,
+          (vec2f(q2) + 0.5) * u.upperSpacing + end,
+          (vec2f(q3) + 0.5) * u.upperSpacing + end,
+          mp,
+          startDistance,
+        );
+        let inv = 1.0 / f32(childCount);
+        let u0 = upperSample(q0, u32(stored));
+        let u1 = upperSample(q1, u32(stored));
+        let u2 = upperSample(q2, u32(stored));
+        let u3 = upperSample(q3, u32(stored));
+        L += ((h.L0 + h.T0 * u0.L) * weights[0] + (h.L1 + h.T1 * u1.L) * weights[1]
+          + (h.L2 + h.T2 * u2.L) * weights[2] + (h.L3 + h.T3 * u3.L) * weights[3]) * inv;
+        T += (h.T0 * u0.T * weights[0] + h.T1 * u1.T * weights[1]
+          + h.T2 * u2.T * weights[2] + h.T3 * u3.T * weights[3]) * inv;
+        raw += (h.L0 * weights[0] + h.L1 * weights[1] + h.L2 * weights[2] + h.L3 * weights[3]) * inv;
+      } else {
+        for (var c = 0; c < 4; c++) {
+          let q = upperProbe(base, c);
+          let qCenter = (vec2f(q) + 0.5) * u.upperSpacing;
+          let e = qCenter + end;
+          let hit = march(start + normalize(e - start) * bundle.t, e, mp, bundle.originDistance);
+          let up = upperSample(q, u32(stored));
+          let scale = weights[c] / f32(childCount);
+          L += (hit.L + hit.T * up.L) * scale;
+          T += hit.T * up.T * scale;
+          raw += hit.L * scale;
+        }
       }
     }
     return Merged(L, T, raw);
@@ -1672,6 +2158,195 @@ fn march(origin: vec2f, to: vec2f, mp: MarchParams, originDistance: f32) -> Hit 
     t += ds;
   }
   return Hit(L, T);
+}
+
+/// The free-space prefix shared by rays from one origin: while the free
+/// sphere at a point of the mean ray still covers every ray (their unit
+/// directions are within \`spread\`, a chord length, of \`meanDir\`), advance
+/// all of them at once. Nothing accumulates in free space, so a ray marching
+/// on from its point at \`t\` gets what it would have marching from the
+/// origin, with a fraction of the dependent distance loads.
+struct Bundle {
+  t: f32,
+  /// A lower bound on the distance field at every ray's point at \`t\`.
+  originDistance: f32,
+};
+
+fn marchBundle(origin: vec2f, meanDir: vec2f, spread: f32, maxT: f32, mp: MarchParams, originDistance: f32) -> Bundle {
+  if (!mp.useDistanceField || maxT <= 0.0 || !inBounds(origin, mp.sceneSize)) {
+    return Bundle(0.0, originDistance);
+  }
+  var t = 0.0;
+  var d = originDistance;
+  for (var i = 0; i < mp.maxSteps; i++) {
+    let c = origin + meanDir * t;
+    if (i > 0 || d < 0.0) {
+      if (!inBounds(c, mp.sceneSize)) {
+        return Bundle(t, -1.0);
+      }
+      d = sceneDistance(vec2i(floor(c)));
+    }
+    // Every ray's point at t is within t * spread of c.
+    let bound = d - t * spread;
+    if (bound <= 0.5) {
+      return Bundle(t, bound);
+    }
+    // Points at t' <= t + step stay inside the sphere of radius d at c:
+    // t' * spread + (t' - t) < d.
+    let step = bound / (1.0 + spread);
+    if (t + step >= maxT) {
+      return Bundle(maxT, -1.0);
+    }
+    t += step;
+  }
+  return Bundle(t, -1.0);
+}
+
+/// Four rays from one origin marched in lockstep: each iteration advances
+/// every unfinished ray one step, so a lane has up to four independent
+/// distance loads in flight instead of a serial chain. Same result as four
+/// \`march\` calls.
+struct Hit4 {
+  L0: vec3f, T0: vec3f,
+  L1: vec3f, T1: vec3f,
+  L2: vec3f, T2: vec3f,
+  L3: vec3f, T3: vec3f,
+};
+
+fn rayExit(origin: vec2f, dir: vec2f, len: f32, size: vec2f) -> f32 {
+  let invDir = 1.0 / dir;
+  let far = max((vec2f(0.0) - origin) * invDir, (size - origin) * invDir);
+  return min(len, min(select(far.x, 1e30, dir.x == 0.0), select(far.y, 1e30, dir.y == 0.0)));
+}
+
+fn march4(origin: vec2f, to0: vec2f, to1: vec2f, to2: vec2f, to3: vec2f, mp: MarchParams, originDistance: f32) -> Hit4 {
+  var out = Hit4(
+    vec3f(0.0), vec3f(1.0), vec3f(0.0), vec3f(1.0),
+    vec3f(0.0), vec3f(1.0), vec3f(0.0), vec3f(1.0),
+  );
+  if (!inBounds(origin, mp.sceneSize)) {
+    return out;
+  }
+  let d0 = to0 - origin;
+  let d1 = to1 - origin;
+  let d2 = to2 - origin;
+  let d3 = to3 - origin;
+  let len = vec4f(length(d0), length(d1), length(d2), length(d3));
+  let dir0 = d0 / max(len.x, 1e-6);
+  let dir1 = d1 / max(len.y, 1e-6);
+  let dir2 = d2 / max(len.z, 1e-6);
+  let dir3 = d3 / max(len.w, 1e-6);
+  let tExit = vec4f(
+    rayExit(origin, dir0, len.x, mp.sceneSize),
+    rayExit(origin, dir1, len.y, mp.sceneSize),
+    rayExit(origin, dir2, len.z, mp.sceneSize),
+    rayExit(origin, dir3, len.w, mp.sceneSize),
+  );
+  var t = vec4f(0.0);
+  if (mp.useDistanceField && originDistance > 0.5) {
+    t = vec4f(originDistance);
+  }
+  // A ray is done once t >= tExit or its transmittance is gone.
+  var done = t >= tExit;
+  for (var i = 0; i < mp.maxSteps; i++) {
+    if (all(done)) { break; }
+    let p0 = origin + dir0 * t.x;
+    let p1 = origin + dir1 * t.y;
+    let p2 = origin + dir2 * t.z;
+    let p3 = origin + dir3 * t.w;
+    let x0 = vec2i(floor(p0));
+    let x1 = vec2i(floor(p1));
+    let x2 = vec2i(floor(p2));
+    let x3 = vec2i(floor(p3));
+    // The four loads are independent: issue them together.
+    var dist = vec4f(0.0);
+    if (mp.useDistanceField) {
+      dist = vec4f(
+        select(0.0, sceneDistance(x0), !done.x),
+        select(0.0, sceneDistance(x1), !done.y),
+        select(0.0, sceneDistance(x2), !done.z),
+        select(0.0, sceneDistance(x3), !done.w),
+      );
+    }
+    let skip = dist > vec4f(0.5);
+    // Ray 0.
+    if (!done.x) {
+      if (skip.x) { t.x += max(dist.x, 0.5); }
+      else {
+        let ds = min(mp.stepSize, len.x - t.x);
+        let m = sceneMedium(x0);
+        let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
+        if (ds == 1.0) { out.L0 += out.T0 * m.E; out.T0 *= tau; }
+        else {
+          let tauDs = pow(tau, vec3f(ds));
+          let clear = tau > vec3f(0.999);
+          out.L0 += out.T0 * m.E * select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
+          out.T0 *= tauDs;
+        }
+        if (max(out.T0.r, max(out.T0.g, out.T0.b)) < 0.002) { out.T0 = vec3f(0.0); done.x = true; }
+        t.x += ds;
+      }
+      done.x = done.x || t.x >= tExit.x;
+    }
+    // Ray 1.
+    if (!done.y) {
+      if (skip.y) { t.y += max(dist.y, 0.5); }
+      else {
+        let ds = min(mp.stepSize, len.y - t.y);
+        let m = sceneMedium(x1);
+        let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
+        if (ds == 1.0) { out.L1 += out.T1 * m.E; out.T1 *= tau; }
+        else {
+          let tauDs = pow(tau, vec3f(ds));
+          let clear = tau > vec3f(0.999);
+          out.L1 += out.T1 * m.E * select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
+          out.T1 *= tauDs;
+        }
+        if (max(out.T1.r, max(out.T1.g, out.T1.b)) < 0.002) { out.T1 = vec3f(0.0); done.y = true; }
+        t.y += ds;
+      }
+      done.y = done.y || t.y >= tExit.y;
+    }
+    // Ray 2.
+    if (!done.z) {
+      if (skip.z) { t.z += max(dist.z, 0.5); }
+      else {
+        let ds = min(mp.stepSize, len.z - t.z);
+        let m = sceneMedium(x2);
+        let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
+        if (ds == 1.0) { out.L2 += out.T2 * m.E; out.T2 *= tau; }
+        else {
+          let tauDs = pow(tau, vec3f(ds));
+          let clear = tau > vec3f(0.999);
+          out.L2 += out.T2 * m.E * select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
+          out.T2 *= tauDs;
+        }
+        if (max(out.T2.r, max(out.T2.g, out.T2.b)) < 0.002) { out.T2 = vec3f(0.0); done.z = true; }
+        t.z += ds;
+      }
+      done.z = done.z || t.z >= tExit.z;
+    }
+    // Ray 3.
+    if (!done.w) {
+      if (skip.w) { t.w += max(dist.w, 0.5); }
+      else {
+        let ds = min(mp.stepSize, len.w - t.w);
+        let m = sceneMedium(x3);
+        let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
+        if (ds == 1.0) { out.L3 += out.T3 * m.E; out.T3 *= tau; }
+        else {
+          let tauDs = pow(tau, vec3f(ds));
+          let clear = tau > vec3f(0.999);
+          out.L3 += out.T3 * m.E * select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
+          out.T3 *= tauDs;
+        }
+        if (max(out.T3.r, max(out.T3.g, out.T3.b)) < 0.002) { out.T3 = vec3f(0.0); done.w = true; }
+        t.w += ds;
+      }
+      done.w = done.w || t.w >= tExit.w;
+    }
+  }
+  return out;
 }
 
 

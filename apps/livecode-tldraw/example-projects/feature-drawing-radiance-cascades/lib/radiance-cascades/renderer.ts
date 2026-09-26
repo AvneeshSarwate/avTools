@@ -196,6 +196,33 @@ export function planCascades(
   };
 }
 
+/**
+ * Whether a level's bilinear-fix corner rays should share a bundle trace of
+ * their free-space prefix (march.wgsl, `marchBundle`). The four rays of a
+ * child diverge by about two upper spacings over the interval, so the
+ * bundle only pays where the interval is long against that: measured, from
+ * eight upper spacings up (the two farthest levels of the default plan);
+ * below, the setup costs more than the shared steps save.
+ */
+export function bundleWorthIt(
+  level: CascadeLevel,
+  upper: CascadeLevel | null,
+): boolean {
+  return upper !== null && level.intervalEnd >= 8 * upper.probeSpacing;
+}
+
+/**
+ * Whether a level's bilinear-fix corner rays should be marched in lockstep
+ * (march.wgsl, `march4`): four distance loads in flight per lane instead of
+ * a serial chain. Pays where marches are a few steps long and latency
+ * dominates: measured, intervals up to two probe spacings (cascade 0 of the
+ * default plan, whose rays are 2 px); on longer intervals the bookkeeping
+ * and the rays finishing at different times cost more.
+ */
+export function interleaveWorthIt(level: CascadeLevel): boolean {
+  return level.intervalEnd - level.intervalStart <= 2 * level.probeSpacing;
+}
+
 export interface CascadeViews {
   merged: GPUTextureView;
   raw: GPUTextureView;

@@ -24,6 +24,19 @@ export interface ComputeOptions {
   /** Probe tile width for cascades 1 and up; 0 picks a square tile. */
   tileWidth: number;
   /**
+   * Bundle-trace the bilinear-fix corner rays on far levels (renderer.ts,
+   * bundleWorthIt). Off by default here: with this backend's occupancy the
+   * far levels are not latency-bound, and the bundle's setup costs more
+   * than the shared loads save (it does pay in the fragment backend).
+   */
+  bundle: boolean;
+  /**
+   * March the four corner rays of a bilinear-fix child in lockstep on
+   * short-interval levels (renderer.ts, interleaveWorthIt), so a lane keeps
+   * four distance loads in flight instead of one.
+   */
+  interleave: boolean;
+  /**
    * Fuse cascade 0 with the gather (direction mean reduced in workgroup
    * memory, never stored). Off, cascade 0 is stored like the other levels
    * and a gather pass and the bounce read the store.
@@ -62,6 +75,8 @@ export const DEFAULT_COMPUTE_OPTIONS: ComputeOptions = {
   workgroupLanes: 64,
   reduceLanes: 64,
   tileWidth: 0,
+  bundle: false,
+  interleave: true,
   fuseCascade0: true,
   tileSize: 16,
   binCapacity: 128,

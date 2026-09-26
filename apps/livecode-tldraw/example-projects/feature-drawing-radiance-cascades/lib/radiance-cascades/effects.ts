@@ -13,6 +13,7 @@ import {
   SEGMENT_STRIDE,
   type StrokeScene,
 } from "./geometry.ts";
+import { bundleWorthIt, interleaveWorthIt } from "./renderer.ts";
 import {
   BOUNCE_WGSL,
   CASCADE_WGSL,
@@ -49,6 +50,7 @@ export function createFullscreenPipeline(
   source: string,
   formats: GPUTextureFormat[],
   fragmentEntry = "fs",
+  constants: Record<string, number> = {},
 ): GPURenderPipeline {
   const module = device.createShaderModule({ label, code: source });
   return device.createRenderPipeline({
@@ -59,6 +61,7 @@ export function createFullscreenPipeline(
       module,
       entryPoint: fragmentEntry,
       targets: formats.map((format) => ({ format })),
+      constants,
     },
     primitive: { topology: "triangle-list", cullMode: "none" },
   });
@@ -397,7 +400,7 @@ export class BounceEffect extends PassEffect {
   }
 }
 
-const CASCADE_UNIFORM_FLOATS = 28;
+const CASCADE_UNIFORM_FLOATS = 32;
 
 /**
  * One cascade level; input `upper` is the level above, absent at the top.
@@ -438,6 +441,7 @@ export class CascadeEffect extends PassEffect {
       CASCADE_WGSL,
       [HDR_FORMAT, HDR_FORMAT],
       "fsMerged",
+      this.pipelineConstants(),
     );
     this.uniformBuffer = device.createBuffer({
       label: `rc-cascade-${level.index}-uniforms`,
@@ -486,6 +490,8 @@ export class CascadeEffect extends PassEffect {
         `rc-cascade-${this.level.index}-raw`,
         CASCADE_WGSL,
         [HDR_FORMAT, HDR_FORMAT, HDR_FORMAT],
+        "fs",
+        this.pipelineConstants(),
       );
       this.rawTexture = createTargetTexture(
         this.device,
@@ -507,6 +513,14 @@ export class CascadeEffect extends PassEffect {
   get upper(): CascadeEffect | null {
     const upper = this.inputs.upper;
     return upper instanceof CascadeEffect ? upper : null;
+  }
+
+  /** Level-static specializations (renderer.ts, bundleWorthIt / interleaveWorthIt). */
+  private pipelineConstants(): Record<string, number> {
+    return {
+      BUNDLE: bundleWorthIt(this.level, this.upper?.level ?? null) ? 1 : 0,
+      INTERLEAVE: interleaveWorthIt(this.level) ? 1 : 0,
+    };
   }
 
   setRuntime(runtime: CascadeRuntime): void {
