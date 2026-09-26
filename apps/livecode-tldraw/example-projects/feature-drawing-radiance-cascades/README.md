@@ -99,7 +99,9 @@ wanted; its ACES tone map is the default here.
    in a separate tab from `projects.html`, or by hand with
    `/engine/` in one tab and
    `/index.html?serverBaseUrl=http://localhost:7777&projectPath=<absolute path>`
-   in another, then Run the module and watch the engine tab. Drag the sun:
+   in another, then Run the module and watch the engine tab, where a line
+   under the canvas reports render size, frame rate, and the cascade plan.
+   Drag the sun:
    the render follows mid-gesture. Switch
    the merge mode: vanilla leaks light into the boulder and rings the sun,
    the bilinear fix does neither. Set a shape's `transmittance` to

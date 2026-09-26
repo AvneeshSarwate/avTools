@@ -255,6 +255,32 @@ const dragPreviews = dragLog.filter((e) => e.kind === 'preview')
 check(dragPreviews.length >= 2 && dragPreviews.every((e) => e.upserts.length === 1 && e.upserts[0] === [...strokeIds][0]), `moving the stroke streamed it: ${JSON.stringify(dragPreviews.map((e) => e.upserts))}`)
 check(dragLog.some((e) => e.kind === 'update') && dragLog.at(-1).kind === 'end', 'the move committed and ended the gesture')
 
+// A transformer rotation streams too. Konva fires `transform` without
+// bubbling, so this only works when the preview listens on the transformer.
+const rotater = await page.evaluate(() => {
+  const tr = document.querySelector('handwriting-canvas').canvasState.layers.transformer
+  const anchor = tr.findOne('.rotater').getAbsolutePosition()
+  const box = tr.getClientRect()
+  return { anchor, center: { x: box.x + box.width / 2, y: box.y + box.height / 2 }, nodes: tr.nodes().length }
+})
+check(rotater.nodes === 1, `the moved stroke is under the transformer (${rotater.nodes} nodes)`)
+await readLog()
+const radius = Math.hypot(rotater.anchor.x - rotater.center.x, rotater.anchor.y - rotater.center.y)
+const angle0 = Math.atan2(rotater.anchor.y - rotater.center.y, rotater.anchor.x - rotater.center.x)
+await page.mouse.move(stageBox.x + rotater.anchor.x, stageBox.y + rotater.anchor.y)
+await page.mouse.down()
+for (let i = 1; i <= 12; i++) {
+  const a = angle0 + (i / 12) * 0.8
+  await page.mouse.move(stageBox.x + rotater.center.x + Math.cos(a) * radius, stageBox.y + rotater.center.y + Math.sin(a) * radius)
+  await page.waitForTimeout(25)
+}
+await page.mouse.up()
+await page.waitForTimeout(80)
+const rotateLog = await readLog()
+const rotatePreviews = rotateLog.filter((e) => e.kind === 'preview')
+check(rotatePreviews.length >= 2 && rotatePreviews.every((e) => e.upserts[0] === [...strokeIds][0]), `rotating the stroke streamed it: ${rotatePreviews.length} previews`)
+check(rotateLog.some((e) => e.kind === 'update') && rotateLog.at(-1).kind === 'end', 'the rotation committed and ended the gesture')
+
 await browser.close()
 
 if (result.error) { console.error(result.error); process.exit(1) }
