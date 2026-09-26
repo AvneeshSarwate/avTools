@@ -21,6 +21,7 @@ import type {
   ClientControlRequest,
   ClientControlResultMessage,
   CreateProjectRequest,
+  DrawingPatchRequest,
   EngineModeChangeRequest,
   EngineModeChangeResponse,
   EntityCreateRequest,
@@ -58,6 +59,8 @@ import type {
   SetPianoRollRequest,
   SetPianoRollCursorRequest,
   StopModuleRequest,
+  SyncActionMessage,
+  SyncActionResultMessage,
   SyncClientMessage,
   SyncEntity,
   SyncEntityChange,
@@ -68,6 +71,7 @@ import type {
 } from "./protocol.ts";
 import type {
   AnimationTimelineSetResult,
+  DrawingPatchResult,
   DrawingSetResult,
   EngineEntityActionResult,
   EngineEntityCapture,
@@ -93,6 +97,7 @@ import {
   analyzeProjectShadow,
   buildProjectImportGraph,
   collectTransitiveDependencies,
+  hashProjectLibraryClosure,
 } from "./project_shadow_analysis.ts";
 import {
   clearModulePianoRollLookups,
@@ -892,6 +897,14 @@ export async function createLivecodeVisualizerServer(
           request: requestBody,
         }) as DrawingSetResult,
       );
+    }
+    if (request.method === "POST" && url.pathname === "/drawing/patch") {
+      const requestBody = await request.json() as DrawingPatchRequest;
+      const result = await plane.execute({
+        kind: "drawingPatch",
+        request: requestBody,
+      }) as DrawingPatchResult;
+      return json(result, { status: result.ok ? 200 : result.status });
     }
     if (request.method === "GET" && url.pathname === "/signals/list") {
       return json(
@@ -2149,8 +2162,14 @@ export async function createLivecodeVisualizerServer(
     // be at runtime. The target is part of the cache key so a retargeted
     // project cannot reuse the other world's verdict.
     const engineTarget = effectiveEngineTarget(state);
+    // Project library files (relative imports that are not manifest modules)
+    // are part of the checked world too, so their edits must miss the cache.
+    const libraryHash = await hashProjectLibraryClosure({
+      projectRoot: state.root,
+      modules: sourceModules,
+    });
     const diagnosticsKey =
-      `${state.generation}:${engineTarget}:${projectSourceHash}`;
+      `${state.generation}:${engineTarget}:${projectSourceHash}:${libraryHash}`;
     if (lastDiagnostics?.diagnosticsKey === diagnosticsKey) {
       return lastDiagnostics.response;
     }
@@ -2307,6 +2326,10 @@ export async function createLivecodeVisualizerServer(
       });
       return;
     }
+    if (message?.type === "action") {
+      await handleSyncAction(state, message);
+      return;
+    }
     if (message?.type !== "subscribe") return;
 
     const entityTypes = Array.isArray(message.entityTypes)
@@ -2336,6 +2359,48 @@ export async function createLivecodeVisualizerServer(
       });
     }
     sendSyncMessage(state, { resets });
+  }
+
+  /**
+   * An engine op sent over the sync socket. The reply carries the op's result
+   * body as-is (a rejected edit is an `ok: false` body, as the in-process
+   * transports deliver it) and does not advance `seq`: it is not sync state.
+   */
+  async function handleSyncAction(
+    state: SyncSocketState,
+    message: SyncActionMessage,
+  ): Promise<void> {
+    const requestId = typeof message.requestId === "string"
+      ? message.requestId
+      : "";
+    let reply: SyncActionResultMessage;
+    try {
+      if (!requestId || !message.op || typeof message.op.kind !== "string") {
+        throw new Error("action needs a requestId and an op");
+      }
+      reply = {
+        type: "actionResult",
+        requestId,
+        ok: true,
+        body: await plane.execute(message.op),
+      };
+    } catch (error) {
+      reply = {
+        type: "actionResult",
+        requestId,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+    if (state.socket.readyState !== WebSocket.OPEN) return;
+    try {
+      state.socket.send(JSON.stringify(reply));
+    } catch (error) {
+      void log({
+        type: "syncActionReplyFailed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   function sendSyncMessage(

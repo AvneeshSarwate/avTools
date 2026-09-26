@@ -10,10 +10,13 @@
 
 import type { LivecodeEvent } from "./events.ts";
 import type { LaunchModuleRequest } from "./runtime.ts";
-import type { SetPianoRollRequest, SetPianoRollCursorRequest } from "./piano_roll.ts";
+import type {
+  SetPianoRollCursorRequest,
+  SetPianoRollRequest,
+} from "./piano_roll.ts";
 import type { SetParamsRequest } from "./params.ts";
 import type { SetAnimationTimelineRequest } from "./animation_timeline.ts";
-import type { SetDrawingRequest } from "./drawing.ts";
+import type { DrawingPatchRequest, SetDrawingRequest } from "./drawing.ts";
 import type {
   EntityCreateRequest,
   EntityDeleteRequest,
@@ -97,6 +100,7 @@ export type EngineOp =
   | { kind: "paramsSet"; request: SetParamsRequest }
   | { kind: "animationTimelineSet"; request: SetAnimationTimelineRequest }
   | { kind: "drawingSet"; request: SetDrawingRequest }
+  | { kind: "drawingPatch"; request: DrawingPatchRequest }
   | { kind: "signalsList" }
   | { kind: "entityCreate"; request: EntityCreateRequest }
   | { kind: "entityDuplicate"; request: EntityDuplicateRequest }

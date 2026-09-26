@@ -32,12 +32,26 @@ validation, so validate at mutation/load boundaries.
 ## 3. Implement and register the store
 
 A store owns validation, normalization, revisions, no-op behavior, and domain
-operations. Use `entity_store.ts` for the existing snapshot/sampling pattern;
-for large state with sparse edits, follow
-[`six_sines_store.ts`](../../../packages/livecode-engine/six_sines_store.ts)
-using [`tracked-state`](../../../packages/tracked-state/README.md). The latter
-is an exemplar, not a global switch: it exposes a flat numeric map and explicit
-preset replacement, so its gates do not cover every possible object shape.
+operations. Use `entity_store.ts` for the existing snapshot/sampling pattern.
+For large state with sparse edits there are two exemplars, and which one fits
+depends on where mutations come from:
+
+- Running code mutates a live object freely (Six Sines' parameter map):
+  follow [`six_sines_store.ts`](../../../packages/livecode-engine/six_sines_store.ts)
+  using [`tracked-state`](../../../packages/tracked-state/README.md), whose
+  proxy discovers what changed on drain. It exposes a flat numeric map and
+  explicit preset replacement, so its gates do not cover every object shape.
+- Every mutation comes through the store's own methods (the drawing document:
+  whole sets, node upserts and deletes): follow
+  [`drawing_store.ts`](../../../packages/livecode-engine/drawing_store.ts),
+  which records the path of each change itself and diffs a whole-document
+  set per node. Do not route such a kind through the tracker: reconciling a
+  document of a few thousand points through the proxy costs tens of
+  milliseconds per write, and reads through the proxy bake an order of
+  magnitude slower than plain objects, for changes the store already knows.
+
+Both deliver the same wire shape (`{name, patches}` after a full entity), so
+the client needs nothing per kind.
 
 Keep the integration formulaic:
 
@@ -85,6 +99,11 @@ Registration covers observation and optional durability, not writes. Add typed
 domain requests, `EngineOp`/`executeEngineOp` handling, and host routes or
 broadcast actions as needed. Use compare-and-set for whole-entity concurrent
 edits. A code-published kind may correctly have no client write operation.
+Client writes go through `engineAction`, which rides the open sync port on
+every transport and falls back to the HTTP route only before the port opens;
+a new host route family must also be added to `livecodeRoutePrefixes` in
+`apps/livecode-tldraw/vite.config.ts`, or the Vite dev client's fallback
+POSTs 404 against its own origin.
 
 The optional generic patch operation delegates to a registered kind's patch
 handler; it is not permission to mutate arbitrary entity paths. Observation

@@ -2,6 +2,8 @@ import type React from "react";
 import type {
   AnimationTimelineData,
   DrawingDocument,
+  DrawingNodeDelete,
+  DrawingNodeUpsert,
   NoteData,
   NoteDataInput,
 } from "@avtools/livecode-protocol";
@@ -46,15 +48,25 @@ export interface AnimationEditorComponentElement extends HTMLElement {
   getPlayheadMarkers?: () => PlayheadMarker[];
 }
 
+/** The `document-preview` event's detail: node edits streamed during a gesture. */
+export interface HandwritingCanvasPreview {
+  upserts: DrawingNodeUpsert[];
+  deletes: DrawingNodeDelete[];
+}
+
 /**
  * The imperative surface `<handwriting-canvas>` exposes. Documents are the
  * lossless form (`@avtools/drawing-document`); the element emits
  * `document-update` (detail `[DrawingDocument]`) on every committed edit and
- * never while a document is being pushed in.
+ * never while a document is being pushed in, and `document-preview`
+ * (detail `[HandwritingCanvasPreview]`) between `interaction-start` and
+ * `interaction-end`.
  */
 export interface HandwritingCanvasElement extends HTMLElement {
   width?: number | string;
   height?: number | string;
+  /** "document": the host owns the document and `state-update` is not emitted. */
+  mode?: "simple" | "document";
   showTimeline?: boolean;
   showVisualizations?: boolean;
   showSnapshots?: boolean;
@@ -77,7 +89,9 @@ declare module "react" {
         AnimationEditorComponentElement
       >;
       "handwriting-canvas": React.DetailedHTMLProps<
-        React.HTMLAttributes<HandwritingCanvasElement>,
+        React.HTMLAttributes<HandwritingCanvasElement> & {
+          mode?: "simple" | "document";
+        },
         HandwritingCanvasElement
       >;
     }

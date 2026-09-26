@@ -5,12 +5,12 @@ import { getCanvasItem, createGroupItem, createPolygonItem, createCircleItem, re
 import { polygonShapes, freehandStrokes, freehandStrokeGroups, circleShapes, type CanvasRuntimeState } from './canvasState'
 
 import { executeCommand } from './commands'
-import { getCurrentFreehandStateString, deepCloneWithNewIds, updateBakedFreehandData, updateTimelineState, refreshStrokeConnections, updateFreehandDraggableStates } from './freehandTool'
-import { getCurrentPolygonStateString, attachPolygonHandlers, serializePolygonState, updateBakedPolygonData } from './polygonTool'
-import { getCurrentCircleStateString, attachCircleHandlers, serializeCircleState, updateBakedCircleData } from './circleTool'
+import { deepCloneWithNewIds, updateBakedFreehandData, updateTimelineState, refreshStrokeConnections, updateFreehandDraggableStates } from './freehandTool'
+import { attachPolygonHandlers, updateBakedPolygonData } from './polygonTool'
+import { attachCircleHandlers, updateBakedCircleData } from './circleTool'
 import { hasAncestorConflict } from './canvasUtils'
 import { uid } from './canvasUtils'
-import { pushCommandWithStates } from './commands'
+import { captureCommandState, pushCommandWithStates } from './commands'
 import { updateMetadataHighlight } from './metadata/highlight'
 
 
@@ -274,11 +274,7 @@ function startSelectionDrag(state: CanvasRuntimeState, stage: Konva.Stage) {
   state.selection.selectionDragState.startNodePositions.clear()
 
   // Capture before-state for undo/redo
-  state.selection.selectionDragState.beforeState = JSON.stringify({
-    freehand: getCurrentFreehandStateString(state),
-    polygon: getCurrentPolygonStateString(state),
-    circle: getCurrentCircleStateString(state)
-  })
+  state.selection.selectionDragState.beforeState = captureCommandState(state)
 
   // Store absolute start positions so we can move across different parents
   const nodes = state.selection.selectedKonvaNodes.value
@@ -297,6 +293,7 @@ function updateSelectionDrag(state: CanvasRuntimeState, stage: Konva.Stage) {
   state.selection.selectionDragState.startNodePositions.forEach((startPos, node) => {
     node.absolutePosition({ x: startPos.x + dx, y: startPos.y + dy })
   })
+  state.callbacks.previewNodes?.([...state.selection.selectionDragState.startNodePositions.keys()])
 
   // Redraw affected layers
   const layers = new Set<Konva.Layer>()
@@ -316,16 +313,13 @@ function updateSelectionDrag(state: CanvasRuntimeState, stage: Konva.Stage) {
 
 function finishSelectionDrag(state: CanvasRuntimeState) {
   // Capture after-state and push a unified command if changed
-  const afterState = JSON.stringify({
-    freehand: getCurrentFreehandStateString(state),
-    polygon: getCurrentPolygonStateString(state),
-    circle: getCurrentCircleStateString(state)
-  })
+  const afterState = captureCommandState(state)
 
   if (state.selection.selectionDragState.beforeState !== afterState) {
     // Push command with captured states so undo/redo works
     pushCommandWithStates(state, 'Move Selection', state.selection.selectionDragState.beforeState, afterState)
   }
+  state.callbacks.previewGestureEnd?.()
 
   state.selection.selectionDragState.isDragging = false
   state.selection.selectionDragState.startNodePositions.clear()
@@ -544,8 +538,6 @@ export function duplicateSelection(state: CanvasRuntimeState) {
       updateBakedFreehandData(state)
       updateBakedPolygonData(state)
       updateBakedCircleData(state)
-      serializePolygonState(state)
-      serializeCircleState(state)
     })
   })
 }
@@ -613,8 +605,6 @@ export function deleteSelection(state: CanvasRuntimeState) {
     updateBakedFreehandData(state)
     updateBakedPolygonData(state)
     updateBakedCircleData(state)
-    serializePolygonState(state)
-    serializeCircleState(state)
 
     // Ancillary viz cleanup (best-effort)
     import('./ancillaryVisualizations').then(({ refreshAnciliaryViz }) => refreshAnciliaryViz(state)).catch(() => {})

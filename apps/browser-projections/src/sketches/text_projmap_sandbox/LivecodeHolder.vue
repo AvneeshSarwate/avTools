@@ -35,10 +35,9 @@ let frameCounter = 0
 const metadataSchemas = [textAnimMetadataSchema, textStyleMetadataSchema, fxChainMetadataSchema]
 
 const syncCanvasState = (state: CanvasStateSnapshot) => {
-  appState.freehandStateString = state.freehand.serializedState
+  appState.canvasStateString = state.documentState
   appState.freehandRenderData = state.freehand.bakedRenderData
   appState.freehandGroupMap = state.freehand.bakedGroupMap
-  appState.polygonStateString = state.polygon.serializedState
   appState.polygonRenderData = state.polygon.bakedRenderData
   const polygonSyncPayload = {
     current: state.polygon.bakedRenderData,
@@ -236,8 +235,7 @@ onUnmounted(() => {
   <CanvasRoot
     ref="canvasRootRef"
     :sync-state="syncCanvasState"
-    :initial-freehand-state="appState.freehandStateString"
-    :initial-polygon-state="appState.polygonStateString"
+    :initial-state="appState.canvasStateString"
     :width="resolution.width"
     :height="resolution.height"
     :show-timeline="false"

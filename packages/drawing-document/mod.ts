@@ -19,10 +19,35 @@ import {
   transformToMatrix,
 } from "./transform.ts";
 
+import {
+  type CurvePoint,
+  mapCurveSegment,
+  type PolygonCurveSegment,
+  polygonCurveSegments,
+} from "./curves.ts";
+
 export type { AffineMatrix, DrawingTransform } from "./transform.ts";
 export { transformToMatrix } from "./transform.ts";
+export {
+  type CurvePoint,
+  evaluateCurveSegment,
+  isCurvedPolygon,
+  konvaTensionPoints,
+  mapCurveSegment,
+  type PolygonCurveSegment,
+  polygonCurveSegments,
+  sampleCurveSegments,
+  tensionPointsToSegments,
+} from "./curves.ts";
 
-export const DRAWING_DOCUMENT_VERSION = 1 as const;
+/**
+ * The newest document version this code reads. Version 2 marks a document
+ * with curved polygons (a non-zero `tension`); a document without them is
+ * still written as version 1. Code that predates curves rejects a version 2
+ * document instead of silently dropping its tensions.
+ */
+export const DRAWING_DOCUMENT_VERSION = 2 as const;
+export type DrawingDocumentVersion = 1 | 2;
 
 export interface DrawingNodeBase {
   /** Unique across the whole document; the canvas uses it as the Konva id. */
@@ -61,6 +86,12 @@ export interface DrawingPolygonNode extends DrawingNodeBase {
   /** Flat `[x0, y0, ...]` in the node's local space. */
   points: number[];
   closed: boolean;
+  /**
+   * Konva `Line` tension; absent means 0 (straight edges). With three or more
+   * points, a non-zero tension draws a curve through every vertex (see
+   * `curves.ts`), which the bake reports as `segments`.
+   */
+  tension?: number;
   creationTime: number;
 }
 
@@ -94,7 +125,7 @@ export type DrawingLayerName = "freehand" | "polygon" | "circle";
  * and groups of circles.
  */
 export interface DrawingDocument {
-  version: typeof DRAWING_DOCUMENT_VERSION;
+  version: DrawingDocumentVersion;
   freehand: DrawingLayer;
   polygon: DrawingLayer;
   circle: DrawingLayer;
@@ -119,7 +150,16 @@ export type FreehandRenderData = FlattenedStrokeGroup[];
 export interface FlattenedPolygon {
   type: "polygon";
   id: string;
+  /** World-space vertices. For a curved polygon, the points the curve passes through. */
   points: { x: number; y: number }[];
+  /**
+   * World-space Bézier segments of a curved polygon, exactly as the canvas
+   * draws it; absent when the edges are straight. Draw them directly (canvas
+   * `quadraticCurveTo`/`bezierCurveTo`; p5 2.x `bezierOrder` then one
+   * `bezierVertex` per control point and anchor) or flatten them with
+   * `sampleCurveSegments`.
+   */
+  segments?: PolygonCurveSegment[];
   metadata?: Record<string, unknown>;
 }
 
@@ -151,7 +191,7 @@ export interface DrawingRenderData {
 
 export function createEmptyDrawingDocument(): DrawingDocument {
   return {
-    version: DRAWING_DOCUMENT_VERSION,
+    version: 1,
     freehand: { nodes: [] },
     polygon: { nodes: [] },
     circle: { nodes: [] },
@@ -194,6 +234,8 @@ export interface MakePolygonNodeOptions {
   id?: string;
   points: number[];
   closed?: boolean;
+  /** Konva `Line` tension; 0 or absent draws straight edges. */
+  tension?: number;
   creationTime?: number;
   transform?: DrawingTransform;
   metadata?: Record<string, unknown>;
@@ -209,6 +251,7 @@ export function makePolygonNode(
     closed: options.closed ?? true,
     creationTime: options.creationTime ?? Date.now(),
   };
+  if (options.tension) node.tension = options.tension;
   if (options.transform) node.transform = { ...options.transform };
   if (options.metadata) node.metadata = { ...options.metadata };
   return node;
@@ -367,11 +410,9 @@ export function normalizeDrawingDocument(
   label = "Drawing document",
 ): DrawingDocument {
   const doc = requireObject(input, label);
-  if (doc.version !== undefined && doc.version !== DRAWING_DOCUMENT_VERSION) {
+  if (doc.version !== undefined && doc.version !== 1 && doc.version !== 2) {
     throw new Error(
-      `${label} version must be ${DRAWING_DOCUMENT_VERSION}, got ${
-        JSON.stringify(doc.version)
-      }`,
+      `${label} version must be 1 or 2, got ${JSON.stringify(doc.version)}`,
     );
   }
   const ids = new Set<string>();
@@ -394,12 +435,51 @@ export function normalizeDrawingDocument(
     );
     return result;
   };
+  const freehand = normalizeLayer("freehand");
+  const polygon = normalizeLayer("polygon");
+  const circle = normalizeLayer("circle");
   return {
-    version: DRAWING_DOCUMENT_VERSION,
-    freehand: normalizeLayer("freehand"),
-    polygon: normalizeLayer("polygon"),
-    circle: normalizeLayer("circle"),
+    version: drawingDocumentVersion(polygon),
+    freehand,
+    polygon,
+    circle,
   };
+}
+
+/** The version a canonical document with this polygon layer carries. */
+export function drawingDocumentVersion(
+  polygon: DrawingLayer,
+): DrawingDocumentVersion {
+  const curved = polygon.nodes.some((node) =>
+    node.type === "polygon" && node.tension !== undefined
+  );
+  return curved ? 2 : 1;
+}
+
+/**
+ * Validate and canonicalize one node for `layer` on its own: the same rules
+ * as `normalizeDrawingDocument`, with id uniqueness checked only within the
+ * node. A caller inserting it into a document owns the document-wide check
+ * (`listDrawingNodeIds`).
+ */
+export function normalizeDrawingNode(
+  input: unknown,
+  layer: DrawingLayerName,
+  label = "Drawing node",
+): DrawingNode {
+  return normalizeNode(input, layer, label, new Set());
+}
+
+/** Every id in the subtree(s), depth first. */
+export function listDrawingNodeIds(
+  nodes: readonly DrawingNode[],
+  into: Set<string> = new Set(),
+): Set<string> {
+  for (const node of nodes) {
+    into.add(node.id);
+    if (node.type === "group") listDrawingNodeIds(node.children, into);
+  }
+  return into;
 }
 
 function normalizeNode(
@@ -493,6 +573,10 @@ function normalizeNode(
       closed: node.closed,
       creationTime: requireFinite(node.creationTime, `${path}.creationTime`),
     };
+    if (node.tension !== undefined) {
+      const tension = requireFinite(node.tension, `${path}.tension`);
+      if (tension !== 0) result.tension = tension;
+    }
     const transform = normalizeTransform(node.transform, `${path}.transform`);
     if (transform) result.transform = transform;
     if (metadata) result.metadata = metadata;
@@ -709,6 +793,17 @@ function bakePolygons(layer: DrawingLayer): PolygonRenderData {
       );
     }
     const flat: FlattenedPolygon = { type: "polygon", id: node.id, points };
+    // Curve in local space, then transform: the handle split is not preserved
+    // by non-uniform scale or skew, but the resulting Béziers are.
+    const local = polygonCurveSegments(
+      node.points,
+      node.tension ?? 0,
+      node.closed,
+    );
+    if (local) {
+      const toWorld = (p: CurvePoint) => applyMatrix(matrix, p.x, p.y);
+      flat.segments = local.map((segment) => mapCurveSegment(segment, toWorld));
+    }
     if (node.metadata) flat.metadata = node.metadata;
     data.push(flat);
   }

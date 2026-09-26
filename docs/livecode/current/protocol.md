@@ -35,6 +35,9 @@ served/baked browser-engine topologies the equivalent envelopes may use `Broadca
 type, its validation, and its Konva-free bake are owned by
 `packages/drawing-document` so the canvas element and the engine share them.
 The wire carries the lossless document, never the baked render data.
+A document is version 1 unless a polygon has a non-zero `tension` (a curve),
+which makes it version 2; code that predates curves then rejects it rather
+than silently dropping the tensions on its next whole-document write.
 
 The invariants in `sync.ts` matter more than the transport:
 
@@ -52,7 +55,7 @@ The invariants in `sync.ts` matter more than the transport:
   because a newer one mentions the same name loses unrelated edits. A gap or
   missing baseline requires a full reset, not guessed parents or replay of
   the last delta. Current recovery has a documented
-  [apply-before-gap limitation](known-risks.md#p1-sparse-sync-recovery-still-applies-before-checking-the-baseline).
+  [apply-before-gap limitation](known-risks.md#p2-sparse-sync-recovery-still-applies-before-checking-the-baseline).
 - Subscriptions are type-level, not name-level.
 - Snapshot reads must not consume the engine's pending changed-name gates.
 
@@ -61,8 +64,19 @@ subscribers. Do not let a socket or HTTP read independently drain a store.
 These are latest-state deltas, not an edit history, trigger stream, or promise
 that every intermediate assignment is delivered. Transport selection does not
 change these rules: WebSocket, BroadcastChannel, and same-realm observers must
-all respect payload ownership and baseline ordering. Tracking is currently
-used by Six Sines; the other kinds retain their existing snapshot behavior.
+all respect payload ownership and baseline ordering. Two kinds ship sparse
+patches: Six Sines drains a `tracked-state` proxy, and the drawing store
+records the path of each explicit mutation itself (see
+[adding an entity kind](adding-an-entity-kind.md#3-implement-and-register-the-store)
+for when each fits); the other kinds retain their existing snapshot behavior.
+
+`/sync` also carries engine actions: a client message
+`{type: "action", requestId, op}` runs one `EngineOp` through the same
+`plane.execute` the HTTP routes use and answers `{type: "actionResult",
+requestId, ok, body | error}` with the op's result body as-is. Replies never
+advance `seq`. The socket is ordered, so a stream of edits and the commit that
+follows them cannot overtake each other the way two HTTP requests can; the
+drawing view uses it for its in-gesture patches and the commit behind them.
 
 ## Run and observation identities
 
@@ -90,6 +104,7 @@ These differences are deliberate; a generic entity layer must not erase them:
 | Params | Leaf merge into an existing declared/live object; unknown/type-mismatched leaves are ignored and logged. | Durable values plus meta; explicit save. |
 | Animation timeline | Whole validated replacement of an existing entity, normally compare-and-set. Sampling/callback execution is not stored. | Durable data only; explicit save. |
 | Six Sines | Live numeric parameter assignments or validated small UI sets; explicit bulk preset reconciliation preserves the held values container. Observation is sparse after the initial full entity. | Durable base preset XML plus current numeric values; explicit save. |
+| Drawing | Whole validated replacement with optional compare-and-set, or node upserts/deletes by id (`/drawing/patch`, the in-gesture stream), validated as a batch. Observation is sparse after the initial full entity: changed nodes by index, a layer's node array when reshaped. | Durable document; explicit save. |
 | Signal | Code publishes a latest value and anchors; there is no client set operation. | Ephemeral, no history/save/CRUD; ends with its owner run. |
 
 Params and signal revisions count observed value generations. Meta, anchors,

@@ -3,6 +3,7 @@
 // test file can import it.
 
 import type {
+  SyncActionResultMessage,
   SyncEntityChange,
   SyncMessage,
 } from "../visualizer/protocol.ts";
@@ -52,13 +53,23 @@ export async function waitFor(
 /** A `/sync` socket plus the message log a test reads its assertions from. */
 export class SyncClient {
   readonly messages: SyncMessage[] = [];
+  /** Replies to `action` messages, in arrival order; never in `messages`. */
+  readonly actionReplies: SyncActionResultMessage[] = [];
   readonly socket: WebSocket;
 
   constructor(socket: WebSocket) {
     this.socket = socket;
     socket.onmessage = (event) => {
-      this.messages.push(JSON.parse(event.data as string) as SyncMessage);
+      const message = JSON.parse(event.data as string) as
+        | SyncMessage
+        | SyncActionResultMessage;
+      if (message.type === "actionResult") this.actionReplies.push(message);
+      else this.messages.push(message);
     };
+  }
+
+  actionResults(): SyncActionResultMessage[] {
+    return this.actionReplies;
   }
 
   static async open(baseUrl: string): Promise<SyncClient> {

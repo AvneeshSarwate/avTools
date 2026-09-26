@@ -117,13 +117,34 @@ export async function captureBakedEntities(): Promise<{
   return { entities, skippedCount: rows.length - entities.length };
 }
 
-/** Perform one engine action over the configured transport. */
+/**
+ * The sync port's action lane, installed by the sync provider while its
+ * transport is open: the server's `/sync` socket, the engine tab's
+ * BroadcastChannel, or this tab's own engine, whichever the page runs on.
+ * The lane is ordered with sync, so a stream of edits and the commit behind
+ * them cannot overtake each other, and it answers with the op's result body
+ * as-is on every transport.
+ */
+type PortActionSender = (op: EngineOp) => Promise<unknown>;
+let portActionSender: PortActionSender | null = null;
+export function setPortActionSender(sender: PortActionSender | null): void {
+  portActionSender = sender;
+}
+
+/**
+ * Perform one engine action: over the open sync port, or, before it opens,
+ * directly on a local engine or as a POST to the server, which forwards it to
+ * whichever engine it drives.
+ */
 export async function engineAction<T>(
   op: EngineOp,
   serverBaseUrl: string,
   httpPath: string,
   httpBody: unknown,
 ): Promise<T> {
+  if (portActionSender) {
+    return await portActionSender(op) as T;
+  }
   if (ACTIONS_TRANSPORT !== "http") {
     return await localEngineAction(op) as T;
   }
