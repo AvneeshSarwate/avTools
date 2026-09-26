@@ -55,8 +55,8 @@ console.log(
 );
 
 const renderer = new RadianceCascadeRenderer(device, width, height, {
-  probeSpacing: 2 * scale,
-  intervalLength: 4 * scale,
+  probeSpacing: 1 * scale,
+  intervalLength: 2 * scale,
   referenceRays: 256,
 });
 renderer.setScene(scene);
@@ -269,6 +269,30 @@ if (!(bounceGain > 1.05)) {
 
 // Debug attachments: every cascade's merged and raw radiance, at texture size.
 renderer.configure({ ...renderer.currentConfig, mergeMode: "bilinearFix" });
+// The smoothness lever: 2 px cascade-0 spacing for comparison with 1 px.
+renderer.configure({
+  ...renderer.currentConfig,
+  probeSpacing: 2 * scale,
+  intervalLength: 4 * scale,
+  baseRayCount: 4,
+  branching: 4,
+});
+await timed("coarse", () => renderer.render());
+const coarseMs = await timed("coarse", () => renderer.render());
+const coarse = await readback(renderer.irradiance.texture);
+await writePng("coarse-2px-4rays", coarse);
+console.log(
+  `coarse (2 px, 4 rays x4): ${
+    coarseMs.toFixed(1)
+  } ms/frame, rms vs reference ${rmsError(coarse, reference).toFixed(4)}`,
+);
+renderer.configure({
+  ...renderer.currentConfig,
+  probeSpacing: 1 * scale,
+  intervalLength: 2 * scale,
+  baseRayCount: 16,
+  branching: 2,
+});
 await timed("debug", () => renderer.render());
 const cascadeEffects = renderer.views.cascades;
 for (const [index, cascade] of cascadeEffects.entries()) {

@@ -42,7 +42,11 @@ glass loop, a blue lamp, a mossy opaque boulder, and an ember freehand stroke.
   branching factor (rays multiply by it per level; spacing always doubles),
   cascade-0 interval length and the interval scale factor, cascade count
   (0 = automatic from the render size), merge mode (vanilla, bilinear fix,
-  parallax fix), direction pre-averaging, interval overlap.
+  parallax fix), direction pre-averaging, interval overlap. The defaults
+  (1 px spacing, 16 rays doubling per level, 2 px base interval quadrupling,
+  bilinear fix) follow the penumbra condition, angular spacing at an
+  interval's end matching the probe spacing; 2 px spacing with 4 rays
+  quadrupling is 3x cheaper and visibly blockier (the check renders both).
 - **march**: distance-field sphere tracing between outlines (off marches
   fixed steps everywhere) and the in-outline step size.
 - **light**: sky radiance for rays that leave the top cascade, and bounce
@@ -73,7 +77,11 @@ into the generated-raw post effects).
    each to the brute-force reference (RMS of tone-mapped luminance), checks
    that bounce brightens a wall's shadow side and settles, and writes PNGs of
    every view (irradiance per mode, reference, bounce, each cascade's merged and
-   raw tiles) to `.output/`.
+   raw tiles, the coarse 2 px configuration) to `.output/`. At 1000x500 on an
+   Apple GPU: vanilla 30 ms and 0.007 RMS, bilinear fix 63 ms and 0.005,
+   parallax fix 31 ms and 0.0125, reference at 256 rays/px 134 ms. Per-ray
+   storage at 1 px spacing is memory-hungry (about 380 MB of cascade textures
+   at this size); pre-averaging halves it, render scale 0.5 quarters it.
 3. **In the app** (browser-engine target): open the project with the engine
    in a separate tab from `projects.html`, or by hand with
    `/engine/` in one tab and
