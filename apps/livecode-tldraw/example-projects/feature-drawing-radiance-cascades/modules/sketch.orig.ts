@@ -164,6 +164,12 @@ function startRenderer(surface: ReturnType<typeof canvasSurface>): Running {
   let frame = 0;
   let renderer: RadianceCascadeRenderer | null = null;
   let presenter: CanvasPresenter | null = null;
+  // A one-line readout under the canvas: render size, frame rate, cascades.
+  const hud = document.createElement("div");
+  hud.style.cssText =
+    "font: 12px/1.5 ui-monospace, Menlo, monospace; color: #cfd6e6; background: #12161f; padding: 2px 8px; white-space: pre;";
+  let hudFrames = 0;
+  let hudSince = performance.now();
 
   const teardown = () => {
     if (frame) cancelAnimationFrame(frame);
@@ -213,6 +219,8 @@ function startRenderer(surface: ReturnType<typeof canvasSurface>): Running {
         device,
         surface.createCanvas(width, height),
       );
+      surface.container.appendChild(hud);
+      hud.textContent = `${width}x${height}`;
       renderedRev = -1;
       configKey = "";
       planKey = "";
@@ -283,6 +291,20 @@ function startRenderer(surface: ReturnType<typeof canvasSurface>): Running {
         exposure: params.render.exposure,
         toneMap: params.render.toneMap as ToneMap,
       });
+
+      hudFrames++;
+      const now = performance.now();
+      if (now - hudSince >= 500) {
+        const fps = (hudFrames * 1000) / (now - hudSince);
+        const plan = renderer.plan.effective;
+        hud.textContent = `${renderer.width}x${renderer.height}  ${
+          fps.toFixed(0)
+        } fps  ${plan.cascadeCount} cascades  ${plan.baseRayCount} rays x${plan.branching}  ${config.mergeMode}${
+          plan.preAverage ? " pre-avg" : ""
+        }  view: ${view}`;
+        hudFrames = 0;
+        hudSince = now;
+      }
     };
     frame = requestAnimationFrame(tick);
   };

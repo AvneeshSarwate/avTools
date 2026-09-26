@@ -5,10 +5,12 @@
 // committed `document-update` at the end of the gesture is unchanged and
 // remains the write of record. Previews never touch the command stack.
 //
-// Every gesture that changes geometry passes through here: Konva drag and
-// transform events bubble to the stage (strokes, groups, the transformer,
-// polygon control points), and the freehand and circle tools call in from
-// their pointer handlers with a provisional node for the shape being drawn.
+// Every gesture that changes geometry passes through here: Konva drag events
+// bubble to the stage (strokes, groups, polygon control points), the
+// transformer's own resize and rotate events are heard on the transformer,
+// the select tool reports the nodes it moves itself, and the freehand and
+// circle tools call in from their pointer handlers with a provisional node
+// for the shape being drawn.
 import Konva from 'konva'
 import type { DrawingLayerName, DrawingNode } from '@avtools/drawing-document'
 import type { CanvasRuntimeState } from './canvasState'
@@ -141,10 +143,17 @@ export const installDocumentPreview = (
   }
   const onEnd = () => controller.finish()
 
-  stage.on('dragstart.preview transformstart.preview', begin)
+  // Drag events bubble to the stage. Transform events do not: Konva's
+  // Transformer fires them on itself and on each node with the non-bubbling
+  // `_fire`, for a resize and a rotation alike, so they are heard on the
+  // transformer itself.
+  const transformer = state.layers.transformer
+  stage.on('dragstart.preview', begin)
   stage.on('dragmove.preview', onDragMove)
-  stage.on('transform.preview', onTransform)
-  stage.on('dragend.preview transformend.preview', onEnd)
+  stage.on('dragend.preview', onEnd)
+  transformer?.on('transformstart.preview', begin)
+  transformer?.on('transform.preview', onTransform)
+  transformer?.on('transformend.preview', onEnd)
 
   const controller: DocumentPreviewController = {
     previewNode: queue,
@@ -172,6 +181,7 @@ export const installDocumentPreview = (
       if (raf !== null) cancelAnimationFrame(raf)
       raf = null
       stage.off('.preview')
+      transformer?.off('.preview')
     }
   }
   return controller
