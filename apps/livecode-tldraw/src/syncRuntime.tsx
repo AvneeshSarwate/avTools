@@ -44,7 +44,7 @@ import type { ReconnectingSocketController } from "./reconnectingSocket";
 import {
   engineAction,
   serverWebSocketUrl,
-  setSocketActionSender,
+  setPortActionSender,
 } from "./serverRequests";
 import {
   applySyncMessageToState,
@@ -448,8 +448,8 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
     [scheduleFlush, subscribe],
   );
 
-  // Actions in flight over the sync socket, by requestId. Rejected on close:
-  // the socket's reconnect is a new world and a reply will never come.
+  // Actions in flight over the sync port, by requestId. Rejected on close:
+  // the transport's reconnect is a new world and a reply will never come.
   const pendingActionsRef = useRef(
     new Map<
       string,
@@ -466,39 +466,37 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
     () => ({
       onOpen: (port) => {
         openRef.current = true;
-        if (port.carriesActions) {
-          setSocketActionSender((op) =>
-            new Promise((resolve, reject) => {
-              if (!port.isOpen()) {
-                reject(new Error("sync socket is not open"));
-                return;
+        setPortActionSender((op) =>
+          new Promise((resolve, reject) => {
+            if (!port.isOpen()) {
+              reject(new Error("sync socket is not open"));
+              return;
+            }
+            const requestId = crypto.randomUUID();
+            const timer = window.setTimeout(() => {
+              if (pendingActionsRef.current.delete(requestId)) {
+                reject(new Error(`engine action ${op.kind} timed out`));
               }
-              const requestId = crypto.randomUUID();
-              const timer = window.setTimeout(() => {
-                if (pendingActionsRef.current.delete(requestId)) {
-                  reject(new Error(`engine action ${op.kind} timed out`));
-                }
-              }, SOCKET_ACTION_TIMEOUT_MS);
-              pendingActionsRef.current.set(requestId, {
-                resolve: (body) => {
-                  window.clearTimeout(timer);
-                  resolve(body);
-                },
-                reject: (error) => {
-                  window.clearTimeout(timer);
-                  reject(error);
-                },
-              });
-              try {
-                port.sendMessage({ type: "action", requestId, op });
-              } catch (error) {
-                pendingActionsRef.current.delete(requestId);
+            }, SOCKET_ACTION_TIMEOUT_MS);
+            pendingActionsRef.current.set(requestId, {
+              resolve: (body) => {
                 window.clearTimeout(timer);
-                reject(error instanceof Error ? error : new Error(String(error)));
-              }
-            })
-          );
-        }
+                resolve(body);
+              },
+              reject: (error) => {
+                window.clearTimeout(timer);
+                reject(error);
+              },
+            });
+            try {
+              port.sendMessage({ type: "action", requestId, op });
+            } catch (error) {
+              pendingActionsRef.current.delete(requestId);
+              window.clearTimeout(timer);
+              reject(error instanceof Error ? error : new Error(String(error)));
+            }
+          })
+        );
         // A fresh transport is owed no state. Subscribe is both registration and
         // the full reset that hydrates this client.
         lastSeqRef.current = null;
@@ -517,7 +515,7 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
       },
       onClose: () => {
         openRef.current = false;
-        setSocketActionSender(null);
+        setPortActionSender(null);
         rejectPendingActions("sync socket closed");
         setConnectionStatus((current) =>
           current === "error" ? current : "closed",
@@ -526,7 +524,7 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
       },
       onError: (message) => {
         openRef.current = false;
-        setSocketActionSender(null);
+        setPortActionSender(null);
         rejectPendingActions(message);
         setConnectionError(message);
         setConnectionStatus("error");
@@ -742,7 +740,6 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
         serverBaseUrlRef.current,
         "/drawing/set",
         body,
-        { preferSocket: true },
       );
     },
     [],
@@ -766,7 +763,6 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
         serverBaseUrlRef.current,
         "/drawing/patch",
         body,
-        { preferSocket: true },
       );
     },
     [],

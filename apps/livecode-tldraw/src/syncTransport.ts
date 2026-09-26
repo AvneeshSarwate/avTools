@@ -14,6 +14,7 @@ import { readBootParam } from "./bootParams";
 import { IN_PROCESS_ENGINE, inProcessEngineHost } from "./inProcessEngine";
 
 const SYNC_BROADCAST_CHANNEL = "livecode-sync";
+const ACTIONS_BROADCAST_CHANNEL = "livecode-actions";
 
 /**
  * "ws" is the default `/sync` socket; "broadcast" (`sync=broadcast`) reads a
@@ -28,11 +29,16 @@ export const configuredSyncTransport: "ws" | "broadcast" | "inprocess" =
     ? "broadcast"
     : "ws";
 
+/**
+ * One sync transport, open: subscribe/sync in one direction, `action`
+ * messages answered by `onActionResult` in the other. Every transport
+ * carries the action lane — the server's socket, the engine tab's
+ * BroadcastChannel, or this tab's own engine — so an entity write takes the
+ * same path as the sync it will be observed through, ordered with it.
+ */
 export interface SyncPort {
   isOpen(): boolean;
   sendMessage(message: SyncClientMessage): void;
-  /** Whether this port answers `action` messages; only the socket does. */
-  carriesActions: boolean;
 }
 
 export interface SyncTransportCallbacks {
@@ -46,28 +52,66 @@ export interface SyncTransportCallbacks {
 export function createBroadcastSyncTransport(
   callbacks: SyncTransportCallbacks,
 ): ReconnectingSocketController {
-  let channel: BroadcastChannel | null = null;
+  let channels: { sync: BroadcastChannel; actions: BroadcastChannel } | null =
+    null;
   return {
     socket: null,
     connect: () => {
-      if (channel) return;
-      const active = new BroadcastChannel(SYNC_BROADCAST_CHANNEL);
-      channel = active;
-      const port: SyncPort = {
-        isOpen: () => channel === active,
-        sendMessage: (message) => active.postMessage(message),
-        carriesActions: false,
+      if (channels) return;
+      const active = {
+        sync: new BroadcastChannel(SYNC_BROADCAST_CHANNEL),
+        actions: new BroadcastChannel(ACTIONS_BROADCAST_CHANNEL),
       };
-      active.onmessage = (event) => {
+      channels = active;
+      const port: SyncPort = {
+        isOpen: () => channels === active,
+        sendMessage: (message) => {
+          if (message.type === "action") {
+            // The engine tab answers `engineRequest` on its actions channel
+            // with the same result envelope its server uplink uses.
+            active.actions.postMessage({
+              type: "engineRequest",
+              requestId: message.requestId,
+              op: message.op,
+            });
+            return;
+          }
+          active.sync.postMessage(message);
+        },
+      };
+      active.sync.onmessage = (event) => {
         const message = event.data as SyncMessage | undefined;
         if (message?.type !== "sync") return;
         callbacks.onMessage(message, port);
       };
+      active.actions.onmessage = (event) => {
+        const message = event.data as
+          | {
+            type?: string;
+            requestId?: string;
+            ok?: boolean;
+            body?: unknown;
+            error?: string;
+          }
+          | undefined;
+        if (message?.type !== "engineResult" || !message.requestId) return;
+        callbacks.onActionResult?.(
+          message.ok
+            ? { type: "actionResult", requestId: message.requestId, ok: true, body: message.body }
+            : {
+              type: "actionResult",
+              requestId: message.requestId,
+              ok: false,
+              error: message.error ?? "engine action failed",
+            },
+        );
+      };
       callbacks.onOpen(port);
     },
     close: () => {
-      channel?.close();
-      channel = null;
+      channels?.sync.close();
+      channels?.actions.close();
+      channels = null;
     },
   };
 }
@@ -103,7 +147,6 @@ function webSocketPort(socket: WebSocket): SyncPort {
   return {
     isOpen: () => socket.readyState === WebSocket.OPEN,
     sendMessage: (message) => socket.send(JSON.stringify(message)),
-    carriesActions: true,
   };
 }
 
@@ -146,9 +189,26 @@ export function createInProcessSyncTransport(
         const engineRunning = () => host.status().lock === "engine";
         const port: SyncPort = {
           isOpen: () => !active.closed && engineRunning(),
-          carriesActions: false,
           sendMessage: (message) => {
-            if (message.type !== "subscribe" || active.closed) return;
+            if (active.closed) return;
+            if (message.type === "action") {
+              // A direct call into this tab's engine, answered on the same
+              // lane as the socket's replies.
+              const { requestId } = message;
+              host.execute(message.op).then(
+                (body) =>
+                  callbacks.onActionResult?.({ type: "actionResult", requestId, ok: true, body }),
+                (error) =>
+                  callbacks.onActionResult?.({
+                    type: "actionResult",
+                    requestId,
+                    ok: false,
+                    error: error instanceof Error ? error.message : String(error),
+                  }),
+              );
+              return;
+            }
+            if (message.type !== "subscribe") return;
             entityTypes = new Set(message.entityTypes);
             // Answered asynchronously, like a socket reply, so a subscribe
             // issued from inside onOpen never re-enters the provider.

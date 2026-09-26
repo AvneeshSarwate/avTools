@@ -251,8 +251,9 @@ async function pollHealthLoop(): Promise<void> {
 /**
  * Same-origin remote opens default to `sync=broadcast`: the UI reads the
  * engine tab's BroadcastChannel instead of the server-relayed `/sync` socket,
- * which on a remote-dev deployment keeps the ~33 ms sync fan-out off the WAN
- * entirely (writes, analysis, and LSP stay HTTP against the server). Off by
+ * and its entity writes ride the same channel, which on a remote-dev
+ * deployment keeps the ~33 ms sync fan-out and every edit off the WAN
+ * entirely (analysis, project, and LSP stay HTTP against the server). Off by
  * choice when the engine tab lives on another machine.
  */
 let broadcastSyncPreferred = true;
