@@ -182,6 +182,7 @@ export const createCircleNode = (
     rotation: options.rotation ?? 0,
     stroke: '#000',
     strokeWidth: 2,
+    strokeScaleEnabled: false, // the outline keeps its width when scaled into an ellipse
     fill: 'rgba(0, 100, 255, 0.1)',
     draggable: false,
     id

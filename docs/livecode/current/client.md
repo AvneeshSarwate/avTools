@@ -211,6 +211,14 @@ Domain bridges retain distinct semantics:
   revision. A foreign change arriving mid-gesture is applied when the
   gesture ends rather than rebuilding the scene under the pointer. Previews
   never enter the element's undo stack.
+- What the element draws is what the document holds. A stroke's outline is
+  generated from its stored points with no centreline smoothing, and shapes
+  keep their stroke width under scale (Konva's `strokeScaleEnabled` is off,
+  the transformer ignores strokes). A resized stroke keeps its thickness the
+  way the engine draws it: at the end of the transform the scale is folded
+  into the stroke's points (a group's scale into its children first) and only
+  position and rotation stay in the node's transform, so the previews of that
+  gesture carry a scale and the commit carries new points.
 - The element serves two surfaces, chosen at instantiation with
   `mode="simple"` (default) or `mode="document"`; the view uses the latter.
   Simple mode emits `state-update` (baked render data plus an

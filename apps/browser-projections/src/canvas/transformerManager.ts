@@ -3,13 +3,26 @@ import { watch } from 'vue'
 
 import { captureCommandState, pushCommandWithStates } from './commands'
 import type { CanvasRuntimeState } from './canvasState'
+import { bakeFreehandNodeScale } from './freehandTool'
 import { updateMetadataHighlight } from './metadata/highlight'
+
+const isUnder = (node: Konva.Node, ancestor: Konva.Node | undefined): boolean => {
+  let current: Konva.Node | null = node.getParent()
+  while (current) {
+    if (current === ancestor) return true
+    current = current.getParent()
+  }
+  return false
+}
 
 const createTransformer = (state: CanvasRuntimeState, container: Konva.Group) => {
   const transformer = new Konva.Transformer({
     rotateEnabled: true,
     keepRatio: false,
-    padding: 6
+    padding: 6,
+    // Shapes keep their stroke width under scale (strokeScaleEnabled is off
+    // on every shape), so the box fits the geometry, not the stroke.
+    ignoreStroke: true
   })
 
   state.layers.transformer = transformer
@@ -26,6 +39,18 @@ const createTransformer = (state: CanvasRuntimeState, container: Konva.Group) =>
   }
 
   transformer.on('transformend', () => {
+    // A resized stroke keeps its thickness: the scale moves into its points
+    // before the command (and the committed document) captures the result.
+    let baked = false
+    for (const node of transformer.nodes()) {
+      if (isUnder(node, state.groups.freehandShape)) {
+        baked = bakeFreehandNodeScale(state, node) || baked
+      }
+    }
+    if (baked) {
+      transformer.forceUpdate()
+      state.groups.freehandShape?.getLayer()?.batchDraw()
+    }
     finishTransformTrackingWithState(state, 'Transform')
     syncHighlight()
   })
