@@ -38,15 +38,27 @@ fn march(origin: vec2f, to: vec2f, mp: MarchParams, originDistance: f32) -> Hit 
     return Hit(L, T);
   }
   let dir = delta / len;
+  // Clip the ray to the scene once instead of testing every step: a sample
+  // at t is inside the scene exactly when t < tExit (and t >= 0 from the
+  // origin, which is then inside too).
+  var tExit = len;
+  if (!inBounds(origin, mp.sceneSize)) {
+    return Hit(L, T);
+  }
+  let invDir = 1.0 / dir;
+  let toMin = (vec2f(0.0) - origin) * invDir;
+  let toMax = (mp.sceneSize - origin) * invDir;
+  let far = max(toMin, toMax);
+  // A zero direction component gives an infinite exit on that axis.
+  tExit = min(tExit, min(select(far.x, 1e30, dir.x == 0.0), select(far.y, 1e30, dir.y == 0.0)));
   var t = 0.0;
   // The first step's distance is known when the caller loaded it.
-  if (mp.useDistanceField && originDistance > 0.5 && inBounds(origin, mp.sceneSize)) {
+  if (mp.useDistanceField && originDistance > 0.5) {
     t = originDistance;
   }
   for (var i = 0; i < mp.maxSteps; i++) {
-    if (t >= len) { break; }
+    if (t >= tExit) { break; }
     let p = origin + dir * t;
-    if (!inBounds(p, mp.sceneSize)) { break; }
     let texel = vec2i(floor(p));
     if (mp.useDistanceField) {
       let d = sceneDistance(texel);
