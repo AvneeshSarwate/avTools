@@ -8,8 +8,12 @@
  *   deno run -A --no-lock tools/gen_shaders.ts          # regenerate (fails on invalid WGSL)
  *   deno run -A --no-lock tools/gen_shaders.ts --check  # also fail if the output is stale
  *
- * A file without an entry point (`@vertex`/`@fragment`) is include-only and
- * is validated through the programs that include it.
+ * Without a `naga` binary on the PATH, validation falls back to compiling
+ * each program on Deno's WebGPU device (add `--unstable-webgpu`; needs an
+ * adapter, a software one such as lavapipe is enough).
+ *
+ * A file without an entry point (`@vertex`/`@fragment`/`@compute`) is
+ * include-only and is validated through the programs that include it.
  */
 
 // The project sits outside the deno workspace, so no import map applies.
@@ -47,7 +51,61 @@ function expand(name: string, stack: string[] = []): string {
   }).join("\n");
 }
 
+async function hasNaga(): Promise<boolean> {
+  try {
+    const result = await new Deno.Command("naga", {
+      args: ["--version"],
+      stdout: "null",
+      stderr: "null",
+    }).output();
+    return result.success;
+  } catch {
+    return false;
+  }
+}
+
+let gpuDevice: GPUDevice | null | undefined;
+
+async function webgpuDevice(): Promise<GPUDevice | null> {
+  if (gpuDevice !== undefined) return gpuDevice;
+  gpuDevice = null;
+  if (typeof navigator !== "undefined" && "gpu" in navigator) {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (adapter) gpuDevice = await adapter.requestDevice();
+  }
+  return gpuDevice;
+}
+
+/** Validate by compiling on a WebGPU device (compilation messages only). */
+async function validateWebGpu(
+  device: GPUDevice,
+  code: string,
+): Promise<string[]> {
+  device.pushErrorScope("validation");
+  const module = device.createShaderModule({ code });
+  const info = await module.getCompilationInfo();
+  const error = await device.popErrorScope();
+  const messages = info.messages
+    .filter((m) => m.type === "error")
+    .map((m) => `${m.lineNum}:${m.linePos}: ${m.message}`);
+  if (error && messages.length === 0) messages.push(error.message);
+  return messages;
+}
+
+const useNaga = await hasNaga();
+if (!useNaga) {
+  const device = await webgpuDevice();
+  if (!device) {
+    console.error(
+      "no `naga` binary and no WebGPU adapter (run with --unstable-webgpu); cannot validate",
+    );
+    Deno.exit(1);
+  }
+  console.log("naga not found; validating on the WebGPU device instead");
+}
+
 async function validate(name: string, code: string): Promise<string[]> {
+  if (!useNaga) return validateWebGpu((await webgpuDevice())!, code);
   const command = new Deno.Command("naga", {
     args: ["--stdin-file-path", name],
     stdin: "piped",

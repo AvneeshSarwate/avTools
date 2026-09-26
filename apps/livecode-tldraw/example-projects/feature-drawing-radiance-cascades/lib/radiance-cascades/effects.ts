@@ -7,6 +7,7 @@
  */
 
 import { ShaderEffect, type ShaderUniforms } from "@avtools/shader-fx/raw";
+import type { GpuTimer } from "./compute/timer.ts";
 import {
   MATERIAL_FLOATS,
   SEGMENT_STRIDE,
@@ -68,6 +69,7 @@ function runFullscreenPass(
   pipeline: GPURenderPipeline,
   bindGroup: GPUBindGroup,
   targets: GPUTextureView[],
+  timestampWrites?: GPURenderPassTimestampWrites,
 ): void {
   const encoder = device.createCommandEncoder({ label });
   const pass = encoder.beginRenderPass({
@@ -78,6 +80,7 @@ function runFullscreenPass(
       loadOp: "clear",
       storeOp: "store",
     })),
+    timestampWrites,
   });
   pass.setPipeline(pipeline);
   pass.setBindGroup(0, bindGroup);
@@ -89,6 +92,8 @@ function runFullscreenPass(
 /** Shared plumbing: a sized effect whose bind group is rebuilt lazily. */
 abstract class PassEffect extends ShaderEffect {
   protected bindGroup: GPUBindGroup | null = null;
+  /** Set by the renderer to time this effect's pass on the GPU. */
+  timer: GpuTimer | null = null;
 
   protected constructor(
     protected readonly device: GPUDevice,
@@ -117,6 +122,10 @@ abstract class PassEffect extends ShaderEffect {
       throw new Error(`${this.effectName}: input "${key}" is not connected`);
     }
     return value as T;
+  }
+
+  protected timestamps(): GPURenderPassTimestampWrites | undefined {
+    return this.timer?.writes(this.effectName);
   }
 }
 
@@ -254,7 +263,7 @@ export class StrokeSceneEffect extends PassEffect {
       this.transmittanceView,
       this.albedoView,
       this.distanceView,
-    ]);
+    ], this.timestamps());
   }
 
   dispose(): void {
@@ -378,7 +387,7 @@ export class BounceEffect extends PassEffect {
     });
     runFullscreenPass(this.device, "rc-bounce", this.pipeline, this.bindGroup, [
       this.output,
-    ]);
+    ], this.timestamps());
   }
 
   dispose(): void {
@@ -540,6 +549,7 @@ export class CascadeEffect extends PassEffect {
       this.pipeline,
       this.bindGroup,
       [this.radianceView, this.transmittanceView, this.rawView],
+      this.timestamps(),
     );
   }
 
@@ -616,7 +626,7 @@ export class GatherEffect extends PassEffect {
     });
     runFullscreenPass(this.device, "rc-gather", this.pipeline, this.bindGroup, [
       this.output,
-    ]);
+    ], this.timestamps());
   }
 
   dispose(): void {
@@ -720,6 +730,7 @@ export class ReferenceEffect extends PassEffect {
       this.pipeline,
       this.bindGroup,
       [this.output],
+      this.timestamps(),
     );
   }
 

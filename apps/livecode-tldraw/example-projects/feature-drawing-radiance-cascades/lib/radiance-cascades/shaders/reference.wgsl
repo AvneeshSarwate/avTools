@@ -17,6 +17,17 @@ struct ReferenceUniforms {
 
 // #include "march.wgsl"
 
+fn sceneDistance(texel: vec2i) -> f32 {
+  return textureLoad(distanceTex, texel, 0).r;
+}
+
+fn sceneMedium(texel: vec2i) -> Medium {
+  return Medium(
+    textureLoad(emissionTex, texel, 0).rgb,
+    textureLoad(transmittanceTex, texel, 0).rgb,
+  );
+}
+
 const TAU_F: f32 = 6.283185307179586;
 
 @fragment

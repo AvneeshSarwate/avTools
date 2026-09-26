@@ -3,11 +3,13 @@
  * runs the cascade renderer under every merge mode plus the brute-force
  * reference, reads the results back, prints timings and pixel probes, and
  * writes tone-mapped PNGs to `.output/`. Fails when a pass raises a WebGPU
- * validation error or a cascade result strays far from the reference.
+ * validation error or a cascade result strays far from the reference. Runs
+ * the fragment and the compute backend (`--backend fragment|compute|both`,
+ * default both) and, with both, checks that they agree with each other.
  *
  *   cd apps/deno-notebooks
  *   deno run --unstable-webgpu -A --no-lock --config deno.json \
- *     ../livecode-tldraw/example-projects/feature-drawing-radiance-cascades/tools/render_check.ts [--scale 0.5]
+ *     ../livecode-tldraw/example-projects/feature-drawing-radiance-cascades/tools/render_check.ts [--scale 0.5] [--backend both]
  *
  * Deno-specific project tool; the renderer itself is browser code that Deno's
  * WebGPU happens to run unchanged.
@@ -20,9 +22,14 @@ import { dirname, fromFileUrl, join } from "jsr:@std/path@1";
 import { encodePNG } from "@img/png";
 import {
   buildStrokeScene,
+  ComputeRadianceRenderer,
+  createRadianceRenderer,
   DisplayPass,
   type RadianceCascadeConfig,
-  RadianceCascadeRenderer,
+  radianceDeviceDescriptor,
+  type RadianceRenderer,
+  RENDERER_BACKENDS,
+  type RendererBackend,
 } from "../lib/radiance-cascades/mod.ts";
 
 const HERE = dirname(fromFileUrl(import.meta.url));
@@ -34,10 +41,29 @@ const scaleArg = Deno.args.indexOf("--scale");
 const scale = scaleArg >= 0 ? Number(Deno.args[scaleArg + 1]) : 1;
 const width = Math.round(STAGE[0] * scale);
 const height = Math.round(STAGE[1] * scale);
+const backendArg = Deno.args.indexOf("--backend");
+const backendChoice = backendArg >= 0 ? Deno.args[backendArg + 1] : "both";
+const backends: RendererBackend[] = backendChoice === "both"
+  ? [...RENDERER_BACKENDS]
+  : [backendChoice as RendererBackend];
+if (!backends.every((b) => RENDERER_BACKENDS.includes(b))) {
+  throw new Error(
+    `--backend must be one of ${RENDERER_BACKENDS.join(", ")}, both`,
+  );
+}
 
 const adapter = await navigator.gpu.requestAdapter();
 if (!adapter) throw new Error("no WebGPU adapter");
-const device = await adapter.requestDevice();
+const device = await adapter.requestDevice(radianceDeviceDescriptor(adapter));
+console.log(
+  `adapter: ${adapter.info.description || adapter.info.vendor || "unknown"}; ` +
+    `timestamp-query ${
+      device.features.has("timestamp-query") ? "on" : "off"
+    }, ` +
+    `${
+      device.limits.maxComputeWorkgroupStorageSize / 1024
+    } KB workgroup memory`,
+);
 device.addEventListener("uncapturederror", (event) => {
   console.error(
     "uncaptured WebGPU error:",
@@ -54,24 +80,6 @@ const scene = buildStrokeScene(bakeDrawingDocument(saved.data), { scale });
 console.log(
   `scene: ${scene.shapeCount} shapes, ${scene.segmentCount} segments at ${width}x${height}`,
 );
-
-const renderer = new RadianceCascadeRenderer(device, width, height, {
-  probeSpacing: 1 * scale,
-  intervalLength: 2 * scale,
-  referenceRays: 256,
-});
-renderer.setScene(scene);
-const plan = renderer.plan;
-console.log(
-  `${plan.effective.cascadeCount} cascades: ${
-    plan.levels.map((l) =>
-      `c${l.index} ${l.rayCount} rays [${l.intervalStart.toFixed(0)}, ${
-        l.intervalEnd.toFixed(0)
-      }] ${l.textureSize.join("x")}`
-    ).join("; ")
-  }`,
-);
-for (const warning of plan.warnings) console.warn("plan:", warning);
 
 /** Read an rgba16float texture back as float32 RGBA. */
 async function readback(texture: GPUTexture): Promise<Float32Array> {
@@ -205,176 +213,280 @@ async function timed(label: string, run: () => void): Promise<number> {
 
 let failures = 0;
 
-const referenceMs = await timed("reference", () => renderer.renderReference());
-const reference = await readback(renderer.reference.texture);
-await writePng("reference", reference);
-console.log(
-  `reference (${renderer.currentConfig.referenceRays} rays/px): ${
-    referenceMs.toFixed(1)
-  } ms`,
-);
-for (const [name, x, y] of PROBES) {
-  console.log(`  ${name}: ${probe(reference, x, y)}`);
+/** Wait for the compute backend's asynchronous timing readback. */
+async function settledTimings(
+  renderer: RadianceRenderer,
+): Promise<Readonly<Record<string, number>> | null> {
+  await device.queue.onSubmittedWorkDone();
+  for (let i = 0; i < 20 && !renderer.timings; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  return renderer.timings;
 }
 
-const cases: Array<[string, Partial<RadianceCascadeConfig>]> = [
-  ["vanilla", { mergeMode: "vanilla" }],
-  ["bilinearFix", { mergeMode: "bilinearFix" }],
-  ["parallaxFix", { mergeMode: "parallaxFix" }],
-  ["preAverage", { mergeMode: "vanilla", preAverage: true }],
-  ["fixedStep", { preAverage: false, useDistanceField: false, stepSize: 1 }],
-  ["sky", { useDistanceField: true, sky: [0.2, 0.25, 0.4] }],
-];
-for (const [name, config] of cases) {
-  renderer.configure({ ...renderer.currentConfig, ...config });
-  // Warm-up frame so pipeline creation is not in the timing.
-  await timed(name, () => renderer.render());
-  const ms = await timed(name, () => renderer.render());
-  const irradiance = await readback(renderer.irradiance.texture);
-  await writePng(name, irradiance);
-  const error = name === "sky" ? NaN : rmsError(irradiance, reference);
-  const verdict = Number.isNaN(error)
-    ? ""
-    : error < 0.08
-    ? "ok"
-    : "FAR FROM REFERENCE";
-  if (verdict.startsWith("FAR")) failures++;
+function formatTimings(timings: Readonly<Record<string, number>>): string {
+  return Object.entries(timings)
+    .filter(([label]) => label !== "total")
+    .map(([label, ms]) => `${label} ${ms.toFixed(2)}`)
+    .join(", ") + ` | total ${timings.total.toFixed(2)} ms GPU`;
+}
+
+interface SuiteResult {
+  irradiance: Map<string, Float32Array>;
+  reference: Float32Array;
+}
+
+async function runSuite(backend: RendererBackend): Promise<SuiteResult> {
+  console.log(`\n=== ${backend} backend ===`);
+  const renderer = createRadianceRenderer(device, width, height, {
+    probeSpacing: 1 * scale,
+    intervalLength: 2 * scale,
+    referenceRays: 256,
+  }, { backend });
+  renderer.setScene(scene);
+  const plan = renderer.plan;
   console.log(
-    `${name}: ${ms.toFixed(1)} ms/frame${
-      Number.isNaN(error)
-        ? ""
-        : `, rms vs reference ${error.toFixed(4)} ${verdict}`
+    `${plan.effective.cascadeCount} cascades: ${
+      plan.levels.map((l) =>
+        `c${l.index} ${l.rayCount} rays [${l.intervalStart.toFixed(0)}, ${
+          l.intervalEnd.toFixed(0)
+        }] ${l.textureSize.join("x")}`
+      ).join("; ")
     }`,
   );
-  for (const [label, x, y] of PROBES) {
-    console.log(`  ${label}: ${probe(irradiance, x, y)}`);
+  for (const line of renderer.describe()) console.log(`  ${line}`);
+  for (const warning of plan.warnings) console.warn("plan:", warning);
+  const png = (
+    name: string,
+    rgba: Float32Array,
+    size?: readonly [number, number],
+  ) => writePng(`${backend}-${name}`, rgba, size);
+  const results = new Map<string, Float32Array>();
+
+  const referenceMs = await timed(
+    "reference",
+    () => renderer.renderReference(),
+  );
+  const reference = await readback(renderer.reference.texture);
+  await png("reference", reference);
+  console.log(
+    `reference (${renderer.currentConfig.referenceRays} rays/px): ${
+      referenceMs.toFixed(1)
+    } ms`,
+  );
+  for (const [name, x, y] of PROBES) {
+    console.log(`  ${name}: ${probe(reference, x, y)}`);
   }
+
+  const cases: Array<[string, Partial<RadianceCascadeConfig>]> = [
+    ["vanilla", { mergeMode: "vanilla" }],
+    ["bilinearFix", { mergeMode: "bilinearFix" }],
+    ["parallaxFix", { mergeMode: "parallaxFix" }],
+    ["preAverage", { mergeMode: "vanilla", preAverage: true }],
+    ["fixedStep", { preAverage: false, useDistanceField: false, stepSize: 1 }],
+    ["sky", { useDistanceField: true, sky: [0.2, 0.25, 0.4] }],
+  ];
+  for (const [name, config] of cases) {
+    renderer.configure({ ...renderer.currentConfig, ...config });
+    // Warm-up frame so pipeline creation is not in the timing.
+    await timed(name, () => renderer.render());
+    const ms = await timed(name, () => renderer.render());
+    const irradiance = await readback(renderer.irradiance.texture);
+    results.set(name, irradiance);
+    await png(name, irradiance);
+    const error = name === "sky" ? NaN : rmsError(irradiance, reference);
+    const verdict = Number.isNaN(error)
+      ? ""
+      : error < 0.08
+      ? "ok"
+      : "FAR FROM REFERENCE";
+    if (verdict.startsWith("FAR")) failures++;
+    console.log(
+      `${name}: ${ms.toFixed(1)} ms/frame${
+        Number.isNaN(error)
+          ? ""
+          : `, rms vs reference ${error.toFixed(4)} ${verdict}`
+      }`,
+    );
+    const timings = await settledTimings(renderer);
+    if (timings) console.log(`  gpu: ${formatTimings(timings)}`);
+    for (const [label, x, y] of PROBES) {
+      console.log(`  ${label}: ${probe(irradiance, x, y)}`);
+    }
+  }
+
+  // Bounce: the white wall's far side should brighten once bounce feeds back.
+  renderer.configure({
+    ...renderer.currentConfig,
+    sky: [0, 0, 0],
+    mergeMode: "vanilla",
+    bounceStrength: 1,
+  });
+  // Each frame adds one bounce; the feedback must settle, not run away.
+  const settling: number[] = [];
+  for (let i = 0; i < 24; i++) {
+    await timed("bounce", () => renderer.render());
+    if (i % 4 === 3) {
+      settling.push(at(await readback(renderer.irradiance.texture), 475, 200));
+    }
+  }
+  const bounced = await readback(renderer.irradiance.texture);
+  results.set("bounce", bounced);
+  await png("bounce", bounced);
+  const lastStep = Math.abs(settling[5] - settling[4]) /
+    Math.max(1e-6, settling[5]);
+  console.log(
+    `bounce settling (right of wall, every 4 frames): ${
+      settling.map((v) => v.toFixed(3)).join(" ")
+    }`,
+  );
+  if (!(lastStep < 0.02)) {
+    failures++;
+    console.log("  FAIL: bounce feedback has not settled after 24 frames");
+  }
+  if (renderer instanceof ComputeRadianceRenderer) {
+    await device.queue.onSubmittedWorkDone();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const band = renderer.bandStats;
+    console.log(
+      `bounce band: ${band.lastCount} probes of ${band.capacity} slots, grown ${band.growths}x`,
+    );
+    if (band.lastCount <= 0) {
+      failures++;
+      console.log("  FAIL: no probe joined the bounce band");
+    }
+  }
+  renderer.configure({ ...renderer.currentConfig, bounceStrength: 0 });
+  await timed("no bounce", () => renderer.render());
+  const unbounced = await readback(renderer.irradiance.texture);
+  const bounceGain = at(bounced, 475, 200) /
+    Math.max(1e-6, at(unbounced, 475, 200));
+  console.log(
+    `bounce: right of wall ${at(unbounced, 475, 200).toFixed(4)} -> ${
+      at(bounced, 475, 200).toFixed(4)
+    } (x${bounceGain.toFixed(2)})`,
+  );
+  if (!(bounceGain > 1.05)) {
+    failures++;
+    console.log("  FAIL: bounce did not brighten the wall's shadow side");
+  }
+
+  // The smoothness lever: 2 px cascade-0 spacing for comparison with 1 px.
+  renderer.configure({
+    ...renderer.currentConfig,
+    mergeMode: "bilinearFix",
+    probeSpacing: 2 * scale,
+    intervalLength: 4 * scale,
+    baseRayCount: 4,
+    branching: 4,
+  });
+  await timed("coarse", () => renderer.render());
+  const coarseMs = await timed("coarse", () => renderer.render());
+  const coarse = await readback(renderer.irradiance.texture);
+  results.set("coarse", coarse);
+  await png("coarse-2px-4rays", coarse);
+  console.log(
+    `coarse (2 px, 4 rays x4): ${
+      coarseMs.toFixed(1)
+    } ms/frame, rms vs reference ${rmsError(coarse, reference).toFixed(4)}`,
+  );
+  renderer.configure({
+    ...renderer.currentConfig,
+    probeSpacing: 1 * scale,
+    intervalLength: 2 * scale,
+    baseRayCount: 16,
+    branching: 2,
+  });
+
+  // Debug attachments: every cascade's merged and raw radiance, at texture size.
+  renderer.setDebugViews(true);
+  await timed("debug", () => renderer.render());
+  const debugMs = await timed("debug", () => renderer.render());
+  const cascadeViews = renderer.views.cascades;
+  for (const [index, cascade] of cascadeViews.entries()) {
+    const [mergedTexture, rawTexture] = renderer.cascadeTextures(index);
+    await png(
+      `cascade${index}-merged`,
+      await readback(mergedTexture),
+      cascade.size,
+    );
+    await png(`cascade${index}-raw`, await readback(rawTexture), cascade.size);
+  }
+  console.log(
+    `debug views: ${cascadeViews.length} cascades, raw+merged each, ${
+      debugMs.toFixed(1)
+    } ms/frame with debug on`,
+  );
+  renderer.setDebugViews(false);
+  await timed("debug off", () => renderer.render());
+
+  // The display pass (what the canvas shows) into an offscreen target: ACES on
+  // the irradiance must light the sun's neighbourhood and leave the boulder dark.
+  const display = new DisplayPass(device, "rgba8unorm");
+  const shown = device.createTexture({
+    size: { width, height },
+    format: "rgba8unorm",
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+  });
+  await timed(
+    "display",
+    () =>
+      display.draw(renderer.irradiance.output, shown.createView(), [
+        width,
+        height,
+      ], {
+        mode: "hdr",
+        exposure: 1,
+        toneMap: "aces",
+      }),
+  );
+  const shownBytes = await readbackBytes(shown);
+  const byteAt = (x: number, y: number) =>
+    shownBytes[(Math.round(y * scale) * width + Math.round(x * scale)) * 4];
+  console.log(
+    `display (ACES): near sun ${byteAt(250, 130)}, inside boulder ${
+      byteAt(660, 350)
+    }`,
+  );
+  if (!(byteAt(250, 130) > 128 && byteAt(660, 350) < 40)) {
+    failures++;
+    console.log("  FAIL: display pass output is not the lit scene");
+  }
+  display.dispose();
+  shown.destroy();
+  renderer.dispose();
+  return { irradiance: results, reference };
 }
 
-// Bounce: the white wall's far side should brighten once bounce feeds back.
-renderer.configure({
-  ...renderer.currentConfig,
-  sky: [0, 0, 0],
-  mergeMode: "vanilla",
-  bounceStrength: 1,
-});
-// Each frame adds one bounce; the feedback must settle, not run away.
 const at = (rgba: Float32Array, x: number, y: number) =>
   luminance(rgba, Math.round(y * scale) * width + Math.round(x * scale));
-const settling: number[] = [];
-for (let i = 0; i < 24; i++) {
-  await timed("bounce", () => renderer.render());
-  if (i % 4 === 3) {
-    settling.push(at(await readback(renderer.irradiance.texture), 475, 200));
+
+const suites = new Map<RendererBackend, SuiteResult>();
+for (const backend of backends) {
+  suites.set(backend, await runSuite(backend));
+}
+
+if (suites.size === 2) {
+  // The backends implement the same algorithm; they may differ only by the
+  // compute backend's lower-bound distance field far from outlines (which
+  // moves where sphere tracing lands within half a pixel of a surface) and
+  // by f16 packing of the stored levels.
+  console.log("\n=== fragment vs compute ===");
+  const fragment = suites.get("fragment")!;
+  const compute = suites.get("compute")!;
+  const referenceGap = rmsError(fragment.reference, compute.reference);
+  console.log(`reference: rms between backends ${referenceGap.toFixed(4)}`);
+  for (const [name, a] of fragment.irradiance) {
+    const b = compute.irradiance.get(name);
+    if (!b) continue;
+    const gap = rmsError(a, b);
+    const limit = name === "bounce" ? 0.02 : 0.01;
+    const verdict = gap < limit ? "ok" : "BACKENDS DISAGREE";
+    if (gap >= limit) failures++;
+    console.log(`${name}: rms between backends ${gap.toFixed(4)} ${verdict}`);
   }
 }
-const bounced = await readback(renderer.irradiance.texture);
-await writePng("bounce", bounced);
-const lastStep = Math.abs(settling[5] - settling[4]) /
-  Math.max(1e-6, settling[5]);
-console.log(
-  `bounce settling (right of wall, every 4 frames): ${
-    settling.map((v) => v.toFixed(3)).join(" ")
-  }`,
-);
-if (!(lastStep < 0.02)) {
-  failures++;
-  console.log("  FAIL: bounce feedback has not settled after 24 frames");
-}
-renderer.configure({ ...renderer.currentConfig, bounceStrength: 0 });
-await timed("no bounce", () => renderer.render());
-const unbounced = await readback(renderer.irradiance.texture);
-const bounceGain = at(bounced, 475, 200) /
-  Math.max(1e-6, at(unbounced, 475, 200));
-console.log(
-  `bounce: right of wall ${at(unbounced, 475, 200).toFixed(4)} -> ${
-    at(bounced, 475, 200).toFixed(4)
-  } (x${bounceGain.toFixed(2)})`,
-);
-if (!(bounceGain > 1.05)) {
-  failures++;
-  console.log("  FAIL: bounce did not brighten the wall's shadow side");
-}
 
-// Debug attachments: every cascade's merged and raw radiance, at texture size.
-renderer.configure({ ...renderer.currentConfig, mergeMode: "bilinearFix" });
-// The smoothness lever: 2 px cascade-0 spacing for comparison with 1 px.
-renderer.configure({
-  ...renderer.currentConfig,
-  probeSpacing: 2 * scale,
-  intervalLength: 4 * scale,
-  baseRayCount: 4,
-  branching: 4,
-});
-await timed("coarse", () => renderer.render());
-const coarseMs = await timed("coarse", () => renderer.render());
-const coarse = await readback(renderer.irradiance.texture);
-await writePng("coarse-2px-4rays", coarse);
-console.log(
-  `coarse (2 px, 4 rays x4): ${
-    coarseMs.toFixed(1)
-  } ms/frame, rms vs reference ${rmsError(coarse, reference).toFixed(4)}`,
-);
-renderer.configure({
-  ...renderer.currentConfig,
-  probeSpacing: 1 * scale,
-  intervalLength: 2 * scale,
-  baseRayCount: 16,
-  branching: 2,
-});
-await timed("debug", () => renderer.render());
-const cascadeEffects = renderer.views.cascades;
-for (const [index, cascade] of cascadeEffects.entries()) {
-  const [mergedTexture, rawTexture] = renderer.cascadeTextures(index);
-  await writePng(
-    `cascade${index}-merged`,
-    await readback(mergedTexture),
-    cascade.size,
-  );
-  await writePng(
-    `cascade${index}-raw`,
-    await readback(rawTexture),
-    cascade.size,
-  );
-}
-console.log(`debug views: ${cascadeEffects.length} cascades, raw+merged each`);
-
-// The display pass (what the canvas shows) into an offscreen target: ACES on
-// the irradiance must light the sun's neighbourhood and leave the boulder dark.
-const display = new DisplayPass(device, "rgba8unorm");
-const shown = device.createTexture({
-  size: { width, height },
-  format: "rgba8unorm",
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
-});
-await timed(
-  "display",
-  () =>
-    display.draw(renderer.irradiance.output, shown.createView(), [
-      width,
-      height,
-    ], {
-      mode: "hdr",
-      exposure: 1,
-      toneMap: "aces",
-    }),
-);
-const shownBytes = await readbackBytes(shown);
-const byteAt = (x: number, y: number) =>
-  shownBytes[(Math.round(y * scale) * width + Math.round(x * scale)) * 4];
-console.log(
-  `display (ACES): near sun ${byteAt(250, 130)}, inside boulder ${
-    byteAt(660, 350)
-  }`,
-);
-if (!(byteAt(250, 130) > 128 && byteAt(660, 350) < 40)) {
-  failures++;
-  console.log("  FAIL: display pass output is not the lit scene");
-}
-display.dispose();
-shown.destroy();
-
-renderer.dispose();
 console.log(failures ? `FAILED (${failures})` : "PASS");
 console.log(`PNGs in ${OUT}`);
 Deno.exit(failures ? 1 : 0);

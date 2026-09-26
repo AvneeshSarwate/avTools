@@ -38,6 +38,17 @@ struct CascadeUniforms {
 
 // #include "march.wgsl"
 
+fn sceneDistance(texel: vec2i) -> f32 {
+  return textureLoad(distanceTex, texel, 0).r;
+}
+
+fn sceneMedium(texel: vec2i) -> Medium {
+  return Medium(
+    textureLoad(emissionTex, texel, 0).rgb,
+    textureLoad(transmittanceTex, texel, 0).rgb,
+  );
+}
+
 fn marchParams() -> MarchParams {
   return MarchParams(u.sceneSize, u.useDistanceField > 0.5, u.stepSize, i32(u.maxSteps));
 }
