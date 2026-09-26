@@ -167,7 +167,9 @@ fn inBounds(p: vec2f, size: vec2f) -> bool {
   return all(p >= vec2f(0.0)) && all(p < size);
 }
 
-fn march(origin: vec2f, to: vec2f, mp: MarchParams) -> Hit {
+// \`originDistance\` is the distance field at \`origin\` when the caller has it
+// (every ray of a probe starts at the same point), or a negative number.
+fn march(origin: vec2f, to: vec2f, mp: MarchParams, originDistance: f32) -> Hit {
   var L = vec3f(0.0);
   var T = vec3f(1.0);
   let delta = to - origin;
@@ -177,6 +179,10 @@ fn march(origin: vec2f, to: vec2f, mp: MarchParams) -> Hit {
   }
   let dir = delta / len;
   var t = 0.0;
+  // The first step's distance is known when the caller loaded it.
+  if (mp.useDistanceField && originDistance > 0.5 && inBounds(origin, mp.sceneSize)) {
+    t = originDistance;
+  }
   for (var i = 0; i < mp.maxSteps; i++) {
     if (t >= len) { break; }
     let p = origin + dir * t;
@@ -192,12 +198,18 @@ fn march(origin: vec2f, to: vec2f, mp: MarchParams) -> Hit {
     let ds = min(mp.stepSize, len - t);
     let m = sceneMedium(texel);
     let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
-    let E = m.E;
-    let tauDs = pow(tau, vec3f(ds));
-    let clear = tau > vec3f(0.999);
-    let emitFactor = select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
-    L += T * E * emitFactor;
-    T *= tauDs;
+    if (ds == 1.0) {
+      // A whole pixel: tau^1 is tau and the emission factor is exactly 1,
+      // for clear and absorbing media alike.
+      L += T * m.E;
+      T *= tau;
+    } else {
+      let tauDs = pow(tau, vec3f(ds));
+      let clear = tau > vec3f(0.999);
+      let emitFactor = select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
+      L += T * m.E * emitFactor;
+      T *= tauDs;
+    }
     if (max(T.r, max(T.g, T.b)) < 0.002) {
       T = vec3f(0.0);
       break;
@@ -221,6 +233,14 @@ fn sceneMedium(texel: vec2i) -> Medium {
 
 fn marchParams() -> MarchParams {
   return MarchParams(u.sceneSize, u.useDistanceField > 0.5, u.stepSize, i32(u.maxSteps));
+}
+
+/// The distance field where a probe's rays start, shared by all of them.
+fn startDistanceAt(start: vec2f) -> f32 {
+  if (u.useDistanceField < 0.5 || !inBounds(start, u.sceneSize)) {
+    return -1.0;
+  }
+  return sceneDistance(vec2i(floor(start)));
 }
 
 const TAU_F: f32 = 6.283185307179586;
@@ -258,14 +278,14 @@ struct Merged {
 // itself, or, when pre-averaging, along the stored (parent) direction so the
 // level below's bilinear-fix rays end exactly where these begin (Yaazarai's
 // fork).
-fn castMerged(center: vec2f, d: i32, start: vec2f) -> Merged {
+fn castMerged(center: vec2f, d: i32, start: vec2f, startDistance: f32) -> Merged {
   let mp = marchParams();
   let w = dirOf(f32(d), u.rayCount);
   let t0 = u.intervalStart;
   let t1 = u.intervalEnd;
   let overlapEnd = center + w * (t0 + (t1 - t0) * u.intervalOverlap);
   if (u.isTop > 0.5) {
-    let hit = march(start, overlapEnd, mp);
+    let hit = march(start, overlapEnd, mp, startDistance);
     return Merged(hit.L + hit.T * u.sky.rgb, hit.T, hit.L);
   }
   let upos = center / u.upperSpacing - 0.5;
@@ -293,7 +313,7 @@ fn castMerged(center: vec2f, d: i32, start: vec2f) -> Merged {
       for (var k = 0; k < childCount; k++) {
         let stored = select(d, d * B + k, upperPerDir);
         let wc = select(w, dirOf(f32(d * B + k), u.upperRayCount), upperPerDir);
-        let hit = march(start, qCenter + wc * t1, mp);
+        let hit = march(start, qCenter + wc * t1, mp, startDistance);
         let up = upperSample(q, stored);
         Lc += hit.L + hit.T * up.L;
         Tc += hit.T * up.T;
@@ -307,7 +327,7 @@ fn castMerged(center: vec2f, d: i32, start: vec2f) -> Merged {
     return Merged(L, T, raw);
   }
 
-  let hit = march(start, overlapEnd, mp);
+  let hit = march(start, overlapEnd, mp, startDistance);
   var upL = vec3f(0.0);
   var upT = vec3f(0.0);
   for (var c = 0; c < 4; c++) {
@@ -402,11 +422,12 @@ fn shade(pos: vec4f) -> Out {
     u.preAverage > 0.5,
   );
   let start = center + startDir * u.intervalStart;
+  let startDistance = startDistanceAt(start);
   var L = vec3f(0.0);
   var T = vec3f(0.0);
   var raw = vec3f(0.0);
   for (var j = 0; j < group; j++) {
-    let m = castMerged(center, stored * group + j, start);
+    let m = castMerged(center, stored * group + j, start, startDistance);
     L += m.L;
     T += m.T;
     raw += m.raw;
@@ -661,7 +682,9 @@ fn inBounds(p: vec2f, size: vec2f) -> bool {
   return all(p >= vec2f(0.0)) && all(p < size);
 }
 
-fn march(origin: vec2f, to: vec2f, mp: MarchParams) -> Hit {
+// \`originDistance\` is the distance field at \`origin\` when the caller has it
+// (every ray of a probe starts at the same point), or a negative number.
+fn march(origin: vec2f, to: vec2f, mp: MarchParams, originDistance: f32) -> Hit {
   var L = vec3f(0.0);
   var T = vec3f(1.0);
   let delta = to - origin;
@@ -671,6 +694,10 @@ fn march(origin: vec2f, to: vec2f, mp: MarchParams) -> Hit {
   }
   let dir = delta / len;
   var t = 0.0;
+  // The first step's distance is known when the caller loaded it.
+  if (mp.useDistanceField && originDistance > 0.5 && inBounds(origin, mp.sceneSize)) {
+    t = originDistance;
+  }
   for (var i = 0; i < mp.maxSteps; i++) {
     if (t >= len) { break; }
     let p = origin + dir * t;
@@ -686,12 +713,18 @@ fn march(origin: vec2f, to: vec2f, mp: MarchParams) -> Hit {
     let ds = min(mp.stepSize, len - t);
     let m = sceneMedium(texel);
     let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
-    let E = m.E;
-    let tauDs = pow(tau, vec3f(ds));
-    let clear = tau > vec3f(0.999);
-    let emitFactor = select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
-    L += T * E * emitFactor;
-    T *= tauDs;
+    if (ds == 1.0) {
+      // A whole pixel: tau^1 is tau and the emission factor is exactly 1,
+      // for clear and absorbing media alike.
+      L += T * m.E;
+      T *= tau;
+    } else {
+      let tauDs = pow(tau, vec3f(ds));
+      let clear = tau > vec3f(0.999);
+      let emitFactor = select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
+      L += T * m.E * emitFactor;
+      T *= tauDs;
+    }
     if (max(T.r, max(T.g, T.b)) < 0.002) {
       T = vec3f(0.0);
       break;
@@ -725,6 +758,14 @@ fn sceneMedium(texel: vec2i) -> Medium {
 
 fn marchParams() -> MarchParams {
   return MarchParams(u.sceneSize, u.useDistanceField != 0u, u.stepSize, u.maxSteps);
+}
+
+/// The distance field where a probe's rays start, shared by all of them.
+fn startDistanceAt(start: vec2f) -> f32 {
+  if (u.useDistanceField == 0u || !inBounds(start, u.sceneSize)) {
+    return -1.0;
+  }
+  return sceneDistance(vec2i(floor(start)));
 }
 
 const TAU_F: f32 = 6.283185307179586;
@@ -770,7 +811,7 @@ struct Merged {
 };
 
 // Identical to cascade.wgsl's castMerged; see there for the merge modes.
-fn castMerged(center: vec2f, d: i32, start: vec2f) -> Merged {
+fn castMerged(center: vec2f, d: i32, start: vec2f, startDistance: f32) -> Merged {
   let mp = marchParams();
   let rayCount = f32(u.rayCount);
   let w = dirOf(f32(d), rayCount);
@@ -778,7 +819,7 @@ fn castMerged(center: vec2f, d: i32, start: vec2f) -> Merged {
   let t1 = u.intervalEnd;
   let overlapEnd = center + w * (t0 + (t1 - t0) * u.intervalOverlap);
   if (u.isTop != 0u) {
-    let hit = march(start, overlapEnd, mp);
+    let hit = march(start, overlapEnd, mp, startDistance);
     return Merged(hit.L + hit.T * u.sky.rgb, hit.T, hit.L);
   }
   let upos = center / u.upperSpacing - 0.5;
@@ -803,7 +844,7 @@ fn castMerged(center: vec2f, d: i32, start: vec2f) -> Merged {
       for (var k = 0; k < childCount; k++) {
         let stored = select(d, d * B + k, upperPerDir);
         let wc = select(w, dirOf(f32(d * B + k), upperRayCount), upperPerDir);
-        let hit = march(start, qCenter + wc * t1, mp);
+        let hit = march(start, qCenter + wc * t1, mp, startDistance);
         let up = upperSample(q, u32(stored));
         Lc += hit.L + hit.T * up.L;
         Tc += hit.T * up.T;
@@ -817,7 +858,7 @@ fn castMerged(center: vec2f, d: i32, start: vec2f) -> Merged {
     return Merged(L, T, raw);
   }
 
-  let hit = march(start, overlapEnd, mp);
+  let hit = march(start, overlapEnd, mp, startDistance);
   var upL = vec3f(0.0);
   var upT = vec3f(0.0);
   for (var c = 0; c < 4; c++) {
@@ -868,11 +909,12 @@ fn castStored(center: vec2f, stored: u32, group: u32) -> Merged {
     u.preAverage != 0u,
   );
   let start = center + startDir * u.intervalStart;
+  let startDistance = startDistanceAt(start);
   var L = vec3f(0.0);
   var T = vec3f(0.0);
   var raw = vec3f(0.0);
   for (var j = 0u; j < group; j++) {
-    let m = castMerged(center, i32(stored * group + j), start);
+    let m = castMerged(center, i32(stored * group + j), start, startDistance);
     L += m.L;
     T += m.T;
     raw += m.raw;
@@ -1269,9 +1311,10 @@ fn main(
     }
     if (best > u.binRadius) {
       // Every unbinned segment is farther than binRadius from every pixel of
-      // this tile, and the tile-centre distance bounds them all.
-      let halfDiag = f32(TILE) * 0.5 * sqrt(2.0);
-      best = max(u.binRadius, bitcast<f32>(info.y) - halfDiag);
+      // this tile, and the distance field is 1-Lipschitz, so the tile-centre
+      // distance minus this pixel's distance to the centre bounds the rest.
+      let center = (vec2f(wg.xy) + 0.5) * f32(TILE);
+      best = max(u.binRadius, bitcast<f32>(info.y) - length(p - center));
     }
   } else {
     for (var i = 0u; i < u.segmentCount; i++) {
@@ -1537,7 +1580,9 @@ fn inBounds(p: vec2f, size: vec2f) -> bool {
   return all(p >= vec2f(0.0)) && all(p < size);
 }
 
-fn march(origin: vec2f, to: vec2f, mp: MarchParams) -> Hit {
+// \`originDistance\` is the distance field at \`origin\` when the caller has it
+// (every ray of a probe starts at the same point), or a negative number.
+fn march(origin: vec2f, to: vec2f, mp: MarchParams, originDistance: f32) -> Hit {
   var L = vec3f(0.0);
   var T = vec3f(1.0);
   let delta = to - origin;
@@ -1547,6 +1592,10 @@ fn march(origin: vec2f, to: vec2f, mp: MarchParams) -> Hit {
   }
   let dir = delta / len;
   var t = 0.0;
+  // The first step's distance is known when the caller loaded it.
+  if (mp.useDistanceField && originDistance > 0.5 && inBounds(origin, mp.sceneSize)) {
+    t = originDistance;
+  }
   for (var i = 0; i < mp.maxSteps; i++) {
     if (t >= len) { break; }
     let p = origin + dir * t;
@@ -1562,12 +1611,18 @@ fn march(origin: vec2f, to: vec2f, mp: MarchParams) -> Hit {
     let ds = min(mp.stepSize, len - t);
     let m = sceneMedium(texel);
     let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
-    let E = m.E;
-    let tauDs = pow(tau, vec3f(ds));
-    let clear = tau > vec3f(0.999);
-    let emitFactor = select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
-    L += T * E * emitFactor;
-    T *= tauDs;
+    if (ds == 1.0) {
+      // A whole pixel: tau^1 is tau and the emission factor is exactly 1,
+      // for clear and absorbing media alike.
+      L += T * m.E;
+      T *= tau;
+    } else {
+      let tauDs = pow(tau, vec3f(ds));
+      let clear = tau > vec3f(0.999);
+      let emitFactor = select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
+      L += T * m.E * emitFactor;
+      T *= tauDs;
+    }
     if (max(T.r, max(T.g, T.b)) < 0.002) {
       T = vec3f(0.0);
       break;
@@ -1599,7 +1654,7 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   for (var k = 0; k < rays; k++) {
     let a = TAU_F * (f32(k) + 0.5) / u.rays;
     let w = vec2f(cos(a), sin(a));
-    let hit = march(pos.xy, pos.xy + w * u.maxDistance, mp);
+    let hit = march(pos.xy, pos.xy + w * u.maxDistance, mp, -1.0);
     sum += hit.L + hit.T * u.sky.rgb;
   }
   return vec4f(sum / u.rays, 1.0);

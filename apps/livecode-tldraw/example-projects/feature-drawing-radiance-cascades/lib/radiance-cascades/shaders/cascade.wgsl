@@ -53,6 +53,14 @@ fn marchParams() -> MarchParams {
   return MarchParams(u.sceneSize, u.useDistanceField > 0.5, u.stepSize, i32(u.maxSteps));
 }
 
+/// The distance field where a probe's rays start, shared by all of them.
+fn startDistanceAt(start: vec2f) -> f32 {
+  if (u.useDistanceField < 0.5 || !inBounds(start, u.sceneSize)) {
+    return -1.0;
+  }
+  return sceneDistance(vec2i(floor(start)));
+}
+
 const TAU_F: f32 = 6.283185307179586;
 
 fn dirOf(index: f32, count: f32) -> vec2f {
@@ -88,14 +96,14 @@ struct Merged {
 // itself, or, when pre-averaging, along the stored (parent) direction so the
 // level below's bilinear-fix rays end exactly where these begin (Yaazarai's
 // fork).
-fn castMerged(center: vec2f, d: i32, start: vec2f) -> Merged {
+fn castMerged(center: vec2f, d: i32, start: vec2f, startDistance: f32) -> Merged {
   let mp = marchParams();
   let w = dirOf(f32(d), u.rayCount);
   let t0 = u.intervalStart;
   let t1 = u.intervalEnd;
   let overlapEnd = center + w * (t0 + (t1 - t0) * u.intervalOverlap);
   if (u.isTop > 0.5) {
-    let hit = march(start, overlapEnd, mp);
+    let hit = march(start, overlapEnd, mp, startDistance);
     return Merged(hit.L + hit.T * u.sky.rgb, hit.T, hit.L);
   }
   let upos = center / u.upperSpacing - 0.5;
@@ -123,7 +131,7 @@ fn castMerged(center: vec2f, d: i32, start: vec2f) -> Merged {
       for (var k = 0; k < childCount; k++) {
         let stored = select(d, d * B + k, upperPerDir);
         let wc = select(w, dirOf(f32(d * B + k), u.upperRayCount), upperPerDir);
-        let hit = march(start, qCenter + wc * t1, mp);
+        let hit = march(start, qCenter + wc * t1, mp, startDistance);
         let up = upperSample(q, stored);
         Lc += hit.L + hit.T * up.L;
         Tc += hit.T * up.T;
@@ -137,7 +145,7 @@ fn castMerged(center: vec2f, d: i32, start: vec2f) -> Merged {
     return Merged(L, T, raw);
   }
 
-  let hit = march(start, overlapEnd, mp);
+  let hit = march(start, overlapEnd, mp, startDistance);
   var upL = vec3f(0.0);
   var upT = vec3f(0.0);
   for (var c = 0; c < 4; c++) {
@@ -232,11 +240,12 @@ fn shade(pos: vec4f) -> Out {
     u.preAverage > 0.5,
   );
   let start = center + startDir * u.intervalStart;
+  let startDistance = startDistanceAt(start);
   var L = vec3f(0.0);
   var T = vec3f(0.0);
   var raw = vec3f(0.0);
   for (var j = 0; j < group; j++) {
-    let m = castMerged(center, stored * group + j, start);
+    let m = castMerged(center, stored * group + j, start, startDistance);
     L += m.L;
     T += m.T;
     raw += m.raw;
