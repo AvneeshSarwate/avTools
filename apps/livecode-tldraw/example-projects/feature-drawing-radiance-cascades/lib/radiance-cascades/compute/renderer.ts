@@ -36,6 +36,7 @@ import {
   COMPUTE_BOUNCE_WGSL,
   COMPUTE_CASCADE_WGSL,
   COMPUTE_DEBUG_UNPACK_WGSL,
+  COMPUTE_GATHER_WGSL,
   COMPUTE_SCENE_BINS_WGSL,
   COMPUTE_SCENE_RASTER_WGSL,
   COMPUTE_UPSAMPLE_WGSL,
@@ -131,7 +132,13 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
 
   private readonly timer: GpuTimer;
   private readonly modules: Record<
-    "bins" | "raster" | "cascade" | "bounce" | "upsample" | "unpack",
+    | "bins"
+    | "raster"
+    | "cascade"
+    | "bounce"
+    | "upsample"
+    | "gather"
+    | "unpack",
     GPUShaderModule
   >;
   private readonly cascadeLayout: GPUBindGroupLayout;
@@ -170,6 +177,9 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
   private readonly upsamplePipeline: GPUComputePipeline;
   private readonly upsampleUniform: GPUBuffer;
   private upsampleBindGroup: GPUBindGroup | null = null;
+  private readonly gatherPipeline: GPUComputePipeline;
+  private readonly gatherUniform: GPUBuffer;
+  private gatherBindGroup: GPUBindGroup | null = null;
   private readonly unpackPipeline: GPUComputePipeline;
   private slotMap: GPUBuffer | null = null;
   private band: GPUBuffer | null = null;
@@ -217,6 +227,7 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
       cascade: module("rc-compute-cascade", COMPUTE_CASCADE_WGSL),
       bounce: module("rc-compute-bounce", COMPUTE_BOUNCE_WGSL),
       upsample: module("rc-compute-upsample", COMPUTE_UPSAMPLE_WGSL),
+      gather: module("rc-compute-gather", COMPUTE_GATHER_WGSL),
       unpack: module("rc-compute-debug-unpack", COMPUTE_DEBUG_UNPACK_WGSL),
     };
 
@@ -366,6 +377,20 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
     });
     this.upsampleUniform = device.createBuffer({
       label: "rc-compute-upsample-uniforms",
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.gatherPipeline = device.createComputePipeline({
+      label: "rc-compute-gather",
+      layout: "auto",
+      compute: {
+        module: this.modules.gather,
+        entryPoint: "main",
+        constants: { TILE: 16 },
+      },
+    });
+    this.gatherUniform = device.createBuffer({
+      label: "rc-compute-gather-uniforms",
       size: 16,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
@@ -595,10 +620,7 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
       limits.maxStorageBufferBindingSize,
       limits.maxBufferSize,
     );
-    const lanes = Math.min(
-      this.options.workgroupLanes,
-      limits.maxComputeInvocationsPerWorkgroup,
-    );
+    const lanes = Math.min(256, limits.maxComputeInvocationsPerWorkgroup);
     const branching = Math.max(1, Math.round(this.config.branching));
     const group = this.config.preAverage && branching > 1 ? branching : 1;
     const warnings: string[] = [];
@@ -663,7 +685,6 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
       TY: ty,
       DW: dw,
       REDUCE: plan.reduce ? 1 : 0,
-      RED_N: plan.reduce ? tx * ty * dw : 1,
       USE_PATCH: plan.patch ? 1 : 0,
       PATCH_W: plan.patch?.size[0] ?? 1,
       PATCH_H: plan.patch?.size[1] ?? 1,
@@ -703,7 +724,8 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
       HDR_FORMAT,
       "rc-probe-irradiance",
     );
-    this.irradianceTex = level0.probeSpacing === 1 &&
+    this.irradianceTex = computePlans[0].reduce &&
+        level0.probeSpacing === 1 &&
         level0.probeCount[0] === this.width &&
         level0.probeCount[1] === this.height
       ? this.probeIrradiance
@@ -748,6 +770,7 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
     if (this.debugEnabled) this.allocateDebug();
     this.bounceBindGroup = null;
     this.upsampleBindGroup = null;
+    this.gatherBindGroup = null;
     this.referenceBindGroup = null;
   }
 
@@ -824,7 +847,15 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
     bv.setUint32(16, level0.rayCount, true);
     bv.setFloat32(20, Math.max(0, this.config.bounceStrength), true);
     bv.setFloat32(24, this.options.bounceOffset, true);
+    bv.setUint32(28, this.options.fuseCascade0 ? 0 : 1, true);
     this.device.queue.writeBuffer(this.bounceUniform, 0, bounce);
+    const gather = new ArrayBuffer(16);
+    const gv = new DataView(gather);
+    gv.setUint32(0, level0.probeCount[0], true);
+    gv.setUint32(4, level0.probeCount[1], true);
+    gv.setFloat32(8, level0.probeSpacing, true);
+    gv.setUint32(12, level0.storedDirs, true);
+    this.device.queue.writeBuffer(this.gatherUniform, 0, gather);
     const upsample = new ArrayBuffer(16);
     const uv = new DataView(upsample);
     uv.setUint32(0, level0.probeCount[0], true);
@@ -898,7 +929,9 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
     v.setUint32(112, this.bandCapacity, true);
     v.setFloat32(
       116,
-      this.options.bounceOffset + 1.5 * level.probeSpacing + 1,
+      this.options.bounceBand
+        ? this.options.bounceOffset + 1.5 * level.probeSpacing + 1
+        : -1,
       true,
     );
     v.setFloat32(120, state.plan.patch?.halo ?? 0, true);
@@ -913,6 +946,8 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
     if (enabled) this.allocateDebug();
     else this.disposeDebug();
     for (const state of this.levels) state.bindGroup = null;
+    // The bounce binds cascade 0's store, which debug views create and free.
+    this.bounceBindGroup = null;
     this.writeAllUniforms();
   }
 
@@ -1052,6 +1087,10 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
         { binding: 5, resource: { buffer: this.band! } },
         { binding: 6, resource: this.probeIrradiance!.view },
         { binding: 7, resource: this.effective.view },
+        {
+          binding: 8,
+          resource: { buffer: this.levels[0]?.store ?? this.dummyBuffers[0] },
+        },
       ],
     });
     const pass = encoder.beginComputePass({
@@ -1081,7 +1120,29 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
       pass.dispatchWorkgroups(...state.plan.dispatch);
       pass.end();
     }
-    if (this.irradianceTex !== this.probeIrradiance) {
+    if (!this.levels[0].plan.reduce) {
+      this.gatherBindGroup ??= this.device.createBindGroup({
+        label: "rc-compute-gather-bind",
+        layout: this.gatherPipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: this.gatherUniform } },
+          { binding: 1, resource: { buffer: this.levels[0].store! } },
+          { binding: 2, resource: this.irradianceTex!.view },
+        ],
+      });
+      const pass = encoder.beginComputePass({
+        label: "rc-gather",
+        timestampWrites: this.timer.writes("gather"),
+      });
+      pass.setPipeline(this.gatherPipeline);
+      pass.setBindGroup(0, this.gatherBindGroup);
+      pass.dispatchWorkgroups(
+        Math.ceil(this.width / 16),
+        Math.ceil(this.height / 16),
+        1,
+      );
+      pass.end();
+    } else if (this.irradianceTex !== this.probeIrradiance) {
       this.upsampleBindGroup ??= this.device.createBindGroup({
         label: "rc-compute-upsample-bind",
         layout: this.upsamplePipeline.getBindGroupLayout(0),
@@ -1262,6 +1323,7 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
     }
     this.bounceUniform.destroy();
     this.upsampleUniform.destroy();
+    this.gatherUniform.destroy();
     this.bandCounter.destroy();
     if (!this.counterPending) this.counterStaging.destroy();
     for (const buffer of this.dummyBuffers) buffer.destroy();

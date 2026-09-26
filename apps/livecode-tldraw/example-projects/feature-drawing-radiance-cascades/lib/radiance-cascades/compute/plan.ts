@@ -14,8 +14,21 @@ export interface ComputeOptions {
   scenePatch: "auto" | boolean;
   /** Stage the upper-level probes a tile merges with in workgroup memory. */
   stageUpper: boolean;
-  /** Lanes per cascade workgroup: a power of two, at most the device limit. */
+  /**
+   * Lanes per workgroup for cascades 1 and up: a power of two, at most 256
+   * (Metal runs nothing for larger groups of this kernel).
+   */
   workgroupLanes: number;
+  /** Lanes (probes) per fused cascade-0 workgroup. */
+  reduceLanes: number;
+  /** Probe tile width for cascades 1 and up; 0 picks a square tile. */
+  tileWidth: number;
+  /**
+   * Fuse cascade 0 with the gather (direction mean reduced in workgroup
+   * memory, never stored). Off, cascade 0 is stored like the other levels
+   * and a gather pass and the bounce read the store.
+   */
+  fuseCascade0: boolean;
   /** Scene rasterizer tile in pixels (also its workgroup size squared). */
   tileSize: number;
   /** Segments a tile bin holds before the tile falls back to all segments. */
@@ -29,17 +42,33 @@ export interface ComputeOptions {
   bandCapacity: number;
   /** Bounce sample offset outside the outline, pixels (see bounce.wgsl). */
   bounceOffset: number;
+  /**
+   * Keep the directional band cascade 0 appends for the bounce. Off, the
+   * bounce uses each probe's irradiance as if uniform over the hemisphere.
+   */
+  bounceBand: boolean;
 }
 
+/**
+ * Defaults measured on an Apple M1 Max (tools/bench.ts): both
+ * workgroup-memory stagings cost more than they save there (the texture
+ * cache already serves the re-reads, and the load phase plus barrier lowers
+ * occupancy), and 64-lane workgroups beat 256. Other GPUs may differ; the
+ * options are there to measure.
+ */
 export const DEFAULT_COMPUTE_OPTIONS: ComputeOptions = {
-  scenePatch: "auto",
-  stageUpper: true,
-  workgroupLanes: 256,
+  scenePatch: false,
+  stageUpper: false,
+  workgroupLanes: 64,
+  reduceLanes: 64,
+  tileWidth: 0,
+  fuseCascade0: true,
   tileSize: 16,
   binCapacity: 128,
   binRadius: 24,
   bandCapacity: 8192,
   bounceOffset: 1.5,
+  bounceBand: true,
 };
 
 export interface ComputeLimits {
@@ -100,25 +129,23 @@ export function planComputeLevel(
   options: ComputeOptions,
   limits: ComputeLimits,
 ): ComputeLevelPlan {
-  const lanes = Math.min(
-    floorPow2(options.workgroupLanes),
-    floorPow2(limits.maxInvocations),
-  );
-  const reduce = level.index === 0;
+  const maxLanes = Math.min(256, floorPow2(limits.maxInvocations));
+  const reduce = level.index === 0 && options.fuseCascade0;
   let tx: number;
   let ty: number;
   let dw: number;
   if (reduce) {
-    dw = level.storedDirs;
-    if (dw > lanes) {
-      throw new Error(
-        `compute cascades: cascade 0 stores ${dw} directions, more than the ${lanes} lanes of a workgroup`,
-      );
-    }
-    [tx, ty] = tileOf(Math.floor(lanes / dw));
+    // One lane per probe, looping over the directions.
+    dw = 1;
+    [tx, ty] = tileOf(Math.min(floorPow2(options.reduceLanes), maxLanes));
   } else {
     dw = 1;
+    const lanes = Math.min(floorPow2(options.workgroupLanes), maxLanes);
     [tx, ty] = tileOf(lanes);
+    if (options.tileWidth > 0) {
+      tx = Math.min(lanes, floorPow2(options.tileWidth));
+      ty = Math.max(1, lanes / tx);
+    }
   }
   const laneCount = tx * ty * dw;
   const group = runtime.preAverage ? runtime.branching : 1;
@@ -128,16 +155,14 @@ export function planComputeLevel(
     ? 4 * childCount * group
     : group;
 
-  const bandSlotBytes = tx * ty * 4;
-  const reductionBytes = reduce ? laneCount * 16 : 16;
-  let bytes = bandSlotBytes + reductionBytes;
+  let bytes = 0;
 
   // Upper footprint: FX = TX/2 + 2 probes for spacing that doubles per level.
   let footprint: [number, number, number] | null = null;
   if (options.stageUpper && upper && runtime.mergeMode !== 2) {
     const fx = Math.floor(tx / 2) + 2;
     const fy = Math.floor(ty / 2) + 2;
-    const fd = dw * group * childCount;
+    const fd = (reduce ? level.storedDirs : dw) * group * childCount;
     const footBytes = fx * fy * fd * STORE_ENTRY_BYTES;
     if (bytes + footBytes <= limits.maxWorkgroupStorage) {
       footprint = [fx, fy, fd];
@@ -154,7 +179,9 @@ export function planComputeLevel(
     const fits = bytes + patchBytes <= limits.maxWorkgroupStorage;
     // Loading a texel costs three texture reads; a march step saves about as
     // many. Stage when the tile's marches outnumber the patch texels enough.
-    const worthIt = laneCount * marchesPerLane >= 6 * pw * ph;
+    const marches = laneCount * marchesPerLane *
+      (reduce ? level.storedDirs : 1);
+    const worthIt = marches >= 6 * pw * ph;
     if (fits && (options.scenePatch === true || worthIt)) {
       patch = { size: [pw, ph], halo };
       bytes += patchBytes;
@@ -167,7 +194,7 @@ export function planComputeLevel(
     dispatch: [
       Math.ceil(level.probeCount[0] / tx),
       Math.ceil(level.probeCount[1] / ty),
-      Math.ceil(level.storedDirs / dw),
+      reduce ? 1 : Math.ceil(level.storedDirs / dw),
     ],
     reduce,
     patch,

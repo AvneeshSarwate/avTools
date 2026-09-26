@@ -14,7 +14,8 @@ struct BounceUniforms {
   rayCount: u32,
   strength: f32,
   offset: f32,
-  pad: u32,
+  /// 1: cascade 0 is stored (non-fused); read `store` instead of the band.
+  fromStore: u32,
 };
 @group(0) @binding(0) var<uniform> u: BounceUniforms;
 @group(0) @binding(1) var emissionTex: texture_2d<f32>;
@@ -24,12 +25,18 @@ struct BounceUniforms {
 @group(0) @binding(5) var<storage, read> band: array<u32>;
 @group(0) @binding(6) var probeIrradiance: texture_2d<f32>;
 @group(0) @binding(7) var effectiveOut: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(8) var<storage, read> store: array<u32>;
 
 const TAU_F: f32 = 6.283185307179586;
 
 fn bandRadiance(slot: u32, k: u32) -> vec3f {
   let i = ((slot - 1u) * u.storedDirs + k) * 2u;
   return vec3f(unpack2x16float(band[i]), unpack2x16float(band[i + 1u]).x);
+}
+
+fn storeRadiance(probe: u32, k: u32) -> vec3f {
+  let i = (k * u.probeCount.x * u.probeCount.y + probe) * 3u;
+  return vec3f(unpack2x16float(store[i]), unpack2x16float(store[i + 1u]).x);
 }
 
 @compute @workgroup_size(TILE, TILE, 1)
@@ -63,11 +70,15 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let dirs = u.storedDirs;
   let group = f32(u.rayCount) / f32(dirs);
   var slots = vec4u(0u);
+  var probes = vec4u(0u);
   var means = array<vec3f, 4>();
   for (var c = 0; c < 4; c++) {
     let q = clamp(base + vec2i(c % 2, c / 2), vec2i(0), vec2i(u.probeCount) - vec2i(1));
-    slots[c] = slotMap[u32(q.y) * u.probeCount.x + u32(q.x)];
-    means[c] = textureLoad(probeIrradiance, q, 0).rgb;
+    probes[c] = u32(q.y) * u.probeCount.x + u32(q.x);
+    if (u.fromStore == 0u) {
+      slots[c] = slotMap[probes[c]];
+      means[c] = textureLoad(probeIrradiance, q, 0).rgb;
+    }
   }
   var irradiance = vec3f(0.0);
   for (var k = 0u; k < dirs; k++) {
@@ -78,8 +89,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     }
     var L = vec3f(0.0);
     for (var c = 0; c < 4; c++) {
-      let slot = slots[c];
-      L += weights[c] * select(means[c], bandRadiance(slot, k), slot != 0u);
+      if (u.fromStore != 0u) {
+        L += weights[c] * storeRadiance(probes[c], k);
+      } else {
+        let slot = slots[c];
+        L += weights[c] * select(means[c], bandRadiance(slot, k), slot != 0u);
+      }
     }
     irradiance += L * weight;
   }
