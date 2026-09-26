@@ -43,44 +43,92 @@ fragment shaders cannot:
   against 392 MB of textures, and no `maxTextureDimension2D` clamp (levels
   are dropped only when a store exceeds the storage-buffer limit, which
   `radianceDeviceDescriptor` raises to the adapter's maximum).
-- **Workgroup-memory stagings**, decided per level by `compute/plan.ts`
-  (`describe()` and the engine log show the decisions): the upper level's
-  probe footprint and child directions a tile merges with are loaded once
-  per workgroup (vanilla and bilinear-fix merges), and where the tile's
-  marches outnumber the scene texels its rays can reach, that patch of the
-  distance, emission and transmittance textures is loaded once and marched
-  in workgroup memory (cascade 0 with the bilinear fix, `scenePatch:
-  "auto"`; force it with `true`).
-- **Cascade 0 fused with the gather and the bounce.** Its workgroup holds a
-  probe tile times all cascade-0 directions, reduces the direction mean in
-  workgroup memory and writes the irradiance texture directly (an upsample
-  pass only when the probe spacing is above a pixel), so cascade 0 is never
-  stored: half of all cascade texels and 192 MB of writes a frame in the
-  default plan. For the bounce, probes within a few pixels of an outline
-  append their directional radiance to a compact band buffer through an
-  atomic slot counter; `compute_bounce` looks them up through a probe-to-slot
-  map, falling back to the probe's irradiance (as the fragment pass does
-  without a normal) for a probe outside the band. The band grows itself when
-  a frame overflows it (`bandStats`).
-- **Exact dispatches**: no dead tiles where the direction count is not a
-  square, as the fragment tiling has.
-- **Per-pass GPU timings** through `timestamp-query` when the device has it
-  (`timings`, on both backends; the HUD and `render_check` print them), and
-  one submit a frame.
+- **Cascade 0 fused with the gather.** A lane is one probe and loops over
+  all its directions, so a SIMD group of neighbouring probes marches one
+  direction at a time (what the fragment tiling gives), the direction mean
+  stays in registers and goes straight to the irradiance texture (an
+  upsample pass only when the probe spacing is above a pixel), and cascade 0
+  is never stored: half of all cascade texels and 192 MB of writes a frame in
+  the default plan, with no workgroup memory or barrier. For the bounce,
+  probes within a few pixels of an outline append their directional radiance
+  to a compact band buffer through an atomic slot counter; `compute_bounce`
+  looks them up through a probe-to-slot map, falling back to the probe's
+  irradiance (as the fragment pass does without a normal) for a probe
+  outside the band. The band grows itself when a frame overflows it
+  (`bandStats`). `fuseCascade0: false` stores cascade 0 like the other levels
+  instead and gathers in a pass of its own (`compute_gather`), with the bounce
+  reading the store.
+- **Workgroup-memory stagings**, both off by default after measurement (see
+  below) and planned per level by `compute/plan.ts` when enabled: the upper
+  level's probe footprint and child directions a tile merges with loaded once
+  per workgroup (`stageUpper`), and the patch of the distance, emission and
+  transmittance textures a tile's rays can reach loaded once and marched in
+  workgroup memory (`scenePatch`, `"auto"` enables it where the tile's
+  marches outnumber the patch texels).
+- **Exact dispatches** (no dead tiles where the direction count is not a
+  square), **one submit a frame**, and **per-pass GPU timings** through
+  `timestamp-query` when the device has it (`timings`, on both backends; the
+  HUD, `render_check` and `bench` print them).
 - Debug views (`cascade N merged/raw`) are produced only while requested
   (`setDebugViews`): the level stores plus cascade 0's are then unpacked
   into the fragment backend's direction-tiled textures for the same display
   pass.
 
 Both backends share `march.wgsl` (the marcher reads the scene through
-`sceneDistance`/`sceneMedium`, which the compute cascade answers from the
-patch when the ray is inside it), `planCascades`, the reference and display
-passes. On the software adapter used to verify this the two agree to
-0.002 RMS or better on every check (the compute backend's distance lower
-bound moves where sphere tracing lands within half a pixel of a surface, and
-the stores are f16 as the textures were). Not used: subgroup operations
-(`subgroups` is optional and untestable on a software adapter; the
-cascade-0 reduction is a workgroup-memory sum).
+`sceneDistance`/`sceneMedium`), `planCascades`, the reference and display
+passes, and agree to 0.002 RMS or better on every check (the compute
+backend's distance lower bound moves where sphere tracing lands within half a
+pixel of a surface, and the stores are f16 as the textures were).
+
+### Measured (Apple M1 Max, 1000x500, `tools/bench.ts` and the browser bench)
+
+Pipelined wall-clock per frame, with the exclusive GPU time of each pass
+(ms; the bilinear fix, then vanilla):
+
+| bilinear fix | frame | c4 | c3 | c2 | c1 | c0 (+ gather) |
+| --- | --- | --- | --- | --- | --- | --- |
+| fragment, Deno | 33.1 | 8.2 | 8.6 | 4.9 | 4.0 | 5.9 + 0.5 |
+| compute, Deno | 25.8 | 5.1 | 6.5 | 4.4 | 3.6 | 5.8 |
+| fragment, Chrome 153 | 30.5 | 8.2 | 8.6 | 4.5 | 3.6 | 5.3 + 0.4 |
+| compute, Chrome 153 | 22.5 | 4.5 | 5.7 | 3.9 | 3.2 | 4.7 |
+
+| vanilla | frame | c4 | c3 | c2 | c1 | c0 (+ gather) |
+| --- | --- | --- | --- | --- | --- | --- |
+| fragment, Deno | 9.8 | 2.1 | 2.3 | 2.0 | 2.9 | 5.7 + 0.8 |
+| compute, Deno | 8.9 | 1.4 | 1.9 | 1.9 | 2.8 | 5.3 |
+| fragment, Chrome 153 | 8.0 | 1.1 | 1.2 | 1.1 | 1.4 | 2.5 + 0.4 |
+| compute, Chrome 153 | 6.1 | 0.7 | 0.9 | 0.9 | 1.2 | 2.1 |
+
+So the compute backend is 22 to 26% faster with the bilinear fix and 9 to
+23% faster vanilla, at a quarter of the cascade memory, and the two agree to
+0.002 RMS. Chrome (Dawn/Tint) compiles every program and runs faster than
+Deno (wgpu/naga) on the same GPU, most visibly at cascade 0.
+
+What the sweep in `bench.ts` decided (all within the run-to-run noise of
+about 5% unless noted):
+
+- 64-lane workgroups with square 8x8 probe tiles for the upper levels; 32 to
+  128 lanes are equal, 256 is 15% slower, 512 much slower, and Metal runs
+  nothing for a 1024-lane workgroup of this kernel (`workgroupLanes`,
+  `reduceLanes`, `tileWidth`).
+- The stagings lose on this GPU: the upper footprint adds about 2.7 ms to
+  cascade 0 and the scene patch 7 to 10 ms, since the texture cache already
+  serves the re-reads and the load phase plus barrier lowers occupancy.
+- The first fused cascade 0 (a probe tile times all 16 directions as lanes,
+  reduced in workgroup memory) cost 7.4 ms against 5.3 + 0.7 ms for storing
+  it and gathering; one lane per probe looping over its directions brought
+  it to parity at 6.0 ms with nothing stored.
+- The bounce band's global atomic counter costs nothing measurable.
+- Not used: subgroup operations. Chrome's WebGPU has the `subgroups`
+  feature (the browser bench confirms it compiles) but Deno's naga does not,
+  so nothing here depends on it; a subgroup reduction is the obvious next
+  experiment for cascade 0 in the browser.
+
+The two backends are compared in the browser with
+`tools/browser_bench.sh`, which bundles `tools/browser_bench.ts` with
+`deno bundle`, serves it with the drawing, and drives the installed Chrome
+through Playwright (`--headed` shows the window; a query such as
+`merge=vanilla&frames=30&scale=1` sets the run).
 
 ## Shape metadata
 
@@ -162,14 +210,20 @@ wanted; its ACES tone map is the default here.
    cascade's merged and raw tiles, the coarse 2 px configuration) to
    `.output/`, prefixed by backend. With both backends it then checks that
    they agree with each other (0.01 RMS). At 1000x500 on an Apple GPU with
-   the fragment backend: vanilla 30 ms and 0.007 RMS, bilinear fix 63 ms and
-   0.005, parallax fix 31 ms and 0.0125, reference at 256 rays/px 134 ms.
-   Per-ray storage at 1 px spacing is memory-hungry (about 380 MB of cascade
-   textures at this size; the compute backend needs about a quarter of that);
-   pre-averaging halves it, render scale 0.5 quarters it. The parallax fix
-   drifts from the reference below `--scale 0.5` in both backends (its
-   intervals get shorter than its probe spacing), which the check reports.
-3. **In the app** (browser-engine target): open the project with the engine
+   the fragment backend: vanilla 24 ms and 0.007 RMS, bilinear fix 45 ms and
+   0.005, parallax fix 28 ms and 0.0125, reference at 256 rays/px 119 ms
+   (single frames, GPU idle before each; `tools/bench.ts` measures pipelined
+   frames, the number the frame rate follows). Per-ray storage at 1 px
+   spacing is memory-hungry (about 380 MB of cascade textures at this size;
+   the compute backend needs about a quarter of that); pre-averaging halves
+   it, render scale 0.5 quarters it. The parallax fix drifts from the
+   reference below `--scale 0.5` in both backends (its intervals get shorter
+   than its probe spacing), which the check reports.
+3. **Benchmark** (Deno WebGPU): `tools/bench.ts` with the same invocation as
+   the render check (`--merge`, `--frames`, `--scale`, `--variants`) times
+   both backends and the compute backend's option variants, pipelined, with
+   the exclusive GPU time per pass.
+4. **In the app** (browser-engine target): open the project with the engine
    in a separate tab from `projects.html`, or by hand with
    `/engine/` in one tab and
    `/index.html?serverBaseUrl=http://localhost:7777&projectPath=<absolute path>`

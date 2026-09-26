@@ -97,10 +97,14 @@ export class GpuTimer {
       const timings: Record<string, number> = {};
       let first = stamps[0];
       let last = stamps[0];
+      // Exclusive time per pass: passes run in order, and a begin stamp can
+      // predate the previous pass's end (separate submits on Metal do that).
+      let previousEnd = stamps[0];
       for (let i = 0; i < labels.length; i++) {
-        const begin = stamps[i * 2];
+        const begin = stamps[i * 2] > previousEnd ? stamps[i * 2] : previousEnd;
         const end = stamps[i * 2 + 1];
-        const ms = Number(end - begin) / 1e6;
+        const ms = end > begin ? Number(end - begin) / 1e6 : 0;
+        if (end > previousEnd) previousEnd = end;
         timings[labels[i]] = (timings[labels[i]] ?? 0) + ms;
         if (begin < first) first = begin;
         if (end > last) last = end;
