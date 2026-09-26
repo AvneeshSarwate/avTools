@@ -40,7 +40,7 @@ fragment shaders cannot:
   near an outline.
 - **Cascade levels in storage buffers**, direction-major, three packed
   f16 pairs per (probe, direction): 93 MB for the default plan at 1000x500
-  against 392 MB of textures, and no `maxTextureDimension2D` clamp (levels
+  against 261 MB of textures, and no `maxTextureDimension2D` clamp (levels
   are dropped only when a store exceeds the storage-buffer limit, which
   `radianceDeviceDescriptor` raises to the adapter's maximum).
 - **Cascade 0 fused with the gather.** A lane is one probe and loops over
@@ -72,7 +72,11 @@ fragment shaders cannot:
 - Debug views (`cascade N merged/raw`) are produced only while requested
   (`setDebugViews`): the level stores plus cascade 0's are then unpacked
   into the fragment backend's direction-tiled textures for the same display
-  pass.
+  pass. The fragment backend does the same for its raw (own-interval)
+  target: off, each cascade pass renders two targets through the `fsMerged`
+  entry point and the raw textures do not exist (a third of its cascade
+  memory, 130 MB of writes a frame in the default plan); the module turns it
+  on only for the two cascade views.
 
 Both backends share `march.wgsl` (the marcher reads the scene through
 `sceneDistance`/`sceneMedium`), `planCascades`, the reference and display
@@ -87,22 +91,24 @@ Pipelined wall-clock per frame, with the exclusive GPU time of each pass
 
 | bilinear fix | frame | c4 | c3 | c2 | c1 | c0 (+ gather) |
 | --- | --- | --- | --- | --- | --- | --- |
-| fragment, Deno | 33.1 | 8.2 | 8.6 | 4.9 | 4.0 | 5.9 + 0.5 |
-| compute, Deno | 25.8 | 5.1 | 6.5 | 4.4 | 3.6 | 5.8 |
-| fragment, Chrome 153 | 30.5 | 8.2 | 8.6 | 4.5 | 3.6 | 5.3 + 0.4 |
-| compute, Chrome 153 | 22.5 | 4.5 | 5.7 | 3.9 | 3.2 | 4.7 |
+| fragment, Deno | 31.4 | 8.0 | 8.4 | 4.4 | 3.8 | 5.5 + 0.5 |
+| compute, Deno | 25.8 | 5.2 | 7.0 | 5.0 | 3.9 | 5.9 |
+| fragment, Chrome 153 | 29.0 | 8.0 | 8.3 | 4.0 | 3.3 | 4.7 + 0.4 |
+| compute, Chrome 153 | 22.6 | 4.5 | 5.7 | 3.9 | 3.3 | 4.7 |
 
 | vanilla | frame | c4 | c3 | c2 | c1 | c0 (+ gather) |
 | --- | --- | --- | --- | --- | --- | --- |
-| fragment, Deno | 9.8 | 2.1 | 2.3 | 2.0 | 2.9 | 5.7 + 0.8 |
-| compute, Deno | 8.9 | 1.4 | 1.9 | 1.9 | 2.8 | 5.3 |
-| fragment, Chrome 153 | 8.0 | 1.1 | 1.2 | 1.1 | 1.4 | 2.5 + 0.4 |
-| compute, Chrome 153 | 6.1 | 0.7 | 0.9 | 0.9 | 1.2 | 2.1 |
+| fragment, Deno | 9.6 | 1.9 | 2.0 | 1.8 | 2.6 | 4.8 + 0.8 |
+| compute, Deno | 8.7 | 1.4 | 1.8 | 1.9 | 2.7 | 4.9 |
+| fragment, Chrome 153 | 7.5 | 1.1 | 1.2 | 0.9 | 1.3 | 2.4 + 0.4 |
+| compute, Chrome 153 | 6.2 | 0.7 | 0.9 | 0.9 | 1.2 | 2.1 |
 
-So the compute backend is 22 to 26% faster with the bilinear fix and 9 to
-23% faster vanilla, at a quarter of the cascade memory, and the two agree to
-0.002 RMS. Chrome (Dawn/Tint) compiles every program and runs faster than
-Deno (wgpu/naga) on the same GPU, most visibly at cascade 0.
+So the compute backend is 18 to 22% faster with the bilinear fix and 10 to
+17% faster vanilla, at about a third of the cascade memory, and the two agree
+to 0.002 RMS. Chrome (Dawn/Tint) compiles every program and runs faster than
+Deno (wgpu/naga) on the same GPU, most visibly at cascade 0. (The fragment
+rows are with its raw debug target off, see below, which took about 1.5 ms
+off its bilinear-fix frame.)
 
 What the sweep in `bench.ts` decided (all within the run-to-run noise of
 about 5% unless noted):

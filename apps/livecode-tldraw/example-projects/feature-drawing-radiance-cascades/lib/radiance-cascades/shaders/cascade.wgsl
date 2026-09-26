@@ -193,8 +193,25 @@ struct Out {
   @location(2) raw: vec4f,
 };
 
+/// Without the raw debug target (the pipeline the renderer uses unless the
+/// debug views are requested).
+struct OutMerged {
+  @location(0) radiance: vec4f,
+  @location(1) transmittance: vec4f,
+};
+
+@fragment
+fn fsMerged(@builtin(position) pos: vec4f) -> OutMerged {
+  let out = shade(pos);
+  return OutMerged(out.radiance, out.transmittance);
+}
+
 @fragment
 fn fs(@builtin(position) pos: vec4f) -> Out {
+  return shade(pos);
+}
+
+fn shade(pos: vec4f) -> Out {
   let texel = vec2i(floor(pos.xy));
   let probes = vec2i(u.probeCount);
   let tile = texel / probes;
