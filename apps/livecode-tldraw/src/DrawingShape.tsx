@@ -151,6 +151,7 @@ function DrawingShapeComponent({ shape }: { shape: DrawingShape }) {
   const setDrawing = runtime.setDrawing;
   const patchDrawing = runtime.patchDrawing;
   const elementRef = useRef<HandwritingCanvasElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
   const bindingRef = useRef<
     {
       drawingName: string;
@@ -223,7 +224,12 @@ function DrawingShapeComponent({ shape }: { shape: DrawingShape }) {
       // The element no longer shows accepted truth; block writes until a
       // later hydration succeeds.
       appliedRef.current = null;
-      setWriteError(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      setWriteError(
+        /document version must be/i.test(message)
+          ? `${message}. The bundled handwriting-canvas predates this document format: run npm run setupLivecode and restart the client.`
+          : message,
+      );
     }
   }, [entity, interacting, originId, shape.props.drawingName]);
 
@@ -404,6 +410,18 @@ function DrawingShapeComponent({ shape }: { shape: DrawingShape }) {
 
   const stopCanvasEvent = (event: SyntheticEvent) => event.stopPropagation();
 
+  // A native listener, not React's delegated onWheel: that one runs after
+  // tldraw's own canvas wheel handler, which has already claimed the event
+  // for the camera unless the shape is in editing mode, so the body would
+  // only scroll sometimes.
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const stopWheel = (event: WheelEvent) => event.stopPropagation();
+    body.addEventListener("wheel", stopWheel, { passive: true });
+    return () => body.removeEventListener("wheel", stopWheel);
+  }, []);
+
   return (
     <HTMLContainer
       className="drawing-shape"
@@ -427,6 +445,7 @@ function DrawingShapeComponent({ shape }: { shape: DrawingShape }) {
           : null}
       </div>
       <div
+        ref={bodyRef}
         className="drawing-shape__body"
         onPointerDown={stopCanvasEvent}
         onPointerMove={stopCanvasEvent}
@@ -434,7 +453,6 @@ function DrawingShapeComponent({ shape }: { shape: DrawingShape }) {
         onPointerCancel={stopCanvasEvent}
         onTouchStart={stopCanvasEvent}
         onKeyDownCapture={stopCanvasEvent}
-        onWheel={stopCanvasEvent}
       >
         {entity
           ? (

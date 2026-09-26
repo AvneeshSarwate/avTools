@@ -42,16 +42,7 @@
       }
     ],
     "scopeViews": [],
-    "canvasSurfaceViews": [
-      {
-        "id": "shape:radiance-cascades-render",
-        "surfaceName": "radiance-cascades/render",
-        "x": 700,
-        "y": 840,
-        "w": 1000,
-        "h": 520
-      }
-    ]
+    "canvasSurfaceViews": []
   },
   "data": [
     {

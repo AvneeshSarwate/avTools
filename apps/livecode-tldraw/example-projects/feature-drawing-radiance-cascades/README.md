@@ -1,9 +1,11 @@
 # feature-drawing-radiance-cascades
 
 Lights the outlines of a drawing with 2D radiance cascades on WebGPU. A
-canvas view of a checked-in drawing, a params pane, and a surface view showing
-the render, which follows every revision of the drawing, the ~30 a second
-streamed while a shape is dragged included. Only the outlines (strokes) of the
+canvas view of a checked-in drawing and a params pane in the UI; the render
+lives in the engine tab's stage and follows every revision of the drawing,
+the ~30 a second streamed while a shape is dragged included. Meant for the
+engine in its own tab (**Open · engine in separate tab**), so the manifest
+has no canvas-surface view; one can be added for the same-tab form. Only the outlines (strokes) of the
 shapes exist to the light: each is an emitter, an occluder, a tinted glass, or
 a bouncing wall according to its `metadata`.
 
@@ -72,9 +74,12 @@ into the generated-raw post effects).
    that bounce brightens a wall's shadow side and settles, and writes PNGs of
    every view (irradiance per mode, reference, bounce, each cascade's merged and
    raw tiles) to `.output/`.
-3. **In the app** (browser-engine target, canvas views mirror only same-realm):
-   `/index.html?serverBaseUrl=http://localhost:7777&projectPath=<absolute path>&engine=inprocess`,
-   then Run the module. Drag the sun: the render follows mid-gesture. Switch
+3. **In the app** (browser-engine target): open the project with the engine
+   in a separate tab from `projects.html`, or by hand with
+   `/engine/` in one tab and
+   `/index.html?serverBaseUrl=http://localhost:7777&projectPath=<absolute path>`
+   in another, then Run the module and watch the engine tab. Drag the sun:
+   the render follows mid-gesture. Switch
    the merge mode: vanilla leaks light into the boulder and rings the sun,
    the bilinear fix does neither. Set a shape's `transmittance` to
    `[1, 0.3, 0.3]` in the metadata editor and it becomes red glass. Raise
@@ -83,3 +88,8 @@ into the generated-raw post effects).
 
 Editing the library needs a page reload to take effect (relative imports are
 not cache-busted); editing the module does not.
+
+If the drawing view shows **write rejected** with "Drawing document version
+must be 1, got 2" on load, the client's bundled `handwriting-canvas` is older
+than the checked-in document (it has curved polygons): run
+`npm run setupLivecode` in `apps/livecode-tldraw` and restart the client.
