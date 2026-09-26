@@ -47,14 +47,22 @@ export interface RadianceCascadeConfig {
   referenceRays: number;
 }
 
+/**
+ * Defaults follow the penumbra condition: a level's angular ray spacing at
+ * the end of its interval should match its probe spacing. With probe spacing
+ * doubling and intervals quadrupling per level, rays need only double, and
+ * cascade 0 needs about 2π·t1/s0 ≈ 16 rays at 1 px spacing. Measured on the
+ * checked-in drawing, 1 px spacing cut the error against the brute-force
+ * reference 2.5x over 2 px; the bilinear fix halved it again.
+ */
 export const DEFAULT_CONFIG: RadianceCascadeConfig = {
-  probeSpacing: 2,
-  baseRayCount: 4,
-  branching: 4,
-  intervalLength: 4,
+  probeSpacing: 1,
+  baseRayCount: 16,
+  branching: 2,
+  intervalLength: 2,
   intervalScale: 4,
   cascadeCount: 0,
-  mergeMode: "vanilla",
+  mergeMode: "bilinearFix",
   preAverage: false,
   sky: [0, 0, 0],
   bounceStrength: 0,
