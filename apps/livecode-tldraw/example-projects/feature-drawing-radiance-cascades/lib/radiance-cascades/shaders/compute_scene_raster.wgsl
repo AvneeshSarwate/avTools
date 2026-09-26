@@ -87,9 +87,10 @@ fn main(
     }
     if (best > u.binRadius) {
       // Every unbinned segment is farther than binRadius from every pixel of
-      // this tile, and the tile-centre distance bounds them all.
-      let halfDiag = f32(TILE) * 0.5 * sqrt(2.0);
-      best = max(u.binRadius, bitcast<f32>(info.y) - halfDiag);
+      // this tile, and the distance field is 1-Lipschitz, so the tile-centre
+      // distance minus this pixel's distance to the centre bounds the rest.
+      let center = (vec2f(wg.xy) + 0.5) * f32(TILE);
+      best = max(u.binRadius, bitcast<f32>(info.y) - length(p - center));
     }
   } else {
     for (var i = 0u; i < u.segmentCount; i++) {

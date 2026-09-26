@@ -27,7 +27,9 @@ fn inBounds(p: vec2f, size: vec2f) -> bool {
   return all(p >= vec2f(0.0)) && all(p < size);
 }
 
-fn march(origin: vec2f, to: vec2f, mp: MarchParams) -> Hit {
+// `originDistance` is the distance field at `origin` when the caller has it
+// (every ray of a probe starts at the same point), or a negative number.
+fn march(origin: vec2f, to: vec2f, mp: MarchParams, originDistance: f32) -> Hit {
   var L = vec3f(0.0);
   var T = vec3f(1.0);
   let delta = to - origin;
@@ -37,6 +39,10 @@ fn march(origin: vec2f, to: vec2f, mp: MarchParams) -> Hit {
   }
   let dir = delta / len;
   var t = 0.0;
+  // The first step's distance is known when the caller loaded it.
+  if (mp.useDistanceField && originDistance > 0.5 && inBounds(origin, mp.sceneSize)) {
+    t = originDistance;
+  }
   for (var i = 0; i < mp.maxSteps; i++) {
     if (t >= len) { break; }
     let p = origin + dir * t;
@@ -52,12 +58,18 @@ fn march(origin: vec2f, to: vec2f, mp: MarchParams) -> Hit {
     let ds = min(mp.stepSize, len - t);
     let m = sceneMedium(texel);
     let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
-    let E = m.E;
-    let tauDs = pow(tau, vec3f(ds));
-    let clear = tau > vec3f(0.999);
-    let emitFactor = select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
-    L += T * E * emitFactor;
-    T *= tauDs;
+    if (ds == 1.0) {
+      // A whole pixel: tau^1 is tau and the emission factor is exactly 1,
+      // for clear and absorbing media alike.
+      L += T * m.E;
+      T *= tau;
+    } else {
+      let tauDs = pow(tau, vec3f(ds));
+      let clear = tau > vec3f(0.999);
+      let emitFactor = select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
+      L += T * m.E * emitFactor;
+      T *= tauDs;
+    }
     if (max(T.r, max(T.g, T.b)) < 0.002) {
       T = vec3f(0.0);
       break;

@@ -38,7 +38,7 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   for (var k = 0; k < rays; k++) {
     let a = TAU_F * (f32(k) + 0.5) / u.rays;
     let w = vec2f(cos(a), sin(a));
-    let hit = march(pos.xy, pos.xy + w * u.maxDistance, mp);
+    let hit = march(pos.xy, pos.xy + w * u.maxDistance, mp, -1.0);
     sum += hit.L + hit.T * u.sky.rgb;
   }
   return vec4f(sum / u.rays, 1.0);
