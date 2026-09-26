@@ -1,9 +1,13 @@
 /**
- * The radiance cascade renderer: plans the cascade levels from the render
- * size and configuration, owns the shader-fx effect chain, and re-plans it
- * when a structural parameter changes.
+ * The fragment-shader radiance cascade renderer: plans the cascade levels
+ * from the render size and configuration, owns the shader-fx effect chain,
+ * and re-plans it when a structural parameter changes. The compute-shader
+ * alternative is `compute/renderer.ts`; both satisfy `RadianceRenderer` in
+ * `backend.ts` and share `planCascades`.
  */
 
+import type { RadianceRenderer } from "./backend.ts";
+import { GpuTimer } from "./compute/timer.ts";
 import {
   BounceEffect,
   CascadeEffect,
@@ -96,13 +100,15 @@ const MAX_CASCADES = 10;
  * Cascade i: spacing s0 * 2^i, rays r0 * B^i, interval
  * [l0 (S^i - 1)/(S - 1), l0 (S^(i+1) - 1)/(S - 1)]. The automatic count is
  * the smallest whose top interval reaches the render diagonal. Levels whose
- * texture would exceed the device limit are dropped with a warning.
+ * texture would exceed the device limit, or for which `fits` returns a
+ * reason, are dropped with a warning (and so is everything above them).
  */
 export function planCascades(
   width: number,
   height: number,
   config: RadianceCascadeConfig,
   maxTextureSize: number,
+  fits?: (level: CascadeLevel) => string | null,
 ): CascadePlan {
   const warnings: string[] = [];
   const branching = Math.max(1, Math.round(config.branching));
@@ -156,7 +162,7 @@ export function planCascades(
       );
       break;
     }
-    levels.push({
+    const level: CascadeLevel = {
       index: i,
       probeSpacing,
       probeCount,
@@ -167,7 +173,13 @@ export function planCascades(
       textureSize,
       intervalStart: intervalStart(i),
       intervalEnd: intervalStart(i + 1),
-    });
+    };
+    const reason = fits?.(level);
+    if (reason) {
+      warnings.push(`cascade ${i}: ${reason}; stopping at ${i} cascades`);
+      break;
+    }
+    levels.push(level);
   }
   if (levels.length === 0) {
     throw new Error("radiance cascades: no cascade fits the device limits");
@@ -201,7 +213,8 @@ export interface RendererViews {
   cascades: CascadeViews[];
 }
 
-export class RadianceCascadeRenderer {
+export class RadianceCascadeRenderer implements RadianceRenderer {
+  readonly backend = "fragment" as const;
   readonly width: number;
   readonly height: number;
   readonly scene: StrokeSceneEffect;
@@ -212,6 +225,7 @@ export class RadianceCascadeRenderer {
   private config: RadianceCascadeConfig;
   private currentPlan: CascadePlan | null = null;
   private planKey = "";
+  private readonly timer: GpuTimer;
 
   constructor(
     private readonly device: GPUDevice,
@@ -221,9 +235,13 @@ export class RadianceCascadeRenderer {
   ) {
     this.width = Math.max(1, Math.floor(width));
     this.height = Math.max(1, Math.floor(height));
+    this.timer = new GpuTimer(device);
     this.scene = new StrokeSceneEffect(device, this.width, this.height);
     this.bounce = new BounceEffect(device, this.scene);
     this.reference = new ReferenceEffect(device, this.bounce, this.scene);
+    this.scene.timer = this.timer;
+    this.bounce.timer = this.timer;
+    this.reference.timer = this.timer;
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.configure(this.config);
   }
@@ -245,6 +263,24 @@ export class RadianceCascadeRenderer {
 
   setScene(scene: StrokeScene): void {
     this.scene.setScene(scene);
+  }
+
+  /** The fragment backend always renders its debug attachments. */
+  setDebugViews(_enabled: boolean): void {}
+
+  /** Per-pass GPU times (each pass is its own submit; `total` spans them). */
+  get timings(): Readonly<Record<string, number>> | null {
+    return this.timer.timings;
+  }
+
+  describe(): string[] {
+    return this.plan.levels.map((level) =>
+      `c${level.index}: spacing ${level.probeSpacing}, ${level.rayCount} rays, ` +
+      `[${level.intervalStart.toFixed(1)}, ${
+        level.intervalEnd.toFixed(1)
+      }] px, ` +
+      `${level.textureSize[0]}x${level.textureSize[1]} x3 textures`
+    );
   }
 
   /** Apply a configuration; rebuilds the cascade chain when its plan changes. */
@@ -295,6 +331,7 @@ export class RadianceCascadeRenderer {
         this.scene,
         upper,
       );
+      cascade.timer = this.timer;
       this.cascades[i] = cascade;
       upper = cascade;
     }
@@ -306,16 +343,30 @@ export class RadianceCascadeRenderer {
       this.height,
       cascade0,
     );
+    this.gather.timer = this.timer;
+  }
+
+  /** Resolve the frame's pass timestamps in a submit of their own. */
+  private resolveTimings(): void {
+    if (!this.timer.enabled) return;
+    const encoder = this.device.createCommandEncoder({ label: "rc-timings" });
+    this.timer.resolve(encoder);
+    this.device.queue.submit([encoder.finish()]);
+    this.timer.collect();
   }
 
   /** Render one frame: scene (if changed), bounce, cascades top-down, gather. */
   render(): void {
+    this.timer.begin();
     this.irradiance.renderAll();
+    this.resolveTimings();
   }
 
   /** Render the brute-force reference (and the scene and bounce it reads). */
   renderReference(): void {
+    this.timer.begin();
     this.reference.renderAll();
+    this.resolveTimings();
   }
 
   /** A cascade's merged and raw radiance textures (for readback tools). */
@@ -350,6 +401,7 @@ export class RadianceCascadeRenderer {
     this.reference.dispose();
     this.bounce.dispose();
     this.scene.dispose();
+    this.timer.dispose();
     this.currentPlan = null;
   }
 }

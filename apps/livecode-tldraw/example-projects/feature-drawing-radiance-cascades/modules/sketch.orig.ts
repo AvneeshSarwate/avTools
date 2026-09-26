@@ -5,10 +5,13 @@ import { canvasSurface } from "canvas-surface";
 import {
   buildStrokeScene,
   CanvasPresenter,
+  createRadianceRenderer,
   type DisplayMode,
   type MergeMode,
   type RadianceCascadeConfig,
-  RadianceCascadeRenderer,
+  radianceDeviceDescriptor,
+  type RadianceRenderer,
+  type RendererBackend,
   type ToneMap,
 } from "../lib/radiance-cascades/mod.ts";
 
@@ -19,7 +22,9 @@ import {
  * scene. Shape `metadata` carries the light material: `strokeWidth`,
  * `emission` [r, g, b] (HDR), `transmittance` [r, g, b] or a number (0 opaque,
  * 1 clear), `albedo` [r, g, b]; see `lib/radiance-cascades/materials.ts` for
- * the defaults.
+ * the defaults. The **backend** parameter swaps the fragment-shader renderer
+ * for the compute-shader one (same output; the HUD shows its per-pass GPU
+ * times when the device supports timestamp queries).
  */
 const shapes = drawing("radiance-cascades_shapes");
 
@@ -31,6 +36,7 @@ export const params = canvasParams(
   "radiance-cascades/params",
   {
     render: {
+      backend: "fragment",
       scale: 1,
       exposure: 1,
       toneMap: "aces",
@@ -54,6 +60,13 @@ export const params = canvasParams(
   },
   {
     render: {
+      backend: {
+        label: "backend",
+        options: {
+          "fragment shaders (shader-fx)": "fragment",
+          "compute shaders (raw WebGPU)": "compute",
+        },
+      },
       scale: { label: "render scale", min: 0.25, max: 2, step: 0.25 },
       exposure: { label: "exposure", min: 0.05, max: 8, step: 0.05 },
       toneMap: {
@@ -162,7 +175,7 @@ interface Running {
 function startRenderer(surface: ReturnType<typeof canvasSurface>): Running {
   let stopped = false;
   let frame = 0;
-  let renderer: RadianceCascadeRenderer | null = null;
+  let renderer: RadianceRenderer | null = null;
   let presenter: CanvasPresenter | null = null;
   // A one-line readout under the canvas: render size, frame rate, cascades.
   const hud = document.createElement("div");
@@ -191,29 +204,34 @@ function startRenderer(surface: ReturnType<typeof canvasSurface>): Running {
       console.error("[radiance-cascades] no WebGPU adapter");
       return;
     }
-    const device = await adapter.requestDevice();
+    const device = await adapter.requestDevice(
+      radianceDeviceDescriptor(adapter),
+    );
     if (stopped) return;
     device.lost.then((info) =>
       console.error("[radiance-cascades] device lost:", info.message)
     );
 
     let scale = 0;
+    let backend: RendererBackend | "" = "";
     let renderedRev = -1;
     let configKey = "";
     let planKey = "";
     let referenceDirty = true;
 
-    const rebuildForScale = (nextScale: number) => {
+    const rebuild = (nextScale: number, nextBackend: RendererBackend) => {
       presenter?.dispose();
       renderer?.dispose();
       scale = nextScale;
+      backend = nextBackend;
       const width = Math.round(STAGE_WIDTH * scale);
       const height = Math.round(STAGE_HEIGHT * scale);
-      renderer = new RadianceCascadeRenderer(
+      renderer = createRadianceRenderer(
         device,
         width,
         height,
         configFromParams(),
+        { backend },
       );
       presenter = new CanvasPresenter(
         device,
@@ -229,7 +247,10 @@ function startRenderer(surface: ReturnType<typeof canvasSurface>): Running {
     const tick = () => {
       if (stopped) return;
       frame = requestAnimationFrame(tick);
-      if (params.render.scale !== scale) rebuildForScale(params.render.scale);
+      const wantedBackend = params.render.backend as RendererBackend;
+      if (params.render.scale !== scale || wantedBackend !== backend) {
+        rebuild(params.render.scale, wantedBackend);
+      }
       if (!renderer || !presenter) return;
 
       const rev = shapes.rev();
@@ -245,19 +266,12 @@ function startRenderer(surface: ReturnType<typeof canvasSurface>): Running {
         const plan = renderer.configure(config);
         configKey = nextConfigKey;
         referenceDirty = true;
-        const nextPlanKey = JSON.stringify(plan);
+        const nextPlanKey = JSON.stringify(plan) + renderer.describe().join();
         if (nextPlanKey !== planKey) {
           planKey = nextPlanKey;
-          const levels = plan.levels.map((level) =>
-            `c${level.index}: spacing ${level.probeSpacing}, ${level.rayCount} rays, ` +
-            `[${level.intervalStart.toFixed(1)}, ${
-              level.intervalEnd.toFixed(1)
-            }] px, ` +
-            `${level.textureSize[0]}x${level.textureSize[1]}`
-          );
           console.log(
-            `[radiance-cascades] ${plan.effective.cascadeCount} cascades\n  ${
-              levels.join("\n  ")
+            `[radiance-cascades] ${renderer.backend} backend, ${plan.effective.cascadeCount} cascades\n  ${
+              renderer.describe().join("\n  ")
             }`,
           );
           for (const warning of plan.warnings) {
@@ -266,8 +280,9 @@ function startRenderer(surface: ReturnType<typeof canvasSurface>): Running {
         }
       }
 
-      renderer.render();
       const view = params.render.view as View;
+      renderer.setDebugViews(view === "cascadeMerged" || view === "cascadeRaw");
+      renderer.render();
       if (
         view === "reference" && (referenceDirty || config.bounceStrength > 0)
       ) {
@@ -297,11 +312,21 @@ function startRenderer(surface: ReturnType<typeof canvasSurface>): Running {
       if (now - hudSince >= 500) {
         const fps = (hudFrames * 1000) / (now - hudSince);
         const plan = renderer.plan.effective;
-        hud.textContent = `${renderer.width}x${renderer.height}  ${
-          fps.toFixed(0)
-        } fps  ${plan.cascadeCount} cascades  ${plan.baseRayCount} rays x${plan.branching}  ${config.mergeMode}${
-          plan.preAverage ? " pre-avg" : ""
-        }  view: ${view}`;
+        const timings = renderer.timings;
+        const gpu = timings
+          ? `  gpu ${timings.total.toFixed(1)} ms (` +
+            Object.entries(timings)
+              .filter(([label]) => label !== "total")
+              .map(([label, ms]) => `${label} ${ms.toFixed(1)}`)
+              .join(", ") +
+            ")"
+          : "";
+        hud.textContent =
+          `${renderer.backend}  ${renderer.width}x${renderer.height}  ${
+            fps.toFixed(0)
+          } fps  ${plan.cascadeCount} cascades  ${plan.baseRayCount} rays x${plan.branching}  ${config.mergeMode}${
+            plan.preAverage ? " pre-avg" : ""
+          }  view: ${view}${gpu}`;
         hudFrames = 0;
         hudSince = now;
       }

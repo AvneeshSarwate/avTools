@@ -138,12 +138,15 @@ struct CascadeUniforms {
 @group(0) @binding(5) var upperTransmittance: texture_2d<f32>;
 
 // ---- march.wgsl ----
-// Shared ray march. Bindings 1..3 must be the scene emission, transmittance
-// and distance textures; the including shader supplies \\\`marchParams()\\\`.
-// Sphere-traces the distance field between outlines and integrates
-// emission/transmittance per pixel of travel inside them. The emission of a
-// step is E * (1 - tau^ds) / (1 - tau): the full E at an opaque hit whatever
-// the step, E * ds through clear media.
+// Shared ray march. The including shader supplies the scene accessors
+//   fn sceneDistance(texel: vec2i) -> f32      signed distance to the nearest outline
+//   fn sceneMedium(texel: vec2i) -> Medium     emission and transmittance
+// (the fragment programs read the scene textures directly; the compute
+// cascade reads a workgroup-memory patch when the ray stays inside it) and
+// \`marchParams()\`. Sphere-traces the distance field between outlines and
+// integrates emission/transmittance per pixel of travel inside them. The
+// emission of a step is E * (1 - tau^ds) / (1 - tau): the full E at an opaque
+// hit whatever the step, E * ds through clear media.
 
 struct MarchParams {
   sceneSize: vec2f,
@@ -154,6 +157,10 @@ struct MarchParams {
 struct Hit {
   L: vec3f,
   T: vec3f,
+};
+struct Medium {
+  E: vec3f,
+  tau: vec3f,
 };
 
 fn inBounds(p: vec2f, size: vec2f) -> bool {
@@ -176,15 +183,16 @@ fn march(origin: vec2f, to: vec2f, mp: MarchParams) -> Hit {
     if (!inBounds(p, mp.sceneSize)) { break; }
     let texel = vec2i(floor(p));
     if (mp.useDistanceField) {
-      let d = textureLoad(distanceTex, texel, 0).r;
+      let d = sceneDistance(texel);
       if (d > 0.5) {
         t += max(d, 0.5);
         continue;
       }
     }
     let ds = min(mp.stepSize, len - t);
-    let tau = clamp(textureLoad(transmittanceTex, texel, 0).rgb, vec3f(0.0), vec3f(1.0));
-    let E = textureLoad(emissionTex, texel, 0).rgb;
+    let m = sceneMedium(texel);
+    let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
+    let E = m.E;
     let tauDs = pow(tau, vec3f(ds));
     let clear = tau > vec3f(0.999);
     let emitFactor = select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
@@ -199,6 +207,17 @@ fn march(origin: vec2f, to: vec2f, mp: MarchParams) -> Hit {
   return Hit(L, T);
 }
 
+
+fn sceneDistance(texel: vec2i) -> f32 {
+  return textureLoad(distanceTex, texel, 0).r;
+}
+
+fn sceneMedium(texel: vec2i) -> Medium {
+  return Medium(
+    textureLoad(emissionTex, texel, 0).rgb,
+    textureLoad(transmittanceTex, texel, 0).rgb,
+  );
+}
 
 fn marchParams() -> MarchParams {
   return MarchParams(u.sceneSize, u.useDistanceField > 0.5, u.stepSize, i32(u.maxSteps));
@@ -383,6 +402,853 @@ fn fs(@builtin(position) pos: vec4f) -> Out {
 }
 `;
 
+/** compute_bounce.wgsl, includes expanded. */
+export const COMPUTE_BOUNCE_WGSL =
+  `// Effective emission for the next frame (see bounce.wgsl for the model). The
+// compute cascade never stores cascade 0, so the directional radiance near
+// outlines comes from the band buffer cascade 0 filled last frame: \`slotMap\`
+// maps a probe to its band slot. A probe outside the band (or dropped when the
+// band overflowed) contributes its irradiance as if it were uniform over the
+// hemisphere, the same as the fragment pass does without a normal.
+
+override TILE: u32 = 16u;
+
+struct BounceUniforms {
+  probeCount: vec2u,
+  probeSpacing: f32,
+  storedDirs: u32,
+  rayCount: u32,
+  strength: f32,
+  offset: f32,
+  pad: u32,
+};
+@group(0) @binding(0) var<uniform> u: BounceUniforms;
+@group(0) @binding(1) var emissionTex: texture_2d<f32>;
+@group(0) @binding(2) var albedoTex: texture_2d<f32>;
+@group(0) @binding(3) var distanceTex: texture_2d<f32>;
+@group(0) @binding(4) var<storage, read> slotMap: array<u32>;
+@group(0) @binding(5) var<storage, read> band: array<u32>;
+@group(0) @binding(6) var probeIrradiance: texture_2d<f32>;
+@group(0) @binding(7) var effectiveOut: texture_storage_2d<rgba16float, write>;
+
+const TAU_F: f32 = 6.283185307179586;
+
+fn bandRadiance(slot: u32, k: u32) -> vec3f {
+  let i = ((slot - 1u) * u.storedDirs + k) * 2u;
+  return vec3f(unpack2x16float(band[i]), unpack2x16float(band[i + 1u]).x);
+}
+
+@compute @workgroup_size(TILE, TILE, 1)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let dims = vec2i(textureDimensions(distanceTex));
+  if (any(vec2i(gid.xy) >= dims)) {
+    return;
+  }
+  let texel = vec2i(gid.xy);
+  let e = textureLoad(emissionTex, texel, 0);
+  if (u.strength <= 0.0 || e.a < 0.5) {
+    textureStore(effectiveOut, texel, e);
+    return;
+  }
+  let pos = vec2f(texel) + 0.5;
+  let d = textureLoad(distanceTex, texel, 0).r;
+  let dx = textureLoad(distanceTex, clamp(texel + vec2i(1, 0), vec2i(0), dims - 1), 0).r
+    - textureLoad(distanceTex, clamp(texel - vec2i(1, 0), vec2i(0), dims - 1), 0).r;
+  let dy = textureLoad(distanceTex, clamp(texel + vec2i(0, 1), vec2i(0), dims - 1), 0).r
+    - textureLoad(distanceTex, clamp(texel - vec2i(0, 1), vec2i(0), dims - 1), 0).r;
+  var n = vec2f(dx, dy);
+  let nl = length(n);
+  let hasNormal = nl > 1e-4;
+  n = select(vec2f(0.0), n / max(nl, 1e-4), hasNormal);
+  let samplePos = pos + n * (max(-d, 0.0) + u.offset);
+
+  let upos = samplePos / u.probeSpacing - 0.5;
+  let base = vec2i(floor(upos));
+  let f = fract(upos);
+  let weights = vec4f((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
+  let dirs = u.storedDirs;
+  let group = f32(u.rayCount) / f32(dirs);
+  var slots = vec4u(0u);
+  var means = array<vec3f, 4>();
+  for (var c = 0; c < 4; c++) {
+    let q = clamp(base + vec2i(c % 2, c / 2), vec2i(0), vec2i(u.probeCount) - vec2i(1));
+    slots[c] = slotMap[u32(q.y) * u.probeCount.x + u32(q.x)];
+    means[c] = textureLoad(probeIrradiance, q, 0).rgb;
+  }
+  var irradiance = vec3f(0.0);
+  for (var k = 0u; k < dirs; k++) {
+    var weight = 2.0 / f32(dirs);
+    if (dirs > 1u && hasNormal) {
+      let a = TAU_F * (f32(k) * group + group * 0.5) / f32(u.rayCount);
+      weight = max(0.0, dot(vec2f(cos(a), sin(a)), n)) * TAU_F / f32(dirs);
+    }
+    var L = vec3f(0.0);
+    for (var c = 0; c < 4; c++) {
+      let slot = slots[c];
+      L += weights[c] * select(means[c], bandRadiance(slot, k), slot != 0u);
+    }
+    irradiance += L * weight;
+  }
+  let albedo = textureLoad(albedoTex, texel, 0).rgb;
+  textureStore(effectiveOut, texel, vec4f(e.rgb + u.strength * albedo * irradiance * 0.5, e.a));
+}
+`;
+
+/** compute_cascade.wgsl, includes expanded. */
+export const COMPUTE_CASCADE_WGSL =
+  `// One cascade level as a compute pass. A lane is one (probe, stored direction);
+// a workgroup is a TX x TY tile of probes times DW consecutive stored
+// directions, laid out 1D with the direction fastest. Levels are stored in
+// storage buffers, direction-major (dir * probes + probe), each entry three
+// u32 of packed f16: radiance rgb and transmittance rgb. What the fragment
+// version cannot do:
+//
+// - USE_PATCH: the scene texels every ray of the tile can touch (tile extent
+//   plus a halo) are loaded into workgroup memory once and marched there.
+//   Worth it where many short rays share a small patch (cascade 0 with the
+//   bilinear fix); the planner decides per level.
+// - USE_FOOT: the upper-level probes and directions this tile merges with are
+//   staged in workgroup memory once instead of being re-read per lane.
+// - REDUCE (cascade 0): the DW directions of a probe are all in one workgroup,
+//   so the direction mean is reduced in workgroup memory and written straight
+//   to the irradiance texture; cascade 0 is never stored. Probes within
+//   \`bandWidth\` of an outline also append their directional radiance to a
+//   compact band buffer (atomic slot counter) for the bounce pass.
+// Rays are otherwise identical to cascade.wgsl (merge modes, pre-averaging,
+// overlap, sky).
+
+override TX: u32 = 16u;
+override TY: u32 = 16u;
+override DW: u32 = 1u;
+override REDUCE: bool = false;
+override RED_N: u32 = 1u;
+override USE_PATCH: bool = false;
+override PATCH_W: u32 = 1u;
+override PATCH_H: u32 = 1u;
+override USE_FOOT: bool = false;
+override FOOT_X: u32 = 1u;
+override FOOT_Y: u32 = 1u;
+override FOOT_D: u32 = 1u;
+
+struct CascadeUniforms {
+  sky: vec4f,
+  sceneSize: vec2f,
+  probeCount: vec2u,
+  upperProbeCount: vec2u,
+  probeSpacing: f32,
+  upperSpacing: f32,
+  rayCount: u32,
+  storedDirs: u32,
+  upperRayCount: u32,
+  upperStoredDirs: u32,
+  intervalStart: f32,
+  intervalEnd: f32,
+  branching: u32,
+  isTop: u32,
+  mergeMode: u32,
+  preAverage: u32,
+  useDistanceField: u32,
+  stepSize: f32,
+  intervalOverlap: f32,
+  maxSteps: i32,
+  storeDirs: u32,
+  storeRaw: u32,
+  bandCapacity: u32,
+  bandWidth: f32,
+  halo: f32,
+  pad0: f32,
+};
+struct Counter {
+  n: atomic<u32>,
+};
+@group(0) @binding(0) var<uniform> u: CascadeUniforms;
+@group(0) @binding(1) var emissionTex: texture_2d<f32>;
+@group(0) @binding(2) var transmittanceTex: texture_2d<f32>;
+@group(0) @binding(3) var distanceTex: texture_2d<f32>;
+/// The level above, packed; unused at the top.
+@group(0) @binding(4) var<storage, read> upper: array<u32>;
+/// This level's store, packed; written when \`storeDirs\` is set.
+@group(0) @binding(5) var<storage, read_write> own: array<u32>;
+/// This level's own-interval radiance for debugging, two u32 per entry.
+@group(0) @binding(6) var<storage, read_write> rawStore: array<u32>;
+/// REDUCE only: per-probe irradiance.
+@group(0) @binding(7) var irradianceOut: texture_storage_2d<rgba16float, write>;
+/// REDUCE only: probe -> band slot + 1, 0 when the probe is not in the band.
+@group(0) @binding(8) var<storage, read_write> slotMap: array<u32>;
+/// REDUCE only: per band slot, DW radiances of two packed u32.
+@group(0) @binding(9) var<storage, read_write> band: array<u32>;
+@group(0) @binding(10) var<storage, read_write> bandCounter: Counter;
+
+var<workgroup> scenePatch: array<vec4u, PATCH_W * PATCH_H>;
+var<workgroup> footprint: array<u32, FOOT_X * FOOT_Y * FOOT_D * 3u>;
+var<workgroup> reduction: array<vec3f, RED_N>;
+var<workgroup> bandSlots: array<u32, TX * TY>;
+
+var<private> patchOrigin: vec2i;
+var<private> footOrigin: vec2i;
+var<private> footDir0: u32;
+
+fn patchWord(texel: vec2i) -> vec4u {
+  let l = texel - patchOrigin;
+  return scenePatch[u32(l.y) * PATCH_W + u32(l.x)];
+}
+
+fn inPatch(texel: vec2i) -> bool {
+  let l = texel - patchOrigin;
+  return USE_PATCH && all(l >= vec2i(0)) && l.x < i32(PATCH_W) && l.y < i32(PATCH_H);
+}
+
+// ---- march.wgsl ----
+// Shared ray march. The including shader supplies the scene accessors
+//   fn sceneDistance(texel: vec2i) -> f32      signed distance to the nearest outline
+//   fn sceneMedium(texel: vec2i) -> Medium     emission and transmittance
+// (the fragment programs read the scene textures directly; the compute
+// cascade reads a workgroup-memory patch when the ray stays inside it) and
+// \`marchParams()\`. Sphere-traces the distance field between outlines and
+// integrates emission/transmittance per pixel of travel inside them. The
+// emission of a step is E * (1 - tau^ds) / (1 - tau): the full E at an opaque
+// hit whatever the step, E * ds through clear media.
+
+struct MarchParams {
+  sceneSize: vec2f,
+  useDistanceField: bool,
+  stepSize: f32,
+  maxSteps: i32,
+};
+struct Hit {
+  L: vec3f,
+  T: vec3f,
+};
+struct Medium {
+  E: vec3f,
+  tau: vec3f,
+};
+
+fn inBounds(p: vec2f, size: vec2f) -> bool {
+  return all(p >= vec2f(0.0)) && all(p < size);
+}
+
+fn march(origin: vec2f, to: vec2f, mp: MarchParams) -> Hit {
+  var L = vec3f(0.0);
+  var T = vec3f(1.0);
+  let delta = to - origin;
+  let len = length(delta);
+  if (len <= 0.0) {
+    return Hit(L, T);
+  }
+  let dir = delta / len;
+  var t = 0.0;
+  for (var i = 0; i < mp.maxSteps; i++) {
+    if (t >= len) { break; }
+    let p = origin + dir * t;
+    if (!inBounds(p, mp.sceneSize)) { break; }
+    let texel = vec2i(floor(p));
+    if (mp.useDistanceField) {
+      let d = sceneDistance(texel);
+      if (d > 0.5) {
+        t += max(d, 0.5);
+        continue;
+      }
+    }
+    let ds = min(mp.stepSize, len - t);
+    let m = sceneMedium(texel);
+    let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
+    let E = m.E;
+    let tauDs = pow(tau, vec3f(ds));
+    let clear = tau > vec3f(0.999);
+    let emitFactor = select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
+    L += T * E * emitFactor;
+    T *= tauDs;
+    if (max(T.r, max(T.g, T.b)) < 0.002) {
+      T = vec3f(0.0);
+      break;
+    }
+    t += ds;
+  }
+  return Hit(L, T);
+}
+
+
+fn sceneDistance(texel: vec2i) -> f32 {
+  if (inPatch(texel)) {
+    return bitcast<f32>(patchWord(texel).w);
+  }
+  return textureLoad(distanceTex, texel, 0).r;
+}
+
+fn sceneMedium(texel: vec2i) -> Medium {
+  if (inPatch(texel)) {
+    let w = patchWord(texel);
+    let a = unpack2x16float(w.x);
+    let b = unpack2x16float(w.y);
+    let c = unpack2x16float(w.z);
+    return Medium(vec3f(a, b.x), vec3f(b.y, c));
+  }
+  return Medium(
+    textureLoad(emissionTex, texel, 0).rgb,
+    textureLoad(transmittanceTex, texel, 0).rgb,
+  );
+}
+
+fn marchParams() -> MarchParams {
+  return MarchParams(u.sceneSize, u.useDistanceField != 0u, u.stepSize, u.maxSteps);
+}
+
+const TAU_F: f32 = 6.283185307179586;
+
+fn dirOf(index: f32, count: f32) -> vec2f {
+  let a = TAU_F * (index + 0.5) / count;
+  return vec2f(cos(a), sin(a));
+}
+
+fn unpackLT(x: u32, y: u32, z: u32) -> Hit {
+  let a = unpack2x16float(x);
+  let b = unpack2x16float(y);
+  let c = unpack2x16float(z);
+  return Hit(vec3f(a, b.x), vec3f(b.y, c));
+}
+
+fn upperIndex(probe: vec2i, stored: u32) -> u32 {
+  let probes = u.upperProbeCount.x * u.upperProbeCount.y;
+  return (stored * probes + u32(probe.y) * u.upperProbeCount.x + u32(probe.x)) * 3u;
+}
+
+fn upperSample(probe: vec2i, stored: u32) -> Hit {
+  if (USE_FOOT) {
+    let l = probe - footOrigin;
+    let dd = i32(stored) - i32(footDir0);
+    if (all(l >= vec2i(0)) && l.x < i32(FOOT_X) && l.y < i32(FOOT_Y) && dd >= 0 && dd < i32(FOOT_D)) {
+      let i = ((u32(l.y) * FOOT_X + u32(l.x)) * FOOT_D + u32(dd)) * 3u;
+      return unpackLT(footprint[i], footprint[i + 1u], footprint[i + 2u]);
+    }
+  }
+  let i = upperIndex(probe, stored);
+  return unpackLT(upper[i], upper[i + 1u], upper[i + 2u]);
+}
+
+fn upperProbe(base: vec2i, corner: i32) -> vec2i {
+  return clamp(base + vec2i(corner % 2, corner / 2), vec2i(0), vec2i(u.upperProbeCount) - vec2i(1));
+}
+
+struct Merged {
+  L: vec3f,
+  T: vec3f,
+  raw: vec3f,
+};
+
+// Identical to cascade.wgsl's castMerged; see there for the merge modes.
+fn castMerged(center: vec2f, d: i32, start: vec2f) -> Merged {
+  let mp = marchParams();
+  let rayCount = f32(u.rayCount);
+  let w = dirOf(f32(d), rayCount);
+  let t0 = u.intervalStart;
+  let t1 = u.intervalEnd;
+  let overlapEnd = center + w * (t0 + (t1 - t0) * u.intervalOverlap);
+  if (u.isTop != 0u) {
+    let hit = march(start, overlapEnd, mp);
+    return Merged(hit.L + hit.T * u.sky.rgb, hit.T, hit.L);
+  }
+  let upos = center / u.upperSpacing - 0.5;
+  let base = vec2i(floor(upos));
+  let f = fract(upos);
+  let weights = vec4f((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
+  let upperPerDir = u.upperStoredDirs >= u.upperRayCount;
+  let B = i32(u.branching);
+  let childCount = select(1, B, upperPerDir);
+  let upperRayCount = f32(u.upperRayCount);
+
+  if (u.mergeMode == 1u) {
+    var L = vec3f(0.0);
+    var T = vec3f(0.0);
+    var raw = vec3f(0.0);
+    for (var c = 0; c < 4; c++) {
+      let q = upperProbe(base, c);
+      let qCenter = (vec2f(q) + 0.5) * u.upperSpacing;
+      var Lc = vec3f(0.0);
+      var Tc = vec3f(0.0);
+      var rawc = vec3f(0.0);
+      for (var k = 0; k < childCount; k++) {
+        let stored = select(d, d * B + k, upperPerDir);
+        let wc = select(w, dirOf(f32(d * B + k), upperRayCount), upperPerDir);
+        let hit = march(start, qCenter + wc * t1, mp);
+        let up = upperSample(q, u32(stored));
+        Lc += hit.L + hit.T * up.L;
+        Tc += hit.T * up.T;
+        rawc += hit.L;
+      }
+      let scale = weights[c] / f32(childCount);
+      L += Lc * scale;
+      T += Tc * scale;
+      raw += rawc * scale;
+    }
+    return Merged(L, T, raw);
+  }
+
+  let hit = march(start, overlapEnd, mp);
+  var upL = vec3f(0.0);
+  var upT = vec3f(0.0);
+  for (var c = 0; c < 4; c++) {
+    let q = upperProbe(base, c);
+    if (u.mergeMode == 2u) {
+      let qCenter = (vec2f(q) + 0.5) * u.upperSpacing;
+      let v = overlapEnd - qCenter;
+      let nominal = TAU_F * (f32(d) + 0.5) / rayCount;
+      var shift = atan2(v.y, v.x) - nominal;
+      shift = shift - floor((shift + 3.14159265) / TAU_F) * TAU_F;
+      let stored = f32(u.upperStoredDirs);
+      let shiftIndex = shift / TAU_F * stored;
+      var Lc = vec3f(0.0);
+      var Tc = vec3f(0.0);
+      for (var k = 0; k < childCount; k++) {
+        var idx = f32(select(d, d * B + k, upperPerDir)) + shiftIndex;
+        idx = idx - floor(idx / stored) * stored;
+        let i0 = i32(floor(idx)) % i32(stored);
+        let i1 = (i0 + 1) % i32(stored);
+        let fr = fract(idx);
+        let s0 = upperSample(q, u32(i0));
+        let s1 = upperSample(q, u32(i1));
+        Lc += mix(s0.L, s1.L, fr);
+        Tc += mix(s0.T, s1.T, fr);
+      }
+      upL += weights[c] * Lc / f32(childCount);
+      upT += weights[c] * Tc / f32(childCount);
+    } else {
+      var Lc = vec3f(0.0);
+      var Tc = vec3f(0.0);
+      for (var k = 0; k < childCount; k++) {
+        let s = upperSample(q, u32(select(d, d * B + k, upperPerDir)));
+        Lc += s.L;
+        Tc += s.T;
+      }
+      upL += weights[c] * Lc / f32(childCount);
+      upT += weights[c] * Tc / f32(childCount);
+    }
+  }
+  return Merged(hit.L + hit.T * upL, hit.T * upT, hit.L);
+}
+
+@compute @workgroup_size(TX * TY * DW, 1, 1)
+fn main(
+  @builtin(workgroup_id) wg: vec3u,
+  @builtin(local_invocation_index) li: u32,
+) {
+  let lanes = TX * TY * DW;
+  let laneDir = li % DW;
+  let laneProbe = li / DW;
+  let lid = vec2u(laneProbe % TX, laneProbe / TX);
+  let tileOrigin = vec2i(wg.xy * vec2u(TX, TY));
+  let dir0 = wg.z * DW;
+  let sceneDims = vec2i(u.sceneSize);
+
+  // Workgroup memory: the scene patch every ray of this tile stays inside.
+  patchOrigin = vec2i(floor(vec2f(tileOrigin) * u.probeSpacing - u.halo));
+  if (USE_PATCH) {
+    let n = PATCH_W * PATCH_H;
+    for (var i = li; i < n; i += lanes) {
+      let local = vec2i(i32(i % PATCH_W), i32(i / PATCH_W));
+      let texel = clamp(patchOrigin + local, vec2i(0), sceneDims - vec2i(1));
+      let E = textureLoad(emissionTex, texel, 0).rgb;
+      let tau = textureLoad(transmittanceTex, texel, 0).rgb;
+      let d = textureLoad(distanceTex, texel, 0).r;
+      scenePatch[i] = vec4u(
+        pack2x16float(E.rg),
+        pack2x16float(vec2f(E.b, tau.r)),
+        pack2x16float(tau.gb),
+        bitcast<u32>(d),
+      );
+    }
+  }
+
+  // Workgroup memory: the upper probes and directions this tile merges with.
+  // A stored direction s of this level reads upper directions
+  // [s * G, (s + 1) * G): its G = group * childCount children.
+  let group = select(1u, u.branching, u.preAverage != 0u);
+  let upperPerDir = u.upperStoredDirs >= u.upperRayCount;
+  let G = group * select(1u, u.branching, upperPerDir);
+  footDir0 = dir0 * G;
+  footOrigin = clamp(
+    vec2i(floor((vec2f(tileOrigin) + 0.5) * u.probeSpacing / u.upperSpacing - 0.5)),
+    vec2i(0),
+    max(vec2i(0), vec2i(u.upperProbeCount) - vec2i(i32(FOOT_X), i32(FOOT_Y))),
+  );
+  if (USE_FOOT && u.isTop == 0u) {
+    let n = FOOT_X * FOOT_Y * FOOT_D;
+    for (var i = li; i < n; i += lanes) {
+      let dd = i % FOOT_D;
+      let rest = i / FOOT_D;
+      let q = footOrigin + vec2i(i32(rest % FOOT_X), i32(rest / FOOT_X));
+      let upDir = footDir0 + dd;
+      if (all(q < vec2i(u.upperProbeCount)) && upDir < u.upperStoredDirs) {
+        let src = upperIndex(q, upDir);
+        footprint[i * 3u] = upper[src];
+        footprint[i * 3u + 1u] = upper[src + 1u];
+        footprint[i * 3u + 2u] = upper[src + 2u];
+      }
+    }
+  }
+  workgroupBarrier();
+
+  let probe = tileOrigin + vec2i(lid);
+  let stored = dir0 + laneDir;
+  let live = all(probe < vec2i(u.probeCount)) && stored < u.storedDirs;
+  let probeIndex = u32(probe.y) * u.probeCount.x + u32(probe.x);
+  var L = vec3f(0.0);
+  var T = vec3f(0.0);
+  var raw = vec3f(0.0);
+  if (live) {
+    let center = (vec2f(probe) + 0.5) * u.probeSpacing;
+    let startDir = select(
+      dirOf(f32(stored), f32(u.rayCount)),
+      dirOf(f32(stored), f32(u.storedDirs)),
+      u.preAverage != 0u,
+    );
+    let start = center + startDir * u.intervalStart;
+    for (var j = 0u; j < group; j++) {
+      let m = castMerged(center, i32(stored * group + j), start);
+      L += m.L;
+      T += m.T;
+      raw += m.raw;
+    }
+    let inv = 1.0 / f32(group);
+    L *= inv;
+    T *= inv;
+    raw *= inv;
+    let probes = u.probeCount.x * u.probeCount.y;
+    let entry = stored * probes + probeIndex;
+    if (u.storeDirs != 0u) {
+      own[entry * 3u] = pack2x16float(L.rg);
+      own[entry * 3u + 1u] = pack2x16float(vec2f(L.b, T.r));
+      own[entry * 3u + 2u] = pack2x16float(T.gb);
+    }
+    if (u.storeRaw != 0u) {
+      rawStore[entry * 2u] = pack2x16float(raw.rg);
+      rawStore[entry * 2u + 1u] = pack2x16float(vec2f(raw.b, 0.0));
+    }
+  }
+
+  if (REDUCE) {
+    reduction[laneProbe * DW + laneDir] = L;
+    if (laneDir == 0u) {
+      var slot = 0u;
+      if (live) {
+        let center = (vec2f(probe) + 0.5) * u.probeSpacing;
+        let d = sceneDistance(clamp(vec2i(floor(center)), vec2i(0), sceneDims - vec2i(1)));
+        if (d < u.bandWidth) {
+          let claimed = atomicAdd(&bandCounter.n, 1u);
+          slot = select(0u, claimed + 1u, claimed < u.bandCapacity);
+        }
+        slotMap[probeIndex] = slot;
+      }
+      bandSlots[laneProbe] = slot;
+    }
+    workgroupBarrier();
+    if (live) {
+      let slot = bandSlots[laneProbe];
+      if (slot != 0u) {
+        let i = ((slot - 1u) * DW + laneDir) * 2u;
+        band[i] = pack2x16float(L.rg);
+        band[i + 1u] = pack2x16float(vec2f(L.b, 0.0));
+      }
+      if (laneDir == 0u) {
+        var sum = vec3f(0.0);
+        for (var k = 0u; k < DW; k++) {
+          sum += reduction[laneProbe * DW + k];
+        }
+        textureStore(irradianceOut, probe, vec4f(sum / f32(DW), 1.0));
+      }
+    }
+  }
+}
+`;
+
+/** compute_debug_unpack.wgsl, includes expanded. */
+export const COMPUTE_DEBUG_UNPACK_WGSL =
+  `// Debug views for the compute backend: unpack a level's store (and raw store)
+// into the direction-tiled textures the fragment backend renders directly, so
+// the same display pass shows either.
+
+override TILE: u32 = 16u;
+
+struct UnpackUniforms {
+  probeCount: vec2u,
+  storedDirs: u32,
+  tileCols: u32,
+};
+@group(0) @binding(0) var<uniform> u: UnpackUniforms;
+@group(0) @binding(1) var<storage, read> store: array<u32>;
+@group(0) @binding(2) var<storage, read> rawStore: array<u32>;
+@group(0) @binding(3) var mergedOut: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var rawOut: texture_storage_2d<rgba16float, write>;
+
+@compute @workgroup_size(TILE, TILE, 1)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let dims = vec2i(textureDimensions(mergedOut));
+  if (any(vec2i(gid.xy) >= dims)) {
+    return;
+  }
+  let texel = vec2i(gid.xy);
+  let probes = vec2i(u.probeCount);
+  let tile = texel / probes;
+  let probe = texel - tile * probes;
+  let stored = u32(tile.y) * u.tileCols + u32(tile.x);
+  if (stored >= u.storedDirs) {
+    textureStore(mergedOut, texel, vec4f(0.0));
+    textureStore(rawOut, texel, vec4f(0.0));
+    return;
+  }
+  let entry = stored * u32(probes.x * probes.y) + u32(probe.y * probes.x + probe.x);
+  let a = unpack2x16float(store[entry * 3u]);
+  let b = unpack2x16float(store[entry * 3u + 1u]);
+  textureStore(mergedOut, texel, vec4f(a, b.x, 1.0));
+  let r = unpack2x16float(rawStore[entry * 2u]);
+  let s = unpack2x16float(rawStore[entry * 2u + 1u]);
+  textureStore(rawOut, texel, vec4f(r, s.x, 1.0));
+}
+`;
+
+/** compute_scene_bins.wgsl, includes expanded. */
+export const COMPUTE_SCENE_BINS_WGSL =
+  `// Compute scene rasterizer, pass 1: bin the segments per screen tile so the
+// raster pass tests only nearby segments. One workgroup per tile; its lanes
+// stride over the segments and claim bin slots with a workgroup atomic. A
+// segment joins a tile's bin when its outline can come within \`binRadius\` of
+// any pixel of the tile (tile-centre distance minus half the tile diagonal).
+// The pass also records, per tile, the distance from the tile centre to the
+// nearest outline over ALL segments: pixels whose nearest outline is not in
+// the bin take that minus half a diagonal as a conservative lower bound, which
+// is all sphere tracing needs.
+
+override TILE: u32 = 16u;
+override BIN_CAPACITY: u32 = 128u;
+override LANES: u32 = 64u;
+
+struct SceneUniforms {
+  size: vec2f,
+  segmentCount: u32,
+  shapeCount: u32,
+  tiles: vec2u,
+  binRadius: f32,
+  pad: f32,
+};
+struct Segment {
+  a: vec2f,
+  b: vec2f,
+  shape: u32,
+  pad: u32,
+};
+struct Material {
+  emission: vec4f,       // rgb, halfWidth
+  transmittance: vec4f,  // rgb, 0
+  albedo: vec4f,         // rgb, 0
+};
+@group(0) @binding(0) var<uniform> u: SceneUniforms;
+@group(0) @binding(1) var<storage, read> segments: array<Segment>;
+@group(0) @binding(2) var<storage, read> materials: array<Material>;
+/// \`tiles.x * tiles.y * BIN_CAPACITY\` segment indices.
+@group(0) @binding(3) var<storage, read_write> bins: array<u32>;
+/// Per tile: (segments that wanted a slot, bits of the tile-centre distance).
+@group(0) @binding(4) var<storage, read_write> tileMeta: array<vec2u>;
+
+var<workgroup> claimed: atomic<u32>;
+var<workgroup> farBits: atomic<u32>;
+
+fn segmentDistance(p: vec2f, a: vec2f, b: vec2f) -> f32 {
+  let ab = b - a;
+  let l2 = dot(ab, ab);
+  let t = select(0.0, clamp(dot(p - a, ab) / max(l2, 1e-12), 0.0, 1.0), l2 > 0.0);
+  return length(p - (a + ab * t));
+}
+
+@compute @workgroup_size(LANES, 1, 1)
+fn main(
+  @builtin(workgroup_id) wg: vec3u,
+  @builtin(local_invocation_index) lane: u32,
+) {
+  if (lane == 0u) {
+    atomicStore(&claimed, 0u);
+    atomicStore(&farBits, 0x7f7fffffu); // largest finite f32
+  }
+  workgroupBarrier();
+  let tile = wg.xy;
+  let tileIndex = tile.y * u.tiles.x + tile.x;
+  let center = (vec2f(tile) + 0.5) * f32(TILE);
+  let halfDiag = f32(TILE) * 0.5 * sqrt(2.0);
+  for (var i = lane; i < u.segmentCount; i += LANES) {
+    let s = segments[i];
+    let d = segmentDistance(center, s.a, s.b) - materials[s.shape].emission.w;
+    // Non-negative floats order as their bits do, so atomicMin works.
+    atomicMin(&farBits, bitcast<u32>(max(d, 0.0)));
+    if (d - halfDiag <= u.binRadius) {
+      let slot = atomicAdd(&claimed, 1u);
+      if (slot < BIN_CAPACITY) {
+        bins[tileIndex * BIN_CAPACITY + slot] = i;
+      }
+    }
+  }
+  workgroupBarrier();
+  if (lane == 0u) {
+    tileMeta[tileIndex] = vec2u(atomicLoad(&claimed), atomicLoad(&farBits));
+  }
+}
+`;
+
+/** compute_scene_raster.wgsl, includes expanded. */
+export const COMPUTE_SCENE_RASTER_WGSL =
+  `// Compute scene rasterizer, pass 2: one workgroup per tile, one lane per
+// pixel. The tile's binned segments are staged once in workgroup memory and
+// every pixel tests only those; a tile whose bin overflowed falls back to all
+// segments, so the result is always exact where it matters. Far from every
+// binned segment the distance written is a lower bound (see pass 1), which
+// sphere tracing accepts. Outputs match the fragment rasterizer: emission
+// (a = coverage), transmittance (a = coverage), albedo, signed distance.
+
+override TILE: u32 = 16u;
+override BIN_CAPACITY: u32 = 128u;
+
+struct SceneUniforms {
+  size: vec2f,
+  segmentCount: u32,
+  shapeCount: u32,
+  tiles: vec2u,
+  binRadius: f32,
+  pad: f32,
+};
+struct Segment {
+  a: vec2f,
+  b: vec2f,
+  shape: u32,
+  pad: u32,
+};
+struct Material {
+  emission: vec4f,
+  transmittance: vec4f,
+  albedo: vec4f,
+};
+@group(0) @binding(0) var<uniform> u: SceneUniforms;
+@group(0) @binding(1) var<storage, read> segments: array<Segment>;
+@group(0) @binding(2) var<storage, read> materials: array<Material>;
+@group(0) @binding(3) var<storage, read> bins: array<u32>;
+@group(0) @binding(4) var<storage, read> tileMeta: array<vec2u>;
+@group(0) @binding(5) var emissionOut: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(6) var transmittanceOut: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(7) var albedoOut: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(8) var distanceOut: texture_storage_2d<r32float, write>;
+
+struct Staged {
+  a: vec2f,
+  b: vec2f,
+  halfWidth: f32,
+  shape: u32,
+};
+var<workgroup> staged: array<Staged, BIN_CAPACITY>;
+
+fn segmentDistance(p: vec2f, a: vec2f, b: vec2f) -> f32 {
+  let ab = b - a;
+  let l2 = dot(ab, ab);
+  let t = select(0.0, clamp(dot(p - a, ab) / max(l2, 1e-12), 0.0, 1.0), l2 > 0.0);
+  return length(p - (a + ab * t));
+}
+
+@compute @workgroup_size(TILE, TILE, 1)
+fn main(
+  @builtin(workgroup_id) wg: vec3u,
+  @builtin(global_invocation_id) gid: vec3u,
+  @builtin(local_invocation_index) li: u32,
+) {
+  let tileIndex = wg.y * u.tiles.x + wg.x;
+  let info = tileMeta[tileIndex];
+  let binned = info.x;
+  let complete = binned <= BIN_CAPACITY;
+  if (complete) {
+    for (var i = li; i < binned; i += TILE * TILE) {
+      let s = segments[bins[tileIndex * BIN_CAPACITY + i]];
+      staged[i] = Staged(s.a, s.b, materials[s.shape].emission.w, s.shape);
+    }
+  }
+  workgroupBarrier();
+  if (any(gid.xy >= vec2u(u.size))) {
+    return;
+  }
+  let p = vec2f(gid.xy) + 0.5;
+  var best = 1e4;
+  var bestShape = 0u;
+  if (complete) {
+    for (var i = 0u; i < binned; i++) {
+      let s = staged[i];
+      let d = segmentDistance(p, s.a, s.b) - s.halfWidth;
+      if (d < best) {
+        best = d;
+        bestShape = s.shape;
+      }
+    }
+    if (best > u.binRadius) {
+      // Every unbinned segment is farther than binRadius from every pixel of
+      // this tile, and the tile-centre distance bounds them all.
+      let halfDiag = f32(TILE) * 0.5 * sqrt(2.0);
+      best = max(u.binRadius, bitcast<f32>(info.y) - halfDiag);
+    }
+  } else {
+    for (var i = 0u; i < u.segmentCount; i++) {
+      let s = segments[i];
+      let d = segmentDistance(p, s.a, s.b) - materials[s.shape].emission.w;
+      if (d < best) {
+        best = d;
+        bestShape = s.shape;
+      }
+    }
+  }
+  let texel = vec2i(gid.xy);
+  if (u.segmentCount > 0u && best <= 0.0) {
+    let m = materials[bestShape];
+    textureStore(emissionOut, texel, vec4f(m.emission.rgb, 1.0));
+    textureStore(transmittanceOut, texel, vec4f(m.transmittance.rgb, 1.0));
+    textureStore(albedoOut, texel, vec4f(m.albedo.rgb, 1.0));
+  } else {
+    textureStore(emissionOut, texel, vec4f(0.0, 0.0, 0.0, 0.0));
+    textureStore(transmittanceOut, texel, vec4f(1.0, 1.0, 1.0, 0.0));
+    textureStore(albedoOut, texel, vec4f(0.0, 0.0, 0.0, 0.0));
+  }
+  textureStore(distanceOut, texel, vec4f(best, 0.0, 0.0, 1.0));
+}
+`;
+
+/** compute_upsample.wgsl, includes expanded. */
+export const COMPUTE_UPSAMPLE_WGSL =
+  `// Per-pixel irradiance from per-probe irradiance when cascade 0's probe
+// spacing is above one pixel: the bilinear gather of gather.wgsl, which
+// commutes with the direction mean the cascade-0 pass already took.
+
+override TILE: u32 = 16u;
+
+struct UpsampleUniforms {
+  probeCount: vec2u,
+  probeSpacing: f32,
+  pad: f32,
+};
+@group(0) @binding(0) var<uniform> u: UpsampleUniforms;
+@group(0) @binding(1) var probeIrradiance: texture_2d<f32>;
+@group(0) @binding(2) var irradianceOut: texture_storage_2d<rgba16float, write>;
+
+@compute @workgroup_size(TILE, TILE, 1)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let dims = vec2i(textureDimensions(irradianceOut));
+  if (any(vec2i(gid.xy) >= dims)) {
+    return;
+  }
+  let pos = vec2f(gid.xy) + 0.5;
+  let upos = pos / u.probeSpacing - 0.5;
+  let base = vec2i(floor(upos));
+  let f = fract(upos);
+  let weights = vec4f((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
+  var sum = vec3f(0.0);
+  for (var c = 0; c < 4; c++) {
+    let q = clamp(base + vec2i(c % 2, c / 2), vec2i(0), vec2i(u.probeCount) - vec2i(1));
+    sum += weights[c] * textureLoad(probeIrradiance, q, 0).rgb;
+  }
+  textureStore(irradianceOut, vec2i(gid.xy), vec4f(sum, 1.0));
+}
+`;
+
 /** display.wgsl, includes expanded. */
 export const DISPLAY_WGSL =
   `// Fit a texture into the output and encode it for the canvas. Modes:
@@ -556,12 +1422,15 @@ struct ReferenceUniforms {
 @group(0) @binding(3) var distanceTex: texture_2d<f32>;
 
 // ---- march.wgsl ----
-// Shared ray march. Bindings 1..3 must be the scene emission, transmittance
-// and distance textures; the including shader supplies \\\`marchParams()\\\`.
-// Sphere-traces the distance field between outlines and integrates
-// emission/transmittance per pixel of travel inside them. The emission of a
-// step is E * (1 - tau^ds) / (1 - tau): the full E at an opaque hit whatever
-// the step, E * ds through clear media.
+// Shared ray march. The including shader supplies the scene accessors
+//   fn sceneDistance(texel: vec2i) -> f32      signed distance to the nearest outline
+//   fn sceneMedium(texel: vec2i) -> Medium     emission and transmittance
+// (the fragment programs read the scene textures directly; the compute
+// cascade reads a workgroup-memory patch when the ray stays inside it) and
+// \`marchParams()\`. Sphere-traces the distance field between outlines and
+// integrates emission/transmittance per pixel of travel inside them. The
+// emission of a step is E * (1 - tau^ds) / (1 - tau): the full E at an opaque
+// hit whatever the step, E * ds through clear media.
 
 struct MarchParams {
   sceneSize: vec2f,
@@ -572,6 +1441,10 @@ struct MarchParams {
 struct Hit {
   L: vec3f,
   T: vec3f,
+};
+struct Medium {
+  E: vec3f,
+  tau: vec3f,
 };
 
 fn inBounds(p: vec2f, size: vec2f) -> bool {
@@ -594,15 +1467,16 @@ fn march(origin: vec2f, to: vec2f, mp: MarchParams) -> Hit {
     if (!inBounds(p, mp.sceneSize)) { break; }
     let texel = vec2i(floor(p));
     if (mp.useDistanceField) {
-      let d = textureLoad(distanceTex, texel, 0).r;
+      let d = sceneDistance(texel);
       if (d > 0.5) {
         t += max(d, 0.5);
         continue;
       }
     }
     let ds = min(mp.stepSize, len - t);
-    let tau = clamp(textureLoad(transmittanceTex, texel, 0).rgb, vec3f(0.0), vec3f(1.0));
-    let E = textureLoad(emissionTex, texel, 0).rgb;
+    let m = sceneMedium(texel);
+    let tau = clamp(m.tau, vec3f(0.0), vec3f(1.0));
+    let E = m.E;
     let tauDs = pow(tau, vec3f(ds));
     let clear = tau > vec3f(0.999);
     let emitFactor = select((vec3f(1.0) - tauDs) / max(vec3f(1.0) - tau, vec3f(1e-4)), vec3f(ds), clear);
@@ -617,6 +1491,17 @@ fn march(origin: vec2f, to: vec2f, mp: MarchParams) -> Hit {
   return Hit(L, T);
 }
 
+
+fn sceneDistance(texel: vec2i) -> f32 {
+  return textureLoad(distanceTex, texel, 0).r;
+}
+
+fn sceneMedium(texel: vec2i) -> Medium {
+  return Medium(
+    textureLoad(emissionTex, texel, 0).rgb,
+    textureLoad(transmittanceTex, texel, 0).rgb,
+  );
+}
 
 const TAU_F: f32 = 6.283185307179586;
 
