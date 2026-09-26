@@ -8,12 +8,69 @@
 
 import { bakeDrawingDocument, type DrawingDocument } from "canvas-drawing";
 import {
+  backendAvailable,
   buildStrokeScene,
   createRadianceRenderer,
   type MergeMode,
   radianceDeviceDescriptor,
   RENDERER_BACKENDS,
 } from "../lib/radiance-cascades/mod.ts";
+
+/** Read an rgba16float texture back as float32 RGBA. */
+async function readback(
+  device: GPUDevice,
+  texture: GPUTexture,
+): Promise<Float32Array> {
+  const bytesPerRow = Math.ceil((texture.width * 8) / 256) * 256;
+  const buffer = device.createBuffer({
+    size: bytesPerRow * texture.height,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  });
+  const encoder = device.createCommandEncoder();
+  encoder.copyTextureToBuffer({ texture }, { buffer, bytesPerRow }, {
+    width: texture.width,
+    height: texture.height,
+  });
+  device.queue.submit([encoder.finish()]);
+  await buffer.mapAsync(GPUMapMode.READ);
+  const halves = new Uint16Array(buffer.getMappedRange());
+  const out = new Float32Array(texture.width * texture.height * 4);
+  const rowHalves = bytesPerRow / 2;
+  for (let y = 0; y < texture.height; y++) {
+    for (let i = 0; i < texture.width * 4; i++) {
+      out[y * texture.width * 4 + i] = halfToFloat(halves[y * rowHalves + i]);
+    }
+  }
+  buffer.unmap();
+  buffer.destroy();
+  return out;
+}
+
+function halfToFloat(h: number): number {
+  const sign = h & 0x8000 ? -1 : 1;
+  const exponent = (h >> 10) & 0x1f;
+  const fraction = h & 0x3ff;
+  if (exponent === 0) return sign * 2 ** -14 * (fraction / 1024);
+  if (exponent === 31) return fraction ? NaN : sign * Infinity;
+  return sign * 2 ** (exponent - 15) * (1 + fraction / 1024);
+}
+
+const tonemap = (x: number) => 1 - 1 / (1 + Math.max(0, x)) ** 2.5;
+
+/** RMS of tone-mapped luminance differences, as render_check.ts. */
+function rmsError(a: Float32Array, b: Float32Array): number {
+  let sum = 0;
+  const n = a.length / 4;
+  for (let i = 0; i < n; i++) {
+    const la = 0.2126 * a[i * 4] + 0.7152 * a[i * 4 + 1] +
+      0.0722 * a[i * 4 + 2];
+    const lb = 0.2126 * b[i * 4] + 0.7152 * b[i * 4 + 1] +
+      0.0722 * b[i * 4 + 2];
+    const d = tonemap(la) - tonemap(lb);
+    sum += d * d;
+  }
+  return Math.sqrt(sum / n);
+}
 
 declare global {
   interface Window {
@@ -86,7 +143,12 @@ async function main() {
   );
 
   const results: Record<string, unknown> = {};
+  const images = new Map<string, Float32Array>();
   for (const backend of RENDERER_BACKENDS) {
+    if (!backendAvailable(backend, device)) {
+      log(`${backend}: not available on this device`);
+      continue;
+    }
     device.pushErrorScope("validation");
     const renderer = createRadianceRenderer(device, width, height, {
       probeSpacing: 1 * scale,
@@ -104,6 +166,7 @@ async function main() {
     const perFrame = (performance.now() - started) / frames;
     await new Promise((r) => setTimeout(r, 50));
     const timings = renderer.timings;
+    images.set(backend, await readback(device, renderer.irradiance.texture));
     const error = await device.popErrorScope();
     const gpu = timings
       ? Object.entries(timings).map(([k, v]) => `${k} ${v.toFixed(2)}`).join(
@@ -117,6 +180,15 @@ async function main() {
     );
     results[backend] = { perFrame, timings, error: error?.message ?? null };
     renderer.dispose();
+  }
+  const reference = images.get("compute");
+  if (reference) {
+    for (const [backend, image] of images) {
+      if (backend === "compute") continue;
+      log(
+        `${backend} vs compute: rms ${rmsError(image, reference).toFixed(4)}`,
+      );
+    }
   }
   window.__result = results;
 }

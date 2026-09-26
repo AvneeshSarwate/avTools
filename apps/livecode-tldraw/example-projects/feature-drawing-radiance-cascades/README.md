@@ -19,6 +19,13 @@ from the params pane:
 - **compute** (`compute/`, raw WebGPU, no shader-fx; the default, about
   twice as fast): the same algorithm as compute passes in one command
   encoder per frame; see below.
+- **compute-subgroups** (browser only): the compute backend with cascade 0
+  on WebGPU subgroups, `shaders/compute_cascade_sg.wgsl`, a copy for
+  experiments the Deno tools cannot run (naga lacks the feature; the file
+  stays free of `enable subgroups;`, which the renderer prepends, so naga
+  still validates its builtins). `backendAvailable` reports it, the module
+  falls back to compute where it is missing, and `tools/browser_bench.sh`
+  measures it and checks it against compute.
 - **fragment** (`renderer.ts`, `effects.ts`; the original): fullscreen
   fragment passes on the raw shader-fx `ShaderEffect` DAG, hand-written
   complete WGSL programs rather than `passN` fragment functions because the
@@ -127,13 +134,19 @@ result below follows from that:
   free-space early-out before the lockstep march changed nothing (it
   already exits on its first iteration there).
 
+- Subgroups (the `compute-subgroups` backend, Chrome): cascade 0 with a
+  lane per (probe, direction), the direction mean a `subgroupAdd` and the
+  band slot a `subgroupShuffle`, no workgroup memory or barrier. Bit-identical
+  to compute and slower: cascade 0 3.5 ms against 2.9 ms. Lanes as
+  directions put sixteen divergent ray directions in every SIMD group,
+  which costs more than the reduction ever did once it lived in registers;
+  with one lane per probe there is nothing left for a subgroup to reduce.
+
 Per-pass GPU times must come from a busy GPU: a frame rendered after an
 idle wait reports inflated, clock-ramping pass times (`tools/bench.ts`
 harvests them from pipelined frames). Chrome (Dawn/Tint) compiles every
 program and runs both backends faster than Deno (wgpu/naga) on the same
-GPU. Not used: subgroup operations (`subgroups` compiles in Chrome, not in
-Deno's naga); a subgroup reduction of cascade 0 is the obvious next
-browser-only experiment.
+GPU.
 
 ### Measured (Apple M1 Max, 1000x500, `tools/bench.ts` and the browser bench)
 
@@ -246,7 +259,8 @@ wanted; its ACES tone map is the default here.
    writes PNGs of every view (irradiance per mode, reference, bounce, each
    cascade's merged and raw tiles, the coarse 2 px configuration) to
    `.output/`, prefixed by backend. With both backends it then checks that
-   they agree with each other (0.01 RMS). At 1000x500 on an Apple GPU with
+   they agree with each other (0.01 RMS); `--backend all` adds the
+   browser-only backend where the device has it. At 1000x500 on an Apple GPU with
    the fragment backend: vanilla 24 ms and 0.007 RMS, bilinear fix 45 ms and
    0.005, parallax fix 28 ms and 0.0125, reference at 256 rays/px 119 ms
    (single frames, GPU idle before each; `tools/bench.ts` measures pipelined

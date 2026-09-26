@@ -3,6 +3,7 @@ import { drawing } from "canvas-drawing";
 import { canvasParams } from "canvas-params";
 import { canvasSurface } from "canvas-surface";
 import {
+  backendAvailable,
   buildStrokeScene,
   CanvasPresenter,
   createRadianceRenderer,
@@ -65,6 +66,7 @@ export const params = canvasParams(
         label: "backend",
         options: {
           "compute shaders (raw WebGPU)": "compute",
+          "compute + subgroups (browser)": "compute-subgroups",
           "fragment shaders (shader-fx)": "fragment",
         },
       },
@@ -227,6 +229,12 @@ function startRenderer(surface: ReturnType<typeof canvasSurface>): Running {
       backend = nextBackend;
       const width = Math.round(STAGE_WIDTH * scale);
       const height = Math.round(STAGE_HEIGHT * scale);
+      if (!backendAvailable(backend, device)) {
+        console.warn(
+          `[radiance-cascades] ${backend} backend is not available on this device; using compute`,
+        );
+        backend = "compute";
+      }
       renderer = createRadianceRenderer(
         device,
         width,
@@ -248,7 +256,8 @@ function startRenderer(surface: ReturnType<typeof canvasSurface>): Running {
     const tick = () => {
       if (stopped) return;
       frame = requestAnimationFrame(tick);
-      const wantedBackend = params.render.backend as RendererBackend;
+      let wantedBackend = params.render.backend as RendererBackend;
+      if (!backendAvailable(wantedBackend, device)) wantedBackend = "compute";
       if (params.render.scale !== scale || wantedBackend !== backend) {
         rebuild(params.render.scale, wantedBackend);
       }

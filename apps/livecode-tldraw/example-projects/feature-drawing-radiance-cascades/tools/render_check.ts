@@ -21,6 +21,7 @@ import { bakeDrawingDocument, type DrawingDocument } from "canvas-drawing";
 import { dirname, fromFileUrl, join } from "jsr:@std/path@1";
 import { encodePNG } from "@img/png";
 import {
+  backendAvailable,
   buildStrokeScene,
   ComputeRadianceRenderer,
   createRadianceRenderer,
@@ -44,11 +45,13 @@ const height = Math.round(STAGE[1] * scale);
 const backendArg = Deno.args.indexOf("--backend");
 const backendChoice = backendArg >= 0 ? Deno.args[backendArg + 1] : "both";
 const backends: RendererBackend[] = backendChoice === "both"
+  ? ["fragment", "compute"]
+  : backendChoice === "all"
   ? [...RENDERER_BACKENDS]
   : [backendChoice as RendererBackend];
 if (!backends.every((b) => RENDERER_BACKENDS.includes(b))) {
   throw new Error(
-    `--backend must be one of ${RENDERER_BACKENDS.join(", ")}, both`,
+    `--backend must be one of ${RENDERER_BACKENDS.join(", ")}, both, all`,
   );
 }
 
@@ -463,6 +466,12 @@ const at = (rgba: Float32Array, x: number, y: number) =>
 
 const suites = new Map<RendererBackend, SuiteResult>();
 for (const backend of backends) {
+  if (!backendAvailable(backend, device)) {
+    console.log(
+      `\n=== ${backend} backend: not available on this device, skipped`,
+    );
+    continue;
+  }
   suites.set(backend, await runSuite(backend));
 }
 

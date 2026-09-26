@@ -14,12 +14,26 @@ import {
 import type { ComputeOptions } from "./compute/plan.ts";
 import { ComputeRadianceRenderer } from "./compute/renderer.ts";
 
-export type RendererBackend = "fragment" | "compute";
+export type RendererBackend = "fragment" | "compute" | "compute-subgroups";
 
+/**
+ * `compute-subgroups` is the compute backend with cascade 0 on WebGPU
+ * subgroups: browsers only, since Deno's naga lacks the feature;
+ * `backendAvailable` says whether a device can run one.
+ */
 export const RENDERER_BACKENDS: readonly RendererBackend[] = [
   "fragment",
   "compute",
+  "compute-subgroups",
 ];
+
+export function backendAvailable(
+  backend: RendererBackend,
+  device: GPUDevice,
+): boolean {
+  return backend !== "compute-subgroups" ||
+    device.features.has("subgroups" as GPUFeatureName);
+}
 
 /** The backend `createRadianceRenderer` picks when none is named. */
 export const DEFAULT_BACKEND: RendererBackend = "compute";
@@ -73,8 +87,8 @@ export function radianceDeviceDescriptor(
   adapter: GPUAdapter,
 ): GPUDeviceDescriptor {
   const requiredFeatures: GPUFeatureName[] = [];
-  if (adapter.features.has("timestamp-query")) {
-    requiredFeatures.push("timestamp-query");
+  for (const feature of ["timestamp-query", "subgroups"] as GPUFeatureName[]) {
+    if (adapter.features.has(feature)) requiredFeatures.push(feature);
   }
   const limits = adapter.limits;
   return {
@@ -101,13 +115,14 @@ export function createRadianceRenderer(
   config: Partial<RadianceCascadeConfig> = {},
   options: CreateRendererOptions = {},
 ): RadianceRenderer {
-  if ((options.backend ?? DEFAULT_BACKEND) === "compute") {
+  const backend = options.backend ?? DEFAULT_BACKEND;
+  if (backend === "compute" || backend === "compute-subgroups") {
     return new ComputeRadianceRenderer(
       device,
       width,
       height,
       config,
-      options.compute,
+      { ...options.compute, subgroups: backend === "compute-subgroups" },
     );
   }
   return new RadianceCascadeRenderer(device, width, height, config);
