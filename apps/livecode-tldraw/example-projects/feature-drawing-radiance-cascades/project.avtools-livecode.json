@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "name": "feature-drawing-radiance-cascades",
+  "engineTarget": "browser",
+  "modules": [
+    {
+      "id": "radiance-cascades/sketch",
+      "path": "modules/sketch.ts",
+      "sourcePath": "modules/sketch.orig.ts",
+      "runtimePath": "modules/sketch.ts",
+      "kind": "runnable",
+      "title": "radiance cascades (lights the drawing's outlines)",
+      "sourceVersion": 2,
+      "x": 80,
+      "y": 80,
+      "w": 560,
+      "h": 900
+    }
+  ],
+  "canvas": {
+    "sixSinesViews": [],
+    "pianoRollViews": [],
+    "paramPaneViews": [
+      {
+        "id": "shape:radiance-cascades-params",
+        "paramsName": "radiance-cascades/params",
+        "x": 1800,
+        "y": 80,
+        "w": 380,
+        "h": 1000
+      }
+    ],
+    "animationEditorViews": [],
+    "drawingViews": [
+      {
+        "id": "shape:radiance-cascades-drawing",
+        "drawingName": "radiance-cascades_shapes",
+        "x": 700,
+        "y": 80,
+        "w": 1060,
+        "h": 720
+      }
+    ],
+    "scopeViews": [],
+    "canvasSurfaceViews": [
+      {
+        "id": "shape:radiance-cascades-render",
+        "surfaceName": "radiance-cascades/render",
+        "x": 700,
+        "y": 840,
+        "w": 1000,
+        "h": 520
+      }
+    ]
+  },
+  "data": [
+    {
+      "type": "drawing",
+      "name": "radiance-cascades_shapes",
+      "path": "data/drawing/radiance-cascades_shapes.json"
+    }
+  ]
+}
