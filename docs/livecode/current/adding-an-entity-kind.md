@@ -99,6 +99,11 @@ Registration covers observation and optional durability, not writes. Add typed
 domain requests, `EngineOp`/`executeEngineOp` handling, and host routes or
 broadcast actions as needed. Use compare-and-set for whole-entity concurrent
 edits. A code-published kind may correctly have no client write operation.
+Client writes go through `engineAction`, which rides the open sync port on
+every transport and falls back to the HTTP route only before the port opens;
+a new host route family must also be added to `livecodeRoutePrefixes` in
+`apps/livecode-tldraw/vite.config.ts`, or the Vite dev client's fallback
+POSTs 404 against its own origin.
 
 The optional generic patch operation delegates to a registered kind's patch
 handler; it is not permission to mutate arbitrary entity paths. Observation

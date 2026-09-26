@@ -21,6 +21,7 @@ const livecodeRoutePrefixes = [
   "/six-sines",
   "/events",
   "/animation-timeline",
+  "/drawing",
   "/signals",
   "/runtime",
   "/project",

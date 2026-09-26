@@ -82,6 +82,15 @@ browser-engine paths. They must preserve the WebSocket/HTTP semantics even
 though their transport is a `BroadcastChannel`. `serverBaseUrl=none` selects a
 baked project boot from `baked.json`.
 
+Entity actions (writes, patches, cursor moves, events) take the sync port's
+action lane on every transport: the `/sync` socket, the engine tab's
+BroadcastChannel, or a direct call into this tab's engine. The lane is ordered
+with the sync it will be observed through and answers the op's result as-is.
+The HTTP entity routes are the fallback while no port is open (a socket still
+connecting), and what `actions=broadcast` governs is the remaining
+server-only helpers (entity create/duplicate/delete, capture) in a serverless
+bake.
+
 `?engine=inprocess` makes this tab the engine (`inProcessEngine.ts`). The page
 dynamically imports `./engine/engine_host.js` from the served asset tree, never
 a Vite-bundled engine, and `index.html` carries the same module import map as
@@ -296,8 +305,8 @@ remembered or default candidate, and plain-`http` candidates are skipped on
 an `https` page; health polling pauses while the tab is hidden, so a
 background tab cannot hold a wake-on-request container awake; and a
 same-origin "engine in browser" open appends `sync=broadcast` (toggleable)
-so sync rides the engine tab's BroadcastChannel instead of a WAN round trip,
-while writes, analysis, and LSP stay HTTP.
+so sync and entity writes ride the engine tab's BroadcastChannel instead of a
+WAN round trip, while analysis, project, and LSP stay HTTP.
 
 ## Project and control caveats
 
