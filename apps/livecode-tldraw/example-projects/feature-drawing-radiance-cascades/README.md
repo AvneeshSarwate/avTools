@@ -188,27 +188,38 @@ on another drawing):
 
 | configuration | ms/frame | RMS |
 | --- | --- | --- |
-| bilinear fix everywhere (default) | 17.9 | 0.0050 |
-| pre-average all levels | 10.6 | 0.0056 |
-| pre-average from c1 | 9.0 | 0.0059 |
-| pre-average from c2 | 9.1 | 0.0059 |
-| far parallax fix from c3 | 7.3 | 0.0065 |
-| far parallax fix from c2 | 6.8 | 0.0067 |
-| far vanilla from c3 | 7.0 | 0.0072 |
-| vanilla everywhere | 5.7 | 0.0070 |
+| bilinear fix everywhere (default) | 17.6 | 0.0050 |
+| far parallax fix from c4 | 14.8 | 0.0052 |
+| pre-average from c2 | 12.0 | 0.0055 |
+| pre-average from c1 | 11.0 | 0.0056 |
+| pre-average all levels | 10.5 | 0.0056 |
+| far parallax fix from c2 | 9.8 | 0.0061 |
+| far vanilla from c1 | 7.3 | 0.0070 |
+| vanilla everywhere | 5.8 | 0.0070 |
 | parallax fix everywhere | 9.3 | 0.0125 |
-| 2 px spacing, 4 rays x4 | 4.4 | 0.0145 |
+| 2 px spacing, 4 rays x4 | 13.5 | 0.0140 |
+
+(Pre-average all and pre-average from c1 render the same image: cascade 0
+is never stored and its irradiance is the mean over all its rays either
+way; the levels above are what pre-averaging changes.)
 
 RMS is a global number and cannot see what the bilinear fix is for. Looking
 at the images: every far-mode hybrid brings the vanilla artefacts back (a
 leak ring inside the boulder's edge, blotches on the glass), even where its
 RMS reads fine, so the far levels are not where the fix is dispensable.
-Pre-averaging is the lever that works: pre-average from c1 (cascade 0 still
-per-direction) looks the same as the default on this drawing at half the
-cost, and pre-averaging everything is nearly as cheap. Pre-averaging halves
-the angular resolution the stored levels keep, so a drawing with many thin
-distant emitters is the case to check before making it the default; the
-sweep exists to run on other drawings.
+Pre-averaging keeps the fix and costs 40% less, and on the checked-in
+drawing it looks the same as the default. It halves the angular resolution
+the stored levels keep, and `tools/worst_cases.ts` builds six synthetic
+scenes to show where that bites, rendering each under the reference,
+bilinear, pre-average all and pre-average from c1 and writing 2x2 grids
+to `.output/worst-<scene>-grid.png`: with ten small point lights or a
+picket fence, the pre-averaged frames show low-frequency mottling that the
+bilinear frame does not; thin distant emitters and a narrow slit are
+blotchier (the slit is a failure for cascades in any form); dense
+scribbled occluders and stacked tinted glass look the same. So
+pre-averaging is a safe default for scenes lit by a few broad sources and
+a visible loss for many small or thin ones; the sweep and the worst cases
+both take `--drawing` / scene selection to decide per input.
 
 The two backends are compared in the browser with
 `tools/browser_bench.sh`, which bundles `tools/browser_bench.ts` with
