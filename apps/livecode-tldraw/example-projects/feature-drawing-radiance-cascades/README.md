@@ -16,13 +16,14 @@ comes in two backends behind one contract (`backend.ts`,
 `createRadianceRenderer(device, w, h, config, { backend })`), switchable
 from the params pane:
 
-- **fragment** (`renderer.ts`, `effects.ts`, the default): fullscreen
+- **compute** (`compute/`, raw WebGPU, no shader-fx; the default, about
+  twice as fast): the same algorithm as compute passes in one command
+  encoder per frame; see below.
+- **fragment** (`renderer.ts`, `effects.ts`; the original): fullscreen
   fragment passes on the raw shader-fx `ShaderEffect` DAG, hand-written
   complete WGSL programs rather than `passN` fragment functions because the
   raster pass reads storage buffers and writes four targets and each cascade
   level writes radiance plus per-channel transmittance at its own size.
-- **compute** (`compute/`, raw WebGPU, no shader-fx): the same algorithm as
-  compute passes in one command encoder per frame; see below.
 
 ## The compute backend
 

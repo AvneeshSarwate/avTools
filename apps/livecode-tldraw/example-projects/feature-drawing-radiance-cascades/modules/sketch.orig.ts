@@ -22,9 +22,10 @@ import {
  * scene. Shape `metadata` carries the light material: `strokeWidth`,
  * `emission` [r, g, b] (HDR), `transmittance` [r, g, b] or a number (0 opaque,
  * 1 clear), `albedo` [r, g, b]; see `lib/radiance-cascades/materials.ts` for
- * the defaults. The **backend** parameter swaps the fragment-shader renderer
- * for the compute-shader one (same output; the HUD shows its per-pass GPU
- * times when the device supports timestamp queries).
+ * the defaults. The **backend** parameter swaps the compute-shader renderer
+ * (the default, about twice as fast) for the original fragment-shader one
+ * (same output; the HUD shows per-pass GPU times when the device supports
+ * timestamp queries).
  */
 const shapes = drawing("radiance-cascades_shapes");
 
@@ -36,7 +37,7 @@ export const params = canvasParams(
   "radiance-cascades/params",
   {
     render: {
-      backend: "fragment",
+      backend: "compute",
       scale: 1,
       exposure: 1,
       toneMap: "aces",
@@ -63,8 +64,8 @@ export const params = canvasParams(
       backend: {
         label: "backend",
         options: {
-          "fragment shaders (shader-fx)": "fragment",
           "compute shaders (raw WebGPU)": "compute",
+          "fragment shaders (shader-fx)": "fragment",
         },
       },
       scale: { label: "render scale", min: 0.25, max: 2, step: 0.25 },
