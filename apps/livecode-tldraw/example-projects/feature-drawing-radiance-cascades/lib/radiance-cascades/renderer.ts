@@ -225,6 +225,7 @@ export class RadianceCascadeRenderer implements RadianceRenderer {
   private config: RadianceCascadeConfig;
   private currentPlan: CascadePlan | null = null;
   private planKey = "";
+  private debugViews = false;
   private readonly timer: GpuTimer;
 
   constructor(
@@ -265,8 +266,14 @@ export class RadianceCascadeRenderer implements RadianceRenderer {
     this.scene.setScene(scene);
   }
 
-  /** The fragment backend always renders its debug attachments. */
-  setDebugViews(_enabled: boolean): void {}
+  /**
+   * The merged cascade textures always exist (the levels read each other);
+   * the raw ones are rendered and kept only while requested.
+   */
+  setDebugViews(enabled: boolean): void {
+    this.debugViews = enabled;
+    for (const cascade of this.cascades) cascade.setRaw(enabled);
+  }
 
   /** Per-pass GPU times (each pass is its own submit; `total` spans them). */
   get timings(): Readonly<Record<string, number>> | null {
@@ -279,7 +286,7 @@ export class RadianceCascadeRenderer implements RadianceRenderer {
       `[${level.intervalStart.toFixed(1)}, ${
         level.intervalEnd.toFixed(1)
       }] px, ` +
-      `${level.textureSize[0]}x${level.textureSize[1]} x3 textures`
+      `${level.textureSize[0]}x${level.textureSize[1]} x2 textures`
     );
   }
 
@@ -332,6 +339,7 @@ export class RadianceCascadeRenderer implements RadianceRenderer {
         upper,
       );
       cascade.timer = this.timer;
+      cascade.setRaw(this.debugViews);
       this.cascades[i] = cascade;
       upper = cascade;
     }
@@ -373,6 +381,11 @@ export class RadianceCascadeRenderer implements RadianceRenderer {
   cascadeTextures(index: number): [GPUTexture, GPUTexture] {
     const cascade = this.cascades[index];
     if (!cascade) throw new Error(`no cascade ${index}`);
+    if (!cascade.raw) {
+      throw new Error(
+        `cascade ${index} debug views are off; call setDebugViews(true) and render a frame first`,
+      );
+    }
     return [cascade.radiance, cascade.raw];
   }
 

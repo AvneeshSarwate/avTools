@@ -48,6 +48,7 @@ export function createFullscreenPipeline(
   label: string,
   source: string,
   formats: GPUTextureFormat[],
+  fragmentEntry = "fs",
 ): GPURenderPipeline {
   const module = device.createShaderModule({ label, code: source });
   return device.createRenderPipeline({
@@ -56,7 +57,7 @@ export function createFullscreenPipeline(
     vertex: { module, entryPoint: "vs" },
     fragment: {
       module,
-      entryPoint: "fs",
+      entryPoint: fragmentEntry,
       targets: formats.map((format) => ({ format })),
     },
     primitive: { topology: "triangle-list", cullMode: "none" },
@@ -398,20 +399,26 @@ export class BounceEffect extends PassEffect {
 
 const CASCADE_UNIFORM_FLOATS = 28;
 
-/** One cascade level; input `upper` is the level above, absent at the top. */
+/**
+ * One cascade level; input `upper` is the level above, absent at the top.
+ * The raw (own-interval) radiance is a debug output: its texture and the
+ * three-target pipeline exist only while `setRaw(true)`.
+ */
 export class CascadeEffect extends PassEffect {
   override effectName: string;
   readonly level: CascadeLevel;
   readonly radiance: GPUTexture;
   readonly transmittance: GPUTexture;
-  readonly raw: GPUTexture;
   readonly radianceView: GPUTextureView;
   readonly transmittanceView: GPUTextureView;
-  readonly rawView: GPUTextureView;
   output: GPUTextureView;
   private readonly pipeline: GPURenderPipeline;
+  private rawPipeline: GPURenderPipeline | null = null;
+  private rawTexture: GPUTexture | null = null;
+  private rawTextureView: GPUTextureView | null = null;
   private readonly uniformBuffer: GPUBuffer;
   private readonly dummy: GPUTexture;
+  private readonly dummyView: GPUTextureView;
   private runtime: CascadeRuntime | null = null;
 
   constructor(
@@ -429,7 +436,8 @@ export class CascadeEffect extends PassEffect {
       device,
       `rc-cascade-${level.index}`,
       CASCADE_WGSL,
-      [HDR_FORMAT, HDR_FORMAT, HDR_FORMAT],
+      [HDR_FORMAT, HDR_FORMAT],
+      "fsMerged",
     );
     this.uniformBuffer = device.createBuffer({
       label: `rc-cascade-${level.index}-uniforms`,
@@ -451,18 +459,49 @@ export class CascadeEffect extends PassEffect {
       HDR_FORMAT,
       `rc-cascade-${level.index}-transmittance`,
     );
-    this.raw = createTargetTexture(
-      device,
-      width,
-      height,
-      HDR_FORMAT,
-      `rc-cascade-${level.index}-raw`,
-    );
     this.radianceView = this.radiance.createView();
     this.transmittanceView = this.transmittance.createView();
-    this.rawView = this.raw.createView();
     this.output = this.radianceView;
     this.dummy = createTargetTexture(device, 1, 1, HDR_FORMAT, "rc-dummy");
+    this.dummyView = this.dummy.createView();
+  }
+
+  /** The raw radiance texture, or null while the debug output is off. */
+  get raw(): GPUTexture | null {
+    return this.rawTexture;
+  }
+
+  /** The raw radiance view; a 1x1 placeholder while the debug output is off. */
+  get rawView(): GPUTextureView {
+    return this.rawTextureView ?? this.dummyView;
+  }
+
+  /** Produce (or stop producing and free) the raw debug output. */
+  setRaw(enabled: boolean): void {
+    if (enabled === (this.rawTexture !== null)) return;
+    if (enabled) {
+      const [width, height] = this.level.textureSize;
+      this.rawPipeline ??= createFullscreenPipeline(
+        this.device,
+        `rc-cascade-${this.level.index}-raw`,
+        CASCADE_WGSL,
+        [HDR_FORMAT, HDR_FORMAT, HDR_FORMAT],
+      );
+      this.rawTexture = createTargetTexture(
+        this.device,
+        width,
+        height,
+        HDR_FORMAT,
+        `rc-cascade-${this.level.index}-raw`,
+      );
+      this.rawTextureView = this.rawTexture.createView();
+    } else {
+      this.rawTexture?.destroy();
+      this.rawTexture = null;
+      this.rawTextureView = null;
+    }
+    // The two pipelines have their own bind group layouts.
+    this.bindGroup = null;
   }
 
   get upper(): CascadeEffect | null {
@@ -525,30 +564,31 @@ export class CascadeEffect extends PassEffect {
     const scene = this.input<StrokeSceneEffect>("scene");
     const emission = this.input<BounceEffect>("emission");
     const upper = this.upper;
+    const withRaw = this.rawTextureView !== null;
+    const pipeline = withRaw ? this.rawPipeline! : this.pipeline;
     this.bindGroup ??= this.device.createBindGroup({
       label: `${this.effectName}-bind`,
-      layout: this.pipeline.getBindGroupLayout(0),
+      layout: pipeline.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: { buffer: this.uniformBuffer } },
         { binding: 1, resource: emission.output },
         { binding: 2, resource: scene.transmittanceView },
         { binding: 3, resource: scene.distanceView },
-        {
-          binding: 4,
-          resource: upper ? upper.radianceView : this.dummy.createView(),
-        },
+        { binding: 4, resource: upper ? upper.radianceView : this.dummyView },
         {
           binding: 5,
-          resource: upper ? upper.transmittanceView : this.dummy.createView(),
+          resource: upper ? upper.transmittanceView : this.dummyView,
         },
       ],
     });
     runFullscreenPass(
       this.device,
       this.effectName,
-      this.pipeline,
+      pipeline,
       this.bindGroup,
-      [this.radianceView, this.transmittanceView, this.rawView],
+      withRaw
+        ? [this.radianceView, this.transmittanceView, this.rawTextureView!]
+        : [this.radianceView, this.transmittanceView],
       this.timestamps(),
     );
   }
@@ -556,7 +596,7 @@ export class CascadeEffect extends PassEffect {
   dispose(): void {
     this.radiance.destroy();
     this.transmittance.destroy();
-    this.raw.destroy();
+    this.rawTexture?.destroy();
     this.dummy.destroy();
     this.uniformBuffer.destroy();
   }
