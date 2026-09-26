@@ -71,7 +71,8 @@ request validation, and imported-path constraints.
 ## P1: browser target checking over-promises module delivery
 
 The browser engine serves relative project files, the generated runtime, and a
-fixed alias-bundle set (the livecode helpers plus `three` and `p5`).
+fixed alias-bundle set (the livecode helpers plus `three`, `p5`, and
+`@avtools/shader-fx/raw`).
 Browser-target shadow checking resolves the wider repository import map, so a
 module can typecheck successfully and then fail at browser import on an
 unserved bare specifier. Either expand bundling (add the specifier to
@@ -103,21 +104,19 @@ maps, so Deno positions can point into generated coordinates. New detector work
 should add explicit confidence/unsupported cases rather than silently widening
 heuristics.
 
-## P1: sparse sync recovery still applies before checking the baseline
+## P2: sparse sync recovery still applies before checking the baseline
 
 [`syncRuntime.tsx`](../../../apps/livecode-tldraw/src/syncRuntime.tsx) calls
 `applySyncMessageToState` before checking sequence gaps
 or a first message without a reset.
 [`syncState.ts`](../../../apps/livecode-tldraw/src/syncState.ts) rejects patches whose
-entity or parent path is absent. A lost structural update or a first delta
-before a baseline can therefore throw before the resubscribe code executes;
-if parents happen to exist, a gap can instead publish incomplete state until
-reset. The old full-entity recovery order is not sufficient for sparse deltas.
-
-Recovery must check baseline/sequence before applying dependent patches and
-request full resets on materialization failure. This is an unresolved
-source-level finding from the documentation audit, not a reproduced browser
-failure. Existing happy-path and reset tests do not establish this guarantee.
+entity or parent path is absent, and since 2026-09 a rejected message
+resubscribes instead of throwing past the recovery code. What remains: if
+parents happen to exist, a gap can still publish incomplete state until the
+resubscribe's reset lands a moment later. Recovery that checks
+baseline/sequence before applying dependent patches would close that window.
+Drawings now ship sparse patches at up to 30 per second during a gesture, so
+this path is exercised far more than it was with Six Sines alone.
 
 ## P2: sync and long-process state have personal-scale bounds
 
@@ -214,6 +213,20 @@ streaming fallback. It copies whatever the source canvas holds at animation
 frame time: Canvas 2D and p5 2D sources are fine, but a WebGL source that does
 not preserve its drawing buffer can read blank. Surface discovery is DOM
 polling, not an entity; the topbar's name list is whatever exists right now.
+
+## P2: a streamed drawing gesture costs a second view O(document) per revision
+
+`setDrawingDocument` on the canvas element rebuilds only the nodes that
+differ, but deciding what differs serializes the whole scene and compares
+every top-level node's JSON, so a second view of a drawing pays a floor per
+streamed revision that grows with the document (about 1 ms at a thousand
+points, 14 ms at twenty thousand) before any rebuild. At thirty revisions a
+second a large drawing can saturate that view's main thread. Caching
+canonical JSON per Konva node would remove the floor; it has not been needed
+at personal scale. Separately, the drawing view uses the built element bundle
+in `apps/livecode-tldraw`: a stale bundle from before `mode="document"`
+ignores the attribute and emits `state-update` for every change, which is
+correct but slow, so run `npm run setupLivecode` after the element changes.
 
 ## P2: the workspace deliberately holds two p5 majors
 

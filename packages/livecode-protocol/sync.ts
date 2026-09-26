@@ -23,6 +23,7 @@ import type {
   RunEntity,
 } from "./runtime.ts";
 import type { SignalEntity } from "./signals.ts";
+import type { EngineOp } from "./engine_uplink.ts";
 
 /**
  * Entity kinds the sync transport carries. Subscriptions are type-level in v1;
@@ -67,7 +68,23 @@ export interface SyncSubscribeMessage {
   entityTypes: string[];
 }
 
-export type SyncClientMessage = SyncSubscribeMessage;
+/**
+ * One engine op over the sync socket instead of an HTTP POST. The socket is
+ * ordered, so a stream of edits and the commit that follows them cannot
+ * overtake each other, which two HTTP requests can. The reply is the op's
+ * result body exactly as the server's `plane.execute` returned it.
+ */
+export interface SyncActionMessage {
+  type: "action";
+  requestId: string;
+  op: EngineOp;
+}
+
+export type SyncClientMessage = SyncSubscribeMessage | SyncActionMessage;
+
+export type SyncActionResultMessage =
+  & { type: "actionResult"; requestId: string }
+  & ({ ok: true; body: unknown } | { ok: false; error: string });
 
 export type SyncEntityChange<E = SyncEntity> = EntityDelta<E> & {
   entityType: string;
@@ -88,4 +105,4 @@ export interface SyncMessage<E = SyncEntity> {
   changes?: Array<SyncEntityChange<E>>;
 }
 
-export type SyncServerMessage = SyncMessage;
+export type SyncServerMessage = SyncMessage | SyncActionResultMessage;

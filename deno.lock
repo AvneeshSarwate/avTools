@@ -84,7 +84,6 @@
     "npm:fit-curve@0.2": "0.2.0",
     "npm:gifenc@1.0.3": "1.0.3",
     "npm:hyperformula@^2.6.1": "2.7.1",
-    "npm:json-diff-ts@^4.8.2": "4.8.2",
     "npm:jssm@^5.96.1": "5.104.2",
     "npm:konva@^9.3.21": "9.3.22",
     "npm:magic-string@0.30.17": "0.30.17",
@@ -3401,9 +3400,6 @@
     "json-buffer@3.0.1": {
       "integrity": "sha512-4bV5BfR2mqfQTJm+V5tPPdf+ZpuhiIvTuAB5g8kcrXOZpTT/QwwVRWBywX1ozr6lEuPdbHxwaJlm9G6mI2sfSQ=="
     },
-    "json-diff-ts@4.8.2": {
-      "integrity": "sha512-7LgOTnfK5XnBs0o0AtHTkry5QGZT7cSlAgu5GtiomUeoHqOavAUDcONNm/bCe4Lapt0AHnaidD5iSE+ItvxKkA=="
-    },
     "json-parse-better-errors@1.0.2": {
       "integrity": "sha512-mrqyZKfX5EhL7hvqcV6WG1yYjnjeuYDzDhhcAAUrq8Po85NBQBJP+ZDUT75qZQ98IkUoBqdkExkukOU7Ts2wrw=="
     },
@@ -5109,7 +5105,6 @@
             "npm:fast-xml-parser@^4.3.2",
             "npm:fit-curve@0.2",
             "npm:hyperformula@^2.6.1",
-            "npm:json-diff-ts@^4.8.2",
             "npm:jssm@^5.96.1",
             "npm:konva@^9.3.21",
             "npm:matter-js@0.20",

@@ -54,6 +54,9 @@ const ALIAS_ENTRIES: Record<string, string> = {
   // it).
   "three": `export * from "${join(HERE, "vendor", "three.ts")}";\n`,
   "p5": `export { default } from "${join(HERE, "vendor", "p5.ts")}";\n`,
+  // The raw-WebGPU shader graph runtime, for modules and project libraries
+  // that build render passes (repo package, resolved by the root import map).
+  "shader_fx_raw": 'export * from "@avtools/shader-fx/raw";\n',
   "runtime":
     'export {\n  visualizedAwait,\n  visualizedTask,\n  visualizedOwnedSignal,\n  visualizedPianoRollLookup,\n} from "@avtools/livecode-engine/runtime.ts";\n',
   // The reusable engine host, for a UI page that runs the engine in its own
@@ -85,6 +88,7 @@ export const MODULE_IMPORT_MAP: Readonly<Record<string, string>> = {
   "@avtools/six-sines": "six_sines.js",
   "three": "three.js",
   "p5": "p5.js",
+  "@avtools/shader-fx/raw": "shader_fx_raw.js",
 };
 
 export function moduleImportMapHtml(prefix: string): string {

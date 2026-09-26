@@ -4,6 +4,7 @@ import type {
 } from "@avtools/livecode-protocol";
 import {
   type AppliedDrawingView,
+  canWriteFromDrawingView,
   decideDrawingHydration,
 } from "../src/drawingViewHydration.ts";
 
@@ -109,4 +110,17 @@ Deno.test("drawing hydration always initializes a recreated or rebound view", ()
   );
   assertEquals(recreated.kind, "hydrate");
   assertEquals(rebound.kind, "hydrate");
+});
+
+Deno.test("drawing view writes only from an element showing accepted truth", () => {
+  const prior = applied("drawing", firstElement, 2, document("a"));
+  assertEquals(canWriteFromDrawingView(prior, "drawing", firstElement), true);
+  // Never hydrated, or its last hydration threw and cleared the baseline.
+  assertEquals(canWriteFromDrawingView(null, "drawing", firstElement), false);
+  // Rebound or recreated, and the new binding has not hydrated yet.
+  assertEquals(canWriteFromDrawingView(prior, "drawing", secondElement), false);
+  assertEquals(
+    canWriteFromDrawingView(prior, "other-drawing", firstElement),
+    false,
+  );
 });

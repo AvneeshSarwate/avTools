@@ -1,97 +1,31 @@
-import { getCurrentFreehandStateString, restoreFreehandState } from './freehandTool'
-import { getCurrentPolygonStateString, restorePolygonState } from './polygonTool'
-import { getCurrentCircleStateString, restoreCircleState } from './circleTool'
-import type { CanvasRenderData, CanvasRuntimeState } from './canvasState'
+import type { DrawingDocument } from '@avtools/drawing-document'
+import type { CanvasRuntimeState } from './canvasState'
+import { reconcileDrawingDocument, serializeDrawingDocument } from './drawingDocument'
+import { convertLegacyCanvasState, isLegacyCanvasState } from './legacyCanvasState'
+export { collectCanvasRenderData } from './canvasBake'
 
 export interface CanvasPersistenceOptions {
   handleTimeUpdate?: (time: number) => void
 }
 
-interface NormalizedCanvasState {
-  freehand?: string
-  polygon?: string
-  circle?: string
-}
+/**
+ * The canvas state as one opaque string: the drawing document as JSON. It is
+ * what the undo stack, snapshots, downloads, and `getCanvasState()` hold.
+ */
+export const serializeCanvasState = (state: CanvasRuntimeState): string =>
+  JSON.stringify(serializeDrawingDocument(state))
 
-const parseStateString = (stateString: string | null | undefined) => {
-  if (!stateString) return null
-  try {
-    return JSON.parse(stateString)
-  } catch (error) {
-    console.warn('Failed to parse state string:', error)
-    return null
-  }
-}
+// A shape sniff, not validation: reconciling the document validates it.
+const isDocumentPayload = (parsed: unknown): parsed is DrawingDocument =>
+  !!parsed && typeof parsed === 'object' && ['freehand', 'polygon', 'circle'].some((layer) => {
+    const section = (parsed as Record<string, unknown>)[layer]
+    return !!section && typeof section === 'object' && Array.isArray((section as { nodes?: unknown }).nodes)
+  })
 
-const normalizeParsedState = (parsed: any): NormalizedCanvasState => {
-  if (!parsed || typeof parsed !== 'object') {
-    return {}
-  }
-
-  if ('freehand' in parsed || 'polygon' in parsed || 'circle' in parsed) {
-    const result: NormalizedCanvasState = {}
-
-    if (parsed.freehand !== undefined) {
-      result.freehand = typeof parsed.freehand === 'string'
-        ? parsed.freehand
-        : JSON.stringify(parsed.freehand)
-    }
-
-    if (parsed.polygon !== undefined) {
-      result.polygon = typeof parsed.polygon === 'string'
-        ? parsed.polygon
-        : JSON.stringify(parsed.polygon)
-    }
-
-    if (parsed.circle !== undefined) {
-      result.circle = typeof parsed.circle === 'string'
-        ? parsed.circle
-        : JSON.stringify(parsed.circle)
-    }
-
-    return result
-  }
-
-  if ('layer' in parsed && (parsed.strokes || parsed.strokeGroups)) {
-    return { freehand: JSON.stringify(parsed) }
-  }
-
-  if ('layer' in parsed && (parsed.polygons || parsed.polygonGroups)) {
-    return { polygon: JSON.stringify(parsed) }
-  }
-
-  if ('layer' in parsed && parsed.circles) {
-    return { circle: JSON.stringify(parsed) }
-  }
-
-  return {}
-}
-
-export const collectCanvasRenderData = (state: CanvasRuntimeState): CanvasRenderData => ({
-  freehand: state.freehand.bakedRenderData,
-  polygon: state.polygon.bakedRenderData,
-  circle: state.circle.bakedRenderData
-})
-
-export const serializeCanvasState = (state: CanvasRuntimeState): string => {
-  const freehandString = getCurrentFreehandStateString(state)
-  const polygonString = getCurrentPolygonStateString(state)
-  const circleString = getCurrentCircleStateString(state)
-
-  const freehand = parseStateString(freehandString)
-  const polygon = parseStateString(polygonString)
-  const circle = parseStateString(circleString)
-
-  const payload = {
-    version: 1,
-    freehand,
-    polygon,
-    circle
-  }
-
-  return JSON.stringify(payload)
-}
-
+/**
+ * Restore a string from `serializeCanvasState`. The format that predates
+ * documents (Konva's own serialization per tool) is converted on the way in.
+ */
 export const deserializeCanvasState = (
   canvasState: CanvasRuntimeState,
   serialized: string,
@@ -99,7 +33,7 @@ export const deserializeCanvasState = (
 ): boolean => {
   if (!serialized) return false
 
-  let parsed: any
+  let parsed: unknown
   try {
     parsed = JSON.parse(serialized)
   } catch (error) {
@@ -107,25 +41,24 @@ export const deserializeCanvasState = (
     return false
   }
 
-  const { freehand, polygon, circle } = normalizeParsedState(parsed)
-
-  if (!freehand && !polygon && !circle) {
-    console.warn('Canvas state payload missing freehand, polygon, and circle data')
+  let document: DrawingDocument
+  if (isDocumentPayload(parsed)) document = parsed
+  else if (isLegacyCanvasState(parsed)) document = convertLegacyCanvasState(parsed)
+  else {
+    console.warn('Canvas state payload is neither a document nor a legacy canvas state')
     return false
   }
 
-  if (freehand) {
-    restoreFreehandState(canvasState, freehand, { handleTimeUpdate: options.handleTimeUpdate })
+  const wasAnimating = canvasState.freehand.currentPlaybackTime.value > 0
+  canvasState.freehand.currentPlaybackTime.value = 0
+  canvasState.freehand.isAnimating.value = false
+  try {
+    reconcileDrawingDocument(canvasState, document)
+  } catch (error) {
+    console.warn('Failed to restore canvas state:', error)
+    return false
   }
-
-  if (polygon) {
-    restorePolygonState(canvasState, polygon)
-  }
-
-  if (circle) {
-    restoreCircleState(canvasState, circle)
-  }
-
+  if (wasAnimating) options.handleTimeUpdate?.(0)
   return true
 }
 

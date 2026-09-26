@@ -100,10 +100,9 @@ export type TemplateAppState = {
   drawing: boolean
 
   //canvas state
-  freehandStateString: string
+  canvasStateString: string
   freehandRenderData: FreehandRenderData
   freehandGroupMap: Record<string, number[]>
-  polygonStateString: string
   polygonRenderData: PolygonRenderData
 }
 
@@ -121,10 +120,9 @@ export const appState: TemplateAppState = {
   stats: undefined,
   paused: false,
   drawing: false,
-  freehandStateString: '',
+  canvasStateString: '',
   freehandRenderData: [],
   freehandGroupMap: {},
-  polygonStateString: '',
   polygonRenderData: [],
 } 
 

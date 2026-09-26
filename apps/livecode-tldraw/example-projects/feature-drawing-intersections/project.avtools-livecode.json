@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "name": "feature-drawing-intersections",
+  "engineTarget": "browser",
+  "modules": [
+    {
+      "id": "drawing-intersections/sketch",
+      "path": "modules/sketch.ts",
+      "sourcePath": "modules/sketch.orig.ts",
+      "runtimePath": "modules/sketch.ts",
+      "kind": "runnable",
+      "title": "p5 sketch (paints where shapes overlap)",
+      "sourceVersion": 1,
+      "x": 80,
+      "y": 80,
+      "w": 560,
+      "h": 900
+    }
+  ],
+  "canvas": {
+    "pianoRollViews": [],
+    "paramPaneViews": [],
+    "animationEditorViews": [],
+    "scopeViews": [],
+    "drawingViews": [
+      {
+        "id": "shape:drawing-intersections-view",
+        "drawingName": "drawing-intersections_shapes",
+        "x": 700,
+        "y": 80,
+        "w": 1060,
+        "h": 720
+      }
+    ],
+    "canvasSurfaceViews": [
+      {
+        "id": "shape:drawing-intersections-sketch-view",
+        "surfaceName": "drawing-intersections/sketch",
+        "x": 700,
+        "y": 840,
+        "w": 540,
+        "h": 300
+      }
+    ]
+  },
+  "data": [
+    {
+      "type": "drawing",
+      "name": "drawing-intersections_shapes",
+      "path": "data/drawing/drawing-intersections_shapes.json"
+    }
+  ]
+}

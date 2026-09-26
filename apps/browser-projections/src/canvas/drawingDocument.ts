@@ -22,9 +22,7 @@ import { createGroupItem } from './CanvasItem'
 import * as selectionStore from './selectionStore'
 import {
   attachHandlersRecursively,
-  clearStrokesInState,
   createStrokeShape,
-  getCurrentFreehandState,
   setStrokeGroupInState,
   setStrokeInState,
   updateBakedFreehandData,
@@ -32,8 +30,8 @@ import {
   updateTimelineState,
   type FreehandStroke
 } from './freehandTool'
-import { createPolygonNode, getCurrentPolygonState, updateBakedPolygonData, updatePolygonControlPoints } from './polygonTool'
-import { createCircleNode, getCurrentCircleState, updateBakedCircleData } from './circleTool'
+import { createPolygonNode, updateBakedPolygonData, updatePolygonControlPoints } from './polygonTool'
+import { createCircleNode, updateBakedCircleData } from './circleTool'
 import { getPointsBounds, uid } from './canvasUtils'
 
 const TRANSFORM_ATTRS = ['x', 'y', 'scaleX', 'scaleY', 'rotation', 'skewX', 'skewY', 'offsetX', 'offsetY'] as const
@@ -88,7 +86,16 @@ const serializeLayer = (state: CanvasRuntimeState, layer: DrawingLayerName, cont
   return { transform: readTransform(container), nodes }
 }
 
-const serializeNode = (state: CanvasRuntimeState, layer: DrawingLayerName, konvaNode: Konva.Node): DrawingNode | null => {
+// A node without a Konva id gets one here and keeps it: the document, the
+// in-gesture previews, and the engine's node patches all address by id, so an
+// id must not change between two serializations of the same node.
+const stableId = (konvaNode: Konva.Node, prefix: string): string => {
+  if (!konvaNode.id()) konvaNode.id(uid(prefix))
+  return konvaNode.id()
+}
+
+/** One Konva node (and, for a group, its subtree) as a document node; null for anything the layer does not hold. */
+export const serializeNode = (state: CanvasRuntimeState, layer: DrawingLayerName, konvaNode: Konva.Node): DrawingNode | null => {
   if (konvaNode instanceof Konva.Group) {
     if (layer === 'polygon') return null
     const children: DrawingNode[] = []
@@ -98,7 +105,7 @@ const serializeNode = (state: CanvasRuntimeState, layer: DrawingLayerName, konva
     })
     const group: DrawingGroupNode = {
       type: 'group',
-      id: konvaNode.id() || uid('group_'),
+      id: stableId(konvaNode, 'group_'),
       transform: readTransform(konvaNode),
       children
     }
@@ -124,9 +131,10 @@ const serializeNode = (state: CanvasRuntimeState, layer: DrawingLayerName, konva
     const runtime = state.polygon.shapes.get(konvaNode.id())
     const node: DrawingPolygonNode = {
       type: 'polygon',
-      id: konvaNode.id() || uid('poly_'),
+      id: stableId(konvaNode, 'poly_'),
       points: [...konvaNode.points()],
       closed: konvaNode.closed(),
+      ...(konvaNode.tension() !== 0 && { tension: konvaNode.tension() }),
       creationTime: runtime?.creationTime ?? 0,
       transform: readTransform(konvaNode)
     }
@@ -137,7 +145,7 @@ const serializeNode = (state: CanvasRuntimeState, layer: DrawingLayerName, konva
     const runtime = state.circle.shapes.get(konvaNode.id())
     const node: DrawingCircleNode = {
       type: 'circle',
-      id: konvaNode.id() || uid('circle_'),
+      id: stableId(konvaNode, 'circle_'),
       radius: konvaNode.radius(),
       creationTime: konvaNode.getAttr('creationTime') ?? runtime?.creationTime ?? 0,
       transform: readTransform(konvaNode)
@@ -148,70 +156,135 @@ const serializeNode = (state: CanvasRuntimeState, layer: DrawingLayerName, konva
   return null
 }
 
-// ==================== hydrate ====================
+// ==================== reconcile ====================
+
+const LAYER_NAMES: readonly DrawingLayerName[] = ['freehand', 'polygon', 'circle']
+
+const layerGroup = (state: CanvasRuntimeState, layer: DrawingLayerName): Konva.Group | undefined =>
+  layer === 'freehand' ? state.groups.freehandShape : layer === 'polygon' ? state.groups.polygonShapes : state.groups.circleShapes
+
+const buildNode = (state: CanvasRuntimeState, layer: DrawingLayerName, node: DrawingNode, parent: Konva.Group) => {
+  if (layer === 'freehand') buildFreehandNode(state, node, parent)
+  else if (layer === 'polygon') { if (node.type === 'polygon') buildPolygonNode(state, node, parent) }
+  else buildCircleNode(state, node, parent)
+}
+
+// Forget everything the runtime holds about a Konva subtree (stroke/shape
+// records, canvas items, selection membership), then destroy it.
+const forgetSubtree = (state: CanvasRuntimeState, layer: DrawingLayerName, root: Konva.Node) => {
+  const visit = (node: Konva.Node) => {
+    const id = node.id()
+    const item = id ? state.canvasItems.get(id) : undefined
+    if (item && state.selection.items.has(item)) selectionStore.remove(state, item)
+    if (id) {
+      state.canvasItems.delete(id)
+      if (layer === 'freehand') {
+        state.freehand.strokes.delete(id)
+        state.freehand.strokeGroups.delete(id)
+      } else if (layer === 'polygon') {
+        state.polygon.shapes.delete(id)
+      } else {
+        state.circle.shapes.delete(id)
+      }
+    }
+    if (node instanceof Konva.Container) node.getChildren().forEach(visit)
+  }
+  visit(root)
+  root.destroy()
+}
+
+const isSelected = (state: CanvasRuntimeState, id: string): boolean => {
+  const item = state.canvasItems.get(id)
+  return item !== undefined && state.selection.items.has(item)
+}
 
 /**
- * Replace the whole scene with `input`. `state.hydrating` suppresses
- * `document-update` for the duration, so a document pushed in by a host is never
- * echoed back as an edit. Throws on an invalid document, leaving the scene
- * untouched.
+ * Bring the scene to `input`, touching only what differs: each layer's
+ * top-level nodes are compared by id and canonical JSON, and only changed
+ * ones are rebuilt (a nested change rebuilds its top-level group). Untouched
+ * Konva nodes keep their identity and selection; a rebuilt node that was
+ * selected is reselected. Returns the layers that changed. Runs with
+ * `state.hydrating` set, so nothing in here emits `document-update`. Throws
+ * on an invalid document before touching the scene.
  */
-export const hydrateDrawingDocument = (state: CanvasRuntimeState, input: DrawingDocument) => {
+export const reconcileDrawingDocument = (state: CanvasRuntimeState, input: DrawingDocument): Set<DrawingLayerName> => {
   const doc = normalizeDrawingDocument(input)
   const stage = state.stage
-  const freehandGroup = state.groups.freehandShape
-  const polygonGroup = state.groups.polygonShapes
-  const circleGroup = state.groups.circleShapes
-  if (!stage || !freehandGroup || !polygonGroup || !circleGroup) {
+  if (!stage || !state.groups.freehandShape || !state.groups.polygonShapes || !state.groups.circleShapes) {
     throw new Error('Cannot hydrate a drawing before the canvas has mounted')
   }
+  const current = serializeDrawingDocument(state)
+  const changedLayers = new Set<DrawingLayerName>()
 
   state.hydrating = true
   try {
-    freehandGroup.destroyChildren()
-    clearStrokesInState(state)
-    selectionStore.clear(state)
-    applyTransform(freehandGroup, doc.freehand.transform)
-    for (const node of doc.freehand.nodes) buildFreehandNode(state, node, freehandGroup)
-    freehandGroup.getChildren().forEach((child) => {
-      if (child instanceof Konva.Group) attachHandlersRecursively(state, child)
-    })
-    updateFreehandDraggableStates(state)
-    updateTimelineState(state)
+    for (const layer of LAYER_NAMES) {
+      const group = layerGroup(state, layer)!
+      let changed = false
+      const currentJson = new Map(current[layer].nodes.map((node) => [node.id, JSON.stringify(node)]))
+      const nextIds = new Set(doc[layer].nodes.map((node) => node.id))
+      const children = new Map<string, Konva.Node>()
+      group.getChildren().forEach((child) => {
+        // serializeDrawingDocument named any id-less top-level node; find it again by that name.
+        if (child.id()) children.set(child.id(), child)
+      })
 
-    polygonGroup.destroyChildren()
-    state.polygon.shapes.clear()
-    state.polygon.groups.clear()
-    applyTransform(polygonGroup, doc.polygon.transform)
-    for (const node of doc.polygon.nodes) {
-      if (node.type === 'polygon') buildPolygonNode(state, node, polygonGroup)
+      for (const [id, child] of children) {
+        if (!nextIds.has(id)) {
+          forgetSubtree(state, layer, child)
+          changed = true
+        }
+      }
+      for (const node of doc[layer].nodes) {
+        if (currentJson.get(node.id) === JSON.stringify(node)) continue
+        const existing = children.get(node.id)
+        const wasSelected = existing !== undefined && isSelected(state, node.id)
+        if (existing) forgetSubtree(state, layer, existing)
+        buildNode(state, layer, node, group)
+        if (layer === 'freehand' && node.type === 'group') {
+          const built = group.findOne(`#${node.id}`)
+          if (built instanceof Konva.Group) attachHandlersRecursively(state, built)
+        }
+        changed = true
+        if (wasSelected) {
+          const item = state.canvasItems.get(node.id)
+          if (item) selectionStore.add(state, item, true)
+        }
+      }
+      if (JSON.stringify(current[layer].transform) !== JSON.stringify(doc[layer].transform)) {
+        applyTransform(group, doc[layer].transform)
+        changed = true
+      }
+      const order = doc[layer].nodes.map((node) => node.id)
+      const actual = group.getChildren().map((child) => child.id())
+      if (order.some((id, index) => actual[index] !== id)) {
+        order.forEach((id, index) => group.findOne(`#${id}`)?.zIndex(index))
+        changed = true
+      }
+      if (!changed) continue
+      changedLayers.add(layer)
+      if (layer === 'freehand') {
+        updateFreehandDraggableStates(state)
+        updateTimelineState(state)
+      } else if (layer === 'polygon') {
+        state.groups.polygonControls?.destroyChildren()
+        if (state.activeTool.value === 'polygon' && state.polygon.mode.value === 'edit') {
+          updatePolygonControlPoints(state)
+        }
+      }
     }
-    state.groups.polygonControls?.destroyChildren()
-    if (state.activeTool.value === 'polygon' && state.polygon.mode.value === 'edit') {
-      updatePolygonControlPoints(state)
+    if (changedLayers.size > 0) {
+      stage.batchDraw()
+      // The bake callbacks emit state-update (sketches rely on it) but, while
+      // hydrating, not document-update.
+      if (changedLayers.has('freehand')) updateBakedFreehandData(state)
+      if (changedLayers.has('polygon')) updateBakedPolygonData(state)
+      if (changedLayers.has('circle')) updateBakedCircleData(state)
     }
-
-    circleGroup.destroyChildren()
-    state.circle.shapes.clear()
-    applyTransform(circleGroup, doc.circle.transform)
-    for (const node of doc.circle.nodes) buildCircleNode(state, node, circleGroup)
-
-    stage.batchDraw()
-
-    // The bake callbacks emit state-update (sketches rely on it) but, while
-    // hydrating, not document-update.
-    const freehandSnapshot = getCurrentFreehandState(state)
-    if (freehandSnapshot) state.freehand.serializedState = JSON.stringify(freehandSnapshot)
-    const polygonSnapshot = getCurrentPolygonState(state)
-    if (polygonSnapshot) state.polygon.serializedState = JSON.stringify(polygonSnapshot)
-    const circleSnapshot = getCurrentCircleState(state)
-    if (circleSnapshot) state.circle.serializedState = JSON.stringify(circleSnapshot)
-    updateBakedFreehandData(state)
-    updateBakedPolygonData(state)
-    updateBakedCircleData(state)
   } finally {
     state.hydrating = false
   }
+  return changedLayers
 }
 
 const buildFreehandNode = (state: CanvasRuntimeState, node: DrawingNode, parent: Konva.Container) => {
@@ -252,7 +325,7 @@ const buildFreehandNode = (state: CanvasRuntimeState, node: DrawingNode, parent:
 }
 
 const buildPolygonNode = (state: CanvasRuntimeState, node: DrawingPolygonNode, parent: Konva.Container) => {
-  const line = createPolygonNode(state, node.id, [...node.points], node.creationTime, parent)
+  const line = createPolygonNode(state, node.id, [...node.points], node.creationTime, parent, node.tension ?? 0)
   if (!node.closed) {
     line.closed(false)
     const runtime = state.polygon.shapes.get(node.id)

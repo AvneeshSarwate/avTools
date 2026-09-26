@@ -3,6 +3,7 @@ import Konva from 'konva'
 import type { CanvasItem } from './CanvasItem'
 import { CommandStack } from './commandStack'
 import type { ZodTypeAny } from 'zod'
+import type { DrawingDocument, PolygonCurveSegment } from '@avtools/drawing-document'
 
 export type MetadataSchemaEntry = { name: string; schema: ZodTypeAny }
 
@@ -31,6 +32,8 @@ export type FlattenedPolygon = {
   type: 'polygon'
   id: string
   points: { x: number, y: number }[]
+  /** Bézier segments of a curved (non-zero tension) polygon; absent when straight. */
+  segments?: PolygonCurveSegment[]
   metadata?: any
 }
 
@@ -59,25 +62,28 @@ export type CanvasRenderData = {
 
 export type CanvasStateSnapshotBase = {
   freehand: {
-    serializedState: string
     bakedRenderData: FreehandRenderData
     bakedGroupMap: Record<string, number[]>
   }
   polygon: {
-    serializedState: string
     bakedRenderData: PolygonRenderData
   }
   circle: {
-    serializedState: string
     bakedRenderData: CircleRenderData
     bakedGroupMap: Record<string, number[]>
   }
 }
 
+/**
+ * What `state-update` carries: every layer's baked render data, which
+ * top-level nodes were added/deleted/changed since the previous emission,
+ * and the whole document as a string (what `setCanvasState` restores).
+ */
 export type CanvasStateSnapshot = CanvasStateSnapshotBase & {
   added: CanvasStateSnapshotBase
   deleted: CanvasStateSnapshotBase
   changed: CanvasStateSnapshotBase
+  documentState: string
 }
 
 export interface FreehandStrokeRuntime {
@@ -171,6 +177,10 @@ export interface CanvasRuntimeState {
     refreshAncillaryViz?: () => void
     syncAppState?: (state: CanvasRuntimeState) => void
     updateCursor?: () => void
+    /** Nodes a tool moved itself (not through Konva drag events), for in-gesture previews. */
+    previewNodes?: (nodes: Konva.Node[]) => void
+    /** The gesture behind `previewNodes` ended (its commit has been pushed). */
+    previewGestureEnd?: () => void
   }
   keyboardDisposables: Array<() => void>
   freehand: {
@@ -187,6 +197,9 @@ export interface CanvasRuntimeState {
     currentPoints: number[]
     currentTimestamps: number[]
     drawingStartTime: number
+    /** Id and creation time of the stroke being drawn, fixed at pointer down so previews and the commit agree. */
+    currentStrokeId: string | null
+    currentCreationTime: number
     selectedStrokesForTimeline: Ref<Set<string>>
     timelineDuration: Ref<number>
     currentPlaybackTime: Ref<number>
@@ -195,7 +208,6 @@ export interface CanvasRuntimeState {
     maxInterStrokeDelay: number
     isAnimating: Ref<boolean>
     freehandDragStartState: string | null
-    serializedState: string
     bakedRenderData: FreehandRenderData
     bakedGroupMap: Record<string, number[]>
   }
@@ -205,9 +217,10 @@ export interface CanvasRuntimeState {
     isDrawing: Ref<boolean>
     currentPoints: Ref<number[]>
     mode: Ref<'draw' | 'edit'>
+    /** Curve tension for new shapes; 0 draws straight edges. */
+    tension: Ref<number>
     dragStartState: string | null
     proximityThreshold: number
-    serializedState: string
     bakedRenderData: PolygonRenderData
   }
   circle: {
@@ -215,8 +228,10 @@ export interface CanvasRuntimeState {
     isDrawing: Ref<boolean>
     currentCenter: Ref<{ x: number, y: number } | null>
     currentRadius: Ref<number>
+    /** Id and creation time of the circle being drawn, fixed at pointer down so previews and the commit agree. */
+    currentId: string | null
+    currentCreationTime: number
     dragStartState: string | null
-    serializedState: string
     bakedRenderData: CircleRenderData
     bakedGroupMap: Record<string, number[]>
   }
@@ -245,6 +260,8 @@ export interface CanvasRuntimeState {
     stack?: CommandStack
     executeCommand?: (name: string, action: () => void) => void
     pushCommand?: (name: string, beforeState: string, afterState: string) => void
+    /** The undo stack's state string (the document as JSON), for tools that capture before/after a gesture. */
+    captureState?: () => string
   }
   metadata: {
     activeNode: Ref<Konva.Node | null>
@@ -267,6 +284,12 @@ export interface CanvasRuntimeState {
     showPanel: Ref<boolean>
     items: Ref<CanvasSnapshot[]>
     selectedId: Ref<string | null>
+  }
+  /** The document-derived bake cache (see canvasBake.ts). */
+  bake: {
+    dirty: boolean
+    document: DrawingDocument | null
+    json: string
   }
 }
 
@@ -323,6 +346,8 @@ export const createCanvasRuntimeState = (): CanvasRuntimeState => {
       currentPoints: [],
       currentTimestamps: [],
       drawingStartTime: 0,
+      currentStrokeId: null,
+      currentCreationTime: 0,
       selectedStrokesForTimeline: ref(new Set()),
       timelineDuration: ref(0),
       currentPlaybackTime: ref(0),
@@ -331,7 +356,6 @@ export const createCanvasRuntimeState = (): CanvasRuntimeState => {
       maxInterStrokeDelay: 300,
       isAnimating: ref(false),
       freehandDragStartState: null,
-      serializedState: '',
       bakedRenderData: [],
       bakedGroupMap: {}
     },
@@ -341,9 +365,9 @@ export const createCanvasRuntimeState = (): CanvasRuntimeState => {
       isDrawing: ref(false),
       currentPoints: ref([]),
       mode: ref('draw'),
+      tension: ref(0),
       dragStartState: null,
       proximityThreshold: 10,
-      serializedState: '',
       bakedRenderData: []
     },
     circle: {
@@ -351,8 +375,9 @@ export const createCanvasRuntimeState = (): CanvasRuntimeState => {
       isDrawing: ref(false),
       currentCenter: ref(null),
       currentRadius: ref(0),
+      currentId: null,
+      currentCreationTime: 0,
       dragStartState: null,
-      serializedState: '',
       bakedRenderData: [],
       bakedGroupMap: {}
     },
@@ -393,7 +418,8 @@ export const createCanvasRuntimeState = (): CanvasRuntimeState => {
       showPanel: ref(false),
       items: ref([]),
       selectedId: ref(null)
-    }
+    },
+    bake: { dirty: true, document: null, json: '' }
   }
 }
 

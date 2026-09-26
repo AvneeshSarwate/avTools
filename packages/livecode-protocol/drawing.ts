@@ -8,7 +8,11 @@
  * the protocol package.
  */
 
-import type { DrawingDocument } from "../drawing-document/mod.ts";
+import type {
+  DrawingDocument,
+  DrawingLayerName,
+  DrawingNode,
+} from "../drawing-document/mod.ts";
 
 export type {
   CircleRenderData,
@@ -49,3 +53,30 @@ export interface SetDrawingRequest {
 export type DrawingSetResult =
   | { ok: true; drawing: DrawingEntity }
   | { ok: false; error: string; current?: DrawingEntity };
+
+/** Replace (or append) one node by id, wherever it sits in the layer. */
+export interface DrawingNodeUpsert {
+  layer: DrawingLayerName;
+  node: DrawingNode;
+}
+
+export interface DrawingNodeDelete {
+  layer: DrawingLayerName;
+  id: string;
+}
+
+/**
+ * Node-level edits to a drawing: the in-gesture stream a view sends while a
+ * shape is dragged or drawn. Like Six Sines parameter sets, a batch is
+ * validated whole and applied whole; each accepted batch is one revision.
+ * Compare-and-set is optional and normally omitted while streaming.
+ */
+export interface DrawingPatchRequest {
+  name: string;
+  upserts?: DrawingNodeUpsert[];
+  deletes?: DrawingNodeDelete[];
+  originId?: string;
+  expectedRev?: number;
+}
+
+export type DrawingPatchResult = import("./entities.ts").EntityPatchResult;

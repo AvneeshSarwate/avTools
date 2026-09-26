@@ -82,6 +82,15 @@ browser-engine paths. They must preserve the WebSocket/HTTP semantics even
 though their transport is a `BroadcastChannel`. `serverBaseUrl=none` selects a
 baked project boot from `baked.json`.
 
+Entity actions (writes, patches, cursor moves, events) take the sync port's
+action lane on every transport: the `/sync` socket, the engine tab's
+BroadcastChannel, or a direct call into this tab's engine. The lane is ordered
+with the sync it will be observed through and answers the op's result as-is.
+The HTTP entity routes are the fallback while no port is open (a socket still
+connecting), and what `actions=broadcast` governs is the remaining
+server-only helpers (entity create/duplicate/delete, capture) in a serverless
+bake.
+
 `?engine=inprocess` makes this tab the engine (`inProcessEngine.ts`). The page
 dynamically imports `./engine/engine_host.js` from the served asset tree, never
 a Vite-bundled engine, and `index.html` carries the same module import map as
@@ -189,8 +198,44 @@ Domain bridges retain distinct semantics:
   lossless document and writes committed edits back whole with compare-and-set.
   The element must not emit `document-update` while a document is being pushed
   in, and the view must not write before its first hydration; either breaks the
-  loop (an echo, or a fresh view erasing the entity). The element's baked
-  `state-update` snapshot is not the entity value.
+  loop (an echo, or a fresh view erasing the entity). A hydration that throws
+  counts as no hydration: the view blocks writes until one succeeds. The
+  element's baked `state-update` snapshot is not the entity value.
+- During a gesture (drag, transform, drawing) the element emits
+  `document-preview` batches of node upserts/deletes by id, at most every
+  33 ms, bracketed by `interaction-start`/`interaction-end`. The view streams
+  them as `drawingPatch` actions without compare-and-set (one in flight,
+  later batches coalesced per node) over the sync socket, so the committed
+  `document-update` that ends the gesture stays the last write on the lane;
+  that commit waits for the last preview's acknowledgement and expects its
+  revision. A foreign change arriving mid-gesture is applied when the
+  gesture ends rather than rebuilding the scene under the pointer. Previews
+  never enter the element's undo stack.
+- The element serves two surfaces, chosen at instantiation with
+  `mode="simple"` (default) or `mode="document"`; the view uses the latter.
+  Simple mode emits `state-update` (baked render data plus an
+  added/changed/deleted diff) for sketches that draw from the element;
+  document mode does not, so a change costs only the nodes it touches.
+  Underneath, one core: the document is the element's truth and
+  `setDrawingDocument` reconciles the scene to it by top-level node id,
+  rebuilding only nodes that differ (untouched Konva nodes keep identity and
+  selection), and the undo stack stores documents. The element's baked
+  render data is the package's Konva-free bake of that document, computed
+  lazily once per document change (`canvasBake.ts`); the `state-update`
+  diff compares top-level nodes by canonical JSON, and neither
+  `state-update` nor `document-update` fires when the document did not
+  change. A second view of the same drawing therefore follows a streamed
+  gesture at a few milliseconds per revision. `getCanvasState()` /
+  `setCanvasState()` are that document as a string, and `state-update`
+  carries it as `documentState`; the format that predates documents
+  (Konva's own serialization per tool, still in older saves and the
+  sketches' preset files) is converted on input by `legacyCanvasState.ts`
+  and never produced.
+- Curved polygons are Konva `Line` tension, set from the polygon toolbar for
+  new shapes or the select toolbar for selected ones. The bake reports them as
+  world-space Bézier `segments`, computed in the node's local space and then
+  transformed (Konva's curve is not preserved by non-uniform scale or skew, so
+  it cannot be rebuilt from the baked vertices).
 - Signal playhead markers are derived by `signalPlayheadMarkers.ts` from signal
   anchors. Piano-roll anchors interpret position in beats; animation anchors
   interpret it in seconds. One signal sent to both must choose compatible units.
@@ -260,8 +305,8 @@ remembered or default candidate, and plain-`http` candidates are skipped on
 an `https` page; health polling pauses while the tab is hidden, so a
 background tab cannot hold a wake-on-request container awake; and a
 same-origin "engine in browser" open appends `sync=broadcast` (toggleable)
-so sync rides the engine tab's BroadcastChannel instead of a WAN round trip,
-while writes, analysis, and LSP stay HTTP.
+so sync and entity writes ride the engine tab's BroadcastChannel instead of a
+WAN round trip, while analysis, project, and LSP stay HTTP.
 
 ## Project and control caveats
 

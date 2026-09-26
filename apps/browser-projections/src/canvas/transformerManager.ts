@@ -1,7 +1,7 @@
 import Konva from 'konva'
 import { watch } from 'vue'
 
-import { pushCommandWithStates } from './commands'
+import { captureCommandState, pushCommandWithStates } from './commands'
 import type { CanvasRuntimeState } from './canvasState'
 import { updateMetadataHighlight } from './metadata/highlight'
 
@@ -73,36 +73,15 @@ function updateTransformerWithState(state: CanvasRuntimeState, selectedNodes: Ko
 
 // State-based transform tracking
 function startTransformTrackingWithState(state: CanvasRuntimeState) {
-  // Import dynamically to avoid circular dependencies
-  import('./freehandTool').then(({ getCurrentFreehandStateString }) => {
-    import('./polygonTool').then(({ getCurrentPolygonStateString }) => {
-      const startState = JSON.stringify({
-        freehand: getCurrentFreehandStateString(state),
-        polygon: getCurrentPolygonStateString(state)
-      })
-      // Store in state rather than module global
-      state.selection.transformStartState = startState
-    })
-  })
+  state.selection.transformStartState = captureCommandState(state)
 }
 
 function finishTransformTrackingWithState(state: CanvasRuntimeState, operationName: string) {
   const dragStartState = state.selection.transformStartState
   if (!dragStartState) return
-  
-  // Import dynamically to avoid circular dependencies
-  import('./freehandTool').then(({ getCurrentFreehandStateString }) => {
-    import('./polygonTool').then(({ getCurrentPolygonStateString }) => {
-      const endState = JSON.stringify({
-        freehand: getCurrentFreehandStateString(state),
-        polygon: getCurrentPolygonStateString(state)
-      })
-
-      if (dragStartState !== endState) {
-        pushCommandWithStates(state, operationName, dragStartState!, endState)
-      }
-
-      state.selection.transformStartState = ''
-    })
-  })
+  const endState = captureCommandState(state)
+  if (dragStartState !== endState) {
+    pushCommandWithStates(state, operationName, dragStartState, endState)
+  }
+  state.selection.transformStartState = ''
 }

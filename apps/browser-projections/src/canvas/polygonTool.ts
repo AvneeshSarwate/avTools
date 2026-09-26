@@ -2,10 +2,10 @@
 /* eslint-disable prefer-const */
 import Konva from "konva"
 import { type ShallowReactive, shallowReactive, ref, watch } from "vue"
-import { findClosestPolygonLineAtPoint } from "./polygonGeometry"
+import { isCurvedPolygon, mapCurveSegment, tensionPointsToSegments } from "@avtools/drawing-document"
+import { findClosestPolygonLineAtPoint, polygonSpanMidpoint, polygonSpans, type Point } from "./polygonGeometry"
 import type { PolygonRenderData, FlattenedPolygon } from "./canvasState"
-import { executeCommand, pushCommandWithStates } from "./commands"
-import { getCurrentFreehandStateString } from './freehandTool'
+import { captureCommandState, executeCommand, pushCommandWithStates } from "./commands"
 import { uid } from './canvasUtils'
 import { createPolygonItem, createGroupItem, getCanvasItem, removeCanvasItem } from './CanvasItem'
 import * as selectionStore from './selectionStore'
@@ -117,6 +117,14 @@ export const generateBakedPolygonData = (
       // Transform points to world coordinates
       const transformedPoints = transformPolygonPoints(originalPoints, child)
       
+      // A curved line's segments come from Konva's own tension points, so the
+      // package's Konva-free bake is checked against the real thing.
+      const transform = child.getAbsoluteTransform()
+      const segments = isCurvedPolygon(originalPoints, child.tension())
+        ? tensionPointsToSegments(originalPoints, child.getTensionPoints(), child.closed())
+          .map(segment => mapCurveSegment(segment, point => transform.point(point)))
+        : undefined
+
       // Extract metadata from the Konva node
       const metadata = child.getAttr('metadata')
       
@@ -128,6 +136,7 @@ export const generateBakedPolygonData = (
         type: 'polygon',
         id: polygonId,
         points: transformedPoints,
+        ...(segments && { segments }),
         ...(metadata && { metadata }) // Only include metadata if it exists
       })
     }
@@ -137,82 +146,27 @@ export const generateBakedPolygonData = (
 }
 
 // Function to update baked polygon data in app state
+// Baked data is derived from the document lazily (canvasBake.ts); this entry
+// point, called after every polygon edit, marks it stale and notifies.
 export const updateBakedPolygonData = (
   canvasState: CanvasRuntimeState
 ) => {
-  canvasState.polygon.bakedRenderData = generateBakedPolygonData(canvasState)
+  canvasState.bake.dirty = true
   canvasState.callbacks.syncAppState?.(canvasState)
 }
 
 // Polygon drawing state now managed via global canvas state
 
-// Polygon Undo/Redo Functions
-// Get current polygon state for undo/redo
-export const getCurrentPolygonState = (
-  state: CanvasRuntimeState
-) => {
-  return selectionStore.withSelectionHighlightSuppressed(state, () => {
-    const polygonShapesGroup = state.groups.polygonShapes
-    const stageRef = state.stage
-    if (!stageRef || !polygonShapesGroup) return null
-
-    try {
-      const layerData = polygonShapesGroup.toObject()
-      const polygonsData = Array.from(state.polygon.shapes.entries())
-      const polygonGroupsData = Array.from(state.polygon.groups.entries())
-
-      const polygonState = {
-        layer: layerData,
-        polygons: polygonsData,
-        polygonGroups: polygonGroupsData,
-      }
-
-      return polygonState
-    } catch (error) {
-      console.warn('Failed to get current polygon state:', error)
-      return null
-    }
-  })
-}
-
-export const getCurrentPolygonStateString = (
-  state: CanvasRuntimeState
-): string => {
-  const polygonState = getCurrentPolygonState(state)
-  return JSON.stringify(polygonState)
-}
-
-// Restore polygon state from string
-export const restorePolygonState = (
-  canvasState: CanvasRuntimeState,
-  stateString: string
-) => {
-  if (!stateString) return
-  try {
-    deserializePolygonState(canvasState, stateString)
-  } catch (error) {
-    console.warn('Failed to restore polygon state:', error)
-  }
-}
-
 // Polygon drag tracking now handled via global state
 
 export const startPolygonDragTracking = (state: CanvasRuntimeState) => {
-  // Capture combined state for unified undo/redo
-  const before = JSON.stringify({
-    freehand: getCurrentFreehandStateString(state),
-    polygon: getCurrentPolygonStateString(state)
-  })
-  state.polygon.dragStartState = before
+  state.polygon.dragStartState = captureCommandState(state)
 }
 
 export const finishPolygonDragTracking = (state: CanvasRuntimeState, nodeName: string) => {
   if (!state.polygon.dragStartState) return
 
-  const endCombined = JSON.stringify({
-    freehand: getCurrentFreehandStateString(state),
-    polygon: getCurrentPolygonStateString(state)
-  })
+  const endCombined = captureCommandState(state)
   if (state.polygon.dragStartState !== endCombined) {
     // Push into unified command stack with combined state
     pushCommandWithStates(state, `Transform ${nodeName}`, state.polygon.dragStartState, endCombined)
@@ -220,30 +174,6 @@ export const finishPolygonDragTracking = (state: CanvasRuntimeState, nodeName: s
   }
 
   state.polygon.dragStartState = null
-}
-
-// Polygon state serialization functions
-export const serializePolygonState = (
-  canvasState: CanvasRuntimeState
-) => {
-  const polygonShapesGroup = canvasState.groups.polygonShapes
-  const stageRef = canvasState.stage
-  if (!stageRef || !polygonShapesGroup) return
-
-  try {
-    const polygonState = getCurrentPolygonState(canvasState)
-    if (!polygonState) return
-
-    canvasState.polygon.serializedState = JSON.stringify(polygonState)
-    canvasState.callbacks.syncAppState?.(canvasState)
-    console.log('Serialized polygon state:', {
-      layerChildren: polygonState.layer?.children?.length || 0,
-      polygons: polygonState.polygons.length,
-      polygonGroups: polygonState.polygonGroups.length
-    })
-  } catch (error) {
-    console.warn('Failed to serialize polygon state:', error)
-  }
 }
 
 // Function to attach handlers to polygon nodes
@@ -259,91 +189,33 @@ export const attachPolygonHandlers = (state: CanvasRuntimeState, node: Konva.Lin
   node.on('dragstart', () => startPolygonDragTracking(state))
   node.on('dragend', () => {
     finishPolygonDragTracking(state, 'Polygon Drag')
-    serializePolygonState(state)
+    updateBakedPolygonData(state)
   })
 }
 
-export const deserializePolygonState = (
-  canvasState: CanvasRuntimeState,
-  stateString: string
-) => {
-  const polygonShapesGroup = canvasState.groups.polygonShapes
-  const polygonControlsGroup = canvasState.groups.polygonControls
-  const stageRef = canvasState.stage
-  if (!stateString || !stageRef || !polygonShapesGroup) return
+// Every polygon's edges in world space, in `polygonShapes` order.
+const worldPolygonSpans = (state: CanvasRuntimeState): Point[][][] =>
+  Array.from(polygonShapes(state).values()).map(p => {
+    const line = p.konvaShape
+    const spans = polygonSpans(p.points, line?.tension() ?? 0, line?.closed() ?? p.closed)
+    if (!line) return spans
+    const t = line.getAbsoluteTransform()
+    return spans.map(span => span.map(point => t.point(point)))
+  })
 
-  try {
-    const polygonState = JSON.parse(stateString)
-    console.log('Deserializing polygon state:', {
-      layerChildren: polygonState.layer?.children?.length || 0,
-      polygons: polygonState.polygons?.length || 0,
-      polygonGroups: polygonState.polygonGroups?.length || 0
-    })
-
-    polygonShapesGroup.destroyChildren()
-    canvasState.polygon.shapes.clear()
-    canvasState.polygon.groups.clear()
-    selectionStore.clear(canvasState)
-
-    const layerData = polygonState.layer
-    if (layerData && layerData.children) {
-      console.log('Restoring', layerData.children.length, 'polygon shapes')
-      layerData.children.forEach((childData: any, index: number) => {
-        console.log('Creating polygon node', index, 'of type', childData.className)
-        const node = Konva.Node.create(JSON.stringify(childData))
-        polygonShapesGroup.add(node)
-        console.log('Added polygon node to layer:', node.id(), node.isVisible())
-
-        if (node instanceof Konva.Line) {
-          attachPolygonHandlers(canvasState, node)
-          createPolygonItem(canvasState, node)
-        } else if (node instanceof Konva.Group) {
-          createGroupItem(canvasState, node)
-        }
-      })
+/** Set the curve tension of polygon lines as one undoable edit. */
+export const setPolygonTension = (state: CanvasRuntimeState, lines: Konva.Line[], tension: number) => {
+  const changed = lines.filter(line => line.tension() !== tension)
+  if (changed.length === 0) return
+  executeCommand(state, 'Set Polygon Curve', () => {
+    changed.forEach(line => line.tension(tension))
+    if (state.activeTool.value === 'polygon' && state.polygon.mode.value === 'edit') {
+      updatePolygonControlPoints(state)
     }
-
-    if (polygonState.polygons) {
-      polygonState.polygons.forEach(([id, polygonData]: [string, any]) => {
-        const shape = stageRef.findOne(`#${id}`) as Konva.Line
-        console.log('Restoring polygon:', id, 'found shape:', !!shape)
-        const polygon: PolygonShape = {
-          id: polygonData.id,
-          points: polygonData.points,
-          closed: polygonData.closed,
-          creationTime: polygonData.creationTime,
-          konvaShape: shape,
-          controlPoints: [],
-        }
-        canvasState.polygon.shapes.set(id, polygon)
-      })
-    }
-
-    if (polygonState.polygonGroups) {
-      polygonState.polygonGroups.forEach(([id, groupData]: [string, any]) => {
-        const group: PolygonGroup = {
-          id: groupData.id,
-          polygonIds: groupData.polygonIds,
-          group: stageRef.findOne(`#${id}`) as Konva.Group,
-        }
-        canvasState.polygon.groups.set(id, group)
-      })
-    }
-
-    polygonControlsGroup?.destroyChildren()
-
-    if (canvasState.activeTool.value === 'polygon' && canvasState.polygon.mode.value === 'edit') {
-      updatePolygonControlPoints(canvasState)
-    }
-
-    polygonShapesGroup.getLayer()?.batchDraw()
-    canvasState.polygon.serializedState = stateString
-    updateBakedPolygonData(canvasState)
-
-    console.log('Polygon state restored from hotreload')
-  } catch (error) {
-    console.warn('Failed to deserialize polygon state:', error)
-  }
+    state.groups.polygonShapes?.getLayer()?.batchDraw()
+    updateBakedPolygonData(state)
+    updateBakedPolygonData(state)
+  })
 }
 
 // Polygon tool functions
@@ -375,20 +247,7 @@ export const handlePolygonClick = (state: CanvasRuntimeState, pos: { x: number, 
     updatePolygonPreview(state)
   } else if (state.polygon.mode.value === 'edit') {
     // Edit shape mode - add points to existing polygons only if not clicking on a control point
-    const polygonArray = Array.from(polygonShapes(state).values()).map(p => {
-      const line = p.konvaShape
-      const t = line ? line.getAbsoluteTransform() : null
-      const pts: { x: number, y: number }[] = []
-      for (let i = 0; i < p.points.length; i += 2) {
-        if (t) {
-          const wp = t.point({ x: p.points[i], y: p.points[i + 1] })
-          pts.push({ x: wp.x, y: wp.y })
-        } else {
-          pts.push({ x: p.points[i], y: p.points[i + 1] })
-        }
-      }
-      return { points: pts }
-    })
+    const polygonArray = worldPolygonSpans(state)
     
     if (polygonArray.length > 0) {
       const result = findClosestPolygonLineAtPoint(polygonArray, pos)
@@ -403,22 +262,15 @@ export const handlePolygonClick = (state: CanvasRuntimeState, pos: { x: number, 
             const points = polygon.points
             const insertIndex = (result.lineIndex + 1) * 2 // Convert to flat array index
             
-            // Calculate midpoint of the line segment
-            const p1x = points[result.lineIndex * 2]
-            const p1y = points[result.lineIndex * 2 + 1]
-            const p2x = points[((result.lineIndex + 1) * 2) % points.length]
-            const p2y = points[((result.lineIndex + 1) * 2 + 1) % points.length]
-            
-            const midX = (p1x + p2x) / 2
-            const midY = (p1y + p2y) / 2
-            
-            // Insert the new point
-            polygon.points.splice(insertIndex, 0, midX, midY)
+            // Insert at the middle of the edge as drawn (on the curve, if curved)
+            const line = polygon.konvaShape!
+            const mid = polygonSpanMidpoint(points, line.tension(), line.closed(), result.lineIndex)
+            polygon.points.splice(insertIndex, 0, mid.x, mid.y)
             
             // Update the Konva shape and control points
             polygon.konvaShape!.points(polygon.points)
             updatePolygonControlPoints(state) // Refresh control points
-            serializePolygonState(state) // Serialize for hotreload
+            updateBakedPolygonData(state)
             polygonShapesGroup?.getLayer()?.batchDraw()
             updateBakedPolygonData(state) // ensure baked data reflects edit
           })
@@ -452,20 +304,7 @@ export const handlePolygonEditMouseMove = (state: CanvasRuntimeState) => {
   }
   
   // Find the closest polygon edge (in world coordinates)
-  const polygonArray = Array.from(polygonShapes(state).values()).map(p => {
-    const line = p.konvaShape
-    const t = line ? line.getAbsoluteTransform() : null
-    const pts: { x: number, y: number }[] = []
-    for (let i = 0; i < p.points.length; i += 2) {
-      if (t) {
-        const wp = t.point({ x: p.points[i], y: p.points[i + 1] })
-        pts.push({ x: wp.x, y: wp.y })
-      } else {
-        pts.push({ x: p.points[i], y: p.points[i + 1] })
-      }
-    }
-    return { points: pts }
-  })
+  const polygonArray = worldPolygonSpans(state)
   
   if (polygonArray.length > 0) {
     const result = findClosestPolygonLineAtPoint(polygonArray, mousePos)
@@ -474,25 +313,16 @@ export const handlePolygonEditMouseMove = (state: CanvasRuntimeState) => {
     
     if (result.polygonIndex >= 0 && result.distance < 20) {
       const polygon = Array.from(polygonShapes(state).values())[result.polygonIndex]
-      const points = polygon.points
       const line = polygon.konvaShape
       const t = line ? line.getAbsoluteTransform() : null
-      
-      // Get the edge endpoints
-      const p1x = points[result.lineIndex * 2]
-      const p1y = points[result.lineIndex * 2 + 1]
-      const p2x = points[((result.lineIndex + 1) * 2) % points.length]
-      const p2y = points[((result.lineIndex + 1) * 2 + 1) % points.length]
-      const wp1 = t ? t.point({ x: p1x, y: p1y }) : { x: p1x, y: p1y }
-      const wp2 = t ? t.point({ x: p2x, y: p2y }) : { x: p2x, y: p2y }
-      
-      // Calculate midpoint in world coordinates
-      const midWX = (wp1.x + wp2.x) / 2
-      const midWY = (wp1.y + wp2.y) / 2
-      
-      // Highlight the edge
+      const localMid = polygonSpanMidpoint(polygon.points, line?.tension() ?? 0, line?.closed() ?? polygon.closed, result.lineIndex)
+      const mid = t ? t.point(localMid) : localMid
+      const midWX = mid.x
+      const midWY = mid.y
+
+      // Highlight the edge as drawn (world space)
       const edgeLine = new Konva.Line({
-        points: [wp1.x, wp1.y, wp2.x, wp2.y],
+        points: polygonArray[result.polygonIndex].spans[result.lineIndex].flatMap(p => [p.x, p.y]),
         stroke: '#00ff00',
         strokeWidth: 4,
         opacity: 0.8
@@ -567,6 +397,7 @@ export const updatePolygonPreview = (state: CanvasRuntimeState) => {
     strokeWidth: 2,
     fill: 'rgba(153, 153, 153, 0.1)',
     closed: false,
+    tension: state.polygon.tension.value,
     dash: [5, 5],
     listening: false
   })
@@ -603,7 +434,8 @@ export const createPolygonNode = (
   id: string,
   points: number[],
   creationTime: number,
-  parent: Konva.Container | undefined = state.groups.polygonShapes
+  parent: Konva.Container | undefined = state.groups.polygonShapes,
+  tension = 0
 ): Konva.Line => {
   const polygon: PolygonShape = {
     id,
@@ -618,6 +450,7 @@ export const createPolygonNode = (
     strokeWidth: 2,
     fill: 'rgba(0, 100, 255, 0.1)',
     closed: true,
+    tension,
     draggable: false, // Will be handled by control points in edit mode
     id
   })
@@ -640,7 +473,14 @@ export const finishPolygon = (state: CanvasRuntimeState) => {
   if (state.polygon.currentPoints.value.length < 6) return // Need at least 3 points
 
   executeCommand(state, 'Create Polygon', () => {
-    createPolygonNode(state, `polygon-${Date.now()}`, [...state.polygon.currentPoints.value], Date.now())
+    createPolygonNode(
+      state,
+      `polygon-${Date.now()}`,
+      [...state.polygon.currentPoints.value],
+      Date.now(),
+      state.groups.polygonShapes,
+      state.polygon.tension.value
+    )
 
     // Reset drawing state to allow drawing new shapes
     state.polygon.isDrawing.value = false
@@ -651,7 +491,7 @@ export const finishPolygon = (state: CanvasRuntimeState) => {
     updatePolygonControlPoints(state)
     
     // Serialize polygon state for hotreload
-    serializePolygonState(state)
+    updateBakedPolygonData(state)
     
     polygonShapesGroup?.getLayer()?.batchDraw()
     polygonPreviewGroup?.getLayer()?.batchDraw()
@@ -773,7 +613,7 @@ export const updatePolygonControlPoints = (state: CanvasRuntimeState) => {
 
               // Refresh control points to show updated points
               updatePolygonControlPoints(state)
-              serializePolygonState(state)
+              updateBakedPolygonData(state)
               updateBakedPolygonData(state)
             })
 
@@ -811,7 +651,7 @@ export const updatePolygonControlPoints = (state: CanvasRuntimeState) => {
         // Add drag end handler to track final state and serialize
         controlPoint.on('dragend', () => {
           finishPolygonDragTracking(state, 'Polygon Control Point')
-          serializePolygonState(state)
+          updateBakedPolygonData(state)
         })
         
         polygon.controlPoints.push(controlPoint)

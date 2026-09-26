@@ -24,7 +24,8 @@ if (!existsSync(BUNDLE)) {
 
 // A document exercising everything the baked format erases: layer and group
 // transforms, nested groups on two layers, stroke timing, an open polygon,
-// metadata, and an ellipse produced by scale plus rotation.
+// metadata, an ellipse produced by scale plus rotation, and curved polygons
+// under non-uniform scale and skew (whose curve must be computed locally).
 const input = normalizeDrawingDocument({
   freehand: {
     transform: { x: 4, scaleX: 1.5 },
@@ -52,7 +53,10 @@ const input = normalizeDrawingDocument({
     nodes: [
       { type: 'polygon', id: 'poly-1', creationTime: 4000, closed: true, points: [300, 50, 350, 60, 330, 110], transform: { x: -10, scaleX: 1.2 }, metadata: { kind: 'zone' } },
       { type: 'polygon', id: 'poly-open', creationTime: 4500, closed: false, points: [10, 200, 60, 210, 40, 260] },
+      { type: 'polygon', id: 'curve-closed', creationTime: 4600, closed: true, tension: 0.5, points: [200, 300, 260, 290, 280, 350, 220, 370], transform: { x: 15, scaleX: 1.8, scaleY: 0.6, rotation: 20, skewX: 0.1 } },
+      { type: 'polygon', id: 'curve-open', creationTime: 4700, closed: false, tension: 0.35, points: [20, 300, 70, 330, 110, 290, 150, 340] },
     ],
+    transform: { y: 6, scaleY: 1.1 },
   },
   circle: {
     transform: { y: 3 },
@@ -98,17 +102,46 @@ const result = await page.evaluate(async (input) => {
   el.setDrawingDocument(clone(input))
   await wait(50)
   const doc1 = clone(el.getDrawingDocument())
-  const render1 = clone(el.getCanvasRenderData())
+  // The Konva-walking bake (what Konva actually holds) is what the parity
+  // check below compares with the package bake; getCanvasRenderData() is the
+  // package bake of the element's own document and must equal it exactly.
+  const render1 = clone(el.getKonvaRenderData())
+  const renderFromDocument = clone(el.getCanvasRenderData())
   const updatesAfterHydrate = documentUpdates
 
-  // Legacy Konva serialization must carry the same document.
+  // getCanvasState() is the document as a string, and setCanvasState still
+  // accepts the format that predates it: Konva's own serialization per tool.
+  // Build one of those from the live scene, the way the old code did.
   const serialized = el.getCanvasState()
+  const stateIsDocument = JSON.stringify(JSON.parse(serialized)) === JSON.stringify(doc1)
+  const st = el.canvasState
+  const legacy = JSON.stringify({
+    version: 1,
+    freehand: {
+      layer: st.groups.freehandShape.toObject(),
+      strokes: [...st.freehand.strokes.entries()].map(([id, s]) => [id, { id: s.id, points: s.points, timestamps: s.timestamps, originalPath: s.originalPath, creationTime: s.creationTime, isFreehand: s.isFreehand }]),
+      strokeGroups: [...st.freehand.strokeGroups.entries()].map(([id, g]) => [id, { id: g.id, strokeIds: g.strokeIds }]),
+    },
+    polygon: {
+      layer: st.groups.polygonShapes.toObject(),
+      polygons: [...st.polygon.shapes.entries()].map(([id, p]) => [id, { id: p.id, points: p.points, closed: p.closed, creationTime: p.creationTime }]),
+      polygonGroups: [],
+    },
+    circle: {
+      layer: st.groups.circleShapes.toObject(),
+      circles: [...st.circle.shapes.entries()].map(([id, c]) => [id, { id: c.id, x: c.shape?.x(), y: c.shape?.y(), r: c.shape?.radius(), creationTime: c.creationTime }]),
+    },
+  })
   el.setDrawingDocument({ version: 1, freehand: { nodes: [] }, polygon: { nodes: [] }, circle: { nodes: [] } })
   await wait(50)
   const emptied = clone(el.getDrawingDocument())
-  el.setCanvasState(serialized)
+  el.setCanvasState(legacy)
   await wait(100)
   const doc2 = clone(el.getDrawingDocument())
+  // And the document string round-trips exactly, layer transforms included.
+  el.setCanvasState(serialized)
+  await wait(50)
+  const doc2b = clone(el.getDrawingDocument())
 
   // An invalid document is rejected without touching the scene.
   let rejected = null
@@ -128,13 +161,109 @@ const result = await page.evaluate(async (input) => {
   const doc4 = clone(el.getDrawingDocument())
 
   const itemCount = el.canvasState.canvasItems.size
-  return { doc1, render1, updatesAfterHydrate, emptied, doc2, rejected, doc3, updatesAfterEdit, doc4, itemCount }
+
+  // A document that differs in one node rebuilds that node only: every other
+  // Konva node keeps its identity, and a selection on one of them survives.
+  // In simple mode it also produces exactly one state-update, whose diff
+  // names that node alone.
+  let stateUpdates = []
+  const onStateUpdate = (e) => stateUpdates.push(e.detail[0])
+  el.addEventListener('state-update', onStateUpdate)
+  const freehandGroup = el.canvasState.groups.freehandShape
+  const keepItem = el.canvasState.canvasItems.get('group_1')
+  el.canvasState.selection.items.add(keepItem)
+  const nodesBefore = new Map(freehandGroup.getChildren().map((n) => [n.id(), n]))
+  const nudged = clone(doc4)
+  nudged.polygon.nodes.find((n) => n.id === 'poly-1').points[0] += 1
+  el.setDrawingDocument(nudged)
+  await wait(50)
+  const after = new Map(freehandGroup.getChildren().map((n) => [n.id(), n]))
+  const identityKept = [...nodesBefore].every(([id, node]) => after.get(id) === node)
+  const selectionKept = el.canvasState.selection.items.has(keepItem)
+  const polyRebuilt = el.canvasState.stage.findOne('#poly-1')?.points()[0] === nudged.polygon.nodes.find((n) => n.id === 'poly-1').points[0]
+  el.canvasState.selection.items.delete(keepItem)
+  el.removeEventListener('state-update', onStateUpdate)
+  const nudgeUpdates = stateUpdates.map((u) => ({
+    changed: ['freehand', 'polygon', 'circle'].map((l) => u.changed[l].bakedRenderData.map((i) => i.id)),
+    added: ['freehand', 'polygon', 'circle'].map((l) => u.added[l].bakedRenderData.map((i) => i.id)),
+    deleted: ['freehand', 'polygon', 'circle'].map((l) => u.deleted[l].bakedRenderData.map((i) => i.id)),
+    polygons: u.polygon.bakedRenderData.length,
+  }))
+
+  // Tension survives the document undo/redo path.
+  el.canvasState.command.executeCommand('smoke: straighten curve', () => {
+    el.canvasState.stage.findOne('#curve-open').tension(0)
+  })
+  await wait(50)
+  const straightened = clone(el.getDrawingDocument())
+  el.canvasState.command.stack.undo()
+  await wait(50)
+  const undone = clone(el.getDrawingDocument())
+
+  return { doc1, render1, renderFromDocument, updatesAfterHydrate, emptied, doc2, doc2b, stateIsDocument, rejected, doc3, updatesAfterEdit, doc4, itemCount, identityKept, selectionKept, polyRebuilt, nudgeUpdates, straightened, undone }
 }, input)
+
+// In-gesture previews: a drawn stroke and a select-tool drag each stream
+// node-level `document-preview` batches under the id the commit then uses,
+// throttled to the sync tick, with the committed `document-update` last.
+await page.evaluate(() => {
+  if (!crypto.randomUUID) crypto.randomUUID = () => Math.random().toString(16).slice(2)
+  const el = document.querySelector('handwriting-canvas')
+  window.__log = []
+  el.addEventListener('document-preview', (e) => window.__log.push({ t: performance.now(), kind: 'preview', upserts: e.detail[0].upserts.map((u) => `${u.layer}:${u.node.id}`) }))
+  el.addEventListener('document-update', (e) => window.__log.push({ t: performance.now(), kind: 'update', ids: e.detail[0].freehand.nodes.map((n) => n.id) }))
+  el.addEventListener('interaction-start', () => window.__log.push({ kind: 'start' }))
+  el.addEventListener('interaction-end', () => window.__log.push({ kind: 'end' }))
+})
+const stageBox = await page.evaluate(() => {
+  const r = document.querySelector('handwriting-canvas').canvasState.stage.container().getBoundingClientRect()
+  return { x: r.x, y: r.y }
+})
+const readLog = () => page.evaluate(() => { const l = window.__log; window.__log = []; return l })
+const gesture = async (from, steps) => {
+  await page.mouse.move(stageBox.x + from[0], stageBox.y + from[1])
+  await page.mouse.down()
+  for (let i = 1; i <= steps; i++) { await page.mouse.move(stageBox.x + from[0] + i * 6, stageBox.y + from[1] + i * 2); await page.waitForTimeout(12) }
+  await page.mouse.up()
+  await page.waitForTimeout(80)
+}
+// A fresh, untransformed document: the freehand layer above carries a scale,
+// which would put a stroke drawn at stage coordinates somewhere else.
+await page.evaluate(() => document.querySelector('handwriting-canvas').setDrawingDocument({ version: 1, freehand: { nodes: [] }, polygon: { nodes: [] }, circle: { nodes: [] } }))
+await page.locator('handwriting-canvas').locator('select.tool-dropdown').selectOption('freehand')
+await readLog()
+// The stage is 500x400: keep the whole gesture inside it.
+await gesture([60, 300], 25)
+const strokeLog = await readLog()
+const strokePreviews = strokeLog.filter((e) => e.kind === 'preview')
+const strokeIds = new Set(strokePreviews.flatMap((e) => e.upserts))
+check(strokePreviews.length >= 3, `drawing a stroke streamed ${strokePreviews.length} previews`)
+check(strokeIds.size === 1 && [...strokeIds][0].startsWith('freehand:stroke-'), `stroke previews share one id: ${[...strokeIds]}`)
+check(strokePreviews.slice(1).every((e, i) => e.t - strokePreviews[i].t >= 30), 'stroke previews are throttled to the sync tick')
+const lastPreviewAt = strokeLog.indexOf(strokePreviews.at(-1))
+const commit = strokeLog.slice(lastPreviewAt).find((e) => e.kind === 'update')
+check(commit && commit.ids.includes([...strokeIds][0].slice('freehand:'.length)), 'the commit after the last preview carries the previewed id')
+check(strokeLog.indexOf(strokePreviews[0]) > strokeLog.findIndex((e) => e.kind === 'start') && strokeLog.at(-1).kind === 'end', `gesture edges bracket the stream: ${strokeLog.map((e) => e.kind).join(' ')}`)
+
+await page.locator('handwriting-canvas').locator('select.tool-dropdown').selectOption('select')
+await page.mouse.click(stageBox.x + 120, stageBox.y + 320)
+await page.waitForTimeout(60)
+await readLog()
+await gesture([120, 320], 12)
+const dragLog = await readLog()
+const dragPreviews = dragLog.filter((e) => e.kind === 'preview')
+check(dragPreviews.length >= 2 && dragPreviews.every((e) => e.upserts.length === 1 && e.upserts[0] === [...strokeIds][0]), `moving the stroke streamed it: ${JSON.stringify(dragPreviews.map((e) => e.upserts))}`)
+check(dragLog.some((e) => e.kind === 'update') && dragLog.at(-1).kind === 'end', 'the move committed and ended the gesture')
 
 await browser.close()
 
 if (result.error) { console.error(result.error); process.exit(1) }
-const { doc1, render1, updatesAfterHydrate, emptied, doc2, rejected, doc3, updatesAfterEdit, doc4, itemCount } = result
+const { doc1, render1, renderFromDocument, updatesAfterHydrate, emptied, doc2, doc2b, stateIsDocument, rejected, doc3, updatesAfterEdit, doc4, itemCount, identityKept, selectionKept, polyRebuilt, nudgeUpdates, straightened, undone } = result
+check(JSON.stringify(nudgeUpdates) === JSON.stringify([{ changed: [[], ['poly-1'], []], added: [[], [], []], deleted: [[], [], []], polygons: 4 }]), `one-node change emitted ${JSON.stringify(nudgeUpdates)}`)
+check(identityKept, 'a one-node document change rebuilt untouched nodes')
+check(selectionKept, 'a one-node document change dropped the selection')
+check(polyRebuilt, 'the changed node was not rebuilt')
+check(stateIsDocument, 'getCanvasState is the document as JSON')
 
 check(JSON.stringify(doc1) === JSON.stringify(input), 'document round trip is not exact')
 check(updatesAfterHydrate === 0, `hydration emitted document-update ${updatesAfterHydrate} times`)
@@ -147,16 +276,24 @@ const withoutLayerTransforms = (doc) => {
   for (const layer of ['freehand', 'polygon', 'circle']) delete copy[layer].transform
   return copy
 }
-check(JSON.stringify(withoutLayerTransforms(doc2)) === JSON.stringify(withoutLayerTransforms(input)), 'serialized Konva state round trip changed the document')
+check(JSON.stringify(withoutLayerTransforms(doc2)) === JSON.stringify(withoutLayerTransforms(input)), 'legacy Konva state import changed the document')
+check(JSON.stringify(doc2b) === JSON.stringify(input), 'document state string round trip is not exact')
 check(rejected && rejected.includes('version'), `invalid document was not rejected: ${rejected}`)
-check(JSON.stringify(doc3) === JSON.stringify(doc2), 'a rejected document altered the scene')
+check(JSON.stringify(doc3) === JSON.stringify(doc2b), 'a rejected document altered the scene')
 check(updatesAfterEdit >= 1, 'an edit did not emit document-update')
 check(doc4.freehand.nodes.length === input.freehand.nodes.length - 1, 'edited document does not reflect the deletion')
-// 3 strokes + 2 freehand groups + 2 polygons + 2 circles + 1 circle group, minus the deleted stroke.
-check(itemCount === 9, `canvasItems registered after edit: ${itemCount} (expected 9)`)
+// 3 strokes + 2 freehand groups + 4 polygons + 2 circles + 1 circle group, minus the deleted stroke.
+check(itemCount === 11, `canvasItems registered after edit: ${itemCount} (expected 11)`)
+check(input.version === 2, `a document with curves should normalize to version 2, got ${input.version}`)
+const curveOpen = (doc) => doc.polygon.nodes.find((n) => n.id === 'curve-open')
+check(curveOpen(straightened) && !('tension' in curveOpen(straightened)), 'a zero tension was not dropped from the document')
+check(curveOpen(undone)?.tension === 0.35, `undo did not restore tension: ${JSON.stringify(curveOpen(undone))}`)
 
-// Konva bake vs. package bake.
+// Konva bake vs. package bake; and the element's own render data is the package bake.
 const expected = bakeDrawingDocument(input)
+for (const layer of ['freehand', 'polygon', 'circle']) {
+  check(JSON.stringify(renderFromDocument[layer]) === JSON.stringify(expected[layer]), `getCanvasRenderData.${layer} is not the package bake of the document`)
+}
 const flatStrokes = (groups, out = []) => {
   for (const g of groups) for (const c of g.children) c.type === 'stroke' ? out.push(c) : flatStrokes([c], out)
   return out
@@ -180,7 +317,20 @@ render1.polygon.forEach((p, i) => {
   const q = expected.polygon[i]
   check(q && p.id === q.id && p.points.every((pt, j) => near(pt.x, q.points[j].x, 1e-6) && near(pt.y, q.points[j].y, 1e-6)), `polygon ${p.id} differs`)
   check(JSON.stringify(p.metadata) === JSON.stringify(q?.metadata), `polygon ${p.id} metadata differs`)
+  // Curved polygons: the canvas's segments come from Konva's getTensionPoints,
+  // the package's from its port, so this checks the port against real Konva.
+  check((p.segments === undefined) === (q?.segments === undefined), `polygon ${p.id} segments presence differs`)
+  if (p.segments && q?.segments) {
+    check(p.segments.length === q.segments.length, `polygon ${p.id} segment count ${p.segments.length} != ${q.segments.length}`)
+    p.segments.forEach((seg, j) => {
+      const other = q.segments[j]
+      const keys = seg.type === 'quadratic' ? ['from', 'control', 'to'] : ['from', 'control1', 'control2', 'to']
+      check(other && other.type === seg.type && keys.every((k) => near(seg[k].x, other[k].x, 1e-6) && near(seg[k].y, other[k].y, 1e-6)),
+        `polygon ${p.id} segment ${j}: canvas ${JSON.stringify(seg)} vs bake ${JSON.stringify(other)}`)
+    })
+  }
 })
+check(expected.polygon.filter((p) => p.segments).length === 2, 'expected two curved polygons in the bake')
 check(render1.circle.length === expected.circle.length, 'circle count differs')
 render1.circle.forEach((c, i) => {
   const q = expected.circle[i]

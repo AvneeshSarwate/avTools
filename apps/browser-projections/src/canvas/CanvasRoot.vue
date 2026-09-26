@@ -1,10 +1,10 @@
 <!-- eslint-disable @typescript-eslint/no-unused-vars -->
 <script setup lang="ts">
-import { createCanvasRuntimeState, type CanvasRuntimeState, type CanvasStateSnapshot, type CanvasStateSnapshotBase, type FreehandRenderData, type PolygonRenderData } from './canvasState';
-import { diff, type IChange } from 'json-diff-ts';
+import { createCanvasRuntimeState, type CanvasRuntimeState, type CanvasStateSnapshot } from './canvasState';
+import { createStateSnapshot, ensureBaked, type EmittedSnapshot } from './canvasBake';
 import * as selectionStore from './selectionStore';
 import { getCanvasItem } from './CanvasItem';
-import { computed, onMounted, onUnmounted, reactive, ref, shallowRef, toRaw, watch } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue';
 import { CanvasWebSocketController } from './canvasWebSocket';
 import { singleKeydownEvent } from './keyboard';
 import Konva from 'konva';
@@ -13,13 +13,13 @@ import HierarchicalMetadataEditor from './HierarchicalMetadataEditor.vue';
 import VisualizationToggles from './VisualizationToggles.vue';
 import SnapshotsPanel from './SnapshotsPanel.vue';
 import PopoutWindow from '@/components/PopoutWindow.vue';
-import { clearFreehandSelection as clearFreehandSelectionImpl, createStrokeShape as createStrokeShapeImpl, deserializeFreehandState, getStrokePath, serializeFreehandState, updateBakedFreehandData, updateFreehandDraggableStates as updateFreehandDraggableStatesImpl, updateTimelineState as updateTimelineStateImpl, type FreehandStroke, handleTimeUpdate as handleTimeUpdateImpl, maxInterStrokeDelay, initFreehandLayers } from './freehandTool';
+import { clearFreehandSelection as clearFreehandSelectionImpl, createStrokeShape as createStrokeShapeImpl, getStrokePath, updateBakedFreehandData, updateFreehandDraggableStates as updateFreehandDraggableStatesImpl, updateTimelineState as updateTimelineStateImpl, type FreehandStroke, handleTimeUpdate as handleTimeUpdateImpl, maxInterStrokeDelay, initFreehandLayers, generateBakedStrokeData } from './freehandTool';
 import { freehandStrokes } from './canvasState';
 import { getPointsBounds } from './canvasUtils';
 import { CommandStack } from './commandStack';
 import { ensureHighlightLayer, createMetadataToolkit } from './metadata';
-import { clearPolygonSelection as clearPolygonSelectionImpl, updatePolygonControlPoints as updatePolygonControlPointsImpl, deserializePolygonState, handlePolygonClick as handlePolygonClickImpl, handlePolygonMouseMove as handlePolygonMouseMoveImpl, handlePolygonEditMouseMove as handlePolygonEditMouseMoveImpl, finishPolygon as finishPolygonImpl, clearCurrentPolygon as clearCurrentPolygonImpl, serializePolygonState, updateBakedPolygonData, initPolygonLayers, setupPolygonModeWatcher as setupPolygonModeWatcherImpl } from './polygonTool';
-import { handleCirclePointerDown as handleCirclePointerDownImpl, handleCirclePointerMove as handleCirclePointerMoveImpl, handleCirclePointerUp as handleCirclePointerUpImpl, serializeCircleState, deserializeCircleState, updateBakedCircleData as updateBakedCircleDataCircle, initCircleLayers } from './circleTool';
+import { clearPolygonSelection as clearPolygonSelectionImpl, updatePolygonControlPoints as updatePolygonControlPointsImpl, handlePolygonClick as handlePolygonClickImpl, handlePolygonMouseMove as handlePolygonMouseMoveImpl, handlePolygonEditMouseMove as handlePolygonEditMouseMoveImpl, finishPolygon as finishPolygonImpl, clearCurrentPolygon as clearCurrentPolygonImpl, updateBakedPolygonData, initPolygonLayers, setupPolygonModeWatcher as setupPolygonModeWatcherImpl, setPolygonTension as setPolygonTensionImpl, generateBakedPolygonData } from './polygonTool';
+import { handleCirclePointerDown as handleCirclePointerDownImpl, handleCirclePointerMove as handleCirclePointerMoveImpl, handleCirclePointerUp as handleCirclePointerUpImpl, updateBakedCircleData as updateBakedCircleDataCircle, initCircleLayers, generateBakedCircleData } from './circleTool';
 import { initAVLayer, refreshAnciliaryViz } from './ancillaryVisualizations';
 import { initializeTransformer } from './transformerManager';
 import {
@@ -35,7 +35,8 @@ import {
   deleteSelection as deleteSelectionImpl
 } from './selectTool';
 import { downloadCanvasState as downloadCanvasStateImpl, uploadCanvasState as uploadCanvasStateImpl, serializeCanvasState as serializeCanvasStateImpl, deserializeCanvasState as deserializeCanvasStateImpl, collectCanvasRenderData as collectCanvasRenderDataImpl } from './canvasPersistence';
-import { hydrateDrawingDocument, serializeDrawingDocument } from './drawingDocument';
+import { reconcileDrawingDocument, serializeDrawingDocument } from './drawingDocument';
+import { installDocumentPreview, type DocumentPreview, type DocumentPreviewController } from './documentPreview';
 import type { DrawingDocument } from '@avtools/drawing-document';
 import type { ZodTypeAny } from 'zod';
 
@@ -44,8 +45,8 @@ const DEFAULT_GRID_SIZE = 20
 // ==================== common stuff ====================
 const props = withDefaults(defineProps<{
   syncState?: (state: CanvasStateSnapshot) => void
-  initialFreehandState?: string
-  initialPolygonState?: string
+  /** A canvas state string (`getCanvasState()`), applied on mount and whenever it changes; the pre-document format is accepted too. */
+  initialState?: string
   width?: number | string
   height?: number | string
   showTimeline?: boolean
@@ -54,9 +55,17 @@ const props = withDefaults(defineProps<{
   showRescale?: boolean
   metadataSchemas?: { name: string; schema: ZodTypeAny }[]
   wsAddress?: string
+  /**
+   * Which surface the element serves. "simple" (default): every edit emits
+   * `state-update` with the baked render data and an added/changed/deleted
+   * diff, for sketches that draw from the element. "document": the host
+   * owns the document (`setDrawingDocument`, `document-update`,
+   * `document-preview`) and `state-update` is not emitted, so a change costs
+   * only the nodes it touches.
+   */
+  mode?: 'simple' | 'document'
 }>(), {
-  initialFreehandState: '',
-  initialPolygonState: '',
+  initialState: '',
   width: 1000,
   height: 500,
   showTimeline: false,
@@ -64,6 +73,7 @@ const props = withDefaults(defineProps<{
   showSnapshots: false,
   showRescale: false,
   metadataSchemas: () => [],
+  mode: 'simple',
 })
 
 // WebSocket-overridable config
@@ -91,7 +101,18 @@ const emit = defineEmits<{
   (event: 'state-update', state: CanvasStateSnapshot): void
   /** The lossless document after each committed edit; never fired while a document is being loaded. */
   (event: 'document-update', document: DrawingDocument): void
+  /**
+   * Node-level changes during a gesture (drag, transform, drawing), at most
+   * every 33 ms, for hosts that stream them. The gesture's committed
+   * `document-update` still follows and is the write of record.
+   */
+  (event: 'document-preview', preview: DocumentPreview): void
+  /** A gesture began / ended; a host should not rebuild the scene in between. */
+  (event: 'interaction-start'): void
+  (event: 'interaction-end'): void
 }>()
+
+let documentPreview: DocumentPreviewController | null = null
 
 const resolution = computed(() => {
   const width = Number(effectiveWidth.value)
@@ -118,175 +139,68 @@ const snapshotItems = canvasState.snapshots.items
 const snapshotSelectedId = canvasState.snapshots.selectedId
 const popped = ref(false)
 
-//vue specific - comma needed in <T,> to disambigate generics from html parsing
-const cloneValue = <T,>(value: T): T => {
-  if (value === undefined || value === null) {
-    return value
-  }
-  if (typeof structuredClone === 'function') {
-    return structuredClone(value)
-  }
-  return JSON.parse(JSON.stringify(value))
-}
-
-const snapshotFreehandRenderData = (data: FreehandRenderData | undefined) => {
-  if (!data) return [] as FreehandRenderData
-  return (cloneValue(toRaw(data)) ?? []) as FreehandRenderData
-}
-
-const snapshotPolygonRenderData = (data: PolygonRenderData | undefined) => {
-  if (!data) return [] as PolygonRenderData
-  return (cloneValue(toRaw(data)) ?? []) as PolygonRenderData
-}
-
-const snapshotGroupMap = (map: Record<string, number[]> | undefined) => {
-  if (!map) return {} as Record<string, number[]>
-  return (cloneValue(toRaw(map)) ?? {}) as Record<string, number[]>
-}
-
-// Store the previous snapshot for diffing (per-instance via ref)
-const previousSnapshot = ref<CanvasStateSnapshotBase | null>(null)
-
-const createEmptySnapshotBase = (): CanvasStateSnapshotBase => ({
-  freehand: { serializedState: '', bakedRenderData: [], bakedGroupMap: {} },
-  polygon: { serializedState: '', bakedRenderData: [] },
-  circle: { serializedState: '', bakedRenderData: [], bakedGroupMap: {} }
-})
-
-const createSnapshotBase = (state: CanvasRuntimeState): CanvasStateSnapshotBase => {
-  const freehandRenderData = snapshotFreehandRenderData(state.freehand.bakedRenderData)
-  const freehandGroupMap = snapshotGroupMap(state.freehand.bakedGroupMap)
-  const polygonRenderData = snapshotPolygonRenderData(state.polygon.bakedRenderData)
-  const circleRenderData = cloneValue(toRaw(state.circle.bakedRenderData)) ?? []
-  const circleGroupMap = snapshotGroupMap(state.circle.bakedGroupMap)
-
-  return {
-    freehand: {
-      serializedState: state.freehand.serializedState ?? '',
-      bakedRenderData: freehandRenderData ?? [],
-      bakedGroupMap: freehandGroupMap ?? {},
-    },
-    polygon: {
-      serializedState: state.polygon.serializedState ?? '',
-      bakedRenderData: polygonRenderData ?? [],
-    },
-    circle: {
-      serializedState: state.circle.serializedState ?? '',
-      bakedRenderData: circleRenderData ?? [],
-      bakedGroupMap: circleGroupMap ?? {},
-    },
-  }
-}
-
-// Extract items from diff changes by type
-const extractChangesFromDiff = (
-  changes: IChange[],
-  currentBase: CanvasStateSnapshotBase
-): { added: CanvasStateSnapshotBase; deleted: CanvasStateSnapshotBase; changed: CanvasStateSnapshotBase } => {
-  const added = createEmptySnapshotBase()
-  const deleted = createEmptySnapshotBase()
-  const changed = createEmptySnapshotBase()
-
-  const renderDataPaths = ['freehand.bakedRenderData', 'polygon.bakedRenderData', 'circle.bakedRenderData'] as const
-  type RenderDataPath = (typeof renderDataPaths)[number]
-
-  const pushToResult = (result: CanvasStateSnapshotBase, path: RenderDataPath, item: any) => {
-    if (path === 'freehand.bakedRenderData') result.freehand.bakedRenderData.push(item)
-    else if (path === 'polygon.bakedRenderData') result.polygon.bakedRenderData.push(item)
-    else if (path === 'circle.bakedRenderData') result.circle.bakedRenderData.push(item)
-  }
-
-  const getCollectionByPath = (path: RenderDataPath): any[] => {
-    if (path === 'freehand.bakedRenderData') return currentBase.freehand.bakedRenderData
-    if (path === 'polygon.bakedRenderData') return currentBase.polygon.bakedRenderData
-    return currentBase.circle.bakedRenderData
-  }
-
-  const processChange = (change: IChange, parentPath: string = '') => {
-    const currentPath = parentPath ? `${parentPath}.${change.key}` : change.key
-
-    if (renderDataPaths.includes(currentPath as RenderDataPath) && change.changes) {
-      const path = currentPath as RenderDataPath
-      const collection = getCollectionByPath(path)
-
-      for (const itemChange of change.changes) {
-        if (itemChange.type === 'ADD') {
-          const value = itemChange.value ?? itemChange.oldValue
-          if (value) pushToResult(added, path, value)
-        } else if (itemChange.type === 'REMOVE') {
-          const value = itemChange.value ?? itemChange.oldValue
-          if (value) pushToResult(deleted, path, value)
-        } else if (itemChange.type === 'UPDATE') {
-          // For keyed arrays, itemChange.key is the id - look up full object from current snapshot
-          const id = itemChange.key
-          const updatedItem = collection.find((x: any) => x.id === id)
-          if (updatedItem) pushToResult(changed, path, updatedItem)
-        }
-      }
-    } else if (change.changes) {
-      for (const nestedChange of change.changes) {
-        processChange(nestedChange, currentPath)
-      }
-    }
-  }
-
-  for (const change of changes) {
-    processChange(change)
-  }
-
-  return { added, deleted, changed }
-}
-
-const createSnapshot = (state: CanvasRuntimeState): CanvasStateSnapshot => {
-  const currentBase = createSnapshotBase(state)
-  
-  // Compute diff against previous snapshot
-  const diffOptions = {
-    embeddedObjKeys: {
-      'freehand.bakedRenderData': 'id',
-      'freehand.bakedRenderData.children': 'id',
-      'polygon.bakedRenderData': 'id',
-      'circle.bakedRenderData': 'id'
-    }
-  }
-  
-  const prev = previousSnapshot.value
-  const changes = prev 
-    ? diff(prev, currentBase, diffOptions)
-    : []
-  
-  const { added, deleted, changed } = prev
-    ? extractChangesFromDiff(changes, currentBase)
-    : { added: createEmptySnapshotBase(), deleted: createEmptySnapshotBase(), changed: createEmptySnapshotBase() }
-  
-  // Store current as previous for next diff
-  previousSnapshot.value = cloneValue(currentBase)
-
-  return {
-    ...currentBase,
-    added,
-    deleted,
-    changed
-  }
-}
+// The last state-update emission, for the next one's added/deleted/changed.
+let lastEmitted: EmittedSnapshot | null = null
+let lastDocumentUpdateJson: string | null = null
 
 const emitStateUpdate = (state: CanvasRuntimeState) => {
-  const snapshot = createSnapshot(state)
-  props.syncState?.(snapshot)
-  emit('state-update', snapshot)
+  if (!state.stage) return
+  if (props.mode !== 'document') {
+    // Nothing is emitted when the document did not change since the last
+    // emission (an edit notifies once per layer it touched; a selection
+    // change notifies too).
+    const { snapshot, emitted, changed } = createStateSnapshot(state, lastEmitted)
+    if (changed) {
+      lastEmitted = emitted
+      props.syncState?.(snapshot)
+      emit('state-update', snapshot)
 
-  // Send via WebSocket if connected
-  if (wsController.value?.isConnected) {
-    wsController.value.sendStateUpdate(snapshot)
+      // Send via WebSocket if connected
+      if (wsController.value?.isConnected) {
+        wsController.value.sendStateUpdate(snapshot)
+      }
+    }
   }
 
-  // Never during hydration: a pushed document is not an edit.
-  if (state.stage && !state.hydrating) {
-    emit('document-update', serializeDrawingDocument(state))
+  // Never during hydration: a pushed document is not an edit. Once per
+  // distinct document, however many notifications an edit produced.
+  if (!state.hydrating) {
+    const { document, json } = ensureBaked(state)
+    if (json !== lastDocumentUpdateJson) {
+      lastDocumentUpdateJson = json
+      emit('document-update', document)
+    }
   }
 }
 
 canvasState.callbacks.syncAppState = emitStateUpdate
+
+// Provisional nodes for the shape being drawn, under the id its commit will use.
+const previewCurrentStroke = () => {
+  const id = canvasState.freehand.currentStrokeId
+  if (!documentPreview || !id || canvasState.freehand.currentPoints.length < 4) return
+  documentPreview.previewNode('freehand', {
+    type: 'stroke',
+    id,
+    points: [...canvasState.freehand.currentPoints],
+    timestamps: [...canvasState.freehand.currentTimestamps],
+    creationTime: canvasState.freehand.currentCreationTime,
+    isFreehand: true
+  })
+}
+const previewCurrentCircle = () => {
+  const id = canvasState.circle.currentId
+  const center = canvasState.circle.currentCenter.value
+  const radius = canvasState.circle.currentRadius.value
+  if (!documentPreview || !id || !center || radius < 2) return
+  documentPreview.previewNode('circle', {
+    type: 'circle',
+    id,
+    radius,
+    creationTime: canvasState.circle.currentCreationTime,
+    transform: { x: center.x, y: center.y }
+  })
+}
 
 watch(
   () => props.syncState,
@@ -307,6 +221,22 @@ const duplicateSelectionStateful = () => duplicateSelectionImpl(canvasState)
 const deleteSelectionStateful = () => deleteSelectionImpl(canvasState)
 const canGroupSelectionStateful = computed<boolean>(() => canGroupSelectionImpl(canvasState))
 const canUngroupSelectionStateful = computed<boolean>(() => canUngroupSelectionImpl(canvasState))
+
+// Curve tension of the selected polygons. Konva attrs are not reactive, so the
+// shown value is tracked here and reread whenever the selection changes.
+const selectedPolygonLines = computed(() => Array.from(canvasState.selection.items)
+  .filter(item => item.type === 'polygon' && item.konvaNode instanceof Konva.Line)
+  .map(item => item.konvaNode as Konva.Line))
+const selectedPolygonTension = ref(0)
+watch(selectedPolygonLines, (lines) => { selectedPolygonTension.value = lines[0]?.tension() ?? 0 }, { immediate: true })
+const readRange = (event: Event) => Number((event.target as HTMLInputElement).value)
+const commitSelectedPolygonTension = (event: Event) => {
+  selectedPolygonTension.value = readRange(event)
+  setPolygonTensionImpl(canvasState, selectedPolygonLines.value, selectedPolygonTension.value)
+  // A curve's bounds differ from its straight outline's.
+  canvasState.layers.transformer?.forceUpdate()
+  metadataToolkit.updateMetadataHighlight(selectionStore.getActiveSingleNode(canvasState) ?? undefined)
+}
 
 // Stateful wrappers for freehand helpers
 const clearFreehandSelection = () => clearFreehandSelectionImpl(canvasState)
@@ -390,6 +320,7 @@ canvasState.command.executeCommand = executeCommand
 canvasState.command.pushCommand = (name: string, beforeState: string, afterState: string) => {
   commandStack.pushCommand(name, beforeState, afterState)
 }
+canvasState.command.captureState = captureCanvasState
 
 const rescaleCanvas720To1080 = () => {
   const stage = canvasState.stage
@@ -438,17 +369,25 @@ const setAnimatingState = (animating: boolean) => {
 
 // Imperative surface for hosts that embed the custom element (no Vue props).
 const setCanvasState = (stateString: string) => restoreCanvasState(stateString)
-// Replace the scene with a document. Throws on an invalid document, leaving
-// the scene as it was; never emits document-update.
+// Bring the scene to a document, rebuilding only the nodes that differ.
+// Throws on an invalid document, leaving the scene as it was; never emits
+// document-update. Playback restarts only when a stroke changed.
 const setDrawingDocument = (doc: DrawingDocument) => {
   const wasAnimating = canvasState.freehand.currentPlaybackTime.value > 0
-  canvasState.freehand.currentPlaybackTime.value = 0
-  canvasState.freehand.isAnimating.value = false
-  hydrateDrawingDocument(canvasState, doc)
-  if (wasAnimating) handleTimeUpdate(0)
+  if (reconcileDrawingDocument(canvasState, doc).has('freehand')) {
+    canvasState.freehand.currentPlaybackTime.value = 0
+    canvasState.freehand.isAnimating.value = false
+    if (wasAnimating) handleTimeUpdate(0)
+  }
 }
 const getDrawingDocument = (): DrawingDocument => serializeDrawingDocument(canvasState)
 const getCanvasRenderData = () => collectCanvasRenderDataImpl(canvasState)
+// The Konva-walking bake, for tests that check the document bake against it.
+const getKonvaRenderData = () => ({
+  freehand: generateBakedStrokeData(canvasState).data,
+  polygon: generateBakedPolygonData(canvasState),
+  circle: generateBakedCircleData(canvasState).data
+})
 
 defineExpose({
   canvasState,
@@ -456,7 +395,8 @@ defineExpose({
   getCanvasState: captureCanvasState,
   setDrawingDocument,
   getDrawingDocument,
-  getCanvasRenderData
+  getCanvasRenderData,
+  getKonvaRenderData
 })
 
 const updateCanvasGrid = () => {
@@ -740,6 +680,13 @@ onMounted(async () => {
     // Initialize ancillary visualizations layer
     initAVLayer(canvasState)
 
+    documentPreview = installDocumentPreview(canvasState, {
+      onPreview: (preview) => emit('document-preview', preview),
+      onInteraction: (active) => { if (active) emit('interaction-start'); else emit('interaction-end') }
+    })
+    canvasState.callbacks.previewNodes = (nodes) => documentPreview?.previewKonvaNodes(nodes)
+    canvasState.callbacks.previewGestureEnd = () => documentPreview?.finish()
+
 
     // Selection rectangle is created by core/selectTool.initializeSelectTool
 
@@ -756,26 +703,13 @@ onMounted(async () => {
     // Initialize cursor
     canvasState.callbacks.updateCursor?.()
 
-    const applyFreehandState = (stateString: string) => {
-      if (!stateString || stateString === canvasState.freehand.serializedState) return
-      deserializeFreehandState(canvasState, stateString)
+    // The host's state string (a sketch keeps one across hot reloads).
+    const applyInitialState = (stateString: string) => {
+      if (!stateString || stateString === captureCanvasState()) return
+      restoreCanvasState(stateString)
     }
-
-    const applyPolygonState = (stateString: string) => {
-      if (!stateString || stateString === canvasState.polygon.serializedState) return
-      deserializePolygonState(canvasState, stateString)
-    }
-
-    applyFreehandState(props.initialFreehandState)
-    applyPolygonState(props.initialPolygonState)
-
-    watch(() => props.initialFreehandState, (stateString) => {
-      applyFreehandState(stateString)
-    })
-
-    watch(() => props.initialPolygonState, (stateString) => {
-      applyPolygonState(stateString)
-    })
+    applyInitialState(props.initialState)
+    watch(() => props.initialState, (stateString) => applyInitialState(stateString))
 
     watch(
       () => canvasState.grid.visible.value,
@@ -839,6 +773,8 @@ onMounted(async () => {
         canvasState.freehand.currentPoints = [pos.x, pos.y]
         canvasState.freehand.drawingStartTime = performance.now()
         canvasState.freehand.currentTimestamps = [0]
+        canvasState.freehand.currentCreationTime = Date.now()
+        canvasState.freehand.currentStrokeId = `stroke-${canvasState.freehand.currentCreationTime}`
 
         // Clear selection when starting to draw
         selectionStore.clear(canvasState)
@@ -880,6 +816,7 @@ onMounted(async () => {
           })
           freehandDrawingGroup?.add(previewPath)
           freehandDrawingGroup?.getLayer()?.batchDraw()
+          previewCurrentStroke()
         }
       } else if (activeTool.value === 'polygon') {
         if (canvasState.polygon.mode.value === 'draw' && canvasState.polygon.isDrawing.value) {
@@ -891,6 +828,7 @@ onMounted(async () => {
       } else if (activeTool.value === 'circle') {
         if (canvasState.circle.isDrawing.value) {
           handleCirclePointerMove()
+          previewCurrentCircle()
         }
       }
     })
@@ -904,9 +842,9 @@ onMounted(async () => {
         if (canvasState.freehand.currentPoints.length > 2) {
           executeCommand('Draw Stroke', () => {
             const freehandShapeGroup = canvasState.groups.freehandShape
-            // Create new stroke
-            const creationTime = Date.now()
-            const strokeId = `stroke-${creationTime}`
+            // Create new stroke, under the id previews already used
+            const creationTime = canvasState.freehand.currentCreationTime || Date.now()
+            const strokeId = canvasState.freehand.currentStrokeId ?? `stroke-${creationTime}`
 
             // Get bounds for normalization
             const bounds = getPointsBounds(canvasState.freehand.currentPoints)
@@ -942,10 +880,21 @@ onMounted(async () => {
           })
         }
 
+        else if (canvasState.freehand.currentStrokeId) {
+          documentPreview?.discard('freehand', canvasState.freehand.currentStrokeId)
+        }
         canvasState.freehand.currentPoints = []
         canvasState.freehand.currentTimestamps = []
+        canvasState.freehand.currentStrokeId = null
+        documentPreview?.finish()
       } else if (activeTool.value === 'circle' && canvasState.circle.isDrawing.value) {
+        const circleId = canvasState.circle.currentId
         handleCirclePointerUp()
+        if (circleId && !canvasState.circle.shapes.has(circleId)) {
+          documentPreview?.discard('circle', circleId)
+        }
+        canvasState.circle.currentId = null
+        documentPreview?.finish()
       } else {
         // Delegate to select tool for all other cases
         handleSelectPointerUpStateful(stageInstance, e)
@@ -977,16 +926,6 @@ onMounted(async () => {
       wsController.value.setHandlers({
         onSetCanvasState: (stateString) => {
           restoreCanvasState(stateString)
-        },
-        onSetFreehandState: (stateString) => {
-          if (stateString && stateString !== canvasState.freehand.serializedState) {
-            deserializeFreehandState(canvasState, stateString)
-          }
-        },
-        onSetPolygonState: (stateString) => {
-          if (stateString && stateString !== canvasState.polygon.serializedState) {
-            deserializePolygonState(canvasState, stateString)
-          }
         },
         onUndo: () => undo(),
         onRedo: () => redo(),
@@ -1020,14 +959,11 @@ onMounted(async () => {
 onUnmounted(() => {
   console.log("disposing livecoded resources")
 
-  // Save state before unmounting (for hot reload)
-  serializeFreehandState(canvasState)
-  serializePolygonState(canvasState)
-  serializeCircleState(canvasState)
-
   disposeEscapeListener?.()
   disposeEscapeListener = undefined
   canvasState.keyboardDisposables.splice(0).forEach((dispose) => dispose())
+  documentPreview?.dispose()
+  documentPreview = null
 
   // Clean up WebSocket
   wsController.value?.disconnect()
@@ -1100,6 +1036,16 @@ onUnmounted(() => {
             🗑️ Delete
           </button>
         </div>
+        <template v-if="selectedPolygonLines.length > 0">
+          <span class="separator">|</span>
+          <label class="info" title="Curve tension of the selected polygons (0 = straight edges)">
+            Curve
+            <input type="range" min="0" max="1" step="0.05" :value="selectedPolygonTension"
+              @input="selectedPolygonTension = readRange($event)" @change="commitSelectedPolygonTension"
+              :disabled="canvasState.freehand.isAnimating.value" />
+            {{ selectedPolygonTension.toFixed(2) }}
+          </label>
+        </template>
         <span class="separator">|</span>
         <button @click="metadataEditorVisible = !metadataEditorVisible" :class="{ active: metadataEditorVisible }"
           :disabled="canvasState.freehand.isAnimating.value">
@@ -1147,6 +1093,13 @@ onUnmounted(() => {
             🗑️ Cancel Shape
           </button>
         </div>
+        <span class="separator">|</span>
+        <label class="info" title="Curve tension for new shapes (0 = straight edges); change existing shapes from the Select tool">
+          Curve
+          <input type="range" min="0" max="1" step="0.05" v-model.number="canvasState.polygon.tension.value"
+            :disabled="canvasState.freehand.isAnimating.value" />
+          {{ canvasState.polygon.tension.value.toFixed(2) }}
+        </label>
         <span class="separator">|</span>
         <span v-if="canvasState.polygon.isDrawing.value" class="info">Drawing: {{ canvasState.polygon.currentPoints.value.length / 2 }} points</span>
       </template>
