@@ -42,6 +42,11 @@ export interface ComputeOptions {
    * and a gather pass and the bounce read the store.
    */
   fuseCascade0: boolean;
+  /**
+   * Browser-only: cascade 0 with lanes as directions and subgroup
+   * reductions (compute_cascade_sg.wgsl); needs the `subgroups` feature.
+   */
+  subgroups: boolean;
   /** Scene rasterizer tile in pixels (also its workgroup size squared). */
   tileSize: number;
   /** Segments a tile bin holds before the tile falls back to all segments. */
@@ -78,6 +83,7 @@ export const DEFAULT_COMPUTE_OPTIONS: ComputeOptions = {
   bundle: false,
   interleave: true,
   fuseCascade0: true,
+  subgroups: false,
   tileSize: 16,
   binCapacity: 128,
   binRadius: 24,
@@ -98,6 +104,8 @@ export interface ComputeLevelPlan {
   dispatch: [number, number, number];
   /** Cascade 0: reduce the directions to irradiance instead of storing them. */
   reduce: boolean;
+  /** Cascade 0 with lanes as directions and subgroup reductions. */
+  subgroups: boolean;
   /** Scene patch in texels and its halo in pixels, when staged. */
   patch: { size: [number, number]; halo: number } | null;
   /** Upper footprint: probes (x, y) and upper directions, when staged. */
@@ -149,7 +157,21 @@ export function planComputeLevel(
   let tx: number;
   let ty: number;
   let dw: number;
-  if (reduce) {
+  const subgroups = reduce && options.subgroups;
+  if (subgroups) {
+    // Lanes as directions: a probe's directions are consecutive lanes.
+    dw = level.storedDirs;
+    if (dw > maxLanes) {
+      throw new Error(
+        `compute cascades: cascade 0 stores ${dw} directions, more than the ${maxLanes} lanes of a workgroup`,
+      );
+    }
+    [tx, ty] = tileOf(
+      Math.floor(
+        Math.max(dw, Math.min(floorPow2(options.reduceLanes), maxLanes)) / dw,
+      ),
+    );
+  } else if (reduce) {
     // One lane per probe, looping over the directions.
     dw = 1;
     [tx, ty] = tileOf(Math.min(floorPow2(options.reduceLanes), maxLanes));
@@ -177,7 +199,8 @@ export function planComputeLevel(
   if (options.stageUpper && upper && runtime.mergeMode !== 2) {
     const fx = Math.floor(tx / 2) + 2;
     const fy = Math.floor(ty / 2) + 2;
-    const fd = (reduce ? level.storedDirs : dw) * group * childCount;
+    const fd = (reduce && !subgroups ? level.storedDirs : dw) * group *
+      childCount;
     const footBytes = fx * fy * fd * STORE_ENTRY_BYTES;
     if (bytes + footBytes <= limits.maxWorkgroupStorage) {
       footprint = [fx, fy, fd];
@@ -195,7 +218,7 @@ export function planComputeLevel(
     // Loading a texel costs three texture reads; a march step saves about as
     // many. Stage when the tile's marches outnumber the patch texels enough.
     const marches = laneCount * marchesPerLane *
-      (reduce ? level.storedDirs : 1);
+      (reduce && !subgroups ? level.storedDirs : 1);
     const worthIt = marches >= 6 * pw * ph;
     if (fits && (options.scenePatch === true || worthIt)) {
       patch = { size: [pw, ph], halo };
@@ -212,6 +235,7 @@ export function planComputeLevel(
       reduce ? 1 : Math.ceil(level.storedDirs / dw),
     ],
     reduce,
+    subgroups,
     patch,
     footprint,
     workgroupBytes: bytes,
@@ -231,7 +255,9 @@ export function describeComputeLevel(
   const parts = [
     `c${level.index}: spacing ${level.probeSpacing}, ${level.rayCount} rays, ` +
     `[${level.intervalStart.toFixed(1)}, ${level.intervalEnd.toFixed(1)}] px`,
-    `workgroup ${tx}x${ty}x${dw}${plan.reduce ? " reduce" : ""}`,
+    `workgroup ${tx}x${ty}x${dw}${
+      plan.reduce ? (plan.subgroups ? " subgroup reduce" : " reduce") : ""
+    }`,
     plan.patch ? `patch ${plan.patch.size.join("x")}` : "no patch",
     plan.footprint ? `footprint ${plan.footprint.join("x")}` : "no footprint",
     `${(plan.workgroupBytes / 1024).toFixed(1)} KB workgroup`,

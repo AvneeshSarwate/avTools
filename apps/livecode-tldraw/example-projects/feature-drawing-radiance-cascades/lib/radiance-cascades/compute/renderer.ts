@@ -36,6 +36,7 @@ import {
 } from "../renderer.ts";
 import {
   COMPUTE_BOUNCE_WGSL,
+  COMPUTE_CASCADE_SG_WGSL,
   COMPUTE_CASCADE_WGSL,
   COMPUTE_DEBUG_UNPACK_WGSL,
   COMPUTE_GATHER_WGSL,
@@ -145,6 +146,8 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
     | "unpack",
     GPUShaderModule
   >;
+  /** The subgroup cascade, created when the option and the feature are on. */
+  private readonly cascadeSgModule: GPUShaderModule | null;
   private readonly cascadeLayout: GPUBindGroupLayout;
   private readonly cascadePipelineLayout: GPUPipelineLayout;
   private readonly pipelineCache = new Map<string, GPUComputePipeline>();
@@ -225,6 +228,20 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
 
     const module = (label: string, code: string) =>
       device.createShaderModule({ label, code });
+    if (
+      this.options.subgroups &&
+      !device.features.has("subgroups" as GPUFeatureName)
+    ) {
+      throw new Error(
+        "compute-subgroups backend: the device has no `subgroups` feature (browsers only; Deno's naga lacks it)",
+      );
+    }
+    this.cascadeSgModule = this.options.subgroups
+      ? module(
+        "rc-compute-cascade-sg",
+        "enable subgroups;\n" + COMPUTE_CASCADE_SG_WGSL,
+      )
+      : null;
     this.modules = {
       bins: module("rc-compute-scene-bins", COMPUTE_SCENE_BINS_WGSL),
       raster: module("rc-compute-scene-raster", COMPUTE_SCENE_RASTER_WGSL),
@@ -718,14 +735,14 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
       FOOT_Y: plan.footprint?.[1] ?? 1,
       FOOT_D: plan.footprint?.[2] ?? 1,
     };
-    const key = JSON.stringify(constants);
+    const key = JSON.stringify([plan.subgroups, constants]);
     let pipeline = this.pipelineCache.get(key);
     if (!pipeline) {
       pipeline = this.device.createComputePipeline({
         label: `rc-compute-cascade ${key}`,
         layout: this.cascadePipelineLayout,
         compute: {
-          module: this.modules.cascade,
+          module: plan.subgroups ? this.cascadeSgModule! : this.modules.cascade,
           entryPoint: "main",
           constants,
         },
