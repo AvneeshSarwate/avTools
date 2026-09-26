@@ -671,13 +671,18 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
       )
     );
     const levelsKey = JSON.stringify(plan.levels);
-    const computeKey = JSON.stringify(computePlans);
+    const computeKey = JSON.stringify([
+      computePlans,
+      runtime.mergeMode,
+      runtime.preAverage,
+      runtime.useDistanceField,
+    ]);
     if (levelsKey !== this.levelsKey) {
-      this.rebuildLevels(plan, computePlans);
+      this.rebuildLevels(plan, computePlans, runtime);
       this.levelsKey = levelsKey;
       this.computeKey = computeKey;
     } else if (computeKey !== this.computeKey) {
-      this.rebuildPipelines(computePlans);
+      this.rebuildPipelines(computePlans, runtime);
       this.computeKey = computeKey;
     }
     this.computePlans = computePlans;
@@ -685,13 +690,21 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
     return plan;
   }
 
-  private levelPipeline(plan: ComputeLevelPlan): GPUComputePipeline {
+  private levelPipeline(
+    plan: ComputeLevelPlan,
+    isTop: boolean,
+    runtime: CascadeRuntime,
+  ): GPUComputePipeline {
     const [tx, ty, dw] = plan.workgroup;
     const constants: Record<string, number> = {
       TX: tx,
       TY: ty,
       DW: dw,
       REDUCE: plan.reduce ? 1 : 0,
+      MERGE_MODE: runtime.mergeMode,
+      IS_TOP: isTop ? 1 : 0,
+      PRE_AVERAGE: runtime.preAverage ? 1 : 0,
+      DISTANCE_FIELD: runtime.useDistanceField ? 1 : 0,
       USE_PATCH: plan.patch ? 1 : 0,
       PATCH_W: plan.patch?.size[0] ?? 1,
       PATCH_H: plan.patch?.size[1] ?? 1,
@@ -720,6 +733,7 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
   private rebuildLevels(
     plan: CascadePlan,
     computePlans: ComputeLevelPlan[],
+    runtime: CascadeRuntime,
   ): void {
     this.disposeLevels();
     const device = this.device;
@@ -758,7 +772,11 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
       return {
         level,
         plan: cplan,
-        pipeline: this.levelPipeline(cplan),
+        pipeline: this.levelPipeline(
+          cplan,
+          i === plan.levels.length - 1,
+          runtime,
+        ),
         uniform: device.createBuffer({
           label: `rc-compute-cascade-${i}-uniforms`,
           size: CASCADE_UNIFORM_BYTES,
@@ -810,10 +828,17 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
     return buffer;
   }
 
-  private rebuildPipelines(computePlans: ComputeLevelPlan[]): void {
+  private rebuildPipelines(
+    computePlans: ComputeLevelPlan[],
+    runtime: CascadeRuntime,
+  ): void {
     for (const [i, state] of this.levels.entries()) {
       state.plan = computePlans[i];
-      state.pipeline = this.levelPipeline(state.plan);
+      state.pipeline = this.levelPipeline(
+        state.plan,
+        i === this.levels.length - 1,
+        runtime,
+      );
       state.bindGroup = null;
     }
   }
