@@ -7,6 +7,8 @@
 
 export interface ViewerResult {
   scene: string;
+  /** "average" or "worst". */
+  set: string;
   segments: number;
   variants: { name: string; file: string; ms: number | null; rms: number }[];
 }
@@ -17,7 +19,7 @@ export function viewerHtml(results: ViewerResult[]): string {
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Radiance cascades: worst cases</title>
+<title>Radiance cascades: scenes</title>
 <style>
   :root { color-scheme: light dark; --bg: #f5f5f4; --fg: #1c1917; --muted: #78716c; --panel: #fff; --line: #d6d3d1; --accent: #2563eb; }
   @media (prefers-color-scheme: dark) { :root { --bg: #111; --fg: #e7e5e4; --muted: #a8a29e; --panel: #1c1917; --line: #3f3f46; --accent: #60a5fa; } }
@@ -25,7 +27,8 @@ export function viewerHtml(results: ViewerResult[]): string {
   body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 ui-sans-serif, system-ui, sans-serif; }
   header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; padding: 12px 16px; border-bottom: 1px solid var(--line); }
   header h1 { font-size: 16px; margin: 0 12px 0 0; }
-  .tabs, .variants { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tabs, .variants { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .tabs .set { color: var(--muted); font-size: 12px; margin: 0 2px 0 10px; text-transform: uppercase; letter-spacing: .04em; }
   button { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; cursor: pointer; }
   button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
   button small { color: var(--muted); margin-left: 6px; }
@@ -48,7 +51,7 @@ export function viewerHtml(results: ViewerResult[]): string {
   body.pixel .stage { width: 1000px; max-width: none; }
 </style>
 <header>
-  <h1>Worst cases</h1>
+  <h1>Scenes</h1>
   <nav class="tabs" id="tabs"></nav>
   <span class="variants" id="variants"></span>
 </header>
@@ -75,8 +78,12 @@ const $ = (id) => document.getElementById(id);
 const fmt = (v) => v.ms === null ? "256 rays/px" : v.ms.toFixed(1) + " ms, rms " + v.rms.toFixed(4);
 function render() {
   const r = RESULTS[scene];
-  $("tabs").innerHTML = RESULTS.map((s, i) =>
-    '<button aria-pressed="' + (i === scene) + '" data-scene="' + i + '">' + s.scene + '<small>' + s.segments + ' seg</small></button>').join("");
+  let lastSet = "";
+  $("tabs").innerHTML = RESULTS.map((s, i) => {
+    const head = s.set !== lastSet ? '<span class="set">' + s.set + '</span>' : "";
+    lastSet = s.set;
+    return head + '<button aria-pressed="' + (i === scene) + '" data-scene="' + i + '">' + s.scene + '<small>' + s.segments + ' seg</small></button>';
+  }).join("");
   $("variants").innerHTML = r.variants.map((v, i) =>
     '<button aria-pressed="' + (i === current) + '" data-variant="' + i + '"><kbd>' + (i + 1) + '</kbd> ' + v.name + '<small>' + fmt(v) + '</small></button>').join("");
   $("wipeSel").innerHTML = '<option value="-1">nothing</option>' + r.variants.map((v, i) =>
