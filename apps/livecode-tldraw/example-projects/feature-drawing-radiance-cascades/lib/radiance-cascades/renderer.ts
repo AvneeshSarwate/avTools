@@ -35,8 +35,22 @@ export interface RadianceCascadeConfig {
   /** Number of cascades; 0 derives it from the render size. */
   cascadeCount: number;
   mergeMode: MergeMode;
+  /**
+   * Merge mode for the far levels, from cascade `farMergeFrom` up (0 turns
+   * this off). The bilinear fix marches eight rays per lane against one; its
+   * visual value is at the near levels, so a cheaper far mode buys most of
+   * the speed back.
+   */
+  farMergeMode: MergeMode;
+  farMergeFrom: number;
   /** Store each level pre-averaged over its branching groups. */
   preAverage: boolean;
+  /**
+   * Also pre-average the levels from this cascade up (0 turns this off): a
+   * pre-averaged level halves the marches of the bilinear-fix merge below
+   * it (one child direction instead of `branching`).
+   */
+  preAverageFrom: number;
   /** Radiance for rays that leave the top cascade with light left to gather. */
   sky: readonly [number, number, number];
   /** Scale of last frame's irradiance times albedo fed back as emission. */
@@ -67,7 +81,10 @@ export const DEFAULT_CONFIG: RadianceCascadeConfig = {
   intervalScale: 4,
   cascadeCount: 0,
   mergeMode: "bilinearFix",
+  farMergeMode: "vanilla",
+  farMergeFrom: 0,
   preAverage: false,
+  preAverageFrom: 0,
   sky: [0, 0, 0],
   bounceStrength: 0,
   useDistanceField: true,
@@ -90,8 +107,43 @@ export interface CascadePlan {
     branching: number;
     cascadeCount: number;
     preAverage: boolean;
+    preAverageFrom: number;
   };
   warnings: string[];
+}
+
+/** Whether cascade `index` stores pre-averaged directions under `config`. */
+export function levelPreAveraged(
+  config: RadianceCascadeConfig,
+  index: number,
+): boolean {
+  const branching = Math.max(1, Math.round(config.branching));
+  if (branching <= 1) return false;
+  return config.preAverage ||
+    (config.preAverageFrom > 0 && index >= Math.round(config.preAverageFrom));
+}
+
+/** The merge mode cascade `index` uses under `config`, as a shader number. */
+export function levelMergeMode(
+  config: RadianceCascadeConfig,
+  index: number,
+): number {
+  const far = config.farMergeFrom > 0 &&
+    index >= Math.round(config.farMergeFrom);
+  return MERGE_MODES[far ? config.farMergeMode : config.mergeMode] ?? 0;
+}
+
+/** A level's runtime: the shared settings with that level's merge mode and pre-averaging. */
+export function levelRuntime(
+  base: CascadeRuntime,
+  config: RadianceCascadeConfig,
+  index: number,
+): CascadeRuntime {
+  return {
+    ...base,
+    mergeMode: levelMergeMode(config, index),
+    preAverage: levelPreAveraged(config, index),
+  };
 }
 
 const MAX_CASCADES = 10;
@@ -114,7 +166,8 @@ export function planCascades(
   const branching = Math.max(1, Math.round(config.branching));
   let baseRayCount = Math.max(1, Math.round(config.baseRayCount));
   const preAverage = config.preAverage && branching > 1;
-  if (preAverage && baseRayCount % branching !== 0) {
+  const preAverageFrom = Math.max(0, Math.round(config.preAverageFrom));
+  if (levelPreAveraged(config, 0) && baseRayCount % branching !== 0) {
     const rounded = Math.max(
       branching,
       Math.round(baseRayCount / branching) * branching,
@@ -147,7 +200,9 @@ export function planCascades(
       Math.max(1, Math.ceil(height / probeSpacing)),
     ];
     const rayCount = baseRayCount * branching ** i;
-    const storedDirs = preAverage ? rayCount / branching : rayCount;
+    const storedDirs = levelPreAveraged(config, i)
+      ? rayCount / branching
+      : rayCount;
     const tileCols = Math.ceil(Math.sqrt(storedDirs));
     const tileRows = Math.ceil(storedDirs / tileCols);
     const textureSize: [number, number] = [
@@ -191,6 +246,7 @@ export function planCascades(
       branching,
       cascadeCount: levels.length,
       preAverage,
+      preAverageFrom,
     },
     warnings,
   };
@@ -341,7 +397,9 @@ export class RadianceCascadeRenderer implements RadianceRenderer {
       intervalOverlap: Math.max(0.1, this.config.intervalOverlap),
       sky: this.config.sky,
     };
-    for (const cascade of this.cascades) cascade.setRuntime(runtime);
+    for (const [i, cascade] of this.cascades.entries()) {
+      cascade.setRuntime(levelRuntime(runtime, this.config, i));
+    }
     this.bounce.setBounce(this.config.bounceStrength);
     this.reference.setRuntime({
       rays: this.config.referenceRays,

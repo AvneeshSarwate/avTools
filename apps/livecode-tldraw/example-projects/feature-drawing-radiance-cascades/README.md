@@ -174,6 +174,42 @@ constants, is 1.3x and 1.2x faster than it was. The two agree to 0.0012 RMS
 or better on every check and the compute backend uses about a third of the
 cascade memory.
 
+### Quality per millisecond
+
+The bilinear fix marches eight rays per lane where vanilla marches one, and
+that is the whole gap between 17.9 ms and 5.7 ms. Two levers spend it
+per level: `farMergeMode` / `farMergeFrom` switch the far levels to a
+cheaper merge, and `preAverageFrom` stores the levels from a cascade up
+pre-averaged, which halves the bilinear-fix marches of the level below each
+(one child direction instead of `branching`). `tools/sweep.ts` measures
+points on the frontier (compute backend, M1 Max, 1000x500; RMS against the
+256-ray reference; `--png` writes each point's image, `--drawing` runs it
+on another drawing):
+
+| configuration | ms/frame | RMS |
+| --- | --- | --- |
+| bilinear fix everywhere (default) | 17.9 | 0.0050 |
+| pre-average all levels | 10.6 | 0.0056 |
+| pre-average from c1 | 9.0 | 0.0059 |
+| pre-average from c2 | 9.1 | 0.0059 |
+| far parallax fix from c3 | 7.3 | 0.0065 |
+| far parallax fix from c2 | 6.8 | 0.0067 |
+| far vanilla from c3 | 7.0 | 0.0072 |
+| vanilla everywhere | 5.7 | 0.0070 |
+| parallax fix everywhere | 9.3 | 0.0125 |
+| 2 px spacing, 4 rays x4 | 4.4 | 0.0145 |
+
+RMS is a global number and cannot see what the bilinear fix is for. Looking
+at the images: every far-mode hybrid brings the vanilla artefacts back (a
+leak ring inside the boulder's edge, blotches on the glass), even where its
+RMS reads fine, so the far levels are not where the fix is dispensable.
+Pre-averaging is the lever that works: pre-average from c1 (cascade 0 still
+per-direction) looks the same as the default on this drawing at half the
+cost, and pre-averaging everything is nearly as cheap. Pre-averaging halves
+the angular resolution the stored levels keep, so a drawing with many thin
+distant emitters is the case to check before making it the default; the
+sweep exists to run on other drawings.
+
 The two backends are compared in the browser with
 `tools/browser_bench.sh`, which bundles `tools/browser_bench.ts` with
 `deno bundle`, serves it with the drawing, and drives the installed Chrome
@@ -204,7 +240,10 @@ glass loop, a blue lamp, a mossy opaque boulder, and an ember freehand stroke.
   branching factor (rays multiply by it per level; spacing always doubles),
   cascade-0 interval length and the interval scale factor, cascade count
   (0 = automatic from the render size), merge mode (vanilla, bilinear fix,
-  parallax fix), direction pre-averaging, interval overlap. The defaults
+  parallax fix), a far merge mode and the cascade it starts from (0 = off),
+  direction pre-averaging, and the cascade pre-averaging starts from
+  (0 = off); interval overlap. See "Quality per millisecond" below for what
+  the far and pre-average levers buy. The defaults
   (1 px spacing, 16 rays doubling per level, 2 px base interval quadrupling,
   bilinear fix) follow the penumbra condition, angular spacing at an
   interval's end matching the probe spacing; 2 px spacing with 4 rays
