@@ -21,6 +21,9 @@ export const RENDERER_BACKENDS: readonly RendererBackend[] = [
   "compute",
 ];
 
+/** The backend `createRadianceRenderer` picks when none is named. */
+export const DEFAULT_BACKEND: RendererBackend = "compute";
+
 /** A texture the display pass or a readback can consume. */
 export interface TextureOutput {
   readonly texture: GPUTexture;
@@ -98,7 +101,7 @@ export function createRadianceRenderer(
   config: Partial<RadianceCascadeConfig> = {},
   options: CreateRendererOptions = {},
 ): RadianceRenderer {
-  if ((options.backend ?? "fragment") === "compute") {
+  if ((options.backend ?? DEFAULT_BACKEND) === "compute") {
     return new ComputeRadianceRenderer(
       device,
       width,
