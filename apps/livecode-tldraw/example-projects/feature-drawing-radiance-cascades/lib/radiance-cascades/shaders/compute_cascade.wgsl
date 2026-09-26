@@ -83,6 +83,9 @@ struct Counter {
 /// REDUCE only: per band slot, DW radiances of two packed u32.
 @group(0) @binding(9) var<storage, read_write> band: array<u32>;
 @group(0) @binding(10) var<storage, read_write> bandCounter: Counter;
+/// Unit directions, precomputed: this level's rays, then the upper level's
+/// rays, then this level's stored (pre-averaged) directions.
+@group(0) @binding(11) var<storage, read> dirTable: array<vec2f>;
 
 var<workgroup> scenePatch: array<vec4u, PATCH_W * PATCH_H>;
 var<workgroup> footprint: array<u32, FOOT_X * FOOT_Y * FOOT_D * 3u>;
@@ -138,9 +141,16 @@ fn startDistanceAt(start: vec2f) -> f32 {
 
 const TAU_F: f32 = 6.283185307179586;
 
-fn dirOf(index: f32, count: f32) -> vec2f {
-  let a = TAU_F * (index + 0.5) / count;
-  return vec2f(cos(a), sin(a));
+fn rayDir(index: u32) -> vec2f {
+  return dirTable[index];
+}
+
+fn upperRayDir(index: u32) -> vec2f {
+  return dirTable[u.rayCount + index];
+}
+
+fn storedDir(index: u32) -> vec2f {
+  return dirTable[u.rayCount + u.upperRayCount + index];
 }
 
 fn unpackLT(x: u32, y: u32, z: u32) -> Hit {
@@ -182,7 +192,7 @@ struct Merged {
 fn castMerged(center: vec2f, d: i32, start: vec2f, startDistance: f32) -> Merged {
   let mp = marchParams();
   let rayCount = f32(u.rayCount);
-  let w = dirOf(f32(d), rayCount);
+  let w = rayDir(u32(d));
   let t0 = u.intervalStart;
   let t1 = u.intervalEnd;
   let overlapEnd = center + w * (t0 + (t1 - t0) * u.intervalOverlap);
@@ -197,7 +207,6 @@ fn castMerged(center: vec2f, d: i32, start: vec2f, startDistance: f32) -> Merged
   let upperPerDir = u.upperStoredDirs >= u.upperRayCount;
   let B = i32(u.branching);
   let childCount = select(1, B, upperPerDir);
-  let upperRayCount = f32(u.upperRayCount);
 
   if (u.mergeMode == 1u) {
     // Children outer, corners inner: a child direction is computed once and
@@ -207,7 +216,7 @@ fn castMerged(center: vec2f, d: i32, start: vec2f, startDistance: f32) -> Merged
     var raw = vec3f(0.0);
     for (var k = 0; k < childCount; k++) {
       let stored = select(d, d * B + k, upperPerDir);
-      let wc = select(w, dirOf(f32(d * B + k), upperRayCount), upperPerDir);
+      let wc = select(w, upperRayDir(u32(d * B + k)), upperPerDir);
       let end = wc * t1;
       for (var c = 0; c < 4; c++) {
         let q = upperProbe(base, c);
@@ -268,11 +277,7 @@ fn castMerged(center: vec2f, d: i32, start: vec2f, startDistance: f32) -> Merged
 
 // One stored direction of a probe: its `group` rays merged and averaged.
 fn castStored(center: vec2f, stored: u32, group: u32) -> Merged {
-  let startDir = select(
-    dirOf(f32(stored), f32(u.rayCount)),
-    dirOf(f32(stored), f32(u.storedDirs)),
-    u.preAverage != 0u,
-  );
+  let startDir = select(rayDir(stored), storedDir(stored), u.preAverage != 0u);
   let start = center + startDir * u.intervalStart;
   let startDistance = startDistanceAt(start);
   var L = vec3f(0.0);

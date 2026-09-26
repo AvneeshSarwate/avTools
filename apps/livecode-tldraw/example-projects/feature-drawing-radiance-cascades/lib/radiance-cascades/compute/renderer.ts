@@ -98,6 +98,8 @@ interface LevelState {
   plan: ComputeLevelPlan;
   pipeline: GPUComputePipeline;
   uniform: GPUBuffer;
+  /** Unit directions: this level's rays, the upper level's, this level's stored. */
+  dirTable: GPUBuffer;
   /** The direction store; null for cascade 0 unless debug views are on. */
   store: GPUBuffer | null;
   raw: GPUBuffer | null;
@@ -258,6 +260,11 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
         { binding: 8, visibility: compute, buffer: { type: "storage" } },
         { binding: 9, visibility: compute, buffer: { type: "storage" } },
         { binding: 10, visibility: compute, buffer: { type: "storage" } },
+        {
+          binding: 11,
+          visibility: compute,
+          buffer: { type: "read-only-storage" },
+        },
       ],
     });
     this.cascadePipelineLayout = device.createPipelineLayout({
@@ -757,6 +764,7 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
           size: CASCADE_UNIFORM_BYTES,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         }),
+        dirTable: this.createDirTable(level, plan.levels[i + 1] ?? null),
         store: cplan.reduce ? null : createStorageBuffer(
           device,
           `rc-cascade-${i}-store`,
@@ -772,6 +780,34 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
     this.upsampleBindGroup = null;
     this.gatherBindGroup = null;
     this.referenceBindGroup = null;
+  }
+
+  /** The unit directions a level's shader indexes instead of calling sin/cos. */
+  private createDirTable(
+    level: CascadeLevel,
+    upper: CascadeLevel | null,
+  ): GPUBuffer {
+    const upperRays = upper?.rayCount ?? 1;
+    const data = new Float32Array(
+      (level.rayCount + upperRays + level.storedDirs) * 2,
+    );
+    const fill = (offset: number, count: number) => {
+      for (let i = 0; i < count; i++) {
+        const a = (2 * Math.PI * (i + 0.5)) / count;
+        data[(offset + i) * 2] = Math.cos(a);
+        data[(offset + i) * 2 + 1] = Math.sin(a);
+      }
+    };
+    fill(0, level.rayCount);
+    fill(level.rayCount, upperRays);
+    fill(level.rayCount + upperRays, level.storedDirs);
+    const buffer = createStorageBuffer(
+      this.device,
+      `rc-cascade-${level.index}-dirs`,
+      data.byteLength,
+    );
+    this.device.queue.writeBuffer(buffer, 0, data);
+    return buffer;
   }
 
   private rebuildPipelines(computePlans: ComputeLevelPlan[]): void {
@@ -1069,6 +1105,7 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
         { binding: 8, resource: { buffer: reduce ? this.slotMap! : d8 } },
         { binding: 9, resource: { buffer: reduce ? this.band! : d9 } },
         { binding: 10, resource: { buffer: reduce ? this.bandCounter : d10 } },
+        { binding: 11, resource: { buffer: state.dirTable } },
       ],
     });
     return state.bindGroup;
@@ -1282,6 +1319,7 @@ export class ComputeRadianceRenderer implements RadianceRenderer {
     this.disposeDebug();
     for (const state of this.levels) {
       state.uniform.destroy();
+      state.dirTable.destroy();
       state.store?.destroy();
     }
     this.levels = [];
