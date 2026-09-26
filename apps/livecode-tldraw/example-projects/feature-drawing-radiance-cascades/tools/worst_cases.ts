@@ -6,12 +6,18 @@
  * brute-force reference and the configured variants, prints frame time
  * and RMS, writes every image to `.output/worst-<scene>-<variant>.png`
  * and a 2x2 grid `.output/worst-<scene>-grid.png` (reference, then the
- * variants in order, row-major) for side-by-side viewing.
+ * variants in order, row-major) for side-by-side viewing, plus
+ * `.output/worst-cases.html`, a viewer (`worst_cases_viewer.ts`): scene
+ * tabs, variant buttons with their timings, keys to flick between
+ * variants, a wipe slider between any two. Open it from the file system.
  *
  *   cd apps/deno-notebooks
  *   deno run --unstable-webgpu -A --no-lock --config deno.json \
  *     ../livecode-tldraw/example-projects/feature-drawing-radiance-cascades/tools/worst_cases.ts \
- *     [--scale 1] [--frames 20] [--backend compute] [--scenes points,fence]
+ *     [--scale 1] [--frames 20] [--backend compute] [--scenes points,fence] [--html-only]
+ *
+ * `--html-only` rewrites the page from the saved `worst-cases.json` without
+ * rendering.
  */
 
 import type { DrawingRenderData } from "canvas-drawing";
@@ -27,6 +33,7 @@ import {
   type RendererBackend,
 } from "../lib/radiance-cascades/mod.ts";
 import { readback, rmsError, tonemap } from "./readback.ts";
+import { viewerHtml, type ViewerResult } from "./worst_cases_viewer.ts";
 
 const HERE = dirname(fromFileUrl(import.meta.url));
 const OUT = join(HERE, "../.output");
@@ -291,6 +298,15 @@ function grid(
 
 // ------------------------------------------------------------------ run
 
+if (Deno.args.includes("--html-only")) {
+  const saved = JSON.parse(
+    await Deno.readTextFile(join(OUT, "worst-cases.json")),
+  ) as ViewerResult[];
+  await Deno.writeTextFile(join(OUT, "worst-cases.html"), viewerHtml(saved));
+  console.log(`worst-cases.html rewritten in ${OUT}`);
+  Deno.exit(0);
+}
+
 const adapter = await navigator.gpu.requestAdapter();
 if (!adapter) throw new Error("no WebGPU adapter");
 const device = await adapter.requestDevice(radianceDeviceDescriptor(adapter));
@@ -315,6 +331,8 @@ console.log(
   }, ${backend} backend, ${width}x${height}; ms/frame pipelined, rms vs reference (256 rays/px)`,
 );
 
+const results: ViewerResult[] = [];
+
 for (const [sceneName, make] of Object.entries(SCENES)) {
   if (only.length && !only.includes(sceneName)) continue;
   const scene = buildStrokeScene(make(), { scale });
@@ -327,6 +345,17 @@ for (const [sceneName, make] of Object.entries(SCENES)) {
   const referencePixels = toPixels(reference, width, height);
   await savePng(`worst-${sceneName}-reference`, referencePixels, width, height);
   console.log(`\n${sceneName}: ${scene.segmentCount} segments`);
+  const result: ViewerResult = {
+    scene: sceneName,
+    segments: scene.segmentCount,
+    variants: [{
+      name: "reference",
+      file: `worst-${sceneName}-reference.png`,
+      ms: null,
+      rms: 0,
+    }],
+  };
+  results.push(result);
   const panels = [referencePixels];
   for (const variant of VARIANTS) {
     // From the full defaults: configure() merges.
@@ -340,10 +369,22 @@ for (const [sceneName, make] of Object.entries(SCENES)) {
     const image = await readback(device, renderer.irradiance.texture);
     const pixels = toPixels(image, width, height);
     panels.push(pixels);
-    await savePng(`worst-${sceneName}-${variant.name}`, pixels, width, height);
+    await savePng(
+      `worst-${sceneName}-${variant.name}`,
+      pixels,
+      width,
+      height,
+    );
+    const rms = rmsError(image, reference);
+    result.variants.push({
+      name: variant.name,
+      file: `worst-${sceneName}-${variant.name}.png`,
+      ms,
+      rms,
+    });
     console.log(
       `  ${variant.name.padEnd(16)} ${ms.toFixed(2).padStart(6)} ms  rms ${
-        rmsError(image, reference).toFixed(4)
+        rms.toFixed(4)
       }`,
     );
   }
@@ -353,6 +394,9 @@ for (const [sceneName, make] of Object.entries(SCENES)) {
   if (error) console.log(`  ERROR: ${error.message}`);
 }
 renderer.dispose();
-console.log(
-  `\nPNGs in ${OUT} (grid: reference, bilinear-all / preaverage-all, preaverage-c1)`,
+await Deno.writeTextFile(
+  join(OUT, "worst-cases.json"),
+  JSON.stringify(results, null, 2),
 );
+await Deno.writeTextFile(join(OUT, "worst-cases.html"), viewerHtml(results));
+console.log(`\nPNGs and worst-cases.html in ${OUT}`);
