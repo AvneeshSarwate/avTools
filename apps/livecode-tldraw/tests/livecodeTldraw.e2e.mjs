@@ -395,6 +395,8 @@ try {
     await runCanvasDuplicateActionCase()
   } else if (process.env.LIVECODE_E2E_CASE === 'drawing') {
     await runDrawingFixtureCase(viteBaseUrl)
+  } else if (process.env.LIVECODE_E2E_CASE === 'uiEvents') {
+    await runUiEventsFixtureCase(viteBaseUrl)
   } else {
     await runResponsiveTopbarCase()
 
@@ -1931,6 +1933,104 @@ async function runProjectOpenRestoresSavedTruthCase() {
  * pointer is still down. The project is browser-target, but only the writer
  * runs here and it needs no DOM; the p5 sketch stays a manual step.
  */
+/**
+ * Engine-to-UI events, round trip: a param button is UI input to the engine,
+ * whose handler sends `tldraw.focusEntity` back. Whichever sync transport this
+ * run uses (socket, relayed uplink, or BroadcastChannel) carries it.
+ */
+async function runUiEventsFixtureCase(viteBaseUrl) {
+  const fixtureRoot = path.join(tldrawAppRoot, 'example-projects/feature-ui-events')
+  const projectRoot = path.join(sessionRoot, 'ui-events-project')
+  cpSync(fixtureRoot, projectRoot, { recursive: true })
+  const moduleId = 'ui-events/focus'
+  await page.goto(projectUrl(viteBaseUrl, serverBaseUrl, projectRoot), {
+    waitUntil: 'domcontentloaded',
+  })
+  await page.locator('.livecode-shape').first().waitFor({ timeout: scaled(20_000) })
+  await waitForPageValue(
+    () => Boolean(window.__livecodeTldrawRuntimeDebug),
+    'tldraw runtime debug hooks installed for the ui-events project',
+    10_000
+  )
+  await page.evaluate(() => window.__livecodeTldrawRuntimeDebug?.connect())
+  await waitForTldrawReady()
+  await waitForPageValue(
+    (id) => window.__livecodeTldrawRuntimeDebug?.getModuleIds().includes(id),
+    'ui-events module registered',
+    scaled(15_000),
+    moduleId
+  )
+  await runModule(moduleId)
+  await waitForParamsEntity('ui-events', (entity) => entity.meta?.focusRight?.button,
+    'focus buttons declared')
+  const shapeBounds = (id) => page.evaluate((id) => {
+    const shape = window.__livecodeTldrawRuntimeDebug?.getShapes().find((s) => s.id === id)
+    return shape ? { x: shape.x, y: shape.y, w: shape.props.w, h: shape.props.h } : null
+  }, id)
+  const camera = () => page.evaluate(() => window.__livecodeTldrawRuntimeDebug?.getCamera())
+  // The camera animates; wait until two reads agree and satisfy the check.
+  const cameraSettled = async (predicate, label) => {
+    const start = Date.now()
+    let previous = null
+    while (Date.now() - start < scaled(10_000)) {
+      const current = await camera()
+      if (previous && JSON.stringify(previous) === JSON.stringify(current) && predicate(current)) {
+        return current
+      }
+      previous = current
+      await sleep(100)
+    }
+    throw new Error(`Timed out waiting for ${label} (last camera: ${JSON.stringify(previous)})`)
+  }
+  const centredOn = (bounds) => (current) =>
+    Math.abs(current.center.x - (bounds.x + bounds.w / 2)) < 2 &&
+    Math.abs(current.center.y - (bounds.y + bounds.h / 2)) < 2
+  const selected = (id, label) => waitForPageValue(
+    (id) => window.__livecodeTldrawRuntimeDebug?.getSelectedShapeIds().includes(id),
+    label,
+    scaled(10_000),
+    id
+  )
+  // The same input a pane button sends; used once the panel is off screen.
+  const press = (target) => serverPostJson('/events/emit', {
+    type: 'ui-events/focus',
+    body: { target, state: 'down' },
+  })
+
+  // keepZoom (default): a real button press pans to the right pane, zoom kept.
+  const before = await camera()
+  await page.locator('.param-pane-shape button', { hasText: 'focus right' }).click()
+  await selected('shape:ui-events-right', 'focus event selects the right pane')
+  const right = await shapeBounds('shape:ui-events-right')
+  const left = await shapeBounds('shape:ui-events-left')
+  const panned = await cameraSettled(centredOn(right), 'camera centred on the right pane')
+  assert(Math.abs(panned.z - before.z) < 1e-9, `keep zoom kept zoom ${before.z}, got ${panned.z}`)
+
+  await press('ui-events/left')
+  await selected('shape:ui-events-left', 'focus event selects the left pane')
+  await cameraSettled(centredOn(left), 'camera centred on the left pane')
+  // Focusing the same target twice moves twice: these are events, not state.
+  await press('ui-events/right')
+  await cameraSettled(centredOn(right), 'camera back on the right pane')
+
+  // fit: zoom to the pane.
+  await serverPostJson('/params/set', { name: 'ui-events', values: { keepZoom: false } })
+  await waitForParamsEntity('ui-events', (entity) => entity.values.keepZoom === false, 'fit mode')
+  const beforeFit = await camera()
+  await press('ui-events/right')
+  const fitted = await cameraSettled(
+    (current) => centredOn(right)(current) && current.z !== beforeFit.z,
+    'camera zoomed to the right pane'
+  )
+  assert(fitted.z > beforeFit.z, `fit zooms in to a small pane (${beforeFit.z} -> ${fitted.z})`)
+
+  const sent = await fetchParamsEntity('ui-events')
+  assert(sent.values.sent >= 3, `module counted its sends (${sent.values.sent})`)
+  await stopModule(moduleId)
+  await waitForServerRunState(moduleId, false, 'ui-events fixture stopped')
+  console.log('PASS ui events: engine focus event selects and pans (keep) or zooms (fit)')
+}
+
 async function runDrawingFixtureCase(viteBaseUrl) {
   const fixtureRoot = path.join(tldrawAppRoot, 'example-projects/feature-drawing-p5')
   const drawingProjectRoot = path.join(sessionRoot, 'drawing-project')

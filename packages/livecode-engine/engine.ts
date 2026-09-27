@@ -4,6 +4,7 @@ import type {
   LaunchModuleResponse,
   RunEntity,
   RuntimeStateModuleRun,
+  UiEventBatch,
   VisualizerManifestMessage,
 } from "@avtools/livecode-protocol";
 import {
@@ -20,6 +21,7 @@ import {
   setRootTimeContext,
 } from "./runtime.ts";
 import { endEventContext } from "./events.ts";
+import { addUiEventSink } from "./ui_events.ts";
 import { endSignalsForModule } from "./signals_store.ts";
 import { seedDemoPianoRoll } from "./piano_roll_store.ts";
 import { registerBuiltinEntityKinds } from "./entity_kinds.ts";
@@ -99,6 +101,12 @@ export interface LivecodeEngineDeps {
    * so a throwing sink is logged rather than killing the timer.
    */
   onSyncTick: (collected: SyncCollectedChanges) => void;
+  /**
+   * Receives every outbound UI event batch (`ui-events` `send`), as soon as
+   * it flushes rather than on the sync tick. Optional: a host without UI
+   * consumers omits it and sent events go nowhere.
+   */
+  onUiEvents?: (batch: UiEventBatch) => void;
   /** Dynamic import of a generated module. Defaults to the host `import()`. */
   importModule?: (url: string) => Promise<unknown>;
   /** MIDI panic capability; a host without MIDI omits it. */
@@ -191,6 +199,10 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
       return drained;
     },
   }));
+
+  const removeUiEventSink = deps.onUiEvents
+    ? addUiEventSink(deps.onUiEvents)
+    : () => {};
 
   // `collectAll` drains change gates and therefore has one caller.
   const broadcastTimer = setInterval(() => {
@@ -688,6 +700,9 @@ export function createLivecodeEngine(deps: LivecodeEngineDeps): LivecodeEngine {
       await stopAllModules("serverClose");
       deps.panicMidi?.();
       parentHandle.cancel();
+      // Let a batch sent by a stop hook flush before the sink goes away.
+      await Promise.resolve();
+      removeUiEventSink();
       lifecycle = "closed";
     })();
     return closePromise;

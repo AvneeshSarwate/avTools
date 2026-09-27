@@ -13,6 +13,7 @@ import type {
   EngineUplinkRequest,
   SyncEntity,
   SyncEntityChange,
+  UiEventBatch,
 } from "./protocol.ts";
 import type { SyncCollectedChanges } from "@avtools/livecode-engine/sync_sources.ts";
 import {
@@ -36,6 +37,8 @@ export interface LocalExecutionPlaneOptions {
   log: (entry: Record<string, unknown>) => void | Promise<void>;
   panicMidi: () => void;
   onSyncTick: (collected: SyncCollectedChanges) => void;
+  /** Outbound UI event batches from the in-process engine. */
+  onUiEvents?: (batch: UiEventBatch) => void;
 }
 
 export interface LocalExecutionPlane extends ExecutionPlane {
@@ -49,6 +52,7 @@ export function createLocalExecutionPlane(
     log: options.log,
     panicMidi: options.panicMidi,
     onSyncTick: options.onSyncTick,
+    onUiEvents: options.onUiEvents,
   });
   return {
     kind: "local",
@@ -70,6 +74,8 @@ export interface RemoteExecutionPlaneOptions {
    * watched world is gone, and clients must not keep rendering a dead one.
    */
   onEngineResets: (resets: Record<string, SyncEntity[]>) => void;
+  /** Relay of the attached engine's outbound UI event batches. */
+  onUiEvents?: (batch: UiEventBatch) => void;
   /**
    * Initialize an arriving engine from its hello resets. The supplied executor
    * is pinned to that engine socket; it can be used before the plane becomes
@@ -311,6 +317,12 @@ export function createRemoteExecutionPlane(
     }
     if (message.type === "engineLog") {
       void options.log(message.entry ?? {});
+      return;
+    }
+    if (message.type === "engineUiEvents") {
+      if (message.batch?.type === "uiEvents") {
+        options.onUiEvents?.(message.batch);
+      }
       return;
     }
     if (message.type === "engineSync") {

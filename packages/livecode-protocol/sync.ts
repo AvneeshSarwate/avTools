@@ -24,6 +24,7 @@ import type {
 } from "./runtime.ts";
 import type { SignalEntity } from "./signals.ts";
 import type { EngineOp } from "./engine_uplink.ts";
+import type { UiEventBatch } from "./ui_events.ts";
 
 /**
  * Entity kinds the sync transport carries. Subscriptions are type-level in v1;
@@ -105,4 +106,11 @@ export interface SyncMessage<E = SyncEntity> {
   changes?: Array<SyncEntityChange<E>>;
 }
 
-export type SyncServerMessage = SyncMessage | SyncActionResultMessage;
+/**
+ * Everything the `/sync` socket carries to a client. `UiEventBatch` rides the
+ * same socket as its own message type; it is not sync and has no `seq`.
+ */
+export type SyncServerMessage =
+  | SyncMessage
+  | SyncActionResultMessage
+  | UiEventBatch;

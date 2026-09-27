@@ -9,6 +9,7 @@
 // two transports.
 
 import type { LivecodeEvent } from "./events.ts";
+import type { UiEventBatch } from "./ui_events.ts";
 import type { LaunchModuleRequest } from "./runtime.ts";
 import type {
   SetPianoRollCursorRequest,
@@ -174,6 +175,11 @@ export type EngineUplinkClientMessage =
     /** One broadcast tick's changed entities, relayed to `/sync` watchers. */
     type: "engineSync";
     changes: SyncEntityChange[];
+  }
+  | {
+    /** Outbound UI events, relayed to every `/sync` watcher as-is. */
+    type: "engineUiEvents";
+    batch: UiEventBatch;
   }
   | {
     type: "engineResult";

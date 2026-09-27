@@ -72,6 +72,8 @@ export interface TldrawRuntimeDebug {
   selectShape(id: string): void;
   selectShapes(ids: string[]): void;
   getSelectedShapeIds(): string[];
+  /** Camera and the page point at the viewport centre, for camera-move checks. */
+  getCamera(): { x: number; y: number; z: number; center: { x: number; y: number } } | null;
   createEntityView(type: string, name: string): string | null;
   /** A second (third, ...) module on the canvas; returns its module id. */
   createModule(source?: string): string | null;
@@ -191,6 +193,13 @@ function installDebugApi() {
     },
     getSelectedShapeIds() {
       return refs.editor?.getSelectedShapeIds().map(String) ?? [];
+    },
+    getCamera() {
+      const editor = refs.editor;
+      if (!editor) return null;
+      const { x, y, z } = editor.getCamera();
+      const center = editor.getViewportPageBounds().center;
+      return { x, y, z, center: { x: center.x, y: center.y } };
     },
     createEntityView(type, name) {
       const editor = refs.editor;

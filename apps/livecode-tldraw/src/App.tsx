@@ -16,6 +16,7 @@ import {
 import { setRuntimeDebugRefs } from "./livecodeTldrawDebug";
 import { waitForInProcessEngineAttached } from "./inProcessEngine";
 import { useClientControlBridge } from "./clientControlBridge";
+import { useTldrawUiEvents } from "./uiEvents";
 import { TopBar } from "./TopBar";
 import { createEntityDuplicateOverrides } from "./duplicateCanvasEntities";
 import {
@@ -83,6 +84,7 @@ function LivecodeTldrawPage() {
   const canvasUpdateTimerRef = useRef<number | undefined>(undefined);
 
   useClientControlBridge(editor, runtime);
+  useTldrawUiEvents(editor);
 
   const syncLivecodeShapesToRuntime = useCallback(() => {
     if (!editor) return;

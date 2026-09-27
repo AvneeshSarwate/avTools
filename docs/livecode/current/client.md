@@ -269,6 +269,16 @@ when updating it. Its entity view works across tabs; only DOM canvas mirroring
 requires the engine and view to share a realm. Audio objects remain in engine
 module state, never in the editor or durable entity.
 
+## Engine-to-UI events
+
+Every sync transport hands `uiEvents` batches to `deliverUiEventBatch` in
+`uiEvents.ts`; anything on the page can listen with `subscribeUiEvents`. The
+`tldraw.*` types are this app's vocabulary, handled by one listener mounted
+with the editor; that table is the extension point for a new UI reaction, not
+the transport. `tldraw.focusEntity` selects and frames an existing view and
+never creates one. Events arriving before the editor mounts, or while the
+transport is down, are gone; nothing is replayed.
+
 ## DOM event boundary
 
 Interactive DOM inside a tldraw shape must stop pointer/touch/wheel propagation
