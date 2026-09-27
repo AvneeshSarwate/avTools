@@ -29,6 +29,7 @@ and analysis/code generation is documented in
 | Typed stores over it: params, ephemeral signals, piano rolls, animation timelines | `packages/livecode-engine/params_store.ts`, `signals_store.ts`, `piano_roll_store.ts`, `animation_timeline_store.ts` |
 | Durable-type registry and entity-name file encoding | `packages/livecode-engine/entity_registry.ts` |
 | User-facing declaration helpers | `helpers/canvas_params.ts`, `helpers/canvas_signals.ts` |
+| Events in from UIs and out to UIs | `helpers/canvas_events.ts`, `helpers/ui_events.ts`, over `packages/livecode-engine/events.ts` and `ui_events.ts` |
 | User-facing piano-roll conversion/playback | `helpers/piano_roll_helpers.ts` |
 | MIDI integration | `helpers/midi_helpers.ts`, `helpers/midi_math.ts` |
 | Deno language-server proxy | `visualizer/lsp_proxy.ts` |

@@ -230,10 +230,9 @@ the analyzer supplies it for recognized calls in timed scopes.
 
 ## Engine-to-UI events
 
-`ui-events` `send` is another engine singleton (`ui_events.ts`), independent
-of stores and sync. The host supplies one sink through the engine's optional
-`onUiEvents` dependency; the engine removes it on close. The Deno host writes
-each batch to every open `/sync` socket, the remote plane relays
-`engineUiEvents` the same way, and the browser host posts to its sync
-BroadcastChannel, calls same-tab observers, and forwards over the uplink.
-Nothing buffers a batch for a consumer that is not connected when it flushes.
+Outbound events are an engine singleton independent of the stores and the sync
+tick; a host receives them through one optional engine dependency, which the
+engine drops on close. The obligation that is easy to miss: a host must
+forward every batch on every path its sync takes (socket fan-out, uplink
+relay, the engine tab's channel, same-tab observers), or consumers in that
+topology silently receive nothing. Nothing buffers a batch.

@@ -83,6 +83,12 @@ chosen, and why tldraw was considered a spatial shell. The active client is now
   topology, the walk-up-from-any-laptop sign-in ritual, the Claude Code
   Remote Control server in the container, credential/lifecycle handling, and
   verified cost figures. Design note only — nothing in it is implemented.
+- `global-input-events-2026-09.md` records the agreed contract for UI-to-engine
+  events and parameter buttons. Implemented; `current/` owns the details.
+- `ui-events-plan-2026-09.md` is the design note for engine-to-UI events, the
+  outbound counterpart: why they exist, why they stay independent of sync and
+  of any particular UI, and the worked BeatStep focus example. Implemented;
+  `current/` owns the contract.
 
 ## Documentation audits
 
