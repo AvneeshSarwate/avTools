@@ -165,13 +165,13 @@ is implied. Params metadata may contain static button messages; only the gesture
 adds `body.state`. Saving/duplicating preserves that literal metadata without
 rewriting payload names or firing messages.
 
-Engine-to-UI events are the reverse direction and deliberately asymmetric with
-input events. `ui-events` `send` batches one synchronous turn and flushes it on
-a microtask as a `uiEvents` message, on whatever channel sync already uses: the
-`/sync` socket (the remote uplink relays `engineUiEvents`), the engine tab's
-sync BroadcastChannel, or the in-process host's `observeUiEvents`. A batch goes
-to every connected consumer regardless of entity subscriptions, never advances
-`seq`, and is neither buffered nor replayed. It has no ordering promise
-relative to sync; an event that must be seen after state is the author's
-problem, not the transport's. Event `seq` is per engine lifetime, and a bounded
-queue reports overflow as `dropped`. Consumers ignore types they do not know.
+Engine-to-UI events are an independent primitive, the outbound counterpart of
+input events. They share nothing with input events or entity sync except the
+channel they travel on. Their contract is the one wire message in
+[`ui_events.ts`](../../../packages/livecode-protocol/ui_events.ts), so any UI
+implementation can consume them without speaking the sync protocol: open the
+channel sync uses in that topology and handle that message type. A batch
+reaches every connected consumer regardless of entity subscriptions, never
+advances `seq`, and is neither buffered nor replayed. Nothing orders events
+against sync; how a piece pairs them with state is its own decision.
+Consumers ignore types they do not know.

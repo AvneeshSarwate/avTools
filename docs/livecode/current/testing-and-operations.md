@@ -59,8 +59,9 @@ file list rather than maintaining it here.
   `run_correlation_test.ts`, and the run portions of `sync_transport_test.ts`.
 - Stores/durability: the concrete store test plus `entity_registry_test.ts`.
 - Transport or remote-plane behavior: `sync_transport_test.ts`,
-  `protocol_smoke_test.ts`, `execution_plane_state_test.ts`,
-  `engine_attach_replay_test.ts`, and the topology E2E scripts.
+  `ui_events_test.ts`, `protocol_smoke_test.ts`,
+  `execution_plane_state_test.ts`, `engine_attach_replay_test.ts`, and the
+  topology E2E scripts.
 - Project graph/targets/LSP: project shadow, browser-target, and LSP tests.
 - React entity subscription isolation: `npm run test:sync-rendering` in
   `apps/livecode-tldraw` mounts real React subscribers in Chromium, including the
@@ -79,8 +80,10 @@ mirroring a module canvas checked by pixel, plus sync-map clearing on takeover).
 checked-in timing gallery (`timing-examples`, `timing-composition`) and checks
 every canvas view draws and that the in-process params action freezes and
 resumes an example's rendered scene. The in-process form against a live server
-is not E2E-covered. `browser_host_import_map_test.ts` keeps the client and
-engine-page import maps identical.
+is not E2E-covered, and neither is engine-to-UI event delivery through the
+in-process host: the `uiEvents` tldraw case covers the socket, the uplink
+relay, and the BroadcastChannel only. `browser_host_import_map_test.ts` keeps
+the client and engine-page import maps identical.
 
 For tracking work, the [package verification guide](../../../packages/tracked-state/README.md#verification-and-benchmarks)
 owns library tests and benchmarks; these are separate from the livecode test

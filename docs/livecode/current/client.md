@@ -271,13 +271,13 @@ module state, never in the editor or durable entity.
 
 ## Engine-to-UI events
 
-Every sync transport hands `uiEvents` batches to `deliverUiEventBatch` in
-`uiEvents.ts`; anything on the page can listen with `subscribeUiEvents`. The
-`tldraw.*` types are this app's vocabulary, handled by one listener mounted
-with the editor; that table is the extension point for a new UI reaction, not
-the transport. `tldraw.focusEntity` selects and frames an existing view and
-never creates one. Events arriving before the editor mounts, or while the
-transport is down, are gone; nothing is replayed.
+This app is one consumer of engine-to-UI events; another UI reads the same
+wire message without any of this code. Each sync transport hands batches to
+`uiEvents.ts`, where anything on the page can subscribe. The `tldraw.*` types
+are this app's vocabulary, not the platform's. Its handler table is the
+extension point for a new UI reaction, and `tldraw.focusEntity` is the
+exemplar: it frames an existing view and never creates one. Nothing is
+replayed to a listener that arrives late or a tab that was disconnected.
 
 ## DOM event boundary
 
