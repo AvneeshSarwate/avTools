@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "jsr:@std/assert@1";
+import { assert, assertAlmostEquals, assertEquals } from "jsr:@std/assert@1";
 import { toFileUrl } from "jsr:@std/path@1";
 import { AbletonClip } from "@avtools/music-types";
 import { launch } from "@avtools/core-timing";
@@ -67,9 +67,17 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
     const { pipelineDefaults, createPipeline } = await import(
       new URL("pipeline.ts", base).href
     );
-    const { melodies, transport } = await import(
+    const { melodies, transport, beatstep } = await import(
       new URL("controls.ts", base).href
     );
+    const {
+      createBeatstepController,
+      TOP_ROW_NOTES,
+      BOTTOM_ROW_NOTES,
+      ENCODER_CCS,
+    } = await import(new URL("beatstep.ts", base).href);
+    const { createClockMapper, createTakeRecorder, takeToRollNotes } =
+      await import(new URL("recording.ts", base).href);
     const { createNoteOutput, playClip } = await import(
       new URL("playback.ts", base).href
     );
@@ -153,13 +161,211 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
         assertEquals(b.base(clip("dscale7")), before);
         melodies.dscale5.base.stretch = 0;
         assert(
-          a.base(clip("dscale5")).notes.every((n: { duration: number; position: number }) =>
-            Number.isFinite(n.duration) && Number.isFinite(n.position)
-          ),
+          a.base(clip("dscale5")).notes.every((
+            n: { duration: number; position: number },
+          ) => Number.isFinite(n.duration) && Number.isFinite(n.position)),
         );
         Object.assign(melodies.dscale5.base, pipelineDefaults().base);
       },
     );
+    await t.step(
+      "BeatStep: LPD8 launch columns, stop, record, radio focus, follow toggle, encoders",
+      () => {
+        const snapshot = JSON.stringify(melodies);
+        const triggers: { type: string; body: Record<string, unknown> }[] = [];
+        const leds = new Map<number, boolean>();
+        const ledSends: number[] = [];
+        const canvas: string[] = [];
+        const settings = {
+          focus: "dscale5",
+          followFocus: true,
+          encoderMode: "delta",
+        };
+        const pads = createBeatstepController({
+          melodies,
+          settings,
+          trigger: (event: { type: string; body: Record<string, unknown> }) =>
+            triggers.push(event),
+          setLed: (note: number, on: boolean) => {
+            leds.set(note, on);
+            ledSends.push(note);
+          },
+          focusCanvas: (name: string) => canvas.push(name),
+        });
+        const note = (on: boolean, n: number) =>
+          pads.handle({
+            type: on ? "noteOn" : "noteOff",
+            channel: 0,
+            note: n,
+            velocity: on ? 100 : 0,
+            timeMs: 0,
+          });
+        const tap = (n: number) => {
+          note(true, n);
+          note(false, n);
+        };
+        const cc = (controller: number, value: number) =>
+          pads.handle({ type: "cc", channel: 0, controller, value, timeMs: 0 });
+        try {
+          // Columns 1-3: top one-shot, bottom gate, one melody per column.
+          tap(TOP_ROW_NOTES[0]);
+          note(true, BOTTOM_ROW_NOTES[1]);
+          note(false, BOTTOM_ROW_NOTES[1]);
+          assertEquals(
+            triggers.map((e) => [e.body.melody, e.body.mode, e.body.state]),
+            [
+              ["dscale5", "oneShot", "down"],
+              ["dscale5", "oneShot", "up"],
+              ["dscale7", "gate", "down"],
+              ["dscale7", "gate", "up"],
+            ],
+          );
+          assert(triggers.every((e) => e.body.origin === "beatstep"));
+          // Columns 4-6: stop on top (press only), record toggle on the bottom.
+          triggers.length = 0;
+          tap(TOP_ROW_NOTES[5]);
+          assertEquals(triggers, [{
+            type: "sonar/stop",
+            body: { melody: "d7mel", state: "down" },
+          }]);
+          tap(BOTTOM_ROW_NOTES[3]);
+          assertEquals(melodies.dscale5.record, true);
+          assertEquals(leds.get(BOTTOM_ROW_NOTES[3]), true, "record pad lit");
+          tap(BOTTOM_ROW_NOTES[3]);
+          assertEquals(melodies.dscale5.record, false);
+          assertEquals(leds.get(BOTTOM_ROW_NOTES[3]), false);
+
+          // Focus radio: top 7, top 8, bottom 7. One lit at a time.
+          pads.resendLeds();
+          assertEquals(leds.get(TOP_ROW_NOTES[6]), true, "initial focus lit");
+          note(true, TOP_ROW_NOTES[7]);
+          assertEquals(settings.focus, "dscale7");
+          assertEquals(canvas, ["dscale7"]);
+          assertEquals(leds.get(TOP_ROW_NOTES[6]), false, "old focus cleared");
+          assertEquals(leds.get(TOP_ROW_NOTES[7]), true);
+          ledSends.length = 0;
+          note(false, TOP_ROW_NOTES[7]);
+          assertEquals(
+            ledSends,
+            [TOP_ROW_NOTES[7]],
+            "a released lit pad is relit (the BeatStep turned it off)",
+          );
+          // Pressing the focused pad again still moves the canvas.
+          tap(TOP_ROW_NOTES[7]);
+          assertEquals(canvas, ["dscale7", "dscale7"]);
+          // Bottom right toggles whether focus moves the canvas.
+          assertEquals(leds.get(BOTTOM_ROW_NOTES[7]), true);
+          tap(BOTTOM_ROW_NOTES[7]);
+          assertEquals(settings.followFocus, false);
+          assertEquals(leds.get(BOTTOM_ROW_NOTES[7]), false);
+          tap(BOTTOM_ROW_NOTES[6]);
+          assertEquals(settings.focus, "d7mel");
+          assertEquals(canvas.length, 2, "no canvas move while follow is off");
+          // A pane-side focus change shows on the pads at the next refresh.
+          settings.focus = "dscale5";
+          pads.refreshLeds();
+          assertEquals(leds.get(TOP_ROW_NOTES[6]), true);
+          assertEquals(leds.get(BOTTOM_ROW_NOTES[6]), false);
+
+          // Encoders edit the focused melody only. Delta mode: the first
+          // message sets a baseline, so a focus change never jumps a value.
+          const other = JSON.stringify(melodies.dscale7);
+          const start = melodies.dscale5.base.transpose;
+          cc(ENCODER_CCS[0], 100);
+          assertEquals(melodies.dscale5.base.transpose, start);
+          cc(ENCODER_CCS[0], 106);
+          assertAlmostEquals(melodies.dscale5.base.transpose, start + 6 / 127);
+          cc(ENCODER_CCS[15], 64);
+          cc(ENCODER_CCS[15], 65);
+          assertEquals(melodies.dscale5.delayEnabled, true);
+          cc(ENCODER_CCS[15], 60);
+          assertEquals(melodies.dscale5.delayEnabled, false);
+          settings.encoderMode = "relative1";
+          const stretch = melodies.dscale5.base.stretch;
+          cc(ENCODER_CCS[1], 66);
+          assertAlmostEquals(melodies.dscale5.base.stretch, stretch + 2 / 127);
+          settings.encoderMode = "relative2";
+          cc(ENCODER_CCS[1], 127);
+          assertAlmostEquals(melodies.dscale5.base.stretch, stretch + 1 / 127);
+          settings.encoderMode = "absolute";
+          cc(ENCODER_CCS[14], 127);
+          assertEquals(melodies.dscale5.delayTime, 1);
+          cc(ENCODER_CCS[6], 0);
+          assertEquals(melodies.dscale5.noteLength, 0);
+          cc(ENCODER_CCS[8], 127);
+          assertEquals(melodies.dscale5.delay.transpose, 1);
+          assertEquals(JSON.stringify(melodies.dscale7), other);
+          pads.allLedsOff();
+          assert([...leds.values()].every((on) => !on));
+        } finally {
+          const saved = JSON.parse(snapshot);
+          for (const name of Object.keys(saved)) {
+            Object.assign(melodies[name].base, saved[name].base);
+            Object.assign(melodies[name].delay, saved[name].delay);
+            const { base: _b, delay: _d, ...rest } = saved[name];
+            Object.assign(melodies[name], rest);
+          }
+        }
+      },
+    );
+    await t.step("recording: takes become roll notes, quantized or not", () => {
+      let engineNow = 100;
+      const clock = createClockMapper(() => engineNow);
+      const at = (timeMs: number) => ({
+        type: "noteOn" as const,
+        channel: 0,
+        note: 60,
+        velocity: 90,
+        timeMs,
+      });
+      assertEquals(clock.toEngineSec(at(5000)), 100);
+      engineNow = 100.5; // delivered late: keeps its device spacing
+      assertEquals(clock.toEngineSec(at(5100)), 100.1);
+
+      const recorder = createTakeRecorder();
+      recorder.handle(at(0), 1); // not recording yet: ignored
+      recorder.start(10);
+      const on = (note: number, sec: number) =>
+        recorder.handle(
+          { type: "noteOn", channel: 0, note, velocity: 90, timeMs: 0 },
+          sec,
+        );
+      const off = (note: number, sec: number) =>
+        recorder.handle(
+          { type: "noteOff", channel: 0, note, velocity: 0, timeMs: 0 },
+          sec,
+        );
+      on(60, 10.52);
+      off(60, 11.0);
+      on(64, 11.01);
+      const notes = recorder.finish(12); // 64 still held: closes at 12
+      assertEquals(recorder.recording, false);
+      const exact = takeToRollNotes(notes, {
+        secondsPerBeat: 0.5,
+        quantize: 0,
+      });
+      assertEquals(exact.notes.map((n: { pitch: number }) => n.pitch), [
+        60,
+        64,
+      ]);
+      assertAlmostEquals(exact.notes[0].position, 0);
+      assertAlmostEquals(exact.notes[1].position, 0.98);
+      assertAlmostEquals(exact.notes[0].duration, 0.96);
+      assertEquals(exact.lengthBeats, 3);
+      const snapped = takeToRollNotes(notes, {
+        secondsPerBeat: 0.5,
+        quantize: 0.5,
+      });
+      assertEquals(
+        snapped.notes.map((n: { position: number; duration: number }) => [
+          n.position,
+          n.duration,
+        ]),
+        [[0, 1], [1, 2]],
+      );
+      recorder.start(20);
+      assertEquals(recorder.finish(21), null, "an empty take writes nothing");
+    });
     await t.step(
       "cancelled overlapping notes release exactly once",
       async () => {
@@ -248,11 +454,33 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
         };
         const trigger = (mode: string, state: string, melody = "dscale5") =>
           emit({ type: "sonar/trigger", body: { melody, mode, state } });
+        // Never auto-select a real BeatStep attached to the machine running
+        // the tests; a missing name just reports that it could not open.
+        beatstep.device = "sonar-test-no-beatstep";
+        // A toggle left on must not start a take on the next run.
+        melodies.d7mel.record = true;
         try {
           await engine.launchModule(req);
           await waitFor(
             () => Boolean(getPianoRoll("sonar/dscale5")),
             "source rolls seeded",
+          );
+          await waitFor(() => !melodies.d7mel.record, "stale record cleared");
+          await waitFor(
+            () => beatstep.status === "could not open sonar-test-no-beatstep",
+            "BeatStep status reports the missing device",
+          );
+          melodies.dscale5.record = true;
+          await waitFor(
+            () => melodies.dscale5.recordStatus.startsWith("recording"),
+            "record toggle starts a take",
+          );
+          melodies.dscale5.record = false;
+          await waitFor(
+            () =>
+              melodies.dscale5.recordStatus ===
+                "no notes recorded; roll unchanged",
+            "an empty take leaves the roll alone",
           );
           await sleep(20);
           assertEquals(trigger("gate", "down").delivered, 1);
@@ -309,7 +537,12 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
           );
           transport.dryRun = false;
           await engine.launchModule({ ...req, replaceRunning: true });
-          await sleep(30);
+          // `delivered` counts listeners whatever the type, so a probe shows
+          // when the replacement's listener is live without playing anything.
+          await waitFor(
+            () => emit({ type: "sonar/probe", body: {} }).delivered === 1,
+            "the replacement's listener is registered",
+          );
           assertEquals(trigger("gate", "down", "dscale7").delivered, 1);
           await sleep(20);
           await engine.stopModule(req.moduleId, "test");

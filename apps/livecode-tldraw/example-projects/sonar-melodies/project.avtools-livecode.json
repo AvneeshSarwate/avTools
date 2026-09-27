@@ -92,9 +92,36 @@
       "y": 3720,
       "w": 560,
       "h": 460
+    },
+    {
+      "id": "sonar/beatstep",
+      "path": "modules/beatstep.ts",
+      "sourcePath": "modules/beatstep.orig.ts",
+      "runtimePath": "modules/beatstep.ts",
+      "kind": "runnable",
+      "title": "BeatStep mapping",
+      "sourceVersion": 2,
+      "x": 2050,
+      "y": 4240,
+      "w": 560,
+      "h": 460
+    },
+    {
+      "id": "sonar/recording",
+      "path": "modules/recording.ts",
+      "sourcePath": "modules/recording.orig.ts",
+      "runtimePath": "modules/recording.ts",
+      "kind": "runnable",
+      "title": "recording into banks",
+      "sourceVersion": 2,
+      "x": 2050,
+      "y": 4760,
+      "w": 560,
+      "h": 460
     }
   ],
   "canvas": {
+    "sixSinesViews": [],
     "pianoRollViews": [
       {
         "id": "shape:sonar-dscale5",
@@ -108,7 +135,7 @@
         "id": "shape:sonar-dscale7",
         "rollName": "sonar/dscale7",
         "x": 700,
-        "y": 780,
+        "y": 880,
         "w": 850,
         "h": 557
       },
@@ -116,7 +143,7 @@
         "id": "shape:sonar-d7mel",
         "rollName": "sonar/d7mel",
         "x": 700,
-        "y": 1480,
+        "y": 1680,
         "w": 850,
         "h": 557
       }
@@ -128,23 +155,23 @@
         "x": 1600,
         "y": 80,
         "w": 360,
-        "h": 680
+        "h": 760
       },
       {
         "id": "shape:sonar-params-dscale7",
         "paramsName": "sonar/dscale7",
         "x": 1600,
-        "y": 780,
+        "y": 880,
         "w": 360,
-        "h": 680
+        "h": 760
       },
       {
         "id": "shape:sonar-params-d7mel",
         "paramsName": "sonar/d7mel",
         "x": 1600,
-        "y": 1480,
+        "y": 1680,
         "w": 360,
-        "h": 680
+        "h": 760
       },
       {
         "id": "shape:sonar-transport",
@@ -153,6 +180,14 @@
         "y": 610,
         "w": 560,
         "h": 420
+      },
+      {
+        "id": "shape:sonar-beatstep",
+        "paramsName": "sonar/beatstep",
+        "x": 80,
+        "y": 1080,
+        "w": 560,
+        "h": 300
       }
     ],
     "animationEditorViews": [],
