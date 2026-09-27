@@ -33,7 +33,13 @@ function sampledParams(): Record<string, ParamsEntity | null> | null {
   const changes = sampleParamsChanges();
   if (!changes) return null;
   return Object.fromEntries(
-    changes.map((change) => [change.name, change.entity]),
+    changes.map((change) => {
+      // Params ship whole entities; a patch here would break their contract.
+      if (change.patches) {
+        throw new Error(`unexpected patch for ${change.name}`);
+      }
+      return [change.name, change.entity];
+    }),
   );
 }
 
