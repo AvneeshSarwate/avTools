@@ -39,7 +39,13 @@ function sampled(): Record<string, SignalEntity | null> | null {
   const changes = sampleSignalChanges();
   if (!changes) return null;
   return Object.fromEntries(
-    changes.map((change) => [change.name, change.entity]),
+    changes.map((change) => {
+      // Signals ship whole entities; a patch here would break their contract.
+      if (change.patches) {
+        throw new Error(`unexpected patch for ${change.name}`);
+      }
+      return [change.name, change.entity];
+    }),
   );
 }
 
@@ -341,7 +347,7 @@ Deno.test("signals are invisible to the durable entity registry", () => {
   // whole ephemeral guarantee: no filter anywhere has to remember signals.
   assertEquals(
     listDurableEntityTypes().map((descriptor) => descriptor.typeId),
-    ["animationTimeline", "drawing", "params", "pianoRoll"],
+    ["animationTimeline", "drawing", "params", "pianoRoll", "sixSines"],
   );
   assertEquals(getDurableEntityType(SIGNAL_ENTITY_TYPE), undefined);
   for (const descriptor of listDurableEntityTypes()) {

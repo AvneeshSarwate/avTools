@@ -245,7 +245,9 @@ Deno.test("a whole-document set ships the changed nodes by index, a reshape ship
   // whole entity ship instead, so a client never applies a patch to a
   // baseline it has not received.
   successful(handle.update((doc) => {
-    doc.circle.nodes[0].radius = 6;
+    const circle = doc.circle.nodes[0];
+    if (circle.type !== "circle") throw new Error("expected a circle node");
+    circle.radius = 6;
   }));
   loadDrawing(handle.name, docWithCircle(1));
   assertEquals(paths(collectDrawingChanges()), ["full"]);

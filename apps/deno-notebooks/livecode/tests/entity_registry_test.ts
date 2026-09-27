@@ -345,9 +345,30 @@ Deno.test("pianoRoll round-trips through serialize/deserialize", () => {
     zoomY: 4,
   });
   assertEquals(loaded?.data.grid, { subdivision: 8 });
+  // Loading fills a missing start cursor with its default of 0; everything
+  // else round-trips unchanged.
+  assertEquals(loaded?.data.playStartPosition, 0);
   assertEquals(
-    pianoRolls.latestJson("reg/trip-loaded"),
-    pianoRolls.latestJson("reg/trip"),
+    JSON.parse(pianoRolls.latestJson("reg/trip-loaded")!),
+    {
+      ...JSON.parse(pianoRolls.latestJson("reg/trip")!),
+      playStartPosition: 0,
+    },
+  );
+
+  // A cursor that was set survives the round trip.
+  setPianoRoll("reg/cursor", {
+    notes: [{ id: "a", pitch: 60, position: 0, duration: 1 }],
+    playStartPosition: 2.5,
+  }, { source: "client" });
+  pianoRolls.deserialize(
+    "reg/cursor-loaded",
+    JSON.parse(JSON.stringify(pianoRolls.serialize("reg/cursor"))),
+  );
+  assertEquals(getPianoRoll("reg/cursor-loaded")?.data.playStartPosition, 2.5);
+  assertEquals(
+    pianoRolls.latestJson("reg/cursor-loaded"),
+    pianoRolls.latestJson("reg/cursor"),
   );
 });
 
