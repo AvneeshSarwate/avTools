@@ -3,6 +3,7 @@
 
 import type { EngineOp } from "./engine_uplink.ts";
 import type { SyncEntity, SyncEntityChange } from "./sync.ts";
+import type { UiEventBatch } from "./ui_events.ts";
 
 /**
  * Engine ownership within one browser origin. `engine` is the only state in
@@ -67,6 +68,11 @@ export interface BrowserEngineHost {
    */
   snapshot(entityTypes?: readonly string[]): Record<string, SyncEntity[]>;
   observe(observer: InProcessSyncObserver): () => void;
+  /**
+   * Same-realm outbound UI events. Batches are fresh objects the engine never
+   * touches again; listeners share them and must not mutate them.
+   */
+  observeUiEvents(listener: (batch: UiEventBatch) => void): () => void;
   /**
    * Execute one engine op in this realm — the same `executeEngineOp` the
    * uplink and the broadcast actions channel use. Rejects while this page is

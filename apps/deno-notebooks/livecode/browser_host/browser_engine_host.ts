@@ -27,6 +27,7 @@ import type {
   SyncEntityChange,
   SyncMessage,
   SyncSubscribeMessage,
+  UiEventBatch,
 } from "@avtools/livecode-protocol";
 
 const SYNC_CHANNEL_NAME = "livecode-sync";
@@ -75,6 +76,7 @@ export function startBrowserEngineHost(
   };
   const statusListeners = new Set<(status: BrowserEngineHostStatus) => void>();
   const observers = new Set<InProcessSyncObserver>();
+  const uiEventListeners = new Set<(batch: UiEventBatch) => void>();
   const lifetime = new AbortController();
   let releaseLock = () => {};
 
@@ -261,6 +263,21 @@ export function startBrowserEngineHost(
         }
         sendLocal({ changes });
         sendUplink({ type: "engineSync", changes });
+      },
+      // Outbound UI events take every path sync takes, as their own message:
+      // same-tab listeners, the sync BroadcastChannel for observer tabs, and
+      // the uplink for the server's `/sync` sockets.
+      onUiEvents: (batch) => {
+        if (runtime !== state) return;
+        for (const listener of [...uiEventListeners]) {
+          try {
+            listener(batch);
+          } catch (error) {
+            console.warn("[livecode-engine] ui event listener threw", error);
+          }
+        }
+        state.channel.postMessage(batch);
+        sendUplink({ type: "engineUiEvents", batch });
       },
     });
     const state: EngineRuntime = {
@@ -558,6 +575,12 @@ export function startBrowserEngineHost(
       observers.add(observer);
       return () => {
         observers.delete(observer);
+      };
+    },
+    observeUiEvents: (listener) => {
+      uiEventListeners.add(listener);
+      return () => {
+        uiEventListeners.delete(listener);
       };
     },
     execute: (op: EngineOp) => {

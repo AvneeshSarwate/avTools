@@ -6,6 +6,7 @@ import type {
   SyncActionResultMessage,
   SyncEntityChange,
   SyncMessage,
+  UiEventBatch,
 } from "../visualizer/protocol.ts";
 
 export function sleep(ms: number): Promise<void> {
@@ -55,6 +56,8 @@ export class SyncClient {
   readonly messages: SyncMessage[] = [];
   /** Replies to `action` messages, in arrival order; never in `messages`. */
   readonly actionReplies: SyncActionResultMessage[] = [];
+  /** Outbound engine UI event batches; not sync, so never in `messages`. */
+  readonly uiBatches: UiEventBatch[] = [];
   readonly socket: WebSocket;
 
   constructor(socket: WebSocket) {
@@ -62,8 +65,10 @@ export class SyncClient {
     socket.onmessage = (event) => {
       const message = JSON.parse(event.data as string) as
         | SyncMessage
-        | SyncActionResultMessage;
+        | SyncActionResultMessage
+        | UiEventBatch;
       if (message.type === "actionResult") this.actionReplies.push(message);
+      else if (message.type === "uiEvents") this.uiBatches.push(message);
       else this.messages.push(message);
     };
   }

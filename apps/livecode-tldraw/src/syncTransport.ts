@@ -5,6 +5,7 @@ import {
   type SyncClientMessage,
   type SyncMessage,
   type SyncServerMessage,
+  type UiEventBatch,
 } from "@avtools/livecode-protocol";
 import {
   createReconnectingSocket,
@@ -45,6 +46,11 @@ export interface SyncTransportCallbacks {
   onOpen(port: SyncPort): void;
   onMessage(message: SyncMessage, port: SyncPort): void;
   onActionResult?(message: SyncActionResultMessage): void;
+  /**
+   * Outbound engine UI events. They share the transport with sync but are not
+   * sync: no seq, no subscription, delivered whatever this page subscribes to.
+   */
+  onUiEvents?(batch: UiEventBatch): void;
   onClose(): void;
   onError(message: string): void;
 }
@@ -80,7 +86,11 @@ export function createBroadcastSyncTransport(
         },
       };
       active.sync.onmessage = (event) => {
-        const message = event.data as SyncMessage | undefined;
+        const message = event.data as SyncMessage | UiEventBatch | undefined;
+        if (message?.type === "uiEvents") {
+          callbacks.onUiEvents?.(message);
+          return;
+        }
         if (message?.type !== "sync") return;
         callbacks.onMessage(message, port);
       };
@@ -133,6 +143,10 @@ export function createWebSocketSyncTransport(
       }
       if (message.type === "actionResult") {
         callbacks.onActionResult?.(message);
+        return;
+      }
+      if (message.type === "uiEvents") {
+        callbacks.onUiEvents?.(message);
         return;
       }
       if (message.type !== "sync") return;
@@ -233,6 +247,11 @@ export function createInProcessSyncTransport(
               );
               if (subscribed.length > 0) deliver({ changes: subscribed });
             },
+          }),
+        );
+        active.teardown.push(
+          host.observeUiEvents((batch) => {
+            if (!active.closed) callbacks.onUiEvents?.(batch);
           }),
         );
         const evaluate = (status: BrowserEngineHostStatus) => {

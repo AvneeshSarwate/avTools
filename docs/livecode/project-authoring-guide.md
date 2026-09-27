@@ -161,6 +161,7 @@ These bare imports are the intentionally supported livecode surface:
 | --- | --- | --- |
 | `@avtools/core-timing` | `TimeContext` types and logical-time primitives. Project modules normally import `TimeContext` as a type and use the injected context; value imports (`startBarrier`/`awaitBarrier`/`resolveBarrier`, `TempoMap`) are served to browser modules as a bundled alias sharing the engine's instance. | Deno and browser |
 | `canvas-params` | `canvasParams(name, defaults, meta)` returns a live JSON-simple object that panes can edit; redeclaration reattaches to existing values. | Deno and browser |
+| `ui-events` | `send({type, body})` fires an event at every connected UI: fire and forget, no `TimeContext`, no replay. The tldraw app understands `tldraw.focusEntity`; other UIs read the same `uiEvents` messages. | Deno and browser |
 | `canvas-signals` | `signal(name)` publishes ephemeral monitor/playhead values and optional entity anchors. Signals end with their owner run and are not a cross-module data API. | Deno and browser |
 | `animation-timeline` | Declare and sample durable number, enum, and function tracks. | Deno and browser |
 | `@avtools/music-types` | Shared `AbletonClip`, `Scale`, and curve data utilities; browser alias shares class identity with piano-roll helpers. | Deno and browser |
@@ -208,6 +209,7 @@ Choosing a sparse store implementation is platform work following the
 | Cursor-latched chords, per-note macro modulation, editable looping MSEGs | [`six-sines-cursor-chords`](../../apps/livecode-tldraw/example-projects/six-sines-cursor-chords/README.md) |
 | Nested live params, metadata, code writes, scopes | [`feature-params-basics`](../../apps/livecode-tldraw/example-projects/feature-params-basics/README.md) |
 | Create/read/play piano rolls and use MIDI | [`feature-piano-roll-flows`](../../apps/livecode-tldraw/example-projects/feature-piano-roll-flows/README.md) |
+| Engine code moving the canvas camera (engine-to-UI events) | [`feature-ui-events`](../../apps/livecode-tldraw/example-projects/feature-ui-events/README.md) |
 | Record MIDI input into a piano roll | [`feature-midi-recording`](../../apps/livecode-tldraw/example-projects/feature-midi-recording/README.md) |
 | Play recorded MPE expression on Six Sines | [`feature-midi-recording-six-sines`](../../apps/livecode-tldraw/example-projects/feature-midi-recording-six-sines/README.md) |
 | Durable timelines, sampling, function cues, animation playheads | [`feature-animation-timeline`](../../apps/livecode-tldraw/example-projects/feature-animation-timeline/README.md) |

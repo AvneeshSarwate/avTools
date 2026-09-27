@@ -64,6 +64,7 @@ import {
 import { readBootParam } from "./bootParams";
 
 import { SyncStore } from "./syncStore";
+import { deliverUiEventBatch } from "./uiEvents";
 import { SyncStoreProvider, useSyncSlice } from "./syncSubscriptions";
 
 export { useSyncEntityNames, useSyncSelector } from "./syncSubscriptions";
@@ -506,6 +507,7 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
         for (const listener of [...listenersRef.current]) listener.onOpen?.();
       },
       onMessage: applyMessage,
+      onUiEvents: deliverUiEventBatch,
       onActionResult: (message) => {
         const entry = pendingActionsRef.current.get(message.requestId);
         if (!entry) return;

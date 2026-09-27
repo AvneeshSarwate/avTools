@@ -227,3 +227,13 @@ belongs to an actual TimeContext; cancellation removes it immediately and natura
 module completion retires remaining descendant subscriptions. Module-ID reuse
 cannot transfer an old handler into a replacement. Headless callers pass ctx;
 the analyzer supplies it for recognized calls in timed scopes.
+
+## Engine-to-UI events
+
+`ui-events` `send` is another engine singleton (`ui_events.ts`), independent
+of stores and sync. The host supplies one sink through the engine's optional
+`onUiEvents` dependency; the engine removes it on close. The Deno host writes
+each batch to every open `/sync` socket, the remote plane relays
+`engineUiEvents` the same way, and the browser host posts to its sync
+BroadcastChannel, calls same-tab observers, and forwards over the uplink.
+Nothing buffers a batch for a consumer that is not connected when it flushes.

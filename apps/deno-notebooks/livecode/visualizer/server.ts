@@ -84,6 +84,7 @@ import type {
   PianoRollSetResult,
   PianoRollSnapshot,
   SignalsSnapshot,
+  UiEventBatch,
 } from "./protocol.ts";
 import {
   createLocalExecutionPlane,
@@ -357,6 +358,7 @@ export async function createLivecodeVisualizerServer(
       log,
       onSyncChanges: (changes) => broadcastSyncChangeList(changes),
       onEngineResets: (resets) => broadcastSyncResets(resets),
+      onUiEvents: broadcastUiEvents,
       initializeEngine: (resets, execute) =>
         replayProjectDataToNewEngine(resets, execute),
     })
@@ -369,6 +371,7 @@ export async function createLivecodeVisualizerServer(
       log,
       panicMidi: (await import("../helpers/midi_helpers.ts")).panicMidi,
       onSyncTick: broadcastSyncChanges,
+      onUiEvents: broadcastUiEvents,
     })
     : null;
   const plane: ExecutionPlane = (localPlane ?? remotePlane)!;
@@ -2269,6 +2272,28 @@ export async function createLivecodeVisualizerServer(
       }
     }
     broadcastSyncChangeList(changes);
+  }
+
+  /**
+   * Outbound UI events go to every open sync socket, whatever it subscribes
+   * to: a consumer needs no subscription, only to handle `uiEvents`. Batches
+   * are not sync messages and never advance a socket's `seq`. Nothing is
+   * buffered; a socket that is not open when a batch flushes misses it.
+   */
+  function broadcastUiEvents(batch: UiEventBatch): void {
+    if (syncSockets.size === 0) return;
+    const payload = JSON.stringify(batch);
+    for (const state of syncSockets.values()) {
+      if (state.socket.readyState !== WebSocket.OPEN) continue;
+      try {
+        state.socket.send(payload);
+      } catch (error) {
+        void log({
+          type: "uiEventsSendFailed",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   }
 
   /** Fan one flat change list out per socket, filtered to its subscriptions. */
