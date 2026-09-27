@@ -385,6 +385,17 @@ input {
   background: #171c19;
 }
 
+/* tldraw sets user-select: none on every element in its container; error and
+   diagnostic text should still be selectable for copying. The footer stops
+   pointerdown from reaching tldraw, so a drag selects instead of moving the
+   shape. */
+.tl-container .livecode-shape__footer,
+.tl-container .livecode-shape__footer * {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+
 .diagnostic {
   padding: 7px 10px;
   color: #ffb3a9;
