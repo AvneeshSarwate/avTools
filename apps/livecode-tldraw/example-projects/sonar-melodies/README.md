@@ -69,7 +69,8 @@ transforms. Several banks can record from the same input at once.
 ## BeatStep
 
 Plug in an Arturia BeatStep (the original, not the Pro) in its factory CNTRL
-preset. The player selects it automatically when it sees an input whose name
+preset, except that encoder 1 sends CC 10 (as on the unit this was mapped on;
+the factory sends CC 7). The player selects it automatically when it sees an input whose name
 contains "BeatStep"; otherwise pick it in the **sonar/beatstep** pane. The pane
 also shows which melody the encoders edit and reports the device status.
 
@@ -78,11 +79,12 @@ Pads, as seen from the front (top row notes 44-51, bottom row 36-43):
 | | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | **top** | dscale5 one-shot | dscale7 one-shot | d7mel one-shot | dscale5 stop | dscale7 stop | d7mel stop | focus dscale5 | focus dscale7 |
-| **bottom** | dscale5 gate | dscale7 gate | d7mel gate | dscale5 record | dscale7 record | d7mel record | focus d7mel | canvas follow |
+| **bottom** | dscale5 gate | dscale7 gate | d7mel gate | dscale5 record | dscale7 record | record focused melody | focus d7mel | canvas follow |
 
 - Columns 1-3 are the original LPD8 layout: one column per melody, one-shot on
-  top and gate on the bottom. Columns 4-6 add stop and a record toggle for the
-  same melodies.
+  top and gate on the bottom. Columns 4-6 add stop for each melody, and record
+  toggles: bottom 4 and 5 for dscale5 and dscale7, and bottom 6 (note 41) for
+  whichever melody has focus.
 - The focus pads choose which melody the encoders edit and light like radio
   buttons. With three melodies and two pads left in the top row, the third
   focus pad is bottom 7.
@@ -91,14 +93,15 @@ Pads, as seen from the front (top row notes 44-51, bottom row 36-43):
   zoom. Pressing the focused pad again brings the camera back to it. This uses
   engine-to-UI events (`ui-events`), so it works in every engine topology.
   Changing focus from the pane's dropdown only updates the pads.
-- Record pads are lit while that bank is recording.
+- Record pads are lit while their bank is recording; note 41 follows the
+  focused melody.
 - The pad layout is one table, `PAD_LAYOUT` in `modules/beatstep.orig.ts`.
 
-Encoders edit the focused melody, in the original sketch's slider order:
+Encoders edit the focused melody, mostly in the original sketch's slider order:
 
 | Encoders | Parameters |
 | --- | --- |
-| 1-8 (top) | base transpose, stretch, rotate, reverse, ornament, easing, noteLength, spread |
+| 1-8 (top) | base transpose (CC 10), stretch, rotate, reverse, ornament, easing, spread (CC 73), noteLength (CC 75) |
 | 9-14 (bottom) | echo transpose, stretch, rotate, reverse, ornament, easing |
 | 15, 16 | delayTime, delayEnabled (turn right for on, left for off) |
 

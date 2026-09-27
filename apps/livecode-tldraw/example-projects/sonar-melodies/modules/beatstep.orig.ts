@@ -14,10 +14,13 @@ import type { MelodyParams } from "./controls.ts";
 export const TOP_ROW_NOTES = [44, 45, 46, 47, 48, 49, 50, 51];
 /** Factory pad notes, left to right. Pads 9-16 are the bottom row. */
 export const BOTTOM_ROW_NOTES = [36, 37, 38, 39, 40, 41, 42, 43];
-/** Factory encoder CCs, encoders 1-16 (1-8 top row, 9-16 bottom row). */
+/**
+ * Encoder CCs, encoders 1-16 (1-8 top row, 9-16 bottom row). The factory
+ * table, except encoder 1, which sends CC 10 on the unit this was mapped on.
+ */
 // deno-fmt-ignore
 export const ENCODER_CCS = [
-  7, 74, 71, 76, 77, 93, 73, 75,
+  10, 74, 71, 76, 77, 93, 73, 75,
   114, 18, 19, 16, 17, 91, 79, 72,
 ];
 
@@ -25,13 +28,15 @@ export type PadAction =
   | { kind: "launch"; melody: MelodyName; mode: "oneShot" | "gate" }
   | { kind: "stop"; melody: MelodyName }
   | { kind: "record"; melody: MelodyName }
+  | { kind: "recordFocused" }
   | { kind: "focus"; melody: MelodyName }
   | { kind: "followFocus" };
 
 /**
  * The pad layout, by note. Columns 1-3 are the LPD8 layout from the original
  * sketch, one column per melody: top one-shot, bottom gate. Columns 4-6 are
- * the same melodies' stop (top) and record (bottom). The focus switcher is the
+ * the same melodies' stop (top) and record (bottom), except bottom 6 (note
+ * 41), which records into the focused melody. The focus switcher is the
  * three pads at the right: top 7, top 8, bottom 7 for melodies 1-3. Bottom 8
  * toggles whether switching also moves the tldraw camera. Edit here to move
  * anything; the rest of the code only reads this table.
@@ -49,6 +54,8 @@ export const PAD_LAYOUT: ReadonlyMap<number, PadAction> = (() => {
     layout.set(focusPads[i], { kind: "focus", melody });
   });
   layout.set(BOTTOM_ROW_NOTES[7], { kind: "followFocus" });
+  // Note 41 (bottom 6) records into whichever melody has focus.
+  layout.set(41, { kind: "recordFocused" });
   return layout;
 })();
 
@@ -57,9 +64,10 @@ type EncoderTarget =
   | readonly ["noteLength" | "delayTime" | "delayEnabled"];
 
 /**
- * Encoders edit the focused melody, in the original sketch's slider order:
- * the top row is the base chain (s0-s7, with s6 as the note-length CC), the
- * bottom row the echo chain (s8-s13), then delay time and delay on/off.
+ * Encoders edit the focused melody, mostly in the original sketch's slider
+ * order: the top row is the base chain (s0-s5, then spread and the note-length
+ * CC), the bottom row the echo chain (s8-s13), then delay time and delay
+ * on/off.
  */
 export const ENCODER_TARGETS: readonly EncoderTarget[] = [
   ["base", "transpose"],
@@ -68,8 +76,8 @@ export const ENCODER_TARGETS: readonly EncoderTarget[] = [
   ["base", "reverse"],
   ["base", "ornament"],
   ["base", "easing"],
-  ["noteLength"],
   ["base", "spread"],
+  ["noteLength"],
   ["delay", "transpose"],
   ["delay", "stretch"],
   ["delay", "rotate"],
@@ -132,6 +140,8 @@ export function createBeatstepController(deps: {
         return settings.followFocus;
       case "record":
         return melodies[action.melody].record;
+      case "recordFocused":
+        return melodies[focused()].record;
       default:
         return false;
     }
@@ -186,6 +196,9 @@ export function createBeatstepController(deps: {
         if (down) {
           melodies[action.melody].record = !melodies[action.melody].record;
         }
+        return;
+      case "recordFocused":
+        if (down) melodies[focused()].record = !melodies[focused()].record;
         return;
       case "focus":
         if (!down) return;

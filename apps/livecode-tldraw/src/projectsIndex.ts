@@ -46,6 +46,8 @@ interface PageState {
   projects: ProjectsListResponse | null;
   projectsError: string | null;
   projectQuery: string;
+  /** Unsubmitted text in the server field; null shows the adopted server. */
+  serverUrlDraft: string | null;
   openPhase: OpenPhase;
   errorMessage: string | null;
 }
@@ -56,6 +58,7 @@ const state: PageState = {
   projects: null,
   projectsError: null,
   projectQuery: "",
+  serverUrlDraft: null,
   openPhase: { kind: "idle" },
   errorMessage: null,
 };
@@ -174,6 +177,7 @@ async function discoverServer(): Promise<void> {
 function adoptServer(serverBaseUrl: string, health: HealthResponse): void {
   const changed = state.serverBaseUrl !== serverBaseUrl;
   state.serverBaseUrl = serverBaseUrl;
+  state.serverUrlDraft = null;
   state.health = health;
   state.errorMessage = null;
   if (changed) {
@@ -237,12 +241,16 @@ async function pollHealthLoop(): Promise<void> {
       const health = await fetchHealth(serverBaseUrl, PROBE_TIMEOUT_MS);
       if (serverBaseUrl !== state.serverBaseUrl || openInProgress()) continue;
       if (health) {
+        // Redraw only on a real change: a redraw rebuilds every element.
+        const changed = JSON.stringify(health) !== JSON.stringify(state.health);
         state.health = health;
-        render();
+        if (changed) render();
         continue;
       }
-      state.health = null;
-      render();
+      if (state.health !== null) {
+        state.health = null;
+        render();
+      }
     }
     await discoverServer();
   }
@@ -462,6 +470,18 @@ function el<K extends keyof HTMLElementTagNameMap>(
 }
 
 function render(): void {
+  // Everything below is rebuilt from state, so the field being typed in is
+  // replaced by a fresh element. Carry its focus and cursor across.
+  const active = document.activeElement;
+  const focus = active instanceof HTMLInputElement && root.contains(active) &&
+      active.dataset.focusKey
+    ? {
+      key: active.dataset.focusKey,
+      start: active.selectionStart,
+      end: active.selectionEnd,
+      direction: active.selectionDirection ?? undefined,
+    }
+    : null;
   root.textContent = "";
   const page = el("div", "page");
 
@@ -507,6 +527,18 @@ function render(): void {
 
   page.appendChild(renderProjects());
   root.appendChild(page);
+
+  if (focus) {
+    const next = root.querySelector<HTMLInputElement>(
+      `input[data-focus-key="${focus.key}"]`,
+    );
+    if (next && !next.disabled) {
+      next.focus();
+      if (focus.start !== null && focus.end !== null) {
+        next.setSelectionRange(focus.start, focus.end, focus.direction);
+      }
+    }
+  }
 }
 
 function renderServerStatus(): HTMLElement {
@@ -549,7 +581,11 @@ function renderServerStatus(): HTMLElement {
   const input = el("input") as HTMLInputElement;
   input.type = "text";
   input.placeholder = `http://localhost:${DEFAULT_SERVER_PORT}`;
-  input.value = state.serverBaseUrl ?? "";
+  input.value = state.serverUrlDraft ?? state.serverBaseUrl ?? "";
+  input.dataset.focusKey = "server-url";
+  input.addEventListener("input", () => {
+    state.serverUrlDraft = input.value;
+  });
   const submit = el("button", undefined, "Use server") as HTMLButtonElement;
   submit.type = "submit";
   input.disabled = openInProgress();
@@ -634,17 +670,10 @@ function renderProjects(): HTMLElement {
   searchInput.setAttribute("aria-label", "Search projects by name");
   searchInput.autocomplete = "off";
   searchInput.spellcheck = false;
+  searchInput.dataset.focusKey = "project-search";
   searchInput.addEventListener("input", () => {
     state.projectQuery = searchInput.value;
     render();
-    const nextInput = document.querySelector<HTMLInputElement>(
-      ".project-search",
-    );
-    nextInput?.focus();
-    nextInput?.setSelectionRange(
-      state.projectQuery.length,
-      state.projectQuery.length,
-    );
   });
   searchLabel.appendChild(searchInput);
   container.appendChild(searchLabel);

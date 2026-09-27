@@ -270,10 +270,13 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
           // Encoders edit the focused melody only. Delta mode: the first
           // message sets a baseline, so a focus change never jumps a value.
           const other = JSON.stringify(melodies.dscale7);
+          // The mapping as measured on the owner's unit: CC 10 is base
+          // transpose, CC 73 base spread, CC 75 the note-length CC.
+          assertEquals(ENCODER_CCS[0], 10);
           const start = melodies.dscale5.base.transpose;
-          cc(ENCODER_CCS[0], 100);
+          cc(10, 100);
           assertEquals(melodies.dscale5.base.transpose, start);
-          cc(ENCODER_CCS[0], 106);
+          cc(10, 106);
           assertAlmostEquals(melodies.dscale5.base.transpose, start + 6 / 127);
           cc(ENCODER_CCS[15], 64);
           cc(ENCODER_CCS[15], 65);
@@ -290,11 +293,36 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
           settings.encoderMode = "absolute";
           cc(ENCODER_CCS[14], 127);
           assertEquals(melodies.dscale5.delayTime, 1);
-          cc(ENCODER_CCS[6], 0);
+          cc(73, 127);
+          assertEquals(melodies.dscale5.base.spread, 1);
+          cc(75, 0);
           assertEquals(melodies.dscale5.noteLength, 0);
           cc(ENCODER_CCS[8], 127);
           assertEquals(melodies.dscale5.delay.transpose, 1);
           assertEquals(JSON.stringify(melodies.dscale7), other);
+
+          // Note 41 toggles recording on whichever melody has focus, and is
+          // lit while that melody records.
+          tap(41);
+          assertEquals(melodies.dscale5.record, true);
+          assertEquals(leds.get(41), true);
+          settings.focus = "dscale7";
+          pads.refreshLeds();
+          assertEquals(leds.get(41), false, "the newly focused bank is idle");
+          tap(41);
+          assertEquals(melodies.dscale7.record, true);
+          assertEquals(
+            melodies.dscale5.record,
+            true,
+            "the other take continues",
+          );
+          tap(41);
+          settings.focus = "dscale5";
+          tap(41);
+          assertEquals([melodies.dscale5.record, melodies.dscale7.record], [
+            false,
+            false,
+          ]);
           pads.allLedsOff();
           assert([...leds.values()].every((on) => !on));
         } finally {
