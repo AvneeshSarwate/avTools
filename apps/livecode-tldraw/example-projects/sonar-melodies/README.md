@@ -1,8 +1,10 @@
 # Sonar melodies — tldraw port
 
 Three editable source piano rolls (`dscale5`, `dscale7`, `d7mel`), each with its
-own parameter object, pipeline instance, and one-shot/gate/stop buttons. All
-controls live on the tldraw canvas. No LPD8 or TouchOSC input adapter is included.
+own parameter object, pipeline instance, and one-shot/gate/stop buttons. Every
+control lives on the tldraw canvas, and an Arturia BeatStep can drive the same
+controls (see below). Each roll ("bank") can also be recorded into directly
+from a MIDI keyboard. No LPD8 or TouchOSC input adapter is included.
 
 Open **sonar-melodies** using **engine on server**, **engine in browser**, or
 **engine in same tab**, then Run **melody player**. Its imported helpers initialize automatically; they do
@@ -44,6 +46,74 @@ roll. The original clip length is kept as a minimum because piano-roll entities
 store notes rather than loop length; extending notes extends the phrase too.
 Save project persists roll edits, params, and layout. Restarting or replacing the
 player preserves those durable values.
+
+## Recording into a bank
+
+Pick a keyboard in the transport pane's **record input**, then switch on
+**record into this bank** in a melody's pane, play, and switch it off. The take
+replaces that melody's source roll; the next trigger plays it through the same
+transforms. Several banks can record from the same input at once.
+
+- The first note lands on beat 0, at the transport BPM.
+- **record quantize** snaps note starts to 1/4, 1/8, or 1/16 of a beat (off by
+  default) and rounds durations to the same grid.
+- **phrase beats** is set to the take's length, rounded up to a whole beat.
+  The roll stores notes only, so this is what keeps trailing silence in the
+  phrase. Set it to 0 to go back to the original melody's length.
+- **record status** reports the result. A take with no notes leaves the roll
+  alone. Stopping or replacing the player discards an unfinished take, and a
+  toggle left on is switched off when the player starts again.
+- Recording writes to the live roll only; **Save project** makes it permanent,
+  as with any roll edit. Undo in the piano roll does not cover a take.
+
+## BeatStep
+
+Plug in an Arturia BeatStep (the original, not the Pro) in its factory CNTRL
+preset. The player selects it automatically when it sees an input whose name
+contains "BeatStep"; otherwise pick it in the **sonar/beatstep** pane. The pane
+also shows which melody the encoders edit and reports the device status.
+
+Pads, as seen from the front (top row notes 44-51, bottom row 36-43):
+
+| | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **top** | dscale5 one-shot | dscale7 one-shot | d7mel one-shot | dscale5 stop | dscale7 stop | d7mel stop | focus dscale5 | focus dscale7 |
+| **bottom** | dscale5 gate | dscale7 gate | d7mel gate | dscale5 record | dscale7 record | d7mel record | focus d7mel | canvas follow |
+
+- Columns 1-3 are the original LPD8 layout: one column per melody, one-shot on
+  top and gate on the bottom. Columns 4-6 add stop and a record toggle for the
+  same melodies.
+- The focus pads choose which melody the encoders edit and light like radio
+  buttons. With three melodies and two pads left in the top row, the third
+  focus pad is bottom 7.
+- **canvas follow** (bottom right, lit while on) decides whether a focus press
+  also moves the tldraw camera to that melody's params pane, at the current
+  zoom. Pressing the focused pad again brings the camera back to it. This uses
+  engine-to-UI events (`ui-events`), so it works in every engine topology.
+  Changing focus from the pane's dropdown only updates the pads.
+- Record pads are lit while that bank is recording.
+- The pad layout is one table, `PAD_LAYOUT` in `modules/beatstep.orig.ts`.
+
+Encoders edit the focused melody, in the original sketch's slider order:
+
+| Encoders | Parameters |
+| --- | --- |
+| 1-8 (top) | base transpose, stretch, rotate, reverse, ornament, easing, noteLength, spread |
+| 9-14 (bottom) | echo transpose, stretch, rotate, reverse, ornament, easing |
+| 15, 16 | delayTime, delayEnabled (turn right for on, left for off) |
+
+The factory encoders send absolute values, which would make a parameter jump
+to the encoder's position whenever focus changes. The default **encoder mode**,
+`delta`, instead applies the change since the last message, so nothing jumps.
+Its limit is the encoder's own 0-127 range: at an end it stops sending until
+turned back. For endless turning, set the encoders to Relative #1 in Arturia's
+MIDI Control Center and choose the matching mode. `absolute` is available for
+anyone who prefers the jump.
+
+Pad LEDs are driven by sending each pad its own note, which works in the
+factory Note mode without SysEx, on both the Deno and browser engines. If the
+BeatStep's output port is missing, the status says so and everything else
+still works. Stopping the player turns the LEDs off.
 
 ## Transform pipeline
 
@@ -109,4 +179,13 @@ shared-pitch cancellation and Stop/Replace/Panic cleanup.
 
 Manually: edit each source, vary only one pane's transforms, trigger overlapping
 one-shots, release a held gate before its echo starts, then Stop/Replace. Save
-and reopen to check the edited rolls and independent settings persist.
+and reopen to check the edited rolls and independent settings persist. Record a
+take into one bank with quantize on and off, and check the other banks are
+untouched. With a BeatStep, press each pad column, switch focus with canvas
+follow on and off, and turn encoders after switching focus to check nothing
+jumps.
+
+The test also drives the BeatStep mapping with synthetic pad and encoder
+events (layout, radio LEDs, relit pads, the follow toggle, every encoder mode)
+and the recorder with synthetic takes. Recording was also checked live through
+an IAC bus on macOS.
