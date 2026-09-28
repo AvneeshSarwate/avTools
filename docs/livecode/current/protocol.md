@@ -157,6 +157,8 @@ changes. Document only a new non-obvious invariant or asymmetry; do not copy the
 new interface or route into Markdown. For a new named kind, use
 `adding-an-entity-kind.md`.
 
+## Events in both directions
+
 Global input events use explicit engine ops, never the conflating sync channel.
 Bodies are validated as JSON data even in same-tab mode, and each handler receives
 an isolated copy. A result reports synchronous dispatch count, not playback or

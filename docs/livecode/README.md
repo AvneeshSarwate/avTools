@@ -50,6 +50,9 @@ runtime validation.
   [sync semantics](current/protocol.md#sync-semantics).
 - Adapting a UI without making component code understand the wire protocol:
   [client state layers](current/client.md#state-layers-and-provider-order).
+- Discrete events rather than state, UI to engine (`canvas-events`) and engine
+  to UI (`ui-events`):
+  [events in both directions](current/protocol.md#events-in-both-directions).
 
 The tracker package's [README](../../packages/tracked-state/README.md) owns its
 value-model, aliasing, selective-scan, and cost details; the pages above own
