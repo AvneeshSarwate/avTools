@@ -29,6 +29,9 @@ import {
   getHorizontalViewportRange,
   getLaneAreaHeight,
   getVerticalViewportRange,
+  getView as getViewHelper,
+  setView as setViewHelper,
+  type PianoRollView,
   updateScrollBounds
 } from './pianoRollViewport'
 import {
@@ -238,6 +241,15 @@ const focusPianoRoll = () => {
 
 const fitZoomToNotes = () => {
   fitZoomToNotesHelper(state, scaledWidth.value, scaledHeight.value, notifyViewportChange)
+}
+
+/** Frame the notes: the public name for the fit the control panel's button does. */
+const fitToContent = () => fitZoomToNotes()
+
+const getView = (): PianoRollView => getViewHelper(state)
+
+const setView = (view: PianoRollView) => {
+  setViewHelper(state, view, scaledWidth.value, scaledHeight.value, notifyViewportChange)
 }
 
 const enforceScrollBounds = () => {
@@ -632,7 +644,10 @@ defineExpose({
   getPlayheadMarkers,
   getPlayStartPosition,
   setPlayStartPosition,
-  fitZoomToNotes
+  fitZoomToNotes,
+  fitToContent,
+  getView,
+  setView
 })
 </script>
 

@@ -60,6 +60,8 @@ transforms. Several banks can record from the same input at once.
 - **phrase beats** is set to the take's length, rounded up to a whole beat.
   The roll stores notes only, so this is what keeps trailing silence in the
   phrase. Set it to 0 to go back to the original melody's length.
+- **fit roll views after recording** (transport pane, on by default) frames
+  the take in that bank's piano-roll views once it is written.
 - **record status** reports the result. A take with no notes leaves the roll
   alone. Stopping or replacing the player discards an unfinished take, and a
   toggle left on is switched off when the player starts again.
@@ -105,16 +107,20 @@ Encoders edit the focused melody, mostly in the original sketch's slider order:
 | 9-14 (bottom) | echo transpose, stretch, rotate, reverse, ornament, easing |
 | 15, 16 | delayTime, delayEnabled (turn right for on, left for off) |
 
-The factory encoders send absolute values, which would make a parameter jump
-to the encoder's position whenever focus changes. The default **encoder mode**,
-`delta`, instead applies the change since the last message, so nothing jumps.
-Its limit is the encoder's own 0-127 range: at an end it stops sending until
-turned back. For endless turning, set the encoders to Relative #1 in Arturia's
-MIDI Control Center and choose the matching mode. `absolute` is available for
-anyone who prefers the jump.
+The knobs are set to Relative #1 (65 for a step clockwise, 63 for a step
+counter-clockwise), and that is the default **encoder mode**: each step moves
+the focused parameter by 1/127, knobs are endless, and switching focus never
+makes a value jump. To set all 16 knobs without Control Center, send
+`F0 00 20 6B 7F 42 02 00 06 2k 01 F7` for k = 0 to F (knobs 1-16). A factory
+BeatStep sends absolute values instead; for that, choose `delta`, which applies
+the change since the last message (limited by the knob's own 0-127 range), or
+`absolute`, which jumps to the knob's position.
 
-Pad LEDs are driven by sending each pad its own note, which works in the
-factory Note mode without SysEx, on both the Deno and browser engines. If the
+Pad LEDs are driven by sending each pad a note-on for its own note, and a
+real note-off to clear it (the BeatStep ignores a velocity-0 note-on). This
+works in the factory Note/Gate mode without SysEx, on both the Deno and
+browser engines. The BeatStep has no local-control setting, so a pad also
+lights itself while held; the player relights a lit pad after its release. If the
 BeatStep's output port is missing, the status says so and everything else
 still works. Stopping the player turns the LEDs off.
 

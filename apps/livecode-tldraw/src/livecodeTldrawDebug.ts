@@ -52,6 +52,7 @@ export interface TldrawRuntimeDebugShape {
   x: number;
   y: number;
   props: Record<string, unknown>;
+  meta: Record<string, unknown>;
 }
 
 export interface TldrawRuntimeDebug {
@@ -338,5 +339,6 @@ function snapshotShapes(): TldrawRuntimeDebugShape[] {
     x: shape.x,
     y: shape.y,
     props: shape.props as Record<string, unknown>,
+    meta: shape.meta as Record<string, unknown>,
   }));
 }

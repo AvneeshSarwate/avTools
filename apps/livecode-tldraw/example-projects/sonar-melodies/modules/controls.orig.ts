@@ -74,6 +74,7 @@ export function declareTransport(inputNames: string[]) {
     dryRun: false,
     recordInput: "",
     recordQuantize: 0,
+    fitAfterRecording: true,
   }, {
     bpm: { min: 20, max: 300 },
     channel: { min: 0, max: 15, step: 1 },
@@ -82,6 +83,7 @@ export function declareTransport(inputNames: string[]) {
       label: "record quantize",
       options: { off: 0, "1/4": 1, "1/8": 0.5, "1/16": 0.25 },
     },
+    fitAfterRecording: { label: "fit roll views after recording" },
   });
 }
 export const transport = declareTransport([]);
@@ -93,7 +95,8 @@ export function declareBeatstep(inputNames: string[]) {
     device: "",
     focus: melodyNames[0] as string,
     followFocus: true,
-    encoderMode: "delta" as string,
+    // The BeatStep's knobs are set to Relative #1 (endless, 65 up / 63 down).
+    encoderMode: "relative1" as string,
     status: "no device",
   }, {
     device: { label: "BeatStep input", options: inputOptions(inputNames) },

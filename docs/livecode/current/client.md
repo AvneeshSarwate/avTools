@@ -190,6 +190,12 @@ Domain bridges retain distinct semantics:
   does not add undo history; note history preserves the current cursor. Cursor
   hydration is silent and must not reload notes or reset selection. Live signal
   markers remain separate, ephemeral observations.
+- A piano-roll view's zoom and scroll are view state, kept in the shape's
+  `meta` and saved with canvas layout, never in the roll entity, so views of
+  one roll can differ and scrolling never edits content (the roll data's
+  `viewport` field is unused). A view opens on its saved view or, failing
+  that, framed on its notes, and saves only after a user gesture or an
+  explicit fit, so opening a project does not rewrite its layout.
 - Params panes edit a live declared object through leaf merges. Creating a pane
   does not create a schema; a not-yet-declared entity can correctly render
   empty/unavailable. Leaf metadata may provide `options: {label: primitive}`

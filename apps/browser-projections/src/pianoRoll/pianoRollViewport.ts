@@ -210,3 +210,36 @@ export const fitZoomToNotes = (
   const topIndex = clamp(topIndexRaw, 0, maxTopIndex)
   applyVerticalZoom(state, newNoteHeight, topIndex, fallbackWidth, fallbackHeight, notifyViewportChange)
 }
+
+/**
+ * What the user is looking at, in units that survive a resize: pixels per
+ * beat and per pitch row (the zoom), and the first visible beat and pitch row
+ * (the scroll). A host can store this and hand it back later.
+ */
+export type PianoRollView = {
+  quarterNoteWidth: number
+  noteHeight: number
+  startBeat: number
+  topRow: number
+}
+
+export const getView = (state: PianoRollState): PianoRollView => ({
+  quarterNoteWidth: state.grid.quarterNoteWidth,
+  noteHeight: state.grid.noteHeight,
+  startBeat: state.grid.quarterNoteWidth > 0
+    ? state.viewport.scrollX / state.grid.quarterNoteWidth
+    : 0,
+  topRow: state.grid.noteHeight > 0 ? state.viewport.scrollY / state.grid.noteHeight : 0
+})
+
+/** Apply a stored view; the zoom helpers clamp it to the current stage. */
+export const setView = (
+  state: PianoRollState,
+  view: PianoRollView,
+  fallbackWidth: number,
+  fallbackHeight: number,
+  notifyViewportChange: () => void
+) => {
+  applyHorizontalZoom(state, view.quarterNoteWidth, view.startBeat, fallbackWidth, fallbackHeight, notifyViewportChange)
+  applyVerticalZoom(state, view.noteHeight, view.topRow, fallbackWidth, fallbackHeight, notifyViewportChange)
+}

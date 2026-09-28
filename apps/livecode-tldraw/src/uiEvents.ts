@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import type { Editor, TLShapeId } from "tldraw";
 import type { UiEvent, UiEventBatch } from "@avtools/livecode-protocol";
 import { entityRefForCanvasView } from "./canvasViews";
+import { requestPianoRollFit } from "./PianoRollShape";
 
 // Engine-to-UI events on this page. Every sync transport hands its `uiEvents`
 // batches to `deliverUiEventBatch`; anything on the page can listen with
@@ -74,10 +75,26 @@ function focusEntity(editor: Editor, body: unknown): void {
   }
 }
 
+/**
+ * `tldraw.fitPianoRoll` `{name, rev?}`: frame the notes in every view of that
+ * roll. With `rev`, a view that has not received that revision yet fits when
+ * it does, since the event is not ordered against the roll's sync.
+ */
+function fitPianoRoll(_editor: Editor, body: unknown): void {
+  if (!body || typeof body !== "object") return;
+  const { name, rev } = body as { name?: unknown; rev?: unknown };
+  if (typeof name !== "string") return;
+  requestPianoRollFit(
+    name,
+    typeof rev === "number" && Number.isFinite(rev) ? rev : undefined,
+  );
+}
+
 export const TLDRAW_UI_EVENT_HANDLERS: Readonly<
   Record<string, TldrawUiEventHandler>
 > = {
   "tldraw.focusEntity": focusEntity,
+  "tldraw.fitPianoRoll": fitPianoRoll,
 };
 
 /** Route this app's `tldraw.*` events to the mounted editor. */

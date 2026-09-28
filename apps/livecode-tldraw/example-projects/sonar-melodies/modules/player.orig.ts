@@ -110,8 +110,12 @@ export default async function run(ctx: TimeContext) {
     melodies,
     settings: beatstep,
     trigger: (event) => pending.push(event),
+    // A pad lights on a note-on for its note and clears on a real note-off;
+    // the BeatStep does not treat a velocity-0 note-on as off.
     setLed: (note, on, channel) =>
-      ledOutput()?.noteOn(channel, note, on ? 127 : 0),
+      on
+        ? ledOutput()?.noteOn(channel, note, 127)
+        : ledOutput()?.noteOff(channel, note, 0),
     focusCanvas: (name) =>
       ui.send({
         type: "tldraw.focusEntity",
@@ -191,8 +195,18 @@ export default async function run(ctx: TimeContext) {
             secondsPerBeat: secondsPerBeatNow,
             quantize: transport.recordQuantize,
           });
-          setPianoRollClip(`sonar/${name}`, { notes: take.notes });
+          const written = setPianoRollClip(`sonar/${name}`, {
+            notes: take.notes,
+          });
           p.takeLength = take.lengthBeats;
+          if (written.ok && transport.fitAfterRecording) {
+            // The rev lets each view fit once it has the take, since this
+            // event is not ordered against the roll's own sync.
+            ui.send({
+              type: "tldraw.fitPianoRoll",
+              body: { name: `sonar/${name}`, rev: written.roll.rev },
+            });
+          }
           p.recordStatus =
             `wrote ${take.notes.length} notes, ${take.lengthBeats} beats`;
         }

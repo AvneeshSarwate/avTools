@@ -39,11 +39,18 @@ the outbound mirror of `canvas-events`:
   A different UI only needs to open that socket or channel and handle
   messages of type `uiEvents`; it does not need to subscribe to anything.
 
-The tldraw app handles `tldraw.*` types and ignores everything else. Today that
-is `tldraw.focusEntity` `{type, name, zoom?: "fit" | "keep"}`: it selects the
-first view bound to that entity on the current page and pans (`keep`) or zooms
-(`fit`, the default) to it. With no bound view nothing happens; the engine
-never creates views. Every open UI tab reacts.
+The tldraw app handles `tldraw.*` types and ignores everything else. Today:
+
+- `tldraw.focusEntity` `{type, name, zoom?: "fit" | "keep"}` selects the
+  first view bound to that entity on the current page and pans (`keep`) or
+  zooms (`fit`, the default) to it. With no bound view nothing happens; the
+  engine never creates views.
+- `tldraw.fitPianoRoll` `{name, rev?}` frames the notes in every view of that
+  piano roll. With `rev`, a view that has not received that revision yet fits
+  when it does, which is how a piece pairs this event with the roll write it
+  follows (sonar-melodies does this after recording).
+
+Every open UI tab reacts.
 
 ## Checks
 

@@ -14,6 +14,7 @@ import {
   RecordProps,
   T,
   TLShape,
+  useEditor,
 } from 'tldraw'
 import '@avtools/piano-roll'
 import type {
@@ -23,6 +24,7 @@ import type {
 import type {
   NoteData,
   PianoRollData,
+  PianoRollViewState,
 } from '@avtools/livecode-protocol'
 import { usePianoRollsSync } from './syncRuntime'
 import { PIANO_ROLL_ENTITY_TYPE } from './serverRequests'
@@ -103,6 +105,65 @@ export function listPianoRollMarkerViews(): PianoRollMarkerViewState[] {
   return Array.from(markerViewReaders.values(), (read) => read())
 }
 
+// A view's zoom and scroll are view state: they live in the shape's meta (no
+// schema change, saved with canvas layout), never in the roll entity, so two
+// views of one roll can differ and scrolling never edits musical content.
+const VIEW_META_KEY = 'pianoRollView'
+
+export function pianoRollViewFromMeta(meta: unknown): PianoRollViewState | null {
+  const view = (meta as Record<string, unknown> | undefined)?.[VIEW_META_KEY] as
+    | Record<string, unknown>
+    | undefined
+  if (!view) return null
+  const { quarterNoteWidth, noteHeight, startBeat, topRow } = view
+  const values = [quarterNoteWidth, noteHeight, startBeat, topRow]
+  if (!values.every((value) => typeof value === 'number' && Number.isFinite(value))) {
+    return null
+  }
+  return view as unknown as PianoRollViewState
+}
+
+/** The view as a plain JSON object, which is what tldraw accepts in meta. */
+function viewMeta(view: PianoRollViewState) {
+  return {
+    quarterNoteWidth: view.quarterNoteWidth,
+    noteHeight: view.noteHeight,
+    startBeat: view.startBeat,
+    topRow: view.topRow,
+  }
+}
+
+function roundView(view: PianoRollViewState): PianoRollViewState {
+  const round = (value: number) => Math.round(value * 1000) / 1000
+  return {
+    quarterNoteWidth: round(view.quarterNoteWidth),
+    noteHeight: round(view.noteHeight),
+    startBeat: round(view.startBeat),
+    topRow: round(view.topRow),
+  }
+}
+
+/** Let the element lay out at its real size before framing anything. */
+function afterLayout(fn: () => void): void {
+  requestAnimationFrame(() => requestAnimationFrame(fn))
+}
+
+const fitRequesters = new Map<
+  string,
+  { rollName: string; request: (minRev?: number) => void }
+>()
+
+/**
+ * Frame the notes in every view of `rollName`. With `minRev`, a view that has
+ * not yet received that revision fits when it does: the request may arrive
+ * before the notes it is about.
+ */
+export function requestPianoRollFit(rollName: string, minRev?: number): void {
+  for (const entry of fitRequesters.values()) {
+    if (entry.rollName === rollName) entry.request(minRev)
+  }
+}
+
 export class PianoRollShapeUtil extends BaseBoxShapeUtil<PianoRollShape> {
   static override type = PIANO_ROLL_SHAPE_TYPE
   static override props: RecordProps<PianoRollShape> = {
@@ -154,6 +215,7 @@ export function createPianoRollShape(
     x?: number
     y?: number
     id?: PianoRollShape['id']
+    view?: PianoRollViewState
   } = {},
 ) {
   const id = options.id ?? createShapeId()
@@ -174,6 +236,7 @@ export function createPianoRollShape(
       showControlPanel: options.showControlPanel ?? true,
       interactive: options.interactive ?? true,
     },
+    ...(options.view ? { meta: { [VIEW_META_KEY]: viewMeta(options.view) } } : {}),
   })
   editor.select(id)
   return id
@@ -189,6 +252,9 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
   const cursorWriteLane = useRef(Promise.resolve())
   const lastAppliedRollRef = useRef<AppliedPianoRollView | null>(null)
   const lastMarkerKeyRef = useRef<string | null>(null)
+  const pendingFitRevRef = useRef<number | null>(null)
+  const saveViewTimerRef = useRef<number | undefined>(undefined)
+  const editor = useEditor()
   const [writeError, setWriteError] = useState<string | null>(null)
   const originId = useMemo(() => `piano-roll-view-${shape.id}`, [shape.id])
   const stageSize = stageSizeFor(shape.props.w, shape.props.h)
@@ -200,6 +266,60 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
     element.interactive = shape.props.interactive
     element.showControlPanel = shape.props.showControlPanel
   }, [shape.props.interactive, shape.props.showControlPanel, stageSize.width, stageSize.height])
+
+  // Write the element's current view into the shape's meta, outside undo
+  // history. Only user gestures and explicit fits call this: the automatic
+  // first framing on load must not mark the project changed.
+  const saveView = useCallback(() => {
+    const view = elementRef.current?.getView?.()
+    const current = editor.getShape(shape.id)
+    if (!view || !current) return
+    const next = roundView(view)
+    const saved = pianoRollViewFromMeta(current.meta)
+    if (saved && JSON.stringify(saved) === JSON.stringify(next)) return
+    editor.run(() => {
+      editor.updateShape({
+        id: shape.id,
+        type: PIANO_ROLL_SHAPE_TYPE,
+        meta: { ...current.meta, [VIEW_META_KEY]: viewMeta(next) },
+      })
+    }, { history: 'ignore' })
+  }, [editor, shape.id])
+
+  const scheduleSaveView = useCallback(() => {
+    window.clearTimeout(saveViewTimerRef.current)
+    saveViewTimerRef.current = window.setTimeout(saveView, 400)
+  }, [saveView])
+
+  useEffect(() => () => window.clearTimeout(saveViewTimerRef.current), [])
+
+  const fitNow = useCallback(() => {
+    afterLayout(() => {
+      elementRef.current?.fitToContent?.()
+      saveView()
+    })
+  }, [saveView])
+
+  useEffect(() => {
+    const shapeId = String(shape.id)
+    fitRequesters.set(shapeId, {
+      rollName: shape.props.rollName,
+      request: (minRev) => {
+        const appliedRev = lastAppliedRollRef.current?.entity.rev
+        if (
+          minRev === undefined ||
+          (appliedRev !== undefined && appliedRev >= minRev)
+        ) {
+          fitNow()
+        } else {
+          pendingFitRevRef.current = Math.max(pendingFitRevRef.current ?? 0, minRev)
+        }
+      },
+    })
+    return () => {
+      fitRequesters.delete(shapeId)
+    }
+  }, [fitNow, shape.id, shape.props.rollName])
 
   // Every live signal anchored at this roll, as marker lines. Ended signals and
   // a dropped signals socket both render as no markers at all: a marker frozen
@@ -249,6 +369,14 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
     }
     el.setPlayStartPosition?.(roll.data.playStartPosition ?? 0)
     const lastApplied = lastAppliedRollRef.current
+    const firstForElement = lastApplied === null || lastApplied.element !== el
+    const settlePendingFit = () => {
+      const pending = pendingFitRevRef.current
+      if (pending !== null && roll.rev >= pending) {
+        pendingFitRevRef.current = null
+        fitNow()
+      }
+    }
     const decision = decidePianoRollHydration(
       lastApplied,
       shape.props.rollName,
@@ -271,14 +399,21 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
     // (originId is persistent, derived from the shape id).
     if (decision.kind === 'accept') {
       lastAppliedRollRef.current = decision.applied
+      settlePendingFit()
       return
     }
     lastAppliedRollRef.current = decision.applied
     el.setNotes?.(roll.data.notes, { silent: true })
-    if (roll.rev === 1) {
-      window.setTimeout(() => el.fitZoomToNotes?.(), 0)
+    if (firstForElement) {
+      // A view opens where it was left, or framed on its notes.
+      const saved = pianoRollViewFromMeta(editor.getShape(shape.id)?.meta)
+      afterLayout(() => {
+        if (saved) el.setView?.(saved)
+        else el.fitToContent?.()
+      })
     }
-  }, [originId, roll, shape.props.rollName])
+    settlePendingFit()
+  }, [editor, fitNow, originId, roll, shape.id, shape.props.rollName])
 
   useEffect(() => {
     const el = elementRef.current
@@ -348,11 +483,17 @@ function PianoRollShapeComponent({ shape }: { shape: PianoRollShape }) {
     const shieldKey = (event: KeyboardEvent) => event.stopPropagation()
     body.addEventListener('keydown', shieldKey)
     body.addEventListener('keyup', shieldKey)
+    // Scrolls, zooms, and the fit button end in one of these; the view is
+    // read back after the gesture settles.
+    body.addEventListener('wheel', scheduleSaveView, { passive: true })
+    body.addEventListener('pointerup', scheduleSaveView)
     return () => {
       body.removeEventListener('keydown', shieldKey)
       body.removeEventListener('keyup', shieldKey)
+      body.removeEventListener('wheel', scheduleSaveView)
+      body.removeEventListener('pointerup', scheduleSaveView)
     }
-  }, [])
+  }, [hasRoll, scheduleSaveView])
 
   const stopCanvasEvent = (event: SyntheticEvent) => {
     event.stopPropagation()

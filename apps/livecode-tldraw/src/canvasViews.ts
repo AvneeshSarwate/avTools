@@ -33,6 +33,7 @@ import {
 } from "./ParamPaneShape";
 import {
   createPianoRollShape,
+  pianoRollViewFromMeta,
   PIANO_ROLL_SHAPE_TYPE,
   type PianoRollShape,
   PianoRollShapeUtil,
@@ -148,14 +149,18 @@ export const CANVAS_VIEW_CODECS: readonly CanvasViewCodec[] = [
     createEntityView: (editor, name, position) =>
       String(createPianoRollShape(editor, { ...position, rollName: name })),
     collect: (shapes) => ({
-      pianoRollViews: shapes.filter(isPianoRollShape).map((shape) => ({
-        id: shape.id,
-        rollName: shape.props.rollName,
-        x: shape.x,
-        y: shape.y,
-        w: shape.props.w,
-        h: shape.props.h,
-      })),
+      pianoRollViews: shapes.filter(isPianoRollShape).map((shape) => {
+        const view = pianoRollViewFromMeta(shape.meta);
+        return {
+          id: shape.id,
+          rollName: shape.props.rollName,
+          x: shape.x,
+          y: shape.y,
+          w: shape.props.w,
+          h: shape.props.h,
+          ...(view ? { view } : {}),
+        };
+      }),
     }),
     restore(editor, canvas) {
       for (const view of canvas.pianoRollViews ?? []) {
@@ -169,13 +174,16 @@ export const CANVAS_VIEW_CODECS: readonly CanvasViewCodec[] = [
           h: view.h,
           rollName: view.rollName,
           title: `piano roll: ${view.rollName}`,
+          ...(view.view ? { view: view.view } : {}),
         });
       }
     },
     hasChanged: (before, after) => {
       const a = before as PianoRollShape;
       const b = after as PianoRollShape;
-      return hasBoxChanged(a, b) || a.props.rollName !== b.props.rollName;
+      return hasBoxChanged(a, b) || a.props.rollName !== b.props.rollName ||
+        JSON.stringify(pianoRollViewFromMeta(a.meta)) !==
+          JSON.stringify(pianoRollViewFromMeta(b.meta));
     },
   },
   {
