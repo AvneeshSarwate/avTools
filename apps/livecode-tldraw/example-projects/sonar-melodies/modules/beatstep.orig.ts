@@ -7,8 +7,10 @@ import type { MelodyParams } from "./controls.ts";
 // Arturia BeatStep (the original, not the Pro) in its factory CNTRL preset:
 // everything on the global channel (1 by default), pads in Note/Gate mode,
 // encoders sending absolute CCs. Pads light when they receive a note-on for
-// their own note, which is how the radio buttons and toggles show state; no
-// SysEx needed, so LEDs work on the browser engine too.
+// their own note and clear on a note-off (not a velocity-0 note-on), which is
+// how the radio buttons and toggles show state. There is no local-control
+// setting: a pad in Gate mode also lights itself while held. No SysEx is
+// needed, so LEDs work on the browser engine too.
 
 /** Factory pad notes, left to right. Pads 1-8 are the top row. */
 export const TOP_ROW_NOTES = [44, 45, 46, 47, 48, 49, 50, 51];

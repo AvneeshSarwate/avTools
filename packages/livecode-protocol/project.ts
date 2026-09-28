@@ -21,6 +21,18 @@ export interface ProjectModuleRecord {
   h?: number;
 }
 
+/**
+ * What one piano-roll view is looking at: zoom as pixels per beat and per
+ * pitch row, scroll as the first visible beat and pitch row. View state, so it
+ * lives with the view, not in the roll entity (whose `viewport` is unused).
+ */
+export interface PianoRollViewState {
+  quarterNoteWidth: number;
+  noteHeight: number;
+  startBeat: number;
+  topRow: number;
+}
+
 export interface ProjectCanvasPianoRollView {
   id: string;
   rollName: string;
@@ -28,6 +40,7 @@ export interface ProjectCanvasPianoRollView {
   y: number;
   w: number;
   h: number;
+  view?: PianoRollViewState;
 }
 
 export interface ProjectCanvasParamPaneView {

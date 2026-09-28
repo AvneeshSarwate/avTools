@@ -6,6 +6,7 @@ import type {
   DrawingNodeUpsert,
   NoteData,
   NoteDataInput,
+  PianoRollViewState,
 } from "@avtools/livecode-protocol";
 
 declare module "@avtools/piano-roll";
@@ -38,6 +39,10 @@ export interface PianoRollComponentElement extends HTMLElement {
   setPlayheadMarkers?: (markers: PlayheadMarker[]) => void;
   getPlayheadMarkers?: () => PlayheadMarker[];
   fitZoomToNotes?: () => void;
+  /** Frame the notes (the public name for the control panel's fit). */
+  fitToContent?: () => void;
+  getView?: () => PianoRollViewState;
+  setView?: (view: PianoRollViewState) => void;
 }
 
 export interface AnimationEditorComponentElement extends HTMLElement {

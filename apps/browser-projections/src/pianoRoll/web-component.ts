@@ -11,3 +11,4 @@ if (!customElements.get(tagName)) {
 
 export { PianoRollElement }
 export type { NoteData } from './pianoRollState'
+export type { PianoRollView } from './pianoRollViewport'

@@ -110,7 +110,8 @@ import '@/pianoRoll/web-component.ts'
   (positions in quarter notes)
 - `getPlayheadMarkers(): PlayheadMarker[]`: Read the markers currently rendered
 - `getPlayStartPosition(): number`: Read the current queue playhead (quarter notes)
-- `fitZoomToNotes()`: Zoom and scroll to fit all notes with minimum 4 beats × 12 pitches
+- `fitToContent()`: Zoom and scroll to fit all notes with minimum 4 beats × 12 pitches (`fitZoomToNotes()` is the older name for the same thing)
+- `getView()` / `setView(view)`: Read or restore what is being looked at, as `{quarterNoteWidth, noteHeight, startBeat, topRow}` (zoom in pixels per beat and per pitch row, scroll as the first visible beat and pitch row). Stored views survive resizing because they are in musical units
 
 ## Interactions
 
