@@ -1,7 +1,7 @@
 # Sonar melodies — tldraw port
 
 Three editable source piano rolls (`dscale5`, `dscale7`, `d7mel`), each with its
-own parameter object, pipeline instance, and one-shot/gate/stop buttons. Every
+own parameter object, pipeline instance, and one-shot/gate/stop/preview buttons. Every
 control lives on the tldraw canvas, and an Arturia BeatStep can drive the same
 controls (see below). Each roll ("bank") can also be recorded into directly
 from a MIDI keyboard. No LPD8 or TouchOSC input adapter is included.
@@ -38,6 +38,10 @@ No project-specific build or helper-module launch is required.
 - **gate** starts the same pair and cancels both on release, including an echo
   that has not started yet. It does not loop. Each melody has its own gate.
 - **stop** cancels every active phrase belonging to that melody.
+- **preview** plays the source roll as written, with no transforms and no
+  echo, on the base output at the transport BPM, and moves a playhead across
+  that melody's piano-roll views. Pressing it again restarts the preview;
+  **stop** ends it.
 - Module Stop, Replace, and Panic retire the listener and release owned notes.
   Holding the same MIDI pitch in two phrases does not let one release the other.
 
