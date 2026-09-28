@@ -27,6 +27,8 @@ function declare(name: MelodyName) {
       body: { melody: name, mode: "gate" },
     }),
     stop: button({ type: "sonar/stop", body: { melody: name } }),
+    // Plays the roll as written: no transforms, no echo.
+    preview: button({ type: "sonar/preview", body: { melody: name } }),
     // Recording replaces this melody's source roll when it is switched off.
     record: false,
     takeLength: 0,

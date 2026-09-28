@@ -5,6 +5,7 @@ import { launch } from "@avtools/core-timing";
 import { createLivecodeEngine } from "@avtools/livecode-engine";
 import { emit } from "@avtools/livecode-engine/events.ts";
 import { getPianoRoll } from "@avtools/livecode-engine/piano_roll_store.ts";
+import { listSignals } from "@avtools/livecode-engine/signals_store.ts";
 import {
   __testingRegisterMidiOutput,
   initMidi,
@@ -554,6 +555,71 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
             messages.filter((e) => e.kind === "on").length,
             messages.filter((e) => e.kind === "off").length,
           );
+
+          // Preview plays the roll as written: transforms and echo ignored.
+          const preview = (state: string, melody = "dscale5") =>
+            emit({ type: "sonar/preview", body: { melody, state } });
+          const playhead = () =>
+            listSignals().find((s) => s.name === "sonar/dscale5/preview")
+              ?.value;
+          const rollPitches = getPianoRoll("sonar/dscale5")!.data.notes
+            .map((n) => n.pitch).sort((a, b) => a - b);
+          const ons = () => messages.filter((e) => e.kind === "on");
+          const balanced = () =>
+            ons().length === messages.filter((e) => e.kind === "off").length;
+          messages.length = 0;
+          melodies.dscale5.base.transpose = 1;
+          preview("down");
+          preview("up");
+          await waitFor(
+            () => typeof playhead() === "number",
+            "preview playhead moves",
+          );
+          await waitFor(
+            () => ons().length === rollPitches.length && balanced(),
+            "preview completed",
+          );
+          await waitFor(() => playhead() === null, "playhead cleared");
+          assertEquals(
+            ons().map((e) => e.pitch).sort((a, b) => a - b),
+            rollPitches,
+            "preview ignores transforms",
+          );
+          assert(
+            messages.every((e) => e.port === "sonar-test-base"),
+            "preview has no echo",
+          );
+          melodies.dscale5.base.transpose = 0.5;
+          // A second press restarts rather than stacking.
+          messages.length = 0;
+          preview("down");
+          await waitFor(() => ons().length >= 2, "preview started");
+          preview("down");
+          await waitFor(
+            () =>
+              ons().length >= rollPitches.length + 2 && balanced() &&
+              playhead() === null,
+            "restarted preview completed",
+          );
+          assertEquals(ons().length, rollPitches.length + 2);
+          // The melody's stop ends a preview and its playhead.
+          messages.length = 0;
+          preview("down");
+          await waitFor(() => ons().length >= 1, "preview started again");
+          emit({
+            type: "sonar/stop",
+            body: { melody: "dscale5", state: "down" },
+          });
+          await waitFor(
+            () => balanced() && playhead() === null,
+            "stop ends the preview",
+          );
+          await sleep(700);
+          assert(
+            ons().length < rollPitches.length,
+            "stopped preview stays stopped",
+          );
+
           const beforeDryRun = messages.length;
           transport.dryRun = true;
           trigger("oneShot", "down");

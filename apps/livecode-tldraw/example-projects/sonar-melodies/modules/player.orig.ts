@@ -2,6 +2,7 @@ import type { TimeContext } from "@avtools/core-timing";
 import { AbletonClip } from "@avtools/music-types";
 import * as events from "canvas-events";
 import * as ui from "ui-events";
+import { signal } from "canvas-signals";
 import { getPianoRoll } from "piano-roll-store";
 import { getPianoRollClip, setPianoRollClip } from "piano-roll-helpers";
 import {
@@ -62,10 +63,73 @@ export default async function run(ctx: TimeContext) {
   const gates = new Map<string, Handle>();
   const pending: events.LivecodeEvent[] = [];
   events.onEvent((event) => {
-    if (event.type === "sonar/trigger" || event.type === "sonar/stop") {
+    if (
+      event.type === "sonar/trigger" || event.type === "sonar/stop" ||
+      event.type === "sonar/preview"
+    ) {
       pending.push(event);
     }
   });
+
+  // Roll data has no loop-length field: keep the recorded take's length, or
+  // the original's trailing silence, extending it if an edit adds notes
+  // beyond the phrase.
+  const phraseSource = (name: MelodyName) => {
+    const source = getPianoRollClip(`sonar/${name}`);
+    const minimumBeats = melodies[name].takeLength > 0
+      ? melodies[name].takeLength
+      : sources[name].duration;
+    source.duration = Math.max(source.duration, minimumBeats);
+    return source;
+  };
+  const secondsPerBeatNow = () =>
+    60 / Math.max(20, Math.min(300, transport.bpm));
+  const channelNow = () =>
+    Math.max(0, Math.min(15, Math.round(transport.channel)));
+
+  // Preview: the roll as written on the base output, with a playhead on the
+  // roll. A second press restarts it; the melody's stop ends it.
+  const previewHeads = new Map(melodyNames.map((name) => {
+    const head = signal<number | null>(`sonar/${name}/preview`);
+    head.addAnchor({ type: "pianoRoll", name: `sonar/${name}` });
+    return [name, head];
+  }));
+  const previews = new Map<MelodyName, Handle>();
+  const startPreview = (name: MelodyName) => {
+    previews.get(name)?.cancel();
+    const clip = phraseSource(name);
+    const out = output(transport.baseOutput);
+    const channel = channelNow();
+    const secondsPerBeat = secondsPerBeatNow();
+    const head = previewHeads.get(name)!;
+    const stepBeats = 1 / 16;
+    const handle = ctx.branch(async (previewCtx) => {
+      await Promise.all([
+        previewCtx.branchWait(async (playCtx) => {
+          await playClip(playCtx, clip, {
+            output: out,
+            channel,
+            secondsPerBeat,
+            gate: 0.98,
+          });
+        }),
+        previewCtx.branchWait(async (headCtx) => {
+          for (let beat = 0; beat < clip.duration; beat += stepBeats) {
+            head.set(beat);
+            await headCtx.waitSec(stepBeats * secondsPerBeat);
+          }
+        }),
+      ]);
+    }, `${name}/preview`);
+    previews.set(name, handle);
+    active.get(name)!.add(handle);
+    void handle.finally(() => {
+      active.get(name)!.delete(handle);
+      if (previews.get(name) !== handle) return;
+      previews.delete(name);
+      head.set(null);
+    }).catch(() => {});
+  };
 
   // MIDI inputs: a keyboard to record from and the BeatStep. Both selectors
   // list the ports visible now and refresh while this runs.
@@ -145,7 +209,6 @@ export default async function run(ctx: TimeContext) {
   try {
     while (true) {
       ctx.setBpm(transport.bpm);
-      const secondsPerBeatNow = 60 / Math.max(20, Math.min(300, transport.bpm));
 
       if (now() >= nextInputScan) {
         nextInputScan = now() + 1;
@@ -192,7 +255,7 @@ export default async function run(ctx: TimeContext) {
             continue;
           }
           const take = takeToRollNotes(notes, {
-            secondsPerBeat: secondsPerBeatNow,
+            secondsPerBeat: secondsPerBeatNow(),
             quantize: transport.recordQuantize,
           });
           const written = setPianoRollClip(`sonar/${name}`, {
@@ -223,6 +286,15 @@ export default async function run(ctx: TimeContext) {
           }
           continue;
         }
+        if (event.type === "sonar/preview") {
+          if (body.state !== "down") continue;
+          try {
+            startPreview(name);
+          } catch (error) {
+            console.error(`[sonar] ${name} preview:`, error);
+          }
+          continue;
+        }
         if (body.mode !== "oneShot" && body.mode !== "gate") continue;
         if (body.state === "up") {
           if (body.mode === "gate") {
@@ -234,22 +306,11 @@ export default async function run(ctx: TimeContext) {
         if (body.state !== "down") continue;
         if (body.mode === "gate") gates.get(gateKey)?.cancel();
         const pipeline = pipelines[name];
-        const source = getPianoRollClip(`sonar/${name}`);
-        // Roll data has no loop-length field: keep the recorded take's length,
-        // or the original's trailing silence, extending it if an edit adds
-        // notes beyond the phrase.
-        const minimumBeats = melodies[name].takeLength > 0
-          ? melodies[name].takeLength
-          : sources[name].duration;
-        source.duration = Math.max(source.duration, minimumBeats);
-        const base = pipeline.base(source);
+        const base = pipeline.base(phraseSource(name));
         const delayBeats = pipeline.delayBeats();
         const p = melodies[name];
-        const secondsPerBeat = 60 / Math.max(20, Math.min(300, transport.bpm));
-        const channel = Math.max(
-          0,
-          Math.min(15, Math.round(transport.channel)),
-        );
+        const secondsPerBeat = secondsPerBeatNow();
+        const channel = channelNow();
         try {
           const baseOut = output(transport.baseOutput);
           const delayOut = p.delayEnabled
