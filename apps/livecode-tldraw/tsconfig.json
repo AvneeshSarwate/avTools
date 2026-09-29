@@ -17,10 +17,11 @@
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
-      "@avtools/livecode-protocol": ["../../packages/livecode-protocol/mod.ts"]
+      "@avtools/livecode-protocol": ["../../packages/livecode-protocol/mod.ts"],
+      "@livecode-ui": ["./src/projectUiApi.ts"]
     },
     "allowImportingTsExtensions": true
   },
-  "include": ["src"],
+  "include": ["src", "example-projects/*/ui"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

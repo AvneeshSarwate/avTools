@@ -116,6 +116,17 @@ export interface SyncActions {
     values: ParamsValues,
     options?: { originId?: string },
   ): Promise<ParamsEntity>;
+  /** Save a preset from explicit values, or a snapshot of the live values when omitted. */
+  setParamsPreset(
+    name: string,
+    label: string,
+    options?: { values?: ParamsValues; originId?: string },
+  ): Promise<ParamsEntity>;
+  deleteParamsPreset(
+    name: string,
+    label: string,
+    options?: { originId?: string },
+  ): Promise<ParamsEntity>;
   setAnimationTimeline(
     name: string,
     data: AnimationTimelineData,
@@ -222,12 +233,14 @@ export interface ParamsSyncApi {
   params: Record<string, ParamsEntity>;
   latestSeq: number | null;
   setParams: SyncActions["setParams"];
+  setParamsPreset: SyncActions["setParamsPreset"];
+  deleteParamsPreset: SyncActions["deleteParamsPreset"];
 }
 
 export function useParamsSync(name?: string | null): ParamsSyncApi {
   const slice = useSyncSlice("params", name);
   const { connectionStatus, connectionError } = useSyncConnection();
-  const { setParams } = useSyncActions();
+  const { setParams, setParamsPreset, deleteParamsPreset } = useSyncActions();
   return useMemo(
     () => ({
       connectionStatus,
@@ -235,8 +248,17 @@ export function useParamsSync(name?: string | null): ParamsSyncApi {
       params: slice.entities,
       latestSeq: slice.latestSeq,
       setParams,
+      setParamsPreset,
+      deleteParamsPreset,
     }),
-    [connectionError, connectionStatus, setParams, slice],
+    [
+      connectionError,
+      connectionStatus,
+      deleteParamsPreset,
+      setParams,
+      setParamsPreset,
+      slice,
+    ],
   );
 }
 
@@ -660,6 +682,49 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
     [],
   );
 
+  const setParamsPreset = useCallback(
+    async (
+      name: string,
+      label: string,
+      options: { values?: ParamsValues; originId?: string } = {},
+    ) => {
+      const body = {
+        name,
+        label,
+        values: options.values,
+        originId: options.originId,
+      };
+      const entity = await engineAction<ParamsEntity | null>(
+        { kind: "paramsPresetSet", request: body },
+        serverBaseUrlRef.current,
+        "/params/preset/set",
+        body,
+      );
+      if (!entity) throw new Error(`No params entity "${name}"`);
+      return entity;
+    },
+    [],
+  );
+
+  const deleteParamsPreset = useCallback(
+    async (
+      name: string,
+      label: string,
+      options: { originId?: string } = {},
+    ) => {
+      const body = { name, label, originId: options.originId };
+      const entity = await engineAction<ParamsEntity | null>(
+        { kind: "paramsPresetDelete", request: body },
+        serverBaseUrlRef.current,
+        "/params/preset/delete",
+        body,
+      );
+      if (!entity) throw new Error(`No params entity "${name}"`);
+      return entity;
+    },
+    [],
+  );
+
   const setAnimationTimeline = useCallback(
     async (
       name: string,
@@ -813,6 +878,8 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
       undoRoll,
       redoRoll,
       setParams,
+      setParamsPreset,
+      deleteParamsPreset,
       setAnimationTimeline,
       setDrawing,
       patchDrawing,
@@ -820,6 +887,7 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
       setSixSinesPreset,
     }),
     [
+      deleteParamsPreset,
       patchDrawing,
       redoRoll,
       serverBaseUrl,
@@ -828,6 +896,7 @@ export function SyncRuntimeProvider({ children }: PropsWithChildren) {
       setSixSinesParameters,
       setSixSinesPreset,
       setParams,
+      setParamsPreset,
       setRoll,
       setRollCursor,
       setServerBaseUrl,

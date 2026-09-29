@@ -75,6 +75,43 @@ export function useSyncSelector<K extends SyncEntityTypeKey, T>(
   return useSyncExternalStore(subscribe, read, read);
 }
 
+/**
+ * One entity's derived view: subscribes to that name only and retains the
+ * result while `equal` holds, so a view of one facet (a preset bank, a single
+ * leaf) ignores the entity's other changes. `select` receives `undefined`
+ * when the entity is absent; `null` as the name disables the subscription.
+ */
+export function useSyncEntitySelector<K extends SyncEntityTypeKey, T>(
+  kind: K,
+  name: string | null,
+  select: (entity: SyncEntityByType[K] | undefined) => T,
+  equal: (a: T, b: T) => boolean = Object.is,
+): T {
+  const store = useStore();
+  const cache = useRef<{
+    entity: SyncEntityByType[K] | undefined;
+    select: typeof select;
+    value: T;
+  } | null>(null);
+  const subscribe = useCallback(
+    (listener: () => void) => store.subscribeEntity(kind, name, listener),
+    [store, kind, name],
+  );
+  const read = useCallback(() => {
+    const entity = name === null
+      ? undefined
+      : store.getEntitySlice(kind, name).entities[name];
+    const prior = cache.current;
+    if (prior && prior.entity === entity && prior.select === select)
+      return prior.value;
+    const next = select(entity);
+    const value = prior && equal(prior.value, next) ? prior.value : next;
+    cache.current = { entity, select, value };
+    return value;
+  }, [store, kind, name, select, equal]);
+  return useSyncExternalStore(subscribe, read, read);
+}
+
 export function SyncStoreProvider({
   store,
   children,
@@ -85,6 +122,11 @@ export function SyncStoreProvider({
     </SyncStoreContext.Provider>
   );
 }
+/** The shared UI copy of sync truth, for one-off reads outside a subscription. */
+export function useSyncStore(): SyncStore {
+  return useStore();
+}
+
 function useStore(): SyncStore {
   const store = useContext(SyncStoreContext);
   if (!store) throw new Error("Sync hooks require a SyncStoreProvider");
