@@ -23,7 +23,9 @@ props and UI details belong in source.
 
 `syncStore.ts` holds the UI copy behind a stable context; `syncSubscriptions.tsx`
 uses React external-store subscriptions. A bound shape must pass its entity name
-to its typed sync hook. A change to another entity, including one of the same
+to its typed sync hook. For one facet of one entity (a preset bank, a single
+leaf) use `useSyncEntitySelector`, which retains its result while the facet is
+unchanged; the `@livecode-ui` facet hooks are built on it. A change to another entity, including one of the same
 kind, must not invalidate that subscription. Omitting the name subscribes to the
 whole kind; reserve that for aggregate consumers. Passing `null` disables a
 subscription when a view switches between kinds.
@@ -163,6 +165,12 @@ The server's `/project/canvas` operation replaces the whole object, so every
 post must collect all registered view kinds together. Restores reuse saved
 shape IDs and skip an already-present ID. Only module and registered-view
 layout is project-persisted; arbitrary tldraw shapes require a `.tldr` save.
+
+A project's own views (`ui/index.tsx`) register through the same codec list:
+one generic entry persists every project-defined type as its shape's props
+and binds Duplicate through `entityType`/`entityName`. Their utils must be
+known before `<Tldraw>` mounts, so `App.tsx` loads the entry first;
+[project UI](project-ui.md) owns that contract.
 
 ## Shape boundaries
 

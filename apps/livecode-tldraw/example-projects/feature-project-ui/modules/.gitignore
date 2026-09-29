@@ -1,0 +1,3 @@
+# Runtime files are materialized from the canonical *.orig.ts sources.
+*.ts
+!*.orig.ts

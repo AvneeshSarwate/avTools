@@ -31,6 +31,7 @@ Read these in order:
 8. `docs/livecode/current/protocol.md`
 9. `docs/livecode/current/testing-and-operations.md`
 10. `docs/livecode/current/known-risks.md`
+11. `docs/livecode/current/project-ui.md`
 
 [`current/adding-an-entity-kind.md`](current/adding-an-entity-kind.md) is an
 on-demand recipe, not bootstrap reading.
@@ -53,6 +54,8 @@ runtime validation.
 - Discrete events rather than state, UI to engine (`canvas-events`) and engine
   to UI (`ui-events`):
   [events in both directions](current/protocol.md#events-in-both-directions).
+- A piece's own tldraw views (`ui/index.tsx`, `@livecode-ui`) and params
+  presets: [project UI](current/project-ui.md).
 
 The tracker package's [README](../../packages/tracked-state/README.md) owns its
 value-model, aliasing, selective-scan, and cost details; the pages above own

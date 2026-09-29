@@ -397,6 +397,8 @@ try {
     await runDrawingFixtureCase(viteBaseUrl)
   } else if (process.env.LIVECODE_E2E_CASE === 'uiEvents') {
     await runUiEventsFixtureCase(viteBaseUrl)
+  } else if (process.env.LIVECODE_E2E_CASE === 'projectUi') {
+    await runProjectUiPresetBankCase(viteBaseUrl)
   } else {
     await runResponsiveTopbarCase()
 
@@ -433,6 +435,7 @@ try {
     await runProjectOpenRestoresSavedTruthCase()
     await runProjectDuplicateAndDeleteCase()
     await runDrawingFixtureCase(viteBaseUrl)
+    await runProjectUiPresetBankCase(viteBaseUrl)
     await runCanvasDuplicateActionCase()
   }
 
@@ -2393,6 +2396,105 @@ async function runProjectDuplicateAndDeleteCase() {
 // ---------------------------------------------------------------------------
 
 /**
+ * A project with its own ui/index.tsx: the entry loads before the editor
+ * mounts, the saved bank shape restores from canvas.projectShapes, and the
+ * bank's buttons drive the params presets end to end (recall writes the
+ * values, save fills a bank, project save writes the presets to disk).
+ */
+async function runProjectUiPresetBankCase(viteBaseUrl) {
+  const fixtureRoot = path.join(tldrawAppRoot, 'example-projects/feature-project-ui')
+  const uiProjectRoot = path.join(sessionRoot, 'project-ui')
+  cpSync(fixtureRoot, uiProjectRoot, { recursive: true })
+  const manifest = JSON.parse(
+    readFileSync(path.join(fixtureRoot, 'project.avtools-livecode.json'), 'utf8')
+  )
+  const bankShape = manifest.canvas.projectShapes[0]
+  const dataEntry = manifest.data.find((entry) => entry.type === 'params')
+  const paramsName = dataEntry.name
+  const saved = JSON.parse(readFileSync(path.join(fixtureRoot, dataEntry.path), 'utf8'))
+
+  await page.goto(projectUrl(viteBaseUrl, serverBaseUrl, uiProjectRoot), {
+    waitUntil: 'domcontentloaded',
+  })
+  await page.locator('.livecode-shape').first().waitFor({ timeout: scaled(20_000) })
+  await waitForPageValue(
+    () => Boolean(window.__livecodeTldrawRuntimeDebug),
+    'tldraw runtime debug hooks installed for the project-UI project',
+    10_000
+  )
+  const uiState = await page.evaluate(() =>
+    window.__livecodeTldrawRuntimeDebug?.getProjectUiState()
+  )
+  assertEqual(uiState.status, 'loaded', `project UI entry loaded: ${JSON.stringify(uiState)}`)
+  assertEqual(uiState.shapeTypes.join(), bankShape.type, 'project UI registered its shape type')
+  assertEqual(uiState.unrestoredTypes.length, 0, 'every saved project shape restored')
+
+  const shapes = await getShapes()
+  const restored = shapes.find((shape) => shape.id === bankShape.id)
+  assert(restored, 'the saved preset-bank shape keeps its id')
+  assertEqual(restored.type, bankShape.type, 'restored project shape type')
+  assertEqual(restored.props.entityName, paramsName, 'restored project shape binding')
+  assertEqual(restored.x, bankShape.x, 'restored project shape x')
+
+  await page.evaluate(() => window.__livecodeTldrawRuntimeDebug?.connect())
+  await waitForTldrawReady()
+
+  const loaded = await waitForParamsEntity(
+    paramsName,
+    (entity) => entity.presets && Object.keys(entity.presets).join() === 'A,B',
+    'the saved params entity loads with its presets'
+  )
+  assertEqual(loaded.values.hue, saved.values.hue, 'saved values load')
+
+  const bank = page.locator(`.preset-bank[data-entity="${paramsName}"]`)
+  await bank.waitFor({ timeout: scaled(10_000) })
+  await bank.locator('[data-bank="B"][data-filled="true"]').waitFor({ timeout: scaled(10_000) })
+  assertEqual(
+    await bank.locator('[data-bank="C"]').getAttribute('data-filled'),
+    'false',
+    'bank C starts empty'
+  )
+
+  await bank.locator('[data-bank="B"]').click()
+  const recalled = await waitForParamsEntity(
+    paramsName,
+    (entity) => entity.values.hue === saved.presets.B.hue && entity.values.count === saved.presets.B.count,
+    'pressing bank B recalls preset B into the live values'
+  )
+  assertEqual(recalled.presets.A.hue, saved.presets.A.hue, 'recall leaves the bank alone')
+
+  await bank.locator('[data-mode="save"]').click()
+  await bank.locator('[data-bank="C"]').click()
+  const withC = await waitForParamsEntity(
+    paramsName,
+    (entity) => Boolean(entity.presets?.C),
+    'save mode fills bank C'
+  )
+  assertEqual(withC.presets.C.hue, saved.presets.B.hue, 'bank C holds the current (B) values')
+  await bank.locator('[data-bank="C"][data-filled="true"]').waitFor({ timeout: scaled(10_000) })
+  assertEqual(
+    await bank.locator('[data-mode="recall"]').getAttribute('data-selected'),
+    'true',
+    'the bank returns to recall mode after a save'
+  )
+
+  const result = await saveProjectViaDebug()
+  const savedParams = result.data.find(
+    (entry) => entry.type === 'params' && entry.name === paramsName
+  )
+  assert(savedParams?.ok, `the params should save: ${JSON.stringify(result)}`)
+  const file = JSON.parse(readFileSync(path.join(uiProjectRoot, savedParams.path), 'utf8'))
+  assertEqual(Object.keys(file.presets).join(), 'A,B,C', 'saved file carries the new preset')
+  const savedManifest = JSON.parse(
+    readFileSync(path.join(uiProjectRoot, 'project.avtools-livecode.json'), 'utf8')
+  )
+  assert(
+    savedManifest.canvas.projectShapes.some((shape) => shape.id === bankShape.id),
+    'the manifest keeps the project shape'
+  )
+}
+
+/**
  * Project mode renders no default canvas, so the project has to carry a module
  * before the boot waits below can resolve. The navigation replaces the canvas
  * every earlier case ran on, which is why these cases come last.
@@ -3316,6 +3418,9 @@ async function startVite(serverTarget) {
       env: {
         ...process.env,
         LIVECODE_SERVER_TARGET: serverTarget,
+        // Copied project fixtures live under the session root, outside the
+        // app: the project-UI case imports ui/index.tsx from there.
+        LIVECODE_PROJECT_ROOTS: sessionRoot,
       },
     }
   )

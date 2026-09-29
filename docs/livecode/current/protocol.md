@@ -64,8 +64,10 @@ subscribers. Do not let a socket or HTTP read independently drain a store.
 These are latest-state deltas, not an edit history, trigger stream, or promise
 that every intermediate assignment is delivered. Transport selection does not
 change these rules: WebSocket, BroadcastChannel, and same-realm observers must
-all respect payload ownership and baseline ordering. Two kinds ship sparse
-patches: Six Sines drains a `tracked-state` proxy, and the drawing store
+all respect payload ownership and baseline ordering. Three kinds ship sparse
+patches: Six Sines drains a `tracked-state` proxy, params ship per-facet
+patches (`["values"]`, `["presets"]`) serialized at collect time and go whole
+for meta or serializability changes, and the drawing store
 records the path of each explicit mutation itself (see
 [adding an entity kind](adding-an-entity-kind.md#3-implement-and-register-the-store)
 for when each fits); the other kinds retain their existing snapshot behavior.
@@ -101,7 +103,7 @@ These differences are deliberate; a generic entity layer must not erase them:
 | Kind | Mutation | Lifetime/persistence |
 | --- | --- | --- |
 | Piano roll | Whole normalized set is an upsert; optional compare-and-set and bounded undo/redo. | Durable; explicit project save. |
-| Params | Leaf merge into an existing declared/live object; unknown/type-mismatched leaves are ignored and logged. | Durable values plus meta; explicit save. |
+| Params | Leaf merge into an existing declared/live object; unknown/type-mismatched leaves are ignored and logged. Presets are label-keyed value snapshots beside the values: set (explicit or snapshot), delete, and recall as an ordinary set. Observation is per-facet after the initial full entity. | Durable values, meta, and presets; explicit save. |
 | Animation timeline | Whole validated replacement of an existing entity, normally compare-and-set. Sampling/callback execution is not stored. | Durable data only; explicit save. |
 | Six Sines | Live numeric parameter assignments or validated small UI sets; explicit bulk preset reconciliation preserves the held values container. Observation is sparse after the initial full entity. | Durable base preset XML plus current numeric values; explicit save. |
 | Drawing | Whole validated replacement with optional compare-and-set, or node upserts/deletes by id (`/drawing/patch`, the in-gesture stream), validated as a batch. Observation is sparse after the initial full entity: changed nodes by index, a layer's node array when reshaped. | Durable document; explicit save. |

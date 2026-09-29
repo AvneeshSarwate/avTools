@@ -22,6 +22,7 @@ and the end-to-end topology and flows are in
 | Projects index page (server discovery, project list, topology-aware open) | `projects.html`, `src/projectsIndex.ts` |
 | Sync provider, entity-scoped subscriptions, typed hooks, and writes | `src/syncRuntime.tsx`, `src/syncStore.ts`, `src/syncSubscriptions.tsx` |
 | Sync map reduction and WebSocket/BroadcastChannel adapters | `src/syncState.ts`, `src/syncTransport.ts` |
+| Project-owned UI: entry loading, the `@livecode-ui` surface, the entity-shape factory | `src/projectUi.ts`, `src/projectUiApi.ts`, `src/defineEntityShape.tsx` |
 | Engine-to-UI events: page-wide listeners and this app's `tldraw.*` handlers | `src/uiEvents.ts` |
 | Runtime provider, connect/recovery, analysis, launch, and project synchronization | `src/livecodeRuntime.tsx`, `src/buildLifecycle.ts`, `src/runCorrelation.ts` |
 | Livecode shape and utility | `src/LivecodeEditorShape.tsx` |
