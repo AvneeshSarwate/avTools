@@ -41,6 +41,8 @@ export {
   useSyncSlice,
 } from "./syncSubscriptions";
 export { useSyncConnection } from "./syncRuntime";
+/** tldraw's prop validators, for `defineEntityShape({ props })`. */
+export { T } from "tldraw";
 export type {
   LivecodeEvent,
   ParamsEntity,
