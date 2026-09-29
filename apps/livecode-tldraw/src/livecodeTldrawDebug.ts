@@ -6,6 +6,12 @@ import type {
   VisualizerManifestMessage,
 } from "./livecodeProtocol";
 import { createEntityView, saveProjectWithCanvas } from "./canvasViews";
+import { createEntityShape } from "./defineEntityShape";
+import {
+  getProjectUiState,
+  isProjectShapeType,
+  type ProjectUiState,
+} from "./projectUi";
 import { createLivecodeShape, createModuleId } from "./LivecodeEditorShape";
 import {
   listPianoRollMarkerViews,
@@ -76,6 +82,14 @@ export interface TldrawRuntimeDebug {
   /** Camera and the page point at the viewport centre, for camera-move checks. */
   getCamera(): { x: number; y: number; z: number; center: { x: number; y: number } } | null;
   createEntityView(type: string, name: string): string | null;
+  /** What the project's ui/index.tsx registered, or why it did not. */
+  getProjectUiState(): ProjectUiState;
+  /** A project-defined entity shape; returns its shape id. */
+  createProjectShape(
+    type: string,
+    entityName: string,
+    options?: { x?: number; y?: number; props?: Record<string, unknown> },
+  ): string | null;
   /** A second (third, ...) module on the canvas; returns its module id. */
   createModule(source?: string): string | null;
   createSignalScope(
@@ -206,6 +220,14 @@ function installDebugApi() {
       const editor = refs.editor;
       if (!editor) return null;
       return createEntityView(editor, type, name);
+    },
+    getProjectUiState() {
+      return getProjectUiState();
+    },
+    createProjectShape(type, entityName, options) {
+      const editor = refs.editor;
+      if (!editor || !isProjectShapeType(type)) return null;
+      return String(createEntityShape(editor, type, { entityName, ...options }));
     },
     createModule(source) {
       const editor = refs.editor;

@@ -111,6 +111,20 @@ export interface ProjectCanvasSixSinesView {
   h: number;
 }
 
+/**
+ * A view whose shape type the project's own UI code defines (`ui/index.tsx`).
+ * Saved as tldraw sees it: the props are the shape's own, and by convention
+ * hold the binding (`entityType`, `entityName`), layout, and presentation,
+ * never domain data, which lives in an entity.
+ */
+export interface ProjectCanvasProjectShape {
+  id: string;
+  type: string;
+  x: number;
+  y: number;
+  props: Record<string, unknown>;
+}
+
 export interface ProjectCanvasState {
   sixSinesViews?: ProjectCanvasSixSinesView[];
   pianoRollViews?: ProjectCanvasPianoRollView[];
@@ -119,6 +133,7 @@ export interface ProjectCanvasState {
   scopeViews?: ProjectCanvasScopeView[];
   drawingViews?: ProjectCanvasDrawingView[];
   canvasSurfaceViews?: ProjectCanvasSurfaceView[];
+  projectShapes?: ProjectCanvasProjectShape[];
 }
 
 /**
