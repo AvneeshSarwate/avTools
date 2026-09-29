@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { type Editor, Tldraw } from "tldraw";
+import { type Editor, type TLAnyShapeUtilConstructor, Tldraw } from "tldraw";
 import {
   type LivecodeEditorShape,
   LivecodeEditorShapeUtil,
@@ -14,6 +14,7 @@ import {
   isCanvasViewShape,
 } from "./canvasViews";
 import { setRuntimeDebugRefs } from "./livecodeTldrawDebug";
+import { getProjectUiState, loadProjectUi } from "./projectUi";
 import { waitForInProcessEngineAttached } from "./inProcessEngine";
 import { useClientControlBridge } from "./clientControlBridge";
 import { useTldrawUiEvents } from "./uiEvents";
@@ -36,6 +37,7 @@ const shapeUtils = [
   LivecodeEditorShapeUtil,
   ...CANVAS_VIEW_SHAPE_UTILS,
 ];
+const BUILTIN_SHAPE_TYPES = shapeUtils.map((util) => util.type);
 export function App() {
   // The sync provider is outermost because everything else reads from it: the
   // entity shapes take their maps from it directly, and the livecode runtime
@@ -71,6 +73,29 @@ function LivecodeTldrawPage() {
   // `serverBaseUrl=none` is the serverless baked topology: the project shape
   // comes from the bake's static baked.json instead of project routes.
   const bakedMode = isBakedServerBaseUrl(runtime.serverBaseUrl);
+  // The project's own shape utils must be known before <Tldraw> mounts, so a
+  // project URL waits for its ui/index.tsx (or its absence) before the editor
+  // renders. Null until that is settled.
+  const [projectShapeUtils, setProjectShapeUtils] = useState<
+    TLAnyShapeUtilConstructor[] | null
+  >(projectPath && !bakedMode ? null : []);
+  const [projectUiError, setProjectUiError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!projectPath || bakedMode) return;
+    let cancelled = false;
+    void loadProjectUi(projectPath, BUILTIN_SHAPE_TYPES).then((utils) => {
+      if (cancelled) return;
+      setProjectUiError(getProjectUiState().error);
+      setProjectShapeUtils(utils);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [bakedMode, projectPath]);
+  const allShapeUtils = useMemo(
+    () => projectShapeUtils ? [...shapeUtils, ...projectShapeUtils] : null,
+    [projectShapeUtils],
+  );
   const projectLoadedRef = useRef(false);
   // Set for the whole async load: this effect re-runs whenever the runtime
   // context changes, and every re-run before the first load finished used to
@@ -337,10 +362,17 @@ function LivecodeTldrawPage() {
         projectPath={projectPath}
         onOpenTldrawFile={loadTldrawFile}
       />
+      {projectUiError
+        ? (
+          <div className="project-ui-error" role="alert">
+            Project UI failed to load; built-in views only. {projectUiError}
+          </div>
+        )
+        : null}
       <div className="canvas-shell">
-        <Tldraw
+        {allShapeUtils === null ? null : <Tldraw
           overrides={uiOverrides}
-          shapeUtils={shapeUtils}
+          shapeUtils={allShapeUtils}
           onMount={(mountedEditor) => {
             setEditor(mountedEditor);
             if (
@@ -350,7 +382,7 @@ function LivecodeTldrawPage() {
               createDefaultLivecodeCanvas(mountedEditor);
             }
           }}
-        />
+        />}
       </div>
     </div>
   );

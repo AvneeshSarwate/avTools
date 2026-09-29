@@ -12,6 +12,15 @@ import type {
 } from "@avtools/livecode-protocol";
 import type { Editor, TLShape } from "tldraw";
 import {
+  createEntityShape,
+  type EntityShape,
+  isEntityShape,
+} from "./defineEntityShape";
+import {
+  isProjectShapeType,
+  recordUnrestoredProjectShapeTypes,
+} from "./projectUi";
+import {
   ANIMATION_EDITOR_SHAPE_TYPE,
   ANIMATION_TIMELINE_ENTITY_TYPE,
   type AnimationEditorShape,
@@ -66,7 +75,8 @@ import {
 } from "./canvasViewRegistry";
 
 interface CanvasViewCodec extends CanvasViewDispatchCodec {
-  shapeUtil:
+  /** Absent for the project-shape codec: its utils come from the project's UI entry. */
+  shapeUtil?:
     | typeof SixSinesShapeUtil
     | typeof PianoRollShapeUtil
     | typeof ParamPaneShapeUtil
@@ -425,10 +435,71 @@ export const CANVAS_VIEW_CODECS: readonly CanvasViewCodec[] = [
       return hasBoxChanged(a, b) || a.props.surfaceName !== b.props.surfaceName;
     },
   },
+  {
+    // Views whose shape type the project's own ui/index.tsx defines. One codec
+    // covers every such type: the binding is in the props by construction
+    // (defineEntityShape), and persistence is the shape's own props.
+    isShape: isProjectShape,
+    rebindEntity: (shape, name) =>
+      ({
+        ...shape,
+        props: { ...shape.props, entityName: name },
+      }) as TLShape,
+    entityRef: (shape) => {
+      const props = (shape as EntityShape).props;
+      return { type: props.entityType, name: props.entityName };
+    },
+    collect: (shapes) => ({
+      projectShapes: shapes.filter(isProjectShape).map((shape) => ({
+        id: shape.id,
+        type: shape.type,
+        x: shape.x,
+        y: shape.y,
+        props: { ...shape.props },
+      })),
+    }),
+    restore(editor, canvas) {
+      const unrestored = new Set<string>();
+      for (const view of canvas.projectShapes ?? []) {
+        const id = view.id as TLShape["id"];
+        if (editor.getShape(id)) continue;
+        if (!isProjectShapeType(view.type)) {
+          unrestored.add(view.type);
+          continue;
+        }
+        const { entityName, ...props } = view.props as unknown as EntityShape["props"];
+        createEntityShape(editor, view.type, {
+          id,
+          entityName,
+          x: view.x,
+          y: view.y,
+          props,
+        });
+      }
+      if (unrestored.size) {
+        recordUnrestoredProjectShapeTypes([...unrestored]);
+        console.warn(
+          `[livecode-tldraw] saved project shapes skipped: no loaded shape util for ${
+            [...unrestored].join(", ")
+          }`,
+        );
+      }
+    },
+    hasChanged: (before, after) => {
+      const a = before as EntityShape;
+      const b = after as EntityShape;
+      return hasBoxChanged(a, b) ||
+        JSON.stringify(a.props) !== JSON.stringify(b.props);
+    },
+  },
 ];
 
-export const CANVAS_VIEW_SHAPE_UTILS = CANVAS_VIEW_CODECS.map(
-  (codec) => codec.shapeUtil,
+function isProjectShape(value: unknown): value is EntityShape {
+  return isEntityShape(value) && isProjectShapeType(value.type);
+}
+
+export const CANVAS_VIEW_SHAPE_UTILS = CANVAS_VIEW_CODECS.flatMap(
+  (codec) => codec.shapeUtil ? [codec.shapeUtil] : [],
 );
 
 export function collectCanvasViews(

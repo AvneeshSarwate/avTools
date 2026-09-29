@@ -1,7 +1,8 @@
 import { sixSinesUiAssets } from "./sixSinesUiAssets";
 import react from "@vitejs/plugin-react";
+import path from "node:path";
 import { fileURLToPath, URL } from "node:url";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, type Plugin, searchForWorkspaceRoot } from "vite";
 
 const livecodeServerTarget =
   process.env.LIVECODE_SERVER_TARGET ?? "http://localhost:7777";
@@ -57,6 +58,17 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     strictPort: true,
+    // A project's ui/index.tsx is served from wherever the project lives.
+    // Projects under this app (example-projects) need nothing; for others,
+    // list their roots in LIVECODE_PROJECT_ROOTS (path-delimited).
+    fs: {
+      allow: [
+        searchForWorkspaceRoot(process.cwd()),
+        ...(process.env.LIVECODE_PROJECT_ROOTS ?? "")
+          .split(path.delimiter)
+          .filter(Boolean),
+      ],
+    },
     // Vite's supported wildcard is a leading-dot domain suffix. This allows
     // any Worker name in this account without trusting the shared workers.dev
     // domain as a whole.
