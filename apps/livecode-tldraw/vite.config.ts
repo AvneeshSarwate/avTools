@@ -100,6 +100,12 @@ export default defineConfig({
           import.meta.url,
         ),
       ),
+      // The project-UI surface: a project's `ui/index.tsx` imports the app's
+      // hooks, actions and shape factory under this one name (see
+      // src/projectUiApi.ts), never by a path into src.
+      "@livecode-ui": fileURLToPath(
+        new URL("./src/projectUiApi.ts", import.meta.url),
+      ),
       // Raw-TS workspace package: the shared wire contract, compiled by Vite
       // straight from source (the same mechanism browser-projections uses for
       // @avtools/core-timing).
