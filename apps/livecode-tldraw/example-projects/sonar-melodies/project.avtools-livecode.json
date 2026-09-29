@@ -23,7 +23,7 @@
       "kind": "runnable",
       "title": "controls",
       "sourceVersion": 2,
-      "x": 2050,
+      "x": 2320,
       "y": 1120,
       "w": 560,
       "h": 460
@@ -36,7 +36,7 @@
       "kind": "runnable",
       "title": "pipeline",
       "sourceVersion": 2,
-      "x": 2050,
+      "x": 2320,
       "y": 1640,
       "w": 560,
       "h": 460
@@ -49,7 +49,7 @@
       "kind": "runnable",
       "title": "transforms",
       "sourceVersion": 2,
-      "x": 2050,
+      "x": 2320,
       "y": 2160,
       "w": 560,
       "h": 460
@@ -62,7 +62,7 @@
       "kind": "runnable",
       "title": "easing",
       "sourceVersion": 2,
-      "x": 2050,
+      "x": 2320,
       "y": 2680,
       "w": 560,
       "h": 460
@@ -75,7 +75,7 @@
       "kind": "runnable",
       "title": "sources",
       "sourceVersion": 2,
-      "x": 2050,
+      "x": 2320,
       "y": 3200,
       "w": 560,
       "h": 460
@@ -88,7 +88,7 @@
       "kind": "runnable",
       "title": "playback + note ownership",
       "sourceVersion": 2,
-      "x": 2050,
+      "x": 2320,
       "y": 3720,
       "w": 560,
       "h": 460
@@ -101,7 +101,7 @@
       "kind": "runnable",
       "title": "BeatStep mapping",
       "sourceVersion": 2,
-      "x": 2050,
+      "x": 2320,
       "y": 4240,
       "w": 560,
       "h": 460
@@ -114,7 +114,7 @@
       "kind": "runnable",
       "title": "recording into banks",
       "sourceVersion": 2,
-      "x": 2050,
+      "x": 2320,
       "y": 4760,
       "w": 560,
       "h": 460
@@ -193,7 +193,74 @@
     "animationEditorViews": [],
     "drawingViews": [],
     "scopeViews": [],
-    "canvasSurfaceViews": []
+    "canvasSurfaceViews": [],
+    "projectShapes": [
+      {
+        "id": "shape:sonar-presets-dscale5",
+        "type": "sonar-preset-switcher",
+        "x": 1980,
+        "y": 80,
+        "props": {
+          "w": 300,
+          "h": 760,
+          "entityType": "params",
+          "entityName": "sonar/dscale5",
+          "loadedPreset": ""
+        }
+      },
+      {
+        "id": "shape:sonar-presets-dscale7",
+        "type": "sonar-preset-switcher",
+        "x": 1980,
+        "y": 880,
+        "props": {
+          "w": 300,
+          "h": 760,
+          "entityType": "params",
+          "entityName": "sonar/dscale7",
+          "loadedPreset": ""
+        }
+      },
+      {
+        "id": "shape:sonar-presets-d7mel",
+        "type": "sonar-preset-switcher",
+        "x": 1980,
+        "y": 1680,
+        "props": {
+          "w": 300,
+          "h": 760,
+          "entityType": "params",
+          "entityName": "sonar/d7mel",
+          "loadedPreset": ""
+        }
+      },
+      {
+        "id": "shape:sonar-presets-transport",
+        "type": "sonar-preset-switcher",
+        "x": 80,
+        "y": 1400,
+        "props": {
+          "w": 560,
+          "h": 300,
+          "entityType": "params",
+          "entityName": "sonar/transport",
+          "loadedPreset": ""
+        }
+      },
+      {
+        "id": "shape:sonar-presets-beatstep",
+        "type": "sonar-preset-switcher",
+        "x": 80,
+        "y": 1720,
+        "props": {
+          "w": 560,
+          "h": 260,
+          "entityType": "params",
+          "entityName": "sonar/beatstep",
+          "loadedPreset": ""
+        }
+      }
+    ]
   },
   "data": [
     {

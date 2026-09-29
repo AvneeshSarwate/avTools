@@ -51,6 +51,19 @@ store notes rather than loop length; extending notes extends the phrase too.
 Save project persists roll edits, params, and layout. Restarting or replacing the
 player preserves those durable values.
 
+## Named presets
+
+Each params pane has a **presets** switcher beside it (`ui/index.tsx`, the
+project's own tldraw view). Type a name and press **set** to save the pane's
+current values under it; pick a name in the dropdown to load it. The table
+lists every leaf of the loaded preset next to the live value and marks the
+ones that have changed since the load; the header counts them. With a preset
+loaded and the name field blank, **set** overwrites that preset; **×** deletes
+it. Presets live on the params entity, so **Save project** writes them to the
+entity's data file and Duplicate copies them with the entity. The loaded name
+is the switcher's own state and survives a reload; the values do not until
+the project is saved.
+
 ## Recording into a bank
 
 Pick a keyboard in the transport pane's **record input**, then switch on
