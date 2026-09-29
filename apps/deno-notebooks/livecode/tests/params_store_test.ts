@@ -4,22 +4,32 @@ import {
   createEmptyParams,
   duplicateParams,
   getParams,
+  getParamsPresets,
   latestParamsJson,
   loadParams,
   makeParamsSnapshot,
   registerParams,
   removeParams,
+  removeParamsPreset,
   sampleParamsChanges,
+  setParamsPreset,
   setParamsValues,
 } from "@avtools/livecode-engine/params_store.ts";
+import { materializeEntityPatches } from "../../../livecode-tldraw/src/syncState.ts";
 import type {
+  EntityPatch,
   ParamsEntity,
   ParamsMeta,
   ParamsValues,
 } from "../visualizer/protocol.ts";
 
+// What a subscribed client holds: the last whole entity per name, with patch
+// deliveries materialized the way the tldraw client does it.
+const clientView = new Map<string, ParamsEntity>();
+
 function resetParams(): void {
   clearParamsStore();
+  clientView.clear();
   // Drain the deletions the reset just recorded, the way a broadcast tick does.
   sampleParamsChanges();
 }
@@ -27,20 +37,36 @@ function resetParams(): void {
 /**
  * One broadcast tick's changed records keyed by name, so the assertions below
  * read like the old full-snapshot ones. A name that is ABSENT here was not
- * shipped at all; a name mapped to null was deleted.
+ * shipped at all; a name mapped to null was deleted. Patch deliveries are
+ * applied to the client's copy and the result is returned, so a test that
+ * cares about wire form uses `sampleParamsChanges()` directly.
  */
 function sampledParams(): Record<string, ParamsEntity | null> | null {
   const changes = sampleParamsChanges();
   if (!changes) return null;
   return Object.fromEntries(
     changes.map((change) => {
-      // Params ship whole entities; a patch here would break their contract.
       if (change.patches) {
-        throw new Error(`unexpected patch for ${change.name}`);
+        const baseline = clientView.get(change.name);
+        if (!baseline) {
+          throw new Error(`patch for ${change.name} before any whole entity`);
+        }
+        const next = materializeEntityPatches(
+          baseline,
+          change.patches,
+        ) as ParamsEntity;
+        clientView.set(change.name, next);
+        return [change.name, next];
       }
+      if (change.entity) clientView.set(change.name, change.entity);
+      else clientView.delete(change.name);
       return [change.name, change.entity];
     }),
   );
+}
+
+function patchPaths(patches: EntityPatch[]): string[] {
+  return patches.map((patch) => patch.path.join("."));
 }
 
 Deno.test("registerParams creates an entity at rev 1 and returns a live clone of the defaults", () => {
@@ -594,4 +620,187 @@ Deno.test("a removed entity ships as a deletion, which no serialize-compare coul
   );
   assertEquals(tick["test/deleted"], null);
   assertEquals(sampledParams(), null, "a deletion is reported exactly once");
+});
+
+Deno.test("presets: a snapshot preset is saved beside the values and ships as a presets patch", () => {
+  resetParams();
+  const params = registerParams("test/presets", { gain: 0.5, on: true });
+  sampledParams(); // creation ships whole
+  params.gain = 0.9;
+  const entity = setParamsPreset("test/presets", "bright");
+  assert(entity);
+  assertEquals(entity.presets, { bright: { gain: 0.9, on: true } });
+  assertEquals(entity.rev, 1, "a preset save is not a value generation");
+
+  // One tick: the code write and the preset save are two facets of one delivery.
+  const changes = sampleParamsChanges();
+  assert(changes && changes.length === 1);
+  const delivery = changes[0]!;
+  assert(delivery.patches, "presets ship as patches after the baseline");
+  assertEquals(patchPaths(delivery.patches), [
+    "values",
+    "presets",
+    "rev",
+    "updatedAt",
+    "updatedBy",
+  ]);
+  assertEquals(getParamsPresets("test/presets"), {
+    bright: { gain: 0.9, on: true },
+  });
+});
+
+Deno.test("presets: a value write ships values only and leaves the client's presets identity alone", () => {
+  resetParams();
+  const params = registerParams("test/presets-identity", { gain: 0.5 });
+  sampledParams();
+  setParamsPreset("test/presets-identity", "a");
+  const withPreset = sampledParams()!["test/presets-identity"]!;
+  const presetsBefore = withPreset.presets;
+  params.gain = 0.7;
+  const changes = sampleParamsChanges();
+  assert(changes?.[0]?.patches);
+  assertEquals(patchPaths(changes[0].patches), [
+    "values",
+    "rev",
+    "updatedAt",
+    "updatedBy",
+  ]);
+  const after = materializeEntityPatches(
+    withPreset,
+    changes[0].patches,
+  ) as ParamsEntity;
+  assertEquals(after.values, { gain: 0.7 });
+  assert(after.presets === presetsBefore, "untouched facet keeps identity");
+});
+
+Deno.test("presets: explicit values are validated and cloned; recall is an ordinary set", () => {
+  resetParams();
+  const params = registerParams("test/presets-explicit", {
+    gain: 0.5,
+    on: true,
+  });
+  sampledParams();
+  const values = { gain: 0.1, on: false };
+  setParamsPreset("test/presets-explicit", "dim", { values });
+  values.gain = 0.99;
+  assertEquals(getParamsPresets("test/presets-explicit").dim, {
+    gain: 0.1,
+    on: false,
+  });
+  assertThrows(
+    () =>
+      setParamsPreset("test/presets-explicit", "bad", {
+        values: { gain: Number.NaN } as ParamsValues,
+      }),
+    Error,
+    "finite",
+  );
+  assertThrows(
+    () => setParamsPreset("test/presets-explicit", "  "),
+    Error,
+    "label",
+  );
+  setParamsValues(
+    "test/presets-explicit",
+    getParamsPresets("test/presets-explicit").dim!,
+  );
+  assertEquals(params.gain, 0.1);
+  assertEquals(params.on, false);
+});
+
+Deno.test("presets: removal ships a presets patch and the last removal deletes the field", () => {
+  resetParams();
+  registerParams("test/presets-remove", { gain: 0.5 });
+  sampledParams();
+  setParamsPreset("test/presets-remove", "a");
+  setParamsPreset("test/presets-remove", "b");
+  sampledParams();
+  removeParamsPreset("test/presets-remove", "a");
+  let changes = sampleParamsChanges();
+  assert(changes?.[0]?.patches);
+  assertEquals(changes[0].patches[0], {
+    op: "set",
+    path: ["presets"],
+    value: { b: { gain: 0.5 } },
+  });
+  assertEquals(
+    removeParamsPreset("test/presets-remove", "never")?.presets,
+    { b: { gain: 0.5 } },
+  );
+  assertEquals(sampleParamsChanges(), null, "unknown label is a no-op");
+  removeParamsPreset("test/presets-remove", "b");
+  changes = sampleParamsChanges();
+  assert(changes?.[0]?.patches);
+  assertEquals(changes[0].patches[0], { op: "delete", path: ["presets"] });
+  assertEquals(getParams("test/presets-remove")?.presets, undefined);
+});
+
+Deno.test("presets: redeclaration, load, and duplicate ship whole and carry the bank", () => {
+  resetParams();
+  registerParams("test/presets-whole", { gain: 0.5 });
+  sampledParams();
+  setParamsPreset("test/presets-whole", "a");
+  sampledParams();
+
+  // A redeclaration with a new field ships the entity whole (meta and shape
+  // together), presets included.
+  registerParams("test/presets-whole", { gain: 0.5, rate: 2 });
+  let changes = sampleParamsChanges();
+  assert(changes?.[0]?.entity, "redeclare ships whole");
+  assertEquals(changes[0].entity.presets, { a: { gain: 0.5 } });
+
+  const copy = duplicateParams("test/presets-whole", "test/presets-copy");
+  assertEquals(copy.presets, { a: { gain: 0.5 } });
+  removeParamsPreset("test/presets-copy", "a");
+  assertEquals(getParamsPresets("test/presets-whole"), { a: { gain: 0.5 } });
+
+  // Load replaces the bank as it replaces the values; no presets means none.
+  loadParams("test/presets-whole", { gain: 0.2, rate: 1 }, undefined, {
+    saved: { gain: 0.3, rate: 3 },
+  });
+  assertEquals(getParamsPresets("test/presets-whole"), {
+    saved: { gain: 0.3, rate: 3 },
+  });
+  loadParams("test/presets-whole", { gain: 0.2, rate: 1 });
+  assertEquals(getParamsPresets("test/presets-whole"), {});
+  changes = sampleParamsChanges();
+  assert(changes?.find((c) => c.name === "test/presets-whole")?.entity);
+
+  assertThrows(
+    () =>
+      loadParams("test/presets-whole", { gain: 1 }, undefined, {
+        bad: { gain: Number.POSITIVE_INFINITY } as ParamsValues,
+      }),
+    Error,
+  );
+});
+
+Deno.test("presets: delete then recreate in one tick ships whole, never a patch", () => {
+  resetParams();
+  registerParams("test/presets-recreate", { gain: 0.5 });
+  sampledParams();
+  setParamsPreset("test/presets-recreate", "a");
+  removeParams("test/presets-recreate");
+  registerParams("test/presets-recreate", { gain: 0.5 });
+  setParamsPreset("test/presets-recreate", "b");
+  const changes = sampleParamsChanges();
+  assert(changes?.[0]?.entity, "a recreated name ships whole");
+  assertEquals(changes[0].entity.presets, { b: { gain: 0.5 } });
+});
+
+Deno.test("presets: an unserializable live value cannot be snapshotted and flips ship whole", () => {
+  resetParams();
+  const params = registerParams("test/presets-unserializable", { gain: 0.5 });
+  sampledParams();
+  (params as Record<string, unknown>).gain = Number.NaN;
+  sampleParamsChanges();
+  assertThrows(
+    () => setParamsPreset("test/presets-unserializable", "x"),
+    Error,
+    "snapshot",
+  );
+  params.gain = 0.5;
+  const changes = sampleParamsChanges();
+  assert(changes?.[0]?.entity, "serializable again ships whole");
+  assertEquals(changes[0].entity.unserializable, undefined);
 });

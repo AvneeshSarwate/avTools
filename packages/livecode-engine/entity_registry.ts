@@ -176,11 +176,18 @@ export const pianoRollEntityType: DurableEntityTypeBehavior = {
       }
     }
     requirePianoRollSet(
-      setPianoRoll(name, {...rollData, playStartPosition: rollData.playStartPosition ?? 0} as unknown as PianoRollData, {
-        label: "Load project",
-        source: "server",
-        undoable: false,
-      }),
+      setPianoRoll(
+        name,
+        {
+          ...rollData,
+          playStartPosition: rollData.playStartPosition ?? 0,
+        } as unknown as PianoRollData,
+        {
+          label: "Load project",
+          source: "server",
+          undoable: false,
+        },
+      ),
     );
     // Open adopts disk truth, so the pre-load stacks would undo into a state
     // the saved file never contained.
@@ -215,6 +222,7 @@ export const paramsEntityType: DurableEntityTypeBehavior = {
       values: JSON.parse(json) as ParamsValues,
     };
     if (entity.meta) saved.meta = entity.meta;
+    if (entity.presets) saved.presets = entity.presets;
     return saved;
   },
   deserialize(name, data) {
@@ -226,11 +234,15 @@ export const paramsEntityType: DurableEntityTypeBehavior = {
     const meta = saved.meta === undefined
       ? undefined
       : requireJsonObject(saved.meta, `Saved params "${name}" meta`);
+    const presets = saved.presets === undefined
+      ? undefined
+      : requireJsonObject(saved.presets, `Saved params "${name}" presets`);
     // loadParams validates the value tree and mutates any live object in place.
     loadParams(
       name,
       values as ParamsValues,
       meta as ParamsMeta | undefined,
+      presets as Record<string, ParamsValues> | undefined,
     );
   },
   latestJson: (name) => latestParamsJson(name),
@@ -289,7 +301,8 @@ export const sixSinesEntityType: DurableEntityTypeBehavior = {
       throw new Error(`Six Sines "${name}" already exists`);
     }
     registerSixSines(name, {
-      preset: '<patch id="org.baconpaul.six-sines" version="12" name="Init"><params/></patch>',
+      preset:
+        '<patch id="org.baconpaul.six-sines" version="12" name="Init"><params/></patch>',
       values: {},
     });
   },

@@ -28,6 +28,7 @@ export interface SavedParamsEntity {
   savedAt: string;
   values: ParamsValues;
   meta?: ParamsMeta;
+  presets?: Record<string, ParamsValues>;
 }
 
 export interface SavedAnimationTimelineEntity {

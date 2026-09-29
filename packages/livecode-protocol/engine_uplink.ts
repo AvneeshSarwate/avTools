@@ -15,7 +15,11 @@ import type {
   SetPianoRollCursorRequest,
   SetPianoRollRequest,
 } from "./piano_roll.ts";
-import type { SetParamsRequest } from "./params.ts";
+import type {
+  DeleteParamsPresetRequest,
+  SetParamsPresetRequest,
+  SetParamsRequest,
+} from "./params.ts";
 import type { SetAnimationTimelineRequest } from "./animation_timeline.ts";
 import type { DrawingPatchRequest, SetDrawingRequest } from "./drawing.ts";
 import type {
@@ -99,6 +103,8 @@ export type EngineOp =
   }
   | { kind: "paramsList" }
   | { kind: "paramsSet"; request: SetParamsRequest }
+  | { kind: "paramsPresetSet"; request: SetParamsPresetRequest }
+  | { kind: "paramsPresetDelete"; request: DeleteParamsPresetRequest }
   | { kind: "animationTimelineSet"; request: SetAnimationTimelineRequest }
   | { kind: "drawingSet"; request: SetDrawingRequest }
   | { kind: "drawingPatch"; request: DrawingPatchRequest }

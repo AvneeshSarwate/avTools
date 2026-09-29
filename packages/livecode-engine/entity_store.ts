@@ -24,6 +24,16 @@ interface EntityTypeStore {
    * deletion and one deleted then recreated reports as a change.
    */
   dirtyNames: Set<string>;
+  /**
+   * What the next delivery of a changed name may ship sparsely. A set of
+   * facet keys means "patch those top-level fields"; "full" means the whole
+   * entity, and it is sticky within a tick so a watcher never sees a patch
+   * before the baseline it applies to. A dirty name with no entry ships whole.
+   * Kinds whose sparse form is literal node patches (the drawing store) keep
+   * their own pending list instead; this is for kinds that re-serialize a
+   * facet at collect time.
+   */
+  pendingFacets: Map<string, Set<string> | "full">;
   snapshotSeq: number;
   /**
    * Highest rev ever reached by a now-deleted name. A recreated or re-loaded
@@ -102,6 +112,7 @@ export function createEntityRecord<V>(
   };
   store.records.set(name, record as EntityRecord);
   store.dirtyNames.add(name);
+  store.pendingFacets.set(name, "full");
   return record;
 }
 
@@ -120,6 +131,7 @@ export function deleteEntityRecord(type: string, name: string): boolean {
     // A deletion is invisible to any serialize-compare, so it only reaches
     // watchers because the name is recorded here.
     store.dirtyNames.add(key);
+    store.pendingFacets.delete(key);
   }
   return removed;
 }
@@ -130,6 +142,7 @@ export function clearEntityRecords(type: string): void {
   for (const name of store.records.keys()) store.dirtyNames.add(name);
   store.records.clear();
   store.revFloors.clear();
+  store.pendingFacets.clear();
 }
 
 /**
@@ -167,6 +180,44 @@ export function markEntityRecordChanged(record: EntityRecord): void {
 
 export function markEntityChanged(type: string, name: string): void {
   storeFor(type).dirtyNames.add(name.trim());
+}
+
+/**
+ * Record that one top-level facet of an entity changed, so the next delivery
+ * can ship just that field. Adds the name to the change gate as well. A name
+ * already marked full stays full.
+ */
+export function markEntityFacetChanged(
+  record: EntityRecord,
+  facet: string,
+): void {
+  const store = storeFor(record.type);
+  store.dirtyNames.add(record.name);
+  const current = store.pendingFacets.get(record.name);
+  if (current === "full") return;
+  if (current) current.add(facet);
+  else store.pendingFacets.set(record.name, new Set([facet]));
+}
+
+/** Record that the next delivery of this entity must ship it whole. */
+export function markEntityFull(record: EntityRecord): void {
+  const store = storeFor(record.type);
+  store.dirtyNames.add(record.name);
+  store.pendingFacets.set(record.name, "full");
+}
+
+/**
+ * Drain one name's pending facets at collect time. `undefined` when nothing
+ * sparse was recorded, which a collector must treat as "ship whole".
+ */
+export function takeEntityFacets(
+  type: string,
+  name: string,
+): Set<string> | "full" | undefined {
+  const store = storeFor(type);
+  const pending = store.pendingFacets.get(name);
+  store.pendingFacets.delete(name);
+  return pending;
 }
 
 /** Drains one entity type's change gate; snapshots never call this. */
@@ -278,6 +329,7 @@ function storeFor(type: string): EntityTypeStore {
   const created: EntityTypeStore = {
     records: new Map(),
     dirtyNames: new Set(),
+    pendingFacets: new Map(),
     snapshotSeq: 0,
     revFloors: new Map(),
   };

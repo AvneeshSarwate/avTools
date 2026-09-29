@@ -11,6 +11,14 @@
 //   2. Object identity is a contract. Reconcile mutates the existing object in
 //      place at every depth so a module that kept a reference across a
 //      relaunch keeps observing live truth.
+//
+// The wire form is whole-entity first, then per-facet patches: a value
+// generation ships `["values"]`, a preset edit ships `["presets"]`, and
+// anything that touches meta or serializability ships the entity whole. Both
+// facets are re-serialized at collect time, never at write time, so several
+// writes inside one tick still cost one delivery. Presets live beside the
+// value tree, not inside it: the live object keeps exactly the declared shape
+// and the sampler's serialize-compare never sees a bank that did not change.
 
 import {
   clearEntityRecords,
@@ -24,13 +32,16 @@ import {
   getEntityRecord,
   isEntityRevConflict,
   listEntityRecords,
-  markEntityRecordChanged,
+  markEntityFacetChanged,
+  markEntityFull,
   nextEntitySnapshotSeq,
   normalizeEntityName,
   safeStringifyEntityValue,
   serializeEntityValue,
+  takeEntityFacets,
 } from "./entity_store.ts";
 import type {
+  EntityPatch,
   ParamsEntity,
   ParamsMeta,
   ParamsSnapshot,
@@ -49,6 +60,12 @@ export interface SetParamsOptions {
 // than the declared default. Mirrors the value tree; entries are removed when
 // they are restored. In memory only, like the entities themselves.
 const tombstones = new Map<string, ParamsValues>();
+
+// Named value snapshots per entity, keyed by label. Saved with the entity and
+// copied by duplicate; never reconciled against a declaration (a preset is
+// what was captured, and recalling it goes through the ordinary patch merge,
+// which drops fields that are no longer declared).
+const presetsByName = new Map<string, Record<string, ParamsValues>>();
 
 /**
  * Create-or-reattach. Returns the live value object: the same reference for
@@ -107,9 +124,10 @@ export function registerParams<T extends ParamsValues>(
       updatedBy: "reconcile",
       valueJson: safeStringifyEntityValue(existing.value),
     });
-  } else if (metaChanged) {
-    markEntityRecordChanged(existing);
   }
+  // A redeclaration may change the value shape and the meta together, and a
+  // pane rebuilds its bindings from both, so it ships whole.
+  if (changed || metaChanged) markEntityFull(existing);
 
   return existing.value as T;
 }
@@ -146,7 +164,86 @@ export function setParamsValues(
     updatedBy: options.originId ?? "client",
     valueJson: afterJson,
   });
+  markEntityFacetChanged(record, "values");
   return toParamsEntity(record);
+}
+
+export interface SetParamsPresetOptions extends SetParamsOptions {
+  /** Explicit values to store; omitted means snapshot the current live values. */
+  values?: ParamsValues;
+}
+
+/**
+ * Save a preset under `label`: an explicit value tree, or a snapshot of the
+ * live values. Presets are not value generations, so `rev` does not move;
+ * the change reaches watchers as a `["presets"]` patch. Undefined when the
+ * entity does not exist. Throws on an empty label, a value tree that is not
+ * JSON-simple, or a snapshot of a live value that cannot be serialized:
+ * preset edits run at route time, never inside timing loops.
+ */
+export function setParamsPreset(
+  name: string,
+  label: string,
+  options: SetParamsPresetOptions = {},
+): ParamsEntity | undefined {
+  const entityName = normalizeEntityName(PARAMS_ENTITY_TYPE, name);
+  const record = getEntityRecord<ParamsValues>(PARAMS_ENTITY_TYPE, entityName);
+  if (!record) return undefined;
+  const presetLabel = normalizePresetLabel(entityName, label);
+  if (isEntityRevConflict(record, options.expectedRev)) {
+    return { ...toParamsEntity(record), conflict: true };
+  }
+
+  let stored: ParamsValues;
+  if (options.values !== undefined) {
+    validateParamsValues(
+      options.values,
+      `${entityName} preset "${presetLabel}"`,
+    );
+    stored = cloneParamsValues(options.values, entityName);
+  } else {
+    const serialized = serializeEntityValue(record.value);
+    if (!serialized.ok) {
+      throw new Error(
+        `Cannot snapshot params "${entityName}" into a preset: ${serialized.error}`,
+      );
+    }
+    stored = JSON.parse(serialized.json) as ParamsValues;
+  }
+
+  const presets = presetsByName.get(entityName) ?? {};
+  presets[presetLabel] = stored;
+  presetsByName.set(entityName, presets);
+  markEntityFacetChanged(record, "presets");
+  return toParamsEntity(record);
+}
+
+/**
+ * Drop one preset. Undefined when the entity does not exist; a label that was
+ * never saved is a no-op that ships nothing.
+ */
+export function removeParamsPreset(
+  name: string,
+  label: string,
+): ParamsEntity | undefined {
+  const entityName = normalizeEntityName(PARAMS_ENTITY_TYPE, name);
+  const record = getEntityRecord<ParamsValues>(PARAMS_ENTITY_TYPE, entityName);
+  if (!record) return undefined;
+  const presetLabel = normalizePresetLabel(entityName, label);
+  const presets = presetsByName.get(entityName);
+  if (!presets || !Object.hasOwn(presets, presetLabel)) {
+    return toParamsEntity(record);
+  }
+  delete presets[presetLabel];
+  if (Object.keys(presets).length === 0) presetsByName.delete(entityName);
+  markEntityFacetChanged(record, "presets");
+  return toParamsEntity(record);
+}
+
+/** A deep copy of one entity's presets; empty when there are none. */
+export function getParamsPresets(name: string): Record<string, ParamsValues> {
+  const presets = presetsByName.get(name.trim());
+  return presets ? structuredClone(presets) : {};
 }
 
 export function getParams(name: string): ParamsEntity | undefined {
@@ -246,6 +343,8 @@ export function duplicateParams(
       valueJson: safeStringifyEntityValue(value),
     },
   );
+  const sourcePresets = presetsByName.get(source);
+  if (sourcePresets) presetsByName.set(target, structuredClone(sourcePresets));
   return toParamsEntity(record);
 }
 
@@ -253,6 +352,7 @@ export function duplicateParams(
 export function removeParams(name: string): boolean {
   const entityName = normalizeEntityName(PARAMS_ENTITY_TYPE, name);
   tombstones.delete(entityName);
+  presetsByName.delete(entityName);
   return deleteEntityRecord(PARAMS_ENTITY_TYPE, entityName);
 }
 
@@ -268,10 +368,16 @@ export function loadParams(
   name: string,
   values: ParamsValues,
   meta?: ParamsMeta,
+  presets?: Record<string, ParamsValues>,
 ): ParamsEntity {
   const entityName = normalizeEntityName(PARAMS_ENTITY_TYPE, name);
   validateParamsValues(values, entityName);
   const loadedMeta = cloneParamsMeta(meta, entityName);
+  const loadedPresets = clonePresets(presets, entityName);
+  // Saved truth replaces the bank as it replaces the values: a file without
+  // presets means the entity has none.
+  if (loadedPresets) presetsByName.set(entityName, loadedPresets);
+  else presetsByName.delete(entityName);
   const existing = getEntityRecord<ParamsValues>(
     PARAMS_ENTITY_TYPE,
     entityName,
@@ -302,6 +408,7 @@ export function loadParams(
     updatedBy: "load",
     valueJson: safeStringifyEntityValue(existing.value),
   });
+  markEntityFull(existing);
   return toParamsEntity(existing);
 }
 
@@ -333,7 +440,7 @@ export function adoptParamsCodeWrites(): void {
     if (!serialized.ok) {
       if (!record.unserializable) {
         record.unserializable = true;
-        markEntityRecordChanged(record);
+        markEntityFull(record);
         console.warn(
           `[params-store] "${record.name}" value is unavailable to views: ` +
             serialized.error,
@@ -344,7 +451,7 @@ export function adoptParamsCodeWrites(): void {
 
     if (record.unserializable) {
       delete record.unserializable;
-      markEntityRecordChanged(record);
+      markEntityFull(record);
       console.warn(
         `[params-store] "${record.name}" value is serializable again.`,
       );
@@ -355,13 +462,18 @@ export function adoptParamsCodeWrites(): void {
     // Adopt the drift: plain property writes never reach the store API, so this
     // is the only place a code-authored generation can be recorded.
     commitEntityWrite(record, { updatedBy: "code", valueJson: json });
+    markEntityFacetChanged(record, "values");
   }
 }
 
 /**
  * The broadcast tick: adopt code writes, then drain this type's change gate and
- * return one record per changed name (`entity: null` for a deleted one). Null
+ * return one delivery per changed name (`entity: null` for a deleted one). Null
  * when the tick found nothing, so an idle store sends nothing at all.
+ *
+ * A name whose pending facets are known ships patches for just those facets;
+ * anything else (creation, load, redeclaration, a serializability flip) ships
+ * the whole entity. Facet values are serialized here, once per tick.
  */
 export function sampleParamsChanges(): EntityChange<ParamsEntity>[] | null {
   adoptParamsCodeWrites();
@@ -371,16 +483,54 @@ export function sampleParamsChanges(): EntityChange<ParamsEntity>[] | null {
   for (const name of changes.changed) {
     const record = getEntityRecord<ParamsValues>(PARAMS_ENTITY_TYPE, name);
     // Defensive: a name can only be in `changed` while its record exists.
-    if (record) collected.push({ name, entity: toParamsEntity(record) });
+    if (!record) continue;
+    const facets = takeEntityFacets(PARAMS_ENTITY_TYPE, name);
+    const patches = facets && facets !== "full"
+      ? facetPatches(record, facets)
+      : null;
+    if (patches) collected.push({ name, patches });
+    else collected.push({ name, entity: toParamsEntity(record) });
   }
-  for (const name of changes.deleted) collected.push({ name, entity: null });
+  for (const name of changes.deleted) {
+    takeEntityFacets(PARAMS_ENTITY_TYPE, name);
+    collected.push({ name, entity: null });
+  }
   return collected;
+}
+
+/** Null when a facet cannot be shipped sparsely, so the caller ships whole. */
+function facetPatches(
+  record: EntityRecord<ParamsValues>,
+  facets: Set<string>,
+): EntityPatch[] | null {
+  const patches: EntityPatch[] = [];
+  if (facets.has("values")) {
+    const wireValue = cloneEntityValueForWire(record);
+    if (!wireValue.ok) return null;
+    patches.push({ op: "set", path: ["values"], value: wireValue.value });
+  }
+  if (facets.has("presets")) {
+    const presets = presetsByName.get(record.name);
+    patches.push(
+      presets
+        ? { op: "set", path: ["presets"], value: structuredClone(presets) }
+        : { op: "delete", path: ["presets"] },
+    );
+  }
+  if (patches.length === 0) return null;
+  patches.push(
+    { op: "set", path: ["rev"], value: record.rev },
+    { op: "set", path: ["updatedAt"], value: record.updatedAt },
+    { op: "set", path: ["updatedBy"], value: record.updatedBy },
+  );
+  return patches;
 }
 
 /** Test seam: drops every params entity and its tombstones. */
 export function clearParamsStore(): void {
   clearEntityRecords(PARAMS_ENTITY_TYPE);
   tombstones.clear();
+  presetsByName.clear();
 }
 
 function toParamsEntity(record: EntityRecord<ParamsValues>): ParamsEntity {
@@ -395,7 +545,34 @@ function toParamsEntity(record: EntityRecord<ParamsValues>): ParamsEntity {
   const meta = record.meta as ParamsMeta | undefined;
   if (meta) entity.meta = JSON.parse(JSON.stringify(meta)) as ParamsMeta;
   if (!wireValue.ok) entity.unserializable = true;
+  const presets = presetsByName.get(record.name);
+  if (presets) entity.presets = structuredClone(presets);
   return entity;
+}
+
+function normalizePresetLabel(entityName: string, label: string): string {
+  const normalized = label.trim();
+  if (!normalized) {
+    throw new Error(`Params "${entityName}" preset label must not be empty`);
+  }
+  return normalized;
+}
+
+function clonePresets(
+  presets: Record<string, ParamsValues> | undefined,
+  entityName: string,
+): Record<string, ParamsValues> | undefined {
+  if (presets === undefined) return undefined;
+  if (!isPlainObject(presets)) {
+    throw new Error(`Params "${entityName}" presets must be a plain object`);
+  }
+  const result: Record<string, ParamsValues> = {};
+  for (const [label, values] of Object.entries(presets)) {
+    const presetLabel = normalizePresetLabel(entityName, label);
+    validateParamsValues(values, `${entityName} preset "${presetLabel}"`);
+    result[presetLabel] = cloneParamsValues(values, entityName);
+  }
+  return Object.keys(result).length ? result : undefined;
 }
 
 // Recursive, in-place reconcile. Existing values survive, new fields arrive at

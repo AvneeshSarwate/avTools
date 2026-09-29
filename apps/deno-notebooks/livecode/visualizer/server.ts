@@ -21,6 +21,7 @@ import type {
   ClientControlRequest,
   ClientControlResultMessage,
   CreateProjectRequest,
+  DeleteParamsPresetRequest,
   DrawingPatchRequest,
   EngineModeChangeRequest,
   EngineModeChangeResponse,
@@ -55,9 +56,10 @@ import type {
   RuntimeStateResponse,
   SetAnimationTimelineRequest,
   SetDrawingRequest,
+  SetParamsPresetRequest,
   SetParamsRequest,
-  SetPianoRollRequest,
   SetPianoRollCursorRequest,
+  SetPianoRollRequest,
   StopModuleRequest,
   SyncActionMessage,
   SyncActionResultMessage,
@@ -824,7 +826,12 @@ export async function createLivecodeVisualizerServer(
     }
     if (request.method === "POST" && url.pathname === "/piano-roll/cursor") {
       const requestBody = await request.json() as SetPianoRollCursorRequest;
-      return json(await plane.execute({kind:"pianoRollCursorSet",request:requestBody}));
+      return json(
+        await plane.execute({
+          kind: "pianoRollCursorSet",
+          request: requestBody,
+        }),
+      );
     }
     if (request.method === "POST" && url.pathname === "/piano-roll/set") {
       const requestBody = await request.json() as SetPianoRollRequest;
@@ -870,6 +877,40 @@ export async function createLivecodeVisualizerServer(
       const requestBody = await request.json() as SetParamsRequest;
       const entity = await plane.execute({
         kind: "paramsSet",
+        request: requestBody,
+      }) as ParamsEntity | null;
+      if (!entity) {
+        return json({
+          ok: false,
+          error: `No params entity "${requestBody.name}"`,
+        }, { status: 404 });
+      }
+      return json(entity);
+    }
+    if (request.method === "POST" && url.pathname === "/params/preset/set") {
+      const requestBody = await request.json() as SetParamsPresetRequest;
+      try {
+        const entity = await plane.execute({
+          kind: "paramsPresetSet",
+          request: requestBody,
+        }) as ParamsEntity | null;
+        if (!entity) {
+          return json({
+            ok: false,
+            error: `No params entity "${requestBody.name}"`,
+          }, { status: 404 });
+        }
+        return json(entity);
+      } catch (error) {
+        return json({ ok: false, error: String(error) }, { status: 422 });
+      }
+    }
+    if (
+      request.method === "POST" && url.pathname === "/params/preset/delete"
+    ) {
+      const requestBody = await request.json() as DeleteParamsPresetRequest;
+      const entity = await plane.execute({
+        kind: "paramsPresetDelete",
         request: requestBody,
       }) as ParamsEntity | null;
       if (!entity) {

@@ -60,6 +60,12 @@ export interface ParamsEntity {
   /** Set when `values` is unavailable because the live value is not serializable. */
   unserializable?: boolean;
   conflict?: boolean;
+  /**
+   * Named snapshots of `values`, saved with the entity. Absent when there are
+   * none. Never inside `values`: the live object stays exactly the declared
+   * shape, and the sampler never re-serializes a bank that did not change.
+   */
+  presets?: Record<string, ParamsValues>;
 }
 
 export interface ParamsSnapshot {
@@ -75,4 +81,22 @@ export interface SetParamsRequest {
   values: ParamsValues;
   originId?: string;
   expectedRev?: number;
+}
+
+/**
+ * Save one preset. Omitting `values` snapshots the entity's current live
+ * values; recalling a preset is an ordinary `SetParamsRequest` with them.
+ */
+export interface SetParamsPresetRequest {
+  name: string;
+  label: string;
+  values?: ParamsValues;
+  originId?: string;
+  expectedRev?: number;
+}
+
+export interface DeleteParamsPresetRequest {
+  name: string;
+  label: string;
+  originId?: string;
 }
