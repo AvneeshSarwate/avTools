@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "name": "feature-project-ui",
+  "engineTarget": "browser",
+  "modules": [
+    {
+      "id": "project-ui/sketch",
+      "path": "modules/sketch.ts",
+      "sourcePath": "modules/sketch.orig.ts",
+      "runtimePath": "modules/sketch.ts",
+      "kind": "runnable",
+      "title": "p5 ring (draws in the engine tab)",
+      "sourceVersion": 2,
+      "x": 80,
+      "y": 80,
+      "w": 560,
+      "h": 620
+    }
+  ],
+  "canvas": {
+    "paramPaneViews": [
+      {
+        "id": "shape:project-ui-look-pane",
+        "paramsName": "project-ui/look",
+        "x": 700,
+        "y": 80,
+        "w": 340,
+        "h": 320
+      }
+    ],
+    "projectShapes": [
+      {
+        "id": "shape:project-ui-presets",
+        "type": "preset-bank",
+        "x": 700,
+        "y": 440,
+        "props": {
+          "w": 340,
+          "h": 150,
+          "entityType": "params",
+          "entityName": "project-ui/look"
+        }
+      }
+    ]
+  },
+  "data": [
+    {
+      "type": "params",
+      "name": "project-ui/look",
+      "path": "data/params/project-ui%2Flook.json"
+    }
+  ]
+}

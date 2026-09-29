@@ -62,6 +62,10 @@ for the smallest project shape. A project contains:
 
 - `project.avtools-livecode.json`: project name, target, module records, canvas
   views, and saved-entity references;
+- optional `ui/index.tsx`: the project's own tldraw views, exported as
+  `shapeUtils` and written against `@livecode-ui` (see
+  [`feature-project-ui`](../../apps/livecode-tldraw/example-projects/feature-project-ui/README.md));
+  a library, not a module, so no `.orig` twin and no manifest entry;
 - canonical module source such as `modules/player.orig.ts`;
 - generated runtime source such as `modules/player.ts`, which the server owns;
 - optional `data/<entity-type>/*.json`, written by explicit project save.
@@ -160,7 +164,7 @@ These bare imports are the intentionally supported livecode surface:
 | Import | Purpose | Targets |
 | --- | --- | --- |
 | `@avtools/core-timing` | `TimeContext` types and logical-time primitives. Project modules normally import `TimeContext` as a type and use the injected context; value imports (`startBarrier`/`awaitBarrier`/`resolveBarrier`, `TempoMap`) are served to browser modules as a bundled alias sharing the engine's instance. | Deno and browser |
-| `canvas-params` | `canvasParams(name, defaults, meta)` returns a live JSON-simple object that panes can edit; redeclaration reattaches to existing values. | Deno and browser |
+| `canvas-params` | `canvasParams(name, defaults, meta)` returns a live JSON-simple object that panes can edit; redeclaration reattaches to existing values. `setParamsPreset(name, label)` / `recallParamsPreset(name, label)` / `removeParamsPreset` / `listParamsPresets` address the entity's saved presets by name and label; recall is an ordinary values write. | Deno and browser |
 | `canvas-events` | Events in from UIs: `onEvent(handler)` receives `{type, body}` messages such as param-pane `button(...)` presses. A handler belongs to its run's `TimeContext` (supplied automatically in timed code) and ends with it. | Deno and browser |
 | `ui-events` | Events out to UIs, the other half of `canvas-events`: `send({type, body})` reaches every connected UI. Fire and forget, no `TimeContext`, no replay. Any UI can consume them; the types the tldraw app understands are listed in [`feature-ui-events`](../../apps/livecode-tldraw/example-projects/feature-ui-events/README.md). | Deno and browser |
 | `canvas-signals` | `signal(name)` publishes ephemeral monitor/playhead values and optional entity anchors. Signals end with their owner run and are not a cross-module data API. | Deno and browser |
@@ -192,6 +196,7 @@ not only through diagnostics.
 | Events (`canvas-events`, `ui-events`) | Moments, not state: delivered to whoever is listening when they happen, never stored or replayed. Whether something is an event or state is the piece's call; anything a UI must still show after a reload belongs in state. |
 | Waits, run state, lookup annotations | Ephemeral visualization/runtime state. Never project data. |
 | Canvas views | Bindings and layout can be project-persisted; deleting a view does not delete its entity. Arbitrary tldraw shapes require a separate `.tldr` save. |
+| Project UI shapes | Persisted as their own props under `canvas.projectShapes`, bound by `entityType`/`entityName`. Keep domain data in an entity, never in shape props. |
 
 Use the kind's live handle for ordinary code edits and its explicit setter for
 whole documents/presets. Do not add dirty calls, UI subscriptions, or tracker
@@ -219,6 +224,7 @@ Choosing a sparse store implementation is platform work following the
 | Ephemeral signals, scopes, and one-to-many playhead anchors | [`feature-signals-and-scopes`](../../apps/livecode-tldraw/example-projects/feature-signals-and-scopes/README.md) |
 | Combined durable save/reopen and multiple entity/view types | [`feature-studio-combined`](../../apps/livecode-tldraw/example-projects/feature-studio-combined/README.md) |
 | Browser `p5`, DOM stage, timeline-driven graphics, cleanup | [`browser-p5-animation`](../../apps/livecode-tldraw/example-projects/browser-p5-animation/README.md) |
+| A piece's own tldraw view (`ui/index.tsx`), params presets, a preset switcher | [`feature-project-ui`](../../apps/livecode-tldraw/example-projects/feature-project-ui/README.md) |
 
 `minimal-p5gpu` is deliberately broken to exercise diagnostics. Do not use it as
 a green template.

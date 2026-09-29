@@ -60,6 +60,17 @@ granular or merge-aware canvas updates is needed.
 Module remove and entity-delete-plus-save are manifest-only: files remain. This
 is documented behavior but destructive if mistaken for filesystem deletion.
 
+A project's `ui/index.tsx` is served only by the Vite dev server: the served
+`uiDist` and bakes open such a project with built-in views and skip its saved
+project shapes (reported, not thrown). Client-control `openProject` does not
+load the new project's UI either; reload with `projectPath`.
+
+UI-to-engine params writes are one op per call. A project UI writing at frame
+rate (an interpolator, a sequencer front-end) sends that many ops; there is no
+client-side per-frame coalescing yet. Musically meaningful behavior belongs in
+a module reading a small control param, which also keeps the piece
+headless-complete.
+
 ## P1: trust boundary is local only
 
 The server offers unauthenticated arbitrary code execution and caller-selected
