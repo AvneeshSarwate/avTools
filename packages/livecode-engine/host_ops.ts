@@ -26,7 +26,12 @@ import {
   undoPianoRoll,
 } from "./piano_roll_store.ts";
 import { emit } from "./events.ts";
-import { makeParamsSnapshot, setParamsValues } from "./params_store.ts";
+import {
+  makeParamsSnapshot,
+  removeParamsPreset,
+  setParamsPreset,
+  setParamsValues,
+} from "./params_store.ts";
 import { makeSignalsSnapshot } from "./signals_store.ts";
 import { setAnimationTimeline } from "./animation_timeline_store.ts";
 import { setSixSinesParameters, setSixSinesPreset } from "./six_sines_store.ts";
@@ -210,7 +215,9 @@ export async function executeEngineOp(
     case "pianoRollList":
       return makePianoRollSnapshot();
     case "pianoRollCursorSet":
-      return setPianoRollCursor(op.request.name, op.request.position, {originId:op.request.originId});
+      return setPianoRollCursor(op.request.name, op.request.position, {
+        originId: op.request.originId,
+      });
     case "pianoRollSet":
       return setPianoRoll(op.request.name, op.request.data, {
         label: op.request.label,
@@ -232,6 +239,14 @@ export async function executeEngineOp(
         originId: op.request.originId,
         expectedRev: op.request.expectedRev,
       }) ?? null;
+    case "paramsPresetSet":
+      return setParamsPreset(op.request.name, op.request.label, {
+        values: op.request.values,
+        originId: op.request.originId,
+        expectedRev: op.request.expectedRev,
+      }) ?? null;
+    case "paramsPresetDelete":
+      return removeParamsPreset(op.request.name, op.request.label) ?? null;
     case "animationTimelineSet":
       return setAnimationTimeline(op.request.name, op.request.data, {
         originId: op.request.originId,

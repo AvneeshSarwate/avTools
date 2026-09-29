@@ -1,4 +1,10 @@
-import { registerParams } from "@avtools/livecode-engine/params_store.ts";
+import {
+  getParamsPresets,
+  registerParams,
+  removeParamsPreset as storeRemoveParamsPreset,
+  setParamsPreset as storeSetParamsPreset,
+  setParamsValues,
+} from "@avtools/livecode-engine/params_store.ts";
 import { cloneEvent } from "@avtools/livecode-engine/events.ts";
 import type {
   LivecodeEvent,
@@ -140,4 +146,43 @@ export function canvasParams<T extends ParamsDeclaration>(
     declaration.values,
     Object.keys(declaration.meta).length ? declaration.meta : undefined,
   ) as ParamsValueOf<T>;
+}
+
+/**
+ * Save the entity's current live values as a preset. Presets are saved with
+ * the entity by project save and copied by duplicate; they are addressed by
+ * name and label so a relaunched module can use them without holding any
+ * handle. Throws when the entity was never declared.
+ */
+export function setParamsPreset(name: string, label: string): void {
+  if (!storeSetParamsPreset(name, label)) {
+    throw new Error(`No params entity "${name}"`);
+  }
+}
+
+export function removeParamsPreset(name: string, label: string): void {
+  if (!storeRemoveParamsPreset(name, label)) {
+    throw new Error(`No params entity "${name}"`);
+  }
+}
+
+/** A copy of the entity's presets by label; empty when there are none. */
+export function listParamsPresets(
+  name: string,
+): Record<string, ParamsValues> {
+  return getParamsPresets(name);
+}
+
+/**
+ * Write a preset back into the live values: the same nested patch merge a
+ * pane edit uses, so fields the declaration has since dropped are ignored
+ * with a warning rather than resurrected. False when the label is unknown.
+ */
+export function recallParamsPreset(name: string, label: string): boolean {
+  const preset = getParamsPresets(name)[label.trim()];
+  if (!preset) return false;
+  if (!setParamsValues(name, preset, { originId: "code" })) {
+    throw new Error(`No params entity "${name}"`);
+  }
+  return true;
 }
