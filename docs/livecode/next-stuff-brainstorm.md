@@ -1,5 +1,6 @@
+if we built it preset sequencer for parameter entities, it would run engine side and just read/copy/manipulate presets - what it's project-specific UI would do is just define the sequence object/format and send it back to the engine - for now, that could just be engine events/hanlders. but if we wanted to persist the sequence with the project in the UI, that would be a different design investigation - main question, should that also be an entity, or do we need some other concept here for data like this?
 
-need some kind of library/viewer for seeing entites that have been programatically created but don't have a UI on the canvas yet (or a browse view to just scroll through or something)
+need some kind of library/viewer for seeing store entites that have been programatically created but don't have a UI on the canvas yet (or a browse view to just scroll through or something)
 
 for engine running in the browser with graphics libs, are there any tests for that wrt assigning canvases and outputs? probably need some extra "engine side UI" for when things run in the browser
 - probably want at least full-screen popout wrapper for canvases, think of other things
