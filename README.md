@@ -18,7 +18,7 @@ Run:
 
 If missing, `setup.sh` will install:
 - Rust toolchain (via rustup)
-- Deno
+- Deno, pinned to 2.8.3 (see [Deno version pin](#deno-version-pin-283))
 - uv (Python package manager)
 - Node.js (via nvm)
 
@@ -33,6 +33,40 @@ Then it will:
 
 After that:
 1. Open `avtools.code-workspace` in VS Code - this should 
+
+### Deno version pin (2.8.3)
+
+`setup.sh` installs, or switches an existing install to, **Deno 2.8.3**, set by
+`DENO_VERSION` at the top of the script. To switch by hand:
+
+```
+deno upgrade --version 2.8.3
+```
+
+**Why:** from Deno 2.9.0, Apple Silicon macOS builds panic as soon as a
+graphics window opens. That covers every windowed sketch built on
+`apps/deno-notebooks/window/` (`Deno.UnsafeWindowSurface`), including the
+hanoiShow live show:
+
+```
+thread 'main' panicked at .../raw-window-metal-1.1.0/src/observer.rs:162:14:
+requested change dictionary did not contain `NSKeyValueChangeNewKey`
+```
+
+- **Cause:** [denoland/deno#35341](https://github.com/denoland/deno/pull/35341),
+  released in 2.9.0, links release builds through
+  [lzld](https://github.com/littledivy/lzld). lzld loads Apple frameworks
+  lazily and stubs Foundation's `NSKeyValueChangeNewKey` constant to NULL.
+- **Why that panics:** the window's view has no `CAMetalLayer`, so wgpu's
+  `raw-window-metal` adds one and watches it via key-value observing. Reading
+  the change it's notified of looks up that constant, finds nothing, and the
+  code panics deliberately.
+- **Versions:** last good 2.8.3, first bad 2.9.0. Tested on 2.8.2, 2.8.3,
+  2.9.0, 2.9.3 and 2.9.7.
+- **Not affected:** headless WebGPU (no window surface), on any version.
+- **Lifting the pin:** wait for a fixed Deno release, or set a `CAMetalLayer` as
+  the NSView's root layer before creating the surface. That workaround avoided
+  the panic on 2.9.7, but drawing to the screen with it hasn't been confirmed.
 
 ## VSCode Setup (Recommended)
 

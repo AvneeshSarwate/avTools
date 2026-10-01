@@ -27,6 +27,7 @@ import {
   type BodyContourProvider,
   createBodyContourProvider,
 } from "./body_contour_provider.ts";
+import { appendSnapshot, type Params, SNAPSHOT_FILE } from "./tegaki_snapshots.ts";
 import {
   createHandBBoxProvider,
   type HandBBoxProvider,
@@ -246,7 +247,8 @@ export const state = {
     lissajousPhaseAccumX: 0,
     lissajousPhaseAccumY: 0,
     lastMorphPhaseUpdateMs: null as number | null,
-    installPauseAutoOffTimeout: null as ReturnType<typeof setTimeout> | null,
+    /** Bumped to invalidate a pending install pause auto-off timer. */
+    installPauseAutoOffEpoch: 0,
     prevPaused: false,
   },
   meta: {
@@ -1453,20 +1455,23 @@ function applyBooleanMacroValue(
 }
 
 function clearInstallPauseAutoOff(): void {
-  if (state.runtime.installPauseAutoOffTimeout !== null) {
-    clearTimeout(state.runtime.installPauseAutoOffTimeout);
-    state.runtime.installPauseAutoOffTimeout = null;
-  }
+  state.runtime.installPauseAutoOffEpoch += 1;
 }
 
-function scheduleInstallPauseAutoOff(): void {
+// Runs on the timing context (not setTimeout) so offline renders see the
+// 5-minute auto-off in render time rather than wall time. Superseded timers
+// self-cancel via the epoch, like scheduleRamp — cancelling a branch makes
+// core-timing log an "aborted" stack.
+function scheduleInstallPauseAutoOff(ctx: DateTimeContext): void {
   clearInstallPauseAutoOff();
-  state.runtime.installPauseAutoOffTimeout = setTimeout(() => {
-    state.runtime.installPauseAutoOffTimeout = null;
+  const myEpoch = state.runtime.installPauseAutoOffEpoch;
+  ctx.branch(async (timerCtx) => {
+    await timerCtx.waitSec(5 * 60);
+    if (state.runtime.installPauseAutoOffEpoch !== myEpoch) return;
     if (!state.params.runInstall || !state.params.paused) return;
     applyBooleanMacroValue("paused", false);
     state.runtime.refreshUi?.();
-  }, 5 * 60 * 1000);
+  });
 }
 
 function pickRunInstallTarget(
@@ -1537,7 +1542,7 @@ async function runInstallLoop(ctx: DateTimeContext): Promise<void> {
         applyBooleanMacroValue(spec.key, nextValue);
         if (spec.key === "paused") {
           if (nextValue) {
-            scheduleInstallPauseAutoOff();
+            scheduleInstallPauseAutoOff(ctx);
           } else {
             clearInstallPauseAutoOff();
           }
@@ -1802,6 +1807,16 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
       s.cooldownUntil = 0;
     }
   });
+  // Full param snapshot for the offline render (render_tegaki_offline.ts
+  // --snapshots). One JSONL file per run, named by start time.
+  pane.addButton({ title: "Save snapshot" }).on("click", () => {
+    appendSnapshot({ ...state.params } as Params)
+      .then(() => console.log(`[tegaki] snapshot saved -> ${SNAPSHOT_FILE.pathname}`))
+      .catch((err) => {
+        console.error("[tegaki] snapshot save failed:", err);
+        console.log(JSON.stringify(state.params));
+      });
+  });
   pane.addButton({ title: "Reset all → 0" }).on("click", () => {
     for (const s of state.glyphStates) {
       s.random.phase = 0;
@@ -1820,7 +1835,17 @@ export function setupPane(pane: PaneContainer, refresh?: () => void) {
 
 // ── Setup (load data, build layout, start animation) ────────────────
 
-export async function setup(dims: { width: number; height: number }) {
+/** Starts the root animation context. Defaults to realtime `launch`; offline
+ *  renders pass a launcher backed by core-timing's OfflineRunner. */
+export type TegakiLauncher = (
+  block: (ctx: DateTimeContext) => Promise<void>,
+) => ReturnType<typeof launch<void>>;
+
+export async function setup(
+  dims: { width: number; height: number },
+  opts: { launch?: TegakiLauncher } = {},
+) {
+  const launchRoot: TegakiLauncher = opts.launch ?? ((block) => launch(block));
   state.meta.width = dims.width;
   state.meta.height = dims.height;
   state.meta.maxWidth = dims.width - MARGIN_X * 2;
@@ -1944,7 +1969,7 @@ export async function setup(dims: { width: number; height: number }) {
   // triggerMode === "random"; intersection-mode ramps are spawned from draw()
   // via scheduleRamp using the stored triggerCtx. Ramps already in flight
   // continue even after a mode switch — they're keyed to their own track.
-  const rootAnim = launch(async (ctx) => {
+  const rootAnim = launchRoot(async (ctx) => {
     // Hand particle emitter — runs alongside the trigger loop.
     ctx.branch((emitterCtx) => runHandEmitterLoop(emitterCtx));
     ctx.branch((installCtx) => runInstallLoop(installCtx));
@@ -1998,9 +2023,10 @@ export async function setup(dims: { width: number; height: number }) {
 
 // ── Draw (no beginFrame/endFrame, no HUD) ───────────────────────────
 
-export function draw(p5: P5GPU, autoClear = true) {
+/** `nowMs` overrides the wall clock for the free-running path phase (offline renders). */
+export function draw(p5: P5GPU, autoClear = true, nowMs?: number) {
   if (autoClear) p5.clear();
-  updateMorphPhaseAccumulators();
+  updateMorphPhaseAccumulators(nowMs);
   updatePausedRecoveryState();
 
   const [ir, ig, ib] = hexToRgb(state.params.inkColor);

@@ -27,6 +27,11 @@ NOTEBOOK_DIR="$ROOT_DIR/apps/deno-notebooks"
 BROWSER_PROJECTIONS_DIR="$ROOT_DIR/apps/browser-projections"
 LIVECODE_TLDRAW_DIR="$ROOT_DIR/apps/livecode-tldraw"
 
+# Pinned Deno version. Deno 2.9.0+ on Apple Silicon macOS panics whenever a
+# graphics window opens (see "Deno version pin" in README.md). Bump this once
+# a fixed Deno release ships.
+DENO_VERSION="2.8.3"
+
 echo "================================================"
 echo "avTools Setup"
 echo "================================================"
@@ -98,8 +103,8 @@ install_rust() {
 }
 
 install_deno() {
-  echo "[toolchain] Installing Deno..."
-  curl -fsSL https://deno.land/install.sh | sh
+  echo "[toolchain] Installing Deno $DENO_VERSION..."
+  curl -fsSL https://deno.land/install.sh | sh -s "v$DENO_VERSION"
   export DENO_INSTALL="${DENO_INSTALL:-$HOME/.deno}"
   export PATH="$DENO_INSTALL/bin:$PATH"
   echo "Deno $(deno --version | head -n1) installed."
@@ -210,7 +215,17 @@ if ! ensure_in_path deno; then
     missing_toolchains+=("Deno")
   fi
 else
-  echo "Deno already installed: $(deno --version | head -n1)"
+  installed_deno_version="$(deno --version | head -n1 | awk '{print $2}')"
+  if [ "$installed_deno_version" = "$DENO_VERSION" ]; then
+    echo "Deno already installed: $(deno --version | head -n1)"
+  elif [ "$want_install_toolchains" = true ]; then
+    echo "[toolchain] Deno $installed_deno_version installed; switching to pinned $DENO_VERSION..."
+    deno upgrade --version "$DENO_VERSION" ||
+      echo "WARNING: could not switch Deno to $DENO_VERSION (installed via a package manager?). Windowed sketches may crash; see README.md."
+  else
+    echo "WARNING: Deno $installed_deno_version installed, but this repo pins $DENO_VERSION."
+    echo "  Windowed sketches may crash on other versions. Fix: deno upgrade --version $DENO_VERSION"
+  fi
 fi
 
 if ! ensure_in_path uv; then
