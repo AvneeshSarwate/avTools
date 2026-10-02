@@ -82,6 +82,9 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
     const { createNoteOutput, playClip } = await import(
       new URL("playback.ts", base).href
     );
+    const { easeCirc, ornamentClip } = await import(
+      new URL("transforms.ts", base).href
+    );
     const clip = (name: string) => {
       const s = sources[name];
       return new AbletonClip(s.name, s.duration, s.notes);
@@ -372,6 +375,7 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
       const exact = takeToRollNotes(notes, {
         secondsPerBeat: 0.5,
         quantize: 0,
+        bendRange: 48,
       });
       assertEquals(exact.notes.map((n: { pitch: number }) => n.pitch), [
         60,
@@ -384,6 +388,7 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
       const snapped = takeToRollNotes(notes, {
         secondsPerBeat: 0.5,
         quantize: 0.5,
+        bendRange: 48,
       });
       assertEquals(
         snapped.notes.map((n: { position: number; duration: number }) => [
@@ -395,6 +400,149 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
       recorder.start(20);
       assertEquals(recorder.finish(21), null, "an empty take writes nothing");
     });
+    await t.step("recording: MPE expression becomes roll curves", () => {
+      const recorder = createTakeRecorder();
+      const send = (event: Record<string, unknown>, sec: number) =>
+        recorder.handle({ timeMs: 0, ...event }, sec);
+      // Sent before the take starts: the note's initial values still count.
+      send({ type: "pitchBend", channel: 2, bend: 0 }, 9);
+      send({ type: "cc", channel: 2, controller: 74, value: 30 }, 9);
+      recorder.start(10);
+      send({ type: "noteOn", channel: 2, note: 60, velocity: 90 }, 10);
+      send({ type: "noteOn", channel: 3, note: 64, velocity: 90 }, 10);
+      send({ type: "pitchBend", channel: 2, bend: 4096 }, 10.5); // +24 at 48
+      send({ type: "channelPressure", channel: 2, pressure: 100 }, 10.5);
+      send({ type: "noteOff", channel: 2, note: 60, velocity: 0 }, 11);
+      send({ type: "noteOff", channel: 3, note: 64, velocity: 0 }, 11);
+      const take = takeToRollNotes(recorder.finish(12), {
+        secondsPerBeat: 1,
+        quantize: 0,
+        bendRange: 48,
+      });
+      const [bent, plain] = take.notes;
+      assertEquals(bent.mpePitch.points.at(-1).pitchOffset, 24);
+      assertEquals(bent.mpePitch.points[0], { time: 0, pitchOffset: 0 });
+      assertEquals(
+        bent.mpePressure.points.map((p: { value: number }) => p.value),
+        [0, 100, 100],
+      );
+      assertEquals(bent.mpeTimbre.points, [{ time: 0, value: 30 }, {
+        time: 1,
+        value: 30,
+      }]);
+      // Another channel's expression is not this note's.
+      assertEquals(
+        [plain.mpePitch, plain.mpePressure, plain.mpeTimbre],
+        [undefined, undefined, undefined],
+      );
+    });
+    await t.step("transforms that change note length carry the curves", () => {
+      const curved = new AbletonClip("curved", 4, [{
+        pitch: 62,
+        position: 0,
+        duration: 2,
+        velocity: 100,
+        offVelocity: 100,
+        probability: 1,
+        isEnabled: true,
+        pitchCurve: [0, 2].map((timeOffset) => ({
+          timeOffset,
+          value: timeOffset,
+          x1: 0.5,
+          y1: 0.5,
+          x2: 0.5,
+          y2: 0.5,
+        })),
+      }]);
+      const eased = easeCirc(curved, 0).notes[0];
+      assertAlmostEquals(eased.pitchCurve.at(-1).timeOffset, eased.duration);
+      assertEquals(curved.notes[0].pitchCurve?.[1].timeOffset, 2);
+      const ornament = ornamentClip(curved, 1, "dR7", () => 0).notes;
+      assertEquals(ornament.length, 3);
+      for (const [i, note] of ornament.entries()) {
+        const curve = note.pitchCurve;
+        assertAlmostEquals(curve[0].value, (2 * i) / 3);
+        assertAlmostEquals(curve.at(-1).value, (2 * (i + 1)) / 3);
+        assertAlmostEquals(curve.at(-1).timeOffset, note.duration);
+      }
+    });
+    await t.step(
+      "MPE playback: a channel per note, expression before note-on",
+      async () => {
+        const messages: string[] = [];
+        const out = createNoteOutput({
+          noteOn: (c: number, p: number) => messages.push(`on ${c} ${p}`),
+          noteOff: (c: number, p: number) => messages.push(`off ${c} ${p}`),
+          pitchBend: (c: number, b: number) => messages.push(`bend ${c} ${b}`),
+          channelPressure: (c: number, v: number) =>
+            messages.push(`pressure ${c} ${v}`),
+          cc: (c: number, n: number, v: number) =>
+            messages.push(`cc ${c} ${n} ${v}`),
+        });
+        const note = (pitch: number, curve?: number) => ({
+          pitch,
+          position: 0,
+          duration: 0.05,
+          velocity: 100,
+          offVelocity: 100,
+          probability: 1,
+          isEnabled: true,
+          pitchCurve: curve === undefined ? undefined : [
+            { timeOffset: 0, value: 0, x1: 0.5, y1: 0.5, x2: 0.5, y2: 0.5 },
+            {
+              timeOffset: 0.05,
+              value: curve,
+              x1: 0.5,
+              y1: 0.5,
+              x2: 0.5,
+              y2: 0.5,
+            },
+          ],
+        });
+        const chord = new AbletonClip("chord", 0.05, [note(60, 12), note(64)]);
+        const play = (mpe?: { bendRange: number }) => {
+          const handle = launch(async (ctx) => {
+            await playClip(ctx, chord, {
+              output: out,
+              channel: 0,
+              secondsPerBeat: 1,
+              gate: 1,
+              mpe,
+            });
+            await ctx.waitSec(0.05);
+          });
+          return handle;
+        };
+        await play({ bendRange: 48 });
+        assertEquals(messages.slice(0, 4), [
+          "bend 1 0",
+          "pressure 1 0",
+          "cc 1 74 64",
+          "on 1 60",
+        ]);
+        assert(messages.includes("on 2 64"), "second note gets channel 2");
+        // +12 of 48 semitones is 2048; the last tick lands just before it.
+        const bends = messages.filter((m) => m.startsWith("bend 1 "))
+          .map((m) => Number(m.split(" ")[2]));
+        assert(bends.length > 2, "the bend is resent while the note sounds");
+        assert(Math.max(...bends) > 1500 && Math.max(...bends) <= 2048);
+        assert(
+          !messages.some((m) => m.startsWith("bend 2 ") && m !== "bend 2 0"),
+        );
+        assertEquals(messages.filter((m) => m.startsWith("off")).sort(), [
+          "off 1 60",
+          "off 2 64",
+        ]);
+        messages.length = 0;
+        await play();
+        assertEquals(messages.sort(), [
+          "off 0 60",
+          "off 0 64",
+          "on 0 60",
+          "on 0 64",
+        ], "without MPE the curves are ignored");
+      },
+    );
     await t.step(
       "cancelled overlapping notes release exactly once",
       async () => {

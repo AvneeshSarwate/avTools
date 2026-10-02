@@ -1,8 +1,74 @@
 // Copied from sonar_sketch/utils/clipTransforms.ts. Algorithms are project-owned.
 // Parser/registry removed; ornament RNG is injectable for repeatable tests.
-import { AbletonClip, type AbletonNote } from "@avtools/music-types";
+import {
+  AbletonClip,
+  type AbletonNote,
+  createCurveValue,
+  type CurveValue,
+} from "@avtools/music-types";
 import { Scale } from "@avtools/music-types";
 import { easingMap } from "./easing.ts";
+
+// MPE curves (pitch, pressure, timbre) keep their offsets in beats into the
+// note. A transform that changes a note's length has to move them with it;
+// one that only moves or transposes the note can leave them alone.
+const CURVE_KEYS = ["pitchCurve", "pressureCurve", "timbreCurve"] as const;
+
+/** Rescales a (cloned) note's curves in place after its length changed. */
+function scaleNoteCurves(note: AbletonNote, oldDuration: number) {
+  if (oldDuration <= 0 || note.duration === oldDuration) return;
+  const factor = note.duration / oldDuration;
+  for (const key of CURVE_KEYS) {
+    note[key]?.forEach((point) => point.timeOffset *= factor);
+  }
+}
+
+/**
+ * The part of a note's curves between `from` and `to` (0..1 of the note),
+ * laid over `duration` beats, with interpolated values at both ends.
+ */
+function sliceNoteCurves(
+  note: AbletonNote,
+  from: number,
+  to: number,
+  duration: number,
+): Pick<AbletonNote, typeof CURVE_KEYS[number]> {
+  const slice = (curve?: CurveValue[]) => {
+    if (!curve?.length || note.duration <= 0) return undefined;
+    const points = [...curve].sort((a, b) => a.timeOffset - b.timeOffset);
+    const at = (u: number) => {
+      const beat = u * note.duration;
+      if (beat <= points[0].timeOffset) return points[0].value;
+      for (let i = 1; i < points.length; i++) {
+        const b = points[i];
+        if (beat > b.timeOffset) continue;
+        const a = points[i - 1];
+        const span = b.timeOffset - a.timeOffset;
+        return span > 0
+          ? a.value + ((beat - a.timeOffset) / span) * (b.value - a.value)
+          : b.value;
+      }
+      return points[points.length - 1].value;
+    };
+    const place = (u: number) => ((u - from) / (to - from)) * duration;
+    const inner = points
+      .filter((p) => {
+        const u = p.timeOffset / note.duration;
+        return u > from && u < to;
+      })
+      .map((p) => ({ ...p, timeOffset: place(p.timeOffset / note.duration) }));
+    return [
+      createCurveValue(0, at(from)),
+      ...inner,
+      createCurveValue(duration, at(to)),
+    ];
+  };
+  return {
+    pitchCurve: slice(note.pitchCurve),
+    pressureCurve: slice(note.pressureCurve),
+    timbreCurve: slice(note.timbreCurve),
+  };
+}
 
 /**
  * IMPORTANT: Clip Transform Invariants
@@ -817,11 +883,13 @@ export function ease(
   newClip.notes.forEach((note) => {
     const posNorm = note.position / duration;
     const endNorm = (note.position + note.duration) / duration;
+    const oldDuration = note.duration;
     note.position = mix(posNorm, easingMap[easeType](posNorm), amount) *
       duration;
     const endTime = mix(endNorm, easingMap[easeType](endNorm), amount) *
       duration;
     note.duration = endTime - note.position;
+    scaleNoteCurves(note, oldDuration);
   });
   return newClip;
 }
@@ -859,9 +927,11 @@ export function easeCirc(clip: AbletonClip, amount: number): AbletonClip {
       0,
       Math.min(1, (note.position + note.duration) / duration),
     );
+    const oldDuration = note.duration;
     note.position = blend(amount, posNorm) * duration;
     const endTime = blend(amount, endNorm) * duration;
     note.duration = endTime - note.position;
+    scaleNoteCurves(note, oldDuration);
   });
 
   // Check if any notes extend beyond clip duration
@@ -987,8 +1057,11 @@ export function ornamentClip(
 
     const baseIndex = scale.getIndFromPitch(note.pitch);
 
+    // Each ornament note carries its third of the original note's curves,
+    // so a gesture continues across the ornament.
     const createNote = (pitchIndex: number, offsetIndex: number) => ({
       ...note,
+      ...sliceNoteCurves(note, offsetIndex / 3, (offsetIndex + 1) / 3, unitDur),
       pitch: scale.getByIndex(pitchIndex),
       position: shiftedStart + (offsetIndex * unitDur),
       duration: unitDur,

@@ -179,13 +179,13 @@
         "x": 80,
         "y": 610,
         "w": 560,
-        "h": 420
+        "h": 560
       },
       {
         "id": "shape:sonar-beatstep",
         "paramsName": "sonar/beatstep",
         "x": 80,
-        "y": 1080,
+        "y": 1220,
         "w": 560,
         "h": 300
       }
@@ -238,7 +238,7 @@
         "id": "shape:sonar-presets-transport",
         "type": "sonar-preset-switcher",
         "x": 80,
-        "y": 1400,
+        "y": 1540,
         "props": {
           "w": 560,
           "h": 300,
@@ -251,7 +251,7 @@
         "id": "shape:sonar-presets-beatstep",
         "type": "sonar-preset-switcher",
         "x": 80,
-        "y": 1720,
+        "y": 1860,
         "props": {
           "w": 560,
           "h": 260,
