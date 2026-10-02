@@ -12,6 +12,12 @@ import type { MidiInputEvent } from "midi-helpers";
 const ROLL_PITCH_RANGE = 24;
 /** Curve points closer than this to the thinned line are dropped. */
 const PITCH_TOLERANCE_SEMITONES = 0.05;
+/**
+ * A pitch-curve point within this many semitones of a whole MIDI pitch is
+ * an anchor (`rooted`): scale-aware transposition moves that pitch through
+ * the scale with the note, so a slide onto a note still lands on one.
+ */
+const ANCHOR_TOLERANCE_SEMITONES = 0.3;
 /** The same for pressure and timbre, in 0..127 steps. */
 const VALUE_TOLERANCE = 1;
 /** MPE rest values; a curve that never leaves them is not written. */
@@ -206,22 +212,31 @@ function curveTimes(note: TakeNote, samples: Sample[]) {
 
 /**
  * `pitchOffset` is semitones from the note's pitch. Undefined for a note that
- * never bent. Samples are thinned because every point becomes a draggable
- * handle in the roll.
+ * never bent. Points near a whole pitch are anchors. Samples are thinned
+ * because every point becomes a draggable handle in the roll; thinning keeps
+ * where each run of anchors on one pitch starts and ends.
  */
 function pitchCurve(note: TakeNote, bendRange: number) {
-  const points = curveTimes(note, note.bends).map(({ time, value }) => ({
-    time,
-    value: Math.max(
+  const points = curveTimes(note, note.bends).map(({ time, value }) => {
+    const offset = Math.max(
       -ROLL_PITCH_RANGE,
       Math.min(ROLL_PITCH_RANGE, (value / 8192) * bendRange),
-    ),
-  }));
+    );
+    const pitch = note.pitch + offset;
+    const whole = Math.round(pitch);
+    const anchored = Math.abs(pitch - whole) <= ANCHOR_TOLERANCE_SEMITONES;
+    return { time, value: offset, anchor: anchored ? whole : null };
+  });
   if (points.every((point) => Math.abs(point.value) < 0.01)) return undefined;
   return {
-    points: simplifyCurve(points, PITCH_TOLERANCE_SEMITONES).map((point) => ({
+    points: simplifyCurve(
+      points,
+      PITCH_TOLERANCE_SEMITONES,
+      (point) => point.anchor,
+    ).map((point) => ({
       time: point.time,
       pitchOffset: point.value,
+      ...(point.anchor === null ? {} : { rooted: true }),
     })),
   };
 }
@@ -235,12 +250,23 @@ function valueCurve(note: TakeNote, samples: Sample[], rest: number) {
 /**
  * Ramer-Douglas-Peucker on value error: keep a point only when dropping it
  * would move the line drawn between its neighbours by more than `tolerance`.
- * Endpoints are always kept.
+ * Endpoints are always kept, and so are both ends of every run of
+ * consecutive points with the same `group`.
  */
 function simplifyCurve<T extends { time: number; value: number }>(
   points: T[],
   tolerance: number,
+  group?: (point: T) => unknown,
 ): T[] {
+  if (group) {
+    const runs: T[][] = [];
+    for (const point of points) {
+      const run = runs[runs.length - 1];
+      if (run && group(run[0]) === group(point)) run.push(point);
+      else runs.push([point]);
+    }
+    return runs.flatMap((run) => simplifyCurve(run, tolerance));
+  }
   if (points.length <= 2) return points;
   const keep = new Array<boolean>(points.length).fill(false);
   keep[0] = keep[points.length - 1] = true;

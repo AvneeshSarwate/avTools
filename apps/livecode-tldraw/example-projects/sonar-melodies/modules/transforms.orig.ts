@@ -5,13 +5,17 @@ import {
   type AbletonNote,
   createCurveValue,
   type CurveValue,
+  scaleTransposeMPE,
 } from "@avtools/music-types";
 import { Scale } from "@avtools/music-types";
 import { easingMap } from "./easing.ts";
 
 // MPE curves (pitch, pressure, timbre) keep their offsets in beats into the
-// note. A transform that changes a note's length has to move them with it;
-// one that only moves or transposes the note can leave them alone.
+// note, so a transform that changes a note's length or cuts it has to move
+// them with it. Pitch points marked `rooted` are anchors: scale-aware
+// transposition moves the pitch they sit on through the scale with the note.
+// Curves from the roll carry no bezier handles (every segment is linear), so
+// only point times and values need moving.
 const CURVE_KEYS = ["pitchCurve", "pressureCurve", "timbreCurve"] as const;
 
 /** Rescales a (cloned) note's curves in place after its length changed. */
@@ -23,9 +27,34 @@ function scaleNoteCurves(note: AbletonNote, oldDuration: number) {
   }
 }
 
+function cloneNoteCurves(
+  note: AbletonNote,
+): Pick<AbletonNote, typeof CURVE_KEYS[number]> {
+  return {
+    pitchCurve: note.pitchCurve?.map((point) => ({ ...point })),
+    pressureCurve: note.pressureCurve?.map((point) => ({ ...point })),
+    timbreCurve: note.timbreCurve?.map((point) => ({ ...point })),
+  };
+}
+
+/** Plays a (cloned) note's curves backwards in place. */
+function reverseNoteCurves(note: AbletonNote) {
+  for (const key of CURVE_KEYS) {
+    const curve = note[key];
+    if (!curve) continue;
+    note[key] = curve
+      .map((point) => ({
+        ...point,
+        timeOffset: Math.max(0, note.duration - point.timeOffset),
+      }))
+      .sort((a, b) => a.timeOffset - b.timeOffset);
+  }
+}
+
 /**
  * The part of a note's curves between `from` and `to` (0..1 of the note),
- * laid over `duration` beats, with interpolated values at both ends.
+ * laid over `duration` beats, with interpolated values at both ends. An end
+ * that falls between two anchors, or on one, stays an anchor.
  */
 function sliceNoteCurves(
   note: AbletonNote,
@@ -36,19 +65,28 @@ function sliceNoteCurves(
   const slice = (curve?: CurveValue[]) => {
     if (!curve?.length || note.duration <= 0) return undefined;
     const points = [...curve].sort((a, b) => a.timeOffset - b.timeOffset);
-    const at = (u: number) => {
+    const at = (u: number, timeOffset: number): CurveValue => {
       const beat = u * note.duration;
-      if (beat <= points[0].timeOffset) return points[0].value;
+      const end = (p: CurveValue) => ({
+        ...createCurveValue(timeOffset, p.value),
+        rooted: p.rooted,
+      });
+      if (beat <= points[0].timeOffset) return end(points[0]);
       for (let i = 1; i < points.length; i++) {
         const b = points[i];
         if (beat > b.timeOffset) continue;
         const a = points[i - 1];
         const span = b.timeOffset - a.timeOffset;
-        return span > 0
-          ? a.value + ((beat - a.timeOffset) / span) * (b.value - a.value)
-          : b.value;
+        if (beat === b.timeOffset || span <= 0) return end(b);
+        return {
+          ...createCurveValue(
+            timeOffset,
+            a.value + ((beat - a.timeOffset) / span) * (b.value - a.value),
+          ),
+          rooted: Boolean(a.rooted && b.rooted),
+        };
       }
-      return points[points.length - 1].value;
+      return end(points[points.length - 1]);
     };
     const place = (u: number) => ((u - from) / (to - from)) * duration;
     const inner = points
@@ -57,17 +95,48 @@ function sliceNoteCurves(
         return u > from && u < to;
       })
       .map((p) => ({ ...p, timeOffset: place(p.timeOffset / note.duration) }));
-    return [
-      createCurveValue(0, at(from)),
-      ...inner,
-      createCurveValue(duration, at(to)),
-    ];
+    return [at(from, 0), ...inner, at(to, duration)];
   };
   return {
     pitchCurve: slice(note.pitchCurve),
     pressureCurve: slice(note.pressureCurve),
     timbreCurve: slice(note.timbreCurve),
   };
+}
+
+/**
+ * `AbletonClip.timeSlice`, except a note cut at either edge keeps the part of
+ * its curves it still covers, instead of the whole curve squeezed into it.
+ * Positions and durations are computed exactly as there.
+ */
+function timeSliceWithCurves(
+  clip: AbletonClip,
+  start: number,
+  end: number,
+): AbletonClip {
+  const notes: AbletonNote[] = [];
+  for (const note of clip.notes) {
+    if (note.position + note.duration < start || note.position > end) continue;
+    let position = note.position;
+    let duration = note.duration;
+    if (position + duration > end) duration = end - position;
+    if (position < start) {
+      duration = duration - (start - position);
+      position = start;
+    }
+    if (duration <= 0) continue;
+    const cut = duration !== note.duration;
+    const from = (position - note.position) / note.duration;
+    notes.push({
+      ...note,
+      ...(cut
+        ? sliceNoteCurves(note, from, from + duration / note.duration, duration)
+        : cloneNoteCurves(note)),
+      position: position - start,
+      duration,
+    });
+  }
+  return new AbletonClip(clip.name, end - start, notes);
 }
 
 /**
@@ -282,10 +351,16 @@ export function retrogradeClip(
     return clip.clone();
   }
 
-  const newNotes: AbletonNote[] = clip.notes.map((note) => ({
-    ...note,
-    position: clip.duration - (note.position + note.duration),
-  }));
+  // Like reversing the recorded events: each note's curves run backwards too.
+  const newNotes: AbletonNote[] = clip.notes.map((note) => {
+    const reversed = {
+      ...note,
+      ...cloneNoteCurves(note),
+      position: clip.duration - (note.position + note.duration),
+    };
+    reverseNoteCurves(reversed);
+    return reversed;
+  });
 
   // Ensure notes are sorted by their new positions
   newNotes.sort((a, b) => a.position - b.position);
@@ -462,7 +537,14 @@ export function scaleTranspose(
   if (!scale) {
     scale = new Scale();
   }
-  const result = clip.scaleTranspose(transpose, scale);
+  // Scale-aware for MPE: anchored (`rooted`) pitch-curve points move to the
+  // matching degree, so a slide onto a scale note still lands on one.
+  const resolvedScale = scale;
+  const result = new AbletonClip(
+    clip.name,
+    clip.duration,
+    clip.notes.map((note) => scaleTransposeMPE(note, transpose, resolvedScale)),
+  );
 
   // Check if any notes extend beyond clip duration
   const maxEnd = result.notes.reduce(
@@ -509,29 +591,28 @@ export function spread(
   }
 
   const scale = scaleMap[scaleKey] || new Scale();
-  const newNotes = [...clip.notes].map((n) => ({ ...n })).sort((a, b) =>
-    a.position - b.position
+  const sorted = [...clip.notes].sort((a, b) => a.position - b.position);
+  // Degree indices; an off-scale note counts as the degree below it and
+  // keeps its distance above it.
+  const originalIndices = sorted.map((n) =>
+    Math.floor(scale.getIndFromPitch(n.pitch) + 1e-9)
   );
-  const originalIndices = newNotes.map((n) => scale.getIndFromPitch(n.pitch));
 
-  const firstInd = originalIndices[0];
-  let prevNewInd = firstInd;
-  newNotes[0].pitch = scale.getByIndex(prevNewInd);
-
-  for (let i = 1; i < newNotes.length; i++) {
+  const newIndices = [originalIndices[0]];
+  let prevNewInd = originalIndices[0];
+  for (let i = 1; i < sorted.length; i++) {
     const interval = originalIndices[i] - originalIndices[i - 1];
-    if (interval === 0) {
-      newNotes[i].pitch = scale.getByIndex(prevNewInd);
-      continue;
+    if (interval !== 0) {
+      const direction = Math.sign(interval);
+      prevNewInd += interval + direction * amount;
     }
-    const direction = Math.sign(interval);
-    const widenedInterval = interval + direction * amount;
-
-    const nextInd = prevNewInd + widenedInterval;
-    prevNewInd = nextInd;
-    newNotes[i].pitch = scale.getByIndex(nextInd);
+    newIndices.push(prevNewInd);
   }
 
+  // Scale-aware, so anchored pitch-curve points move with their note.
+  const newNotes = sorted.map((note, i) =>
+    scaleTransposeMPE(note, newIndices[i] - originalIndices[i], scale)
+  );
   return new AbletonClip(clip.name + "_spread", clip.duration, newNotes);
 }
 
@@ -999,8 +1080,10 @@ export function rotateClip(
     return clip.clone();
   }
 
-  const front = clip.timeSlice(cut, dur);
-  const back = clip.timeSlice(0, cut);
+  // A note crossing the cut is split, and each part keeps its share of the
+  // note's curves.
+  const front = timeSliceWithCurves(clip, cut, dur);
+  const back = timeSliceWithCurves(clip, 0, cut);
 
   const result = AbletonClip.concat(front, back);
 
@@ -1055,17 +1138,25 @@ export function ornamentClip(
     // (newDuration - oldDuration)
     timeShift += totalOrnDur - note.duration;
 
-    const baseIndex = scale.getIndFromPitch(note.pitch);
-
     // Each ornament note carries its third of the original note's curves,
-    // so a gesture continues across the ornament.
-    const createNote = (pitchIndex: number, offsetIndex: number) => ({
-      ...note,
-      ...sliceNoteCurves(note, offsetIndex / 3, (offsetIndex + 1) / 3, unitDur),
-      pitch: scale.getByIndex(pitchIndex),
-      position: shiftedStart + (offsetIndex * unitDur),
-      duration: unitDur,
-    });
+    // so a gesture continues across the ornament, and moves `steps` scale
+    // degrees with its anchors.
+    const createNote = (steps: number, offsetIndex: number) =>
+      scaleTransposeMPE(
+        {
+          ...note,
+          ...sliceNoteCurves(
+            note,
+            offsetIndex / 3,
+            (offsetIndex + 1) / 3,
+            unitDur,
+          ),
+          position: shiftedStart + (offsetIndex * unitDur),
+          duration: unitDur,
+        },
+        steps,
+        scale,
+      );
 
     // 0: Trill Up (A, A+1, A)
     // 1: Trill Down (A, A-1, A)
@@ -1073,21 +1164,21 @@ export function ornamentClip(
     // 3: Run Down (A, A-1, A-2)
 
     if (ornamentType === 0) {
-      newNotes.push(createNote(baseIndex, 0));
-      newNotes.push(createNote(baseIndex + 1, 1));
-      newNotes.push(createNote(baseIndex, 2));
+      newNotes.push(createNote(0, 0));
+      newNotes.push(createNote(1, 1));
+      newNotes.push(createNote(0, 2));
     } else if (ornamentType === 1) {
-      newNotes.push(createNote(baseIndex, 0));
-      newNotes.push(createNote(baseIndex - 1, 1));
-      newNotes.push(createNote(baseIndex, 2));
+      newNotes.push(createNote(0, 0));
+      newNotes.push(createNote(-1, 1));
+      newNotes.push(createNote(0, 2));
     } else if (ornamentType === 2) {
-      newNotes.push(createNote(baseIndex, 0));
-      newNotes.push(createNote(baseIndex + 1, 1));
-      newNotes.push(createNote(baseIndex + 2, 2));
+      newNotes.push(createNote(0, 0));
+      newNotes.push(createNote(1, 1));
+      newNotes.push(createNote(2, 2));
     } else {
-      newNotes.push(createNote(baseIndex, 0));
-      newNotes.push(createNote(baseIndex - 1, 1));
-      newNotes.push(createNote(baseIndex - 2, 2));
+      newNotes.push(createNote(0, 0));
+      newNotes.push(createNote(-1, 1));
+      newNotes.push(createNote(-2, 2));
     }
   });
 
