@@ -88,6 +88,16 @@ function positionsToDeltas(positions: number[], totalTime?: number) {
 
 type NoteWithDelta = { note: AbletonNote, preDelta: number, postDelta?: number }
 
+/**
+ * `pitch` moved `steps` degrees of `scale`. An off-scale pitch moves with the
+ * degree at or below it and keeps its distance above that degree; indexing
+ * the scale at its fractional index would give NaN.
+ */
+export function scaleStepPitch(scale: Scale, pitch: number, steps: number): number {
+  const index = Math.floor(scale.getIndFromPitch(pitch) + 1e-9);
+  return scale.getByIndex(index + steps) + (pitch - scale.getByIndex(index));
+}
+
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
@@ -128,8 +138,7 @@ function toNormalizedPitchPoints(
 function buildRootedPitchSegments(
   points: NormalizedPitchPoint[],
   basePitch: number,
-  baseIndex: number,
-  newBaseIndex: number,
+  transpose: number,
   scale: Scale,
 ): RootedPitchSegment[] {
   const segments: RootedPitchSegment[] = [];
@@ -137,10 +146,7 @@ function buildRootedPitchSegments(
 
   const finalize = () => {
     if (!current) return;
-    const rawIndex = scale.getIndFromPitch(current.roundedPitch);
-    const segmentIndex = Number.isInteger(rawIndex) ? rawIndex : Math.round(rawIndex);
-    const deltaIndex = segmentIndex - baseIndex;
-    const newSegmentPitch = scale.getByIndex(newBaseIndex + deltaIndex);
+    const newSegmentPitch = scaleStepPitch(scale, current.roundedPitch, transpose);
     if (Number.isFinite(newSegmentPitch)) {
       segments.push({
         ...current,
@@ -291,16 +297,14 @@ export function scaleTransposeMPE(note: AbletonNote, transpose: number, scale: S
   };
 
   const basePitch = note.pitch;
-  const baseIndex = scale.getIndFromPitch(basePitch);
-  const newBaseIndex = baseIndex + transpose;
-  const newBasePitch = scale.getByIndex(newBaseIndex);
+  const newBasePitch = scaleStepPitch(scale, basePitch, transpose);
   clone.pitch = newBasePitch;
 
   const pitchCurve = clone.pitchCurve as MpeCurveValue[] | undefined;
   if (!pitchCurve || pitchCurve.length === 0) return clone;
 
   const normalizedPoints = toNormalizedPitchPoints(pitchCurve, clone.duration);
-  let segments = buildRootedPitchSegments(normalizedPoints, basePitch, baseIndex, newBaseIndex, scale);
+  let segments = buildRootedPitchSegments(normalizedPoints, basePitch, transpose, scale);
   if (segments.length === 0) {
     return clone;
   }
@@ -401,7 +405,7 @@ export class AbletonClip {
   scaleTranspose(tranpose: number, scale: Scale): AbletonClip {
     const clone = this.clone();
     clone.notes.forEach(note => {
-      note.pitch = scale.getByIndex(scale.getIndFromPitch(note.pitch) + tranpose)
+      note.pitch = scaleStepPitch(scale, note.pitch, tranpose)
     });
     return clone;
   }

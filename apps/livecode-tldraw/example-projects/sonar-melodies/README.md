@@ -91,6 +91,11 @@ transforms. Several banks can record from the same input at once.
   into semitones. Curves are thinned to the points needed, and a curve that
   never leaves its rest value (no bend, zero pressure, timbre 64) is not
   written. Curves span the note, so quantizing a note stretches them with it.
+- Pitch-curve points within 0.3 semitones of a whole MIDI pitch are marked
+  as anchors (the roll's `rooted` points, drawn in the anchor colour and
+  editable there). Thinning keeps where each run of anchors on one pitch
+  starts and ends. Anchors are what scale-aware transposition moves (see
+  below).
 - **record status** reports the result. A take with no notes leaves the roll
   alone. Stopping or replacing the player discards an unfinished take, and a
   toggle left on is switched off when the player starts again.
@@ -118,14 +123,24 @@ mode is read at each trigger.
 With MPE output off, notes play on **channel** as before and the curves are
 ignored.
 
-The transforms keep a note's curves attached to it: transpose and spread move
-the note and leave its bend relative to it, and stretch and easing scale its
-curves with its new length. An ornament splits a note into three, and each
-gets its third of the original curves, so a gesture continues across the
-ornament. Reverse moves notes, but each note's curves still play forwards.
-Rotation cuts a note that crosses the rotation point with the shared
-`AbletonClip.timeSlice`, which squeezes each piece's curves into that piece
-rather than cutting them.
+The transforms keep a note's curves attached to it:
+
+- **Transpose, spread and ornament pitches** are scale-aware for MPE
+  (`scaleTransposeMPE`): the note moves through the scale, and so does each
+  run of anchored pitch-curve points, so a slide from D onto F# moved up a
+  degree in `dR7` runs from D# onto G#. Points between anchors move by an
+  amount interpolated between them; a curve with no anchors keeps its bend
+  relative to the note.
+- An off-scale pitch moves with the scale degree below it and keeps its
+  distance above it. (Before this, any recorded note outside `dR7` became
+  NaN in the pipeline.)
+- **Stretch and easing** scale a note's curves with its new length.
+- **Reverse** reverses each note's curves too, as if the recorded events were
+  played backwards.
+- **Rotate** cuts a note crossing the rotation point in two, and each part
+  keeps its own section of the curves.
+- An **ornament** splits a note into three, and each part gets its third of
+  the curves, so a gesture continues across the ornament.
 
 ## BeatStep
 
@@ -223,9 +238,9 @@ chain, are copied into `transforms.orig.ts` and `easing.orig.ts`. Their only
 shared music dependency is the existing `AbletonClip`/`Scale` data library.
 There is no runtime dependency on browser-projections, its Vue state, the DSL
 parser, `eval`, or `new Function`. Ornament RNG is injectable for testing.
-`ease`, `easeCirc` and `ornamentClip` additionally move MPE curves with the
-notes (see [MPE output](#mpe-output)); the source melodies have none, so this
-does not change their results.
+The transforms additionally carry MPE curves (see [MPE output](#mpe-output));
+the source melodies have no curves and are all in `dR7`, so this does not
+change their results.
 
 ## Source provenance and verification
 
@@ -262,7 +277,8 @@ jumps.
 
 The test also drives the BeatStep mapping with synthetic pad and encoder
 events (layout, radio LEDs, relit pads, the follow toggle, every encoder mode)
-and the recorder with synthetic takes, including MPE expression. It checks
-that easing and ornaments carry curves, and that MPE playback gives each note
-its own channel with its expression sent before the note-on. Recording was also checked live through
+and the recorder with synthetic takes, including MPE expression and anchor
+marking. It checks that every curve-carrying transform moves the curves as
+described above, that off-scale pitches transpose, and that MPE playback
+gives each note its own channel with its expression sent before the note-on. Recording was also checked live through
 an IAC bus on macOS.

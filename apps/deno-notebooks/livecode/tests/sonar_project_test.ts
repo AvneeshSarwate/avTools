@@ -82,7 +82,15 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
     const { createNoteOutput, playClip } = await import(
       new URL("playback.ts", base).href
     );
-    const { easeCirc, ornamentClip } = await import(
+    const {
+      easeCirc,
+      ornamentClip,
+      retrogradeClip,
+      rotateClip,
+      scaleMap,
+      scaleTranspose,
+      spread,
+    } = await import(
       new URL("transforms.ts", base).href
     );
     const clip = (name: string) => {
@@ -421,7 +429,11 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
       });
       const [bent, plain] = take.notes;
       assertEquals(bent.mpePitch.points.at(-1).pitchOffset, 24);
-      assertEquals(bent.mpePitch.points[0], { time: 0, pitchOffset: 0 });
+      assertEquals(bent.mpePitch.points[0], {
+        time: 0,
+        pitchOffset: 0,
+        rooted: true,
+      });
       assertEquals(
         bent.mpePressure.points.map((p: { value: number }) => p.value),
         [0, 100, 100],
@@ -465,6 +477,127 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
         assertAlmostEquals(curve.at(-1).value, (2 * (i + 1)) / 3);
         assertAlmostEquals(curve.at(-1).timeOffset, note.duration);
       }
+    });
+    await t.step(
+      "recording: pitch points near a whole pitch are anchors",
+      () => {
+        const recorder = createTakeRecorder();
+        const send = (event: Record<string, unknown>, sec: number) =>
+          recorder.handle({ timeMs: 0, channel: 1, ...event }, sec);
+        // At 48 semitones of bend, 8192 / 48 is one semitone.
+        const semis = (n: number) => Math.round((n * 8192) / 48);
+        recorder.start(0);
+        send({ type: "noteOn", note: 62, velocity: 90 }, 0);
+        send({ type: "pitchBend", bend: semis(0.2) }, 0.2);
+        send({ type: "pitchBend", bend: semis(1.5) }, 0.4);
+        send({ type: "pitchBend", bend: semis(3.9) }, 0.6);
+        send({ type: "pitchBend", bend: semis(4.1) }, 0.8);
+        send({ type: "noteOff", note: 62, velocity: 0 }, 1);
+        const [note] = takeToRollNotes(recorder.finish(1), {
+          secondsPerBeat: 1,
+          quantize: 0,
+          bendRange: 48,
+        }).notes;
+        assertEquals(
+          note.mpePitch.points.map((
+            p: { pitchOffset: number; rooted?: boolean },
+          ) => [Math.round(p.pitchOffset * 10) / 10, Boolean(p.rooted)]),
+          [
+            [0, true],
+            [0.2, true],
+            [1.5, false],
+            [3.9, true],
+            [4.1, true],
+            [4.1, true],
+          ],
+        );
+      },
+    );
+    await t.step("reverse, rotate and transpose carry the curves", () => {
+      const point = (timeOffset: number, value: number, rooted?: boolean) => ({
+        timeOffset,
+        value,
+        x1: 0.5,
+        y1: 0.5,
+        x2: 0.5,
+        y2: 0.5,
+        ...(rooted ? { rooted } : {}),
+      });
+      const note = (
+        pitch: number,
+        position: number,
+        curve?: ReturnType<typeof point>[],
+      ) => ({
+        pitch,
+        position,
+        duration: 2,
+        velocity: 100,
+        offVelocity: 100,
+        probability: 1,
+        isEnabled: true,
+        pitchCurve: curve,
+      });
+      const values = (
+        n: { pitchCurve: { timeOffset: number; value: number }[] },
+      ) => n.pitchCurve.map((p) => [p.timeOffset, p.value]);
+
+      // Reverse plays each note's curve backwards, like reversed events.
+      const ramp = new AbletonClip("ramp", 4, [
+        note(62, 0, [point(0, 0), point(0.5, 1), point(2, 2)]),
+      ]);
+      const reversed = retrogradeClip(ramp, 1).notes[0];
+      assertEquals(reversed.position, 2);
+      assertEquals(values(reversed), [[0, 2], [1.5, 1], [2, 0]]);
+
+      // Rotating at beat 2 cuts the note at 1..3; each part keeps its half.
+      const crossing = new AbletonClip("crossing", 4, [
+        note(62, 1, [point(0, 0), point(2, 2)]),
+      ]);
+      const rotated = rotateClip(crossing, 0.75).notes;
+      assertEquals(rotated.map((n: { position: number }) => n.position), [
+        0,
+        3,
+      ]);
+      assertEquals(values(rotated[0]), [[0, 1], [1, 2]]);
+      assertEquals(values(rotated[1]), [[0, 0], [1, 1]]);
+
+      // dR7 from D: 62 63 66 68 ... A slide from D to its anchor on F# (two
+      // degrees up) moved up one degree runs from D# to G#.
+      const slide = new AbletonClip("slide", 4, [
+        note(62, 0, [point(0, 0, true), point(1, 2), point(2, 4, true)]),
+      ]);
+      const up = scaleTranspose(slide, 1, scaleMap.dR7).notes[0];
+      assertEquals(up.pitch, 63);
+      assertEquals(up.pitchCurve.at(-1).value, 68 - 63);
+      assertEquals(up.pitchCurve[0].value, 0);
+      // Spread uses the same move: the second note goes up a degree.
+      const spreadOut = spread(
+        new AbletonClip("pair", 4, [note(62, 0), {
+          ...slide.notes[0],
+          position: 2,
+          pitch: 63,
+        }]),
+        1,
+        "dR7",
+      ).notes[1];
+      assertEquals(spreadOut.pitch, 66);
+      assertEquals(spreadOut.pitchCurve.at(-1).value, 69 - 66);
+
+      // Off-scale pitches (E, F here) move with the degree below them
+      // instead of becoming NaN, and transposing by 0 leaves them alone.
+      const offScale = new AbletonClip("off", 4, [note(64, 0), note(65, 2)]);
+      assertEquals(
+        scaleTranspose(offScale, 0, scaleMap.dR7).notes.map((
+          n: { pitch: number },
+        ) => n.pitch),
+        [64, 65],
+      );
+      assertEquals(
+        scaleTranspose(offScale, 1, scaleMap.dR7).notes.map((
+          n: { pitch: number },
+        ) => n.pitch),
+        [67, 68],
+      );
     });
     await t.step(
       "MPE playback: a channel per note, expression before note-on",
