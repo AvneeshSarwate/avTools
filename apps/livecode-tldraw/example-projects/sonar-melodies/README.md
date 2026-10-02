@@ -4,7 +4,9 @@ Three editable source piano rolls (`dscale5`, `dscale7`, `d7mel`), each with its
 own parameter object, pipeline instance, and one-shot/gate/stop/preview buttons. Every
 control lives on the tldraw canvas, and an Arturia BeatStep can drive the same
 controls (see below). Each roll ("bank") can also be recorded into directly
-from a MIDI keyboard. No LPD8 or TouchOSC input adapter is included.
+from a MIDI keyboard, including per-note MPE expression, and playback can
+send that expression back out as MPE. No LPD8 or TouchOSC input adapter is
+included.
 
 Open **sonar-melodies** using **engine on server**, **engine in browser**, or
 **engine in same tab**, then Run **melody player**. Its imported helpers initialize automatically; they do
@@ -79,11 +81,51 @@ transforms. Several banks can record from the same input at once.
   phrase. Set it to 0 to go back to the original melody's length.
 - **fit roll views after recording** (transport pane, on by default) frames
   the take in that bank's piano-roll views once it is written.
+- Pitch bend, pressure and timbre (CC74) are recorded per note as the roll's
+  pitch, Pressure and Timbre curves, as in
+  [`feature-midi-recording`](../feature-midi-recording/README.md): per
+  channel, so with an MPE controller each note gets its own, and a note's
+  curves start at the values its channel had at note-on. Poly pressure is
+  recorded for its key. **record bend range** (transport pane, 48 by default,
+  the MPE standard; ordinary keyboards are usually 2) scales recorded bend
+  into semitones. Curves are thinned to the points needed, and a curve that
+  never leaves its rest value (no bend, zero pressure, timbre 64) is not
+  written. Curves span the note, so quantizing a note stretches them with it.
 - **record status** reports the result. A take with no notes leaves the roll
   alone. Stopping or replacing the player discards an unfinished take, and a
   toggle left on is switched off when the player starts again.
 - Recording writes to the live roll only; **Save project** makes it permanent,
   as with any roll edit. Undo in the piano roll does not cover a take.
+
+## MPE output
+
+**MPE output** (transport pane, off by default) plays every phrase, echo and
+preview as MPE on a lower zone: each note gets its own member channel (MIDI
+channels 2-16; **channel** is then unused), and its pitch, pressure and timbre
+curves are sent as that channel's pitch bend, channel pressure and CC74,
+updated every 10 ms while the note sounds. A note's starting values go out
+just before its note-on, and a note without a curve gets the rest values (no
+bend, pressure 0, timbre 64), so a channel never carries the previous note's
+expression. **MPE output bend range** must match the synth's member-channel
+bend range (48 by default); no RPN or MPE configuration message is sent, so
+set the instrument to MPE mode yourself. The noteLength CC76 goes on the
+master channel (channel 1). Free channels are reused least recently released
+first, so a released note's tail keeps its bend for as long as possible; with
+more than 15 notes sounding at once, notes share a channel. The base and echo
+outputs allocate channels separately. Like the other transport settings, the
+mode is read at each trigger.
+
+With MPE output off, notes play on **channel** as before and the curves are
+ignored.
+
+The transforms keep a note's curves attached to it: transpose and spread move
+the note and leave its bend relative to it, and stretch and easing scale its
+curves with its new length. An ornament splits a note into three, and each
+gets its third of the original curves, so a gesture continues across the
+ornament. Reverse moves notes, but each note's curves still play forwards.
+Rotation cuts a note that crosses the rotation point with the shared
+`AbletonClip.timeSlice`, which squeezes each piece's curves into that piece
+rather than cutting them.
 
 ## BeatStep
 
@@ -181,6 +223,9 @@ chain, are copied into `transforms.orig.ts` and `easing.orig.ts`. Their only
 shared music dependency is the existing `AbletonClip`/`Scale` data library.
 There is no runtime dependency on browser-projections, its Vue state, the DSL
 parser, `eval`, or `new Function`. Ornament RNG is injectable for testing.
+`ease`, `easeCirc` and `ornamentClip` additionally move MPE curves with the
+notes (see [MPE output](#mpe-output)); the source melodies have none, so this
+does not change their results.
 
 ## Source provenance and verification
 
@@ -207,11 +252,17 @@ Manually: edit each source, vary only one pane's transforms, trigger overlapping
 one-shots, release a held gate before its echo starts, then Stop/Replace. Save
 and reopen to check the edited rolls and independent settings persist. Record a
 take into one bank with quantize on and off, and check the other banks are
-untouched. With a BeatStep, press each pad column, switch focus with canvas
+untouched. Record a take on an MPE controller (sliding, pressing, moving a
+finger vertically) and check the roll shows its curves; then turn on MPE
+output, route it to an MPE synth, and check preview and triggers (with
+stretch, easing and ornament) reproduce the gestures. With a BeatStep, press
+each pad column, switch focus with canvas
 follow on and off, and turn encoders after switching focus to check nothing
 jumps.
 
 The test also drives the BeatStep mapping with synthetic pad and encoder
 events (layout, radio LEDs, relit pads, the follow toggle, every encoder mode)
-and the recorder with synthetic takes. Recording was also checked live through
+and the recorder with synthetic takes, including MPE expression. It checks
+that easing and ornaments carry curves, and that MPE playback gives each note
+its own channel with its expression sent before the note-on. Recording was also checked live through
 an IAC bus on macOS.

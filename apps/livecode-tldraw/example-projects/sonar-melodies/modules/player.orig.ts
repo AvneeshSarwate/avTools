@@ -20,7 +20,7 @@ import {
   transport,
 } from "./controls.ts";
 import { type MelodyName, melodyNames, sources } from "./sources.ts";
-import { createNoteOutput, playClip } from "./playback.ts";
+import { createNoteOutput, type NoteOutput, playClip } from "./playback.ts";
 import { createPipeline } from "./pipeline.ts";
 import { createBeatstepController } from "./beatstep.ts";
 import {
@@ -39,13 +39,26 @@ export default async function run(ctx: TimeContext) {
       );
     }
   }
+  const midiOutput = (name: string): NoteOutput => {
+    const device = getMidiDevice(name);
+    return {
+      noteOn: (channel, pitch, velocity) =>
+        device.noteOn(channel, pitch, velocity),
+      noteOff: (channel, pitch) => device.noteOff(channel, pitch),
+      pitchBend: (channel, bend) => device.pitchBend(channel, bend),
+      cc: (channel, controller, value) => device.cc(channel, controller, value),
+      // The MIDI helper has no channel-pressure call: it is two raw bytes.
+      channelPressure: (channel, pressure) =>
+        device.raw([0xd0 | channel, pressure]),
+    };
+  };
   const outputs = new Map<string, ReturnType<typeof createNoteOutput>>();
   const output = (name: string) => {
     const key = `${transport.dryRun ? "dry" : "midi"}/${name}`;
     if (!outputs.has(key)) {
       outputs.set(
         key,
-        createNoteOutput(transport.dryRun ? undefined : getMidiDevice(name)),
+        createNoteOutput(transport.dryRun ? undefined : midiOutput(name)),
       );
     }
     return outputs.get(key)!;
@@ -86,6 +99,11 @@ export default async function run(ctx: TimeContext) {
     60 / Math.max(20, Math.min(300, transport.bpm));
   const channelNow = () =>
     Math.max(0, Math.min(15, Math.round(transport.channel)));
+  // Read at trigger, like the channel: a phrase keeps the mode it began with.
+  const mpeNow = () =>
+    transport.mpeOutput
+      ? { bendRange: Math.max(1, transport.mpeBendRange) }
+      : undefined;
 
   // Preview: the roll as written on the base output, with a playhead on the
   // roll. A second press restarts it; the melody's stop ends it.
@@ -100,6 +118,7 @@ export default async function run(ctx: TimeContext) {
     const clip = phraseSource(name);
     const out = output(transport.baseOutput);
     const channel = channelNow();
+    const mpe = mpeNow();
     const secondsPerBeat = secondsPerBeatNow();
     const head = previewHeads.get(name)!;
     const stepBeats = 1 / 16;
@@ -111,6 +130,7 @@ export default async function run(ctx: TimeContext) {
             channel,
             secondsPerBeat,
             gate: 0.98,
+            mpe,
           });
         }),
         previewCtx.branchWait(async (headCtx) => {
@@ -257,6 +277,7 @@ export default async function run(ctx: TimeContext) {
           const take = takeToRollNotes(notes, {
             secondsPerBeat: secondsPerBeatNow(),
             quantize: transport.recordQuantize,
+            bendRange: transport.recordBendRange,
           });
           const written = setPianoRollClip(`sonar/${name}`, {
             notes: take.notes,
@@ -311,15 +332,17 @@ export default async function run(ctx: TimeContext) {
         const p = melodies[name];
         const secondsPerBeat = secondsPerBeatNow();
         const channel = channelNow();
+        const mpe = mpeNow();
         try {
           const baseOut = output(transport.baseOutput);
           const delayOut = p.delayEnabled
             ? output(transport.delayOutput)
             : baseOut;
           // Preserve the old external s6 mapping; the rack decides note-length meaning.
+          // With MPE it goes on the master channel, which covers every note.
           if (!transport.dryRun) {
             getMidiDevice(transport.baseOutput).cc(
-              channel,
+              mpe ? 0 : channel,
               76,
               p.noteLength * 127,
             );
@@ -332,6 +355,7 @@ export default async function run(ctx: TimeContext) {
                   channel,
                   secondsPerBeat,
                   gate: 0.98,
+                  mpe,
                 });
               }),
               phraseCtx.branchWait(async (delayCtx) => {
@@ -344,6 +368,7 @@ export default async function run(ctx: TimeContext) {
                   channel,
                   secondsPerBeat,
                   gate: 0.98,
+                  mpe,
                 });
               }),
             ]);

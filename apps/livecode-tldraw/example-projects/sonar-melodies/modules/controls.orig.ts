@@ -76,7 +76,10 @@ export function declareTransport(inputNames: string[]) {
     dryRun: false,
     recordInput: "",
     recordQuantize: 0,
+    recordBendRange: 48,
     fitAfterRecording: true,
+    mpeOutput: false,
+    mpeBendRange: 48,
   }, {
     bpm: { min: 20, max: 300 },
     channel: { min: 0, max: 15, step: 1 },
@@ -85,7 +88,22 @@ export function declareTransport(inputNames: string[]) {
       label: "record quantize",
       options: { off: 0, "1/4": 1, "1/8": 0.5, "1/16": 0.25 },
     },
+    // Semitones at full bend: the controller's, to read recorded bend, and
+    // the synth's, to play it back. 48 is the MPE default.
+    recordBendRange: {
+      label: "record bend range (semitones)",
+      min: 1,
+      max: 96,
+      step: 1,
+    },
     fitAfterRecording: { label: "fit roll views after recording" },
+    mpeOutput: { label: "MPE output (notes on channels 2-16)" },
+    mpeBendRange: {
+      label: "MPE output bend range (semitones)",
+      min: 1,
+      max: 96,
+      step: 1,
+    },
   });
 }
 export const transport = declareTransport([]);
