@@ -5,11 +5,17 @@ import {
   fromFileUrl,
   isAbsolute,
   join,
-  normalize,
 } from "jsr:@std/path@1";
 import { pathToFileURL } from "node:url";
 import { analyzeAndTransformTimedModule } from "./analyze_transform.ts";
 import { removePathBestEffort } from "./fs_utils.ts";
+import {
+  normalizeProjectDataPath,
+  normalizeProjectModuleRecord,
+  normalizeProjectRuntimePath,
+  normalizeProjectSourcePath,
+  sourcePathForRuntimePath,
+} from "./project_paths.ts";
 import { createGeneratedRunId } from "@avtools/livecode-engine/generated_run_id.ts";
 import type {
   AddProjectModuleRequest,
@@ -44,11 +50,14 @@ import type {
   ProjectModuleRecord,
   ProjectModuleSourceResponse,
   ProjectModuleStatus,
+  ProjectModuleWriteConflict,
   ProjectSaveEntityResult,
   ProjectSaveResponse,
   ProjectSaveSkippedEntity,
   ProjectShadowCheckResponse,
   ProjectsListResponse,
+  ProjectSourceStatusEntry,
+  ProjectSourceStatusMessage,
   ProjectStatusResponse,
   ReloadProjectModuleRequest,
   RemoveProjectModuleRequest,
@@ -139,6 +148,15 @@ interface PendingClientCommand {
   resolve: (value: ClientControlCommandResponse) => void;
   timer: number;
 }
+
+/**
+ * A write refused because the file changed on disk since the server last wrote
+ * or loaded it (see `WriteProjectModuleRequest.refuseIfChangedOnDisk`).
+ */
+class ProjectModuleWriteConflictError extends Error {}
+
+/** How often the server stats project sources while a `/project/sources` client listens. */
+const PROJECT_SOURCE_POLL_MS = 250;
 
 interface ProjectModuleHashes {
   editorHash: string | null;
@@ -233,7 +251,6 @@ export interface LivecodeVisualizerServer {
 
 const SERVER_VERSION = "0.1.0";
 const PROJECT_MANIFEST_FILENAME = "project.avtools-livecode.json";
-const SOURCE_SUFFIX = ".orig.ts";
 const REPO_ROOT = fromFileUrl(new URL("../../../..", import.meta.url));
 const MAX_PREPARED_RUNS_PER_MODULE = 3;
 /** How deep under each projects root `/projects/list` looks for manifests. */
@@ -292,6 +309,17 @@ export async function createLivecodeVisualizerServer(
 
   const syncSockets = new Map<WebSocket, SyncSocketState>();
   const clientControlSockets = new Map<string, ClientControlSocket>();
+  // `/project/sources` listeners. The poll runs only while this is non-empty,
+  // and a message goes out only when the snapshot differs from the last one.
+  const projectSourceSockets = new Set<WebSocket>();
+  let projectSourceTimer: ReturnType<typeof setInterval> | undefined;
+  let projectSourcePollInFlight = false;
+  let lastProjectSourceStatusJson: string | null = null;
+  // Module ids with a source write between its file write and its hash
+  // update. The poll runs outside the project lane (so a long diagnostics
+  // check cannot delay it), and this is what keeps it from reading that window
+  // as an outside edit.
+  const projectSourceWritesInFlight = new Map<string, number>();
   const pendingClientCommands = new Map<string, PendingClientCommand>();
   const preparedRuns = new Map<string, PreparedRun>();
   const preparedRunIdsByModule = new Map<string, string[]>();
@@ -657,6 +685,30 @@ export async function createLivecodeVisualizerServer(
       };
       socket.onclose = () => syncSockets.delete(socket);
       socket.onerror = () => syncSockets.delete(socket);
+      return response;
+    }
+
+    if (url.pathname === "/project/sources") {
+      const { socket, response } = Deno.upgradeWebSocket(request);
+      socket.onopen = () => {
+        projectSourceSockets.add(socket);
+        // A new listener always gets the current snapshot, even when it equals
+        // what everyone else last received.
+        void makeProjectSourceStatusMessage()
+          .then((message) => {
+            if (socket.readyState === WebSocket.OPEN) {
+              socket.send(JSON.stringify(message));
+            }
+          })
+          .catch(() => undefined);
+        ensureProjectSourcePoll();
+      };
+      const retire = () => {
+        projectSourceSockets.delete(socket);
+        ensureProjectSourcePoll();
+      };
+      socket.onclose = retire;
+      socket.onerror = retire;
       return response;
     }
 
@@ -1088,9 +1140,19 @@ export async function createLivecodeVisualizerServer(
       request.method === "POST" && url.pathname === "/project/modules/write"
     ) {
       const requestBody = await request.json() as WriteProjectModuleRequest;
-      return json(
-        await runProjectOperation(() => writeProjectModule(requestBody)),
-      );
+      try {
+        return json(
+          await runProjectOperation(() => writeProjectModule(requestBody)),
+        );
+      } catch (error) {
+        if (!(error instanceof ProjectModuleWriteConflictError)) throw error;
+        const body: ProjectModuleWriteConflict = {
+          ok: false,
+          conflict: "changedOnDisk",
+          error: error.message,
+        };
+        return json(body, { status: 409 });
+      }
     }
     if (
       request.method === "POST" && url.pathname === "/project/modules/reload"
@@ -1220,6 +1282,9 @@ export async function createLivecodeVisualizerServer(
     close: async () => {
       closing = true;
       for (const socket of syncSockets.keys()) socket.close();
+      for (const socket of projectSourceSockets) socket.close();
+      projectSourceSockets.clear();
+      ensureProjectSourcePoll();
       for (const client of clientControlSockets.values()) {
         client.socket.close();
       }
@@ -1910,6 +1975,9 @@ export async function createLivecodeVisualizerServer(
     if (!moduleRecord) {
       throw new Error("Project module not found");
     }
+    if (requestBody.refuseIfChangedOnDisk) {
+      await assertUnchangedOnDisk(state, moduleRecord, requestBody.sourceText);
+    }
     if (requestBody.sourceVersion !== undefined) {
       moduleRecord.sourceVersion = requestBody.sourceVersion;
     } else {
@@ -1919,6 +1987,104 @@ export async function createLivecodeVisualizerServer(
     await writeProjectManifest(state);
     await materializeProjectRuntime(state);
     return await makeProjectStatusResponse();
+  }
+
+  async function assertUnchangedOnDisk(
+    state: ProjectState,
+    moduleRecord: ProjectModuleRecord,
+    sourceText: string,
+  ): Promise<void> {
+    const lastLoadedHash = state.hashes.get(moduleRecord.id)?.lastLoadedHash ??
+      null;
+    if (lastLoadedHash === null) return;
+    let diskHash: string;
+    try {
+      diskHash = (await readCachedProjectSource(
+        state,
+        projectAbsolutePath(state, moduleRecord.sourcePath),
+      )).sourceHash;
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) return;
+      throw error;
+    }
+    if (diskHash === lastLoadedHash) return;
+    // The outside edit already says what this write would: nothing to lose.
+    if (diskHash === await hashText(sourceText)) return;
+    throw new ProjectModuleWriteConflictError(
+      `${moduleRecord.sourcePath} changed on disk since the editor last loaded it`,
+    );
+  }
+
+  /**
+   * The `/project/sources` snapshot: a stat per module (sources are re-read
+   * only when their stat changes), cheap enough for the poll. It deliberately
+   * runs outside the project lane, which a diagnostics `deno check` can hold
+   * for seconds; it only reads, and a module mid-write reports unchanged.
+   */
+  async function makeProjectSourceStatusMessage(): Promise<
+    ProjectSourceStatusMessage
+  > {
+    const state = currentProject;
+    if (!state) {
+      return { type: "projectSourceStatus", projectRoot: null, modules: [] };
+    }
+    const modules: ProjectSourceStatusEntry[] = [];
+    for (const moduleRecord of state.manifest.modules) {
+      let diskHash: string | null = null;
+      try {
+        diskHash = (await readCachedProjectSource(
+          state,
+          projectAbsolutePath(state, moduleRecord.sourcePath),
+        )).sourceHash;
+      } catch {
+        // Unreadable (deleted, mid-rename): reported as null, never as changed.
+      }
+      const lastLoadedHash =
+        state.hashes.get(moduleRecord.id)?.lastLoadedHash ?? null;
+      const writing = (projectSourceWritesInFlight.get(moduleRecord.id) ?? 0) >
+        0;
+      modules.push({
+        moduleId: moduleRecord.id,
+        path: moduleRecord.path,
+        diskHash,
+        changedOnDisk: !writing && Boolean(
+          diskHash && lastLoadedHash && diskHash !== lastLoadedHash,
+        ),
+      });
+    }
+    return { type: "projectSourceStatus", projectRoot: state.root, modules };
+  }
+
+  function ensureProjectSourcePoll() {
+    if (projectSourceSockets.size === 0 || closing) {
+      if (projectSourceTimer !== undefined) clearInterval(projectSourceTimer);
+      projectSourceTimer = undefined;
+      lastProjectSourceStatusJson = null;
+      return;
+    }
+    if (projectSourceTimer !== undefined) return;
+    projectSourceTimer = setInterval(
+      () => void pollProjectSourceStatus(),
+      PROJECT_SOURCE_POLL_MS,
+    );
+  }
+
+  async function pollProjectSourceStatus() {
+    if (projectSourcePollInFlight) return;
+    projectSourcePollInFlight = true;
+    try {
+      const message = await makeProjectSourceStatusMessage();
+      const serialized = JSON.stringify(message);
+      if (serialized === lastProjectSourceStatusJson) return;
+      lastProjectSourceStatusJson = serialized;
+      for (const socket of projectSourceSockets) {
+        if (socket.readyState === WebSocket.OPEN) socket.send(serialized);
+      }
+    } catch {
+      // Best-effort status; the next tick retries.
+    } finally {
+      projectSourcePollInFlight = false;
+    }
   }
 
   async function reloadProjectModule(
@@ -2033,10 +2199,7 @@ export async function createLivecodeVisualizerServer(
       results.set(moduleRecord.id, result);
 
       if (usingCachedSuccess) {
-        state.hashes.set(moduleRecord.id, {
-          editorHash: sourceHash,
-          lastLoadedHash: sourceHash,
-        });
+        adoptBaselineHashIfAbsent(state, moduleRecord.id, sourceHash);
         continue;
       }
 
@@ -2053,13 +2216,29 @@ export async function createLivecodeVisualizerServer(
       await Deno.mkdir(dirname(runtimePath), { recursive: true });
       await Deno.writeTextFile(runtimePath, transformedCode);
       state.materialized.set(moduleRecord.id, { sourceHash, result });
-      state.hashes.set(moduleRecord.id, {
-        editorHash: sourceHash,
-        lastLoadedHash: sourceHash,
-      });
+      adoptBaselineHashIfAbsent(state, moduleRecord.id, sourceHash);
     }
 
     return { generatedRunId, projectSourceHash, sourceHashes, results };
+  }
+
+  /**
+   * Materialization transforms whatever is on disk, but it is not a load: an
+   * edit made outside the editor stays `changedOnDisk` until the editor writes
+   * or reloads that module. Re-baselining here would let analyzing any one
+   * module silently accept an outside edit to every other one, and the disk
+   * guard on the next editor write would then overwrite it.
+   */
+  function adoptBaselineHashIfAbsent(
+    state: ProjectState,
+    moduleId: string,
+    sourceHash: string,
+  ) {
+    if (state.hashes.has(moduleId)) return;
+    state.hashes.set(moduleId, {
+      editorHash: sourceHash,
+      lastLoadedHash: sourceHash,
+    });
   }
 
   function makeProjectCurrentResponse(
@@ -2652,13 +2831,27 @@ export async function createLivecodeVisualizerServer(
     sourceText: string,
   ): Promise<void> {
     const sourcePath = projectAbsolutePath(state, moduleRecord.sourcePath);
-    await Deno.mkdir(dirname(sourcePath), { recursive: true });
-    await Deno.writeTextFile(sourcePath, sourceText);
     const sourceHash = await hashText(sourceText);
-    state.hashes.set(moduleRecord.id, {
-      editorHash: sourceHash,
-      lastLoadedHash: sourceHash,
-    });
+    projectSourceWritesInFlight.set(
+      moduleRecord.id,
+      (projectSourceWritesInFlight.get(moduleRecord.id) ?? 0) + 1,
+    );
+    try {
+      await Deno.mkdir(dirname(sourcePath), { recursive: true });
+      await Deno.writeTextFile(sourcePath, sourceText);
+      state.hashes.set(moduleRecord.id, {
+        editorHash: sourceHash,
+        lastLoadedHash: sourceHash,
+      });
+    } finally {
+      const remaining =
+        (projectSourceWritesInFlight.get(moduleRecord.id) ?? 1) - 1;
+      if (remaining > 0) {
+        projectSourceWritesInFlight.set(moduleRecord.id, remaining);
+      } else {
+        projectSourceWritesInFlight.delete(moduleRecord.id);
+      }
+    }
     // Keep the content cache in sync with what we just wrote so the next poll
     // reuses it. No materialized.delete: that cache self-invalidates by
     // sourceHash comparison at read time (see ProjectState.materialized).
@@ -2695,26 +2888,6 @@ export async function createLivecodeVisualizerServer(
       y: input.y,
       w: input.w,
       h: input.h,
-    };
-  }
-
-  function normalizeProjectModuleRecord(
-    moduleRecord: ProjectModuleRecord,
-  ): ProjectModuleRecord {
-    const runtimePath = normalizeProjectRuntimePath(
-      moduleRecord.runtimePath ?? moduleRecord.path,
-    );
-    const sourcePath = moduleRecord.sourcePath
-      ? normalizeProjectSourcePath(moduleRecord.sourcePath)
-      : sourcePathForRuntimePath(runtimePath);
-    return {
-      ...moduleRecord,
-      path: runtimePath,
-      runtimePath,
-      sourcePath,
-      sourceVersion: moduleRecord.sourceVersion ?? 1,
-      kind: "runnable",
-      title: moduleRecord.title ?? basename(runtimePath, ".ts"),
     };
   }
 
@@ -3015,59 +3188,6 @@ function resolvePath(path: string): string {
 
 function sanitizeFilePart(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, "_");
-}
-
-function normalizeProjectRelativePath(path: string): string {
-  return normalizeProjectPath(path, ".ts", "Project module");
-}
-
-/** Same relative/inside-project/no-NUL rules as modules, for data files. */
-function normalizeProjectDataPath(path: string): string {
-  return normalizeProjectPath(path, ".json", "Project data");
-}
-
-function normalizeProjectPath(
-  path: string,
-  suffix: string,
-  label: string,
-): string {
-  if (!path || path.includes("\0")) {
-    throw new Error(`${label} path is required`);
-  }
-  if (path.startsWith("file:") || isAbsolute(path)) {
-    throw new Error(`${label} paths must be relative`);
-  }
-  const normalized = normalize(path).replaceAll("\\", "/");
-  if (
-    normalized === "." || normalized === ".." ||
-    normalized.startsWith("../")
-  ) {
-    throw new Error(`${label} paths must stay inside the project`);
-  }
-  if (!normalized.endsWith(suffix)) {
-    throw new Error(`${label} paths must end in ${suffix}`);
-  }
-  return normalized;
-}
-
-function normalizeProjectRuntimePath(path: string): string {
-  const normalized = normalizeProjectRelativePath(path);
-  if (normalized.endsWith(SOURCE_SUFFIX)) {
-    return `${normalized.slice(0, -SOURCE_SUFFIX.length)}.ts`;
-  }
-  return normalized;
-}
-
-function normalizeProjectSourcePath(path: string): string {
-  const normalized = normalizeProjectRelativePath(path);
-  if (normalized.endsWith(SOURCE_SUFFIX)) return normalized;
-  return sourcePathForRuntimePath(normalized);
-}
-
-function sourcePathForRuntimePath(runtimePath: string): string {
-  const normalized = normalizeProjectRelativePath(runtimePath);
-  if (normalized.endsWith(SOURCE_SUFFIX)) return normalized;
-  return `${normalized.slice(0, -".ts".length)}${SOURCE_SUFFIX}`;
 }
 
 function moduleIdFromPath(runtimePath: string): string {

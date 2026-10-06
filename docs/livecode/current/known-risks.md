@@ -106,6 +106,13 @@ files are not necessarily represented as a coherent tree, so relative-import
 completion/diagnostics can disagree with runtime shadow analysis. This needs an
 external-project test and explicit mirroring policy.
 
+## P2: outside-edit detection needs a connected editor and a stat change
+
+A server stat poll (mtime and size) detects outside edits to `*.orig.ts`, and
+only a connected tldraw client acts on them. An outside write that leaves both
+unchanged goes unseen. With no client connected nothing reloads; opening the
+project re-baselines every module to its disk text.
+
 ## P2: analysis and diagnostic attribution are deliberately narrow
 
 Timed-context discovery is type-text/direct-identifier based and helper

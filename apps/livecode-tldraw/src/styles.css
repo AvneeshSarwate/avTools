@@ -298,7 +298,7 @@ input {
 
 .livecode-shape {
   display: grid;
-  grid-template-rows: 48px 34px minmax(0, 1fr) auto;
+  grid-template-rows: 48px 34px auto minmax(0, 1fr) auto;
   overflow: hidden;
   border: 1px solid rgba(236, 244, 239, 0.18);
   border-radius: 8px;
@@ -369,6 +369,52 @@ input {
 .livecode-shape__editor {
   min-width: 0;
   min-height: 0;
+}
+
+/* Disk/staleness notices. Always rendered so the grid rows stay fixed; it
+   collapses to zero height when there is nothing to say. */
+.livecode-shape__source-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+}
+
+/* Not display: none, which would pull the element out of its grid row and
+   shift the editor into this auto row. */
+.livecode-shape__source-notice:empty {
+  padding: 0;
+  border-bottom: none;
+}
+
+.livecode-shape__source-notice button {
+  font-size: 12px;
+}
+
+.source-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.source-pill--stale,
+.source-pill--reloaded {
+  border-color: rgba(246, 201, 107, 0.35);
+  color: #f2d38b;
+  background: rgba(246, 201, 107, 0.1);
+}
+
+.source-pill--conflict {
+  border-color: rgba(255, 128, 128, 0.42);
+  color: #ffb3a9;
+  background: rgba(255, 128, 128, 0.12);
 }
 
 .livecode-codemirror {

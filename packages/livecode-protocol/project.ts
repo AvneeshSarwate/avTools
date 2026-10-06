@@ -200,6 +200,20 @@ export interface UpdateProjectModuleRequest extends ProjectModuleInput {}
 export interface WriteProjectModuleRequest extends ProjectModuleLocator {
   sourceText: string;
   sourceVersion?: number;
+  /**
+   * Refuse (HTTP 409, `ProjectModuleWriteConflict`) instead of writing when the
+   * file changed on disk since the server last wrote or loaded it, unless the
+   * file already holds `sourceText`. The editor sets this so a keystroke cannot
+   * silently overwrite an edit made outside it; a deliberate overwrite omits it.
+   */
+  refuseIfChangedOnDisk?: boolean;
+}
+
+/** The 409 body of a write refused by `refuseIfChangedOnDisk`. */
+export interface ProjectModuleWriteConflict {
+  ok: false;
+  conflict: "changedOnDisk";
+  error: string;
 }
 
 export interface ReloadProjectModuleRequest extends ProjectModuleLocator {}
@@ -228,6 +242,31 @@ export interface ProjectModuleStatus extends ProjectModuleRecord {
   dependencies: string[];
   dependents: string[];
   changedDependencies: string[];
+}
+
+/**
+ * One module's disk truth on the `/project/sources` WebSocket. `diskHash` is
+ * null when the canonical source cannot be read. `changedOnDisk` means the file
+ * differs from what the server last wrote or loaded for it: an edit made
+ * outside the editor that no client has reloaded yet.
+ */
+export interface ProjectSourceStatusEntry {
+  moduleId: string;
+  path: string;
+  diskHash: string | null;
+  changedOnDisk: boolean;
+}
+
+/**
+ * Pushed on `/project/sources` once at connect and then whenever any entry
+ * changes (the server stats sources about every 250 ms while a client
+ * listens). Each message is a complete snapshot for the current project;
+ * `projectRoot` is null when no project is open.
+ */
+export interface ProjectSourceStatusMessage {
+  type: "projectSourceStatus";
+  projectRoot: string | null;
+  modules: ProjectSourceStatusEntry[];
 }
 
 /**

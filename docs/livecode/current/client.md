@@ -125,6 +125,22 @@ For project modules, buffer write-through and a successful shadow diagnostic
 check precede the launch request. Direct server callers do not receive this
 guard.
 
+Each project module record also tracks its file. `syncedSourceText` is the text
+it last wrote or loaded. Its `diskState` is `synced`, `reloaded` (an outside
+edit replaced the text and nobody has typed since), or `conflict`. On a
+`/project/sources` push, or a write the server refused, an untouched module
+fetches the file's text and adopts it; a module with unsaved typing goes to
+`conflict` and holds its writes until the user picks a side. Adoption
+deliberately avoids the server's reload route: resetting the server's baseline
+there would let a write already in flight with the old buffer pass the disk
+guard. The runtime owns the adopted text; `diskReloadSeq` tells the editor
+shape, which owns displayed text, to copy it.
+
+`editorStale` compares the active run's source hash (carried on its `run`
+entity, so it covers runs launched by any client) with the newest analysis's
+hash and text. Before the first analysis the answer is unknown and reported as
+not stale.
+
 The client begins launch correlation before HTTP returns because a terminal
 `run` entity can cross the acknowledgement (instant failure is the important
 case). While the request is pending, that terminal remains in the sync store but

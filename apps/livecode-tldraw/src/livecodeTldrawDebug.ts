@@ -50,6 +50,8 @@ export interface TldrawRuntimeDebugModule {
    * watched ended" from "an older run's terminal leaked through".
    */
   runToken: string | null;
+  editorStale: boolean;
+  diskState: string;
 }
 
 export interface TldrawRuntimeDebugShape {
@@ -349,6 +351,8 @@ function toDebugModule(state: ModuleViewState): TldrawRuntimeDebugModule {
     latestError: state.latestError,
     executionCount: state.executionCount,
     runToken: state.runToken,
+    editorStale: state.editorStale,
+    diskState: state.diskState,
   };
 }
 

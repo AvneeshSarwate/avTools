@@ -144,7 +144,11 @@ are:
 - `/runtime/launch` can be called without prior preparation and direct callers
   bypass project diagnostics. Refusal of an occupied slot is 409 unless
   replacement was explicit.
-- `/project/events` is a one-shot status response, not SSE.
+- `/project/events` is a one-shot status response, not SSE. The push channel
+  is the `/project/sources` WebSocket, which carries per-module disk status
+  only.
+- `/project/modules/write` with `refuseIfChangedOnDisk` answers 409 instead of
+  overwriting an outside edit; without the flag it overwrites.
 - `/projects/list` is read-only discovery over the configured roots (a few
   levels deep; an unreadable manifest is listed with an `error`, and a project
   directory is never scanned for nested projects). It does not consult or

@@ -40,8 +40,27 @@ runnable.
 The tldraw project editor is write-through: after its analysis debounce it
 writes the whole buffer to canonical source before requesting runtime analysis.
 Consequently the status model's `dirty`/`conflict` concepts are rarely produced
-by the current UI; external disk edits normally appear as `changedOnDisk` until
-explicit reload.
+by the current UI.
+
+An edit made outside the editor is `changedOnDisk`: the file differs from what
+the server last wrote or loaded for that module. Only an editor write, a
+reload, or an open moves that baseline. Materialization deliberately does not;
+it transforms whatever is on disk, so if it re-baselined, analyzing any one
+module would silently accept outside edits to all the others. The server pushes
+per-module disk status on `/project/sources` (stat-polled about every 250 ms
+while a client listens, outside the project lane so a diagnostics run cannot
+delay it). A connected editor with no unsaved typing adopts the file's text;
+one with unsaved typing shows a conflict. Editor writes carry
+`refuseIfChangedOnDisk`, so the server refuses (409) rather than overwrite an
+outside edit, unless the file already holds the written text. "Keep mine"
+omits the flag. The disk check is stat-cached by mtime and size, so an outside
+write that keeps both unchanged goes unseen.
+
+The LSP proxy mirrors open documents into its synthetic workspace, but must
+never write a repository-backed document: the workspace reaches the repository
+through a symlink, so such a write would land on the real `*.orig.ts`,
+bypassing the project write path and its disk guard. Projects outside the
+repository are mirrored as copies inside the workspace.
 
 Transient prepared builds use unique immutable generated paths. Project
 preparations point at mutable runtime paths. The launched entry gets a cache

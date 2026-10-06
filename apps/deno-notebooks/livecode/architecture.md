@@ -25,6 +25,7 @@ and analysis/code generation is documented in
 | Static analysis and generated source | `visualizer/analyze_transform.ts` |
 | Prepared-module instrumentation, active wait tracking, signal ownership, and the process root clock | `packages/livecode-engine/runtime.ts` |
 | Project import graph, shadow files, and diagnostics | `visualizer/project_shadow_analysis.ts` |
+| Standalone project check (the shadow check without a server) and the shared project path rules | `visualizer/check_project.ts`, `visualizer/project_paths.ts` |
 | Generic entity records and the per-type changed-name gate | `packages/livecode-engine/entity_store.ts` |
 | Typed stores over it: params, ephemeral signals, piano rolls, animation timelines | `packages/livecode-engine/params_store.ts`, `signals_store.ts`, `piano_roll_store.ts`, `animation_timeline_store.ts` |
 | Durable-type registry and entity-name file encoding | `packages/livecode-engine/entity_registry.ts` |
@@ -43,6 +44,7 @@ From `apps/deno-notebooks`:
 
 ```sh
 deno task livecode:server
+deno task livecode:check <projectDir> [--target deno|browser] [--json]
 deno task test:livecode:unit
 deno task test:livecode:repro
 deno task test:livecode:server

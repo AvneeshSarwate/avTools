@@ -399,6 +399,9 @@ try {
     await runUiEventsFixtureCase(viteBaseUrl)
   } else if (process.env.LIVECODE_E2E_CASE === 'projectUi') {
     await runProjectUiPresetBankCase(viteBaseUrl)
+  } else if (process.env.LIVECODE_E2E_CASE === 'externalEdit') {
+    await enterProjectMode(viteBaseUrl)
+    await runExternalEditReloadCase()
   } else {
     await runResponsiveTopbarCase()
 
@@ -429,6 +432,7 @@ try {
     // replaces it, so these cases come last and never disturb the ones before.
     await enterProjectMode(viteBaseUrl)
     await runCheckedInAnimationFixtureCase()
+    await runExternalEditReloadCase()
     await addProjectParamsModule(viteBaseUrl)
     await runProjectEntityCreateCase()
     await runProjectSaveRoundTripCase()
@@ -2499,6 +2503,207 @@ async function runProjectUiPresetBankCase(viteBaseUrl) {
  * before the boot waits below can resolve. The navigation replaces the canvas
  * every earlier case ran on, which is why these cases come last.
  */
+/**
+ * The coding-agent loop: an edit written straight to the canonical source
+ * reaches an untouched editor without a reload gesture, the editor says the
+ * running code is now different, and an outside edit that meets unsaved typing
+ * is a conflict the user settles instead of a silent overwrite either way.
+ */
+async function runExternalEditReloadCase() {
+  const moduleRecord = projectFixtureManifest.modules[0]
+  const moduleId = moduleRecord.id
+  const sourceFile = path.join(projectRoot, moduleRecord.sourcePath)
+  const original = readFileSync(sourceFile, 'utf8')
+
+  await runModule(moduleId)
+  await waitForServerRunState(moduleId, true, 'external-edit fixture running')
+  await waitForModuleField(
+    moduleId,
+    (module) => module.runStatus === 'running' && !module.editorStale,
+    'a fresh run is not stale'
+  )
+
+  const agentEdit = `${original}\n// agent: an edit made outside the editor\n`
+  writeFileSync(sourceFile, agentEdit)
+  await waitForModuleField(
+    moduleId,
+    (module) =>
+      module.sourceText === agentEdit &&
+      module.diskState === 'reloaded' &&
+      module.editorStale,
+    'the outside edit reloads into the editor and marks the run stale'
+  )
+  await waitForPageValue(
+    ({ moduleId, agentEdit }) =>
+      (window.__livecodeTldrawRuntimeDebug?.getShapes() ?? []).some(
+        (shape) =>
+          shape.type === 'livecode-editor' &&
+          shape.props.moduleId === moduleId &&
+          shape.props.source === agentEdit
+      ),
+    'the editor shape shows the reloaded text',
+    scaled(5_000),
+    { moduleId, agentEdit }
+  )
+  await waitForSourceNotice(
+    moduleRecord.path,
+    ['reloaded from disk', 'running code differs from editor'],
+    'reload and staleness notices'
+  )
+
+  await clickModuleActionButton(moduleRecord.path, 'Replace')
+  await waitForModuleField(
+    moduleId,
+    (module) => module.runStatus === 'running' && !module.editorStale,
+    'Replace runs the reloaded text, clearing staleness'
+  )
+  await stopModule(moduleId)
+  await waitForServerRunState(moduleId, false, 'external-edit fixture stopped')
+
+  // Outside edit + unsaved typing. The editor's write is held in flight while
+  // the outside edit lands, so the typing is genuinely unsaved when the client
+  // learns of the change (otherwise a fast write-through makes it an ordinary
+  // edit made before the agent's). The released write must then be refused.
+  const agentSecond = `${agentEdit}// agent: second edit\n`
+  const mineFirst = `${agentEdit}// mine: typed in the editor\n`
+  await withHeldSourceWrites(async () => {
+    await setSourceFor(moduleId, mineFirst)
+    writeFileSync(sourceFile, agentSecond)
+    await waitForModuleField(
+      moduleId,
+      (module) => module.diskState === 'conflict',
+      'outside edit over unsaved typing is a conflict'
+    )
+  })
+  await sleep(500)
+  assertEqual(
+    readFileSync(sourceFile, 'utf8'),
+    agentSecond,
+    'the released stale write never overwrites the outside edit'
+  )
+  await waitForModuleField(
+    moduleId,
+    (module) => module.diskState === 'conflict' && module.sourceText === mineFirst,
+    'the conflict keeps the unsaved typing'
+  )
+  await clickSourceNoticeButton(moduleRecord.path, 'Keep mine')
+  await waitForFileText(sourceFile, mineFirst, 'Keep mine writes the editor text')
+  await waitForModuleField(
+    moduleId,
+    (module) => module.diskState === 'synced',
+    'Keep mine settles the conflict'
+  )
+
+  const agentThird = `${mineFirst}// agent: third edit\n`
+  await withHeldSourceWrites(async () => {
+    await setSourceFor(moduleId, `${mineFirst}// mine: discarded\n`)
+    writeFileSync(sourceFile, agentThird)
+    await waitForModuleField(
+      moduleId,
+      (module) => module.diskState === 'conflict',
+      'a second conflict'
+    )
+  })
+  await clickSourceNoticeButton(moduleRecord.path, 'Load disk version')
+  await waitForModuleField(
+    moduleId,
+    (module) => module.sourceText === agentThird && module.diskState === 'reloaded',
+    'Load disk version adopts the file text'
+  )
+
+  // Leave the fixture as the later project cases expect it.
+  await setSourceFor(moduleId, original)
+  await waitForFileText(sourceFile, original, 'fixture source restored')
+}
+
+/** Hold the editor's project write requests until `run` finishes, then release them. */
+async function withHeldSourceWrites(run) {
+  const held = []
+  const handler = (route) => {
+    held.push(route)
+  }
+  await page.route('**/project/modules/write', handler)
+  try {
+    await run()
+  } finally {
+    await page.unroute('**/project/modules/write', handler)
+    for (const route of held) await route.continue().catch(() => {})
+  }
+}
+
+async function waitForModuleField(moduleId, predicate, label) {
+  const start = Date.now()
+  let last = null
+  while (Date.now() - start < scaled(15_000)) {
+    last = await page.evaluate(
+      (moduleId) => window.__livecodeTldrawRuntimeDebug?.modules[moduleId] ?? null,
+      moduleId
+    )
+    if (last && predicate(last)) return last
+    await sleep(100)
+  }
+  throw new Error(
+    `Timed out waiting for ${label} (module: ${JSON.stringify({
+      sourceTail: last?.sourceText?.slice(-80),
+      runStatus: last?.runStatus,
+      diskState: last?.diskState,
+      editorStale: last?.editorStale,
+      latestError: last?.latestError,
+    })})`
+  )
+}
+
+async function waitForFileText(filePath, expected, label) {
+  const start = Date.now()
+  while (Date.now() - start < scaled(10_000)) {
+    if (readFileSync(filePath, 'utf8') === expected) return
+    await sleep(100)
+  }
+  throw new Error(`Timed out waiting for ${label}`)
+}
+
+async function waitForSourceNotice(modulePath, expectedFragments, label) {
+  return await waitForPageValue(
+    ({ modulePath, expectedFragments }) => {
+      const shape = Array.from(document.querySelectorAll('.livecode-shape')).find(
+        (element) =>
+          Array.from(element.querySelectorAll('.livecode-shape__title span')).some(
+            (span) => (span.textContent ?? '').trim() === modulePath
+          )
+      )
+      const text = shape?.querySelector('.livecode-shape__source-notice')
+        ?.textContent ?? ''
+      return expectedFragments.every((fragment) => text.includes(fragment))
+        ? text
+        : null
+    },
+    label,
+    scaled(5_000),
+    { modulePath, expectedFragments }
+  )
+}
+
+async function clickSourceNoticeButton(modulePath, label) {
+  const clicked = await page.evaluate(
+    ({ modulePath, label }) => {
+      const shape = Array.from(document.querySelectorAll('.livecode-shape')).find(
+        (element) =>
+          Array.from(element.querySelectorAll('.livecode-shape__title span')).some(
+            (span) => (span.textContent ?? '').trim() === modulePath
+          )
+      )
+      const button = Array.from(
+        shape?.querySelectorAll('.livecode-shape__source-notice button') ?? []
+      ).find((candidate) => (candidate.textContent ?? '').trim() === label)
+      if (!button) return false
+      button.click()
+      return true
+    },
+    { modulePath, label }
+  )
+  assert(clicked, `source notice button ${label} for ${modulePath}`)
+}
+
 async function enterProjectMode(viteBaseUrl) {
   projectRoot = path.join(sessionRoot, 'project-mode')
   cpSync(projectFixtureRoot, projectRoot, { recursive: true })
