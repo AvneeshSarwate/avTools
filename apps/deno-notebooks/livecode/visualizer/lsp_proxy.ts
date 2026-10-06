@@ -190,8 +190,11 @@ try {
 async function writeTextDocument(uri: string, text: string) {
   // Repo-backed docs are sent to Deno LSP as in-memory open documents. Do not
   // write those buffers through the temp-workspace symlink, or editor changes
-  // would bypass the project write path.
-  if (isRepoFileUri(uri)) return;
+  // would bypass the project write path (and its guard against overwriting an
+  // edit made outside the editor). The proxy hands notification handlers URIs
+  // already translated into the temp workspace, so the check must translate
+  // back: a temp-dir URI is never itself a repo path.
+  if (isRepoFileUri(utils.tempDirUriToVirtualUri(uri, workspaceDir))) return;
 
   const mapped = utils.virtualUriToTempDirUri(uri, workspaceDir);
   if (!mapped?.startsWith("file:")) return;
@@ -368,7 +371,9 @@ function isRepoFileUri(uriString: string): boolean {
   if (!uriString.startsWith("file:")) return false;
   try {
     const filePath = normalize(fromFileUrl(uriString));
-    const root = normalize(repoRoot);
+    // The server passes --repo-root with a trailing slash, which normalize
+    // keeps; without trimming it this prefix test can never match.
+    const root = normalize(repoRoot).replace(/\/+$/, "");
     return filePath === root || filePath.startsWith(`${root}/`);
   } catch {
     return false;

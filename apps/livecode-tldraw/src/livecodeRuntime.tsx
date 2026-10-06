@@ -26,7 +26,10 @@ import type {
   LaunchModuleRequest,
   LaunchModuleResponse,
   PreparedBuild,
+  ProjectModuleSourceResponse,
+  ProjectModuleWriteConflict,
   ProjectShadowCheckResponse,
+  ProjectSourceStatusMessage,
   RunEntity,
   RuntimeModuleRunState,
   RuntimeStateResponse,
@@ -60,6 +63,7 @@ import {
   useSyncActions,
   useSyncLifecycle,
 } from "./syncRuntime";
+import { createReconnectingSocket } from "./reconnectingSocket";
 
 const BUILD_DEBOUNCE_MS = 100;
 const PROJECT_DIAGNOSTICS_POLL_MS = 2_500;
@@ -68,6 +72,16 @@ export type ConnectionStatus = "closed" | "connecting" | "open" | "error";
 export type { BuildStatus } from "./buildLifecycle";
 export type RunStatus =
   "idle" | "running" | "stopping" | "stopped" | "error" | "unknown";
+
+/**
+ * How a project module's editor text relates to its file on disk:
+ * - `synced`: the editor owns the file (write-through as usual);
+ * - `reloaded`: an edit made outside the editor replaced the text, and nobody
+ *   has typed since;
+ * - `conflict`: the file changed outside the editor while it held unsaved
+ *   typing; writes are held until the user picks a side.
+ */
+export type DiskState = "synced" | "reloaded" | "conflict";
 
 export interface RunModuleOptions {
   /** Ask the server to stop this module's running run and start this one. */
@@ -92,13 +106,39 @@ export interface ModuleViewState {
   runToken: string | null;
   /** Number of times this module has entered user code in this engine process. */
   executionCount: number;
+  /**
+   * The module is running code other than what the editor shows: its run was
+   * launched from a different source than the current text. Replace applies
+   * the editor text.
+   */
+  editorStale: boolean;
+  diskState: DiskState;
+  /**
+   * Bumped whenever the runtime replaces the text from disk, so the editor
+   * shape (which owns the displayed text) knows to adopt `sourceText`.
+   */
+  diskReloadSeq: number;
 }
 
-type ModuleRecord = Omit<ModuleViewState, "buildStatus"> & {
-  build: BuildLifecycle;
-  nextAnalyzeRequestId: number;
-  runCorrelation: RunCorrelation;
-};
+type ModuleRecord =
+  & Omit<ModuleViewState, "buildStatus" | "editorStale">
+  & {
+    build: BuildLifecycle;
+    nextAnalyzeRequestId: number;
+    runCorrelation: RunCorrelation;
+    /** Source hash of the active run (from its run entity); null when not running. */
+    runSourceHash: string | null;
+    /** Text and server hash of the newest successful analysis. */
+    lastPrepared: { sourceText: string; sourceHash: string | undefined } | null;
+    /** The text this client last wrote to, or loaded from, the module's file. */
+    syncedSourceText: string;
+    /** Set by "keep mine": the next write goes out without the disk guard. */
+    forceNextWrite: boolean;
+    diskReloadInFlight: boolean;
+  };
+
+/** A guarded project write the server refused because the file changed on disk. */
+class DiskConflictError extends Error {}
 export interface LivecodeRuntimeApi {
   serverBaseUrl: string;
   setServerBaseUrl(next: string): void;
@@ -125,6 +165,11 @@ export interface LivecodeRuntimeApi {
   /** Run over the module's own running run: `runModule` with explicit consent. */
   replaceModule(moduleId: string): Promise<void>;
   stopModule(moduleId: string): Promise<void>;
+  /**
+   * Settle a `conflict`: "disk" discards the editor text for the file's,
+   * "mine" overwrites the file with the editor text.
+   */
+  resolveDiskConflict(moduleId: string, keep: "disk" | "mine"): void;
 }
 
 const LivecodeRuntimeContext = createContext<RuntimeViewStore | null>(null);
@@ -382,6 +427,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
         record.runToken = run.runToken;
         record.executionCount = run.executionCount;
       }
+      record.runSourceHash = active?.sourceHash ?? null;
       if (active) {
         record.runStatus = "running";
         record.manifest = active.manifest ?? record.manifest;
@@ -409,6 +455,48 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       ),
     );
   }, [postJson]);
+
+  // Disk-conflict handling needs scheduleAnalyze, which is defined after the
+  // analysis path that detects the conflict; this ref closes that loop.
+  const onDiskConflictRef = useRef<(record: ModuleRecord) => void>(() => {});
+
+  const writeProjectSource = useCallback(
+    async (
+      record: ModuleRecord,
+      sourceText: string,
+      sourceVersion: number,
+      force: boolean,
+    ) => {
+      const response = await fetch(
+        `${serverBaseUrlRef.current}/project/modules/write`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            path: record.projectModulePath,
+            sourceText,
+            sourceVersion,
+            ...(force ? {} : { refuseIfChangedOnDisk: true }),
+          }),
+        },
+      );
+      if (response.status === 409) {
+        const body = await response.json().catch(() => null) as
+          | ProjectModuleWriteConflict
+          | null;
+        if (body?.conflict === "changedOnDisk") throw new DiskConflictError();
+      }
+      if (!response.ok) {
+        throw new Error(
+          `/project/modules/write failed with ${response.status}: ${await response.text()}`,
+        );
+      }
+      // The file now holds exactly this text, whatever the editor did since.
+      record.syncedSourceText = sourceText;
+      if (record.diskState === "conflict") record.diskState = "synced";
+    },
+    [],
+  );
 
   const analyzeNow = useCallback(
     async (
@@ -446,11 +534,13 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
 
       const promise = (async () => {
         if (record.projectModulePath) {
-          await postJson("/project/modules/write", {
-            path: record.projectModulePath,
-            sourceText,
-            sourceVersion,
-          });
+          const force = record.forceNextWrite;
+          record.forceNextWrite = false;
+          // Held while in conflict: each keystroke would only be refused again.
+          if (record.diskState === "conflict" && !force) {
+            throw new DiskConflictError();
+          }
+          await writeProjectSource(record, sourceText, sourceVersion, force);
         }
         return await postJson<AnalyzeResponse>(
           "/runtime/analyze",
@@ -464,6 +554,10 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
           }
 
           if (response.type === "analyzeSuccess") {
+            record.lastPrepared = {
+              sourceText,
+              sourceHash: response.sourceHash,
+            };
             const prepared: PreparedBuild = {
               ...response,
               sourceText,
@@ -494,14 +588,21 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
           return null;
         })
         .catch((error: unknown) => {
+          const conflict = error instanceof DiskConflictError;
+          // A refusal stands even when a newer analysis superseded this one:
+          // the newer write meets the same changed file.
+          if (conflict) onDiskConflictRef.current(record);
           if (!isCurrentAnalysis(record.build, requestId)) return null;
           record.build = { phase: "failed", identity };
           record.manifest = null;
           record.diagnostics = [];
           record.activeIds = [];
           record.pianoRollLookups = {};
-          record.latestError =
-            error instanceof Error ? error.message : String(error);
+          record.latestError = conflict
+            ? "file changed outside the editor: load the disk version or keep yours"
+            : error instanceof Error
+            ? error.message
+            : String(error);
           publishModule(record);
           return null;
         });
@@ -516,7 +617,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
 
       return promise;
     },
-    [fetchProjectDiagnostics, postJson, publishModule],
+    [fetchProjectDiagnostics, publishModule, writeProjectSource],
   );
 
   const scheduleAnalyze = useCallback(
@@ -546,6 +647,98 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       publishModule(record);
     },
     [analyzeNow, publishModule],
+  );
+
+  /**
+   * Adopt the file's text into the editor. Deliberately not the server's reload
+   * route: that resets the server's record of what the editor last loaded,
+   * which would let a write already in flight with the old buffer pass the disk
+   * guard. The write-through that follows sends the file's own text, which the
+   * guard always allows, and that write is what re-syncs the server.
+   */
+  const reloadFromDisk = useCallback(
+    async (record: ModuleRecord, options: { discardLocal?: boolean } = {}) => {
+      const path = record.projectModulePath;
+      if (!path || record.diskReloadInFlight) return;
+      record.diskReloadInFlight = true;
+      const textBeforeReload = record.sourceText;
+      try {
+        const response = await fetch(
+          `${serverBaseUrlRef.current}/project/modules/source?path=${
+            encodeURIComponent(path)
+          }`,
+        );
+        if (!response.ok) {
+          throw new Error(
+            `/project/modules/source failed with ${response.status}: ${await response.text()}`,
+          );
+        }
+        const { sourceText } =
+          (await response.json()) as ProjectModuleSourceResponse;
+        if (modulesRef.current.get(record.moduleId) !== record) return;
+        if (!options.discardLocal && record.sourceText !== textBeforeReload) {
+          // Typed while the reload was in flight: that typing is unsaved work.
+          record.diskState = "conflict";
+          publishModule(record);
+          return;
+        }
+        cancelQueuedBuild(record);
+        record.forceNextWrite = false;
+        record.syncedSourceText = sourceText;
+        record.diskState = sourceText === textBeforeReload
+          ? "synced"
+          : "reloaded";
+        if (sourceText !== record.sourceText) {
+          record.sourceText = sourceText;
+          record.manifest = null;
+          record.diagnostics = [];
+          record.activeIds = [];
+          record.pianoRollLookups = {};
+          record.diskReloadSeq += 1;
+        }
+        record.latestError = null;
+        scheduleAnalyze(record, 0);
+      } catch (error) {
+        record.latestError = `reload from disk failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
+        publishModule(record);
+      } finally {
+        record.diskReloadInFlight = false;
+      }
+    },
+    [publishModule, scheduleAnalyze],
+  );
+
+  /** The file changed outside the editor (pushed, or a refused write). */
+  const onDiskChanged = useCallback(
+    (record: ModuleRecord) => {
+      if (record.diskReloadInFlight || record.diskState === "conflict") return;
+      if (record.sourceText === record.syncedSourceText) {
+        void reloadFromDisk(record);
+        return;
+      }
+      record.diskState = "conflict";
+      publishModule(record);
+    },
+    [publishModule, reloadFromDisk],
+  );
+  onDiskConflictRef.current = onDiskChanged;
+
+  const resolveDiskConflict = useCallback(
+    (moduleId: string, keep: "disk" | "mine") => {
+      const record = modulesRef.current.get(moduleId);
+      if (!record) return;
+      if (keep === "disk") {
+        void reloadFromDisk(record, { discardLocal: true });
+        return;
+      }
+      record.forceNextWrite = true;
+      record.diskState = "synced";
+      record.latestError = null;
+      scheduleAnalyze(record, 0);
+    },
+    [reloadFromDisk, scheduleAnalyze],
   );
 
   const ensureBuild = useCallback(
@@ -775,6 +968,37 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
     return () => window.clearInterval(timer);
   }, [connectionStatus, fetchProjectDiagnostics]);
 
+  // The server pushes each module's disk status; an edit made outside the
+  // editor (a coding agent, another editor) reloads an untouched module and
+  // flags a conflict on one holding unsaved typing. Writes only happen while
+  // connected, so the watch is gated the same way.
+  useEffect(() => {
+    if (connectionStatus !== "open") return;
+    const base = serverBaseUrl.trim().replace(/\/+$/, "");
+    if (!base || base === "none") return;
+    const controller = createReconnectingSocket({
+      makeUrl: () => `${base.replace(/^http/, "ws")}/project/sources`,
+      onMessage: (event) => {
+        if (typeof event.data !== "string") return;
+        let message: ProjectSourceStatusMessage;
+        try {
+          message = JSON.parse(event.data) as ProjectSourceStatusMessage;
+        } catch {
+          return;
+        }
+        if (message.type !== "projectSourceStatus") return;
+        for (const entry of message.modules) {
+          if (!entry.changedOnDisk) continue;
+          for (const record of modulesRef.current.values()) {
+            if (record.projectModulePath === entry.path) onDiskChanged(record);
+          }
+        }
+      },
+    });
+    controller.connect();
+    return () => controller.close();
+  }, [connectionStatus, onDiskChanged, serverBaseUrl]);
+
   useEffect(() => {
     return () => retireLspConnection(lspConnectionRef.current);
   }, []);
@@ -844,6 +1068,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       if (!record) return;
       if (record.sourceText === sourceText) return;
       record.sourceText = sourceText;
+      if (record.diskState === "reloaded") record.diskState = "synced";
       record.manifest = null;
       record.diagnostics = [];
       record.activeIds = [];
@@ -973,6 +1198,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       runModule,
       replaceModule,
       stopModule,
+      resolveDiskConflict,
     }),
     [
       serverBaseUrl,
@@ -995,6 +1221,7 @@ export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
       runModule,
       replaceModule,
       stopModule,
+      resolveDiskConflict,
     ],
   );
 
@@ -1036,6 +1263,13 @@ function makeModuleRecord(
     executionCount: 0,
     runCorrelation: createRunCorrelation(),
     nextAnalyzeRequestId: 0,
+    runSourceHash: null,
+    lastPrepared: null,
+    syncedSourceText: sourceText,
+    forceNextWrite: false,
+    diskReloadInFlight: false,
+    diskState: "synced",
+    diskReloadSeq: 0,
   };
 }
 
@@ -1047,12 +1281,14 @@ function applyRunEntity(record: ModuleRecord, run: RunEntity | undefined) {
 
   record.executionCount = run.executionCount;
   if (run.state === "launching" || run.state === "running") {
+    record.runSourceHash = run.sourceHash ?? null;
     record.runToken = run.runToken;
     if (record.runStatus !== "stopping") record.runStatus = "running";
     return;
   }
 
   record.runToken = run.runToken;
+  record.runSourceHash = null;
   record.activeIds = [];
   if (run.state === "error") {
     record.runStatus = "error";
@@ -1084,7 +1320,24 @@ function toViewState(record: ModuleRecord): ModuleViewState {
     latestError: record.latestError,
     runToken: record.runToken,
     executionCount: record.executionCount,
+    editorStale: isEditorStale(record),
+    diskState: record.diskState,
+    diskReloadSeq: record.diskReloadSeq,
   };
+}
+
+/**
+ * Whether the active run executes code other than the editor text. The run
+ * entity carries the hash of the source it launched from; the newest analysis
+ * pairs a hash with its text. Without an analysis to compare (before the first
+ * one lands) the answer is unknown, reported as not stale.
+ */
+function isEditorStale(record: ModuleRecord): boolean {
+  if (record.runStatus !== "running" || !record.runSourceHash) return false;
+  const prepared = record.lastPrepared;
+  if (!prepared?.sourceHash) return false;
+  return prepared.sourceHash !== record.runSourceHash ||
+    prepared.sourceText !== record.sourceText;
 }
 
 const EMPTY_ACTIVE_IDS: string[] = Object.freeze([]) as unknown as string[];
@@ -1109,7 +1362,10 @@ function viewMatchesRecord(
     view.lastSnapshotSeq === record.lastSnapshotSeq &&
     view.latestError === record.latestError &&
     view.runToken === record.runToken &&
-    view.executionCount === record.executionCount
+    view.executionCount === record.executionCount &&
+    view.editorStale === isEditorStale(record) &&
+    view.diskState === record.diskState &&
+    view.diskReloadSeq === record.diskReloadSeq
   );
 }
 

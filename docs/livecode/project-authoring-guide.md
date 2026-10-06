@@ -108,9 +108,13 @@ for the complete API.
 
 1. Inspect the manifest, project README, all `*.orig.ts`, and any checked-in
    data before changing behavior. Do not infer launch order from file order.
-2. Edit canonical source. With a UI client open, `setModuleSource` keeps the
-   canvas editor and server coordinated; after an external file edit, use
-   `reloadProjectModule` or reopen the project.
+2. Edit canonical source, then check it with `deno task livecode:check`
+   (see [Checking without the server](#checking-without-the-server)). With a
+   connected UI open, an edit written straight to `*.orig.ts` reaches the
+   canvas editor on its own (see
+   [Editing beside an open editor](#editing-beside-an-open-editor));
+   `setModuleSource` and `reloadProjectModule` remain for driving a UI
+   explicitly.
 3. Let analysis complete; project analysis writes the current buffer through to
    `*.orig.ts`. Project Run also performs a target-aware whole-project check.
 4. Run an idle module. If its slot is occupied, decide explicitly whether to
@@ -123,6 +127,70 @@ for the complete API.
 Editing a dependency does not restart dependents, and stable dependency import
 URLs may retain their existing module instance. When initialization or exported
 state shape must be unquestionably fresh, restart the engine process/tab.
+
+## Checking without the server
+
+`deno check` on `*.orig.ts` is the wrong check, and LSP is feedback, not the
+gate. Run the same whole-project check the Run button uses, with no server:
+
+```sh
+# from apps/deno-notebooks; paths resolve against your own directory
+deno task livecode:check <projectDir> [--target deno|browser] [--json]
+```
+
+Exit 0 means no diagnostics, 1 means diagnostics, 2 means the command could
+not run. `--json` gives `{ok, target, diagnostics: [{code, file, line,
+column, message, positionIsGenerated}]}`. It exists because a plain check
+gets four things wrong:
+
+- **Imports name generated files.** Modules import runtime paths such as
+  `./state.ts`, which exist only after the server materializes them and are
+  stale after any edit to `state.orig.ts`. The checker transforms every module
+  into a temporary tree, so modules check against each other's current source.
+- **Some rules belong to the analyzer.** `TCV_*` diagnostics (a missing
+  default timed root, an unawaited `ctx.wait`, dynamic `ctx[...]` access) are
+  not type errors; only the transform reports them.
+- **The checked world depends on the target.** Deno projects check against
+  the repository `deno.json`; browser projects against the browser lib set,
+  where `Deno.*` is an error and DOM globals are legal. A manifest without
+  `engineTarget` follows the server's engine mode, so the checker defaults to
+  `deno` and says so. Set `engineTarget` for an unambiguous check.
+- **Some arguments are supplied for you.** The analyzer passes `ctx` to calls
+  such as `onEvent` in timed code. `ctx` is optional in their types, so moving
+  such a call out of a timed scope type-checks and then throws at runtime.
+
+Diagnostics are reported against the `*.orig.ts` file. A `deno check` position
+the checker cannot place exactly (the quoted line is ambiguous or rewritten)
+is labelled as a generated position. A clean check does not prove behavior;
+run the module.
+
+## Editing beside an open editor
+
+With a project open in a connected tldraw UI, a coding agent and a person can
+share the source:
+
+1. The agent writes `*.orig.ts` with ordinary file tools.
+2. Within about a quarter second the server pushes the change. An editor
+   with no unsaved typing adopts the file's text and shows **reloaded from
+   disk**. If the module is running different code, the editor also shows
+   **running code differs from editor**; Replace runs the editor text.
+3. The person reads it and types requests inline, for example
+   `// CLAUDE: make this swing more`. Write-through saves them to disk.
+4. Told to continue, the agent reads the file, acts on the comments, removes
+   the ones it addressed, and the loop repeats.
+
+The agent does not need `reloadProjectModule` in this loop. Two rules keep it
+safe:
+
+- The editor never silently overwrites an outside edit. If the file changes
+  while the editor holds unsaved typing, it shows **file changed on disk** and
+  holds writes until the person picks **Load disk version** or **Keep mine**.
+  Even so, avoid editing a module the person is typing in.
+- Reloading never restarts a run. Replace (or `runModule` with
+  `replaceRunning: true`) is still the explicit step that applies new code.
+
+This needs a connected UI. Without one, nothing reloads; reopening the
+project or `reloadProjectModule` picks the file up.
 
 ## Run, Replace, Stop, and Panic
 
@@ -233,7 +301,8 @@ a green template.
 
 - Confirm only intended `*.orig.ts`, manifest, canvas, and saved-data changes
   remain; generated `*.ts` is not authored source.
-- Run target-aware project diagnostics and exercise every changed module.
+- Run `deno task livecode:check` on the project (or the UI's target-aware
+  project diagnostics) and exercise every changed module.
 - Verify natural completion or Stop, and Replace when the module is intended to
   be replaceable while active.
 - Stop anything started for verification. Save durable entities only when those

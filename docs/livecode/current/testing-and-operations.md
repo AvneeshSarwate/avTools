@@ -14,6 +14,11 @@ deno task livecode:server
 From `apps/livecode-tldraw`, run `npm run setupLivecode` once after checkout or
 after a bundled web component changes, then `npm run dev`.
 
+`deno task livecode:check <projectDir>` (also from `apps/deno-notebooks`) runs
+the Run button's whole-project shadow check without a server. It is the check
+for an agent iterating on project source; see the
+[authoring guide](../project-authoring-guide.md#checking-without-the-server).
+
 The drawing-document round trip, the parity between the element's Konva
 bake and the package's Konva-free bake (including curved polygons, where the
 package's port of Konva's curve maths is compared with Konva's own
@@ -63,6 +68,11 @@ file list rather than maintaining it here.
   `execution_plane_state_test.ts`, `engine_attach_replay_test.ts`, and the
   topology E2E scripts.
 - Project graph/targets/LSP: project shadow, browser-target, and LSP tests.
+- Outside edits and the disk guard: `project_source_status_test.ts` (server),
+  and `LIVECODE_E2E_CASE=externalEdit npm run test:e2e` in
+  `apps/livecode-tldraw` for reload, staleness, and both conflict choices. The
+  E2E holds the editor's write request in flight to make the conflict
+  deterministic.
 - React entity subscription isolation: `npm run test:sync-rendering` in
   `apps/livecode-tldraw` mounts real React subscribers in Chromium, including the
   runtime provider and actual tldraw shapes. It checks all nine kinds, resets,

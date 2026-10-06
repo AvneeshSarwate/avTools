@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   BaseBoxShapeUtil,
   createShapeId,
@@ -182,6 +182,25 @@ function LivecodeEditorShapeComponent(
   const { setModuleSource } = runtime;
   const moduleState = runtime.modules[shape.props.moduleId];
 
+  // The shape owns the displayed text. When the runtime adopts a file's text
+  // (an edit made outside the editor), copy it here; the store listener's
+  // setModuleSource then sees identical text and does nothing.
+  const diskReloadSeq = moduleState?.diskReloadSeq ?? 0;
+  const reloadedSource = moduleState?.sourceText;
+  const shapeSourceRef = useRef(shape.props.source);
+  shapeSourceRef.current = shape.props.source;
+  useEffect(() => {
+    if (diskReloadSeq === 0 || reloadedSource === undefined) return;
+    if (shapeSourceRef.current === reloadedSource) return;
+    editor.updateShape<LivecodeEditorShape>({
+      id: shape.id,
+      type: LIVECODE_EDITOR_SHAPE_TYPE,
+      props: { source: reloadedSource },
+    });
+    // Only a new reload moves the shape; later typing changes reloadedSource
+    // through the shape itself.
+  }, [diskReloadSeq]);
+
   const previousActiveRangesRef = useRef<SourceRange[] | null>(null);
   const activeRanges = reconcileActiveWaitRanges(
     previousActiveRangesRef.current,
@@ -358,6 +377,57 @@ function LivecodeEditorShapeComponent(
                 : "project diagnostics"}
             >
               {hasDependencyIssue ? "dep issue" : "dep changed"}
+            </span>
+          )
+          : null}
+      </div>
+
+      <div
+        className="livecode-shape__source-notice"
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        {moduleState?.diskState === "conflict"
+          ? (
+            <>
+              <span
+                className="source-pill source-pill--conflict"
+                title="The file changed outside the editor while this editor had unsaved typing. Saving is paused until you pick a side."
+              >
+                file changed on disk
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  runtime.resolveDiskConflict(shape.props.moduleId, "disk")}
+              >
+                Load disk version
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  runtime.resolveDiskConflict(shape.props.moduleId, "mine")}
+              >
+                Keep mine
+              </button>
+            </>
+          )
+          : moduleState?.diskState === "reloaded"
+          ? (
+            <span
+              className="source-pill source-pill--reloaded"
+              title="This text was replaced by an edit made outside the editor. The note clears when you type."
+            >
+              reloaded from disk
+            </span>
+          )
+          : null}
+        {moduleState?.editorStale
+          ? (
+            <span
+              className="source-pill source-pill--stale"
+              title="The running module was launched from different code than the editor shows. Replace runs the editor text."
+            >
+              running code differs from editor: Replace to apply
             </span>
           )
           : null}
