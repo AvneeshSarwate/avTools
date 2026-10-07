@@ -1,0 +1,157 @@
+{
+  "type": "params",
+  "name": "sonar/dscale7",
+  "savedAt": "2026-10-05T20:11:27.233Z",
+  "values": {
+    "base": {
+      "transpose": 0.5,
+      "stretch": 0.3333333333333333,
+      "rotate": 0.5,
+      "reverse": 0,
+      "ornament": 0,
+      "easing": 0.5,
+      "spread": 0
+    },
+    "delay": {
+      "transpose": 0.5,
+      "stretch": 0.3333333333333333,
+      "rotate": 0.5,
+      "reverse": 0,
+      "ornament": 0,
+      "easing": 0.5
+    },
+    "delayTime": 0.5,
+    "delayEnabled": false,
+    "noteLength": 0.5,
+    "record": false,
+    "takeLength": 0,
+    "recordStatus": "idle"
+  },
+  "meta": {
+    "base": {
+      "transpose": {
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "stretch": {
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "rotate": {
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "reverse": {
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "ornament": {
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "easing": {
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "spread": {
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      }
+    },
+    "delay": {
+      "transpose": {
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "stretch": {
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "rotate": {
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "reverse": {
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "ornament": {
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "easing": {
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      }
+    },
+    "delayTime": {
+      "min": 0,
+      "max": 1,
+      "step": 0.001
+    },
+    "noteLength": {
+      "min": 0,
+      "max": 1,
+      "step": 0.001
+    },
+    "record": {
+      "label": "record into this bank"
+    },
+    "takeLength": {
+      "label": "phrase beats (0 = original)",
+      "min": 0,
+      "max": 64,
+      "step": 0.25
+    },
+    "recordStatus": {
+      "label": "record status"
+    },
+    "oneShot": {
+      "button": {
+        "type": "sonar/trigger",
+        "body": {
+          "melody": "dscale7",
+          "mode": "oneShot"
+        }
+      }
+    },
+    "gate": {
+      "button": {
+        "type": "sonar/trigger",
+        "body": {
+          "melody": "dscale7",
+          "mode": "gate"
+        }
+      }
+    },
+    "stop": {
+      "button": {
+        "type": "sonar/stop",
+        "body": {
+          "melody": "dscale7"
+        }
+      }
+    },
+    "preview": {
+      "button": {
+        "type": "sonar/preview",
+        "body": {
+          "melody": "dscale7"
+        }
+      }
+    }
+  }
+}
