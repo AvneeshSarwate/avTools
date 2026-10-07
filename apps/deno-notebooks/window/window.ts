@@ -283,3 +283,50 @@ function resizeSurface(
   // borrow. Keep native resize events in our window state and leave the Deno
   // surface at its initial size until that runtime path is fixed.
 }
+
+/** Logs swapchain skips once per run of consecutive failures, not per frame. */
+export interface SwapSkipLog {
+  skip(err: unknown): void;
+  recovered(): void;
+}
+
+export function createSwapSkipLog(label: string): SwapSkipLog {
+  let skipped = 0;
+  return {
+    skip(err) {
+      if (skipped === 0) {
+        console.warn(
+          `${label}: window surface unavailable (${(err as Error)?.message ?? err}); ` +
+            "skipping on-screen frames until it returns (window occluded or minimized?)",
+        );
+      }
+      skipped += 1;
+    },
+    recovered() {
+      if (skipped > 0) {
+        console.warn(`${label}: window surface back after ${skipped} skipped frames`);
+        skipped = 0;
+      }
+    },
+  };
+}
+
+/**
+ * Acquire the window's swapchain texture, or null if the surface can't hand
+ * one out this frame. Deno 2.8.3+ (wgpu 29) throws "Invalid Surface Status"
+ * while the window is occluded; render loops should skip the on-screen blit
+ * rather than stop.
+ */
+export function tryGetSwapTexture(
+  ctx: GPUCanvasContext,
+  log: SwapSkipLog,
+): GPUTexture | null {
+  try {
+    const texture = ctx.getCurrentTexture();
+    log.recovered();
+    return texture;
+  } catch (err) {
+    log.skip(err);
+    return null;
+  }
+}

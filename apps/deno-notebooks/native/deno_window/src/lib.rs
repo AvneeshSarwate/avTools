@@ -19,6 +19,62 @@ use winit::window::{Window, WindowId};
 #[cfg(target_os = "macos")]
 use wry::WebViewBuilder;
 
+// ── CAMetalLayer pre-install (macOS) ─────────────────────────────────────
+//
+// GPU windows get a CAMetalLayer as their content view's root layer before
+// Deno creates the WebGPU surface. wgpu (via raw-window-metal) then uses that
+// layer as-is. Without it, raw-window-metal adds its own sublayer and syncs it
+// with key-value observing, and that path panics on Deno 2.9.0+ (Apple
+// Silicon): those builds load Foundation lazily through lzld, which stubs
+// NSKeyValueChangeNewKey to NULL ("requested change dictionary did not
+// contain `NSKeyValueChangeNewKey`"). See "Deno version pin" in the repo
+// README. Because nothing observes the layer for us, contentsScale is
+// updated here on ScaleFactorChanged; AppKit keeps the root layer's bounds
+// in step with the view.
+#[cfg(target_os = "macos")]
+mod metal_layer {
+    use objc::runtime::{Object, YES};
+    use objc::{class, msg_send, sel, sel_impl};
+    use winit::raw_window_handle_05::{HasRawWindowHandle, RawWindowHandle};
+    use winit::window::Window;
+
+    // CAMetalLayer lives in QuartzCore; link it so class!(CAMetalLayer)
+    // resolves even when the host process hasn't loaded the framework.
+    #[link(name = "QuartzCore", kind = "framework")]
+    extern "C" {}
+
+    fn ns_view(window: &Window) -> Option<*mut Object> {
+        match window.raw_window_handle() {
+            RawWindowHandle::AppKit(handle) if !handle.ns_view.is_null() => {
+                Some(handle.ns_view as *mut Object)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn install(window: &Window) {
+        let Some(view) = ns_view(window) else { return };
+        unsafe {
+            let layer: *mut Object = msg_send![class!(CAMetalLayer), layer];
+            let _: () = msg_send![layer, setContentsScale: window.scale_factor()];
+            // Layer-hosting: assign the layer before enabling wantsLayer so
+            // AppKit uses ours instead of creating a backing layer.
+            let _: () = msg_send![view, setLayer: layer];
+            let _: () = msg_send![view, setWantsLayer: YES];
+        }
+    }
+
+    pub fn update_scale(window: &Window, scale_factor: f64) {
+        let Some(view) = ns_view(window) else { return };
+        unsafe {
+            let layer: *mut Object = msg_send![view, layer];
+            if !layer.is_null() {
+                let _: () = msg_send![layer, setContentsScale: scale_factor];
+            }
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(tag = "type")]
 enum WindowEventRecord {
@@ -48,6 +104,9 @@ struct WindowSlot {
     height: u32,
     title: String,
     hide_on_close: bool,
+    /// GPU render windows get a pre-installed CAMetalLayer (macOS); webview
+    /// panel windows don't.
+    metal_layer: bool,
     events: Vec<WindowEventRecord>,
     last_cursor: (f64, f64),
     should_close: bool,
@@ -70,7 +129,7 @@ impl WindowSlot {
         }
     }
 
-    fn new(width: u32, height: u32, title: String, hide_on_close: bool) -> Self {
+    fn new(width: u32, height: u32, title: String, hide_on_close: bool, metal_layer: bool) -> Self {
         Self {
             window: None,
             window_id: None,
@@ -78,6 +137,7 @@ impl WindowSlot {
             height,
             title,
             hide_on_close,
+            metal_layer,
             events: Vec::new(),
             last_cursor: (0.0, 0.0),
             should_close: false,
@@ -104,6 +164,10 @@ impl WindowSlot {
                 self.cached_display_handle = handle_from_raw_display(display_handle);
                 self.cached_window_system = window_system_id(win_handle, display_handle);
                 self.debug_log_handles("ensure_window");
+                #[cfg(target_os = "macos")]
+                if self.metal_layer {
+                    metal_layer::install(&window);
+                }
                 self.window = Some(window);
             }
             Err(err) => {
@@ -160,9 +224,12 @@ impl MultiWindowApp {
         height: u32,
         title: String,
         hide_on_close: bool,
+        metal_layer: bool,
     ) {
-        self.windows
-            .insert(token, WindowSlot::new(width, height, title, hide_on_close));
+        self.windows.insert(
+            token,
+            WindowSlot::new(width, height, title, hide_on_close, metal_layer),
+        );
     }
 
     fn remove_window(&mut self, token: u64) {
@@ -240,8 +307,14 @@ impl ApplicationHandler for MultiWindowApp {
                 slot.window = None;
             }
             WindowEvent::Resized(size) => slot.record_resize(size),
-            WindowEvent::ScaleFactorChanged { .. } => {
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 if let Some(window) = slot.window.as_ref() {
+                    #[cfg(target_os = "macos")]
+                    if slot.metal_layer {
+                        metal_layer::update_scale(window, scale_factor);
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    let _ = scale_factor;
                     slot.record_resize(window.inner_size());
                 }
             }
@@ -404,7 +477,7 @@ pub extern "C" fn create_window(
         let token = runtime.allocate_token();
         runtime
             .app
-            .insert_window(token, width, height, title, false);
+            .insert_window(token, width, height, title, false, true);
 
         // Pump a few times to ensure the window is created.
         for _ in 0..8 {
@@ -666,7 +739,7 @@ mod webview_impl {
         let token = runtime.allocate_token();
         runtime
             .app
-            .insert_window(token, width, height, title.to_string(), true);
+            .insert_window(token, width, height, title.to_string(), true, false);
 
         for _ in 0..8 {
             pump_once(runtime);

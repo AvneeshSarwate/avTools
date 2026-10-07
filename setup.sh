@@ -27,10 +27,10 @@ NOTEBOOK_DIR="$ROOT_DIR/apps/deno-notebooks"
 BROWSER_PROJECTIONS_DIR="$ROOT_DIR/apps/browser-projections"
 LIVECODE_TLDRAW_DIR="$ROOT_DIR/apps/livecode-tldraw"
 
-# Pinned Deno version. Deno 2.9.0+ on Apple Silicon macOS panics whenever a
-# graphics window opens (see "Deno version pin" in README.md). Bump this once
-# a fixed Deno release ships.
-DENO_VERSION="2.8.3"
+# Pinned Deno version. 2.9.x needs the CAMetalLayer pre-install in
+# native/deno_window to open graphics windows on Apple Silicon (see "Deno
+# version pin" in README.md); rebuild the native libs when switching.
+DENO_VERSION="2.9.7"
 
 echo "================================================"
 echo "avTools Setup"
