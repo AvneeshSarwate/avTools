@@ -18,7 +18,7 @@ Run:
 
 If missing, `setup.sh` will install:
 - Rust toolchain (via rustup)
-- Deno, pinned to 2.8.3 (see [Deno version pin](#deno-version-pin-283))
+- Deno, pinned to 2.9.7 (see [Deno version pin](#deno-version-pin-297))
 - uv (Python package manager)
 - Node.js (via nvm)
 
@@ -34,17 +34,20 @@ Then it will:
 After that:
 1. Open `avtools.code-workspace` in VS Code - this should 
 
-### Deno version pin (2.8.3)
+### Deno version pin (2.9.7)
 
-`setup.sh` installs, or switches an existing install to, **Deno 2.8.3**, set by
+`setup.sh` installs, or switches an existing install to, **Deno 2.9.7**, set by
 `DENO_VERSION` at the top of the script. To switch by hand:
 
 ```
-deno upgrade --version 2.8.3
+deno upgrade --version 2.9.7
 ```
 
-**Why:** from Deno 2.9.0, Apple Silicon macOS builds panic as soon as a
-graphics window opens. That covers every windowed sketch built on
+Then rebuild the native window library (`./setup.sh` does this) so it has the
+fix described below.
+
+**Background:** from Deno 2.9.0, Apple Silicon macOS builds panicked as soon as a
+graphics window opened. That covered every windowed sketch built on
 `apps/deno-notebooks/window/` (`Deno.UnsafeWindowSurface`), including the
 hanoiShow live show:
 
@@ -57,16 +60,20 @@ requested change dictionary did not contain `NSKeyValueChangeNewKey`
   released in 2.9.0, links release builds through
   [lzld](https://github.com/littledivy/lzld). lzld loads Apple frameworks
   lazily and stubs Foundation's `NSKeyValueChangeNewKey` constant to NULL.
-- **Why that panics:** the window's view has no `CAMetalLayer`, so wgpu's
-  `raw-window-metal` adds one and watches it via key-value observing. Reading
-  the change it's notified of looks up that constant, finds nothing, and the
+- **Why that panicked:** the window's view had no `CAMetalLayer`, so wgpu's
+  `raw-window-metal` added one and watched it via key-value observing. Reading
+  the change it was notified of looks up that constant, finds nothing, and the
   code panics deliberately.
-- **Versions:** last good 2.8.3, first bad 2.9.0. Tested on 2.8.2, 2.8.3,
-  2.9.0, 2.9.3 and 2.9.7.
-- **Not affected:** headless WebGPU (no window surface), on any version.
-- **Lifting the pin:** wait for a fixed Deno release, or set a `CAMetalLayer` as
-  the NSView's root layer before creating the surface. That workaround avoided
-  the panic on 2.9.7, but drawing to the screen with it hasn't been confirmed.
+- **Fix:** `native/deno_window` now installs a `CAMetalLayer` as the view's
+  root layer before Deno creates the surface, so wgpu uses it as-is and never
+  sets up the observer. The library updates the layer's scale itself when the
+  display scale changes.
+- **Verified** on an M1 Max: windows open without panicking and draw on screen
+  on 2.9.7, with the moving-circle sketch's render loop running. 2.8.3 still
+  works with the same library.
+- **Occluded windows:** since 2.8.3 (wgpu 29), a covered or minimized window
+  can't hand out a swapchain texture ("Invalid Surface Status"). The window
+  helpers skip on-screen frames until it returns and keep running.
 
 ## VSCode Setup (Recommended)
 

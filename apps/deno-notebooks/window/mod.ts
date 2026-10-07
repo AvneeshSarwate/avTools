@@ -1,7 +1,10 @@
 export {
   createGpuWindow,
+  createSwapSkipLog,
+  tryGetSwapTexture,
   type BeforeSurfaceCreateInfo,
   type GpuWindow,
+  type SwapSkipLog,
   type WindowOptions,
 } from "./window.ts";
 export {

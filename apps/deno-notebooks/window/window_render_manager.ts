@@ -4,7 +4,12 @@ import { ShaderEffect, type ShaderSource } from "@avtools/shader-fx/raw";
 import { createBlitPipeline, blit } from "./blit.ts";
 import type { WindowEvent } from "./events.ts";
 import { createWindowTweakpane, type WindowTweakpane } from "./tweakpane_panel.ts";
-import { createGpuWindow, type GpuWindow } from "./window.ts";
+import {
+  createGpuWindow,
+  createSwapSkipLog,
+  type GpuWindow,
+  tryGetSwapTexture,
+} from "./window.ts";
 import { createSyphonGpuWindow, type SyphonOptions, type SyphonServer } from "../syphon/syphon.ts";
 
 export type WindowRenderSource = ShaderSource;
@@ -88,19 +93,29 @@ export async function createWindowRenderManager(
     pane,
   };
 
+  const skips = createSwapSkipLog("window_render_manager");
+
   const present = (source: WindowRenderSource): void => {
     if (disposed || window.closed) {
       return;
     }
     try {
-      const swapTexture = window.ctx.getCurrentTexture();
-      const encoder = options.device.createCommandEncoder();
-      blit(options.device, encoder, blitPipeline, resolveFrameSourceView(source), swapTexture.createView());
-      options.device.queue.submit([encoder.finish()]);
+      // Deno 2.8.3+ (wgpu 29) refuses a swapchain texture while the window
+      // is occluded (covered, minimized, other Space). Skip the on-screen
+      // blit for that frame instead of tearing down the loop; Syphon still
+      // publishes.
+      const swapTexture = tryGetSwapTexture(window.ctx, skips);
+      if (swapTexture) {
+        const encoder = options.device.createCommandEncoder();
+        blit(options.device, encoder, blitPipeline, resolveFrameSourceView(source), swapTexture.createView());
+        options.device.queue.submit([encoder.finish()]);
+      }
       if (hasSyphon(window)) {
         window.syphon.publishFrame();
       }
-      window.present();
+      if (swapTexture) {
+        window.present();
+      }
     } catch (error) {
       console.error("window_render_manager: present failed", error);
       throw error;

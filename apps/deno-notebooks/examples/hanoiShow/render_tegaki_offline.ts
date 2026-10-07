@@ -8,8 +8,7 @@
 // All commands run from apps/deno-notebooks.
 //
 // 0. Prereqs
-//    - Deno 2.8.3: `deno upgrade --version 2.8.3`. Deno 2.9.x panics when the
-//      live show opens its window on Apple Silicon (see "Deno version pin" in
+//    - Deno 2.9.7: `deno upgrade --version 2.9.7` (see "Deno version pin" in
 //      the repo README). This render is headless and runs on any version.
 //    - Native libs built (./setup.sh at the repo root) and ffmpeg on PATH
 //      (`brew install ffmpeg`).

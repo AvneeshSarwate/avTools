@@ -13,7 +13,13 @@
  *   await runP5RenderLoop(ctx);
  */
 
-import { createGpuWindow, createBlitPipeline, blit } from "../window/mod.ts";
+import {
+  blit,
+  createBlitPipeline,
+  createGpuWindow,
+  createSwapSkipLog,
+  tryGetSwapTexture,
+} from "../window/mod.ts";
 import type { GpuWindow, WindowEvent, BlitPipeline } from "../window/mod.ts";
 
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -1051,6 +1057,7 @@ export async function runP5RenderLoop(
   const autoClose = opts.autoClose ?? true;
   let running = true;
   let frame = 0;
+  const swapSkips = createSwapSkipLog("p5_deno_shim");
 
   console.log("Starting p5 render loop...");
 
@@ -1082,18 +1089,21 @@ export async function runP5RenderLoop(
       { width: pixels.width, height: pixels.height },
     );
 
-    // 5. Blit texture to window surface
-    const swapTexture = win.ctx.getCurrentTexture();
-    const encoder = device.createCommandEncoder();
-    blit(device, encoder, blitPipeline, gpuTexture.createView(), swapTexture.createView());
-    device.queue.submit([encoder.finish()]);
+    // 5. Blit texture to window surface (skipped while the window is
+    //    occluded on Deno 2.8.3+, where acquiring the texture throws)
+    const swapTexture = tryGetSwapTexture(win.ctx, swapSkips);
+    if (swapTexture) {
+      const encoder = device.createCommandEncoder();
+      blit(device, encoder, blitPipeline, gpuTexture.createView(), swapTexture.createView());
+      device.queue.submit([encoder.finish()]);
 
-    // 6. Present
-    try {
-      win.present();
-    } catch (e) {
-      console.error("Present error at frame", frame, ":", e);
-      break;
+      // 6. Present
+      try {
+        win.present();
+      } catch (e) {
+        console.error("Present error at frame", frame, ":", e);
+        break;
+      }
     }
 
     frame++;
