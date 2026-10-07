@@ -347,7 +347,7 @@
       "group": "Main",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -364,6 +364,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -414,6 +422,32 @@
         {
           "value": 7,
           "label": "Step"
+        }
+      ]
+    },
+    {
+      "id": 559,
+      "name": "Main Legacy 1.2 DSP",
+      "group": "Main",
+      "type": 1,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 5,
+      "unit": "",
+      "digits": 2,
+      "a": 0.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": [
+        {
+          "value": 0,
+          "label": "Off"
+        },
+        {
+          "value": 1,
+          "label": "On"
         }
       ]
     },
@@ -2025,7 +2059,7 @@
       "group": "Macro 1",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -2042,6 +2076,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -3122,7 +3164,7 @@
       "group": "Macro 2",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -3139,6 +3181,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -4219,7 +4269,7 @@
       "group": "Macro 3",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -4236,6 +4286,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -5316,7 +5374,7 @@
       "group": "Macro 4",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -5333,6 +5391,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -6413,7 +6479,7 @@
       "group": "Macro 5",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -6430,6 +6496,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -7510,7 +7584,7 @@
       "group": "Macro 6",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -7527,6 +7601,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -8577,7 +8659,7 @@
       "group": "Main Pan Mod",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -8594,6 +8676,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -9635,7 +9725,7 @@
       "group": "Main Tune",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -9652,6 +9742,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -10715,7 +10813,7 @@
       "group": "Op 1 Feedback",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -10732,6 +10830,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -11855,7 +11961,7 @@
       "group": "Op 1 Mixer",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -11872,6 +11978,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -13136,7 +13250,7 @@
       "group": "Op 1 Source",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -13153,6 +13267,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -13269,6 +13391,23 @@
       "unit": " cents",
       "digits": 4,
       "a": 1.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
+      "id": 1691,
+      "name": "Op 1 Source LFO to Wavetable Morph",
+      "group": "Op 1 Source",
+      "type": 0,
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
       "b": 0.0,
       "c": 0.0,
       "d": 0.0,
@@ -13553,6 +13692,23 @@
     {
       "id": 1508,
       "name": "Op 1 Source Phase",
+      "group": "Op 1 Source",
+      "type": 0,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
+      "id": 1688,
+      "name": "Op 1 Source Phase Map Read Phase",
       "group": "Op 1 Source",
       "type": 0,
       "min": 0.0,
@@ -14181,7 +14337,7 @@
       "group": "Op 1 Source",
       "type": 1,
       "min": 0.0,
-      "max": 21.0,
+      "max": 22.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -14277,7 +14433,88 @@
         },
         {
           "value": 21,
+          "label": "Wavetable"
+        },
+        {
+          "value": 22,
           "label": "Audio In"
+        }
+      ]
+    },
+    {
+      "id": 1693,
+      "name": "Op 1 Source Wavetable Mip Chain",
+      "group": "Op 1 Source",
+      "type": 1,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "scale": 5,
+      "unit": "",
+      "digits": 2,
+      "a": 0.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": [
+        {
+          "value": 0,
+          "label": "Off"
+        },
+        {
+          "value": 1,
+          "label": "On"
+        }
+      ]
+    },
+    {
+      "id": 1689,
+      "name": "Op 1 Source Wavetable Morph",
+      "group": "Op 1 Source",
+      "type": 0,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
+      "id": 1692,
+      "name": "Op 1 Source Wavetable Playback",
+      "group": "Op 1 Source",
+      "type": 1,
+      "min": 0.0,
+      "max": 3.0,
+      "default": 1.0,
+      "scale": 5,
+      "unit": "",
+      "digits": 2,
+      "a": 0.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": [
+        {
+          "value": 0,
+          "label": "Band Limited"
+        },
+        {
+          "value": 1,
+          "label": "Band Limited Tapered"
+        },
+        {
+          "value": 2,
+          "label": "Direct"
+        },
+        {
+          "value": 3,
+          "label": "Direct ZOH"
         }
       ]
     },
@@ -14564,6 +14801,23 @@
       "options": []
     },
     {
+      "id": 1690,
+      "name": "Op 1 Source Env to Wavetable Morph",
+      "group": "Op 1 Source",
+      "type": 0,
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
       "id": 30001,
       "name": "Op 1 to Op 2 Active",
       "group": "Op 1 to Op 2",
@@ -14831,7 +15085,7 @@
       "group": "Op 1 to Op 2",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -14848,6 +15102,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -16018,7 +16280,7 @@
       "group": "Op 1 to Op 3",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -16035,6 +16297,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -17205,7 +17475,7 @@
       "group": "Op 1 to Op 4",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -17222,6 +17492,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -18392,7 +18670,7 @@
       "group": "Op 1 to Op 5",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -18409,6 +18687,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -19579,7 +19865,7 @@
       "group": "Op 1 to Op 6",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -19596,6 +19882,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -20732,7 +21026,7 @@
       "group": "Op 2 Feedback",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -20749,6 +21043,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -21872,7 +22174,7 @@
       "group": "Op 2 Mixer",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -21889,6 +22191,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -23153,7 +23463,7 @@
       "group": "Op 2 Source",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -23170,6 +23480,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -23286,6 +23604,23 @@
       "unit": " cents",
       "digits": 4,
       "a": 1.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
+      "id": 1941,
+      "name": "Op 2 Source LFO to Wavetable Morph",
+      "group": "Op 2 Source",
+      "type": 0,
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
       "b": 0.0,
       "c": 0.0,
       "d": 0.0,
@@ -23570,6 +23905,23 @@
     {
       "id": 1758,
       "name": "Op 2 Source Phase",
+      "group": "Op 2 Source",
+      "type": 0,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
+      "id": 1938,
+      "name": "Op 2 Source Phase Map Read Phase",
       "group": "Op 2 Source",
       "type": 0,
       "min": 0.0,
@@ -24198,7 +24550,7 @@
       "group": "Op 2 Source",
       "type": 1,
       "min": 0.0,
-      "max": 21.0,
+      "max": 22.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -24294,7 +24646,88 @@
         },
         {
           "value": 21,
+          "label": "Wavetable"
+        },
+        {
+          "value": 22,
           "label": "Audio In"
+        }
+      ]
+    },
+    {
+      "id": 1943,
+      "name": "Op 2 Source Wavetable Mip Chain",
+      "group": "Op 2 Source",
+      "type": 1,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "scale": 5,
+      "unit": "",
+      "digits": 2,
+      "a": 0.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": [
+        {
+          "value": 0,
+          "label": "Off"
+        },
+        {
+          "value": 1,
+          "label": "On"
+        }
+      ]
+    },
+    {
+      "id": 1939,
+      "name": "Op 2 Source Wavetable Morph",
+      "group": "Op 2 Source",
+      "type": 0,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
+      "id": 1942,
+      "name": "Op 2 Source Wavetable Playback",
+      "group": "Op 2 Source",
+      "type": 1,
+      "min": 0.0,
+      "max": 3.0,
+      "default": 1.0,
+      "scale": 5,
+      "unit": "",
+      "digits": 2,
+      "a": 0.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": [
+        {
+          "value": 0,
+          "label": "Band Limited"
+        },
+        {
+          "value": 1,
+          "label": "Band Limited Tapered"
+        },
+        {
+          "value": 2,
+          "label": "Direct"
+        },
+        {
+          "value": 3,
+          "label": "Direct ZOH"
         }
       ]
     },
@@ -24581,6 +25014,23 @@
       "options": []
     },
     {
+      "id": 1940,
+      "name": "Op 2 Source Env to Wavetable Morph",
+      "group": "Op 2 Source",
+      "type": 0,
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
       "id": 30401,
       "name": "Op 2 to Op 3 Active",
       "group": "Op 2 to Op 3",
@@ -24848,7 +25298,7 @@
       "group": "Op 2 to Op 3",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -24865,6 +25315,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -26035,7 +26493,7 @@
       "group": "Op 2 to Op 4",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -26052,6 +26510,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -27222,7 +27688,7 @@
       "group": "Op 2 to Op 5",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -27239,6 +27705,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -28409,7 +28883,7 @@
       "group": "Op 2 to Op 6",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -28426,6 +28900,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -29562,7 +30044,7 @@
       "group": "Op 3 Feedback",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -29579,6 +30061,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -30702,7 +31192,7 @@
       "group": "Op 3 Mixer",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -30719,6 +31209,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -31983,7 +32481,7 @@
       "group": "Op 3 Source",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -32000,6 +32498,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -32116,6 +32622,23 @@
       "unit": " cents",
       "digits": 4,
       "a": 1.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
+      "id": 2191,
+      "name": "Op 3 Source LFO to Wavetable Morph",
+      "group": "Op 3 Source",
+      "type": 0,
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
       "b": 0.0,
       "c": 0.0,
       "d": 0.0,
@@ -32400,6 +32923,23 @@
     {
       "id": 2008,
       "name": "Op 3 Source Phase",
+      "group": "Op 3 Source",
+      "type": 0,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
+      "id": 2188,
+      "name": "Op 3 Source Phase Map Read Phase",
       "group": "Op 3 Source",
       "type": 0,
       "min": 0.0,
@@ -33028,7 +33568,7 @@
       "group": "Op 3 Source",
       "type": 1,
       "min": 0.0,
-      "max": 21.0,
+      "max": 22.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -33124,7 +33664,88 @@
         },
         {
           "value": 21,
+          "label": "Wavetable"
+        },
+        {
+          "value": 22,
           "label": "Audio In"
+        }
+      ]
+    },
+    {
+      "id": 2193,
+      "name": "Op 3 Source Wavetable Mip Chain",
+      "group": "Op 3 Source",
+      "type": 1,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "scale": 5,
+      "unit": "",
+      "digits": 2,
+      "a": 0.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": [
+        {
+          "value": 0,
+          "label": "Off"
+        },
+        {
+          "value": 1,
+          "label": "On"
+        }
+      ]
+    },
+    {
+      "id": 2189,
+      "name": "Op 3 Source Wavetable Morph",
+      "group": "Op 3 Source",
+      "type": 0,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
+      "id": 2192,
+      "name": "Op 3 Source Wavetable Playback",
+      "group": "Op 3 Source",
+      "type": 1,
+      "min": 0.0,
+      "max": 3.0,
+      "default": 1.0,
+      "scale": 5,
+      "unit": "",
+      "digits": 2,
+      "a": 0.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": [
+        {
+          "value": 0,
+          "label": "Band Limited"
+        },
+        {
+          "value": 1,
+          "label": "Band Limited Tapered"
+        },
+        {
+          "value": 2,
+          "label": "Direct"
+        },
+        {
+          "value": 3,
+          "label": "Direct ZOH"
         }
       ]
     },
@@ -33411,6 +34032,23 @@
       "options": []
     },
     {
+      "id": 2190,
+      "name": "Op 3 Source Env to Wavetable Morph",
+      "group": "Op 3 Source",
+      "type": 0,
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
       "id": 31001,
       "name": "Op 3 to Op 4 Active",
       "group": "Op 3 to Op 4",
@@ -33678,7 +34316,7 @@
       "group": "Op 3 to Op 4",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -33695,6 +34333,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -34865,7 +35511,7 @@
       "group": "Op 3 to Op 5",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -34882,6 +35528,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -36052,7 +36706,7 @@
       "group": "Op 3 to Op 6",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -36069,6 +36723,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -37205,7 +37867,7 @@
       "group": "Op 4 Feedback",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -37222,6 +37884,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -38345,7 +39015,7 @@
       "group": "Op 4 Mixer",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -38362,6 +39032,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -39626,7 +40304,7 @@
       "group": "Op 4 Source",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -39643,6 +40321,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -39759,6 +40445,23 @@
       "unit": " cents",
       "digits": 4,
       "a": 1.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
+      "id": 2441,
+      "name": "Op 4 Source LFO to Wavetable Morph",
+      "group": "Op 4 Source",
+      "type": 0,
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
       "b": 0.0,
       "c": 0.0,
       "d": 0.0,
@@ -40043,6 +40746,23 @@
     {
       "id": 2258,
       "name": "Op 4 Source Phase",
+      "group": "Op 4 Source",
+      "type": 0,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
+      "id": 2438,
+      "name": "Op 4 Source Phase Map Read Phase",
       "group": "Op 4 Source",
       "type": 0,
       "min": 0.0,
@@ -40671,7 +41391,7 @@
       "group": "Op 4 Source",
       "type": 1,
       "min": 0.0,
-      "max": 21.0,
+      "max": 22.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -40767,7 +41487,88 @@
         },
         {
           "value": 21,
+          "label": "Wavetable"
+        },
+        {
+          "value": 22,
           "label": "Audio In"
+        }
+      ]
+    },
+    {
+      "id": 2443,
+      "name": "Op 4 Source Wavetable Mip Chain",
+      "group": "Op 4 Source",
+      "type": 1,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "scale": 5,
+      "unit": "",
+      "digits": 2,
+      "a": 0.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": [
+        {
+          "value": 0,
+          "label": "Off"
+        },
+        {
+          "value": 1,
+          "label": "On"
+        }
+      ]
+    },
+    {
+      "id": 2439,
+      "name": "Op 4 Source Wavetable Morph",
+      "group": "Op 4 Source",
+      "type": 0,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
+      "id": 2442,
+      "name": "Op 4 Source Wavetable Playback",
+      "group": "Op 4 Source",
+      "type": 1,
+      "min": 0.0,
+      "max": 3.0,
+      "default": 1.0,
+      "scale": 5,
+      "unit": "",
+      "digits": 2,
+      "a": 0.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": [
+        {
+          "value": 0,
+          "label": "Band Limited"
+        },
+        {
+          "value": 1,
+          "label": "Band Limited Tapered"
+        },
+        {
+          "value": 2,
+          "label": "Direct"
+        },
+        {
+          "value": 3,
+          "label": "Direct ZOH"
         }
       ]
     },
@@ -41054,6 +41855,23 @@
       "options": []
     },
     {
+      "id": 2440,
+      "name": "Op 4 Source Env to Wavetable Morph",
+      "group": "Op 4 Source",
+      "type": 0,
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
       "id": 31801,
       "name": "Op 4 to Op 5 Active",
       "group": "Op 4 to Op 5",
@@ -41321,7 +42139,7 @@
       "group": "Op 4 to Op 5",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -41338,6 +42156,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -42508,7 +43334,7 @@
       "group": "Op 4 to Op 6",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -42525,6 +43351,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -43661,7 +44495,7 @@
       "group": "Op 5 Feedback",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -43678,6 +44512,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -44801,7 +45643,7 @@
       "group": "Op 5 Mixer",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -44818,6 +45660,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -46082,7 +46932,7 @@
       "group": "Op 5 Source",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -46099,6 +46949,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -46215,6 +47073,23 @@
       "unit": " cents",
       "digits": 4,
       "a": 1.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
+      "id": 2691,
+      "name": "Op 5 Source LFO to Wavetable Morph",
+      "group": "Op 5 Source",
+      "type": 0,
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
       "b": 0.0,
       "c": 0.0,
       "d": 0.0,
@@ -46499,6 +47374,23 @@
     {
       "id": 2508,
       "name": "Op 5 Source Phase",
+      "group": "Op 5 Source",
+      "type": 0,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
+      "id": 2688,
+      "name": "Op 5 Source Phase Map Read Phase",
       "group": "Op 5 Source",
       "type": 0,
       "min": 0.0,
@@ -47127,7 +48019,7 @@
       "group": "Op 5 Source",
       "type": 1,
       "min": 0.0,
-      "max": 21.0,
+      "max": 22.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -47223,7 +48115,88 @@
         },
         {
           "value": 21,
+          "label": "Wavetable"
+        },
+        {
+          "value": 22,
           "label": "Audio In"
+        }
+      ]
+    },
+    {
+      "id": 2693,
+      "name": "Op 5 Source Wavetable Mip Chain",
+      "group": "Op 5 Source",
+      "type": 1,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "scale": 5,
+      "unit": "",
+      "digits": 2,
+      "a": 0.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": [
+        {
+          "value": 0,
+          "label": "Off"
+        },
+        {
+          "value": 1,
+          "label": "On"
+        }
+      ]
+    },
+    {
+      "id": 2689,
+      "name": "Op 5 Source Wavetable Morph",
+      "group": "Op 5 Source",
+      "type": 0,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
+      "id": 2692,
+      "name": "Op 5 Source Wavetable Playback",
+      "group": "Op 5 Source",
+      "type": 1,
+      "min": 0.0,
+      "max": 3.0,
+      "default": 1.0,
+      "scale": 5,
+      "unit": "",
+      "digits": 2,
+      "a": 0.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": [
+        {
+          "value": 0,
+          "label": "Band Limited"
+        },
+        {
+          "value": 1,
+          "label": "Band Limited Tapered"
+        },
+        {
+          "value": 2,
+          "label": "Direct"
+        },
+        {
+          "value": 3,
+          "label": "Direct ZOH"
         }
       ]
     },
@@ -47510,6 +48483,23 @@
       "options": []
     },
     {
+      "id": 2690,
+      "name": "Op 5 Source Env to Wavetable Morph",
+      "group": "Op 5 Source",
+      "type": 0,
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
       "id": 32801,
       "name": "Op 5 to Op 6 Active",
       "group": "Op 5 to Op 6",
@@ -47777,7 +48767,7 @@
       "group": "Op 5 to Op 6",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -47794,6 +48784,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -48930,7 +49928,7 @@
       "group": "Op 6 Feedback",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -48947,6 +49945,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -50070,7 +51076,7 @@
       "group": "Op 6 Mixer",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -50087,6 +51093,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -51351,7 +52365,7 @@
       "group": "Op 6 Source",
       "type": 1,
       "min": 0.0,
-      "max": 1.0,
+      "max": 3.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -51368,6 +52382,14 @@
         {
           "value": 1,
           "label": "Song"
+        },
+        {
+          "value": 2,
+          "label": "RndVc"
+        },
+        {
+          "value": 3,
+          "label": "RndNt"
         }
       ]
     },
@@ -51484,6 +52506,23 @@
       "unit": " cents",
       "digits": 4,
       "a": 1.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
+      "id": 2941,
+      "name": "Op 6 Source LFO to Wavetable Morph",
+      "group": "Op 6 Source",
+      "type": 0,
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
       "b": 0.0,
       "c": 0.0,
       "d": 0.0,
@@ -51768,6 +52807,23 @@
     {
       "id": 2758,
       "name": "Op 6 Source Phase",
+      "group": "Op 6 Source",
+      "type": 0,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
+      "id": 2938,
+      "name": "Op 6 Source Phase Map Read Phase",
       "group": "Op 6 Source",
       "type": 0,
       "min": 0.0,
@@ -52396,7 +53452,7 @@
       "group": "Op 6 Source",
       "type": 1,
       "min": 0.0,
-      "max": 21.0,
+      "max": 22.0,
       "default": 0.0,
       "scale": 5,
       "unit": "",
@@ -52492,7 +53548,88 @@
         },
         {
           "value": 21,
+          "label": "Wavetable"
+        },
+        {
+          "value": 22,
           "label": "Audio In"
+        }
+      ]
+    },
+    {
+      "id": 2943,
+      "name": "Op 6 Source Wavetable Mip Chain",
+      "group": "Op 6 Source",
+      "type": 1,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "scale": 5,
+      "unit": "",
+      "digits": 2,
+      "a": 0.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": [
+        {
+          "value": 0,
+          "label": "Off"
+        },
+        {
+          "value": 1,
+          "label": "On"
+        }
+      ]
+    },
+    {
+      "id": 2939,
+      "name": "Op 6 Source Wavetable Morph",
+      "group": "Op 6 Source",
+      "type": 0,
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
+    },
+    {
+      "id": 2942,
+      "name": "Op 6 Source Wavetable Playback",
+      "group": "Op 6 Source",
+      "type": 1,
+      "min": 0.0,
+      "max": 3.0,
+      "default": 1.0,
+      "scale": 5,
+      "unit": "",
+      "digits": 2,
+      "a": 0.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": [
+        {
+          "value": 0,
+          "label": "Band Limited"
+        },
+        {
+          "value": 1,
+          "label": "Band Limited Tapered"
+        },
+        {
+          "value": 2,
+          "label": "Direct"
+        },
+        {
+          "value": 3,
+          "label": "Direct ZOH"
         }
       ]
     },
@@ -52777,6 +53914,23 @@
       "c": 0.0,
       "d": 0.0,
       "options": []
+    },
+    {
+      "id": 2940,
+      "name": "Op 6 Source Env to Wavetable Morph",
+      "group": "Op 6 Source",
+      "type": 0,
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "scale": 0,
+      "unit": "%",
+      "digits": 2,
+      "a": 100.0,
+      "b": 0.0,
+      "c": 0.0,
+      "d": 0.0,
+      "options": []
     }
   ],
   "nodes": [
@@ -52810,6 +53964,12 @@
         1680,
         1681,
         1682,
+        1688,
+        1692,
+        1693,
+        1689,
+        1690,
+        1691,
         1683,
         1684,
         1685,
@@ -52882,6 +54042,10 @@
         {
           "value": 15,
           "label": "Phase"
+        },
+        {
+          "value": 16,
+          "label": "Wavetable Morph"
         },
         {
           "value": 20,
@@ -53447,6 +54611,12 @@
         1930,
         1931,
         1932,
+        1938,
+        1942,
+        1943,
+        1939,
+        1940,
+        1941,
         1933,
         1934,
         1935,
@@ -53519,6 +54689,10 @@
         {
           "value": 15,
           "label": "Phase"
+        },
+        {
+          "value": 16,
+          "label": "Wavetable Morph"
         },
         {
           "value": 20,
@@ -54084,6 +55258,12 @@
         2180,
         2181,
         2182,
+        2188,
+        2192,
+        2193,
+        2189,
+        2190,
+        2191,
         2183,
         2184,
         2185,
@@ -54156,6 +55336,10 @@
         {
           "value": 15,
           "label": "Phase"
+        },
+        {
+          "value": 16,
+          "label": "Wavetable Morph"
         },
         {
           "value": 20,
@@ -54721,6 +55905,12 @@
         2430,
         2431,
         2432,
+        2438,
+        2442,
+        2443,
+        2439,
+        2440,
+        2441,
         2433,
         2434,
         2435,
@@ -54793,6 +55983,10 @@
         {
           "value": 15,
           "label": "Phase"
+        },
+        {
+          "value": 16,
+          "label": "Wavetable Morph"
         },
         {
           "value": 20,
@@ -55358,6 +56552,12 @@
         2680,
         2681,
         2682,
+        2688,
+        2692,
+        2693,
+        2689,
+        2690,
+        2691,
         2683,
         2684,
         2685,
@@ -55430,6 +56630,10 @@
         {
           "value": 15,
           "label": "Phase"
+        },
+        {
+          "value": 16,
+          "label": "Wavetable Morph"
         },
         {
           "value": 20,
@@ -55995,6 +57199,12 @@
         2930,
         2931,
         2932,
+        2938,
+        2942,
+        2943,
+        2939,
+        2940,
+        2941,
         2933,
         2934,
         2935,
@@ -56067,6 +57277,10 @@
         {
           "value": 15,
           "label": "Phase"
+        },
+        {
+          "value": 16,
+          "label": "Wavetable Morph"
         },
         {
           "value": 20,
@@ -58890,6 +60104,7 @@
         554,
         555,
         556,
+        559,
         502,
         503,
         504,

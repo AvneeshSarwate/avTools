@@ -10,8 +10,9 @@ Source:
 - Original synthesizer: [baconpaul/six-sines](https://github.com/baconpaul/six-sines)
 - Browser-port fork: [AvneeshSarwate/six-sines](https://github.com/AvneeshSarwate/six-sines)
 - Port branch: [`browser-audio-worklet`](https://github.com/AvneeshSarwate/six-sines/tree/browser-audio-worklet)
-- Packaged commit: [`4a321fcb2bfb`](https://github.com/AvneeshSarwate/six-sines/commit/4a321fcb2bfb)
-  (adds per-note pressure/brightness note expressions; see below)
+- Packaged commit: [`13732086f077`](https://github.com/AvneeshSarwate/six-sines/commit/13732086f077)
+  (rebased onto upstream `03f3b9a`: user wavetables, phase-map read phase, random LFO
+  phases, and the `<= 1.2 dsp` flag; see below)
 
 `six-sines-node.js` is the public module. Its adjacent `.d.ts` provides TypeScript declarations;
 `six-sines-worklet.js`, `six-sines.js`, and `six-sines.wasm` are runtime assets and must remain
@@ -76,6 +77,14 @@ and `SixSinesShape.tsx` for a tldraw view. See
 for piano-roll playback, preset sharing, and optional 60 Hz pan automation.
 
 Macro Level per-note offsets feed both Macro Amplitude and Macro Modulated sources. Amplitude is the clamped knob plus host offset; Modulated additionally applies the macro envelope/LFO. A per-note offset never changes the stored/global knob value.
+
+## Wavetables and 1.3 patches
+
+The editor's Wavetable waveform plays a built-in sine-to-saw table, or a `.wt`/`.wav` loaded
+with **Load Wavetable…**. A loaded table is embedded in the preset XML in the native format,
+so it arrives as a `preset-change` and the host reloads the engine; livecode persists it
+with the base preset. Patches are now version 14. Older patches load with `<= 1.2 dsp` on,
+so they keep their sound, and the Audio In waveform value moved from 21 to 22.
 
 ## Per-note MPE expression
 
