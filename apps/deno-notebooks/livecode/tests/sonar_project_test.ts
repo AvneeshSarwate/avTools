@@ -175,6 +175,7 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
         const snapshot = JSON.stringify(melodies);
         const triggers: { type: string; body: Record<string, unknown> }[] = [];
         const leds = new Map<number, boolean>();
+        const ledChannels = new Map<number, number>();
         const ledSends: number[] = [];
         const canvas: string[] = [];
         const settings = {
@@ -187,9 +188,10 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
           settings,
           trigger: (event: { type: string; body: Record<string, unknown> }) =>
             triggers.push(event),
-          setLed: (note: number, on: boolean) => {
+          setLed: (note: number, on: boolean, channel: number) => {
             leds.set(note, on);
             ledSends.push(note);
+            ledChannels.set(note, channel);
           },
           focusCanvas: (name: string) => canvas.push(name),
         });
@@ -324,6 +326,34 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
             false,
             false,
           ]);
+          // Pads set to different channels each get their LED on their own
+          // channel: a press on one never redirects another pad's light.
+          pads.handle({
+            type: "noteOn",
+            channel: 9,
+            note: TOP_ROW_NOTES[7],
+            velocity: 100,
+            timeMs: 0,
+          });
+          pads.handle({
+            type: "noteOff",
+            channel: 9,
+            note: TOP_ROW_NOTES[7],
+            velocity: 0,
+            timeMs: 0,
+          });
+          assertEquals(settings.focus, "dscale7");
+          assertEquals(
+            ledChannels.get(TOP_ROW_NOTES[7]),
+            9,
+            "lit on its channel",
+          );
+          assertEquals(leds.get(TOP_ROW_NOTES[6]), false);
+          assertEquals(
+            ledChannels.get(TOP_ROW_NOTES[6]),
+            0,
+            "the old focus pad is cleared on its own channel",
+          );
           pads.allLedsOff();
           assert([...leds.values()].every((on) => !on));
         } finally {

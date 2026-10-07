@@ -127,7 +127,11 @@ export function createBeatstepController(deps: {
   const { melodies, settings } = deps;
   const lastAbsolute = new Map<number, number>();
   const ledState = new Map<number, boolean>();
-  let channel = 0;
+  // Each pad's LED answers only on the channel that pad sends on, and pads
+  // can be set to different channels. Learned from the pad's own notes;
+  // channel 1 (the factory global channel) until a pad has been pressed.
+  const padChannels = new Map<number, number>();
+  const channelFor = (note: number) => padChannels.get(note) ?? 0;
 
   const focused = (): MelodyName =>
     (melodyNames as readonly string[]).includes(settings.focus)
@@ -160,7 +164,7 @@ export function createBeatstepController(deps: {
       const want = wantsLed(action);
       if (ledState.get(note) === want) continue;
       ledState.set(note, want);
-      deps.setLed(note, want, channel);
+      deps.setLed(note, want, channelFor(note));
     }
   }
 
@@ -168,7 +172,7 @@ export function createBeatstepController(deps: {
     for (const note of PAD_LAYOUT.keys()) {
       if (ledState.get(note) === false) continue;
       ledState.set(note, false);
-      deps.setLed(note, false, channel);
+      deps.setLed(note, false, channelFor(note));
     }
   }
 
@@ -264,7 +268,11 @@ export function createBeatstepController(deps: {
       if (event.type === "noteOn" || event.type === "noteOff") {
         const action = PAD_LAYOUT.get(event.note);
         if (!action) return;
-        channel = event.channel;
+        if (padChannels.get(event.note) !== event.channel) {
+          padChannels.set(event.note, event.channel);
+          // Whatever was sent before went out on a guessed channel.
+          ledState.delete(event.note);
+        }
         const down = event.type === "noteOn";
         pad(action, down);
         refreshLeds(down ? undefined : event.note);
