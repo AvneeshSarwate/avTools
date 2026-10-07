@@ -9,7 +9,7 @@
       "runtimePath": "modules/player.ts",
       "kind": "runnable",
       "title": "Run: melody player",
-      "sourceVersion": 2,
+      "sourceVersion": 1,
       "x": 80,
       "y": 80,
       "w": 560,
@@ -22,7 +22,7 @@
       "runtimePath": "modules/controls.ts",
       "kind": "runnable",
       "title": "controls",
-      "sourceVersion": 2,
+      "sourceVersion": 1,
       "x": 2320,
       "y": 1120,
       "w": 560,
@@ -35,7 +35,7 @@
       "runtimePath": "modules/pipeline.ts",
       "kind": "runnable",
       "title": "pipeline",
-      "sourceVersion": 2,
+      "sourceVersion": 1,
       "x": 2320,
       "y": 1640,
       "w": 560,
@@ -48,7 +48,7 @@
       "runtimePath": "modules/transforms.ts",
       "kind": "runnable",
       "title": "transforms",
-      "sourceVersion": 2,
+      "sourceVersion": 1,
       "x": 2320,
       "y": 2160,
       "w": 560,
@@ -61,7 +61,7 @@
       "runtimePath": "modules/easing.ts",
       "kind": "runnable",
       "title": "easing",
-      "sourceVersion": 2,
+      "sourceVersion": 1,
       "x": 2320,
       "y": 2680,
       "w": 560,
@@ -74,7 +74,7 @@
       "runtimePath": "modules/sources.ts",
       "kind": "runnable",
       "title": "sources",
-      "sourceVersion": 2,
+      "sourceVersion": 1,
       "x": 2320,
       "y": 3200,
       "w": 560,
@@ -87,7 +87,7 @@
       "runtimePath": "modules/playback.ts",
       "kind": "runnable",
       "title": "playback + note ownership",
-      "sourceVersion": 2,
+      "sourceVersion": 1,
       "x": 2320,
       "y": 3720,
       "w": 560,
@@ -100,7 +100,7 @@
       "runtimePath": "modules/beatstep.ts",
       "kind": "runnable",
       "title": "BeatStep mapping",
-      "sourceVersion": 2,
+      "sourceVersion": 1,
       "x": 2320,
       "y": 4240,
       "w": 560,
@@ -113,7 +113,7 @@
       "runtimePath": "modules/recording.ts",
       "kind": "runnable",
       "title": "recording into banks",
-      "sourceVersion": 2,
+      "sourceVersion": 1,
       "x": 2320,
       "y": 4760,
       "w": 560,
@@ -129,7 +129,13 @@
         "x": 700,
         "y": 80,
         "w": 850,
-        "h": 557
+        "h": 557,
+        "view": {
+          "quarterNoteWidth": 197.5,
+          "noteHeight": 26.385,
+          "startBeat": 0,
+          "topRow": 53
+        }
       },
       {
         "id": "shape:sonar-dscale7",
@@ -198,10 +204,10 @@
       {
         "id": "shape:sonar-presets-dscale5",
         "type": "sonar-preset-switcher",
-        "x": 1980,
+        "x": 1990.3125,
         "y": 80,
         "props": {
-          "w": 300,
+          "w": 315.36328125,
           "h": 760,
           "entityType": "params",
           "entityName": "sonar/dscale5",
@@ -214,7 +220,7 @@
         "x": 1980,
         "y": 880,
         "props": {
-          "w": 300,
+          "w": 325.67578125000006,
           "h": 760,
           "entityType": "params",
           "entityName": "sonar/dscale7",
@@ -227,7 +233,7 @@
         "x": 1980,
         "y": 1680,
         "props": {
-          "w": 300,
+          "w": 325.67578125000006,
           "h": 760,
           "entityType": "params",
           "entityName": "sonar/d7mel",
@@ -264,19 +270,44 @@
   },
   "data": [
     {
-      "type": "pianoRoll",
-      "name": "sonar/dscale5",
-      "path": "data/pianoRoll/dscale5.json"
+      "type": "params",
+      "name": "sonar/beatstep",
+      "path": "data/params/sonar%2Fbeatstep.json"
     },
     {
-      "type": "pianoRoll",
+      "type": "params",
+      "name": "sonar/d7mel",
+      "path": "data/params/sonar%2Fd7mel.json"
+    },
+    {
+      "type": "params",
+      "name": "sonar/dscale5",
+      "path": "data/params/sonar%2Fdscale5.json"
+    },
+    {
+      "type": "params",
       "name": "sonar/dscale7",
-      "path": "data/pianoRoll/dscale7.json"
+      "path": "data/params/sonar%2Fdscale7.json"
+    },
+    {
+      "type": "params",
+      "name": "sonar/transport",
+      "path": "data/params/sonar%2Ftransport.json"
     },
     {
       "type": "pianoRoll",
       "name": "sonar/d7mel",
-      "path": "data/pianoRoll/d7mel.json"
+      "path": "data/pianoRoll/sonar%2Fd7mel.json"
+    },
+    {
+      "type": "pianoRoll",
+      "name": "sonar/dscale5",
+      "path": "data/pianoRoll/sonar%2Fdscale5.json"
+    },
+    {
+      "type": "pianoRoll",
+      "name": "sonar/dscale7",
+      "path": "data/pianoRoll/sonar%2Fdscale7.json"
     }
   ]
 }

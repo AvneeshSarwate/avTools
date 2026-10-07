@@ -1,5 +1,5 @@
 import { assert, assertAlmostEquals, assertEquals } from "jsr:@std/assert@1";
-import { toFileUrl } from "jsr:@std/path@1";
+import { fromFileUrl, join, toFileUrl } from "jsr:@std/path@1";
 import { AbletonClip } from "@avtools/music-types";
 import { launch } from "@avtools/core-timing";
 import { createLivecodeEngine } from "@avtools/livecode-engine";
@@ -56,11 +56,14 @@ Deno.test("sonar port: analysis, original-pipeline parity, independent controls 
         }
         assertEquals(manifest.canvas.pianoRollViews.length, 3);
         for (const entry of manifest.data) {
+          // Saved file names are percent-encoded entity names
+          // (`sonar%2Fd7mel.json`); join like the server does, since a file
+          // URL would decode `%2F` into a directory separator.
           const saved = JSON.parse(
-            await Deno.readTextFile(new URL(entry.path, project)),
+            await Deno.readTextFile(join(fromFileUrl(project), entry.path)),
           );
           assertEquals(saved.name, entry.name);
-          assert(saved.data.notes.length > 0);
+          if (entry.type === "pianoRoll") assert(saved.data.notes.length > 0);
         }
       },
     );

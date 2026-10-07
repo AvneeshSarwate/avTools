@@ -1,0 +1,164 @@
+{
+  "type": "pianoRoll",
+  "name": "sonar/d7mel",
+  "savedAt": "2026-10-05T20:11:27.233Z",
+  "data": {
+    "notes": [
+      {
+        "id": "d7mel-0",
+        "pitch": 61,
+        "position": 0,
+        "duration": 0.5,
+        "velocity": 100
+      },
+      {
+        "id": "d7mel-1",
+        "pitch": 62,
+        "position": 0.5,
+        "duration": 1,
+        "velocity": 101
+      },
+      {
+        "id": "d7mel-2",
+        "pitch": 62,
+        "position": 1.5,
+        "duration": 0.5,
+        "velocity": 101
+      },
+      {
+        "id": "d7mel-3",
+        "pitch": 71,
+        "position": 2,
+        "duration": 1,
+        "velocity": 101
+      },
+      {
+        "id": "d7mel-4",
+        "pitch": 68,
+        "position": 3,
+        "duration": 1,
+        "velocity": 99
+      },
+      {
+        "id": "d7mel-5",
+        "pitch": 73,
+        "position": 4,
+        "duration": 0.5,
+        "velocity": 98
+      },
+      {
+        "id": "d7mel-6",
+        "pitch": 71,
+        "position": 4.5,
+        "duration": 0.5,
+        "velocity": 97
+      },
+      {
+        "id": "d7mel-7",
+        "pitch": 73,
+        "position": 5,
+        "duration": 1,
+        "velocity": 97
+      },
+      {
+        "id": "d7mel-8",
+        "pitch": 71,
+        "position": 6,
+        "duration": 1,
+        "velocity": 101
+      },
+      {
+        "id": "d7mel-9",
+        "pitch": 68,
+        "position": 7,
+        "duration": 1,
+        "velocity": 99
+      },
+      {
+        "id": "d7mel-10",
+        "pitch": 69,
+        "position": 8,
+        "duration": 0.5,
+        "velocity": 97
+      },
+      {
+        "id": "d7mel-11",
+        "pitch": 68,
+        "position": 8.5,
+        "duration": 0.5,
+        "velocity": 97
+      },
+      {
+        "id": "d7mel-12",
+        "pitch": 69,
+        "position": 9,
+        "duration": 0.5,
+        "velocity": 97
+      },
+      {
+        "id": "d7mel-13",
+        "pitch": 66,
+        "position": 9.5,
+        "duration": 0.5,
+        "velocity": 97
+      },
+      {
+        "id": "d7mel-14",
+        "pitch": 62,
+        "position": 10,
+        "duration": 0.5,
+        "velocity": 97
+      },
+      {
+        "id": "d7mel-15",
+        "pitch": 61,
+        "position": 10.5,
+        "duration": 0.5,
+        "velocity": 97
+      },
+      {
+        "id": "d7mel-16",
+        "pitch": 62,
+        "position": 11,
+        "duration": 1,
+        "velocity": 97
+      },
+      {
+        "id": "d7mel-17",
+        "pitch": 69,
+        "position": 12,
+        "duration": 0.5,
+        "velocity": 97
+      },
+      {
+        "id": "d7mel-18",
+        "pitch": 68,
+        "position": 12.5,
+        "duration": 0.5,
+        "velocity": 97
+      },
+      {
+        "id": "d7mel-19",
+        "pitch": 66,
+        "position": 13,
+        "duration": 0.5,
+        "velocity": 97
+      },
+      {
+        "id": "d7mel-20",
+        "pitch": 62,
+        "position": 13.5,
+        "duration": 0.5,
+        "velocity": 95
+      },
+      {
+        "id": "d7mel-21",
+        "pitch": 61,
+        "position": 14,
+        "duration": 2,
+        "velocity": 95
+      }
+    ],
+    "playStartPosition": 0
+  }
+}
