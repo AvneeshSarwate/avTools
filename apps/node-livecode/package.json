@@ -1,0 +1,10 @@
+{
+  "name": "@avtools/node-livecode",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.20.0 <23" },
+  "scripts": { "build": "node scripts/build.mjs", "test": "node test/lifecycle.mjs", "start": "node cli.mjs" },
+  "dependencies": { "@avtools/native-webgpu": "file:../../packages/native-webgpu" },
+  "devDependencies": { "esbuild": "0.25.12", "seedrandom": "3.0.5" }
+}

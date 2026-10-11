@@ -1,9 +1,45 @@
-# avTools – Unified Deno + Browser Workspace
+# avTools – Deno, Node, Browser, and TouchDesigner Workspace
 
 This repo is both a set of libraries and a specifically built project-setup for creative coding. It is a Deno‑workspace monorepo that unifies browser/Vite apps, Deno notebooks (aka Jupyter notebooks using the Deno kernel), shared TypeScript packages, and native Rust helpers. The goal is to create a set of Typescript based libraries for creative coding that can run both "natively" via Deno and/or also in the browser. The goal of the project setup in this repo is to make VSCode intellisense work “out of the box” across all environments (Deno files, jupyter notebooks).
 
+The repository also includes a **Node.js + Dawn implementation of P5GPU** and a
+**TouchDesigner custom TOP** built around the same renderer. These are implemented
+integrations with runnable examples; start with the guides below when working on
+native graphics or TouchDesigner.
+
 ### Why Deno (and notebooks?)
 The purpose of integrating Deno is to allow for a first-class livecoding experience for sketching and prototyping. Deno comes out of the box with support for Jupyter Notebooks. checkout the examples in `apps/deno-notebooks/examples`
+
+## Native P5GPU: Node/Dawn and TouchDesigner
+
+- **Node.js + Dawn:** [`packages/native-webgpu`](packages/native-webgpu/README.md)
+  exposes `P5GPU`, Dawn WebGPU device creation, native preview windows, and Syphon
+  output as `@avtools/native-webgpu`. It shares the portable renderer with the
+  Deno implementation and retains the Rust text engine. Its README covers setup,
+  builds, API usage, and checks. [`apps/node-livecode`](apps/node-livecode/README.md)
+  provides a minimal Node host for the existing livecode engine, with offscreen
+  rendering and optional window previews.
+- **TouchDesigner:** the [integration guide](packages/native-webgpu/TOUCHDESIGNER.md)
+  covers the avTools Sketch TOP, which embeds V8, Dawn, P5GPU, and Rust text inside
+  TouchDesigner; consumers do not need Node or Deno installed. It accepts a
+  JavaScript sketch DAT, CHOP controls, TOP inputs, and named pulse events, with
+  CPU TOP output by default and optional Syphon output. Source lives in
+  `packages/native-webgpu/native/td/`, with the embedded runtime in
+  `packages/native-webgpu/native/embedded/`.
+
+For a runnable TD project, open
+[`Sketch.toe`](packages/native-webgpu/native/td/example/Sketch.toe).
+It opens the example network and animated preview, automatically finding the
+checkout's built plugin or the release ZIP's adjacent `Plugins` directory.
+Build the plugin first on a fresh checkout; the native binaries are not checked
+in. The [example README](packages/native-webgpu/native/td/example/README.md)
+explains the controls and the reusable `Sketch.tox` component.
+
+These native integrations currently target **macOS Apple Silicon**; the Node
+build is validated with **Node 22.20.0**. The full livecode editor/server remains
+Deno-hosted. Root `setup.sh` does not build the Dawn package or TD plugin: follow
+their dedicated guides. See [validation results and limitations](packages/native-webgpu/VALIDATION.md)
+before extending or testing these paths.
 
 ## First‑Time Setup Checklist
 
@@ -106,6 +142,7 @@ avTools/
 │  ├─ core-timing/
 │  ├─ creative-algs/
 │  ├─ music-types/
+│  ├─ native-webgpu/        # Node/Dawn P5GPU, Syphon, and embedded TouchDesigner TOP
 │  ├─ ui-bridge/
 │  ├─ power2d/
 │  ├─ power2d-codegen/
@@ -113,6 +150,7 @@ avTools/
 ├─ apps/
 │  ├─ browser-projections/   # Vue + Vite web app
 │  ├─ livecode-tldraw/       # React/tldraw livecode client
+│  ├─ node-livecode/         # Minimal Node/Dawn host for the livecode engine
 │  └─ deno-notebooks/        # Deno notebooks, livecode server, and Rust FFI libs
 ├─ tools/
 │  ├─ vite-shader-plugin/    # Vite shader codegen wrapper

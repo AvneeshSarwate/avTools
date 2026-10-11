@@ -104,6 +104,8 @@ struct WindowSlot {
     height: u32,
     title: String,
     hide_on_close: bool,
+    // Native surface owners must release their surface before the NSWindow.
+    defer_close: bool,
     /// GPU render windows get a pre-installed CAMetalLayer (macOS); webview
     /// panel windows don't.
     metal_layer: bool,
@@ -137,6 +139,7 @@ impl WindowSlot {
             height,
             title,
             hide_on_close,
+            defer_close: false,
             metal_layer,
             events: Vec::new(),
             last_cursor: (0.0, 0.0),
@@ -301,6 +304,9 @@ impl ApplicationHandler for MultiWindowApp {
                 }
                 slot.events.push(WindowEventRecord::Close);
                 slot.should_close = true;
+                if slot.defer_close {
+                    return;
+                }
                 if let Some(existing_id) = slot.window_id.take() {
                     self.window_id_to_token.remove(&existing_id);
                 }
@@ -688,6 +694,28 @@ pub extern "C" fn destroy_window(state: *mut WindowState) {
     unsafe {
         drop(Box::from_raw(state));
     }
+}
+
+#[no_mangle]
+pub extern "C" fn set_window_deferred_close(state: *mut WindowState, enabled: u32) {
+    let Some(token) = state_token(state) else { return; };
+    GLOBAL_RUNTIME.with(|cell| {
+        if let Some(runtime) = cell.borrow_mut().as_mut() {
+            if let Some(slot) = runtime.app.windows.get_mut(&token) {
+                slot.defer_close = enabled != 0;
+            }
+        }
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn window_should_close(state: *mut WindowState) -> u32 {
+    let Some(token) = state_token(state) else { return 1; };
+    GLOBAL_RUNTIME.with(|cell| {
+        cell.borrow().as_ref()
+            .and_then(|runtime| runtime.app.windows.get(&token))
+            .map(|slot| u32::from(slot.should_close)).unwrap_or(1)
+    })
 }
 
 // ── Webview (wry) FFI ──────────────────────────────────────────────────

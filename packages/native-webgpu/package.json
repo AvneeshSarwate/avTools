@@ -1,0 +1,54 @@
+{
+  "name": "@avtools/native-webgpu",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.20.0 <23"
+  },
+  "scripts": {
+    "test:baseline": "node --expose-gc test/offscreen.mjs",
+    "build": "node scripts/build.mjs",
+    "dawn:fetch": "node scripts/dawn.mjs fetch",
+    "dawn:patch": "node scripts/dawn.mjs patch",
+    "dawn:build": "node scripts/dawn.mjs build --extension",
+    "typecheck": "tsc -p tsconfig.json",
+    "test:p5": "node --expose-gc test/p5.mjs",
+    "test:lifetime": "node --expose-gc test/lifetime.mjs",
+    "test:window": "node --expose-gc test/window.mjs",
+    "test:image": "node test/image.mjs",
+    "test:syphon": "node test/syphon.mjs",
+    "test:touchengine": "node test/touchengine.mjs",
+    "test:soak": "node --expose-gc test/soak.mjs",
+    "td:build": "node scripts/build-td-plugin.mjs",
+    "td:pack": "node scripts/package-td.mjs"
+  },
+  "dependencies": {
+    "@webgpu/types": "0.1.72"
+  },
+  "devDependencies": {
+    "@types/earcut": "3.0.0",
+    "@types/node": "22.19.0",
+    "esbuild": "0.25.12",
+    "typescript": "5.9.3",
+    "webgpu": "0.6.1",
+    "earcut": "3.0.2"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/types/packages/native-webgpu/src/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./td-sketch": {
+      "types": "./td-sketch.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "native-manifest.json",
+    "README.md",
+    "VALIDATION.md",
+    "TOUCHDESIGNER.md",
+    "td-sketch.d.ts"
+  ]
+}

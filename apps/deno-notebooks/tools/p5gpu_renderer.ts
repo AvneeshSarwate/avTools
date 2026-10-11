@@ -1,0 +1,3847 @@
+/// <reference lib="dom" />
+
+import earcut from "earcut";
+import type { TextEngine, TextLayoutResult } from "./p5gpu_text/types.ts";
+import { GlyphAtlas } from "./p5gpu_text/atlas.ts";
+
+export interface P5GPUHost {
+  /** Each renderer owns and disposes the returned engine. */
+  createTextEngine(): TextEngine | null;
+  readFile(path: string | URL): Promise<Uint8Array>;
+  env?(name: string): string | undefined;
+}
+
+export interface P5GPUOptions {
+  width: number;
+  height: number;
+  format?: GPUTextureFormat;
+  sampleCount?: number;
+  optimizedMode?: boolean;
+}
+
+/** Borrowed same-device texture. Keep it live and unchanged until endFrame submits.
+ * RGBA values use straight alpha; the default UV origin is the top left.
+ */
+export interface P5GPUImage {
+  texture: GPUTexture;
+  filter?: GPUFilterMode;
+  flipY?: boolean;
+}
+
+type Vec2 = [number, number];
+type ColorTuple = [number, number, number, number];
+
+type DrawBatchKind =
+  | "geom"
+  | "text"
+  | "image"
+  | "stencilStrokeMask"
+  | "stencilStrokeCover"
+  | "stencilFillMask"
+  | "stencilFillCover";
+
+type DrawBatch = {
+  kind: DrawBatchKind;
+  startVertex: number;
+  vertexCount: number;
+  blendMode: number;
+  isText: boolean;
+  imageBindGroup?: GPUBindGroup;
+};
+
+type ShapeBuilder = {
+  kind: number | null;
+  rings: Vec2[][];
+  activeRing: number;
+  curvePoints: Vec2[];
+};
+
+interface DrawState {
+  matrix: Float32Array;
+  fillEnabled: boolean;
+  fillSet: boolean;
+  fillColor: ColorTuple;
+  strokeEnabled: boolean;
+  strokeSet: boolean;
+  strokeColor: ColorTuple;
+  strokeWeight: number;
+  strokeCap: number;
+  strokeJoin: number;
+  strokeMiterLimit: number;
+  imageMode: number;
+  tint: ColorTuple;
+  rectMode: number;
+  ellipseMode: number;
+  colorMode: number;
+  colorMaxes: [number, number, number, number];
+  blendMode: number;
+  curveTightness: number;
+  curveDetail: number;
+  bezierDetail: number;
+  eraseMode: boolean;
+  eraseFillStrength: number;
+  eraseStrokeStrength: number;
+  textFontFamily: string;
+  textSize: number;
+  textLeading: number;
+  textLeadingSet: boolean;
+  textAlignH: "left" | "center" | "right";
+  textAlignV: "top" | "center" | "bottom" | "alphabetic";
+  textStyle: "normal" | "italic" | "bold" | "bold italic";
+  textWeight: number;
+  textWeightSet: boolean;
+  textWrap: "WORD" | "CHAR";
+  textDirection: "inherit" | "ltr" | "rtl";
+  textAxes: Record<string, number>;
+  textAxisQuantization: number;
+  textDynamicScratch: boolean;
+}
+
+const EPS = 1e-6;
+const CURVE_TOLERANCE = 0.5;
+const CURVE_MIN_SEGMENTS = 2;
+const CURVE_MAX_SEGMENTS = 64;
+const ENABLE_STENCIL_STROKES = true;
+const ENABLE_STENCIL_FILLS = true;
+const STENCIL_STROKE_SEGMENT_THRESHOLD = 64;
+const STENCIL_FILL_SEGMENT_THRESHOLD = 64;
+const STENCIL_TEXTURE_FORMAT: GPUTextureFormat = "depth24plus-stencil8";
+const GEOM_FLOATS_PER_VERTEX = 6;
+const GEOM_BYTES_PER_VERTEX = GEOM_FLOATS_PER_VERTEX * 4;
+const TEXT_FLOATS_PER_VERTEX = 8;
+const TEXT_BYTES_PER_VERTEX = TEXT_FLOATS_PER_VERTEX * 4;
+
+const P5_CONST = {
+  CORNER: 0,
+  CORNERS: 1,
+  CENTER: 2,
+  RADIUS: 3,
+  LEFT: "left",
+  RIGHT: "right",
+  TOP: "top",
+  BOTTOM: "bottom",
+  BASELINE: "alphabetic",
+  NORMAL: "normal",
+  ITALIC: "italic",
+  BOLD: "bold",
+  BOLDITALIC: "bold italic",
+  WORD: "WORD",
+  CHAR: "CHAR",
+
+  ROUND: 10,
+  SQUARE: 11,
+  PROJECT: 12,
+  MITER: 13,
+  BEVEL: 14,
+
+  CLOSE: 20,
+
+  POINTS: 30,
+  LINES: 31,
+  TRIANGLES: 32,
+  TRIANGLE_FAN: 33,
+  TRIANGLE_STRIP: 34,
+  QUADS: 35,
+  QUAD_STRIP: 36,
+
+  OPEN: 40,
+  CHORD: 41,
+  PIE: 42,
+
+  RGB: 50,
+  HSB: 51,
+  HSL: 52,
+
+  BLEND: 60,
+  ADD: 61,
+  DARKEST: 62,
+  LIGHTEST: 63,
+  DIFFERENCE: 64,
+  EXCLUSION: 65,
+  MULTIPLY: 66,
+  SCREEN: 67,
+  REPLACE: 68,
+  REMOVE: 69,
+  OVERLAY: 70,
+  HARD_LIGHT: 71,
+  SOFT_LIGHT: 72,
+  DODGE: 73,
+  BURN: 74,
+} as const;
+
+function clamp(value: number, min = 0, max = 1): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function toNumber(value: unknown, fallback = 0): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+
+function identityMatrix(): Float32Array {
+  return new Float32Array([1, 0, 0, 1, 0, 0]);
+}
+
+function cloneState(state: DrawState): DrawState {
+  return {
+    matrix: new Float32Array(state.matrix),
+    fillEnabled: state.fillEnabled,
+    fillSet: state.fillSet,
+    fillColor: [...state.fillColor] as ColorTuple,
+    strokeEnabled: state.strokeEnabled,
+    strokeSet: state.strokeSet,
+    strokeColor: [...state.strokeColor] as ColorTuple,
+    strokeWeight: state.strokeWeight,
+    strokeCap: state.strokeCap,
+    strokeJoin: state.strokeJoin,
+    strokeMiterLimit: state.strokeMiterLimit,
+    imageMode: state.imageMode,
+    tint: [...state.tint] as ColorTuple,
+    rectMode: state.rectMode,
+    ellipseMode: state.ellipseMode,
+    colorMode: state.colorMode,
+    colorMaxes: [...state.colorMaxes] as [number, number, number, number],
+    blendMode: state.blendMode,
+    curveTightness: state.curveTightness,
+    curveDetail: state.curveDetail,
+    bezierDetail: state.bezierDetail,
+    eraseMode: state.eraseMode,
+    eraseFillStrength: state.eraseFillStrength,
+    eraseStrokeStrength: state.eraseStrokeStrength,
+    textFontFamily: state.textFontFamily,
+    textSize: state.textSize,
+    textLeading: state.textLeading,
+    textLeadingSet: state.textLeadingSet,
+    textAlignH: state.textAlignH,
+    textAlignV: state.textAlignV,
+    textStyle: state.textStyle,
+    textWeight: state.textWeight,
+    textWeightSet: state.textWeightSet,
+    textWrap: state.textWrap,
+    textDirection: state.textDirection,
+    textAxes: { ...state.textAxes },
+    textAxisQuantization: state.textAxisQuantization,
+    textDynamicScratch: state.textDynamicScratch,
+  };
+}
+
+function multiplyAffineInPlace(m: Float32Array, n0: number, n1: number, n2: number, n3: number, n4: number, n5: number): void {
+  const a = m[0];
+  const b = m[1];
+  const c = m[2];
+  const d = m[3];
+  const tx = m[4];
+  const ty = m[5];
+
+  m[0] = a * n0 + c * n1;
+  m[1] = b * n0 + d * n1;
+  m[2] = a * n2 + c * n3;
+  m[3] = b * n2 + d * n3;
+  m[4] = a * n4 + c * n5 + tx;
+  m[5] = b * n4 + d * n5 + ty;
+}
+
+function transformPoint(m: Float32Array, x: number, y: number): Vec2 {
+  return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+}
+
+function normalize(vx: number, vy: number): Vec2 {
+  const len = Math.hypot(vx, vy);
+  if (len <= EPS) return [0, 0];
+  return [vx / len, vy / len];
+}
+
+function orient(a: Vec2, b: Vec2, c: Vec2): number {
+  return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+}
+
+function pointOnSegment(p: Vec2, a: Vec2, b: Vec2): boolean {
+  return Math.abs(orient(a, b, p)) <= 1e-5 &&
+    p[0] >= Math.min(a[0], b[0]) - 1e-5 &&
+    p[0] <= Math.max(a[0], b[0]) + 1e-5 &&
+    p[1] >= Math.min(a[1], b[1]) - 1e-5 &&
+    p[1] <= Math.max(a[1], b[1]) + 1e-5;
+}
+
+function segmentsIntersect(a0: Vec2, a1: Vec2, b0: Vec2, b1: Vec2): boolean {
+  const o1 = orient(a0, a1, b0);
+  const o2 = orient(a0, a1, b1);
+  const o3 = orient(b0, b1, a0);
+  const o4 = orient(b0, b1, a1);
+
+  if (((o1 > 0 && o2 < 0) || (o1 < 0 && o2 > 0)) &&
+    ((o3 > 0 && o4 < 0) || (o3 < 0 && o4 > 0))) {
+    return true;
+  }
+
+  return pointOnSegment(b0, a0, a1) ||
+    pointOnSegment(b1, a0, a1) ||
+    pointOnSegment(a0, b0, b1) ||
+    pointOnSegment(a1, b0, b1);
+}
+
+function lineIntersectionPoint(p1: Vec2, d1: Vec2, p2: Vec2, d2: Vec2): Vec2 | null {
+  const denom = d1[0] * d2[1] - d1[1] * d2[0];
+  if (Math.abs(denom) < EPS) return null;
+  const dx = p2[0] - p1[0];
+  const dy = p2[1] - p1[1];
+  const t = (dx * d2[1] - dy * d2[0]) / denom;
+  return [p1[0] + d1[0] * t, p1[1] + d1[1] * t];
+}
+
+function hsbToRgb(h: number, s: number, v: number): [number, number, number] {
+  const hh = ((h % 1) + 1) % 1;
+  const i = Math.floor(hh * 6);
+  const f = hh * 6 - i;
+  const p = v * (1 - s);
+  const q = v * (1 - f * s);
+  const t = v * (1 - (1 - f) * s);
+
+  switch (i % 6) {
+    case 0: return [v, t, p];
+    case 1: return [q, v, p];
+    case 2: return [p, v, t];
+    case 3: return [p, q, v];
+    case 4: return [t, p, v];
+    default: return [v, p, q];
+  }
+}
+
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  const hh = ((h % 1) + 1) % 1;
+  if (s <= EPS) return [l, l, l];
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const hueToRgb = (t: number) => {
+    let tt = t;
+    if (tt < 0) tt += 1;
+    if (tt > 1) tt -= 1;
+    if (tt < 1 / 6) return p + (q - p) * 6 * tt;
+    if (tt < 1 / 2) return q;
+    if (tt < 2 / 3) return p + (q - p) * (2 / 3 - tt) * 6;
+    return p;
+  };
+  return [hueToRgb(hh + 1 / 3), hueToRgb(hh), hueToRgb(hh - 1 / 3)];
+}
+
+function parseRgbLikeComponent(raw: string): number {
+  const trimmed = raw.trim();
+  if (trimmed.endsWith("%")) {
+    const value = Number(trimmed.slice(0, -1));
+    if (!Number.isFinite(value)) return 0;
+    return clamp(value / 100) * 255;
+  }
+  const value = Number(trimmed);
+  if (!Number.isFinite(value)) return 0;
+  return value;
+}
+
+function alignTo(value: number, alignment: number): number {
+  return Math.ceil(value / alignment) * alignment;
+}
+
+function createDefaultState(): DrawState {
+  return {
+    matrix: identityMatrix(),
+    fillEnabled: true,
+    fillSet: false,
+    fillColor: [1, 1, 1, 1],
+    strokeEnabled: true,
+    strokeSet: false,
+    strokeColor: [0, 0, 0, 1],
+    strokeWeight: 1,
+    strokeCap: P5_CONST.ROUND,
+    strokeJoin: P5_CONST.MITER,
+    strokeMiterLimit: 4,
+    imageMode: P5_CONST.CORNER,
+    tint: [1, 1, 1, 1],
+    rectMode: P5_CONST.CORNER,
+    ellipseMode: P5_CONST.CENTER,
+    colorMode: P5_CONST.RGB,
+    colorMaxes: [255, 255, 255, 255],
+    blendMode: P5_CONST.BLEND,
+    curveTightness: 0,
+    curveDetail: 1.0,
+    bezierDetail: 1.0,
+    eraseMode: false,
+    eraseFillStrength: 255,
+    eraseStrokeStrength: 255,
+    textFontFamily: "Noto Sans",
+    textSize: 12,
+    textLeading: 12 * 1.275,
+    textLeadingSet: false,
+    textAlignH: "left",
+    textAlignV: "alphabetic",
+    textStyle: "normal",
+    textWeight: 400,
+    textWeightSet: false,
+    textWrap: "WORD",
+    textDirection: "inherit",
+    textAxes: {},
+    textAxisQuantization: 1,
+    textDynamicScratch: false,
+  };
+}
+
+function resolveBlendState(mode: number): GPUBlendState {
+  switch (mode) {
+    case P5_CONST.ADD:
+      return {
+        color: { operation: "add", srcFactor: "src-alpha", dstFactor: "one" },
+        alpha: { operation: "add", srcFactor: "one", dstFactor: "one" },
+      };
+    case P5_CONST.MULTIPLY:
+      return {
+        color: { operation: "add", srcFactor: "dst", dstFactor: "one-minus-src-alpha" },
+        alpha: { operation: "add", srcFactor: "one", dstFactor: "one-minus-src-alpha" },
+      };
+    case P5_CONST.SCREEN:
+      return {
+        color: { operation: "add", srcFactor: "one", dstFactor: "one-minus-src" },
+        alpha: { operation: "add", srcFactor: "one", dstFactor: "one-minus-src-alpha" },
+      };
+    case P5_CONST.REPLACE:
+      return {
+        color: { operation: "add", srcFactor: "one", dstFactor: "zero" },
+        alpha: { operation: "add", srcFactor: "one", dstFactor: "zero" },
+      };
+    case P5_CONST.BLEND:
+    default:
+      return {
+        color: { operation: "add", srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha" },
+        alpha: { operation: "add", srcFactor: "one", dstFactor: "one-minus-src-alpha" },
+      };
+  }
+}
+
+const GEOM_SHADER_SOURCE = /* wgsl */`
+struct CanvasUniform {
+  size: vec2f,
+}
+
+@group(0) @binding(0) var<uniform> uCanvas: CanvasUniform;
+
+struct VertexIn {
+  @location(0) position: vec2f,
+  @location(1) color: vec4f,
+}
+
+struct VertexOut {
+  @builtin(position) clipPos: vec4f,
+  @location(0) color: vec4f,
+}
+
+@vertex
+fn vsMain(v: VertexIn) -> VertexOut {
+  let ndc = vec2f(
+    (v.position.x / uCanvas.size.x) * 2.0 - 1.0,
+    -((v.position.y / uCanvas.size.y) * 2.0 - 1.0)
+  );
+
+  var out: VertexOut;
+  out.clipPos = vec4f(ndc, 0.0, 1.0);
+  out.color = v.color;
+  return out;
+}
+
+@fragment
+fn fsMain(v: VertexOut) -> @location(0) vec4f {
+  return v.color;
+}
+`;
+
+const TEXT_SHADER_SOURCE = /* wgsl */`
+struct CanvasUniform {
+  size: vec2f,
+}
+
+@group(0) @binding(0) var<uniform> uCanvas: CanvasUniform;
+@group(1) @binding(0) var uAtlas: texture_2d<f32>;
+@group(1) @binding(1) var uSampler: sampler;
+
+struct VertexIn {
+  @location(0) position: vec2f,
+  @location(1) uv: vec2f,
+  @location(2) color: vec4f,
+}
+
+struct VertexOut {
+  @builtin(position) clipPos: vec4f,
+  @location(0) uv: vec2f,
+  @location(1) color: vec4f,
+}
+
+@vertex
+fn vsText(v: VertexIn) -> VertexOut {
+  let ndc = vec2f(
+    (v.position.x / uCanvas.size.x) * 2.0 - 1.0,
+    -((v.position.y / uCanvas.size.y) * 2.0 - 1.0)
+  );
+
+  var out: VertexOut;
+  out.clipPos = vec4f(ndc, 0.0, 1.0);
+  out.uv = v.uv;
+  out.color = v.color;
+  return out;
+}
+
+@fragment
+fn fsText(v: VertexOut) -> @location(0) vec4f {
+  let alpha = textureSample(uAtlas, uSampler, v.uv).r;
+  return vec4f(v.color.rgb, v.color.a * alpha);
+}
+`;
+
+const IMAGE_SHADER_SOURCE = TEXT_SHADER_SOURCE.replace(
+  "let alpha = textureSample(uAtlas, uSampler, v.uv).r;\n  return vec4f(v.color.rgb, v.color.a * alpha);",
+  "return textureSample(uAtlas, uSampler, v.uv) * v.color;",
+);
+
+export class P5GPU {
+  public readonly CORNER = P5_CONST.CORNER;
+  public readonly CORNERS = P5_CONST.CORNERS;
+  public readonly CENTER = P5_CONST.CENTER;
+  public readonly RADIUS = P5_CONST.RADIUS;
+  public readonly LEFT = P5_CONST.LEFT;
+  public readonly RIGHT = P5_CONST.RIGHT;
+  public readonly TOP = P5_CONST.TOP;
+  public readonly BOTTOM = P5_CONST.BOTTOM;
+  public readonly BASELINE = P5_CONST.BASELINE;
+  public readonly NORMAL = P5_CONST.NORMAL;
+  public readonly ITALIC = P5_CONST.ITALIC;
+  public readonly BOLD = P5_CONST.BOLD;
+  public readonly BOLDITALIC = P5_CONST.BOLDITALIC;
+  public readonly WORD = P5_CONST.WORD;
+  public readonly CHAR = P5_CONST.CHAR;
+
+  public readonly ROUND = P5_CONST.ROUND;
+  public readonly SQUARE = P5_CONST.SQUARE;
+  public readonly PROJECT = P5_CONST.PROJECT;
+  public readonly MITER = P5_CONST.MITER;
+  public readonly BEVEL = P5_CONST.BEVEL;
+
+  public readonly CLOSE = P5_CONST.CLOSE;
+
+  public readonly POINTS = P5_CONST.POINTS;
+  public readonly LINES = P5_CONST.LINES;
+  public readonly TRIANGLES = P5_CONST.TRIANGLES;
+  public readonly TRIANGLE_FAN = P5_CONST.TRIANGLE_FAN;
+  public readonly TRIANGLE_STRIP = P5_CONST.TRIANGLE_STRIP;
+  public readonly QUADS = P5_CONST.QUADS;
+  public readonly QUAD_STRIP = P5_CONST.QUAD_STRIP;
+
+  public readonly OPEN = P5_CONST.OPEN;
+  public readonly CHORD = P5_CONST.CHORD;
+  public readonly PIE = P5_CONST.PIE;
+
+  public readonly RGB = P5_CONST.RGB;
+  public readonly HSB = P5_CONST.HSB;
+  public readonly HSL = P5_CONST.HSL;
+
+  public readonly BLEND = P5_CONST.BLEND;
+  public readonly ADD = P5_CONST.ADD;
+  public readonly DARKEST = P5_CONST.DARKEST;
+  public readonly LIGHTEST = P5_CONST.LIGHTEST;
+  public readonly DIFFERENCE = P5_CONST.DIFFERENCE;
+  public readonly EXCLUSION = P5_CONST.EXCLUSION;
+  public readonly MULTIPLY = P5_CONST.MULTIPLY;
+  public readonly SCREEN = P5_CONST.SCREEN;
+  public readonly REPLACE = P5_CONST.REPLACE;
+  public readonly REMOVE = P5_CONST.REMOVE;
+  public readonly OVERLAY = P5_CONST.OVERLAY;
+  public readonly HARD_LIGHT = P5_CONST.HARD_LIGHT;
+  public readonly SOFT_LIGHT = P5_CONST.SOFT_LIGHT;
+  public readonly DODGE = P5_CONST.DODGE;
+  public readonly BURN = P5_CONST.BURN;
+
+  public readonly PI = Math.PI;
+  public readonly TWO_PI = Math.PI * 2;
+  public readonly HALF_PI = Math.PI * 0.5;
+  public readonly QUARTER_PI = Math.PI * 0.25;
+  public readonly TAU = Math.PI * 2;
+
+  readonly device: GPUDevice;
+  readonly width: number;
+  readonly height: number;
+  readonly format: GPUTextureFormat;
+  readonly outputTexture: GPUTexture;
+  optimizedMode: boolean;
+
+  pixels: Uint8ClampedArray;
+
+  private _state: DrawState;
+  private _stack: DrawState[] = [];
+  private _shape: ShapeBuilder | null = null;
+
+  private _geomShaderModule: GPUShaderModule;
+  private _textShaderModule: GPUShaderModule;
+  private _imageShaderModule: GPUShaderModule;
+  private _imageSamplers = new Map<GPUFilterMode, GPUSampler>();
+  private _uniformBuffer: GPUBuffer;
+  private _canvasBindGroupLayout: GPUBindGroupLayout;
+  private _textBindGroupLayout: GPUBindGroupLayout;
+  private _canvasBindGroup: GPUBindGroup;
+  private _geomPipelineLayout: GPUPipelineLayout;
+  private _textPipelineLayout: GPUPipelineLayout;
+  private _geomPipelineCache = new Map<string, GPURenderPipeline>();
+  private _textPipelineCache = new Map<string, GPURenderPipeline>();
+  private _strokeStencilPipelineCache = new Map<string, GPURenderPipeline>();
+  private _stencilCoverPipelineCache = new Map<string, GPURenderPipeline>();
+  private _fillStencilPipelineCache = new Map<string, GPURenderPipeline>();
+  private _fillCoverPipelineCache = new Map<string, GPURenderPipeline>();
+
+  private _geomStagingBuffer: Float32Array;
+  private _geomStagingCursor = 0;
+  private _geomVertexCount = 0;
+  private _textVertices: number[] = [];
+  private _textVertexCount = 0;
+  private _batches: DrawBatch[] = [];
+
+  private _geomVertexBuffer: GPUBuffer | null = null;
+  private _geomVertexBufferCapacityBytes = 0;
+  private _textVertexBuffer: GPUBuffer | null = null;
+  private _textVertexBufferCapacityBytes = 0;
+  private _sampleCount = 1;
+  private _msaaColorTexture: GPUTexture | null = null;
+  private _stencilTexture: GPUTexture | null = null;
+  private _stencilTextureSampleCount = 0;
+  private _stencilUnavailable = false;
+
+  private _textEngine: TextEngine | null = null;
+  private _textAtlas: GlyphAtlas | null = null;
+  private _textBindGroup: GPUBindGroup | null = null;
+  private _textBindGroupAtlasVersion = -1;
+  private _textLastLayout: {
+    tightWidth: number;
+    fontWidth: number;
+    ascent: number;
+    descent: number;
+    fontAscent: number;
+    fontDescent: number;
+    fontCapHeight: number;
+    totalHeight: number;
+  } = {
+    tightWidth: 0,
+    fontWidth: 0,
+    ascent: 0,
+    descent: 0,
+    fontAscent: 0,
+    fontDescent: 0,
+    fontCapHeight: 0,
+    totalHeight: 0,
+  };
+  private _textMetricsDebug = false;
+  private _textMetricsDebugVerbose = false;
+  private _textMetricsDebugBudget = 48;
+  private _textAtlasGrowthDebug = false;
+  private _textAtlasGrowthDebugBudget = 32;
+
+  private _clearRequested = false;
+  private _clearColor: ColorTuple = [0, 0, 0, 0];
+  private _hasRenderedFrame = false;
+
+  constructor(device: GPUDevice, opts: P5GPUOptions, private readonly host: P5GPUHost) {
+    this.device = device;
+    this.width = Math.max(1, Math.floor(opts.width));
+    this.height = Math.max(1, Math.floor(opts.height));
+    this.format = opts.format ?? "rgba8unorm";
+    this.optimizedMode = opts.optimizedMode ?? false;
+    this._textEngine = host.createTextEngine();
+    this.outputTexture = this.device.createTexture({
+      size: { width: this.width, height: this.height },
+      format: this.format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this._sampleCount = Math.max(1, Math.floor(opts.sampleCount ?? 4));
+    if (this._sampleCount > 1) {
+      try {
+        this._msaaColorTexture = this.device.createTexture({
+          size: { width: this.width, height: this.height },
+          sampleCount: this._sampleCount,
+          format: this.format,
+          usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        });
+      } catch (_) {
+        this._sampleCount = 1;
+        this._msaaColorTexture = null;
+      }
+    }
+
+    this._state = createDefaultState();
+    this._state.strokeColor = [0, 0, 0, 1];
+    this._state.fillColor = [1, 1, 1, 1];
+
+    this._geomShaderModule = this.device.createShaderModule({ code: GEOM_SHADER_SOURCE });
+    this._textShaderModule = this.device.createShaderModule({ code: TEXT_SHADER_SOURCE });
+    this._imageShaderModule = this.device.createShaderModule({ code: IMAGE_SHADER_SOURCE });
+    this._canvasBindGroupLayout = this.device.createBindGroupLayout({
+      entries: [
+        {
+          binding: 0,
+          visibility: GPUShaderStage.VERTEX,
+          buffer: { type: "uniform" },
+        },
+      ],
+    });
+    this._textBindGroupLayout = this.device.createBindGroupLayout({
+      entries: [
+        {
+          binding: 0,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: "float", viewDimension: "2d", multisampled: false },
+        },
+        {
+          binding: 1,
+          visibility: GPUShaderStage.FRAGMENT,
+          sampler: { type: "filtering" },
+        },
+      ],
+    });
+
+    this._geomPipelineLayout = this.device.createPipelineLayout({ bindGroupLayouts: [this._canvasBindGroupLayout] });
+    this._textPipelineLayout = this.device.createPipelineLayout({
+      bindGroupLayouts: [this._canvasBindGroupLayout, this._textBindGroupLayout],
+    });
+    this._uniformBuffer = this.device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.device.queue.writeBuffer(this._uniformBuffer, 0, new Float32Array([this.width, this.height]));
+
+    this._canvasBindGroup = this.device.createBindGroup({
+      layout: this._canvasBindGroupLayout,
+      entries: [{ binding: 0, resource: { buffer: this._uniformBuffer } }],
+    });
+
+    if (this._textEngine) {
+      this._textAtlas = new GlyphAtlas(this.device, this.device.queue, {
+        initialSize: 512,
+        maxSize: 4096,
+        maxEntries: 65536,
+      });
+    }
+    this._textMetricsDebug = host.env?.("P5_TEXT_METRICS_DEBUG") === "1";
+    this._textMetricsDebugVerbose = host.env?.("P5_TEXT_METRICS_DEBUG_VERBOSE") === "1";
+    this._textAtlasGrowthDebug = host.env?.("P5_TEXT_ATLAS_GROW_DEBUG") === "1";
+
+    this.pixels = new Uint8ClampedArray(this.width * this.height * 4);
+    this._geomStagingBuffer = new Float32Array(4096);
+  }
+
+  beginFrame(): void {
+    this._geomStagingCursor = 0;
+    this._geomVertexCount = 0;
+    this._textVertices.length = 0;
+    this._textVertexCount = 0;
+    this._batches.length = 0;
+    this._shape = null;
+    this._clearRequested = false;
+    this._clearColor = [0, 0, 0, 0];
+    this._textAtlas?.beginFrame();
+    this._textAtlasGrowthDebugBudget = 32;
+  }
+
+  endFrame(): GPUTexture {
+    const encoder = this.device.createCommandEncoder();
+    const useLoadOp = !this._clearRequested && this._hasRenderedFrame;
+    const loadOp: GPULoadOp = useLoadOp ? "load" : "clear";
+    const isStencilBatch = (batch: DrawBatch): boolean =>
+      batch.kind === "stencilStrokeMask" ||
+      batch.kind === "stencilStrokeCover" ||
+      batch.kind === "stencilFillMask" ||
+      batch.kind === "stencilFillCover";
+    const hasStencilCommands = this._batches.some(isStencilBatch);
+    const frameSampleCount = hasStencilCommands ? 1 : ((!useLoadOp && this._msaaColorTexture && this._sampleCount > 1) ? this._sampleCount : 1);
+    const clearColor: GPUColor = {
+      r: this._clearColor[0],
+      g: this._clearColor[1],
+      b: this._clearColor[2],
+      a: this._clearColor[3],
+    };
+    const outputView = this.outputTexture.createView();
+    const msaaView = frameSampleCount > 1 ? this._msaaColorTexture!.createView() : null;
+    const stencilView = hasStencilCommands ? this._ensureStencilTexture(frameSampleCount)?.createView() ?? null : null;
+
+    let hasGeom = false;
+    let hasText = false;
+
+    if (this._geomVertexCount > 0) {
+      const byteLength = this._geomStagingCursor * 4;
+      this._ensureGeomVertexBuffer(byteLength);
+      this.device.queue.writeBuffer(this._geomVertexBuffer!, 0, this._geomStagingBuffer.buffer as ArrayBuffer, 0, byteLength);
+      hasGeom = true;
+    }
+
+    if (this._textVertexCount > 0) {
+      const textData = new Float32Array(this._textVertices);
+      this._ensureTextVertexBuffer(textData.byteLength);
+      this.device.queue.writeBuffer(this._textVertexBuffer!, 0, textData.buffer, textData.byteOffset, textData.byteLength);
+      hasText = this._syncTextBindGroup() || this._batches.some(batch => batch.kind === "image");
+    }
+
+    let nextColorLoadOp: GPULoadOp = loadOp;
+    const beginRenderPass = (withStencil: boolean): GPURenderPassEncoder => {
+      const descriptor: GPURenderPassDescriptor = {
+        colorAttachments: [
+          {
+            view: msaaView ?? outputView,
+            resolveTarget: msaaView ? outputView : undefined,
+            loadOp: nextColorLoadOp,
+            storeOp: "store",
+            clearValue: clearColor,
+          },
+        ],
+      };
+      if (withStencil && stencilView) {
+        descriptor.depthStencilAttachment = this._stencilRenderPassAttachment(stencilView);
+      }
+      const pass = encoder.beginRenderPass(descriptor);
+      pass.setBindGroup(0, this._canvasBindGroup);
+      nextColorLoadOp = "load";
+      return pass;
+    };
+
+    const drawBatch = (
+      pass: GPURenderPassEncoder,
+      batch: DrawBatch,
+      stencilPass: boolean,
+      state: {
+        lastPipeline: GPURenderPipeline | null;
+        lastVB: GPUBuffer | null;
+        lastTextBG: boolean;
+      },
+    ): void => {
+      if (batch.vertexCount <= 0) return;
+
+      if (stencilPass) {
+        if (!hasGeom || !this._geomVertexBuffer || !stencilView) return;
+        const pipeline = batch.kind === "stencilStrokeMask"
+          ? this._getStrokeStencilPipeline(frameSampleCount)
+          : batch.kind === "stencilFillMask"
+          ? this._getFillStencilPipeline(frameSampleCount)
+          : batch.kind === "stencilFillCover"
+          ? this._getFillCoverPipeline(batch.blendMode, frameSampleCount)
+          : this._getStencilCoverPipeline(batch.blendMode, frameSampleCount);
+        if (pipeline !== state.lastPipeline) { pass.setPipeline(pipeline); state.lastPipeline = pipeline; }
+        if (this._geomVertexBuffer !== state.lastVB) { pass.setVertexBuffer(0, this._geomVertexBuffer); state.lastVB = this._geomVertexBuffer; }
+        pass.setStencilReference(batch.kind === "stencilFillCover" ? 0 : 1);
+        pass.draw(batch.vertexCount, 1, batch.startVertex, 0);
+        state.lastTextBG = false;
+        return;
+      }
+
+      if (batch.kind === "stencilStrokeCover" || batch.kind === "stencilFillCover") return;
+
+      if (batch.isText) {
+        const isImage = batch.kind === "image";
+        const bindGroup = isImage ? batch.imageBindGroup : this._textBindGroup;
+        if (!hasText || !this._textVertexBuffer || !bindGroup) return;
+        const pipeline = this._getTextPipeline(batch.blendMode, frameSampleCount, isImage);
+        if (pipeline !== state.lastPipeline) { pass.setPipeline(pipeline); state.lastPipeline = pipeline; }
+        if (isImage || !state.lastTextBG) pass.setBindGroup(1, bindGroup);
+        state.lastTextBG = !isImage;
+        if (this._textVertexBuffer !== state.lastVB) { pass.setVertexBuffer(0, this._textVertexBuffer); state.lastVB = this._textVertexBuffer; }
+        pass.draw(batch.vertexCount, 1, batch.startVertex, 0);
+        return;
+      }
+
+      if (!hasGeom || !this._geomVertexBuffer) return;
+      const pipeline = this._getGeomPipeline(batch.blendMode, frameSampleCount);
+      if (pipeline !== state.lastPipeline) { pass.setPipeline(pipeline); state.lastPipeline = pipeline; }
+      if (this._geomVertexBuffer !== state.lastVB) { pass.setVertexBuffer(0, this._geomVertexBuffer); state.lastVB = this._geomVertexBuffer; }
+      state.lastTextBG = false;
+      pass.draw(batch.vertexCount, 1, batch.startVertex, 0);
+    };
+
+    if (!hasGeom && !hasText) {
+      const pass = beginRenderPass(false);
+      pass.end();
+    } else {
+      let i = 0;
+      while (i < this._batches.length) {
+        while (i < this._batches.length && this._batches[i].vertexCount <= 0) i++;
+        if (i >= this._batches.length) break;
+
+        const firstBatch = this._batches[i];
+        const stencilPass = !!stencilView && isStencilBatch(firstBatch);
+        const pass = beginRenderPass(stencilPass);
+        const state = {
+          lastPipeline: null as GPURenderPipeline | null,
+          lastVB: null as GPUBuffer | null,
+          lastTextBG: false,
+        };
+
+        while (i < this._batches.length) {
+          const batch = this._batches[i];
+          const batchStencilPass = !!stencilView && isStencilBatch(batch);
+          if (batch.vertexCount > 0 && batchStencilPass !== stencilPass) break;
+          drawBatch(pass, batch, stencilPass, state);
+          i++;
+        }
+
+        pass.end();
+      }
+    }
+
+    this.device.queue.submit([encoder.finish()]);
+    this._hasRenderedFrame = true;
+    return this.outputTexture;
+  }
+
+  dispose(): void {
+    this._batches.length = 0; // Release borrowed image views and bind groups.
+    try { this._geomVertexBuffer?.destroy(); } catch (_) { /* ignore */ }
+    try { this._textVertexBuffer?.destroy(); } catch (_) { /* ignore */ }
+    try { this._uniformBuffer.destroy(); } catch (_) { /* ignore */ }
+    try { this._msaaColorTexture?.destroy(); } catch (_) { /* ignore */ }
+    try { this._stencilTexture?.destroy(); } catch (_) { /* ignore */ }
+    try { this.outputTexture.destroy(); } catch (_) { /* ignore */ }
+    try { this._textAtlas?.dispose(); } catch (_) { /* ignore */ }
+    try { this._textEngine?.dispose(); } catch (_) { /* ignore */ }
+  }
+
+  push(): void {
+    this._stack.push(cloneState(this._state));
+  }
+
+  pop(): void {
+    const prev = this._stack.pop();
+    if (prev) this._state = prev;
+  }
+
+  resetMatrix(): void {
+    this._state.matrix.set(identityMatrix());
+  }
+
+  translate(x: number, y: number): void {
+    multiplyAffineInPlace(this._state.matrix, 1, 0, 0, 1, toNumber(x), toNumber(y));
+  }
+
+  rotate(angle: number): void {
+    const theta = toNumber(angle);
+    const c = Math.cos(theta);
+    const s = Math.sin(theta);
+    multiplyAffineInPlace(this._state.matrix, c, s, -s, c, 0, 0);
+  }
+
+  scale(s: number, sy?: number): void {
+    const sx = toNumber(s, 1);
+    const y = sy === undefined ? sx : toNumber(sy, sx);
+    multiplyAffineInPlace(this._state.matrix, sx, 0, 0, y, 0, 0);
+  }
+
+  shearX(angle: number): void {
+    multiplyAffineInPlace(this._state.matrix, 1, 0, Math.tan(toNumber(angle)), 1, 0, 0);
+  }
+
+  shearY(angle: number): void {
+    multiplyAffineInPlace(this._state.matrix, 1, Math.tan(toNumber(angle)), 0, 1, 0, 0);
+  }
+
+  applyMatrix(a: number, b: number, c: number, d: number, e: number, f: number): void {
+    multiplyAffineInPlace(this._state.matrix, toNumber(a), toNumber(b), toNumber(c), toNumber(d), toNumber(e), toNumber(f));
+  }
+
+  rectMode(mode: number): void {
+    this._state.rectMode = toNumber(mode, this.CORNER);
+  }
+
+  ellipseMode(mode: number): void {
+    this._state.ellipseMode = toNumber(mode, this.CENTER);
+  }
+
+  colorMode(mode: number, max1 = 255, max2 = max1, max3 = max1, maxA = 255): void {
+    this._state.colorMode = toNumber(mode, this.RGB);
+    this._state.colorMaxes = [
+      Math.max(EPS, toNumber(max1, 255)),
+      Math.max(EPS, toNumber(max2, 255)),
+      Math.max(EPS, toNumber(max3, 255)),
+      Math.max(EPS, toNumber(maxA, 255)),
+    ];
+  }
+
+  blendMode(mode: number): void {
+    this._state.blendMode = toNumber(mode, this.BLEND);
+  }
+
+  erase(strengthFill = 255, strengthStroke = 255): void {
+    this._state.eraseMode = true;
+    this._state.eraseFillStrength = clamp(toNumber(strengthFill, 255), 0, 255);
+    this._state.eraseStrokeStrength = clamp(toNumber(strengthStroke, 255), 0, 255);
+  }
+
+  noErase(): void {
+    this._state.eraseMode = false;
+  }
+
+  fill(v1: unknown, v2?: unknown, v3?: unknown, a?: unknown): void {
+    this._state.fillEnabled = true;
+    this._state.fillSet = true;
+    this._state.fillColor = this._parseColor(v1, v2, v3, a);
+  }
+
+  noFill(): void {
+    this._state.fillEnabled = false;
+    this._state.fillSet = true;
+  }
+
+  stroke(v1: unknown, v2?: unknown, v3?: unknown, a?: unknown): void {
+    this._state.strokeEnabled = true;
+    this._state.strokeSet = true;
+    this._state.strokeColor = this._parseColor(v1, v2, v3, a);
+  }
+
+  noStroke(): void {
+    this._state.strokeEnabled = false;
+    this._state.strokeSet = true;
+  }
+
+  strokeWeight(weight: number): void {
+    this._state.strokeWeight = Math.max(0, toNumber(weight, 1));
+  }
+
+  strokeCap(cap: number): void {
+    this._state.strokeCap = toNumber(cap, this.ROUND);
+  }
+
+  strokeJoin(join: number): void {
+    this._state.strokeJoin = toNumber(join, this.MITER);
+  }
+
+  strokeMiterLimit(limit: number): void {
+    this._state.strokeMiterLimit = Math.max(1, toNumber(limit, 4));
+  }
+
+  curveTightness(amount: number): void {
+    this._state.curveTightness = toNumber(amount);
+  }
+
+  curveDetail(d?: number): number | void {
+    if (d === undefined) return this._state.curveDetail;
+    this._state.curveDetail = Math.max(0, toNumber(d));
+  }
+
+  bezierDetail(d?: number): number | void {
+    if (d === undefined) return this._state.bezierDetail;
+    this._state.bezierDetail = Math.max(0, toNumber(d));
+  }
+
+  textAlign(horiz?: unknown, vert?: unknown): { horizontal: string; vertical: string } | void {
+    if (horiz === undefined) {
+      return { horizontal: this._state.textAlignH, vertical: this._state.textAlignV };
+    }
+    this._state.textAlignH = this._parseTextAlignH(horiz);
+    if (vert !== undefined) {
+      this._state.textAlignV = this._parseTextAlignV(vert);
+    }
+  }
+
+  textFont(font?: unknown, size?: number): string | void {
+    if (font === undefined) return this._state.textFontFamily;
+    if (typeof font === "string" && font.trim().length > 0) {
+      this._state.textFontFamily = font.trim();
+    }
+    if (size !== undefined) {
+      this.textSize(size);
+    }
+  }
+
+  textSize(size?: number): number | void {
+    if (size === undefined) return this._state.textSize;
+    const nextSize = Math.max(1, toNumber(size, this._state.textSize));
+    this._state.textSize = nextSize;
+    if (!this._state.textLeadingSet) {
+      this._state.textLeading = nextSize * 1.275;
+    }
+  }
+
+  textLeading(leading?: number): number | void {
+    if (leading === undefined) return this._state.textLeading;
+    this._state.textLeading = Math.max(1, toNumber(leading, this._state.textLeading));
+    this._state.textLeadingSet = true;
+  }
+
+  textStyle(style?: unknown): string | void {
+    if (style === undefined) return this._state.textStyle;
+    this._state.textStyle = this._parseTextStyle(style);
+  }
+
+  textWeight(weight?: number): number | void {
+    if (weight === undefined) return this._state.textWeight;
+    this._state.textWeight = toNumber(weight, this._state.textWeight);
+    this._state.textWeightSet = true;
+    // p5 v2 also mirrors textWeight() into font-variation-settings "wght".
+    this._state.textAxes = {
+      ...this._state.textAxes,
+      wght: this._state.textWeight,
+    };
+  }
+
+  textWrap(style?: unknown): "WORD" | "CHAR" | void {
+    if (style === undefined) return this._state.textWrap;
+    this._state.textWrap = String(style).toUpperCase() === "CHAR" ? "CHAR" : "WORD";
+  }
+
+  textDirection(direction?: unknown): "inherit" | "ltr" | "rtl" | void {
+    if (direction === undefined) return this._state.textDirection;
+    const normalized = String(direction).toLowerCase();
+    if (normalized === "ltr" || normalized === "rtl") {
+      this._state.textDirection = normalized;
+      return;
+    }
+    this._state.textDirection = "inherit";
+  }
+
+  textAxisQuantization(step?: number): number | void {
+    if (step === undefined) return this._state.textAxisQuantization;
+    const next = toNumber(step, this._state.textAxisQuantization);
+    this._state.textAxisQuantization = Number.isFinite(next) ? Math.max(0, next) : this._state.textAxisQuantization;
+  }
+
+  textDynamicMode(enabled?: boolean): boolean | void {
+    if (enabled === undefined) return this._state.textDynamicScratch;
+    this._state.textDynamicScratch = Boolean(enabled);
+  }
+
+  textVariationAxes(axes?: Record<string, number>): Record<string, number> | void {
+    if (axes === undefined) return { ...this._state.textAxes };
+    const next: Record<string, number> = {};
+    for (const [tag, value] of Object.entries(axes)) {
+      if (tag.length !== 4) continue;
+      const num = toNumber(value);
+      if (!Number.isFinite(num)) continue;
+      next[tag] = num;
+    }
+    this._state.textAxes = next;
+  }
+
+  textProperty(prop: string, value?: unknown): unknown {
+    const key = prop.trim();
+    if (value === undefined) {
+      if (key === "fontVariationSettings") return this._formatVariationSettings(this._state.textAxes);
+      if (key === "direction") return this._state.textDirection;
+      if (key === "textAlign") return this._state.textAlignH;
+      if (key === "textBaseline") return this._state.textAlignV;
+      return undefined;
+    }
+
+    if (key === "fontVariationSettings" && typeof value === "string") {
+      const parsed = this._parseVariationSettings(value);
+      this._state.textAxes = parsed;
+      if (Number.isFinite(parsed.wght)) {
+        this._state.textWeight = toNumber(parsed.wght, this._state.textWeight);
+        this._state.textWeightSet = true;
+      }
+      return this;
+    }
+    if (key === "direction") {
+      this.textDirection(value);
+      return this;
+    }
+    if (key === "textAlign") {
+      this.textAlign(value);
+      return this;
+    }
+    if (key === "textBaseline") {
+      this.textAlign(this._state.textAlignH, value);
+      return this;
+    }
+
+    return this;
+  }
+
+  textProperties(values?: Record<string, unknown>): Record<string, unknown> | void {
+    if (values === undefined) {
+      return {
+        textAlign: this._state.textAlignH,
+        textBaseline: this._state.textAlignV,
+        direction: this._state.textDirection,
+        fontVariationSettings: this._formatVariationSettings(this._state.textAxes),
+      };
+    }
+    for (const [key, value] of Object.entries(values)) {
+      this.textProperty(key, value);
+    }
+  }
+
+  async loadFont(path: string | URL, name?: string): Promise<string> {
+    const text = this._requireTextSubsystem();
+    if (!text) {
+      throw new Error("P5GPU text subsystem is unavailable. Build native text engine first.");
+    }
+    const bytes = await this.host.readFile(path);
+    const ok = text.engine.loadFontBytes(bytes);
+    if (!ok) throw new Error(`Failed to load font bytes from ${String(path)}`);
+    if (name && name.trim().length > 0) {
+      this._state.textFontFamily = name.trim();
+      return name.trim();
+    }
+    return String(path);
+  }
+
+  text(str: unknown, x: number, y: number, maxWidth?: number, maxHeight?: number): void {
+    const text = this._requireTextSubsystem();
+    if (!text) return;
+
+    const source = String(str ?? "");
+    let tx = toNumber(x);
+    let ty = toNumber(y);
+    let width: number | null = null;
+    let height: number | null = null;
+
+    if (maxWidth !== undefined) {
+      const rect = this._resolveTextRect(tx, ty, toNumber(maxWidth), maxHeight === undefined ? undefined : toNumber(maxHeight));
+      tx = rect.x;
+      ty = rect.y;
+      width = Math.max(0, rect.width);
+      height = rect.height === undefined ? null : Math.max(0, rect.height);
+    }
+
+    const layout = this._layoutText(source, width, height);
+    const tightWidth = layout.tightWidth;
+    this._textLastLayout = {
+      tightWidth,
+      fontWidth: layout.fontWidth,
+      ascent: layout.ascent,
+      descent: layout.descent,
+      fontAscent: layout.fontAscent,
+      fontDescent: layout.fontDescent,
+      fontCapHeight: layout.fontCapHeight,
+      totalHeight: layout.totalHeight,
+    };
+
+    if (layout.glyphs.length === 0) return;
+
+    if (width === null) {
+      if (this._state.textAlignH === "center") tx -= tightWidth * 0.5;
+      else if (this._state.textAlignH === "right") tx -= tightWidth;
+    }
+
+    const layoutTopY = this._resolveTextTopY(ty, height, layout);
+
+    const blend = this._currentBlendMode();
+    const fillColor: ColorTuple = this._state.fillSet ? this._effectiveFillColor() : [0, 0, 0, 1];
+    const strokeColor = this._effectiveStrokeColor();
+    const drawFill = this._state.fillSet ? this._state.fillEnabled : true;
+    const drawStroke = this._state.strokeSet && this._state.strokeEnabled && this._state.strokeWeight > 0;
+    const strokeOffset = Math.max(1, this._state.strokeWeight * 0.5);
+
+    for (const glyph of layout.glyphs) {
+      // Atlas no longer grows mid-frame; ensureGlyph returns null if
+      // space is exhausted, deferring growth to the next beginFrame().
+      const atlasGlyph = text.atlas.ensureGlyph(glyph.key, text.engine);
+      if (!atlasGlyph) continue;
+
+      const gx = tx + glyph.x + atlasGlyph.left;
+      const gy = Math.round(layoutTopY + glyph.y - atlasGlyph.top);
+
+      if (drawStroke) {
+        this._emitTextStroke(gx, gy, atlasGlyph, strokeColor, strokeOffset, blend);
+      }
+      if (drawFill) {
+        this._emitTextQuad(gx, gy, atlasGlyph, fillColor, blend);
+      }
+    }
+  }
+
+  textWidth(text: unknown): number {
+    if (!this._requireTextSubsystem()) return 0;
+    const source = String(text ?? "");
+    const layout = this._layoutText(source, null, null);
+    const tightWidth = layout.tightWidth;
+    this._textLastLayout = {
+      tightWidth,
+      fontWidth: layout.fontWidth,
+      ascent: layout.ascent,
+      descent: layout.descent,
+      fontAscent: layout.fontAscent,
+      fontDescent: layout.fontDescent,
+      fontCapHeight: layout.fontCapHeight,
+      totalHeight: layout.totalHeight,
+    };
+    if (this._textMetricsDebug && !Number.isFinite(tightWidth)) {
+      this._debugTextMetrics("textWidth-non-finite", {
+        text: source,
+        tightWidth,
+        layout: {
+          tightWidth: layout.tightWidth,
+          fontWidth: layout.fontWidth,
+          ascent: layout.ascent,
+          descent: layout.descent,
+          firstBaseline: layout.firstBaseline,
+          totalHeight: layout.totalHeight,
+          lineCount: layout.lineCount,
+        },
+      });
+    }
+    return tightWidth;
+  }
+
+  fontWidth(text: unknown): number {
+    if (!this._requireTextSubsystem()) return 0;
+    const layout = this._layoutText(String(text ?? ""), null, null);
+    this._textLastLayout = {
+      tightWidth: layout.tightWidth,
+      fontWidth: layout.fontWidth,
+      ascent: layout.ascent,
+      descent: layout.descent,
+      fontAscent: layout.fontAscent,
+      fontDescent: layout.fontDescent,
+      fontCapHeight: layout.fontCapHeight,
+      totalHeight: layout.totalHeight,
+    };
+    if (this._textMetricsDebug && !Number.isFinite(layout.fontWidth)) {
+      this._debugTextMetrics("fontWidth-non-finite", {
+        text: String(text ?? ""),
+        fontWidth: layout.fontWidth,
+        layout: {
+          tightWidth: layout.tightWidth,
+          fontWidth: layout.fontWidth,
+          ascent: layout.ascent,
+          descent: layout.descent,
+          firstBaseline: layout.firstBaseline,
+          totalHeight: layout.totalHeight,
+          lineCount: layout.lineCount,
+        },
+      });
+    }
+    return layout.fontWidth;
+  }
+
+  textAscent(text?: unknown): number {
+    if (!this._requireTextSubsystem()) return 0;
+    if (text === undefined) {
+      return this.fontAscent();
+    }
+    const source = String(text);
+    const measured = this._measureTextGlyphInkExtents(source);
+    if (measured) {
+      const alphaAscent = measured.baseline - measured.top;
+      const alphaDescent = measured.bottom - measured.baseline;
+      const fontMetrics = this._resolvedFontBoxMetrics(measured.layout);
+      const baselineShift = this._textBaselineShift(fontMetrics);
+      const ascent = alphaAscent + baselineShift;
+      const descent = alphaDescent - baselineShift;
+      this._textLastLayout = {
+        tightWidth: Math.max(0, measured.maxX - measured.minX),
+        fontWidth: measured.layout.fontWidth,
+        ascent,
+        descent,
+        fontAscent: fontMetrics.ascent,
+        fontDescent: fontMetrics.descent,
+        fontCapHeight: fontMetrics.capHeight,
+        totalHeight: measured.layout.totalHeight,
+      };
+      if (this._textMetricsDebug && !Number.isFinite(ascent)) {
+        this._debugTextMetrics("textAscent-non-finite", {
+          text: source,
+          measured: {
+            minX: measured.minX,
+            maxX: measured.maxX,
+            top: measured.top,
+            bottom: measured.bottom,
+            baseline: measured.baseline,
+          },
+          layout: {
+            tightWidth: measured.layout.tightWidth,
+            fontWidth: measured.layout.fontWidth,
+            ascent: measured.layout.ascent,
+            descent: measured.layout.descent,
+            fontAscent: measured.layout.fontAscent,
+            fontDescent: measured.layout.fontDescent,
+            firstBaseline: measured.layout.firstBaseline,
+            totalHeight: measured.layout.totalHeight,
+            lineCount: measured.layout.lineCount,
+          },
+        });
+      }
+      return ascent;
+    }
+    const layout = this._layoutText(source, null, null);
+    const fontMetrics = this._resolvedFontBoxMetrics(layout);
+    const baselineShift = this._textBaselineShift(fontMetrics);
+    const ascent = layout.ascent + baselineShift;
+    const descent = layout.descent - baselineShift;
+    this._textLastLayout = {
+      tightWidth: layout.tightWidth,
+      fontWidth: layout.fontWidth,
+      ascent,
+      descent,
+      fontAscent: fontMetrics.ascent,
+      fontDescent: fontMetrics.descent,
+      fontCapHeight: fontMetrics.capHeight,
+      totalHeight: layout.totalHeight,
+    };
+    return ascent;
+  }
+
+  textDescent(text?: unknown): number {
+    if (!this._requireTextSubsystem()) return 0;
+    if (text === undefined) {
+      return this.fontDescent();
+    }
+    const source = String(text);
+    const measured = this._measureTextGlyphInkExtents(source);
+    if (measured) {
+      const alphaAscent = measured.baseline - measured.top;
+      const alphaDescent = measured.bottom - measured.baseline;
+      const fontMetrics = this._resolvedFontBoxMetrics(measured.layout);
+      const baselineShift = this._textBaselineShift(fontMetrics);
+      const ascent = alphaAscent + baselineShift;
+      const descent = alphaDescent - baselineShift;
+      this._textLastLayout = {
+        tightWidth: Math.max(0, measured.maxX - measured.minX),
+        fontWidth: measured.layout.fontWidth,
+        ascent,
+        descent,
+        fontAscent: fontMetrics.ascent,
+        fontDescent: fontMetrics.descent,
+        fontCapHeight: fontMetrics.capHeight,
+        totalHeight: measured.layout.totalHeight,
+      };
+      if (this._textMetricsDebug && !Number.isFinite(descent)) {
+        this._debugTextMetrics("textDescent-non-finite", {
+          text: source,
+          measured: {
+            minX: measured.minX,
+            maxX: measured.maxX,
+            top: measured.top,
+            bottom: measured.bottom,
+            baseline: measured.baseline,
+          },
+          layout: {
+            tightWidth: measured.layout.tightWidth,
+            fontWidth: measured.layout.fontWidth,
+            ascent: measured.layout.ascent,
+            descent: measured.layout.descent,
+            fontAscent: measured.layout.fontAscent,
+            fontDescent: measured.layout.fontDescent,
+            firstBaseline: measured.layout.firstBaseline,
+            totalHeight: measured.layout.totalHeight,
+            lineCount: measured.layout.lineCount,
+          },
+        });
+      }
+      return descent;
+    }
+    const layout = this._layoutText(source, null, null);
+    const fontMetrics = this._resolvedFontBoxMetrics(layout);
+    const baselineShift = this._textBaselineShift(fontMetrics);
+    const ascent = layout.ascent + baselineShift;
+    const descent = layout.descent - baselineShift;
+    this._textLastLayout = {
+      tightWidth: layout.tightWidth,
+      fontWidth: layout.fontWidth,
+      ascent,
+      descent,
+      fontAscent: fontMetrics.ascent,
+      fontDescent: fontMetrics.descent,
+      fontCapHeight: fontMetrics.capHeight,
+      totalHeight: layout.totalHeight,
+    };
+    return descent;
+  }
+
+  fontAscent(): number {
+    if (!this._requireTextSubsystem()) return 0;
+    const layout = this._layoutText("_", null, null);
+    const fontMetrics = this._resolvedFontBoxMetrics(layout);
+    const baselineShift = this._textBaselineShift(fontMetrics);
+    const ascent = fontMetrics.ascent + baselineShift;
+    const descent = fontMetrics.descent - baselineShift;
+    this._textLastLayout = {
+      tightWidth: layout.tightWidth,
+      fontWidth: layout.fontWidth,
+      ascent,
+      descent,
+      fontAscent: fontMetrics.ascent,
+      fontDescent: fontMetrics.descent,
+      fontCapHeight: fontMetrics.capHeight,
+      totalHeight: layout.totalHeight,
+    };
+    return ascent;
+  }
+
+  fontDescent(): number {
+    if (!this._requireTextSubsystem()) return 0;
+    const layout = this._layoutText("_", null, null);
+    const fontMetrics = this._resolvedFontBoxMetrics(layout);
+    const baselineShift = this._textBaselineShift(fontMetrics);
+    const ascent = fontMetrics.ascent + baselineShift;
+    const descent = fontMetrics.descent - baselineShift;
+    this._textLastLayout = {
+      tightWidth: layout.tightWidth,
+      fontWidth: layout.fontWidth,
+      ascent,
+      descent,
+      fontAscent: fontMetrics.ascent,
+      fontDescent: fontMetrics.descent,
+      fontCapHeight: fontMetrics.capHeight,
+      totalHeight: layout.totalHeight,
+    };
+    return descent;
+  }
+
+  textBounds(str: unknown, x: number, y: number, maxWidth?: number, maxHeight?: number): { x: number; y: number; w: number; h: number } {
+    return this._computeTextBounds(String(str ?? ""), x, y, maxWidth, maxHeight, true);
+  }
+
+  fontBounds(str: unknown, x: number, y: number, maxWidth?: number, maxHeight?: number): { x: number; y: number; w: number; h: number } {
+    return this._computeTextBounds(String(str ?? ""), x, y, maxWidth, maxHeight, false);
+  }
+
+  textStats(): { hits: number; misses: number; uploads: number; bytesUploaded: number; grows: number; clears: number; evictions: number } {
+    return this._textAtlas?.takeFrameStats() ?? {
+      hits: 0,
+      misses: 0,
+      uploads: 0,
+      bytesUploaded: 0,
+      grows: 0,
+      clears: 0,
+      evictions: 0,
+    };
+  }
+
+  background(v1: unknown, v2?: unknown, v3?: unknown, a?: unknown): void {
+    this._clearRequested = true;
+    this._clearColor = this._parseColor(v1, v2, v3, a);
+  }
+
+  clear(): void {
+    this._clearRequested = true;
+    this._clearColor = [0, 0, 0, 0];
+  }
+
+  rect(x: number, y: number, w: number, h?: number, tl?: number, tr?: number, br?: number, bl?: number): void {
+    const rect = this._resolveRect(x, y, w, h);
+    const hasRounding = tl !== undefined || tr !== undefined || br !== undefined || bl !== undefined;
+
+    if (!hasRounding) {
+      const p0: Vec2 = [rect.x, rect.y];
+      const p1: Vec2 = [rect.x + rect.w, rect.y];
+      const p2: Vec2 = [rect.x + rect.w, rect.y + rect.h];
+      const p3: Vec2 = [rect.x, rect.y + rect.h];
+
+      if (this._state.fillEnabled) {
+        const fillColor = this._effectiveFillColor();
+        this._emitLocalTriangle(p0, p1, p2, fillColor);
+        this._emitLocalTriangle(p0, p2, p3, fillColor);
+      }
+      if (this._state.strokeEnabled && this._state.strokeWeight > 0) {
+        const strokeColor = this._effectiveStrokeColor();
+        this._emitStrokePathLocal([p0, p1, p2, p3], true, strokeColor);
+      }
+      return;
+    }
+
+    const points = this._buildRoundedRectPoints(
+      rect.x,
+      rect.y,
+      rect.w,
+      rect.h,
+      [toNumber(tl, 0), toNumber(tr, tl ?? 0), toNumber(br, tl ?? 0), toNumber(bl, tr ?? tl ?? 0)],
+    );
+
+    if (this._state.fillEnabled && points.length >= 3) {
+      this._emitPolygonFillLocal([points], this._effectiveFillColor());
+    }
+    if (this._state.strokeEnabled && this._state.strokeWeight > 0 && points.length >= 2) {
+      this._emitStrokePathLocal(points, true, this._effectiveStrokeColor());
+    }
+  }
+
+  square(x: number, y: number, size: number, tl?: number, tr?: number, br?: number, bl?: number): void {
+    this.rect(x, y, size, size, tl, tr, br, bl);
+  }
+
+  triangle(x1: number, y1: number, x2: number, y2: number, x3: number, y3: number): void {
+    const a: Vec2 = [toNumber(x1), toNumber(y1)];
+    const b: Vec2 = [toNumber(x2), toNumber(y2)];
+    const c: Vec2 = [toNumber(x3), toNumber(y3)];
+
+    if (this._state.fillEnabled) {
+      this._emitLocalTriangle(a, b, c, this._effectiveFillColor());
+    }
+    if (this._state.strokeEnabled && this._state.strokeWeight > 0) {
+      this._emitStrokePathLocal([a, b, c], true, this._effectiveStrokeColor());
+    }
+  }
+
+  quad(x1: number, y1: number, x2: number, y2: number, x3: number, y3: number, x4: number, y4: number): void {
+    const a: Vec2 = [toNumber(x1), toNumber(y1)];
+    const b: Vec2 = [toNumber(x2), toNumber(y2)];
+    const c: Vec2 = [toNumber(x3), toNumber(y3)];
+    const d: Vec2 = [toNumber(x4), toNumber(y4)];
+
+    if (this._state.fillEnabled) {
+      const fillColor = this._effectiveFillColor();
+      this._emitLocalTriangle(a, b, c, fillColor);
+      this._emitLocalTriangle(a, c, d, fillColor);
+    }
+    if (this._state.strokeEnabled && this._state.strokeWeight > 0) {
+      this._emitStrokePathLocal([a, b, c, d], true, this._effectiveStrokeColor());
+    }
+  }
+
+  ellipse(x: number, y: number, w: number, h?: number): void {
+    const e = this._resolveEllipse(x, y, w, h);
+    if (e.rx <= EPS || e.ry <= EPS) return;
+
+    const points = this._buildEllipsePoints(e.cx, e.cy, e.rx, e.ry, 0, Math.PI * 2);
+
+    if (this._state.fillEnabled) {
+      const fillColor = this._effectiveFillColor();
+      const blend = this._currentBlendMode();
+      this._ensureBatch(blend, false);
+      const m = this._state.matrix;
+      const ccx = m[0] * e.cx + m[2] * e.cy + m[4];
+      const ccy = m[1] * e.cx + m[3] * e.cy + m[5];
+      const p0 = points[0];
+      let prevX = m[0] * p0[0] + m[2] * p0[1] + m[4];
+      let prevY = m[1] * p0[0] + m[3] * p0[1] + m[5];
+      for (let i = 0; i < points.length; i++) {
+        const np = points[(i + 1) % points.length];
+        const nextX = m[0] * np[0] + m[2] * np[1] + m[4];
+        const nextY = m[1] * np[0] + m[3] * np[1] + m[5];
+        this._pushTriangleVertices(ccx, ccy, prevX, prevY, nextX, nextY, fillColor);
+        prevX = nextX;
+        prevY = nextY;
+      }
+    }
+
+    if (this._state.strokeEnabled && this._state.strokeWeight > 0) {
+      this._emitStrokePathLocal(points, true, this._effectiveStrokeColor());
+    }
+  }
+
+  circle(x: number, y: number, d: number): void {
+    this.ellipse(x, y, d, d);
+  }
+
+  arc(x: number, y: number, w: number, h: number, start: number, stop: number, mode: number = this.OPEN): void {
+    const e = this._resolveEllipse(x, y, w, h);
+    if (e.rx <= EPS || e.ry <= EPS) return;
+
+    let s = toNumber(start);
+    let t = toNumber(stop);
+    if (!Number.isFinite(s) || !Number.isFinite(t)) return;
+
+    while (t < s) t += Math.PI * 2;
+    const span = Math.max(EPS, t - s);
+    const points = this._buildEllipsePoints(e.cx, e.cy, e.rx, e.ry, s, s + span);
+
+    if (this._state.fillEnabled && mode !== this.OPEN) {
+      const fillColor = this._effectiveFillColor();
+      if (mode === this.CHORD) {
+        this._emitPolygonFillLocal([points], fillColor);
+      } else {
+        const center = transformPoint(this._state.matrix, e.cx, e.cy);
+        for (let i = 0; i < points.length - 1; i++) {
+          const p0 = transformPoint(this._state.matrix, points[i][0], points[i][1]);
+          const p1 = transformPoint(this._state.matrix, points[i + 1][0], points[i + 1][1]);
+          this._emitTriangle(center, p0, p1, fillColor);
+        }
+      }
+    }
+
+    if (this._state.strokeEnabled && this._state.strokeWeight > 0) {
+      const strokeColor = this._effectiveStrokeColor();
+      if (mode === this.PIE) {
+        this._emitStrokePathLocal([[e.cx, e.cy], ...points], true, strokeColor);
+      } else if (mode === this.CHORD) {
+        this._emitStrokePathLocal(points, true, strokeColor);
+      } else {
+        this._emitStrokePathLocal(points, false, strokeColor);
+      }
+    }
+  }
+
+  line(x1: number, y1: number, x2: number, y2: number): void {
+    if (!this._state.strokeEnabled || this._state.strokeWeight <= 0) return;
+    this._emitStrokePathLocal(
+      [
+        [toNumber(x1), toNumber(y1)],
+        [toNumber(x2), toNumber(y2)],
+      ],
+      false,
+      this._effectiveStrokeColor(),
+    );
+  }
+
+  point(x: number, y: number): void {
+    if (!this._state.strokeEnabled || this._state.strokeWeight <= 0) return;
+    const scale = this._estimatedStrokeScale();
+    const diameter = Math.max(1, this._state.strokeWeight * scale);
+    const radius = diameter * 0.5;
+    const center = transformPoint(this._state.matrix, toNumber(x), toNumber(y));
+    const segments = Math.max(8, Math.ceil((Math.PI * 2 * radius) / 3));
+    const color = this._effectiveStrokeColor();
+
+    for (let i = 0; i < segments; i++) {
+      const a0 = (i / segments) * Math.PI * 2;
+      const a1 = ((i + 1) / segments) * Math.PI * 2;
+      const p0: Vec2 = [center[0] + Math.cos(a0) * radius, center[1] + Math.sin(a0) * radius];
+      const p1: Vec2 = [center[0] + Math.cos(a1) * radius, center[1] + Math.sin(a1) * radius];
+      this._emitTriangle(center, p0, p1, color);
+    }
+  }
+
+  beginShape(kind?: number): void {
+    this._shape = {
+      kind: kind === undefined ? null : toNumber(kind),
+      rings: [[]],
+      activeRing: 0,
+      curvePoints: [],
+    };
+  }
+
+  endShape(mode?: number): void {
+    const shape = this._shape;
+    if (!shape) return;
+    this._shape = null;
+
+    const closeRequested = mode === this.CLOSE;
+    const outer = shape.rings[0] ?? [];
+    if (outer.length === 0) return;
+
+    if (shape.kind === null) {
+      if (this._state.fillEnabled) {
+        this._emitPolygonFillLocal(shape.rings.filter((ring) => ring.length >= 3), this._effectiveFillColor());
+      }
+      if (this._state.strokeEnabled && this._state.strokeWeight > 0) {
+        const strokeColor = this._effectiveStrokeColor();
+        for (let i = 0; i < shape.rings.length; i++) {
+          const ring = shape.rings[i];
+          if (ring.length < 2) continue;
+          this._emitStrokePathLocal(ring, i > 0 || closeRequested, strokeColor);
+        }
+      }
+      return;
+    }
+
+    switch (shape.kind) {
+      case P5_CONST.POINTS:
+        for (const [x, y] of outer) this.point(x, y);
+        return;
+      case P5_CONST.LINES:
+        for (let i = 0; i + 1 < outer.length; i += 2) {
+          const a = outer[i];
+          const b = outer[i + 1];
+          this.line(a[0], a[1], b[0], b[1]);
+        }
+        return;
+      case P5_CONST.TRIANGLES:
+        for (let i = 0; i + 2 < outer.length; i += 3) {
+          const a = outer[i];
+          const b = outer[i + 1];
+          const c = outer[i + 2];
+          this.triangle(a[0], a[1], b[0], b[1], c[0], c[1]);
+        }
+        return;
+      case P5_CONST.TRIANGLE_FAN:
+        for (let i = 1; i + 1 < outer.length; i++) {
+          const a = outer[0];
+          const b = outer[i];
+          const c = outer[i + 1];
+          this.triangle(a[0], a[1], b[0], b[1], c[0], c[1]);
+        }
+        return;
+      case P5_CONST.TRIANGLE_STRIP:
+        for (let i = 0; i + 2 < outer.length; i++) {
+          const a = outer[i];
+          const b = outer[i + 1];
+          const c = outer[i + 2];
+          this.triangle(a[0], a[1], b[0], b[1], c[0], c[1]);
+        }
+        return;
+      case P5_CONST.QUADS:
+        for (let i = 0; i + 3 < outer.length; i += 4) {
+          const a = outer[i];
+          const b = outer[i + 1];
+          const c = outer[i + 2];
+          const d = outer[i + 3];
+          this.quad(a[0], a[1], b[0], b[1], c[0], c[1], d[0], d[1]);
+        }
+        return;
+      case P5_CONST.QUAD_STRIP:
+        for (let i = 0; i + 3 < outer.length; i += 2) {
+          const a = outer[i];
+          const b = outer[i + 1];
+          const c = outer[i + 3];
+          const d = outer[i + 2];
+          this.quad(a[0], a[1], b[0], b[1], c[0], c[1], d[0], d[1]);
+        }
+        return;
+      default:
+        return;
+    }
+  }
+
+  vertex(x: number, y: number): void {
+    if (!this._shape) return;
+    const ring = this._shape.rings[this._shape.activeRing];
+    ring.push([toNumber(x), toNumber(y)]);
+  }
+
+  beginContour(): void {
+    if (!this._shape || this._shape.kind !== null) return;
+    this._shape.rings.push([]);
+    this._shape.activeRing = this._shape.rings.length - 1;
+  }
+
+  endContour(): void {
+    if (!this._shape || this._shape.kind !== null) return;
+    this._shape.activeRing = 0;
+  }
+
+  curveVertex(x: number, y: number): void {
+    if (!this._shape) return;
+    this._shape.curvePoints.push([toNumber(x), toNumber(y)]);
+    if (this._shape.curvePoints.length < 4) return;
+    const points = this._shape.curvePoints;
+    const p0 = points[points.length - 4];
+    const p1 = points[points.length - 3];
+    const p2 = points[points.length - 2];
+    const p3 = points[points.length - 1];
+    const [b0, b1, b2, b3] = this._catmullRomToBezier(p0, p1, p2, p3, this._state.curveTightness);
+    const wangN = this._wangCubicSegments(b0, b1, b2, b3);
+    const n = Math.max(CURVE_MIN_SEGMENTS, Math.ceil(wangN * this._state.curveDetail));
+    const sampled = this._sampleCubicBezier(b0, b1, b2, b3, n);
+    const ring = this._shape.rings[this._shape.activeRing];
+    if (ring.length === 0) ring.push(sampled[0]);
+    for (let i = 1; i < sampled.length; i++) ring.push(sampled[i]);
+  }
+
+  bezierVertex(x2: number, y2: number, x3: number, y3: number, x4: number, y4: number): void {
+    if (!this._shape) return;
+    const ring = this._shape.rings[this._shape.activeRing];
+    const last = ring[ring.length - 1];
+    if (!last) return;
+
+    const cp1: Vec2 = [toNumber(x2), toNumber(y2)];
+    const cp2: Vec2 = [toNumber(x3), toNumber(y3)];
+    const end: Vec2 = [toNumber(x4), toNumber(y4)];
+    const wangN = this._wangCubicSegments(last, cp1, cp2, end);
+    const n = Math.max(CURVE_MIN_SEGMENTS, Math.ceil(wangN * this._state.bezierDetail));
+    const sampled = this._sampleCubicBezier(last, cp1, cp2, end, n);
+
+    for (let i = 1; i < sampled.length; i++) ring.push(sampled[i]);
+  }
+
+  quadraticVertex(cx: number, cy: number, x3: number, y3: number): void {
+    if (!this._shape) return;
+    const ring = this._shape.rings[this._shape.activeRing];
+    const last = ring[ring.length - 1];
+    if (!last) return;
+
+    const cp: Vec2 = [toNumber(cx), toNumber(cy)];
+    const end: Vec2 = [toNumber(x3), toNumber(y3)];
+    const wangN = this._wangQuadraticSegments(last, cp, end);
+    const n = Math.max(CURVE_MIN_SEGMENTS, Math.ceil(wangN * this._state.bezierDetail));
+    const sampled = this._sampleQuadraticBezier(last, cp, end, n);
+
+    for (let i = 1; i < sampled.length; i++) ring.push(sampled[i]);
+  }
+
+  bezier(x1: number, y1: number, x2: number, y2: number, x3: number, y3: number, x4: number, y4: number): void {
+    if (!this._state.strokeEnabled || this._state.strokeWeight <= 0) return;
+    const b0: Vec2 = [toNumber(x1), toNumber(y1)];
+    const b1: Vec2 = [toNumber(x2), toNumber(y2)];
+    const b2: Vec2 = [toNumber(x3), toNumber(y3)];
+    const b3: Vec2 = [toNumber(x4), toNumber(y4)];
+    const wangN = this._wangCubicSegments(b0, b1, b2, b3);
+    const n = Math.max(CURVE_MIN_SEGMENTS, Math.ceil(wangN * this._state.bezierDetail));
+    const sampled = this._sampleCubicBezier(b0, b1, b2, b3, n);
+    this._emitStrokePathLocal(sampled, false, this._effectiveStrokeColor());
+  }
+
+  curve(x1: number, y1: number, x2: number, y2: number, x3: number, y3: number, x4: number, y4: number): void {
+    if (!this._state.strokeEnabled || this._state.strokeWeight <= 0) return;
+    const cr0: Vec2 = [toNumber(x1), toNumber(y1)];
+    const cr1: Vec2 = [toNumber(x2), toNumber(y2)];
+    const cr2: Vec2 = [toNumber(x3), toNumber(y3)];
+    const cr3: Vec2 = [toNumber(x4), toNumber(y4)];
+    const [b0, b1, b2, b3] = this._catmullRomToBezier(cr0, cr1, cr2, cr3, this._state.curveTightness);
+    const wangN = this._wangCubicSegments(b0, b1, b2, b3);
+    const n = Math.max(CURVE_MIN_SEGMENTS, Math.ceil(wangN * this._state.curveDetail));
+    const sampled = this._sampleCubicBezier(b0, b1, b2, b3, n);
+    this._emitStrokePathLocal(sampled, false, this._effectiveStrokeColor());
+  }
+
+  lerpColor(c1: unknown, c2: unknown, amt: number): ColorTuple {
+    const a = this._parseColor(c1);
+    const b = this._parseColor(c2);
+    const t = clamp(toNumber(amt), 0, 1);
+    return [
+      a[0] + (b[0] - a[0]) * t,
+      a[1] + (b[1] - a[1]) * t,
+      a[2] + (b[2] - a[2]) * t,
+      a[3] + (b[3] - a[3]) * t,
+    ];
+  }
+
+  async loadPixels(): Promise<void> {
+    const bytesPerRow = alignTo(this.width * 4, 256);
+    const readBuffer = this.device.createBuffer({
+      size: bytesPerRow * this.height,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+
+    const encoder = this.device.createCommandEncoder();
+    encoder.copyTextureToBuffer(
+      { texture: this.outputTexture },
+      { buffer: readBuffer, bytesPerRow, rowsPerImage: this.height },
+      { width: this.width, height: this.height, depthOrArrayLayers: 1 },
+    );
+    this.device.queue.submit([encoder.finish()]);
+
+    await readBuffer.mapAsync(GPUMapMode.READ);
+    const mapped = new Uint8Array(readBuffer.getMappedRange());
+
+    const out = new Uint8ClampedArray(this.width * this.height * 4);
+    for (let y = 0; y < this.height; y++) {
+      const srcStart = y * bytesPerRow;
+      const dstStart = y * this.width * 4;
+      out.set(mapped.subarray(srcStart, srcStart + this.width * 4), dstStart);
+    }
+
+    this.pixels = out;
+    readBuffer.unmap();
+    readBuffer.destroy();
+  }
+
+  updatePixels(): void {
+    if (this.pixels.length !== this.width * this.height * 4) {
+      throw new Error("pixels length mismatch; call loadPixels() first or provide full canvas data");
+    }
+
+    const upload = Uint8Array.from(this.pixels);
+    this.device.queue.writeTexture(
+      { texture: this.outputTexture },
+      upload,
+      { bytesPerRow: this.width * 4, rowsPerImage: this.height },
+      { width: this.width, height: this.height, depthOrArrayLayers: 1 },
+    );
+  }
+
+  get(x: number, y: number): [number, number, number, number];
+  get(x: number, y: number, w: number, h: number): Uint8ClampedArray;
+  get(x: number, y: number, w?: number, h?: number): [number, number, number, number] | Uint8ClampedArray {
+    const xi = Math.floor(toNumber(x));
+    const yi = Math.floor(toNumber(y));
+
+    if (w === undefined || h === undefined) {
+      if (this.pixels.length !== this.width * this.height * 4) {
+        throw new Error("pixels not loaded; call await loadPixels() first");
+      }
+      if (xi < 0 || yi < 0 || xi >= this.width || yi >= this.height) return [0, 0, 0, 0];
+      const idx = (yi * this.width + xi) * 4;
+      return [this.pixels[idx], this.pixels[idx + 1], this.pixels[idx + 2], this.pixels[idx + 3]];
+    }
+
+    const ww = Math.max(0, Math.floor(toNumber(w)));
+    const hh = Math.max(0, Math.floor(toNumber(h)));
+    const out = new Uint8ClampedArray(ww * hh * 4);
+    if (this.pixels.length !== this.width * this.height * 4) {
+      throw new Error("pixels not loaded; call await loadPixels() first");
+    }
+
+    for (let yy = 0; yy < hh; yy++) {
+      for (let xx = 0; xx < ww; xx++) {
+        const srcX = xi + xx;
+        const srcY = yi + yy;
+        const dstIdx = (yy * ww + xx) * 4;
+        if (srcX < 0 || srcY < 0 || srcX >= this.width || srcY >= this.height) continue;
+        const srcIdx = (srcY * this.width + srcX) * 4;
+        out[dstIdx] = this.pixels[srcIdx];
+        out[dstIdx + 1] = this.pixels[srcIdx + 1];
+        out[dstIdx + 2] = this.pixels[srcIdx + 2];
+        out[dstIdx + 3] = this.pixels[srcIdx + 3];
+      }
+    }
+
+    return out;
+  }
+
+  set(x: number, y: number, c: unknown): void {
+    const xi = Math.floor(toNumber(x));
+    const yi = Math.floor(toNumber(y));
+    if (xi < 0 || yi < 0 || xi >= this.width || yi >= this.height) return;
+
+    if (this.pixels.length !== this.width * this.height * 4) {
+      this.pixels = new Uint8ClampedArray(this.width * this.height * 4);
+    }
+
+    const color = this._parseColor(c);
+    const idx = (yi * this.width + xi) * 4;
+    this.pixels[idx] = Math.round(clamp(color[0]) * 255);
+    this.pixels[idx + 1] = Math.round(clamp(color[1]) * 255);
+    this.pixels[idx + 2] = Math.round(clamp(color[2]) * 255);
+    this.pixels[idx + 3] = Math.round(clamp(color[3]) * 255);
+  }
+
+  // Image drawing is deferred for now; this keeps parity with plan phases.
+  imageMode(mode: number): void {
+    if (mode !== this.CORNER && mode !== this.CORNERS && mode !== this.CENTER) throw new Error("Invalid image mode");
+    this._state.imageMode = mode;
+  }
+
+  tint(v1: unknown, v2?: unknown, v3?: unknown, alpha?: unknown): void {
+    this._state.tint = this._parseColor(v1, v2, v3, alpha);
+  }
+
+  noTint(): void { this._state.tint = [1, 1, 1, 1]; }
+
+  image(img: P5GPUImage, x: number, y: number, w = img.texture.width, h = img.texture.height): void {
+    const texture = img.texture;
+    if (texture === this.outputTexture) throw new Error("image cannot sample its current render target");
+    if (texture.dimension !== "2d" || texture.depthOrArrayLayers !== 1 || texture.sampleCount !== 1 ||
+        !(texture.usage & GPUTextureUsage.TEXTURE_BINDING) || !["rgba8unorm", "bgra8unorm"].includes(texture.format))
+      throw new Error("image requires a single-sample RGBA8/BGRA8 2D texture with TEXTURE_BINDING usage");
+    if (![x, y, w, h].every(Number.isFinite)) throw new Error("image coordinates must be finite");
+    if (this._state.imageMode === this.CORNERS) { w -= x; h -= y; }
+    if (this._state.imageMode === this.CENTER) { x -= w / 2; y -= h / 2; }
+    if (!w || !h) return;
+    const filter = img.filter ?? "linear";
+    if (filter !== "linear" && filter !== "nearest") throw new Error("Invalid image filter");
+    let sampler = this._imageSamplers.get(filter);
+    if (!sampler) {
+      sampler = this.device.createSampler({ minFilter: filter, magFilter: filter, addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge" });
+      this._imageSamplers.set(filter, sampler);
+    }
+    const bindGroup = this.device.createBindGroup({ layout: this._textBindGroupLayout,
+      entries: [{ binding: 0, resource: texture.createView() }, { binding: 1, resource: sampler }] });
+    this._batches.push({ kind: "image", startVertex: this._textVertexCount, vertexCount: 0,
+      blendMode: this._currentBlendMode(), isText: true, imageBindGroup: bindGroup });
+    const v0 = img.flipY ? 1 : 0, v1 = img.flipY ? 0 : 1;
+    const vertices = [[x,y,0,v0], [x+w,y,1,v0], [x+w,y+h,1,v1], [x,y,0,v0], [x+w,y+h,1,v1], [x,y+h,0,v1]];
+    for (const [px, py, u, v] of vertices) {
+      const pos = transformPoint(this._state.matrix, px, py);
+      this._pushTextVertex(pos[0], pos[1], u, v, this._state.tint);
+    }
+  }
+
+  private _requireTextSubsystem(): { engine: TextEngine; atlas: GlyphAtlas } | null {
+    if (!this._textEngine || !this._textAtlas) return null;
+    return { engine: this._textEngine, atlas: this._textAtlas };
+  }
+
+  private _resolveTextRect(
+    x: number,
+    y: number,
+    width: number,
+    height?: number,
+  ): { x: number; y: number; width: number; height?: number } {
+    let tx = x;
+    let ty = y;
+    let tw = width;
+    let th = height;
+
+    switch (this._state.rectMode) {
+      case P5_CONST.RADIUS:
+        tw *= 2;
+        tx -= tw * 0.5;
+        if (th !== undefined) {
+          th *= 2;
+          ty -= th * 0.5;
+        }
+        break;
+      case P5_CONST.CENTER:
+        tx -= tw * 0.5;
+        if (th !== undefined) {
+          ty -= th * 0.5;
+        }
+        break;
+      case P5_CONST.CORNERS:
+        tw -= tx;
+        if (th !== undefined) {
+          th -= ty;
+        }
+        break;
+      case P5_CONST.CORNER:
+      default:
+        break;
+    }
+
+    if (tw < 0) {
+      tx += tw;
+      tw = -tw;
+    }
+    if (th !== undefined && th < 0) {
+      ty += th;
+      th = -th;
+    }
+
+    return { x: tx, y: ty, width: tw, height: th };
+  }
+
+  private _layoutText(text: string, width: number | null, height: number | null): TextLayoutResult {
+    const subsystem = this._requireTextSubsystem();
+    if (!subsystem) {
+      return {
+        glyphs: [],
+        tightWidth: 0,
+        fontWidth: 0,
+        ascent: 0,
+        descent: 0,
+        fontAscent: 0,
+        fontDescent: 0,
+        fontCapHeight: 0,
+        firstBaseline: 0,
+        totalHeight: 0,
+        lineCount: 0,
+      };
+    }
+
+    const wrapMode = width === null ? 2 : this._state.textWrap === "CHAR" ? 1 : 0;
+    const alignH: 0 | 1 | 2 = this._state.textAlignH === "center"
+      ? 1
+      : this._state.textAlignH === "right"
+      ? 2
+      : 0;
+    const styleCode: 0 | 1 | 2 = this._resolvedStyleCode();
+    const resolvedWeight = this._resolvedTextWeight();
+    const layout = subsystem.engine.layoutText({
+      text,
+      family: this._state.textFontFamily,
+      fontSize: this._state.textSize,
+      lineHeight: this._state.textLeading,
+      width,
+      height,
+      alignH,
+      wrapMode,
+      weight: resolvedWeight,
+      style: styleCode,
+      axisQuantization: this._state.textAxisQuantization,
+      axes: this._resolvedTextAxes(resolvedWeight),
+    });
+    if (this._textMetricsDebug) {
+      if (this._textMetricsDebugVerbose) {
+        this._debugTextMetrics("layout-call", {
+          req: {
+            family: this._state.textFontFamily,
+            fontSize: this._state.textSize,
+            lineHeight: this._state.textLeading,
+            width,
+            height,
+            textLen: text.length,
+            textSample: text.slice(0, 32),
+            alignH,
+            wrapMode,
+            styleCode,
+            resolvedWeight,
+          },
+          layout: {
+            glyphCount: layout.glyphs.length,
+            tightWidth: layout.tightWidth,
+            fontWidth: layout.fontWidth,
+            ascent: layout.ascent,
+            descent: layout.descent,
+            firstBaseline: layout.firstBaseline,
+            totalHeight: layout.totalHeight,
+            lineCount: layout.lineCount,
+            glyphSample: layout.glyphs.slice(0, 3).map((glyph) => ({ x: glyph.x, y: glyph.y })),
+          },
+        });
+      }
+      const finiteCore = Number.isFinite(layout.tightWidth) &&
+        Number.isFinite(layout.fontWidth) &&
+        Number.isFinite(layout.ascent) &&
+        Number.isFinite(layout.descent) &&
+        Number.isFinite(layout.firstBaseline) &&
+        Number.isFinite(layout.totalHeight) &&
+        Number.isFinite(layout.lineCount);
+      let finiteGlyphs = true;
+      for (let i = 0; i < layout.glyphs.length; i++) {
+        const glyph = layout.glyphs[i];
+        if (!Number.isFinite(glyph.x) || !Number.isFinite(glyph.y)) {
+          finiteGlyphs = false;
+          break;
+        }
+      }
+      if (!finiteCore || !finiteGlyphs) {
+        this._debugTextMetrics("layout-non-finite", {
+          req: {
+            family: this._state.textFontFamily,
+            fontSize: this._state.textSize,
+            lineHeight: this._state.textLeading,
+            width,
+            height,
+            textLen: text.length,
+            alignH,
+            wrapMode,
+            styleCode,
+            resolvedWeight,
+          },
+          layout: {
+            glyphCount: layout.glyphs.length,
+            tightWidth: layout.tightWidth,
+            fontWidth: layout.fontWidth,
+            ascent: layout.ascent,
+            descent: layout.descent,
+            firstBaseline: layout.firstBaseline,
+            totalHeight: layout.totalHeight,
+            lineCount: layout.lineCount,
+            glyphSample: layout.glyphs.slice(0, 6).map((glyph) => ({ x: glyph.x, y: glyph.y })),
+          },
+        });
+      }
+    }
+    return layout;
+  }
+
+  private _computeTextBounds(
+    source: string,
+    x: number,
+    y: number,
+    maxWidth?: number,
+    maxHeight?: number,
+    tight = true,
+  ): { x: number; y: number; w: number; h: number } {
+    let tx = toNumber(x);
+    let ty = toNumber(y);
+    let width: number | null = null;
+    let height: number | null = null;
+
+    if (maxWidth !== undefined) {
+      const rect = this._resolveTextRect(tx, ty, toNumber(maxWidth), maxHeight === undefined ? undefined : toNumber(maxHeight));
+      tx = rect.x;
+      ty = rect.y;
+      width = Math.max(0, rect.width);
+      height = rect.height === undefined ? null : Math.max(0, rect.height);
+    }
+
+    const layout = this._layoutText(source, width, height);
+    const measuredTight = layout.tightWidth;
+    const measureW = tight ? measuredTight : layout.fontWidth;
+
+    if (width === null) {
+      if (this._state.textAlignH === "center") tx -= measureW * 0.5;
+      else if (this._state.textAlignH === "right") tx -= measureW;
+    } else {
+      if (this._state.textAlignH === "center") tx += (width - measureW) * 0.5;
+      else if (this._state.textAlignH === "right") tx += width - measureW;
+    }
+
+    const layoutTopY = this._resolveTextTopY(ty, height, layout);
+
+    return {
+      x: tx,
+      y: layoutTopY,
+      w: measureW,
+      h: layout.totalHeight,
+    };
+  }
+
+  private _resolveTextTopY(
+    y: number,
+    boxHeight: number | null,
+    layout: Pick<TextLayoutResult, "ascent" | "descent" | "fontAscent" | "fontDescent" | "fontCapHeight" | "totalHeight" | "lineCount">,
+  ): number {
+    const fontMetrics = this._resolvedFontBoxMetrics(layout);
+    const baselineShift = this._textBaselineShift(fontMetrics);
+
+    if (boxHeight !== null) {
+      const h = Math.max(0, boxHeight);
+      switch (this._state.textAlignV) {
+        case "center":
+          return y + (h - layout.totalHeight) * 0.5;
+        case "bottom":
+          return y + (h - layout.totalHeight);
+        case "top":
+          return y + fontMetrics.ascent - layout.ascent;
+        case "alphabetic":
+          return y - layout.ascent;
+        default:
+          return y;
+      }
+    }
+
+    // In p5 v2, TOP/BOTTOM/CENTER map to canvas textBaseline values, so the
+    // provided y is a baseline anchor, not the glyph ink top.
+    return y - baselineShift - layout.ascent;
+  }
+
+  private _emitTextStroke(
+    x: number,
+    y: number,
+    glyph: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      u0: number;
+      v0: number;
+      u1: number;
+      v1: number;
+    },
+    color: ColorTuple,
+    radius: number,
+    blendMode: number,
+  ): void {
+    const offsets: Vec2[] = [
+      [-radius, 0],
+      [radius, 0],
+      [0, -radius],
+      [0, radius],
+      [-radius, -radius],
+      [radius, -radius],
+      [-radius, radius],
+      [radius, radius],
+    ];
+
+    for (const [ox, oy] of offsets) {
+      this._emitTextQuad(
+        x + ox,
+        y + oy,
+        glyph,
+        color,
+        blendMode,
+      );
+    }
+  }
+
+  private _emitTextQuad(
+    x: number,
+    y: number,
+    glyph: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      u0: number;
+      v0: number;
+      u1: number;
+      v1: number;
+    },
+    color: ColorTuple,
+    blendMode: number,
+  ): void {
+    const x0 = x;
+    const y0 = y;
+    const x1 = x + glyph.width;
+    const y1 = y + glyph.height;
+
+    const p0 = transformPoint(this._state.matrix, x0, y0);
+    const p1 = transformPoint(this._state.matrix, x1, y0);
+    const p2 = transformPoint(this._state.matrix, x1, y1);
+    const p3 = transformPoint(this._state.matrix, x0, y1);
+
+    this._ensureBatch(blendMode, true);
+    this._pushTextVertex(p0[0], p0[1], glyph.u0, glyph.v0, color);
+    this._pushTextVertex(p1[0], p1[1], glyph.u1, glyph.v0, color);
+    this._pushTextVertex(p2[0], p2[1], glyph.u1, glyph.v1, color);
+    this._pushTextVertex(p0[0], p0[1], glyph.u0, glyph.v0, color);
+    this._pushTextVertex(p2[0], p2[1], glyph.u1, glyph.v1, color);
+    this._pushTextVertex(p3[0], p3[1], glyph.u0, glyph.v1, color);
+  }
+
+  private _parseTextAlignH(value: unknown): "left" | "center" | "right" {
+    const v = String(value).toLowerCase();
+    if (value === this.CENTER || v === "center" || v === "middle") return "center";
+    if (value === this.RIGHT || v === "right" || v === "end") return "right";
+    return "left";
+  }
+
+  private _parseTextAlignV(value: unknown): "top" | "center" | "bottom" | "alphabetic" {
+    const v = String(value).toLowerCase();
+    if (value === this.CENTER || v === "center" || v === "middle") return "center";
+    if (value === this.TOP || v === "top" || v === "hanging") return "top";
+    if (value === this.BOTTOM || v === "bottom" || v === "ideographic") return "bottom";
+    return "alphabetic";
+  }
+
+  private _parseTextStyle(value: unknown): "normal" | "italic" | "bold" | "bold italic" {
+    const v = String(value).toLowerCase().trim();
+    if (v === "bold italic" || v === "italic bold" || value === this.BOLDITALIC) return "bold italic";
+    if (v === "bold" || value === this.BOLD) return "bold";
+    if (v === "italic" || value === this.ITALIC || v === "oblique") return "italic";
+    return "normal";
+  }
+
+  private _resolvedTextWeight(): number {
+    if (this._state.textWeightSet) return this._state.textWeight;
+    if (this._state.textStyle === "bold" || this._state.textStyle === "bold italic") return 700;
+    return 400;
+  }
+
+  private _resolvedStyleCode(): 0 | 1 | 2 {
+    return (this._state.textStyle === "italic" || this._state.textStyle === "bold italic") ? 1 : 0;
+  }
+
+  private _resolvedTextAxes(resolvedWeight: number): Record<string, number> {
+    const axes: Record<string, number> = { ...this._state.textAxes };
+    if (this._state.textWeightSet && !Number.isFinite(axes.wght)) {
+      // p5 v2 textWeight() updates the active weight axis when available.
+      axes.wght = resolvedWeight;
+    }
+    return axes;
+  }
+
+  private _resolvedFontBoxMetrics(
+    layout: Pick<TextLayoutResult, "ascent" | "descent" | "fontAscent" | "fontDescent" | "fontCapHeight">,
+  ): { ascent: number; descent: number; capHeight: number; emAscent: number; emDescent: number } {
+    const ascent = Number.isFinite(layout.fontAscent) && layout.fontAscent > 0
+      ? layout.fontAscent
+      : Math.max(0, layout.ascent);
+    const descent = Number.isFinite(layout.fontDescent) && layout.fontDescent >= 0
+      ? layout.fontDescent
+      : Math.max(0, layout.descent);
+    const capHeight = Number.isFinite(layout.fontCapHeight) && layout.fontCapHeight > 0
+      ? layout.fontCapHeight
+      : ascent;
+    const metricTotal = ascent + descent;
+    const emTarget = Number.isFinite(this._state.textSize) && this._state.textSize > 0
+      ? this._state.textSize
+      : metricTotal;
+    // Canvas top/bottom baseline offsets track em-height, not cap-height.
+    const emScale = metricTotal > 0
+      ? clamp(emTarget / metricTotal, 0.25, 4)
+      : 1;
+    const emAscent = ascent * emScale;
+    const emDescent = descent * emScale;
+    return { ascent, descent, capHeight, emAscent, emDescent };
+  }
+
+  private _textBaselineShift(
+    fontMetrics: { emAscent: number; emDescent: number },
+  ): number {
+    switch (this._state.textAlignV) {
+      case "top":
+        return -fontMetrics.emAscent;
+      case "bottom":
+        return fontMetrics.emDescent;
+      case "center":
+        return (fontMetrics.emDescent - fontMetrics.emAscent) * 0.5;
+      case "alphabetic":
+      default:
+        return 0;
+    }
+  }
+
+  private _measureTextGlyphInkExtents(text: string, alphaThreshold = 0): {
+    minX: number;
+    maxX: number;
+    top: number;
+    bottom: number;
+    baseline: number;
+    layout: TextLayoutResult;
+  } | null {
+    const subsystem = this._requireTextSubsystem();
+    if (!subsystem) return null;
+
+    const layout = this._layoutText(text, null, null);
+    if (layout.glyphs.length === 0) return null;
+
+    let minLeft = Number.POSITIVE_INFINITY;
+    let maxRight = Number.NEGATIVE_INFINITY;
+    let minTop = Number.POSITIVE_INFINITY;
+    let maxBottom = Number.NEGATIVE_INFINITY;
+
+    for (const glyph of layout.glyphs) {
+      const atlasGlyph = subsystem.atlas.ensureGlyph(glyph.key, subsystem.engine);
+      if (!atlasGlyph) continue;
+      const inkX0 = alphaThreshold > 0 ? atlasGlyph.inkX0 : 0;
+      const inkX1 = alphaThreshold > 0 ? atlasGlyph.inkX1 : atlasGlyph.width;
+      const left = glyph.x + atlasGlyph.left + inkX0;
+      const right = glyph.x + atlasGlyph.left + inkX1;
+      const top = glyph.y - atlasGlyph.top;
+      const bottom = top + atlasGlyph.height;
+      if (left < minLeft) minLeft = left;
+      if (right > maxRight) maxRight = right;
+      if (top < minTop) minTop = top;
+      if (bottom > maxBottom) maxBottom = bottom;
+    }
+
+    if (
+      !Number.isFinite(minLeft) ||
+      !Number.isFinite(maxRight) ||
+      !Number.isFinite(minTop) ||
+      !Number.isFinite(maxBottom)
+    ) return null;
+
+    const baseline = Number.isFinite(layout.firstBaseline) && layout.firstBaseline > 0
+      ? layout.firstBaseline
+      : layout.ascent;
+    if (this._textMetricsDebug && !Number.isFinite(baseline)) {
+      this._debugTextMetrics("baseline-non-finite", {
+        text,
+        layout: {
+          firstBaseline: layout.firstBaseline,
+          ascent: layout.ascent,
+          descent: layout.descent,
+          totalHeight: layout.totalHeight,
+          lineCount: layout.lineCount,
+          glyphCount: layout.glyphs.length,
+        },
+      });
+    }
+
+    return {
+      minX: minLeft,
+      maxX: maxRight,
+      top: minTop,
+      bottom: maxBottom,
+      baseline,
+      layout,
+    };
+  }
+
+  private _measureTextBlockTightWidth(source: string, alphaThreshold = 0): number {
+    const lines = source.split(/\r?\n/g);
+    let maxWidth = 0;
+    for (const line of lines) {
+      const measured = this._measureTextGlyphInkExtents(line, alphaThreshold);
+      if (!measured) continue;
+      maxWidth = Math.max(maxWidth, Math.max(0, measured.maxX - measured.minX));
+    }
+    return maxWidth;
+  }
+
+  private _debugTextMetrics(label: string, payload: unknown): void {
+    if (!this._textMetricsDebug || this._textMetricsDebugBudget <= 0) return;
+    this._textMetricsDebugBudget -= 1;
+    try {
+      console.log(`[p5gpu][text-metrics][${label}] ${JSON.stringify(payload)}`);
+    } catch {
+      console.log(`[p5gpu][text-metrics][${label}] (unserializable payload)`);
+    }
+  }
+
+  private _parseVariationSettings(settings: string): Record<string, number> {
+    const out: Record<string, number> = {};
+    const regex = /[\"']?([A-Za-z0-9]{4})[\"']?\\s*([+-]?\\d*\\.?\\d+)/g;
+    let match: RegExpExecArray | null = regex.exec(settings);
+    while (match) {
+      const tag = match[1];
+      const value = Number(match[2]);
+      if (Number.isFinite(value)) out[tag] = value;
+      match = regex.exec(settings);
+    }
+    return out;
+  }
+
+  private _formatVariationSettings(axes: Record<string, number>): string {
+    return Object.entries(axes)
+      .map(([tag, value]) => `\"${tag}\" ${value}`)
+      .join(", ");
+  }
+
+  private _syncTextBindGroup(): boolean {
+    if (!this._textAtlas) return false;
+    if (this._textBindGroup && this._textBindGroupAtlasVersion === this._textAtlas.version) {
+      return true;
+    }
+
+    this._textBindGroup = this.device.createBindGroup({
+      layout: this._textBindGroupLayout,
+      entries: [
+        { binding: 0, resource: this._textAtlas.textureView() },
+        { binding: 1, resource: this._textAtlas.sampler },
+      ],
+    });
+    this._textBindGroupAtlasVersion = this._textAtlas.version;
+    return true;
+  }
+
+  private _parseColor(v1?: unknown, v2?: unknown, v3?: unknown, v4?: unknown): ColorTuple {
+    if (typeof v1 === "string") {
+      const parsed = this._parseColorString(v1);
+      if (parsed) return parsed;
+    }
+
+    if (Array.isArray(v1) || ArrayBuffer.isView(v1)) {
+      const arr = Array.from(v1 as ArrayLike<unknown>).slice(0, 4).map((v) => toNumber(v));
+      if (arr.length === 0) return [0, 0, 0, 1];
+      if (arr.length === 1) arr.push(arr[0], arr[0], this._state.colorMaxes[3]);
+      if (arr.length === 2) {
+        const gray = arr[0];
+        const alpha = arr[1];
+        arr[1] = gray;
+        arr.push(gray, alpha);
+      }
+      if (arr.length === 3) arr.push(this._state.colorMaxes[3]);
+
+      const maxes = this._state.colorMaxes;
+      const looksNormalized = arr.every((value) => value >= 0 && value <= 1);
+      if (looksNormalized) {
+        return [clamp(arr[0]), clamp(arr[1]), clamp(arr[2]), clamp(arr[3])];
+      }
+      return this._numericColorToRgba(arr[0], arr[1], arr[2], arr[3], maxes);
+    }
+
+    if (typeof v1 === "object" && v1) {
+      const maybeLevels = v1 as { levels?: ArrayLike<number> };
+      if (maybeLevels.levels && maybeLevels.levels.length >= 3) {
+        const lv = maybeLevels.levels;
+        return [clamp((lv[0] ?? 0) / 255), clamp((lv[1] ?? 0) / 255), clamp((lv[2] ?? 0) / 255), clamp((lv[3] ?? 255) / 255)];
+      }
+    }
+
+    const n1 = toNumber(v1, 0);
+    const hasV2 = v2 !== undefined;
+    const hasV3 = v3 !== undefined;
+    const hasV4 = v4 !== undefined;
+
+    const maxes = this._state.colorMaxes;
+
+    if (!hasV2 && !hasV3 && !hasV4) {
+      return this._numericColorToRgba(n1, n1, n1, maxes[3], maxes);
+    }
+
+    if (hasV2 && !hasV3 && !hasV4) {
+      const n2 = toNumber(v2, maxes[3]);
+      return this._numericColorToRgba(n1, n1, n1, n2, maxes);
+    }
+
+    const n2 = toNumber(v2, 0);
+    const n3 = toNumber(v3, 0);
+    const n4 = hasV4 ? toNumber(v4, maxes[3]) : maxes[3];
+    return this._numericColorToRgba(n1, n2, n3, n4, maxes);
+  }
+
+  private _numericColorToRgba(c1: number, c2: number, c3: number, a: number, maxes: [number, number, number, number]): ColorTuple {
+    const alpha = clamp(a / maxes[3]);
+
+    if (this._state.colorMode === this.HSB) {
+      const h = clamp(c1 / maxes[0]);
+      const s = clamp(c2 / maxes[1]);
+      const b = clamp(c3 / maxes[2]);
+      const [r, g, bb] = hsbToRgb(h, s, b);
+      return [r, g, bb, alpha];
+    }
+
+    if (this._state.colorMode === this.HSL) {
+      const h = clamp(c1 / maxes[0]);
+      const s = clamp(c2 / maxes[1]);
+      const l = clamp(c3 / maxes[2]);
+      const [r, g, bb] = hslToRgb(h, s, l);
+      return [r, g, bb, alpha];
+    }
+
+    return [
+      clamp(c1 / maxes[0]),
+      clamp(c2 / maxes[1]),
+      clamp(c3 / maxes[2]),
+      alpha,
+    ];
+  }
+
+  private _parseColorString(value: string): ColorTuple | null {
+    const input = value.trim().toLowerCase();
+
+    const named = new Map<string, ColorTuple>([
+      ["black", [0, 0, 0, 1]],
+      ["white", [1, 1, 1, 1]],
+      ["red", [1, 0, 0, 1]],
+      ["green", [0, 0.5, 0, 1]],
+      ["blue", [0, 0, 1, 1]],
+      ["transparent", [0, 0, 0, 0]],
+    ]);
+    if (named.has(input)) return named.get(input)!;
+
+    if (/^#[0-9a-f]{3}$/.test(input)) {
+      const r = parseInt(input[1] + input[1], 16);
+      const g = parseInt(input[2] + input[2], 16);
+      const b = parseInt(input[3] + input[3], 16);
+      return [r / 255, g / 255, b / 255, 1];
+    }
+
+    if (/^#[0-9a-f]{4}$/.test(input)) {
+      const r = parseInt(input[1] + input[1], 16);
+      const g = parseInt(input[2] + input[2], 16);
+      const b = parseInt(input[3] + input[3], 16);
+      const a = parseInt(input[4] + input[4], 16);
+      return [r / 255, g / 255, b / 255, a / 255];
+    }
+
+    if (/^#[0-9a-f]{6}$/.test(input)) {
+      const r = parseInt(input.slice(1, 3), 16);
+      const g = parseInt(input.slice(3, 5), 16);
+      const b = parseInt(input.slice(5, 7), 16);
+      return [r / 255, g / 255, b / 255, 1];
+    }
+
+    if (/^#[0-9a-f]{8}$/.test(input)) {
+      const r = parseInt(input.slice(1, 3), 16);
+      const g = parseInt(input.slice(3, 5), 16);
+      const b = parseInt(input.slice(5, 7), 16);
+      const a = parseInt(input.slice(7, 9), 16);
+      return [r / 255, g / 255, b / 255, a / 255];
+    }
+
+    const rgbMatch = input.match(/^rgba?\((.+)\)$/);
+    if (rgbMatch) {
+      const parts = rgbMatch[1].split(",").map((p) => p.trim());
+      if (parts.length === 3 || parts.length === 4) {
+        const r = parseRgbLikeComponent(parts[0]);
+        const g = parseRgbLikeComponent(parts[1]);
+        const b = parseRgbLikeComponent(parts[2]);
+        let a = 255;
+        if (parts.length === 4) {
+          const alphaRaw = parts[3];
+          if (alphaRaw.endsWith("%")) {
+            a = clamp(Number(alphaRaw.slice(0, -1)) / 100) * 255;
+          } else {
+            const alpha = Number(alphaRaw);
+            a = alpha <= 1 ? clamp(alpha) * 255 : clamp(alpha, 0, 255);
+          }
+        }
+        return [clamp(r / 255), clamp(g / 255), clamp(b / 255), clamp(a / 255)];
+      }
+    }
+
+    return null;
+  }
+
+  private _resolveRect(x: number, y: number, w: number, h?: number): { x: number; y: number; w: number; h: number } {
+    let rx = toNumber(x);
+    let ry = toNumber(y);
+    let rw = toNumber(w);
+    let rh = h === undefined ? rw : toNumber(h);
+
+    switch (this._state.rectMode) {
+      case P5_CONST.CORNERS: {
+        const x0 = rx;
+        const y0 = ry;
+        const x2 = rw;
+        const y2 = rh;
+        const left = Math.min(x0, x2);
+        const top = Math.min(y0, y2);
+        rx = left;
+        ry = top;
+        rw = Math.abs(x2 - x0);
+        rh = Math.abs(y2 - y0);
+        break;
+      }
+      case P5_CONST.CENTER:
+        rx -= rw * 0.5;
+        ry -= rh * 0.5;
+        break;
+      case P5_CONST.RADIUS:
+        rx -= rw;
+        ry -= rh;
+        rw *= 2;
+        rh *= 2;
+        break;
+      case P5_CONST.CORNER:
+      default:
+        break;
+    }
+
+    if (rw < 0) {
+      rx += rw;
+      rw = -rw;
+    }
+    if (rh < 0) {
+      ry += rh;
+      rh = -rh;
+    }
+
+    return { x: rx, y: ry, w: rw, h: rh };
+  }
+
+  private _resolveEllipse(x: number, y: number, w: number, h?: number): { cx: number; cy: number; rx: number; ry: number } {
+    let xx = toNumber(x);
+    let yy = toNumber(y);
+    let ww = toNumber(w);
+    let hh = h === undefined ? ww : toNumber(h);
+
+    switch (this._state.ellipseMode) {
+      case P5_CONST.CORNER:
+        return {
+          cx: xx + ww * 0.5,
+          cy: yy + hh * 0.5,
+          rx: Math.abs(ww) * 0.5,
+          ry: Math.abs(hh) * 0.5,
+        };
+      case P5_CONST.CORNERS: {
+        const x2 = ww;
+        const y2 = hh;
+        return {
+          cx: (xx + x2) * 0.5,
+          cy: (yy + y2) * 0.5,
+          rx: Math.abs(x2 - xx) * 0.5,
+          ry: Math.abs(y2 - yy) * 0.5,
+        };
+      }
+      case P5_CONST.RADIUS:
+        return {
+          cx: xx,
+          cy: yy,
+          rx: Math.abs(ww),
+          ry: Math.abs(hh),
+        };
+      case P5_CONST.CENTER:
+      default:
+        return {
+          cx: xx,
+          cy: yy,
+          rx: Math.abs(ww) * 0.5,
+          ry: Math.abs(hh) * 0.5,
+        };
+    }
+  }
+
+  private _buildEllipsePoints(cx: number, cy: number, rx: number, ry: number, start: number, stop: number): Vec2[] {
+    const arcLength = Math.max(EPS, Math.abs(stop - start));
+    const circumference = Math.PI * 2 * Math.sqrt((rx * rx + ry * ry) * 0.5);
+    const scaledLength = circumference * (arcLength / (Math.PI * 2));
+    const segments = this.optimizedMode
+      ? Math.max(8, Math.ceil(scaledLength / 8))
+      : Math.max(12, Math.ceil(scaledLength / 4));
+
+    const points: Vec2[] = [];
+    const step = (stop - start) / segments;
+    for (let i = 0; i <= segments; i++) {
+      const t = start + step * i;
+      points.push([cx + Math.cos(t) * rx, cy + Math.sin(t) * ry]);
+    }
+
+    if (points.length > 1) {
+      const first = points[0];
+      const last = points[points.length - 1];
+      if (Math.hypot(first[0] - last[0], first[1] - last[1]) < 1e-3) {
+        points.pop();
+      }
+    }
+
+    return points;
+  }
+
+  private _buildRoundedRectPoints(x: number, y: number, w: number, h: number, radii: [number, number, number, number]): Vec2[] {
+    const maxR = Math.min(w, h) * 0.5;
+    let tl = clamp(radii[0], 0, maxR);
+    let tr = clamp(radii[1], 0, maxR);
+    let br = clamp(radii[2], 0, maxR);
+    let bl = clamp(radii[3], 0, maxR);
+
+    if (tl + tr > w && w > EPS) {
+      const scale = w / (tl + tr);
+      tl *= scale;
+      tr *= scale;
+    }
+    if (bl + br > w && w > EPS) {
+      const scale = w / (bl + br);
+      bl *= scale;
+      br *= scale;
+    }
+
+    const segFor = (r: number) => this.optimizedMode
+      ? Math.max(2, Math.ceil((Math.PI * 0.5 * r) / 8))
+      : Math.max(3, Math.ceil((Math.PI * 0.5 * r) / 4));
+    const points: Vec2[] = [];
+
+    const addArc = (cx: number, cy: number, r: number, start: number, end: number) => {
+      if (r <= EPS) {
+        points.push([cx, cy]);
+        return;
+      }
+      const segs = segFor(r);
+      for (let i = 0; i <= segs; i++) {
+        const t = start + (end - start) * (i / segs);
+        points.push([cx + Math.cos(t) * r, cy + Math.sin(t) * r]);
+      }
+    };
+
+    addArc(x + w - tr, y + tr, tr, -Math.PI * 0.5, 0);
+    addArc(x + w - br, y + h - br, br, 0, Math.PI * 0.5);
+    addArc(x + bl, y + h - bl, bl, Math.PI * 0.5, Math.PI);
+    addArc(x + tl, y + tl, tl, Math.PI, Math.PI * 1.5);
+
+    const deduped: Vec2[] = [];
+    for (const p of points) {
+      const prev = deduped[deduped.length - 1];
+      if (!prev || Math.hypot(prev[0] - p[0], prev[1] - p[1]) > 1e-3) {
+        deduped.push(p);
+      }
+    }
+    if (deduped.length > 1) {
+      const first = deduped[0];
+      const last = deduped[deduped.length - 1];
+      if (Math.hypot(first[0] - last[0], first[1] - last[1]) < 1e-3) {
+        deduped.pop();
+      }
+    }
+
+    return deduped;
+  }
+
+  private _emitLocalTriangle(a: Vec2, b: Vec2, c: Vec2, color: ColorTuple): void {
+    const ta = transformPoint(this._state.matrix, a[0], a[1]);
+    const tb = transformPoint(this._state.matrix, b[0], b[1]);
+    const tc = transformPoint(this._state.matrix, c[0], c[1]);
+    this._emitTriangle(ta, tb, tc, color);
+  }
+
+  private _emitTriangle(a: Vec2, b: Vec2, c: Vec2, color: ColorTuple): void {
+    const blend = this._currentBlendMode();
+    this._ensureBatch(blend, false);
+    this._pushVertex(a[0], a[1], color);
+    this._pushVertex(b[0], b[1], color);
+    this._pushVertex(c[0], c[1], color);
+  }
+
+  private _emitPolygonFillLocal(rings: Vec2[][], color: ColorTuple): void {
+    const validRings = rings.filter((ring) => ring.length >= 3);
+    if (validRings.length === 0) return;
+
+    if (validRings.length === 1 && this._shouldUseStencilFill(validRings[0], color)) {
+      this._emitStencilFillLocal(validRings[0], color);
+      return;
+    }
+
+    const flat: number[] = [];
+    const holes: number[] = [];
+    let cursor = 0;
+
+    for (let i = 0; i < validRings.length; i++) {
+      const ring = validRings[i];
+      if (i > 0) holes.push(cursor);
+      for (const p of ring) {
+        flat.push(p[0], p[1]);
+        cursor += 1;
+      }
+    }
+
+    const indices = earcut(flat, holes.length > 0 ? holes : undefined, 2);
+    for (let i = 0; i + 2 < indices.length; i += 3) {
+      const ia = indices[i] * 2;
+      const ib = indices[i + 1] * 2;
+      const ic = indices[i + 2] * 2;
+
+      const a: Vec2 = [flat[ia], flat[ia + 1]];
+      const b: Vec2 = [flat[ib], flat[ib + 1]];
+      const c: Vec2 = [flat[ic], flat[ic + 1]];
+      this._emitLocalTriangle(a, b, c, color);
+    }
+  }
+
+  private _emitStencilFillLocal(ring: Vec2[], color: ColorTuple): void {
+    const path: Vec2[] = [];
+    for (const p of ring) {
+      const tp = transformPoint(this._state.matrix, p[0], p[1]);
+      const prev = path[path.length - 1];
+      if (!prev || Math.hypot(tp[0] - prev[0], tp[1] - prev[1]) > EPS) {
+        path.push(tp);
+      }
+    }
+
+    if (path.length > 1) {
+      const first = path[0];
+      const last = path[path.length - 1];
+      if (Math.hypot(first[0] - last[0], first[1] - last[1]) <= EPS) {
+        path.pop();
+      }
+    }
+    if (path.length < 3) return;
+
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    for (const p of path) {
+      minX = Math.min(minX, p[0]);
+      minY = Math.min(minY, p[1]);
+      maxX = Math.max(maxX, p[0]);
+      maxY = Math.max(maxY, p[1]);
+    }
+
+    const blend = this._currentBlendMode();
+    const anchor = path[0];
+    this._ensureBatch(blend, false, "stencilFillMask");
+    for (let i = 1; i + 1 < path.length; i++) {
+      const b = path[i];
+      const c = path[i + 1];
+      this._pushTriangleVertices(anchor[0], anchor[1], b[0], b[1], c[0], c[1], color);
+    }
+
+    this._ensureBatch(blend, false, "stencilFillCover");
+    this._pushCoverQuad(minX - 1, minY - 1, maxX + 1, maxY + 1, color);
+  }
+
+  private _shouldUseStencilFill(ring: Vec2[], color: ColorTuple): boolean {
+    if (!ENABLE_STENCIL_FILLS) return false;
+    if (this._state.eraseMode || this._stencilUnavailable) return false;
+    if (color[3] < 0.999) return true;
+    if (ring.length >= STENCIL_FILL_SEGMENT_THRESHOLD) return true;
+    return this._pathHasSelfIntersection(ring);
+  }
+
+  private _pathHasSelfIntersection(path: Vec2[]): boolean {
+    const n = path.length;
+    if (n < 4) return false;
+
+    for (let i = 0; i < n; i++) {
+      const a0 = path[i];
+      const a1 = path[(i + 1) % n];
+      for (let j = i + 1; j < n; j++) {
+        if (Math.abs(i - j) <= 1) continue;
+        if (i === 0 && j === n - 1) continue;
+
+        const b0 = path[j];
+        const b1 = path[(j + 1) % n];
+        if (segmentsIntersect(a0, a1, b0, b1)) return true;
+      }
+    }
+
+    return false;
+  }
+
+  private _emitStrokePathLocal(points: Vec2[], closed: boolean, color: ColorTuple): void {
+    if (points.length === 0) return;
+
+    const transformed = points.map((p) => transformPoint(this._state.matrix, p[0], p[1]));
+    this._emitStrokePathScreen(transformed, closed, color);
+  }
+
+  private _emitStrokePathScreen(points: Vec2[], closed: boolean, color: ColorTuple): void {
+    if (points.length === 0) return;
+
+    const scale = this._estimatedStrokeScale();
+    const weight = Math.max(0.0001, this._state.strokeWeight * scale);
+    const half = weight * 0.5;
+
+    const path: Vec2[] = [];
+    for (const p of points) {
+      const prev = path[path.length - 1];
+      if (!prev || Math.hypot(p[0] - prev[0], p[1] - prev[1]) > EPS) {
+        path.push([p[0], p[1]]);
+      }
+    }
+
+    if (closed && path.length > 1) {
+      const first = path[0];
+      const last = path[path.length - 1];
+      if (Math.hypot(first[0] - last[0], first[1] - last[1]) <= EPS) {
+        path.pop();
+      }
+    }
+
+    if (path.length === 0) return;
+
+    const blend = this._currentBlendMode();
+
+    const emitDot = (p: Vec2): void => {
+      this._ensureBatch(blend, false, "geom");
+      if (this._state.strokeCap === this.ROUND) {
+        this._emitRoundCap(p, [1, 0], half, color);
+        this._emitRoundCap(p, [-1, 0], half, color);
+      } else {
+        this._pushTriangleVertices(p[0] - half, p[1] - half, p[0] + half, p[1] - half, p[0] + half, p[1] + half, color);
+        this._pushTriangleVertices(p[0] - half, p[1] - half, p[0] + half, p[1] + half, p[0] - half, p[1] + half, color);
+      }
+    };
+
+    if (path.length === 1) {
+      emitDot(path[0]);
+      return;
+    }
+
+    const isClosed = closed && path.length > 2;
+
+    if (!isClosed && (this._state.strokeCap === this.SQUARE || this._state.strokeCap === this.PROJECT)) {
+      const first = path[0];
+      const second = path[1];
+      const last = path[path.length - 1];
+      const prev = path[path.length - 2];
+      const d0 = normalize(second[0] - first[0], second[1] - first[1]);
+      const d1 = normalize(last[0] - prev[0], last[1] - prev[1]);
+      first[0] -= d0[0] * half;
+      first[1] -= d0[1] * half;
+      last[0] += d1[0] * half;
+      last[1] += d1[1] * half;
+    }
+
+    const n = path.length;
+    const segCount = isClosed ? n : n - 1;
+    if (segCount <= 0) {
+      emitDot(path[0]);
+      return;
+    }
+
+    const joinMode =
+      this._state.strokeJoin === this.ROUND ||
+      this._state.strokeJoin === this.BEVEL ||
+      this._state.strokeJoin === this.MITER
+        ? this._state.strokeJoin
+        : this.MITER;
+    const miterLimitRatio = this._state.strokeMiterLimit;
+    const dirX = new Float64Array(segCount);
+    const dirY = new Float64Array(segCount);
+    const normalX = new Float64Array(segCount);
+    const normalY = new Float64Array(segCount);
+    const useStencilStroke = this._shouldUseStencilStroke(isClosed, segCount, color);
+    const coverPad = half * Math.max(1, miterLimitRatio) + 2;
+    let coverMinX = Number.POSITIVE_INFINITY;
+    let coverMinY = Number.POSITIVE_INFINITY;
+    let coverMaxX = Number.NEGATIVE_INFINITY;
+    let coverMaxY = Number.NEGATIVE_INFINITY;
+    for (const p of path) {
+      coverMinX = Math.min(coverMinX, p[0] - coverPad);
+      coverMinY = Math.min(coverMinY, p[1] - coverPad);
+      coverMaxX = Math.max(coverMaxX, p[0] + coverPad);
+      coverMaxY = Math.max(coverMaxY, p[1] + coverPad);
+    }
+
+    for (let i = 0; i < segCount; i++) {
+      const a = path[i];
+      const b = path[(i + 1) % n];
+      const dx = b[0] - a[0];
+      const dy = b[1] - a[1];
+      const len = Math.hypot(dx, dy);
+      if (len <= EPS) {
+        emitDot(path[0]);
+        return;
+      }
+      const ux = dx / len;
+      const uy = dy / len;
+      dirX[i] = ux;
+      dirY[i] = uy;
+      normalX[i] = -uy;
+      normalY[i] = ux;
+    }
+
+    this._ensureBatch(blend, false, useStencilStroke ? "stencilStrokeMask" : "geom");
+
+    const miterOffsetsAt = (vertexIndex: number, prevSeg: number, nextSeg: number): [number, number, number, number] | null => {
+      if (joinMode !== this.MITER) return null;
+
+      let mx = normalX[prevSeg] + normalX[nextSeg];
+      let my = normalY[prevSeg] + normalY[nextSeg];
+      const mLen = Math.hypot(mx, my);
+      if (mLen <= 1e-5) return null;
+
+      mx /= mLen;
+      my /= mLen;
+
+      const dot = mx * normalX[prevSeg] + my * normalY[prevSeg];
+      if (Math.abs(dot) <= 1e-5) return null;
+
+      const miterLen = half / dot;
+      if (!Number.isFinite(miterLen) || Math.abs(miterLen) > half * miterLimitRatio) {
+        return null;
+      }
+
+      const p = path[vertexIndex];
+      return [p[0] + mx * miterLen, p[1] + my * miterLen, p[0] - mx * miterLen, p[1] - my * miterLen];
+    };
+
+    const endpointOffsets = (
+      vertexIndex: number,
+      segmentIndex: number,
+      prevSeg: number,
+      nextSeg: number,
+      canJoin: boolean,
+    ): [number, number, number, number] => {
+      if (canJoin) {
+        const miter = miterOffsetsAt(vertexIndex, prevSeg, nextSeg);
+        if (miter) return miter;
+      }
+
+      const p = path[vertexIndex];
+      const nx = normalX[segmentIndex] * half;
+      const ny = normalY[segmentIndex] * half;
+      return [p[0] + nx, p[1] + ny, p[0] - nx, p[1] - ny];
+    };
+
+    for (let seg = 0; seg < segCount; seg++) {
+      const startIndex = seg;
+      const endIndex = (seg + 1) % n;
+
+      const startCanJoin = isClosed || startIndex > 0;
+      const startPrevSeg = (seg - 1 + segCount) % segCount;
+      const start = endpointOffsets(startIndex, seg, startPrevSeg, seg, startCanJoin);
+
+      const endCanJoin = isClosed || endIndex < n - 1;
+      const endNextSeg = (seg + 1) % segCount;
+      const end = endpointOffsets(endIndex, seg, seg, endNextSeg, endCanJoin);
+
+      this._pushTriangleVertices(start[0], start[1], start[2], start[3], end[2], end[3], color);
+      this._pushTriangleVertices(start[0], start[1], end[2], end[3], end[0], end[1], color);
+    }
+
+    const emitJoin = (vertexIndex: number, prevSeg: number, nextSeg: number): void => {
+      if (miterOffsetsAt(vertexIndex, prevSeg, nextSeg)) return;
+
+      const cross = dirX[prevSeg] * dirY[nextSeg] - dirY[prevSeg] * dirX[nextSeg];
+      const dot = dirX[prevSeg] * dirX[nextSeg] + dirY[prevSeg] * dirY[nextSeg];
+      if (Math.abs(cross) < 1e-4 && dot > 0) return;
+
+      const turnSign = cross >= 0 ? 1 : -1;
+      const outerSide = cross >= 0 ? -1 : 1;
+      const fromX = normalX[prevSeg] * half * outerSide;
+      const fromY = normalY[prevSeg] * half * outerSide;
+      const toX = normalX[nextSeg] * half * outerSide;
+      const toY = normalY[nextSeg] * half * outerSide;
+      const p = path[vertexIndex];
+
+      if (joinMode === this.ROUND) {
+        this._emitRoundJoin(p, fromX, fromY, toX, toY, half, turnSign, color);
+        return;
+      }
+
+      this._pushTriangleVertices(p[0], p[1], p[0] + fromX, p[1] + fromY, p[0] + toX, p[1] + toY, color);
+    };
+
+    const joinCount = isClosed ? n : Math.max(0, n - 2);
+    for (let i = 0; i < joinCount; i++) {
+      const vertexIndex = isClosed ? i : i + 1;
+      const prevSeg = (vertexIndex - 1 + segCount) % segCount;
+      const nextSeg = vertexIndex % segCount;
+      emitJoin(vertexIndex, prevSeg, nextSeg);
+    }
+
+    if (!isClosed) {
+      if (this._state.strokeCap === this.ROUND) {
+        const d0 = normalize(path[1][0] - path[0][0], path[1][1] - path[0][1]);
+        const d1 = normalize(path[n - 1][0] - path[n - 2][0], path[n - 1][1] - path[n - 2][1]);
+        this._emitRoundCap(path[0], [-d0[0], -d0[1]], half, color);
+        this._emitRoundCap(path[n - 1], [d1[0], d1[1]], half, color);
+      }
+    }
+
+    if (useStencilStroke) {
+      this._ensureBatch(blend, false, "stencilStrokeCover");
+      this._pushCoverQuad(coverMinX, coverMinY, coverMaxX, coverMaxY, color);
+    }
+  }
+
+  private _shouldUseStencilStroke(closed: boolean, segmentCount: number, color: ColorTuple): boolean {
+    if (!ENABLE_STENCIL_STROKES) return false;
+    if (this._state.eraseMode || this._stencilUnavailable) return false;
+    if (color[3] < 0.999) return true;
+    return closed && segmentCount >= STENCIL_STROKE_SEGMENT_THRESHOLD;
+  }
+
+  private _pushCoverQuad(minX: number, minY: number, maxX: number, maxY: number, color: ColorTuple): void {
+    if (
+      !Number.isFinite(minX) ||
+      !Number.isFinite(minY) ||
+      !Number.isFinite(maxX) ||
+      !Number.isFinite(maxY) ||
+      maxX <= minX ||
+      maxY <= minY
+    ) {
+      return;
+    }
+
+    this._pushTriangleVertices(minX, minY, maxX, minY, maxX, maxY, color);
+    this._pushTriangleVertices(minX, minY, maxX, maxY, minX, maxY, color);
+  }
+
+  private _emitRoundJoin(center: Vec2, fromX: number, fromY: number, toX: number, toY: number, radius: number, sign: number, color: ColorTuple): void {
+    let a0 = Math.atan2(fromY, fromX);
+    let a1 = Math.atan2(toY, toX);
+
+    if (sign > 0) {
+      while (a1 < a0) a1 += Math.PI * 2;
+    } else {
+      while (a1 > a0) a1 -= Math.PI * 2;
+    }
+
+    const delta = a1 - a0;
+    const arcLen = Math.abs(delta) * radius;
+    const steps = Math.min(64, Math.max(2, Math.ceil(arcLen / 3)));
+    const cx = center[0], cy = center[1];
+
+    let prevX = cx + Math.cos(a0) * radius;
+    let prevY = cy + Math.sin(a0) * radius;
+    for (let i = 1; i <= steps; i++) {
+      const angle = a0 + (delta * i) / steps;
+      const nextX = cx + Math.cos(angle) * radius;
+      const nextY = cy + Math.sin(angle) * radius;
+      this._pushTriangleVertices(cx, cy, prevX, prevY, nextX, nextY, color);
+      prevX = nextX;
+      prevY = nextY;
+    }
+  }
+
+  private _emitRoundCap(center: Vec2, dir: Vec2, radius: number, color: ColorTuple): void {
+    const base = Math.atan2(dir[1], dir[0]);
+    const start = base - Math.PI * 0.5;
+    const end = base + Math.PI * 0.5;
+    const steps = this.optimizedMode
+      ? Math.min(64, Math.max(4, Math.ceil((Math.PI * radius) / 6)))
+      : Math.min(128, Math.max(8, Math.ceil((Math.PI * radius) / 3)));
+    const cx = center[0], cy = center[1];
+
+    let prevX = cx + Math.cos(start) * radius;
+    let prevY = cy + Math.sin(start) * radius;
+    for (let i = 1; i <= steps; i++) {
+      const angle = start + ((end - start) * i) / steps;
+      const nextX = cx + Math.cos(angle) * radius;
+      const nextY = cy + Math.sin(angle) * radius;
+      this._pushTriangleVertices(cx, cy, prevX, prevY, nextX, nextY, color);
+      prevX = nextX;
+      prevY = nextY;
+    }
+  }
+
+  /**
+   * Wang's formula for cubic bezier subdivision count.
+   * Returns the number of line segments needed to approximate the cubic bezier
+   * within CURVE_TOLERANCE pixels of the true curve.
+   */
+  private _wangCubicSegments(b0: Vec2, b1: Vec2, b2: Vec2, b3: Vec2): number {
+    const dx1 = b2[0] - 2 * b1[0] + b0[0];
+    const dy1 = b2[1] - 2 * b1[1] + b0[1];
+    const dx2 = b3[0] - 2 * b2[0] + b1[0];
+    const dy2 = b3[1] - 2 * b2[1] + b1[1];
+    const maxDeviation = Math.max(Math.hypot(dx1, dy1), Math.hypot(dx2, dy2));
+    if (maxDeviation <= EPS) return CURVE_MIN_SEGMENTS;
+    const strokeHalf = this._state.strokeWeight * this._estimatedStrokeScale() * 0.5;
+    const tol = Math.min(CURVE_TOLERANCE, Math.max(0.05, strokeHalf * 0.1));
+    const n = Math.ceil(Math.sqrt(Math.sqrt(3.0 / 8.0) * maxDeviation / tol));
+    return Math.max(CURVE_MIN_SEGMENTS, Math.min(n, CURVE_MAX_SEGMENTS));
+  }
+
+  /**
+   * Wang's formula for quadratic bezier subdivision count.
+   */
+  private _wangQuadraticSegments(p0: Vec2, p1: Vec2, p2: Vec2): number {
+    const dx = p2[0] - 2 * p1[0] + p0[0];
+    const dy = p2[1] - 2 * p1[1] + p0[1];
+    const maxDeviation = Math.hypot(dx, dy);
+    if (maxDeviation <= EPS) return CURVE_MIN_SEGMENTS;
+    const strokeHalf = this._state.strokeWeight * this._estimatedStrokeScale() * 0.5;
+    const tol = Math.min(CURVE_TOLERANCE, Math.max(0.05, strokeHalf * 0.1));
+    const n = Math.ceil(Math.sqrt(Math.sqrt(1.0 / 8.0) * maxDeviation / tol));
+    return Math.max(CURVE_MIN_SEGMENTS, Math.min(n, CURVE_MAX_SEGMENTS));
+  }
+
+  /**
+   * Converts 4 Catmull-Rom control points to 4 cubic bezier control points.
+   * Uses the standard p5.js v2 catmullRomToBezier conversion.
+   */
+  private _catmullRomToBezier(
+    p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, tightness: number
+  ): [Vec2, Vec2, Vec2, Vec2] {
+    const s = (1 - tightness) / 6;
+    const b0: Vec2 = [p1[0], p1[1]];
+    const b1: Vec2 = [p1[0] + (p2[0] - p0[0]) * s, p1[1] + (p2[1] - p0[1]) * s];
+    const b2: Vec2 = [p2[0] + (p1[0] - p3[0]) * s, p2[1] + (p1[1] - p3[1]) * s];
+    const b3: Vec2 = [p2[0], p2[1]];
+    return [b0, b1, b2, b3];
+  }
+
+  private _sampleCubicBezier(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, segments: number): Vec2[] {
+    const steps = Math.max(2, Math.floor(segments));
+    const out: Vec2[] = [];
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const mt = 1 - t;
+      const x = mt * mt * mt * p0[0]
+        + 3 * mt * mt * t * p1[0]
+        + 3 * mt * t * t * p2[0]
+        + t * t * t * p3[0];
+      const y = mt * mt * mt * p0[1]
+        + 3 * mt * mt * t * p1[1]
+        + 3 * mt * t * t * p2[1]
+        + t * t * t * p3[1];
+      out.push([x, y]);
+    }
+    return out;
+  }
+
+  private _sampleQuadraticBezier(p0: Vec2, p1: Vec2, p2: Vec2, segments: number): Vec2[] {
+    const steps = Math.max(2, Math.floor(segments));
+    const out: Vec2[] = [];
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const mt = 1 - t;
+      const x = mt * mt * p0[0] + 2 * mt * t * p1[0] + t * t * p2[0];
+      const y = mt * mt * p0[1] + 2 * mt * t * p1[1] + t * t * p2[1];
+      out.push([x, y]);
+    }
+    return out;
+  }
+
+  private _sampleCatmullRom(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, segments: number, tightness: number): Vec2[] {
+    const steps = Math.max(2, Math.floor(segments));
+    const t = (1 - tightness) * 0.5;
+    const out: Vec2[] = [];
+
+    for (let i = 0; i <= steps; i++) {
+      const u = i / steps;
+      const u2 = u * u;
+      const u3 = u2 * u;
+
+      const a0 = -t * u3 + 2 * t * u2 - t * u;
+      const a1 = (2 - t) * u3 + (t - 3) * u2 + 1;
+      const a2 = (t - 2) * u3 + (3 - 2 * t) * u2 + t * u;
+      const a3 = t * u3 - t * u2;
+
+      const x = a0 * p0[0] + a1 * p1[0] + a2 * p2[0] + a3 * p3[0];
+      const y = a0 * p0[1] + a1 * p1[1] + a2 * p2[1] + a3 * p3[1];
+      out.push([x, y]);
+    }
+
+    return out;
+  }
+
+  private _effectiveFillColor(): ColorTuple {
+    if (!this._state.eraseMode) return this._state.fillColor;
+    const alpha = 1 - this._state.eraseFillStrength / 255;
+    return [0, 0, 0, clamp(alpha)];
+  }
+
+  private _effectiveStrokeColor(): ColorTuple {
+    if (!this._state.eraseMode) return this._state.strokeColor;
+    const alpha = 1 - this._state.eraseStrokeStrength / 255;
+    return [0, 0, 0, clamp(alpha)];
+  }
+
+  private _currentBlendMode(): number {
+    if (this._state.eraseMode) return this.REPLACE;
+    return this._state.blendMode;
+  }
+
+  private _estimatedStrokeScale(): number {
+    const m = this._state.matrix;
+    const sx = Math.hypot(m[0], m[1]);
+    const sy = Math.hypot(m[2], m[3]);
+    return Math.max(0.0001, (sx + sy) * 0.5);
+  }
+
+  private _ensureBatch(blendMode: number, isText: boolean, kind?: DrawBatchKind): void {
+    const batchKind = kind ?? (isText ? "text" : "geom");
+    const batch = this._batches[this._batches.length - 1];
+    if (!batch || batch.blendMode !== blendMode || batch.isText !== isText || batch.kind !== batchKind) {
+      const startVertex = isText ? this._textVertexCount : this._geomVertexCount;
+      this._batches.push({ kind: batchKind, startVertex, vertexCount: 0, blendMode, isText });
+    }
+  }
+
+  private _ensureGeomStagingCapacity(floatsNeeded: number): void {
+    const required = this._geomStagingCursor + floatsNeeded;
+    if (required <= this._geomStagingBuffer.length) return;
+    let newSize = this._geomStagingBuffer.length;
+    while (newSize < required) newSize *= 2;
+    const newBuf = new Float32Array(newSize);
+    newBuf.set(this._geomStagingBuffer);
+    this._geomStagingBuffer = newBuf;
+  }
+
+  private _pushVertex(x: number, y: number, color: ColorTuple): void {
+    this._ensureGeomStagingCapacity(GEOM_FLOATS_PER_VERTEX);
+    const c = this._geomStagingCursor;
+    this._geomStagingBuffer[c] = x;
+    this._geomStagingBuffer[c + 1] = y;
+    this._geomStagingBuffer[c + 2] = color[0];
+    this._geomStagingBuffer[c + 3] = color[1];
+    this._geomStagingBuffer[c + 4] = color[2];
+    this._geomStagingBuffer[c + 5] = color[3];
+    this._geomStagingCursor = c + GEOM_FLOATS_PER_VERTEX;
+    this._geomVertexCount += 1;
+    const batch = this._batches[this._batches.length - 1];
+    if (batch) batch.vertexCount += 1;
+  }
+
+  /** Push a full triangle (3 vertices) in one call — avoids per-vertex overhead. */
+  private _pushTriangleVertices(
+    ax: number, ay: number,
+    bx: number, by: number,
+    cx: number, cy: number,
+    color: ColorTuple,
+  ): void {
+    this._ensureGeomStagingCapacity(GEOM_FLOATS_PER_VERTEX * 3);
+    const buf = this._geomStagingBuffer;
+    const r = color[0], g = color[1], b = color[2], a = color[3];
+    let c = this._geomStagingCursor;
+    buf[c] = ax; buf[c+1] = ay; buf[c+2] = r; buf[c+3] = g; buf[c+4] = b; buf[c+5] = a;
+    c += 6;
+    buf[c] = bx; buf[c+1] = by; buf[c+2] = r; buf[c+3] = g; buf[c+4] = b; buf[c+5] = a;
+    c += 6;
+    buf[c] = cx; buf[c+1] = cy; buf[c+2] = r; buf[c+3] = g; buf[c+4] = b; buf[c+5] = a;
+    this._geomStagingCursor = c + 6;
+    this._geomVertexCount += 3;
+    this._batches[this._batches.length - 1].vertexCount += 3;
+  }
+
+  private _pushTextVertex(x: number, y: number, u: number, v: number, color: ColorTuple): void {
+    this._textVertices.push(x, y, u, v, color[0], color[1], color[2], color[3]);
+    this._textVertexCount += 1;
+    const batch = this._batches[this._batches.length - 1];
+    if (batch) batch.vertexCount += 1;
+  }
+
+  private _rescaleBufferedTextUVs(scale: number): void {
+    if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return;
+    for (let i = 2; i < this._textVertices.length; i += 8) {
+      this._textVertices[i] *= scale;
+      this._textVertices[i + 1] *= scale;
+    }
+  }
+
+  private _ensureGeomVertexBuffer(requiredBytes: number): void {
+    if (this._geomVertexBuffer && requiredBytes <= this._geomVertexBufferCapacityBytes) return;
+
+    const newSize = Math.max(requiredBytes, Math.ceil(this._geomVertexBufferCapacityBytes * 1.5), 64 * 1024);
+    try { this._geomVertexBuffer?.destroy(); } catch (_) { /* ignore */ }
+
+    this._geomVertexBuffer = this.device.createBuffer({
+      size: newSize,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    this._geomVertexBufferCapacityBytes = newSize;
+  }
+
+  private _ensureTextVertexBuffer(requiredBytes: number): void {
+    if (this._textVertexBuffer && requiredBytes <= this._textVertexBufferCapacityBytes) return;
+
+    const newSize = Math.max(requiredBytes, Math.ceil(this._textVertexBufferCapacityBytes * 1.5), 64 * 1024);
+    try { this._textVertexBuffer?.destroy(); } catch (_) { /* ignore */ }
+
+    this._textVertexBuffer = this.device.createBuffer({
+      size: newSize,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    this._textVertexBufferCapacityBytes = newSize;
+  }
+
+  private _ensureStencilTexture(sampleCount: number): GPUTexture | null {
+    if (this._stencilUnavailable) return null;
+    if (
+      this._stencilTexture &&
+      this._stencilTextureSampleCount === sampleCount
+    ) {
+      return this._stencilTexture;
+    }
+
+    try { this._stencilTexture?.destroy(); } catch (_) { /* ignore */ }
+    this._stencilTexture = null;
+    this._stencilTextureSampleCount = 0;
+
+    try {
+      const texture = this.device.createTexture({
+        size: { width: this.width, height: this.height },
+        sampleCount,
+        format: STENCIL_TEXTURE_FORMAT,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      this._stencilTexture = texture;
+      this._stencilTextureSampleCount = sampleCount;
+      return texture;
+    } catch (_) {
+      this._stencilUnavailable = true;
+      return null;
+    }
+  }
+
+  private _stencilRenderPassAttachment(view: GPUTextureView): GPURenderPassDepthStencilAttachment {
+    return {
+      view,
+      depthLoadOp: "clear",
+      depthStoreOp: "discard",
+      depthClearValue: 1,
+      stencilLoadOp: "clear",
+      stencilStoreOp: "store",
+      stencilClearValue: 0,
+    };
+  }
+
+  private _getStrokeStencilPipeline(sampleCount: number): GPURenderPipeline {
+    const cacheKey = `${sampleCount}`;
+    const existing = this._strokeStencilPipelineCache.get(cacheKey);
+    if (existing) return existing;
+
+    const pipeline = this.device.createRenderPipeline({
+      layout: this._geomPipelineLayout,
+      vertex: {
+        module: this._geomShaderModule,
+        entryPoint: "vsMain",
+        buffers: [
+          {
+            arrayStride: GEOM_BYTES_PER_VERTEX,
+            stepMode: "vertex",
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x2" },
+              { shaderLocation: 1, offset: 8, format: "float32x4" },
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module: this._geomShaderModule,
+        entryPoint: "fsMain",
+        targets: [
+          {
+            format: this.format,
+            writeMask: 0,
+          },
+        ],
+      },
+      primitive: {
+        topology: "triangle-list",
+      },
+      depthStencil: {
+        format: STENCIL_TEXTURE_FORMAT,
+        depthCompare: "always",
+        depthWriteEnabled: false,
+        stencilFront: { compare: "always", passOp: "replace" },
+        stencilBack: { compare: "always", passOp: "replace" },
+        stencilReadMask: 0xff,
+        stencilWriteMask: 0xff,
+      },
+      multisample: {
+        count: sampleCount,
+      },
+    });
+
+    this._strokeStencilPipelineCache.set(cacheKey, pipeline);
+    return pipeline;
+  }
+
+  private _getStencilCoverPipeline(mode: number, sampleCount: number): GPURenderPipeline {
+    const cacheKey = `${mode}:${sampleCount}`;
+    const existing = this._stencilCoverPipelineCache.get(cacheKey);
+    if (existing) return existing;
+
+    const pipeline = this.device.createRenderPipeline({
+      layout: this._geomPipelineLayout,
+      vertex: {
+        module: this._geomShaderModule,
+        entryPoint: "vsMain",
+        buffers: [
+          {
+            arrayStride: GEOM_BYTES_PER_VERTEX,
+            stepMode: "vertex",
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x2" },
+              { shaderLocation: 1, offset: 8, format: "float32x4" },
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module: this._geomShaderModule,
+        entryPoint: "fsMain",
+        targets: [
+          {
+            format: this.format,
+            blend: resolveBlendState(mode),
+            writeMask: GPUColorWrite.ALL,
+          },
+        ],
+      },
+      primitive: {
+        topology: "triangle-list",
+      },
+      depthStencil: {
+        format: STENCIL_TEXTURE_FORMAT,
+        depthCompare: "always",
+        depthWriteEnabled: false,
+        stencilFront: { compare: "equal", passOp: "zero" },
+        stencilBack: { compare: "equal", passOp: "zero" },
+        stencilReadMask: 0xff,
+        stencilWriteMask: 0xff,
+      },
+      multisample: {
+        count: sampleCount,
+      },
+    });
+
+    this._stencilCoverPipelineCache.set(cacheKey, pipeline);
+    return pipeline;
+  }
+
+  private _getFillStencilPipeline(sampleCount: number): GPURenderPipeline {
+    const cacheKey = `${sampleCount}`;
+    const existing = this._fillStencilPipelineCache.get(cacheKey);
+    if (existing) return existing;
+
+    const pipeline = this.device.createRenderPipeline({
+      layout: this._geomPipelineLayout,
+      vertex: {
+        module: this._geomShaderModule,
+        entryPoint: "vsMain",
+        buffers: [
+          {
+            arrayStride: GEOM_BYTES_PER_VERTEX,
+            stepMode: "vertex",
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x2" },
+              { shaderLocation: 1, offset: 8, format: "float32x4" },
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module: this._geomShaderModule,
+        entryPoint: "fsMain",
+        targets: [
+          {
+            format: this.format,
+            writeMask: 0,
+          },
+        ],
+      },
+      primitive: {
+        topology: "triangle-list",
+      },
+      depthStencil: {
+        format: STENCIL_TEXTURE_FORMAT,
+        depthCompare: "always",
+        depthWriteEnabled: false,
+        stencilFront: { compare: "always", passOp: "increment-wrap" },
+        stencilBack: { compare: "always", passOp: "decrement-wrap" },
+        stencilReadMask: 0xff,
+        stencilWriteMask: 0xff,
+      },
+      multisample: {
+        count: sampleCount,
+      },
+    });
+
+    this._fillStencilPipelineCache.set(cacheKey, pipeline);
+    return pipeline;
+  }
+
+  private _getFillCoverPipeline(mode: number, sampleCount: number): GPURenderPipeline {
+    const cacheKey = `${mode}:${sampleCount}`;
+    const existing = this._fillCoverPipelineCache.get(cacheKey);
+    if (existing) return existing;
+
+    const pipeline = this.device.createRenderPipeline({
+      layout: this._geomPipelineLayout,
+      vertex: {
+        module: this._geomShaderModule,
+        entryPoint: "vsMain",
+        buffers: [
+          {
+            arrayStride: GEOM_BYTES_PER_VERTEX,
+            stepMode: "vertex",
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x2" },
+              { shaderLocation: 1, offset: 8, format: "float32x4" },
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module: this._geomShaderModule,
+        entryPoint: "fsMain",
+        targets: [
+          {
+            format: this.format,
+            blend: resolveBlendState(mode),
+            writeMask: GPUColorWrite.ALL,
+          },
+        ],
+      },
+      primitive: {
+        topology: "triangle-list",
+      },
+      depthStencil: {
+        format: STENCIL_TEXTURE_FORMAT,
+        depthCompare: "always",
+        depthWriteEnabled: false,
+        stencilFront: { compare: "not-equal", passOp: "zero" },
+        stencilBack: { compare: "not-equal", passOp: "zero" },
+        stencilReadMask: 0xff,
+        stencilWriteMask: 0xff,
+      },
+      multisample: {
+        count: sampleCount,
+      },
+    });
+
+    this._fillCoverPipelineCache.set(cacheKey, pipeline);
+    return pipeline;
+  }
+
+  private _getGeomPipeline(mode: number, sampleCount: number): GPURenderPipeline {
+    const cacheKey = `${mode}:${sampleCount}`;
+    const existing = this._geomPipelineCache.get(cacheKey);
+    if (existing) return existing;
+
+    const pipeline = this.device.createRenderPipeline({
+      layout: this._geomPipelineLayout,
+      vertex: {
+        module: this._geomShaderModule,
+        entryPoint: "vsMain",
+        buffers: [
+          {
+            arrayStride: GEOM_BYTES_PER_VERTEX,
+            stepMode: "vertex",
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x2" },
+              { shaderLocation: 1, offset: 8, format: "float32x4" },
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module: this._geomShaderModule,
+        entryPoint: "fsMain",
+        targets: [
+          {
+            format: this.format,
+            blend: resolveBlendState(mode),
+            writeMask: GPUColorWrite.ALL,
+          },
+        ],
+      },
+      primitive: {
+        topology: "triangle-list",
+      },
+      multisample: {
+        count: sampleCount,
+      },
+    });
+
+    this._geomPipelineCache.set(cacheKey, pipeline);
+    return pipeline;
+  }
+
+  private _getTextPipeline(mode: number, sampleCount: number, image = false): GPURenderPipeline {
+    const cacheKey = `${mode}:${sampleCount}:${image}`;
+    const existing = this._textPipelineCache.get(cacheKey);
+    if (existing) return existing;
+
+    const pipeline = this.device.createRenderPipeline({
+      layout: this._textPipelineLayout,
+      vertex: {
+        module: image ? this._imageShaderModule : this._textShaderModule,
+        entryPoint: "vsText",
+        buffers: [
+          {
+            arrayStride: TEXT_BYTES_PER_VERTEX,
+            stepMode: "vertex",
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x2" },
+              { shaderLocation: 1, offset: 8, format: "float32x2" },
+              { shaderLocation: 2, offset: 16, format: "float32x4" },
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module: image ? this._imageShaderModule : this._textShaderModule,
+        entryPoint: "fsText",
+        targets: [
+          {
+            format: this.format,
+            blend: resolveBlendState(mode),
+            writeMask: GPUColorWrite.ALL,
+          },
+        ],
+      },
+      primitive: {
+        topology: "triangle-list",
+      },
+      multisample: {
+        count: sampleCount,
+      },
+    });
+
+    this._textPipelineCache.set(cacheKey, pipeline);
+    return pipeline;
+  }
+}
