@@ -1,6 +1,10 @@
 # avTools Sketch example
 
-`Sketch.tox` is a self-contained TouchDesigner component kept beside the C++ TOP
+**Open `Sketch.toe` to run the example.** It is a standalone TouchDesigner project
+with the network and a live output preview. Its embedded startup script finds this
+checkout's built plugin automatically; no Textport commands are required.
+
+`Sketch.tox` is the reusable TouchDesigner component kept beside the C++ TOP
 source. Its JavaScript, CHOP, TOP input, and two renderer instances are embedded;
 there are no machine-specific paths or external image/font dependencies in the
 fixture. The native plugin bundle is built separately and is not checked in.
@@ -8,7 +12,13 @@ fixture. The native plugin bundle is built separately and is not checked in.
 ## Open from this checkout
 
 Build the plugin using [the integration guide](../../../TOUCHDESIGNER.md), then
-run this in TouchDesigner's Textport, substituting your checkout path:
+double-click **Sketch.toe** in this directory. The plugin has already been built
+on the development machine. In a release ZIP, open `Sketch.toe` beside the supplied
+`Plugins` directory. The native plugin is a separate dependency, not embedded in
+the `.toe` or checked into Git.
+
+To add the example to an existing project instead, run this in TouchDesigner's
+Textport, substituting your checkout path:
 
 ```python
 import runpy
@@ -58,4 +68,10 @@ restore Amount=40 and CPU output, set **Plugin Path** to the literal relative
 value `Plugins/AvToolsSketch.plugin`, and save the component over `Sketch.tox`.
 Avoid a machine-specific absolute path or an expression on this exposed parameter;
 TouchEngine supplies exposed input values from their saved/default values.
-`scripts/package-td.mjs` packages this same `.tox` for users.
+To rebuild `Sketch.toe`, open TouchDesigner's empty Base project template and run
+`save_project.py` with `runpy.run_path(...)`. It imports the saved `.tox`, embeds
+`project_start.py`, sets up the preview, and saves `Sketch.toe`. The builder refuses
+to replace a nonempty `/project1`. The `.toe` runs its embedded Python; it does not
+depend on these external scripts when opened.
+
+`scripts/package-td.mjs` packages these same `.tox` and `.toe` files for users.
