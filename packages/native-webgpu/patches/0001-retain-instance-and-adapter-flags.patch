@@ -1,0 +1,99 @@
+diff --git a/src/dawn/node/binding/AsyncRunner.cpp b/src/dawn/node/binding/AsyncRunner.cpp
+index 9c16028b5..1e7136307 100644
+--- a/src/dawn/node/binding/AsyncRunner.cpp
++++ b/src/dawn/node/binding/AsyncRunner.cpp
+@@ -33,13 +33,13 @@
+ namespace wgpu::binding {
+ 
+ // static
+-std::shared_ptr<AsyncRunner> AsyncRunner::Create(dawn::native::Instance* instance) {
++std::shared_ptr<AsyncRunner> AsyncRunner::Create(std::shared_ptr<dawn::native::Instance> instance) {
+     auto runner = std::make_shared<AsyncRunner>(instance);
+     runner->weak_this_ = runner;
+     return runner;
+ }
+ 
+-AsyncRunner::AsyncRunner(dawn::native::Instance* instance) : instance_(instance) {}
++AsyncRunner::AsyncRunner(std::shared_ptr<dawn::native::Instance> instance) : instance_(instance) {}
+ 
+ void AsyncRunner::Begin(Napi::Env env) {
+     assert(tasks_waiting_ != std::numeric_limits<decltype(tasks_waiting_)>::max());
+diff --git a/src/dawn/node/binding/AsyncRunner.h b/src/dawn/node/binding/AsyncRunner.h
+index 2fe3563f3..e4e7e16a6 100644
+--- a/src/dawn/node/binding/AsyncRunner.h
++++ b/src/dawn/node/binding/AsyncRunner.h
+@@ -45,7 +45,7 @@ namespace wgpu::binding {
+ class AsyncRunner {
+   public:
+     // Creates an AsyncRunner to use to process events on the instance.
+-    static std::shared_ptr<AsyncRunner> Create(dawn::native::Instance* instance);
++    static std::shared_ptr<AsyncRunner> Create(std::shared_ptr<dawn::native::Instance> instance);
+ 
+     // Begin() should be called when a new asynchronous task is started.
+     // If the number of executing asynchronous tasks transitions from 0 to 1, then a function
+@@ -65,13 +65,13 @@ class AsyncRunner {
+     void Reject(Napi::Env env, interop::Promise<void> promise, Napi::Error error);
+ 
+     // Use AsyncRunner::Create instead of this constructor.
+-    explicit AsyncRunner(dawn::native::Instance* instance);
++    explicit AsyncRunner(std::shared_ptr<dawn::native::Instance> instance);
+ 
+   private:
+     void ScheduleProcessEvents(Napi::Env env);
+ 
+     std::weak_ptr<AsyncRunner> weak_this_;
+-    const dawn::native::Instance* const instance_;
++    const std::shared_ptr<dawn::native::Instance> instance_;
+     uint64_t tasks_waiting_ = 0;
+     bool process_events_queued_ = false;
+ };
+diff --git a/src/dawn/node/binding/GPU.cpp b/src/dawn/node/binding/GPU.cpp
+index 8bb24a52e..b7373c95b 100644
+--- a/src/dawn/node/binding/GPU.cpp
++++ b/src/dawn/node/binding/GPU.cpp
+@@ -120,9 +120,9 @@ GPU::GPU(Flags flags) : flags_(std::move(flags)) {
+ 
+     wgpu::InstanceDescriptor desc;
+     desc.nextInChain = &togglesDesc;
+-    instance_ = std::make_unique<dawn::native::Instance>(
++    instance_ = std::make_shared<dawn::native::Instance>(
+         reinterpret_cast<const WGPUInstanceDescriptor*>(&desc));
+-    async_ = AsyncRunner::Create(instance_.get());
++    async_ = AsyncRunner::Create(instance_);
+ }
+ 
+ interop::Promise<std::optional<interop::Interface<interop::GPUAdapter>>> GPU::requestAdapter(
+diff --git a/src/dawn/node/binding/GPU.h b/src/dawn/node/binding/GPU.h
+index 9345441e9..19858bb60 100644
+--- a/src/dawn/node/binding/GPU.h
++++ b/src/dawn/node/binding/GPU.h
+@@ -53,7 +53,7 @@ class GPU final : public interop::GPU {
+ 
+   private:
+     const Flags flags_;
+-    std::unique_ptr<dawn::native::Instance> instance_;
++    std::shared_ptr<dawn::native::Instance> instance_;
+     std::shared_ptr<AsyncRunner> async_;
+ };
+ 
+diff --git a/src/dawn/node/binding/GPUAdapter.h b/src/dawn/node/binding/GPUAdapter.h
+index f6b0dc0ca..5deec7a07 100644
+--- a/src/dawn/node/binding/GPUAdapter.h
++++ b/src/dawn/node/binding/GPUAdapter.h
+@@ -34,6 +34,7 @@
+ #include <string>
+ 
+ #include "src/dawn/node/binding/AsyncRunner.h"
++#include "src/dawn/node/binding/Flags.h"
+ #include "src/dawn/node/interop/NodeAPI.h"
+ #include "src/dawn/node/interop/WebGPU.h"
+ 
+@@ -55,7 +56,7 @@ class GPUAdapter final : public interop::GPUAdapter {
+ 
+   private:
+     wgpu::Adapter adapter_;
+-    const Flags& flags_;
++    const Flags flags_;
+     std::shared_ptr<AsyncRunner> async_;
+ 
+     // The adapter becomes invalid after the first successful requestDevice and all subsequent

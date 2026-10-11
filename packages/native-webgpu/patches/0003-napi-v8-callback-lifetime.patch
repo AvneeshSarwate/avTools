@@ -1,0 +1,29 @@
+diff --git a/src/dawn/node/napi_v8/napi_v8.cpp b/src/dawn/node/napi_v8/napi_v8.cpp
+index cf8fbff42..0cf1131a2 100644
+--- a/src/dawn/node/napi_v8/napi_v8.cpp
++++ b/src/dawn/node/napi_v8/napi_v8.cpp
+@@ -283,6 +283,10 @@ napi_status CreateFunctionTemplate(napi_env env,
+ 
+     v8::Local<v8::External> ext =
+         v8::External::New(env->isolate, binding_ptr, v8::kExternalPointerTypeTagDefault);
++    binding_ptr->liveness.Reset(env->isolate, ext);
++    binding_ptr->liveness.SetWeak(binding_ptr, [](const v8::WeakCallbackInfo<CallbackBinding>& info) {
++        info.GetParameter()->liveness.Reset();
++    }, v8::WeakCallbackType::kParameter);
+     auto function_template = v8::FunctionTemplate::New(env->isolate, NativeCallbackTrampoline, ext);
+     if (!name.IsEmpty() && name->IsString()) {
+         function_template->SetClassName(name.As<v8::String>());
+diff --git a/src/dawn/node/napi_v8/napi_v8.h b/src/dawn/node/napi_v8/napi_v8.h
+index 3f2f4d6ba..879ca6225 100644
+--- a/src/dawn/node/napi_v8/napi_v8.h
++++ b/src/dawn/node/napi_v8/napi_v8.h
+@@ -70,6 +70,9 @@ struct CallbackBinding {
+     napi_env env = nullptr;
+     napi_callback callback = nullptr;
+     void* user_data = nullptr;
++    // The External is retained by callable functions/templates. Weak tracking
++    // lets an embedding owner reclaim dead callback metadata between pumps.
++    v8::Global<v8::External> liveness;
+ };
+ 
+ // Internal struct representing a Node-API reference (napi_ref)

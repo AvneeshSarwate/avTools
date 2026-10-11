@@ -4,61 +4,9 @@ import { resolveAssetDir, resolveNativeLib } from "../../bundle_paths.ts";
 
 const textEncoder = new TextEncoder();
 
-export interface TextLayoutRequest {
-  text: string;
-  family: string;
-  fontSize: number;
-  lineHeight: number;
-  width: number | null;
-  height: number | null;
-  alignH: 0 | 1 | 2;
-  wrapMode: 0 | 1 | 2;
-  weight: number;
-  style: 0 | 1 | 2;
-  axisQuantization: number;
-  axes: Record<string, number>;
-  /** When true, turns off standard / contextual / discretionary ligatures
-   *  (`liga`, `clig`, `dlig`) and contextual alternates (`calt`) during
-   *  HarfBuzz shaping. Use when downstream consumers index by codepoint
-   *  (e.g. tegaki stroke-data lookup) and can't handle multi-codepoint
-   *  glyphs. Default: false (ligatures on). Required ligatures like
-   *  Arabic's `rlig` are never disabled. */
-  disableLigatures?: boolean;
-}
-
-export interface TextLayoutGlyph {
-  key: bigint;
-  x: number;
-  y: number;
-  /** UTF-8 byte offset in the source text where this glyph's cluster begins.
-   *  Multiple glyphs can share a cluster (e.g. decomposed mark + base); a
-   *  single input codepoint can also be absent from the glyph list if the
-   *  shaper collapsed it. Use this to map glyphs back to source text. */
-  cluster: number;
-}
-
-export interface TextLayoutResult {
-  glyphs: TextLayoutGlyph[];
-  tightWidth: number;
-  fontWidth: number;
-  ascent: number;
-  descent: number;
-  fontAscent: number;
-  fontDescent: number;
-  fontCapHeight: number;
-  firstBaseline: number;
-  totalHeight: number;
-  lineCount: number;
-}
-
-export interface RasterizedGlyph {
-  width: number;
-  height: number;
-  left: number;
-  top: number;
-  contentType: number;
-  pixels: Uint8Array;
-}
+import type { TextLayoutRequest, TextLayoutResult, RasterizedGlyph } from "./types.ts";
+export type { TextLayoutRequest, TextLayoutGlyph, TextLayoutResult, RasterizedGlyph } from "./types.ts";
+import { parseBinaryLayout } from "./layout.ts";
 
 export const FFI_SYMBOLS = {
   text_engine_create: { parameters: [], result: "pointer" },
@@ -157,67 +105,6 @@ function encodeString(input: string): { bytes: Uint8Array; ptr: Deno.PointerValu
   };
 }
 
-function parseBinaryLayout(buffer: Uint8Array, byteLength: number): TextLayoutResult {
-  const emptyResult: TextLayoutResult = {
-    glyphs: [],
-    tightWidth: 0,
-    fontWidth: 0,
-    ascent: 0,
-    descent: 0,
-    fontAscent: 0,
-    fontDescent: 0,
-    fontCapHeight: 0,
-    firstBaseline: 0,
-    totalHeight: 0,
-    lineCount: 0,
-  };
-
-  // Header is 44 bytes minimum
-  if (byteLength < 44) return emptyResult;
-
-  const dv = new DataView(buffer.buffer, buffer.byteOffset, byteLength);
-
-  const tightWidth = dv.getFloat32(0, true);
-  const fontWidth = dv.getFloat32(4, true);
-  const ascent = dv.getFloat32(8, true);
-  const descent = dv.getFloat32(12, true);
-  const fontAscent = dv.getFloat32(16, true);
-  const fontDescent = dv.getFloat32(20, true);
-  const fontCapHeight = dv.getFloat32(24, true);
-  const firstBaseline = dv.getFloat32(28, true);
-  const totalHeight = dv.getFloat32(32, true);
-  const lineCount = dv.getFloat32(36, true);
-  const glyphCount = dv.getUint32(40, true);
-
-  // Per-glyph record is 20 bytes: u64 key + i32 x + i32 y + u32 cluster
-  const expectedSize = 44 + glyphCount * 20;
-  if (byteLength < expectedSize) return emptyResult;
-
-  const glyphs: TextLayoutGlyph[] = new Array(glyphCount);
-  let offset = 44;
-  for (let i = 0; i < glyphCount; i++) {
-    const key = dv.getBigUint64(offset, true);
-    const x = dv.getInt32(offset + 8, true);
-    const y = dv.getInt32(offset + 12, true);
-    const cluster = dv.getUint32(offset + 16, true);
-    glyphs[i] = { key, x, y, cluster };
-    offset += 20;
-  }
-
-  return {
-    glyphs,
-    tightWidth,
-    fontWidth,
-    ascent,
-    descent,
-    fontAscent,
-    fontDescent,
-    fontCapHeight,
-    firstBaseline,
-    totalHeight,
-    lineCount,
-  };
-}
 
 export class NativeTextEngine {
   private readonly _lib: TextEngineLibrary;

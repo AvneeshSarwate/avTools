@@ -1,6 +1,8 @@
 /// <reference lib="dom" />
 
 export interface DrawingAPI {
+  readonly width: number;
+  readonly height: number;
   background(v1: unknown, v2?: unknown, v3?: unknown, a?: unknown): void;
   clear(): void;
 

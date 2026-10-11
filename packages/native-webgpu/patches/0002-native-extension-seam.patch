@@ -1,0 +1,52 @@
+diff --git a/src/dawn/node/CMakeLists.txt b/src/dawn/node/CMakeLists.txt
+index f28474bfa..4d93ab007 100644
+--- a/src/dawn/node/CMakeLists.txt
++++ b/src/dawn/node/CMakeLists.txt
+@@ -195,3 +195,9 @@ endmacro()
+ 
+ javascript("index.js")
+ javascript("cts.cjs")
++
++# avTools keeps platform interop outside the upstream binding implementation.
++if(AVTOOLS_NATIVE_DIR)
++    target_compile_definitions(dawn_node PRIVATE AVTOOLS_NATIVE_EXTENSION=1)
++    include("${AVTOOLS_NATIVE_DIR}/DawnExtension.cmake")
++endif()
+diff --git a/src/dawn/node/Module.cpp b/src/dawn/node/Module.cpp
+index cb70833c7..701e367a7 100644
+--- a/src/dawn/node/Module.cpp
++++ b/src/dawn/node/Module.cpp
+@@ -43,6 +43,10 @@ int __llvm_profile_write_file(void);
+ }
+ #endif  // DAWN_EMIT_COVERAGE
+ 
++#ifdef AVTOOLS_NATIVE_EXTENSION
++void InitializeAvTools(Napi::Env env, Napi::Object exports);
++#endif
++
+ namespace {
+ 
+ Napi::Value CreateGPU(const Napi::CallbackInfo& info) {
+@@ -121,6 +125,9 @@ NAPI_MODULE_EXPORT Napi::Object Initialize(Napi::Env env, Napi::Object exports)
+     exports.Set(Napi::String::New(env, "coverage"), coverage_provider);
+ #endif  // DAWN_EMIT_COVERAGE
+ 
++#ifdef AVTOOLS_NATIVE_EXTENSION
++    InitializeAvTools(env, exports);
++#endif
+     return exports;
+ }
+ 
+diff --git a/src/dawn/node/binding/GPUDevice.h b/src/dawn/node/binding/GPUDevice.h
+index 5e048d595..98cbadc63 100644
+--- a/src/dawn/node/binding/GPUDevice.h
++++ b/src/dawn/node/binding/GPUDevice.h
+@@ -62,6 +62,8 @@ class GPUDevice final : public interop::GPUDevice, EventTarget {
+               std::shared_ptr<AsyncRunner> async);
+     ~GPUDevice() override;
+ 
++    const wgpu::Device& GetNativeDevice() const { return device_; }
++
+     void ForceLoss(wgpu::DeviceLostReason reason, const char* message);
+ 
+     // interop::GPUDevice interface compliance
