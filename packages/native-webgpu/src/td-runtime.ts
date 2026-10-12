@@ -18,7 +18,7 @@ const message=(error:any)=>String(error?.stack??error);
 g.__avDone=false;g.__avError='';g.__avBytes=null;g.__avPulseNames='[]';g.__avSyphonClients=0;g.__avSyphonPublished=0;g.__avSyphonDropped=0;
 let syphon:any,syphonName='';
 (async()=>{
-  const gpu=nativeGPU.create(['backend=metal']);
+  const gpu=nativeGPU.create(['backend=metal','avtools-event-driven=1']);
   const adapter=await gpu.requestAdapter();if(!adapter)throw new Error('No Metal adapter');
   device=await adapter.requestDevice();
   device.addEventListener('uncapturederror',event=>{g.__avError=event.error.message;blocked=true;});

@@ -28,6 +28,9 @@ if(out('git',['rev-parse','HEAD'],resolve(dawn,'build'))!==manifest.embedding.ch
 const napiPatch=resolve(root,'patches/0003-napi-v8-callback-lifetime.patch');
 try{execFileSync('git',['apply','--reverse','--check',napiPatch],{cwd:dawn,stdio:'pipe'});}
 catch{run('git',['apply',napiPatch],dawn);}
+const eventPatch=resolve(root,'patches/0004-embedded-event-driven-wait.patch');
+try{execFileSync('git',['apply','--reverse','--check',eventPatch],{cwd:dawn,stdio:'pipe'});}
+catch{run('git',['apply',eventPatch],dawn);}
 const patch=resolve(root,'patches/embedding-clt-sdk.patch');
 try{execFileSync('git',['apply','--reverse','--check',patch],{cwd:resolve(dawn,'build'),stdio:'pipe'});}
 catch{run('git',['apply',patch],resolve(dawn,'build'));}

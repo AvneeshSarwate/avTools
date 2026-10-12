@@ -1,0 +1,215 @@
+--- a/src/dawn/node/binding/AsyncRunner.h
++++ b/src/dawn/node/binding/AsyncRunner.h
+@@ -33,6 +33,7 @@
+ 
+ #include <memory>
+ #include <utility>
++#include <vector>
+ 
+ #include "dawn/native/DawnNative.h"
+ #include "src/dawn/node/interop/Core.h"
+@@ -45,7 +46,7 @@
+ class AsyncRunner {
+   public:
+     // Creates an AsyncRunner to use to process events on the instance.
+-    static std::shared_ptr<AsyncRunner> Create(std::shared_ptr<dawn::native::Instance> instance);
++    static std::shared_ptr<AsyncRunner> Create(std::shared_ptr<dawn::native::Instance> instance, bool eventDriven = false);
+ 
+     // Begin() should be called when a new asynchronous task is started.
+     // If the number of executing asynchronous tasks transitions from 0 to 1, then a function
+@@ -65,7 +66,9 @@
+     void Reject(Napi::Env env, interop::Promise<void> promise, Napi::Error error);
+ 
+     // Use AsyncRunner::Create instead of this constructor.
+-    explicit AsyncRunner(std::shared_ptr<dawn::native::Instance> instance);
++    explicit AsyncRunner(std::shared_ptr<dawn::native::Instance> instance, bool eventDriven = false);
++
++    void TrackFuture(wgpu::Future future);
+ 
+   private:
+     void ScheduleProcessEvents(Napi::Env env);
+@@ -74,6 +77,8 @@
+     const std::shared_ptr<dawn::native::Instance> instance_;
+     uint64_t tasks_waiting_ = 0;
+     bool process_events_queued_ = false;
++    bool event_driven_ = false;
++    std::vector<WGPUFutureWaitInfo> futures_;
+ };
+ 
+ // Whether an asynchronous task needs wgpuInstanceProcessEvents() to be called in order to make
+--- a/src/dawn/node/binding/AsyncRunner.cpp
++++ b/src/dawn/node/binding/AsyncRunner.cpp
+@@ -28,18 +28,24 @@
+ #include "src/dawn/node/binding/AsyncRunner.h"
+ 
+ #include <cassert>
++#include <algorithm>
+ #include <limits>
+ 
+ namespace wgpu::binding {
+ 
+ // static
+-std::shared_ptr<AsyncRunner> AsyncRunner::Create(std::shared_ptr<dawn::native::Instance> instance) {
+-    auto runner = std::make_shared<AsyncRunner>(instance);
++std::shared_ptr<AsyncRunner> AsyncRunner::Create(std::shared_ptr<dawn::native::Instance> instance, bool eventDriven) {
++    auto runner = std::make_shared<AsyncRunner>(instance, eventDriven);
+     runner->weak_this_ = runner;
+     return runner;
+ }
+ 
+-AsyncRunner::AsyncRunner(std::shared_ptr<dawn::native::Instance> instance) : instance_(instance) {}
++AsyncRunner::AsyncRunner(std::shared_ptr<dawn::native::Instance> instance, bool eventDriven)
++    : instance_(instance), event_driven_(eventDriven) {}
++
++void AsyncRunner::TrackFuture(wgpu::Future future) {
++    if (event_driven_) futures_.push_back({{future.id}, false});
++}
+ 
+ void AsyncRunner::Begin(Napi::Env env) {
+     assert(tasks_waiting_ != std::numeric_limits<decltype(tasks_waiting_)>::max());
+@@ -78,6 +84,19 @@
+                                     }
+ 
+                                     self->process_events_queued_ = false;
++                                    if (self->event_driven_ && !self->futures_.empty()) {
++                                        // Embedded owner thread only. WaitAny invokes JS callbacks on
++                                        // this thread, never on Dawn's Metal completion thread. Bound
++                                        // the wait so the host can enforce its async deadline.
++                                        auto futures = std::move(self->futures_);
++                                        const auto status = wgpuInstanceWaitAny(self->instance_->Get(),
++                                            std::min<size_t>(64, futures.size()), futures.data(), 100000000);
++                                        if (status != WGPUWaitStatus_Success && status != WGPUWaitStatus_TimedOut) {
++                                            Napi::Error::New(env, "Dawn WaitAny failed").ThrowAsJavaScriptException();
++                                            return;
++                                        }
++                                        for (auto f : futures) if (!f.completed) self->futures_.push_back(f);
++                                    }
+                                     wgpuInstanceProcessEvents(self->instance_->Get());
+                                     self->ScheduleProcessEvents(env);
+                                 }),
+--- a/src/dawn/node/binding/GPU.cpp
++++ b/src/dawn/node/binding/GPU.cpp
+@@ -120,9 +120,12 @@
+ 
+     wgpu::InstanceDescriptor desc;
+     desc.nextInChain = &togglesDesc;
++    const bool eventDriven = flags_.Get("avtools-event-driven") == "1";
++    const auto timedWait = wgpu::InstanceFeatureName::TimedWaitAny;
++    if (eventDriven) { desc.requiredFeatureCount = 1; desc.requiredFeatures = &timedWait; }
+     instance_ = std::make_shared<dawn::native::Instance>(
+         reinterpret_cast<const WGPUInstanceDescriptor*>(&desc));
+-    async_ = AsyncRunner::Create(instance_);
++    async_ = AsyncRunner::Create(instance_, eventDriven);
+ }
+ 
+ interop::Promise<std::optional<interop::Interface<interop::GPUAdapter>>> GPU::requestAdapter(
+--- a/src/dawn/node/binding/GPUBuffer.cpp
++++ b/src/dawn/node/binding/GPUBuffer.cpp
+@@ -74,7 +74,7 @@
+     auto ctx = std::make_unique<AsyncContext<void>>(env, PROMISE_INFO, async_);
+     pending_map_.emplace(ctx->promise);
+ 
+-    buffer_.MapAsync(
++    auto future = buffer_.MapAsync(
+         mode, dawn::checked_cast<size_t>(uint64_t{offset}), dawn::checked_cast<size_t>(rangeSize),
+         wgpu::CallbackMode::AllowProcessEvents,
+         [ctx = std::move(ctx), this](wgpu::MapAsyncStatus status, wgpu::StringView) {
+@@ -105,6 +105,7 @@
+             assert(*pending_map_ == ctx->promise);
+             pending_map_.reset();
+         });
++    async_->TrackFuture(future);
+ 
+     return pending_map_.value();
+ }
+--- a/src/dawn/node/binding/GPUQueue.cpp
++++ b/src/dawn/node/binding/GPUQueue.cpp
+@@ -63,7 +63,7 @@
+     auto ctx = std::make_unique<AsyncContext<void>>(env, PROMISE_INFO, async_);
+     auto promise = ctx->promise;
+ 
+-    queue_.OnSubmittedWorkDone(
++    auto future = queue_.OnSubmittedWorkDone(
+         wgpu::CallbackMode::AllowProcessEvents,
+         [ctx = std::move(ctx)](wgpu::QueueWorkDoneStatus status, wgpu::StringView message) {
+             if (status != wgpu::QueueWorkDoneStatus::Success) {
+@@ -71,6 +71,7 @@
+             }
+             ctx->promise.Resolve();
+         });
++    async_->TrackFuture(future);
+ 
+     return promise;
+ }
+--- a/src/dawn/node/binding/GPUDevice.cpp
++++ b/src/dawn/node/binding/GPUDevice.cpp
+@@ -518,7 +518,7 @@
+         env, PROMISE_INFO, async_);
+     auto promise = ctx->promise;
+ 
+-    device_.CreateComputePipelineAsync(
++    auto future = device_.CreateComputePipelineAsync(
+         &desc, wgpu::CallbackMode::AllowProcessEvents,
+         [ctx = std::move(ctx), label = CopyLabel(desc.label)](
+             wgpu::CreatePipelineAsyncStatus status, wgpu::ComputePipeline pipeline,
+@@ -533,6 +533,7 @@
+                     break;
+             }
+         });
++    async_->TrackFuture(future);
+ 
+     return promise;
+ }
+@@ -551,7 +552,7 @@
+         env, PROMISE_INFO, async_);
+     auto promise = ctx->promise;
+ 
+-    device_.CreateRenderPipelineAsync(
++    auto future = device_.CreateRenderPipelineAsync(
+         &desc, wgpu::CallbackMode::AllowProcessEvents,
+         [ctx = std::move(ctx), label = CopyLabel(desc.label)](
+             wgpu::CreatePipelineAsyncStatus status, wgpu::RenderPipeline pipeline,
+@@ -566,6 +567,7 @@
+                     break;
+             }
+         });
++    async_->TrackFuture(future);
+ 
+     return promise;
+ }
+@@ -672,7 +674,7 @@
+         env, PROMISE_INFO, async_);
+     auto promise = ctx->promise;
+ 
+-    device_.PopErrorScope(
++    auto future = device_.PopErrorScope(
+         wgpu::CallbackMode::AllowProcessEvents,
+         [ctx = std::move(ctx)](wgpu::PopErrorScopeStatus status, wgpu::ErrorType type,
+                                wgpu::StringView message) {
+@@ -692,6 +694,7 @@
+ 
+             ctx->promise.Resolve(createErrorFromWGPUError(env, type, message));
+         });
++    async_->TrackFuture(future);
+ 
+     return promise;
+ }
+--- a/src/dawn/node/binding/GPUShaderModule.cpp
++++ b/src/dawn/node/binding/GPUShaderModule.cpp
+@@ -118,7 +118,7 @@
+         env, PROMISE_INFO, async_);
+     auto promise = ctx->promise;
+ 
+-    shader_.GetCompilationInfo(
++    auto future = shader_.GetCompilationInfo(
+         wgpu::CallbackMode::AllowProcessEvents,
+         [ctx = std::move(ctx)](wgpu::CompilationInfoRequestStatus status,
+                                wgpu::CompilationInfo const* compilationInfo) {
+@@ -132,6 +132,7 @@
+             ctx->promise.Resolve(interop::GPUCompilationInfo::Create<GPUCompilationInfo>(
+                 ctx->env, ctx->env, std::move(messages)));
+         });
++    async_->TrackFuture(future);
+ 
+     return promise;
+ }

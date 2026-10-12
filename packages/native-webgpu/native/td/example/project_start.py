@@ -20,6 +20,5 @@ def onStart():
         node.par.Sketch = component.op('sketch')
         node.par.Controls = component.op('controls')
         node.cook(force=True)
-        if node.errors():
-            raise RuntimeError(node.errors())
+        # Buffered rendering finishes on a worker; inspect the Info DAT after cooking.
     return

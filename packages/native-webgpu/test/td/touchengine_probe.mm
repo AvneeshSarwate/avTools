@@ -4,15 +4,18 @@
 #include <TouchEngine/TouchEngine.h>
 #include <TouchEngine/TEMetal.h>
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include <chrono>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
 #include <vector>
-struct State { std::atomic<bool> ready{false}, loaded{false}, frame{false}, unloaded{false}; std::atomic<int> error{0}; };
+struct State { std::mutex mutex;std::condition_variable cv; std::atomic<bool> ready{false}, loaded{false}, frame{false}, unloaded{false}; std::atomic<int> error{0}; };
 static void event(TEInstance*, TEEvent event, TEResult result, int64_t, int32_t, int64_t, int32_t, void* info) {
     auto& s = *(State*)info;
-    fprintf(stderr, "TouchEngine event %d: %s\n", int(event), TEResultGetDescription(result));
+    std::lock_guard lock(s.mutex);
     if (TEResultGetSeverity(result) == TESeverityError) {
         fprintf(stderr, "TouchEngine event %d: %s\n", int(event), TEResultGetDescription(result)); s.error = int(result);
     }
@@ -20,6 +23,7 @@ static void event(TEInstance*, TEEvent event, TEResult result, int64_t, int32_t,
     if (event == TEEventInstanceDidLoad) s.loaded = true;
     if (event == TEEventFrameDidFinish) s.frame = true;
     if (event == TEEventInstanceDidUnload) s.unloaded = true;
+    s.cv.notify_all();
 }
 static void link(TEInstance*, TELinkEvent, const char*, void*) {}
 static void check(TEResult r) {
@@ -54,6 +58,62 @@ static void outputLinks(TEInstance* instance, const char* parent, std::vector<st
         }
     }
 }
+// Wait for every TD texture's ownership fence in one command buffer. This
+// includes TD's upload, unlike FrameDidFinish or the uploadBuffer call duration.
+// Pixel validation is a separate command after that timing boundary.
+static void measureOutputs(TEInstance* instance,id<MTLDevice> device,id<MTLCommandQueue> queue,
+    const std::vector<std::string>& outputs,int frame,std::chrono::steady_clock::time_point start,
+    double cookMs,double scheduleSlipMs) {
+    std::vector<TouchObject<TETexture>> textures;size_t fenceCount=0;
+    id<MTLCommandBuffer> fence=[queue commandBuffer];
+    for(const auto& identifier:outputs){
+        TouchObject<TETexture> texture;check(TEInstanceLinkGetTextureValue(instance,identifier.c_str(),TELinkValueCurrent,texture.take()));
+        if(!texture)throw std::runtime_error("Missing output texture");
+        TouchObject<TESemaphore> incoming;uint64_t value=0;
+        if(TEInstanceHasTextureTransfer(instance,texture)){
+            fenceCount++;check(TEInstanceGetTextureTransfer(instance,texture,incoming.take(),&value));
+            if(!incoming||TESemaphoreGetType(incoming)!=TESemaphoreTypeMetal)throw std::runtime_error("Missing Metal fence");
+            id<MTLSharedEvent> shared=[device newSharedEventWithHandle:TEMetalSemaphoreGetSharedEventHandle((TEMetalSemaphore*)incoming.get())];
+            [fence encodeWaitForEvent:shared value:value];[shared release];
+        }
+        textures.push_back(std::move(texture));
+    }
+    [fence commit];[fence waitUntilCompleted];
+    if(fence.status==MTLCommandBufferStatusError)throw std::runtime_error("TD upload fence failed");
+    const auto gpuReady=std::chrono::steady_clock::now();
+    const double gpuReadyMs=std::chrono::duration<double,std::milli>(gpuReady-start).count();
+    const auto gpuReadyNs=std::chrono::duration_cast<std::chrono::nanoseconds>(gpuReady.time_since_epoch()).count();
+    auto validationStart=std::chrono::steady_clock::now();
+    id<MTLCommandBuffer> validation=[queue commandBuffer];
+    id<MTLBuffer> pixels=[device newBufferWithLength:outputs.size()*4*256 options:MTLResourceStorageModeShared];
+    id<MTLBlitCommandEncoder> blit=[validation blitCommandEncoder];
+    for(size_t i=0;i<textures.size();i++){
+        if(TETextureGetType(textures[i])!=TETextureTypeMetal)throw std::runtime_error("Expected Metal texture");
+        id<MTLTexture> texture=TEMetalTextureGetTexture((TEMetalTexture*)textures[i].get());
+        if(texture.pixelFormat!=MTLPixelFormatRGBA8Unorm && texture.pixelFormat!=MTLPixelFormatBGRA8Unorm)throw std::runtime_error("Expected RGBA8/BGRA8 output");
+        bool topLeft=TETextureGetOrigin(textures[i])==TETextureOriginTopLeft;
+        NSUInteger ys[]={topLeft?0:texture.height-1,topLeft?texture.height-1:0,texture.height/2,topLeft?std::min(NSUInteger(64),texture.height-1):texture.height-1-std::min(NSUInteger(64),texture.height-1)};
+        NSUInteger xs[]={0,0,texture.width/2,std::min(NSUInteger(64),texture.width-1)};
+        for(int p=0;p<4;p++)[blit copyFromTexture:texture sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(xs[p],ys[p],0) sourceSize:MTLSizeMake(1,1,1) toBuffer:pixels destinationOffset:(i*4+p)*256 destinationBytesPerRow:256 destinationBytesPerImage:256];
+    }
+    [blit endEncoding];
+    id<MTLSharedEvent> done=[device newSharedEvent];[validation encodeSignalEvent:done value:1];[validation commit];[validation waitUntilCompleted];
+    if(validation.status==MTLCommandBufferStatusError)throw std::runtime_error("Pixel validation failed");
+    const double validationMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-validationStart).count();
+    auto* bytes=static_cast<unsigned char*>(pixels.contents);
+    for(size_t i=0;i<textures.size();i++){
+        if(TEInstanceDoesTextureOwnershipTransfer(instance)){
+            auto* handle=[done newSharedEventHandle];TouchObject<TEMetalSemaphore> outgoing;outgoing.take(TEMetalSemaphoreCreate(handle,nullptr,nullptr));
+            check(TEInstanceAddTextureTransfer(instance,textures[i],(TESemaphore*)outgoing.get(),1));[handle release];
+        }
+        id<MTLTexture> texture=TEMetalTextureGetTexture((TEMetalTexture*)textures[i].get());
+        auto rgba=[&](int sample){auto* p=bytes+(i*4+sample)*256;bool bgra=texture.pixelFormat==MTLPixelFormatBGRA8Unorm;return @[@(p[bgra?2:0]),@(p[1]),@(p[bgra?0:2]),@(p[3])];};
+        NSDictionary* result=@{@"frame":@(frame),@"output":@(i),@"fences":@(fenceCount),@"inputSample":rgba(3),@"cookMs":@(cookMs),@"gpuReadyMs":@(gpuReadyMs),@"gpuReadyNs":@(gpuReadyNs),@"validationMs":@(validationMs),@"scheduleSlipMs":@(scheduleSlipMs),@"width":@(texture.width),@"height":@(texture.height),@"top":rgba(0),@"bottom":rgba(1),@"center":rgba(2)};
+        NSData* json=[NSJSONSerialization dataWithJSONObject:result options:0 error:nil];fwrite(json.bytes,1,json.length,stdout);fputc('\n',stdout);
+    }
+    [done release];[pixels release];
+}
+
 int main(int argc, const char** argv) {
     if (argc < 2) { fprintf(stderr,"Usage: touchengine-probe fixture.tox [frames]\n"); return 2; }
     @autoreleasepool {
@@ -76,16 +136,23 @@ int main(int argc, const char** argv) {
             const int frames = argc > 2 ? atoi(argv[2]) : 10;
             const bool benchmark=argc>3 && std::string(argv[3]).find("--bench-")==0;
             if(benchmark){if(gpuInput.empty())throw std::runtime_error("Missing Gpu parameter");check(TEInstanceLinkSetBooleanValue(instance,gpuInput.c_str(),std::string(argv[3])=="--bench-syphon"));}
+            const bool bufferedBench=argc>3 && std::string(argv[3])=="--buffered-bench";
             auto begin=std::chrono::steady_clock::now();
             for (int frame=0;frame<frames;frame++) {
                 // Syphon discovery and its independent producer need wall-clock time.
+                if(bufferedBench && frame==30)begin=std::chrono::steady_clock::now()-std::chrono::milliseconds(500);
+                const auto scheduled=begin+std::chrono::nanoseconds(int64_t(frame*1e9/60));
                 const double elapsed=std::chrono::duration<double>(std::chrono::steady_clock::now()-begin).count();
                 const double delay=benchmark?std::max(0.0,frame/60.0-elapsed):1.0/60.0;
-                [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:delay]];
+                if(bufferedBench)std::this_thread::sleep_until(scheduled);
+                else [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:delay]];
                 if(argc>3 && std::string(argv[3])=="--sketch" && !amountInput.empty()){double amount=frame<45?40:90;check(TEInstanceLinkSetDoubleValue(instance,amountInput.c_str(),&amount,1));}
                 auto cookStart=std::chrono::steady_clock::now();
-                state.frame = false; check(TEInstanceStartFrameAtTime(instance,frame,60,false)); wait(state.frame,state);
+                state.frame = false; check(TEInstanceStartFrameAtTime(instance,frame,60,false));
+                if(bufferedBench){std::unique_lock lock(state.mutex);if(!state.cv.wait_for(lock,std::chrono::seconds(45),[&]{return state.frame.load()||state.error.load();}))throw std::runtime_error("Frame callback timeout");if(state.error)throw std::runtime_error("Frame callback error");}
+                else wait(state.frame,state);
                 const double cookMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-cookStart).count();
+                if(bufferedBench){measureOutputs(instance,device,queue,outputs,frame,cookStart,cookMs,std::chrono::duration<double,std::milli>(cookStart-scheduled).count());continue;}
                 for (const auto& identifier : outputs) {
                     TouchObject<TETexture> wrapped; check(TEInstanceLinkGetTextureValue(instance,identifier.c_str(),TELinkValueCurrent,wrapped.take()));
                     if (!wrapped) continue;

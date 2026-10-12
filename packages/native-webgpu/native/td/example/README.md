@@ -26,7 +26,7 @@ runpy.run_path('/path/to/avTools/packages/native-webgpu/native/td/example/load_e
 ```
 
 The loader creates a new component under `/project1`, reads the current plugin
-location from `build/td-plugin-path.txt`, and checks both TOPs. It does not replace
+location from `build/td-plugin-path.txt`, and starts both TOPs. Buffered results appear on subsequent cooks; the Info DATs show errors/status. It does not replace
 existing operators or save your project. Enter the printed component path to
 see its network; view `out1` or `out2` to start animation.
 
@@ -48,6 +48,19 @@ matches the release ZIP: place its `Plugins` directory beside your saved `.toe`.
   replace it with another TOP. Rust-backed text reads “Dawn + Rust.”
 - Change either TOP's **Width / Height**, or pulse **Reset** to rerun setup.
   `info1` and `info2` show status and transport details.
+- Output is buffered by default, normally one frame behind. The new **Wait for
+  Same Cook (Blocking)** toggle opts into synchronous output. An Info CHOP exposes
+  frame age, skipped submissions, worker time, and upload-enqueue time.
+- Optional early submission: enable **Pre-trigger Mode** on either or both TOPs.
+  The single embedded `pretrigger` Execute DAT finds the enabled instances and
+  submits/collects them in two passes. Its Python source is also `pretrigger.py`.
+  Put useful independent project work in `between_passes(nodes)` to give workers
+  more time before collection; the default hook does nothing and adds no delay.
+  `before_submit(nodes)` can update controls or send event pulses. Same-frame
+  output is opportunistic; an unfinished result uses the previous output.
+  Place one coordinator at the common ancestor of participating TOPs in your
+  project. The toggle is off by default and overrides the blocking Same Cook
+  option while on.
 - Optional Syphon: enable **Enable Syphon** on one renderer, then create a Syphon
   In TOP and select its advertised `avTools Embedded:...` name. Names include the
   operator path to distinguish instances. **Syphon Only** returns a 1×1 placeholder
@@ -55,6 +68,11 @@ matches the release ZIP: place its `Plugins` directory beside your saved `.toe`.
   cooking. CPU TOP output is the default; wired inputs still use CPU transfers.
 
 ## Verification and updates
+
+The buffered revision additionally passed headless tests for pulses queued while
+a worker is overloaded, CHOP snapshots, resizing, last-good output after syntax
+errors, draw errors, async timeout/reset recovery, and continued animation in the
+other instance. See [timings and methodology](../../../VALIDATION.md#buffered-transfers-and-end-to-end-timing-2026-10-12).
 
 This saved component was loaded from this directory with real TouchEngine on
 TD Commercial 2025.31550 / macOS arm64: 60 frames on each output passed dimension,
