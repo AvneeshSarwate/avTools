@@ -21,6 +21,12 @@ typedef struct {
 typedef struct {double inputMs,drawMs,readbackMs,totalMs; uint64_t cooks; uint32_t ready,syphonClients,syphonPublished,syphonDropped;} AVStats;
 __attribute__((visibility("default"))) AVSketch* avCreate(const char* resources,char* error,size_t errorSize);
 __attribute__((visibility("default"))) int avCook(AVSketch*,const AVFrame*,AVStats*,char* error,size_t errorSize);
+// Deferred creation does no GPU/V8 initialization on the caller. Dispatch runs on
+// the isolate's owner thread; avCook may be called there directly. User data must
+// survive through callback completion. avDestroy joins any active callback.
+__attribute__((visibility("default"))) AVSketch* avCreateDeferred(const char*,char*,size_t);
+typedef void (*AVWork)(AVSketch*,void*);
+__attribute__((visibility("default"))) int avDispatch(AVSketch*,AVWork,void*);
 __attribute__((visibility("default"))) void avDestroy(AVSketch*);
 #ifdef __cplusplus
 }

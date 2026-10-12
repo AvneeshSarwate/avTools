@@ -7,6 +7,11 @@
 #include <string>
 #include <vector>
 #include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <filesystem>
+#include <unistd.h>
+#include <thread>
 static void require(bool value,const char* detail){if(!value)throw std::runtime_error(detail);}
 int main(int argc,char**argv){try{
   require(argc==3,"bridge-probe runtime.dylib Resources");void* lib=dlopen(argv[1],RTLD_NOW|RTLD_LOCAL);if(!lib)throw std::runtime_error(dlerror());
@@ -28,8 +33,26 @@ int main(int argc,char**argv){try{
     pixels.resize(71*41*4);f.width=71;f.height=41;f.reset=0;f.output=pixels.data();f.outputSize=pixels.size();require(render(b),error);require(pixels[pixels.size()-2]==1,"Resize did not reset state");
     f.source="let level=0;function onPulse(name,p,f){if(name==='Trigger')level+=f.chop('amount',1)+f.chop('missing');}function draw(p){p.background(level,0,0)}";f.reset=1;
     const char* pulses[]={"Trigger","Trigger"};f.pulses=pulses;f.pulseCount=2;require(render(b),error);require(pixels[0]==80,"Pulse handlers did not read CHOP snapshot exactly twice");f.reset=0;f.pulseCount=0;require(render(b),error);require(pixels[0]==80,"Pulse was replayed");
+    f.source="async function setup(p,h){const d=h.device;const buffers=Array.from({length:100},()=>d.createBuffer({size:256,usage:GPUBufferUsage.MAP_READ|GPUBufferUsage.COPY_DST}));const shader=d.createShaderModule({code:'@compute @workgroup_size(1) fn main() {}'});await Promise.all([...buffers.map(b=>b.mapAsync(GPUMapMode.READ)),d.queue.onSubmittedWorkDone(),shader.getCompilationInfo(),d.createComputePipelineAsync({layout:'auto',compute:{module:shader,entryPoint:'main'}})]);for(const b of buffers){b.unmap();b.destroy();}}function draw(p){p.background(23,45,67);}";f.reset=1;require(render(b),error);require(!*error,error);require(pixels[0]==23&&pixels[1]==45&&pixels[2]==67,"Batched/mixed async futures failed");f.reset=0;
     f.source="async function setup(){await new Promise(()=>{})} function draw(){}";require(!render(b),"Unresolved setup accepted");require(strstr(error,"budget"),"Async timeout missing");
     destroy(b);destroy(a);printf("Bridge cycle %d passed: text, CHOP samples, TOP orientation, 100 cooks, two isolates, reload, reset, resize, errors, sync/async budgets, disposal\n",cycle);
   }
+  auto deferred=reinterpret_cast<decltype(&avCreateDeferred)>(dlsym(lib,"avCreateDeferred"));
+  auto dispatch=reinterpret_cast<decltype(&avDispatch)>(dlsym(lib,"avDispatch"));require(deferred&&dispatch,"Missing deferred C API");
+  struct Pending {decltype(&avCook) cook;AVFrame frame{};std::mutex mutex;std::condition_variable cv;bool started=false,finished=false;};
+  Pending pending;pending.cook=cook;std::vector<uint8_t> output(16*16*4);pending.frame.width=pending.frame.height=16;pending.frame.output=output.data();pending.frame.outputSize=output.size();pending.frame.source="async function setup(){await new Promise(()=>{});}function draw(){}";
+  char detail[8192]{};auto* stopped=deferred(argv[2],detail,sizeof(detail));require(stopped,detail);
+  require(dispatch(stopped,[](AVSketch* s,void* data){auto& p=*static_cast<Pending*>(data);{std::lock_guard lock(p.mutex);p.started=true;}p.cv.notify_one();AVStats stats{};char error[8192]{};p.cook(s,&p.frame,&stats,error,sizeof(error));p.finished=true;},&pending),"Dispatch failed");
+  {std::unique_lock lock(pending.mutex);require(pending.cv.wait_for(lock,std::chrono::seconds(5),[&]{return pending.started;}),"Worker did not start");}
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));auto stopStart=std::chrono::steady_clock::now();destroy(stopped);
+  require(pending.finished,"Destroy did not join active callback");require(std::chrono::duration<double>(std::chrono::steady_clock::now()-stopStart).count()<1.5,"Destroy failed to wake unresolved async setup");
+  puts("Deferred dispatch and active-job teardown passed");
+  char temporary[]="/tmp/avtools-init-XXXXXX";require(mkdtemp(temporary),"Could not create initialization fixture");
+  auto* retry=deferred(temporary,detail,sizeof(detail));require(retry,detail);AVStats retryStats{};AVFrame retryFrame=pending.frame;retryFrame.source="function draw(p){p.background(12,34,56);}";retryFrame.rate=60;
+  require(!cook(retry,&retryFrame,&retryStats,detail,sizeof(detail)),"Missing resources unexpectedly loaded");
+  std::filesystem::create_directory_symlink(std::filesystem::path(argv[2])/"fonts",std::filesystem::path(temporary)/"fonts");
+  std::filesystem::copy_file(std::filesystem::path(argv[2])/"renderer.js",std::filesystem::path(temporary)/"renderer.js");
+  retryFrame.reset=1;require(cook(retry,&retryFrame,&retryStats,detail,sizeof(detail)),detail);require(output[0]==12&&output[1]==34&&output[2]==56,"Deferred initialization did not recover");destroy(retry);std::filesystem::remove_all(temporary);
+  puts("Reset after failed deferred initialization passed");
   dlclose(lib);return 0;
 }catch(const std::exception& e){fprintf(stderr,"FAIL: %s\n",e.what());return 1;}}

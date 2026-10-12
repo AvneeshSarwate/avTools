@@ -39,7 +39,8 @@
     "clangSHA256": "56e00034a68d5e8d939febafc1cd3677b1347741a033cb1c3e45badfceb024a1",
     "patches": [
       "embedding-clt-sdk.patch",
-      "0003-napi-v8-callback-lifetime.patch"
+      "0003-napi-v8-callback-lifetime.patch",
+      "0004-embedded-event-driven-wait.patch"
     ],
     "allocatorShim": false,
     "partitionAllocAsMalloc": false

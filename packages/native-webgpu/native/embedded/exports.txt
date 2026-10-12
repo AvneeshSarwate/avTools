@@ -1,3 +1,5 @@
 _avCreate
 _avCook
 _avDestroy
+_avCreateDeferred
+_avDispatch

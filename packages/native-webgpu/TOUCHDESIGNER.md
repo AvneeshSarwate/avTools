@@ -60,12 +60,12 @@ function draw(p, frame) {
   keep the last valid sketch running and report the compile error.
 - **Controls CHOP:** `frame.chop(name, sampleIndex = 0)` returns the sample or `0`
   for a missing channel/index. `frame.controls` exposes `sampleRate`, `startIndex`,
-  and `channels: [{name, samples: Float32Array}]`. Samples are copied each cook;
+  and `channels: [{name, samples: Float32Array}]`. Samples are copied for each accepted frame;
   retaining an old snapshot cannot retain a TD-owned pointer.
-- **Event Name / Send Pulse:** each pulse queues one event. On the next cook,
-  `onPulse(name, p, frame)` runs before `draw`, using that cook's event-name field
+- **Event Name / Send Pulse:** each pulse queues one event. On the next accepted frame,
+  `onPulse(name, p, frame)` runs before `draw`, using that frame's event-name field
   and CHOP snapshot. There is no event payload. Several pulses before a cook
-  each run once; they all use the values at that cook. Up to 256 can be queued.
+  each run once; they use the values when the worker accepts its next frame. Pulses remain queued while it is busy. Up to 256 can be queued.
   Handlers are synchronous; unknown names can simply be ignored by the script.
 - **Width / Height:** 1–4096 physical pixels; changing either resets the sketch.
 - **Reset / Reload:** rerun setup. Reset also recreates an isolate stopped by a
@@ -86,18 +86,45 @@ sandbox or protection against deliberately exhausting process memory.
 
 ## Transport and performance
 
-**CPU TOP output is the default.** The renderer draws on Metal. Its result is
-copied to a reusable padded staging buffer, mapped, and copied directly into a
-TD-owned output buffer. No array of JS pixel objects is created. TD uploads that
-buffer during the same cook; this path waits for readback rather than silently
-adding a frame of latency. RGBA8 is the supported format; no HDR claim is made.
+**Buffered CPU TOP output is the default**, normally one frame behind TD.
+Each instance owns an independent worker. A cook uploads its latest completed
+RGBA8 buffer and submits a fresh snapshot if that worker is available. The worker
+renders, copies the texture to padded staging memory, waits for map completion,
+and copies rows directly into a TD-owned output buffer. No JS pixel-object array
+is created. GPU initialization also happens on the worker.
 
-Wired TOP inputs use TD's supported RGBA8 download, an owned typed-array snapshot,
-and upload into reusable Dawn textures. `frame.top(i)` returns an image usable by
-`p.image`. It refers to that input's reusable texture, so retaining it observes
-later cooks' content. Resize/reload/disposal can invalidate old texture handles.
-RGBA bytes remain in the working color representation; there is no extra gamma
-conversion in the renderer. Use explicit TD color-space conversions as needed.
+There is at most one active job and one completed result per instance, with no
+pending frame backlog. If the worker is late, TD retains the last output and
+skips new submissions until the next opportunity. Pulses and Reset stay queued;
+controls, source, dimensions, and time are captured when the next job is accepted.
+Consequently overloaded sketches may repeat/skip frames or exceed one frame of
+latency. First load and shader compilation can also take multiple frames. The
+**Wait for Same Cook (Blocking)** toggle opts into the old immediate-result
+semantics; independent TOPs then serialize their waits on TD's cook thread.
+
+Output completion uses Dawn's **`WaitAny`**, not a 1 ms polling sleep. A pinned,
+opt-in binding patch tracks GPU futures and waits on the isolate's owner thread,
+where it safely resolves JS promises. Normal completion wakes immediately; a
+100 ms timeout only bounds a stalled native wait so host deadlines can be checked.
+Unresolved promises with no queued work sleep until their deadline or teardown.
+This changes the embedded host only; normal Node bindings retain their event loop.
+
+Wired TOP inputs request TD's RGBA8 download during the cook, then wait for
+`getData()` on the worker. The worker owns the download references, makes an owned
+V8 snapshot, and uploads into reusable Dawn textures. `frame.top(i)` works with
+`p.image`; retaining it observes that reusable texture's later contents. Inputs
+and controls belong to the same accepted frame snapshot. This keeps download
+completion waits off TD's cook thread, but initiating a download, copying bytes,
+and uploading still have costs. Resize/reload/disposal can invalidate old handles.
+
+Apple Silicon shared memory does not eliminate GPU synchronization or these
+copies. The worker still waits for its own output readback before finishing, but
+four instances can perform that work concurrently while TD continues cooking.
+TD's `uploadBuffer()` call schedules work; its duration alone is **not** total GPU
+upload time. The end-to-end benchmark waits for every exported Metal texture's
+ownership fence, including TD's uploads, before recording GPU readiness. See the
+[buffered measurements](VALIDATION.md#buffered-transfers-and-end-to-end-timing-2026-10-12).
+RGBA8 is the supported format; use explicit TD color-space conversions as needed.
 
 **Enable Syphon** publishes the rendered GPU texture under **Syphon Name**.
 It is off by default. **Syphon Only (1px TOP)** additionally bypasses output
@@ -117,10 +144,46 @@ same-cook feedback semantics from a disconnected Syphon receiver.
 
 An Info CHOP reports input download, input upload/snapshot, draw/submission,
 readback wait, total runtime milliseconds, cook count, readiness, and Syphon
-client/publication/drop counters. GPU execution
+client/publication/drop counters. It also exposes `cook_ms`, `upload_enqueue_ms`,
+`worker_ms`, `output_age_frames` (-1 before the first result), and cumulative
+`skipped_frames`. Worker timings describe the last completed job. GPU execution
 overlaps submission; draw/submission time is not a GPU timestamp measurement.
 Info DAT reports transport and error details. See `VALIDATION.md` for measured
 results, machine details, and remaining limitations.
+
+### Optional pre-trigger mode
+
+Enable **Pre-trigger Mode** on each participating TOP. Put the contents of
+[`pretrigger.py`](native/td/example/pretrigger.py) in **one Execute DAT** with
+**Frame Start** enabled. Place it in the component containing the sketches; it
+automatically discovers enabled TOPs recursively under its parent. Change its
+`scope()` function to `return op('/project1')` for project-wide discovery. Disabled
+and bypassed TOPs are left alone. The saved `Sketch.toe` / `Sketch.tox` already
+contain this DAT, with both TOP toggles off by default.
+
+The DAT sends **Submit Early (Coordinator)** to each enabled TOP and forces a
+submission-only cook. After its optional `between_passes(nodes)` hook, it forces
+a collection-only cook on each. Collection uploads a ready current result or
+retains the latest previous result, without waiting. `before_submit(nodes)` is a
+place to update controls or send event pulses before snapshots. No artificial
+delay is supplied: put useful independent project work in `between_passes` if
+appropriate, such as explicitly cooking a branch that does not depend on these
+sketches. All submission and collection ordering lives in this one DAT.
+
+**Wait for Same Cook** is disabled and ignored while pre-trigger mode is enabled.
+Normal cooks do not submit in this mode; if the DAT is missing/inactive, output
+eventually holds and the TOP reports a warning. Turning the toggle off resumes
+ordinary behavior. Repeated submit pulses/coordinators cannot submit a second job
+for the same absolute TD frame. Busy workers skip that frame's submission and
+keep Reset/events pending. Info CHOP additionally exposes `pretrigger_enabled`
+and `submitted_frame`; use `output_age_frames` to measure actual output latency.
+
+The collection deadline matters: work completing after collection cannot update
+already-cooked downstream consumers. A generic frame-end collection is therefore
+insufficient. Same-frame readiness depends on the interval and workload; without
+intervening work, previous-frame output is normal. Variable 0/1-frame latency can
+repeat/skip animation frames. See
+[measurements and limits](VALIDATION.md#early-submission-and-same-frame-collection-investigation).
 
 ## Build and runtime ownership
 
@@ -150,7 +213,7 @@ caused a real TouchDesigner host-allocation crash during the first load test.
 Each operator owns a worker thread, isolate, device, renderer and Rust text state.
 All V8 operations and destruction occur on that worker. Only a narrow C ABI crosses
 between Chromium's bundled libc++ and the TD adapter's system libc++. The runtime
-exports three C functions; the rest of its symbols are hidden. Embedded Syphon
+exports five C functions (including deferred creation and worker dispatch); the rest of its symbols are hidden. Embedded Syphon
 classes and C identifiers are prefixed to avoid TD's own Syphon library.
 
 The shared V8 platform and its library remain loaded for the process lifetime.
@@ -160,7 +223,7 @@ restart; script hot reload does not. Build directories are content-versioned to
 avoid overwriting a binary mapped by an active TD process. Local bundles are
 ad-hoc signed; release distribution/notarization is not configured.
 
-Maintained extra embedding patches: `embedding-clt-sdk.patch` and
-`0003-napi-v8-callback-lifetime.patch`. The latter reclaims callback metadata after
-V8 GC. `TextCompat.cpp` fills the limited generic N-API gaps in the pinned V8 shim;
+Maintained extra embedding patches: `embedding-clt-sdk.patch`,
+`0003-napi-v8-callback-lifetime.patch` (callback metadata reclamation after V8 GC),
+and `0004-embedded-event-driven-wait.patch` (opt-in GPU future waits). `TextCompat.cpp` fills the limited generic N-API gaps in the pinned V8 shim;
 it does not implement a separate WebGPU binding.

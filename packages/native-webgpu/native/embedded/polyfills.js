@@ -2,6 +2,7 @@ globalThis.console = {log:hostLog,error:hostLog,warn:hostLog,debug:hostLog};
 const tasks=[];
 globalThis.setImmediate = callback => {tasks.push(callback); return tasks.length;};
 globalThis.__pump=()=>{const turn=tasks.splice(0,64);for(const task of turn)task();};
+Object.defineProperty(globalThis,'__pumpPending',{get:()=>tasks.length>0});
 globalThis.Event=class Event{constructor(type,options={}){this.type=type;this.cancelable=!!options?.cancelable;this.defaultPrevented=false;} preventDefault(){if(this.cancelable)this.defaultPrevented=true;}};
 globalThis.EventTarget=class EventTarget {
   listeners=new Map();
