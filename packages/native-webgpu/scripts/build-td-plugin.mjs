@@ -3,7 +3,7 @@ import {seedrandomNotices} from './seedrandom-notices.mjs';
 import {execFileSync} from 'node:child_process';
 import {cpSync,mkdirSync,writeFileSync,readFileSync,existsSync,readdirSync,renameSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
-import {resolve} from 'node:path';
+import {resolve,basename} from 'node:path';
 import {createHash} from 'node:crypto';
 const root=fileURLToPath(new URL('../',import.meta.url));
 // Hash the bundled renderer (including transitive imports) and all shipped inputs.
@@ -13,8 +13,15 @@ const digest=createHash('sha256');
 function hashTree(path){for(const entry of readdirSync(path,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))){digest.update(entry.name);const child=resolve(path,entry.name);if(entry.isDirectory())hashTree(child);else if(entry.isFile())digest.update(readFileSync(child));}}
 for(const path of ['scripts/build-td-plugin.mjs','native/td/SketchTOP.cpp','native/embedded/Bridge.h','upstream/node-webgpu/third_party/dawn/out/avtools-v8/libavtools_runtime.dylib','dist/THIRD_PARTY_NOTICES.txt'])digest.update(readFileSync(resolve(root,path)));
 digest.update(seedrandomNotices(root));digest.update(renderer.outputFiles[0].contents);hashTree(resolve(root,'dist/fonts'));hashTree(resolve(root,'build/syphon-embedded/AVToolsSyphon.framework/Versions/A'));
-const tag=digest.digest('hex').slice(0,12),finalBundle=resolve(root,`build/AvToolsSketch-${tag}.plugin`);
-if(existsSync(finalBundle)){writeFileSync(resolve(root,'build/td-plugin-path.txt'),finalBundle+'\n');console.log(finalBundle);process.exit(0);}
+const tag=digest.digest('hex').slice(0,12),prebuilt=resolve(root,'prebuilt/macos-arm64'),finalBundle=resolve(prebuilt,`AvToolsSketch-${tag}.plugin`);
+mkdirSync(prebuilt,{recursive:true});mkdirSync(resolve(root,'build'),{recursive:true});
+function publish(){
+  writeFileSync(resolve(prebuilt,'current.txt'),basename(finalBundle)+'\n');
+  // Preserve the local marker used by native developer probes.
+  writeFileSync(resolve(root,'build/td-plugin-path.txt'),finalBundle+'\n');
+  console.log(finalBundle);
+}
+if(existsSync(finalBundle)){publish();process.exit(0);}
 const bundle=resolve(root,`build/.AvToolsSketch-${tag}-${process.pid}.plugin`),mac=resolve(bundle,'Contents/MacOS'),resources=resolve(bundle,'Contents/Resources');
 mkdirSync(mac,{recursive:true});mkdirSync(resources,{recursive:true});
 writeFileSync(resolve(resources,'renderer.js'),renderer.outputFiles[0].contents);
@@ -32,5 +39,4 @@ execFileSync('codesign',['--force','--sign','-',resolve(mac,'AVToolsSyphon.frame
 execFileSync('codesign',['--force','--sign','-',resolve(mac,'libavtools_runtime.dylib')],{stdio:'inherit'});
 execFileSync('codesign',['--force','--sign','-',bundle],{stdio:'inherit'});
 renameSync(bundle,finalBundle);
-writeFileSync(resolve(root,'build/td-plugin-path.txt'),finalBundle+'\n');
-console.log(finalBundle);
+publish();

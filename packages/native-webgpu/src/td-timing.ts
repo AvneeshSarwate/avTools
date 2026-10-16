@@ -7,6 +7,11 @@ export class SketchLifetime {
   active=true;
   error='';
   private roots=new Set<timing.CancelablePromiseProxy<any>>();
+  private cleanups: (()=>void)[]=[];
+  private resources=new Set<{destroy():void}>();
+  private disposing=false;
+  /** Synchronous, reverse registration order; called before GPU resources expire. */
+  onDispose(callback:()=>void){this.run(()=>{if(this.disposing)throw new Error('Sketch cleanup has already started');if(typeof callback!=='function')throw new TypeError('onDispose requires a function');this.cleanups.push(callback);});}
   constructor(){scopes.set(this.id,this);}
   run<T>(fn:()=>T):T {
     if(!this.active)throw new Error('Sketch generation has been disposed');
@@ -33,10 +38,17 @@ export class SketchLifetime {
   fail(error:unknown){if(!this.active||this.error)return;this.error=String((error as any)?.stack??error);this.run(()=>this.cancelRoots());g.__hostInvalidate(this.id);g.__hostCancelFrames(this.id);}
   async dispose(){
     if(!this.active)return;
+    this.disposing=true;
     this.run(()=>this.cancelRoots());
     // A task boundary drains all cancellation microtasks before resource teardown.
     // Cleanup that waits for unrelated external promises cannot delay reload forever.
     await new Promise<void>(resolve=>g.__avNativeImmediate(resolve));
+    for(const cleanup of this.cleanups.splice(0).reverse()){
+      try {const result:any=this.run(cleanup);if(result&&typeof result.then==='function'){result.catch(()=>{});throw new Error('onDispose callbacks must be synchronous');}}
+      catch(error){console.error('Sketch cleanup failed:',String(error));}
+    }
+    for(const resource of this.resources){try{resource.destroy();}catch(error){console.error('GPU cleanup failed:',String(error));}}
+    this.resources.clear();
     g.__hostInvalidate(this.id);g.__hostCancelFrames(this.id);this.active=false;scopes.delete(this.id);
   }
   private wrapped=new WeakMap<object,any>();
@@ -59,7 +71,12 @@ export class SketchLifetime {
       const proxy=new Proxy(target,{get:(object,key)=>{
         const result=this.run(()=>Reflect.get(object,key,object));
         if(typeof result!=='function')return wrap(result);
-        if(!methods.has(key))methods.set(key,(...args:unknown[])=>this.run(()=>wrap(Reflect.apply(result,object,args.map(unwrap)))));
+        if(!methods.has(key))methods.set(key,(...args:unknown[])=>this.run(()=>{
+          const value:any=Reflect.apply(result,object,args.map(unwrap));
+          if((key==='createBuffer'||key==='createTexture')&&value&&typeof value.destroy==='function')this.resources.add(value);
+          if(key==='destroy')this.resources.delete(object);
+          return wrap(value);
+        }));
         return methods.get(key);
       },set:(object,key,value)=>this.run(()=>Reflect.set(object,key,unwrap(value),object))});
       wrapped.set(target,proxy);raw.set(proxy,target);return proxy;

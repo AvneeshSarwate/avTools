@@ -2,12 +2,13 @@
 
 **Open `Sketch.toe` to run the example.** It is a standalone TouchDesigner project
 with the network and a live output preview. Its embedded startup script finds this
-checkout's built plugin automatically; no Textport commands are required.
+checkout's prebuilt plugin automatically; no Textport commands are required.
 
 `Sketch.tox` is the reusable TouchDesigner component kept beside the C++ TOP
 source. Its JavaScript, CHOP, TOP input, and two renderer instances are embedded;
 there are no machine-specific paths or external image/font dependencies in the
-fixture. The native plugin bundle is built separately and is not checked in.
+fixture. The native plugin bundle is checked in separately under
+[`prebuilt/macos-arm64`](../../../prebuilt/README.md).
 
 ## TimeContext example
 
@@ -21,11 +22,10 @@ the readable source; `TimeContext.tox` is the reusable component. See
 
 ## Open from this checkout
 
-Build the plugin using [the integration guide](../../../TOUCHDESIGNER.md), then
-double-click **Sketch.toe** in this directory. The plugin has already been built
-on the development machine. In a release ZIP, open `Sketch.toe` beside the supplied
-`Plugins` directory. The native plugin is a separate dependency, not embedded in
-the `.toe` or checked into Git.
+With TouchDesigner installed on macOS 15+ Apple Silicon, double-click **Sketch.toe**
+in this directory. The checkout includes the native plugin; no build is needed.
+In a release ZIP, open `Sketch.toe` beside the supplied `Plugins` directory.
+The native plugin is a separate bundle, not embedded in the `.toe`.
 
 To add the example to an existing project instead, run this in TouchDesigner's
 Textport, substituting your checkout path:
@@ -36,7 +36,7 @@ runpy.run_path('/path/to/avTools/packages/native-webgpu/native/td/example/load_e
 ```
 
 The loader creates a new component under `/project1`, reads the current plugin
-location from `build/td-plugin-path.txt`, and starts both TOPs. Buffered results appear on subsequent cooks; the Info DATs show errors/status. It does not replace
+location from `prebuilt/macos-arm64/current.txt`, and starts both TOPs. Buffered results appear on subsequent cooks; the Info DATs show errors/status. It does not replace
 existing operators or save your project. Enter the printed component path to
 see its network; view `out1` or `out2` to start animation.
 

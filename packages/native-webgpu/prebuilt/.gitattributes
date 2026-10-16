@@ -1,0 +1,2 @@
+# Signed bundle contents must survive checkout byte-for-byte.
+macos-arm64/*.plugin/** -text -diff

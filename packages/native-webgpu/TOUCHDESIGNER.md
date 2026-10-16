@@ -9,6 +9,11 @@ adapter; there is no speculative cross-platform framework.
 
 ## Loading
 
+The [prebuilt macOS Apple Silicon plugin](prebuilt/README.md) is checked into this
+repository. Fresh clones can open `native/td/example/Sketch.toe` directly with TD
+installed; no native build is required. `prebuilt/macos-arm64/current.txt` names
+the versioned bundle. The `.toe` examples resolve it automatically.
+
 The reusable repository fixture is [native/td/example/Sketch.tox](native/td/example/Sketch.tox).
 See its [quick-start README](native/td/example/README.md) for the checkout loader,
 pulse example, and interactive checks. The release ZIP packages this same fixture.
@@ -194,6 +199,11 @@ repeat/skip animation frames. See
 
 ## Build and runtime ownership
 
+This section is for rebuilding the plugin from source. Sketch authors can use
+the [checked-in binary](prebuilt/README.md) and skip these steps. `td:build` writes
+new versioned bundles under `prebuilt/macos-arm64/` and updates `current.txt`;
+commit the selected bundle together with matching source changes.
+
 Installed TD headers were found at
 `/Applications/TouchDesigner.app/Contents/Resources/tfs/Samples/CPlusPlus/CPUMemoryTOP/`.
 The headless harness uses the pinned official TouchEngine macOS SDK recorded in
@@ -234,3 +244,12 @@ Maintained extra embedding patches: `embedding-clt-sdk.patch`,
 `0003-napi-v8-callback-lifetime.patch` (callback metadata reclamation after V8 GC),
 and `0004-embedded-event-driven-wait.patch` (opt-in GPU future waits). `TextCompat.cpp` fills the limited generic N-API gaps in the pinned V8 shim;
 it does not implement a separate WebGPU binding.
+
+## TypeScript projects and IDE development
+
+The [TD starter project](../../apps/td-projects/starter/README.md) provides two
+file-backed sketches, TimeContext, raw Power2D/shader-fx, local WGSL generation,
+IDE types, and a save → rebuild → restart loop. Open its `project.toe` after setup.
+Use `host.onDispose(callback)` for synchronous cleanup on reload; buffers/textures
+created through `host.device` are also tracked and destroyed automatically.
+The [build-tool guide](../../tools/td-sketch-build/README.md) owns this workflow.

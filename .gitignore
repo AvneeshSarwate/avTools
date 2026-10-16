@@ -54,6 +54,9 @@ apps/deno-notebooks/.avtools-livecode-sessions/
 **/*.pdb
 **/*.exe
 
+# Distributable TD runtime; fresh clones can run without native build tooling.
+!/packages/native-webgpu/prebuilt/macos-arm64/**/*.dylib
+
 # Python
 __pycache__/
 *.py[cod]
