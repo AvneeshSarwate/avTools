@@ -40,7 +40,8 @@
     "patches": [
       "embedding-clt-sdk.patch",
       "0003-napi-v8-callback-lifetime.patch",
-      "0004-embedded-event-driven-wait.patch"
+      "0004-embedded-event-driven-wait.patch",
+      "0005-embedded-timer-deadlines.patch"
     ],
     "allocatorShim": false,
     "partitionAllocAsMalloc": false

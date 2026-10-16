@@ -1,3 +1,4 @@
+import {seedrandomNotices} from './seedrandom-notices.mjs';
 import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -6,6 +7,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const repo = resolve(root, '../..');
 const dawn = resolve(root, 'upstream/node-webgpu/third_party/dawn');
 const notices = new Map();
+notices.set('seedrandom-3.0.5/licenses',seedrandomNotices(root));
 async function collect(directory, prefix, depth = 0) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     if (entry.isFile() && /^(licen[cs]e|copying|copyright|notice)([._-]|$)/i.test(entry.name)) {

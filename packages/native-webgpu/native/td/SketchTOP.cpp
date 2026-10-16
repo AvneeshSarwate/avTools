@@ -31,7 +31,7 @@ class SketchTOP final:public TOP_CPlusPlusBase {
   };
   TOP_Context* context;AVSketch* runtime=nullptr;
   // Only the short ownership exchanges take this lock. GPU waits and buffer
-  // allocation happen on the isolate worker, never while holding it.
+  // allocation happen on workers, never while holding it.
   std::mutex mutex;bool busy=false;std::unique_ptr<Job> pending,completed,fallback;
   AVStats stats{};std::string error;bool reset=true,syphonOnly=false,sameCook=false,pretrigger=false,triggerPending=false;
   double lastTriggerFrame=-1,submittedFrame=-1;int phase=0;int64_t cookStartNs=0;

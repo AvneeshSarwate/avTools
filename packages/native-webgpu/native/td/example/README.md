@@ -9,6 +9,16 @@ source. Its JavaScript, CHOP, TOP input, and two renderer instances are embedded
 there are no machine-specific paths or external image/font dependencies in the
 fixture. The native plugin bundle is built separately and is not checked in.
 
+## TimeContext example
+
+Open **TimeContext.toe** for two autonomous timing instances. Its counter and ball
+are driven by `host.timing.launch`; a second counter uses `waitFrame`. Pause TD,
+wait, then resume: realtime ticks jump forward while frame ticks resume normally.
+Set Event Name to `Trigger` and Send Pulse to toggle the realtime root, or use
+`start`, `stop`, or `reset`. The other TOP stays independent. `TimeContext.js` is
+the readable source; `TimeContext.tox` is the reusable component. See
+[the timing guide](../../../TIMING.md). The same plugin lookup applies below.
+
 ## Open from this checkout
 
 Build the plugin using [the integration guide](../../../TOUCHDESIGNER.md), then

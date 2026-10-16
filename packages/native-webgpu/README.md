@@ -5,9 +5,11 @@ retained Rust text shaping/rasterization, and the existing winit window library.
 The Deno renderer wrapper remains available. This is a local development package;
 it has not been published to npm. Other platforms and Node majors are unvalidated.
 
-Design plans: [TimeContext support in the embedded runtime](plans/timecontext-embedded-runtime-plan.md)
-is the proposed next step; the [original Dawn/Node/TouchDesigner port plan](plans/avtools-dawn-syphon-touchdesigner-port-plan.md)
-is retained for implementation history.
+The embedded TOP also supports [TimeContext](TIMING.md), with autonomous timers,
+managed sketch lifetimes, and a saved `TimeContext.toe` example.
+The [TimeContext design](plans/timecontext-embedded-runtime-plan.md) and
+[original port plan](plans/avtools-dawn-syphon-touchdesigner-port-plan.md) are retained
+for implementation history.
 
 ```js
 import { createGPU, P5GPU, GPUWindow, SyphonChannel } from '@avtools/native-webgpu';

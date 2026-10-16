@@ -1,6 +1,8 @@
 # TimeContext in the embedded V8 runtime
 
-Design and implementation handoff, researched 2026-10-11. **Proposed work, not implemented.**
+Design and implementation handoff, researched 2026-10-11. **Implemented 2026-10-15.** Current API and limitations: [TIMING.md](../TIMING.md).
+Validation and remaining characterization gaps: [TIMING_VALIDATION.md](../TIMING_VALIDATION.md).
+The original findings and proposed architecture below are historical design context.
 
 This is the next priority after the [original Dawn/Node/TouchDesigner port](avtools-dawn-syphon-touchdesigner-port-plan.md). The original plan is historical context; the implementation and current package documentation are authoritative about what already works.
 

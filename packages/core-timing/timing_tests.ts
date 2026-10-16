@@ -1037,11 +1037,16 @@ function trapUnhandledRejections() {
     event.preventDefault();
     events.push(event.reason);
   }) as EventListener;
-  globalThis.addEventListener("unhandledrejection", listener);
+  const nodeProcess = (globalThis as any).process;
+  const nodeListener = (reason: unknown) => events.push(reason);
+  if (nodeProcess?.versions?.node && !(globalThis as any).Deno) nodeProcess.on("unhandledRejection", nodeListener);
+  else globalThis.addEventListener("unhandledrejection", listener);
   return {
     events,
-    dispose: () =>
-      globalThis.removeEventListener("unhandledrejection", listener),
+    dispose: () => {
+      if (nodeProcess?.versions?.node && !(globalThis as any).Deno) nodeProcess.off("unhandledRejection", nodeListener);
+      else globalThis.removeEventListener("unhandledrejection", listener);
+    },
   };
 }
 
@@ -2120,19 +2125,10 @@ export async function runAllTimingTests(
   return results;
 }
 
+/** Explicit startup; importing the specification never starts asynchronous tests. */
 export async function runTimingTestsGuarded() {
-  console.log("Running timing tests...");
-  try {
-    await runAllTimingTests();
-  } catch (err) {
-    console.error(err);
-  }
-  try {
-    await runAllInvariantTests();
-  } catch (err) {
-    console.error(err);
-  }
-  console.log("Timing tests completed");
+  const failures: unknown[] = [];
+  try { await runAllTimingTests(); } catch (error) { failures.push(error); }
+  try { await runAllInvariantTests(); } catch (error) { failures.push(error); }
+  if (failures.length) throw new AggregateError(failures, "Timing specification failed");
 }
-
-runTimingTestsGuarded();

@@ -53,6 +53,13 @@ function draw(p, frame) {
 }
 ```
 
+## TimeContext
+
+`setup(p, host)` exposes `host.timing`: the shared TimeContext library, with
+autonomous realtime timers even while TD playback is paused. Open
+[TimeContext.toe](native/td/example/TimeContext.toe) to try managed roots, frame waits,
+and pulse cancellation. See [TIMING.md](TIMING.md) for API, lifecycle, and tests.
+
 ## Controls and events
 
 - **Sketch DAT / Source File:** edits compile before replacing the active sketch.
@@ -72,13 +79,13 @@ function draw(p, frame) {
   timeout. Ordinary source edits do not recreate the GPU device.
 
 `frame.frame`, `rate`, `absFrame`, and `deltaSeconds` come from TD's cook time.
-`frame.time = (frame.frame - 1) / frame.rate`. There is no independent animation
+`frame.time = (frame.frame - 1) / frame.rate`. These fields follow TD time; `host.timing` supplies an independent realtime
 clock. Repeated cooks still call draw with TD's current time; a backward seek
 preserves sketch state and can produce a negative delta. Pause does not prohibit
 parameter-triggered cooks. Draw and pulse exceptions stop that sketch until a
 source edit or reset; the last successfully uploaded TOP remains available.
 
-JavaScript execution is bounded to one second per render/pump call. Pending GPU
+JavaScript execution is bounded to one second per JavaScript callback and microtask drain. Pending GPU
 initialization has a five-second deadline; setup/readback pumping has a
 three-second deadline. Native driver calls cannot be preempted by V8 termination.
 These are reliability limits for trusted creative scripts, not a security

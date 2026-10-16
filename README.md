@@ -35,6 +35,11 @@ Build the plugin first on a fresh checkout; the native binaries are not checked
 in. The [example README](packages/native-webgpu/native/td/example/README.md)
 explains the controls and the reusable `Sketch.tox` component.
 
+The TOP also bundles [TimeContext](packages/native-webgpu/TIMING.md): independent
+realtime scheduling continues while TD playback is paused, with managed cleanup
+on reload. Open [TimeContext.toe](packages/native-webgpu/native/td/example/TimeContext.toe)
+for a ready-to-run timing and pulse example.
+
 These native integrations currently target **macOS Apple Silicon**; the Node
 build is validated with **Node 22.20.0**. The full livecode editor/server remains
 Deno-hosted. Root `setup.sh` does not build the Dawn package or TD plugin: follow

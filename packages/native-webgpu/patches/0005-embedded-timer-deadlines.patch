@@ -1,0 +1,36 @@
+--- a/src/dawn/node/binding/AsyncRunner.cpp
++++ b/src/dawn/node/binding/AsyncRunner.cpp
+@@ -72,7 +72,7 @@
+ 
+     auto weak_self = weak_this_;
+     env.Global()
+-        .Get("setImmediate")
++        .Get(event_driven_ && env.Global().Has("__avNativeImmediate") ? "__avNativeImmediate" : "setImmediate")
+         .As<Napi::Function>()
+         .Call({
+             // TODO(crbug.com/dawn/1127): Create once, reuse.
+@@ -89,8 +89,14 @@
+                                         // this thread, never on Dawn's Metal completion thread. Bound
+                                         // the wait so the host can enforce its async deadline.
+                                         auto futures = std::move(self->futures_);
++                                        // A GPU wait may sleep only until the next host task deadline.
++                                        // This is a deadline bound on an event wait, not periodic polling.
++                                        uint64_t waitNs = 100000000;
++                                        auto budget = env.Global().Get("__avNativeWaitBudget");
++                                        if (budget.IsFunction()) waitNs = static_cast<uint64_t>(
++                                            budget.As<Napi::Function>().Call({}).As<Napi::Number>().DoubleValue() * 1000000);
+                                         const auto status = wgpuInstanceWaitAny(self->instance_->Get(),
+-                                            std::min<size_t>(64, futures.size()), futures.data(), 100000000);
++                                            std::min<size_t>(64, futures.size()), futures.data(), waitNs);
+                                         if (status != WGPUWaitStatus_Success && status != WGPUWaitStatus_TimedOut) {
+                                             Napi::Error::New(env, "Dawn WaitAny failed").ThrowAsJavaScriptException();
+                                             return;
+@@ -105,7 +111,7 @@
+ 
+ void AsyncRunner::Reject(Napi::Env env, interop::Promise<void> promise, Napi::Error error) {
+     env.Global()
+-        .Get("setImmediate")
++        .Get(event_driven_ && env.Global().Has("__avNativeImmediate") ? "__avNativeImmediate" : "setImmediate")
+         .As<Napi::Function>()
+         .Call({Napi::Function::New(
+             env, [promise, error](const Napi::CallbackInfo&) { promise.Reject(error); })});
