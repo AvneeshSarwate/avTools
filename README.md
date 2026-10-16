@@ -30,15 +30,25 @@ The purpose of integrating Deno is to allow for a first-class livecoding experie
 For a runnable TD project, open
 [`Sketch.toe`](packages/native-webgpu/native/td/example/Sketch.toe).
 It opens the example network and animated preview, automatically finding the
-checkout's built plugin or the release ZIP's adjacent `Plugins` directory.
-Build the plugin first on a fresh checkout; the native binaries are not checked
-in. The [example README](packages/native-webgpu/native/td/example/README.md)
+checkout's [prebuilt plugin](packages/native-webgpu/prebuilt/README.md) or the
+release ZIP's adjacent `Plugins` directory. The macOS Apple Silicon binary is
+checked in, so a fresh clone does not need a native build for TD.
+The [example README](packages/native-webgpu/native/td/example/README.md)
 explains the controls and the reusable `Sketch.tox` component.
 
 The TOP also bundles [TimeContext](packages/native-webgpu/TIMING.md): independent
 realtime scheduling continues while TD playback is paused, with managed cleanup
 on reload. Open [TimeContext.toe](packages/native-webgpu/native/td/example/TimeContext.toe)
 for a ready-to-run timing and pulse example.
+
+For IDE-based TD sketch development, read the
+[`apps/td-projects` workflow guide](apps/td-projects/README.md) and start with
+[the starter project](apps/td-projects/starter/README.md). A project holds a
+`.toe`, multiple TypeScript sketches, shared helpers, and local WGSL shaders.
+`npm run dev` generates typed raw shader wrappers and rebuilds one JavaScript
+bundle per sketch; file-backed TOPs restart when their bundle changes. The reusable
+[`tools/td-sketch-build`](tools/td-sketch-build/README.md) runner owns builds,
+watching, compatibility checks, and embedded-runtime smoke tests.
 
 These native integrations currently target **macOS Apple Silicon**; the Node
 build is validated with **Node 22.20.0**. The full livecode editor/server remains

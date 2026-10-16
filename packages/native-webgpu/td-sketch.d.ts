@@ -9,6 +9,11 @@ export interface SketchHost {
   readonly device: GPUDevice;
   /** Canonical core-timing API; launches are owned by this sketch generation. */
   readonly timing: typeof Timing;
+  /** Synchronous cleanup on replacement, failed setup, resize, reset, or shutdown.
+   * Runs in reverse registration order while this generation's resources are valid.
+   * Buffers/textures created through host.device are also destroyed automatically.
+   */
+  onDispose(callback: () => void): void;
   /** Latest completed input snapshot; absent channels/indexes return zero. */
   chop(name: string, sampleIndex?: number): number;
   /** Fresh records/sample copies: modifying them cannot change the host snapshot. */

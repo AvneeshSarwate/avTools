@@ -45,6 +45,13 @@ int main(int argc,char**argv){try{
   // Candidate setup precedes commit, so check the old getter from a pulse after it.
   f.source="function onPulse(){try{globalThis.oldTexture.width;throw Error('stale getter allowed');}catch(e){if(!String(e).includes('disposed'))throw e;}}function draw(p){p.background(0)}";
   render(a);f.pulseCount=1;render(a);f.pulseCount=0;
+  // Resource cleanup runs before guard invalidation, including failed candidates.
+  f.source=R"JS(function setup(p,h){globalThis.cleanupOrder=[];const texture=h.device.createTexture({size:[1,1],format:'rgba8unorm',usage:GPUTextureUsage.TEXTURE_BINDING});h.onDispose(()=>{if(texture.width!==1)throw Error('cleanup lost texture');cleanupOrder.push(1);});h.onDispose(()=>cleanupOrder.push(2));}function draw(p){p.background(0);})JS";
+  render(a);
+  f.source="function draw(p){if(cleanupOrder[0]!==2||cleanupOrder[1]!==1)throw Error('cleanup ordering failed');p.background(cleanupOrder.length,0,0)}";
+  render(a);check(pixels[0]==2,"Cleanup hooks did not run on replacement");
+  f.source="function setup(p,h){h.onDispose(()=>cleanupOrder.push(3));throw Error('failed cleanup candidate')}function draw(){}";
+  render(a);check(std::string(error).find("failed cleanup candidate")!=std::string::npos,"Failed setup error missing");check(pixels[0]==3,"Failed candidate cleanup did not run");
   for(int cycle=0;cycle<100;cycle++){
     std::string text="// reload "+std::to_string(cycle)+R"JS(
 function setup(p,h){setTimeout(()=>{},60000);h.timing.launch(async c=>{while(true)await c.waitSec(60);});}

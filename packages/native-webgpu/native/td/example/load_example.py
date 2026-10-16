@@ -4,10 +4,8 @@ import time
 
 example_dir = Path(__file__).resolve().parent
 package_dir = example_dir.parents[2]
-plugin_marker = package_dir / 'build/td-plugin-path.txt'
-if not plugin_marker.is_file():
-    raise RuntimeError('Build the TD plugin first; see packages/native-webgpu/TOUCHDESIGNER.md')
-plugin = Path(plugin_marker.read_text().strip())
+prebuilt = package_dir / 'prebuilt/macos-arm64'
+plugin = prebuilt / (prebuilt / 'current.txt').read_text().strip()
 if not plugin.is_dir():
     raise RuntimeError('The built plugin is missing: ' + str(plugin))
 

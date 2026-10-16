@@ -3,7 +3,9 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
 const root=fileURLToPath(new URL('../',import.meta.url));
-const plugin=readFileSync(resolve(root,'build/td-plugin-path.txt'),'utf8').trim();
+const prebuilt=resolve(root,'prebuilt/macos-arm64');
+const plugin=resolve(prebuilt,readFileSync(resolve(prebuilt,'current.txt'),'utf8').trim());
+mkdirSync(resolve(root,'build'),{recursive:true});
 const staging=mkdtempSync(resolve(root,'build/td-release-'));
 const release=resolve(staging,'avtools-sketch-macos-arm64');mkdirSync(resolve(release,'Plugins'),{recursive:true});
 // Stable release name matches the example's project-relative default Plugin Path.

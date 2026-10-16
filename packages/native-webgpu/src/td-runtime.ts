@@ -52,7 +52,7 @@ g.__avRender=async()=>{
         if(typeof candidate.draw!=='function')throw new Error('Sketch must define function draw(p, frame)');
         next=new EmbeddedP5GPU(device,{width:frame.width,height:frame.height,sampleCount:1},fonts);
         const guarded=candidateLife.guard(next);
-        const host=Object.freeze({device:candidateLife.guard(device),readFile:(path:string)=>candidateLife.run(()=>g.readFile(path)),timing:candidateLife.timing,chop,latestControls});
+        const host=Object.freeze({device:candidateLife.guard(device),readFile:(path:string)=>candidateLife.run(()=>g.readFile(path)),timing:candidateLife.timing,onDispose:(callback:()=>void)=>candidateLife.onDispose(callback),chop,latestControls});
         await candidateLife.run(()=>candidate.setup?.(guarded,host));
         if(candidateLife.error)throw new Error(candidateLife.error);
         await lifetime?.dispose();
