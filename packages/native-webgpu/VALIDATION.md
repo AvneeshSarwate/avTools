@@ -1,5 +1,9 @@
 # Native port validation
 
+TimeContext runtime changes (2026-10-15), cross-host conformance, lifecycle checks,
+and updated four-TOP measurements are in [TIMING_VALIDATION.md](TIMING_VALIDATION.md).
+Earlier dated measurements below remain historical baselines.
+
 Validation machine: Apple M1 Max (32 GPU cores), macOS 15.7.7 (24G720),
 arm64, Node 22.20.0, TouchDesigner Commercial 2025.31550. Revision/toolchain
 pins are in `native-manifest.json`. Results below are hardware checks on this

@@ -1,0 +1,1271 @@
+{
+  "machine": "Apple M1 Max, macOS 15.7.7, TD 2025.31550",
+  "render": "four 1920x1080 CPU-output TOPs at 60 Hz, no input TOPs, buffered output",
+  "notes": "GUI TD playback paused; no concurrent native benchmark. General desktop activity not controlled. Discard first 30 frames. gpuReadyMs includes TD upload ownership fences; separate validation pixel readback excluded. Later stale-RAF rejection fix does not affect these workloads.",
+  "comparisons": [
+    {
+      "artifactDirectory": "artifacts/timing/td-comparison-1792118105265573000",
+      "runs": [
+        {
+          "case": "baseline",
+          "artifacts": "artifacts/td/buffered-scaling-1792118105294299000",
+          "mode": "no-input",
+          "sameCook": false,
+          "complex": false,
+          "timingHz": 0,
+          "plugin": "AvToolsSketch-ff53beb1bfa2.plugin",
+          "instances": 4,
+          "frames": 210,
+          "repeatedOutputs": 0,
+          "ageFrames": {
+            "count": 840,
+            "mean": 1.0,
+            "p50": 1,
+            "p95": 1,
+            "p99": 1,
+            "max": 1
+          },
+          "overlappingWorkerPairs": 1260,
+          "hostMs": {
+            "cookMs": {
+              "count": 210,
+              "mean": 3.077966861904762,
+              "p50": 2.629583,
+              "p95": 5.334041,
+              "p99": 6.670084,
+              "max": 11.512583
+            },
+            "gpuReadyMs": {
+              "count": 210,
+              "mean": 6.3659880666666675,
+              "p50": 6.528542,
+              "p95": 9.888583,
+              "p99": 13.494541,
+              "max": 13.657167
+            },
+            "validationMs": {
+              "count": 210,
+              "mean": 0.5148979904761904,
+              "p50": 0.286583,
+              "p95": 1.436833,
+              "p99": 2.000042,
+              "max": 4.09525
+            },
+            "scheduleSlipMs": {
+              "count": 210,
+              "mean": 1.6152465904761903,
+              "p50": 1.733042,
+              "p95": 2.874209,
+              "p99": 3.755042,
+              "max": 4.988584
+            }
+          },
+          "renderStartToUploadedImageMs": {
+            "count": 840,
+            "mean": 21.023336007142856,
+            "p50": 21.51025,
+            "p95": 24.983417,
+            "p99": 26.891416,
+            "max": 31.406542
+          },
+          "missedDeadlines": 0,
+          "pluginSumMs": {
+            "cookMs": {
+              "count": 210,
+              "mean": 0.7146261714285714,
+              "p50": 0.5675,
+              "p95": 1.586915,
+              "p99": 1.845126,
+              "max": 3.574791
+            },
+            "uploadMs": {
+              "count": 210,
+              "mean": 0.3855582952380952,
+              "p50": 0.288666,
+              "p95": 0.889792,
+              "p99": 1.168792,
+              "max": 3.110125
+            }
+          },
+          "workerMs": {
+            "workerMs": {
+              "count": 840,
+              "mean": 2.755932242857143,
+              "p50": 2.377583,
+              "p95": 4.999375,
+              "p99": 9.872542,
+              "max": 13.15075
+            },
+            "inputDownloadMs": {
+              "count": 840,
+              "mean": 0.00011224404761904761,
+              "p50": 8.3e-05,
+              "p95": 0.000334,
+              "p99": 0.000417,
+              "max": 0.000958
+            },
+            "inputUploadMs": {
+              "count": 840,
+              "mean": 0.24181175952380954,
+              "p50": 0.196917,
+              "p95": 0.460542,
+              "p99": 0.911792,
+              "max": 7.95825
+            },
+            "drawMs": {
+              "count": 840,
+              "mean": 0.27891734761904763,
+              "p50": 0.255333,
+              "p95": 0.497458,
+              "p99": 0.81625,
+              "max": 1.364375
+            },
+            "readbackMs": {
+              "count": 840,
+              "mean": 1.6504627773809524,
+              "p50": 1.280375,
+              "p95": 3.759792,
+              "p99": 7.340709,
+              "max": 11.895875
+            }
+          }
+        },
+        {
+          "case": "current",
+          "artifacts": "artifacts/td/buffered-scaling-1792118117827780000",
+          "mode": "no-input",
+          "sameCook": false,
+          "complex": false,
+          "timingHz": 0,
+          "plugin": "AvToolsSketch-3aef62711bca.plugin",
+          "instances": 4,
+          "frames": 210,
+          "repeatedOutputs": 0,
+          "ageFrames": {
+            "count": 840,
+            "mean": 1.0,
+            "p50": 1,
+            "p95": 1,
+            "p99": 1,
+            "max": 1
+          },
+          "overlappingWorkerPairs": 1260,
+          "hostMs": {
+            "cookMs": {
+              "count": 210,
+              "mean": 2.774390085714286,
+              "p50": 2.503625,
+              "p95": 5.172709,
+              "p99": 5.925042,
+              "max": 6.914375
+            },
+            "gpuReadyMs": {
+              "count": 210,
+              "mean": 4.2149008142857145,
+              "p50": 3.921208,
+              "p95": 6.292375,
+              "p99": 7.386708,
+              "max": 7.999
+            },
+            "validationMs": {
+              "count": 210,
+              "mean": 0.3105789666666666,
+              "p50": 0.256416,
+              "p95": 0.577,
+              "p99": 1.214167,
+              "max": 1.456583
+            },
+            "scheduleSlipMs": {
+              "count": 210,
+              "mean": 1.9303864285714285,
+              "p50": 2.207625,
+              "p95": 3.03875,
+              "p99": 3.535501,
+              "max": 4.220376
+            }
+          },
+          "renderStartToUploadedImageMs": {
+            "count": 840,
+            "mean": 19.113639532142855,
+            "p50": 19.211875,
+            "p95": 22.489125,
+            "p99": 23.777833,
+            "max": 26.677583
+          },
+          "missedDeadlines": 0,
+          "pluginSumMs": {
+            "cookMs": {
+              "count": 210,
+              "mean": 0.5968884476190477,
+              "p50": 0.5007079999999999,
+              "p95": 1.277167,
+              "p99": 1.7370420000000002,
+              "max": 2.746251
+            },
+            "uploadMs": {
+              "count": 210,
+              "mean": 0.31549047142857145,
+              "p50": 0.26245999999999997,
+              "p95": 0.638083,
+              "p99": 1.006291,
+              "max": 1.5057919999999998
+            }
+          },
+          "workerMs": {
+            "workerMs": {
+              "count": 840,
+              "mean": 1.538156288095238,
+              "p50": 1.421542,
+              "p95": 2.428375,
+              "p99": 3.033916,
+              "max": 4.18825
+            },
+            "inputDownloadMs": {
+              "count": 840,
+              "mean": 0.00015986190476190477,
+              "p50": 4.2e-05,
+              "p95": 0.000291,
+              "p99": 0.0005,
+              "max": 0.029
+            },
+            "inputUploadMs": {
+              "count": 840,
+              "mean": 0.06390249523809523,
+              "p50": 0.054833,
+              "p95": 0.118583,
+              "p99": 0.194541,
+              "max": 0.869834
+            },
+            "drawMs": {
+              "count": 840,
+              "mean": 0.2818190547619048,
+              "p50": 0.271666,
+              "p95": 0.434292,
+              "p99": 0.706167,
+              "max": 1.773708
+            },
+            "readbackMs": {
+              "count": 840,
+              "mean": 0.6724605238095238,
+              "p50": 0.596666,
+              "p95": 1.31425,
+              "p99": 1.656958,
+              "max": 2.33875
+            }
+          }
+        },
+        {
+          "case": "timing240",
+          "artifacts": "artifacts/td/buffered-scaling-1792118130135936000",
+          "mode": "no-input",
+          "sameCook": false,
+          "complex": false,
+          "timingHz": 240,
+          "plugin": "AvToolsSketch-3aef62711bca.plugin",
+          "instances": 4,
+          "frames": 210,
+          "repeatedOutputs": 0,
+          "ageFrames": {
+            "count": 840,
+            "mean": 1.0,
+            "p50": 1,
+            "p95": 1,
+            "p99": 1,
+            "max": 1
+          },
+          "overlappingWorkerPairs": 1259,
+          "hostMs": {
+            "cookMs": {
+              "count": 210,
+              "mean": 2.5397119285714287,
+              "p50": 2.325125,
+              "p95": 4.405667,
+              "p99": 5.538083,
+              "max": 8.874458
+            },
+            "gpuReadyMs": {
+              "count": 210,
+              "mean": 4.648086066666667,
+              "p50": 4.004875,
+              "p95": 7.588209,
+              "p99": 8.415209,
+              "max": 12.514167
+            },
+            "validationMs": {
+              "count": 210,
+              "mean": 0.45191013333333335,
+              "p50": 0.276334,
+              "p95": 1.308208,
+              "p99": 1.552584,
+              "max": 2.200542
+            },
+            "scheduleSlipMs": {
+              "count": 210,
+              "mean": 2.6373404000000003,
+              "p50": 2.460542,
+              "p95": 5.605209,
+              "p99": 6.456042,
+              "max": 6.935042
+            }
+          },
+          "renderStartToUploadedImageMs": {
+            "count": 840,
+            "mean": 19.79212107857143,
+            "p50": 19.241,
+            "p95": 27.003959,
+            "p99": 29.360042,
+            "max": 30.106375
+          },
+          "missedDeadlines": 0,
+          "pluginSumMs": {
+            "cookMs": {
+              "count": 210,
+              "mean": 0.5643700333333334,
+              "p50": 0.519333,
+              "p95": 0.851917,
+              "p99": 1.530418,
+              "max": 1.622792
+            },
+            "uploadMs": {
+              "count": 210,
+              "mean": 0.2911123333333333,
+              "p50": 0.262792,
+              "p95": 0.473625,
+              "p99": 0.798833,
+              "max": 1.14625
+            }
+          },
+          "workerMs": {
+            "workerMs": {
+              "count": 840,
+              "mean": 1.7168954833333332,
+              "p50": 1.428875,
+              "p95": 3.726291,
+              "p99": 4.404834,
+              "max": 6.239833
+            },
+            "inputDownloadMs": {
+              "count": 840,
+              "mean": 0.00011489642857142857,
+              "p50": 8.3e-05,
+              "p95": 0.000291,
+              "p99": 0.000417,
+              "max": 0.003
+            },
+            "inputUploadMs": {
+              "count": 840,
+              "mean": 0.059227908333333336,
+              "p50": 0.054291,
+              "p95": 0.105208,
+              "p99": 0.161,
+              "max": 0.429459
+            },
+            "drawMs": {
+              "count": 840,
+              "mean": 0.2733968880952381,
+              "p50": 0.261542,
+              "p95": 0.404792,
+              "p99": 0.552625,
+              "max": 4.379458
+            },
+            "readbackMs": {
+              "count": 840,
+              "mean": 0.8950032214285715,
+              "p50": 0.606459,
+              "p95": 2.821917,
+              "p99": 3.372792,
+              "max": 4.11525
+            }
+          },
+          "timerLatenessMs": {
+            "count": 2880,
+            "p50": 0.358707999967919,
+            "p95": 1.1218746666349944,
+            "p99": 2.442624666628035,
+            "max": 8.614041333312798
+          }
+        },
+        {
+          "case": "timing1000",
+          "artifacts": "artifacts/td/buffered-scaling-1792118142412717000",
+          "mode": "no-input",
+          "sameCook": false,
+          "complex": false,
+          "timingHz": 1000,
+          "plugin": "AvToolsSketch-3aef62711bca.plugin",
+          "instances": 4,
+          "frames": 210,
+          "repeatedOutputs": 0,
+          "ageFrames": {
+            "count": 840,
+            "mean": 1.0,
+            "p50": 1,
+            "p95": 1,
+            "p99": 1,
+            "max": 1
+          },
+          "overlappingWorkerPairs": 1260,
+          "hostMs": {
+            "cookMs": {
+              "count": 210,
+              "mean": 2.3986571857142858,
+              "p50": 2.248167,
+              "p95": 3.560042,
+              "p99": 4.923959,
+              "max": 10.199
+            },
+            "gpuReadyMs": {
+              "count": 210,
+              "mean": 5.802214266666667,
+              "p50": 6.1625,
+              "p95": 7.500166,
+              "p99": 8.05875,
+              "max": 11.02825
+            },
+            "validationMs": {
+              "count": 210,
+              "mean": 0.4931926619047619,
+              "p50": 0.283208,
+              "p95": 1.344166,
+              "p99": 2.141541,
+              "max": 2.590208
+            },
+            "scheduleSlipMs": {
+              "count": 210,
+              "mean": 2.2834132142857144,
+              "p50": 2.317875,
+              "p95": 4.354167,
+              "p99": 5.588875,
+              "max": 5.765125
+            }
+          },
+          "renderStartToUploadedImageMs": {
+            "count": 840,
+            "mean": 21.01011850952381,
+            "p50": 21.346291,
+            "p95": 24.786125,
+            "p99": 25.839667,
+            "max": 27.850917
+          },
+          "missedDeadlines": 0,
+          "pluginSumMs": {
+            "cookMs": {
+              "count": 210,
+              "mean": 0.5746896380952381,
+              "p50": 0.50454,
+              "p95": 0.774125,
+              "p99": 1.3343319999999999,
+              "max": 6.448791
+            },
+            "uploadMs": {
+              "count": 210,
+              "mean": 0.30289047142857145,
+              "p50": 0.252791,
+              "p95": 0.38575,
+              "p99": 0.819917,
+              "max": 6.119543
+            }
+          },
+          "workerMs": {
+            "workerMs": {
+              "count": 840,
+              "mean": 2.348055494047619,
+              "p50": 2.177292,
+              "p95": 4.212708,
+              "p99": 4.871417,
+              "max": 5.70425
+            },
+            "inputDownloadMs": {
+              "count": 840,
+              "mean": 8.700595238095238e-05,
+              "p50": 4.2e-05,
+              "p95": 0.000209,
+              "p99": 0.000375,
+              "max": 0.005375
+            },
+            "inputUploadMs": {
+              "count": 840,
+              "mean": 0.054863797619047625,
+              "p50": 0.05325,
+              "p95": 0.093125,
+              "p99": 0.126041,
+              "max": 0.185083
+            },
+            "drawMs": {
+              "count": 840,
+              "mean": 0.25694534404761904,
+              "p50": 0.248083,
+              "p95": 0.390084,
+              "p99": 0.445584,
+              "max": 1.815958
+            },
+            "readbackMs": {
+              "count": 840,
+              "mean": 1.550745969047619,
+              "p50": 1.340667,
+              "p95": 3.430625,
+              "p99": 3.976875,
+              "max": 4.60425
+            }
+          },
+          "timerLatenessMs": {
+            "count": 12000,
+            "p50": 0.2615000001287626,
+            "p95": 0.9637919999994438,
+            "p99": 1.0741250000207856,
+            "max": 6.427666999999998
+          }
+        },
+        {
+          "case": "baseline-repeat",
+          "artifacts": "artifacts/td/buffered-scaling-1792118154752308000",
+          "mode": "no-input",
+          "sameCook": false,
+          "complex": false,
+          "timingHz": 0,
+          "plugin": "AvToolsSketch-ff53beb1bfa2.plugin",
+          "instances": 4,
+          "frames": 210,
+          "repeatedOutputs": 0,
+          "ageFrames": {
+            "count": 840,
+            "mean": 1.0,
+            "p50": 1,
+            "p95": 1,
+            "p99": 1,
+            "max": 1
+          },
+          "overlappingWorkerPairs": 1260,
+          "hostMs": {
+            "cookMs": {
+              "count": 210,
+              "mean": 2.876359885714286,
+              "p50": 2.48075,
+              "p95": 5.355333,
+              "p99": 6.919584,
+              "max": 8.425875
+            },
+            "gpuReadyMs": {
+              "count": 210,
+              "mean": 4.408935123809524,
+              "p50": 3.949584,
+              "p95": 7.158167,
+              "p99": 9.921375,
+              "max": 12.470042
+            },
+            "validationMs": {
+              "count": 210,
+              "mean": 0.2952979761904762,
+              "p50": 0.266,
+              "p95": 0.432792,
+              "p99": 1.0565,
+              "max": 1.115375
+            },
+            "scheduleSlipMs": {
+              "count": 210,
+              "mean": 2.605894919047619,
+              "p50": 2.357875,
+              "p95": 5.255376,
+              "p99": 5.837751,
+              "max": 6.475126
+            }
+          },
+          "renderStartToUploadedImageMs": {
+            "count": 840,
+            "mean": 19.23776147857143,
+            "p50": 19.248084,
+            "p95": 24.635542,
+            "p99": 29.73825,
+            "max": 30.302792
+          },
+          "missedDeadlines": 0,
+          "pluginSumMs": {
+            "cookMs": {
+              "count": 210,
+              "mean": 0.6098872761904761,
+              "p50": 0.5004580000000001,
+              "p95": 1.171293,
+              "p99": 1.898543,
+              "max": 2.559542
+            },
+            "uploadMs": {
+              "count": 210,
+              "mean": 0.31494619999999995,
+              "p50": 0.256249,
+              "p95": 0.644208,
+              "p99": 1.032708,
+              "max": 1.2879180000000001
+            }
+          },
+          "workerMs": {
+            "workerMs": {
+              "count": 840,
+              "mean": 1.8464114214285714,
+              "p50": 1.689209,
+              "p95": 2.756,
+              "p99": 4.5705,
+              "max": 7.26975
+            },
+            "inputDownloadMs": {
+              "count": 840,
+              "mean": 0.00011618095238095238,
+              "p50": 4.2e-05,
+              "p95": 0.000291,
+              "p99": 0.000417,
+              "max": 0.018917
+            },
+            "inputUploadMs": {
+              "count": 840,
+              "mean": 0.24297382857142857,
+              "p50": 0.197583,
+              "p95": 0.394917,
+              "p99": 1.395333,
+              "max": 3.486166
+            },
+            "drawMs": {
+              "count": 840,
+              "mean": 0.2814768345238095,
+              "p50": 0.260666,
+              "p95": 0.477541,
+              "p99": 0.695417,
+              "max": 1.758291
+            },
+            "readbackMs": {
+              "count": 840,
+              "mean": 0.7298718654761904,
+              "p50": 0.620333,
+              "p95": 1.411958,
+              "p99": 2.330791,
+              "max": 3.99925
+            }
+          }
+        },
+        {
+          "case": "current-repeat",
+          "artifacts": "artifacts/td/buffered-scaling-1792118167039360000",
+          "mode": "no-input",
+          "sameCook": false,
+          "complex": false,
+          "timingHz": 0,
+          "plugin": "AvToolsSketch-3aef62711bca.plugin",
+          "instances": 4,
+          "frames": 210,
+          "repeatedOutputs": 0,
+          "ageFrames": {
+            "count": 840,
+            "mean": 1.0,
+            "p50": 1,
+            "p95": 1,
+            "p99": 1,
+            "max": 1
+          },
+          "overlappingWorkerPairs": 1258,
+          "hostMs": {
+            "cookMs": {
+              "count": 210,
+              "mean": 3.380956147619048,
+              "p50": 2.511,
+              "p95": 9.73525,
+              "p99": 12.571125,
+              "max": 13.415458
+            },
+            "gpuReadyMs": {
+              "count": 210,
+              "mean": 6.266955523809524,
+              "p50": 6.018125,
+              "p95": 11.66125,
+              "p99": 14.46775,
+              "max": 14.6635
+            },
+            "validationMs": {
+              "count": 210,
+              "mean": 0.5161392857142857,
+              "p50": 0.297917,
+              "p95": 1.407458,
+              "p99": 2.401625,
+              "max": 4.023084
+            },
+            "scheduleSlipMs": {
+              "count": 210,
+              "mean": 2.567483023809524,
+              "p50": 2.381709,
+              "p95": 5.383792,
+              "p99": 5.880792,
+              "max": 6.257334
+            }
+          },
+          "renderStartToUploadedImageMs": {
+            "count": 840,
+            "mean": 20.636841158333336,
+            "p50": 20.618666,
+            "p95": 29.682167,
+            "p99": 33.441,
+            "max": 34.131583
+          },
+          "missedDeadlines": 11,
+          "pluginSumMs": {
+            "cookMs": {
+              "count": 210,
+              "mean": 0.787194319047619,
+              "p50": 0.545167,
+              "p95": 1.803209,
+              "p99": 7.083957,
+              "max": 8.892334
+            },
+            "uploadMs": {
+              "count": 210,
+              "mean": 0.36087825714285715,
+              "p50": 0.284958,
+              "p95": 0.841166,
+              "p99": 1.386542,
+              "max": 1.5449169999999999
+            }
+          },
+          "workerMs": {
+            "workerMs": {
+              "count": 840,
+              "mean": 2.208699901190476,
+              "p50": 1.702292,
+              "p95": 4.388083,
+              "p99": 7.176625,
+              "max": 9.519458
+            },
+            "inputDownloadMs": {
+              "count": 840,
+              "mean": 0.00010199047619047619,
+              "p50": 8.3e-05,
+              "p95": 0.000292,
+              "p99": 0.000416,
+              "max": 0.0015
+            },
+            "inputUploadMs": {
+              "count": 840,
+              "mean": 0.061932691666666664,
+              "p50": 0.054042,
+              "p95": 0.119708,
+              "p99": 0.178292,
+              "max": 0.336875
+            },
+            "drawMs": {
+              "count": 840,
+              "mean": 0.30708731904761905,
+              "p50": 0.262083,
+              "p95": 0.458583,
+              "p99": 1.243958,
+              "max": 8.21025
+            },
+            "readbackMs": {
+              "count": 840,
+              "mean": 1.3005954666666666,
+              "p50": 0.790167,
+              "p95": 3.402209,
+              "p99": 5.76325,
+              "max": 7.964541
+            }
+          }
+        }
+      ]
+    },
+    {
+      "artifactDirectory": "artifacts/timing/td-comparison-1792118220147867000",
+      "runs": [
+        {
+          "case": "baseline",
+          "artifacts": "artifacts/td/buffered-scaling-1792118220178140000",
+          "mode": "no-input",
+          "sameCook": false,
+          "complex": false,
+          "timingHz": 0,
+          "plugin": "AvToolsSketch-ff53beb1bfa2.plugin",
+          "instances": 4,
+          "frames": 570,
+          "repeatedOutputs": 0,
+          "ageFrames": {
+            "count": 2280,
+            "mean": 1.0,
+            "p50": 1,
+            "p95": 1,
+            "p99": 1,
+            "max": 1
+          },
+          "overlappingWorkerPairs": 3419,
+          "hostMs": {
+            "cookMs": {
+              "count": 570,
+              "mean": 3.218676164912281,
+              "p50": 2.811209,
+              "p95": 6.284416,
+              "p99": 7.881416,
+              "max": 8.652375
+            },
+            "gpuReadyMs": {
+              "count": 570,
+              "mean": 4.874406371929824,
+              "p50": 4.434375,
+              "p95": 7.525209,
+              "p99": 9.737166,
+              "max": 11.730917
+            },
+            "validationMs": {
+              "count": 570,
+              "mean": 0.3177016105263158,
+              "p50": 0.275959,
+              "p95": 0.51175,
+              "p99": 1.150125,
+              "max": 1.721375
+            },
+            "scheduleSlipMs": {
+              "count": 570,
+              "mean": 2.9156442473684208,
+              "p50": 2.884834,
+              "p95": 5.500125,
+              "p99": 7.503417,
+              "max": 12.533626
+            }
+          },
+          "renderStartToUploadedImageMs": {
+            "count": 2280,
+            "mean": 19.4451206622807,
+            "p50": 19.442166,
+            "p95": 25.539583,
+            "p99": 27.725042,
+            "max": 35.536416
+          },
+          "missedDeadlines": 2,
+          "pluginSumMs": {
+            "cookMs": {
+              "count": 570,
+              "mean": 0.6192839192982456,
+              "p50": 0.5355,
+              "p95": 1.2679989999999999,
+              "p99": 1.923375,
+              "max": 2.602291
+            },
+            "uploadMs": {
+              "count": 570,
+              "mean": 0.32485398421052636,
+              "p50": 0.27549999999999997,
+              "p95": 0.603666,
+              "p99": 1.286585,
+              "max": 1.850084
+            }
+          },
+          "workerMs": {
+            "workerMs": {
+              "count": 2280,
+              "mean": 1.8686629390350877,
+              "p50": 1.69275,
+              "p95": 3.011959,
+              "p99": 4.399417,
+              "max": 8.235708
+            },
+            "inputDownloadMs": {
+              "count": 2280,
+              "mean": 0.0002259140350877193,
+              "p50": 4.2e-05,
+              "p95": 0.00025,
+              "p99": 0.000417,
+              "max": 0.279833
+            },
+            "inputUploadMs": {
+              "count": 2280,
+              "mean": 0.2618818328947369,
+              "p50": 0.193458,
+              "p95": 0.388417,
+              "p99": 2.379625,
+              "max": 6.731833
+            },
+            "drawMs": {
+              "count": 2280,
+              "mean": 0.27014350000000004,
+              "p50": 0.2535,
+              "p95": 0.417458,
+              "p99": 0.855792,
+              "max": 2.286166
+            },
+            "readbackMs": {
+              "count": 2280,
+              "mean": 0.7614022614035088,
+              "p50": 0.623834,
+              "p95": 1.606458,
+              "p99": 2.293625,
+              "max": 5.834291
+            }
+          }
+        },
+        {
+          "case": "current",
+          "artifacts": "artifacts/td/buffered-scaling-1792118238954845000",
+          "mode": "no-input",
+          "sameCook": false,
+          "complex": false,
+          "timingHz": 0,
+          "plugin": "AvToolsSketch-3aef62711bca.plugin",
+          "instances": 4,
+          "frames": 570,
+          "repeatedOutputs": 0,
+          "ageFrames": {
+            "count": 2280,
+            "mean": 1.0,
+            "p50": 1,
+            "p95": 1,
+            "p99": 1,
+            "max": 1
+          },
+          "overlappingWorkerPairs": 3419,
+          "hostMs": {
+            "cookMs": {
+              "count": 570,
+              "mean": 3.7674073666666668,
+              "p50": 2.791375,
+              "p95": 10.32,
+              "p99": 12.756833,
+              "max": 14.426125
+            },
+            "gpuReadyMs": {
+              "count": 570,
+              "mean": 5.861651957894737,
+              "p50": 4.910625,
+              "p95": 11.701834,
+              "p99": 14.297708,
+              "max": 16.062917
+            },
+            "validationMs": {
+              "count": 570,
+              "mean": 0.44917668070175437,
+              "p50": 0.271583,
+              "p95": 1.338875,
+              "p99": 2.560792,
+              "max": 2.904917
+            },
+            "scheduleSlipMs": {
+              "count": 570,
+              "mean": 2.7557231824561406,
+              "p50": 2.150084,
+              "p95": 8.656625,
+              "p99": 10.258792,
+              "max": 13.138083
+            }
+          },
+          "renderStartToUploadedImageMs": {
+            "count": 2280,
+            "mean": 19.89927749254386,
+            "p50": 20.075166,
+            "p95": 30.433834,
+            "p99": 32.273541,
+            "max": 33.11925
+          },
+          "missedDeadlines": 20,
+          "pluginSumMs": {
+            "cookMs": {
+              "count": 570,
+              "mean": 0.7120871947368421,
+              "p50": 0.561751,
+              "p95": 1.562751,
+              "p99": 3.241624,
+              "max": 6.965498
+            },
+            "uploadMs": {
+              "count": 570,
+              "mean": 0.38641542631578946,
+              "p50": 0.28566600000000003,
+              "p95": 0.774875,
+              "p99": 2.282959,
+              "max": 5.759666
+            }
+          },
+          "workerMs": {
+            "workerMs": {
+              "count": 2280,
+              "mean": 1.8138068978070174,
+              "p50": 1.470292,
+              "p95": 3.876625,
+              "p99": 5.376333,
+              "max": 10.482208
+            },
+            "inputDownloadMs": {
+              "count": 2280,
+              "mean": 0.00011368421052631579,
+              "p50": 8.3e-05,
+              "p95": 0.000292,
+              "p99": 0.000458,
+              "max": 0.016042
+            },
+            "inputUploadMs": {
+              "count": 2280,
+              "mean": 0.07430351798245614,
+              "p50": 0.05825,
+              "p95": 0.130584,
+              "p99": 0.259959,
+              "max": 5.558875
+            },
+            "drawMs": {
+              "count": 2280,
+              "mean": 0.27702431842105263,
+              "p50": 0.259792,
+              "p95": 0.437791,
+              "p99": 0.780791,
+              "max": 5.301625
+            },
+            "readbackMs": {
+              "count": 2280,
+              "mean": 0.946782301754386,
+              "p50": 0.628417,
+              "p95": 2.939583,
+              "p99": 4.078333,
+              "max": 6.140042
+            }
+          }
+        },
+        {
+          "case": "current-repeat",
+          "artifacts": "artifacts/td/buffered-scaling-1792118257759726000",
+          "mode": "no-input",
+          "sameCook": false,
+          "complex": false,
+          "timingHz": 0,
+          "plugin": "AvToolsSketch-3aef62711bca.plugin",
+          "instances": 4,
+          "frames": 570,
+          "repeatedOutputs": 0,
+          "ageFrames": {
+            "count": 2280,
+            "mean": 1.0,
+            "p50": 1,
+            "p95": 1,
+            "p99": 1,
+            "max": 1
+          },
+          "overlappingWorkerPairs": 3416,
+          "hostMs": {
+            "cookMs": {
+              "count": 570,
+              "mean": 3.4398449631578947,
+              "p50": 2.641334,
+              "p95": 6.791958,
+              "p99": 9.652292,
+              "max": 10.880458
+            },
+            "gpuReadyMs": {
+              "count": 570,
+              "mean": 6.4225929105263155,
+              "p50": 6.4965,
+              "p95": 8.732292,
+              "p99": 11.4665,
+              "max": 12.524708
+            },
+            "validationMs": {
+              "count": 570,
+              "mean": 0.3571945947368421,
+              "p50": 0.273292,
+              "p95": 0.786625,
+              "p99": 1.544833,
+              "max": 2.60975
+            },
+            "scheduleSlipMs": {
+              "count": 570,
+              "mean": 2.773219594736842,
+              "p50": 2.557875,
+              "p95": 6.374459,
+              "p99": 7.32125,
+              "max": 9.653875
+            }
+          },
+          "renderStartToUploadedImageMs": {
+            "count": 2280,
+            "mean": 20.79852233596491,
+            "p50": 21.324625,
+            "p95": 27.218958,
+            "p99": 29.220292,
+            "max": 31.325625
+          },
+          "missedDeadlines": 0,
+          "pluginSumMs": {
+            "cookMs": {
+              "count": 570,
+              "mean": 0.7154391175438597,
+              "p50": 0.571042,
+              "p95": 1.437668,
+              "p99": 2.268542,
+              "max": 6.504834
+            },
+            "uploadMs": {
+              "count": 570,
+              "mean": 0.37071477017543863,
+              "p50": 0.291458,
+              "p95": 0.755292,
+              "p99": 1.389792,
+              "max": 2.159583
+            }
+          },
+          "workerMs": {
+            "workerMs": {
+              "count": 2280,
+              "mean": 2.3651790210526316,
+              "p50": 2.112959,
+              "p95": 4.281125,
+              "p99": 5.484583,
+              "max": 7.821541
+            },
+            "inputDownloadMs": {
+              "count": 2280,
+              "mean": 0.0001147517543859649,
+              "p50": 8.3e-05,
+              "p95": 0.000292,
+              "p99": 0.000416,
+              "max": 0.012417
+            },
+            "inputUploadMs": {
+              "count": 2280,
+              "mean": 0.0700219653508772,
+              "p50": 0.0605,
+              "p95": 0.127834,
+              "p99": 0.229875,
+              "max": 3.774792
+            },
+            "drawMs": {
+              "count": 2280,
+              "mean": 0.288003949122807,
+              "p50": 0.265042,
+              "p95": 0.490334,
+              "p99": 0.915708,
+              "max": 4.638334
+            },
+            "readbackMs": {
+              "count": 2280,
+              "mean": 1.4551064899122808,
+              "p50": 1.157166,
+              "p95": 3.327792,
+              "p99": 4.269834,
+              "max": 6.635209
+            }
+          }
+        },
+        {
+          "case": "baseline-repeat",
+          "artifacts": "artifacts/td/buffered-scaling-1792118276609175000",
+          "mode": "no-input",
+          "sameCook": false,
+          "complex": false,
+          "timingHz": 0,
+          "plugin": "AvToolsSketch-ff53beb1bfa2.plugin",
+          "instances": 4,
+          "frames": 570,
+          "repeatedOutputs": 0,
+          "ageFrames": {
+            "count": 2280,
+            "mean": 1.0,
+            "p50": 1,
+            "p95": 1,
+            "p99": 1,
+            "max": 1
+          },
+          "overlappingWorkerPairs": 3420,
+          "hostMs": {
+            "cookMs": {
+              "count": 570,
+              "mean": 3.017073696491228,
+              "p50": 2.475292,
+              "p95": 6.013416,
+              "p99": 7.339167,
+              "max": 9.182667
+            },
+            "gpuReadyMs": {
+              "count": 570,
+              "mean": 5.171943721052632,
+              "p50": 5.191334,
+              "p95": 7.645375,
+              "p99": 8.746709,
+              "max": 10.588875
+            },
+            "validationMs": {
+              "count": 570,
+              "mean": 0.3278165350877193,
+              "p50": 0.272583,
+              "p95": 0.65625,
+              "p99": 1.065958,
+              "max": 1.353041
+            },
+            "scheduleSlipMs": {
+              "count": 570,
+              "mean": 2.604408598245614,
+              "p50": 2.540001,
+              "p95": 4.966542,
+              "p99": 5.8835,
+              "max": 10.394667
+            }
+          },
+          "renderStartToUploadedImageMs": {
+            "count": 2280,
+            "mean": 19.933573276754387,
+            "p50": 19.953417,
+            "p95": 24.835709,
+            "p99": 26.864459,
+            "max": 35.558333
+          },
+          "missedDeadlines": 1,
+          "pluginSumMs": {
+            "cookMs": {
+              "count": 570,
+              "mean": 0.673843650877193,
+              "p50": 0.5397080000000001,
+              "p95": 1.395375,
+              "p99": 2.619583,
+              "max": 3.923127
+            },
+            "uploadMs": {
+              "count": 570,
+              "mean": 0.3584179877192982,
+              "p50": 0.27941699999999997,
+              "p95": 0.716667,
+              "p99": 1.658792,
+              "max": 3.573666
+            }
+          },
+          "workerMs": {
+            "workerMs": {
+              "count": 2280,
+              "mean": 2.100839774122807,
+              "p50": 1.9285,
+              "p95": 3.376292,
+              "p99": 4.364916,
+              "max": 7.345417
+            },
+            "inputDownloadMs": {
+              "count": 2280,
+              "mean": 0.00010443508771929824,
+              "p50": 8.3e-05,
+              "p95": 0.000292,
+              "p99": 0.000417,
+              "max": 0.000667
+            },
+            "inputUploadMs": {
+              "count": 2280,
+              "mean": 0.23827206622807018,
+              "p50": 0.193917,
+              "p95": 0.373875,
+              "p99": 1.490333,
+              "max": 4.155666
+            },
+            "drawMs": {
+              "count": 2280,
+              "mean": 0.2719275184210526,
+              "p50": 0.256833,
+              "p95": 0.441625,
+              "p99": 0.815584,
+              "max": 1.365125
+            },
+            "readbackMs": {
+              "count": 2280,
+              "mean": 1.0083628789473684,
+              "p50": 0.773583,
+              "p95": 2.115916,
+              "p99": 2.9845,
+              "max": 4.817958
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

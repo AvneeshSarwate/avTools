@@ -1067,20 +1067,20 @@ export class TimeScheduler {
       );
     }
 
-    this.ensureRafLoop();
-
     return new Promise<void>((resolve, reject) => {
       const seq = this.allocSeq();
       const id = `frame:${seq}`;
 
       const abortListener = () => {
         this.frameWaiters.delete(id);
+        this.stopRafIfIdle();
         ctx.abortController.signal.removeEventListener("abort", abortListener);
         reject(new Error("aborted"));
       };
 
       ctx.abortController.signal.addEventListener("abort", abortListener);
       this.frameWaiters.set(id, { seq, ctx, resolve, reject, abortListener });
+      this.ensureRafLoop();
     });
   }
 
@@ -1428,6 +1428,13 @@ export class TimeScheduler {
 
   /* ------------------------------- frames ------------------------------- */
 
+  private stopRafIfIdle() {
+    if (this.frameWaiters.size || !this.rafRunning) return;
+    this.rafRunning = false;
+    if (this.rafHandle !== null) globalThis.cancelAnimationFrame?.(this.rafHandle);
+    this.rafHandle = null;
+  }
+
   private ensureRafLoop() {
     if (this.rafRunning) return;
     this.rafRunning = true;
@@ -1444,13 +1451,15 @@ export class TimeScheduler {
     const tick = () => {
       if (!this.rafRunning) return;
 
+      this.rafRunning = false;
+      this.rafHandle = null;
       const t = this.now();
       this.resolveAllFrameWaitersAt(t);
 
       // If timers were delayed, frame ticks can help “catch up” quickly.
       this.queuePump();
 
-      this.rafHandle = rafFn(() => tick());
+      // A continuation registering another frame starts a new subscription.
     };
 
     this.rafHandle = rafFn(() => tick());

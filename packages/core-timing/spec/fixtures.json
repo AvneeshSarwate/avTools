@@ -1,0 +1,438 @@
+{
+  "version": 1,
+  "timeEpsilon": 1e-09,
+  "cases": [
+    {
+      "id": "logical.sequential",
+      "actions": [
+        [
+          "emit",
+          "start"
+        ],
+        [
+          "waitSec",
+          0.01
+        ],
+        [
+          "emit",
+          "one"
+        ],
+        [
+          "waitSec",
+          0.02
+        ],
+        [
+          "emit",
+          "two"
+        ]
+      ],
+      "expected": [
+        [
+          "root",
+          0,
+          "start"
+        ],
+        [
+          "root",
+          0.01,
+          "one"
+        ],
+        [
+          "root",
+          0.03,
+          "two"
+        ]
+      ]
+    },
+    {
+      "id": "ordering.fork-ties",
+      "actions": [
+        [
+          "fork",
+          "a",
+          [
+            [
+              "waitSec",
+              0.01
+            ],
+            [
+              "emit",
+              "a"
+            ]
+          ]
+        ],
+        [
+          "fork",
+          "b",
+          [
+            [
+              "waitSec",
+              0.01
+            ],
+            [
+              "emit",
+              "b"
+            ]
+          ]
+        ],
+        [
+          "waitSec",
+          0.02
+        ],
+        [
+          "emit",
+          "parent"
+        ]
+      ],
+      "expected": [
+        [
+          "root/a",
+          0.01,
+          "a"
+        ],
+        [
+          "root/b",
+          0.01,
+          "b"
+        ],
+        [
+          "root",
+          0.02,
+          "parent"
+        ]
+      ]
+    },
+    {
+      "id": "ordering.continuation-inserts-earlier",
+      "actions": [
+        [
+          "fork",
+          "a",
+          [
+            [
+              "waitSec",
+              0.01
+            ],
+            [
+              "emit",
+              "a1"
+            ],
+            [
+              "waitSec",
+              0.005
+            ],
+            [
+              "emit",
+              "a2"
+            ]
+          ]
+        ],
+        [
+          "waitSec",
+          0.02
+        ],
+        [
+          "emit",
+          "parent"
+        ]
+      ],
+      "expected": [
+        [
+          "root/a",
+          0.01,
+          "a1"
+        ],
+        [
+          "root/a",
+          0.015,
+          "a2"
+        ],
+        [
+          "root",
+          0.02,
+          "parent"
+        ]
+      ]
+    },
+    {
+      "id": "join.advances-parent",
+      "actions": [
+        [
+          "join",
+          "a",
+          [
+            [
+              "waitSec",
+              0.02
+            ],
+            [
+              "emit",
+              "child"
+            ]
+          ]
+        ],
+        [
+          "emit",
+          "joined"
+        ],
+        [
+          "waitSec",
+          0.01
+        ],
+        [
+          "emit",
+          "end"
+        ]
+      ],
+      "expected": [
+        [
+          "root/a",
+          0.02,
+          "child"
+        ],
+        [
+          "root",
+          0.02,
+          "joined"
+        ],
+        [
+          "root",
+          0.03,
+          "end"
+        ]
+      ]
+    },
+    {
+      "id": "logical.zero-wait",
+      "actions": [
+        [
+          "emit",
+          "start"
+        ],
+        [
+          "waitSec",
+          0
+        ],
+        [
+          "emit",
+          "zero"
+        ],
+        [
+          "waitSec",
+          0.01
+        ],
+        [
+          "emit",
+          "end"
+        ]
+      ],
+      "expected": [
+        [
+          "root",
+          0,
+          "start"
+        ],
+        [
+          "root",
+          0,
+          "zero"
+        ],
+        [
+          "root",
+          0.01,
+          "end"
+        ]
+      ]
+    },
+    {
+      "id": "tempo.beats",
+      "bpm": 120,
+      "actions": [
+        [
+          "wait",
+          0.02
+        ],
+        [
+          "emit",
+          "beat"
+        ],
+        [
+          "wait",
+          0.04
+        ],
+        [
+          "emit",
+          "end"
+        ]
+      ],
+      "expected": [
+        [
+          "root",
+          0.01,
+          "beat"
+        ],
+        [
+          "root",
+          0.03,
+          "end"
+        ]
+      ]
+    },
+    {
+      "id": "tempo.change",
+      "actions": [
+        [
+          "wait",
+          0.01
+        ],
+        [
+          "setBpm",
+          120
+        ],
+        [
+          "wait",
+          0.02
+        ],
+        [
+          "emit",
+          "end"
+        ]
+      ],
+      "expected": [
+        [
+          "root",
+          0.02,
+          "end"
+        ]
+      ]
+    },
+    {
+      "id": "cancel.child",
+      "actions": [
+        [
+          "fork",
+          "a",
+          [
+            [
+              "waitSec",
+              0.02
+            ],
+            [
+              "emit",
+              "must-not-run"
+            ]
+          ]
+        ],
+        [
+          "waitSec",
+          0.01
+        ],
+        [
+          "cancel",
+          "a"
+        ],
+        [
+          "waitSec",
+          0.02
+        ],
+        [
+          "emit",
+          "parent"
+        ]
+      ],
+      "expected": [
+        [
+          "root",
+          0.03,
+          "parent"
+        ]
+      ]
+    },
+    {
+      "id": "barrier.release",
+      "actions": [
+        [
+          "startBarrier",
+          "gate"
+        ],
+        [
+          "fork",
+          "a",
+          [
+            [
+              "awaitBarrier",
+              "gate"
+            ],
+            [
+              "emit",
+              "released"
+            ]
+          ]
+        ],
+        [
+          "waitSec",
+          0.01
+        ],
+        [
+          "resolveBarrier",
+          "gate"
+        ],
+        [
+          "waitSec",
+          0.02
+        ],
+        [
+          "emit",
+          "parent"
+        ]
+      ],
+      "expected": [
+        [
+          "root/a",
+          0.01,
+          "released"
+        ],
+        [
+          "root",
+          0.03,
+          "parent"
+        ]
+      ]
+    }
+  ],
+  "rng": {
+    "algorithm": "seedrandom 3.0.5 default ARC4",
+    "seedEncoding": "Strings unchanged; numbers converted with JavaScript String(number)",
+    "forkSeed": "parentSeed + '::fork:' + zero-based forkIndex",
+    "vectors": [
+      {
+        "seed": "hello.",
+        "expected": [
+          0.9282578795792454,
+          0.3752569768646784,
+          0.7316977468919549
+        ]
+      }
+    ],
+    "branches": {
+      "seed": "hello.",
+      "forked": [
+        [
+          0.14625215643499956,
+          0.10162552836902669,
+          0.9335237263434936
+        ],
+        [
+          0.9971041727454871,
+          0.4342557610795065,
+          0.27471858441358843
+        ]
+      ],
+      "shared": [
+        0.9282578795792454,
+        0.3752569768646784,
+        0.7316977468919549
+      ]
+    }
+  }
+}

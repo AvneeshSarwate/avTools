@@ -26,12 +26,16 @@ def run(args, **kw):
     return subprocess.run([str(a) for a in args], check=True, **kw)
 
 
-original = Path((ROOT / 'build/td-plugin-path.txt').read_text().strip())
+original = Path(os.environ.get('AVTOOLS_BENCH_PLUGIN') or (ROOT / 'build/td-plugin-path.txt').read_text().strip())
 bundle = OUT / 'TraceSketch.plugin'
 shutil.copytree(original, bundle, symlinks=True)
 sdk = subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
 mac = bundle / 'Contents/MacOS'
-run(['clang++', '-isysroot', sdk, '-isystem', sdk + '/usr/include/c++/v1', '-std=c++17', '-O2', '-fvisibility=hidden', '-bundle', '-arch', 'arm64', '-mmacosx-version-min=15.0', '-I/Applications/TouchDesigner.app/Contents/Resources/tfs/Samples/CPlusPlus/CPUMemoryTOP', '-DAVTOOLS_TOP_TRACE_PATH="' + str(OUT/'trace.jsonl') + '"', ROOT/'native/td/SketchTOP.cpp', '-L'+str(mac), '-lavtools_runtime', '-o', mac/'AvToolsSketch'])
+wrapper = OUT / 'TraceSketch.cpp'
+# TouchEngine children do not inherit the probe's stderr. Capture in the private
+# benchmark plugin only; shipped plugins keep their normal console behavior.
+wrapper.write_text('#include <cstdio>\nstatic const bool capture = []{freopen(' + json.dumps(str(OUT/'runtime.log')) + ', "a", stderr); return true;}();\n#include ' + json.dumps(str(ROOT/'native/td/SketchTOP.cpp')) + '\n')
+run(['clang++', '-isysroot', sdk, '-isystem', sdk + '/usr/include/c++/v1', '-std=c++17', '-O2', '-fvisibility=hidden', '-bundle', '-arch', 'arm64', '-mmacosx-version-min=15.0', '-I/Applications/TouchDesigner.app/Contents/Resources/tfs/Samples/CPlusPlus/CPUMemoryTOP', '-DAVTOOLS_TOP_TRACE_PATH="' + str(OUT/'trace.jsonl') + '"', wrapper, '-L'+str(mac), '-lavtools_runtime', '-o', mac/'AvToolsSketch'])
 run(['codesign', '--force', '--sign', '-', bundle], capture_output=True)
 
 # Reuse serialized parameter definitions; construct graphs without editor automation.
@@ -50,6 +54,13 @@ sketch.write_text("function setup(p){p.textSize(48);} function draw(p,f){p.backg
 
 if os.environ.get('AVTOOLS_BENCH_COMPLEX'):
     sketch.write_text(sketch.read_text().replace("p.circle(960+Math.sin(f.frame/20)*400,540,200);", "for(let i=0;i<1000;i++){p.fill(i%256,(i*7)%256,(i*13)%256);p.circle(40+(i*37+f.frame*2)%1840,40+(i*53)%1000,12+i%24);}p.fill(255);for(let i=0;i<20;i++)p.text('Dawn + Rust '+i,100+(i%4)*420,150+Math.floor(i/4)*170);"))
+
+
+if os.environ.get('AVTOOLS_BENCH_TIMING_HZ'):
+    hz=int(os.environ['AVTOOLS_BENCH_TIMING_HZ'])
+    source=sketch.read_text().replace('function setup(p){', 'function setup(p,h){')
+    timing=f"""h.timing.launch(async c=>{{const start=performance.now();let samples=[],n=0;while(true){{await c.waitSec(1/{hz});samples.push(performance.now()-start-c.time*1000);if(++n%{hz}===0){{console.log(JSON.stringify({{suite:'td-timer-lateness',hz:{hz},raw:samples}}));samples=[];}}}}}},{{seed:'benchmark'}});"""
+    sketch.write_text(source.replace('p.textSize(48);','p.textSize(48);'+timing))
 
 
 def fixture(count, mode, same_cook=False):
@@ -90,7 +101,7 @@ def fixture(count, mode, same_cook=False):
 
 def summarize(values):
     values = sorted(values)
-    return {'mean': sum(values)/len(values), 'p50': values[len(values)//2], 'p95': values[int(len(values)*.95)], 'max': values[-1]}
+    return {'count':len(values),'mean': sum(values)/len(values), 'p50': values[len(values)//2], 'p95': values[int(len(values)*.95)], 'p99': values[min(len(values)-1,int(len(values)*.99))], 'max': values[-1]}
 
 
 if __name__ == '__main__':
@@ -129,7 +140,7 @@ if __name__ == '__main__':
             repeats=sum(a['top'][0]==b['top'][0] for i in range(count) for a,b in zip([o for o in samples if o['output']==i],[o for o in samples if o['output']==i][1:]))
             jobs={ (t['instance'],t['workerStartNs']):t for t in traces if t['workerStartNs'] }
             overlap=sum(a['workerStartNs']<b['workerEndNs'] and b['workerStartNs']<a['workerEndNs'] for a in jobs.values() for b in jobs.values() if a['instance']<b['instance'])
-            result={'mode':mode,'sameCook':same_cook,'complex':bool(os.environ.get('AVTOOLS_BENCH_COMPLEX')),'instances':count,'frames':FRAMES-30,'repeatedOutputs':repeats,'ageFrames':summarize([o['age'] for o in samples]),'overlappingWorkerPairs':overlap,
+            result={'mode':mode,'sameCook':same_cook,'complex':bool(os.environ.get('AVTOOLS_BENCH_COMPLEX')),'timingHz':int(os.environ.get('AVTOOLS_BENCH_TIMING_HZ') or '0'),'plugin':str(original),'instances':count,'frames':FRAMES-30,'repeatedOutputs':repeats,'ageFrames':summarize([o['age'] for o in samples]),'overlappingWorkerPairs':overlap,
                 'hostMs':{key:summarize([o[key] for o in frames.values()]) for key in ['cookMs','gpuReadyMs','validationMs','scheduleSlipMs']},
                 'renderStartToUploadedImageMs':summarize(image_latency),
                 'missedDeadlines':sum(o['gpuReadyMs']+o['scheduleSlipMs']>1000/60 for o in frames.values()),

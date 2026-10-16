@@ -13,37 +13,52 @@
 #include <sstream>
 #include <stdexcept>
 #include <vector>
+#include <deque>
 using Clock=std::chrono::steady_clock;
 static double ms(Clock::time_point start){return std::chrono::duration<double,std::milli>(Clock::now()-start).count();}
 static std::string quoted(const std::string& value){std::string s="\"";for(unsigned char c:value){if(c=='"'||c=='\\'){s+='\\';s+=c;}else if(c<32){char b[7];snprintf(b,sizeof(b),"\\u%04x",c);s+=b;}else s+=c;}return s+'"';}
 static void report(char* dest,size_t size,const std::string& value){if(dest&&size){std::memcpy(dest,value.data(),std::min(size-1,value.size()));dest[std::min(size-1,value.size())]=0;}}
 struct AVSketch {
-  std::mutex mutex;std::condition_variable cv;std::function<void()> job;bool stopping=false;
+  std::mutex mutex;std::shared_ptr<avtools::Wake> wake=std::make_shared<avtools::Wake>();std::deque<std::function<void()>> jobs;bool stopping=false;
+  std::condition_variable dispatchCV;std::function<void()> dispatchJob;bool dispatchBusy=false;std::thread dispatcher;
   std::unique_ptr<avtools::Runtime> runtime;std::string resources,error;bool poisoned=false;uint64_t cooks=0;std::thread worker;
   explicit AVSketch(const char* root):resources(root),worker([this]{loop();}){}
-  ~AVSketch(){ {std::lock_guard lock(mutex);stopping=true;}cv.notify_one();worker.join(); }
-  void loop(){for(;;){std::function<void()> next;{std::unique_lock lock(mutex);cv.wait(lock,[this]{return stopping||bool(job);});if(stopping)break;next=std::move(job);job=nullptr;}next();}if(runtime){runtime->evaluate("__avDispose()",100);runtime.reset();}}
-  template<class F> void sync(F&& work){if(std::this_thread::get_id()==worker.get_id()){work();return;}std::packaged_task<void()> task(std::forward<F>(work));auto done=task.get_future();{std::lock_guard lock(mutex);job=[&task]{task();};}cv.notify_one();done.get();}
+  ~AVSketch(){ {std::lock_guard lock(mutex);stopping=true;}wake->notify();dispatchCV.notify_one();if(dispatcher.joinable())dispatcher.join();worker.join(); }
+  void loop(){
+    for(;;){
+      std::function<void()> next;
+      {std::lock_guard lock(mutex);if(stopping&&jobs.empty())break;if(!jobs.empty()){next=std::move(jobs.front());jobs.pop_front();}}
+      if(next)next();
+      if(runtime&&!poisoned&&!runtime->pump(1000)){poisoned=true;error=runtime->error();}
+      {std::lock_guard lock(mutex);if(stopping&&jobs.empty())break;if(!jobs.empty())continue;}
+      wake->wait(runtime&&!poisoned?runtime->deadline():Clock::time_point::max());
+    }
+    dispose();
+  }
+  template<class F> void sync(F&& work){if(std::this_thread::get_id()==worker.get_id()){work();return;}std::packaged_task<void()> task(std::forward<F>(work));auto done=task.get_future();{std::lock_guard lock(mutex);if(stopping)throw std::runtime_error("Sketch stopped");jobs.emplace_back([&task]{task();});}wake->notify();done.get();}
   void eval(const std::string& text,int budget=100){if(!runtime->evaluate(text,budget)){poisoned=true;throw std::runtime_error(runtime->error());}}
   void wait(int timeout){
     const auto deadline=Clock::now()+std::chrono::milliseconds(timeout);
     while(runtime->value("__avDone")!="true"){
       if(Clock::now()>=deadline){poisoned=true;throw std::runtime_error("Async initialization/readback exceeded time budget; reset the operator");}
       if(!runtime->pump(1000)){poisoned=true;throw std::runtime_error(runtime->error());}
-      // Dawn's queued task waits on tracked futures with WaitAny. A promise
-      // without queued work has no possible producer in this embedded host;
-      // sleep until its deadline (or teardown), rather than polling it.
-      if(runtime->value("__avDone")!="true" && runtime->value("__pumpPending")=="false"){
-        std::unique_lock lock(mutex);cv.wait_until(lock,deadline,[this]{return stopping;});
-        if(stopping)throw std::runtime_error("Sketch stopped");
-      }
+      if(runtime->value("__avDone")!="true")wake->wait(std::min(deadline,runtime->deadline()));
+      {std::lock_guard lock(mutex);if(stopping)throw std::runtime_error("Sketch stopped");}
     }
   }
+  void dispose(){
+    if(!runtime)return;
+    if(!runtime->poisoned()&&runtime->call("__avDispose",100)){
+      auto deadline=Clock::now()+std::chrono::milliseconds(250);
+      while(runtime->value("__avDone")!="true"&&Clock::now()<deadline){if(!runtime->pump(100))break;wake->wait(std::min(deadline,runtime->deadline()));}
+    }
+    runtime.reset();
+  }
   void initialize(){
-    if(runtime){runtime->evaluate("__avDispose()",100);runtime.reset();}
+    dispose();
     // Deferred creation leaves the instance alive if initialization fails.
     // Keep it resettable even for failures before the renderer is installed.
-    poisoned=true;runtime=std::make_unique<avtools::Runtime>();
+    poisoned=true;runtime=std::make_unique<avtools::Runtime>(wake);
     std::vector<std::string> fonts;for(const auto& entry:std::filesystem::directory_iterator(resources+"/fonts")){auto ext=entry.path().extension().string();if(ext==".ttf"||ext==".otf"||ext==".woff"||ext==".woff2")fonts.push_back(entry.path().string());}std::sort(fonts.begin(),fonts.end());
     std::string json="[";for(const auto& font:fonts){if(json.size()>1)json+=',';json+=quoted(font);}json+=']';runtime->setString("__avFontsJSON",json);
     std::ifstream file(resources+"/renderer.js");if(!file)throw std::runtime_error("Missing bundled renderer.js");std::string source((std::istreambuf_iterator<char>(file)),{});
@@ -62,7 +77,7 @@ struct AVSketch {
     for(uint32_t i=0;i<f.channelCount;i++){const auto& c=f.channels[i];runtime->setBytes("__avData",c.samples,c.count*sizeof(float));eval("__avChannel("+quoted(c.name)+")");}
     for(uint32_t i=0;i<f.imageCount;i++){const auto& image=f.images[i];runtime->setBytes("__avData",image.pixels,size_t(image.width)*image.height*4);eval("__avImage("+std::to_string(i)+","+std::to_string(image.width)+","+std::to_string(image.height)+")");}
     eval("__avTrimImages("+std::to_string(f.imageCount)+");globalThis.__avData=null;globalThis.__avSubmitted=false");stats.inputMs=ms(start);
-    eval("__avRender()",1000);wait(3000);stats.drawMs=std::stod(runtime->value("__avDrawMs"));stats.readbackMs=std::stod(runtime->value("__avReadbackMs"));
+    if(!runtime->call("__avRender",1000)){poisoned=true;throw std::runtime_error(runtime->error());}wait(3000);stats.drawMs=std::stod(runtime->value("__avDrawMs"));stats.readbackMs=std::stod(runtime->value("__avReadbackMs"));
     stats.syphonClients=std::stoul(runtime->value("__avSyphonClients"));stats.syphonPublished=std::stoul(runtime->value("__avSyphonPublished"));stats.syphonDropped=std::stoul(runtime->value("__avSyphonDropped"));
     error=runtime->value("__avError");
     if(runtime->value("__avHasFrame")=="true"){
@@ -91,8 +106,18 @@ extern "C" AVSketch* avCreate(const char* resources,char* error,size_t size){
 extern "C" int avDispatch(AVSketch* sketch,AVWork work,void* user){
   try{
     if(!sketch||!work)return 0;
-    {std::lock_guard lock(sketch->mutex);if(sketch->stopping||sketch->job)return 0;sketch->job=[=]{work(sketch,user);};}
-    sketch->cv.notify_one();return 1;
+    std::lock_guard lock(sketch->mutex);
+    if(sketch->stopping||sketch->dispatchBusy)return 0;
+    // The TD input download API may block. Keep its preparation callback off
+    // the V8 owner so independent timers continue even during an input fence.
+    if(!sketch->dispatcher.joinable())sketch->dispatcher=std::thread([sketch]{
+      for(;;){std::function<void()> next;
+        {std::unique_lock lock(sketch->mutex);sketch->dispatchCV.wait(lock,[&]{return sketch->stopping||bool(sketch->dispatchJob);});if(!sketch->dispatchJob)break;next=std::move(sketch->dispatchJob);sketch->dispatchJob=nullptr;}
+        next();
+        {std::lock_guard lock(sketch->mutex);sketch->dispatchBusy=false;}
+      }
+    });
+    sketch->dispatchBusy=true;sketch->dispatchJob=[=]{work(sketch,user);};sketch->dispatchCV.notify_one();return 1;
   }catch(...){return 0;} // Never unwind across the host's different C++ ABI.
 }
 extern "C" int avCook(AVSketch* sketch,const AVFrame* frame,AVStats* stats,char* error,size_t size){

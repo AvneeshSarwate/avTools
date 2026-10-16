@@ -1,6 +1,6 @@
 # Copied into the pinned Dawn source tree by scripts/embedding.mjs.
 source_set("runtime") {
-  sources = [ "Runtime.cpp", "Runtime.h", "TextCompat.cpp", "dawn_syphon.mm", "text_addon.cpp", "//src/dawn/node/Module.cpp", "//src/dawn/node/ManualConstructors.cpp" ]
+  sources = [ "Runtime.cpp", "Runtime.h", "HostLoop.cpp", "HostLoop.h", "TextCompat.cpp", "dawn_syphon.mm", "text_addon.cpp", "//src/dawn/node/Module.cpp", "//src/dawn/node/ManualConstructors.cpp" ]
   cflags_objcc = [ "-fno-objc-arc" ]
   defines = [ "AVTOOLS_EMBEDDED=1", "AVTOOLS_EMBEDDED_SYPHON=1", "NAPI_VERSION=8", "DAWN_ENABLE_BACKEND_METAL" ]
   include_dirs = [ "//", "$root_gen_dir/src/dawn/node", "$root_gen_dir/src", "@SYPHON_INCLUDE@" ]
