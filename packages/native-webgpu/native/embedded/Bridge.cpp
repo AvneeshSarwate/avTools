@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <vector>
 #include <deque>
+#include <cmath>
 using Clock=std::chrono::steady_clock;
 static double ms(Clock::time_point start){return std::chrono::duration<double,std::milli>(Clock::now()-start).count();}
 static std::string quoted(const std::string& value){std::string s="\"";for(unsigned char c:value){if(c=='"'||c=='\\'){s+='\\';s+=c;}else if(c<32){char b[7];snprintf(b,sizeof(b),"\\u%04x",c);s+=b;}else s+=c;}return s+'"';}
@@ -21,8 +22,8 @@ static void report(char* dest,size_t size,const std::string& value){if(dest&&siz
 struct AVSketch {
   std::mutex mutex;std::shared_ptr<avtools::Wake> wake=std::make_shared<avtools::Wake>();std::deque<std::function<void()>> jobs;bool stopping=false;
   std::condition_variable dispatchCV;std::function<void()> dispatchJob;bool dispatchBusy=false;std::thread dispatcher;
-  std::unique_ptr<avtools::Runtime> runtime;std::string resources,error;bool poisoned=false;uint64_t cooks=0;std::thread worker;
-  explicit AVSketch(const char* root):resources(root),worker([this]{loop();}){}
+  std::unique_ptr<avtools::Runtime> runtime;std::string resources,error;bool poisoned=false,chop=false;uint64_t cooks=0;std::thread worker;
+  explicit AVSketch(const char* root,bool cpuChannels=false):resources(root),chop(cpuChannels),worker([this]{loop();}){}
   ~AVSketch(){ {std::lock_guard lock(mutex);stopping=true;}wake->notify();dispatchCV.notify_one();if(dispatcher.joinable())dispatcher.join();worker.join(); }
   void loop(){
     for(;;){
@@ -59,6 +60,10 @@ struct AVSketch {
     // Deferred creation leaves the instance alive if initialization fails.
     // Keep it resettable even for failures before the renderer is installed.
     poisoned=true;runtime=std::make_unique<avtools::Runtime>(wake);
+    if(chop){
+      std::ifstream file(resources+"/chop.js");if(!file)throw std::runtime_error("Missing bundled chop.js");
+      eval(std::string((std::istreambuf_iterator<char>(file)),{}),1000);poisoned=false;return;
+    }
     std::vector<std::string> fonts;for(const auto& entry:std::filesystem::directory_iterator(resources+"/fonts")){auto ext=entry.path().extension().string();if(ext==".ttf"||ext==".otf"||ext==".woff"||ext==".woff2")fonts.push_back(entry.path().string());}std::sort(fonts.begin(),fonts.end());
     std::string json="[";for(const auto& font:fonts){if(json.size()>1)json+=',';json+=quoted(font);}json+=']';runtime->setString("__avFontsJSON",json);
     std::ifstream file(resources+"/renderer.js");if(!file)throw std::runtime_error("Missing bundled renderer.js");std::string source((std::istreambuf_iterator<char>(file)),{});
@@ -87,6 +92,36 @@ struct AVSketch {
     }
     stats.totalMs=ms(start);if(stats.ready)return 1;
     if(runtime->value("__avRendered")=="true"){stats.ready=1;return 2;}return 0;
+  }
+  int cookChop(const AVChopFrame& f,AVStats& stats){
+    if(!chop)throw std::runtime_error("Expected a CHOP runtime");
+    auto start=Clock::now();stats={};stats.cooks=++cooks;
+    if(!runtime)initialize();
+    if(poisoned){if(!f.reset)throw std::runtime_error("Execution stopped after a timeout; pulse Reset");initialize();}
+    runtime->setString("__avSource",f.source);
+    std::ostringstream json;json.precision(17);
+    json<<"{\"reset\":"<<f.reset<<",\"frame\":"<<f.frame<<",\"rate\":"<<f.rate<<",\"deltaSeconds\":"<<f.deltaSeconds<<",\"absFrame\":"<<f.absFrame<<",\"channels\":[";
+    std::vector<float> samples;
+    for(uint32_t i=0;i<f.channelCount;i++){
+      const auto& c=f.channels[i];if(i)json<<',';
+      json<<"{\"input\":"<<c.input<<",\"name\":"<<quoted(c.channel.name)<<",\"offset\":"<<samples.size()<<",\"count\":"<<c.channel.count<<'}';
+      if(c.channel.count)samples.insert(samples.end(),c.channel.samples,c.channel.samples+c.channel.count);
+    }
+    json<<"],\"outputSamples\":"<<std::max(1u,f.outputSamples)<<",\"names\":[";for(uint32_t i=0;i<f.outputCount;i++){if(i)json<<',';json<<quoted(f.names[i]);}
+    json<<"],\"pulses\":[";for(uint32_t i=0;i<f.pulseCount;i++){if(i)json<<',';json<<quoted(f.pulses[i]);}json<<"]}";
+    runtime->setString("__avFrameJSON",json.str());runtime->setBytes("__avData",samples.data(),samples.size()*sizeof(float));
+    // No pump between receiving the job and publishing its complete snapshot.
+    if(!runtime->call("__avChopAccept",1000))throw std::runtime_error(runtime->error());
+    stats.inputMs=ms(start);
+    auto runStart=Clock::now();
+    if(!runtime->call("__avChopCook",1000)){poisoned=true;throw std::runtime_error(runtime->error());}
+    wait(3000);stats.drawMs=ms(runStart);error=runtime->value("__avError");
+    if(runtime->value("__avHasFrame")=="true"){
+      const size_t bytes=size_t(f.outputCount)*std::max(1u,f.outputSamples)*sizeof(float);
+      if(!runtime->copyRows("__avBytes",f.output,bytes,bytes,bytes,1))throw std::runtime_error(runtime->error());
+      stats.ready=1;
+    }
+    stats.totalMs=ms(start);return stats.ready;
   }
 };
 extern "C" AVSketch* avCreateDeferred(const char* resources,char* error,size_t size){
@@ -128,3 +163,17 @@ extern "C" int avCook(AVSketch* sketch,const AVFrame* frame,AVStats* stats,char*
   }catch(const std::exception& e){report(error,size,e.what());return 0;}
 }
 extern "C" void avDestroy(AVSketch* sketch){delete sketch;}
+extern "C" AVSketch* avChopCreate(const char* resources,char* error,size_t size){
+  // Reuse the existing library pinning and owner-thread lifecycle.
+  auto* sketch=avCreateDeferred(resources,error,size);if(sketch)sketch->chop=true;return sketch;
+}
+extern "C" int avChopCook(AVSketch* sketch,const AVChopFrame* f,AVStats* stats,char* error,size_t size){
+  try{
+    if(!sketch||!f||!stats||!f->source||!f->output||!f->names||!f->outputCount||f->outputCount>1024||size_t(f->outputCount)*std::max(1u,f->outputSamples)>1048576||f->channelCount>4096||f->pulseCount>256||(f->channelCount&&!f->channels)||(f->pulseCount&&!f->pulses)||!std::isfinite(f->frame)||!std::isfinite(f->absFrame)||!std::isfinite(f->rate)||f->rate<=0||!std::isfinite(f->deltaSeconds))throw std::runtime_error("Invalid CHOP frame");
+    size_t count=0;
+    for(uint32_t i=0;i<f->channelCount;i++){const auto& c=f->channels[i];count+=c.channel.count;if(c.input>=4||!c.channel.name||(c.channel.count&&!c.channel.samples)||count>1048576)throw std::runtime_error("Invalid/oversized CHOP inputs (maximum 1M samples)");}
+    for(uint32_t i=0;i<f->outputCount;i++)if(!f->names[i])throw std::runtime_error("Missing output channel name");
+    for(uint32_t i=0;i<f->pulseCount;i++)if(!f->pulses[i])throw std::runtime_error("Missing pulse name");
+    int result=0;sketch->sync([&]{result=sketch->cookChop(*f,*stats);});report(error,size,sketch->error);return result;
+  }catch(const std::exception& e){report(error,size,e.what());return 0;}
+}

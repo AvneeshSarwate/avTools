@@ -5,6 +5,8 @@ project-local helpers/shaders, and one generated JavaScript bundle per sketch.
 
 Start with [starter](starter/README.md). It includes an openable `project.toe`,
 Power2D and shader-fx examples, TimeContext animation, CHOP controls, and pulses.
+For procedural channel animation and XY buffers, start with
+[channels](channels/README.md), which uses the V8/TimeContext CHOP and the same watcher.
 
 ## Edit in your IDE, preview in TouchDesigner
 
@@ -47,3 +49,20 @@ Node, include its `.toe`, built `dist/`, and compatible native plugin. See the
 The shared [project runner](../../tools/td-sketch-build/README.md) owns generation,
 checking, bundling, and watching. Projects declare their layout in a small config;
 the runner does not depend on their location under `apps/`.
+
+## CHOP entries
+
+CHOP sketches use `host.inputs`, persistent `host.outputs`, `host.timing`, and an
+optional synchronous `onCook`. Configure them alongside TOP entries:
+
+```ts
+sketches: {
+  image: 'sketches/image/main.ts', // TOP
+  motion: {entry: 'sketches/motion/main.ts', target: 'chop', outputs: ['x', 'y'], samples: 10000},
+}
+```
+
+Set the corresponding TD CHOP's Output Channels to `x y`, Output Samples to
+`10000`, and Source File to `dist/motion.js`. Config output layouts are used by
+`npm run check`; they do not modify the TD network. Scalar control channels use
+the default sample count of 1. See the [CHOP API](../../packages/native-webgpu/CHOP.md).

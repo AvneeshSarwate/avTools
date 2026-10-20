@@ -1,0 +1,4 @@
+{
+  "deno.enable": false,
+  "typescript.tsdk": "../../../tools/td-sketch-build/node_modules/typescript/lib"
+}

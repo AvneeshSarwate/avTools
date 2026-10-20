@@ -89,3 +89,6 @@ clonedCompanionRepos*
 
 
 Icon
+
+# Local report produced by the checked-in CHOP stress fixture.
+/packages/native-webgpu/native/td/chop-example/stress-results.json
