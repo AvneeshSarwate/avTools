@@ -1,0 +1,11 @@
+{
+  "name": "avtools-td-channels",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "npm --prefix ../../../tools/td-sketch-build ci && npm run build",
+    "dev": "node ../../../tools/td-sketch-build/cli.mjs dev",
+    "build": "node ../../../tools/td-sketch-build/cli.mjs build",
+    "check": "node ../../../tools/td-sketch-build/cli.mjs check"
+  }
+}

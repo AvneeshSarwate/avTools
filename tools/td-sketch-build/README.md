@@ -5,6 +5,11 @@ Sketch TOP. No browser dev server, livecode server, or native rebuild is needed
 when editing a sketch. The reusable runner imports the existing raw shader generators;
 it does not implement another shader language or renderer.
 
+Future development: the [native TypeScript build-tool plan](../../packages/native-webgpu/plans/native-typescript-build-tool-plan.md)
+describes a single executable using Rolldown/Oxc and tsrs, followed by automatic
+build/watch integration in the C++ TOP/CHOP plugins. It is a proposal; the Node
+runner documented here remains the current workflow.
+
 Start with [the two-sketch project](../../apps/td-projects/starter/README.md).
 The build tool's dependencies are pinned in `package-lock.json`; install here with
 `npm ci`. Its CLI accepts a config file from any project directory:
@@ -149,3 +154,18 @@ Results and generated fixtures go under `packages/native-webgpu/artifacts/td/`.
 The initial 60 frames and final metrics-export frame are excluded. This is a
 buffered-output test with no image inputs; worker elapsed time includes GPU waits
 and must not be read as CPU utilization.
+
+## CHOP bundles
+
+The runner also builds the V8/TimeContext CHOP host. Use an object entry with
+`{entry: 'sketches/animation/main.ts', target: 'chop', outputs: ['value', 'gain']}`.
+Optional `samples` defaults to 1; e.g. `outputs: ['x','y'], samples: 10000` for XY
+point buffers. Export `setup`, `onCook`, and/or `onPulse`; setup or onCook is required.
+Import types from `@avtools/native-webgpu/td-chop` and launch managed tasks through
+`host.timing`. Set the matching Output Channels / Output Samples in TD.
+
+CHOP entries use the same typechecking, import checks, atomic publication, last-good
+build behavior, and event-driven watcher. `check` selects the CHOP prebuilt via
+`current-chop.txt` (override with `AVTOOLS_TD_CHOP_PLUGIN`) and exercises the configured
+channel layout in the embedded V8 host. Mixed TOP/CHOP projects are supported.
+See [the channels project](../../apps/td-projects/channels/README.md).

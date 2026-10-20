@@ -22,7 +22,9 @@
     "test:soak": "node --expose-gc test/soak.mjs",
     "td:build": "node scripts/build-td-plugin.mjs",
     "td:pack": "node scripts/package-td.mjs",
-    "test:timing": "node test/timing/run.mjs"
+    "test:timing": "node test/timing/run.mjs",
+    "td:build:chop": "node scripts/build-td-plugin.mjs --chop",
+    "test:chop": "node test/chop/run.mjs"
   },
   "dependencies": {
     "@webgpu/types": "0.1.72",
@@ -44,6 +46,9 @@
     },
     "./td-sketch": {
       "types": "./td-sketch.d.ts"
+    },
+    "./td-chop": {
+      "types": "./td-chop.d.ts"
     }
   },
   "files": [
@@ -54,6 +59,8 @@
     "TOUCHDESIGNER.md",
     "td-sketch.d.ts",
     "TIMING.md",
-    "TIMING_VALIDATION.md"
+    "TIMING_VALIDATION.md",
+    "td-chop.d.ts",
+    "CHOP.md"
   ]
 }

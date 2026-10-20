@@ -86,3 +86,20 @@ test('watcher sees atomic saves, helper edits and recovery without restarting',a
   assert.equal(events.length,0,'Benchmark artifacts must not trigger a build');
   await watcher.close();
 });
+
+test('CHOP entries expose typed state callbacks, validate names, and retain last good bundle',async t=>{
+  const original=await fixture(t);
+  const config=resolve(original.root,'td-sketches.config.ts');
+  await writeFile(config,`export default {sketches:{a:{entry:'sketches/a.ts',target:'chop',outputs:['out']},b:'sketches/b.ts'},shaderDirs:[]}`);
+  await writeFile(resolve(original.root,'sketches/a.ts'),`import type {Setup,OnCook,OnPulse} from '@avtools/native-webgpu/td-chop'; export const setup:Setup=h=>{h.outputs.set('out',1)}; export const onCook:OnCook=h=>{h.outputs.set('out',h.inputs.get('value'))}; export const onPulse:OnPulse=(name,h)=>{h.outputs.set('out',name==='Trigger'?9:0)};`);
+  const p=await loadProject(config);await buildProject(p,quiet);
+  const first=await bundle(p);const callbacks=new Function(first+';return {setup,onCook,onPulse}')();let value=0;
+  const host={inputs:{get:()=>23},outputs:{set:(_,v)=>value=v}};
+  callbacks.setup(host);assert.equal(value,1);callbacks.onCook(host,{});assert.equal(value,23);callbacks.onPulse('Trigger',host);assert.equal(value,9);
+  await writeFile(resolve(p.root,'sketches/a.ts'),`import type {OnCook} from '@avtools/native-webgpu/td-chop'; export const onCook:OnCook=h=>h.outputs.set('out','wrong');`);
+  await assert.rejects(buildProject(p,quiet),/not assignable/);assert.equal(await bundle(p),first);
+  await writeFile(resolve(p.root,'sketches/a.ts'),'export function draw(){}');
+  await assert.rejects(buildProject(p,quiet),/must export setup or onCook/);assert.equal(await bundle(p),first);
+  await writeFile(config,`export default {sketches:{a:{entry:'sketches/a.ts',target:'chop',outputs:['out','out']}}}`);
+  await assert.rejects(loadProject(config),/unique channel identifiers/);
+});

@@ -3,7 +3,8 @@
 This repo is both a set of libraries and a specifically built project-setup for creative coding. It is a Deno‑workspace monorepo that unifies browser/Vite apps, Deno notebooks (aka Jupyter notebooks using the Deno kernel), shared TypeScript packages, and native Rust helpers. The goal is to create a set of Typescript based libraries for creative coding that can run both "natively" via Deno and/or also in the browser. The goal of the project setup in this repo is to make VSCode intellisense work “out of the box” across all environments (Deno files, jupyter notebooks).
 
 The repository also includes a **Node.js + Dawn implementation of P5GPU** and a
-**TouchDesigner custom TOP** built around the same renderer. These are implemented
+**TouchDesigner custom TOP** built around the same renderer, plus a
+**V8/TimeContext CHOP** for stateful channel animation and buffer transforms. These are implemented
 integrations with runnable examples; start with the guides below when working on
 native graphics or TouchDesigner.
 
@@ -41,12 +42,19 @@ realtime scheduling continues while TD playback is paused, with managed cleanup
 on reload. Open [TimeContext.toe](packages/native-webgpu/native/td/example/TimeContext.toe)
 for a ready-to-run timing and pulse example.
 
+The [avTools Channels CHOP](packages/native-webgpu/CHOP.md) runs independent
+TimeContext tasks against persistent channel state, with optional same-cook input
+transforms and bulk arrays for XY point buffers. Open
+[Channels.toe](packages/native-webgpu/native/td/chop-example/Channels.toe) directly,
+or use [the channels IDE project](apps/td-projects/channels/README.md). Its separate
+prebuilt plugin is selected by `prebuilt/macos-arm64/current-chop.txt`.
+
 For IDE-based TD sketch development, read the
 [`apps/td-projects` workflow guide](apps/td-projects/README.md) and start with
 [the starter project](apps/td-projects/starter/README.md). A project holds a
 `.toe`, multiple TypeScript sketches, shared helpers, and local WGSL shaders.
 `npm run dev` generates typed raw shader wrappers and rebuilds one JavaScript
-bundle per sketch; file-backed TOPs restart when their bundle changes. The reusable
+bundle per sketch; file-backed TOPs and CHOPs restart when their bundle changes. The reusable
 [`tools/td-sketch-build`](tools/td-sketch-build/README.md) runner owns builds,
 watching, compatibility checks, and embedded-runtime smoke tests.
 
@@ -157,7 +165,7 @@ avTools/
 │  ├─ core-timing/
 │  ├─ creative-algs/
 │  ├─ music-types/
-│  ├─ native-webgpu/        # Node/Dawn P5GPU, Syphon, and embedded TouchDesigner TOP
+│  ├─ native-webgpu/        # Node/Dawn P5GPU, Syphon, and embedded TouchDesigner TOP/CHOP
 │  ├─ ui-bridge/
 │  ├─ power2d/
 │  ├─ power2d-codegen/

@@ -3,3 +3,5 @@ _avCook
 _avDestroy
 _avCreateDeferred
 _avDispatch
+_avChopCreate
+_avChopCook

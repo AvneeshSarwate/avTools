@@ -29,6 +29,21 @@ __attribute__((visibility("default"))) AVSketch* avCreateDeferred(const char*,ch
 typedef void (*AVWork)(AVSketch*,void*);
 __attribute__((visibility("default"))) int avDispatch(AVSketch*,AVWork,void*);
 __attribute__((visibility("default"))) void avDestroy(AVSketch*);
+// CPU channel host. Each call publishes all input snapshots atomically and
+// returns this cook's outputs; it never queues a previous-frame result.
+typedef struct {uint32_t input; AVChannel channel;} AVChopChannel;
+typedef struct {
+  const char* source; uint32_t reset;
+  double frame,rate,deltaSeconds,absFrame;
+  const AVChopChannel* channels; uint32_t channelCount;
+  const char* const* names; uint32_t outputCount; float* output;
+  const char* const* pulses; uint32_t pulseCount;
+  // Channel-major output buffer: outputCount * outputSamples floats.
+  // Zero outputSamples means one for scalar callers.
+  uint32_t outputSamples;
+} AVChopFrame;
+__attribute__((visibility("default"))) AVSketch* avChopCreate(const char*,char*,size_t);
+__attribute__((visibility("default"))) int avChopCook(AVSketch*,const AVChopFrame*,AVStats*,char*,size_t);
 #ifdef __cplusplus
 }
 #endif

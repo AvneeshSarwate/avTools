@@ -37,3 +37,19 @@ use their resources. Do not rename or edit files inside a signed bundle.
 After editing example startup code, refresh the embedded copy with
 `python3 scripts/update-td-project-startup.py`, then regenerate the IDE starter
 using `python3 ../../tools/td-sketch-build/build-example.py`.
+
+## Channels CHOP
+
+`macos-arm64/current-chop.txt` names the separate **AvToolsChannels** bundle.
+It supports TD 2025.31550 / CHOP API 10 on the same macOS Apple Silicon target.
+Open [Channels.toe](../native/td/chop-example/Channels.toe), or use the
+[channels IDE project](../../../apps/td-projects/channels/README.md).
+For standalone distribution, use `Plugins/AvToolsChannels.plugin` beside the `.toe`.
+
+`npm run td:build:chop` builds/publishes this bundle after the shared embedded
+runtime has been rebuilt. Commit the new bundle, `current-chop.txt`, and source
+together. The CHOP shares the V8/Dawn runtime binary for build reuse, but creates
+no GPU device, renderer, or textures. See [CHOP.md](../CHOP.md).
+The current Channels bundle is approximately 45 MiB on disk (it omits the TOP's
+font payload). Keep it intact, including the Syphon framework used by the shared
+runtime library, even though the CHOP itself performs no graphics work.

@@ -28,9 +28,15 @@ export async function loadProject(configPath){
   const config=(await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].contents).toString('base64'))).default;
   if(!config||!config.sketches||!Object.keys(config.sketches).length)throw Error('Config must export a nonempty sketches map');
   const local=(path,label)=>{if(typeof path!=='string')throw Error(`${label} must be a path`);const result=resolve(root,path);if(!inside(root,result)||result===root)throw Error(`${label} must be inside the project directory`);return result;};
-  const entries=Object.entries(config.sketches).map(([name,path])=>{
+  const entries=Object.entries(config.sketches).map(([name,value])=>{
     if(!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(name))throw Error(`Invalid sketch name: ${name}`);
-    return {name,entry:local(path,`sketch ${name}`)};
+    const target=typeof value==='string'?'top':value?.target;
+    if(!['top','chop'].includes(target))throw Error(`Invalid target for ${name}`);
+    const outputs=target==='chop'?value.outputs:[];
+    if(target==='chop'&&(!Array.isArray(outputs)||!outputs.length||outputs.length>1024||outputs.some(n=>typeof n!=='string'||!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(n))||new Set(outputs).size!==outputs.length))throw Error(`${name}: outputs must be unique channel identifiers`);
+    const samples=target==='chop'?(value.samples??1):1;
+    if(!Number.isInteger(samples)||samples<1||samples*Math.max(1,outputs.length)>1048576)throw Error(`${name}: samples must be a positive integer; maximum 1M total output samples`);
+    return {name,target,outputs,samples,entry:local(typeof value==='string'?value:value.entry,`sketch ${name}`)};
   });
   const outDir=local(config.outDir??'dist','outDir'),generatedDir=local(config.generatedDir??'generated','generatedDir');
   if(inside(outDir,generatedDir)||inside(generatedDir,outDir))throw Error('Output and generated directories must be separate');
@@ -55,6 +61,7 @@ export async function prepareTypes(project){
   const paths={};
   for(const [name,path] of Object.entries(await aliases()))paths[name.endsWith('/')?name+'*':name]=[posix(path)+(name.endsWith('/')?'/*':'')];
   paths['@avtools/native-webgpu/td-sketch']=[resolve(repoRoot,'packages/native-webgpu/td-sketch.d.ts')];
+  paths['@avtools/native-webgpu/td-chop']=[resolve(repoRoot,'packages/native-webgpu/td-chop.d.ts')];
   paths['@avtools/native-webgpu']=[resolve(repoRoot,'packages/native-webgpu/dist/types/packages/native-webgpu/src/index.d.ts')];
   paths['earcut']=[resolve(modules,'@types/earcut/index.d.ts')];
   paths['seedrandom']=[resolve(modules,'@types/seedrandom/index.d.ts')];
@@ -143,7 +150,12 @@ async function bundle(project,entry,alias){
     if(name)return {path:name.endsWith('/')?resolve(alias[name],args.path.slice(name.length)):alias[name]};
   });}};
   // The TOP evaluates this file with new Function; callbacks must be in that scope.
-  const footer=`
+  const footer=entry.target==='chop'?`
+function setup(host) { return __tdSketch.setup?.(host); }
+function onCook(host, frame) { return __tdSketch.onCook?.(host, frame); }
+const onPulse = __tdSketch.onPulse;
+//# sourceURL=td-chop/${entry.name}.js
+`:`
 if (typeof __tdSketch.draw !== 'function') throw new Error('Sketch must export draw');
 function setup(p, host) { return __tdSketch.setup?.(p, host); }
 function draw(p, frame) { return __tdSketch.draw(p, frame); }
@@ -162,7 +174,7 @@ export async function buildProject(project,{log=console.log}={}){
     const result=await bundle(project,entry,alias);checkRuntimeInputs(project,result,program);
     const source=program.getSourceFile(entry.entry);
     const exports=source&&program.getTypeChecker().getExportsOfModule(program.getTypeChecker().getSymbolAtLocation(source));
-    if(!exports?.some(symbol=>symbol.name==='draw'))throw Error(`${entry.entry}: must export draw`);
+    if(!exports?.some(symbol=>entry.target==='chop'?['setup','onCook'].includes(symbol.name):symbol.name==='draw'))throw Error(`${entry.entry}: must export ${entry.target==='chop'?'setup or onCook':'draw'}`);
     results.push({entry,result});
   }
   // All entries must validate before publishing. Each replacement is atomic;
@@ -173,7 +185,7 @@ export async function buildProject(project,{log=console.log}={}){
     const contents=result.outputFiles[0].contents;
     if(await atomicWrite(resolve(project.outDir,entry.name+'.js'),contents))changed.push(entry.name);
   }
-  await atomicWrite(resolve(project.root,'.td/build.json'),JSON.stringify({entries:results.map(({entry,result})=>({name:entry.name,source:relative(project.root,entry.entry),bundle:relative(project.root,resolve(project.outDir,entry.name+'.js')),sha256:hash(result.outputFiles[0].contents)}))},null,2)+'\n');
+  await atomicWrite(resolve(project.root,'.td/build.json'),JSON.stringify({entries:results.map(({entry,result})=>({name:entry.name,target:entry.target,outputs:entry.outputs,samples:entry.samples,source:relative(project.root,entry.entry),bundle:relative(project.root,resolve(project.outDir,entry.name+'.js')),sha256:hash(result.outputFiles[0].contents)}))},null,2)+'\n');
   log(changed.length?`Built ${changed.join(', ')}`:'Checked; bundles unchanged');
   return {changed,inputs};
 }
