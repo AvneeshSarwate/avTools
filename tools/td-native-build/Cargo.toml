@@ -1,0 +1,47 @@
+[package]
+name = "avtools-build"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace]
+exclude = ["vendor/tsrs"]
+
+[lib]
+name = "avtools_build"
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+anyhow = "1"
+rayon = "1"
+oxc_allocator = "=0.154.0"
+oxc_parser = "=0.154.0"
+oxc_span = "=0.154.0"
+oxc_ast = "=0.154.0"
+oxc_ast_visit = "=0.154.0"
+oxc_semantic = "=0.154.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+walkdir = "2"
+notify = "8"
+tokio = { version = "1", features = ["rt-multi-thread"] }
+rolldown = "=1.2.14"
+rolldown_common = "=1.2.14"
+rquickjs = { version = "0.11", features = ["full"] }
+# A host may retain several plugin versions. Compressed arenas reserve a fixed
+# process address range and abort when another compiler dylib already owns it.
+tsrs_core = { path = "vendor/tsrs/crates/tsrs_core", features = ["plain-ptrs"] }
+tsrs_ast = { path = "vendor/tsrs/crates/tsrs_ast" }
+tsrs_vfs = { path = "vendor/tsrs/crates/tsrs_vfs" }
+tsrs_tsoptions = { path = "vendor/tsrs/crates/tsrs_tsoptions" }
+tsrs_compiler = { path = "vendor/tsrs/crates/tsrs_compiler" }
+
+[profile.dev]
+opt-level = 1
+debug = false
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = "symbols"

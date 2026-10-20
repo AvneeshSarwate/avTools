@@ -1,0 +1,8 @@
+{
+  "name": "@avtools/shader-fx",
+  "version": "0.0.0",
+  "exports": "./mod.ts",
+  "imports": {
+    "babylonjs": "npm:babylonjs@^8.20.0"
+  }
+}

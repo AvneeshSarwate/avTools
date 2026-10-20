@@ -1,6 +1,10 @@
 # Native TypeScript build tool for TouchDesigner
 
-Status: proposed; implementation has not started.
+Status: implemented initial native core/CLI, copied SDK, shader generators, and
+TOP/CHOP project integration. See [implementation guide](../../../tools/td-native-build/README.md)
+and [validation](../../../tools/td-native-build/VALIDATION.md). The existing Node
+runner remains available. A physically separate clean-machine installation has
+not been exercised; release tests remove developer runtimes from PATH.
 Research date: 2026-10-20.
 
 ## Objective and user experience

@@ -12,7 +12,9 @@ const cpp=chop?'native/td/SketchCHOP.cpp':'native/td/SketchTOP.cpp';
 // Hash the bundled renderer (including transitive imports) and all shipped inputs.
 // Build elsewhere, then rename once; never overwrite a binary mapped into TD.
 const renderer=await build({entryPoints:[resolve(root,chop?'src/td-chop-runtime.ts':'src/td-runtime.ts')],write:false,bundle:true,platform:'neutral',format:'iife',target:'es2022',nodePaths:[resolve(root,'node_modules')]});
-const digest=createHash('sha256');
+const nativeBuildRoot=resolve(root,'prebuilt/macos-arm64/native-build');
+const nativeBuildTag=readFileSync(resolve(nativeBuildRoot,'current.txt'),'utf8').trim();
+const digest=createHash('sha256');digest.update(nativeBuildTag);digest.update(readFileSync(resolve(root,'native/td/NativeBuild.h')));
 function hashTree(path){for(const entry of readdirSync(path,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))){digest.update(entry.name);const child=resolve(path,entry.name);if(entry.isDirectory())hashTree(child);else if(entry.isFile())digest.update(readFileSync(child));}}
 for(const path of ['scripts/build-td-plugin.mjs',cpp,'native/embedded/Bridge.h','upstream/node-webgpu/third_party/dawn/out/avtools-v8/libavtools_runtime.dylib','dist/THIRD_PARTY_NOTICES.txt'])digest.update(readFileSync(resolve(root,path)));
 digest.update(seedrandomNotices(root));digest.update(renderer.outputFiles[0].contents);hashTree(resolve(root,'dist/fonts'));hashTree(resolve(root,'build/syphon-embedded/AVToolsSyphon.framework/Versions/A'));
@@ -27,6 +29,7 @@ function publish(){
 if(existsSync(finalBundle)){publish();process.exit(0);}
 const bundle=resolve(root,`build/.${name}-${tag}-${process.pid}.plugin`),mac=resolve(bundle,'Contents/MacOS'),resources=resolve(bundle,'Contents/Resources');
 mkdirSync(mac,{recursive:true});mkdirSync(resources,{recursive:true});
+writeFileSync(resolve(resources,'native-build.txt'),'../../../native-build/'+nativeBuildTag+'/libavtools_build.dylib\n');
 writeFileSync(resolve(resources,chop?'chop.js':'renderer.js'),renderer.outputFiles[0].contents);
 writeFileSync(resolve(resources,'seedrandom-LICENSE.txt'),seedrandomNotices(root));
 if(!chop)cpSync(resolve(root,'dist/fonts'),resolve(resources,'fonts'),{recursive:true});

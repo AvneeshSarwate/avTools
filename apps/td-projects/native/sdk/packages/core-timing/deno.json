@@ -1,0 +1,8 @@
+{
+  "name": "@avtools/core-timing",
+  "version": "0.0.0",
+  "exports": "./mod.ts",
+  "imports": {
+    "seedrandom": "npm:seedrandom@^3.0.5"
+  }
+}

@@ -1,5 +1,6 @@
 #include "TOP_CPlusPlusBase.h"
 #include "../embedded/Bridge.h"
+#include "NativeBuild.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -19,7 +20,7 @@ using namespace TD;
 namespace {
 using Clock=std::chrono::steady_clock;
 double elapsed(Clock::time_point start){return std::chrono::duration<double,std::milli>(Clock::now()-start).count();}
-std::string resources(){Dl_info info{};if(!dladdr(reinterpret_cast<void*>(&resources),&info))throw std::runtime_error("Could not locate plugin resources");return (std::filesystem::path(info.dli_fname).parent_path().parent_path()/"Resources").string();}
+const std::string& resources(){static const std::string path=[](){Dl_info info{};if(!dladdr(reinterpret_cast<void*>(&resources),&info))throw std::runtime_error("Could not locate plugin resources");return (std::filesystem::path(info.dli_fname).parent_path().parent_path()/"Resources").string();}();return path;}
 class SketchTOP final:public TOP_CPlusPlusBase {
   struct Channel {std::string name;std::vector<float> samples;};
   struct Job {
@@ -29,7 +30,7 @@ class SketchTOP final:public TOP_CPlusPlusBase {
     double inputDownloadMs=0,workerMs=0;int ready=0;
     int64_t startNs=0,endNs=0;
   };
-  TOP_Context* context;AVSketch* runtime=nullptr;
+  TOP_Context* context;AVSketch* runtime=nullptr;NativeBuild nativeBuild;
   // Only the short ownership exchanges take this lock. GPU waits and buffer
   // allocation happen on workers, never while holding it.
   std::mutex mutex;bool busy=false;std::unique_ptr<Job> pending,completed,fallback;
@@ -93,6 +94,11 @@ class SketchTOP final:public TOP_CPlusPlusBase {
 #endif
     }} finish{*this,cookStart};
     try {
+      // Build controls must take effect even on a collection-only cook or while
+      // the rendering worker is busy (including a parameter edit while paused).
+      const char* project=inputs->getParString("Projectdir");std::string builtSource;
+      if(project&&*project)builtSource=nativeBuild.read(resources(),project,inputs->getParString("Entry"),inputs->getParInt("Autobuild")!=0);
+      else nativeBuild.clear();
       // A duplicated coordinator/pulse must not run draw or consume events twice.
       if(submitOnly){if(lastTriggerFrame==currentFrame)return;lastTriggerFrame=currentFrame;}
       std::unique_ptr<Job> ready;bool inFlight;
@@ -115,8 +121,9 @@ class SketchTOP final:public TOP_CPlusPlusBase {
       char detail[8192]{};
       if(!runtime){runtime=avCreateDeferred(resources().c_str(),detail,sizeof(detail));if(!runtime)throw std::runtime_error(detail);}
       auto job=std::make_unique<Job>();
-      if(const auto* dat=inputs->getParDAT("Sketch")){if(dat->isTable)throw std::runtime_error("Sketch must reference a Text DAT");if(dat->numRows&&dat->numCols)job->source=dat->getCell(0,0);}
-      else {const char* path=inputs->getParString("Sourcefile");if(path&&*path){std::ifstream file(path);if(!file)throw std::runtime_error("Cannot open source file");job->source.assign(std::istreambuf_iterator<char>(file),{});}}
+      if(project&&*project){job->source=std::move(builtSource);if(job->source.empty()){error.clear();return;}}
+      else if(const auto* dat=inputs->getParDAT("Sketch")){nativeBuild.clearFile();if(dat->isTable)throw std::runtime_error("Sketch must reference a Text DAT");if(dat->numRows&&dat->numCols)job->source=dat->getCell(0,0);}
+      else {const char* path=inputs->getParString("Sourcefile");if(path&&*path){job->source=nativeBuild.readFile(resources(),path);}}
       if(job->source.empty())throw std::runtime_error("Set Sketch to a JavaScript Text DAT or choose Source File");
       auto& frame=job->frame;frame.width=std::clamp(inputs->getParInt("Width"),1,4096);frame.height=std::clamp(inputs->getParInt("Height"),1,4096);frame.reset=reset;
       job->syphonName=inputs->getParInt("Syphonenabled")?inputs->getParString("Syphonname"):"";frame.syphonOnly=inputs->getParInt("Syphononly");syphonOnly=frame.syphonOnly;
@@ -138,6 +145,7 @@ class SketchTOP final:public TOP_CPlusPlusBase {
     }catch(const std::exception& e){error=e.what();}
   }
   void setupParameters(OP_ParameterManager* manager,void*)override{
+    NativeBuild::parameters(manager);
     OP_StringParameter source;source.name="Sketch";source.label="Sketch DAT";source.page="Sketch";manager->appendDAT(source);
     source.name="Sourcefile";source.label="Source File";manager->appendFile(source);
     source.name="Controls";source.label="Controls CHOP";manager->appendCHOP(source);
@@ -150,8 +158,8 @@ class SketchTOP final:public TOP_CPlusPlusBase {
     {OP_NumericParameter p;p.name="Pretriggerpulse";p.label="Submit Early (Coordinator)";p.page="Output";manager->appendPulse(p);}
     for(const char* name:{"Reset","Reload","Sendpulse"}){OP_NumericParameter p;p.name=name;p.label=!strcmp(name,"Sendpulse")?"Send Pulse":name;p.page="Sketch";manager->appendPulse(p);}
   }
-  void pulsePressed(const char* name,void*)override{if(!strcmp(name,"Pretriggerpulse")){triggerPending=true;return;}if(!strcmp(name,"Reset")||!strcmp(name,"Reload"))reset=true;else if(!strcmp(name,"Sendpulse")){if(pendingPulses<256)pendingPulses++;else error="Pulse queue full (256); cook before sending more events";}}
-  void getWarningString(OP_String* result,void*)override{result->setString(pretrigger&&lastTriggerFrame<currentFrame-1?"Pre-trigger Mode needs an active pretrigger Execute DAT; no recent submission received.":"");}
+  void pulsePressed(const char* name,void*)override{if(std::string(name)=="Buildproject"){nativeBuild.request();return;}if(!strcmp(name,"Pretriggerpulse")){triggerPending=true;return;}if(!strcmp(name,"Reset")||!strcmp(name,"Reload"))reset=true;else if(!strcmp(name,"Sendpulse")){if(pendingPulses<256)pendingPulses++;else error="Pulse queue full (256); cook before sending more events";}}
+  void getWarningString(OP_String* result,void*)override{auto buildWarning=nativeBuild.warning();if(!buildWarning.empty()){result->setString(buildWarning.c_str());return;}result->setString(pretrigger&&lastTriggerFrame<currentFrame-1?"Pre-trigger Mode needs an active pretrigger Execute DAT; no recent submission received.":"");}
   void getErrorString(OP_String* result,void*)override{result->setString(error.c_str());}
   int32_t getNumInfoCHOPChans(void*)override{return 17;}
   void getInfoCHOPChan(int32_t index,OP_InfoCHOPChan* channel,void*)override{
@@ -159,8 +167,9 @@ class SketchTOP final:public TOP_CPlusPlusBase {
     double values[]={double(stats.cooks),double(stats.ready),inputDownloadMs,stats.inputMs,stats.drawMs,stats.readbackMs,stats.totalMs,double(stats.syphonClients),double(stats.syphonPublished),double(stats.syphonDropped),cookMs,uploadMs,outputFrame<0?-1:currentFrame-outputFrame,double(skipped),workerMs,double(pretrigger),submittedFrame};
     if(index>=0&&index<17){channel->name->setString(names[index]);channel->value=float(values[index]);}
   }
-  bool getInfoDATSize(OP_InfoDATSize* size,void*)override{size->rows=4;size->cols=2;size->byColumn=false;return true;}
+  bool getInfoDATSize(OP_InfoDATSize* size,void*)override{size->rows=6;size->cols=2;size->byColumn=false;return true;}
   void getInfoDATEntries(int32_t index,int32_t,OP_InfoDATEntries* entries,void*)override{
+    if(index==4||index==5){entries->values[0]->setString(index==4?"build_state":"build_diagnostics");entries->values[1]->setString(index==4?nativeBuild.status().c_str():nativeBuild.message().c_str());return;}
     std::string publication="clients="+std::to_string(stats.syphonClients)+" published="+std::to_string(stats.syphonPublished)+" dropped="+std::to_string(stats.syphonDropped);
     const char* keys[]={"transport","status","runtime","syphon"};const char* values[]={syphonOnly?"Syphon GPU output; 1px placeholder TOP; wired inputs use CPU":(pretrigger?"RGBA8 CPU output; pre-trigger submit/collect; nonblocking":sameCook?"RGBA8 CPU input/output; same cook (blocking)":"RGBA8 CPU input/output; buffered worker; normally one frame latency"),error.empty()?(outputFrame<0?"initializing":"ready"):error.c_str(),"V8 + Dawn Metal + Rust text; one worker/isolate per TOP",publication.c_str()};
     if(index>=0&&index<4){entries->values[0]->setString(keys[index]);entries->values[1]->setString(values[index]);}

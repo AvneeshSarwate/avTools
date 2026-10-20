@@ -92,3 +92,9 @@ Icon
 
 # Local report produced by the checked-in CHOP stress fixture.
 /packages/native-webgpu/native/td/chop-example/stress-results.json
+
+# Copyable native TypeScript SDK includes WebGPU declarations and earcut assets.
+!/tools/td-native-build/template/sdk/dependencies/@webgpu/types/dist/
+!/tools/td-native-build/template/sdk/dependencies/@webgpu/types/dist/**
+!/apps/td-projects/native/sdk/dependencies/@webgpu/types/dist/
+!/apps/td-projects/native/sdk/dependencies/@webgpu/types/dist/**

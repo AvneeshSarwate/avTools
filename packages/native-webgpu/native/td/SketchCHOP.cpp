@@ -1,5 +1,6 @@
 #include "CHOP_CPlusPlusBase.h"
 #include "../embedded/Bridge.h"
+#include "NativeBuild.h"
 #include <algorithm>
 #include <chrono>
 #include <cctype>
@@ -14,7 +15,7 @@
 using namespace TD;
 namespace {
 using Clock=std::chrono::steady_clock;
-std::string resources(){Dl_info info{};if(!dladdr(reinterpret_cast<void*>(&resources),&info))throw std::runtime_error("Cannot locate plugin resources");return (std::filesystem::path(info.dli_fname).parent_path().parent_path()/"Resources").string();}
+const std::string& resources(){static const std::string path=[](){Dl_info info{};if(!dladdr(reinterpret_cast<void*>(&resources),&info))throw std::runtime_error("Cannot locate plugin resources");return (std::filesystem::path(info.dli_fname).parent_path().parent_path()/"Resources").string();}();return path;}
 std::vector<std::string> channelNames(const OP_Inputs* inputs){
   std::istringstream stream(inputs->getParString("Outputchannels"));std::vector<std::string> names;std::set<std::string> seen;std::string name;
   while(stream>>name){
@@ -24,7 +25,7 @@ std::vector<std::string> channelNames(const OP_Inputs* inputs){
   if(names.empty())throw std::runtime_error("Set at least one Output Channel");return names;
 }
 class SketchCHOP final:public CHOP_CPlusPlusBase {
-  AVSketch* runtime=nullptr;AVStats stats{};std::string error,warning;bool reset=true;uint32_t pulses=0;
+  AVSketch* runtime=nullptr;NativeBuild nativeBuild;AVStats stats{};std::string error,warning;bool reset=true;uint32_t pulses=0;
   double cookMs=0,outputFrame=-1;
  public:
   ~SketchCHOP()override{avDestroy(runtime);}
@@ -44,8 +45,10 @@ class SketchCHOP final:public CHOP_CPlusPlusBase {
       auto names=channelNames(inputs);
       if(size_t(inputs->getParInt("Outputsamples"))*names.size()>1048576||output->numSamples<1||size_t(output->numChannels)!=names.size()||size_t(output->numSamples)*names.size()>1048576)throw std::runtime_error("Maximum 1M total output samples");
       std::string source;
-      if(const auto* dat=inputs->getParDAT("Sketch")){if(dat->isTable)throw std::runtime_error("Sketch must be a Text DAT");if(dat->numRows&&dat->numCols)source=dat->getCell(0,0);}
-      else{const char* file=inputs->getParString("Sourcefile");if(file&&*file){std::ifstream stream(file);if(!stream)throw std::runtime_error("Cannot open Source File");source.assign(std::istreambuf_iterator<char>(stream),{});}}
+      const char* project=inputs->getParString("Projectdir");if(!project||!*project)nativeBuild.clear();
+      if(project&&*project){source=nativeBuild.read(resources(),project,inputs->getParString("Entry"),inputs->getParInt("Autobuild")!=0);if(source.empty()){error.clear();return;}}
+      else if(const auto* dat=inputs->getParDAT("Sketch")){nativeBuild.clearFile();if(dat->isTable)throw std::runtime_error("Sketch must be a Text DAT");if(dat->numRows&&dat->numCols)source=dat->getCell(0,0);}
+      else{const char* file=inputs->getParString("Sourcefile");if(file&&*file){source=nativeBuild.readFile(resources(),file);}}
       if(source.empty())throw std::runtime_error("Set Sketch DAT or Source File");
       char detail[8192]{};
       if(!runtime){runtime=avChopCreate(resources().c_str(),detail,sizeof(detail));if(!runtime)throw std::runtime_error(detail);}
@@ -60,6 +63,7 @@ class SketchCHOP final:public CHOP_CPlusPlusBase {
     }catch(const std::exception& e){error=e.what();}
   }
   void setupParameters(OP_ParameterManager* manager,void*)override{
+    NativeBuild::parameters(manager);
     OP_StringParameter p;p.page="Script";p.name="Sketch";p.label="Sketch DAT";manager->appendDAT(p);
     p.name="Sourcefile";p.label="Source File";manager->appendFile(p);
     p.name="Outputchannels";p.label="Output Channels";p.defaultValue="out";manager->appendString(p);
@@ -67,9 +71,11 @@ class SketchCHOP final:public CHOP_CPlusPlusBase {
     p.name="Eventname";p.label="Event Name";p.defaultValue="Trigger";manager->appendString(p);
     for(const auto* name:{"Sendpulse","Reset","Reload"}){OP_NumericParameter n;n.name=name;n.label=std::string(name)=="Sendpulse"?"Send Pulse":name;n.page="Script";manager->appendPulse(n);}
   }
-  void pulsePressed(const char* name,void*)override{if(std::string(name)=="Sendpulse"){if(pulses<256)pulses++;else error="Pulse queue full; cook before sending more events";}else reset=true;}
-  void getWarningString(OP_String* value,void*)override{value->setString(warning.c_str());}
+  void pulsePressed(const char* name,void*)override{if(std::string(name)=="Buildproject"){nativeBuild.request();return;}if(std::string(name)=="Sendpulse"){if(pulses<256)pulses++;else error="Pulse queue full; cook before sending more events";}else reset=true;}
+  void getWarningString(OP_String* value,void*)override{auto buildWarning=nativeBuild.warning();value->setString(buildWarning.empty()?warning.c_str():buildWarning.c_str());}
   void getErrorString(OP_String* value,void*)override{value->setString(error.c_str());}
+  bool getInfoDATSize(OP_InfoDATSize* size,void*)override{size->rows=2;size->cols=2;size->byColumn=false;return true;}
+  void getInfoDATEntries(int32_t index,int32_t,OP_InfoDATEntries* entries,void*)override{entries->values[0]->setString(index==0?"build_state":"build_diagnostics");entries->values[1]->setString(index==0?nativeBuild.status().c_str():nativeBuild.message().c_str());}
   int32_t getNumInfoCHOPChans(void*)override{return 6;}
   void getInfoCHOPChan(int32_t i,OP_InfoCHOPChan* channel,void*)override{
     const char* names[]={"cooks","cook_ms","input_copy_ms","script_ms","output_abs_frame","ready"};

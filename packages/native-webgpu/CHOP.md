@@ -12,7 +12,12 @@ and pulse Trigger to animate gain. Value is multiplied by the current gain in
 the same cook. Two independent instances and a four-CHOP pass-through chain are
 included. See the [example guide](native/td/chop-example/README.md).
 
-For TypeScript editing, use [apps/td-projects/channels](../../apps/td-projects/channels/README.md).
+For TypeScript editing without a terminal watcher, open the
+[native project](../../apps/td-projects/native/README.md). Its Build page selects
+a project and entry; checking, bundling and watching happen inside the plugin.
+The copied SDK works in VS Code. See the [native build guide](../../tools/td-native-build/README.md).
+
+The existing Node workflow remains in [apps/td-projects/channels](../../apps/td-projects/channels/README.md).
 Run `npm run setup`, open that directory in VS Code, run `npm run dev`, and open
 its `project.toe`. Saving a valid change rebuilds the bundle and restarts the
 corresponding instances on their next cook. No browser or server is required.
@@ -125,8 +130,10 @@ owned CPU buffers; this is not zero-copy. Bulk arrays avoid one host call per po
 
 ## Parameters and errors
 
-Sketch DAT takes priority over Source File. Source File is checked on every cook;
-use the watcher for TypeScript and static imports. Event Name plus Send Pulse
+Project Directory takes priority over Sketch DAT and Source File. With it clear,
+Sketch DAT takes priority over Source File. Source File uses background filesystem
+notifications and changed-file reads; cooks adopt pending source without rereading
+the file. Project builds support TypeScript and static imports. Event Name plus Send Pulse
 queues a named event for the next cook. The handler reads that cook's inputs;
 pulses carry no argument object. Reset and Reload restart the current script.
 
