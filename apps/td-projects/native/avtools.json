@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "sketches": {
+    "channels": {"target": "chop", "entry": "sketches/channels/main.ts", "outputs": ["value", "ticks"]},
+    "background": {"target": "top", "entry": "sketches/background/main.ts"}
+  },
+  "shaderDirs": ["sketches"]
+}

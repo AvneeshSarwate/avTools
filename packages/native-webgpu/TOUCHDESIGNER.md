@@ -33,7 +33,9 @@ the component. Its component-level **Plugin Path** defaults to
 The embedded sketch demonstrates Event Name / Send Pulse; `sketch.js` is a readable
 copy of that DAT. The two-instance fixture also demonstrates CHOP and TOP inputs.
 
-A Sketch DAT takes priority over Source File. Sketches are plain JavaScript, not
+A nonempty **Project Directory** takes priority over Sketch DAT and Source File;
+see [native TypeScript builds](../../tools/td-native-build/README.md). With it clear,
+a Sketch DAT takes priority over Source File. These inputs are plain JavaScript, not
 ES modules: define `setup`, `draw`, and optionally `onPulse` in the DAT. There is
 no TypeScript transpiler, package resolution, `require`, Node, or Deno in V8.
 
@@ -246,6 +248,14 @@ and `0004-embedded-event-driven-wait.patch` (opt-in GPU future waits). `TextComp
 it does not implement a separate WebGPU binding.
 
 ## TypeScript projects and IDE development
+
+The [native project](../../apps/td-projects/native/README.md) builds TypeScript
+directly inside the TOP/CHOP, with a copied SDK, shader generation, background
+watching, type diagnostics and last-good retention. Open its `project.toe` and edit
+the folder in VS Code; no Node install or terminal watcher is needed. The Build
+page selects Project Directory, Entry and Automatic Builds. Keep the plugins'
+sibling `native-build/` directory when copying them; see the
+[native build guide](../../tools/td-native-build/README.md).
 
 The [TD starter project](../../apps/td-projects/starter/README.md) provides two
 file-backed sketches, TimeContext, raw Power2D/shader-fx, local WGSL generation,

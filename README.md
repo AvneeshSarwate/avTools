@@ -49,7 +49,15 @@ transforms and bulk arrays for XY point buffers. Open
 or use [the channels IDE project](apps/td-projects/channels/README.md). Its separate
 prebuilt plugin is selected by `prebuilt/macos-arm64/current-chop.txt`.
 
-For IDE-based TD sketch development, read the
+For **TypeScript builds inside TouchDesigner**, open
+[the native project](apps/td-projects/native/project.toe) and edit its folder in
+VS Code. The TOP and CHOP share a native compiler/watcher: no Node, npm, or terminal
+watcher is required. Project Directory and Entry select the script; errors retain
+the last working bundle. Read [the native workflow](apps/td-projects/native/README.md)
+and [build-core guide](tools/td-native-build/README.md) for the local SDK, shader
+generators, CLI, and implementation details.
+
+The earlier Node-based workflow remains supported. For that workflow, read the
 [`apps/td-projects` workflow guide](apps/td-projects/README.md) and start with
 [the starter project](apps/td-projects/starter/README.md). A project holds a
 `.toe`, multiple TypeScript sketches, shared helpers, and local WGSL shaders.

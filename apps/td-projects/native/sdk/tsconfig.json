@@ -1,0 +1,62 @@
+{
+  "compilerOptions": {
+    "paths": {
+      "@avtools/core-timing": [
+        "./packages/core-timing/mod.ts"
+      ],
+      "@avtools/creative-algs": [
+        "./packages/creative-algs/mod.ts"
+      ],
+      "@avtools/power2d": [
+        "./packages/power2d/mod.ts"
+      ],
+      "@avtools/power2d/core": [
+        "./packages/power2d/core/mod.ts"
+      ],
+      "@avtools/power2d/raw": [
+        "./packages/power2d/raw/mod.ts"
+      ],
+      "@avtools/power2d/generated/*": [
+        "./packages/power2d/generated/*"
+      ],
+      "@avtools/power2d/generated-raw/*": [
+        "./packages/power2d/generated-raw/*"
+      ],
+      "@avtools/shader-fx": [
+        "./packages/shader-fx/mod.ts"
+      ],
+      "@avtools/shader-fx/raw": [
+        "./packages/shader-fx/raw/mod.ts"
+      ],
+      "@avtools/shader-fx/generated/*": [
+        "./packages/shader-fx/generated/*"
+      ],
+      "@avtools/shader-fx/generated-raw/*": [
+        "./packages/shader-fx/generated-raw/*"
+      ],
+      "@avtools/native-webgpu/td-chop": [
+        "./packages/native-webgpu/td-chop.d.ts"
+      ],
+      "@avtools/native-webgpu/td-sketch": [
+        "./packages/native-webgpu/td-sketch.d.ts"
+      ],
+      "@avtools/native-webgpu": [
+        "./packages/native-webgpu/types/packages/native-webgpu/src/index.d.ts"
+      ],
+      "earcut": [
+        "./dependencies/earcut"
+      ],
+      "seedrandom": [
+        "./dependencies/seedrandom"
+      ]
+    },
+    "typeRoots": [
+      "./dependencies/@types"
+    ],
+    "types": [],
+    "skipLibCheck": true
+  },
+  "files": [
+    "./dependencies/@webgpu/types/dist/index.d.ts"
+  ]
+}

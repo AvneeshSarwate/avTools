@@ -3,12 +3,19 @@
 Each subdirectory is a TD piece, with a `.toe`, multiple TypeScript sketches,
 project-local helpers/shaders, and one generated JavaScript bundle per sketch.
 
-Start with [starter](starter/README.md). It includes an openable `project.toe`,
+For the native workflow, open **[native/project.toe](native/project.toe)** and
+open [its folder](native/README.md) in your IDE. TOP/CHOP operators compile and watch
+TypeScript themselves using Project Directory and Entry. The copied SDK provides
+IntelliSense immediately; there is no install step or external watcher. See the
+[native build guide](../../tools/td-native-build/README.md) for configuration and
+shader generation.
+
+For the existing Node watcher workflow, start with [starter](starter/README.md). It includes an openable `project.toe`,
 Power2D and shader-fx examples, TimeContext animation, CHOP controls, and pulses.
 For procedural channel animation and XY buffers, start with
 [channels](channels/README.md), which uses the V8/TimeContext CHOP and the same watcher.
 
-## Edit in your IDE, preview in TouchDesigner
+## Node watcher workflow
 
 The [prebuilt native plugin](../../packages/native-webgpu/prebuilt/README.md) is
 included in this checkout for macOS 15+ Apple Silicon. Install TouchDesigner,

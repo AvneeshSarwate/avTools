@@ -2,7 +2,10 @@
 
 This directory is committed to ordinary Git, including the native binaries. A
 fresh clone can run the TD examples without Rust, CMake, Ninja, Xcode, or a native
-build. No Git LFS setup is required. Keep the entire `.plugin` bundle together.
+build. No Git LFS setup is required. Keep the entire `.plugin` bundle together,
+plus the sibling `native-build/` directory for native project compilation and
+Source File watching. When distributing `Plugins/AvToolsSketch.plugin` or
+`Plugins/AvToolsChannels.plugin`, put `native-build/` in that same Plugins folder.
 
 `macos-arm64/current.txt` names the current bundle relative to its own directory.
 The versioned filename avoids replacing a binary already loaded by TouchDesigner.
@@ -16,7 +19,14 @@ Other TD versions are unverified. The bundle is locally ad-hoc signed, not Apple
 notarized. Fonts, third-party notices, V8 and seedrandom licenses, and Syphon's
 framework resources ship inside it. Its on-disk payload is approximately 49 MiB.
 
-For TypeScript sketch editing, Node 22.20.x and `npm run setup` in the
+For TypeScript editing without any developer runtime installed, use the
+[native project](../../../apps/td-projects/native/README.md). Its Project Directory
+and Entry parameters use the signed CLI/shared library under
+`macos-arm64/native-build/<version>/`. Both plugins resolve that one canonical
+library so their compiler service and watchers are shared. The CLI itself is a
+standalone executable and embeds the SDK/template and TypeScript standard libraries.
+
+For the older external watcher workflow, Node 22.20.x and `npm run setup` in the
 [starter](../../../apps/td-projects/starter/README.md) are sufficient; native
 compilation is unnecessary. The optional native `npm run check` harness still
 needs Apple Command Line Tools to compile its small test executable.
@@ -27,7 +37,9 @@ Follow the [native build guide](../TOUCHDESIGNER.md#build-and-runtime-ownership)
 when changing the embedded runtime or C++ plugin. From `packages/native-webgpu`,
 `npm run td:build` creates a new versioned bundle here, updates `current.txt`, and
 also writes the ignored `build/td-plugin-path.txt` for native developer probes.
-It does not rebuild Dawn/V8 itself; complete those prerequisite steps first.
+It uses the packaged native compiler named by `native-build/current.txt`.
+To change that service, follow [its build guide](../../../tools/td-native-build/README.md)
+and package it before rebuilding both plugins. It does not rebuild Dawn/V8 itself; complete those prerequisite steps first.
 
 Review and commit the new bundle, `current.txt`, and matching source changes
 together. Remove superseded tracked bundles once they are no longer needed; the
