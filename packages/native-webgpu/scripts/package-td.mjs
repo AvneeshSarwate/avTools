@@ -1,15 +1,40 @@
-import {cpSync,mkdirSync,mkdtempSync,readFileSync,writeFileSync} from 'node:fs';
+import {cpSync,mkdirSync,mkdtempSync,readFileSync,writeFileSync,renameSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const prebuilt=resolve(root,'prebuilt/macos-arm64');
-const plugin=resolve(prebuilt,readFileSync(resolve(prebuilt,'current.txt'),'utf8').trim());
+// Default: the checked-in end-user distribution. --plugins-only is retained as an alias.
+const pluginsOnly=!process.argv.includes('--examples');
 mkdirSync(resolve(root,'build'),{recursive:true});
 const staging=mkdtempSync(resolve(root,'build/td-release-'));
-const release=resolve(staging,'avtools-sketch-macos-arm64');mkdirSync(resolve(release,'Plugins'),{recursive:true});
-// Stable release name matches the example's project-relative default Plugin Path.
-cpSync(plugin,resolve(release,'Plugins/AvToolsSketch.plugin'),{recursive:true,verbatimSymlinks:true});
+const release=resolve(staging,pluginsOnly?'avtools-td-macos-arm64':'avtools-sketch-macos-arm64');mkdirSync(resolve(release,'Plugins'),{recursive:true});
+// Keep signed bundles intact. Read each bundle's actual compiler reference,
+// rather than assuming today's compiler marker matches both shipped plugins.
+const compilerTags=new Set();
+for(const [marker,name] of [['current.txt','AvToolsSketch'],['current-chop.txt','AvToolsChannels']]){
+  const plugin=resolve(prebuilt,readFileSync(resolve(prebuilt,marker),'utf8').trim());
+  const reference=readFileSync(resolve(plugin,'Contents/Resources/native-build.txt'),'utf8').trim();
+  const match=/^\.\.\/\.\.\/\.\.\/native-build\/([a-f0-9]+)\/libavtools_build\.dylib$/.exec(reference);
+  if(!match)throw new Error(`Unexpected compiler reference in ${plugin}: ${reference}`);
+  compilerTags.add(match[1]);
+  cpSync(plugin,resolve(release,`Plugins/${name}.plugin`),{recursive:true,verbatimSymlinks:true});
+}
+for(const tag of compilerTags)cpSync(resolve(prebuilt,'native-build',tag),resolve(release,'Plugins/native-build',tag),{recursive:true});
+const currentCompiler=readFileSync(resolve(prebuilt,'native-build/current.txt'),'utf8').trim();
+if(!compilerTags.has(currentCompiler))throw new Error('Current compiler is not referenced by either plugin; rebuild plugins before packaging.');
+writeFileSync(resolve(release,'Plugins/native-build/current.txt'),currentCompiler+'\n');
+cpSync(resolve(prebuilt,'README.md'),resolve(release,'Plugins/README.md'));
+mkdirSync(resolve(root,'artifacts'),{recursive:true});
+if(pluginsOnly){
+  writeFileSync(resolve(release,'README.md'),'# avTools for TouchDesigner\n\nStart with [Plugins/README.md](Plugins/README.md) for the GUI setup walkthrough.\n');
+  const archive=resolve(root,'prebuilt/avtools-td-plugins-macos-arm64.zip');
+  const temporaryArchive=resolve(staging,'plugins.zip');
+  execFileSync('ditto',['-c','-k','--sequesterRsrc','--keepParent',release,temporaryArchive],{stdio:'inherit'});
+  renameSync(temporaryArchive,archive);
+  writeFileSync(resolve(root,'artifacts/td-plugins-release-path.txt'),release+'\n');
+  console.log(archive);process.exit(0);
+}
 for(const name of ['TOUCHDESIGNER.md','VALIDATION.md','TIMING.md','TIMING_VALIDATION.md','native-manifest.json','td-sketch.d.ts'])cpSync(resolve(root,name),resolve(release,name));
 cpSync(resolve(root,'dist/types'),resolve(release,'dist/types'),{recursive:true});
 const example=resolve(root,'native/td/example');

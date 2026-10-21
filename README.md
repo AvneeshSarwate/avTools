@@ -43,6 +43,13 @@ checked in, so a fresh clone does not need a native build for TD.
 The [example README](packages/native-webgpu/native/td/example/README.md)
 explains the controls and the reusable `Sketch.tox` component.
 
+For a new project, follow the [beginner GUI walkthrough](packages/native-webgpu/prebuilt/macos-arm64/README.md):
+load a plugin, generate a TypeScript template, and edit in VS Code. The
+[distribution guide](packages/native-webgpu/prebuilt/README.md) explains the
+[checked-in plugin ZIP](packages/native-webgpu/prebuilt/avtools-td-plugins-macos-arm64.zip),
+which includes these instructions alongside the binaries. Maintainers regenerate
+it with `npm run td:pack` in `packages/native-webgpu`.
+
 The TOP also bundles [TimeContext](packages/native-webgpu/TIMING.md): independent
 realtime scheduling continues while TD playback is paused. Reload creates a fresh
 JavaScript environment; synchronous cleanup is best effort. Open [TimeContext.toe](packages/native-webgpu/native/td/example/TimeContext.toe)

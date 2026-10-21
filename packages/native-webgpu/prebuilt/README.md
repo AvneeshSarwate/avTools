@@ -1,5 +1,9 @@
 # Prebuilt TouchDesigner plugin
 
+New to TouchDesigner? Follow the [GUI setup walkthrough](macos-arm64/README.md).
+It also ships inside the clean distribution's `Plugins` folder.
+See [onboarding validation](ONBOARDING_VALIDATION.md) for the tested GUI flow.
+
 This directory is committed to ordinary Git, including the native binaries. A
 fresh clone can run the TD examples without Rust, CMake, Ninja, Xcode, or a native
 build. No Git LFS setup is required. Keep the entire `.plugin` bundle together,
@@ -32,6 +36,21 @@ compilation is unnecessary. The optional native `npm run check` harness still
 needs Apple Command Line Tools to compile its small test executable.
 
 ## Updating the binary
+
+The clean [plugin ZIP](avtools-td-plugins-macos-arm64.zip) is checked into ordinary
+Git. On GitHub, open that file and use **Download raw file** to download just the
+ZIP. Extract it and follow `Plugins/README.md`; no repository checkout is needed.
+
+From `packages/native-webgpu`, run **`npm run td:pack`** to regenerate
+`prebuilt/avtools-td-plugins-macos-arm64.zip`. From the repository root, the
+same command is `node packages/native-webgpu/scripts/package-td.mjs`.
+It packages the current TOP, CHOP, each referenced compiler version, and the
+end-user README without rebuilding native code. Commit the regenerated ZIP
+whenever shipping plugins, compiler assets or the end-user guide change. Node is
+only a maintainer packaging dependency; consumers need TD and their editor.
+The source directory keeps historical versions, but the ZIP contains only the
+current distribution. `--examples` retains the older, larger example-project ZIP
+under ignored `artifacts/` (and requires the built `dist/types` tree).
 
 Follow the [native build guide](../TOUCHDESIGNER.md#build-and-runtime-ownership)
 when changing the embedded runtime or C++ plugin. From `packages/native-webgpu`,

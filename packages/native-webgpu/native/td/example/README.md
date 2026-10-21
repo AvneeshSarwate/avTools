@@ -102,4 +102,6 @@ To rebuild `Sketch.toe`, open TouchDesigner's empty Base project template and ru
 to replace a nonempty `/project1`. The `.toe` runs its embedded Python; it does not
 depend on these external scripts when opened.
 
-`scripts/package-td.mjs` packages these same `.tox` and `.toe` files for users.
+`scripts/package-td.mjs --examples` packages these same `.tox` and `.toe` files.
+The default `npm run td:pack` instead creates the clean, checked-in plugin ZIP;
+see the [distribution guide](../../../prebuilt/README.md).
