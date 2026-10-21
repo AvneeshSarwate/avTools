@@ -1,0 +1,111 @@
+{
+  "passed": true,
+  "error": null,
+  "stages": [
+    {
+      "stage": "baseline",
+      "values": [
+        14.0,
+        14.0,
+        14.0,
+        14.0
+      ],
+      "cpu_ms": {
+        "channels1": 0.18345899879932404,
+        "channels2": 0.09083299338817596,
+        "channels3": 0.07354199886322021,
+        "channels4": 0.10620799660682678,
+        "background1": 0.08370800316333771,
+        "background2": 0.0598749965429306,
+        "background3": 0.02633298933506012,
+        "background4": 0.02591700851917267
+      },
+      "latency_ms": 183.54795899358578,
+      "info": "build_state\tready\r\nbuild_diagnostics\tReady (83 ms), revision 4c8c91e30f89\r\nexecution\tBlocking: waits for current inputs\r\n"
+    },
+    {
+      "stage": "npm_import",
+      "values": [
+        42.0,
+        42.0,
+        42.0,
+        42.0
+      ],
+      "cpu_ms": {
+        "channels1": 1.778249979019165,
+        "channels2": 1.6367919445037842,
+        "channels3": 1.7569169998168945,
+        "channels4": 1.7926249504089355,
+        "background1": 0.20274999737739563,
+        "background2": 0.06991599500179291,
+        "background3": 0.06054200232028961,
+        "background4": 0.13791701197624207
+      },
+      "latency_ms": 223.48958300426602,
+      "info": "build_state\tready\r\nbuild_diagnostics\tReady (94 ms), revision d322df51c153\r\nexecution\tBlocking: waits for current inputs\r\n"
+    },
+    {
+      "stage": "type_error_last_good",
+      "values": [
+        42.0,
+        42.0,
+        42.0,
+        42.0
+      ],
+      "cpu_ms": {
+        "channels1": 0.19449999928474426,
+        "channels2": 0.09891600906848907,
+        "channels3": 0.09979100525379181,
+        "channels4": 0.10199999809265137,
+        "background1": 0.20362500846385956,
+        "background2": 0.06462499499320984,
+        "background3": 0.0564580112695694,
+        "background4": 0.05574999749660492
+      },
+      "latency_ms": 210.02454099652823,
+      "info": "build_state\terror\r\nbuild_diagnostics\t/private/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-environment-y63jp_ov/sketches/channels/math.ts:1:44 TS2304 Cannot find name 'fetch'.\r\nexecution\tBlocking: waits for current inputs\r\n"
+    },
+    {
+      "stage": "repair",
+      "values": [
+        14.0,
+        14.0,
+        14.0,
+        14.0
+      ],
+      "cpu_ms": {
+        "channels1": 0.45754098892211914,
+        "channels2": 0.2789999842643738,
+        "channels3": 0.5248749852180481,
+        "channels4": 0.336417019367218,
+        "background1": 0.1933329999446869,
+        "background2": 0.08316700160503387,
+        "background3": 0.05704200267791748,
+        "background4": 0.06695899367332458
+      },
+      "latency_ms": 217.8108750085812,
+      "info": "build_state\tready\r\nbuild_diagnostics\tReady (82 ms), revision 98c798014044\r\nexecution\tBlocking: waits for current inputs\r\n"
+    },
+    {
+      "stage": "restore_project",
+      "values": [
+        14.0,
+        14.0,
+        14.0,
+        14.0
+      ],
+      "cpu_ms": {
+        "channels1": 0.2603750228881836,
+        "channels2": 0.1722079962491989,
+        "channels3": 0.1352500021457672,
+        "channels4": 0.1465420126914978,
+        "background1": 0.04558299481868744,
+        "background2": 0.028333008289337158,
+        "background3": 0.043290987610816956,
+        "background4": 0.024166986346244812
+      },
+      "latency_ms": 215.49445799610112,
+      "info": "build_state\tready\r\nbuild_diagnostics\tReady (84 ms), revision b52c661853ba\r\nexecution\tBlocking: waits for current inputs\r\n"
+    }
+  ]
+}

@@ -1,4 +1,3 @@
-/// <reference lib="dom" />
 
 import earcut from 'earcut';
 import type {

@@ -1,5 +1,5 @@
-import type {P5GPU, P5GPUImage} from '@avtools/native-webgpu';
-import type * as Timing from './types/packages/core-timing/mod.d.ts';
+import type {P5GPU, P5GPUImage} from './td-types/p5.d.ts';
+import type * as Timing from '../core-timing/mod.ts';
 export interface SketchControls {
   readonly sampleRate: number;
   readonly startIndex: number;
@@ -7,9 +7,9 @@ export interface SketchControls {
 }
 export interface SketchHost {
   readonly device: GPUDevice;
-  /** Canonical core-timing API; launches are owned by this sketch generation. */
+  /** Compatibility timing API with supervised launches. Prefer ordinary @avtools/core-timing imports. */
   readonly timing: typeof Timing;
-  /** Synchronous cleanup on replacement, failed setup, resize, reset, or shutdown.
+  /** Bounded synchronous best-effort cleanup on replacement, resize, reset or shutdown.
    * Runs in reverse registration order while this generation's resources are valid.
    * Buffers/textures created through host.device are also destroyed automatically.
    */
@@ -37,5 +37,10 @@ export interface SketchFrame {
   top(index: number): P5GPUImage | undefined;
 }
 export type Setup = (p: P5GPU, host: SketchHost) => void | Promise<void>;
+/** Runs on this TOP's V8 worker. Wait for Current Result controls whether the
+ * TD cook waits; Pre-trigger Mode always submits/collects without waiting.
+ * Buffered TOPs skip input captures while busy; frame callbacks are not replayed.
+ */
 export type Draw = (p: P5GPU, frame: SketchFrame) => void;
+/** FIFO event name captured when Send Pulse is pressed; delivered on the next accepted render. */
 export type OnPulse = (name: string, p: P5GPU, frame: SketchFrame) => void;

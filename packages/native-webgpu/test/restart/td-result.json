@@ -1,0 +1,271 @@
+{
+  "passed": true,
+  "stage": 13,
+  "error": "",
+  "records": [
+    {
+      "stage": 0,
+      "values": [
+        1.0,
+        1.0
+      ],
+      "ticks": [
+        21.0,
+        21.0
+      ],
+      "elapsed_ms": 342.7287499944214,
+      "states": [
+        "build_state\tready\r\nbuild_diagnostics\tReady (28 ms), revision 373755b83fe6\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=4062a86b39a17eb8; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@4062a86b39a17eb8\r\n",
+        "build_state\tready\r\nbuild_diagnostics\tReady (28 ms), revision 373755b83fe6\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=4062a86b39a17eb8; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@4062a86b39a17eb8\r\n"
+      ],
+      "errors": [
+        "",
+        ""
+      ]
+    },
+    {
+      "stage": 1,
+      "values": [
+        1.0,
+        2.0
+      ],
+      "ticks": [
+        36.0,
+        1.0
+      ],
+      "elapsed_ms": 155.89799999725074,
+      "states": [
+        "build_state\tready\r\nbuild_diagnostics\tReady (27 ms), revision 5b350f03ec77\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tPending Reload\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=dfc459a660d2c7ef; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@4062a86b39a17eb8\r\n",
+        "build_state\tready\r\nbuild_diagnostics\tReady (27 ms), revision 5b350f03ec77\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=dfc459a660d2c7ef; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@dfc459a660d2c7ef\r\n"
+      ],
+      "errors": [
+        "",
+        ""
+      ]
+    },
+    {
+      "stage": 2,
+      "values": [
+        1.0,
+        2.0
+      ],
+      "ticks": [
+        3.0,
+        3.0
+      ],
+      "elapsed_ms": 28.500500004156493,
+      "states": [
+        "build_state\tready\r\nbuild_diagnostics\tReady (27 ms), revision 5b350f03ec77\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tPending Reload\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=dfc459a660d2c7ef; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@4062a86b39a17eb8\r\n",
+        "build_state\tready\r\nbuild_diagnostics\tReady (27 ms), revision 5b350f03ec77\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=dfc459a660d2c7ef; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@dfc459a660d2c7ef\r\n"
+      ],
+      "errors": [
+        "",
+        ""
+      ]
+    },
+    {
+      "stage": 3,
+      "values": [
+        2.0,
+        2.0
+      ],
+      "ticks": [
+        1.0,
+        5.0
+      ],
+      "elapsed_ms": 21.78904099855572,
+      "states": [
+        "build_state\tready\r\nbuild_diagnostics\tReady (27 ms), revision 5b350f03ec77\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=dfc459a660d2c7ef; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@dfc459a660d2c7ef\r\n",
+        "build_state\tready\r\nbuild_diagnostics\tReady (27 ms), revision 5b350f03ec77\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=dfc459a660d2c7ef; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@dfc459a660d2c7ef\r\n"
+      ],
+      "errors": [
+        "",
+        ""
+      ]
+    },
+    {
+      "stage": 4,
+      "values": [
+        2.0,
+        2.0
+      ],
+      "ticks": [
+        14.0,
+        20.0
+      ],
+      "elapsed_ms": 143.7802919972455,
+      "states": [
+        "build_state\terror\r\nbuild_diagnostics\t/private/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts:5:1 TS2304 Cannot find name 'missingFunction'.\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=dfc459a660d2c7ef; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@dfc459a660d2c7ef\r\n",
+        "build_state\terror\r\nbuild_diagnostics\t/private/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts:5:1 TS2304 Cannot find name 'missingFunction'.\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=dfc459a660d2c7ef; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@dfc459a660d2c7ef\r\n"
+      ],
+      "errors": [
+        "",
+        ""
+      ]
+    },
+    {
+      "stage": 5,
+      "values": [
+        2.0,
+        -1
+      ],
+      "ticks": [
+        29.0,
+        -1
+      ],
+      "elapsed_ms": 154.38029200595338,
+      "states": [
+        "build_state\tready\r\nbuild_diagnostics\tReady (25 ms), revision 33793d3f75e9\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tPending Reload\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=b156fce39d79588f; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@dfc459a660d2c7ef\r\n",
+        "build_state\tready\r\nbuild_diagnostics\tReady (25 ms), revision 33793d3f75e9\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=b156fce39d79588f; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@b156fce39d79588f\r\n"
+      ],
+      "errors": [
+        "",
+        "  Error: Error: intentional activation failure\n    at Module.setup (eval at <anonymous> (unknown source), <anonymous>:572:9)\n    at Object.setup (eval at <anonymous> (unknown source), <anonymous>:584:49)\n    at <anonymous>:2319:59\n    at SketchLifetime.run (<anonymous>:2117:16)\n    at g2.__avChopCook (<anonymous>:2319:27) (/project1/reload_test/second)"
+      ]
+    },
+    {
+      "stage": 6,
+      "values": [
+        -1,
+        -1
+      ],
+      "ticks": [
+        -1,
+        -1
+      ],
+      "elapsed_ms": 311.59416599257383,
+      "states": [
+        "build_state\tready\r\nbuild_diagnostics\tReady (25 ms), revision 33793d3f75e9\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=b156fce39d79588f; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@b156fce39d79588f\r\n",
+        "build_state\tready\r\nbuild_diagnostics\tReady (25 ms), revision 33793d3f75e9\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=b156fce39d79588f; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@b156fce39d79588f\r\n"
+      ],
+      "errors": [
+        "  Error: Error: intentional activation failure\n    at Module.setup (eval at <anonymous> (unknown source), <anonymous>:572:9)\n    at Object.setup (eval at <anonymous> (unknown source), <anonymous>:584:49)\n    at <anonymous>:2319:59\n    at SketchLifetime.run (<anonymous>:2117:16)\n    at g2.__avChopCook (<anonymous>:2319:27) (/project1/reload_test/first)",
+        "  Error: Error: intentional activation failure\n    at Module.setup (eval at <anonymous> (unknown source), <anonymous>:572:9)\n    at Object.setup (eval at <anonymous> (unknown source), <anonymous>:584:49)\n    at <anonymous>:2319:59\n    at SketchLifetime.run (<anonymous>:2117:16)\n    at g2.__avChopCook (<anonymous>:2319:27) (/project1/reload_test/second)"
+      ]
+    },
+    {
+      "stage": 7,
+      "values": [
+        4.0,
+        4.0
+      ],
+      "ticks": [
+        1.0,
+        1.0
+      ],
+      "elapsed_ms": 143.77316599711776,
+      "states": [
+        "build_state\tready\r\nbuild_diagnostics\tReady (28 ms), revision 86d941e3fa4b\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=d5b6f070f2a4f05d; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@d5b6f070f2a4f05d\r\n",
+        "build_state\tready\r\nbuild_diagnostics\tReady (28 ms), revision 86d941e3fa4b\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=d5b6f070f2a4f05d; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@d5b6f070f2a4f05d\r\n"
+      ],
+      "errors": [
+        "",
+        ""
+      ]
+    },
+    {
+      "stage": 8,
+      "values": [
+        4.0,
+        4.0
+      ],
+      "ticks": [
+        82.0,
+        81.0
+      ],
+      "elapsed_ms": 810.2715830027591,
+      "states": [
+        "build_state\tready\r\nbuild_diagnostics\tReady (28 ms), revision 86d941e3fa4b\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=d5b6f070f2a4f05d; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@d5b6f070f2a4f05d\r\n",
+        "build_state\tready\r\nbuild_diagnostics\tReady (28 ms), revision 86d941e3fa4b\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=d5b6f070f2a4f05d; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@d5b6f070f2a4f05d\r\n"
+      ],
+      "errors": [
+        "",
+        ""
+      ]
+    },
+    {
+      "stage": 9,
+      "values": [
+        5.0,
+        5.0
+      ],
+      "ticks": [
+        1.0,
+        1.0
+      ],
+      "elapsed_ms": 144.33862500300165,
+      "states": [
+        "build_state\tready\r\nbuild_diagnostics\tReady (27 ms), revision efcca89fd015\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=ce6d93ea6759e24c; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@ce6d93ea6759e24c\r\n",
+        "build_state\tready\r\nbuild_diagnostics\tReady (27 ms), revision efcca89fd015\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=ce6d93ea6759e24c; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@ce6d93ea6759e24c\r\n"
+      ],
+      "errors": [
+        "",
+        ""
+      ]
+    },
+    {
+      "stage": 10,
+      "values": [
+        5.0,
+        5.0
+      ],
+      "ticks": [
+        32.0,
+        31.0
+      ],
+      "elapsed_ms": 306.2713330000406,
+      "states": [
+        "build_state\tready\r\nbuild_diagnostics\tReady (26 ms), revision b943042c3c6f\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tPending Reload\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/other.ts; available=71ec614e8e0bde46; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@ce6d93ea6759e24c\r\n",
+        "build_state\tready\r\nbuild_diagnostics\tReady (27 ms), revision efcca89fd015\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=ce6d93ea6759e24c; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@ce6d93ea6759e24c\r\n"
+      ],
+      "errors": [
+        "",
+        ""
+      ]
+    },
+    {
+      "stage": 11,
+      "values": [
+        9.0,
+        5.0
+      ],
+      "ticks": [
+        1.0,
+        33.0
+      ],
+      "elapsed_ms": 22.735874998033978,
+      "states": [
+        "build_state\tready\r\nbuild_diagnostics\tReady (26 ms), revision b943042c3c6f\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/other.ts; available=71ec614e8e0bde46; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/other.ts@71ec614e8e0bde46\r\n",
+        "build_state\tready\r\nbuild_diagnostics\tReady (27 ms), revision efcca89fd015\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=ce6d93ea6759e24c; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@ce6d93ea6759e24c\r\n"
+      ],
+      "errors": [
+        "",
+        ""
+      ]
+    },
+    {
+      "stage": 12,
+      "values": [
+        9.0,
+        5.0
+      ],
+      "ticks": [
+        41.0,
+        74.0
+      ],
+      "elapsed_ms": 407.8529589896789,
+      "states": [
+        "build_state\tready\r\nbuild_diagnostics\tReady (26 ms), revision b943042c3c6f\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/other.ts; available=71ec614e8e0bde46; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/other.ts@71ec614e8e0bde46\r\n",
+        "build_state\tready\r\nbuild_diagnostics\tReady (27 ms), revision efcca89fd015\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts; available=ce6d93ea6759e24c; active=ts:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-reload-kj4_x4lh/sketches/channels/main.ts@ce6d93ea6759e24c\r\n"
+      ],
+      "errors": [
+        "",
+        ""
+      ]
+    }
+  ],
+  "plugins": [
+    "AvToolsSketch-fb99bddcf431.plugin",
+    "AvToolsChannels-ab5e3d6d5fef.plugin"
+  ]
+}

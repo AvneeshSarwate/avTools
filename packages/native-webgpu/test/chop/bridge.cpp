@@ -28,8 +28,8 @@ int main(int argc,char** argv){try{
   f.source=stateful;samples[1]=21;run();float first=output[1],frames=output[3];pause(160);run();check(output[1]>=first+8,"Timers depend on cook");check(output[2]==21,"Timer did not read latest inputs");check(output[3]==frames+1,"Frame waits ran while paused");check(output[0]==42,"Cook evaluator stale");
   run(1);check(output[1]<5,"CHOP instances share state");samples[1]=31;run();pause(40);run();check(output[2]==31&&output[0]==62,"Fresh snapshot missing");
   const char* pulse="Trigger";f.pulses=&pulse;f.pulseCount=1;run();check(output[4]==1,"Pulse failed");f.pulseCount=0;run();check(output[4]==1,"Pulse duplicated");
-  f.source="function setup(h){globalThis.failedCleanup=0;h.onDispose(()=>globalThis.failedCleanup++);setTimeout(()=>globalThis.leaked=1,5);throw Error('candidate failed');}";run();check(std::string(error).find("candidate failed")!=std::string::npos,"Failed setup error missing");pause(30);
-  f.source="function onCook(h){h.outputs.set('out',globalThis.failedCleanup);h.outputs.set('seen',globalThis.leaked||0)}";run();check(output[0]==1&&output[2]==0,"Failed candidate leaked");pause(40);run();check(output[1]==0,"Old timers survived reload");
+  f.source="function setup(h){globalThis.failedCleanup=0;h.onDispose(()=>globalThis.failedCleanup++);setTimeout(()=>globalThis.leaked=1,5);throw Error('candidate failed');}";run(0,false);check(std::string(error).find("candidate failed")!=std::string::npos,"Failed setup error missing");pause(30);
+  f.source="function onCook(h){h.outputs.set('out',globalThis.failedCleanup||0);h.outputs.set('seen',globalThis.leaked||0)}";run();check(output[0]==0&&output[2]==0,"Failed environment leaked globals");pause(40);run();check(output[1]==0,"Old timers survived reload");
   f.source="function setup(h){globalThis.staleHost=h;}";run();
   f.source="function onCook(h){try{globalThis.staleHost.outputs.set('out',99)}catch{h.outputs.set('out',7)}}";run();check(output[0]==7,"Disposed host is writable");
   f.source="async function onCook(h){h.outputs.set('out',1)}";run(0,false);check(std::string(error).find("must be synchronous")!=std::string::npos,"Async cook accepted");

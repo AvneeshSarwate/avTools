@@ -129,7 +129,14 @@ pub fn ignored(root: &Path, path: &Path, config: Option<&Config>) -> bool {
         matches!(
             p.as_os_str().to_str(),
             Some(
-                ".git" | ".avtools" | "node_modules" | "target" | "build" | "artifacts" | "Backup"
+                ".git"
+                    | ".avtools"
+                    | "node_modules"
+                    | "target"
+                    | "build"
+                    | "artifacts"
+                    | "Backup"
+                    | "Plugins"
             )
         )
     }) {
@@ -141,7 +148,7 @@ pub fn ignored(root: &Path, path: &Path, config: Option<&Config>) -> bool {
         || rel.starts_with(generated)
         || matches!(
             path.extension().and_then(|x| x.to_str()),
-            Some("toe" | "tox" | "tmp" | "log")
+            Some("toe" | "tox" | "tmp" | "log" | "plugin" | "dylib")
         )
 }
 // Capture every allowed input, including missing-import directory changes. Content
@@ -153,12 +160,6 @@ pub fn snapshot(root: &Path, config: &Config) -> Result<BTreeMap<PathBuf, Vec<u8
         .filter_entry(|e| e.path() == root || !ignored(root, e.path(), Some(config)))
     {
         let item = item?;
-        if item.file_type().is_symlink() {
-            bail!(
-                "Copy local dependencies into the SDK; symlinks are unsupported: {}",
-                item.path().display()
-            );
-        }
         if item.file_type().is_file() {
             files.insert(
                 item.path().strip_prefix(root)?.to_path_buf(),

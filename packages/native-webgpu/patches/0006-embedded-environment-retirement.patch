@@ -1,0 +1,243 @@
+--- /dev/null
++++ b/src/dawn/node/interop/Environment.h
+@@ -0,0 +1,32 @@
++// avTools: native callback lifetime, independent of V8/Node implementation.
++#pragma once
++#include <atomic>
++#include <functional>
++#include <memory>
++#include <mutex>
++#include <unordered_map>
++#include <vector>
++#include "src/dawn/node/interop/NodeAPI.h"
++namespace wgpu::interop {
++struct EnvironmentLifetime {
++    std::atomic<bool> retired{false};
++    // Owner-thread cleanup; weak captures only. No JS is invoked during retirement.
++    std::vector<std::function<void()>> cleanup;
++};
++inline std::mutex environmentMutex;
++inline std::unordered_map<napi_env,std::weak_ptr<EnvironmentLifetime>> environments;
++inline std::shared_ptr<EnvironmentLifetime> EnvironmentFor(napi_env env) {
++    std::lock_guard lock(environmentMutex);
++    auto& slot=environments[env];auto life=slot.lock();
++    if(!life){life=std::make_shared<EnvironmentLifetime>();slot=life;}
++    return life;
++}
++inline void RetireEnvironment(napi_env env) {
++    std::shared_ptr<EnvironmentLifetime> life;
++    {std::lock_guard lock(environmentMutex);auto it=environments.find(env);if(it==environments.end())return;life=it->second.lock();environments.erase(it);}
++    if(!life)return;
++    life->retired=true;
++    auto cleanup=std::move(life->cleanup);
++    for(auto& fn:cleanup)fn();
++}
++}
+--- a/src/dawn/node/interop/Core.h
++++ b/src/dawn/node/interop/Core.h
+@@ -45,6 +45,7 @@
+ #include <vector>
+ 
+ #include "src/dawn/node/interop/NodeAPI.h"
++#include "src/dawn/node/interop/Environment.h"
+ #include "src/dawn/node/utils/Debug.h"
+ 
+ #define ENABLE_INTEROP_LOGGING 0  // Enable for verbose interop logging
+@@ -228,13 +229,15 @@
+ 
+     // Reject() rejects the promise with the given failure value.
+     void Reject(Napi::Value value) const {
++        if(Retired())return;
+         state_->deferred.Reject(value);
+         state_->state = PromiseState::Rejected;
+     }
+     void Reject(Napi::Error err) const { Reject(err.Value()); }
+-    void Reject(std::string err) const { Reject(Napi::Error::New(state_->deferred.Env(), err)); }
+-
+-    PromiseState GetState() const { return state_->state; }
++    void Reject(std::string err) const { if(Retired())return;Reject(Napi::Error::New(state_->deferred.Env(), err)); }
++
++    bool Retired() const { return state_->lifetime->retired.load(); }
++    PromiseState GetState() const { return Retired()?PromiseState::Discarded:state_->state; }
+ 
+     // Place the promise into the Discarded state.
+     // This state will not throw a fatal error if this promise has not been rejected or resolved by
+@@ -244,6 +247,7 @@
+ 
+   protected:
+     void Resolve(Napi::Value value) const {
++        if(Retired())return;
+         state_->deferred.Resolve(value);
+         state_->state = PromiseState::Resolved;
+     }
+@@ -252,22 +256,24 @@
+         Napi::Promise::Deferred deferred;
+         PromiseInfo info;
+         PromiseState state = PromiseState::Pending;
++        std::shared_ptr<EnvironmentLifetime> lifetime;
+     };
+ 
+     PromiseBase(Napi::Env env, const PromiseInfo& info)
+-        : state_(new State{Napi::Promise::Deferred::New(env), info}) {
++        : state_(std::make_shared<State>(State{Napi::Promise::Deferred::New(env), info, PromiseState::Pending, EnvironmentFor(env)})) {
+         state_->deferred.Promise().AddFinalizer(
+-            [](Napi::Env, State* state) {
+-                if (state->state == PromiseState::Pending) {
++            [](Napi::Env, std::shared_ptr<State>* owner) {
++                const auto& state=*owner;
++                if (!state->lifetime->retired && state->state == PromiseState::Pending) {
+                     ::wgpu::utils::Fatal("Promise not resolved or rejected", state->info.file,
+                                          state->info.line, state->info.function);
+                 }
+-                delete state;
++                delete owner;
+             },
+-            state_);
+-    }
+-
+-    State* const state_;
++            new std::shared_ptr<State>(state_));
++    }
++
++    const std::shared_ptr<State> state_;
+ };
+ }  // namespace detail
+ 
+@@ -288,6 +294,7 @@
+ 
+     // Resolve() fulfills the promise with the given value.
+     void Resolve(T&& value) const {
++        if(Retired())return;
+         PromiseBase::Resolve(ToJS(state_->deferred.Env(), std::forward<T>(value)));
+     }
+ };
+@@ -303,7 +310,7 @@
+     }
+ 
+     // Resolve() fulfills the promise.
+-    void Resolve() const { PromiseBase::Resolve(state_->deferred.Env().Undefined()); }
++    void Resolve() const { if(Retired())return;PromiseBase::Resolve(state_->deferred.Env().Undefined()); }
+ };
+ 
+ ////////////////////////////////////////////////////////////////////////////////
+--- a/src/dawn/node/binding/AsyncRunner.h
++++ b/src/dawn/node/binding/AsyncRunner.h
+@@ -74,7 +74,9 @@
+     void ScheduleProcessEvents(Napi::Env env);
+ 
+     std::weak_ptr<AsyncRunner> weak_this_;
+-    const std::shared_ptr<dawn::native::Instance> instance_;
++    std::shared_ptr<dawn::native::Instance> instance_;
++    bool registered_ = false;
++    std::shared_ptr<interop::EnvironmentLifetime> lifetime_;
+     uint64_t tasks_waiting_ = 0;
+     bool process_events_queued_ = false;
+     bool event_driven_ = false;
+--- a/src/dawn/node/binding/AsyncRunner.cpp
++++ b/src/dawn/node/binding/AsyncRunner.cpp
+@@ -48,6 +48,14 @@
+ }
+ 
+ void AsyncRunner::Begin(Napi::Env env) {
++    if(!registered_){
++        registered_=true;
++        lifetime_=interop::EnvironmentFor(env);
++        lifetime_->cleanup.push_back([weak=weak_this_]{
++            // Break pending-callback -> runner -> instance retention cycles.
++            if(auto self=weak.lock()){self->futures_.clear();self->instance_.reset();}
++        });
++    }
+     assert(tasks_waiting_ != std::numeric_limits<decltype(tasks_waiting_)>::max());
+     if (tasks_waiting_++ == 0) {
+         ScheduleProcessEvents(env);
+--- a/src/dawn/node/binding/GPUBuffer.cpp
++++ b/src/dawn/node/binding/GPUBuffer.cpp
+@@ -78,6 +78,7 @@
+         mode, dawn::checked_cast<size_t>(uint64_t{offset}), dawn::checked_cast<size_t>(rangeSize),
+         wgpu::CallbackMode::AllowProcessEvents,
+         [ctx = std::move(ctx), this](wgpu::MapAsyncStatus status, wgpu::StringView) {
++            if(ctx->promise.Retired())return;
+             // The promise may already have been resolved with an AbortError if there was an early
+             // destroy() or early unmap().
+             if (ctx->promise.GetState() != interop::PromiseState::Pending) {
+--- a/src/dawn/node/binding/GPUQueue.cpp
++++ b/src/dawn/node/binding/GPUQueue.cpp
+@@ -66,6 +66,7 @@
+     auto future = queue_.OnSubmittedWorkDone(
+         wgpu::CallbackMode::AllowProcessEvents,
+         [ctx = std::move(ctx)](wgpu::QueueWorkDoneStatus status, wgpu::StringView message) {
++            if(ctx->promise.Retired())return;
+             if (status != wgpu::QueueWorkDoneStatus::Success) {
+                 Napi::Error::New(ctx->env, std::string(message)).ThrowAsJavaScriptException();
+             }
+--- a/src/dawn/node/binding/GPUShaderModule.cpp
++++ b/src/dawn/node/binding/GPUShaderModule.cpp
+@@ -122,6 +122,7 @@
+         wgpu::CallbackMode::AllowProcessEvents,
+         [ctx = std::move(ctx)](wgpu::CompilationInfoRequestStatus status,
+                                wgpu::CompilationInfo const* compilationInfo) {
++            if(ctx->promise.Retired())return;
+             Messages messages(compilationInfo->messageCount);
+             for (uint32_t i = 0; i < compilationInfo->messageCount; i++) {
+                 auto& msg = DAWN_UNSAFE_TODO(compilationInfo->messages[i]);
+--- a/src/dawn/node/binding/GPUDevice.cpp
++++ b/src/dawn/node/binding/GPUDevice.cpp
+@@ -231,6 +231,7 @@
+ }
+ 
+ void GPUDevice::handleUncapturedError(ErrorType type, wgpu::StringView message) {
++    if(lost_promise_.Retired())return;
+     Napi::HandleScope scope(env_);
+ 
+     auto error = createErrorFromWGPUError(env_, type, message);
+@@ -262,7 +263,7 @@
+                                               ErrorType type,
+                                               wgpu::StringView message) {
+     auto gpuDevice = lookupGPUDeviceFromWGPUDevice(device.Get());
+-    gpuDevice->handleUncapturedError(type, message);
++    if(gpuDevice)gpuDevice->handleUncapturedError(type, message);
+ }
+ 
+ void GPUDevice::ForceLoss(wgpu::DeviceLostReason reason, const char* message) {
+@@ -523,6 +524,7 @@
+         [ctx = std::move(ctx), label = CopyLabel(desc.label)](
+             wgpu::CreatePipelineAsyncStatus status, wgpu::ComputePipeline pipeline,
+             wgpu::StringView message) {
++            if(ctx->promise.Retired())return;
+             switch (status) {
+                 case wgpu::CreatePipelineAsyncStatus::Success:
+                     ctx->promise.Resolve(interop::GPUComputePipeline::Create<GPUComputePipeline>(
+@@ -557,6 +559,7 @@
+         [ctx = std::move(ctx), label = CopyLabel(desc.label)](
+             wgpu::CreatePipelineAsyncStatus status, wgpu::RenderPipeline pipeline,
+             wgpu::StringView message) {
++            if(ctx->promise.Retired())return;
+             switch (status) {
+                 case wgpu::CreatePipelineAsyncStatus::Success:
+                     ctx->promise.Resolve(interop::GPURenderPipeline::Create<GPURenderPipeline>(
+@@ -678,6 +681,7 @@
+         wgpu::CallbackMode::AllowProcessEvents,
+         [ctx = std::move(ctx)](wgpu::PopErrorScopeStatus status, wgpu::ErrorType type,
+                                wgpu::StringView message) {
++            if(ctx->promise.Retired())return;
+             auto env = ctx->env;
+             switch (status) {
+                 case wgpu::PopErrorScopeStatus::Error:
+--- a/src/dawn/node/binding/GPUAdapter.cpp
++++ b/src/dawn/node/binding/GPUAdapter.cpp
+@@ -201,6 +201,7 @@
+         [](const wgpu::Device&, wgpu::DeviceLostReason reason, wgpu::StringView message,
+            DeviceLostContext* device_lost_ctx) {
+             std::unique_ptr<DeviceLostContext> ctx(device_lost_ctx);
++            if(ctx->promise.Retired())return;
+             auto r = interop::GPUDeviceLostReason::kDestroyed;
+             switch (reason) {
+                 case wgpu::DeviceLostReason::Destroyed:
+@@ -230,6 +231,7 @@
+         &desc, wgpu::CallbackMode::AllowSpontaneous,
+         [ctx = std::move(ctx), desc, device_lost_promise, this, &gpu_device](
+             wgpu::RequestDeviceStatus status, wgpu::Device wgpu_device, wgpu::StringView message) {
++            if(ctx->promise.Retired())return;
+             switch (status) {
+                 case wgpu::RequestDeviceStatus::Success:
+                     gpu_device = std::make_unique<GPUDevice>(ctx->env, desc, wgpu_device,

@@ -1,3 +1,4 @@
+import * as timing from '@avtools/core-timing';
 import {createPower2DScene, StyledShape} from '@avtools/power2d/raw';
 import type {Setup, Draw, OnPulse} from '@avtools/native-webgpu/td-sketch';
 import {DotMaterial} from '../../generated/sketches/particles/shaders/dot.material.raw.generated.ts';
@@ -18,7 +19,7 @@ export const setup: Setup = (p, host) => {
     return shape;
   });
   host.onDispose(() => { for (const shape of shapes) shape.dispose(); });
-  host.timing.launch(async ctx => {
+  timing.launch(async ctx => {
     while (true) {
       await ctx.waitSec(1/60);
       angle += (reversed ? -1 : 1) * (0.005 + host.chop('amount')/4000);

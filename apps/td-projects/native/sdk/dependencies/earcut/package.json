@@ -36,6 +36,5 @@
   "repository": {
     "type": "git",
     "url": "git://github.com/mapbox/earcut.git"
-  },
-  "types": "../@types/earcut/index.d.ts"
+  }
 }

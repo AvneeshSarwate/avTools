@@ -1,5 +1,8 @@
 # avTools Channels CHOP
 
+Current lifecycle: [Build, Reload, and Reset](RELOAD.md). Automatic Reload is per operator; Reload adopts available source, Reset restarts active source. Each activation creates a fresh isolate. SDK 3 supports ordinary TimeContext imports.
+
+
 A native TouchDesigner CHOP running JavaScript in V8 with the workspace's
 TimeContext library. Each instance owns persistent output state, current input
 snapshots, and independent timing tasks. It does not create a WebGPU device or
@@ -24,30 +27,36 @@ corresponding instances on their next cook. No browser or server is required.
 
 ## State and timing
 
-A cook performs these steps synchronously:
+**Wait for Current Result** (`Samecook`) defaults to **On**. The worker accepts
+this cook's owned input snapshot, resumes frame waits, delivers queued pulses,
+and runs `onCook`. TD waits for that request and copies its complete result.
+Chained blocking CHOP costs add in TD dependency order.
 
-1. Read the upstream CHOP inputs and publish an owned snapshot to the V8 owner.
-2. Resume pending frame waits, deliver queued pulses, and call optional `onCook`.
-3. Copy persistent output state to this cook's TD output buffers.
+Turn it **Off** to return the latest completed output without waiting for JavaScript.
+A result already ready at collection can be used immediately; there is no mandatory
+one-frame delay. When overloaded, one replaceable pending input snapshot keeps
+memory bounded. Intermediate requests may be skipped. Outputs initially are zero;
+reload keeps the last compatible result, while channel/sample changes start at zero.
+The same script works in either mode, and toggling preserves its state and timers.
 
-There is no previous-frame output queue. `onCook` sees this cook's input values;
-its writes reach downstream nodes in the same cook. Chained instances cook in
-TD dependency order. Their synchronous costs add; they do not run in parallel
-merely because each has an owner thread.
+Independent TimeContext tasks and `setTimeout` run between cooks, including while
+playback is paused. Their writes publish complete snapshots after worker turns;
+the next TD cook can collect them without waiting for its newly submitted work.
+Reads use the latest **worker-accepted** inputs. A synchronous callback sees stable
+inputs; an async continuation can see newer inputs after an `await`.
 
-Independent `host.timing.launch` tasks and `setTimeout` run between cooks, including
-while TD playback is paused. They read the most recently published inputs and
-write state for the next time TD samples it. They cannot see upstream changes
-that TD has not cooked/published yet. A timer's scheduling phase can therefore
-matter; use `onCook` when a transform must consume the current input immediately.
-`launchBrowser` frame waits advance when this operator cooks, not independently.
-The native owner uses event-driven waits, with no 1 ms polling loop.
+`launchBrowser`/`waitFrame` advances once per accepted request. Skipped cooks are
+not replayed. `frame.deltaSeconds` accumulates elapsed absolute TD time across
+coalescing; timeline `frame`/`time` can seek or loop. TimeContext realtime clocks
+still use monotonic wall time. Nothing synthesizes frame ticks while paused.
 
-JavaScript remains single-threaded within each instance. TD waits for the owner
-to finish the synchronous cook; a long-running callback can delay it. Avoid
-awaiting long-lived tasks in `setup`: launch them and return. Setup may return a
-Promise; `onCook` and `onPulse` must be synchronous. A watchdog stops runaway
-execution, but is not a substitute for short callbacks.
+JavaScript is single-threaded per instance. Slow callbacks delay that isolate;
+blocking cooks also wait, buffered cooks do not. Setup may return a Promise;
+`onCook` and `onPulse` must be synchronous. Launch long-lived tasks rather than
+awaiting them in setup. The watchdog is a recovery mechanism, not a frame budget.
+
+Open [ExecutionModes.toe](native/td/execution-mode-example/ExecutionModes.toe)
+for a side-by-side example. See [execution details and measurements](EXECUTION_MODES.md).
 
 ## Script API
 
@@ -96,14 +105,15 @@ changing the names or sample count restarts it. Names must be unique identifiers
 Outputs start at zero and remain until changed. Writes require a declared channel,
 valid sample index, and finite float32 values. Array copies cannot mutate host
 state accidentally or after a reset. Use TimeContext context-local variables or
-module state for other intermediate data. Cleanup cancels owned timing roots,
-timers, frame waits, and stale host access. Import timing **types** if needed;
-launch through `host.timing` so ownership remains correct.
+module state for other intermediate data. Restart destroys the old isolate,
+including timers, frame waits and retained closures. Import timing functions
+normally from `@avtools/core-timing`; `host.timing` is a compatibility API.
 
 ## Buffers and XY point clouds
 
 Set **Output Samples** to 10000 and **Output Channels** to `x y` for 10,000 XY
-points. All samples are delivered during the same cook. Four wired input CHOPs
+points. Blocking mode delivers all samples during the same cook; buffered mode
+returns complete arrays from a finished request. Four wired input CHOPs
 are supported, with each input's channel names kept separate. For interpolation,
 connect XY buffer A to input 0, XY buffer B to input 1, and a `mix` channel to
 input 2:
@@ -130,22 +140,26 @@ owned CPU buffers; this is not zero-copy. Bulk arrays avoid one host call per po
 
 ## Parameters and errors
 
-Project Directory takes priority over Sketch DAT and Source File. With it clear,
+TypeScript File takes priority over Sketch DAT and Source File. Create Template
+Project can scaffold the SDK and sources from the Build page. With TypeScript File clear,
 Sketch DAT takes priority over Source File. Source File uses background filesystem
 notifications and changed-file reads; cooks adopt pending source without rereading
 the file. Project builds support TypeScript and static imports. Event Name plus Send Pulse
-queues a named event for the next cook. The handler reads that cook's inputs;
+captures its name immediately and queues it FIFO for the next accepted request.
+The handler reads that request's inputs;
 pulses carry no argument object. Reset and Reload restart the current script.
 
 A replacement script that fails during compilation/setup leaves the working
 generation active and reports a TD warning. It is retried after another edit or
-Reset. Runtime errors stop producing valid output and appear as TD errors; fix
-the script or Reset. Output layout changes also restart the script.
+Reset. Runtime errors appear as TD errors in blocking mode. Buffered mode retains the
+last compatible output and shows a warning; fix the script or Reset. Output layout changes also restart the script.
 
-An Info CHOP exposes `cooks`, `cook_ms`, `input_copy_ms`, `script_ms`,
-`output_abs_frame`, and `ready`. `cook_ms` covers the native execute call, including
-waiting for the owner and copying results; TD's `cpuCookTime` includes its own
-operator overhead. Background timing callbacks also use CPU between cooks.
+An Info CHOP exposes cook/worker/copy/wait costs, submitted/accepted/completed
+request IDs, published/consumed sequences, source frame, monotonic input and
+publication ages, coalesced inputs, pulse overflow, and repeated-publication
+percentage over the last 120 cooks. `cook_ms` covers native execute;
+TD's `cpuCookTime` includes operator overhead. Background callbacks also consume
+CPU between cooks. See [the diagnostic reference](EXECUTION_MODES.md#diagnostics).
 
 ## Build and tests
 
@@ -162,3 +176,8 @@ reload cleanup, errors, and large XY buffers using the actual embedded runtime.
 The example's `verify.py` and `stress.py` run inside TD; they include TD buffer
 handling and operator cook overhead. See [validation](native/td/chop-example/VALIDATION.md)
 for measured workloads, limitations, and reproduction steps.
+
+`node test/chop/run.mjs --execution` runs policy/timeout tests and a 1/4-instance
+scalar/10k XY benchmark. `--quick` skips the benchmark matrix.
+
+Console messages are available per operator through the Diagnostics page and Info DAT. See [logging and paused refresh](LOGGING.md) and the [openable Logging.toe example](native/td/logging-example/Logging.toe).

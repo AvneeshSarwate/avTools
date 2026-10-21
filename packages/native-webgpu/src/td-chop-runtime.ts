@@ -1,18 +1,21 @@
 import {SketchLifetime} from './td-timing.ts';
-import type {ChopHost, ChopFrame} from '../td-chop.d.ts';
+import type {ChopHost as PublicChopHost, ChopFrame} from '../td-chop.d.ts';
+// Source-side timing classes carry private members; the SDK uses emitted declarations.
+// Keep implementation checking against the original classes, not a second nominal copy.
+type ChopHost = Omit<PublicChopHost, 'timing'> & { readonly timing: typeof import('../../core-timing/mod.ts') };
 const g = globalThis as any;
 type Program = {setup?: (host: ChopHost) => unknown; onCook?: (host: ChopHost, frame: ChopFrame) => unknown; onPulse?: (name: string, host: ChopHost) => unknown};
-type Generation = {life: SketchLifetime; host: ChopHost; program: Program; values: Map<string, Float32Array>};
+type Generation = {signature: string; life: SketchLifetime; host: ChopHost; program: Program; values: Map<string, Float32Array>};
 let active: Generation | undefined;
 let inputs: Map<string, Float32Array>[] = [];
 let frame: ChopFrame;
 let names: string[] = [], pulses: string[] = [], reset = false;
 let sampleCount = 1;
-let attemptedSource: string | undefined, attemptedNames = '', reloadError = '';
 const message = (error: any) => String(error?.stack ?? error);
 const synchronous = (value: any, name: string) => {
-  if (value && typeof value.then === 'function') { Promise.resolve(value).catch(() => {}); throw Error(`${name} must be synchronous; use host.timing for independent tasks`); }
+  if (value && typeof value.then === 'function') { Promise.resolve(value).catch(() => {}); throw Error(`${name} must be synchronous; use TimeContext for independent tasks`); }
 };
+g.__avChopDirty = false;
 g.__avDone = true; g.__avError = ''; g.__avHasFrame = false;
 g.__avChopAccept = () => {
   const incoming = JSON.parse(g.__avFrameJSON);
@@ -48,7 +51,8 @@ function createGeneration(): Generation {
       set: (name: string, value: number, sample = 0) => life.run(() => {
         const data = outputChannel(name);
         if (!Number.isInteger(sample) || sample < 0 || sample >= count) throw Error('Output sample index out of range');
-        data[sample] = finite(name, value);
+        const next = finite(name, value);
+        if (data[sample] !== next) { data[sample] = next; g.__avChopDirty = true; }
       }),
       get: (name: string, sample = 0) => life.run(() => values.get(name)?.[sample] ?? 0),
       samples: (name: string) => life.run(() => values.get(name)?.slice() ?? new Float32Array()),
@@ -59,30 +63,25 @@ function createGeneration(): Generation {
         // its own buffer and can safely reuse it after this call.
         const next = new Float32Array(count);
         for (let i = 0; i < count; i++) next[i] = finite(name, source[i]);
-        data.set(next);
+        data.set(next); g.__avChopDirty = true;
       }),
       names: () => life.run(() => [...values.keys()]),
     }),
     onDispose: (fn: () => void) => life.onDispose(fn),
   });
-  return {life, host, values, program: {}};
+  return {signature: JSON.stringify([names, sampleCount]), life, host, values, program: {}};
 }
 g.__avChopCook = async () => {
   g.__avDone = false; g.__avError = ''; g.__avHasFrame = false;
   try {
     const signature = JSON.stringify([names, sampleCount]);
-    if (reset || g.__avSource !== attemptedSource || signature !== attemptedNames) {
-      attemptedSource = g.__avSource; attemptedNames = signature;
-      const candidate = createGeneration();
-      try {
-        candidate.program = candidate.life.run(() => new Function(`${g.__avSource}\n;return {setup:typeof setup==='function'?setup:undefined,onCook:typeof onCook==='function'?onCook:undefined,onPulse:typeof onPulse==='function'?onPulse:undefined};`)());
-        if (!candidate.program.setup && !candidate.program.onCook) throw Error('CHOP script must define setup(host) or onCook(host, frame)');
-        await candidate.life.run(() => candidate.program.setup?.(candidate.host));
-        if (candidate.life.error) throw Error(candidate.life.error);
-        await active?.life.dispose(); active = candidate; reloadError = '';
-      } catch (error) { await candidate.life.dispose(); reloadError = message(error); }
+    if (!active) {
+      active = createGeneration();
+      active.program = active.life.run(() => new Function(`${g.__avSource}\n;return {setup:typeof setup==='function'?setup:undefined,onCook:typeof onCook==='function'?onCook:undefined,onPulse:typeof onPulse==='function'?onPulse:undefined};`)());
+      if (!active.program.setup && !active.program.onCook) throw Error('CHOP script must define setup(host) or onCook(host, frame)');
+      await active.life.run(() => active!.program.setup?.(active!.host));
+      if (active.life.error) throw Error(active.life.error);
     }
-    if (!active) throw Error(reloadError || 'No valid CHOP script');
     const current = active;
     if (current.life.error) throw Error(current.life.error);
     if (g.__avBackgroundError) throw Error(g.__avBackgroundError);
@@ -92,14 +91,25 @@ g.__avChopCook = async () => {
     try {
       for (const name of pulses) synchronous(current.life.run(() => current.program.onPulse?.(name, current.host)), 'onPulse');
       synchronous(current.life.run(() => current.program.onCook?.(current.host, frame)), 'onCook');
-      const output = new Float32Array(names.length * sampleCount);
-      names.forEach((name, index) => {
-        const data = current.values.get(name);
-        if (data) output.set(data.subarray(0, sampleCount), index * sampleCount);
-      });
-      g.__avBytes = new Uint8Array(output.buffer); g.__avHasFrame = true; g.__avError = reloadError;
+      snapshot(current);
     } catch (error) { current.life.fail(error); throw error; }
   } catch (error) { g.__avError = message(error); }
   finally { g.__avDone = true; }
 };
-g.__avDispose = async () => { g.__avDone = false; try { await active?.life.dispose(); active = undefined; } finally { g.__avDone = true; } };
+function snapshot(current: Generation) {
+  const output = new Float32Array(names.length * sampleCount);
+  names.forEach((name, index) => {
+    const data = current.values.get(name);
+    if (data) output.set(data.subarray(0, sampleCount), index * sampleCount);
+  });
+  g.__avBytes = new Uint8Array(output.buffer); g.__avHasFrame = true; g.__avChopDirty = false;
+}
+// Native worker calls this only between bounded event-loop turns, never inside
+// a synchronous callback or while an async setup/reload is incomplete.
+g.__avChopFlush = () => {
+  g.__avHasFrame = false;
+  if (!active || !g.__avDone || active.signature !== JSON.stringify([names, sampleCount])) return;
+  if (active.life.error || g.__avBackgroundError) { g.__avError = active.life.error || g.__avBackgroundError; return; }
+  if (g.__avChopDirty) snapshot(active);
+};
+g.__avDispose = () => { g.__avDone = false; try { active?.life.dispose(); active = undefined; } finally { g.__avDone = true; } };

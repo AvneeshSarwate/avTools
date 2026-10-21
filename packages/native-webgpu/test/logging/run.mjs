@@ -1,0 +1,10 @@
+import {execFileSync} from 'node:child_process';
+import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
+import {resolve} from 'node:path';
+const root=resolve(import.meta.dirname,'../..'),out=resolve(root,'build/logging');mkdirSync(out,{recursive:true});
+const pre=resolve(root,'prebuilt/macos-arm64'),chop=resolve(pre,readFileSync(resolve(pre,'current-chop.txt'),'utf8').trim());
+const sdk=execFileSync('xcrun',['--show-sdk-path'],{encoding:'utf8'}).trim();
+execFileSync('clang++',['-std=c++17','-O2','-isysroot',sdk,'-isystem',sdk+'/usr/include/c++/v1',resolve(import.meta.dirname,'native.cpp'),'-o',resolve(out,'native')],{stdio:'inherit'});
+const dylib=process.env.LOGGING_RUNTIME||resolve(chop,'Contents/MacOS/libavtools_runtime.dylib');
+const result=execFileSync(resolve(out,'native'),[dylib,resolve(chop,'Contents/Resources')],{encoding:'utf8',timeout:120000});
+console.log(result);JSON.parse(result);writeFileSync(resolve(import.meta.dirname,'native-result.json'),result);

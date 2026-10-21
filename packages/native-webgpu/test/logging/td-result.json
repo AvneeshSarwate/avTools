@@ -1,0 +1,65 @@
+{
+  "passed": true,
+  "build": "2025.31550",
+  "records": [
+    {
+      "test": "channels_isolation_observers",
+      "rows": 257,
+      "source_cooks_during_read": 0
+    },
+    {
+      "test": "channels_reload_error",
+      "generation": 11
+    },
+    {
+      "test": "sketch_isolation_observers",
+      "rows": 257,
+      "source_cooks_during_read": 0
+    },
+    {
+      "test": "sketch_reload_error",
+      "generation": 13
+    },
+    {
+      "test": "execution_modes",
+      "passed": true
+    },
+    {
+      "test": "detached_GPU_buffer_preview",
+      "passed": true
+    },
+    {
+      "test": "channels_paused",
+      "native_cooks_before": 3914.0,
+      "native_cooks_after": 3914.0,
+      "source_metadata_cooks": 1,
+      "sequence_before": 1496,
+      "passive_sequence": 1496,
+      "refreshed_sequence": 1499,
+      "cached_changed_without_force": false
+    },
+    {
+      "test": "channels_clear_reset",
+      "passed": true
+    },
+    {
+      "test": "sketch_paused",
+      "native_cooks_before": 3862.0,
+      "native_cooks_after": 3862.0,
+      "source_metadata_cooks": 1,
+      "sequence_before": 1524,
+      "passive_sequence": 1524,
+      "refreshed_sequence": 1527,
+      "cached_changed_without_force": false
+    },
+    {
+      "test": "sketch_clear_reset",
+      "passed": true
+    },
+    {
+      "test": "rename_delete_pending",
+      "passed": true
+    }
+  ],
+  "error": null
+}

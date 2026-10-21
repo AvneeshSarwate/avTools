@@ -1,7 +1,8 @@
+import {launch} from '@avtools/core-timing';
 import type {ChopHost} from '@avtools/native-webgpu/td-chop';
 import {scale} from './math.ts';
 export function setup(host: ChopHost) {
-  host.timing.launch(async ctx => {
+  launch(async ctx => {
     while (true) { host.outputs.set('ticks', host.outputs.get('ticks') + 1); await ctx.waitSec(0.01); }
   });
 }

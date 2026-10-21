@@ -1,10 +1,11 @@
+import * as timing from '@avtools/core-timing';
 import type {Setup, OnCook} from '@avtools/native-webgpu/td-chop';
 let phase = 0;
 let x: Float32Array, y: Float32Array;
 export const setup: Setup = host => {
   x = new Float32Array(host.outputs.sampleCount);
   y = new Float32Array(host.outputs.sampleCount);
-  host.timing.launch(async ctx => {
+  timing.launch(async ctx => {
     while (true) { await ctx.waitSec(1 / 120); phase += 0.005; }
   });
 };

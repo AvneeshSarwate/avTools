@@ -1,5 +1,5 @@
 // Small embedded host profile, not a browser DOM or a Node environment.
-globalThis.console = {log:hostLog,error:hostLog,warn:hostLog,debug:hostLog};
+// Native console captures bounded, level-aware value snapshots.
 globalThis.performance = Object.freeze({now:__hostNow});
 globalThis.crypto = Object.freeze({randomUUID:__hostUUID});
 globalThis.DOMException=class DOMException extends Error{constructor(message,name='Error'){super(message);this.name=name;}};

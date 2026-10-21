@@ -106,3 +106,76 @@ substitute. VS Code aliases/declarations are supplied; this run did not automate
 VS Code UI acceptance test. Other macOS architectures, Windows, other TD versions,
 arbitrary npm dependencies, full TypeScript 5 parity, and automatic source-map
 application inside V8 remain outside the verified scope.
+
+## SDK 2 and normal dependency resolution — 2026-10-20
+
+[Recorded results](tests/results/environment.json) and the
+[live TD stage details](tests/results/environment-td.json) cover the updated
+compiler, SDK and versioned TOP/CHOP binaries. All 14 behavior/environment tests
+passed against both debug and release compilers. Fixtures cover real installed
+earcut plus separate @types, ESM exports/imports, CJS/JSON, external aliases and
+relative imports, external tsconfig inheritance, workspace/pnpm symlinks, external
+edits/deletion/recovery/missing installation, stale snapshots, idle watches and
+all-entry last-good preservation after a bundler failure.
+
+The same valid/invalid environment fixtures run through ordinary TypeScript 5.9.3
+and the native checker. Strict declaration checking, loaded-file inspection and
+TypeScript language-service completions pass without DOM or implicit Node globals.
+Explicit dependency ambient leakage is tested and documented, not prevented.
+Fresh init and relocated projects work with PATH restricted to `/usr/bin:/bin`.
+
+Native ABI subscriptions, file notifications and two-library coexistence pass.
+The shared service completed 200 builds: median request-to-ready was 183.7 ms,
+and the final 100 macOS physical-footprint samples ranged from 5.97 to 6.06 MiB.
+This measures the small compiler host process, not total TD memory.
+
+The example's compiled TOP and CHOP each passed 36 cooks, six reloads/resets and
+pulse checks. Two isolated embedded contexts passed runtime-global/timer/event/RAF/
+Dawn probes and TimeContext conformance. Supported GPU constructors were exercised;
+unsupported constructors are rejected by the type tests. A direct invalid Dawn
+constructor call can still abort inside the existing native binding, so this is
+not a runtime safety guarantee for code that bypasses types.
+
+In TD 2025.31550, four TOPs and four CHOPs loaded the packaged compiler. The
+[repeatable fixture](tests/td-environment.py) uses a temporary project copy. All
+CHOP values changed 14 → 42 using the actual earcut package, remained 42 during a
+`fetch` type error, then returned to 14 after repair and project restoration.
+The three edit acknowledgements took 223.5, 210.0 and 217.8 ms. Every stage had
+zero operator runtime errors. Per-stage CPU samples include reload cooks; they are
+not a new sustained performance benchmark. The original example is left running.
+
+## Direct TypeScript entries and template buttons — 2026-10-20
+
+The native example and fresh CLI template now use direct TypeScript entry files,
+without `avtools.json`. Legacy manifest behavior remains covered separately.
+All 19 behavior/environment/entry tests pass in debug, and the five new entry
+regressions pass against the final release. Coverage includes independent entry
+errors, shared helpers, explicit tsconfig files lists, nearest configs, ambient
+types, workspace links, relocation, requested WGSL wrappers, missing-file recovery,
+and refusal to overwrite template paths. Unrelated TD media is not read as source.
+The C ABI tests additionally exercise template creation, identical subscriptions,
+independent errors/last-good outputs and repair.
+
+[Final live TD results](tests/results/entry-setup-td.json) record the shipping
+compiler and plugin versions. The [repeatable fixture](tests/td-entry-setup.py)
+created TOP and CHOP templates using relative destination paths, preserved existing
+`.toe` content, rejected a second creation without changing source, and selected
+the correct starter entry and CHOP schema. Two CHOP entries shared a helper:
+one retained its last-good 14 during an intentional error while the other updated
+114 → 121; repair updated the first to 21, and restoration returned 14/114.
+
+Deleting and restoring a relative entry also preserved its output and resumed
+building automatically. This caught a macOS `/var` versus `/private/var` watcher
+alias bug, now fixed by canonicalizing project roots and external watch directories.
+A CLI `/tmp` alias regression covers it too. The saved example's eight operators
+were ready and error-free: two different TOP entries and two CHOP entries, with
+CHOP values 14/114/14/114. No example sources were left modified by the live tests.
+
+The manifest-free TOP/CHOP bundles also passed the embedded runtime smoke harness
+(36 cooks, six reloads/resets and pulse checks per target). This update changes
+compilation/setup, not the rendering or channel execution policies. The template
+button writes sources/SDK/config only; it does not copy plugins or generate a `.toe`.
+
+## Portable timing and full restart (2026-10-20–21)
+
+SDK 3 ships ordinary core-timing source; the native and Node builders accept value imports. Per-operator Automatic Reload separates compilation from activation. The plugin retires the old isolate before replacement; failed runtime setup never rolls back. See [restart validation](../../packages/native-webgpu/test/restart/README.md) for live TD controls, raw JS/DAT tests, callback retirement, native soaks, and four-1080p timing measurements. Final compiler marker: `9c2ef39d35ed`.

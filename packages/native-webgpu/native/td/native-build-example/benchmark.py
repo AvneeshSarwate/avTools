@@ -7,7 +7,7 @@ callback.par.active=False
 callback.text='''from pathlib import Path
 import json,time
 root=parent()
-projectdir=Path(root.op('channels1').par.Projectdir.eval())
+projectdir=Path(root.op('channels1').par.Typescript.eval()).parents[2]
 repo=next(p for p in (projectdir,*projectdir.parents) if (p/'packages/native-webgpu/prebuilt').is_dir())
 source=projectdir/'sketches/channels/math.ts'
 original=source.read_text()
@@ -37,7 +37,7 @@ def onFrameStart(frame):
  infos=[root.op('build_channels1').text]
  if pending:
   expected={'edit':21,'error':21,'recover':28,'restore':14}[stage]
-  acknowledged=all(v==expected for v in values) and (('build_state\\terror' in infos[0]) if stage=='error' else 'build_state\\tready' in infos[0])
+  acknowledged=all(v==expected+(100 if i%2 else 0) for i,v in enumerate(values)) and (('build_state\\terror' in infos[0]) if stage=='error' else 'build_state\\tready' in infos[0])
   if acknowledged:pending['latency_ms']=(now-pending['start'])*1000;pending=None
  if count>60:samples.append({'frame':count,'stage':stage,'frame_ms':(now-last)*1000 if last else 0,'cpu_ms':costs,'values':values,'errors':errors})
  last=now

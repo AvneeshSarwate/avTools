@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tsrs_core::{P, Tristate, arena::Region, context::Context};
-use tsrs_vfs::{FS, bundled, osvfs};
+use tsrs_vfs::{FS, bundled};
 
 static POISONED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static SESSION: Mutex<()> = Mutex::new(());
@@ -66,6 +66,16 @@ fn copy(d: P<tsrs_ast::Diagnostic>) -> Diagnostic {
     }
 }
 pub fn check(root: &Path) -> Vec<Diagnostic> {
+    check_inputs(root, &crate::inputs::Inputs::default())
+}
+pub fn check_inputs(root: &Path, inputs: &crate::inputs::Inputs) -> Vec<Diagnostic> {
+    check_selected(root, inputs, None)
+}
+pub fn check_selected(
+    root: &Path,
+    inputs: &crate::inputs::Inputs,
+    entry: Option<&Path>,
+) -> Vec<Diagnostic> {
     let _lock = SESSION.lock().unwrap_or_else(|e| e.into_inner());
     assert!(
         !POISONED.load(std::sync::atomic::Ordering::Relaxed),
@@ -83,22 +93,7 @@ pub fn check(root: &Path) -> Vec<Diagnostic> {
     let region = Region::new(1 << 20);
     let diagnostics = {
         let _scope = region.enter();
-        let allowed = root.to_path_buf();
-        let local = tsrs_vfs::wrapvfs::wrap(
-            osvfs::fs(),
-            tsrs_vfs::wrapvfs::Replacements {
-                read_file: Some(Box::new(move |path| {
-                    let normalized = tsrs_core::tspath::normalize_path(path);
-                    if Path::new(&normalized).starts_with(&allowed) {
-                        osvfs::fs().read_file(path)
-                    } else {
-                        None
-                    }
-                })),
-                ..Default::default()
-            },
-        );
-        let fs: Arc<dyn FS> = Arc::new(bundled::wrap_fs(local));
+        let fs: Arc<dyn FS> = Arc::new(bundled::wrap_fs(inputs.checker_fs()));
         let host = P::new(Host {
             cwd: root.to_string_lossy().into_owned(),
             fs: fs.clone(),
@@ -116,7 +111,23 @@ pub fn check(root: &Path) -> Vec<Diagnostic> {
             None,
         );
         let mut diagnostics: Vec<_> = errors.into_iter().map(copy).collect();
-        if let Some(config) = config {
+        if let Some(mut config) = config {
+            if let Some(entry) = entry {
+                // Keep explicit ambient declarations, but do not check unrelated runnable sketches.
+                let mut files: Vec<_> = config
+                    .parsed_config
+                    .file_names
+                    .iter()
+                    .filter(|p| {
+                        p.ends_with(".d.ts") || p.ends_with(".d.mts") || p.ends_with(".d.cts")
+                    })
+                    .cloned()
+                    .collect();
+                files.push(entry.to_string_lossy().into_owned());
+                config = config.with_file_names(files);
+                config.errors.retain(|d| d.code() != 18003);
+                diagnostics.retain(|d| d.code != 18003);
+            }
             let host = tsrs_compiler::new_cached_fs_compiler_host(
                 &root.to_string_lossy(),
                 fs,

@@ -1,6 +1,5 @@
-/// <reference lib="dom" />
 
-import earcut from 'earcut';
+import earcut from '#avtools-earcut';
 import type {
   BatchInstanceAttrs,
   BatchMaterialDef,

@@ -40,23 +40,14 @@
       "@avtools/native-webgpu/td-sketch": [
         "./packages/native-webgpu/td-sketch.d.ts"
       ],
-      "@avtools/native-webgpu": [
-        "./packages/native-webgpu/types/packages/native-webgpu/src/index.d.ts"
-      ],
-      "earcut": [
-        "./dependencies/earcut"
-      ],
-      "seedrandom": [
-        "./dependencies/seedrandom"
+      "@avtools/native-webgpu/td-p5": [
+        "./packages/native-webgpu/td-types/p5.d.ts"
       ]
     },
-    "typeRoots": [
-      "./dependencies/@types"
-    ],
     "types": [],
     "skipLibCheck": true
   },
   "files": [
-    "./dependencies/@webgpu/types/dist/index.d.ts"
+    "./packages/native-webgpu/td-runtime.d.ts"
   ]
 }

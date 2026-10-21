@@ -1,4 +1,4 @@
-import seedrandom, { type PRNG } from "seedrandom";
+import seedrandom, { type PRNG } from "#avtools-seedrandom";
 
 export type { PRNG };
 

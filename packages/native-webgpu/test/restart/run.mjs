@@ -1,0 +1,12 @@
+import {build} from 'esbuild';
+import {execFileSync} from 'node:child_process';
+import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
+import {resolve} from 'node:path';
+const root=resolve(import.meta.dirname,'../..'),out=resolve(root,'build/restart');mkdirSync(out,{recursive:true});
+const bundled=await build({entryPoints:[resolve(import.meta.dirname,'entry.ts')],bundle:true,write:false,format:'iife',globalName:'entry',platform:'neutral',nodePaths:[resolve(root,'node_modules')]});
+writeFileSync(resolve(out,'portable.js'),bundled.outputFiles[0].text+'\nfunction setup(h){return entry.setup(h)}function onCook(h){return entry.onCook(h)}');
+await build({entryPoints:[resolve(import.meta.dirname,'animation.ts')],bundle:true,outfile:resolve(out,'animation.mjs'),platform:'neutral',format:'esm',nodePaths:[resolve(root,'node_modules')]});
+const {animate}=await import(resolve(out,'animation.mjs'));const state={ticks:0};const task=animate(state);await new Promise(r=>setTimeout(r,60));if(state.ticks<3)throw Error('Portable Node animation failed');task.cancel();await task.catch(()=>{});
+const pre=resolve(root,'prebuilt/macos-arm64');const top=resolve(pre,readFileSync(resolve(pre,'current.txt'),'utf8').trim()),chop=resolve(pre,readFileSync(resolve(pre,'current-chop.txt'),'utf8').trim());
+const sdk=execFileSync('xcrun',['--show-sdk-path'],{encoding:'utf8'}).trim();execFileSync('clang++',['-std=c++17','-O2','-isysroot',sdk,'-isystem',sdk+'/usr/include/c++/v1',resolve(import.meta.dirname,'restart.cpp'),'-o',resolve(out,'restart')],{stdio:'inherit'});
+execFileSync(resolve(out,'restart'),[resolve(top,'Contents/MacOS/libavtools_runtime.dylib'),resolve(top,'Contents/Resources'),resolve(chop,'Contents/Resources'),resolve(out,'portable.js')],{stdio:'inherit',timeout:180000});

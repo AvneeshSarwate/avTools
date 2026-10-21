@@ -1,0 +1,71 @@
+{
+  "passed": true,
+  "records": [
+    {
+      "stage": 0,
+      "value": 1.0,
+      "errors": "",
+      "state": "build_state\t\r\nbuild_diagnostics\t\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/source.js; available=fd46fbe8e48ed4fd; active=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/source.js@fd46fbe8e48ed4fd\r\n"
+    },
+    {
+      "stage": 1,
+      "value": 1.0,
+      "errors": "",
+      "state": "build_state\t\r\nbuild_diagnostics\t\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tPending Reload\r\nsource_identity\tselected=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/source.js; available=62e20e8e9aba2a4; active=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/source.js@fd46fbe8e48ed4fd\r\n"
+    },
+    {
+      "stage": 2,
+      "value": 2.0,
+      "errors": "",
+      "state": "build_state\t\r\nbuild_diagnostics\t\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/source.js; available=62e20e8e9aba2a4; active=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/source.js@62e20e8e9aba2a4\r\n"
+    },
+    {
+      "stage": 3,
+      "value": 2.0,
+      "errors": "",
+      "state": "build_state\t\r\nbuild_diagnostics\t\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tPending Reload\r\nsource_identity\tselected=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/source.js; available=faa49e8ef469b0b; active=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/source.js@62e20e8e9aba2a4\r\n"
+    },
+    {
+      "stage": 4,
+      "value": 2.0,
+      "errors": "",
+      "state": "build_state\t\r\nbuild_diagnostics\t\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tPending Reload\r\nsource_identity\tselected=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/other.js; available=d2352ee8cc3b8f72; active=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/source.js@62e20e8e9aba2a4\r\n"
+    },
+    {
+      "stage": 5,
+      "value": 4.0,
+      "errors": "",
+      "state": "build_state\t\r\nbuild_diagnostics\t\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/other.js; available=d2352ee8cc3b8f72; active=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/other.js@d2352ee8cc3b8f72\r\n"
+    },
+    {
+      "stage": 6,
+      "value": 4.0,
+      "errors": "",
+      "state": "build_state\t\r\nbuild_diagnostics\t\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/other.js; available=d2352ee8cc3b8f72; active=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/other.js@d2352ee8cc3b8f72\r\n"
+    },
+    {
+      "stage": 7,
+      "value": 4.0,
+      "errors": "",
+      "state": "build_state\t\r\nbuild_diagnostics\t\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/other.js; available=d2352ee8cc3b8f72; active=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/other.js@d2352ee8cc3b8f72\r\n"
+    },
+    {
+      "stage": 8,
+      "value": -1,
+      "errors": "  Error: SyntaxError: Unexpected token ';'\n    at new Function (<anonymous>)\n    at <anonymous>:2316:48\n    at SketchLifetime.run (<anonymous>:2117:16)\n    at g2.__avChopCook (<anonymous>:2316:38) (/project1/reload_raw_test1/file)",
+      "state": "build_state\t\r\nbuild_diagnostics\t\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/other.js; available=af85f3141d45758b; active=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/other.js@af85f3141d45758b\r\n"
+    },
+    {
+      "stage": 9,
+      "value": 5.0,
+      "errors": "",
+      "state": "build_state\t\r\nbuild_diagnostics\t\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/other.js; available=dad757e8d11ce419; active=file:/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-raw-48jbk2v_/other.js@dad757e8d11ce419\r\n"
+    }
+  ],
+  "final_pixel": [
+    0.0,
+    0.0,
+    1.0,
+    1.0
+  ]
+}

@@ -1,6 +1,5 @@
 import {build} from 'esbuild';
 import ts from 'typescript';
-import {builtinModules} from 'node:module';
 import {readFile, writeFile, mkdir, rename, readdir, rm} from 'node:fs/promises';
 import {existsSync, watch} from 'node:fs';
 import {resolve, dirname, relative, isAbsolute, sep} from 'node:path';
@@ -47,7 +46,6 @@ export async function loadProject(configPath){
 }
 
 const blockedPackages=new Map([
-  ['@avtools/core-timing','Use host.timing for lifecycle-managed launches; type-only imports are supported.'],
   ['@avtools/native-webgpu','Use host.device and the supplied p renderer; native-webgpu is a Node host.'],
   ['@avtools/power2d','Import @avtools/power2d/raw or /core explicitly.'],
   ['@avtools/shader-fx','Import @avtools/shader-fx/raw explicitly.'],
@@ -118,7 +116,6 @@ function checkRuntimeInputs(project,result,program){
   const forbidden=new Set(['window','document','navigator','fetch','WebSocket','Worker','setInterval','clearInterval','Deno','process','require']);
   for(const input of Object.keys(result.metafile.inputs)){
     const path=resolve(project.root,input);
-    if(inside(resolve(repoRoot,'packages/core-timing'),path))throw Error('Bundled core-timing bypasses managed cleanup. Use host.timing (type-only imports are fine).');
     if(/\/babylon(?:GL)?\//.test(posix(path)))throw Error(`Browser/Babylon implementation in bundle: ${input}. Use the raw WebGPU entry point.`);
     const source=program.getSourceFile(path);
     if(!source)continue;
@@ -141,11 +138,10 @@ function checkRuntimeInputs(project,result,program){
 }
 
 async function bundle(project,entry,alias){
-  const dependencies=new Set(builtinModules.flatMap(name=>[name,'node:'+name]));
   const resolver={name:'td-runtime-imports',setup(context){context.onResolve({filter:/.*/},args=>{
     if(args.kind==='entry-point')return;
     if(blockedPackages.has(args.path))return {errors:[{text:blockedPackages.get(args.path)}]};
-    if(args.path.startsWith('node:')||dependencies.has(args.path)||/^(?:https?:|jsr:|npm:)/.test(args.path))return {errors:[{text:`Unsupported runtime import ${args.path}; bundle host-independent local/npm code only.`}]};
+    if(/^(?:https?:|jsr:|npm:)/.test(args.path))return {errors:[{text:`Unsupported runtime import ${args.path}; bundle host-independent local/npm code only.`}]};
     const name=Object.keys(alias).sort((a,b)=>b.length-a.length).find(name=>name.endsWith('/')?args.path.startsWith(name):args.path===name);
     if(name)return {path:name.endsWith('/')?resolve(alias[name],args.path.slice(name.length)):alias[name]};
   });}};
@@ -162,7 +158,7 @@ function draw(p, frame) { return __tdSketch.draw(p, frame); }
 const onPulse = __tdSketch.onPulse;
 //# sourceURL=td-sketch/${entry.name}.js
 `;
-  return build({absWorkingDir:project.root,entryPoints:[entry.entry],outfile:resolve(project.outDir,entry.name+'.js'),bundle:true,write:false,metafile:true,platform:'neutral',format:'iife',globalName:'__tdSketch',target:'es2022',nodePaths:[modules],mainFields:['module','main'],conditions:['import','default'],loader:{'.wgsl':'text'},plugins:[resolver],footer:{js:footer},logLevel:'silent'});
+  return build({absWorkingDir:project.root,entryPoints:[entry.entry],outfile:resolve(project.outDir,entry.name+'.js'),bundle:true,write:false,metafile:true,platform:'browser',format:'iife',globalName:'__tdSketch',target:'es2022',nodePaths:[modules],mainFields:['module','main'],conditions:['import','default'],loader:{'.wgsl':'text'},plugins:[resolver],footer:{js:footer},logLevel:'silent'});
 }
 
 export async function buildProject(project,{log=console.log}={}){

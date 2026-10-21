@@ -1,0 +1,13 @@
+{
+  "private": true,
+  "imports": {
+    "#avtools-earcut": {
+      "types": "./dependencies/@types/earcut/index.d.ts",
+      "default": "./dependencies/earcut/src/earcut.js"
+    },
+    "#avtools-seedrandom": {
+      "types": "./dependencies/@types/seedrandom/index.d.ts",
+      "default": "./dependencies/seedrandom/index.js"
+    }
+  }
+}

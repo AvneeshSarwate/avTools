@@ -1,5 +1,8 @@
 # TimeContext inside the Sketch TOP
 
+Current lifecycle: [Build, Reload, and Reset](RELOAD.md). Automatic Reload is per operator; Reload adopts available source, Reset restarts active source. Each activation creates a fresh isolate. SDK 3 supports ordinary TimeContext imports.
+
+
 Open [TimeContext.toe](native/td/example/TimeContext.toe) after building the plugin.
 It is an ordinary saved TD project with two independent sketches, an embedded
 JavaScript DAT, pulse controls, and a preview. No Python bootstrap commands are
@@ -54,21 +57,15 @@ This is not timeline scheduling: TD seeks and loops do not rewind TimeContext.
 
 ## Lifetime and errors
 
-Each TOP has its own isolate and timer queues. Work started at sketch top level,
-in setup, callbacks, or promise continuations belongs to that sketch generation.
-A failed candidate is cleaned up and the previous sketch stays active. During
-async candidate setup the old sketch may continue running. Successful commit
-cancels old managed roots, drains cancellation microtasks at a task boundary,
-invalidates timers/immediates/frame subscriptions, then disposes old renderer
-resources. Reset/deletion also cancels owned work. `host.timing.cancelAllContexts()`
-is scoped to that sketch's managed roots.
+Each operator has its own isolate and timer queues. Activation retires the old
+isolate before evaluating replacement source. A runtime setup failure leaves an
+error; it does not resume old execution. Compilation failure retains the old
+running environment. See [RELOAD.md](RELOAD.md) for the full control contract.
 
-Ordinary promises cannot be canceled. An old unresolved promise may still settle;
-its old-generation timers are rejected, and retained renderer/device/resource
-access throws after disposal. Cleanup that awaits unrelated external promises
-cannot hold reload open indefinitely. Arbitrary mutations of shared JS globals
-cannot be rolled back. These lifecycle guards are for trusted sketches, not a
-security boundary.
+`host.timing` remains a compatibility API with supervised roots. New TypeScript
+code imports the ordinary library. User cleanup is bounded synchronous best
+effort; arbitrary cancellation/finally continuations are not guaranteed before
+native resources and the old isolate are destroyed.
 
 Uncaught background callback errors and unhandled rejections stop the owning
 sketch. The next cook reports the error; edit/reset to recover. Expected managed

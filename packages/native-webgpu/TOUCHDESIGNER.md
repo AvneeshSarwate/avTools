@@ -33,7 +33,7 @@ the component. Its component-level **Plugin Path** defaults to
 The embedded sketch demonstrates Event Name / Send Pulse; `sketch.js` is a readable
 copy of that DAT. The two-instance fixture also demonstrates CHOP and TOP inputs.
 
-A nonempty **Project Directory** takes priority over Sketch DAT and Source File;
+A nonempty **TypeScript File** takes priority over Sketch DAT and Source File;
 see [native TypeScript builds](../../tools/td-native-build/README.md). With it clear,
 a Sketch DAT takes priority over Source File. These inputs are plain JavaScript, not
 ES modules: define `setup`, `draw`, and optionally `onPulse` in the DAT. There is
@@ -62,16 +62,16 @@ function draw(p, frame) {
 
 ## TimeContext
 
-`setup(p, host)` exposes `host.timing`: the shared TimeContext library, with
+TypeScript sketches import `launch` and other APIs from `@avtools/core-timing`, with
 autonomous realtime timers even while TD playback is paused. Open
 [TimeContext.toe](native/td/example/TimeContext.toe) to try managed roots, frame waits,
-and pulse cancellation. See [TIMING.md](TIMING.md) for API, lifecycle, and tests.
+and pulse cancellation through the retained `host.timing` compatibility API. See [RELOAD.md](RELOAD.md) for current lifecycle and reload controls.
 
 ## Controls and events
 
-- **Sketch DAT / Source File:** edits compile before replacing the active sketch.
-  Successful replacement reruns setup and resets renderer state. Syntax errors
-  keep the last valid sketch running and report the compile error.
+- **Automatic Reload / Reload / Reset:** see [Build, Reload, and Reset](RELOAD.md).
+  TypeScript build failures preserve running code. Raw JS/DAT activation errors
+  stop the old environment and report the failure; there is no rollback.
 - **Controls CHOP:** `frame.chop(name, sampleIndex = 0)` returns the sample or `0`
   for a missing channel/index. `frame.controls` exposes `sampleRate`, `startIndex`,
   and `channels: [{name, samples: Float32Array}]`. Samples are copied for each accepted frame;
@@ -82,8 +82,8 @@ and pulse cancellation. See [TIMING.md](TIMING.md) for API, lifecycle, and tests
   each run once; they use the values when the worker accepts its next frame. Pulses remain queued while it is busy. Up to 256 can be queued.
   Handlers are synchronous; unknown names can simply be ignored by the script.
 - **Width / Height:** 1–4096 physical pixels; changing either resets the sketch.
-- **Reset / Reload:** rerun setup. Reset also recreates an isolate stopped by a
-  timeout. Ordinary source edits do not recreate the GPU device.
+- **Reset / Reload:** recreate the isolate and GPU device. Reset uses the active
+  source; Reload adopts the latest successful available source.
 
 `frame.frame`, `rate`, `absFrame`, and `deltaSeconds` come from TD's cook time.
 `frame.time = (frame.frame - 1) / frame.rate`. These fields follow TD time; `host.timing` supplies an independent realtime
@@ -113,7 +113,7 @@ skips new submissions until the next opportunity. Pulses and Reset stay queued;
 controls, source, dimensions, and time are captured when the next job is accepted.
 Consequently overloaded sketches may repeat/skip frames or exceed one frame of
 latency. First load and shader compilation can also take multiple frames. The
-**Wait for Same Cook (Blocking)** toggle opts into the old immediate-result
+**Wait for Current Result** toggle opts into the old immediate-result
 semantics; independent TOPs then serialize their waits on TD's cook thread.
 
 Output completion uses Dawn's **`WaitAny`**, not a 1 ms polling sleep. A pinned,
@@ -184,7 +184,7 @@ delay is supplied: put useful independent project work in `between_passes` if
 appropriate, such as explicitly cooking a branch that does not depend on these
 sketches. All submission and collection ordering lives in this one DAT.
 
-**Wait for Same Cook** is disabled and ignored while pre-trigger mode is enabled.
+**Wait for Current Result** is disabled and ignored while pre-trigger mode is enabled.
 Normal cooks do not submit in this mode; if the DAT is missing/inactive, output
 eventually holds and the TOP reports a warning. Turning the toggle off resumes
 ordinary behavior. Repeated submit pulses/coordinators cannot submit a second job
@@ -253,7 +253,8 @@ The [native project](../../apps/td-projects/native/README.md) builds TypeScript
 directly inside the TOP/CHOP, with a copied SDK, shader generation, background
 watching, type diagnostics and last-good retention. Open its `project.toe` and edit
 the folder in VS Code; no Node install or terminal watcher is needed. The Build
-page selects Project Directory, Entry and Automatic Builds. Keep the plugins'
+page selects TypeScript File and Automatic Builds; Create Template Project can
+scaffold the SDK and sources in a chosen folder. No manifest is needed. Keep the plugins'
 sibling `native-build/` directory when copying them; see the
 [native build guide](../../tools/td-native-build/README.md).
 
@@ -263,3 +264,14 @@ IDE types, and a save → rebuild → restart loop. Open its `project.toe` after
 Use `host.onDispose(callback)` for synchronous cleanup on reload; buffers/textures
 created through `host.device` are also tracked and destroyed automatically.
 The [build-tool guide](../../tools/td-sketch-build/README.md) owns this workflow.
+
+## Execution policy
+
+The existing `Samecook` parameter is now labelled **Wait for Current Result**;
+saved projects retain their values and TOP still defaults to buffered execution.
+Switching to blocking waits for an in-flight render, then renders current inputs.
+It does not restart the script. Pre-trigger Mode always ignores this toggle and
+remains nonblocking. Pulse names are captured when pressed, even across edits
+before the next accepted render. See [execution modes](EXECUTION_MODES.md).
+
+Console messages are available per operator through the Diagnostics page and Info DAT. See [logging and paused refresh](LOGGING.md) and the [openable Logging.toe example](native/td/logging-example/Logging.toe).

@@ -1,4 +1,6 @@
 #include "Runtime.h"
+#include "LogFormat.h"
+#include "src/dawn/node/interop/Environment.h"
 #include "Polyfills.h"
 #include "src/dawn/node/interop/NodeAPI.h"
 #include <libplatform/libplatform.h>
@@ -24,11 +26,6 @@ v8::Local<v8::String> str(v8::Isolate* i, const char* s) { return v8::String::Ne
 void now(const v8::FunctionCallbackInfo<v8::Value>& args) {
   args.GetReturnValue().Set(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
-void log(const v8::FunctionCallbackInfo<v8::Value>& args) {
-  std::string line;
-  for(int j=0;j<args.Length();j++) { v8::String::Utf8Value s(args.GetIsolate(),args[j]); if(j)line+=" ";line+=*s?*s:""; }
-  fprintf(stderr,"%s\n",line.c_str());
-}
 void read(const v8::FunctionCallbackInfo<v8::Value>& args) {
   auto* isolate=args.GetIsolate();
   if(args.Length()!=1 || !args[0]->IsString()) { isolate->ThrowException(v8::Exception::TypeError(str(isolate,"readFile requires a path"))); return; }
@@ -51,6 +48,14 @@ struct Runtime::State {
     std::vector<v8::Global<v8::Value>> args;
   };
   struct Rejection {v8::Global<v8::Promise> promise;v8::Global<v8::Value> reason;uint64_t generation;};
+  static void log(const v8::FunctionCallbackInfo<v8::Value>& args){
+    auto& runtime=*get(args.GetIsolate()).runtime;
+    int severity=args.Data().As<v8::Int32>()->Value();
+    if(runtime.logs_&&!runtime.logs_->enabled(severity))return;
+    LogFormat formatter(args.GetIsolate());auto line=formatter.format(args,0);
+    if(runtime.logs_)runtime.logs_->capture(severity,runtime.logGeneration_,line,formatter.truncated);
+    else fprintf(stderr,"%s\n",line.c_str()); // Standalone Runtime fallback only.
+  }
   Runtime* runtime;
   v8::Isolate* isolate;
   Clock::time_point start=Clock::now();
@@ -124,7 +129,7 @@ struct Runtime::State {
     if(!suppressed)report(r.reason.Get(isolate),r.generation);
   }}
 };
-Runtime::Runtime(std::shared_ptr<Wake> wake):wake_(std::move(wake)) {
+Runtime::Runtime(std::shared_ptr<Wake> wake,std::shared_ptr<LogSink> logs,uint64_t logGeneration):logs_(std::move(logs)),logGeneration_(logGeneration),wake_(std::move(wake)) {
   hostPlatform(); allocator_.reset(v8::ArrayBuffer::Allocator::NewDefaultAllocator());
   v8::Isolate::CreateParams params; params.array_buffer_allocator=allocator_.get();
   isolate_=v8::Isolate::Allocate(); foreground_=attachForeground(isolate_,wake_);v8::Isolate::Initialize(isolate_,params);
@@ -132,11 +137,15 @@ Runtime::Runtime(std::shared_ptr<Wake> wake):wake_(std::move(wake)) {
   state_=std::make_unique<State>();state_->runtime=this;state_->isolate=isolate_;isolate_->SetData(0,state_.get());
   watchdog_=std::make_unique<Watchdog>(isolate_);
   isolate_->SetPromiseRejectCallback(State::reject);
+  isolate_->SetCaptureStackTraceForUncaughtExceptions(true,8);
   v8::Isolate::Scope scope(isolate_); v8::HandleScope handles(isolate_);
   isolate_->AddMessageListener(State::uncaught);
   auto context=v8::Context::New(isolate_); context_.Reset(isolate_,context); v8::Context::Scope current(context);
   context->Global()->Set(context,str(isolate_,"hostNow"),v8::Function::New(context,now).ToLocalChecked()).Check();
-  context->Global()->Set(context,str(isolate_,"hostLog"),v8::Function::New(context,log).ToLocalChecked()).Check();
+  auto console=v8::Object::New(isolate_);
+  const char* methods[]={"debug","log","warn","error","info"};
+  for(int n=0;n<5;n++)console->Set(context,str(isolate_,methods[n]),v8::Function::New(context,State::log,v8::Int32::New(isolate_,n==4?1:n)).ToLocalChecked()).Check();
+  context->Global()->Set(context,str(isolate_,"console"),console).Check();
   context->Global()->Set(context,str(isolate_,"readFile"),v8::Function::New(context,read).ToLocalChecked()).Check();
   auto bind=[&](const char* name,v8::FunctionCallback callback,bool data=false){context->Global()->Set(context,str(isolate_,name),v8::Function::New(context,callback,v8::Boolean::New(isolate_,data)).ToLocalChecked()).Check();};
   bind("__avNativeImmediate",State::nativeImmediate,true);bind("setTimeout",State::schedule);bind("setImmediate",State::schedule,true);
@@ -155,7 +164,7 @@ Runtime::Runtime(std::shared_ptr<Wake> wake):wake_(std::move(wake)) {
 Runtime::~Runtime() {
   owner();
   { v8::Isolate::Scope scope(isolate_); v8::HandleScope handles(isolate_); auto context=context_.Get(isolate_); v8::Context::Scope current(context);
-    watchdog_.reset();dawn::napi_v8::DestroyEnv(env_);state_.reset(); context_.Reset(); }
+    watchdog_.reset();wgpu::interop::RetireEnvironment(env_);dawn::napi_v8::DestroyEnv(env_);state_.reset(); context_.Reset(); }
   foreground_->close();isolate_->Dispose();detachForeground(isolate_);
 }
 void Runtime::owner() const { if(std::this_thread::get_id()!=owner_) std::terminate(); }
@@ -198,7 +207,7 @@ bool Runtime::pump(int budgetMs) {
   v8::Isolate::Scope scope(isolate_);v8::HandleScope handles(isolate_);auto c=context_.Get(isolate_);v8::Context::Scope current(c);
   // A bounded round services each source; new immediates belong to the next
   // round. Each callback gets its own complete microtask checkpoint.
-  const auto boundary=state_->nextId;
+  const auto boundary=state_->nextId;const auto roundStart=Clock::now();
   for(unsigned round=0;round<64;round++){
     bool worked=false;
     auto invoke=[&](std::unique_ptr<State::Task> t){
@@ -216,7 +225,7 @@ bool Runtime::pump(int budgetMs) {
     while(!state_->immediates.empty()&&!state_->tasks.count(state_->immediates.front()))state_->immediates.pop_front();
     if(!state_->immediates.empty()&&state_->immediates.front()<=boundary){auto id=state_->immediates.front();state_->immediates.pop_front();auto t=std::move(state_->tasks.at(id));state_->tasks.erase(id);worked=true;if(!invoke(std::move(t)))return false;}
     if(auto task=foreground_->take()){++state_->foregroundCalls;worked=true;v8::TryCatch catcher(isolate_);watchdog_->arm(budgetMs);auto prior=state_->generation();state_->generation(0);task->Run();isolate_->PerformMicrotaskCheckpoint();state_->flushRejections();state_->generation(prior);if(!finish(catcher))return false;}
-    if(!worked)break;
+    if(!worked||Clock::now()-roundStart>=std::chrono::milliseconds(2))break;
   }
   std::erase_if(env_->callback_bindings,[](const auto& binding){return binding->liveness.IsEmpty();});
   std::erase_if(env_->references,[](const auto& ref){return !ref->is_userland_ref&&ref->handle.IsEmpty()&&!ref->finalize_cb;});

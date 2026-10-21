@@ -30,6 +30,10 @@ try{execFileSync('git',['apply','--reverse','--check',napiPatch],{cwd:dawn,stdio
 catch{run('git',['apply',napiPatch],dawn);}
 // Apply incremental event-loop patches in order. A later patch may overlap an
 // earlier one, so first detect the latest applied state.
+const retirementPatch=resolve(root,'patches/0006-embedded-environment-retirement.patch');
+let retiredPatched=false;
+try{execFileSync('git',['apply','--reverse','--check',retirementPatch],{cwd:dawn,stdio:'pipe'});retiredPatched=true;}catch{}
+if(!retiredPatched){
 const timerPatch=resolve(root,'patches/0005-embedded-timer-deadlines.patch');
 try{execFileSync('git',['apply','--reverse','--check',timerPatch],{cwd:dawn,stdio:'pipe'});}
 catch{
@@ -37,6 +41,8 @@ catch{
   try{execFileSync('git',['apply','--reverse','--check',eventPatch],{cwd:dawn,stdio:'pipe'});}
   catch{run('git',['apply',eventPatch],dawn);}
   run('git',['apply',timerPatch],dawn);
+}
+run('git',['apply',retirementPatch],dawn);
 }
 const patch=resolve(root,'patches/embedding-clt-sdk.patch');
 try{execFileSync('git',['apply','--reverse','--check',patch],{cwd:resolve(dawn,'build'),stdio:'pipe'});}

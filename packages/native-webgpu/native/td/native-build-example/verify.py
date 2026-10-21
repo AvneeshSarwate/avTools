@@ -1,7 +1,7 @@
 from pathlib import Path
 import json,time
 root=op('/native_build_test') or op('/project1/native_build_test')
-projectdir=Path(root.op('channels1').par.Projectdir.eval())
+projectdir=Path(root.op('channels1').par.Typescript.eval()).parents[2]
 repo=next(p for p in (projectdir,*projectdir.parents) if (p/'packages/native-webgpu/prebuilt').is_dir())
 records=[]
 for kind in ('channels','background'):

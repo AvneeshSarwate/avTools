@@ -1,0 +1,99 @@
+{
+  "date": "2026-10-20",
+  "platform": "macOS Apple Silicon, TD 2025.31550",
+  "sdk": "avtools-sdk-2",
+  "shipping": {
+    "current.txt": "AvToolsSketch-d28cdae2e2e9.plugin",
+    "current-chop.txt": "AvToolsChannels-91866660de68.plugin",
+    "native-build/current.txt": "53589b14e5c4"
+  },
+  "compiler_tests": {
+    "debug": 14,
+    "release": 14,
+    "failed": 0,
+    "ordinary_typescript": "5.9.3",
+    "strict_declarations": true,
+    "language_service_completion": true,
+    "vscode_ui_test": false
+  },
+  "native": {
+    "c_abi_subscriptions": "pass",
+    "source_file_notifications": "pass",
+    "two_compiler_libraries": "pass",
+    "top_and_chop_bundles": "pass: 36 cooks, 6 reloads/resets, pulses each",
+    "runtime_environment": "pass: two isolated V8/Dawn contexts",
+    "timecontext": "pass: two isolated contexts, 21 conformance cases plus invariants"
+  },
+  "soak": {
+    "builds": 200,
+    "median_request_to_ready_ms": 183.7265,
+    "last100_memory_bytes_min": 6259904,
+    "last100_memory_bytes_max": 6358208
+  },
+  "touchdesigner": {
+    "passed": true,
+    "instances": {
+      "top": 4,
+      "chop": 4
+    },
+    "stages": [
+      {
+        "stage": "baseline",
+        "values": [
+          14.0,
+          14.0,
+          14.0,
+          14.0
+        ],
+        "latency_ms": 183.54795899358578
+      },
+      {
+        "stage": "npm_import",
+        "values": [
+          42.0,
+          42.0,
+          42.0,
+          42.0
+        ],
+        "latency_ms": 223.48958300426602
+      },
+      {
+        "stage": "type_error_last_good",
+        "values": [
+          42.0,
+          42.0,
+          42.0,
+          42.0
+        ],
+        "latency_ms": 210.02454099652823
+      },
+      {
+        "stage": "repair",
+        "values": [
+          14.0,
+          14.0,
+          14.0,
+          14.0
+        ],
+        "latency_ms": 217.8108750085812
+      },
+      {
+        "stage": "restore_project",
+        "values": [
+          14.0,
+          14.0,
+          14.0,
+          14.0
+        ],
+        "latency_ms": 215.49445799610112
+      }
+    ]
+  },
+  "limits": [
+    "Installed node_modules resolution; no package manager invocation, Yarn PnP or URL imports.",
+    "Mixed template uses TOP union profile; CHOP-only native checks need common profile.",
+    "Explicit imported Node/DOM ambient declarations can weaken environment checking.",
+    "Invalid direct Dawn constructors can abort in existing native bindings; negative constructor checks are compile-time, not a runtime safety guarantee.",
+    "No separate clean-Mac or VS Code UI test."
+  ]
+}

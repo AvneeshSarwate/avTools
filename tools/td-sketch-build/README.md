@@ -47,11 +47,14 @@ may be async; `draw(p, frame)` and pulse handlers must be synchronous. The outpu
 adapter exposes those exports to the existing TOP loader. Module-local state is
 private to the entry's TOP instance and resets on reload.
 
-Use `host.timing.launch(...)`, `host.timing.launchBrowser(...)`, and other managed
-timing APIs. `import type {TimeContext} from '@avtools/core-timing'` is fine;
-bundling a second runtime copy of core-timing is rejected because it would bypass
-the host's root tracking and cancellation policy. Shared helpers can accept a
-context or the typed `host.timing` namespace explicitly.
+Import timing functions normally from `@avtools/core-timing`, including in reusable
+helpers that do not depend on a TD host. The package implementation is bundled.
+The TOP/CHOP recreates its JavaScript environment on activation. `host.timing`
+remains a compatibility API for existing scripts. See
+[Build, Reload, and Reset](../../packages/native-webgpu/RELOAD.md) for automatic
+activation controls, manual restart, errors, and synchronous best-effort cleanup.
+Package-authored browser replacements (such as seedrandom's optional crypto
+fallback) are honored; this does not add browser APIs to the embedded runtime.
 
 Use `host.device` for raw WebGPU resources; never create a Node GPU or another
 renderer. Import `@avtools/power2d/raw`, `/core`, and `@avtools/shader-fx/raw`
