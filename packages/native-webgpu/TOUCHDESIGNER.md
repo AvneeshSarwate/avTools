@@ -219,8 +219,10 @@ node scripts/syphon.mjs --embedded
 node scripts/embedding.mjs
 node scripts/build-td-plugin.mjs
 node scripts/build-bridge-probe.mjs
-# Packages the checked-in native/td/example/Sketch.tox:
+# Packages the current TOP, CHOP, builder, and GUI guide into the checked-in ZIP:
 node scripts/package-td.mjs
+# Optional larger archive containing the checked-in example projects:
+node scripts/package-td.mjs --examples
 ```
 
 The pinned Chromium Clang archive is checksum verified. Apple CLT supplies the
