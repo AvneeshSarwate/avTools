@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory(prefix='avtools-native-example-') as temporary:
     # The startup DAT resolves these paths; no machine-specific path is shipped.
     for path in (fixture/name).glob('*.parm'):
         lines=path.read_text().splitlines()
-        lines=[line for line in lines if not line.startswith(('plugin ','Projectdir '))]
+        lines=[line for line in lines if not line.startswith(('plugin ','Projectdir ','Entry ','Typescript '))]
         path.write_text('\n'.join(lines)+'\n')
     collapse(tox);shutil.copy2(tox,example/'NativeBuild.tox')
     toe=temp/'NativeBuild.toe';shutil.copy2(example.parent/'example/Sketch.toe',toe);directory=expand(toe)

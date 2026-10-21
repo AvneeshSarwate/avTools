@@ -60,12 +60,7 @@ pub fn build(root: &Path, check_only: bool) -> Result<BuildResult> {
     }
 }
 fn build_inner(root: &Path, check_only: bool) -> Result<BuildResult> {
-    static INIT: std::sync::Once = std::sync::Once::new();
-    INIT.call_once(|| {
-        let _ = rayon::ThreadPoolBuilder::new()
-            .num_threads(2)
-            .build_global();
-    });
+    initialize();
     let start = Instant::now();
     let config = Config::load(root)?;
     let files = project::snapshot(root, &config)?;
@@ -73,6 +68,8 @@ fn build_inner(root: &Path, check_only: bool) -> Result<BuildResult> {
     if serde_json::to_value(&captured)? != serde_json::to_value(&config)? {
         bail!("Inputs changed while building; configuration snapshot changed");
     }
+    let inputs = crate::inputs::Inputs::default();
+    inputs.seed(root, &files);
     let revision = project::revision(&files);
     let session = root.join(".avtools/session");
     if session.exists() {
@@ -86,22 +83,9 @@ fn build_inner(root: &Path, check_only: bool) -> Result<BuildResult> {
         }
     }
     let _cleanup = Cleanup(session.clone());
-    for (path, bytes) in &files {
-        project::atomic_write(&session.join(path), bytes)?;
-    }
     let generated = generator::generate(&files, &config)?;
-    for (path, bytes) in &generated {
-        project::atomic_write(&session.join(path), bytes)?;
-    }
-    let mut diagnostics = checker::check(&session);
-    for diagnostic in &mut diagnostics {
-        if let Some(file) = &mut diagnostic.file {
-            *file = file.replace(
-                &session.to_string_lossy().to_string(),
-                &root.to_string_lossy(),
-            );
-        }
-    }
+    inputs.generated(root, &config.generated_dir, &generated);
+    let diagnostics = checker::check_inputs(root, &inputs);
     let mut result = BuildResult {
         state: "ready".into(),
         revision,
@@ -117,12 +101,35 @@ fn build_inner(root: &Path, check_only: bool) -> Result<BuildResult> {
             .enable_all()
             .build()?;
         for (name, entry) in &config.sketches {
-            outputs.extend(rt.block_on(bundler::bundle(&session, name, entry))?);
+            match rt.block_on(bundler::bundle(root, name, entry, &inputs)) {
+                Ok(files) => outputs.extend(files),
+                Err(error) => {
+                    result.diagnostics.push(checker::Diagnostic {
+                        code: 0,
+                        message: format!("{error:#}"),
+                        file: None,
+                        line: None,
+                        column: None,
+                    });
+                    break;
+                }
+            }
         }
     }
-    if project::revision(&project::snapshot(root, &config)?) != result.revision {
+    project::atomic_write(
+        &root.join(".avtools/source-revision.txt"),
+        result.revision.as_bytes(),
+    )?;
+    let dependencies = inputs.dependencies();
+    project::atomic_write(
+        &root.join(".avtools/dependencies.json"),
+        &serde_json::to_vec(&dependencies)?,
+    )?;
+    if !inputs.current() || project::revision(&project::snapshot(root, &config)?) != result.revision
+    {
         bail!("Inputs changed while building; result discarded. Retry scheduled by watcher.");
     }
+    result.revision = inputs.revision();
     // Derived source remains inspectable even when a user type error blocks publication.
     for (path, bytes) in &generated {
         project::atomic_write(&root.join(path), bytes)?;
@@ -141,6 +148,7 @@ fn build_inner(root: &Path, check_only: bool) -> Result<BuildResult> {
     }
     if !result.diagnostics.is_empty() {
         result.state = "error".into();
+        outputs.clear(); // Every entry must succeed before publishing any runtime bundle.
     }
     for (name, bytes) in outputs {
         if let Some(entry) = name.strip_suffix(".js") {
@@ -164,4 +172,13 @@ fn build_inner(root: &Path, check_only: bool) -> Result<BuildResult> {
         )?;
     }
     Ok(result)
+}
+
+pub(crate) fn initialize() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build_global();
+    });
 }

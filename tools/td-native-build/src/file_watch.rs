@@ -38,6 +38,16 @@ fn refresh(path: &Path, value: &Mutex<Value>) {
 }
 impl FileWatch {
     fn create(path: PathBuf) -> anyhow::Result<Self> {
+        // FSEvents reports physical /private paths. Canonicalize the parent,
+        // including when the selected file is temporarily absent during a save.
+        let parent = path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("Missing parent directory"))?
+            .canonicalize()?;
+        let path = parent.join(
+            path.file_name()
+                .ok_or_else(|| anyhow::anyhow!("Missing file name"))?,
+        );
         let value = Arc::new(Mutex::new(Value {
             source: String::new(),
             error: String::new(),

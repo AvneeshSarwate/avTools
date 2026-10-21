@@ -49,6 +49,15 @@
     },
     "./td-chop": {
       "types": "./td-chop.d.ts"
+    },
+    "./td-runtime": {
+      "types": "./td-runtime.d.ts"
+    },
+    "./td-top-runtime": {
+      "types": "./td-top-runtime.d.ts"
+    },
+    "./td-p5": {
+      "types": "./td-types/p5.d.ts"
     }
   },
   "files": [
@@ -61,6 +70,10 @@
     "TIMING.md",
     "TIMING_VALIDATION.md",
     "td-chop.d.ts",
-    "CHOP.md"
+    "CHOP.md",
+    "td-runtime.d.ts",
+    "td-top-runtime.d.ts",
+    "td-types",
+    "TD_TYPES.md"
   ]
 }

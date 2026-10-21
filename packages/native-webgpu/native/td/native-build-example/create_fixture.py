@@ -19,8 +19,7 @@ for i in range(4):
     chop.cook(force=True)
     chop.inputConnectors[0].connect(controls)
     chop.par.Outputchannels='value ticks'
-    chop.par.Projectdir=str(projectdir)
-    chop.par.Entry='channels'
+    chop.par.Typescript=str(projectdir/'sketches'/('channels' if i % 2 == 0 else 'offset')/'main.ts')
     chop.nodeX=-100+i*230
     chop.nodeY=0
     out=root.create(nullCHOP,'out_channels'+str(i+1))
@@ -35,8 +34,7 @@ for i in range(4):
     top=root.create(cplusplusTOP,'background'+str(i+1))
     top.par.plugin=str(prebuilt/(prebuilt/'current.txt').read_text().strip())
     top.cook(force=True)
-    top.par.Projectdir=str(projectdir)
-    top.par.Entry='background'
+    top.par.Typescript=str(projectdir/'sketches'/('background' if i % 2 == 0 else 'orbit')/'main.ts')
     top.par.Width=1920
     top.par.Height=1080
     top.nodeX=chop.nodeX

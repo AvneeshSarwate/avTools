@@ -1,4 +1,3 @@
-/// <reference lib="dom" />
 
 export class RawMesh {
   readonly vertexBuffers: Record<string, GPUBuffer>;

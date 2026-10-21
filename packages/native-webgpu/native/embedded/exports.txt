@@ -5,3 +5,13 @@ _avCreateDeferred
 _avDispatch
 _avChopCreate
 _avChopCook
+_avChopExecute
+_avChopCollect
+
+_avLogCreate
+_avLogDestroy
+_avLogLevel
+_avLogClear
+_avLogRead
+_avLogAttach
+_avLogStats

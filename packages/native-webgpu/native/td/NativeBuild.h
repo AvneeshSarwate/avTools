@@ -1,5 +1,6 @@
 #pragma once
 #include <dlfcn.h>
+#include "TDParameters.h"
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -13,6 +14,8 @@ class NativeBuild {
   struct API {
     void* library=nullptr;
     void* (*subscribe)(const char*,const char*,int)=nullptr;
+    void* (*subscribe_file)(const char*,const char*,int)=nullptr;
+    int (*init)(const char*,char*,size_t)=nullptr;
     int (*poll)(void*)=nullptr;
     const char* (*source)(const void*)=nullptr;
     const char* (*status)(const void*)=nullptr;
@@ -31,11 +34,11 @@ class NativeBuild {
       library=dlopen(path.c_str(),RTLD_NOW|RTLD_LOCAL|RTLD_NODELETE);
       if(!library)throw std::runtime_error(dlerror());
 #define LOAD(name) name=reinterpret_cast<decltype(name)>(dlsym(library,"avb_" #name));if(!name)throw std::runtime_error("Missing native build ABI: " #name)
-      LOAD(subscribe);LOAD(poll);LOAD(source);LOAD(status);LOAD(message);LOAD(request);LOAD(destroy);LOAD(file_create);LOAD(file_poll);LOAD(file_source);LOAD(file_error);LOAD(file_destroy);
+      LOAD(subscribe);LOAD(subscribe_file);LOAD(init);LOAD(poll);LOAD(source);LOAD(status);LOAD(message);LOAD(request);LOAD(destroy);LOAD(file_create);LOAD(file_poll);LOAD(file_source);LOAD(file_error);LOAD(file_destroy);
 #undef LOAD
     }
   };
-  API* api=nullptr;void* subscription=nullptr;void* fileWatch=nullptr;std::string fileKey,fileCode,fileError;std::string key,code,state,detail;
+  API* api=nullptr;void* subscription=nullptr;void* fileWatch=nullptr;std::string fileKey,fileCode,fileError;std::string key,code,state,detail,setupError;
  public:
   ~NativeBuild(){clear();clearFile();}
   void clearFile(){if(fileWatch)api->file_destroy(fileWatch);fileWatch=nullptr;fileKey.clear();fileCode.clear();fileError.clear();}
@@ -48,10 +51,32 @@ class NativeBuild {
     if(api->poll(subscription)){code=api->source(subscription);state=api->status(subscription);detail=api->message(subscription);}
     return code;
   }
-  void request(){if(subscription)api->request(subscription);}
+  std::string readTyped(const std::string& resources,const char* file,const char* target,bool automatic,TD::OP_Context* context){
+    clearFile();
+    // Resolve via TD only when the parameter changes. Keep the subscription stable
+    // while an editor temporarily removes a relative entry during atomic saves.
+    const std::string next="typescript\n"+std::string(file)+"\n"+target+"\n"+(automatic?"1":"0");
+    if(key!=next){TDParameters pars(context);const auto path=std::filesystem::absolute(pars.path("Typescript")).lexically_normal().string();clear();if(!api){static API shared(resources);api=&shared;}subscription=api->subscribe_file(path.c_str(),target,automatic);if(!subscription)throw std::runtime_error("Cannot build TypeScript File: choose a .ts file with an enclosing tsconfig.json (or create a template first)");key=next;}
+    if(api->poll(subscription)){code=api->source(subscription);state=api->status(subscription);detail=api->message(subscription);}
+    return code;
+  }
+  void createTemplate(const std::string& resources,TD::OP_Context* context,bool chop){
+    try {
+      TDParameters pars(context);const auto directory=pars.path("Templatedir");
+      if(directory.empty())throw std::runtime_error("Choose a Template Directory first");
+      if(!api){static API shared(resources);api=&shared;}
+      char message[4096]{};if(!api->init(directory.c_str(),message,sizeof(message)))throw std::runtime_error(message);
+      clear();setupError.clear();
+      pars.set("Typescript",(std::filesystem::path(directory)/"sketches"/(chop?"channels":"background")/"main.ts").string());
+      if(chop){pars.set("Outputchannels","value ticks");pars.set("Outputsamples",1);}
+      pars.set("Autobuild",1);
+      state="created";detail="Template created. Open its folder in your editor; saving rebuilds this entry.";
+    }catch(const std::exception& e){setupError=e.what();}
+  }
+  void request(){setupError.clear();if(subscription)api->request(subscription);}
   const std::string& status()const{return state;}
-  const std::string& message()const{return detail;}
-  std::string warning()const{return !fileError.empty()?fileError:state=="error"?detail:"";}
+  const std::string& message()const{return setupError.empty()?detail:setupError;}
+  std::string warning()const{return !setupError.empty()?setupError:!fileError.empty()?fileError:state=="error"?detail:"";}
   std::string readFile(const std::string& resources,const char* path){
     clear();const auto next=std::filesystem::absolute(path).lexically_normal().string();
     if(next!=fileKey){clearFile();if(!api){static API shared(resources);api=&shared;}fileWatch=api->file_create(next.c_str());if(!fileWatch)throw std::runtime_error("Cannot watch Source File directory");fileKey=next;}
@@ -59,9 +84,14 @@ class NativeBuild {
     return fileCode;
   }
   template<class Manager> static void parameters(Manager* manager){
-    TD::OP_StringParameter p;p.page="Build";p.name="Projectdir";p.label="Project Directory";manager->appendFolder(p);
-    p.name="Entry";p.label="Entry";p.defaultValue="";manager->appendString(p);
+    TD::OP_StringParameter p;p.page="Build";p.name="Typescript";p.label="TypeScript File";manager->appendFile(p);
     TD::OP_NumericParameter n;n.page="Build";n.name="Autobuild";n.label="Automatic Builds";n.defaultValues[0]=1;manager->appendToggle(n);
-    n.name="Buildproject";n.label="Build Project";n.defaultValues[0]=0;manager->appendPulse(n);
+    n.name="Autoreload";n.label="Automatic Reload";manager->appendToggle(n);
+    n.name="Buildproject";n.label="Build Script";n.defaultValues[0]=0;manager->appendPulse(n);
+    p.name="Templatedir";p.label="Template Directory";manager->appendFolder(p);
+    n.name="Createtemplate";n.label="Create Template Project";manager->appendPulse(n);
+    // Keep saved older projects readable; new projects need no manifest.
+    p.page="Legacy Build";p.name="Projectdir";p.label="Project Directory";manager->appendFolder(p);
+    p.name="Entry";p.label="Entry";p.defaultValue="";manager->appendString(p);
   }
 };

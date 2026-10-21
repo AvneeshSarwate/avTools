@@ -126,3 +126,67 @@ impl Drop for Handle {
         }
     }
 }
+
+/// Manifest-free subscriptions share an entry build and the enclosing project watcher.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn avb_subscribe_file(
+    entry: *const c_char,
+    target: *const c_char,
+    automatic: i32,
+) -> *mut Handle {
+    if entry.is_null() || target.is_null() {
+        return std::ptr::null_mut();
+    }
+    catch_unwind(|| {
+        let entry = unsafe { CStr::from_ptr(entry) }.to_str().ok()?;
+        let target = unsafe { CStr::from_ptr(target) }.to_str().ok()?;
+        let sub = Service::shared()
+            .subscribe_file(Path::new(entry), target)
+            .ok()?;
+        if automatic != 0 {
+            sub.project
+                .automatic
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        Some(Box::into_raw(Box::new(Handle {
+            sub,
+            entry: "sketch".into(),
+            sequence: u64::MAX,
+            automatic: automatic != 0,
+            source: cstring(""),
+            status: cstring("queued"),
+            message: cstring(""),
+        })))
+    })
+    .ok()
+    .flatten()
+    .unwrap_or(std::ptr::null_mut())
+}
+/// Explicit file creation; error text copied to caller storage. Never overwrites content.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn avb_init(root: *const c_char, error: *mut c_char, capacity: usize) -> i32 {
+    let result = catch_unwind(|| -> anyhow::Result<()> {
+        if root.is_null() {
+            anyhow::bail!("Choose a Template Directory first");
+        }
+        let root = unsafe { CStr::from_ptr(root) }.to_str()?;
+        if root.is_empty() {
+            anyhow::bail!("Choose a Template Directory first");
+        }
+        crate::template::create(Path::new(root))
+    });
+    let message = match result {
+        Ok(Ok(())) => return 1,
+        Ok(Err(e)) => format!("{e:#}"),
+        Err(_) => "Template creation failed".into(),
+    };
+    if !error.is_null() && capacity > 0 {
+        let bytes = message.as_bytes();
+        let n = bytes.len().min(capacity - 1);
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), error.cast(), n);
+            *error.add(n) = 0;
+        }
+    }
+    0
+}

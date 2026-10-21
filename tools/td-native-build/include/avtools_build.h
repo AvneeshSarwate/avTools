@@ -1,4 +1,5 @@
 #pragma once
+#include <stddef.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -6,6 +7,9 @@ extern "C" {
 // build service. Destroy waits for the final outstanding build when it is the last
 // subscription. Calls on a given handle must be serialized by the caller.
 // The library must remain loaded until every subscription is destroyed.
+int avb_init(const char* directory, char* error, size_t capacity);
+void* avb_subscribe_file(const char* typescript_file, const char* target, int automatic);
+// Legacy manifest-based interface.
 void* avb_subscribe(const char* project_directory, const char* entry, int automatic);
 // 1: new status/source, 0: unchanged, -1: API failure. Does not wait for compilation.
 int avb_poll(void* subscription);

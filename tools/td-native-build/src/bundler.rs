@@ -1,40 +1,58 @@
 use crate::project::Entry;
 use anyhow::{Result, anyhow, bail};
-use oxc_ast_visit::Visit;
 use rolldown::{
     Bundler, BundlerOptions, CodeSplittingMode, InputItem, OutputFormat, Platform, SourceMapType,
 };
 use rolldown_common::{ModuleType, Output};
 use std::path::Path;
 
-pub async fn bundle(root: &Path, name: &str, entry: &Entry) -> Result<Vec<(String, Vec<u8>)>> {
-    let mut bundler = Bundler::new(BundlerOptions {
-        cwd: Some(root.to_path_buf()),
-        tsconfig: Some(rolldown::TsConfig::Manual(root.join("tsconfig.json"))),
-        input: Some(vec![InputItem {
-            name: Some(name.into()),
-            import: root.join(&entry.entry).to_string_lossy().into_owned(),
-        }]),
-        name: Some("__tdSketch".into()),
-        resolve: Some(rolldown::ResolveOptions {
-            main_fields: Some(vec!["module".into(), "main".into()]),
+pub async fn bundle(
+    root: &Path,
+    name: &str,
+    entry: &Entry,
+    inputs: &crate::inputs::Inputs,
+) -> Result<Vec<(String, Vec<u8>)>> {
+    let errors = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let mut bundler = Bundler::with_plugins(
+        BundlerOptions {
+            cwd: Some(root.to_path_buf()),
+            tsconfig: Some(rolldown::TsConfig::Manual(root.join("tsconfig.json"))),
+            input: Some(vec![InputItem {
+                name: Some(name.into()),
+                import: root.join(&entry.entry).to_string_lossy().into_owned(),
+            }]),
+            name: Some("__tdSketch".into()),
+            resolve: Some(rolldown::ResolveOptions {
+                main_fields: Some(vec!["module".into(), "main".into()]),
+                ..Default::default()
+            }),
+            format: Some(OutputFormat::Iife),
+            platform: Some(Platform::Neutral),
+            sourcemap: Some(SourceMapType::File),
+            code_splitting: Some(CodeSplittingMode::Bool(false)),
+            module_types: Some([(".wgsl".into(), ModuleType::Text)].into_iter().collect()),
             ..Default::default()
-        }),
-        format: Some(OutputFormat::Iife),
-        platform: Some(Platform::Neutral),
-        sourcemap: Some(SourceMapType::File),
-        code_splitting: Some(CodeSplittingMode::Bool(false)),
-        module_types: Some([(".wgsl".into(), ModuleType::Text)].into_iter().collect()),
-        ..Default::default()
-    })
+        },
+        vec![rolldown_plugin::Plugin::new_shared(DependencyPlugin::new(
+            root,
+            inputs,
+            errors.clone(),
+        ))],
+    )
     .map_err(|e| anyhow!("{e:?}"))?;
     let result = bundler.generate().await;
     bundler.close().await.map_err(|e| anyhow!("{e:?}"))?;
-    let output = result.map_err(|e| anyhow!("{e:?}"))?;
-    // Unresolved imports are warnings in Rollup; they cannot become runtime globals here.
-    if !output.warnings.is_empty() {
-        bail!("Bundler warnings: {:?}", output.warnings);
-    }
+    let output = result.map_err(|e| {
+        anyhow!(
+            "{}\n{}",
+            e.iter()
+                .map(|d| d.to_diagnostic().convert_to_string(false))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            errors.lock().unwrap().join("\n")
+        )
+    })?;
+    // Our resolver reports unresolved imports as errors; ordinary package warnings are nonfatal.
     let mut files = Vec::new();
     for asset in output.assets {
         let mut bytes = asset.content_as_bytes().to_vec();
@@ -53,27 +71,6 @@ pub async fn bundle(root: &Path, name: &str, entry: &Entry) -> Result<Vec<(Strin
             {
                 bail!("{name}: export {}", required.join(" or "));
             }
-            for module in &chunk.module_ids {
-                let id = module.to_string();
-                if Path::new(&id).is_absolute() && !Path::new(&id).starts_with(root) {
-                    bail!("Runtime dependencies must be inside the project/SDK: {id}");
-                }
-                if id.contains("/core-timing/")
-                    || id.contains("/babylon/")
-                    || id.contains("/babylonGL/")
-                {
-                    bail!(
-                        "Unsupported runtime module {id}; use host.timing and raw WebGPU libraries"
-                    );
-                }
-            }
-            validate_runtime(&chunk.code)?;
-            for module in &chunk.module_ids {
-                let id = module.to_string();
-                if let Ok(text) = std::fs::read_to_string(&id) {
-                    validate_imports(&id, &text)?;
-                }
-            }
             let footer = if entry.target == "chop" {
                 "\nfunction setup(host) { return __tdSketch.setup?.(host); }\nfunction onCook(host, frame) { return __tdSketch.onCook?.(host, frame); }\nconst onPulse = __tdSketch.onPulse;\n"
             } else {
@@ -86,51 +83,132 @@ pub async fn bundle(root: &Path, name: &str, entry: &Entry) -> Result<Vec<(Strin
     Ok(files)
 }
 
-fn validate_runtime(code: &str) -> Result<()> {
-    let allocator = oxc_allocator::Allocator::default();
-    let parsed = oxc_parser::Parser::new(&allocator, code, oxc_span::SourceType::mjs()).parse();
-    let semantic = oxc_semantic::SemanticBuilder::new().build(&parsed.program);
-    for name in [
-        "window",
-        "document",
-        "navigator",
-        "fetch",
-        "WebSocket",
-        "Worker",
-        "setInterval",
-        "clearInterval",
-        "Deno",
-        "process",
-        "require",
-    ] {
-        if semantic
-            .semantic
-            .scoping()
-            .root_unresolved_references()
-            .contains_key(name)
-        {
-            bail!("{name} is unavailable in the TD runtime");
+#[derive(Debug)]
+struct DependencyPlugin {
+    root: std::path::PathBuf,
+    inputs: crate::inputs::Inputs,
+    imports: oxc_resolver::ResolverGeneric<crate::inputs::Inputs>,
+    requires: oxc_resolver::ResolverGeneric<crate::inputs::Inputs>,
+    errors: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+impl DependencyPlugin {
+    fn failure(&self, message: String) -> anyhow::Error {
+        self.errors.lock().unwrap().push(message.clone());
+        anyhow!(message)
+    }
+    fn new(
+        root: &Path,
+        inputs: &crate::inputs::Inputs,
+        errors: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    ) -> Self {
+        let options = |condition: &str| oxc_resolver::ResolveOptions {
+            tsconfig: Some(oxc_resolver::TsconfigDiscovery::Manual(
+                oxc_resolver::TsconfigOptions {
+                    config_file: root.join("tsconfig.json"),
+                    references: oxc_resolver::TsconfigReferences::Auto,
+                },
+            )),
+            condition_names: vec![condition.into(), "default".into()],
+            extensions: vec![
+                ".tsx".into(),
+                ".ts".into(),
+                ".jsx".into(),
+                ".js".into(),
+                ".mjs".into(),
+                ".cjs".into(),
+                ".json".into(),
+            ],
+            extension_alias: vec![
+                (
+                    ".js".into(),
+                    vec![".ts".into(), ".tsx".into(), ".js".into()],
+                ),
+                (".mjs".into(), vec![".mts".into(), ".mjs".into()]),
+                (".cjs".into(), vec![".cts".into(), ".cjs".into()]),
+            ],
+            main_fields: vec!["module".into(), "main".into()],
+            // Honor package-authored browser fallbacks (e.g. seedrandom crypto:false).
+            alias_fields: vec![vec!["browser".into()]],
+            builtin_modules: false,
+            ..Default::default()
+        };
+        Self {
+            errors,
+            root: root.into(),
+            inputs: inputs.clone(),
+            imports: oxc_resolver::ResolverGeneric::new_with_file_system(
+                inputs.clone(),
+                options("import"),
+            ),
+            requires: oxc_resolver::ResolverGeneric::new_with_file_system(
+                inputs.clone(),
+                options("require"),
+            ),
         }
     }
-    Ok(())
 }
-#[derive(Default)]
-struct Imports {
-    dynamic: bool,
-}
-impl<'a> Visit<'a> for Imports {
-    fn visit_import_expression(&mut self, _: &oxc_ast::ast::ImportExpression<'a>) {
-        self.dynamic = true;
+impl rolldown_plugin::Plugin for DependencyPlugin {
+    fn register_hook_usage(&self) -> rolldown_plugin::HookUsage {
+        rolldown_plugin::HookUsage::ResolveId | rolldown_plugin::HookUsage::Load
     }
-}
-fn validate_imports(path: &str, code: &str) -> Result<()> {
-    let allocator = oxc_allocator::Allocator::default();
-    let source_type = oxc_span::SourceType::from_path(path).unwrap_or(oxc_span::SourceType::mjs());
-    let parsed = oxc_parser::Parser::new(&allocator, code, source_type).parse();
-    let mut visitor = Imports::default();
-    visitor.visit_program(&parsed.program);
-    if visitor.dynamic {
-        bail!("{path}: runtime import() is unsupported; use static imports");
+    fn name(&self) -> std::borrow::Cow<'static, str> {
+        "avtools-inputs".into()
     }
-    Ok(())
+    async fn resolve_id(
+        &self,
+        _ctx: &rolldown_plugin::PluginContext,
+        args: &rolldown_plugin::HookResolveIdArgs<'_>,
+    ) -> rolldown_plugin::HookResolveIdReturn {
+        if args.specifier.starts_with('\0') {
+            return Ok(None);
+        }
+        let parent = args
+            .importer
+            .and_then(|p| Path::new(p).parent())
+            .unwrap_or(&self.root);
+        let resolver = if args.kind == rolldown_common::ImportKind::Require {
+            &self.requires
+        } else {
+            &self.imports
+        };
+        let resolution = match resolver.resolve(parent,args.specifier) {
+            Ok(value) => value,
+            Err(oxc_resolver::ResolveError::Ignored(_)) => return Ok(Some(rolldown_plugin::HookResolveIdOutput::from_id("\0avtools-empty"))),
+            Err(e) => return Err(self.failure(format!("Cannot resolve {} from {}: {e}. Install dependencies with your package manager; Node built-ins have no TD runtime implementation.",args.specifier,parent.display()))),
+        };
+        let mut output = rolldown_plugin::HookResolveIdOutput::from_id(
+            resolution.full_path().to_string_lossy().into_owned(),
+        );
+        output.package_json_path = resolution
+            .package_json()
+            .map(|p| p.path().to_string_lossy().into_owned());
+        Ok(Some(output))
+    }
+    async fn load(
+        &self,
+        _ctx: rolldown_plugin::SharedLoadPluginContext,
+        args: &rolldown_plugin::HookLoadArgs<'_>,
+    ) -> rolldown_plugin::HookLoadReturn {
+        if args.id == "\0avtools-empty" {
+            return Ok(Some(rolldown_plugin::HookLoadOutput {
+                code: "module.exports = {};".into(),
+                ..Default::default()
+            }));
+        }
+        if args.id.starts_with('\0') {
+            return Ok(None);
+        }
+        if args.id.ends_with(".d.ts") || args.id.ends_with(".d.mts") || args.id.ends_with(".d.cts")
+        {
+            return Err(self.failure(format!("{} is declarations only; use type-only imports. For runtime functions import the package implementation, not a declaration file.",args.id)));
+        }
+        Ok(Some(rolldown_plugin::HookLoadOutput {
+            code: self
+                .inputs
+                .text(Path::new(args.id))
+                .map_err(|e| self.failure(format!("Cannot load {}: {e}", args.id)))?
+                .into(),
+            ..Default::default()
+        }))
+    }
 }

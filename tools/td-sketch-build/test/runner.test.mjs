@@ -34,7 +34,7 @@ test('callbacks, unchanged outputs, transitive helpers, and last-good build on e
   await writeFile(resolve(p.root,'sketches/a.ts'),'import {readFile} from "node:fs"; export function draw(){ return readFile; }');
   await assert.rejects(buildProject(p,quiet),/node:fs/);assert.equal(await bundle(p),good);
   await writeFile(resolve(p.root,'sketches/a.ts'),'import {launch} from "@avtools/core-timing"; export function draw(){return launch;}');
-  await assert.rejects(buildProject(p,quiet),/host.timing/);assert.equal(await bundle(p),good);
+  await buildProject(p,quiet);assert.match(await bundle(p),/TimeScheduler/);
   await writeFile(resolve(p.root,'sketches/a.ts'),'export function draw(){return document.title;}');
   await assert.rejects(buildProject(p,quiet),/document is unavailable/);
   await writeFile(resolve(p.root,'sketches/a.ts'),'export function draw(){return import("./shared.ts");}');

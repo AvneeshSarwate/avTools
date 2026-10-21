@@ -43875,7 +43875,9 @@ SOFTWARE.
 
 ---------------------------------------------------------
 
-===== wgsl_reflect =====
+
+===== wgsl_reflect (embedded shader generators) =====
+
 # MIT License
 
 Copyright (c) 2021 Brendan Duncan

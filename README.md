@@ -8,8 +8,14 @@ The repository also includes a **Node.js + Dawn implementation of P5GPU** and a
 integrations with runnable examples; start with the guides below when working on
 native graphics or TouchDesigner.
 
-### Why Deno (and notebooks?)
+TouchDesigner lifecycle and portable TimeContext imports: see [Build, Reload, and Reset](packages/native-webgpu/RELOAD.md). Each TOP/CHOP has independent Automatic Reload, Reload, and Reset controls.
+
+## Why Deno (and notebooks?)
 The purpose of integrating Deno is to allow for a first-class livecoding experience for sketching and prototyping. Deno comes out of the box with support for Jupyter Notebooks. checkout the examples in `apps/deno-notebooks/examples`
+
+TouchDesigner TOPs and CHOPs support per-instance **Wait for Current Result**
+(blocking or buffered execution with the same JavaScript API). See the
+[execution guide and ready-to-open example](packages/native-webgpu/EXECUTION_MODES.md).
 
 ## Native P5GPU: Node/Dawn and TouchDesigner
 
@@ -38,8 +44,8 @@ The [example README](packages/native-webgpu/native/td/example/README.md)
 explains the controls and the reusable `Sketch.tox` component.
 
 The TOP also bundles [TimeContext](packages/native-webgpu/TIMING.md): independent
-realtime scheduling continues while TD playback is paused, with managed cleanup
-on reload. Open [TimeContext.toe](packages/native-webgpu/native/td/example/TimeContext.toe)
+realtime scheduling continues while TD playback is paused. Reload creates a fresh
+JavaScript environment; synchronous cleanup is best effort. Open [TimeContext.toe](packages/native-webgpu/native/td/example/TimeContext.toe)
 for a ready-to-run timing and pulse example.
 
 The [avTools Channels CHOP](packages/native-webgpu/CHOP.md) runs independent
@@ -49,13 +55,19 @@ transforms and bulk arrays for XY point buffers. Open
 or use [the channels IDE project](apps/td-projects/channels/README.md). Its separate
 prebuilt plugin is selected by `prebuilt/macos-arm64/current-chop.txt`.
 
+TouchDesigner TOP/CHOP scripts support ordinary `console.log/info/warn/error/debug` with per-operator Info DAT history. See [logging controls](packages/native-webgpu/LOGGING.md) and [Logging.toe](packages/native-webgpu/native/td/logging-example/Logging.toe) for the ready-to-open example.
+
 For **TypeScript builds inside TouchDesigner**, open
 [the native project](apps/td-projects/native/project.toe) and edit its folder in
 VS Code. The TOP and CHOP share a native compiler/watcher: no Node, npm, or terminal
-watcher is required. Project Directory and Entry select the script; errors retain
+watcher is required. TypeScript File selects the entry directly; no manifest is
+needed. Create Template Project optionally scaffolds sources from the operator. Errors retain
 the last working bundle. Read [the native workflow](apps/td-projects/native/README.md)
 and [build-core guide](tools/td-native-build/README.md) for the local SDK, shader
 generators, CLI, and implementation details.
+The native builder also accepts installed npm packages, external shared sources and
+workspace symlinks. Its [TD type environment](packages/native-webgpu/TD_TYPES.md)
+provides runtime-accurate completion without default browser or Node globals.
 
 The earlier Node-based workflow remains supported. For that workflow, read the
 [`apps/td-projects` workflow guide](apps/td-projects/README.md) and start with

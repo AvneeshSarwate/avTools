@@ -1,4 +1,3 @@
-/// <reference lib="dom" />
 
 export interface UniformDescriptor {
   name: string;

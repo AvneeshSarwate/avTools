@@ -1,9 +1,21 @@
 {
   "extends": "./sdk/tsconfig.json",
   "compilerOptions": {
-    "target": "ES2022", "module": "ESNext", "moduleResolution": "Bundler",
-    "lib": ["ES2022", "DOM"], "strict": true, "noEmit": true,
-    "allowImportingTsExtensions": true, "skipLibCheck": true
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": [
+      "ES2022"
+    ],
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true
   },
-  "include": ["sketches/**/*.ts", "generated/**/*.ts", "sdk/wgsl.d.ts", "sdk/dependencies/@webgpu/types/dist/index.d.ts"]
+  "include": [
+    "sketches/**/*.ts",
+    "generated/**/*.ts",
+    "sdk/wgsl.d.ts",
+    "sdk/packages/native-webgpu/td-top-runtime.d.ts"
+  ]
 }

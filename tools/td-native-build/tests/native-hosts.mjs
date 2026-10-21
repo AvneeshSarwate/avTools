@@ -13,9 +13,10 @@ try {
   execFileSync('clang++',['-std=c++17','-isysroot',sdk,'-isystem',resolve(sdk,'usr/include/c++/v1'),resolve(tool,'tests',name+'.cpp'),'-L'+dirname(library),'-lavtools_build','-Wl,-rpath,'+dirname(library),'-o',executable],{stdio:'inherit'});
   return executable;
  };
- const project=resolve(temporary,'project');execFileSync(binary,['init',project],{stdio:'inherit'});
+ const project=resolve(temporary,'project');execFileSync(binary,['init',project],{stdio:'inherit'});copyFileSync(resolve(tool,'tests/legacy-project.json'),resolve(project,'avtools.json'));
  execFileSync(compile('c-host'),[project],{stdio:'inherit'});
- execFileSync(compile('file-host'),[resolve(temporary,'source.js')],{stdio:'inherit'});
+ execFileSync(compile('entry-host'),[resolve(temporary,'entry-project')],{stdio:'inherit'});
+ execFileSync(compile('file-host'),[resolve(temporary,'source.js').replace('/private/tmp/','/tmp/')],{stdio:'inherit'});
  const second=resolve(temporary,'libsecond_build.dylib');copyFileSync(library,second);
  execFileSync('install_name_tool',['-id',second,second]);
  execFileSync('codesign',['--force','--sign','-',second],{stdio:'inherit'});

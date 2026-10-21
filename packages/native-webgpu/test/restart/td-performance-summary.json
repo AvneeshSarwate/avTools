@@ -1,0 +1,16 @@
+{
+  "background": {
+    "median_cpu_ms": 0.08308349549770355,
+    "p95_cpu_ms": 0.24558299779891968
+  },
+  "channels": {
+    "median_cpu_ms": 0.4626460075378418,
+    "p95_cpu_ms": 0.6372920274734497
+  },
+  "eight_operators_median_cpu_ms": 2.324417009949684,
+  "simultaneous_reload_cpu_ms": 25.94433180987835,
+  "plugins": [
+    "AvToolsSketch-fb99bddcf431.plugin",
+    "AvToolsChannels-ab5e3d6d5fef.plugin"
+  ]
+}

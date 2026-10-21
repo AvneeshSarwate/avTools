@@ -20,8 +20,8 @@ notarized. Fonts, third-party notices, V8 and seedrandom licenses, and Syphon's
 framework resources ship inside it. Its on-disk payload is approximately 49 MiB.
 
 For TypeScript editing without any developer runtime installed, use the
-[native project](../../../apps/td-projects/native/README.md). Its Project Directory
-and Entry parameters use the signed CLI/shared library under
+[native project](../../../apps/td-projects/native/README.md). Its TypeScript File
+parameter and optional Create Template Project button use the signed CLI/shared library under
 `macos-arm64/native-build/<version>/`. Both plugins resolve that one canonical
 library so their compiler service and watchers are shared. The CLI itself is a
 standalone executable and embeds the SDK/template and TypeScript standard libraries.
@@ -65,3 +65,5 @@ no GPU device, renderer, or textures. See [CHOP.md](../CHOP.md).
 The current Channels bundle is approximately 45 MiB on disk (it omits the TOP's
 font payload). Keep it intact, including the Syphon framework used by the shared
 runtime library, even though the CHOP itself performs no graphics work.
+
+SDK 3 supports ordinary TimeContext imports. Current TOP/CHOP plugins include independent Automatic Reload, Reload, and Reset controls and full isolate retirement. See [the lifecycle guide](../RELOAD.md).

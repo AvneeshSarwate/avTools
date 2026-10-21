@@ -14,7 +14,7 @@ const cpp=chop?'native/td/SketchCHOP.cpp':'native/td/SketchTOP.cpp';
 const renderer=await build({entryPoints:[resolve(root,chop?'src/td-chop-runtime.ts':'src/td-runtime.ts')],write:false,bundle:true,platform:'neutral',format:'iife',target:'es2022',nodePaths:[resolve(root,'node_modules')]});
 const nativeBuildRoot=resolve(root,'prebuilt/macos-arm64/native-build');
 const nativeBuildTag=readFileSync(resolve(nativeBuildRoot,'current.txt'),'utf8').trim();
-const digest=createHash('sha256');digest.update(nativeBuildTag);digest.update(readFileSync(resolve(root,'native/td/NativeBuild.h')));
+const digest=createHash('sha256');digest.update(nativeBuildTag);digest.update(readFileSync(resolve(root,'native/td/Logging.h')));digest.update(readFileSync(resolve(root,'native/td/SourceActivation.h')));digest.update(readFileSync(resolve(root,'native/td/NativeBuild.h')));digest.update(readFileSync(resolve(root,'native/td/PulseName.h')));digest.update(readFileSync(resolve(root,'native/td/TDParameters.h')));
 function hashTree(path){for(const entry of readdirSync(path,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))){digest.update(entry.name);const child=resolve(path,entry.name);if(entry.isDirectory())hashTree(child);else if(entry.isFile())digest.update(readFileSync(child));}}
 for(const path of ['scripts/build-td-plugin.mjs',cpp,'native/embedded/Bridge.h','upstream/node-webgpu/third_party/dawn/out/avtools-v8/libavtools_runtime.dylib','dist/THIRD_PARTY_NOTICES.txt'])digest.update(readFileSync(resolve(root,path)));
 digest.update(seedrandomNotices(root));digest.update(renderer.outputFiles[0].contents);hashTree(resolve(root,'dist/fonts'));hashTree(resolve(root,'build/syphon-embedded/AVToolsSyphon.framework/Versions/A'));

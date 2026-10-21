@@ -1,0 +1,117 @@
+{
+  "nativeManifest": {
+    "avtoolsStartingCommit": "cd442de7730120f1fcd489db91b1bd26c090d9a5",
+    "node": "22.20.0",
+    "nodeWebgpu": "f2585d1b386b0f8df63b3d080131e35ab448a9bb",
+    "nodeWebgpuTag": "v0.6.1",
+    "dawn": "80ee0043018a51532ea0fa2e77496cc66634157e",
+    "depotTools": "36a8df4ad006eaa0572fb446edb8145fe5403592",
+    "webgpuPackage": "0.6.1",
+    "webgpuTypes": "0.1.72",
+    "target": "darwin-arm64",
+    "macOS": "15.7.7 (24G720)",
+    "gpu": "Apple M1 Max, 32 GPU cores",
+    "touchDesigner": "2025.31550",
+    "toolchain": {
+      "appleClang": "16.0.0 (clang-1600.0.26.6)",
+      "macOSSDK": "15.2",
+      "cmake": "4.4.3",
+      "ninja": "1.13.2",
+      "go": "1.26.6 (Dawn DEPS)",
+      "macOSSDKBuild": "24C94"
+    },
+    "patches": [
+      "0001-retain-instance-and-adapter-flags.patch",
+      "0002-native-extension-seam.patch"
+    ],
+    "syphon": {
+      "revision": "f4761677a45b8034a3c2069ec0f3d2553da81fba",
+      "shaderBuild": "Pinned upstream shader compiled with MTLDevice at runtime; see scripts/syphon.mjs",
+      "replacedBinary": "Repository v5 framework produced a confirmed use-after-free in SyphonCFMessageSender on disconnect",
+      "patches": [
+        "syphon-0001-metal-region.patch"
+      ]
+    },
+    "touchEngineSDK": "c3ceb1ab540db44dbfed4fb1bdb7bbfbb0305962",
+    "embedding": {
+      "v8": "44a3ea5dfba49555118a387c6ea31f57b89de180",
+      "chromiumBuild": "31b155b37d2a13483487177f1d8a8d39a83e072c",
+      "clangArchive": "https://commondatastorage.googleapis.com/chromium-browser-clang/Mac_arm64/clang-llvmorg-24-init-7747-g62397f8b-1.tar.xz",
+      "clangSHA256": "56e00034a68d5e8d939febafc1cd3677b1347741a033cb1c3e45badfceb024a1",
+      "patches": [
+        "embedding-clt-sdk.patch",
+        "0003-napi-v8-callback-lifetime.patch",
+        "0004-embedded-event-driven-wait.patch",
+        "0005-embedded-timer-deadlines.patch"
+      ],
+      "allocatorShim": false,
+      "partitionAllocAsMalloc": false
+    }
+  },
+  "revision": "410103693150f077c85154717a499ff9aef61fdc",
+  "bundleSHA256": "a8cd82b3bd9a625be9b05340a06a21ca9793ba978674ae217e0573dd0dba5721",
+  "recordedAt": "2026-10-21T03:59:08.202Z",
+  "host": "native",
+  "command": "upstream/node-webgpu/third_party/dawn/out/avtools-v8/embedded-probe",
+  "suites": [
+    {
+      "suite": "timecontext",
+      "host": "embedded V8 (native-manifest.json)",
+      "cases": [
+        "sequential_waitSec_basic",
+        "parallel_branchWait_ordering",
+        "deterministic_tie_break_same_deadline_is_stable",
+        "many_branchWaits_stress_join",
+        "microtask_yield_intermediate_scheduling",
+        "cancel_cascades_to_children_and_stops_ticks",
+        "barrier_loop_sync_melodyA_waits_for_melodyB",
+        "barrier_race_resolve_then_immediate_restart",
+        "tempo_change_shared_retimes_beat_wait",
+        "tempo_clone_child_isolated_from_root_changes",
+        "tempo_modulation_60fps_staircase_parity",
+        "tempo_modulation_ramp_chase_parity",
+        "wait0_is_valid_sync_point",
+        "frame_like_loop_waitSec_60fpsish",
+        "noteoff_handleCancel_guaranteed_on_cancel",
+        "waitSec_negative_and_NaN_are_safe",
+        "seeded_rng_forked_branches_repeatable",
+        "seeded_rng_shared_stream_deterministic_under_tie_break",
+        "barrier_start_adopts_in_progress_cycle",
+        "barrier_await_on_never_started_key_free_runs",
+        "cancelSafe_settles_awaiting_parent_with_value"
+      ],
+      "elapsedMs": 13397.459499999999,
+      "pass": true
+    },
+    {
+      "suite": "timecontext",
+      "host": "embedded V8 (native-manifest.json)",
+      "cases": [
+        "sequential_waitSec_basic",
+        "parallel_branchWait_ordering",
+        "deterministic_tie_break_same_deadline_is_stable",
+        "many_branchWaits_stress_join",
+        "microtask_yield_intermediate_scheduling",
+        "cancel_cascades_to_children_and_stops_ticks",
+        "barrier_loop_sync_melodyA_waits_for_melodyB",
+        "barrier_race_resolve_then_immediate_restart",
+        "tempo_change_shared_retimes_beat_wait",
+        "tempo_clone_child_isolated_from_root_changes",
+        "tempo_modulation_60fps_staircase_parity",
+        "tempo_modulation_ramp_chase_parity",
+        "wait0_is_valid_sync_point",
+        "frame_like_loop_waitSec_60fpsish",
+        "noteoff_handleCancel_guaranteed_on_cancel",
+        "waitSec_negative_and_NaN_are_safe",
+        "seeded_rng_forked_branches_repeatable",
+        "seeded_rng_shared_stream_deterministic_under_tie_break",
+        "barrier_start_adopts_in_progress_cycle",
+        "barrier_await_on_never_started_key_free_runs",
+        "cancelSafe_settles_awaiting_parent_with_value"
+      ],
+      "elapsedMs": 13420.056375,
+      "pass": true
+    }
+  ],
+  "pass": true
+}

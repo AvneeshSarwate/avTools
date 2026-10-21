@@ -4,13 +4,14 @@
 #include <thread>
 #include <v8.h>
 #include "HostLoop.h"
+#include "LogSink.h"
 #include "src/dawn/node/napi_v8/napi_v8.h"
 
 namespace avtools {
 // One owner thread per isolate. No Node runtime or process-level exit API.
 class Runtime {
  public:
-  explicit Runtime(std::shared_ptr<Wake> wake = std::make_shared<Wake>());
+  explicit Runtime(std::shared_ptr<Wake> wake = std::make_shared<Wake>(), std::shared_ptr<LogSink> logs = {}, uint64_t logGeneration = 0);
   ~Runtime();
   Runtime(const Runtime&) = delete;
   Runtime& operator=(const Runtime&) = delete;
@@ -30,6 +31,8 @@ class Runtime {
   const std::string& error() const { return error_; }
  private:
   struct State;
+  std::shared_ptr<LogSink> logs_;
+  uint64_t logGeneration_=0;
   std::unique_ptr<State> state_;
   std::unique_ptr<Watchdog> watchdog_;
   std::shared_ptr<Wake> wake_;

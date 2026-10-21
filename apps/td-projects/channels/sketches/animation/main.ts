@@ -1,10 +1,11 @@
+import * as timing from '@avtools/core-timing';
 import type {Setup, OnCook, OnPulse} from '@avtools/native-webgpu/td-chop';
 
 // Module state belongs to this operator. Each copy has its own gain and tasks.
 let requested = false;
 export const setup: Setup = host => {
   host.outputs.set('gain', 1);
-  host.timing.launch(async ctx => {
+  timing.launch(async ctx => {
     while (true) {
       if (requested) {
         requested = false;

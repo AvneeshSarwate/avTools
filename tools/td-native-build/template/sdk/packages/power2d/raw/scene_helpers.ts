@@ -1,4 +1,3 @@
-/// <reference lib="dom" />
 
 import type { Power2DRenderable, Power2DScene } from './types.ts';
 

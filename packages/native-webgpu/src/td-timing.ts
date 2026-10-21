@@ -36,13 +36,10 @@ export class SketchLifetime {
   });
   cancelRoots(){for(const root of [...this.roots])root.cancel();this.roots.clear();}
   fail(error:unknown){if(!this.active||this.error)return;this.error=String((error as any)?.stack??error);this.run(()=>this.cancelRoots());g.__hostInvalidate(this.id);g.__hostCancelFrames(this.id);}
-  async dispose(){
+  dispose(){
     if(!this.active)return;
     this.disposing=true;
     this.run(()=>this.cancelRoots());
-    // A task boundary drains all cancellation microtasks before resource teardown.
-    // Cleanup that waits for unrelated external promises cannot delay reload forever.
-    await new Promise<void>(resolve=>g.__avNativeImmediate(resolve));
     for(const cleanup of this.cleanups.splice(0).reverse()){
       try {const result:any=this.run(cleanup);if(result&&typeof result.then==='function'){result.catch(()=>{});throw new Error('onDispose callbacks must be synchronous');}}
       catch(error){console.error('Sketch cleanup failed:',String(error));}

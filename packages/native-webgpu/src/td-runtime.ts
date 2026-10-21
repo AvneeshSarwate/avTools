@@ -12,7 +12,7 @@ const g=globalThis as any;
 Object.assign(g,nativeGPU.globals);
 const fonts:string[]=JSON.parse(__avFontsJSON);
 let device:GPUDevice, p:EmbeddedP5GPU|undefined, sketch:any, staging:GPUBuffer|undefined;
-let width=0,height=0,stride=0, priorSource:string|undefined, blocked=false, reloadError='';
+let width=0,height=0,stride=0, blocked=false;
 let images:{texture:GPUTexture}[]=[];
 let channels:{name:string,samples:Float32Array}[]=[],incomingChannels:typeof channels=[];
 let controlsMeta={sampleRate:0,startIndex:0};
@@ -43,27 +43,21 @@ g.__avRender=async()=>{
   const frame=JSON.parse(__avFrameJSON);
   try {
     if(!device)throw new Error('GPU initialization failed');
-    if(frame.reset||__avSource!==priorSource||width!==frame.width||height!==frame.height){
-      priorSource=__avSource;
-      const candidateLife=new SketchLifetime();
-      let next:EmbeddedP5GPU|undefined;
-      try {
-        const candidate=candidateLife.run(()=>new Function(`${__avSource}\n;return {setup:typeof setup==='function'?setup:undefined,draw:typeof draw==='function'?draw:undefined,onPulse:typeof onPulse!=='undefined'?onPulse:undefined};`)());
-        if(typeof candidate.draw!=='function')throw new Error('Sketch must define function draw(p, frame)');
-        next=new EmbeddedP5GPU(device,{width:frame.width,height:frame.height,sampleCount:1},fonts);
-        const guarded=candidateLife.guard(next);
-        const host=Object.freeze({device:candidateLife.guard(device),readFile:(path:string)=>candidateLife.run(()=>g.readFile(path)),timing:candidateLife.timing,onDispose:(callback:()=>void)=>candidateLife.onDispose(callback),chop,latestControls});
-        await candidateLife.run(()=>candidate.setup?.(guarded,host));
-        if(candidateLife.error)throw new Error(candidateLife.error);
-        await lifetime?.dispose();
-        p?.dispose();staging?.destroy();p=next;sketchP=guarded;sketch=candidate;lifetime=candidateLife;width=frame.width;height=frame.height;
-        stride=Math.ceil(width*4/256)*256;staging=device.createBuffer({size:stride*height,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});
-        blocked=false;reloadError='';g.__avPulseNames=JSON.stringify(candidate.onPulse&&typeof candidate.onPulse==='object'?Object.keys(candidate.onPulse).filter(name=>typeof candidate.onPulse[name]==='function'):[]);
-      }catch(error){await candidateLife.dispose();next?.dispose();reloadError=message(error);}
-
+    if(!lifetime){
+      lifetime=new SketchLifetime();
+      sketch=lifetime.run(()=>new Function(`${__avSource}\n;return {setup:typeof setup==='function'?setup:undefined,draw:typeof draw==='function'?draw:undefined,onPulse:typeof onPulse!=='undefined'?onPulse:undefined};`)());
+      if(typeof sketch.draw!=='function')throw new Error('Sketch must define function draw(p, frame)');
+      p=new EmbeddedP5GPU(device,{width:frame.width,height:frame.height,sampleCount:1},fonts);
+      sketchP=lifetime.guard(p);
+      const life=lifetime;
+      const host=Object.freeze({device:life.guard(device),readFile:(path:string)=>life.run(()=>g.readFile(path)),timing:life.timing,onDispose:(callback:()=>void)=>life.onDispose(callback),chop,latestControls});
+      await life.run(()=>sketch.setup?.(sketchP,host));
+      if(life.error)throw new Error(life.error);
+      width=frame.width;height=frame.height;stride=Math.ceil(width*4/256)*256;
+      staging=device.createBuffer({size:stride*height,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});
+      g.__avPulseNames=JSON.stringify(sketch.onPulse&&typeof sketch.onPulse==='object'?Object.keys(sketch.onPulse).filter(name=>typeof sketch.onPulse[name]==='function'):[]);
     }
-    if(!p||!sketch)throw new Error(reloadError||'No valid sketch');
-    if(width!==frame.width||height!==frame.height)throw new Error(reloadError||'Resize did not complete');
+    if(!p||!sketch)throw new Error('No valid sketch');
     if(lifetime?.error)throw new Error(lifetime.error);
     if(g.__avBackgroundError)throw new Error(g.__avBackgroundError);
     if(blocked)throw new Error('Draw stopped after an error; edit the source or reset');
@@ -89,14 +83,14 @@ g.__avRender=async()=>{
     syphon?.publish(texture,true,{x:0,y:0,width,height});
     const syphonStats=syphon?.stats();g.__avSyphonClients=Number(syphonStats?.hasClients??false);g.__avSyphonPublished=syphonStats?.published??0;g.__avSyphonDropped=syphonStats?.dropped??0;
     g.__avRendered=true;
-    if(frame.syphonOnly){g.__avDrawMs=g.hostNow()-drawStart;g.__avError=reloadError;return;}
+    if(frame.syphonOnly){g.__avDrawMs=g.hostNow()-drawStart;g.__avError='';return;}
     const encoder=device.createCommandEncoder();encoder.copyTextureToBuffer({texture},{buffer:staging!,bytesPerRow:stride},[width,height]);device.queue.submit([encoder.finish()]);
     g.__avSubmitted=true;g.__avDrawMs=g.hostNow()-drawStart;
     const readbackStart=g.hostNow();
     await staging!.mapAsync(GPUMapMode.READ);
     g.__avReadbackMs=g.hostNow()-readbackStart;
-    g.__avBytes=new Uint8Array(staging!.getMappedRange());g.__avHasFrame=true;g.__avError=reloadError;
+    g.__avBytes=new Uint8Array(staging!.getMappedRange());g.__avHasFrame=true;g.__avError='';
   }catch(error){g.__avError=message(error);}finally{g.__avDone=true;}
 };
 g.__avUnmap=()=>{g.__avBytes=null;if(staging?.mapState==='mapped')staging.unmap();};
-g.__avDispose=async()=>{g.__avDone=false;await lifetime?.dispose();g.__avUnmap();syphon?.dispose();for(const image of images)image.texture.destroy();images=[];p?.dispose();staging?.destroy();device?.destroy();g.__avDone=true;};
+g.__avDispose=()=>{g.__avDone=false;lifetime?.dispose();g.__avUnmap();syphon?.dispose();for(const image of images)image.texture.destroy();images=[];p?.dispose();staging?.destroy();device?.destroy();g.__avDone=true;};

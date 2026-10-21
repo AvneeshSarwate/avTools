@@ -369,23 +369,31 @@ function deriveSeed(parentSeed: string, forkIndex: number): string {
   return `${parentSeed}::fork:${forkIndex}`;
 }
 
+// Optional host capability: the embedded TD runtime has setImmediate but no MessageChannel.
+// Keep feature detection typed without requiring browser ambient declarations.
+type OptionalTaskHost = {
+  setImmediate?: (cb: () => void) => void;
+  MessageChannel?: new () => {
+    port1: { onmessage: (() => void) | null; start?(): void };
+    port2: { postMessage(value: unknown): void };
+  };
+};
+
 // A "macrotask yield" primitive.
 // This is the rigorous way to ensure the JS runtime drains the microtask queue to empty,
 // matching realtime behavior (microtask checkpoint after each timer callback).
 const createYieldToMacrotask = (
   setTimeoutFn: SetTimeoutFn,
 ): () => Promise<void> => {
-  const g = globalThis as typeof globalThis & {
-    setImmediate?: (cb: () => void) => void;
-  };
+  const g = globalThis as unknown as OptionalTaskHost;
 
   if (typeof g.setImmediate === "function") {
     const setImmediateFn = g.setImmediate;
     return () => new Promise<void>((res) => setImmediateFn(res));
   }
 
-  if (typeof MessageChannel !== "undefined") {
-    const mc = new MessageChannel();
+  if (typeof g.MessageChannel === "function") {
+    const mc = new g.MessageChannel();
     const q: Array<() => void> = [];
 
     mc.port1.onmessage = () => {
@@ -412,9 +420,7 @@ const createYieldToMacrotask = (
 const createScheduleMacrotask = (
   setTimeoutFn: SetTimeoutFn,
 ): (cb: () => void) => void => {
-  const g = globalThis as typeof globalThis & {
-    setImmediate?: (cb: () => void) => void;
-  };
+  const g = globalThis as unknown as OptionalTaskHost;
 
   // Node.js / some runtimes
   if (typeof g.setImmediate === "function") {
@@ -423,8 +429,8 @@ const createScheduleMacrotask = (
   }
 
   // Browsers / modern runtimes (fast, not clamped like setTimeout(0) often is)
-  if (typeof MessageChannel !== "undefined") {
-    const mc = new MessageChannel();
+  if (typeof g.MessageChannel === "function") {
+    const mc = new g.MessageChannel();
     const q: Array<() => void> = [];
     mc.port1.onmessage = () => {
       const fn = q.shift();

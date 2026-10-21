@@ -1,11 +1,15 @@
 # TouchDesigner sketch projects
 
+Current lifecycle: [Build, Reload, and Reset](../../packages/native-webgpu/RELOAD.md). Automatic Reload is per operator; Reload adopts available source, Reset restarts active source. Each activation creates a fresh isolate. SDK 3 supports ordinary TimeContext imports.
+
+
 Each subdirectory is a TD piece, with a `.toe`, multiple TypeScript sketches,
 project-local helpers/shaders, and one generated JavaScript bundle per sketch.
 
 For the native workflow, open **[native/project.toe](native/project.toe)** and
 open [its folder](native/README.md) in your IDE. TOP/CHOP operators compile and watch
-TypeScript themselves using Project Directory and Entry. The copied SDK provides
+TypeScript themselves using a TypeScript File per operator, without a manifest.
+Create Template Project optionally creates the SDK/config/starter sources from the Build page. The copied SDK provides
 IntelliSense immediately; there is no install step or external watcher. See the
 [native build guide](../../tools/td-native-build/README.md) for configuration and
 shader generation.
@@ -73,3 +77,16 @@ Set the corresponding TD CHOP's Output Channels to `x y`, Output Samples to
 `10000`, and Source File to `dist/motion.js`. Config output layouts are used by
 `npm run check`; they do not modify the TD network. Scalar control channels use
 the default sample count of 1. See the [CHOP API](../../packages/native-webgpu/CHOP.md).
+
+### Per-operator execution mode
+
+TOPs and CHOPs expose **Wait for Current Result** (`Samecook`). CHOP defaults on
+for same-cook transforms; TOP defaults off. Turn it off on a CHOP to let its timing
+worker run independently and return the latest complete channel buffer. Pending
+inputs can coalesce under load. The script API and bundler are unchanged, and
+switching modes preserves runtime state. Pre-trigger TOPs remain nonblocking.
+See [the execution guide and example](../../packages/native-webgpu/EXECUTION_MODES.md).
+
+The native workflow's SDK 3 supports normal installed npm imports and watched shared
+source/workspace links. Its [TD type environment](../../packages/native-webgpu/TD_TYPES.md)
+uses ES2022 plus the embedded host API; Node/browser globals are not enabled by default.

@@ -1,136 +1,128 @@
 # Native TypeScript builds for TouchDesigner
 
-`avtools-build` checks, bundles, generates shader wrappers, and watches TypeScript
-without Node, npm, Deno, or a compiler installed on the user's machine. The TOP and
-CHOP load the same native build library directly. A terminal watcher is optional.
-The original [Node runner](../td-sketch-build/README.md) remains available.
+Current lifecycle: [Build, Reload, and Reset](../../packages/native-webgpu/RELOAD.md). Automatic Reload is per operator; Reload adopts available source, Reset restarts active source. Each activation creates a fresh isolate. SDK 3 supports ordinary TimeContext imports.
 
-## Open and edit
 
-Open [the native example](../../apps/td-projects/native/project.toe) in TouchDesigner.
-Open that directory in VS Code and edit `sketches/`. Saving rebuilds and restarts
-the affected sketches automatically. State resets on successful replacement.
-Errors appear in each operator's Info DAT and warning; its last working script
-continues running. No setup command is required for the supplied project.
+The avTools TOP and CHOP compile and watch TypeScript inside the native plugin.
+No Node, npm, Deno, compiler installation or terminal watcher is needed for the
+supplied SDK. The [older Node runner](../td-sketch-build/README.md) remains available.
 
-To use a project on another operator, select the current prebuilt avTools TOP/CHOP
-and set its **Build** page:
+## Start in your own TD project
 
-- **Project Directory**: directory containing `avtools.json`.
-- **Entry**: a key in that file's `sketches` map.
-- **Automatic Builds**: rebuild on filesystem changes; turn off for manual builds.
-- **Build Project**: request a build explicitly.
+1. Load the current [prebuilt TOP or CHOP](../../packages/native-webgpu/prebuilt/README.md)
+   into your project. Keep its `.plugin` bundle and sibling `native-build/` distribution together.
+2. On its **Build** page, choose a **Template Directory**: a new folder, or your TD
+   project directory if none of the template's paths already exist there.
+3. Press **Create Template Project**. This creates a local SDK, `tsconfig.json`,
+   starter TOP/CHOP sources and a README. It selects the matching **TypeScript File**
+   on this operator, enables Automatic Builds, and configures the starter CHOP's
+   `value ticks` output channels and one output sample.
+4. Open that folder in VS Code and edit the sources. Saving rebuilds the affected
+   entries; successful changed bundles restart their instances.
 
-Automatic Builds is shared at the project level: any enabled subscriber keeps its
-watcher active. A manual subscriber still receives builds requested by another
-instance. Disable the toggle on every instance of that project for fully manual use.
+Creation is optional. For an existing TypeScript project, just select its entry
+file. Creation refuses collisions, including existing SDK directories and symlinks;
+it never replaces an existing project or silently upgrades its SDK. Unrelated
+files such as a `.toe` are preserved. Filesystem failures can leave a partial
+new template; diagnostics explain the failure. No `.toe` or plugin copy is generated
+by this button: the operator is already in your TD project.
 
-Project Directory takes precedence over Sketch DAT and Source File. Clear it to
-use those existing modes. For a CHOP, set Output Channels and Output Samples to
-match the entry's `outputs` and `samples`. These describe the runtime output shape;
-they do not dynamically create TD parameters.
+For a ready-to-open example, use [project.toe](../../apps/td-projects/native/project.toe).
 
-Compilation runs on a dedicated thread. Multiple instances of a project share the
-watcher and bundle data; their V8 state and timing tasks remain independent. There
-is one serialized build service per loaded compiler version, shared by TOP/CHOP.
-Builds finish while playback is paused; activation waits until the next cook. No
-filesystem callback calls TD or V8. Polling at cook boundaries uses a nonblocking
-lock attempt. Source File mode also watches its directory and reads changed files
-in the background, retaining the last complete file if temporarily removed.
+## Several sketches in one .toe
 
-## CLI and copying a template
+Each operator's **TypeScript File** points directly to a `.ts` entry. There is no
+manifest or bundle-path setup. For example:
 
-The signed macOS arm64 executable is in
-`packages/native-webgpu/prebuilt/macos-arm64/native-build/<version>/avtools-build`;
-`native-build/current.txt` identifies the version. It is standalone: copying just
-that executable is sufficient for CLI use. Keep its adjacent third-party notices
-when redistributing it.
+| Operator | TypeScript File |
+| --- | --- |
+| Background TOP | `sketches/background/main.ts` |
+| Orbit TOP | `sketches/orbit/main.ts` |
+| Channels CHOP | `sketches/channels/main.ts` |
+| Offset CHOP | `sketches/offset/main.ts` |
+
+The nearest enclosing `tsconfig.json` supplies types and import resolution. Entries
+can share ordinary relative imports, aliases, npm packages and workspace links.
+The native checker checks the selected entry and its dependency graph, plus the
+config's ambient declaration files. An unrelated entry's error does not block it;
+a broken shared helper affects every entry importing that helper. VS Code still
+checks the full project selected by its tsconfig. Use `import` for executable
+helpers; unrelated global-script `.ts` files are not implicit dependencies.
+
+TOP entries export `draw`, optionally `setup` and `onPulse`. CHOP entries export
+`setup` and/or `onCook`, optionally `onPulse`. The operator determines the target.
+CHOP Output Channels and Output Samples define the runtime schema; there is no
+manifest schema to keep in sync. Import runtime timing functions from `@avtools/core-timing`.
+
+One native service serializes compilation, and entries in the same project share
+its root filesystem watcher. Identical entry/target subscriptions share compiled
+results; each operator retains its own V8 state. Automatic Builds is shared among
+subscribers of the **same entry**. Build Script requests that entry explicitly.
+Compilation never runs in a cook. Builds finish while playback is paused, and the
+new script activates on its next cook. Errors preserve each entry's last working
+bundle and appear in the Info DAT and operator warning.
+
+TypeScript File takes precedence over other source modes. Clear it to use Sketch
+DAT or Source File. Source File still accepts prebuilt JavaScript and watches it.
+Older manifest projects remain supported on the **Legacy Build** page; leave those
+fields empty in new projects. They retain their original all-entry build behavior.
+
+## Types, dependencies and shaders
+
+SDK 3 gives the IDE and native checker ES2022 plus accurate TD declarations.
+See [TD types](../../packages/native-webgpu/TD_TYPES.md) for common/TOP profiles,
+type-only timing imports, separate Node tooling configs and ambient-type limits.
+Imported npm packages may use bundled types or ordinary `@types` dependencies.
+Install them using your own package manager; the native compiler does not install
+packages. It supports installed node_modules layouts including pnpm symlinks,
+package exports/imports, CommonJS/JSON, external sources and tsconfig aliases/extends.
+Yarn PnP, URL imports and `npm:` specifiers are outside this implementation.
+
+Dependencies must run with embedded V8/TD APIs. Node built-ins are bundle errors;
+no Node/browser/network APIs are added by importing a package. Safely guarded
+platform detection is allowed. SDK-private dependencies do not override npm
+versions installed in the user's project.
+
+Plain `.wgsl` imports become strings. Local `.material.wgsl`, `.strokeMaterial.wgsl`,
+`.fragFunc.wgsl` and `.compute.wgsl` sources generate typed wrappers under
+`generated/`, retaining project-relative shader directories. Only requested
+wrappers affect an entry's diagnostics/publication. The embedded QuickJS generators
+need no Node runtime. Keep generated wrappers out of source control.
+
+## CLI and caches
+
+The signed executable under `prebuilt/macos-arm64/native-build/<version>/` embeds
+the same template. `native-build/current.txt` identifies its distribution.
 
 ```sh
-avtools-build init /path/to/new-project
-avtools-build build /path/to/project
-avtools-build check /path/to/project
-avtools-build watch /path/to/project
+avtools-build init /path/to/project
+avtools-build build-file /path/to/project/sketches/background/main.ts top
+avtools-build check-file /path/to/project/sketches/channels/main.ts chop
+avtools-build watch-file /path/to/project/sketches/channels/main.ts chop
 ```
 
-`init` requires an empty directory and extracts the versioned, embedded template
-and SDK. Alternatively copy `apps/td-projects/native/`, excluding `.avtools/` and
-`dist/`. The SDK is explicit project data and never silently upgraded. To upgrade,
-initialize a separate directory and compare/copy its SDK deliberately.
+`check-file` checks types/generated shader types, without bundling or a runtime
+smoke test. Build results and last-good JavaScript live in
+`.avtools/entries/<entry-and-target-hash>/`, with status and dependency metadata.
+These are disposable implementation caches; operators don't need their paths.
+Legacy `build|check|watch PROJECT` commands still require `avtools.json`.
 
-`check` checks types/configuration and generated shader types without publishing
-runtime bundles. It does **not** run a GPU/runtime smoke test, unlike the old
-runner's `check` command. Developer runtime validation is described below.
+Checking and bundling share cached filesystem observations at original paths.
+Imported external dependencies and missing paths are watched; source edits during
+compilation discard stale results. A project lock serializes CLI/TD publication.
+Each bundle replacement is atomic; unchanged bytes do not restart scripts.
+Source maps are emitted, but V8 does not automatically apply them.
 
-The supported dependency scope is local source plus the supplied SDK. Dependencies
-must be copied into the project; symlinks and outside-project source are rejected.
-There is no automatic package installation. The relative `sdk/tsconfig.json`
-aliases work in the checker, bundler and ordinary VS Code TypeScript tooling.
-Full TypeScript checking uses pinned tsrs (TypeScript 7.1 development baseline);
-Rolldown/Oxc performs transformation and bundling. The IDE's TypeScript version may
-differ. Existing starter and generated shader contracts have conformance coverage.
+Compiler sessions release owned parser/program/checker regions between builds;
+[vendor notes](vendor/UPSTREAM.md) explain the audited ownership constraints.
+A compiler panic requires restarting the host. The last subscription joins the
+build service; compiler dylibs stay loaded for process-lifetime worker pools.
 
-## Project configuration
+## Build and validate the tool
 
-```json
-{
-  "version": 1,
-  "sketches": {
-    "background": {"entry": "sketches/background/main.ts", "target": "top"},
-    "channels": {"entry": "sketches/channels/main.ts", "target": "chop",
-                 "outputs": ["x", "y"], "samples": 10000}
-  },
-  "shaderDirs": ["sketches"],
-  "generatedDir": "generated",
-  "outDir": "dist"
-}
-```
-
-Paths resolve against the config directory. `samples` defaults to 1; CHOP schemas
-follow the runtime's 1024-channel / 1M-total-sample limits. TOP entries export
-`draw`, with optional `setup` and `onPulse`. CHOP entries export `setup` and/or
-`onCook`, with optional `onPulse`. Import host types and use `host.timing` for
-managed timing; bundling a separate timing runtime is rejected.
-
-Plain `.wgsl` imports become strings. The existing `.material.wgsl`,
-`.strokeMaterial.wgsl`, `.fragFunc.wgsl`, and `.compute.wgsl` conventions generate
-typed wrappers under `generated/`. They use the existing TypeScript generators,
-prebundled at release time and executed by embedded QuickJS. No Node fallback is
-used. Generated files remain visible to the IDE.
-
-## Publication and lifecycle
-
-Each build snapshots local input contents into a private session directory,
-generates/checks/bundles there, and verifies the source revision before publication.
-An edit during compilation discards the stale result and schedules another build.
-A project file lock also serializes a simultaneous CLI and TD build.
-All entries validate before any bundle is published; each file replacement is
-atomic, but different operators can observe revisions on different cooks.
-Identical output bytes do not touch the live file or restart its script.
-
-`.avtools/status.json` contains state, revision, diagnostics and timing;
-`.avtools/last-good.json` retains the last successful build. `dist/*.js.map` holds
-source maps for tooling; V8 does not automatically consume them.
-
-Compiler sessions do not persist across builds. The adapter owns config/parser
-regions, checker regions and programs, copies diagnostics, frees the program,
-releases regions, then resets compiler IDs. [Vendor notes](vendor/UPSTREAM.md)
-record the audited ownership constraints. One checker and two bundler workers
-limit background contention. A compiler panic poisons the service until the host
-restarts; user type/syntax errors are ordinary recoverable results.
-
-The last subscription closes project watchers and joins outstanding compilation.
-The dylib itself is pinned until process exit because the bundler's shared Rayon
-pool has process lifetime. Plugins resolve one canonical shared dylib; copying
-private, unrelated compiler libraries into each plugin is not the packaging model.
-The compiler uses ordinary pointers so distinct plugin versions can coexist
-without competing for the upstream compiler's fixed virtual-address reservation.
-
-## Build and validate the tool itself
-
-Development requires Rust 1.99.1, the macOS SDK, and the existing Node build
-dependencies **only for refreshing release assets**. Cargo.lock pins Rolldown
-1.2.14/Oxc 0.154 and the other dependencies; tsrs is vendored at a specific revision.
+Development needs Rust 1.99.1 and the macOS SDK. Node dependencies are used only
+for refreshing release assets and driving tests. Cargo.lock pins Rolldown/Oxc;
+tsrs is vendored. User projects need none of that tooling.
 
 ```sh
 node tools/td-native-build/scripts/prepare-assets.mjs
@@ -139,17 +131,16 @@ node tools/td-native-build/scripts/notices.mjs
 node tools/td-native-build/scripts/package.mjs
 node packages/native-webgpu/scripts/build-td-plugin.mjs
 node packages/native-webgpu/scripts/build-td-plugin.mjs --chop
-node --test tools/td-native-build/tests/behavior.mjs
+node --test tools/td-native-build/tests/behavior.mjs tools/td-native-build/tests/environment.mjs tools/td-native-build/tests/entry-files.mjs
 node tools/td-native-build/tests/native-hosts.mjs
-node tools/td-native-build/tests/native-runtime.mjs apps/td-projects/native
+node tools/td-native-build/tests/native-runtime.mjs apps/td-projects/native/sketches/background/main.ts top
+node tools/td-native-build/tests/native-runtime.mjs apps/td-projects/native/sketches/channels/main.ts chop "value ticks"
 ```
 
-Behavior tests use Node as the test driver but run the native executable with
-`PATH=/usr/bin:/bin`. Set `AVTOOLS_BUILD_BINARY` to test a release or packaged binary.
-The C hosts test subscription/result ownership and bundle-directory notifications.
-`tests/two-libraries.cpp` checks coexistence of independently loaded compiler
-versions; `tests/service-soak.cpp` measures complete repeated in-process builds.
-Add `--soak` to `native-hosts.mjs` for 200 complete builds and JSON memory samples.
-`avtools-build soak PROJECT COUNT [ALTERNATE_PROJECT]` measures repeated owned
-sessions in one process. See [validation](VALIDATION.md) for actual results and
-remaining limits. Builds on Windows are not supplied yet.
+Set `AVTOOLS_BUILD_BINARY` to test another compiler distribution. Native host tests
+cover C ABI ownership, entry subscriptions, independent error recovery and file
+notifications. Add `--soak` for 200 repeated builds. See [validation](VALIDATION.md).
+The shipped target is macOS Apple Silicon; Windows binaries are not supplied.
+
+Execution policy is independent of compilation: **Wait for Current Result** chooses
+blocking/buffered execution per operator. See [execution modes](../../packages/native-webgpu/EXECUTION_MODES.md).
