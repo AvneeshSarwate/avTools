@@ -24,10 +24,13 @@ for kind,marker,typ in [('top','current.txt',cplusplusTOP),('chop','current-chop
  folder=temporary/kind;folder.mkdir();(folder/'show.toe').write_text('existing TD project')
  node.par.Templatedir=os.path.relpath(folder,project.folder) # Exercise TD relative-path expansion too.
  node.par.Createtemplate.pulse();node.cook(force=True)
+ assert not (folder/'tsconfig.json').exists()
+ folder=folder/'avtools-project'
  assert (folder/'tsconfig.json').exists(),node.warnings()
+ assert '/sdk/' in (folder/'.gitignore').read_text()
  assert not (folder/'avtools.json').exists()
  assert Path(node.par.Typescript.eval()).is_file(),node.par.Typescript.eval()
- assert (folder/'show.toe').read_text()=='existing TD project'
+ assert (folder.parent/'show.toe').read_text()=='existing TD project'
  if kind=='chop':
   assert node.par.Outputchannels.eval()=='value ticks'
   assert node.par.Outputsamples.eval()==1
@@ -41,14 +44,14 @@ for kind,marker,typ in [('top','current.txt',cplusplusTOP),('chop','current-chop
  nodes.append(node)
  records.append({'template':kind,'relative_directory':True,'selected':str(Path(node.par.Typescript.eval()).relative_to(folder)),'preserved_existing_files':True})
 # Another entry under the CHOP's tsconfig; use the same helper but different output.
-other=temporary/'chop/sketches/other.ts'
+other=temporary/'chop/avtools-project/sketches/other.ts'
 other.write_text('import {scale} from "./channels/math.ts";export function onCook(h:any){h.outputs.set("value",scale(h.inputs.get("value"))+100);}')
 second=root.create(cplusplusCHOP,'second');second.par.plugin=str(prebuilt/(prebuilt/'current-chop.txt').read_text().strip());second.cook(force=True)
 second.par.Typescript=os.path.relpath(other,project.folder);second.par.Outputchannels='value ticks';second.inputConnectors[0].connect(controls)
 info=root.create(infoDAT,'info_second');info.par.op=second.name
 nodes.append(second)
-source=temporary/'chop/sketches/channels/main.ts';saved=source.read_text()
-helper=temporary/'chop/sketches/channels/math.ts';original_helper=helper.read_text()
+source=temporary/'chop/avtools-project/sketches/channels/main.ts';saved=source.read_text()
+helper=temporary/'chop/avtools-project/sketches/channels/math.ts';original_helper=helper.read_text()
 started=time.perf_counter();stage=0
 def onFrameStart(frame):
  global stage,started

@@ -1,0 +1,30 @@
+{
+  "passed": true,
+  "records": [
+    {
+      "kind": "top",
+      "created_child": true,
+      "preserved_parent": true,
+      "repeat_refused": true
+    },
+    {
+      "kind": "chop",
+      "created_child": true,
+      "preserved_parent": true,
+      "repeat_refused": true
+    },
+    {
+      "symlink_refused": true
+    }
+  ],
+  "examples": [
+    "starter_top",
+    "starter_chop",
+    "all_controls",
+    "buffers",
+    "inputs",
+    "timing"
+  ],
+  "samples": 10000,
+  "math_and_parameter_edits": true
+}

@@ -1,3 +1,4 @@
+import type {ParameterDefinitions, ParameterValues} from './td-parameters.d.ts';
 import type * as Timing from '../core-timing/mod.ts';
 /** One worker-owned state/timing context per CHOP, in both execution modes.
  * Wait for Current Result on: TD waits for the current accepted inputs/output.
@@ -5,7 +6,8 @@ import type * as Timing from '../core-timing/mod.ts';
  * Timers remain independent of TD cooking. A synchronous callback sees stable
  * inputs; a continuation after await can see a newer accepted snapshot.
  */
-export interface ChopHost {
+export interface ChopHost<P extends ParameterDefinitions = ParameterDefinitions> {
+  readonly params: ParameterValues<P>;
   readonly timing: typeof Timing;
   readonly inputs: {
     /** Latest worker-accepted input; default sample is the last sample. Missing data returns 0. */
@@ -34,10 +36,10 @@ export interface ChopHost {
  * TimeContext's realtime clocks still advance from monotonic wall time.
  */
 export interface ChopFrame { readonly frame: number; readonly absFrame: number; readonly rate: number; readonly time: number; readonly deltaSeconds: number; }
-export type Setup = (host: ChopHost) => void | Promise<void>;
+export type Setup<P extends ParameterDefinitions = ParameterDefinitions> = (host: ChopHost<P>) => void | Promise<void>;
 /** Runs once per accepted request, after frame-wait continuations and queued
  * pulses. Buffered mode may skip intermediate TD inputs. Must be synchronous.
  */
-export type OnCook = (host: ChopHost, frame: ChopFrame) => void;
+export type OnCook<P extends ParameterDefinitions = ParameterDefinitions> = (host: ChopHost<P>, frame: ChopFrame) => void;
 /** FIFO event name captured when Send Pulse is pressed; reads accepted inputs. */
-export type OnPulse = (name: string, host: ChopHost) => void;
+export type OnPulse<P extends ParameterDefinitions = ParameterDefinitions> = (name: string, host: ChopHost<P>) => void;

@@ -12,6 +12,7 @@ class SourceActivation {
   struct Choice {Version version;bool restart=false,control=false;};
  private:
   Version available,active;
+  std::optional<Choice> pinned;
   std::string selected;
   std::deque<std::optional<Version>> requests; // Reload=true; Reset=false. Never coalesce controls.
   bool automatic=true,started=false;
@@ -25,7 +26,11 @@ class SourceActivation {
     for(auto& request:requests)if(!request)request=available;
   }
   void request(bool reload){if(requests.size()>=16)throw std::runtime_error("Reload/Reset queue full (16)");requests.push_back(reload?std::nullopt:std::optional<Version>(active));}
+  Choice current()const{return {active,false,false};}
+  void pin(const Choice& choice){pinned=choice;pinned->restart=true;}
+  void reject(const Choice& choice){if(choice.control&&!requests.empty())requests.pop_front();pinned.reset();}
   Choice choose(){
+    if(pinned)return *pinned;
     if(!requests.empty()){
       if(!requests.front())requests.front()=available;
       const auto& version=*requests.front();
@@ -35,7 +40,7 @@ class SourceActivation {
     if((!started||automatic)&&!available.code.empty()&&(!started||!(available==active)))return {available,true,false};
     return {active,false,false};
   }
-  void accepted(const Choice& choice){active=choice.version;started=true;if(choice.control)requests.pop_front();}
+  void accepted(const Choice& choice){active=choice.version;started=true;pinned.reset();if(choice.control&&!requests.empty())requests.pop_front();}
   std::string status()const{return !requests.empty()?"Reload Pending (next accepted submission)":!started?"Waiting for source":!(available==active)?"Pending Reload":"Active (see runtime diagnostics)";}
   static std::string fingerprint(const Version& v){uint64_t hash=14695981039346656037ull;for(unsigned char c:v.code){hash^=c;hash*=1099511628211ull;}std::ostringstream s;s<<std::hex<<hash;return v.code.empty()?"none":s.str();}
   std::string identities()const{return "selected="+selected+"; available="+fingerprint(available)+"; active="+active.identity+"@"+fingerprint(active);}

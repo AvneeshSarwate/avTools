@@ -1,6 +1,6 @@
 # Native TypeScript builds for TouchDesigner
 
-Current lifecycle: [Build, Reload, and Reset](../../packages/native-webgpu/RELOAD.md). Automatic Reload is per operator; Reload adopts available source, Reset restarts active source. Each activation creates a fresh isolate. SDK 3 supports ordinary TimeContext imports.
+Current lifecycle: [Build, Reload, and Reset](../../packages/native-webgpu/RELOAD.md). Automatic Reload is per operator; Reload adopts available source, Reset restarts active source. Each activation creates a fresh isolate. The generated SDK supports ordinary TimeContext imports.
 
 
 The avTools TOP and CHOP compile and watch TypeScript inside the native plugin.
@@ -11,17 +11,17 @@ supplied SDK. The [older Node runner](../td-sketch-build/README.md) remains avai
 
 1. Load the current [prebuilt TOP or CHOP](../../packages/native-webgpu/prebuilt/README.md)
    into your project. Keep its `.plugin` bundle and sibling `native-build/` distribution together.
-2. On its **Build** page, choose a **Template Directory**: a new folder, or your TD
-   project directory if none of the template's paths already exist there.
+2. On its **Build** page, choose a **Template Parent Folder**, usually your TD
+   project directory. The button creates an `avtools-project/` child folder.
 3. Press **Create Template Project**. This creates a local SDK, `tsconfig.json`,
    starter TOP/CHOP sources and a README. It selects the matching **TypeScript File**
    on this operator, enables Automatic Builds, and configures the starter CHOP's
    `value ticks` output channels and one output sample.
-4. Open that folder in VS Code and edit the sources. Saving rebuilds the affected
+4. Open the new `avtools-project/` folder in VS Code and edit the sources. Saving rebuilds the affected
    entries; successful changed bundles restart their instances.
 
 Creation is optional. For an existing TypeScript project, just select its entry
-file. Creation refuses collisions, including existing SDK directories and symlinks;
+file. Creation refuses an existing `avtools-project` child, including symlinks;
 it never replaces an existing project or silently upgrades its SDK. Unrelated
 files such as a `.toe` are preserved. Filesystem failures can leave a partial
 new template; diagnostics explain the failure. No `.toe` or plugin copy is generated
@@ -144,3 +144,13 @@ The shipped target is macOS Apple Silicon; Windows binaries are not supplied.
 
 Execution policy is independent of compilation: **Wait for Current Result** chooses
 blocking/buffered execution per operator. See [execution modes](../../packages/native-webgpu/EXECUTION_MODES.md).
+
+## Template setup verification
+
+`tests/td-template-examples.py` runs in TD's Textport with `__file__` set to its
+absolute path. It creates an isolated test component and temporary source
+projects without saving the current `.toe`. Distribution 20 passed this test
+in TouchDesigner 2025.31550 on macOS: both template buttons create the child
+folder, preserve unrelated parent files, reject repeat/symlink collisions, and
+run the new controls, input, timing and 10,000-sample XY interpolation examples.
+Results are recorded in [`tests/results/template-examples-td.json`](tests/results/template-examples-td.json).

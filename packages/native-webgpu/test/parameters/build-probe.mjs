@@ -1,0 +1,12 @@
+import {execFileSync} from 'node:child_process';
+import {mkdirSync,writeFileSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
+import {resolve} from 'node:path';
+const root=fileURLToPath(new URL('../../',import.meta.url)), out=resolve(root,'artifacts/parameters');
+const bundle=resolve(out,'ParameterProbe.plugin');mkdirSync(bundle+'/Contents/MacOS',{recursive:true});
+writeFileSync(out+'/schema.txt','1\n');
+writeFileSync(bundle+'/Contents/Info.plist','<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>ParameterProbe</string><key>CFBundleIdentifier</key><string>org.avtools.parameterprobe</string><key>CFBundlePackageType</key><string>BNDL</string></dict></plist>');
+const sdk=execFileSync('xcrun',['--show-sdk-path'],{encoding:'utf8'}).trim();
+execFileSync('clang++',['-isysroot',sdk,'-isystem',sdk+'/usr/include/c++/v1','-std=c++17','-O2','-bundle','-arch','arm64','-mmacosx-version-min=15.0','-I/Applications/TouchDesigner.app/Contents/Resources/tfs/Samples/CPlusPlus/CHOP','-DPROBE_SCHEMA="'+out+'/schema.txt"',resolve(root,'test/parameters/ParameterProbe.cpp'),'-o',bundle+'/Contents/MacOS/ParameterProbe'],{stdio:'inherit'});
+execFileSync('codesign',['--force','--sign','-',bundle],{stdio:'inherit'});
+console.log(bundle);

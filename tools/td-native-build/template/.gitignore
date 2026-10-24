@@ -3,3 +3,6 @@
 /.avtools/
 /Backup/
 /CrashAutoSave.*
+# Generated SDK; restore from a fresh template made by the same plugin version.
+/sdk/
+/node_modules/

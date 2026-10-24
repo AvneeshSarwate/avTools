@@ -62,15 +62,19 @@ class NativeBuild {
   }
   void createTemplate(const std::string& resources,TD::OP_Context* context,bool chop){
     try {
-      TDParameters pars(context);const auto directory=pars.path("Templatedir");
-      if(directory.empty())throw std::runtime_error("Choose a Template Directory first");
+      TDParameters pars(context);const auto parent=pars.path("Templatedir");
+      if(parent.empty())throw std::runtime_error("Choose a Template Parent Folder first");
       if(!api){static API shared(resources);api=&shared;}
+      const auto directory=(std::filesystem::path(parent)/"avtools-project").string();
+      // Reserve our child directory atomically, including against existing symlinks.
+      // Never scaffold into the selected parent or merge with an existing project.
+      if(!std::filesystem::create_directory(directory))throw std::runtime_error("Template would replace "+directory+"; choose another parent folder. Existing files were not changed.");
       char message[4096]{};if(!api->init(directory.c_str(),message,sizeof(message)))throw std::runtime_error(message);
       clear();setupError.clear();
       pars.set("Typescript",(std::filesystem::path(directory)/"sketches"/(chop?"channels":"background")/"main.ts").string());
       if(chop){pars.set("Outputchannels","value ticks");pars.set("Outputsamples",1);}
       pars.set("Autobuild",1);
-      state="created";detail="Template created. Open its folder in your editor; saving rebuilds this entry.";
+      state="created";detail="Template created in "+directory+". Open this folder in your editor; saving rebuilds this entry.";
     }catch(const std::exception& e){setupError=e.what();}
   }
   void request(){setupError.clear();if(subscription)api->request(subscription);}
@@ -88,7 +92,7 @@ class NativeBuild {
     TD::OP_NumericParameter n;n.page="Build";n.name="Autobuild";n.label="Automatic Builds";n.defaultValues[0]=1;manager->appendToggle(n);
     n.name="Autoreload";n.label="Automatic Reload";manager->appendToggle(n);
     n.name="Buildproject";n.label="Build Script";n.defaultValues[0]=0;manager->appendPulse(n);
-    p.name="Templatedir";p.label="Template Directory";manager->appendFolder(p);
+    p.name="Templatedir";p.label="Template Parent Folder";manager->appendFolder(p);
     n.name="Createtemplate";n.label="Create Template Project";manager->appendPulse(n);
     // Keep saved older projects readable; new projects need no manifest.
     p.page="Legacy Build";p.name="Projectdir";p.label="Project Directory";manager->appendFolder(p);

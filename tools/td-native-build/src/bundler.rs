@@ -77,6 +77,19 @@ pub async fn bundle(
                 "\nfunction setup(p, host) { return __tdSketch.setup?.(p, host); }\nfunction draw(p, frame) { return __tdSketch.draw(p, frame); }\nconst onPulse = __tdSketch.onPulse;\n"
             };
             bytes.extend_from_slice(footer.as_bytes());
+            let path = root.join(&entry.entry);
+            let source = String::from_utf8(inputs.read(&path)?)?;
+            let metadata = crate::parameters::extract(&source, &path, chunk.exports.iter().any(|e| e.as_str() == "parameters"))?;
+            let mut annotated = format!("// avtools-parameters-v1:{metadata}\n").into_bytes();
+            annotated.extend(bytes);
+            bytes = annotated;
+        }
+        if asset.filename().ends_with(".map") {
+            let mut map: serde_json::Value = serde_json::from_slice(&bytes)?;
+            if let Some(mappings) = map.get_mut("mappings") {
+                *mappings = serde_json::Value::String(format!(";{}", mappings.as_str().unwrap_or("")));
+            }
+            bytes = serde_json::to_vec(&map)?;
         }
         files.push((asset.filename().to_string(), bytes));
     }

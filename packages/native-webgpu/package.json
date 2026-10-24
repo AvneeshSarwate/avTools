@@ -47,6 +47,7 @@
     "./td-sketch": {
       "types": "./td-sketch.d.ts"
     },
+    "./td-parameters": {"types": "./td-parameters.d.ts"},
     "./td-chop": {
       "types": "./td-chop.d.ts"
     },
@@ -66,10 +67,12 @@
     "README.md",
     "VALIDATION.md",
     "TOUCHDESIGNER.md",
+    "PARAMETERS.md",
     "td-sketch.d.ts",
     "TIMING.md",
     "TIMING_VALIDATION.md",
     "td-chop.d.ts",
+    "td-parameters.d.ts",
     "CHOP.md",
     "td-runtime.d.ts",
     "td-top-runtime.d.ts",

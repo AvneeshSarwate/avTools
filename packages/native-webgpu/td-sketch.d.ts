@@ -1,3 +1,4 @@
+import type {ParameterDefinitions, ParameterValues} from './td-parameters.d.ts';
 import type {P5GPU, P5GPUImage} from './td-types/p5.d.ts';
 import type * as Timing from '../core-timing/mod.ts';
 export interface SketchControls {
@@ -5,7 +6,8 @@ export interface SketchControls {
   readonly startIndex: number;
   readonly channels: ReadonlyArray<{readonly name: string; readonly samples: Float32Array}>;
 }
-export interface SketchHost {
+export interface SketchHost<P extends ParameterDefinitions = ParameterDefinitions> {
+  readonly params: ParameterValues<P>;
   readonly device: GPUDevice;
   /** Compatibility timing API with supervised launches. Prefer ordinary @avtools/core-timing imports. */
   readonly timing: typeof Timing;
@@ -20,7 +22,8 @@ export interface SketchHost {
   latestControls(): SketchControls;
   readFile(path: string): Uint8Array;
 }
-export interface SketchFrame {
+export interface SketchFrame<P extends ParameterDefinitions = ParameterDefinitions> {
+  readonly params: ParameterValues<P>;
   width: number;
   height: number;
   frame: number;
@@ -36,11 +39,11 @@ export interface SketchFrame {
   chop(name: string, sampleIndex?: number): number;
   top(index: number): P5GPUImage | undefined;
 }
-export type Setup = (p: P5GPU, host: SketchHost) => void | Promise<void>;
+export type Setup<P extends ParameterDefinitions = ParameterDefinitions> = (p: P5GPU, host: SketchHost<P>) => void | Promise<void>;
 /** Runs on this TOP's V8 worker. Wait for Current Result controls whether the
  * TD cook waits; Pre-trigger Mode always submits/collects without waiting.
  * Buffered TOPs skip input captures while busy; frame callbacks are not replayed.
  */
-export type Draw = (p: P5GPU, frame: SketchFrame) => void;
+export type Draw<P extends ParameterDefinitions = ParameterDefinitions> = (p: P5GPU, frame: SketchFrame<P>) => void;
 /** FIFO event name captured when Send Pulse is pressed; delivered on the next accepted render. */
-export type OnPulse = (name: string, p: P5GPU, frame: SketchFrame) => void;
+export type OnPulse<P extends ParameterDefinitions = ParameterDefinitions> = (name: string, p: P5GPU, frame: SketchFrame<P>) => void;

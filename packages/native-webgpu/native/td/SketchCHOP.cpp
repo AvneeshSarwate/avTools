@@ -3,6 +3,7 @@
 #include "Logging.h"
 #include "NativeBuild.h"
 #include "SourceActivation.h"
+#include "DeclaredParameters.h"
 #include "PulseName.h"
 #include <algorithm>
 #include <chrono>
@@ -28,11 +29,11 @@ std::vector<std::string> channelNames(const OP_Inputs* inputs){
   if(names.empty())throw std::runtime_error("Set at least one Output Channel");return names;
 }
 class SketchCHOP final:public CHOP_CPlusPlusBase {
-  AVSketch* runtime=nullptr;NativeBuild nativeBuild;Logging logging;SourceActivation activation;std::string selectionError;AVStats stats{};std::string error,warning;bool reset=false;std::vector<std::string> pulses;TD::OP_Context* context;AVChopDiagnostics diagnostics{};uint64_t localPulseOverflows=0;std::vector<float> values;
+  AVSketch* runtime=nullptr;NativeBuild nativeBuild;Logging logging;SourceActivation activation;DeclaredParameters declared;std::string selectionError;AVStats stats{};std::string error,warning;bool reset=false;std::vector<std::string> pulses;TD::OP_Context* context;AVChopDiagnostics diagnostics{};uint64_t localPulseOverflows=0;std::vector<float> values;
   double cookMs=0,outputFrame=-1;
  public:
-  explicit SketchCHOP(const OP_NodeInfo* info):context(info->context){}
-  ~SketchCHOP()override{avDestroy(runtime);}
+  explicit SketchCHOP(const OP_NodeInfo* info):declared(info->context,info->opId,resources()),context(info->context){declared.restore(activation,pulses);}
+  ~SketchCHOP()override{declared.preserve(activation,pulses);avDestroy(runtime);}
   void getGeneralInfo(CHOP_GeneralInfo* info,const OP_Inputs*,void*)override{info->cookEveryFrameIfAsked=true;info->timeslice=false;}
   bool getOutputInfo(CHOP_OutputInfo* info,const OP_Inputs* inputs,void*)override{
     info->numSamples=std::clamp(inputs->getParInt("Outputsamples"),1,1048576);info->startIndex=0;info->sampleRate=float(inputs->getTimeInfo()->rate);
@@ -45,6 +46,7 @@ class SketchCHOP final:public CHOP_CPlusPlusBase {
     logging.update(inputs);if(logging.takeRefresh()){for(int c=0;c<output->numChannels;c++)for(int n=0;n<output->numSamples;n++){size_t i=size_t(c)*output->numSamples+n;output->channels[c][n]=i<values.size()?values[i]:0.f;}return;}
     auto start=Clock::now();struct Finish{double& ms;Clock::time_point start;~Finish(){ms=std::chrono::duration<double,std::milli>(Clock::now()-start).count();}}finish{cookMs,start};
     for(int i=0;i<output->numChannels;i++)std::fill_n(output->channels[i],output->numSamples,0.f);
+    auto retain=[&](){for(int c=0;c<output->numChannels;c++)for(int n=0;n<output->numSamples;n++){size_t i=size_t(c)*output->numSamples+n;output->channels[c][n]=i<values.size()?values[i]:0.f;}};
     outputFrame=-1;warning.clear();
     try{
       auto names=channelNames(inputs);
@@ -59,7 +61,14 @@ class SketchCHOP final:public CHOP_CPlusPlusBase {
       else{const char* file=inputs->getParString("Sourcefile");if(file&&*file){identity="file:"+std::string(file);source=nativeBuild.readFile(resources(),file);}}
       }catch(const std::exception& e){selectionError=e.what();}
       activation.observe(identity,source,inputs->getParInt("Autoreload")!=0);
-      auto choice=activation.choose();source=choice.version.code;if(source.empty())return;reset=choice.restart;
+      auto choice=activation.choose();
+      if(choice.restart&&runtime&&!inputs->getParInt("Samecook")){
+        char detail[8192]{};avChopCollect(runtime,values.data(),values.size(),&stats,&diagnostics,detail,sizeof(detail));
+        if(diagnostics.busy||diagnostics.completed<diagnostics.submitted||diagnostics.pulseDepth){retain();return;}
+      }
+      if(!declared.prepare(activation,choice)){retain();return;}
+      source=choice.version.code;if(source.empty())return;reset=choice.restart;
+      auto parameterValues=declared.snapshot(inputs);
       char detail[8192]{};
       if(!runtime){runtime=avChopCreate(resources().c_str(),detail,sizeof(detail));if(!runtime)throw std::runtime_error(detail);logging.attach(runtime);}
       std::vector<AVChopChannel> channels;
@@ -67,14 +76,14 @@ class SketchCHOP final:public CHOP_CPlusPlusBase {
       std::vector<const char*> outputNames;for(auto& name:names)outputNames.push_back(name.c_str());
       values.resize(names.size()*output->numSamples);std::vector<const char*> events;for(auto& name:pulses)events.push_back(name.c_str());
       const auto* time=inputs->getTimeInfo();
-      AVChopFrame frame{source.c_str(),uint32_t(reset),time->frame,time->rate,time->deltaMS/1000,double(time->absFrame),channels.data(),uint32_t(channels.size()),outputNames.data(),uint32_t(names.size()),values.data(),events.data(),uint32_t(events.size()),uint32_t(output->numSamples)};
+      AVChopFrame frame{source.c_str(),uint32_t(reset),time->frame,time->rate,time->deltaMS/1000,double(time->absFrame),channels.data(),uint32_t(channels.size()),outputNames.data(),uint32_t(names.size()),values.data(),events.data(),uint32_t(events.size()),uint32_t(output->numSamples),parameterValues.c_str()};
       const auto priorRequest=diagnostics.submitted;
       const int ready=avChopExecute(runtime,&frame,inputs->getParInt("Samecook")!=0,&stats,&diagnostics,detail,sizeof(detail));if(diagnostics.submitted>priorRequest){activation.accepted(choice);reset=false;pulses.clear();}error=(!ready&&inputs->getParInt("Samecook"))?detail:"";warning=error.empty()?detail:"";
       if(ready){for(size_t i=0;i<names.size();i++)std::copy_n(values.data()+i*output->numSamples,output->numSamples,output->channels[i]);outputFrame=diagnostics.sourceFrame;}
     }catch(const std::exception& e){error=e.what();}
   }
   void setupParameters(OP_ParameterManager* manager,void*)override{
-    NativeBuild::parameters(manager);Logging::parameters(manager);
+    NativeBuild::parameters(manager);Logging::parameters(manager);declared.setup(manager);
     {OP_NumericParameter p;p.name="Samecook";p.label="Wait for Current Result";p.page="Script";p.defaultValues[0]=1;manager->appendToggle(p);}
     OP_StringParameter p;p.page="Script";p.name="Sketch";p.label="Sketch DAT";manager->appendDAT(p);
     p.name="Sourcefile";p.label="Source File";manager->appendFile(p);
@@ -86,12 +95,12 @@ class SketchCHOP final:public CHOP_CPlusPlusBase {
   void pulsePressed(const char* name,void*)override{if(logging.pulse(name,context))return;
     if(std::string(name)=="Createtemplate"){nativeBuild.createTemplate(resources(),context,true);return;}
     if(std::string(name)=="Buildproject"){nativeBuild.request();return;}
-    if(std::string(name)=="Sendpulse"){
-      try{if(pulses.size()>=256){++localPulseOverflows;throw std::runtime_error("Pulse queue full (256); event rejected");}pulses.push_back(capturePulseName(context));}
+    if(std::string(name)=="Sendpulse"||declared.pulse(name)){
+      try{if(pulses.size()>=256){++localPulseOverflows;throw std::runtime_error("Pulse queue full (256); event rejected");}pulses.push_back(declared.pulse(name)?name:capturePulseName(context));}
       catch(const std::exception& e){error=e.what();}
     }else if(std::string(name)=="Reload"||std::string(name)=="Reset"){try{activation.request(std::string(name)=="Reload");}catch(const std::exception& e){error=e.what();}}
   }
-  void getWarningString(OP_String* value,void*)override{auto buildWarning=nativeBuild.warning();if(buildWarning.empty())buildWarning=selectionError;value->setString(buildWarning.empty()?warning.c_str():buildWarning.c_str());}
+  void getWarningString(OP_String* value,void*)override{auto buildWarning=nativeBuild.warning();if(buildWarning.empty())buildWarning=selectionError;if(buildWarning.empty())buildWarning=declared.warning();value->setString(buildWarning.empty()?warning.c_str():buildWarning.c_str());}
   void getErrorString(OP_String* value,void*)override{value->setString(error.c_str());}
   bool getInfoDATSize(OP_InfoDATSize* size,void*)override{return logging.size(size,context,5);}
   void getInfoDATEntries(int32_t index,int32_t,OP_InfoDATEntries* entries,void*)override{if(logging.row(index,entries,5))return;if(index>=3){entries->values[0]->setString(index==3?"reload_state":"source_identity");entries->values[1]->setString((index==3?activation.status():activation.identities()).c_str());return;}if(index==2){entries->values[0]->setString("execution");entries->values[1]->setString(diagnostics.blocking?"Blocking: waits for current inputs":"Buffered: latest complete output; pending inputs coalesce");return;}entries->values[0]->setString(index==0?"build_state":"build_diagnostics");entries->values[1]->setString(index==0?nativeBuild.status().c_str():nativeBuild.message().c_str());}

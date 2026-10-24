@@ -1,4 +1,5 @@
 import {EmbeddedP5GPU} from './embedded.ts';
+import {parameterSnapshot} from './td-parameters.ts';
 import {SketchLifetime} from './td-timing.ts';
 declare const nativeGPU:{create(flags:string[]):GPU,globals:Record<string,unknown>};
 declare const __avFontsJSON:string;
@@ -15,6 +16,7 @@ let device:GPUDevice, p:EmbeddedP5GPU|undefined, sketch:any, staging:GPUBuffer|u
 let width=0,height=0,stride=0, blocked=false;
 let images:{texture:GPUTexture}[]=[];
 let channels:{name:string,samples:Float32Array}[]=[],incomingChannels:typeof channels=[];
+let params=parameterSnapshot({});
 let controlsMeta={sampleRate:0,startIndex:0};
 const message=(error:any)=>String(error?.stack??error);
 g.__avDone=false;g.__avError='';g.__avBytes=null;g.__avPulseNames='[]';g.__avSyphonClients=0;g.__avSyphonPublished=0;g.__avSyphonDropped=0;
@@ -37,10 +39,10 @@ g.__avImage=(index:number,w:number,h:number)=>{
   if(!image||image.texture.width!==w||image.texture.height!==h){image?.texture.destroy();image={texture:device.createTexture({size:[w,h],format:'rgba8unorm',usage:GPUTextureUsage.COPY_DST|GPUTextureUsage.TEXTURE_BINDING})};images[index]=image;}
   device.queue.writeTexture({texture:image.texture},__avData,{bytesPerRow:w*4},[w,h]);
 };
-g.__avTrimImages=(count:number)=>{channels=incomingChannels;const f=JSON.parse(__avFrameJSON);controlsMeta={sampleRate:f.sampleRate,startIndex:f.startIndex};for(const image of images.splice(count))image.texture.destroy();};
+g.__avTrimImages=(count:number)=>{channels=incomingChannels;const f=JSON.parse(__avFrameJSON);params=parameterSnapshot(f.params);controlsMeta={sampleRate:f.sampleRate,startIndex:f.startIndex};for(const image of images.splice(count))image.texture.destroy();};
 g.__avRender=async()=>{
   g.__avDone=false;g.__avError='';g.__avHasFrame=false;g.__avRendered=false;g.__avDrawMs=0;g.__avReadbackMs=0;
-  const frame=JSON.parse(__avFrameJSON);
+  const frame=JSON.parse(__avFrameJSON);frame.params=params;
   try {
     if(!device)throw new Error('GPU initialization failed');
     if(!lifetime){
@@ -50,7 +52,7 @@ g.__avRender=async()=>{
       p=new EmbeddedP5GPU(device,{width:frame.width,height:frame.height,sampleCount:1},fonts);
       sketchP=lifetime.guard(p);
       const life=lifetime;
-      const host=Object.freeze({device:life.guard(device),readFile:(path:string)=>life.run(()=>g.readFile(path)),timing:life.timing,onDispose:(callback:()=>void)=>life.onDispose(callback),chop,latestControls});
+      const host=Object.freeze({get params(){return params;},device:life.guard(device),readFile:(path:string)=>life.run(()=>g.readFile(path)),timing:life.timing,onDispose:(callback:()=>void)=>life.onDispose(callback),chop,latestControls});
       await life.run(()=>sketch.setup?.(sketchP,host));
       if(life.error)throw new Error(life.error);
       width=frame.width;height=frame.height;stride=Math.ceil(width*4/256)*256;

@@ -22,7 +22,13 @@ class TDParameters {
   void (*clear)()=symbol<void(*)()>("PyErr_Clear");
   int gil;Object* tuple=nullptr;Object* node=nullptr;Object* pars=nullptr;
   void drop(Object* p){if(p)decref(p);}
-  [[noreturn]] void fail(const char* message){clear();throw std::runtime_error(message);}
+  [[noreturn]] void fail(const char* message){
+    Object *type=nullptr,*value=nullptr,*trace=nullptr;
+    symbol<void(*)(Object**,Object**,Object**)>("PyErr_Fetch")(&type,&value,&trace);
+    std::string detail;
+    if(value){auto description=symbol<Object*(*)(Object*)>("PyObject_Str")(value);const char* p=description?utf8(description):nullptr;if(p)detail=p;drop(description);}
+    drop(type);drop(value);drop(trace);clear();throw std::runtime_error(std::string(message)+(detail.empty()?"":": "+detail));
+  }
   std::string text(Object* value){const char* p=value?utf8(value):nullptr;std::string out=p?p:"";bool ok=p;drop(value);if(!ok)fail("Cannot evaluate TD parameter");return out;}
   void setValue(const char* name,Object* value){Object* par=pars?attr(pars,name):nullptr;int result=(par&&value)?setAttr(par,"val",value):-1;drop(par);drop(value);if(result<0)fail("Cannot set TD parameter");}
  public:
@@ -40,6 +46,21 @@ class TDParameters {
     Object* fn=attr(node,"evalExpression");Object* expression=string("me.cook(force=True)");
     Object* result=(fn&&expression)?callArgs(fn,expression,nullptr):nullptr;
     bool ok=result;drop(result);drop(expression);drop(fn);if(!ok)fail("Cannot refresh operator metadata");
+  }
+  std::string moduleCall(const std::string& loader,const char* method,const std::string& action,const std::string& payload){
+    auto dict=symbol<Object*(*)()>("PyDict_New")();
+    auto builtins=symbol<Object*(*)()>("PyEval_GetBuiltins")();
+    symbol<int(*)(Object*,const char*,Object*)>("PyDict_SetItemString")(dict,"__builtins__",builtins);
+    auto module=symbol<Object*(*)(const char*,int,Object*,Object*,void*)>("PyRun_StringFlags")(loader.c_str(),258,dict,dict,nullptr);
+    drop(dict);
+    Object* fn=module?attr(module,method):nullptr;
+    Object* a=string(action.c_str());Object* p=string(payload.c_str());
+    Object* result=fn?callArgs(fn,node,a,p,nullptr):nullptr;
+    drop(fn);drop(module);drop(a);drop(p);return text(result);
+  }
+  std::string expression(const std::string& code){
+    Object* fn=attr(node,"evalExpression");Object* argument=string(code.c_str());
+    Object* result=(fn&&argument)?callArgs(fn,argument,nullptr):nullptr;drop(argument);drop(fn);return text(result);
   }
   std::string path(const char* name){
     auto value=get(name);if(value.empty())return value;
