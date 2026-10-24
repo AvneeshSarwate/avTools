@@ -1,9 +1,9 @@
 # Copied into the pinned Dawn source tree by scripts/embedding.mjs.
 source_set("runtime") {
-  sources = [ "Runtime.cpp", "Runtime.h", "LogSink.h", "LogFormat.h", "HostLoop.cpp", "HostLoop.h", "TextCompat.cpp", "dawn_syphon.mm", "text_addon.cpp", "//src/dawn/node/Module.cpp", "//src/dawn/node/ManualConstructors.cpp" ]
+  sources = [ "IO.cpp", "IO.h", "Runtime.cpp", "Runtime.h", "LogSink.h", "LogFormat.h", "HostLoop.cpp", "HostLoop.h", "TextCompat.cpp", "dawn_syphon.mm", "text_addon.cpp", "//src/dawn/node/Module.cpp", "//src/dawn/node/ManualConstructors.cpp" ]
   cflags_objcc = [ "-fno-objc-arc" ]
   defines = [ "AVTOOLS_EMBEDDED=1", "AVTOOLS_EMBEDDED_SYPHON=1", "NAPI_VERSION=8", "DAWN_ENABLE_BACKEND_METAL" ]
-  include_dirs = [ "//third_party/v8/src", "$root_gen_dir/third_party/v8/src", "//", "$root_gen_dir/src/dawn/node", "$root_gen_dir/src", "@SYPHON_INCLUDE@" ]
+  include_dirs = [ "//third_party/v8/src", "$root_gen_dir/third_party/v8/src", "//", "$root_gen_dir/src/dawn/node", "$root_gen_dir/src", "@SYPHON_INCLUDE@", "@LIBUV_INCLUDE@" ]
   configs -= [ "//build/config/compiler:no_exceptions", "//build/config/compiler:enable_arc" ]
   configs += [ "//build/config/compiler:exceptions", "//src/dawn/node:common_config", "//src/tint:tint_public_config" ]
   deps = [ "//src/dawn/native:sources", "//src/dawn/node:dawn_node_binding", "//src/dawn/node/napi_v8:napi_v8", "//src/dawn:proc", "//third_party/v8/src:v8_libplatform" ]
@@ -13,7 +13,7 @@ executable("embedded-probe") {
   sources = [ "probe.cpp" ]
   include_dirs = [ "//" ]
   deps = [ ":runtime", "//src/dawn/node/napi_v8:napi_v8", "//third_party/v8/src:v8_libplatform" ]
-  libs = [ "@RUST_TEXT_LIBRARY@", "@SYPHON_LIBRARY@", "iconv" ]
+  libs = [ "@LIBUV_LIBRARY@", "@RUST_TEXT_LIBRARY@", "@SYPHON_LIBRARY@", "iconv" ]
   frameworks = [ "CoreFoundation.framework", "Security.framework" ]
 }
 
@@ -23,7 +23,7 @@ shared_library("avtools_runtime") {
   configs -= [ "//build/config/compiler:no_exceptions" ]
   configs += [ "//build/config/compiler:exceptions" ]
   deps = [ ":runtime", "//src/dawn/node/napi_v8:napi_v8", "//third_party/v8/src:v8_libplatform" ]
-  libs = [ "@RUST_TEXT_LIBRARY@", "@SYPHON_LIBRARY@", "iconv" ]
+  libs = [ "@LIBUV_LIBRARY@", "@RUST_TEXT_LIBRARY@", "@SYPHON_LIBRARY@", "iconv" ]
   frameworks = [ "CoreFoundation.framework", "Security.framework" ]
   ldflags = [ "-Wl,-rpath,@loader_path", "-Wl,-exported_symbols_list," + rebase_path("exports.txt", root_build_dir), "-Wl,-install_name,@loader_path/libavtools_runtime.dylib" ]
 }

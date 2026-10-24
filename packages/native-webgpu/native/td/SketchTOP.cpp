@@ -29,7 +29,7 @@ const std::string& resources(){static const std::string path=[](){Dl_info info{}
 class SketchTOP final:public TOP_CPlusPlusBase {
   struct Channel {std::string name;std::vector<float> samples;};
   struct Job {
-    AVFrame frame{};std::string source,syphonName,eventName,error,parameterValues;
+    AVFrame frame{};std::string baseDirectory,source,syphonName,eventName,error,parameterValues;
     std::vector<Channel> channels;std::vector<OP_SmartRef<OP_TOPDownloadResult>> downloads;
     std::vector<std::string> events;AVStats stats{};OP_SmartRef<TOP_Buffer> buffer;
     double inputDownloadMs=0,workerMs=0;int ready=0;
@@ -49,7 +49,7 @@ class SketchTOP final:public TOP_CPlusPlusBase {
   void render(Job& job){
     const auto start=Clock::now();job.startNs=std::chrono::duration_cast<std::chrono::nanoseconds>(start.time_since_epoch()).count();
     try {
-      auto& frame=job.frame;frame.source=job.source.c_str();frame.parametersJSON=job.parameterValues.c_str();frame.syphonName=job.syphonName.c_str();
+      auto& frame=job.frame;frame.baseDirectory=job.baseDirectory.c_str();frame.source=job.source.c_str();frame.parametersJSON=job.parameterValues.c_str();frame.syphonName=job.syphonName.c_str();
       std::vector<const char*> pulses;for(auto& name:job.events)pulses.push_back(name.c_str());frame.pulses=pulses.data();frame.pulseCount=uint32_t(pulses.size());
       std::vector<AVChannel> channels;
       for(const auto& channel:job.channels)channels.push_back({channel.name.c_str(),channel.samples.data(),static_cast<uint32_t>(channel.samples.size())});
@@ -114,7 +114,7 @@ class SketchTOP final:public TOP_CPlusPlusBase {
         else {const char* path=inputs->getParString("Sourcefile");if(path&&*path){identity="file:"+std::string(path);builtSource=nativeBuild.readFile(resources(),path);}}
       }
       }catch(const std::exception& e){selectionError=e.what();}
-      activation.observe(identity,builtSource,inputs->getParInt("Autoreload")!=0);
+      activation.observe(identity,builtSource,inputs->getParInt("Autoreload")!=0,[&]{return TDParameters(context).scriptDirectory(identity);});
       // A duplicated coordinator/pulse must not run draw or consume events twice.
       if(submitOnly){if(lastTriggerFrame==currentFrame)return;lastTriggerFrame=currentFrame;}
       std::unique_ptr<Job> ready;bool inFlight;
@@ -139,7 +139,7 @@ class SketchTOP final:public TOP_CPlusPlusBase {
       char detail[8192]{};
       if(!runtime){runtime=avCreateDeferred(resources().c_str(),detail,sizeof(detail));if(!runtime)throw std::runtime_error(detail);logging.attach(runtime);}
       auto job=std::make_unique<Job>();
-      auto choice=activation.choose();if(!declared.prepare(activation,choice))return;job->parameterValues=declared.snapshot(inputs);job->source=choice.version.code;if(job->source.empty())return;reset=choice.restart;
+      auto choice=activation.choose();if(!declared.prepare(activation,choice))return;job->parameterValues=declared.snapshot(inputs);job->baseDirectory=choice.version.baseDirectory;job->source=choice.version.code;if(job->source.empty())return;reset=choice.restart;
       auto& frame=job->frame;frame.width=std::clamp(inputs->getParInt("Width"),1,4096);frame.height=std::clamp(inputs->getParInt("Height"),1,4096);frame.reset=reset;
       job->syphonName=inputs->getParInt("Syphonenabled")?inputs->getParString("Syphonname"):"";frame.syphonOnly=inputs->getParInt("Syphononly");syphonOnly=frame.syphonOnly;
       job->events=pendingPulses;

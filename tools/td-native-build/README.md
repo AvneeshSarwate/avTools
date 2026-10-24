@@ -10,7 +10,7 @@ supplied SDK. The [older Node runner](../td-sketch-build/README.md) remains avai
 ## Start in your own TD project
 
 1. Load the current [prebuilt TOP or CHOP](../../packages/native-webgpu/prebuilt/README.md)
-   into your project. Keep its `.plugin` bundle and sibling `native-build/` distribution together.
+   into your project. Each complete `.plugin` bundle includes its statically linked builder; it can be copied independently.
 2. On its **Build** page, choose a **Template Parent Folder**, usually your TD
    project directory. The button creates an `avtools-project/` child folder.
 3. Press **Create Template Project**. This creates a local SDK, `tsconfig.json`,
@@ -126,7 +126,7 @@ tsrs is vendored. User projects need none of that tooling.
 
 ```sh
 node tools/td-native-build/scripts/prepare-assets.mjs
-cargo build --release --manifest-path tools/td-native-build/Cargo.toml -j 4
+MACOSX_DEPLOYMENT_TARGET=15.0 CFLAGS=-mmacosx-version-min=15.0 cargo +1.99.1 build --release --manifest-path tools/td-native-build/Cargo.toml -j 4
 node tools/td-native-build/scripts/notices.mjs
 node tools/td-native-build/scripts/package.mjs
 node packages/native-webgpu/scripts/build-td-plugin.mjs
@@ -154,3 +154,5 @@ in TouchDesigner 2025.31550 on macOS: both template buttons create the child
 folder, preserve unrelated parent files, reject repeat/symlink collisions, and
 run the new controls, input, timing and 10,000-sample XY interpolation examples.
 Results are recorded in [`tests/results/template-examples-td.json`](tests/results/template-examples-td.json).
+
+The developer CLI under `prebuilt/macos-arm64/native-build` remains available for tests and command-line builds. End-user plugin distributions no longer include or require that sibling directory.

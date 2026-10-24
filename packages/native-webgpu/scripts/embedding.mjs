@@ -47,12 +47,13 @@ run('git',['apply',retirementPatch],dawn);
 const patch=resolve(root,'patches/embedding-clt-sdk.patch');
 try{execFileSync('git',['apply','--reverse','--check',patch],{cwd:resolve(dawn,'build'),stdio:'pipe'});}
 catch{run('git',['apply',patch],resolve(dawn,'build'));}
+run(process.execPath,[resolve(root,'scripts/libuv.mjs')]);
 const target=resolve(dawn,'avtools/embedded');mkdirSync(target,{recursive:true});cpSync(resolve(root,'native/embedded'),target,{recursive:true});
 writeFileSync(resolve(target,'Polyfills.h'),'static const char* kPolyfills = R"AVTOOLS('+readFileSync(resolve(root,'native/embedded/polyfills.js'),'utf8')+')AVTOOLS";\n');
 cpSync(resolve(root,'build/syphon-embedded/AvToolsSyphonPrefix.h'),resolve(target,'AvToolsSyphonPrefix.h'));
 for(const name of ['dawn_syphon.mm','text_addon.cpp','text_engine.h'])cpSync(resolve(root,'native',name),resolve(target,name));
 const stagedGN=resolve(target,'BUILD.gn');
-writeFileSync(stagedGN,readFileSync(stagedGN,'utf8').replaceAll('@SYPHON_INCLUDE@',resolve(root,'build/syphon-embedded/include')).replaceAll('@SYPHON_LIBRARY@',resolve(root,'build/syphon-embedded/AVToolsSyphon.framework/Versions/A/AVToolsSyphon')).replaceAll('@SYPHON_FRAMEWORK_DIR@',resolve(root,'build/syphon-embedded')).replaceAll('@RUST_TEXT_LIBRARY@',resolve(root,'../../apps/deno-notebooks/native/text_engine/target/release/libtext_engine.a')));
+writeFileSync(stagedGN,readFileSync(stagedGN,'utf8').replaceAll('@SYPHON_INCLUDE@',resolve(root,'build/syphon-embedded/include')).replaceAll('@SYPHON_LIBRARY@',resolve(root,'build/syphon-embedded/AVToolsSyphon.framework/Versions/A/AVToolsSyphon')).replaceAll('@SYPHON_FRAMEWORK_DIR@',resolve(root,'build/syphon-embedded')).replaceAll('@LIBUV_INCLUDE@',resolve(root,'build/libuv/libuv-v'+manifest.libuv.version+'/include')).replaceAll('@LIBUV_LIBRARY@',resolve(root,'build/libuv/out/libuv.a')).replaceAll('@RUST_TEXT_LIBRARY@',resolve(root,'../../apps/deno-notebooks/native/text_engine/target/release/libtext_engine.a')));
 const top=resolve(dawn,'BUILD.gn');let gn=readFileSync(top,'utf8');
 if(!gn.includes('group("avtools_embedding")'))writeFileSync(top,gn+'\n# avTools embedding integration, sources staged from packages/native-webgpu/native/embedded.\ngroup("avtools_embedding") { deps = [ "//avtools/embedded:embedded-probe" ] }\n');
 const build=resolve(dawn,'out/avtools-v8');mkdirSync(resolve(build,'sdk'),{recursive:true});

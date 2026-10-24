@@ -60,7 +60,7 @@ class SketchCHOP final:public CHOP_CPlusPlusBase {
       else if(const auto* dat=inputs->getParDAT("Sketch")){identity="dat:"+std::string(inputs->getParString("Sketch"));nativeBuild.clearFile();if(dat->isTable)throw std::runtime_error("Sketch must be a Text DAT");if(dat->numRows&&dat->numCols)source=dat->getCell(0,0);}
       else{const char* file=inputs->getParString("Sourcefile");if(file&&*file){identity="file:"+std::string(file);source=nativeBuild.readFile(resources(),file);}}
       }catch(const std::exception& e){selectionError=e.what();}
-      activation.observe(identity,source,inputs->getParInt("Autoreload")!=0);
+      activation.observe(identity,source,inputs->getParInt("Autoreload")!=0,[&]{return TDParameters(context).scriptDirectory(identity);});
       auto choice=activation.choose();
       if(choice.restart&&runtime&&!inputs->getParInt("Samecook")){
         char detail[8192]{};avChopCollect(runtime,values.data(),values.size(),&stats,&diagnostics,detail,sizeof(detail));
@@ -76,7 +76,7 @@ class SketchCHOP final:public CHOP_CPlusPlusBase {
       std::vector<const char*> outputNames;for(auto& name:names)outputNames.push_back(name.c_str());
       values.resize(names.size()*output->numSamples);std::vector<const char*> events;for(auto& name:pulses)events.push_back(name.c_str());
       const auto* time=inputs->getTimeInfo();
-      AVChopFrame frame{source.c_str(),uint32_t(reset),time->frame,time->rate,time->deltaMS/1000,double(time->absFrame),channels.data(),uint32_t(channels.size()),outputNames.data(),uint32_t(names.size()),values.data(),events.data(),uint32_t(events.size()),uint32_t(output->numSamples),parameterValues.c_str()};
+      AVChopFrame frame{source.c_str(),uint32_t(reset),time->frame,time->rate,time->deltaMS/1000,double(time->absFrame),channels.data(),uint32_t(channels.size()),outputNames.data(),uint32_t(names.size()),values.data(),events.data(),uint32_t(events.size()),uint32_t(output->numSamples),parameterValues.c_str(),choice.version.baseDirectory.c_str()};
       const auto priorRequest=diagnostics.submitted;
       const int ready=avChopExecute(runtime,&frame,inputs->getParInt("Samecook")!=0,&stats,&diagnostics,detail,sizeof(detail));if(diagnostics.submitted>priorRequest){activation.accepted(choice);reset=false;pulses.clear();}error=(!ready&&inputs->getParInt("Samecook"))?detail:"";warning=error.empty()?detail:"";
       if(ready){for(size_t i=0;i<names.size();i++)std::copy_n(values.data()+i*output->numSamples,output->numSamples,output->channels[i]);outputFrame=diagnostics.sourceFrame;}

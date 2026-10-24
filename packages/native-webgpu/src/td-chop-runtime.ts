@@ -1,3 +1,4 @@
+import {createIO} from './td-io.ts';
 import {parameterSnapshot} from './td-parameters.ts';
 import {SketchLifetime} from './td-timing.ts';
 import type {ChopHost as PublicChopHost, ChopFrame} from '../td-chop.d.ts';
@@ -43,6 +44,7 @@ function createGeneration(): Generation {
     return Math.fround(value);
   };
   const host: ChopHost = Object.freeze({
+    ...createIO(life),
     get params() { return params; },
     timing: life.timing,
     inputs: Object.freeze({
@@ -97,7 +99,7 @@ g.__avChopCook = async () => {
       synchronous(current.life.run(() => current.program.onCook?.(current.host, frame)), 'onCook');
       snapshot(current);
     } catch (error) { current.life.fail(error); throw error; }
-  } catch (error) { g.__avError = message(error); }
+  } catch (error) { active?.life.fail(error); g.__avError = message(error); }
   finally { g.__avDone = true; }
 };
 function snapshot(current: Generation) {

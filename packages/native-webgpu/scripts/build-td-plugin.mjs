@@ -14,7 +14,7 @@ const cpp=chop?'native/td/SketchCHOP.cpp':'native/td/SketchTOP.cpp';
 const renderer=await build({absWorkingDir:root,entryPoints:[resolve(root,chop?'src/td-chop-runtime.ts':'src/td-runtime.ts')],write:false,bundle:true,platform:'neutral',format:'iife',target:'es2022',nodePaths:[resolve(root,'node_modules')]});
 const nativeBuildRoot=resolve(root,'prebuilt/macos-arm64/native-build');
 const nativeBuildTag=readFileSync(resolve(nativeBuildRoot,'current.txt'),'utf8').trim();
-const digest=createHash('sha256');for(const f of ['DeclaredParameters.h','DeclaredParameters.py'])digest.update(readFileSync(resolve(root,'native/td',f)));digest.update(nativeBuildTag);digest.update(readFileSync(resolve(root,'native/td/Logging.h')));digest.update(readFileSync(resolve(root,'native/td/SourceActivation.h')));digest.update(readFileSync(resolve(root,'native/td/NativeBuild.h')));digest.update(readFileSync(resolve(root,'native/td/PulseName.h')));digest.update(readFileSync(resolve(root,'native/td/TDParameters.h')));
+const digest=createHash('sha256');for(const f of ['DeclaredParameters.h','DeclaredParameters.py'])digest.update(readFileSync(resolve(root,'native/td',f)));digest.update(nativeBuildTag);digest.update(readFileSync(resolve(root,'../../tools/td-native-build/target/release/libavtools_build.a')));digest.update(readFileSync(resolve(root,'native/td/Logging.h')));digest.update(readFileSync(resolve(root,'native/td/SourceActivation.h')));digest.update(readFileSync(resolve(root,'native/td/NativeBuild.h')));digest.update(readFileSync(resolve(root,'native/td/PulseName.h')));digest.update(readFileSync(resolve(root,'native/td/TDParameters.h')));
 function hashTree(path){for(const entry of readdirSync(path,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))){digest.update(entry.name);const child=resolve(path,entry.name);if(entry.isDirectory())hashTree(child);else if(entry.isFile())digest.update(readFileSync(child));}}
 for(const path of ['scripts/build-td-plugin.mjs',cpp,'native/embedded/Bridge.h','upstream/node-webgpu/third_party/dawn/out/avtools-v8/libavtools_runtime.dylib','dist/THIRD_PARTY_NOTICES.txt'])digest.update(readFileSync(resolve(root,path)));
 digest.update(seedrandomNotices(root));digest.update(renderer.outputFiles[0].contents);hashTree(resolve(root,'dist/fonts'));hashTree(resolve(root,'build/syphon-embedded/AVToolsSyphon.framework/Versions/A'));
@@ -35,7 +35,9 @@ if(existsSync(finalBundle)){publish();process.exit(0);}
 const bundle=resolve(root,`build/.${name}-${tag}-${process.pid}.plugin`),mac=resolve(bundle,'Contents/MacOS'),resources=resolve(bundle,'Contents/Resources');
 mkdirSync(mac,{recursive:true});mkdirSync(resources,{recursive:true});
 cpSync(resolve(root,'native/td/DeclaredParameters.py'),resolve(resources,'DeclaredParameters.py'));
-writeFileSync(resolve(resources,'native-build.txt'),'../../../native-build/'+nativeBuildTag+'/libavtools_build.dylib\n');
+writeFileSync(resolve(resources,'native-build.txt'),'embedded-static\n');
+cpSync(resolve(nativeBuildRoot,nativeBuildTag,'THIRD_PARTY_NOTICES.txt'),resolve(resources,'compiler-THIRD_PARTY_NOTICES.txt'));
+cpSync(resolve(root,'build/libuv/libuv-v'+JSON.parse(readFileSync(resolve(root,'native-manifest.json'),'utf8')).libuv.version+'/LICENSE'),resolve(resources,'libuv-LICENSE'));
 writeFileSync(resolve(resources,chop?'chop.js':'renderer.js'),renderer.outputFiles[0].contents);
 writeFileSync(resolve(resources,'seedrandom-LICENSE.txt'),seedrandomNotices(root));
 if(!chop)cpSync(resolve(root,'dist/fonts'),resolve(resources,'fonts'),{recursive:true});
@@ -46,7 +48,8 @@ cpSync(resolve(root,'upstream/node-webgpu/third_party/dawn/out/avtools-v8/libavt
 writeFileSync(resolve(bundle,'Contents/Info.plist'),`<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>${name}</string><key>CFBundleIdentifier</key><string>org.avtools.${chop?'channels':'sketch'}</string><key>CFBundleName</key><string>${name}</string><key>CFBundlePackageType</key><string>BNDL</string><key>CFBundleVersion</key><string>1</string></dict></plist>`);
 const headers='/Applications/TouchDesigner.app/Contents/Resources/tfs/Samples/CPlusPlus/'+(chop?'CHOP':'CPUMemoryTOP');
 const sdk=execFileSync('xcrun',['--show-sdk-path'],{encoding:'utf8'}).trim();
-execFileSync('clang++',['-isysroot',sdk,'-isystem',sdk+'/usr/include/c++/v1','-std=c++17','-O2','-fvisibility=hidden','-bundle','-arch','arm64','-mmacosx-version-min=15.0','-I'+headers,resolve(root,cpp),'-L'+mac,'-lavtools_runtime','-o',resolve(mac,name)],{stdio:'inherit'});
+execFileSync('clang++',['-isysroot',sdk,'-isystem',sdk+'/usr/include/c++/v1','-std=c++17','-O2','-fvisibility=hidden','-bundle','-arch','arm64','-mmacosx-version-min=15.0','-I'+headers,resolve(root,cpp),'-L'+mac,'-lavtools_runtime','-Wl,-load_hidden,'+resolve(root,'../../tools/td-native-build/target/release/libavtools_build.a'),'-Wl,-dead_strip','-framework','Security','-framework','CoreFoundation','-framework','CoreServices','-liconv','-lresolv','-o',resolve(mac,name)],{stdio:'inherit'});
+execFileSync('strip',['-x',resolve(mac,name)],{stdio:'inherit'});
 execFileSync('codesign',['--force','--sign','-',resolve(mac,'AVToolsSyphon.framework')],{stdio:'inherit'});
 execFileSync('codesign',['--force','--sign','-',resolve(mac,'libavtools_runtime.dylib')],{stdio:'inherit'});
 execFileSync('codesign',['--force','--sign','-',bundle],{stdio:'inherit'});

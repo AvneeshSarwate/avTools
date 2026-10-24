@@ -9,7 +9,7 @@ function put(root,file,text){const p=resolve(root,file);mkdirSync(dirname(p),{re
 function fixture(t){const root=mkdtempSync('/private/tmp/avtools-entry-');t.after(()=>rmSync(root,{recursive:true,force:true}));execFileSync(binary,['init',root]);return root;}
 function build(file,target='chop',check=false){try{return JSON.parse(execFileSync(binary,[check?'check-file':'build-file',file,target],{encoding:'utf8',stdio:['ignore','pipe','pipe']}));}catch(e){return JSON.parse(e.stdout);}}
 function code(result){return readFileSync(result.changed.find(p=>p.endsWith('/sketch.js')),'utf8');}
-function value(code){let value;new Function(code+';return onCook')()({inputs:{get:()=>7},outputs:{set:(_n,v)=>value=v}});return value;}
+function value(code){let value;new Function(code+';return onCook')()({params:{Gain:1,Offset:0,Tickinterval:.01},inputs:{get:()=>7},outputs:{set:(_n,v)=>value=v}});return value;}
 test('manifest-free template builds entries independently with shared helpers, ambient types and separate caches',t=>{
  const root=fixture(t);assert.equal(existsSync(resolve(root,'avtools.json')),false);
  // Unrelated media is not captured as compiler input.

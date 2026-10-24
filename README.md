@@ -296,3 +296,5 @@ want to read it.
 
 TouchDesigner scripts can also [declare native operator controls](packages/native-webgpu/PARAMETERS.md)
 in TypeScript, with typed `host.params` / `frame.params` reads and named pulse events.
+
+The current TouchDesigner plugins are self-contained bundles with a static TypeScript compiler and libuv. Both TOP/CHOP hosts support [async file reads and OSC/UDP](packages/native-webgpu/IO.md); generated templates include examples, and [IO.toe](packages/native-webgpu/native/td/io-example/IO.toe) demonstrates them with TD OSC DATs.

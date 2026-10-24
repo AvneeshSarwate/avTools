@@ -44,3 +44,18 @@ test('generated XY interpolation runs over 10k samples and handles short inputs'
  host.params.Blend=1;cook(host);assert.equal(values.x[9999],12);assert.equal(values.y[9999],20);
  inputs[1].x=new Float32Array([8]);inputs[1].y=new Float32Array();cook(host);assert.equal(values.x[0],8);assert.equal(values.x[9999],0);assert.equal(values.y[0],0);
 });
+test('default entries expose working TOP and CHOP controls',t=>{
+ const root=fixture(t);
+ const top=build(resolve(root,'sketches/background/main.ts'),'top');
+ const chop=build(resolve(root,'sketches/channels/main.ts'),'chop');
+ assert.equal(top.state,'ready',JSON.stringify(top));assert.equal(chop.state,'ready',JSON.stringify(chop));
+ const source=r=>readFileSync(r.changed.find(p=>p.endsWith('/sketch.js')),'utf8');
+ const metadata=r=>JSON.parse(source(r).split('\n')[0].slice('// avtools-parameters-v1:'.length));
+ assert.equal(metadata(top).Size.default,70);assert.equal(metadata(chop).Gain.default,1);
+ const draw=new Function(source(top)+';return draw')();let circle,fill;
+ draw({background(){},noStroke(){},fill(...v){fill=v;},circle(...v){circle=v;}},{params:{Size:125,Color:[0,1,0],Speed:2},width:800,height:600,frame:30});
+ assert.deepEqual(circle,[400,300,125]);assert.deepEqual(fill,[0,255,0]);
+ const cook=new Function(source(chop)+';return onCook')();let value;
+ cook({params:{Gain:3,Offset:2},inputs:{get:()=>7},outputs:{set:(_name,v)=>{value=v;}}});
+ assert.equal(value,44);
+});
