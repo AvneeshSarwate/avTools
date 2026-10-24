@@ -34,12 +34,10 @@ The `.plugin` items are macOS bundles: keep each entire bundle intact. The sibli
 template. Keep it next to the plugins. The command-line executable is optional
 for GUI use, but copying the complete folder is simplest.
 
-If you downloaded the **repository** instead of the clean distribution, the
-plugins are under `packages/native-webgpu/prebuilt/macos-arm64`. That directory
-contains older versions too. `current.txt` names the current TOP bundle;
-`current-chop.txt` names the current CHOP bundle. Copy those two bundles and the
-`native-build` folder into your project's `Plugins` folder, plus this README.
-Versioned bundle names work just as well; select those names in step 2.
+If you downloaded the **repository**, copy the entire
+`apps/td-projects/Plugins` folder beside your saved `.toe`. It contains the current
+TOP, CHOP, and required TypeScript builder. Use a project-local copy; this folder
+is refreshed by native plugin builds.
 
 ## 2. Load your first operator
 
@@ -66,15 +64,14 @@ name to appear in the operator creation dialog first. See Derivative's
 
 ## 3. Generate your editable TypeScript project
 
-1. On the operator's **Build** page, set **Template Directory** to a new folder
-   named `Code` inside `MyProject`. You may create an empty `Code` folder in Finder
-   first and select it with the folder chooser.
-2. Press **Create Template Project**. Only press this once for this code folder.
-   It writes the SDK, `tsconfig.json`, README and starter sketches. It refuses to
-   overwrite template files that already exist.
+1. On the operator's **Build** page, set **Template Parent Folder** to `MyProject`
+   (the folder containing your `.toe`), or another existing folder.
+2. Press **Create Template Project**. It creates an `avtools-project/` subdirectory
+   containing the SDK, `tsconfig.json`, README and example sketches. It refuses an
+   existing child of that name, so repeated clicks cannot overwrite your edits.
 3. The operator automatically selects the matching **TypeScript File**:
-   `Code/sketches/background/main.ts` for the TOP, or
-   `Code/sketches/channels/main.ts` for the CHOP.
+   `avtools-project/sketches/background/main.ts` for the TOP, or
+   `avtools-project/sketches/channels/main.ts` for the CHOP.
 4. Keep **Automatic Builds** and **Automatic Reload** on.
 5. Start TD's timeline playback and enable the node's viewer if needed. The TOP
    starter draws an orange circle. The CHOP starter has `value` and `ticks`
@@ -87,7 +84,7 @@ there is no terminal command or watcher process to start.
 
 ## 4. Edit in VS Code
 
-In VS Code choose **File → Open Folder** and open **Code** (the folder containing
+In VS Code choose **File → Open Folder** and open **avtools-project** (the folder containing
 `tsconfig.json`). Open `sketches/background/main.ts`. Change the circle's size or
 the `p.fill(...)` color and save. After a successful build, TD restarts this
 sketch and displays the change. Local variables and timing tasks start fresh.
@@ -104,17 +101,17 @@ own package manager; the supplied libraries need no installation.
 ## 5. Add another sketch or a CHOP
 
 Create another CPlusPlus TOP or CHOP and load the corresponding plugin as in
-step 2. On **Build → TypeScript File**, select another entry in the **same Code
+step 2. On **Build → TypeScript File**, select another entry in the **same avtools-project
 folder**. Do not generate the template again. Every operator points directly to
 its own `.ts` entry; there is no manifest or bundle filename to configure.
 
 For example, duplicate `sketches/background` as `sketches/second-image` in VS Code,
-then select `Code/sketches/second-image/main.ts` on the second TOP. Helpers can be
+then select `avtools-project/sketches/second-image/main.ts` on the second TOP. Helpers can be
 shared with normal imports. Two nodes may also use the same entry: their running
 state is independent.
 
 To use the existing CHOP starter on a second operator, select
-`Code/sketches/channels/main.ts`, then set **Script → Output Channels** to
+`avtools-project/sketches/channels/main.ts`, then set **Script → Output Channels** to
 `value ticks` and **Output Samples** to `1`. These are set automatically only
 on the CHOP that creates a template. To test an input, create a **Constant CHOP**,
 set its first channel's name to `value` and value to `0.25`, and wire its output
@@ -147,9 +144,9 @@ should be `0.5`. Keep **Wait for Current Result** on for same-cook transforms.
   complete extracted bundles; downloading individual files from inside a bundle
   will not reproduce the signed plugin.
 
-When sharing the project, include your `.toe`, `Plugins`, and `Code` folders.
+When sharing the project, include your `.toe`, `Plugins`, and `avtools-project` folders.
 Make plugin and TypeScript paths relative to the saved project folder (for
-example `Plugins/AvToolsSketch.plugin` and `Code/sketches/background/main.ts`)
+example `Plugins/AvToolsSketch.plugin` and `avtools-project/sketches/background/main.ts`)
 before moving it. Include any additional assets your sketches read.
 
 ## Download and packaging notes
@@ -164,8 +161,59 @@ GitHub's **Code → Download ZIP** instead downloads the whole source repository
 The source `macos-arm64` folder retains older versions; the packaged ZIP contains
 only the current pair and their required builder version(s).
 
-Maintainers regenerate the checked-in ZIP with **`npm run td:pack`** from
-`packages/native-webgpu`, or `node packages/native-webgpu/scripts/package-td.mjs`
-from the repo root. This packages existing binaries without rebuilding them.
-Commit the ZIP alongside changes to its plugins, builder or this README. Node is
-needed only to run that maintainer command, not by plugin users.
+## Source, builds, and distribution versions
+
+Source lives in the avTools repository:
+
+- `packages/native-webgpu/native/td/`: C++ TOP and CHOP operators.
+- `packages/native-webgpu/native/embedded/`: embedded V8/Dawn runtime.
+- `packages/native-webgpu/src/td-runtime.ts` and `src/td-chop-runtime.ts`: script hosts.
+- `tools/td-native-build/`: TypeScript builder, embedded SDK, and template.
+- `packages/native-webgpu/prebuilt/macos-arm64/README.md`: source for this guide.
+- `packages/native-webgpu/scripts/package-td.mjs`: distribution assembly.
+
+From `packages/native-webgpu`, **`npm run td:build`** and
+**`npm run td:build:chop`** build their operator and then automatically refresh
+`apps/td-projects/Plugins` and the checked-in ZIP. The package contains the latest
+built version of each operator; rebuild both after shared runtime/compiler changes.
+The native build prerequisites are documented in `packages/native-webgpu/TOUCHDESIGNER.md`
+and `tools/td-native-build/README.md`.
+
+**`npm run td:pack`** refreshes the folder and ZIP from existing binaries without
+compiling native code. From the repo root, use
+`node packages/native-webgpu/scripts/package-td.mjs`.
+
+`Plugins/version.json` records a simple distribution number: **1, 2, 3, …**.
+It increments when shipped files change, including documentation or builder assets;
+identical packaging keeps the same number. It identifies the complete TOP/CHOP/builder
+set, independently of SDK versions and internal content-hashed bundle names.
+Keep this file when copying Plugins so you can identify a project's installed version.
+Commit the refreshed folder (including `version.json`) and ZIP together with source
+changes. Do not edit generated files in `apps/td-projects/Plugins` directly.
+
+To update an existing project, close it in TouchDesigner and replace its entire
+Plugins folder with the new copy. Node and native build tools are only needed by
+maintainers, not plugin users.
+
+## Controls declared in TypeScript
+
+New template projects include two extra examples:
+
+* TOP: select `sketches/parameters/picture.ts`, then open its **Controls** page.
+  Change Size, Color, Visible or Shape, or press Shuffle.
+* CHOP: select `sketches/parameters/channels.ts`, set Output Channels to `value`,
+  and use Gain, Duration and Animate on **Controls**.
+
+An exported literal `parameters` object defines these native controls. Read
+`host.params` (CHOP/setup/timing code) or `frame.params` (TOP draw). Named pulse
+buttons call `onPulse` with their name. Compatible parameter edits preserve TD
+values, expressions, exports and bindings; a changed declaration briefly restarts
+the native instance. Automatic Reload off keeps the old code and controls until
+Reload. Reset restarts the active version. Full API and reload behavior:
+[`PARAMETERS.md`](https://github.com/AvneeshSarwate/avTools/blob/main/packages/native-webgpu/PARAMETERS.md).
+
+The generated README lists examples for all declared control types, XY buffer
+interpolation, TOP/CHOP inputs and independent TimeContext animation. Its
+`.gitignore` excludes `sdk/`, caches and installed dependencies. To restore an
+ignored SDK after cloning, create a fresh template with the same plugin version
+in a different parent folder, then copy its `sdk/` into your code project.

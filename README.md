@@ -43,12 +43,14 @@ checked in, so a fresh clone does not need a native build for TD.
 The [example README](packages/native-webgpu/native/td/example/README.md)
 explains the controls and the reusable `Sketch.tox` component.
 
-For a new project, follow the [beginner GUI walkthrough](packages/native-webgpu/prebuilt/macos-arm64/README.md):
+For a new project, copy [apps/td-projects/Plugins](apps/td-projects/Plugins) beside
+your saved `.toe` and follow its [beginner GUI walkthrough](apps/td-projects/Plugins/README.md):
 load a plugin, generate a TypeScript template, and edit in VS Code. The
 [distribution guide](packages/native-webgpu/prebuilt/README.md) explains the
 [checked-in plugin ZIP](packages/native-webgpu/prebuilt/avtools-td-plugins-macos-arm64.zip),
-which includes these instructions alongside the binaries. Maintainers regenerate
-it with `npm run td:pack` in `packages/native-webgpu`.
+which includes these instructions alongside the binaries. Normal TOP/CHOP builds
+refresh the copyable folder and ZIP; `npm run td:pack` in `packages/native-webgpu`
+packages existing binaries. `Plugins/version.json` increments when shipped contents change.
 
 The TOP also bundles [TimeContext](packages/native-webgpu/TIMING.md): independent
 realtime scheduling continues while TD playback is paused. Reload creates a fresh
@@ -291,3 +293,6 @@ want to read it.
   — Oct 2025, single-component, may still be accurate.
 - [`webcomponents/README.md`](webcomponents/README.md) — short (15
   lines); components have grown since it was written.
+
+TouchDesigner scripts can also [declare native operator controls](packages/native-webgpu/PARAMETERS.md)
+in TypeScript, with typed `host.params` / `frame.params` reads and named pulse events.

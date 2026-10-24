@@ -31,6 +31,8 @@ node_modules/
 **/.nuxt/
 **/.svelte-kit/
 **/.cache/
+# Native TypeScript builder caches beside project configurations.
+.avtools/
 .playwright-cli/
 **/dist/
 **/build/
@@ -56,6 +58,7 @@ apps/deno-notebooks/.avtools-livecode-sessions/
 
 # Distributable TD runtime; fresh clones can run without native build tooling.
 !/packages/native-webgpu/prebuilt/macos-arm64/**/*.dylib
+!/apps/td-projects/Plugins/**/*.dylib
 
 # Python
 __pycache__/

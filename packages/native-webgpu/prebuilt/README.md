@@ -1,5 +1,9 @@
 # Prebuilt TouchDesigner plugin
 
+The ready-to-copy **[apps/td-projects/Plugins](../../../apps/td-projects/Plugins)**
+folder is checked in alongside the ZIP. Copy it beside your saved `.toe`.
+Its `version.json` tracks the complete distribution with an incrementing integer.
+
 New to TouchDesigner? Follow the [GUI setup walkthrough](macos-arm64/README.md).
 It also ships inside the clean distribution's `Plugins` folder.
 See [onboarding validation](ONBOARDING_VALIDATION.md) for the tested GUI flow.
@@ -44,6 +48,9 @@ ZIP. Extract it and follow `Plugins/README.md`; no repository checkout is needed
 From `packages/native-webgpu`, run **`npm run td:pack`** to regenerate
 `prebuilt/avtools-td-plugins-macos-arm64.zip`. From the repository root, the
 same command is `node packages/native-webgpu/scripts/package-td.mjs`.
+This also refreshes `apps/td-projects/Plugins`. Identical contents retain their
+version; changes to shipped files increment it. Commit the folder, version file,
+and ZIP together.
 It packages the current TOP, CHOP, each referenced compiler version, and the
 end-user README without rebuilding native code. Commit the regenerated ZIP
 whenever shipping plugins, compiler assets or the end-user guide change. Node is
@@ -56,6 +63,8 @@ Follow the [native build guide](../TOUCHDESIGNER.md#build-and-runtime-ownership)
 when changing the embedded runtime or C++ plugin. From `packages/native-webgpu`,
 `npm run td:build` creates a new versioned bundle here, updates `current.txt`, and
 also writes the ignored `build/td-plugin-path.txt` for native developer probes.
+Both `td:build` and `td:build:chop` then run packaging automatically, refreshing
+the copyable Plugins folder and ZIP from the current TOP/CHOP pair.
 It uses the packaged native compiler named by `native-build/current.txt`.
 To change that service, follow [its build guide](../../../tools/td-native-build/README.md)
 and package it before rebuilding both plugins. It does not rebuild Dawn/V8 itself; complete those prerequisite steps first.

@@ -1,9 +1,21 @@
 # TouchDesigner sketch projects
 
+For a new project, copy the entire **[Plugins](Plugins)** folder beside your saved
+`.toe`. It is the ready-to-use macOS Apple Silicon distribution, including both
+operators and the native TypeScript builder. Follow **[Plugins/README.md](Plugins/README.md)**
+for the GUI setup, template generation, source locations, and update instructions.
+No Node install or native build is needed to use it.
+
+[Plugins/version.json](Plugins/version.json) identifies the distribution with an
+incrementing integer. The normal TOP/CHOP build commands in `packages/native-webgpu`
+refresh this folder and the downloadable ZIP automatically; `npm run td:pack`
+refreshes them from existing binaries. Versions increment only when shipped contents
+change. Commit both outputs together. Edit their sources, not this generated folder.
+
 Current lifecycle: [Build, Reload, and Reset](../../packages/native-webgpu/RELOAD.md). Automatic Reload is per operator; Reload adopts available source, Reset restarts active source. Each activation creates a fresh isolate. SDK 3 supports ordinary TimeContext imports.
 
 
-Each subdirectory is a TD piece, with a `.toe`, multiple TypeScript sketches,
+The other subdirectories are TD pieces, each with a `.toe`, multiple TypeScript sketches,
 project-local helpers/shaders, and one generated JavaScript bundle per sketch.
 
 For the native workflow, open **[native/project.toe](native/project.toe)** and
@@ -90,3 +102,17 @@ See [the execution guide and example](../../packages/native-webgpu/EXECUTION_MOD
 The native workflow's SDK 3 supports normal installed npm imports and watched shared
 source/workspace links. Its [TD type environment](../../packages/native-webgpu/TD_TYPES.md)
 uses ES2022 plus the embedded host API; Node/browser globals are not enabled by default.
+
+## Script-declared controls
+
+TOP and CHOP TypeScript entries can export native parameter definitions. The new
+template includes `sketches/parameters/picture.ts` and `channels.ts`; see the
+[parameter API](../../packages/native-webgpu/PARAMETERS.md) and openable
+[Parameters.toe example](../../packages/native-webgpu/native/td/parameter-example/Parameters.toe).
+
+The plugin's **Template Parent Folder** picker selects the enclosing directory.
+**Create Template Project** creates `avtools-project/` inside it and selects the
+starter TypeScript entry. Open that child folder in VS Code. Its README lists API
+examples (controls, buffers, input images and timing); its `.gitignore` excludes
+the generated SDK. Restore the SDK from a fresh template of the same plugin
+version when cloning a code-only project.

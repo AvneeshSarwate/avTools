@@ -34,6 +34,9 @@
       "@avtools/shader-fx/generated-raw/*": [
         "./packages/shader-fx/generated-raw/*"
       ],
+      "@avtools/native-webgpu/td-parameters": [
+        "./packages/native-webgpu/td-parameters.d.ts"
+      ],
       "@avtools/native-webgpu/td-chop": [
         "./packages/native-webgpu/td-chop.d.ts"
       ],
