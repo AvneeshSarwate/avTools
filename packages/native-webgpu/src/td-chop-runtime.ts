@@ -1,3 +1,4 @@
+import {parameterSnapshot} from './td-parameters.ts';
 import {SketchLifetime} from './td-timing.ts';
 import type {ChopHost as PublicChopHost, ChopFrame} from '../td-chop.d.ts';
 // Source-side timing classes carry private members; the SDK uses emitted declarations.
@@ -9,6 +10,7 @@ type Generation = {signature: string; life: SketchLifetime; host: ChopHost; prog
 let active: Generation | undefined;
 let inputs: Map<string, Float32Array>[] = [];
 let frame: ChopFrame;
+let params = parameterSnapshot({});
 let names: string[] = [], pulses: string[] = [], reset = false;
 let sampleCount = 1;
 const message = (error: any) => String(error?.stack ?? error);
@@ -23,6 +25,7 @@ g.__avChopAccept = () => {
   const next = Array.from({length: 4}, () => new Map<string, Float32Array>());
   for (const c of incoming.channels) next[c.input].set(c.name, data.subarray(c.offset, c.offset + c.count));
   inputs = next; names = incoming.names; pulses = incoming.pulses; reset = !!incoming.reset; sampleCount = incoming.outputSamples;
+  params = parameterSnapshot(incoming.params);
   frame = Object.freeze({frame: incoming.frame, absFrame: incoming.absFrame, rate: incoming.rate, deltaSeconds: incoming.deltaSeconds, time: (incoming.frame - 1) / incoming.rate});
   g.__avData = null;
 };
@@ -40,6 +43,7 @@ function createGeneration(): Generation {
     return Math.fround(value);
   };
   const host: ChopHost = Object.freeze({
+    get params() { return params; },
     timing: life.timing,
     inputs: Object.freeze({
       get: (name: string, input = 0, sample?: number) => life.run(() => { const data = inputs[input]?.get(name); return data?.[sample ?? data.length - 1] ?? 0; }),

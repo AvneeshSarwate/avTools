@@ -181,3 +181,9 @@ for measured workloads, limitations, and reproduction steps.
 scalar/10k XY benchmark. `--quick` skips the benchmark matrix.
 
 Console messages are available per operator through the Diagnostics page and Info DAT. See [logging and paused refresh](LOGGING.md) and the [openable Logging.toe example](native/td/logging-example/Logging.toe).
+
+## Script-declared controls
+
+TypeScript entries can export a literal `parameters` object to create native sliders,
+colors, menus, text fields, toggles and pulse buttons. See [PARAMETERS.md](PARAMETERS.md)
+for typed reads, reload/persistence behavior and generated examples.

@@ -14,3 +14,5 @@ pub mod inputs;
 
 pub mod entry_build;
 pub mod template;
+
+pub mod parameters;

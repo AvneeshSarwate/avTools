@@ -17,13 +17,13 @@ struct ChopRequest {
   uint64_t id=0,generation=0,schema=0;
   double elapsed=0;
   std::chrono::steady_clock::time_point submitted;
-  std::string source;
+  std::string source,parametersJSON;
   std::vector<std::string> channelNames,names,events;
   std::vector<float> samples;
   std::vector<AVChopChannel> channels;
   std::vector<const char*> namePointers,eventPointers;
   std::shared_ptr<std::promise<bool>> waiter;
-  explicit ChopRequest(const AVChopFrame& f):frame(f),submitted(std::chrono::steady_clock::now()),source(f.source){
+  explicit ChopRequest(const AVChopFrame& f):frame(f),submitted(std::chrono::steady_clock::now()),source(f.source),parametersJSON(f.parametersJSON?f.parametersJSON:"{}"){
     size_t total=0;for(uint32_t i=0;i<f.channelCount;i++)total+=f.channels[i].channel.count;
     samples.reserve(total);channelNames.reserve(f.channelCount);channels.reserve(f.channelCount);
     for(uint32_t i=0;i<f.channelCount;i++){
@@ -38,7 +38,7 @@ struct ChopRequest {
   void bind(float* output){
     namePointers.clear();for(auto& n:names)namePointers.push_back(n.c_str());
     eventPointers.clear();for(auto& n:events)eventPointers.push_back(n.c_str());
-    frame.source=source.c_str();frame.channels=channels.data();frame.names=namePointers.data();
+    frame.parametersJSON=parametersJSON.c_str();frame.source=source.c_str();frame.channels=channels.data();frame.names=namePointers.data();
     frame.pulses=eventPointers.data();frame.pulseCount=uint32_t(eventPointers.size());frame.output=output;
     frame.deltaSeconds=elapsed;
   }

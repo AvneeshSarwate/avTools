@@ -96,7 +96,7 @@ struct AVSketch {
     runtime->setString("__avSource",f.source);
     runtime->setString("__avSyphonName",f.syphonName?f.syphonName:"");
     std::string pulses="[";for(uint32_t i=0;i<f.pulseCount;i++){if(i)pulses+=',';pulses+=quoted(f.pulses[i]);}pulses+=']';runtime->setString("__avPulsesJSON",pulses);
-    std::ostringstream json;json.precision(17);json<<"{\"width\":"<<f.width<<",\"height\":"<<f.height<<",\"reset\":"<<f.reset<<",\"syphonOnly\":"<<f.syphonOnly<<",\"frame\":"<<f.frame<<",\"rate\":"<<f.rate<<",\"deltaSeconds\":"<<f.deltaSeconds<<",\"absFrame\":"<<f.absFrame<<",\"sampleRate\":"<<f.sampleRate<<",\"startIndex\":"<<f.startIndex<<"}";
+    std::ostringstream json;json.precision(17);json<<"{\"width\":"<<f.width<<",\"height\":"<<f.height<<",\"reset\":"<<f.reset<<",\"syphonOnly\":"<<f.syphonOnly<<",\"frame\":"<<f.frame<<",\"rate\":"<<f.rate<<",\"deltaSeconds\":"<<f.deltaSeconds<<",\"absFrame\":"<<f.absFrame<<",\"sampleRate\":"<<f.sampleRate<<",\"startIndex\":"<<f.startIndex<<",\"params\":"<<(f.parametersJSON?f.parametersJSON:"{}")<<"}";
     runtime->setString("__avFrameJSON",json.str());eval("__avInputs()");
     for(uint32_t i=0;i<f.channelCount;i++){const auto& c=f.channels[i];runtime->setBytes("__avData",c.samples,c.count*sizeof(float));eval("__avChannel("+quoted(c.name)+")");}
     for(uint32_t i=0;i<f.imageCount;i++){const auto& image=f.images[i];runtime->setBytes("__avData",image.pixels,size_t(image.width)*image.height*4);eval("__avImage("+std::to_string(i)+","+std::to_string(image.width)+","+std::to_string(image.height)+")");}
@@ -152,7 +152,7 @@ struct AVSketch {
       if(c.channel.count)samples.insert(samples.end(),c.channel.samples,c.channel.samples+c.channel.count);
     }
     json<<"],\"outputSamples\":"<<std::max(1u,f.outputSamples)<<",\"names\":[";for(uint32_t i=0;i<f.outputCount;i++){if(i)json<<',';json<<quoted(f.names[i]);}
-    json<<"],\"pulses\":[";for(uint32_t i=0;i<f.pulseCount;i++){if(i)json<<',';json<<quoted(f.pulses[i]);}json<<"]}";
+    json<<"],\"pulses\":[";for(uint32_t i=0;i<f.pulseCount;i++){if(i)json<<',';json<<quoted(f.pulses[i]);}json<<"],\"params\":"<<(f.parametersJSON?f.parametersJSON:"{}")<<"}";
     runtime->setString("__avFrameJSON",json.str());runtime->setBytes("__avData",samples.data(),samples.size()*sizeof(float));
     // No pump between receiving the job and publishing its complete snapshot.
     if(!runtime->call("__avChopAccept",1000))throw std::runtime_error(runtime->error());

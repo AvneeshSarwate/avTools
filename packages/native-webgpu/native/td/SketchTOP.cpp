@@ -3,6 +3,7 @@
 #include "Logging.h"
 #include "NativeBuild.h"
 #include "SourceActivation.h"
+#include "DeclaredParameters.h"
 #include "PulseName.h"
 #include <condition_variable>
 #include <algorithm>
@@ -28,13 +29,13 @@ const std::string& resources(){static const std::string path=[](){Dl_info info{}
 class SketchTOP final:public TOP_CPlusPlusBase {
   struct Channel {std::string name;std::vector<float> samples;};
   struct Job {
-    AVFrame frame{};std::string source,syphonName,eventName,error;
+    AVFrame frame{};std::string source,syphonName,eventName,error,parameterValues;
     std::vector<Channel> channels;std::vector<OP_SmartRef<OP_TOPDownloadResult>> downloads;
     std::vector<std::string> events;AVStats stats{};OP_SmartRef<TOP_Buffer> buffer;
     double inputDownloadMs=0,workerMs=0;int ready=0;
     int64_t startNs=0,endNs=0;
   };
-  TOP_Context* context;AVSketch* runtime=nullptr;NativeBuild nativeBuild;Logging logging;SourceActivation activation;std::string selectionError;
+  TOP_Context* context;AVSketch* runtime=nullptr;NativeBuild nativeBuild;Logging logging;SourceActivation activation;DeclaredParameters declared;std::string selectionError;
   // Only the short ownership exchanges take this lock. GPU waits and buffer
   // allocation happen on workers, never while holding it.
   std::mutex mutex;std::condition_variable completionCV;bool busy=false;std::unique_ptr<Job> pending,completed,fallback;
@@ -48,7 +49,7 @@ class SketchTOP final:public TOP_CPlusPlusBase {
   void render(Job& job){
     const auto start=Clock::now();job.startNs=std::chrono::duration_cast<std::chrono::nanoseconds>(start.time_since_epoch()).count();
     try {
-      auto& frame=job.frame;frame.source=job.source.c_str();frame.syphonName=job.syphonName.c_str();
+      auto& frame=job.frame;frame.source=job.source.c_str();frame.parametersJSON=job.parameterValues.c_str();frame.syphonName=job.syphonName.c_str();
       std::vector<const char*> pulses;for(auto& name:job.events)pulses.push_back(name.c_str());frame.pulses=pulses.data();frame.pulseCount=uint32_t(pulses.size());
       std::vector<AVChannel> channels;
       for(const auto& channel:job.channels)channels.push_back({channel.name.c_str(),channel.samples.data(),static_cast<uint32_t>(channel.samples.size())});
@@ -82,8 +83,8 @@ class SketchTOP final:public TOP_CPlusPlusBase {
     }
   }
  public:
-  explicit SketchTOP(TOP_Context* c,const OP_NodeInfo* info):context(c),opContext(info->context){}
-  ~SketchTOP() override {avDestroy(runtime);}
+  explicit SketchTOP(TOP_Context* c,const OP_NodeInfo* info):context(c),declared(info->context,info->opId,resources()),opContext(info->context){declared.restore(activation,pendingPulses);}
+  ~SketchTOP() override {declared.preserve(activation,pendingPulses);avDestroy(runtime);}
   void getGeneralInfo(TOP_GeneralInfo* info,const OP_Inputs* inputs,void*)override{info->cookEveryFrameIfAsked=true;info->cookEveryFrame=inputs->getParInt("Syphonenabled")!=0;}
   void execute(TOP_Output* output,const OP_Inputs* inputs,void*)override{
     logging.update(inputs);if(logging.takeRefresh())return;
@@ -138,7 +139,7 @@ class SketchTOP final:public TOP_CPlusPlusBase {
       char detail[8192]{};
       if(!runtime){runtime=avCreateDeferred(resources().c_str(),detail,sizeof(detail));if(!runtime)throw std::runtime_error(detail);logging.attach(runtime);}
       auto job=std::make_unique<Job>();
-      auto choice=activation.choose();job->source=choice.version.code;if(job->source.empty())return;reset=choice.restart;
+      auto choice=activation.choose();if(!declared.prepare(activation,choice))return;job->parameterValues=declared.snapshot(inputs);job->source=choice.version.code;if(job->source.empty())return;reset=choice.restart;
       auto& frame=job->frame;frame.width=std::clamp(inputs->getParInt("Width"),1,4096);frame.height=std::clamp(inputs->getParInt("Height"),1,4096);frame.reset=reset;
       job->syphonName=inputs->getParInt("Syphonenabled")?inputs->getParString("Syphonname"):"";frame.syphonOnly=inputs->getParInt("Syphononly");syphonOnly=frame.syphonOnly;
       job->events=pendingPulses;
@@ -160,7 +161,7 @@ class SketchTOP final:public TOP_CPlusPlusBase {
     }catch(const std::exception& e){error=e.what();}
   }
   void setupParameters(OP_ParameterManager* manager,void*)override{
-    NativeBuild::parameters(manager);Logging::parameters(manager);
+    NativeBuild::parameters(manager);Logging::parameters(manager);declared.setup(manager);
     OP_StringParameter source;source.name="Sketch";source.label="Sketch DAT";source.page="Sketch";manager->appendDAT(source);
     source.name="Sourcefile";source.label="Source File";manager->appendFile(source);
     source.name="Controls";source.label="Controls CHOP";manager->appendCHOP(source);
@@ -173,8 +174,8 @@ class SketchTOP final:public TOP_CPlusPlusBase {
     {OP_NumericParameter p;p.name="Pretriggerpulse";p.label="Submit Early (Coordinator)";p.page="Output";manager->appendPulse(p);}
     for(const char* name:{"Reset","Reload","Sendpulse"}){OP_NumericParameter p;p.name=name;p.label=!strcmp(name,"Sendpulse")?"Send Pulse":name;p.page="Sketch";manager->appendPulse(p);}
   }
-  void pulsePressed(const char* name,void*)override{if(logging.pulse(name,opContext))return;if(std::string(name)=="Createtemplate"){nativeBuild.createTemplate(resources(),opContext,false);return;}if(std::string(name)=="Buildproject"){nativeBuild.request();return;}if(!strcmp(name,"Pretriggerpulse")){triggerPending=true;return;}if(!strcmp(name,"Reset")||!strcmp(name,"Reload")){try{activation.request(!strcmp(name,"Reload"));}catch(const std::exception& e){error=e.what();}}else if(!strcmp(name,"Sendpulse")){try{if(pendingPulses.size()>=256)throw std::runtime_error("Pulse queue full (256); event rejected");pendingPulses.push_back(capturePulseName(opContext));}catch(const std::exception& e){error=e.what();}}}
-  void getWarningString(OP_String* result,void*)override{auto buildWarning=nativeBuild.warning();if(buildWarning.empty())buildWarning=selectionError;if(!buildWarning.empty()){result->setString(buildWarning.c_str());return;}result->setString(pretrigger&&lastTriggerFrame<currentFrame-1?"Pre-trigger Mode needs an active pretrigger Execute DAT; no recent submission received.":"");}
+  void pulsePressed(const char* name,void*)override{if(logging.pulse(name,opContext))return;if(std::string(name)=="Createtemplate"){nativeBuild.createTemplate(resources(),opContext,false);return;}if(std::string(name)=="Buildproject"){nativeBuild.request();return;}if(!strcmp(name,"Pretriggerpulse")){triggerPending=true;return;}if(!strcmp(name,"Reset")||!strcmp(name,"Reload")){try{activation.request(!strcmp(name,"Reload"));}catch(const std::exception& e){error=e.what();}}else if(!strcmp(name,"Sendpulse")||declared.pulse(name)){try{if(pendingPulses.size()>=256)throw std::runtime_error("Pulse queue full (256); event rejected");pendingPulses.push_back(declared.pulse(name)?name:capturePulseName(opContext));}catch(const std::exception& e){error=e.what();}}}
+  void getWarningString(OP_String* result,void*)override{auto buildWarning=nativeBuild.warning();if(buildWarning.empty())buildWarning=selectionError;if(buildWarning.empty())buildWarning=declared.warning();if(!buildWarning.empty()){result->setString(buildWarning.c_str());return;}result->setString(pretrigger&&lastTriggerFrame<currentFrame-1?"Pre-trigger Mode needs an active pretrigger Execute DAT; no recent submission received.":"");}
   void getErrorString(OP_String* result,void*)override{result->setString(error.c_str());}
   int32_t getNumInfoCHOPChans(void*)override{return 22;}
   void getInfoCHOPChan(int32_t index,OP_InfoCHOPChan* channel,void*)override{

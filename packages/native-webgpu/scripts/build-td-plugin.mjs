@@ -11,10 +11,10 @@ const name=chop?'AvToolsChannels':'AvToolsSketch';
 const cpp=chop?'native/td/SketchCHOP.cpp':'native/td/SketchTOP.cpp';
 // Hash the bundled renderer (including transitive imports) and all shipped inputs.
 // Build elsewhere, then rename once; never overwrite a binary mapped into TD.
-const renderer=await build({entryPoints:[resolve(root,chop?'src/td-chop-runtime.ts':'src/td-runtime.ts')],write:false,bundle:true,platform:'neutral',format:'iife',target:'es2022',nodePaths:[resolve(root,'node_modules')]});
+const renderer=await build({absWorkingDir:root,entryPoints:[resolve(root,chop?'src/td-chop-runtime.ts':'src/td-runtime.ts')],write:false,bundle:true,platform:'neutral',format:'iife',target:'es2022',nodePaths:[resolve(root,'node_modules')]});
 const nativeBuildRoot=resolve(root,'prebuilt/macos-arm64/native-build');
 const nativeBuildTag=readFileSync(resolve(nativeBuildRoot,'current.txt'),'utf8').trim();
-const digest=createHash('sha256');digest.update(nativeBuildTag);digest.update(readFileSync(resolve(root,'native/td/Logging.h')));digest.update(readFileSync(resolve(root,'native/td/SourceActivation.h')));digest.update(readFileSync(resolve(root,'native/td/NativeBuild.h')));digest.update(readFileSync(resolve(root,'native/td/PulseName.h')));digest.update(readFileSync(resolve(root,'native/td/TDParameters.h')));
+const digest=createHash('sha256');for(const f of ['DeclaredParameters.h','DeclaredParameters.py'])digest.update(readFileSync(resolve(root,'native/td',f)));digest.update(nativeBuildTag);digest.update(readFileSync(resolve(root,'native/td/Logging.h')));digest.update(readFileSync(resolve(root,'native/td/SourceActivation.h')));digest.update(readFileSync(resolve(root,'native/td/NativeBuild.h')));digest.update(readFileSync(resolve(root,'native/td/PulseName.h')));digest.update(readFileSync(resolve(root,'native/td/TDParameters.h')));
 function hashTree(path){for(const entry of readdirSync(path,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))){digest.update(entry.name);const child=resolve(path,entry.name);if(entry.isDirectory())hashTree(child);else if(entry.isFile())digest.update(readFileSync(child));}}
 for(const path of ['scripts/build-td-plugin.mjs',cpp,'native/embedded/Bridge.h','upstream/node-webgpu/third_party/dawn/out/avtools-v8/libavtools_runtime.dylib','dist/THIRD_PARTY_NOTICES.txt'])digest.update(readFileSync(resolve(root,path)));
 digest.update(seedrandomNotices(root));digest.update(renderer.outputFiles[0].contents);hashTree(resolve(root,'dist/fonts'));hashTree(resolve(root,'build/syphon-embedded/AVToolsSyphon.framework/Versions/A'));
@@ -25,10 +25,16 @@ function publish(){
   // Preserve the local marker used by native developer probes.
   writeFileSync(resolve(root,chop?'build/td-chop-plugin-path.txt':'build/td-plugin-path.txt'),finalBundle+'\n');
   console.log(finalBundle);
+  // Both normal plugin builds refresh the copyable distribution and its ZIP.
+  // A first-ever build must publish both operators before packaging the pair.
+  if(existsSync(resolve(prebuilt,'current.txt')) && existsSync(resolve(prebuilt,'current-chop.txt'))){
+    execFileSync(process.execPath,[resolve(root,'scripts/package-td.mjs')],{stdio:'inherit'});
+  }
 }
 if(existsSync(finalBundle)){publish();process.exit(0);}
 const bundle=resolve(root,`build/.${name}-${tag}-${process.pid}.plugin`),mac=resolve(bundle,'Contents/MacOS'),resources=resolve(bundle,'Contents/Resources');
 mkdirSync(mac,{recursive:true});mkdirSync(resources,{recursive:true});
+cpSync(resolve(root,'native/td/DeclaredParameters.py'),resolve(resources,'DeclaredParameters.py'));
 writeFileSync(resolve(resources,'native-build.txt'),'../../../native-build/'+nativeBuildTag+'/libavtools_build.dylib\n');
 writeFileSync(resolve(resources,chop?'chop.js':'renderer.js'),renderer.outputFiles[0].contents);
 writeFileSync(resolve(resources,'seedrandom-LICENSE.txt'),seedrandomNotices(root));
