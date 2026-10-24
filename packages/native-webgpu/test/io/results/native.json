@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "platform": "darwin",
+  "arch": "arm64",
+  "output": [
+    "OSC paused-cook roundtrip median_ms=0.08875 p95_ms=0.197166",
+    "flood dropped=5744 delivered=257",
+    "four_idle_udp_cpu_percent=0.0108333",
+    "four_chop_cook_total median_ms=0.150042 p95_ms=0.32425",
+    "PASS: async setup files, UTF8/binary/errors/limits, OSC interoperability, future bundles, malformed traffic, paused-cook callbacks, 50 port rebinds, failed setup and destroy cleanup"
+  ]
+}

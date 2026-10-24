@@ -94,6 +94,7 @@ struct AVSketch {
     prepare(f.source,std::to_string(f.width)+"x"+std::to_string(f.height),f.reset);
     if(!runtime->pump(1000)){poisoned=true;throw std::runtime_error(runtime->error());}
     runtime->setString("__avSource",f.source);
+    runtime->setString("__avBaseDirectory",f.baseDirectory?f.baseDirectory:"");
     runtime->setString("__avSyphonName",f.syphonName?f.syphonName:"");
     std::string pulses="[";for(uint32_t i=0;i<f.pulseCount;i++){if(i)pulses+=',';pulses+=quoted(f.pulses[i]);}pulses+=']';runtime->setString("__avPulsesJSON",pulses);
     std::ostringstream json;json.precision(17);json<<"{\"width\":"<<f.width<<",\"height\":"<<f.height<<",\"reset\":"<<f.reset<<",\"syphonOnly\":"<<f.syphonOnly<<",\"frame\":"<<f.frame<<",\"rate\":"<<f.rate<<",\"deltaSeconds\":"<<f.deltaSeconds<<",\"absFrame\":"<<f.absFrame<<",\"sampleRate\":"<<f.sampleRate<<",\"startIndex\":"<<f.startIndex<<",\"params\":"<<(f.parametersJSON?f.parametersJSON:"{}")<<"}";
@@ -143,6 +144,7 @@ struct AVSketch {
     std::string shape=std::to_string(f.outputSamples);for(uint32_t i=0;i<f.outputCount;i++)shape+="\n"+std::string(f.names[i]);
     prepare(f.source,shape,f.reset);
     runtime->setString("__avSource",f.source);
+    runtime->setString("__avBaseDirectory",f.baseDirectory?f.baseDirectory:"");
     std::ostringstream json;json.precision(17);
     json<<"{\"reset\":"<<f.reset<<",\"frame\":"<<f.frame<<",\"rate\":"<<f.rate<<",\"deltaSeconds\":"<<f.deltaSeconds<<",\"absFrame\":"<<f.absFrame<<",\"channels\":[";
     std::vector<float> samples;

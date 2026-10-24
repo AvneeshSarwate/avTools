@@ -20,23 +20,16 @@ MyProject/
     README.md                       <-- these instructions
     AvToolsSketch.plugin            <-- image output (TOP)
     AvToolsChannels.plugin          <-- numeric channel output (CHOP)
-    native-build/
-      current.txt
-      <version>/                    <-- keep this directory name
-        libavtools_build.dylib
-        avtools-build
-        THIRD_PARTY_NOTICES.txt
-        VERSION
 ```
 
-The `.plugin` items are macOS bundles: keep each entire bundle intact. The sibling
-`native-build` directory contains the shared TypeScript builder and embedded
-template. Keep it next to the plugins. The command-line executable is optional
-for GUI use, but copying the complete folder is simplest.
+Each `.plugin` is a self-contained macOS bundle, including its statically linked
+TypeScript compiler, libuv, template SDK and private graphics runtime. Keep the
+entire bundle intact. You may copy just the TOP or just the CHOP if that is all
+you need; no sibling `native-build` directory or command-line executable is needed.
 
 If you downloaded the **repository**, copy the entire
 `apps/td-projects/Plugins` folder beside your saved `.toe`. It contains the current
-TOP, CHOP, and required TypeScript builder. Use a project-local copy; this folder
+TOP and CHOP with their embedded TypeScript builders. Use a project-local copy; this folder
 is refreshed by native plugin builds.
 
 ## 2. Load your first operator
@@ -76,6 +69,8 @@ name to appear in the operator creation dialog first. See Derivative's
 5. Start TD's timeline playback and enable the node's viewer if needed. The TOP
    starter draws an orange circle. The CHOP starter has `value` and `ticks`
    channels; without an input, `value` is zero and `ticks` increases.
+   Open **Controls** to adjust Size, Color and Speed on the TOP, or Gain, Offset
+   and Tick Interval on the CHOP.
 6. Save the `.toe` again so TD remembers the operator and file paths.
 
 The button does not create another `.toe` or copy plugins. It creates the code
@@ -217,3 +212,21 @@ interpolation, TOP/CHOP inputs and independent TimeContext animation. Its
 `.gitignore` excludes `sdk/`, caches and installed dependencies. To restore an
 ignored SDK after cloning, create a fresh template with the same plugin version
 in a different parent folder, then copy its `sdk/` into your code project.
+
+## Files, UDP and OSC
+
+Generated templates include `sketches/osc/channels.ts`, `picture.ts`, `udp.ts`
+and `config.json`. Both operators offer asynchronous `host.files.readText()` /
+`readBytes()`, `host.udp.open()` and `host.osc.open()`. OSC callbacks run even
+when TD is not cooking; output becomes visible when TD next cooks the operator.
+The channel example uses TimeContext to ease toward incoming `/target` values
+and replies with `/received`. Its Output Channels are `value target messages port`.
+The picture example listens for `/x`. Read the listening port in the Info DAT's
+log or select a Port in Controls and press Reset. Separate instances need
+separate ports (the default 0 automatically chooses one).
+
+Sockets default to localhost; explicitly bind `0.0.0.0` for LAN reception.
+Incoming bundles are delivered immediately with timetag metadata. Reload/Reset
+closes old sockets automatically. File paths are relative to the TypeScript
+entrypoint. New assets need a Reset to be reread. The generated project README
+contains examples; the full repository API guide is `packages/native-webgpu/IO.md`.

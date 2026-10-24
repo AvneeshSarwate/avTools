@@ -1,4 +1,5 @@
 #include "Runtime.h"
+#include "IO.h"
 #include "LogFormat.h"
 #include "src/dawn/node/interop/Environment.h"
 #include "Polyfills.h"
@@ -12,6 +13,7 @@
 #include <vector>
 #include <cstring>
 #include <map>
+#include <set>
 #include <deque>
 #include <unordered_set>
 #include <cmath>
@@ -56,6 +58,8 @@ struct Runtime::State {
     if(runtime.logs_)runtime.logs_->capture(severity,runtime.logGeneration_,line,formatter.truncated);
     else fprintf(stderr,"%s\n",line.c_str()); // Standalone Runtime fallback only.
   }
+  std::unique_ptr<IO> io;
+  std::set<uint64_t> ioRequests,ioReads;
   Runtime* runtime;
   v8::Isolate* isolate;
   Clock::time_point start=Clock::now();
@@ -72,7 +76,29 @@ struct Runtime::State {
   uint64_t generation(){auto data=isolate->GetContinuationPreservedEmbedderDataV2();return data->IsValue()&&data.As<v8::Value>()->IsNumber()?uint64_t(data.As<v8::Value>().As<v8::Number>()->Value()):0;}
   void generation(uint64_t id){isolate->SetContinuationPreservedEmbedderDataV2(v8::Number::New(isolate,double(id)));}
   void cancel(uint64_t id){auto it=tasks.find(id);if(it==tasks.end())return;auto& t=*it->second;if(!t.immediate)timers.erase({t.due,id});tasks.erase(it);}
-  void invalidate(uint64_t gen){active.erase(gen);for(auto it=tasks.begin();it!=tasks.end();){auto id=it++->first;if(tasks.at(id)->generation==gen)cancel(id);}std::erase_if(immediates,[&](uint64_t id){return !tasks.count(id);});}
+  void invalidate(uint64_t gen){active.erase(gen);if(io)io->cancel(gen);for(auto it=tasks.begin();it!=tasks.end();){auto id=it++->first;if(tasks.at(id)->generation==gen)cancel(id);}std::erase_if(immediates,[&](uint64_t id){return !tasks.count(id);});}
+  static void ioCall(const v8::FunctionCallbackInfo<v8::Value>& a){
+    auto& s=get(a.GetIsolate());auto* i=s.isolate;auto c=i->GetCurrentContext();
+    auto fail=[&](const char* message){i->ThrowException(v8::Exception::Error(str(i,message)));};
+    if(a.Length()!=6||!a[0]->IsString()||!a[1]->IsNumber()||!a[2]->IsNumber()||!a[3]->IsString()||!a[4]->IsNumber()){fail("Invalid native I/O arguments");return;}
+    v8::String::Utf8Value op(i,a[0]),text(i,a[3]);std::string name=*op,path=*text;
+    double rawId=a[1].As<v8::Number>()->Value(),rawSocket=a[2].As<v8::Number>()->Value(),rawPort=a[4].As<v8::Number>()->Value();
+    auto valid=[](double v,double max){return std::isfinite(v)&&v>=0&&v<=max&&v==std::floor(v);};
+    if(!valid(rawId,9007199254740991.)||!valid(rawSocket,9007199254740991.)||!valid(rawPort,65535)||path.find('\0')!=std::string::npos){fail("Invalid I/O id, path, or port");return;}
+    auto id=uint64_t(rawId),socket=uint64_t(rawSocket),gen=s.generation();
+    if(s.dead(gen)){fail("Sketch generation has been disposed");return;}
+    if(name=="stats"){a.GetReturnValue().Set(double(s.io?s.io->dropped():0));return;}
+    if(!s.io)s.io=std::make_unique<IO>([wake=s.runtime->wake_]{wake->notify();});
+    if(name=="close"){s.io->close(socket);return;}
+    if(s.ioRequests.size()>=128||s.ioRequests.count(id)){fail("Too many pending I/O requests (128)");return;}
+    if(name=="read"){if(s.ioReads.size()>=4){fail("Too many pending file reads (4)");return;}s.ioReads.insert(id);s.ioRequests.insert(id);s.io->read(id,gen,path);}
+    else if(name=="open"){s.ioRequests.insert(id);s.io->open(id,gen,path,int(rawPort));}
+    else if(name=="send"&&a[5]->IsUint8Array()){
+      auto view=a[5].As<v8::Uint8Array>();if(view->ByteLength()>65507){fail("UDP payload exceeds 65507 bytes");return;}
+      auto backing=view->Buffer()->GetBackingStore();auto* begin=static_cast<uint8_t*>(backing->Data())+view->ByteOffset();
+      s.ioRequests.insert(id);s.io->send(id,gen,socket,path,int(rawPort),std::vector<uint8_t>(begin,begin+view->ByteLength()));
+    }else fail("Invalid I/O operation");
+  }
   static void schedule(const v8::FunctionCallbackInfo<v8::Value>& a){
     auto& s=get(a.GetIsolate());auto* i=s.isolate;auto c=i->GetCurrentContext();
     if(!a.Length()||!a[0]->IsFunction()){i->ThrowException(v8::Exception::TypeError(str(i,"Timer callback must be callable")));return;}
@@ -148,6 +174,7 @@ Runtime::Runtime(std::shared_ptr<Wake> wake,std::shared_ptr<LogSink> logs,uint64
   context->Global()->Set(context,str(isolate_,"console"),console).Check();
   context->Global()->Set(context,str(isolate_,"readFile"),v8::Function::New(context,read).ToLocalChecked()).Check();
   auto bind=[&](const char* name,v8::FunctionCallback callback,bool data=false){context->Global()->Set(context,str(isolate_,name),v8::Function::New(context,callback,v8::Boolean::New(isolate_,data)).ToLocalChecked()).Check();};
+  bind("__avIO",State::ioCall);
   bind("__avNativeImmediate",State::nativeImmediate,true);bind("setTimeout",State::schedule);bind("setImmediate",State::schedule,true);
   bind("clearTimeout",State::clear);bind("clearImmediate",State::clear);bind("queueMicrotask",State::microtask);
   bind("__hostStats",State::stats);bind("__hostReportError",State::reportError);bind("__hostNow",State::monotonic);bind("__hostUUID",State::uuid);bind("__hostGeneration",State::setGeneration);
@@ -198,7 +225,7 @@ bool Runtime::call(const char* name,int budgetMs){
 Clock::time_point Runtime::deadline(){
   owner();if(poisoned_)return Clock::time_point::max();
   while(!state_->immediates.empty()&&!state_->tasks.count(state_->immediates.front()))state_->immediates.pop_front();
-  if(!state_->immediates.empty())return Clock::now();
+  if(!state_->immediates.empty()||(state_->io&&state_->io->pending()))return Clock::now();
   auto due=foreground_->deadline();if(!state_->timers.empty())due=std::min(due,state_->timers.begin()->first.first);return due;
 }
 size_t Runtime::taskCount() const{return state_->tasks.size();}
@@ -224,6 +251,19 @@ bool Runtime::pump(int budgetMs) {
     }
     while(!state_->immediates.empty()&&!state_->tasks.count(state_->immediates.front()))state_->immediates.pop_front();
     if(!state_->immediates.empty()&&state_->immediates.front()<=boundary){auto id=state_->immediates.front();state_->immediates.pop_front();auto t=std::move(state_->tasks.at(id));state_->tasks.erase(id);worked=true;if(!invoke(std::move(t)))return false;}
+    IOEvent event;
+    if(state_->io&&state_->io->take(event)){
+      worked=true;
+      if(event.kind!="data"&&event.kind!="socketError"){state_->ioRequests.erase(event.id);state_->ioReads.erase(event.id);}
+      if(!state_->dead(event.generation)){
+        v8::TryCatch catcher(isolate_);watchdog_->arm(budgetMs);auto prior=state_->generation();state_->generation(event.generation);
+        auto buffer=v8::ArrayBuffer::New(isolate_,event.bytes.size());if(!event.bytes.empty())std::memcpy(buffer->GetBackingStore()->Data(),event.bytes.data(),event.bytes.size());
+        v8::Local<v8::Value> args[]={v8::Number::New(isolate_,double(event.id)),str(isolate_,event.kind.c_str()),str(isolate_,event.error.c_str()),v8::Uint8Array::New(buffer,0,event.bytes.size()),str(isolate_,event.address.c_str()),v8::Integer::New(isolate_,event.port)};
+        v8::Local<v8::Value> f,result;
+        if(c->Global()->Get(c,str(isolate_,"__avIOEvent")).ToLocal(&f)&&f->IsFunction()&&!f.As<v8::Function>()->Call(c,c->Global(),6,args).ToLocal(&result)&&!catcher.HasTerminated()){auto error=catcher.Exception();catcher.Reset();state_->report(error,event.generation);}
+        isolate_->PerformMicrotaskCheckpoint();state_->flushRejections();state_->generation(prior);if(!finish(catcher))return false;
+      }
+    }
     if(auto task=foreground_->take()){++state_->foregroundCalls;worked=true;v8::TryCatch catcher(isolate_);watchdog_->arm(budgetMs);auto prior=state_->generation();state_->generation(0);task->Run();isolate_->PerformMicrotaskCheckpoint();state_->flushRejections();state_->generation(prior);if(!finish(catcher))return false;}
     if(!worked||Clock::now()-roundStart>=std::chrono::milliseconds(2))break;
   }

@@ -1,3 +1,4 @@
+import {createIO} from './td-io.ts';
 import {EmbeddedP5GPU} from './embedded.ts';
 import {parameterSnapshot} from './td-parameters.ts';
 import {SketchLifetime} from './td-timing.ts';
@@ -52,7 +53,7 @@ g.__avRender=async()=>{
       p=new EmbeddedP5GPU(device,{width:frame.width,height:frame.height,sampleCount:1},fonts);
       sketchP=lifetime.guard(p);
       const life=lifetime;
-      const host=Object.freeze({get params(){return params;},device:life.guard(device),readFile:(path:string)=>life.run(()=>g.readFile(path)),timing:life.timing,onDispose:(callback:()=>void)=>life.onDispose(callback),chop,latestControls});
+      const host=Object.freeze({...createIO(life),get params(){return params;},device:life.guard(device),readFile:(path:string)=>life.run(()=>g.readFile(path)),timing:life.timing,onDispose:(callback:()=>void)=>life.onDispose(callback),chop,latestControls});
       await life.run(()=>sketch.setup?.(sketchP,host));
       if(life.error)throw new Error(life.error);
       width=frame.width;height=frame.height;stride=Math.ceil(width*4/256)*256;
@@ -92,7 +93,7 @@ g.__avRender=async()=>{
     await staging!.mapAsync(GPUMapMode.READ);
     g.__avReadbackMs=g.hostNow()-readbackStart;
     g.__avBytes=new Uint8Array(staging!.getMappedRange());g.__avHasFrame=true;g.__avError='';
-  }catch(error){g.__avError=message(error);}finally{g.__avDone=true;}
+  }catch(error){lifetime?.fail(error);g.__avError=message(error);}finally{g.__avDone=true;}
 };
 g.__avUnmap=()=>{g.__avBytes=null;if(staging?.mapState==='mapped')staging.unmap();};
 g.__avDispose=()=>{g.__avDone=false;lifetime?.dispose();g.__avUnmap();syphon?.dispose();for(const image of images)image.texture.destroy();images=[];p?.dispose();staging?.destroy();device?.destroy();g.__avDone=true;};

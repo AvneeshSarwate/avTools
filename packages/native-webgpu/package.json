@@ -24,7 +24,8 @@
     "td:pack": "node scripts/package-td.mjs",
     "test:timing": "node test/timing/run.mjs",
     "td:build:chop": "node scripts/build-td-plugin.mjs --chop",
-    "test:chop": "node test/chop/run.mjs"
+    "test:chop": "node test/chop/run.mjs",
+    "test:io": "node --test test/io/codec.mjs && node test/io/run.mjs"
   },
   "dependencies": {
     "@webgpu/types": "0.1.72",
@@ -47,7 +48,9 @@
     "./td-sketch": {
       "types": "./td-sketch.d.ts"
     },
-    "./td-parameters": {"types": "./td-parameters.d.ts"},
+    "./td-parameters": {
+      "types": "./td-parameters.d.ts"
+    },
     "./td-chop": {
       "types": "./td-chop.d.ts"
     },
@@ -59,6 +62,9 @@
     },
     "./td-p5": {
       "types": "./td-types/p5.d.ts"
+    },
+    "./td-io": {
+      "types": "./td-io.d.ts"
     }
   },
   "files": [
@@ -77,6 +83,8 @@
     "td-runtime.d.ts",
     "td-top-runtime.d.ts",
     "td-types",
-    "TD_TYPES.md"
+    "TD_TYPES.md",
+    "td-io.d.ts",
+    "IO.md"
   ]
 }

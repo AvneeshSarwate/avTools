@@ -116,3 +116,5 @@ starter TypeScript entry. Open that child folder in VS Code. Its README lists AP
 examples (controls, buffers, input images and timing); its `.gitignore` excludes
 the generated SDK. Restore the SDK from a fresh template of the same plugin
 version when cloning a code-only project.
+
+Each current `.plugin` bundle is independently copyable, including its static TypeScript compiler and libuv. Both TOP and CHOP hosts support [async files and OSC/UDP](../../packages/native-webgpu/IO.md); generated templates include examples.

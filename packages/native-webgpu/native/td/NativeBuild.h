@@ -6,10 +6,8 @@
 #include <stdexcept>
 #include <string>
 
-// Both plugin binaries load the SAME canonical dylib. Its Rust globals own one
-// shared service; sketch V8 state remains per operator. Pin library code for the
-// process because third-party Rayon pools have process lifetime. The last project
-// subscription still joins the build service and closes all project watchers.
+// Compiler is statically linked into each plugin executable.
+#include "../../../../tools/td-native-build/include/avtools_build.h"
 class NativeBuild {
   struct API {
     void* library=nullptr;
@@ -28,12 +26,12 @@ class NativeBuild {
     const char* (*file_error)(const void*)=nullptr;
     void (*file_destroy)(void*)=nullptr;
     explicit API(const std::string& resources){
-      std::ifstream marker(std::filesystem::path(resources)/"native-build.txt");std::string relative;std::getline(marker,relative);
-      if(relative.empty())throw std::runtime_error("Native build service is not packaged with this plugin");
-      auto path=std::filesystem::canonical(std::filesystem::path(resources)/relative);
-      library=dlopen(path.c_str(),RTLD_NOW|RTLD_LOCAL|RTLD_NODELETE);
+      // Rayon owns process-lifetime threads: pin their code before the first call.
+      Dl_info info{};
+      if(!dladdr(reinterpret_cast<void*>(&avb_init),&info)||!info.dli_fname)throw std::runtime_error("Cannot locate embedded compiler");
+      library=dlopen(info.dli_fname,RTLD_NOW|RTLD_LOCAL|RTLD_NODELETE);
       if(!library)throw std::runtime_error(dlerror());
-#define LOAD(name) name=reinterpret_cast<decltype(name)>(dlsym(library,"avb_" #name));if(!name)throw std::runtime_error("Missing native build ABI: " #name)
+#define LOAD(name) name=&avb_ ## name
       LOAD(subscribe);LOAD(subscribe_file);LOAD(init);LOAD(poll);LOAD(source);LOAD(status);LOAD(message);LOAD(request);LOAD(destroy);LOAD(file_create);LOAD(file_poll);LOAD(file_source);LOAD(file_error);LOAD(file_destroy);
 #undef LOAD
     }

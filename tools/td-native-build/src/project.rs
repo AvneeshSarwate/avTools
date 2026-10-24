@@ -184,8 +184,21 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<bool> {
         return Ok(false);
     }
     fs::create_dir_all(path.parent().unwrap())?;
-    let temp = path.with_extension(format!("{}.tmp", std::process::id()));
-    fs::write(&temp, bytes)?;
-    fs::rename(&temp, path)?;
+    // Different statically embedded compiler instances may build the same entry.
+    // Reserve a unique temporary name rather than sharing a process-id suffix.
+    use std::io::Write;
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
+    let mut attempt = 0;
+    let (temp, mut file) = loop {
+        let temp = path.with_extension(format!("{}.{stamp}.{attempt}.tmp", std::process::id()));
+        match fs::OpenOptions::new().write(true).create_new(true).open(&temp) {
+            Ok(file) => break (temp, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => attempt += 1,
+            Err(error) => return Err(error.into()),
+        }
+    };
+    let result = file.write_all(bytes).and_then(|_| { drop(file); fs::rename(&temp, path) });
+    if result.is_err() { let _ = fs::remove_file(&temp); }
+    result?;
     Ok(true)
 }

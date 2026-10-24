@@ -4,11 +4,12 @@
 #include <stdexcept>
 #include <optional>
 #include <sstream>
+#include <functional>
 // TD-thread policy only. Bundles are copied into accepted native requests;
 // runtime destruction and initialization always happen on the owner worker.
 class SourceActivation {
  public:
-  struct Version {std::string identity,code;bool operator==(const Version& b)const{return identity==b.identity&&code==b.code;}};
+  struct Version {std::string identity,code,baseDirectory;bool operator==(const Version& b)const{return identity==b.identity&&code==b.code;}};
   struct Choice {Version version;bool restart=false,control=false;};
  private:
   Version available,active;
@@ -17,10 +18,10 @@ class SourceActivation {
   std::deque<std::optional<Version>> requests; // Reload=true; Reset=false. Never coalesce controls.
   bool automatic=true,started=false;
  public:
-  void observe(std::string identity,const std::string& code,bool enabled){
+  void observe(std::string identity,const std::string& code,bool enabled,std::function<std::string()> directory={}){
     automatic=enabled;
     if(selected!=identity){selected=std::move(identity);available={selected,{}};}
-    if(!code.empty())available={selected,code};
+    if(!code.empty()&&(available.code!=code||available.baseDirectory.empty()))available={selected,code,directory?directory():std::string()};
     // A Reload is accepted at the first cook that observes it. Freeze the
     // available version now, even if a busy TOP cannot submit until later.
     for(auto& request:requests)if(!request)request=available;
