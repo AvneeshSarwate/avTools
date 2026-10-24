@@ -59,6 +59,7 @@ export async function prepareTypes(project){
   const paths={};
   for(const [name,path] of Object.entries(await aliases()))paths[name.endsWith('/')?name+'*':name]=[posix(path)+(name.endsWith('/')?'/*':'')];
   paths['@avtools/native-webgpu/td-sketch']=[resolve(repoRoot,'packages/native-webgpu/td-sketch.d.ts')];
+  paths['@avtools/native-webgpu/td-io']=[resolve(repoRoot,'packages/native-webgpu/td-io.d.ts')];
   paths['@avtools/native-webgpu/td-chop']=[resolve(repoRoot,'packages/native-webgpu/td-chop.d.ts')];
   paths['@avtools/native-webgpu']=[resolve(repoRoot,'packages/native-webgpu/dist/types/packages/native-webgpu/src/index.d.ts')];
   paths['earcut']=[resolve(modules,'@types/earcut/index.d.ts')];

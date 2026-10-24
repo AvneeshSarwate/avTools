@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "live_component": "/project1/io_example",
+  "checked": [
+    "TOP /x updates expected blue pixel",
+    "CHOP /target updates value and messages",
+    "native TD OSC Out DAT receives /received reply",
+    "IO.tox saved by TouchDesigner",
+    "IO.toe serialized with portable startup/plugin/source references"
+  ],
+  "user_project_saved": false
+}

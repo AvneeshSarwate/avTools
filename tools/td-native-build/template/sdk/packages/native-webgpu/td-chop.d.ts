@@ -1,3 +1,4 @@
+import type {IOHost} from './td-io.d.ts';
 import type {ParameterDefinitions, ParameterValues} from './td-parameters.d.ts';
 import type * as Timing from '../core-timing/mod.ts';
 /** One worker-owned state/timing context per CHOP, in both execution modes.
@@ -6,7 +7,7 @@ import type * as Timing from '../core-timing/mod.ts';
  * Timers remain independent of TD cooking. A synchronous callback sees stable
  * inputs; a continuation after await can see a newer accepted snapshot.
  */
-export interface ChopHost<P extends ParameterDefinitions = ParameterDefinitions> {
+export interface ChopHost<P extends ParameterDefinitions = ParameterDefinitions> extends IOHost {
   readonly params: ParameterValues<P>;
   readonly timing: typeof Timing;
   readonly inputs: {

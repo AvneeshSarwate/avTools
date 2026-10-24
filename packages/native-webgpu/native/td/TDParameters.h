@@ -62,6 +62,12 @@ class TDParameters {
     Object* fn=attr(node,"evalExpression");Object* argument=string(code.c_str());
     Object* result=(fn&&argument)?callArgs(fn,argument,nullptr):nullptr;drop(argument);drop(fn);return text(result);
   }
+  std::string scriptDirectory(const std::string& identity){
+    if(identity.rfind("ts:",0)==0)return std::filesystem::path(path("Typescript")).parent_path().string();
+    if(identity.rfind("file:",0)==0)return std::filesystem::path(path("Sourcefile")).parent_path().string();
+    if(identity.rfind("project:",0)==0)return path("Projectdir");
+    return expression("project.folder");
+  }
   std::string path(const char* name){
     auto value=get(name);if(value.empty())return value;
     // Let TD expand project-relative paths and variables using its normal path API.

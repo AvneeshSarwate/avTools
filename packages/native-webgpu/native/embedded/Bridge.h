@@ -33,6 +33,7 @@ typedef struct {
   const AVImage* images; uint32_t imageCount;
   uint8_t* output; size_t outputSize;
   const char* parametersJSON; // Owned accepted snapshot, or null for no declarations.
+  const char* baseDirectory; // Script entry directory; null means process cwd for native callers.
 } AVFrame;
 typedef struct {double inputMs,drawMs,readbackMs,totalMs; uint64_t cooks; uint32_t ready,syphonClients,syphonPublished,syphonDropped;} AVStats;
 __attribute__((visibility("default"))) AVSketch* avCreate(const char* resources,char* error,size_t errorSize);
@@ -58,6 +59,7 @@ typedef struct {
   // Zero outputSamples means one for scalar callers.
   uint32_t outputSamples;
   const char* parametersJSON;
+  const char* baseDirectory;
 } AVChopFrame;
 typedef struct {
   uint64_t submitted,accepted,completed,published,consumed,sourceRequest,generation,schema;

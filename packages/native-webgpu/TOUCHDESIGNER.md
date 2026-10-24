@@ -256,8 +256,8 @@ directly inside the TOP/CHOP, with a copied SDK, shader generation, background
 watching, type diagnostics and last-good retention. Open its `project.toe` and edit
 the folder in VS Code; no Node install or terminal watcher is needed. The Build
 page selects TypeScript File and Automatic Builds; Create Template Project can
-scaffold the SDK and sources in a chosen folder. No manifest is needed. Keep the plugins'
-sibling `native-build/` directory when copying them; see the
+scaffold the SDK and sources in a chosen folder. No manifest is needed. Keep each
+entire `.plugin` bundle when copying it; its compiler is statically linked. See the
 [native build guide](../../tools/td-native-build/README.md).
 
 The [TD starter project](../../apps/td-projects/starter/README.md) provides two
@@ -283,3 +283,5 @@ Console messages are available per operator through the Diagnostics page and Inf
 TypeScript entries can export a literal `parameters` object to create native sliders,
 colors, menus, text fields, toggles and pulse buttons. See [PARAMETERS.md](PARAMETERS.md)
 for typed reads, reload/persistence behavior and generated examples.
+
+Both operators also support [asynchronous files, UDP and OSC](IO.md), with examples in generated projects.

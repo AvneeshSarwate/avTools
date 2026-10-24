@@ -45,5 +45,9 @@
     ],
     "allocatorShim": false,
     "partitionAllocAsMalloc": false
+  },
+  "libuv": {
+    "version": "1.52.1",
+    "sha256": "66d511b9e6e334c0e62279eb234fbfb2b3110b1479c09b95b44c7afca8cff9e7"
   }
 }

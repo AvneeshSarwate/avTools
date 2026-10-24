@@ -1,0 +1,15 @@
+import {build} from 'esbuild';
+import {execFileSync} from 'node:child_process';
+import {mkdirSync,writeFileSync,openSync,closeSync,ftruncateSync,existsSync} from 'node:fs';
+import {resolve} from 'node:path';
+const root=resolve(import.meta.dirname,'../..'),dir=resolve(root,'build/io-test');mkdirSync(dir,{recursive:true});
+await build({entryPoints:[resolve(root,'src/td-chop-runtime.ts')],bundle:true,format:'iife',platform:'neutral',target:'es2022',outfile:resolve(dir,'chop.js')});
+writeFileSync(resolve(dir,'asset.txt'),'hello 日本語 🎛️\n');writeFileSync(resolve(dir,'asset.bin'),Uint8Array.from({length:1048576},(_,i)=>i%256));
+const fd=openSync(resolve(dir,'oversize.bin'),'w');ftruncateSync(fd,65*1024*1024);closeSync(fd);
+if(!existsSync(resolve(dir,'fifo')))execFileSync('mkfifo',[resolve(dir,'fifo')]);
+const sdk=execFileSync('xcrun',['--show-sdk-path'],{encoding:'utf8'}).trim();
+execFileSync('clang++',['-std=c++17','-O2','-isysroot',sdk,'-isystem',sdk+'/usr/include/c++/v1',resolve(root,'test/io/bridge.cpp'),'-o',resolve(dir,'bridge')],{stdio:'inherit'});
+const output=execFileSync(resolve(dir,'bridge'),[resolve(root,'upstream/node-webgpu/third_party/dawn/out/avtools-v8/libavtools_runtime.dylib'),dir,dir],{encoding:'utf8',timeout:120000,env:{...process.env,DYLD_FRAMEWORK_PATH:resolve(root,'build/syphon-embedded')}});
+process.stdout.write(output);
+mkdirSync(resolve(root,'test/io/results'),{recursive:true});
+writeFileSync(resolve(root,'test/io/results/native.json'),JSON.stringify({passed:true,platform:process.platform,arch:process.arch,output:output.trim().split('\n')},null,2)+'\n');

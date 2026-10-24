@@ -18,14 +18,13 @@ for(const [marker,name] of [['current.txt','AvToolsSketch'],['current-chop.txt',
   const plugin=resolve(prebuilt,readFileSync(resolve(prebuilt,marker),'utf8').trim());
   const reference=readFileSync(resolve(plugin,'Contents/Resources/native-build.txt'),'utf8').trim();
   const match=/^\.\.\/\.\.\/\.\.\/native-build\/([a-f0-9]+)\/libavtools_build\.dylib$/.exec(reference);
-  if(!match)throw new Error(`Unexpected compiler reference in ${plugin}: ${reference}`);
-  compilerTags.add(match[1]);
+  if(reference!=='embedded-static'&&!match)throw new Error(`Unexpected compiler reference in ${plugin}: ${reference}`);
+  if(match)compilerTags.add(match[1]);
   cpSync(plugin,resolve(release,`Plugins/${name}.plugin`),{recursive:true,verbatimSymlinks:true});
 }
 for(const tag of compilerTags)cpSync(resolve(prebuilt,'native-build',tag),resolve(release,'Plugins/native-build',tag),{recursive:true});
-const currentCompiler=readFileSync(resolve(prebuilt,'native-build/current.txt'),'utf8').trim();
-if(!compilerTags.has(currentCompiler))throw new Error('Current compiler is not referenced by either plugin; rebuild plugins before packaging.');
-writeFileSync(resolve(release,'Plugins/native-build/current.txt'),currentCompiler+'\n');
+
+if(compilerTags.size)writeFileSync(resolve(release,'Plugins/native-build/current.txt'),[...compilerTags].at(-1)+'\n');
 cpSync(resolve(prebuilt,'README.md'),resolve(release,'Plugins/README.md'));
 const version=writeDistributionVersion(resolve(release,'Plugins'),projectPlugins);
 mkdirSync(resolve(root,'artifacts'),{recursive:true});

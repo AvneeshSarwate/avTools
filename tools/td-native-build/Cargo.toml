@@ -9,7 +9,7 @@ exclude = ["vendor/tsrs"]
 
 [lib]
 name = "avtools_build"
-crate-type = ["rlib", "cdylib"]
+crate-type = ["rlib", "cdylib", "staticlib"]
 
 [dependencies]
 anyhow = "1"

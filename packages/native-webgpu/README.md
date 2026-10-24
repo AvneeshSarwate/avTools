@@ -111,3 +111,5 @@ publication transport. See `VALIDATION.md` for results and unfinished acceptance
 checks. The complete Deno server/editor migration remains separate work.
 The implemented embedded plugin, pulse events, CPU TOP transfers and optional
 Syphon output are documented in [TOUCHDESIGNER.md](TOUCHDESIGNER.md).
+
+Each current `.plugin` bundle is independently copyable, including its static TypeScript compiler and libuv. Both TOP and CHOP hosts support [async files and OSC/UDP](IO.md); generated templates include examples.

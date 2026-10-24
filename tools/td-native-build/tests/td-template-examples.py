@@ -68,12 +68,16 @@ def onFrameStart(frame):
    assert [float(a[c][0]) for c in ['count','x','y','z','red','alpha','textlength','pulses']]==[3,.25,.75,1,1,.5,8,0]
    assert b.numSamples==10000 and all(v==4 for v in b['x'].vals) and all(v==6 for v in b['y'].vals)
    image=root.op('inputs').numpyArray(delayed=False);assert image is not None and float(image[0,0,1])>.9
+   root.op('starter_top').par.Size=40
+   root.op('starter_chop').par.Gain=2;root.op('starter_chop').par.Offset=5
    a.par.Trigger.pulse();b.par.Blend=.25
    stage=1;started=time.perf_counter()
   elif time.perf_counter()-started>.2:
+   assert float(root.op('starter_chop')['value'][0])==5
+   assert root.op('starter_top').par.Size.eval()==40
    assert float(a['pulses'][0])==1
    assert all(v==2 for v in b['x'].vals) and all(v==3 for v in b['y'].vals)
-   result.write_text(json.dumps({'passed':True,'records':records,'examples':[n.name for n in nodes],'samples':10000,'math_and_parameter_edits':True},indent=2));me.par.active=False;print('PASS template child folders, collisions, all new API examples and 10k XY interpolation')
+   result.write_text(json.dumps({'passed':True,'records':records,'examples':[n.name for n in nodes],'samples':10000,'math_and_parameter_edits':True,'default_controls':True},indent=2));me.par.active=False;print('PASS template child folders, collisions, all new API examples and 10k XY interpolation')
  except Exception as e:
   result.write_text(json.dumps({'passed':False,'error':str(e),'records':records},indent=2));me.par.active=False;print('FAIL template examples',e)
 '''

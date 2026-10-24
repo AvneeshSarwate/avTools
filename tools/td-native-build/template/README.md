@@ -7,6 +7,10 @@ In an avTools TOP's **Build** page, select `sketches/background/main.ts` as
 **TypeScript File**. In an avTools CHOP, select `sketches/channels/main.ts` and set
 **Output Channels** to `value ticks`, **Output Samples** to `1`. A wired input
 channel named `value` is doubled; `ticks` advances independently with TimeContext.
+The default TOP exposes Size, Color and Speed on its **Controls** page. The
+default CHOP exposes Gain, Offset and Tick Interval; its initial value behavior
+is still twice the input. Adjust these controls without editing code.
+
 The Create Template Project button configures the operator that created this folder.
 
 Add more .ts entries anywhere under this tsconfig and select them on other
@@ -109,3 +113,33 @@ computer, create a temporary template with that same plugin version, copy its
 `sdk/` here, then open this folder in VS Code. Avoid overwriting deliberately
 modified SDK files. You can choose to vendor the SDK instead by removing the
 `/sdk/` ignore rule and committing it.
+
+## Files and OSC / UDP
+
+Both hosts include `files`, `udp` and `osc`; no npm dependency is necessary.
+Select `sketches/osc/channels.ts` on a CHOP with Output Channels
+`value target messages port` for TimeContext easing driven by `/target` OSC
+messages. Select `sketches/osc/picture.ts` on a TOP for `/x` position control.
+`sketches/osc/udp.ts` is a raw UDP echo example (channels `port bytes messages`).
+These entries load `config.json` asynchronously during setup. Relative file
+paths resolve beside the entrypoint. Use `await host.files.readText(path)` or
+`readBytes(path)`; missing/unreadable files reject. Regular files up to 64 MiB
+are supported, with four simultaneous reads. Reset rereads assets.
+
+`const osc = await host.osc.open({port: 9000})` listens on localhost. Use an
+available port for each instance, or `port: 0` to select one automatically;
+`osc.localAddress` tells you the chosen port. LAN reception requires an explicit
+`address: '0.0.0.0'`. Numeric IPv4/IPv6 and `localhost` are supported.
+`osc.onMessage((message, remote) => ...)` receives typed `message.args` and an
+OSC address. Send with `osc.send({address: '/reply', args: [0.5]}, remote)`.
+Plain numbers send float32; `{type: 'i', value: 42}` sends int32. Catch send
+promise rejections and use `osc.onError()` for malformed incoming packets.
+Bundles deliver immediately and expose their raw bigint timetag to the handler.
+
+Callbacks run independently of TD cooking, on the same JS worker as timing
+callbacks. They can read current host state and update state/output immediately.
+A TD cook presents the latest output. Reload/Reset closes sockets automatically;
+changing a setup Port parameter needs Reset. Raw `host.udp.open()` has the same
+lifecycle, but receives/sends Uint8Array datagrams. Monitor
+`host.udp.droppedDatagrams` for overflow of the 256 packet / 4 MiB receive queue.
+See the SDK's `td-io.d.ts` for method/type descriptions and limits.

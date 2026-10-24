@@ -391,16 +391,16 @@
             return v + (w ^ w >>> 16) | 0;
           };
           function init(me2, seed2) {
-            var t, v, i, j, w, X = [], limit = 128;
+            var t, v, i, j, w, X = [], limit2 = 128;
             if (seed2 === (seed2 | 0)) {
               v = seed2;
               seed2 = null;
             } else {
               seed2 = seed2 + "\0";
               v = 0;
-              limit = Math.max(limit, seed2.length);
+              limit2 = Math.max(limit2, seed2.length);
             }
-            for (i = 0, j = -32; j < limit; ++j) {
+            for (i = 0, j = -32; j < limit2; ++j) {
               if (seed2) v ^= seed2.charCodeAt((j + 32) % seed2.length);
               if (j === 0) w = v;
               v ^= v << 10;
@@ -726,6 +726,424 @@
       module.exports = sr;
     }
   });
+
+  // src/osc.ts
+  var limit = 65507;
+  var pad = (n) => n + 3 & ~3;
+  function utf8Encode(text) {
+    const bytes = [];
+    for (const char of text) {
+      let n = char.codePointAt(0);
+      if (n >= 55296 && n <= 57343) n = 65533;
+      if (n < 128) bytes.push(n);
+      else if (n < 2048) bytes.push(192 | n >> 6, 128 | n & 63);
+      else if (n < 65536) bytes.push(224 | n >> 12, 128 | n >> 6 & 63, 128 | n & 63);
+      else bytes.push(240 | n >> 18, 128 | n >> 12 & 63, 128 | n >> 6 & 63, 128 | n & 63);
+    }
+    return new Uint8Array(bytes);
+  }
+  function utf8Decode(bytes) {
+    let out = "";
+    for (let i = 0; i < bytes.length; ) {
+      const first = bytes[i++];
+      let count = first < 128 ? 0 : first >= 194 && first <= 223 ? 1 : first >= 224 && first <= 239 ? 2 : first >= 240 && first <= 244 ? 3 : -1;
+      if (count < 0 || i + count > bytes.length) throw Error("Invalid UTF-8");
+      let code = first & (count === 0 ? 127 : (1 << 6 - count) - 1);
+      const width2 = count;
+      while (count--) {
+        const b = bytes[i++];
+        if ((b & 192) !== 128) throw Error("Invalid UTF-8");
+        code = code << 6 | b & 63;
+      }
+      if (width2 && code < [0, 128, 2048, 65536][width2] || code > 1114111 || code >= 55296 && code <= 57343) throw Error("Invalid UTF-8");
+      out += String.fromCodePoint(code);
+    }
+    return out;
+  }
+  function argument(value) {
+    if (value === null) return { type: "N" };
+    if (typeof value === "number") return { type: "f", value };
+    if (typeof value === "string") return { type: "s", value };
+    if (typeof value === "boolean") return { type: value ? "T" : "F" };
+    if (typeof value === "bigint") return { type: "h", value };
+    if (value instanceof Uint8Array) return { type: "b", value };
+    return value;
+  }
+  function encodeOsc(packet, depth = 0) {
+    if (depth > 16) throw Error("OSC nesting exceeds 16");
+    const bytes = new Uint8Array(65508), view = new DataView(bytes.buffer);
+    let cursor = 0;
+    const reserve = (n) => {
+      if (cursor + n > limit) throw Error("OSC packet exceeds UDP payload limit");
+      const at = cursor;
+      cursor += n;
+      return at;
+    };
+    const string = (s) => {
+      if (typeof s !== "string" || s.includes("\0")) throw Error("Invalid OSC string");
+      const encoded = utf8Encode(s);
+      bytes.set(encoded, reserve(pad(encoded.length + 1)));
+    };
+    const int = (n) => view.setInt32(reserve(4), n);
+    if ("packets" in packet) {
+      string("#bundle");
+      if (packet.timetag < 0n || packet.timetag > 0xffffffffffffffffn) throw Error("Invalid OSC timetag");
+      view.setBigUint64(reserve(8), packet.timetag);
+      for (const child of packet.packets) {
+        const b = encodeOsc(child, depth + 1);
+        int(b.length);
+        bytes.set(b, reserve(b.length));
+      }
+    } else {
+      if (!packet.address.startsWith("/")) throw Error("OSC address must start with /");
+      string(packet.address);
+      const args = (packet.args ?? []).map(argument);
+      const tags = (values, level) => {
+        if (level > 16) throw Error("OSC array nesting exceeds 16");
+        return values.map((a) => a.type === "array" ? "[" + tags(a.value, level + 1) + "]" : a.type).join("");
+      };
+      string("," + tags(args, 0));
+      const write = (a) => {
+        switch (a.type) {
+          case "array":
+            for (const child of a.value) write(child);
+            break;
+          case "i":
+            if (!Number.isInteger(a.value) || a.value < -2147483648 || a.value > 2147483647) throw Error("Invalid OSC int32");
+            int(a.value);
+            break;
+          case "f":
+            view.setFloat32(reserve(4), a.value);
+            break;
+          case "d":
+            view.setFloat64(reserve(8), a.value);
+            break;
+          case "c":
+          case "r":
+            if (!Number.isInteger(a.value) || a.value < 0 || a.value > 4294967295) throw Error("Invalid OSC uint32");
+            view.setUint32(reserve(4), a.value);
+            break;
+          case "h":
+            if (a.value < -0x8000000000000000n || a.value > 0x7fffffffffffffffn) throw Error("Invalid OSC int64");
+            view.setBigInt64(reserve(8), a.value);
+            break;
+          case "t":
+            if (a.value < 0n || a.value > 0xffffffffffffffffn) throw Error("Invalid OSC timetag");
+            view.setBigUint64(reserve(8), a.value);
+            break;
+          case "s":
+          case "S":
+            string(a.value);
+            break;
+          case "b":
+            if (!(a.value instanceof Uint8Array)) throw Error("Invalid OSC blob");
+            int(a.value.length);
+            bytes.set(a.value, reserve(pad(a.value.length)));
+            break;
+          case "m":
+            if (!(a.value instanceof Uint8Array) || a.value.length !== 4) throw Error("OSC MIDI requires 4 bytes");
+            bytes.set(a.value, reserve(4));
+            break;
+          case "T":
+          case "F":
+          case "N":
+          case "I":
+            break;
+          default:
+            throw Error("Unsupported OSC type");
+        }
+      };
+      for (const a of args) write(a);
+    }
+    return bytes.slice(0, cursor);
+  }
+  function decodeOsc(bytes) {
+    if (bytes.length > limit || !bytes.length || bytes.length % 4) throw Error("Invalid OSC packet length");
+    const messages = [];
+    const parse = (data, timetag, depth) => {
+      if (depth > 16 || messages.length >= 4096) throw Error("OSC nesting/message limit exceeded");
+      const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+      let cursor = 0;
+      const take = (n) => {
+        if (n < 0 || cursor + n > data.length) throw Error("Truncated OSC packet");
+        const at = cursor;
+        cursor += n;
+        return at;
+      };
+      const string = () => {
+        const start = cursor;
+        while (cursor < data.length && data[cursor]) cursor++;
+        if (cursor === data.length) throw Error("Unterminated OSC string");
+        const end = cursor;
+        cursor = start;
+        const length = pad(end - start + 1);
+        take(length);
+        for (let i = end; i < cursor; i++) if (data[i]) throw Error("Invalid OSC string padding");
+        return utf8Decode(data.subarray(start, end));
+      };
+      const head = string();
+      if (head === "#bundle") {
+        const time = view.getBigUint64(take(8));
+        while (cursor < data.length) {
+          const size = view.getInt32(take(4));
+          if (size <= 0 || size % 4) throw Error("Invalid OSC bundle element");
+          const offset = take(size);
+          parse(data.subarray(offset, offset + size), time, depth + 1);
+        }
+        return;
+      }
+      if (!head.startsWith("/")) throw Error("Invalid OSC address");
+      const tags = string();
+      if (!tags.startsWith(",")) throw Error("Missing OSC type tags");
+      let tag = 1;
+      const readArgs = (level, nested = false) => {
+        if (level > 16) throw Error("OSC array nesting exceeds 16");
+        const args2 = [];
+        while (tag < tags.length) {
+          const type = tags[tag++];
+          if (type === "]") {
+            if (!nested) throw Error("Unexpected OSC array close");
+            return args2;
+          }
+          switch (type) {
+            case "[":
+              args2.push({ type: "array", value: readArgs(level + 1, true) });
+              break;
+            case "i":
+              args2.push({ type, value: view.getInt32(take(4)) });
+              break;
+            case "f":
+              args2.push({ type, value: view.getFloat32(take(4)) });
+              break;
+            case "d":
+              args2.push({ type, value: view.getFloat64(take(8)) });
+              break;
+            case "c":
+            case "r":
+              args2.push({ type, value: view.getUint32(take(4)) });
+              break;
+            case "h":
+              args2.push({ type, value: view.getBigInt64(take(8)) });
+              break;
+            case "t":
+              args2.push({ type, value: view.getBigUint64(take(8)) });
+              break;
+            case "s":
+            case "S":
+              args2.push({ type, value: string() });
+              break;
+            case "b": {
+              const size = view.getInt32(take(4));
+              if (size < 0 || size > limit) throw Error("Invalid OSC blob size");
+              const at = take(pad(size));
+              for (let i = at + size; i < cursor; i++) if (data[i]) throw Error("Invalid OSC blob padding");
+              args2.push({ type, value: data.slice(at, at + size) });
+              break;
+            }
+            case "m": {
+              const at = take(4);
+              args2.push({ type, value: data.slice(at, at + 4) });
+              break;
+            }
+            case "T":
+            case "F":
+            case "N":
+            case "I":
+              args2.push({ type });
+              break;
+            default:
+              throw Error(`Unsupported OSC type: ${type}`);
+          }
+        }
+        if (nested) throw Error("Unterminated OSC array");
+        return args2;
+      };
+      const args = readArgs(0);
+      if (cursor !== data.length) throw Error("Trailing OSC bytes");
+      messages.push({ address: head, args, timetag });
+    };
+    parse(bytes, 1n, 0);
+    return messages;
+  }
+
+  // src/td-io.ts
+  var g = globalThis;
+  var sequence = 0;
+  var pending = /* @__PURE__ */ new Map();
+  var receivers = /* @__PURE__ */ new Map();
+  g.__avIOEvent = (id, kind, error, bytes, address2, port) => {
+    const remote = Object.freeze({ address: address2, port });
+    if (kind === "data" || kind === "socketError") receivers.get(id)?.(kind, error, bytes, remote);
+    else {
+      const callback = pending.get(id);
+      pending.delete(id);
+      callback?.(kind, error, bytes, remote);
+    }
+  };
+  var native = (op, id = 0, socket = 0, path = "", port = 0, bytes) => g.__avIO(op, id, socket, path, port, bytes);
+  function address(options = {}) {
+    const address2 = options.address ?? "127.0.0.1", port = options.port ?? 0;
+    if (typeof address2 !== "string" || address2.includes("\0") || !Number.isInteger(port) || port < 0 || port > 65535) throw Error("Invalid UDP address/port");
+    return { address: address2, port };
+  }
+  function createIO(life) {
+    const baseDirectory = String(g.__avBaseDirectory ?? "");
+    const ids = /* @__PURE__ */ new Set();
+    const sockets = /* @__PURE__ */ new Set();
+    life.onDispose(() => {
+      for (const socket of sockets) socket.close();
+      for (const id of ids) pending.delete(id);
+      ids.clear();
+    });
+    function request(op, socket, path, port, bytes, done) {
+      return life.run(() => new Promise((resolve, reject) => {
+        if (pending.size >= 128) {
+          reject(Error("Too many pending I/O requests (128)"));
+          return;
+        }
+        const id = ++sequence;
+        ids.add(id);
+        pending.set(id, (kind, error, data, remote) => {
+          ids.delete(id);
+          if (kind === "error") {
+            reject(Error(error));
+            return;
+          }
+          try {
+            resolve(done(kind, data, remote, id));
+          } catch (error2) {
+            reject(error2);
+          }
+        });
+        try {
+          native(op, id, socket, path, port, bytes);
+        } catch (error) {
+          pending.delete(id);
+          ids.delete(id);
+          reject(error);
+        }
+      }));
+    }
+    const readBytes = (path) => {
+      if (typeof path !== "string" || !path || path.includes("\0")) return Promise.reject(Error("File path must be a nonempty string"));
+      const resolved = path.startsWith("/") || !baseDirectory ? path : baseDirectory + "/" + path;
+      return request("read", 0, resolved, 0, void 0, (_kind, bytes) => bytes);
+    };
+    function open(options) {
+      const local = address(options);
+      return request("open", 0, local.address, local.port, void 0, (_kind, _bytes, localAddress, id) => {
+        let closed = false;
+        const listeners = /* @__PURE__ */ new Set();
+        const errors = /* @__PURE__ */ new Set();
+        const active = () => {
+          if (closed) throw Error("UDP socket is closed");
+        };
+        const socket = Object.freeze({
+          localAddress,
+          send(bytes, destination) {
+            active();
+            if (!(bytes instanceof Uint8Array) || bytes.byteLength > 65507) return Promise.reject(Error("UDP payload must be Uint8Array, at most 65507 bytes"));
+            const remote = address(destination);
+            if (!remote.port) return Promise.reject(Error("UDP destination port must be 1\u201365535"));
+            return request("send", id, remote.address, remote.port, bytes, () => {
+            });
+          },
+          onMessage(callback) {
+            return life.run(() => {
+              active();
+              if (typeof callback !== "function") throw TypeError("Expected a callback");
+              listeners.add(callback);
+              return () => listeners.delete(callback);
+            });
+          },
+          onError(callback) {
+            return life.run(() => {
+              active();
+              if (typeof callback !== "function") throw TypeError("Expected a callback");
+              errors.add(callback);
+              return () => errors.delete(callback);
+            });
+          },
+          close() {
+            if (closed) return;
+            closed = true;
+            receivers.delete(id);
+            listeners.clear();
+            errors.clear();
+            sockets.delete(socket);
+            try {
+              native("close", 0, id);
+            } catch {
+            }
+          }
+        });
+        receivers.set(id, (kind, error, bytes, remote) => {
+          if (closed) return;
+          if (kind === "data") {
+            for (const callback of [...listeners]) life.run(() => callback(bytes, remote));
+          } else if (errors.size) {
+            for (const callback of [...errors]) life.run(() => callback(Error(error)));
+          } else console.warn("UDP receive error:", error);
+        });
+        sockets.add(socket);
+        return socket;
+      });
+    }
+    async function openOsc(options) {
+      const socket = await open(options);
+      const messages = /* @__PURE__ */ new Set();
+      const errors = /* @__PURE__ */ new Set();
+      let closed = false;
+      const report = (error) => {
+        for (const callback of [...errors]) life.run(() => callback(error));
+      };
+      socket.onError(report);
+      socket.onMessage((bytes, remote) => {
+        let decoded;
+        try {
+          decoded = decodeOsc(bytes);
+        } catch (error) {
+          report(error);
+          return;
+        }
+        for (const message2 of decoded) for (const callback of [...messages]) life.run(() => callback(message2, remote));
+      });
+      return Object.freeze({
+        localAddress: socket.localAddress,
+        send: (packet, remote) => socket.send(encodeOsc(packet), remote),
+        onMessage(callback) {
+          return life.run(() => {
+            if (closed) throw Error("OSC socket is closed");
+            if (typeof callback !== "function") throw TypeError("Expected a callback");
+            messages.add(callback);
+            return () => messages.delete(callback);
+          });
+        },
+        onError(callback) {
+          return life.run(() => {
+            if (closed) throw Error("OSC socket is closed");
+            if (typeof callback !== "function") throw TypeError("Expected a callback");
+            errors.add(callback);
+            return () => errors.delete(callback);
+          });
+        },
+        close() {
+          if (closed) return;
+          closed = true;
+          messages.clear();
+          errors.clear();
+          socket.close();
+        }
+      });
+    }
+    return Object.freeze({
+      files: Object.freeze({ baseDirectory, readBytes, readText: async (path) => utf8Decode(await readBytes(path)) }),
+      udp: Object.freeze({ open, get droppedDatagrams() {
+        return life.run(() => native("stats"));
+      } }),
+      osc: Object.freeze({ open: openOsc })
+    });
+  }
 
   // ../../node_modules/.deno/earcut@3.0.2/node_modules/earcut/src/earcut.js
   function earcut(data, holeIndices, dim = 2) {
@@ -1302,8 +1720,8 @@
         this.texture.destroy();
       } catch {
       }
-      for (const pending of this._pendingTextureDestroys) {
-        void pending.catch(() => {
+      for (const pending2 of this._pendingTextureDestroys) {
+        void pending2.catch(() => {
         });
       }
       this._pendingTextureDestroys.length = 0;
@@ -1445,14 +1863,14 @@
     _deferTextureDestroy(texture) {
       const queue = this.queue;
       if (typeof queue.onSubmittedWorkDone === "function") {
-        const pending = queue.onSubmittedWorkDone().catch(() => {
+        const pending2 = queue.onSubmittedWorkDone().catch(() => {
         }).then(() => {
           try {
             texture.destroy();
           } catch {
           }
         });
-        this._pendingTextureDestroys.push(pending);
+        this._pendingTextureDestroys.push(pending2);
         if (this._pendingTextureDestroys.length > 24) {
           this._pendingTextureDestroys = this._pendingTextureDestroys.slice(-12);
         }
@@ -2295,8 +2713,8 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
     strokeJoin(join) {
       this._state.strokeJoin = toNumber(join, this.MITER);
     }
-    strokeMiterLimit(limit) {
-      this._state.strokeMiterLimit = Math.max(1, toNumber(limit, 4));
+    strokeMiterLimit(limit2) {
+      this._state.strokeMiterLimit = Math.max(1, toNumber(limit2, 4));
     }
     curveTightness(amount) {
       this._state.curveTightness = toNumber(amount);
@@ -3659,15 +4077,15 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
         const h = clamp(c1 / maxes[0]);
         const s = clamp(c2 / maxes[1]);
         const b = clamp(c3 / maxes[2]);
-        const [r, g3, bb] = hsbToRgb(h, s, b);
-        return [r, g3, bb, alpha];
+        const [r, g4, bb] = hsbToRgb(h, s, b);
+        return [r, g4, bb, alpha];
       }
       if (this._state.colorMode === this.HSL) {
         const h = clamp(c1 / maxes[0]);
         const s = clamp(c2 / maxes[1]);
         const l = clamp(c3 / maxes[2]);
-        const [r, g3, bb] = hslToRgb(h, s, l);
-        return [r, g3, bb, alpha];
+        const [r, g4, bb] = hslToRgb(h, s, l);
+        return [r, g4, bb, alpha];
       }
       return [
         clamp(c1 / maxes[0]),
@@ -3689,36 +4107,36 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
       if (named.has(input)) return named.get(input);
       if (/^#[0-9a-f]{3}$/.test(input)) {
         const r = parseInt(input[1] + input[1], 16);
-        const g3 = parseInt(input[2] + input[2], 16);
+        const g4 = parseInt(input[2] + input[2], 16);
         const b = parseInt(input[3] + input[3], 16);
-        return [r / 255, g3 / 255, b / 255, 1];
+        return [r / 255, g4 / 255, b / 255, 1];
       }
       if (/^#[0-9a-f]{4}$/.test(input)) {
         const r = parseInt(input[1] + input[1], 16);
-        const g3 = parseInt(input[2] + input[2], 16);
+        const g4 = parseInt(input[2] + input[2], 16);
         const b = parseInt(input[3] + input[3], 16);
         const a = parseInt(input[4] + input[4], 16);
-        return [r / 255, g3 / 255, b / 255, a / 255];
+        return [r / 255, g4 / 255, b / 255, a / 255];
       }
       if (/^#[0-9a-f]{6}$/.test(input)) {
         const r = parseInt(input.slice(1, 3), 16);
-        const g3 = parseInt(input.slice(3, 5), 16);
+        const g4 = parseInt(input.slice(3, 5), 16);
         const b = parseInt(input.slice(5, 7), 16);
-        return [r / 255, g3 / 255, b / 255, 1];
+        return [r / 255, g4 / 255, b / 255, 1];
       }
       if (/^#[0-9a-f]{8}$/.test(input)) {
         const r = parseInt(input.slice(1, 3), 16);
-        const g3 = parseInt(input.slice(3, 5), 16);
+        const g4 = parseInt(input.slice(3, 5), 16);
         const b = parseInt(input.slice(5, 7), 16);
         const a = parseInt(input.slice(7, 9), 16);
-        return [r / 255, g3 / 255, b / 255, a / 255];
+        return [r / 255, g4 / 255, b / 255, a / 255];
       }
       const rgbMatch = input.match(/^rgba?\((.+)\)$/);
       if (rgbMatch) {
         const parts = rgbMatch[1].split(",").map((p2) => p2.trim());
         if (parts.length === 3 || parts.length === 4) {
           const r = parseRgbLikeComponent(parts[0]);
-          const g3 = parseRgbLikeComponent(parts[1]);
+          const g4 = parseRgbLikeComponent(parts[1]);
           const b = parseRgbLikeComponent(parts[2]);
           let a = 255;
           if (parts.length === 4) {
@@ -3730,7 +4148,7 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
               a = alpha <= 1 ? clamp(alpha) * 255 : clamp(alpha, 0, 255);
             }
           }
-          return [clamp(r / 255), clamp(g3 / 255), clamp(b / 255), clamp(a / 255)];
+          return [clamp(r / 255), clamp(g4 / 255), clamp(b / 255), clamp(a / 255)];
         }
       }
       return null;
@@ -4354,26 +4772,26 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
     _pushTriangleVertices(ax, ay, bx, by, cx, cy, color) {
       this._ensureGeomStagingCapacity(GEOM_FLOATS_PER_VERTEX * 3);
       const buf = this._geomStagingBuffer;
-      const r = color[0], g3 = color[1], b = color[2], a = color[3];
+      const r = color[0], g4 = color[1], b = color[2], a = color[3];
       let c = this._geomStagingCursor;
       buf[c] = ax;
       buf[c + 1] = ay;
       buf[c + 2] = r;
-      buf[c + 3] = g3;
+      buf[c + 3] = g4;
       buf[c + 4] = b;
       buf[c + 5] = a;
       c += 6;
       buf[c] = bx;
       buf[c + 1] = by;
       buf[c + 2] = r;
-      buf[c + 3] = g3;
+      buf[c + 3] = g4;
       buf[c + 4] = b;
       buf[c + 5] = a;
       c += 6;
       buf[c] = cx;
       buf[c + 1] = cy;
       buf[c + 2] = r;
-      buf[c + 3] = g3;
+      buf[c + 3] = g4;
       buf[c + 4] = b;
       buf[c + 5] = a;
       this._geomStagingCursor = c + 6;
@@ -4796,8 +5214,8 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
 
   // src/text-core.ts
   var HostTextEngine = class {
-    constructor(native) {
-      this.native = native;
+    constructor(native2) {
+      this.native = native2;
     }
     cache = /* @__PURE__ */ new Map();
     dispose() {
@@ -5035,13 +5453,13 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
     return `${parentSeed}::fork:${forkIndex}`;
   }
   var createYieldToMacrotask = (setTimeoutFn) => {
-    const g3 = globalThis;
-    if (typeof g3.setImmediate === "function") {
-      const setImmediateFn = g3.setImmediate;
+    const g4 = globalThis;
+    if (typeof g4.setImmediate === "function") {
+      const setImmediateFn = g4.setImmediate;
       return () => new Promise((res) => setImmediateFn(res));
     }
-    if (typeof g3.MessageChannel === "function") {
-      const mc = new g3.MessageChannel();
+    if (typeof g4.MessageChannel === "function") {
+      const mc = new g4.MessageChannel();
       const q = [];
       mc.port1.onmessage = () => {
         const fn = q.shift();
@@ -5056,13 +5474,13 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
     return () => new Promise((res) => setTimeoutFn(res, 0));
   };
   var createScheduleMacrotask = (setTimeoutFn) => {
-    const g3 = globalThis;
-    if (typeof g3.setImmediate === "function") {
-      const setImmediateFn = g3.setImmediate;
+    const g4 = globalThis;
+    if (typeof g4.setImmediate === "function") {
+      const setImmediateFn = g4.setImmediate;
       return (cb) => setImmediateFn(cb);
     }
-    if (typeof g3.MessageChannel === "function") {
-      const mc = new g3.MessageChannel();
+    if (typeof g4.MessageChannel === "function") {
+      const mc = new g4.MessageChannel();
       const q = [];
       mc.port1.onmessage = () => {
         const fn = q.shift();
@@ -6228,10 +6646,10 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
   };
 
   // src/td-timing.ts
-  var g = globalThis;
+  var g2 = globalThis;
   var scopes = /* @__PURE__ */ new Map();
   var SketchLifetime = class {
-    id = g.__hostRegister();
+    id = g2.__hostRegister();
     active = true;
     error = "";
     roots = /* @__PURE__ */ new Set();
@@ -6251,11 +6669,11 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
     }
     run(fn) {
       if (!this.active) throw new Error("Sketch generation has been disposed");
-      const previous = g.__hostGeneration(this.id);
+      const previous = g2.__hostGeneration(this.id);
       try {
         return fn();
       } finally {
-        g.__hostGeneration(previous);
+        g2.__hostGeneration(previous);
       }
     }
     track(fn) {
@@ -6284,8 +6702,8 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
       if (!this.active || this.error) return;
       this.error = String(error?.stack ?? error);
       this.run(() => this.cancelRoots());
-      g.__hostInvalidate(this.id);
-      g.__hostCancelFrames(this.id);
+      g2.__hostInvalidate(this.id);
+      g2.__hostCancelFrames(this.id);
     }
     dispose() {
       if (!this.active) return;
@@ -6311,8 +6729,8 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
         }
       }
       this.resources.clear();
-      g.__hostInvalidate(this.id);
-      g.__hostCancelFrames(this.id);
+      g2.__hostInvalidate(this.id);
+      g2.__hostCancelFrames(this.id);
       this.active = false;
       scopes.delete(this.id);
     }
@@ -6351,18 +6769,18 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
       return wrap(value);
     }
   };
-  g.__hostError = (error, generation) => {
+  g2.__hostError = (error, generation) => {
     const scope = scopes.get(generation);
     if (scope) scope.fail(error);
     else if (generation === 0) {
-      g.__avError = String(error?.stack ?? error);
-      g.__avBackgroundError = g.__avError;
+      g2.__avError = String(error?.stack ?? error);
+      g2.__avBackgroundError = g2.__avError;
     }
   };
 
   // src/td-runtime.ts
-  var g2 = globalThis;
-  Object.assign(g2, nativeGPU.globals);
+  var g3 = globalThis;
+  Object.assign(g3, nativeGPU.globals);
   var fonts = JSON.parse(__avFontsJSON);
   var device;
   var p;
@@ -6378,13 +6796,13 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
   var params = parameterSnapshot({});
   var controlsMeta = { sampleRate: 0, startIndex: 0 };
   var message = (error) => String(error?.stack ?? error);
-  g2.__avDone = false;
-  g2.__avError = "";
-  g2.__avBytes = null;
-  g2.__avPulseNames = "[]";
-  g2.__avSyphonClients = 0;
-  g2.__avSyphonPublished = 0;
-  g2.__avSyphonDropped = 0;
+  g3.__avDone = false;
+  g3.__avError = "";
+  g3.__avBytes = null;
+  g3.__avPulseNames = "[]";
+  g3.__avSyphonClients = 0;
+  g3.__avSyphonPublished = 0;
+  g3.__avSyphonDropped = 0;
   var syphon;
   var syphonName = "";
   var lifetime;
@@ -6397,25 +6815,25 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
     if (!adapter) throw new Error("No Metal adapter");
     device = await adapter.requestDevice();
     device.addEventListener("uncapturederror", (event) => {
-      g2.__avError = event.error.message;
+      g3.__avError = event.error.message;
       blocked = true;
     });
     device.lost.then((info) => {
       blocked = true;
-      g2.__avError = `Device lost: ${info.message}; reset the operator`;
+      g3.__avError = `Device lost: ${info.message}; reset the operator`;
     });
   })().catch((error) => {
-    g2.__avError = message(error);
+    g3.__avError = message(error);
   }).finally(() => {
-    g2.__avDone = true;
+    g3.__avDone = true;
   });
-  g2.__avInputs = () => {
+  g3.__avInputs = () => {
     incomingChannels = [];
   };
-  g2.__avChannel = (name) => {
+  g3.__avChannel = (name) => {
     incomingChannels.push({ name, samples: new Float32Array(__avData.buffer, __avData.byteOffset, __avData.byteLength / 4) });
   };
-  g2.__avImage = (index, w, h) => {
+  g3.__avImage = (index, w, h) => {
     let image = images[index];
     if (!image || image.texture.width !== w || image.texture.height !== h) {
       image?.texture.destroy();
@@ -6424,20 +6842,20 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
     }
     device.queue.writeTexture({ texture: image.texture }, __avData, { bytesPerRow: w * 4 }, [w, h]);
   };
-  g2.__avTrimImages = (count) => {
+  g3.__avTrimImages = (count) => {
     channels = incomingChannels;
     const f = JSON.parse(__avFrameJSON);
     params = parameterSnapshot(f.params);
     controlsMeta = { sampleRate: f.sampleRate, startIndex: f.startIndex };
     for (const image of images.splice(count)) image.texture.destroy();
   };
-  g2.__avRender = async () => {
-    g2.__avDone = false;
-    g2.__avError = "";
-    g2.__avHasFrame = false;
-    g2.__avRendered = false;
-    g2.__avDrawMs = 0;
-    g2.__avReadbackMs = 0;
+  g3.__avRender = async () => {
+    g3.__avDone = false;
+    g3.__avError = "";
+    g3.__avHasFrame = false;
+    g3.__avRendered = false;
+    g3.__avDrawMs = 0;
+    g3.__avReadbackMs = 0;
     const frame = JSON.parse(__avFrameJSON);
     frame.params = params;
     try {
@@ -6450,22 +6868,22 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
         p = new EmbeddedP5GPU(device, { width: frame.width, height: frame.height, sampleCount: 1 }, fonts);
         sketchP = lifetime.guard(p);
         const life = lifetime;
-        const host = Object.freeze({ get params() {
+        const host = Object.freeze({ ...createIO(life), get params() {
           return params;
-        }, device: life.guard(device), readFile: (path) => life.run(() => g2.readFile(path)), timing: life.timing, onDispose: (callback) => life.onDispose(callback), chop, latestControls });
+        }, device: life.guard(device), readFile: (path) => life.run(() => g3.readFile(path)), timing: life.timing, onDispose: (callback) => life.onDispose(callback), chop, latestControls });
         await life.run(() => sketch.setup?.(sketchP, host));
         if (life.error) throw new Error(life.error);
         width = frame.width;
         height = frame.height;
         stride = Math.ceil(width * 4 / 256) * 256;
         staging = device.createBuffer({ size: stride * height, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-        g2.__avPulseNames = JSON.stringify(sketch.onPulse && typeof sketch.onPulse === "object" ? Object.keys(sketch.onPulse).filter((name) => typeof sketch.onPulse[name] === "function") : []);
+        g3.__avPulseNames = JSON.stringify(sketch.onPulse && typeof sketch.onPulse === "object" ? Object.keys(sketch.onPulse).filter((name) => typeof sketch.onPulse[name] === "function") : []);
       }
       if (!p || !sketch) throw new Error("No valid sketch");
       if (lifetime?.error) throw new Error(lifetime.error);
-      if (g2.__avBackgroundError) throw new Error(g2.__avBackgroundError);
+      if (g3.__avBackgroundError) throw new Error(g3.__avBackgroundError);
       if (blocked) throw new Error("Draw stopped after an error; edit the source or reset");
-      await g2.__hostFrame();
+      await g3.__hostFrame();
       frame.time = (frame.frame - 1) / frame.rate;
       frame.controls = Object.freeze({ sampleRate: frame.sampleRate, startIndex: frame.startIndex, channels });
       frame.chop = chop;
@@ -6477,7 +6895,7 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
         if (syphonName) syphon = new nativeGPU.NativeSyphon(device, syphonName, false);
       }
       if (frame.syphonOnly && !syphon) throw new Error("Syphon-only output requires an enabled, named Syphon channel");
-      const drawStart = g2.hostNow();
+      const drawStart = g3.hostNow();
       p.beginFrame();
       try {
         for (const name of JSON.parse(__avPulsesJSON)) {
@@ -6502,46 +6920,47 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
       const texture = p.endFrame();
       syphon?.publish(texture, true, { x: 0, y: 0, width, height });
       const syphonStats = syphon?.stats();
-      g2.__avSyphonClients = Number(syphonStats?.hasClients ?? false);
-      g2.__avSyphonPublished = syphonStats?.published ?? 0;
-      g2.__avSyphonDropped = syphonStats?.dropped ?? 0;
-      g2.__avRendered = true;
+      g3.__avSyphonClients = Number(syphonStats?.hasClients ?? false);
+      g3.__avSyphonPublished = syphonStats?.published ?? 0;
+      g3.__avSyphonDropped = syphonStats?.dropped ?? 0;
+      g3.__avRendered = true;
       if (frame.syphonOnly) {
-        g2.__avDrawMs = g2.hostNow() - drawStart;
-        g2.__avError = "";
+        g3.__avDrawMs = g3.hostNow() - drawStart;
+        g3.__avError = "";
         return;
       }
       const encoder = device.createCommandEncoder();
       encoder.copyTextureToBuffer({ texture }, { buffer: staging, bytesPerRow: stride }, [width, height]);
       device.queue.submit([encoder.finish()]);
-      g2.__avSubmitted = true;
-      g2.__avDrawMs = g2.hostNow() - drawStart;
-      const readbackStart = g2.hostNow();
+      g3.__avSubmitted = true;
+      g3.__avDrawMs = g3.hostNow() - drawStart;
+      const readbackStart = g3.hostNow();
       await staging.mapAsync(GPUMapMode.READ);
-      g2.__avReadbackMs = g2.hostNow() - readbackStart;
-      g2.__avBytes = new Uint8Array(staging.getMappedRange());
-      g2.__avHasFrame = true;
-      g2.__avError = "";
+      g3.__avReadbackMs = g3.hostNow() - readbackStart;
+      g3.__avBytes = new Uint8Array(staging.getMappedRange());
+      g3.__avHasFrame = true;
+      g3.__avError = "";
     } catch (error) {
-      g2.__avError = message(error);
+      lifetime?.fail(error);
+      g3.__avError = message(error);
     } finally {
-      g2.__avDone = true;
+      g3.__avDone = true;
     }
   };
-  g2.__avUnmap = () => {
-    g2.__avBytes = null;
+  g3.__avUnmap = () => {
+    g3.__avBytes = null;
     if (staging?.mapState === "mapped") staging.unmap();
   };
-  g2.__avDispose = () => {
-    g2.__avDone = false;
+  g3.__avDispose = () => {
+    g3.__avDone = false;
     lifetime?.dispose();
-    g2.__avUnmap();
+    g3.__avUnmap();
     syphon?.dispose();
     for (const image of images) image.texture.destroy();
     images = [];
     p?.dispose();
     staging?.destroy();
     device?.destroy();
-    g2.__avDone = true;
+    g3.__avDone = true;
   };
 })();

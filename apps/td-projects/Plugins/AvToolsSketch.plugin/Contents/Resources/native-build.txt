@@ -1,1 +1,1 @@
-../../../native-build/ec805a04a3bf/libavtools_build.dylib
+embedded-static

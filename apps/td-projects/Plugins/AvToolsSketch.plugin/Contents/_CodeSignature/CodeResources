@@ -16,6 +16,10 @@
 		<data>
 		QgaPk7/ysa/k3vZmPLctTn/Tkfc=
 		</data>
+		<key>Resources/compiler-THIRD_PARTY_NOTICES.txt</key>
+		<data>
+		lYy8txtLteh7oLtzG/ZPdmfSByA=
+		</data>
 		<key>Resources/fonts/Inter-Bold.ttf</key>
 		<data>
 		EUgny+qVaB7unYd7CxqwUV1fO2k=
@@ -52,13 +56,17 @@
 		<data>
 		YWj00n/dd3l1rg3jkAckcbr7Ao4=
 		</data>
+		<key>Resources/libuv-LICENSE</key>
+		<data>
+		C0deOL2U03vPv8KOp/wCS9gKKAo=
+		</data>
 		<key>Resources/native-build.txt</key>
 		<data>
-		pTlBe4Bh9PGN4x5Jn9cfITYKHtI=
+		t51eALG15Z8nT5fQTKPtMfMryMg=
 		</data>
 		<key>Resources/renderer.js</key>
 		<data>
-		d92bD2A/Tf3NWz8uhpA6J1zZUsg=
+		q0myXkAhxRG17h4ejqdStueZ5/I=
 		</data>
 		<key>Resources/seedrandom-LICENSE.txt</key>
 		<data>
@@ -80,10 +88,10 @@
 		<dict>
 			<key>cdhash</key>
 			<data>
-			gY7qCgHxTGAZm6vZWLLdJA+SJZc=
+			/0Dva2X3RqVg0Rcl6n2ismC8IhI=
 			</data>
 			<key>requirement</key>
-			<string>cdhash H"818eea0a01f14c60199babd958b2dd240f922597"</string>
+			<string>cdhash H"ff40ef6b65f746a560d11725ea7da2b260bc2212"</string>
 		</dict>
 		<key>Resources/DeclaredParameters.py</key>
 		<dict>
@@ -104,6 +112,13 @@
 			<key>hash2</key>
 			<data>
 			arM6+HdKDzlu467rdh4yKQV2gtb5+n9XLjkMLLOm5Qk=
+			</data>
+		</dict>
+		<key>Resources/compiler-THIRD_PARTY_NOTICES.txt</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			M/84fh5yo5RZY8MacsmO2qIrVO7xO+nJVFGGcaWUQc0=
 			</data>
 		</dict>
 		<key>Resources/fonts/Inter-Bold.ttf</key>
@@ -169,18 +184,25 @@
 			m1I/fYJZPfAQcXOEnruMgXRxod9LT7LDy/QM/YEMgoE=
 			</data>
 		</dict>
+		<key>Resources/libuv-LICENSE</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			Ft4MMrJly31GptO9YU8lndTWk6XiazQHsEqujXMEHww=
+			</data>
+		</dict>
 		<key>Resources/native-build.txt</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			hxoJGNQ7NvEL2ez1kSoRS6JmnhiYrwV2VATFs1dce68=
+			moTilTb42in5GFKb02h6AchuiZbfxpZ+dC0U9zvs6Vk=
 			</data>
 		</dict>
 		<key>Resources/renderer.js</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			jtXI0UOCl5/HOhot0dBJK6cJq13W/Ms5E0GUp6R5lRk=
+			Re1jGffoBCj5KHUlFXHSBSsWG+FYw/48wxqkUYWwCzE=
 			</data>
 		</dict>
 		<key>Resources/seedrandom-LICENSE.txt</key>
