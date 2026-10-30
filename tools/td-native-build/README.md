@@ -16,7 +16,9 @@ supplied SDK. The [older Node runner](../td-sketch-build/README.md) remains avai
 3. Press **Create Template Project**. This creates a local SDK, `tsconfig.json`,
    starter TOP/CHOP sources and a README. It selects the matching **TypeScript File**
    on this operator, enables Automatic Builds, and configures the starter CHOP's
-   `value ticks` output channels and one output sample.
+   `value ticks` output channels and one output sample, or the TOP's 1280×720 output.
+   The [generated README](template/README.md) includes the complete offline
+   TouchDesigner-facing script API reference for coding agents and users.
 4. Open the new `avtools-project/` folder in VS Code and edit the sources. Saving rebuilds the affected
    entries; successful changed bundles restart their instances.
 

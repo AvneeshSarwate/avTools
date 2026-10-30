@@ -5,13 +5,20 @@
       "kind": "top",
       "created_child": true,
       "preserved_parent": true,
-      "repeat_refused": true
+      "repeat_refused": true,
+      "api_readme": true,
+      "resolution": [
+        1280,
+        720
+      ]
     },
     {
       "kind": "chop",
       "created_child": true,
       "preserved_parent": true,
-      "repeat_refused": true
+      "repeat_refused": true,
+      "api_readme": true,
+      "resolution": null
     },
     {
       "symlink_refused": true
@@ -23,8 +30,11 @@
     "all_controls",
     "buffers",
     "inputs",
-    "timing"
+    "timing",
+    "raw_readme"
   ],
   "samples": 10000,
-  "math_and_parameter_edits": true
+  "math_and_parameter_edits": true,
+  "default_controls": true,
+  "raw_webgpu_readme_and_resize_reset": true
 }
