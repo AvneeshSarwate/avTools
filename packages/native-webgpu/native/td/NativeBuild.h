@@ -71,6 +71,7 @@ class NativeBuild {
       clear();setupError.clear();
       pars.set("Typescript",(std::filesystem::path(directory)/"sketches"/(chop?"channels":"background")/"main.ts").string());
       if(chop){pars.set("Outputchannels","value ticks");pars.set("Outputsamples",1);}
+      else{pars.set("Width",1280);pars.set("Height",720);}
       pars.set("Autobuild",1);
       state="created";detail="Template created in "+directory+". Open this folder in your editor; saving rebuilds this entry.";
     }catch(const std::exception& e){setupError=e.what();}
