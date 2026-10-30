@@ -52,6 +52,11 @@ which includes these instructions alongside the binaries. Normal TOP/CHOP builds
 refresh the copyable folder and ZIP; `npm run td:pack` in `packages/native-webgpu`
 packages existing binaries. `Plugins/version.json` increments when shipped contents change.
 
+Every generated TypeScript project's [README](tools/td-native-build/template/README.md)
+contains the complete offline TD-facing API guide for users and coding agents:
+callbacks, inputs/outputs, controls, timing, reloads, files, OSC/UDP and diagnostics.
+New TOP templates initialize at 1280×720.
+
 The TOP also bundles [TimeContext](packages/native-webgpu/TIMING.md): independent
 realtime scheduling continues while TD playback is paused. Reload creates a fresh
 JavaScript environment; synchronous cleanup is best effort. Open [TimeContext.toe](packages/native-webgpu/native/td/example/TimeContext.toe)

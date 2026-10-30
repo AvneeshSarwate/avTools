@@ -60,14 +60,15 @@ name to appear in the operator creation dialog first. See Derivative's
 1. On the operator's **Build** page, set **Template Parent Folder** to `MyProject`
    (the folder containing your `.toe`), or another existing folder.
 2. Press **Create Template Project**. It creates an `avtools-project/` subdirectory
-   containing the SDK, `tsconfig.json`, README and example sketches. It refuses an
+   containing the SDK, `tsconfig.json`, README and example sketches. Its README
+   is the complete offline TD script/API guide for users and coding agents. It refuses an
    existing child of that name, so repeated clicks cannot overwrite your edits.
 3. The operator automatically selects the matching **TypeScript File**:
    `avtools-project/sketches/background/main.ts` for the TOP, or
    `avtools-project/sketches/channels/main.ts` for the CHOP.
 4. Keep **Automatic Builds** and **Automatic Reload** on.
 5. Start TD's timeline playback and enable the node's viewer if needed. The TOP
-   starter draws an orange circle. The CHOP starter has `value` and `ticks`
+   starter draws an orange circle at 1280×720 (720p). The CHOP starter has `value` and `ticks`
    channels; without an input, `value` is zero and `ticks` increases.
    Open **Controls** to adjust Size, Color and Speed on the TOP, or Gain, Offset
    and Tick Interval on the CHOP.
@@ -131,9 +132,9 @@ should be `0.5`. Keep **Wait for Current Result** on for same-cook transforms.
 - **No updates:** check playback, node viewing/downstream demand, TypeScript
   File, both automatic toggles, and the build diagnostics. A runtime exception
   requires fixing the source and reloading; `console.error` alone is only a log.
-- **Missing builder / cannot create template:** check that `native-build` is
-  beside the plugin bundles and includes the matching version directory. Copy
-  the complete matching distribution rather than mixing plugin versions.
+- **Cannot create template:** choose an existing Template Parent Folder without
+  an `avtools-project` child, and keep the entire `.plugin` bundle intact. The
+  compiler and template are embedded; no sibling builder directory is needed.
 - **macOS blocks a downloaded plugin:** these bundles are ad-hoc signed, not
   Apple-notarized. macOS may require its normal security approval. Preserve the
   complete extracted bundles; downloading individual files from inside a bundle

@@ -165,7 +165,7 @@ class SketchTOP final:public TOP_CPlusPlusBase {
     OP_StringParameter source;source.name="Sketch";source.label="Sketch DAT";source.page="Sketch";manager->appendDAT(source);
     source.name="Sourcefile";source.label="Source File";manager->appendFile(source);
     source.name="Controls";source.label="Controls CHOP";manager->appendCHOP(source);
-    for(const char* name:{"Width","Height"}){OP_NumericParameter p;p.name=name;p.label=name;p.page="Sketch";p.defaultValues[0]=512;p.minValues[0]=1;p.maxValues[0]=4096;p.minSliders[0]=1;p.maxSliders[0]=1920;p.clampMins[0]=p.clampMaxes[0]=true;manager->appendInt(p);}
+    for(const char* name:{"Width","Height"}){OP_NumericParameter p;p.name=name;p.label=name;p.page="Sketch";p.defaultValues[0]=!strcmp(name,"Width")?1280:720;p.minValues[0]=1;p.maxValues[0]=4096;p.minSliders[0]=1;p.maxSliders[0]=1920;p.clampMins[0]=p.clampMaxes[0]=true;manager->appendInt(p);}
     source.name="Eventname";source.label="Event Name";source.defaultValue="Trigger";manager->appendString(source);
     source.page="Output";source.name="Syphonname";source.label="Syphon Name";source.defaultValue="avTools Sketch";manager->appendString(source);
     for(const char* name:{"Syphonenabled","Syphononly"}){OP_NumericParameter p;p.name=name;p.label=!strcmp(name,"Syphonenabled")?"Enable Syphon":"Syphon Only (1px TOP)";p.page="Output";p.defaultValues[0]=0;manager->appendToggle(p);}
