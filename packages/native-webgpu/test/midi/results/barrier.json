@@ -1,0 +1,4 @@
+{
+  "passed": true,
+  "output": "PASS: embedded close waits for in-flight callback; no callback after close returns"
+}

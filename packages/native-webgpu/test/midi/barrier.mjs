@@ -1,0 +1,12 @@
+import {execFileSync} from 'node:child_process';
+import {mkdirSync,writeFileSync} from 'node:fs';
+import {resolve} from 'node:path';
+const root=resolve(import.meta.dirname,'../..'),dir=resolve(root,'build/midi-test');
+mkdirSync(dir,{recursive:true});
+const rust=resolve(root,'../../apps/deno-notebooks/native/midi_bridge');
+execFileSync('cargo',['build','--release','--locked','--offline','--manifest-path',resolve(rust,'Cargo.toml')],{stdio:'inherit'});
+const sdk=execFileSync('xcrun',['--show-sdk-path'],{encoding:'utf8'}).trim();
+execFileSync('clang++',['-std=c++17','-O2','-Wno-deprecated-declarations','-isysroot',sdk,'-isystem',sdk+'/usr/include/c++/v1',resolve(root,'test/midi/barrier.cpp'),'-framework','CoreMIDI','-framework','CoreFoundation','-o',resolve(dir,'barrier')],{stdio:'inherit'});
+const output=execFileSync(resolve(dir,'barrier'),[resolve(rust,'target/release/libmidi_bridge.dylib')],{encoding:'utf8',timeout:10000});
+process.stdout.write(output);
+writeFileSync(resolve(root,'test/midi/results/barrier.json'),JSON.stringify({passed:true,output:output.trim()},null,2)+'\n');

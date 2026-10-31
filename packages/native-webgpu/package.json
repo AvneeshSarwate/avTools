@@ -25,7 +25,8 @@
     "test:timing": "node test/timing/run.mjs",
     "td:build:chop": "node scripts/build-td-plugin.mjs --chop",
     "test:chop": "node test/chop/run.mjs",
-    "test:io": "node --test test/io/codec.mjs && node test/io/run.mjs"
+    "test:io": "node --test test/io/codec.mjs && node test/io/run.mjs",
+    "test:midi": "node --test test/midi/adapter.mjs test/midi/sdk.mjs && node test/midi/run.mjs && node test/midi/barrier.mjs"
   },
   "dependencies": {
     "@webgpu/types": "0.1.72",
@@ -65,6 +66,9 @@
     },
     "./td-io": {
       "types": "./td-io.d.ts"
+    },
+    "./td-midi": {
+      "types": "./td-midi.d.ts"
     }
   },
   "files": [
@@ -85,6 +89,8 @@
     "td-types",
     "TD_TYPES.md",
     "td-io.d.ts",
-    "IO.md"
+    "IO.md",
+    "td-midi.d.ts",
+    "MIDI.md"
   ]
 }

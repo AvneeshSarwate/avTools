@@ -285,3 +285,8 @@ colors, menus, text fields, toggles and pulse buttons. See [PARAMETERS.md](PARAM
 for typed reads, reload/persistence behavior and generated examples.
 
 Both operators also support [asynchronous files, UDP and OSC](IO.md), with examples in generated projects.
+
+## Native MIDI
+
+Use a script-declared `midiInput` device selector with `host.midi.bindInput()`,
+or explicitly open devices through `host.midi`. See [MIDI API and examples](MIDI.md).

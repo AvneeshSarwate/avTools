@@ -1,3 +1,4 @@
+import type {MidiHost} from './td-midi.d.ts';
 import type {IOHost} from './td-io.d.ts';
 import type {ParameterDefinitions, ParameterValues} from './td-parameters.d.ts';
 import type * as Timing from '../core-timing/mod.ts';
@@ -8,6 +9,7 @@ import type * as Timing from '../core-timing/mod.ts';
  * inputs; a continuation after await can see a newer accepted snapshot.
  */
 export interface ChopHost<P extends ParameterDefinitions = ParameterDefinitions> extends IOHost {
+  readonly midi: MidiHost<P>;
   readonly params: ParameterValues<P>;
   readonly timing: typeof Timing;
   readonly inputs: {
