@@ -47,7 +47,7 @@ pub unsafe extern "C" fn midi_open_input(
         Ok(s) => s,
         Err(_) => return 0,
     };
-    match input::open_input(port_id, rate_hz, flags, cb) {
+    match input::open_input(port_id, rate_hz, flags, input::Sink::Legacy(cb)) {
         Ok(handle) => {
             let id = next_handle();
             INPUTS.lock().unwrap().insert(id, handle);
@@ -59,7 +59,8 @@ pub unsafe extern "C" fn midi_open_input(
 
 #[no_mangle]
 pub unsafe extern "C" fn midi_close_input(handle: u32) {
-    if let Some(input) = INPUTS.lock().unwrap().remove(&handle) {
+    let input = INPUTS.lock().unwrap().remove(&handle);
+    if let Some(input) = input {
         input.close();
     }
 }
@@ -118,4 +119,32 @@ fn write_json_buffer(bytes: Vec<u8>, out_ptr: *mut u8, out_cap: u32) -> u32 {
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_ptr, bytes.len());
     }
     needed
+}
+
+/// Embedded ABI: callback must enqueue promptly, never invoke JS or close itself.
+/// close joins both dispatch threads before returning; context remains caller-owned.
+#[no_mangle]
+pub unsafe extern "C" fn av_midi_open_input(
+    port: *const u8, len: u32, rate: u32, flags: u32,
+    callback: extern "C" fn(usize, *const u8, u32), context: usize,
+    error: *mut u8, capacity: u32,
+) -> u32 {
+    let result = (|| {
+        if port.is_null() || len == 0 || len > 4096 || rate < 1 || rate > 1000 || flags > 1 {
+            return Err("Invalid MIDI input id/options".to_string());
+        }
+        let id = std::str::from_utf8(std::slice::from_raw_parts(port, len as usize)).map_err(|e| e.to_string())?;
+        input::open_input(id, rate, flags, input::Sink::Embedded(callback, context))
+    })();
+    match result {
+        Ok(input) => { let id = next_handle(); INPUTS.lock().unwrap().insert(id, input); id }
+        Err(message) => {
+            if !error.is_null() && capacity > 0 {
+                let n = message.len().min(capacity as usize - 1);
+                std::ptr::copy_nonoverlapping(message.as_ptr(), error, n);
+                *error.add(n) = 0;
+            }
+            0
+        }
+    }
 }

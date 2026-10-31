@@ -727,6 +727,328 @@
     }
   });
 
+  // ../midi/api.ts
+  var MidiOutput = class {
+    constructor(port, transport) {
+      this.port = port;
+      this.transport = transport;
+      this.name = port.name;
+    }
+    name;
+    #closed = false;
+    get closed() {
+      return this.#closed;
+    }
+    send(bytes) {
+      this.#assertOpen();
+      const message2 = bytes instanceof Uint8Array ? new Uint8Array(bytes) : Uint8Array.from(bytes);
+      if (message2.length === 0) {
+        throw new RangeError("A MIDI message must contain at least one byte");
+      }
+      this.transport.send(message2);
+    }
+    noteOn(channel, note, velocity = 100) {
+      this.send([
+        144 | midiChannel(channel),
+        midi7Bit(note),
+        midi7Bit(velocity)
+      ]);
+    }
+    noteOff(channel, note, velocity = 0) {
+      this.send([
+        128 | midiChannel(channel),
+        midi7Bit(note),
+        midi7Bit(velocity)
+      ]);
+    }
+    polyPressure(channel, note, pressure) {
+      this.send([
+        160 | midiChannel(channel),
+        midi7Bit(note),
+        midi7Bit(pressure)
+      ]);
+    }
+    cc(channel, controller, value) {
+      this.send([
+        176 | midiChannel(channel),
+        midi7Bit(controller),
+        midi7Bit(value)
+      ]);
+    }
+    programChange(channel, program) {
+      this.send([192 | midiChannel(channel), midi7Bit(program)]);
+    }
+    channelPressure(channel, pressure) {
+      this.send([208 | midiChannel(channel), midi7Bit(pressure)]);
+    }
+    pitchBend(channel, bend) {
+      const value = clampInteger(bend, -8192, 8191) + 8192;
+      this.send([
+        224 | midiChannel(channel),
+        value & 127,
+        value >> 7 & 127
+      ]);
+    }
+    allSoundOff(channel) {
+      this.cc(channel, 120, 0);
+    }
+    allNotesOff(channel) {
+      this.cc(channel, 123, 0);
+    }
+    close() {
+      if (this.#closed) return;
+      this.#closed = true;
+      this.transport.close?.();
+    }
+    #assertOpen() {
+      if (this.#closed) {
+        throw new Error(`MIDI output "${this.name}" is closed`);
+      }
+    }
+  };
+  function midiChannel(value) {
+    return clampInteger(value, 0, 15);
+  }
+  function midi7Bit(value) {
+    return clampInteger(value, 0, 127);
+  }
+  function clampInteger(value, min, max) {
+    const finite = Number.isFinite(value) ? value : 0;
+    return Math.max(min, Math.min(max, Math.round(finite)));
+  }
+
+  // ../../apps/deno-notebooks/midi/decode.ts
+  var MAGIC = 1296647250;
+  var VERSION = 1;
+  function decodePacket(bytes) {
+    if (bytes.length < 32) {
+      throw new Error("Packet too small");
+    }
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const magic = view.getUint32(0, true);
+    if (magic !== MAGIC) {
+      throw new Error("Bad magic");
+    }
+    const version = view.getUint16(4, true);
+    if (version !== VERSION) {
+      throw new Error(`Unsupported version ${version}`);
+    }
+    const flags = view.getUint16(6, true);
+    const dispatchTsUs = Number(view.getBigUint64(8, true));
+    const droppedRaw = view.getUint32(16, true);
+    const droppedNote = view.getUint32(20, true);
+    const recordCount = view.getUint32(24, true);
+    const header = {
+      flags,
+      dispatchTsUs,
+      droppedRaw,
+      droppedNote,
+      recordCount
+    };
+    const available = Math.floor((bytes.length - 32) / 16);
+    const count = Math.min(recordCount, available);
+    const records = new Array(count);
+    let offset = 32;
+    for (let i = 0; i < count; i++) {
+      const tsUs = Number(view.getBigUint64(offset, true));
+      const kind = view.getUint8(offset + 8);
+      const channel = view.getUint8(offset + 9);
+      const a = view.getUint8(offset + 10);
+      const b = view.getUint8(offset + 11);
+      const v16 = view.getInt16(offset + 12, true);
+      const extra = view.getUint16(offset + 14, true);
+      records[i] = { tsUs, kind, channel, a, b, v16, extra };
+      offset += 16;
+    }
+    return { header, records };
+  }
+
+  // src/td-midi.ts
+  var g = globalThis;
+  var sequence = 0;
+  var selections = {};
+  var receivers = /* @__PURE__ */ new Map();
+  var bindings = /* @__PURE__ */ new Set();
+  var native = (op, id = 0, port = "", rate = 250, raw = true, bytes) => g.__avMIDI(op, id, port, rate, raw, bytes);
+  g.__avMIDIEvent = (id, bytes) => receivers.get(id)?.(bytes);
+  g.__avMIDISelections = () => {
+    selections = Object.freeze(JSON.parse(g.__avMIDISelectionsJSON || "{}"));
+    for (const update of [...bindings]) update();
+  };
+  function events(bytes) {
+    return decodePacket(bytes).records.map((r) => {
+      const common = { channel: r.channel, timeMs: r.tsUs / 1e3 };
+      switch (r.kind) {
+        case 1:
+          return { ...common, type: "cc", controller: r.a, value: r.b };
+        case 2:
+          return { ...common, type: "pitchBend", bend: r.v16 };
+        case 3:
+          return { ...common, type: "channelPressure", pressure: r.b };
+        case 4:
+          return { ...common, type: "polyPressure", note: r.a, pressure: r.b };
+        case 5:
+          return { ...common, type: "programChange", program: r.b };
+        case 6:
+          return { ...common, type: r.extra ? "noteOn" : "noteOff", note: r.a, velocity: r.b };
+        default:
+          throw Error("Unsupported native MIDI record");
+      }
+    });
+  }
+  function createMIDI(life) {
+    const resources = /* @__PURE__ */ new Set();
+    life.onDispose(() => {
+      for (const resource of [...resources]) resource.close();
+    });
+    const list = (output) => life.run(() => JSON.parse(native(output ? "outputs" : "inputs")).map((p) => Object.freeze({ ...p, manufacturer: null })));
+    function input(initial, options = {}, parameter) {
+      const rate = options.rateHz ?? 250, raw = options.rawCC ?? true;
+      if (!Number.isInteger(rate) || rate < 1 || rate > 1e3 || typeof raw !== "boolean") throw Error("MIDI options require rateHz 1\u20131000 and boolean rawCC");
+      let id = 0, selected = "", port = null, error = "", closed = false;
+      const messages = /* @__PURE__ */ new Set(), statuses = /* @__PURE__ */ new Set();
+      function disconnect() {
+        if (id) {
+          receivers.delete(id);
+          try {
+            native("close", id);
+          } catch {
+          }
+        }
+        id = 0;
+        port = null;
+      }
+      function connect(next, strict) {
+        disconnect();
+        selected = next;
+        error = "";
+        if (next) {
+          try {
+            const found = list(false).find((p) => p.id === next);
+            if (!found) throw Error(`MIDI input unavailable: ${next}`);
+            const key = ++sequence;
+            native("input", key, next, rate, raw);
+            id = key;
+            port = found;
+            receivers.set(key, (bytes) => {
+              for (const event of events(bytes)) {
+                if (closed || id !== key) break;
+                for (const callback of [...messages]) {
+                  if (closed || id !== key) break;
+                  life.run(() => callback(event));
+                }
+              }
+            });
+          } catch (cause) {
+            error = String(cause.message ?? cause);
+            if (strict) throw cause;
+            console.warn(error);
+          }
+        }
+        for (const callback of [...statuses]) life.run(callback);
+      }
+      const update = () => {
+        if (closed) return;
+        const next = selections[parameter] ?? "";
+        if (next !== selected) life.run(() => connect(next, false));
+      };
+      const handle = Object.freeze({
+        get port() {
+          return port;
+        },
+        get connected() {
+          return !!id;
+        },
+        get error() {
+          return error;
+        },
+        get closed() {
+          return closed;
+        },
+        onMessage(callback) {
+          return life.run(() => {
+            if (closed) throw Error("MIDI input is closed");
+            if (typeof callback !== "function") throw TypeError("Expected MIDI callback");
+            messages.add(callback);
+            return () => messages.delete(callback);
+          });
+        },
+        on(type, callback) {
+          if (typeof callback !== "function") throw TypeError("Expected MIDI callback");
+          return handle.onMessage((event) => {
+            if (event.type === type) callback(event);
+          });
+        },
+        onStatus(callback) {
+          return life.run(() => {
+            if (closed) throw Error("MIDI input is closed");
+            if (typeof callback !== "function") throw TypeError("Expected MIDI callback");
+            statuses.add(callback);
+            return () => statuses.delete(callback);
+          });
+        },
+        reconnect() {
+          life.run(() => {
+            if (closed) throw Error("MIDI input is closed");
+            connect(parameter === void 0 ? selected : selections[parameter] ?? "", false);
+          });
+        },
+        close() {
+          if (closed) return;
+          closed = true;
+          bindings.delete(update);
+          disconnect();
+          messages.clear();
+          statuses.clear();
+          resources.delete(handle);
+        }
+      });
+      connect(initial, parameter === void 0);
+      resources.add(handle);
+      if (parameter !== void 0) bindings.add(update);
+      return handle;
+    }
+    return Object.freeze({
+      listInputs: () => list(false),
+      listOutputs: () => list(true),
+      bindInput(parameter, options) {
+        return life.run(() => {
+          if (!Object.hasOwn(selections, parameter)) throw Error(`'${parameter}' is not a declared midiInput parameter`);
+          return input(selections[parameter], options, parameter);
+        });
+      },
+      async openInput(port, options) {
+        if (typeof port !== "string" || !port) throw Error("MIDI input requires a device id");
+        return life.run(() => input(port, options));
+      },
+      async openOutput(portId) {
+        return life.run(() => {
+          const port = list(true).find((p) => p.id === portId);
+          if (!port) throw Error(`MIDI output unavailable: ${portId}`);
+          const id = ++sequence;
+          native("output", id, portId);
+          const output = new MidiOutput(port, {
+            send(bytes) {
+              life.run(() => native("send", id, "", 250, true, Uint8Array.from(bytes)));
+            },
+            close() {
+              try {
+                native("close", id);
+              } catch {
+              }
+              resources.delete(output);
+            }
+          });
+          resources.add(output);
+          return output;
+        });
+      },
+      get stats() {
+        return life.run(() => Object.freeze(JSON.parse(native("stats"))));
+      }
+    });
+  }
+
   // src/osc.ts
   var limit = 65507;
   var pad = (n) => n + 3 & ~3;
@@ -967,27 +1289,27 @@
   }
 
   // src/td-io.ts
-  var g = globalThis;
-  var sequence = 0;
+  var g2 = globalThis;
+  var sequence2 = 0;
   var pending = /* @__PURE__ */ new Map();
-  var receivers = /* @__PURE__ */ new Map();
-  g.__avIOEvent = (id, kind, error, bytes, address2, port) => {
+  var receivers2 = /* @__PURE__ */ new Map();
+  g2.__avIOEvent = (id, kind, error, bytes, address2, port) => {
     const remote = Object.freeze({ address: address2, port });
-    if (kind === "data" || kind === "socketError") receivers.get(id)?.(kind, error, bytes, remote);
+    if (kind === "data" || kind === "socketError") receivers2.get(id)?.(kind, error, bytes, remote);
     else {
       const callback = pending.get(id);
       pending.delete(id);
       callback?.(kind, error, bytes, remote);
     }
   };
-  var native = (op, id = 0, socket = 0, path = "", port = 0, bytes) => g.__avIO(op, id, socket, path, port, bytes);
+  var native2 = (op, id = 0, socket = 0, path = "", port = 0, bytes) => g2.__avIO(op, id, socket, path, port, bytes);
   function address(options = {}) {
     const address2 = options.address ?? "127.0.0.1", port = options.port ?? 0;
     if (typeof address2 !== "string" || address2.includes("\0") || !Number.isInteger(port) || port < 0 || port > 65535) throw Error("Invalid UDP address/port");
     return { address: address2, port };
   }
   function createIO(life) {
-    const baseDirectory = String(g.__avBaseDirectory ?? "");
+    const baseDirectory = String(g2.__avBaseDirectory ?? "");
     const ids = /* @__PURE__ */ new Set();
     const sockets = /* @__PURE__ */ new Set();
     life.onDispose(() => {
@@ -1001,7 +1323,7 @@
           reject(Error("Too many pending I/O requests (128)"));
           return;
         }
-        const id = ++sequence;
+        const id = ++sequence2;
         ids.add(id);
         pending.set(id, (kind, error, data, remote) => {
           ids.delete(id);
@@ -1016,7 +1338,7 @@
           }
         });
         try {
-          native(op, id, socket, path, port, bytes);
+          native2(op, id, socket, path, port, bytes);
         } catch (error) {
           pending.delete(id);
           ids.delete(id);
@@ -1067,17 +1389,17 @@
           close() {
             if (closed) return;
             closed = true;
-            receivers.delete(id);
+            receivers2.delete(id);
             listeners.clear();
             errors.clear();
             sockets.delete(socket);
             try {
-              native("close", 0, id);
+              native2("close", 0, id);
             } catch {
             }
           }
         });
-        receivers.set(id, (kind, error, bytes, remote) => {
+        receivers2.set(id, (kind, error, bytes, remote) => {
           if (closed) return;
           if (kind === "data") {
             for (const callback of [...listeners]) life.run(() => callback(bytes, remote));
@@ -1139,7 +1461,7 @@
     return Object.freeze({
       files: Object.freeze({ baseDirectory, readBytes, readText: async (path) => utf8Decode(await readBytes(path)) }),
       udp: Object.freeze({ open, get droppedDatagrams() {
-        return life.run(() => native("stats"));
+        return life.run(() => native2("stats"));
       } }),
       osc: Object.freeze({ open: openOsc })
     });
@@ -1321,13 +1643,13 @@
     return `${parentSeed}::fork:${forkIndex}`;
   }
   var createYieldToMacrotask = (setTimeoutFn) => {
-    const g4 = globalThis;
-    if (typeof g4.setImmediate === "function") {
-      const setImmediateFn = g4.setImmediate;
+    const g5 = globalThis;
+    if (typeof g5.setImmediate === "function") {
+      const setImmediateFn = g5.setImmediate;
       return () => new Promise((res) => setImmediateFn(res));
     }
-    if (typeof g4.MessageChannel === "function") {
-      const mc = new g4.MessageChannel();
+    if (typeof g5.MessageChannel === "function") {
+      const mc = new g5.MessageChannel();
       const q = [];
       mc.port1.onmessage = () => {
         const fn = q.shift();
@@ -1342,13 +1664,13 @@
     return () => new Promise((res) => setTimeoutFn(res, 0));
   };
   var createScheduleMacrotask = (setTimeoutFn) => {
-    const g4 = globalThis;
-    if (typeof g4.setImmediate === "function") {
-      const setImmediateFn = g4.setImmediate;
+    const g5 = globalThis;
+    if (typeof g5.setImmediate === "function") {
+      const setImmediateFn = g5.setImmediate;
       return (cb) => setImmediateFn(cb);
     }
-    if (typeof g4.MessageChannel === "function") {
-      const mc = new g4.MessageChannel();
+    if (typeof g5.MessageChannel === "function") {
+      const mc = new g5.MessageChannel();
       const q = [];
       mc.port1.onmessage = () => {
         const fn = q.shift();
@@ -2514,10 +2836,10 @@
   };
 
   // src/td-timing.ts
-  var g2 = globalThis;
+  var g3 = globalThis;
   var scopes = /* @__PURE__ */ new Map();
   var SketchLifetime = class {
-    id = g2.__hostRegister();
+    id = g3.__hostRegister();
     active = true;
     error = "";
     roots = /* @__PURE__ */ new Set();
@@ -2537,11 +2859,11 @@
     }
     run(fn) {
       if (!this.active) throw new Error("Sketch generation has been disposed");
-      const previous = g2.__hostGeneration(this.id);
+      const previous = g3.__hostGeneration(this.id);
       try {
         return fn();
       } finally {
-        g2.__hostGeneration(previous);
+        g3.__hostGeneration(previous);
       }
     }
     track(fn) {
@@ -2570,8 +2892,8 @@
       if (!this.active || this.error) return;
       this.error = String(error?.stack ?? error);
       this.run(() => this.cancelRoots());
-      g2.__hostInvalidate(this.id);
-      g2.__hostCancelFrames(this.id);
+      g3.__hostInvalidate(this.id);
+      g3.__hostCancelFrames(this.id);
     }
     dispose() {
       if (!this.active) return;
@@ -2597,8 +2919,8 @@
         }
       }
       this.resources.clear();
-      g2.__hostInvalidate(this.id);
-      g2.__hostCancelFrames(this.id);
+      g3.__hostInvalidate(this.id);
+      g3.__hostCancelFrames(this.id);
       this.active = false;
       scopes.delete(this.id);
     }
@@ -2637,17 +2959,17 @@
       return wrap(value);
     }
   };
-  g2.__hostError = (error, generation) => {
+  g3.__hostError = (error, generation) => {
     const scope = scopes.get(generation);
     if (scope) scope.fail(error);
     else if (generation === 0) {
-      g2.__avError = String(error?.stack ?? error);
-      g2.__avBackgroundError = g2.__avError;
+      g3.__avError = String(error?.stack ?? error);
+      g3.__avBackgroundError = g3.__avError;
     }
   };
 
   // src/td-chop-runtime.ts
-  var g3 = globalThis;
+  var g4 = globalThis;
   var active;
   var inputs = [];
   var frame;
@@ -2664,13 +2986,13 @@
       throw Error(`${name} must be synchronous; use TimeContext for independent tasks`);
     }
   };
-  g3.__avChopDirty = false;
-  g3.__avDone = true;
-  g3.__avError = "";
-  g3.__avHasFrame = false;
-  g3.__avChopAccept = () => {
-    const incoming = JSON.parse(g3.__avFrameJSON);
-    const data = new Float32Array(g3.__avData.buffer, g3.__avData.byteOffset, g3.__avData.byteLength / 4);
+  g4.__avChopDirty = false;
+  g4.__avDone = true;
+  g4.__avError = "";
+  g4.__avHasFrame = false;
+  g4.__avChopAccept = () => {
+    const incoming = JSON.parse(g4.__avFrameJSON);
+    const data = new Float32Array(g4.__avData.buffer, g4.__avData.byteOffset, g4.__avData.byteLength / 4);
     const next = Array.from({ length: 4 }, () => /* @__PURE__ */ new Map());
     for (const c of incoming.channels) next[c.input].set(c.name, data.subarray(c.offset, c.offset + c.count));
     inputs = next;
@@ -2680,7 +3002,7 @@
     sampleCount = incoming.outputSamples;
     params = parameterSnapshot(incoming.params);
     frame = Object.freeze({ frame: incoming.frame, absFrame: incoming.absFrame, rate: incoming.rate, deltaSeconds: incoming.deltaSeconds, time: (incoming.frame - 1) / incoming.rate });
-    g3.__avData = null;
+    g4.__avData = null;
   };
   function createGeneration() {
     const life = new SketchLifetime();
@@ -2697,6 +3019,7 @@
     };
     const host = Object.freeze({
       ...createIO(life),
+      midi: createMIDI(life),
       get params() {
         return params;
       },
@@ -2717,7 +3040,7 @@
           const next = finite(name, value);
           if (data[sample] !== next) {
             data[sample] = next;
-            g3.__avChopDirty = true;
+            g4.__avChopDirty = true;
           }
         }),
         get: (name, sample = 0) => life.run(() => values.get(name)?.[sample] ?? 0),
@@ -2728,7 +3051,7 @@
           const next = new Float32Array(count);
           for (let i = 0; i < count; i++) next[i] = finite(name, source[i]);
           data.set(next);
-          g3.__avChopDirty = true;
+          g4.__avChopDirty = true;
         }),
         names: () => life.run(() => [...values.keys()])
       }),
@@ -2736,15 +3059,15 @@
     });
     return { signature: JSON.stringify([names, sampleCount]), life, host, values, program: {} };
   }
-  g3.__avChopCook = async () => {
-    g3.__avDone = false;
-    g3.__avError = "";
-    g3.__avHasFrame = false;
+  g4.__avChopCook = async () => {
+    g4.__avDone = false;
+    g4.__avError = "";
+    g4.__avHasFrame = false;
     try {
       const signature = JSON.stringify([names, sampleCount]);
       if (!active) {
         active = createGeneration();
-        active.program = active.life.run(() => new Function(`${g3.__avSource}
+        active.program = active.life.run(() => new Function(`${g4.__avSource}
 ;return {setup:typeof setup==='function'?setup:undefined,onCook:typeof onCook==='function'?onCook:undefined,onPulse:typeof onPulse==='function'?onPulse:undefined};`)());
         if (!active.program.setup && !active.program.onCook) throw Error("CHOP script must define setup(host) or onCook(host, frame)");
         await active.life.run(() => active.program.setup?.(active.host));
@@ -2752,8 +3075,8 @@
       }
       const current = active;
       if (current.life.error) throw Error(current.life.error);
-      if (g3.__avBackgroundError) throw Error(g3.__avBackgroundError);
-      await g3.__hostFrame();
+      if (g4.__avBackgroundError) throw Error(g4.__avBackgroundError);
+      await g4.__hostFrame();
       if (current.life.error) throw Error(current.life.error);
       try {
         for (const name of pulses) synchronous(current.life.run(() => current.program.onPulse?.(name, current.host)), "onPulse");
@@ -2765,9 +3088,9 @@
       }
     } catch (error) {
       active?.life.fail(error);
-      g3.__avError = message(error);
+      g4.__avError = message(error);
     } finally {
-      g3.__avDone = true;
+      g4.__avDone = true;
     }
   };
   function snapshot(current) {
@@ -2776,26 +3099,26 @@
       const data = current.values.get(name);
       if (data) output.set(data.subarray(0, sampleCount), index * sampleCount);
     });
-    g3.__avBytes = new Uint8Array(output.buffer);
-    g3.__avHasFrame = true;
-    g3.__avChopDirty = false;
+    g4.__avBytes = new Uint8Array(output.buffer);
+    g4.__avHasFrame = true;
+    g4.__avChopDirty = false;
   }
-  g3.__avChopFlush = () => {
-    g3.__avHasFrame = false;
-    if (!active || !g3.__avDone || active.signature !== JSON.stringify([names, sampleCount])) return;
-    if (active.life.error || g3.__avBackgroundError) {
-      g3.__avError = active.life.error || g3.__avBackgroundError;
+  g4.__avChopFlush = () => {
+    g4.__avHasFrame = false;
+    if (!active || !g4.__avDone || active.signature !== JSON.stringify([names, sampleCount])) return;
+    if (active.life.error || g4.__avBackgroundError) {
+      g4.__avError = active.life.error || g4.__avBackgroundError;
       return;
     }
-    if (g3.__avChopDirty) snapshot(active);
+    if (g4.__avChopDirty) snapshot(active);
   };
-  g3.__avDispose = () => {
-    g3.__avDone = false;
+  g4.__avDispose = () => {
+    g4.__avDone = false;
     try {
       active?.life.dispose();
       active = void 0;
     } finally {
-      g3.__avDone = true;
+      g4.__avDone = true;
     }
   };
 })();

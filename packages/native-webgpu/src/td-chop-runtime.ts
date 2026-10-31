@@ -1,3 +1,4 @@
+import {createMIDI} from './td-midi.ts';
 import {createIO} from './td-io.ts';
 import {parameterSnapshot} from './td-parameters.ts';
 import {SketchLifetime} from './td-timing.ts';
@@ -44,7 +45,7 @@ function createGeneration(): Generation {
     return Math.fround(value);
   };
   const host: ChopHost = Object.freeze({
-    ...createIO(life),
+    ...createIO(life), midi: createMIDI(life),
     get params() { return params; },
     timing: life.timing,
     inputs: Object.freeze({

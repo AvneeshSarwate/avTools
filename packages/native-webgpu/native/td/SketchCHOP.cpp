@@ -43,6 +43,7 @@ class SketchCHOP final:public CHOP_CPlusPlusBase {
     try{auto names=channelNames(inputs);name->setString(index>=0&&size_t(index)<names.size()?names[index].c_str():"out");}catch(...){name->setString("out");}
   }
   void execute(CHOP_Output* output,const OP_Inputs* inputs,void*)override{
+    declared.midi(runtime,inputs);
     logging.update(inputs);if(logging.takeRefresh()){for(int c=0;c<output->numChannels;c++)for(int n=0;n<output->numSamples;n++){size_t i=size_t(c)*output->numSamples+n;output->channels[c][n]=i<values.size()?values[i]:0.f;}return;}
     auto start=Clock::now();struct Finish{double& ms;Clock::time_point start;~Finish(){ms=std::chrono::duration<double,std::milli>(Clock::now()-start).count();}}finish{cookMs,start};
     for(int i=0;i<output->numChannels;i++)std::fill_n(output->channels[i],output->numSamples,0.f);
@@ -71,6 +72,7 @@ class SketchCHOP final:public CHOP_CPlusPlusBase {
       auto parameterValues=declared.snapshot(inputs);
       char detail[8192]{};
       if(!runtime){runtime=avChopCreate(resources().c_str(),detail,sizeof(detail));if(!runtime)throw std::runtime_error(detail);logging.attach(runtime);}
+      declared.midi(runtime,inputs);
       std::vector<AVChopChannel> channels;
       for(int input=0;input<inputs->getNumInputs();input++)if(const auto* chop=inputs->getInputCHOP(input))for(int c=0;c<chop->numChannels;c++)channels.push_back({uint32_t(input),{chop->getChannelName(c),chop->getChannelData(c),uint32_t(chop->numSamples)}});
       std::vector<const char*> outputNames;for(auto& name:names)outputNames.push_back(name.c_str());
@@ -82,6 +84,8 @@ class SketchCHOP final:public CHOP_CPlusPlusBase {
       if(ready){for(size_t i=0;i<names.size();i++)std::copy_n(values.data()+i*output->numSamples,output->numSamples,output->channels[i]);outputFrame=diagnostics.sourceFrame;}
     }catch(const std::exception& e){error=e.what();}
   }
+  void buildDynamicMenu(const OP_Inputs* inputs,OP_BuildDynamicMenuInfo* info,void*)override{declared.menu(info);declared.midi(runtime,inputs);}
+  void setParameterEnableStates(const OP_Inputs* inputs,OP_ParEnableState*,void*)override{declared.midi(runtime,inputs);}
   void setupParameters(OP_ParameterManager* manager,void*)override{
     NativeBuild::parameters(manager);Logging::parameters(manager);declared.setup(manager);
     {OP_NumericParameter p;p.name="Samecook";p.label="Wait for Current Result";p.page="Script";p.defaultValues[0]=1;manager->appendToggle(p);}

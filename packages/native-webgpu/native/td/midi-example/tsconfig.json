@@ -1,0 +1,5 @@
+{
+  "extends": "../../../../../tools/td-native-build/template/sdk/tsconfig.json",
+  "compilerOptions": {"strict": true, "target": "ES2022", "module": "ESNext", "moduleResolution": "Bundler", "noEmit": true, "allowImportingTsExtensions": true, "lib": ["ES2022"]},
+  "files": ["../../../../../tools/td-native-build/template/sdk/packages/native-webgpu/td-top-runtime.d.ts", "picture.ts", "channels.ts"]
+}

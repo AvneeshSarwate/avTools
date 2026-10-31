@@ -1,0 +1,64 @@
+{
+  "passed": true,
+  "td_build": "2025.33230",
+  "records": [
+    {
+      "stage": "four instances share source A",
+      "channels": [
+        0.19685038924217224,
+        0.19685038924217224
+      ],
+      "circle_positions": [
+        0.19609375,
+        0.19609375
+      ]
+    },
+    {
+      "stage": "one instance reset; peers keep source A",
+      "channels": [
+        0.1962539106607437,
+        0.19685038924217224
+      ],
+      "circle_positions": [
+        0.19609375,
+        0.19609375
+      ]
+    },
+    {
+      "stage": "all switched to source B",
+      "channels": [
+        0.7857881784439087,
+        0.7857285737991333
+      ],
+      "circle_positions": [
+        0.7866861288039633,
+        0.7866861288039633
+      ]
+    },
+    {
+      "stage": "None closes without resetting script state",
+      "channels": [
+        0.7873974442481995,
+        0.7873973250389099
+      ],
+      "circle_positions": [
+        0.7866861288039633,
+        0.7866861288039633
+      ]
+    },
+    {
+      "stage": "missing device preserved without runtime error"
+    },
+    {
+      "stage": "reselect source A",
+      "channels": [
+        0.19836607575416565,
+        0.1984068751335144
+      ],
+      "circle_positions": [
+        0.19609375,
+        0.19609375
+      ]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "recordedAt": "2026-10-31",
+  "td_build": "2025.33230",
+  "verification": "computer use, paused timeline, viewers disabled; GUI dropdown A to B",
+  "paused_gui_switch": {
+    "extra_cooks": 0,
+    "first_result": 0.787401556968689,
+    "expected": 0.7874015748031497
+  }
+}

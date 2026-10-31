@@ -11,7 +11,7 @@ KEY = 'avtools.parameters.v1'
 PENDING = KEY + '.pending'
 REBUILDING = KEY + '.rebuilding'
 RESERVED = set('Typescript Projectdir Entry Autobuild Autoreload Buildproject Createtemplate Templatedir Sketch Sourcefile Controls Width Height Eventname Sendpulse Reset Reload Outputchannels Outputsamples Samecook Pretrigger Pretriggerpulse Syphonname Syphonenabled Syphononly Infoview Clearlogs Refreshlogs Loglevel Clearlog Copylog Logdat Loglimit'.split())
-KINDS = {'float': 1, 'int': 1, 'toggle': 1, 'string': 1, 'menu': 1, 'xy': 2, 'xyz': 3, 'rgb': 3, 'rgba': 4, 'pulse': 0}
+KINDS = {'float': 1, 'int': 1, 'toggle': 1, 'string': 1, 'menu': 1, 'midiInput': 1, 'xy': 2, 'xyz': 3, 'rgb': 3, 'rgba': 4, 'pulse': 0}
 
 
 def clean_text(value, description, limit=256):
@@ -46,7 +46,7 @@ def validate(raw):
         if kind == 'pulse':
             if set(spec) - {'type', 'label', 'page'}:
                 raise ValueError(name + ': pulse accepts only type, label and page')
-        elif kind in ('string', 'menu'):
+        elif kind in ('string', 'menu', 'midiInput'):
             out['default'] = clean_text(spec.get('default', ''), name + ' default', 4096)
             if kind == 'menu':
                 options = spec.get('options')
@@ -98,7 +98,7 @@ def rows(schema):
         kind = p['type']
         default = p.get('default', 0)
         vals = default if isinstance(default, list) else [default]
-        numeric = kind not in ('string', 'menu')
+        numeric = kind not in ('string', 'menu', 'midiInput')
         fields = [name, kind, text(p['label']), text(p['page']), str(KINDS[kind])]
         fields += [str(float(vals[i])) if numeric and i < len(vals) else '0' for i in range(4)]
         fields += [str(p.get('min', 0)), str(p.get('max', 1)), str(int(p.get('clamp', False))), text(default) if not numeric else '-', str(len(p.get('options', [])))]
@@ -127,6 +127,8 @@ def rebuild(node_id, token):
 
 def dispatch(node, action, payload):
     try:
+        if action == 'midi_menu':
+            return '\n'.join(p['id'].encode('utf-8').hex() + '\t' + p['name'].encode('utf-8').hex() for p in json.loads(payload))
         if action == 'setup':
             return rows(validate(node.fetch(KEY, {}, search=False)))
         if action == 'rebuilding':

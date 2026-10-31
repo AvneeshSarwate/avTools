@@ -117,3 +117,8 @@ Implementation: `native/td/DeclaredParameters.{h,py}`, the native builder's
 `src/parameters.rs`, and `td-parameters.d.ts`. Test sources live under
 `test/declared-parameters`; integration results distinguish live TD tests from
 compiler/native-only checks.
+
+## Native MIDI
+
+Use a script-declared `midiInput` device selector with `host.midi.bindInput()`,
+or explicitly open devices through `host.midi`. See [MIDI API and examples](MIDI.md).

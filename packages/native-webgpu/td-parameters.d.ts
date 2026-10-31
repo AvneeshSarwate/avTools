@@ -12,12 +12,13 @@ export type ParameterDefinition = Base & (
   | ({readonly type: 'xy'; readonly default?: readonly [number, number]} & Numeric)
   | ({readonly type: 'xyz' | 'rgb'; readonly default?: readonly [number, number, number]} & Numeric)
   | ({readonly type: 'rgba'; readonly default?: readonly [number, number, number, number]} & Numeric)
+  | {readonly type: 'midiInput'; readonly default?: string}
   | {readonly type: 'pulse'}
 );
 export type ParameterDefinitions = Readonly<Record<string, ParameterDefinition>>;
 type ParameterValue<P> = P extends {type: 'toggle'} ? boolean
   : P extends {type: 'menu'; options: readonly (infer S)[]} ? S
-  : P extends {type: 'string'} ? string
+  : P extends {type: 'string' | 'midiInput'} ? string
   : P extends {type: 'xy'} ? readonly [number, number]
   : P extends {type: 'xyz' | 'rgb'} ? readonly [number, number, number]
   : P extends {type: 'rgba'} ? readonly [number, number, number, number]

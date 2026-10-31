@@ -727,6 +727,328 @@
     }
   });
 
+  // ../midi/api.ts
+  var MidiOutput = class {
+    constructor(port, transport) {
+      this.port = port;
+      this.transport = transport;
+      this.name = port.name;
+    }
+    name;
+    #closed = false;
+    get closed() {
+      return this.#closed;
+    }
+    send(bytes) {
+      this.#assertOpen();
+      const message2 = bytes instanceof Uint8Array ? new Uint8Array(bytes) : Uint8Array.from(bytes);
+      if (message2.length === 0) {
+        throw new RangeError("A MIDI message must contain at least one byte");
+      }
+      this.transport.send(message2);
+    }
+    noteOn(channel, note, velocity = 100) {
+      this.send([
+        144 | midiChannel(channel),
+        midi7Bit(note),
+        midi7Bit(velocity)
+      ]);
+    }
+    noteOff(channel, note, velocity = 0) {
+      this.send([
+        128 | midiChannel(channel),
+        midi7Bit(note),
+        midi7Bit(velocity)
+      ]);
+    }
+    polyPressure(channel, note, pressure) {
+      this.send([
+        160 | midiChannel(channel),
+        midi7Bit(note),
+        midi7Bit(pressure)
+      ]);
+    }
+    cc(channel, controller, value) {
+      this.send([
+        176 | midiChannel(channel),
+        midi7Bit(controller),
+        midi7Bit(value)
+      ]);
+    }
+    programChange(channel, program) {
+      this.send([192 | midiChannel(channel), midi7Bit(program)]);
+    }
+    channelPressure(channel, pressure) {
+      this.send([208 | midiChannel(channel), midi7Bit(pressure)]);
+    }
+    pitchBend(channel, bend) {
+      const value = clampInteger(bend, -8192, 8191) + 8192;
+      this.send([
+        224 | midiChannel(channel),
+        value & 127,
+        value >> 7 & 127
+      ]);
+    }
+    allSoundOff(channel) {
+      this.cc(channel, 120, 0);
+    }
+    allNotesOff(channel) {
+      this.cc(channel, 123, 0);
+    }
+    close() {
+      if (this.#closed) return;
+      this.#closed = true;
+      this.transport.close?.();
+    }
+    #assertOpen() {
+      if (this.#closed) {
+        throw new Error(`MIDI output "${this.name}" is closed`);
+      }
+    }
+  };
+  function midiChannel(value) {
+    return clampInteger(value, 0, 15);
+  }
+  function midi7Bit(value) {
+    return clampInteger(value, 0, 127);
+  }
+  function clampInteger(value, min, max) {
+    const finite = Number.isFinite(value) ? value : 0;
+    return Math.max(min, Math.min(max, Math.round(finite)));
+  }
+
+  // ../../apps/deno-notebooks/midi/decode.ts
+  var MAGIC = 1296647250;
+  var VERSION = 1;
+  function decodePacket(bytes) {
+    if (bytes.length < 32) {
+      throw new Error("Packet too small");
+    }
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const magic = view.getUint32(0, true);
+    if (magic !== MAGIC) {
+      throw new Error("Bad magic");
+    }
+    const version = view.getUint16(4, true);
+    if (version !== VERSION) {
+      throw new Error(`Unsupported version ${version}`);
+    }
+    const flags = view.getUint16(6, true);
+    const dispatchTsUs = Number(view.getBigUint64(8, true));
+    const droppedRaw = view.getUint32(16, true);
+    const droppedNote = view.getUint32(20, true);
+    const recordCount = view.getUint32(24, true);
+    const header = {
+      flags,
+      dispatchTsUs,
+      droppedRaw,
+      droppedNote,
+      recordCount
+    };
+    const available = Math.floor((bytes.length - 32) / 16);
+    const count = Math.min(recordCount, available);
+    const records = new Array(count);
+    let offset = 32;
+    for (let i = 0; i < count; i++) {
+      const tsUs = Number(view.getBigUint64(offset, true));
+      const kind = view.getUint8(offset + 8);
+      const channel = view.getUint8(offset + 9);
+      const a = view.getUint8(offset + 10);
+      const b = view.getUint8(offset + 11);
+      const v16 = view.getInt16(offset + 12, true);
+      const extra = view.getUint16(offset + 14, true);
+      records[i] = { tsUs, kind, channel, a, b, v16, extra };
+      offset += 16;
+    }
+    return { header, records };
+  }
+
+  // src/td-midi.ts
+  var g = globalThis;
+  var sequence = 0;
+  var selections = {};
+  var receivers = /* @__PURE__ */ new Map();
+  var bindings = /* @__PURE__ */ new Set();
+  var native = (op, id = 0, port = "", rate = 250, raw = true, bytes) => g.__avMIDI(op, id, port, rate, raw, bytes);
+  g.__avMIDIEvent = (id, bytes) => receivers.get(id)?.(bytes);
+  g.__avMIDISelections = () => {
+    selections = Object.freeze(JSON.parse(g.__avMIDISelectionsJSON || "{}"));
+    for (const update of [...bindings]) update();
+  };
+  function events(bytes) {
+    return decodePacket(bytes).records.map((r) => {
+      const common = { channel: r.channel, timeMs: r.tsUs / 1e3 };
+      switch (r.kind) {
+        case 1:
+          return { ...common, type: "cc", controller: r.a, value: r.b };
+        case 2:
+          return { ...common, type: "pitchBend", bend: r.v16 };
+        case 3:
+          return { ...common, type: "channelPressure", pressure: r.b };
+        case 4:
+          return { ...common, type: "polyPressure", note: r.a, pressure: r.b };
+        case 5:
+          return { ...common, type: "programChange", program: r.b };
+        case 6:
+          return { ...common, type: r.extra ? "noteOn" : "noteOff", note: r.a, velocity: r.b };
+        default:
+          throw Error("Unsupported native MIDI record");
+      }
+    });
+  }
+  function createMIDI(life) {
+    const resources = /* @__PURE__ */ new Set();
+    life.onDispose(() => {
+      for (const resource of [...resources]) resource.close();
+    });
+    const list = (output) => life.run(() => JSON.parse(native(output ? "outputs" : "inputs")).map((p2) => Object.freeze({ ...p2, manufacturer: null })));
+    function input(initial, options = {}, parameter) {
+      const rate = options.rateHz ?? 250, raw = options.rawCC ?? true;
+      if (!Number.isInteger(rate) || rate < 1 || rate > 1e3 || typeof raw !== "boolean") throw Error("MIDI options require rateHz 1\u20131000 and boolean rawCC");
+      let id = 0, selected = "", port = null, error = "", closed = false;
+      const messages = /* @__PURE__ */ new Set(), statuses = /* @__PURE__ */ new Set();
+      function disconnect() {
+        if (id) {
+          receivers.delete(id);
+          try {
+            native("close", id);
+          } catch {
+          }
+        }
+        id = 0;
+        port = null;
+      }
+      function connect(next, strict) {
+        disconnect();
+        selected = next;
+        error = "";
+        if (next) {
+          try {
+            const found = list(false).find((p2) => p2.id === next);
+            if (!found) throw Error(`MIDI input unavailable: ${next}`);
+            const key = ++sequence;
+            native("input", key, next, rate, raw);
+            id = key;
+            port = found;
+            receivers.set(key, (bytes) => {
+              for (const event of events(bytes)) {
+                if (closed || id !== key) break;
+                for (const callback of [...messages]) {
+                  if (closed || id !== key) break;
+                  life.run(() => callback(event));
+                }
+              }
+            });
+          } catch (cause) {
+            error = String(cause.message ?? cause);
+            if (strict) throw cause;
+            console.warn(error);
+          }
+        }
+        for (const callback of [...statuses]) life.run(callback);
+      }
+      const update = () => {
+        if (closed) return;
+        const next = selections[parameter] ?? "";
+        if (next !== selected) life.run(() => connect(next, false));
+      };
+      const handle = Object.freeze({
+        get port() {
+          return port;
+        },
+        get connected() {
+          return !!id;
+        },
+        get error() {
+          return error;
+        },
+        get closed() {
+          return closed;
+        },
+        onMessage(callback) {
+          return life.run(() => {
+            if (closed) throw Error("MIDI input is closed");
+            if (typeof callback !== "function") throw TypeError("Expected MIDI callback");
+            messages.add(callback);
+            return () => messages.delete(callback);
+          });
+        },
+        on(type, callback) {
+          if (typeof callback !== "function") throw TypeError("Expected MIDI callback");
+          return handle.onMessage((event) => {
+            if (event.type === type) callback(event);
+          });
+        },
+        onStatus(callback) {
+          return life.run(() => {
+            if (closed) throw Error("MIDI input is closed");
+            if (typeof callback !== "function") throw TypeError("Expected MIDI callback");
+            statuses.add(callback);
+            return () => statuses.delete(callback);
+          });
+        },
+        reconnect() {
+          life.run(() => {
+            if (closed) throw Error("MIDI input is closed");
+            connect(parameter === void 0 ? selected : selections[parameter] ?? "", false);
+          });
+        },
+        close() {
+          if (closed) return;
+          closed = true;
+          bindings.delete(update);
+          disconnect();
+          messages.clear();
+          statuses.clear();
+          resources.delete(handle);
+        }
+      });
+      connect(initial, parameter === void 0);
+      resources.add(handle);
+      if (parameter !== void 0) bindings.add(update);
+      return handle;
+    }
+    return Object.freeze({
+      listInputs: () => list(false),
+      listOutputs: () => list(true),
+      bindInput(parameter, options) {
+        return life.run(() => {
+          if (!Object.hasOwn(selections, parameter)) throw Error(`'${parameter}' is not a declared midiInput parameter`);
+          return input(selections[parameter], options, parameter);
+        });
+      },
+      async openInput(port, options) {
+        if (typeof port !== "string" || !port) throw Error("MIDI input requires a device id");
+        return life.run(() => input(port, options));
+      },
+      async openOutput(portId) {
+        return life.run(() => {
+          const port = list(true).find((p2) => p2.id === portId);
+          if (!port) throw Error(`MIDI output unavailable: ${portId}`);
+          const id = ++sequence;
+          native("output", id, portId);
+          const output = new MidiOutput(port, {
+            send(bytes) {
+              life.run(() => native("send", id, "", 250, true, Uint8Array.from(bytes)));
+            },
+            close() {
+              try {
+                native("close", id);
+              } catch {
+              }
+              resources.delete(output);
+            }
+          });
+          resources.add(output);
+          return output;
+        });
+      },
+      get stats() {
+        return life.run(() => Object.freeze(JSON.parse(native("stats"))));
+      }
+    });
+  }
+
   // src/osc.ts
   var limit = 65507;
   var pad = (n) => n + 3 & ~3;
@@ -967,27 +1289,27 @@
   }
 
   // src/td-io.ts
-  var g = globalThis;
-  var sequence = 0;
+  var g2 = globalThis;
+  var sequence2 = 0;
   var pending = /* @__PURE__ */ new Map();
-  var receivers = /* @__PURE__ */ new Map();
-  g.__avIOEvent = (id, kind, error, bytes, address2, port) => {
+  var receivers2 = /* @__PURE__ */ new Map();
+  g2.__avIOEvent = (id, kind, error, bytes, address2, port) => {
     const remote = Object.freeze({ address: address2, port });
-    if (kind === "data" || kind === "socketError") receivers.get(id)?.(kind, error, bytes, remote);
+    if (kind === "data" || kind === "socketError") receivers2.get(id)?.(kind, error, bytes, remote);
     else {
       const callback = pending.get(id);
       pending.delete(id);
       callback?.(kind, error, bytes, remote);
     }
   };
-  var native = (op, id = 0, socket = 0, path = "", port = 0, bytes) => g.__avIO(op, id, socket, path, port, bytes);
+  var native2 = (op, id = 0, socket = 0, path = "", port = 0, bytes) => g2.__avIO(op, id, socket, path, port, bytes);
   function address(options = {}) {
     const address2 = options.address ?? "127.0.0.1", port = options.port ?? 0;
     if (typeof address2 !== "string" || address2.includes("\0") || !Number.isInteger(port) || port < 0 || port > 65535) throw Error("Invalid UDP address/port");
     return { address: address2, port };
   }
   function createIO(life) {
-    const baseDirectory = String(g.__avBaseDirectory ?? "");
+    const baseDirectory = String(g2.__avBaseDirectory ?? "");
     const ids = /* @__PURE__ */ new Set();
     const sockets = /* @__PURE__ */ new Set();
     life.onDispose(() => {
@@ -1001,7 +1323,7 @@
           reject(Error("Too many pending I/O requests (128)"));
           return;
         }
-        const id = ++sequence;
+        const id = ++sequence2;
         ids.add(id);
         pending.set(id, (kind, error, data, remote) => {
           ids.delete(id);
@@ -1016,7 +1338,7 @@
           }
         });
         try {
-          native(op, id, socket, path, port, bytes);
+          native2(op, id, socket, path, port, bytes);
         } catch (error) {
           pending.delete(id);
           ids.delete(id);
@@ -1067,17 +1389,17 @@
           close() {
             if (closed) return;
             closed = true;
-            receivers.delete(id);
+            receivers2.delete(id);
             listeners.clear();
             errors.clear();
             sockets.delete(socket);
             try {
-              native("close", 0, id);
+              native2("close", 0, id);
             } catch {
             }
           }
         });
-        receivers.set(id, (kind, error, bytes, remote) => {
+        receivers2.set(id, (kind, error, bytes, remote) => {
           if (closed) return;
           if (kind === "data") {
             for (const callback of [...listeners]) life.run(() => callback(bytes, remote));
@@ -1139,7 +1461,7 @@
     return Object.freeze({
       files: Object.freeze({ baseDirectory, readBytes, readText: async (path) => utf8Decode(await readBytes(path)) }),
       udp: Object.freeze({ open, get droppedDatagrams() {
-        return life.run(() => native("stats"));
+        return life.run(() => native2("stats"));
       } }),
       osc: Object.freeze({ open: openOsc })
     });
@@ -4077,15 +4399,15 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
         const h = clamp(c1 / maxes[0]);
         const s = clamp(c2 / maxes[1]);
         const b = clamp(c3 / maxes[2]);
-        const [r, g4, bb] = hsbToRgb(h, s, b);
-        return [r, g4, bb, alpha];
+        const [r, g5, bb] = hsbToRgb(h, s, b);
+        return [r, g5, bb, alpha];
       }
       if (this._state.colorMode === this.HSL) {
         const h = clamp(c1 / maxes[0]);
         const s = clamp(c2 / maxes[1]);
         const l = clamp(c3 / maxes[2]);
-        const [r, g4, bb] = hslToRgb(h, s, l);
-        return [r, g4, bb, alpha];
+        const [r, g5, bb] = hslToRgb(h, s, l);
+        return [r, g5, bb, alpha];
       }
       return [
         clamp(c1 / maxes[0]),
@@ -4107,36 +4429,36 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
       if (named.has(input)) return named.get(input);
       if (/^#[0-9a-f]{3}$/.test(input)) {
         const r = parseInt(input[1] + input[1], 16);
-        const g4 = parseInt(input[2] + input[2], 16);
+        const g5 = parseInt(input[2] + input[2], 16);
         const b = parseInt(input[3] + input[3], 16);
-        return [r / 255, g4 / 255, b / 255, 1];
+        return [r / 255, g5 / 255, b / 255, 1];
       }
       if (/^#[0-9a-f]{4}$/.test(input)) {
         const r = parseInt(input[1] + input[1], 16);
-        const g4 = parseInt(input[2] + input[2], 16);
+        const g5 = parseInt(input[2] + input[2], 16);
         const b = parseInt(input[3] + input[3], 16);
         const a = parseInt(input[4] + input[4], 16);
-        return [r / 255, g4 / 255, b / 255, a / 255];
+        return [r / 255, g5 / 255, b / 255, a / 255];
       }
       if (/^#[0-9a-f]{6}$/.test(input)) {
         const r = parseInt(input.slice(1, 3), 16);
-        const g4 = parseInt(input.slice(3, 5), 16);
+        const g5 = parseInt(input.slice(3, 5), 16);
         const b = parseInt(input.slice(5, 7), 16);
-        return [r / 255, g4 / 255, b / 255, 1];
+        return [r / 255, g5 / 255, b / 255, 1];
       }
       if (/^#[0-9a-f]{8}$/.test(input)) {
         const r = parseInt(input.slice(1, 3), 16);
-        const g4 = parseInt(input.slice(3, 5), 16);
+        const g5 = parseInt(input.slice(3, 5), 16);
         const b = parseInt(input.slice(5, 7), 16);
         const a = parseInt(input.slice(7, 9), 16);
-        return [r / 255, g4 / 255, b / 255, a / 255];
+        return [r / 255, g5 / 255, b / 255, a / 255];
       }
       const rgbMatch = input.match(/^rgba?\((.+)\)$/);
       if (rgbMatch) {
         const parts = rgbMatch[1].split(",").map((p2) => p2.trim());
         if (parts.length === 3 || parts.length === 4) {
           const r = parseRgbLikeComponent(parts[0]);
-          const g4 = parseRgbLikeComponent(parts[1]);
+          const g5 = parseRgbLikeComponent(parts[1]);
           const b = parseRgbLikeComponent(parts[2]);
           let a = 255;
           if (parts.length === 4) {
@@ -4148,7 +4470,7 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
               a = alpha <= 1 ? clamp(alpha) * 255 : clamp(alpha, 0, 255);
             }
           }
-          return [clamp(r / 255), clamp(g4 / 255), clamp(b / 255), clamp(a / 255)];
+          return [clamp(r / 255), clamp(g5 / 255), clamp(b / 255), clamp(a / 255)];
         }
       }
       return null;
@@ -4772,26 +5094,26 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
     _pushTriangleVertices(ax, ay, bx, by, cx, cy, color) {
       this._ensureGeomStagingCapacity(GEOM_FLOATS_PER_VERTEX * 3);
       const buf = this._geomStagingBuffer;
-      const r = color[0], g4 = color[1], b = color[2], a = color[3];
+      const r = color[0], g5 = color[1], b = color[2], a = color[3];
       let c = this._geomStagingCursor;
       buf[c] = ax;
       buf[c + 1] = ay;
       buf[c + 2] = r;
-      buf[c + 3] = g4;
+      buf[c + 3] = g5;
       buf[c + 4] = b;
       buf[c + 5] = a;
       c += 6;
       buf[c] = bx;
       buf[c + 1] = by;
       buf[c + 2] = r;
-      buf[c + 3] = g4;
+      buf[c + 3] = g5;
       buf[c + 4] = b;
       buf[c + 5] = a;
       c += 6;
       buf[c] = cx;
       buf[c + 1] = cy;
       buf[c + 2] = r;
-      buf[c + 3] = g4;
+      buf[c + 3] = g5;
       buf[c + 4] = b;
       buf[c + 5] = a;
       this._geomStagingCursor = c + 6;
@@ -5214,8 +5536,8 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
 
   // src/text-core.ts
   var HostTextEngine = class {
-    constructor(native2) {
-      this.native = native2;
+    constructor(native3) {
+      this.native = native3;
     }
     cache = /* @__PURE__ */ new Map();
     dispose() {
@@ -5453,13 +5775,13 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
     return `${parentSeed}::fork:${forkIndex}`;
   }
   var createYieldToMacrotask = (setTimeoutFn) => {
-    const g4 = globalThis;
-    if (typeof g4.setImmediate === "function") {
-      const setImmediateFn = g4.setImmediate;
+    const g5 = globalThis;
+    if (typeof g5.setImmediate === "function") {
+      const setImmediateFn = g5.setImmediate;
       return () => new Promise((res) => setImmediateFn(res));
     }
-    if (typeof g4.MessageChannel === "function") {
-      const mc = new g4.MessageChannel();
+    if (typeof g5.MessageChannel === "function") {
+      const mc = new g5.MessageChannel();
       const q = [];
       mc.port1.onmessage = () => {
         const fn = q.shift();
@@ -5474,13 +5796,13 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
     return () => new Promise((res) => setTimeoutFn(res, 0));
   };
   var createScheduleMacrotask = (setTimeoutFn) => {
-    const g4 = globalThis;
-    if (typeof g4.setImmediate === "function") {
-      const setImmediateFn = g4.setImmediate;
+    const g5 = globalThis;
+    if (typeof g5.setImmediate === "function") {
+      const setImmediateFn = g5.setImmediate;
       return (cb) => setImmediateFn(cb);
     }
-    if (typeof g4.MessageChannel === "function") {
-      const mc = new g4.MessageChannel();
+    if (typeof g5.MessageChannel === "function") {
+      const mc = new g5.MessageChannel();
       const q = [];
       mc.port1.onmessage = () => {
         const fn = q.shift();
@@ -6646,10 +6968,10 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
   };
 
   // src/td-timing.ts
-  var g2 = globalThis;
+  var g3 = globalThis;
   var scopes = /* @__PURE__ */ new Map();
   var SketchLifetime = class {
-    id = g2.__hostRegister();
+    id = g3.__hostRegister();
     active = true;
     error = "";
     roots = /* @__PURE__ */ new Set();
@@ -6669,11 +6991,11 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
     }
     run(fn) {
       if (!this.active) throw new Error("Sketch generation has been disposed");
-      const previous = g2.__hostGeneration(this.id);
+      const previous = g3.__hostGeneration(this.id);
       try {
         return fn();
       } finally {
-        g2.__hostGeneration(previous);
+        g3.__hostGeneration(previous);
       }
     }
     track(fn) {
@@ -6702,8 +7024,8 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
       if (!this.active || this.error) return;
       this.error = String(error?.stack ?? error);
       this.run(() => this.cancelRoots());
-      g2.__hostInvalidate(this.id);
-      g2.__hostCancelFrames(this.id);
+      g3.__hostInvalidate(this.id);
+      g3.__hostCancelFrames(this.id);
     }
     dispose() {
       if (!this.active) return;
@@ -6729,8 +7051,8 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
         }
       }
       this.resources.clear();
-      g2.__hostInvalidate(this.id);
-      g2.__hostCancelFrames(this.id);
+      g3.__hostInvalidate(this.id);
+      g3.__hostCancelFrames(this.id);
       this.active = false;
       scopes.delete(this.id);
     }
@@ -6769,18 +7091,18 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
       return wrap(value);
     }
   };
-  g2.__hostError = (error, generation) => {
+  g3.__hostError = (error, generation) => {
     const scope = scopes.get(generation);
     if (scope) scope.fail(error);
     else if (generation === 0) {
-      g2.__avError = String(error?.stack ?? error);
-      g2.__avBackgroundError = g2.__avError;
+      g3.__avError = String(error?.stack ?? error);
+      g3.__avBackgroundError = g3.__avError;
     }
   };
 
   // src/td-runtime.ts
-  var g3 = globalThis;
-  Object.assign(g3, nativeGPU.globals);
+  var g4 = globalThis;
+  Object.assign(g4, nativeGPU.globals);
   var fonts = JSON.parse(__avFontsJSON);
   var device;
   var p;
@@ -6796,13 +7118,13 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
   var params = parameterSnapshot({});
   var controlsMeta = { sampleRate: 0, startIndex: 0 };
   var message = (error) => String(error?.stack ?? error);
-  g3.__avDone = false;
-  g3.__avError = "";
-  g3.__avBytes = null;
-  g3.__avPulseNames = "[]";
-  g3.__avSyphonClients = 0;
-  g3.__avSyphonPublished = 0;
-  g3.__avSyphonDropped = 0;
+  g4.__avDone = false;
+  g4.__avError = "";
+  g4.__avBytes = null;
+  g4.__avPulseNames = "[]";
+  g4.__avSyphonClients = 0;
+  g4.__avSyphonPublished = 0;
+  g4.__avSyphonDropped = 0;
   var syphon;
   var syphonName = "";
   var lifetime;
@@ -6815,25 +7137,25 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
     if (!adapter) throw new Error("No Metal adapter");
     device = await adapter.requestDevice();
     device.addEventListener("uncapturederror", (event) => {
-      g3.__avError = event.error.message;
+      g4.__avError = event.error.message;
       blocked = true;
     });
     device.lost.then((info) => {
       blocked = true;
-      g3.__avError = `Device lost: ${info.message}; reset the operator`;
+      g4.__avError = `Device lost: ${info.message}; reset the operator`;
     });
   })().catch((error) => {
-    g3.__avError = message(error);
+    g4.__avError = message(error);
   }).finally(() => {
-    g3.__avDone = true;
+    g4.__avDone = true;
   });
-  g3.__avInputs = () => {
+  g4.__avInputs = () => {
     incomingChannels = [];
   };
-  g3.__avChannel = (name) => {
+  g4.__avChannel = (name) => {
     incomingChannels.push({ name, samples: new Float32Array(__avData.buffer, __avData.byteOffset, __avData.byteLength / 4) });
   };
-  g3.__avImage = (index, w, h) => {
+  g4.__avImage = (index, w, h) => {
     let image = images[index];
     if (!image || image.texture.width !== w || image.texture.height !== h) {
       image?.texture.destroy();
@@ -6842,20 +7164,20 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
     }
     device.queue.writeTexture({ texture: image.texture }, __avData, { bytesPerRow: w * 4 }, [w, h]);
   };
-  g3.__avTrimImages = (count) => {
+  g4.__avTrimImages = (count) => {
     channels = incomingChannels;
     const f = JSON.parse(__avFrameJSON);
     params = parameterSnapshot(f.params);
     controlsMeta = { sampleRate: f.sampleRate, startIndex: f.startIndex };
     for (const image of images.splice(count)) image.texture.destroy();
   };
-  g3.__avRender = async () => {
-    g3.__avDone = false;
-    g3.__avError = "";
-    g3.__avHasFrame = false;
-    g3.__avRendered = false;
-    g3.__avDrawMs = 0;
-    g3.__avReadbackMs = 0;
+  g4.__avRender = async () => {
+    g4.__avDone = false;
+    g4.__avError = "";
+    g4.__avHasFrame = false;
+    g4.__avRendered = false;
+    g4.__avDrawMs = 0;
+    g4.__avReadbackMs = 0;
     const frame = JSON.parse(__avFrameJSON);
     frame.params = params;
     try {
@@ -6868,22 +7190,22 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
         p = new EmbeddedP5GPU(device, { width: frame.width, height: frame.height, sampleCount: 1 }, fonts);
         sketchP = lifetime.guard(p);
         const life = lifetime;
-        const host = Object.freeze({ ...createIO(life), get params() {
+        const host = Object.freeze({ ...createIO(life), midi: createMIDI(life), get params() {
           return params;
-        }, device: life.guard(device), readFile: (path) => life.run(() => g3.readFile(path)), timing: life.timing, onDispose: (callback) => life.onDispose(callback), chop, latestControls });
+        }, device: life.guard(device), readFile: (path) => life.run(() => g4.readFile(path)), timing: life.timing, onDispose: (callback) => life.onDispose(callback), chop, latestControls });
         await life.run(() => sketch.setup?.(sketchP, host));
         if (life.error) throw new Error(life.error);
         width = frame.width;
         height = frame.height;
         stride = Math.ceil(width * 4 / 256) * 256;
         staging = device.createBuffer({ size: stride * height, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-        g3.__avPulseNames = JSON.stringify(sketch.onPulse && typeof sketch.onPulse === "object" ? Object.keys(sketch.onPulse).filter((name) => typeof sketch.onPulse[name] === "function") : []);
+        g4.__avPulseNames = JSON.stringify(sketch.onPulse && typeof sketch.onPulse === "object" ? Object.keys(sketch.onPulse).filter((name) => typeof sketch.onPulse[name] === "function") : []);
       }
       if (!p || !sketch) throw new Error("No valid sketch");
       if (lifetime?.error) throw new Error(lifetime.error);
-      if (g3.__avBackgroundError) throw new Error(g3.__avBackgroundError);
+      if (g4.__avBackgroundError) throw new Error(g4.__avBackgroundError);
       if (blocked) throw new Error("Draw stopped after an error; edit the source or reset");
-      await g3.__hostFrame();
+      await g4.__hostFrame();
       frame.time = (frame.frame - 1) / frame.rate;
       frame.controls = Object.freeze({ sampleRate: frame.sampleRate, startIndex: frame.startIndex, channels });
       frame.chop = chop;
@@ -6895,7 +7217,7 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
         if (syphonName) syphon = new nativeGPU.NativeSyphon(device, syphonName, false);
       }
       if (frame.syphonOnly && !syphon) throw new Error("Syphon-only output requires an enabled, named Syphon channel");
-      const drawStart = g3.hostNow();
+      const drawStart = g4.hostNow();
       p.beginFrame();
       try {
         for (const name of JSON.parse(__avPulsesJSON)) {
@@ -6920,47 +7242,47 @@ fn fsText(v: VertexOut) -> @location(0) vec4f {
       const texture = p.endFrame();
       syphon?.publish(texture, true, { x: 0, y: 0, width, height });
       const syphonStats = syphon?.stats();
-      g3.__avSyphonClients = Number(syphonStats?.hasClients ?? false);
-      g3.__avSyphonPublished = syphonStats?.published ?? 0;
-      g3.__avSyphonDropped = syphonStats?.dropped ?? 0;
-      g3.__avRendered = true;
+      g4.__avSyphonClients = Number(syphonStats?.hasClients ?? false);
+      g4.__avSyphonPublished = syphonStats?.published ?? 0;
+      g4.__avSyphonDropped = syphonStats?.dropped ?? 0;
+      g4.__avRendered = true;
       if (frame.syphonOnly) {
-        g3.__avDrawMs = g3.hostNow() - drawStart;
-        g3.__avError = "";
+        g4.__avDrawMs = g4.hostNow() - drawStart;
+        g4.__avError = "";
         return;
       }
       const encoder = device.createCommandEncoder();
       encoder.copyTextureToBuffer({ texture }, { buffer: staging, bytesPerRow: stride }, [width, height]);
       device.queue.submit([encoder.finish()]);
-      g3.__avSubmitted = true;
-      g3.__avDrawMs = g3.hostNow() - drawStart;
-      const readbackStart = g3.hostNow();
+      g4.__avSubmitted = true;
+      g4.__avDrawMs = g4.hostNow() - drawStart;
+      const readbackStart = g4.hostNow();
       await staging.mapAsync(GPUMapMode.READ);
-      g3.__avReadbackMs = g3.hostNow() - readbackStart;
-      g3.__avBytes = new Uint8Array(staging.getMappedRange());
-      g3.__avHasFrame = true;
-      g3.__avError = "";
+      g4.__avReadbackMs = g4.hostNow() - readbackStart;
+      g4.__avBytes = new Uint8Array(staging.getMappedRange());
+      g4.__avHasFrame = true;
+      g4.__avError = "";
     } catch (error) {
       lifetime?.fail(error);
-      g3.__avError = message(error);
+      g4.__avError = message(error);
     } finally {
-      g3.__avDone = true;
+      g4.__avDone = true;
     }
   };
-  g3.__avUnmap = () => {
-    g3.__avBytes = null;
+  g4.__avUnmap = () => {
+    g4.__avBytes = null;
     if (staging?.mapState === "mapped") staging.unmap();
   };
-  g3.__avDispose = () => {
-    g3.__avDone = false;
+  g4.__avDispose = () => {
+    g4.__avDone = false;
     lifetime?.dispose();
-    g3.__avUnmap();
+    g4.__avUnmap();
     syphon?.dispose();
     for (const image of images) image.texture.destroy();
     images = [];
     p?.dispose();
     staging?.destroy();
     device?.destroy();
-    g3.__avDone = true;
+    g4.__avDone = true;
   };
 })();

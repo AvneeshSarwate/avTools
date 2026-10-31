@@ -1,3 +1,4 @@
+import type {MidiHost} from './td-midi.d.ts';
 import type {IOHost} from './td-io.d.ts';
 import type {ParameterDefinitions, ParameterValues} from './td-parameters.d.ts';
 import type {P5GPU, P5GPUImage} from './td-types/p5.d.ts';
@@ -8,6 +9,7 @@ export interface SketchControls {
   readonly channels: ReadonlyArray<{readonly name: string; readonly samples: Float32Array}>;
 }
 export interface SketchHost<P extends ParameterDefinitions = ParameterDefinitions> extends IOHost {
+  readonly midi: MidiHost<P>;
   readonly params: ParameterValues<P>;
   readonly device: GPUDevice;
   /** Compatibility timing API with supervised launches. Prefer ordinary @avtools/core-timing imports. */

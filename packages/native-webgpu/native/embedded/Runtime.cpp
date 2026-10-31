@@ -1,5 +1,6 @@
 #include "Runtime.h"
 #include "IO.h"
+#include "MIDI.h"
 #include "LogFormat.h"
 #include "src/dawn/node/interop/Environment.h"
 #include "Polyfills.h"
@@ -58,6 +59,7 @@ struct Runtime::State {
     if(runtime.logs_)runtime.logs_->capture(severity,runtime.logGeneration_,line,formatter.truncated);
     else fprintf(stderr,"%s\n",line.c_str()); // Standalone Runtime fallback only.
   }
+  std::unique_ptr<MIDI> midi;
   std::unique_ptr<IO> io;
   std::set<uint64_t> ioRequests,ioReads;
   Runtime* runtime;
@@ -76,7 +78,23 @@ struct Runtime::State {
   uint64_t generation(){auto data=isolate->GetContinuationPreservedEmbedderDataV2();return data->IsValue()&&data.As<v8::Value>()->IsNumber()?uint64_t(data.As<v8::Value>().As<v8::Number>()->Value()):0;}
   void generation(uint64_t id){isolate->SetContinuationPreservedEmbedderDataV2(v8::Number::New(isolate,double(id)));}
   void cancel(uint64_t id){auto it=tasks.find(id);if(it==tasks.end())return;auto& t=*it->second;if(!t.immediate)timers.erase({t.due,id});tasks.erase(it);}
-  void invalidate(uint64_t gen){active.erase(gen);if(io)io->cancel(gen);for(auto it=tasks.begin();it!=tasks.end();){auto id=it++->first;if(tasks.at(id)->generation==gen)cancel(id);}std::erase_if(immediates,[&](uint64_t id){return !tasks.count(id);});}
+  void invalidate(uint64_t gen){active.erase(gen);if(midi)midi->cancel(gen);if(io)io->cancel(gen);for(auto it=tasks.begin();it!=tasks.end();){auto id=it++->first;if(tasks.at(id)->generation==gen)cancel(id);}std::erase_if(immediates,[&](uint64_t id){return !tasks.count(id);});}
+  static void midiCall(const v8::FunctionCallbackInfo<v8::Value>& a){
+    auto& s=get(a.GetIsolate());auto* i=s.isolate;
+    try {
+      if(a.Length()!=6||!a[0]->IsString()||!a[1]->IsNumber()||!a[2]->IsString()||!a[3]->IsUint32()||!a[4]->IsBoolean())throw std::runtime_error("Invalid native MIDI arguments");
+      auto number=a[1].As<v8::Number>()->Value();if(!std::isfinite(number)||number<0||number>9007199254740991.||std::floor(number)!=number)throw std::runtime_error("Invalid MIDI handle");
+      v8::String::Utf8Value operation(i,a[0]),port(i,a[2]);std::string op(*operation,operation.length()),name(*port,port.length());auto id=uint64_t(number),gen=s.generation();
+      if(s.dead(gen))throw std::runtime_error("Sketch generation has been disposed");
+      if(op=="inputs"||op=="outputs"){a.GetReturnValue().Set(str(i,MIDI::ports(op=="outputs").c_str()));return;}
+      if(!s.midi)s.midi=std::make_unique<MIDI>([wake=s.runtime->wake_]{wake->notify();});
+      if(op=="input"||op=="output")s.midi->open(id,gen,name,a[3].As<v8::Uint32>()->Value(),a[4]->BooleanValue(i),op=="output");
+      else if(op=="close")s.midi->close(id);
+      else if(op=="stats")a.GetReturnValue().Set(str(i,s.midi->stats().c_str()));
+      else if(op=="send"&&a[5]->IsUint8Array()){auto view=a[5].As<v8::Uint8Array>();auto store=view->Buffer()->GetBackingStore();s.midi->send(id,static_cast<uint8_t*>(store->Data())+view->ByteOffset(),view->ByteLength());}
+      else throw std::runtime_error("Invalid MIDI operation");
+    }catch(const std::exception& e){i->ThrowException(v8::Exception::Error(str(i,e.what())));}
+  }
   static void ioCall(const v8::FunctionCallbackInfo<v8::Value>& a){
     auto& s=get(a.GetIsolate());auto* i=s.isolate;auto c=i->GetCurrentContext();
     auto fail=[&](const char* message){i->ThrowException(v8::Exception::Error(str(i,message)));};
@@ -174,6 +192,7 @@ Runtime::Runtime(std::shared_ptr<Wake> wake,std::shared_ptr<LogSink> logs,uint64
   context->Global()->Set(context,str(isolate_,"console"),console).Check();
   context->Global()->Set(context,str(isolate_,"readFile"),v8::Function::New(context,read).ToLocalChecked()).Check();
   auto bind=[&](const char* name,v8::FunctionCallback callback,bool data=false){context->Global()->Set(context,str(isolate_,name),v8::Function::New(context,callback,v8::Boolean::New(isolate_,data)).ToLocalChecked()).Check();};
+  bind("__avMIDI",State::midiCall);
   bind("__avIO",State::ioCall);
   bind("__avNativeImmediate",State::nativeImmediate,true);bind("setTimeout",State::schedule);bind("setImmediate",State::schedule,true);
   bind("clearTimeout",State::clear);bind("clearImmediate",State::clear);bind("queueMicrotask",State::microtask);
@@ -225,7 +244,7 @@ bool Runtime::call(const char* name,int budgetMs){
 Clock::time_point Runtime::deadline(){
   owner();if(poisoned_)return Clock::time_point::max();
   while(!state_->immediates.empty()&&!state_->tasks.count(state_->immediates.front()))state_->immediates.pop_front();
-  if(!state_->immediates.empty()||(state_->io&&state_->io->pending()))return Clock::now();
+  if(!state_->immediates.empty()||((state_->midi&&state_->midi->pending())||(state_->io&&state_->io->pending())))return Clock::now();
   auto due=foreground_->deadline();if(!state_->timers.empty())due=std::min(due,state_->timers.begin()->first.first);return due;
 }
 size_t Runtime::taskCount() const{return state_->tasks.size();}
@@ -251,6 +270,17 @@ bool Runtime::pump(int budgetMs) {
     }
     while(!state_->immediates.empty()&&!state_->tasks.count(state_->immediates.front()))state_->immediates.pop_front();
     if(!state_->immediates.empty()&&state_->immediates.front()<=boundary){auto id=state_->immediates.front();state_->immediates.pop_front();auto t=std::move(state_->tasks.at(id));state_->tasks.erase(id);worked=true;if(!invoke(std::move(t)))return false;}
+    MIDIEvent midiEvent;
+    if(state_->midi&&state_->midi->take(midiEvent)){
+      worked=true;
+      if(!state_->dead(midiEvent.generation)){
+        v8::TryCatch catcher(isolate_);watchdog_->arm(budgetMs);auto prior=state_->generation();state_->generation(midiEvent.generation);
+        auto buffer=v8::ArrayBuffer::New(isolate_,midiEvent.bytes.size());std::memcpy(buffer->GetBackingStore()->Data(),midiEvent.bytes.data(),midiEvent.bytes.size());
+        v8::Local<v8::Value> args[]={v8::Number::New(isolate_,double(midiEvent.id)),v8::Uint8Array::New(buffer,0,midiEvent.bytes.size())},f,result;
+        if(c->Global()->Get(c,str(isolate_,"__avMIDIEvent")).ToLocal(&f)&&f->IsFunction()&&!f.As<v8::Function>()->Call(c,c->Global(),2,args).ToLocal(&result)&&!catcher.HasTerminated()){auto error=catcher.Exception();catcher.Reset();state_->report(error,midiEvent.generation);}
+        isolate_->PerformMicrotaskCheckpoint();state_->flushRejections();state_->generation(prior);if(!finish(catcher))return false;
+      }
+    }
     IOEvent event;
     if(state_->io&&state_->io->take(event)){
       worked=true;

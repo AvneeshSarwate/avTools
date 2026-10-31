@@ -1,0 +1,18 @@
+[package]
+name = "avtools-runtime-deps"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+midi_bridge = { path = "../../../../apps/deno-notebooks/native/midi_bridge" }
+text_engine = { path = "../../../../apps/deno-notebooks/native/text_engine" }
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1

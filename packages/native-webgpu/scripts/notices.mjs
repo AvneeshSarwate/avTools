@@ -24,9 +24,9 @@ await collect(`${dawn}/third_party`, 'Dawn/third_party', 3);
 await collect(`${root}/upstream/syphon`, 'Syphon', 0);
 await collect(`${root}/node_modules/earcut`, 'earcut');
 const crates = new Set();
-for (const name of ['text_engine', 'deno_window']) {
+for (const manifest of [`${root}/native/rust/Cargo.toml`, `${repo}/apps/deno-notebooks/native/deno_window/Cargo.toml`]) {
   const metadata = JSON.parse(execFileSync('cargo', ['metadata', '--format-version', '1', '--locked', '--offline', '--filter-platform', 'aarch64-apple-darwin',
-    '--manifest-path', `${repo}/apps/deno-notebooks/native/${name}/Cargo.toml`], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 }));
+    '--manifest-path', manifest], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 }));
   for (const crate of metadata.packages) {
     if (!crate.source || crates.has(crate.id)) continue;
     crates.add(crate.id);
