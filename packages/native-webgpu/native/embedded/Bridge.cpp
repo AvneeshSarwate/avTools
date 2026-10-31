@@ -1,5 +1,6 @@
 #include "Bridge.h"
 #include "Runtime.h"
+#include "MIDI.h"
 #include "ChopExchange.h"
 #include <algorithm>
 #include <chrono>
@@ -22,6 +23,7 @@ static std::string quoted(const std::string& value){std::string s="\"";for(unsig
 static void report(char* dest,size_t size,const std::string& value){if(dest&&size){std::memcpy(dest,value.data(),std::min(size-1,value.size()));dest[std::min(size-1,value.size())]=0;}}
 struct AVLog {std::shared_ptr<avtools::LogSink> sink=std::make_shared<avtools::LogSink>();};
 struct AVSketch {
+  std::string midiSelections="{}";bool midiPending=false;
   std::shared_ptr<avtools::LogSink> logs;uint64_t logGeneration=0;
   std::mutex mutex;std::shared_ptr<avtools::Wake> wake=std::make_shared<avtools::Wake>();std::deque<std::function<void()>> jobs;bool stopping=false;
   std::condition_variable dispatchCV;std::function<void()> dispatchJob;bool dispatchBusy=false;std::thread dispatcher;
@@ -33,6 +35,8 @@ struct AVSketch {
       std::function<void()> next;
       {std::lock_guard lock(mutex);if(stopping&&jobs.empty())break;if(!jobs.empty()){next=std::move(jobs.front());jobs.pop_front();}}
       if(next)next();
+      bool updateMidi=false;{std::lock_guard lock(mutex);updateMidi=midiPending;midiPending=false;}
+      if(updateMidi&&runtime&&!poisoned){try{applyMidi();}catch(const std::exception& e){error=e.what();poisoned=true;}}
       if(chop){if(auto request=exchange.take())runChop(std::move(request));}
       if(runtime&&!poisoned){
         const bool timerTurn=chop&&runtime->deadline()<=Clock::now();auto timerStart=Clock::now();if(timerTurn)exchange.timerBegin();
@@ -65,6 +69,11 @@ struct AVSketch {
     }
     runtime.reset();
   }
+  void applyMidi(){
+    std::string snapshot;{std::lock_guard lock(mutex);snapshot=midiSelections;}
+    runtime->setString("__avMIDISelectionsJSON",snapshot);
+    if(!runtime->call("__avMIDISelections",1000))throw std::runtime_error(runtime->error());
+  }
   void initialize(){
     dispose();
     // Deferred creation leaves the instance alive if initialization fails.
@@ -74,12 +83,12 @@ struct AVSketch {
     poisoned=true;runtime=std::make_unique<avtools::Runtime>(wake,logs,logGeneration);
     if(chop){
       std::ifstream file(resources+"/chop.js");if(!file)throw std::runtime_error("Missing bundled chop.js");
-      eval(std::string((std::istreambuf_iterator<char>(file)),{}),1000);poisoned=false;return;
+      eval(std::string((std::istreambuf_iterator<char>(file)),{}),1000);applyMidi();poisoned=false;return;
     }
     std::vector<std::string> fonts;for(const auto& entry:std::filesystem::directory_iterator(resources+"/fonts")){auto ext=entry.path().extension().string();if(ext==".ttf"||ext==".otf"||ext==".woff"||ext==".woff2")fonts.push_back(entry.path().string());}std::sort(fonts.begin(),fonts.end());
     std::string json="[";for(const auto& font:fonts){if(json.size()>1)json+=',';json+=quoted(font);}json+=']';runtime->setString("__avFontsJSON",json);
     std::ifstream file(resources+"/renderer.js");if(!file)throw std::runtime_error("Missing bundled renderer.js");std::string source((std::istreambuf_iterator<char>(file)),{});
-    eval(source,1000);wait(5000);auto failure=runtime->value("__avError");if(!failure.empty())throw std::runtime_error(failure);poisoned=false;
+    eval(source,1000);applyMidi();wait(5000);auto failure=runtime->value("__avError");if(!failure.empty())throw std::runtime_error(failure);poisoned=false;
   }
   // Ordered owner-thread lifetime boundary. Record attempts before initialization
   // so a bad bundle is not retried every frame; Reset or changed source retries.
@@ -250,3 +259,13 @@ extern "C" void avLogRead(AVLog* log,AVLogSnapshot* out){if(log&&out)log->sink->
 extern "C" void avLogAttach(AVSketch* sketch,AVLog* log){if(sketch)sketch->sync([&]{sketch->logs=log?log->sink:nullptr;});}
 
 extern "C" void avLogStats(AVLog* log,AVLogSnapshot* out){if(log&&out)log->sink->snapshot(*out,false);}
+
+extern "C" void avMidiSelections(AVSketch* sketch,const char* json){
+  if(!sketch||!json||std::strlen(json)>32768)return;
+  {std::lock_guard lock(sketch->mutex);if(sketch->stopping||sketch->midiSelections==json)return;sketch->midiSelections=json;sketch->midiPending=true;}
+  sketch->wake->notify();
+}
+extern "C" uint32_t avMidiInputs(char* output,uint32_t capacity){
+  try{auto json=avtools::MIDI::ports(false);if(output&&capacity>=json.size())std::memcpy(output,json.data(),json.size());return json.size();}
+  catch(...){if(output&&capacity>=2)std::memcpy(output,"[]",2);return 2;}
+}

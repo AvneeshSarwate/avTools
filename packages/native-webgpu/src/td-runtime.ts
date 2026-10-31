@@ -1,3 +1,4 @@
+import {createMIDI} from './td-midi.ts';
 import {createIO} from './td-io.ts';
 import {EmbeddedP5GPU} from './embedded.ts';
 import {parameterSnapshot} from './td-parameters.ts';
@@ -53,7 +54,7 @@ g.__avRender=async()=>{
       p=new EmbeddedP5GPU(device,{width:frame.width,height:frame.height,sampleCount:1},fonts);
       sketchP=lifetime.guard(p);
       const life=lifetime;
-      const host=Object.freeze({...createIO(life),get params(){return params;},device:life.guard(device),readFile:(path:string)=>life.run(()=>g.readFile(path)),timing:life.timing,onDispose:(callback:()=>void)=>life.onDispose(callback),chop,latestControls});
+      const host=Object.freeze({...createIO(life), midi: createMIDI(life),get params(){return params;},device:life.guard(device),readFile:(path:string)=>life.run(()=>g.readFile(path)),timing:life.timing,onDispose:(callback:()=>void)=>life.onDispose(callback),chop,latestControls});
       await life.run(()=>sketch.setup?.(sketchP,host));
       if(life.error)throw new Error(life.error);
       width=frame.width;height=frame.height;stride=Math.ceil(width*4/256)*256;

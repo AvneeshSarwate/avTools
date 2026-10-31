@@ -1,5 +1,7 @@
 #pragma once
 #include "TDParameters.h"
+#include "../embedded/Bridge.h"
+#include <chrono>
 #include "SourceActivation.h"
 #include <cmath>
 #include <iomanip>
@@ -15,6 +17,8 @@ class DeclaredParameters {
   inline static std::map<uint32_t,Handoff> handoffs;
   TD::OP_Context* context;uint32_t id;std::string resources,checked,error;bool scheduled=false;
   std::vector<Parameter> parameters;
+  std::string lastMidi,menuRows;AVSketch* lastMidiRuntime=nullptr;
+  std::chrono::steady_clock::time_point menuChecked{};
   static std::string unhex(const std::string& value){std::string out;for(size_t i=0;i+1<value.size();i+=2)out+=char(std::stoi(value.substr(i,2),nullptr,16));return out;}
   static std::vector<std::string> split(const std::string& text,char delimiter){std::vector<std::string> out;size_t start=0;for(;;){auto end=text.find(delimiter,start);out.push_back(text.substr(start,end==std::string::npos?end:end-start));if(end==std::string::npos)break;start=end+1;}return out;}
   std::string call(const char* action,const std::string& payload="")const{
@@ -61,9 +65,10 @@ class DeclaredParameters {
         auto f=split(line,'\t');if(f.size()<14)throw std::runtime_error("Invalid stored parameter data");
         Parameter p{f[0],f[1],unhex(f[2]),unhex(f[3]),std::stoi(f[4])};
         TD::OP_ParAppendResult result=TD::OP_ParAppendResult::InvalidName;
-        if(p.type=="string"||p.type=="menu"){
-          TD::OP_StringParameter s;s.name=p.name.c_str();s.label=p.label.c_str();s.page=p.page.c_str();auto value=unhex(f[12]);s.defaultValue=value.c_str();
-          if(p.type=="string")result=manager->appendString(s);
+        if(p.type=="string"||p.type=="menu"||p.type=="midiInput"){
+          TD::OP_StringParameter s;s.name=p.name.c_str();s.label=p.label.c_str();s.page=p.page.c_str();auto value=unhex(f[12]);if(p.type=="midiInput"&&value.empty())value="__avtools_none__";s.defaultValue=value.c_str();
+          if(p.type=="midiInput")result=manager->appendDynamicStringMenu(s);
+          else if(p.type=="string")result=manager->appendString(s);
           else{int count=std::stoi(f[13]);std::vector<std::string> names,labels;std::vector<const char*> np,lp;
             for(int i=0;i<count;i++){names.push_back(unhex(f.at(14+i*2)));labels.push_back(unhex(f.at(15+i*2)));}
             for(int i=0;i<count;i++){np.push_back(names[i].c_str());lp.push_back(labels[i].c_str());}result=manager->appendMenu(s,count,np.data(),lp.data());}
@@ -77,11 +82,33 @@ class DeclaredParameters {
       }
     }catch(const std::exception& e){error=e.what();}
   }
+  void midi(AVSketch* runtime,const TD::OP_Inputs* inputs){
+    if(!runtime)return;
+    std::string json="{";bool first=true;
+    for(const auto& p:parameters)if(p.type=="midiInput"){
+      if(!first)json+=',';first=false;const char* value=inputs->getParString(p.name.c_str());json+=quote(p.name)+":"+quote(value&&std::string(value)!="__avtools_none__"?value:"");
+    }
+    json+='}';if(json!=lastMidi||runtime!=lastMidiRuntime){avMidiSelections(runtime,json.c_str());lastMidi=json;lastMidiRuntime=runtime;}
+  }
+  void menu(TD::OP_BuildDynamicMenuInfo* info){
+    bool match=false;for(const auto& p:parameters)if(p.type=="midiInput"&&p.name==info->name)match=true;if(!match)return;
+    // TD rejects an empty menu entry name (and drops the entire menu).
+    // Keep the internal sentinel out of the script-facing parameter snapshot.
+    info->addMenuEntry("__avtools_none__","None");
+    try{
+      auto now=std::chrono::steady_clock::now();
+      if(now-menuChecked>std::chrono::seconds(1)){
+        std::string json;for(int retry=0;retry<3;retry++){auto size=avMidiInputs(nullptr,0);json.resize(size);auto written=avMidiInputs(json.data(),size);if(written<=size){json.resize(written);break;}}
+        menuRows=call("midi_menu",json);menuChecked=now;
+      }
+      for(const auto& line:split(menuRows,'\n')){auto row=split(line,'\t');if(row.size()==2){auto id=unhex(row[0]),label=unhex(row[1]);info->addMenuEntry(id.c_str(),label.c_str());}}
+    }catch(const std::exception& e){error=e.what();}
+  }
   std::string snapshot(const TD::OP_Inputs* inputs)const{
     if(parameters.empty())return "{}";
     std::ostringstream json;json.imbue(std::locale::classic());json.precision(17);json<<'{';bool first=true;
     for(const auto& p:parameters){if(p.type=="pulse")continue;if(!first)json<<',';first=false;json<<quote(p.name)<<':';
-      if(p.type=="string"||p.type=="menu"){const char* value=inputs->getParString(p.name.c_str());json<<quote(value?value:"");}
+      if(p.type=="string"||p.type=="menu"||p.type=="midiInput"){const char* value=inputs->getParString(p.name.c_str());json<<quote(value&&!(p.type=="midiInput"&&std::string(value)=="__avtools_none__")?value:"");}
       else if(p.type=="toggle")json<<(inputs->getParInt(p.name.c_str())?"true":"false");
       else{double values[4]{};
         if(p.type=="rgb")inputs->getParRGB(p.name.c_str(),values[0],values[1],values[2]);

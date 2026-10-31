@@ -2,7 +2,7 @@ use crossbeam_channel::{bounded, Receiver};
 use midir::{Ignore, MidiInput, MidiInputConnection};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Condvar};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -17,7 +17,23 @@ const RAW_CC_QUEUE_CAP: usize = 4096;
 
 const FLAG_RAW_CC: u32 = 1;
 
+#[derive(Clone, Copy)]
+pub enum Sink {
+    Legacy(Callback),
+    Embedded(extern "C" fn(usize, *const u8, u32), usize),
+}
+impl Sink {
+    fn call(self, bytes: &[u8]) {
+        match self {
+            Self::Legacy(cb) => cb(bytes.as_ptr(), bytes.len() as u32),
+            Self::Embedded(cb, context) => cb(context, bytes.as_ptr(), bytes.len() as u32),
+        }
+    }
+}
+
 pub struct InputHandle {
+    shared: Arc<SharedState>,
+    joined: bool,
     stop: Arc<AtomicBool>,
     callback_enabled: Arc<AtomicBool>,
     conn: Option<MidiInputConnection<()>>,
@@ -29,7 +45,12 @@ impl InputHandle {
     pub fn close(mut self) {
         self.callback_enabled.store(false, Ordering::Relaxed);
         self.stop.store(true, Ordering::Relaxed);
+        { let _pending = self.shared.pending.lock().unwrap(); self.shared.ready.notify_all(); }
         drop(self.conn.take());
+        if self.joined {
+            if let Some(thread) = self.coalescer_join.take() { let _ = thread.join(); }
+            if let Some(thread) = self.dispatch_join.take() { let _ = thread.join(); }
+        }
         let _ = self.coalescer_join.take();
         let _ = self.dispatch_join.take();
     }
@@ -59,6 +80,8 @@ struct RawCCRecord {
 }
 
 struct SharedState {
+    pending: Mutex<bool>,
+    ready: Condvar,
     state: Mutex<State>,
     notes: Mutex<VecDeque<NoteEdge>>,
     raw_ccs: Mutex<VecDeque<RawCCRecord>>,
@@ -69,6 +92,8 @@ struct SharedState {
 impl SharedState {
     fn new() -> Self {
         Self {
+            pending: Mutex::new(false),
+            ready: Condvar::new(),
             state: Mutex::new(State::default()),
             notes: Mutex::new(VecDeque::with_capacity(NOTE_QUEUE_CAP)),
             raw_ccs: Mutex::new(VecDeque::with_capacity(RAW_CC_QUEUE_CAP)),
@@ -123,7 +148,7 @@ pub fn open_input(
     port_id: &str,
     rate_hz: u32,
     flags: u32,
-    cb: Callback,
+    cb: Sink,
 ) -> Result<InputHandle, String> {
     let raw_cc = (flags & FLAG_RAW_CC) != 0;
     let mut midi_in = MidiInput::new("midi-bridge-in")
@@ -195,6 +220,8 @@ pub fn open_input(
     });
 
     Ok(InputHandle {
+        shared,
+        joined: matches!(cb, Sink::Embedded(..)),
         stop,
         callback_enabled,
         conn: Some(conn),
@@ -205,15 +232,19 @@ pub fn open_input(
 
 fn coalescer_loop(raw_rx: Receiver<RawMsg>, shared: Arc<SharedState>, stop: Arc<AtomicBool>, raw_cc: bool) {
     while !stop.load(Ordering::Relaxed) {
-        match raw_rx.recv_timeout(Duration::from_millis(5)) {
+        match raw_rx.recv() {
             Ok(raw) => {
                 handle_raw(raw, &shared, raw_cc);
-                for raw in raw_rx.try_iter() {
+                for raw in raw_rx.try_iter().take(RAW_QUEUE_CAP) {
                     handle_raw(raw, &shared, raw_cc);
                 }
+                let mut pending = shared.pending.lock().unwrap();
+                if !*pending {
+                    *pending = true;
+                    shared.ready.notify_one();
+                }
             }
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+            Err(_) => break,
         }
     }
 }
@@ -370,24 +401,21 @@ fn dispatch_loop(
     shared: Arc<SharedState>,
     stop: Arc<AtomicBool>,
     callback_enabled: Arc<AtomicBool>,
-    cb: Callback,
+    cb: Sink,
     start: Instant,
     rate_hz: u32,
 ) {
     let rate = rate_hz.max(1);
     let period = Duration::from_secs_f64(1.0 / rate as f64);
-    let mut next_tick = Instant::now() + period;
     while !stop.load(Ordering::Relaxed) {
-        let now = Instant::now();
-        if now < next_tick {
-            thread::sleep(next_tick - now);
-        }
-        let now = Instant::now();
-        if now > next_tick + period {
-            next_tick = now + period;
-        } else {
-            next_tick += period;
-        }
+        let pending = shared.pending.lock().unwrap();
+        let pending = shared.ready.wait_while(pending, |p| !*p && !stop.load(Ordering::Relaxed)).unwrap();
+        if stop.load(Ordering::Relaxed) { break; }
+        // Notifications during this window do not shorten it. No idle polling.
+        let (mut pending, _) = shared.ready.wait_timeout_while(pending, period, |_| !stop.load(Ordering::Relaxed)).unwrap();
+        if stop.load(Ordering::Relaxed) { break; }
+        *pending = false;
+        drop(pending);
 
         let dispatch_ts_us = start.elapsed().as_micros() as u64;
         let dropped_raw = shared.dropped_raw.swap(0, Ordering::Relaxed);
@@ -510,7 +538,7 @@ fn dispatch_loop(
         records.sort_by_key(|r| r.ts_us);
         let packet = encode_packet(&records, dispatch_ts_us, dropped_raw, dropped_note, 0);
         if callback_enabled.load(Ordering::Relaxed) {
-            cb(packet.as_ptr(), packet.len() as u32);
+            cb.call(&packet);
         }
     }
 }

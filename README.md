@@ -17,6 +17,10 @@ TouchDesigner TOPs and CHOPs support per-instance **Wait for Current Result**
 (blocking or buffered execution with the same JavaScript API). See the
 [execution guide and ready-to-open example](packages/native-webgpu/EXECUTION_MODES.md).
 
+TOP and CHOP scripts also support [native MIDI input/output](packages/native-webgpu/MIDI.md),
+including script-declared device menus, shared controllers, batched delivery, and
+automatic cleanup on reload. The generated template includes MIDI examples and API docs.
+
 ## Native P5GPU: Node/Dawn and TouchDesigner
 
 - **Node.js + Dawn:** [`packages/native-webgpu`](packages/native-webgpu/README.md)

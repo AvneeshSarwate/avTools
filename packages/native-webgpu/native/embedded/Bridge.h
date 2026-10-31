@@ -6,6 +6,9 @@ extern "C" {
 #endif
 // All caller pointers are borrowed only for the synchronous call. No C++ ABI crosses this boundary.
 typedef struct AVSketch AVSketch;
+// MIDI selection control updates coalesce independently of frame submissions.
+__attribute__((visibility("default"))) void avMidiSelections(AVSketch*,const char* json);
+__attribute__((visibility("default"))) uint32_t avMidiInputs(char* output,uint32_t capacity);
 // Logging handles own bounded history independently of V8 and may outlive a sketch.
 // Levels: Debug=0, Info/log=1, Warning=2, Error=3, Off=4.
 typedef struct AVLog AVLog;

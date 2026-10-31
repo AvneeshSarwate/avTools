@@ -87,6 +87,7 @@ class SketchTOP final:public TOP_CPlusPlusBase {
   ~SketchTOP() override {declared.preserve(activation,pendingPulses);avDestroy(runtime);}
   void getGeneralInfo(TOP_GeneralInfo* info,const OP_Inputs* inputs,void*)override{info->cookEveryFrameIfAsked=true;info->cookEveryFrame=inputs->getParInt("Syphonenabled")!=0;}
   void execute(TOP_Output* output,const OP_Inputs* inputs,void*)override{
+    declared.midi(runtime,inputs);
     logging.update(inputs);if(logging.takeRefresh())return;
     const auto cookStart=Clock::now();uploadMs=0;blockingWaitMs=0;currentFrame=inputs->getTimeInfo()->absFrame;
     cookStartNs=std::chrono::duration_cast<std::chrono::nanoseconds>(cookStart.time_since_epoch()).count();
@@ -138,6 +139,7 @@ class SketchTOP final:public TOP_CPlusPlusBase {
       if(inFlight){skipped++;return;}
       char detail[8192]{};
       if(!runtime){runtime=avCreateDeferred(resources().c_str(),detail,sizeof(detail));if(!runtime)throw std::runtime_error(detail);logging.attach(runtime);}
+      declared.midi(runtime,inputs);
       auto job=std::make_unique<Job>();
       auto choice=activation.choose();if(!declared.prepare(activation,choice))return;job->parameterValues=declared.snapshot(inputs);job->baseDirectory=choice.version.baseDirectory;job->source=choice.version.code;if(job->source.empty())return;reset=choice.restart;
       auto& frame=job->frame;frame.width=std::clamp(inputs->getParInt("Width"),1,4096);frame.height=std::clamp(inputs->getParInt("Height"),1,4096);frame.reset=reset;
@@ -160,6 +162,8 @@ class SketchTOP final:public TOP_CPlusPlusBase {
       }
     }catch(const std::exception& e){error=e.what();}
   }
+  void buildDynamicMenu(const OP_Inputs* inputs,OP_BuildDynamicMenuInfo* info,void*)override{declared.menu(info);declared.midi(runtime,inputs);}
+  void setParameterEnableStates(const OP_Inputs* inputs,OP_ParEnableState*,void*)override{declared.midi(runtime,inputs);}
   void setupParameters(OP_ParameterManager* manager,void*)override{
     NativeBuild::parameters(manager);Logging::parameters(manager);declared.setup(manager);
     OP_StringParameter source;source.name="Sketch";source.label="Sketch DAT";source.page="Sketch";manager->appendDAT(source);

@@ -118,3 +118,7 @@ the generated SDK. Restore the SDK from a fresh template of the same plugin
 version when cloning a code-only project.
 
 Each current `.plugin` bundle is independently copyable, including its static TypeScript compiler and libuv. Both TOP and CHOP hosts support [async files and OSC/UDP](../../packages/native-webgpu/IO.md); generated templates include examples.
+
+Native MIDI input/output is bundled in both operators. Generated projects include
+MIDI device-selector and TimeContext examples plus the full API reference in their
+README. See [MIDI guide](../../packages/native-webgpu/MIDI.md).

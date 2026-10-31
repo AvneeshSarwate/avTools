@@ -1,0 +1,10 @@
+{
+  "platform": "darwin",
+  "arch": "arm64",
+  "output": [
+    "instances=1 raw_cc=1 idle_cpu_percent=0.00176599 active_1khz_cpu_percent=5.93284 all_instances_latency_median_ms=4.84729 p95_ms=5.31746 delivered_per_instance=3050",
+    "instances=4 raw_cc=1 idle_cpu_percent=0.00256592 active_1khz_cpu_percent=16.3457 all_instances_latency_median_ms=5.19412 p95_ms=5.27908 delivered_per_instance=3050",
+    "instances=1 raw_cc=0 idle_cpu_percent=0.00153175 active_1khz_cpu_percent=6.06754 all_instances_latency_median_ms=5.07271 p95_ms=5.41496 delivered_per_instance=546",
+    "instances=4 raw_cc=0 idle_cpu_percent=0.00166571 active_1khz_cpu_percent=14.2342 all_instances_latency_median_ms=5.20696 p95_ms=5.29183 delivered_per_instance=603"
+  ]
+}

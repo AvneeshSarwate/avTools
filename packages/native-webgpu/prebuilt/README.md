@@ -10,10 +10,10 @@ See [onboarding validation](ONBOARDING_VALIDATION.md) for the tested GUI flow.
 
 This directory is committed to ordinary Git, including the native binaries. A
 fresh clone can run the TD examples without Rust, CMake, Ninja, Xcode, or a native
-build. No Git LFS setup is required. Keep the entire `.plugin` bundle together,
-plus the sibling `native-build/` directory for native project compilation and
-Source File watching. When distributing `Plugins/AvToolsSketch.plugin` or
-`Plugins/AvToolsChannels.plugin`, put `native-build/` in that same Plugins folder.
+build. No Git LFS setup is required. Keep each entire `.plugin` bundle together.
+The compiler, watchers, MIDI bridge, and text engine are statically linked into
+the plugin/runtime binaries; users do not need a sibling `native-build/` folder.
+The `macos-arm64/native-build/` directory is a maintainer CLI artifact.
 
 `macos-arm64/current.txt` names the current bundle relative to its own directory.
 The versioned filename avoids replacing a binary already loaded by TouchDesigner.
@@ -22,17 +22,17 @@ automatically. A project's adjacent `Plugins/AvToolsSketch.plugin` takes priorit
 for standalone distribution. When importing a `.tox` manually, set its Plugin Path
 to the bundle named in `current.txt`.
 
-Supported target: **macOS 15+, Apple Silicon, TouchDesigner 2025.31550 / TOP API 12**.
+Supported target: **macOS 15+, Apple Silicon, TouchDesigner 2025.31550 / 2025.33230**.
 Other TD versions are unverified. The bundle is locally ad-hoc signed, not Apple
 notarized. Fonts, third-party notices, V8 and seedrandom licenses, and Syphon's
-framework resources ship inside it. Its on-disk payload is approximately 49 MiB.
+framework resources ship inside it. Its on-disk payload is approximately 81 MiB per operator bundle.
 
 For TypeScript editing without any developer runtime installed, use the
 [native project](../../../apps/td-projects/native/README.md). Its TypeScript File
-parameter and optional Create Template Project button use the signed CLI/shared library under
-`macos-arm64/native-build/<version>/`. Both plugins resolve that one canonical
-library so their compiler service and watchers are shared. The CLI itself is a
-standalone executable and embeds the SDK/template and TypeScript standard libraries.
+parameter and optional Create Template Project button use the embedded native
+compiler. The CLI is also available for developer tests and embeds the same
+SDK/template and TypeScript standard libraries. Native MIDI examples and API
+instructions are included in that generated template README.
 
 For the older external watcher workflow, Node 22.20.x and `npm run setup` in the
 [starter](../../../apps/td-projects/starter/README.md) are sufficient; native

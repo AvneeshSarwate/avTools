@@ -15,3 +15,6 @@ _avLogClear
 _avLogRead
 _avLogAttach
 _avLogStats
+
+_avMidiSelections
+_avMidiInputs

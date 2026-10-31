@@ -1,0 +1,14 @@
+{
+  "passed": true,
+  "platform": "darwin",
+  "arch": "arm64",
+  "output": [
+    "four V8 workers, 5000 messages at 1kHz, 30 reloads; cpu_seconds=5.60685, wall_seconds=5.50476",
+    "worker=0 count=1060 last=4999 ticks=73 drops=0 order_errors=0 inputs=1",
+    "worker=1 count=5000 last=4999 ticks=265 drops=0 order_errors=0 inputs=1",
+    "worker=2 count=5000 last=4999 ticks=264 drops=0 order_errors=0 inputs=1",
+    "worker=3 count=5000 last=4999 ticks=270 drops=0 order_errors=0 inputs=1",
+    "native output loopback messages=7; coalesced 128 CC into 1 events",
+    "PASS: fan-out, slow JS consumer, reload, selection changes without cooks, missing/None, cleanup"
+  ]
+}

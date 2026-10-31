@@ -231,3 +231,12 @@ Incoming bundles are delivered immediately with timetag metadata. Reload/Reset
 closes old sockets automatically. File paths are relative to the TypeScript
 entrypoint. New assets need a Reset to be reread. The generated project README
 contains examples; the full repository API guide is `packages/native-webgpu/IO.md`.
+
+## MIDI controllers
+
+The TOP and CHOP both include native MIDI input and output. In a generated project,
+try `sketches/midi/channels.ts` or `sketches/midi/picture.ts`, then choose a device
+on the operator’s **MIDI** parameter page. Multiple operators can use the same
+controller. `sketches/midi/explicit.ts` demonstrates enumeration and sending.
+The generated project README contains the full typed API, batching options, and
+reload behavior. No extra MIDI library installation is required.
