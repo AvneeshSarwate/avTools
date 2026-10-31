@@ -100,8 +100,8 @@ The native TimeContext conformance regression passed both 21-case suites and
 its lifecycle/stall invariants after the MIDI integration.
 
 The live four-operator component passed and was saved as `MIDI.tox`; the standalone
-`MIDI.toe` was assembled from it. The final standalone reopen reached a macOS
-startup notification before plugin loading. That dialog is owned by
-UserNotificationCenter, which the computer-use tool cannot operate; dismissal
-was requested from the user. Standalone reopen is therefore not counted as a
-completed test in these results.
+`MIDI.toe` was assembled from it. Standalone reopen also passed after the user
+dismissed a macOS startup notification: both CHOPs and both TOPs loaded the current
+plugins, compiled their adjacent TypeScript entrypoints, and reported no errors
+or warnings. All four selectors started at None; the TOP viewers rendered the
+expected centered circles. See [results/reopen.json](results/reopen.json).

@@ -1,0 +1,41 @@
+{
+  "project": "MIDI.toe",
+  "operators": [
+    {
+      "name": "channels1",
+      "errors": "",
+      "warnings": "",
+      "controller": "__avtools_none__",
+      "plugin": "/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/prebuilt/macos-arm64/AvToolsChannels-ce663bd66590.plugin",
+      "typescript": "/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/native/td/midi-example/channels.ts",
+      "build_ready": true
+    },
+    {
+      "name": "channels2",
+      "errors": "",
+      "warnings": "",
+      "controller": "__avtools_none__",
+      "plugin": "/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/prebuilt/macos-arm64/AvToolsChannels-ce663bd66590.plugin",
+      "typescript": "/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/native/td/midi-example/channels.ts",
+      "build_ready": true
+    },
+    {
+      "name": "picture1",
+      "errors": "",
+      "warnings": "",
+      "controller": "__avtools_none__",
+      "plugin": "/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/prebuilt/macos-arm64/AvToolsSketch-336cde181926.plugin",
+      "typescript": "/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/native/td/midi-example/picture.ts",
+      "build_ready": true
+    },
+    {
+      "name": "picture2",
+      "errors": "",
+      "warnings": "",
+      "controller": "__avtools_none__",
+      "plugin": "/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/prebuilt/macos-arm64/AvToolsSketch-336cde181926.plugin",
+      "typescript": "/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/native/td/midi-example/picture.ts",
+      "build_ready": true
+    }
+  ]
+}
