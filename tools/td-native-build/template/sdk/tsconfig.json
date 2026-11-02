@@ -7,6 +7,9 @@
       "@avtools/creative-algs": [
         "./packages/creative-algs/mod.ts"
       ],
+      "@avtools/drawing-document": [
+        "./packages/drawing-document/mod.ts"
+      ],
       "@avtools/power2d": [
         "./packages/power2d/mod.ts"
       ],

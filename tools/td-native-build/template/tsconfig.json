@@ -13,6 +13,7 @@
     "skipLibCheck": true
   },
   "include": [
+    "examples/**/*.ts",
     "sketches/**/*.ts",
     "generated/**/*.ts",
     "sdk/wgsl.d.ts",

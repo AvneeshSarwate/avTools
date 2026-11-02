@@ -122,3 +122,5 @@ Each current `.plugin` bundle is independently copyable, including its static Ty
 Native MIDI input/output is bundled in both operators. Generated projects include
 MIDI device-selector and TimeContext examples plus the full API reference in their
 README. See [MIDI guide](../../packages/native-webgpu/MIDI.md).
+
+For live browser drawings, see the separate [TD Canvas app](../td-canvas/README.md) and its ready-to-open [Canvas.toe](../td-canvas/td/Canvas.toe). It uses the shared TOP/CHOP WebSocket client API.

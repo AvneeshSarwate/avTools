@@ -10,6 +10,7 @@ import {
   ZodObject,
   ZodOptional,
   ZodString,
+  type ZodTypeAny,
   type ZodRawShape
 } from 'zod'
 import type { $ZodIssue } from 'zod/v4/core'
@@ -25,7 +26,9 @@ type FlatSchema =
   | ZodNullable<PrimitiveSchema>
   | ZodDefault<PrimitiveSchema>
   | ZodReadonly<PrimitiveSchema>
-type SupportedSchema = FlatSchema | ZodObject<Record<string, FlatSchema>>
+// The editor accepts arbitrary schemas and renders an unsupported-kind fallback.
+// MetadataEditor and CanvasRoot intentionally expose ZodTypeAny to callers.
+type SupportedSchema = ZodTypeAny
 
 interface Props {
   schema: SupportedSchema

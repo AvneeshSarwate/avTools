@@ -322,7 +322,7 @@ export const handlePolygonEditMouseMove = (state: CanvasRuntimeState) => {
 
       // Highlight the edge as drawn (world space)
       const edgeLine = new Konva.Line({
-        points: polygonArray[result.polygonIndex].spans[result.lineIndex].flatMap(p => [p.x, p.y]),
+        points: polygonArray[result.polygonIndex][result.lineIndex].flatMap(p => [p.x, p.y]),
         stroke: '#00ff00',
         strokeWidth: 4,
         opacity: 0.8

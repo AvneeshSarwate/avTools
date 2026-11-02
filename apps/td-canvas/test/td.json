@@ -1,0 +1,39 @@
+{
+  "passed": true,
+  "touchdesigner": "2025.33230",
+  "operators": [
+    {
+      "name": "picture1",
+      "errors": "",
+      "warnings": "",
+      "ink_pixels": 6404
+    },
+    {
+      "name": "picture2",
+      "errors": "",
+      "warnings": "",
+      "ink_pixels": 6404
+    },
+    {
+      "name": "channels1",
+      "errors": "",
+      "warnings": "",
+      "channels": {
+        "shapes": 3.0,
+        "revision": 0.0,
+        "connected": 1.0
+      }
+    },
+    {
+      "name": "channels2",
+      "errors": "",
+      "warnings": "",
+      "channels": {
+        "shapes": 3.0,
+        "revision": 0.0,
+        "connected": 1.0
+      }
+    }
+  ],
+  "top_pixels_equal": true
+}

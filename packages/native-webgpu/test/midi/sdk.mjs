@@ -15,10 +15,10 @@ test('generated SDK checks MIDI parameter names and event types, and builds ever
     catch(error){return JSON.parse(error.stdout);}
   }
   for(const [name,kind] of [['channels','chop'],['picture','top'],['explicit','chop']]){
-    const result=build(resolve(root,`sketches/midi/${name}.ts`),kind);
+    const result=build(resolve(root,`examples/midi/${name}.ts`),kind);
     assert.equal(result.state,'ready',JSON.stringify(result));
   }
-  const entry=resolve(root,'sketches/midi/contract.ts');
+  const entry=resolve(root,'examples/midi/contract.ts');
   const source=`import type {ChopHost} from '@avtools/native-webgpu/td-chop';
 export const parameters={Controller:{type:'midiInput'},Speed:{type:'float'}} as const;
 export function setup(host:ChopHost<typeof parameters>){

@@ -1,5 +1,6 @@
 #include "Runtime.h"
 #include "IO.h"
+#include "WebSocket.h"
 #include "MIDI.h"
 #include "LogFormat.h"
 #include "src/dawn/node/interop/Environment.h"
@@ -61,6 +62,7 @@ struct Runtime::State {
   }
   std::unique_ptr<MIDI> midi;
   std::unique_ptr<IO> io;
+  std::unique_ptr<WebSockets> websockets;
   std::set<uint64_t> ioRequests,ioReads;
   Runtime* runtime;
   v8::Isolate* isolate;
@@ -78,7 +80,7 @@ struct Runtime::State {
   uint64_t generation(){auto data=isolate->GetContinuationPreservedEmbedderDataV2();return data->IsValue()&&data.As<v8::Value>()->IsNumber()?uint64_t(data.As<v8::Value>().As<v8::Number>()->Value()):0;}
   void generation(uint64_t id){isolate->SetContinuationPreservedEmbedderDataV2(v8::Number::New(isolate,double(id)));}
   void cancel(uint64_t id){auto it=tasks.find(id);if(it==tasks.end())return;auto& t=*it->second;if(!t.immediate)timers.erase({t.due,id});tasks.erase(it);}
-  void invalidate(uint64_t gen){active.erase(gen);if(midi)midi->cancel(gen);if(io)io->cancel(gen);for(auto it=tasks.begin();it!=tasks.end();){auto id=it++->first;if(tasks.at(id)->generation==gen)cancel(id);}std::erase_if(immediates,[&](uint64_t id){return !tasks.count(id);});}
+  void invalidate(uint64_t gen){active.erase(gen);if(midi)midi->cancel(gen);if(io)io->cancel(gen);if(websockets)websockets->cancel(gen);for(auto it=tasks.begin();it!=tasks.end();){auto id=it++->first;if(tasks.at(id)->generation==gen)cancel(id);}std::erase_if(immediates,[&](uint64_t id){return !tasks.count(id);});}
   static void midiCall(const v8::FunctionCallbackInfo<v8::Value>& a){
     auto& s=get(a.GetIsolate());auto* i=s.isolate;
     try {
@@ -94,6 +96,36 @@ struct Runtime::State {
       else if(op=="send"&&a[5]->IsUint8Array()){auto view=a[5].As<v8::Uint8Array>();auto store=view->Buffer()->GetBackingStore();s.midi->send(id,static_cast<uint8_t*>(store->Data())+view->ByteOffset(),view->ByteLength());}
       else throw std::runtime_error("Invalid MIDI operation");
     }catch(const std::exception& e){i->ThrowException(v8::Exception::Error(str(i,e.what())));}
+  }
+  static void webSocketCall(const v8::FunctionCallbackInfo<v8::Value>& a) {
+    auto& s = get(a.GetIsolate()); auto* i = s.isolate;
+    try {
+      if (a.Length() != 6 || !a[0]->IsString() || !a[1]->IsNumber() || !a[2]->IsNumber() || !a[3]->IsString() || !a[4]->IsUint32())
+        throw std::runtime_error("Invalid WebSocket arguments");
+      auto handle = [](v8::Local<v8::Value> value) {
+        double n = value.As<v8::Number>()->Value();
+        if (!std::isfinite(n) || n < 0 || n > 9007199254740991. || std::floor(n) != n) throw std::runtime_error("Invalid WebSocket handle");
+        return uint64_t(n);
+      };
+      auto id = handle(a[1]), socket = handle(a[2]), gen = s.generation();
+      if (s.dead(gen)) throw std::runtime_error("Sketch generation has been disposed");
+      v8::String::Utf8Value operation(i, a[0]), value(i, a[3]);
+      std::string op(*operation, operation.length()), text(*value, value.length());
+      if (!s.websockets) s.websockets = std::make_unique<WebSockets>([wake=s.runtime->wake_]{wake->notify();});
+      if (op == "open") s.websockets->open(id, gen, text);
+      else if (op == "close") {
+        int code = a[4].As<v8::Uint32>()->Value();
+        if ((code != 1000 && (code < 3000 || code > 4999)) || text.size() > 123) throw std::runtime_error("Invalid WebSocket close code/reason");
+        s.websockets->close(socket, code, text);
+      } else if (op == "send" && a[5]->IsUint8Array()) {
+        auto view = a[5].As<v8::Uint8Array>();
+        if (view->ByteLength() > 8*1024*1024) throw std::runtime_error("WebSocket message exceeds 8 MiB");
+        auto backing = view->Buffer()->GetBackingStore();
+        std::vector<uint8_t> bytes(view->ByteLength());
+        if (!bytes.empty()) std::memcpy(bytes.data(), static_cast<uint8_t*>(backing->Data()) + view->ByteOffset(), bytes.size());
+        s.websockets->send(id, gen, socket, bytes, a[4].As<v8::Uint32>()->Value() != 0);
+      } else throw std::runtime_error("Invalid WebSocket operation");
+    } catch (const std::exception& error) { i->ThrowException(v8::Exception::Error(str(i,error.what()))); }
   }
   static void ioCall(const v8::FunctionCallbackInfo<v8::Value>& a){
     auto& s=get(a.GetIsolate());auto* i=s.isolate;auto c=i->GetCurrentContext();
@@ -194,6 +226,7 @@ Runtime::Runtime(std::shared_ptr<Wake> wake,std::shared_ptr<LogSink> logs,uint64
   auto bind=[&](const char* name,v8::FunctionCallback callback,bool data=false){context->Global()->Set(context,str(isolate_,name),v8::Function::New(context,callback,v8::Boolean::New(isolate_,data)).ToLocalChecked()).Check();};
   bind("__avMIDI",State::midiCall);
   bind("__avIO",State::ioCall);
+  bind("__avWebSocket",State::webSocketCall);
   bind("__avNativeImmediate",State::nativeImmediate,true);bind("setTimeout",State::schedule);bind("setImmediate",State::schedule,true);
   bind("clearTimeout",State::clear);bind("clearImmediate",State::clear);bind("queueMicrotask",State::microtask);
   bind("__hostStats",State::stats);bind("__hostReportError",State::reportError);bind("__hostNow",State::monotonic);bind("__hostUUID",State::uuid);bind("__hostGeneration",State::setGeneration);
@@ -244,7 +277,7 @@ bool Runtime::call(const char* name,int budgetMs){
 Clock::time_point Runtime::deadline(){
   owner();if(poisoned_)return Clock::time_point::max();
   while(!state_->immediates.empty()&&!state_->tasks.count(state_->immediates.front()))state_->immediates.pop_front();
-  if(!state_->immediates.empty()||((state_->midi&&state_->midi->pending())||(state_->io&&state_->io->pending())))return Clock::now();
+  if(!state_->immediates.empty()||((state_->midi&&state_->midi->pending())||(state_->io&&state_->io->pending())||(state_->websockets&&state_->websockets->pending())))return Clock::now();
   auto due=foreground_->deadline();if(!state_->timers.empty())due=std::min(due,state_->timers.begin()->first.first);return due;
 }
 size_t Runtime::taskCount() const{return state_->tasks.size();}
@@ -292,6 +325,23 @@ bool Runtime::pump(int budgetMs) {
         v8::Local<v8::Value> f,result;
         if(c->Global()->Get(c,str(isolate_,"__avIOEvent")).ToLocal(&f)&&f->IsFunction()&&!f.As<v8::Function>()->Call(c,c->Global(),6,args).ToLocal(&result)&&!catcher.HasTerminated()){auto error=catcher.Exception();catcher.Reset();state_->report(error,event.generation);}
         isolate_->PerformMicrotaskCheckpoint();state_->flushRejections();state_->generation(prior);if(!finish(catcher))return false;
+      }
+    }
+    WebSocketEvent wsEvent;
+    if (state_->websockets && state_->websockets->take(wsEvent)) {
+      worked = true;
+      if (!state_->dead(wsEvent.generation)) {
+        v8::TryCatch catcher(isolate_); watchdog_->arm(budgetMs);
+        auto prior = state_->generation(); state_->generation(wsEvent.generation);
+        auto buffer = v8::ArrayBuffer::New(isolate_, wsEvent.bytes.size());
+        if (!wsEvent.bytes.empty()) std::memcpy(buffer->GetBackingStore()->Data(), wsEvent.bytes.data(), wsEvent.bytes.size());
+        v8::Local<v8::Value> args[] = {v8::Number::New(isolate_,double(wsEvent.id)),str(isolate_,wsEvent.kind.c_str()),str(isolate_,wsEvent.text.c_str()),v8::Uint8Array::New(buffer,0,wsEvent.bytes.size()),v8::Integer::New(isolate_,wsEvent.code)};
+        v8::Local<v8::Value> f,result;
+        if (c->Global()->Get(c,str(isolate_,"__avWebSocketEvent")).ToLocal(&f) && f->IsFunction() && !f.As<v8::Function>()->Call(c,c->Global(),5,args).ToLocal(&result) && !catcher.HasTerminated()) {
+          auto error=catcher.Exception(); catcher.Reset(); state_->report(error,wsEvent.generation);
+        }
+        isolate_->PerformMicrotaskCheckpoint(); state_->flushRejections(); state_->generation(prior);
+        if (!finish(catcher)) return false;
       }
     }
     if(auto task=foreground_->take()){++state_->foregroundCalls;worked=true;v8::TryCatch catcher(isolate_);watchdog_->arm(budgetMs);auto prior=state_->generation();state_->generation(0);task->Run();isolate_->PerformMicrotaskCheckpoint();state_->flushRejections();state_->generation(prior);if(!finish(catcher))return false;}

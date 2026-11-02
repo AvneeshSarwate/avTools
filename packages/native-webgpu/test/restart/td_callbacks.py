@@ -71,7 +71,7 @@ def onFrameStart(frame):
     source.write_text(code(5))
    elif stage==9:first.par.Buildproject.pulse()
    elif stage==10:
-    other=folder/'sketches/other.ts';other.write_text(code(9));first.par.Autoreload=False;first.par.Typescript=str(other)
+    other=folder/'examples/other.ts';other.write_text(code(9));first.par.Autoreload=False;first.par.Typescript=str(other)
    elif stage==11:first.par.Reload.pulse()
    elif stage==12:
     dat.text="if(globalThis.old)throw Error('stale global');globalThis.old=1;function draw(p){p.background(0,0,255)}"

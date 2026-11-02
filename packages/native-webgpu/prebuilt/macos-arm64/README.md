@@ -64,8 +64,8 @@ name to appear in the operator creation dialog first. See Derivative's
    is the complete offline TD script/API guide for users and coding agents. It refuses an
    existing child of that name, so repeated clicks cannot overwrite your edits.
 3. The operator automatically selects the matching **TypeScript File**:
-   `avtools-project/sketches/background/main.ts` for the TOP, or
-   `avtools-project/sketches/channels/main.ts` for the CHOP.
+   `avtools-project/examples/background/main.ts` for the TOP, or
+   `avtools-project/examples/channels/main.ts` for the CHOP.
 4. Keep **Automatic Builds** and **Automatic Reload** on.
 5. Start TD's timeline playback and enable the node's viewer if needed. The TOP
    starter draws an orange circle at 1280×720 (720p). The CHOP starter has `value` and `ticks`
@@ -81,7 +81,7 @@ there is no terminal command or watcher process to start.
 ## 4. Edit in VS Code
 
 In VS Code choose **File → Open Folder** and open **avtools-project** (the folder containing
-`tsconfig.json`). Open `sketches/background/main.ts`. Change the circle's size or
+`tsconfig.json`). Open `examples/background/main.ts`. Change the circle's size or
 the `p.fill(...)` color and save. After a successful build, TD restarts this
 sketch and displays the change. Local variables and timing tasks start fresh.
 
@@ -101,13 +101,13 @@ step 2. On **Build → TypeScript File**, select another entry in the **same avt
 folder**. Do not generate the template again. Every operator points directly to
 its own `.ts` entry; there is no manifest or bundle filename to configure.
 
-For example, duplicate `sketches/background` as `sketches/second-image` in VS Code,
+For example, duplicate `examples/background` as `sketches/second-image` in VS Code,
 then select `avtools-project/sketches/second-image/main.ts` on the second TOP. Helpers can be
 shared with normal imports. Two nodes may also use the same entry: their running
 state is independent.
 
 To use the existing CHOP starter on a second operator, select
-`avtools-project/sketches/channels/main.ts`, then set **Script → Output Channels** to
+`avtools-project/examples/channels/main.ts`, then set **Script → Output Channels** to
 `value ticks` and **Output Samples** to `1`. These are set automatically only
 on the CHOP that creates a template. To test an input, create a **Constant CHOP**,
 set its first channel's name to `value` and value to `0.25`, and wire its output
@@ -142,7 +142,7 @@ should be `0.5`. Keep **Wait for Current Result** on for same-cook transforms.
 
 When sharing the project, include your `.toe`, `Plugins`, and `avtools-project` folders.
 Make plugin and TypeScript paths relative to the saved project folder (for
-example `Plugins/AvToolsSketch.plugin` and `avtools-project/sketches/background/main.ts`)
+example `Plugins/AvToolsSketch.plugin` and `avtools-project/examples/background/main.ts`)
 before moving it. Include any additional assets your sketches read.
 
 ## Download and packaging notes
@@ -195,9 +195,9 @@ maintainers, not plugin users.
 
 New template projects include two extra examples:
 
-* TOP: select `sketches/parameters/picture.ts`, then open its **Controls** page.
+* TOP: select `examples/parameters/picture.ts`, then open its **Controls** page.
   Change Size, Color, Visible or Shape, or press Shuffle.
-* CHOP: select `sketches/parameters/channels.ts`, set Output Channels to `value`,
+* CHOP: select `examples/parameters/channels.ts`, set Output Channels to `value`,
   and use Gain, Duration and Animate on **Controls**.
 
 An exported literal `parameters` object defines these native controls. Read
@@ -216,7 +216,7 @@ in a different parent folder, then copy its `sdk/` into your code project.
 
 ## Files, UDP and OSC
 
-Generated templates include `sketches/osc/channels.ts`, `picture.ts`, `udp.ts`
+Generated templates include `examples/osc/channels.ts`, `picture.ts`, `udp.ts`
 and `config.json`. Both operators offer asynchronous `host.files.readText()` /
 `readBytes()`, `host.udp.open()` and `host.osc.open()`. OSC callbacks run even
 when TD is not cooking; output becomes visible when TD next cooks the operator.
@@ -235,8 +235,16 @@ contains examples; the full repository API guide is `packages/native-webgpu/IO.m
 ## MIDI controllers
 
 The TOP and CHOP both include native MIDI input and output. In a generated project,
-try `sketches/midi/channels.ts` or `sketches/midi/picture.ts`, then choose a device
+try `examples/midi/channels.ts` or `examples/midi/picture.ts`, then choose a device
 on the operator’s **MIDI** parameter page. Multiple operators can use the same
-controller. `sketches/midi/explicit.ts` demonstrates enumeration and sending.
+controller. `examples/midi/explicit.ts` demonstrates enumeration and sending.
 The generated project README contains the full typed API, batching options, and
 reload behavior. No extra MIDI library installation is required.
+
+## Browser canvas example
+
+All supplied template sketches are under `examples/`; create `sketches/` for your
+own code. Select `examples/canvas/picture.ts` on a TOP to display drawings from
+the separate `apps/td-canvas` browser app. The generated README explains how to
+start its local server. `examples/canvas/channels.ts` reports shape count, revision
+and connection state. Generic WebSocket examples are under `examples/websocket/`.
