@@ -2,8 +2,8 @@
 
 MIDI device input/output is built into the macOS TOP and CHOP. No browser MIDI,
 Node, Deno, npm install, or separately installed MIDI library is needed. See
-the generated template’s `sketches/midi/picture.ts` and `sketches/midi/channels.ts` (Output Channels:
-`value note velocity`), and `sketches/midi/explicit.ts`.
+the generated template’s `examples/midi/picture.ts` and `examples/midi/channels.ts` (Output Channels:
+`value note velocity`), and `examples/midi/explicit.ts`.
 
 Declare a device selector as literal entrypoint metadata:
 

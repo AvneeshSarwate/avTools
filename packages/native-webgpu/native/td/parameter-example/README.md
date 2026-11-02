@@ -23,7 +23,7 @@ for the complete API and limits.
 
 This example references the repo SDK through its tsconfig. To work outside the
 checkout, copy `apps/td-projects/Plugins` beside a new saved `.toe`, use Create
-Template Project, and choose its `sketches/parameters/` entries instead.
+Template Project, and choose its `examples/parameters/` entries instead.
 
 Regenerate by running `create_fixture.py` in TD with `__file__` set to its absolute
 path, verify/cook the Controls pages, and save the component as Parameters.tox.

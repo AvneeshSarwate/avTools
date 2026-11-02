@@ -14,7 +14,7 @@ supplied SDK. The [older Node runner](../td-sketch-build/README.md) remains avai
 2. On its **Build** page, choose a **Template Parent Folder**, usually your TD
    project directory. The button creates an `avtools-project/` child folder.
 3. Press **Create Template Project**. This creates a local SDK, `tsconfig.json`,
-   starter TOP/CHOP sources and a README. It selects the matching **TypeScript File**
+   TOP/CHOP sources under `examples/` and a README. It selects the matching **TypeScript File**
    on this operator, enables Automatic Builds, and configures the starter CHOP's
    `value ticks` output channels and one output sample, or the TOP's 1280×720 output.
    The [generated README](template/README.md) includes the complete offline
@@ -98,9 +98,9 @@ the same template. `native-build/current.txt` identifies its distribution.
 
 ```sh
 avtools-build init /path/to/project
-avtools-build build-file /path/to/project/sketches/background/main.ts top
-avtools-build check-file /path/to/project/sketches/channels/main.ts chop
-avtools-build watch-file /path/to/project/sketches/channels/main.ts chop
+avtools-build build-file /path/to/project/examples/background/main.ts top
+avtools-build check-file /path/to/project/examples/channels/main.ts chop
+avtools-build watch-file /path/to/project/examples/channels/main.ts chop
 ```
 
 `check-file` checks types/generated shader types, without bundling or a runtime

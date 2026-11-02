@@ -107,8 +107,8 @@ Legacy raw-JS/DAT scripts without builder metadata have no declared controls.
 Open [Parameters.toe](native/td/parameter-example/Parameters.toe) in this repository
 for a ready-to-use TOP/CHOP example.
 
-Create Template Project includes `sketches/parameters/picture.ts` and
-`sketches/parameters/channels.ts` examples. For an older generated project, create
+Create Template Project includes `examples/parameters/picture.ts` and
+`examples/parameters/channels.ts` examples. For an older generated project, create
 a new template in an empty folder and copy its `sdk/` into the existing project
 (after preserving any deliberate local SDK edits). New typings are not silently
 installed over user-owned project files.

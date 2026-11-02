@@ -1,0 +1,49 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "node",
+      "vite/client"
+    ],
+    "paths": {
+      "@/*": [
+        "../browser-projections/src/*"
+      ],
+      "@avtools/drawing-document": [
+        "../../packages/drawing-document/mod.ts"
+      ],
+      "vue": [
+        "./node_modules/vue"
+      ],
+      "@vue/*": [
+        "./node_modules/@vue/*"
+      ],
+      "zod": [
+        "./node_modules/zod"
+      ],
+      "konva": [
+        "./node_modules/konva"
+      ]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.vue",
+    "shared/**/*.ts",
+    "server.ts",
+    "relay.ts",
+    "test/**/*.ts",
+    "vite.config.ts"
+  ]
+}

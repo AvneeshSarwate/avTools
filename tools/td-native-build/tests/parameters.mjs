@@ -23,18 +23,18 @@ export function onCook(h:ChopHost<typeof parameters>){const n:number=h.params.Sp
   writeFileSync(entry,source.replace("const n:number=h.params.Speed;",extra+'const n:number=h.params.Speed;'));assert.equal(build(entry).state,'error',extra);
  }
  writeFileSync(entry,"function create(){return {Speed:{type:'float',default:1}}} export const parameters=create(); export function onCook(){}");assert.equal(build(entry).state,'error');
- for(const [name,target] of [['picture.ts','top'],['channels.ts','chop']]){const example=build(resolve(root,'sketches/parameters',name),target);assert.equal(example.state,'ready',JSON.stringify(example));}
+ for(const [name,target] of [['picture.ts','top'],['channels.ts','chop']]){const example=build(resolve(root,'examples/parameters',name),target);assert.equal(example.state,'ready',JSON.stringify(example));}
 });
 
 test('all generated API examples build and SDK is git-ignored',t=>{
  const root=fixture(t);
  assert.ok(readFileSync(resolve(root,'.gitignore'),'utf8').split('\n').includes('/sdk/'));
  for(const [entry,target] of [['buffers/interpolate.ts','chop'],['parameters/all-controls.ts','chop'],['inputs/picture.ts','top'],['timing/picture.ts','top']]){
-  const result=build(resolve(root,'sketches',entry),target);assert.equal(result.state,'ready',JSON.stringify(result));
+  const result=build(resolve(root,'examples',entry),target);assert.equal(result.state,'ready',JSON.stringify(result));
  }
 });
 test('generated XY interpolation runs over 10k samples and handles short inputs',t=>{
- const root=fixture(t),result=build(resolve(root,'sketches/buffers/interpolate.ts'));
+ const root=fixture(t),result=build(resolve(root,'examples/buffers/interpolate.ts'));
  assert.equal(result.state,'ready');
  const code=readFileSync(result.changed.find(p=>p.endsWith('/sketch.js')),'utf8');
  const cook=new Function(code+';return onCook')();
@@ -46,8 +46,8 @@ test('generated XY interpolation runs over 10k samples and handles short inputs'
 });
 test('default entries expose working TOP and CHOP controls',t=>{
  const root=fixture(t);
- const top=build(resolve(root,'sketches/background/main.ts'),'top');
- const chop=build(resolve(root,'sketches/channels/main.ts'),'chop');
+ const top=build(resolve(root,'examples/background/main.ts'),'top');
+ const chop=build(resolve(root,'examples/channels/main.ts'),'chop');
  assert.equal(top.state,'ready',JSON.stringify(top));assert.equal(chop.state,'ready',JSON.stringify(chop));
  const source=r=>readFileSync(r.changed.find(p=>p.endsWith('/sketch.js')),'utf8');
  const metadata=r=>JSON.parse(source(r).split('\n')[0].slice('// avtools-parameters-v1:'.length));

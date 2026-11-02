@@ -22,7 +22,7 @@ def make(kind):
  n.par.Templatedir=str(folder);n.par.Createtemplate.pulse();n.cook(force=True)
  if kind=='top':n.par.Width=128;n.par.Height=128 # This fixture's pixel probes use 128px, not the 720p template default.
  project=folder/'avtools-project';assert (project/'sdk/packages/native-webgpu/td-io.d.ts').is_file()
- n.par.Typescript=str(project/'sketches/osc'/('picture.ts' if kind=='top' else 'channels.ts'))
+ n.par.Typescript=str(project/'examples/osc'/('picture.ts' if kind=='top' else 'channels.ts'))
  if kind=='chop':n.par.Outputchannels='value target messages port'
  info=root.create(infoDAT,'info_'+kind);info.par.op=n.name
  sender=root.create(oscoutDAT,'send_'+kind);sender.par.address='127.0.0.1';sender.viewer=True

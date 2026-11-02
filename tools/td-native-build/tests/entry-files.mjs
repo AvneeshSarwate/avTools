@@ -14,16 +14,16 @@ test('manifest-free template builds entries independently with shared helpers, a
  const root=fixture(t);assert.equal(existsSync(resolve(root,'avtools.json')),false);
  // Unrelated media is not captured as compiler input.
  put(root,'media/clip.bin','unrelated media');
- const a=resolve(root,'sketches/channels/main.ts'),b=resolve(root,'sketches/background/main.ts');
+ const a=resolve(root,'examples/channels/main.ts'),b=resolve(root,'examples/background/main.ts');
  const ra=build(a),rb=build(b,'top');assert.equal(ra.state,'ready',JSON.stringify(ra));assert.equal(rb.state,'ready',JSON.stringify(rb));assert.equal(value(code(ra)),14);
  assert.ok(!readFileSync(resolve(dirname(ra.changed[0]),'dependencies.json'),'utf8').includes('clip.bin'));
- const shared=put(root,'sketches/shared.ts','export const factor=3;');
- const other=put(root,'sketches/other.ts','import {factor} from "./shared.ts";export function onCook(h:any){h.outputs.set("out",factor);}');
+ const shared=put(root,'examples/shared.ts','export const factor=3;');
+ const other=put(root,'examples/other.ts','import {factor} from "./shared.ts";export function onCook(h:any){h.outputs.set("out",factor);}');
  let r=build(other);assert.equal(r.state,'ready');assert.equal(value(code(r)),3);assert.notEqual(dirname(r.changed[0]),dirname(ra.changed[0]));
- put(root,'sketches/background/main.ts','export const draw=notDefined;');assert.equal(build(b,'top').state,'error');assert.equal(build(a).state,'ready');
- put(root,'sketches/channels/math.ts','export const scale=(v:number)=>v*4;');r=build(a);assert.equal(r.state,'ready');assert.equal(value(code(r)),28);
+ put(root,'examples/background/main.ts','export const draw=notDefined;');assert.equal(build(b,'top').state,'error');assert.equal(build(a).state,'ready');
+ put(root,'examples/channels/math.ts','export const scale=(v:number)=>v*4;');r=build(a);assert.equal(r.state,'ready');assert.equal(value(code(r)),28);
  writeFileSync(shared,'export const factor:number="bad";');assert.equal(build(other).state,'error');assert.equal(build(a).state,'ready');
- put(root,'sketches/channels/math.ts','export const scale=(v:number)=>{fetch("x");return v;};');r=build(a);assert.equal(r.state,'error');assert.ok(r.diagnostics.some(d=>d.file.endsWith('math.ts')));
+ put(root,'examples/channels/math.ts','export const scale=(v:number)=>{fetch("x");return v;};');r=build(a);assert.equal(r.state,'error');assert.ok(r.diagnostics.some(d=>d.file.endsWith('math.ts')));
 });
 test('nearest tsconfig, entries excluded from include, linked helpers, and relocation',t=>{
  const root=fixture(t);put(root,'isolated/tsconfig.json',JSON.stringify({extends:'../sdk/tsconfig.json',compilerOptions:{lib:['ES2022'],module:'ESNext',moduleResolution:'Bundler',allowImportingTsExtensions:true,strict:true,noEmit:true},include:['*.d.ts']}));
@@ -39,25 +39,25 @@ test('nearest tsconfig, entries excluded from include, linked helpers, and reloc
 });
 test('template creation preserves unrelated TD content and refuses collisions and symlinks',t=>{
  const root=mkdtempSync('/private/tmp/avtools-init-');t.after(()=>rmSync(root,{recursive:true,force:true}));put(root,'show.toe','keep');execFileSync(binary,['init',root]);assert.equal(readFileSync(resolve(root,'show.toe'),'utf8'),'keep');
- const source=resolve(root,'sketches/channels/main.ts');writeFileSync(source,'user edits');assert.throws(()=>execFileSync(binary,['init',root],{stdio:'pipe'}));assert.equal(readFileSync(source,'utf8'),'user edits');
+ const source=resolve(root,'examples/channels/main.ts');writeFileSync(source,'user edits');assert.throws(()=>execFileSync(binary,['init',root],{stdio:'pipe'}));assert.equal(readFileSync(source,'utf8'),'user edits');
  const second=mkdtempSync('/private/tmp/avtools-init-link-');t.after(()=>rmSync(second,{recursive:true,force:true}));symlinkSync('/missing-template-target',resolve(second,'sdk'));assert.throws(()=>execFileSync(binary,['init',second],{stdio:'pipe'}));assert.equal(existsSync(resolve(second,'tsconfig.json')),false);
 });
 test('only requested WGSL wrappers affect an entry; invalid unrelated shader does not block it',t=>{
- const root=fixture(t);const shader=resolve(root,'sketches/waves.fragFunc.wgsl');copyFileSync(resolve(repo,'apps/td-projects/starter/sketches/background/shaders/waves.fragFunc.wgsl'),shader);
- put(root,'sketches/broken.compute.wgsl','invalid shader');
- const entry=put(root,'sketches/shader.ts','import * as shader from "../generated/sketches/waves.frag.raw.generated.ts";export function draw(){return shader;}');
- let r=build(entry,'top');assert.equal(r.state,'ready',JSON.stringify(r));assert.ok(existsSync(resolve(root,'generated/sketches/waves.frag.raw.generated.ts')));
+ const root=fixture(t);const shader=resolve(root,'examples/waves.fragFunc.wgsl');copyFileSync(resolve(repo,'apps/td-projects/starter/sketches/background/shaders/waves.fragFunc.wgsl'),shader);
+ put(root,'examples/broken.compute.wgsl','invalid shader');
+ const entry=put(root,'examples/shader.ts','import * as shader from "../generated/examples/waves.frag.raw.generated.ts";export function draw(){return shader;}');
+ let r=build(entry,'top');assert.equal(r.state,'ready',JSON.stringify(r));assert.ok(existsSync(resolve(root,'generated/examples/waves.frag.raw.generated.ts')));
  writeFileSync(shader,'invalid shader');r=build(entry,'top');assert.equal(r.state,'error');assert.ok(r.diagnostics.some(d=>d.message.includes('waves.fragFunc.wgsl')),JSON.stringify(r));
- assert.equal(build(resolve(root,'sketches/channels/main.ts')).state,'ready');
+ assert.equal(build(resolve(root,'examples/channels/main.ts')).state,'ready');
 });
 test('entry watch through a macOS path alias recovers missing inputs and rebuilds shared dependencies',async t=>{
- const root=fixture(t),entry=resolve(root,'sketches/channels/main.ts');let r=build(entry);const output=r.changed.find(p=>p.endsWith('/sketch.js')),status=resolve(dirname(output),'status.json');
+ const root=fixture(t),entry=resolve(root,'examples/channels/main.ts');let r=build(entry);const output=r.changed.find(p=>p.endsWith('/sketch.js')),status=resolve(dirname(output),'status.json');
  const child=spawn(binary,['watch-file',entry.replace('/private/tmp/','/tmp/'),'chop'],{stdio:['ignore','pipe','pipe']});t.after(()=>child.kill('SIGTERM'));let log='';child.stdout.on('data',b=>log+=b);child.stderr.on('data',b=>log+=b);
  const wait=async f=>{const end=Date.now()+15000;while(Date.now()<end){try{if(f())return;}catch{}await new Promise(r=>setTimeout(r,50));}throw Error(log);};
  await wait(()=>log.includes('ready:'));
- put(root,'sketches/background/main.ts','export const draw=invalid;');
- put(root,'sketches/channels/math.ts','export const scale=(v:number)=>v*5;');await wait(()=>value(readFileSync(output,'utf8'))===35);
+ put(root,'examples/background/main.ts','export const draw=invalid;');
+ put(root,'examples/channels/math.ts','export const scale=(v:number)=>v*5;');await wait(()=>value(readFileSync(output,'utf8'))===35);
  rmSync(entry);await wait(()=>JSON.parse(readFileSync(status)).state==='error');assert.equal(value(readFileSync(output,'utf8')),35);
- put(root,'sketches/channels/main.ts','export function onCook(h:any){h.outputs.set("v",12);}');await wait(()=>value(readFileSync(output,'utf8'))===12);
+ put(root,'examples/channels/main.ts','export function onCook(h:any){h.outputs.set("v",12);}');await wait(()=>value(readFileSync(output,'utf8'))===12);
  await new Promise(r=>setTimeout(r,500));const count=(log.match(/ready:/g)||[]).length;await new Promise(r=>setTimeout(r,1000));assert.equal((log.match(/ready:/g)||[]).length,count);
 });

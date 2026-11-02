@@ -24,7 +24,7 @@ startup resolver expects the avTools checkout. After importing the `.tox`, run
 its startup DAT’s `onStart()` once (or reopen your saved project). For standalone
 projects, copy
 `apps/td-projects/Plugins` beside your `.toe`, use **Create Template Project**, and
-select the generated `sketches/midi/channels.ts` / `picture.ts` files. That project
+select the generated `examples/midi/channels.ts` / `picture.ts` files. That project
 README includes the complete API, explicit device connections and sending.
 
 See [MIDI API](../../../MIDI.md) and [validation](../../../test/midi/README.md).

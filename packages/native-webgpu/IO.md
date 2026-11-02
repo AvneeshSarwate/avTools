@@ -1,4 +1,4 @@
-# Files, UDP and OSC in TouchDesigner
+# Files, UDP, OSC and WebSockets in TouchDesigner
 
 Both TOP and CHOP scripts receive `host.files`, `host.udp`, and `host.osc`.
 These are native libuv-backed APIs; they do not require Node, npm, a terminal
@@ -110,7 +110,7 @@ follow the normal sketch error policy.
 
 ## Examples and implementation
 
-Create Template Project includes `sketches/osc/channels.ts` (TimeContext easing
+Create Template Project includes `examples/osc/channels.ts` (TimeContext easing
 and OSC replies), `picture.ts` (OSC-controlled position), `udp.ts` (raw echo),
 and `config.json` (async setup asset). The CHOP examples document their required
 Output Channels at the top of each file. The live repo fixture is in
@@ -157,3 +157,68 @@ folder, without any sibling compiler library; both generated and built templates
 TD OSC Out DAT ↔ JS replies, TOP pixel output, TimeContext easing, relative JSON
 assets, Reset and source-save/reload on the same port passed. Machine-readable
 results: [native.json](test/io/results/native.json), [td.json](test/io/results/td.json).
+
+## WebSocket client API (TOP and CHOP)
+
+`host.webSocket.connect(url)` returns a connection immediately, initially in
+`connecting` state. Register listeners synchronously after connecting. Use
+`ws://` for local servers or `wss://` for TLS; DNS names are supported. macOS's
+system transport handles framing, fragmentation, ping/pong, DNS and certificate
+validation. No extra dylib, Node process, or npm dependency is needed inside TD.
+This does not install global `WebSocket`, `fetch`, HTTP, or raw TCP APIs. Servers
+run externally. URLs cannot contain credentials or fragments; redirects are not
+followed. Cookies and shared credential storage are disabled.
+
+```ts
+const socket = host.webSocket.connect('ws://127.0.0.1:8080');
+
+socket.onOpen(() => {
+  void socket.send(JSON.stringify({type: 'subscribe', drawing: 'main'}))
+    .catch(error => console.warn(error.message));
+});
+
+socket.onMessage(data => {
+  // string for text; owned Uint8Array for binary.
+  if (typeof data === 'string') {
+    const message = JSON.parse(data);
+    // Update ordinary state here. TOP draw() reads it on its next render;
+    // CHOP callbacks can write host.outputs immediately.
+  }
+});
+
+socket.onError(error => console.warn(error.message));
+socket.onClose(({code, reason}) => console.log('Closed:', code, reason));
+```
+
+API details:
+
+- `url`: the requested URL.
+- `readyState`: `connecting | open | closing | closed`.
+- `bufferedAmount`: payload bytes awaiting native send completion.
+- `onOpen(fn)`, `onMessage(fn)`, `onError(fn)`, `onClose(fn)` return unsubscribe
+  functions. Registering a listener does not replay earlier events.
+- `send(string | Uint8Array): Promise<void>` copies data and resolves on transport
+  send completion, not peer acknowledgment. Sending before open or after close
+  rejects. Catch send failures. Text is UTF-8; binary has no encoding conversion.
+- `close(code = 1000, reason = '')`: idempotent local shutdown; code must be 1000
+  or 3000–4999, reason at most 123 UTF-8 bytes. Local close does not await the
+  peer handshake or guarantee delivery of outstanding sends. Remote failures
+  generally close with 1006; error precedes close when available.
+
+Limits per runtime: 16 connections, 8 MiB per message, 64 pending sends / 16 MiB,
+and 256 queued incoming messages / 16 MiB. An incoming queue overflow closes the
+connection with an error instead of silently losing messages. Coalesce stale
+updates before sending, and use application acknowledgments for state transfer.
+
+Callbacks run on the existing JS worker, independently of TD cooks, alongside
+TimeContext and timers. No per-frame polling is added. Heavy JSON parsing or
+geometry processing still occupies that worker. Reset, reload, failed setup and
+destruction cancel connections and suppress callbacks from old generations.
+There is no automatic reconnect: scripts can use a timer from `onClose`, with a
+stopped flag registered through `host.onDispose`. On reconnect, request a current
+snapshot instead of assuming messages sent while disconnected will be replayed.
+
+Generated examples: `examples/websocket/picture.ts` and `channels.ts`. They expect
+an external server at port 8080. The avTools repository also has `apps/td-canvas`,
+a standalone Vue drawing app, local WebSocket relay, and TOP/CHOP examples with
+reconnect and full-state recovery.

@@ -307,3 +307,17 @@ TouchDesigner scripts can also [declare native operator controls](packages/nativ
 in TypeScript, with typed `host.params` / `frame.params` reads and named pulse events.
 
 The current TouchDesigner plugins are self-contained bundles with a static TypeScript compiler and libuv. Both TOP/CHOP hosts support [async file reads and OSC/UDP](packages/native-webgpu/IO.md); generated templates include examples, and [IO.toe](packages/native-webgpu/native/td/io-example/IO.toe) demonstrates them with TD OSC DATs.
+
+
+### Browser drawings into TouchDesigner
+
+[TD Canvas](apps/td-canvas/README.md) is a standalone Vue app that imports
+`CanvasRoot.vue`, serves a local WebSocket relay, and streams shapes to the
+JavaScript TOP or CHOP. Run `npm ci && npm run dev` in `apps/td-canvas`, then open
+[Canvas.toe](apps/td-canvas/td/Canvas.toe). The page layout is editable in
+`apps/td-canvas/src/App.vue`; TOP/CHOP examples live beside the `.toe`.
+
+Both native hosts expose [`host.webSocket`](packages/native-webgpu/IO.md#websocket-client-api-top-and-chop)
+for text/binary WebSocket clients, including TLS and DNS. Generated template
+projects contain the API docs and `sketches/websocket` examples. Connections
+run independently of cooking and are cleaned up on reload.

@@ -25,20 +25,20 @@ def make(name,kind):
  return n
 for kind in ['top','chop']:
  n=make('starter_'+kind,kind);folder=temp/kind;folder.mkdir();(folder/'show.toe').write_text('keep')
- (folder/'sketches').mkdir();(folder/'sketches/user.ts').write_text('keep too')
+ (folder/'examples').mkdir();(folder/'examples/user.ts').write_text('keep too')
  n.par.Templatedir=str(folder);n.par.Createtemplate.pulse();n.cook(force=True)
  projectdir=folder/'avtools-project'
  assert projectdir.is_dir() and (projectdir/'tsconfig.json').is_file(),n.warnings()
  assert not (folder/'tsconfig.json').exists() and not (folder/'sdk').exists()
- assert (folder/'show.toe').read_text()=='keep' and (folder/'sketches/user.ts').read_text()=='keep too'
+ assert (folder/'show.toe').read_text()=='keep' and (folder/'examples/user.ts').read_text()=='keep too'
  assert '/sdk/' in (projectdir/'.gitignore').read_text()
  assert Path(n.par.Typescript.eval()).is_relative_to(projectdir)
  assert '## CHOP API' in (projectdir/'README.md').read_text(encoding='utf-8')
  assert '## UDP and OSC API' in (projectdir/'README.md').read_text(encoding='utf-8')
  if kind=='top':assert (n.par.Width.eval(),n.par.Height.eval())==(1280,720)
- before=(projectdir/'sketches/channels/main.ts').read_text()
+ before=(projectdir/'examples/channels/main.ts').read_text()
  n.par.Createtemplate.pulse();n.cook(force=True);assert 'replace' in n.warnings(),n.warnings()
- assert (projectdir/'sketches/channels/main.ts').read_text()==before
+ assert (projectdir/'examples/channels/main.ts').read_text()==before
  n.par.Buildproject.pulse();nodes.append(n)
  records.append({'kind':kind,'created_child':True,'preserved_parent':True,'repeat_refused':True,'api_readme':True,'resolution':[n.par.Width.eval(),n.par.Height.eval()] if kind=='top' else None})
 # Existing symlink child is rejected without writing through it.
@@ -49,10 +49,10 @@ records.append({'symlink_refused':True})
 # Build and execute the exact WebGPU lifecycle example from the generated README.
 readme=(temp/'top/avtools-project/README.md').read_text(encoding='utf-8')
 raw=next(block.split('```')[0] for block in readme.split('```ts')[1:] if '// Example: raw-webgpu-lifecycle' in block.split('```')[0])
-(temp/'top/avtools-project/sketches/readme-webgpu.ts').write_text(raw,encoding='utf-8')
+(temp/'top/avtools-project/examples/readme-webgpu.ts').write_text(raw,encoding='utf-8')
 entries=[('all_controls','parameters/all-controls.ts','chop','value count x y z red alpha textlength pulses',1),('buffers','buffers/interpolate.ts','chop','x y',10000),('inputs','inputs/picture.ts','top','',1),('timing','timing/picture.ts','top','',1),('raw_readme','readme-webgpu.ts','top','',1)]
 for name,entry,kind,channels,count in entries:
- n=make(name,kind);n.par.Typescript=str(temp/'top/avtools-project/sketches'/entry)
+ n=make(name,kind);n.par.Typescript=str(temp/'top/avtools-project/examples'/entry)
  if kind=='chop':n.par.Outputchannels=channels;n.par.Outputsamples=count
  nodes.append(n)
 # Two XY buffers, exercising math at 10k samples through the example.

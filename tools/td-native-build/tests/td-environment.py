@@ -18,7 +18,7 @@ temporary=Path(tempfile.mkdtemp(prefix='avtools-environment-'))
 shutil.copytree(original,temporary,dirs_exist_ok=True,ignore=shutil.ignore_patterns('.avtools','dist','node_modules','Backup','*.toe','*.tox'))
 for name in ('earcut','@types/earcut'):
  shutil.copytree(repo/'packages/native-webgpu/node_modules'/name,temporary/'node_modules'/name)
-source=temporary/'sketches/channels/math.ts'
+source=temporary/'examples/channels/math.ts'
 saved=source.read_text()
 for node in nodes:node.par.Typescript=str(temporary/Path(originals[node.name]).relative_to(original))
 stage=0

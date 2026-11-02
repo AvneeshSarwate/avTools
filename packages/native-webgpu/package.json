@@ -26,7 +26,8 @@
     "td:build:chop": "node scripts/build-td-plugin.mjs --chop",
     "test:chop": "node test/chop/run.mjs",
     "test:io": "node --test test/io/codec.mjs && node test/io/run.mjs",
-    "test:midi": "node --test test/midi/adapter.mjs test/midi/sdk.mjs && node test/midi/run.mjs && node test/midi/barrier.mjs"
+    "test:midi": "node --test test/midi/adapter.mjs test/midi/sdk.mjs && node test/midi/run.mjs && node test/midi/barrier.mjs",
+    "test:websocket": "node test/websocket/transport.mjs && node test/websocket/run.mjs && node --test test/websocket/sdk.mjs"
   },
   "dependencies": {
     "@webgpu/types": "0.1.72",

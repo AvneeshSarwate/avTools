@@ -10,7 +10,7 @@ function fixture(t){const dir=mkdtempSync('/private/tmp/avtools-environment-');t
 function native(dir,command='check'){try{return JSON.parse(execFileSync(binary,[command,dir],{encoding:'utf8',stdio:['ignore','pipe','pipe']}));}catch(e){return JSON.parse(e.stdout);}}
 function program(dir){const c=ts.readConfigFile(resolve(dir,'tsconfig.json'),ts.sys.readFile);const parsed=ts.parseJsonConfigFileContent(c.config,ts.sys,dir);return ts.createProgram(parsed.fileNames,parsed.options);}
 function diagnostics(p){return ts.getPreEmitDiagnostics(p);}
-function put(dir,source){writeFileSync(resolve(dir,'sketches/probe.ts'),source);}
+function put(dir,source){writeFileSync(resolve(dir,'examples/probe.ts'),source);}
 const valid=`import type {ChopHost} from '@avtools/native-webgpu/td-chop';
 import type {Draw,SketchHost} from '@avtools/native-webgpu/td-sketch';
 import type {TimeContext} from '@avtools/core-timing';
@@ -36,7 +36,7 @@ test('ES-only TD declarations, raw libraries and timing declarations agree in ts
  assert.ok(!files.some(f=>/lib\.dom|@types\/node/.test(f)));
  assert.ok(readFileSync(resolve(dir,'dist/channels.js'),'utf8').includes('TimeScheduler'));
  // The same TS language service used by editors sees only the provided console members.
- const entry=resolve(dir,'sketches/probe.ts');put(dir,'console.');const c=program(dir);
+ const entry=resolve(dir,'examples/probe.ts');put(dir,'console.');const c=program(dir);
  const host={getScriptFileNames:()=>c.getRootFileNames(),getScriptVersion:()=> '1',getScriptSnapshot:f=>{const s=ts.sys.readFile(f);return s===undefined?undefined:ts.ScriptSnapshot.fromString(s);},getCurrentDirectory:()=>dir,getCompilationSettings:()=>c.getCompilerOptions(),getDefaultLibFileName:o=>ts.getDefaultLibFilePath(o),fileExists:ts.sys.fileExists,readFile:ts.sys.readFile,readDirectory:ts.sys.readDirectory};
  const service=ts.createLanguageService(host);const names=service.getCompletionsAtPosition(entry,8,{})?.entries.map(e=>e.name)??[];assert.ok(['log','info','warn','error','debug'].every(name=>names.includes(name)));assert.ok(!names.includes('table'));service.dispose();
 });
@@ -52,7 +52,7 @@ test('unsupported TD APIs produce source diagnostics in both checkers',t=>{
  ];
  for(const code of invalid){put(dir,code);const d=diagnostics(program(dir));assert.ok(d.some(d=>d.file?.fileName.endsWith('probe.ts')),code);const result=native(dir);assert.equal(result.state,'error',code);assert.ok(result.diagnostics.some(d=>d.file?.endsWith('probe.ts')&&d.line>=1),JSON.stringify(result));}
  put(dir,`import {launch} from '@avtools/core-timing';export const start=launch;`);assert.equal(native(dir).state,'ready');
- writeFileSync(resolve(dir,'sketches/background/main.ts'),`import {launch} from '@avtools/core-timing';export function draw(){return launch;}`);assert.equal(native(dir,'build').state,'ready');
+ writeFileSync(resolve(dir,'examples/background/main.ts'),`import {launch} from '@avtools/core-timing';export function draw(){return launch;}`);assert.equal(native(dir,'build').state,'ready');
 });
 test('Node types are opt-in, explicit dependency ambient leakage is documented, built-ins never become globals',t=>{
  const dir=fixture(t);mkdirSync(resolve(dir,'node_modules/@types'),{recursive:true});
@@ -60,8 +60,8 @@ test('Node types are opt-in, explicit dependency ambient leakage is documented, 
  put(dir,'process.version;');assert.ok(diagnostics(program(dir)).length);assert.equal(native(dir).state,'error');
  put(dir,'/// <reference types="node" />\nprocess.version;');assert.deepEqual(diagnostics(program(dir)).map(d=>ts.flattenDiagnosticMessageText(d.messageText,' ')),[]);assert.equal(native(dir).state,'ready');
  put(dir,'/// <reference lib="dom" />\ndocument.title;');assert.deepEqual(diagnostics(program(dir)).map(d=>ts.flattenDiagnosticMessageText(d.messageText,' ')),[]);assert.equal(native(dir).state,'ready');
- put(dir,'');writeFileSync(resolve(dir,'sketches/background/main.ts'),'/// <reference types="node" />\nimport {readFileSync} from "node:fs";export function draw(){return readFileSync("x");}');assert.equal(native(dir).state,'ready');const result=native(dir,'build');assert.equal(result.state,'error');assert.match(JSON.stringify(result.diagnostics),/node:fs/);
+ put(dir,'');writeFileSync(resolve(dir,'examples/background/main.ts'),'/// <reference types="node" />\nimport {readFileSync} from "node:fs";export function draw(){return readFileSync("x");}');assert.equal(native(dir).state,'ready');const result=native(dir,'build');assert.equal(result.state,'error');assert.match(JSON.stringify(result.diagnostics),/node:fs/);
 });
 test('strict CHOP-only profile does not advertise GPU globals',t=>{
- const dir=fixture(t),config=JSON.parse(readFileSync(resolve(dir,'tsconfig.json')));config.include=['sketches/channels/**/*.ts','sketches/probe.ts'];writeFileSync(resolve(dir,'tsconfig.json'),JSON.stringify(config));put(dir,'GPUBufferUsage.COPY_DST;');assert.ok(diagnostics(program(dir)).length);assert.equal(native(dir).state,'error');put(dir,'performance.now();');assert.equal(native(dir).state,'ready');
+ const dir=fixture(t),config=JSON.parse(readFileSync(resolve(dir,'tsconfig.json')));config.include=['examples/channels/**/*.ts','examples/probe.ts'];writeFileSync(resolve(dir,'tsconfig.json'),JSON.stringify(config));put(dir,'GPUBufferUsage.COPY_DST;');assert.ok(diagnostics(program(dir)).length);assert.equal(native(dir).state,'error');put(dir,'performance.now();');assert.equal(native(dir).state,'ready');
 });

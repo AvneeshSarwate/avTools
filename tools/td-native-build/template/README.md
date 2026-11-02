@@ -2,7 +2,9 @@
 
 This is the complete TouchDesigner-facing script guide for this generated
 project, including instructions for coding agents. It is usable offline and
-is created alongside `tsconfig.json` and `sketches/` by **Create Template Project**.
+is created alongside `tsconfig.json` and `examples/` by **Create Template Project**.
+All supplied sketches live under `examples/`. Create `sketches/` for your own work;
+the TypeScript config includes both directories.
 The SDK declarations are the exact API contracts; this guide explains how to
 use them. It does not attempt to document the full p5 drawing API.
 
@@ -19,6 +21,7 @@ Start with the setup and example catalog below, then use these reference section
 - [Native MIDI API](#native-midi-api)
 - [File API](#file-api)
 - [UDP and OSC API](#udp-and-osc-api)
+- [WebSocket client API](#websocket-client-api-top-and-chop)
 - [Build, activation and cleanup](#build-activation-and-cleanup)
 - [Logging, diagnostics and verification](#logging-diagnostics-and-verification)
 
@@ -27,8 +30,8 @@ Start with the setup and example catalog below, then use these reference section
 Open this folder in VS Code. The local SDK and tsconfig provide TypeScript types
 without installing Node or an editor extension.
 
-In an avTools TOP's **Build** page, select `sketches/background/main.ts` as
-**TypeScript File**. In an avTools CHOP, select `sketches/channels/main.ts` and set
+In an avTools TOP's **Build** page, select `examples/background/main.ts` as
+**TypeScript File**. In an avTools CHOP, select `examples/channels/main.ts` and set
 **Output Channels** to `value ticks`, **Output Samples** to `1`. A wired input
 channel named `value` is doubled; `ticks` advances independently with TimeContext.
 The default TOP exposes Size, Color and Speed on its **Controls** page. The
@@ -60,13 +63,13 @@ Local WGSL files can be imported as strings. Shader conventions `.material.wgsl`
 under `generated/`, retaining the shader's project-relative directories. Only
 wrappers used by the selected entry affect its build.
 
-Optional CLI: `avtools-build build-file sketches/background/main.ts top` or
-`avtools-build watch-file sketches/channels/main.ts chop`. No terminal watcher is
+Optional CLI: `avtools-build build-file examples/background/main.ts top` or
+`avtools-build watch-file examples/channels/main.ts chop`. No terminal watcher is
 required when using the plugin's Automatic Builds toggle.
 
 ## Script-declared controls
 
-Try `sketches/parameters/picture.ts` on a TOP or `sketches/parameters/channels.ts`
+Try `examples/parameters/picture.ts` on a TOP or `examples/parameters/channels.ts`
 on a CHOP (Output Channels: `value`). Their exported `parameters` object creates
 native controls on a **Controls** page, including named pulse buttons. Read
 `host.params` in setup/timing/CHOP callbacks or `frame.params` in TOP draw/pulses.
@@ -91,7 +94,7 @@ script or Reset; they do not roll back a successfully installed schema.
 Select one entry per operator using **Build → TypeScript File**. All examples
 share this project's SDK; you do not need to generate another template per OP.
 
-| Entry under `sketches/` | Operator and configuration | Demonstrates |
+| Entry under `examples/` | Operator and configuration | Demonstrates |
 | --- | --- | --- |
 | `background/main.ts` | TOP | p5 draw callback and shared helper import |
 | `channels/main.ts` | CHOP, outputs `value ticks`, 1 sample | Current inputs, same-cook math, independent timing |
@@ -104,6 +107,10 @@ share this project's SDK; you do not need to generate another template per OP.
 | `osc/channels.ts` | CHOP, outputs `value target messages port`, 1 sample | Async JSON file read, incoming OSC, TimeContext easing, OSC reply |
 | `osc/picture.ts` | TOP | Async JSON file read, OSC position control |
 | `osc/udp.ts` | CHOP, outputs `port bytes messages`, 1 sample | Raw UDP reception and echo |
+| `canvas/picture.ts` | TOP, 1280×720 | Live shapes from the TD Canvas browser editor |
+| `canvas/channels.ts` | CHOP, outputs `shapes revision connected` | Drawing statistics and connection state |
+| `websocket/picture.ts` | TOP | Circle positioned by WebSocket JSON messages |
+| `websocket/channels.ts` | CHOP, outputs `value connected` | WebSocket JSON to channels |
 
 For the buffer example, wire two CHOPs with `x` and `y` channels and matching
 sample counts. Enable **Wait for Current Result** when same-cook data is required.
@@ -146,10 +153,10 @@ modified SDK files. You can choose to vendor the SDK instead by removing the
 ## Files and OSC / UDP
 
 Both hosts include `files`, `udp` and `osc`; no npm dependency is necessary.
-Select `sketches/osc/channels.ts` on a CHOP with Output Channels
+Select `examples/osc/channels.ts` on a CHOP with Output Channels
 `value target messages port` for TimeContext easing driven by `/target` OSC
-messages. Select `sketches/osc/picture.ts` on a TOP for `/x` position control.
-`sketches/osc/udp.ts` is a raw UDP echo example (channels `port bytes messages`).
+messages. Select `examples/osc/picture.ts` on a TOP for `/x` position control.
+`examples/osc/udp.ts` is a raw UDP echo example (channels `port bytes messages`).
 These entries load `config.json` asynchronously during setup. Relative file
 paths resolve beside the entrypoint. Use `await host.files.readText(path)` or
 `readBytes(path)`; missing/unreadable files reject. Regular files up to 64 MiB
@@ -181,7 +188,7 @@ See the SDK's `td-io.d.ts` for method/type descriptions and limits.
 2. Decide whether the entry produces channels (CHOP) or an image (TOP). Import
    the matching callback/host types with `import type`. These are declarations,
    not runtime modules to instantiate.
-3. Write an entry under `sketches/`; helpers may use normal relative imports,
+3. Write your own entry under `sketches/` (or copy an example there); helpers may use normal relative imports,
    TypeScript aliases, linked source and installed npm packages. Select that
    entry in the operator's **Build → TypeScript File**. No manifest is needed.
 4. For a CHOP, tell the user the exact **Output Channels** and **Output Samples**
@@ -334,7 +341,7 @@ In buffered mode `deltaSeconds` accumulates elapsed absolute TD time across
 coalesced requests; backwards absolute time resets its anchor. Timeline seeks
 and loops do not rewind the independent TimeContext clock.
 
-See `sketches/buffers/interpolate.ts` for interpolation between two 10,000-point
+See `examples/buffers/interpolate.ts` for interpolation between two 10,000-point
 XY buffers. Configure its output as `x y`, 10000 samples.
 
 ## TOP API
@@ -708,7 +715,7 @@ Missing files, permission errors, directories and oversized files reject.
 Use `async setup` for initialization and validate parsed JSON before use. Asset
 file changes alone do not rebuild TypeScript; Reset rereads setup assets, or your
 code can explicitly reread them. There are no file-write/directory APIs. See
-`sketches/osc/config.json` and the matching TOP/CHOP entries for complete examples.
+`examples/osc/config.json` and the matching TOP/CHOP entries for complete examples.
 
 ```ts
 // Target: chop
@@ -957,8 +964,8 @@ a plugin does not overwrite an existing generated project's files.
 
 MIDI device input/output is built into the macOS TOP and CHOP. No browser MIDI,
 Node, Deno, npm install, or separately installed MIDI library is needed. See
-`sketches/midi/picture.ts`, `sketches/midi/channels.ts` (Output Channels:
-`value note velocity`), and `sketches/midi/explicit.ts`.
+`examples/midi/picture.ts`, `examples/midi/channels.ts` (Output Channels:
+`value note velocity`), and `examples/midi/explicit.ts`.
 
 Declare a device selector as literal entrypoint metadata:
 
@@ -1064,3 +1071,96 @@ no lossless guarantee during overload or reload. Output sends accept up to 64 Ki
 The current input supports MIDI 1.0 channel-voice messages, not SysEx, clock,
 transport, song position or MIDI 2.0/UMP. OSC's MIDI argument type is unrelated
 to opening native MIDI devices.
+
+## WebSocket client API (TOP and CHOP)
+
+`host.webSocket.connect(url)` returns a connection immediately, initially in
+`connecting` state. Register listeners synchronously after connecting. Use
+`ws://` for local servers or `wss://` for TLS; DNS names are supported. macOS's
+system transport handles framing, fragmentation, ping/pong, DNS and certificate
+validation. No extra dylib, Node process, or npm dependency is needed inside TD.
+This does not install global `WebSocket`, `fetch`, HTTP, or raw TCP APIs. Servers
+run externally. URLs cannot contain credentials or fragments; redirects are not
+followed. Cookies and shared credential storage are disabled.
+
+```ts
+const socket = host.webSocket.connect('ws://127.0.0.1:8080');
+
+socket.onOpen(() => {
+  void socket.send(JSON.stringify({type: 'subscribe', drawing: 'main'}))
+    .catch(error => console.warn(error.message));
+});
+
+socket.onMessage(data => {
+  // string for text; owned Uint8Array for binary.
+  if (typeof data === 'string') {
+    const message = JSON.parse(data);
+    // Update ordinary state here. TOP draw() reads it on its next render;
+    // CHOP callbacks can write host.outputs immediately.
+  }
+});
+
+socket.onError(error => console.warn(error.message));
+socket.onClose(({code, reason}) => console.log('Closed:', code, reason));
+```
+
+API details:
+
+- `url`: the requested URL.
+- `readyState`: `connecting | open | closing | closed`.
+- `bufferedAmount`: payload bytes awaiting native send completion.
+- `onOpen(fn)`, `onMessage(fn)`, `onError(fn)`, `onClose(fn)` return unsubscribe
+  functions. Registering a listener does not replay earlier events.
+- `send(string | Uint8Array): Promise<void>` copies data and resolves on transport
+  send completion, not peer acknowledgment. Sending before open or after close
+  rejects. Catch send failures. Text is UTF-8; binary has no encoding conversion.
+- `close(code = 1000, reason = '')`: idempotent local shutdown; code must be 1000
+  or 3000–4999, reason at most 123 UTF-8 bytes. Local close does not await the
+  peer handshake or guarantee delivery of outstanding sends. Remote failures
+  generally close with 1006; error precedes close when available.
+
+Limits per runtime: 16 connections, 8 MiB per message, 64 pending sends / 16 MiB,
+and 256 queued incoming messages / 16 MiB. An incoming queue overflow closes the
+connection with an error instead of silently losing messages. Coalesce stale
+updates before sending, and use application acknowledgments for state transfer.
+
+Callbacks run on the existing JS worker, independently of TD cooks, alongside
+TimeContext and timers. No per-frame polling is added. Heavy JSON parsing or
+geometry processing still occupies that worker. Reset, reload, failed setup and
+destruction cancel connections and suppress callbacks from old generations.
+There is no automatic reconnect: scripts can use a timer from `onClose`, with a
+stopped flag registered through `host.onDispose`. On reconnect, request a current
+snapshot instead of assuming messages sent while disconnected will be replayed.
+
+Generated examples: `examples/websocket/picture.ts` and `channels.ts`. They expect
+an external server at port 8080. The avTools repository also has `apps/td-canvas`,
+a standalone Vue drawing app, local WebSocket relay, and TOP/CHOP examples with
+reconnect and full-state recovery.
+
+## Canvas editor example
+
+Select `examples/canvas/picture.ts` on a TOP (1280×720), or
+`examples/canvas/channels.ts` on a CHOP with Output Channels
+`shapes revision connected`. All sketch dependencies are included in this project.
+The TOP draws circle, polygon and freehand outlines, including transformed/grouped
+shapes. Its **Drawing URL** parameter defaults to
+`ws://127.0.0.1:5177/canvas?drawing=main`; Reset after changing it.
+
+Run the browser editor/relay separately from the avTools checkout:
+
+```sh
+cd apps/td-canvas
+npm ci
+npm run dev
+```
+
+Open http://127.0.0.1:5177 and draw. The browser app needs Node 22.20+;
+the TOP/CHOP sketches themselves need only the plugins. The browser app is not
+copied into this template. The repository also includes a ready-to-open
+`apps/td-canvas/td/Canvas.toe`. See `apps/td-canvas/README.md` for setup.
+
+The included `examples/canvas/subscribe.ts` helper handles reconnect, snapshots,
+preview revisions and acknowledgments. It retains the last drawing while
+disconnected and restores current state after Reset or TypeScript reload.
+`protocol.ts` defines messages; the pure drawing-document library in the SDK
+bakes shape transforms. Edit `picture.ts` to customize rendering.

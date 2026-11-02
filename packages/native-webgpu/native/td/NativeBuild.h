@@ -69,7 +69,7 @@ class NativeBuild {
       if(!std::filesystem::create_directory(directory))throw std::runtime_error("Template would replace "+directory+"; choose another parent folder. Existing files were not changed.");
       char message[4096]{};if(!api->init(directory.c_str(),message,sizeof(message)))throw std::runtime_error(message);
       clear();setupError.clear();
-      pars.set("Typescript",(std::filesystem::path(directory)/"sketches"/(chop?"channels":"background")/"main.ts").string());
+      pars.set("Typescript",(std::filesystem::path(directory)/"examples"/(chop?"channels":"background")/"main.ts").string());
       if(chop){pars.set("Outputchannels","value ticks");pars.set("Outputsamples",1);}
       else{pars.set("Width",1280);pars.set("Height",720);}
       pars.set("Autobuild",1);

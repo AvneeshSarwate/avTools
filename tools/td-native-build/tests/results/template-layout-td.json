@@ -1,0 +1,21 @@
+{
+  "passed": true,
+  "records": [
+    {
+      "kind": "top",
+      "default": "examples/background/main.ts",
+      "canvas_client_included": true
+    },
+    {
+      "kind": "chop",
+      "default": "examples/channels/main.ts",
+      "canvas_client_included": true
+    }
+  ],
+  "shape_count": 3.0,
+  "canvas_connected": true,
+  "resolution": [
+    1280,
+    720
+  ]
+}

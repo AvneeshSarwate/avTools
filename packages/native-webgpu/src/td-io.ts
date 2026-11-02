@@ -1,4 +1,5 @@
 import type {IOHost, UdpOptions, UdpSocket, OscSocket, RemoteAddress, ReceivedOscMessage} from '../td-io.d.ts';
+import {createWebSocketHost} from './td-websocket.ts';
 import type {SketchLifetime} from './td-timing.ts';
 import {encodeOsc, decodeOsc, utf8Decode} from './osc.ts';
 const g = globalThis as any;
@@ -100,6 +101,7 @@ export function createIO(life: SketchLifetime): IOHost {
     });
   }
   return Object.freeze({
+    webSocket: createWebSocketHost(life),
     files: Object.freeze({baseDirectory, readBytes, readText: async (path: string) => utf8Decode(await readBytes(path))}),
     udp: Object.freeze({open, get droppedDatagrams() { return life.run(() => native('stats')); }}),
     osc: Object.freeze({open: openOsc}),
