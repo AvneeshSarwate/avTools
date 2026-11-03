@@ -20,6 +20,9 @@ MyProject/
     README.md                       <-- these instructions
     AvToolsSketch.plugin            <-- image output (TOP)
     AvToolsChannels.plugin          <-- numeric channel output (CHOP)
+    avtools-build                    <-- standalone typechecker/build CLI
+    avtools-build-VERSION.txt        <-- compiler version
+    avtools-build-NOTICES.txt        <-- CLI third-party licenses
 ```
 
 Each `.plugin` is a self-contained macOS bundle, including its statically linked
@@ -248,3 +251,36 @@ own code. Select `examples/canvas/picture.ts` on a TOP to display drawings from
 the separate `apps/td-canvas` browser app. The generated README explains how to
 start its local server. `examples/canvas/channels.ts` reports shape count, revision
 and connection state. Generic WebSocket examples are under `examples/websocket/`.
+
+## Offline typechecking for coding agents
+
+The plugin distribution includes a standalone `Plugins/avtools-build` executable
+(macOS Apple Silicon). It uses the same native checker as the plugins and needs
+no Node, npm, Deno, `tsc`, Rust, or running TouchDesigner. Keep it with the project.
+It uses the entry's nearest `tsconfig.json`, SDK and installed dependencies.
+
+From the TD project directory, with `Plugins/` and `avtools-project/` beside the `.toe`:
+
+```sh
+./Plugins/avtools-build check-file avtools-project/examples/background/main.ts top
+./Plugins/avtools-build check-file avtools-project/examples/channels/main.ts chop
+# Your own entry:
+./Plugins/avtools-build check-file avtools-project/sketches/my-sketch/main.ts top
+```
+
+Adjust the executable path if the folders are elsewhere. Check each entry with
+its matching `top` or `chop` target. The command prints JSON with `state`,
+`diagnostics` (file/line/column/message), and timing. Exit code 0 with
+`state: "ready"` means success; a nonzero exit means failure. Configuration/usage
+errors can instead print an error on stderr.
+
+`check-file` checks types and requested generated shader wrappers. It may write
+caches/status under `.avtools/` and wrappers under `generated/`, but it does not
+publish a new JavaScript bundle or run the sketch. It does not validate GPU,
+network, or other runtime behavior; finish with a check in TD.
+
+To guarantee checking **before** the running operator reloads, turn off its
+**Automatic Reload** before saving edits (for every instance using that entry).
+After a successful CLI check and TD build, pulse **Reload** to adopt the result.
+Automatic Builds may stay on. Merely running the CLI does not suspend TD's
+existing automatic build/reload settings.

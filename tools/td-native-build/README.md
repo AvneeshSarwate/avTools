@@ -93,8 +93,10 @@ need no Node runtime. Keep generated wrappers out of source control.
 
 ## CLI and caches
 
-The signed executable under `prebuilt/macos-arm64/native-build/<version>/` embeds
-the same template. `native-build/current.txt` identifies its distribution.
+The end-user `Plugins/avtools-build` executable embeds the same template and
+runs without Node, `tsc`, TD, or non-system shared libraries. Release packaging
+copies it from `prebuilt/macos-arm64/native-build/<version>/`;
+`native-build/current.txt` identifies that compiler distribution.
 
 ```sh
 avtools-build init /path/to/project
@@ -157,4 +159,6 @@ folder, preserve unrelated parent files, reject repeat/symlink collisions, and
 run the new controls, input, timing and 10,000-sample XY interpolation examples.
 Results are recorded in [`tests/results/template-examples-td.json`](tests/results/template-examples-td.json).
 
-The developer CLI under `prebuilt/macos-arm64/native-build` remains available for tests and command-line builds. End-user plugin distributions no longer include or require that sibling directory.
+End-user distributions include the standalone `Plugins/avtools-build` CLI and its
+version/license files. Plugins still embed their compiler statically and do not
+require the CLI or a sibling `native-build` directory to run.

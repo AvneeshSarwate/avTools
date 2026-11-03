@@ -21,6 +21,7 @@ Start with the setup and example catalog below, then use these reference section
 - [Native MIDI API](#native-midi-api)
 - [File API](#file-api)
 - [UDP and OSC API](#udp-and-osc-api)
+- [Offline typechecking for coding agents](#offline-typechecking-for-coding-agents)
 - [WebSocket client API](#websocket-client-api-top-and-chop)
 - [Build, activation and cleanup](#build-activation-and-cleanup)
 - [Logging, diagnostics and verification](#logging-diagnostics-and-verification)
@@ -1164,3 +1165,36 @@ preview revisions and acknowledgments. It retains the last drawing while
 disconnected and restores current state after Reset or TypeScript reload.
 `protocol.ts` defines messages; the pure drawing-document library in the SDK
 bakes shape transforms. Edit `picture.ts` to customize rendering.
+
+## Offline typechecking for coding agents
+
+The plugin distribution includes a standalone `Plugins/avtools-build` executable
+(macOS Apple Silicon). It uses the same native checker as the plugins and needs
+no Node, npm, Deno, `tsc`, Rust, or running TouchDesigner. Keep it with the project.
+It uses the entry's nearest `tsconfig.json`, SDK and installed dependencies.
+
+From the generated `avtools-project/` directory, assuming `Plugins/` is beside it:
+
+```sh
+../Plugins/avtools-build check-file examples/background/main.ts top
+../Plugins/avtools-build check-file examples/channels/main.ts chop
+# Your own entry:
+../Plugins/avtools-build check-file sketches/my-sketch/main.ts top
+```
+
+Adjust the executable path if the folders are elsewhere. Check each entry with
+its matching `top` or `chop` target. The command prints JSON with `state`,
+`diagnostics` (file/line/column/message), and timing. Exit code 0 with
+`state: "ready"` means success; a nonzero exit means failure. Configuration/usage
+errors can instead print an error on stderr.
+
+`check-file` checks types and requested generated shader wrappers. It may write
+caches/status under `.avtools/` and wrappers under `generated/`, but it does not
+publish a new JavaScript bundle or run the sketch. It does not validate GPU,
+network, or other runtime behavior; finish with a check in TD.
+
+To guarantee checking **before** the running operator reloads, turn off its
+**Automatic Reload** before saving edits (for every instance using that entry).
+After a successful CLI check and TD build, pulse **Reload** to adopt the result.
+Automatic Builds may stay on. Merely running the CLI does not suspend TD's
+existing automatic build/reload settings.

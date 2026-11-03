@@ -6,6 +6,10 @@ operators and the native TypeScript builder. Follow **[Plugins/README.md](Plugin
 for the GUI setup, template generation, source locations, and update instructions.
 No Node install or native build is needed to use it.
 
+Coding agents can typecheck without TD or `tsc` using the included
+`Plugins/avtools-build check-file /path/to/entry.ts top` (or `chop`).
+The plugin README explains diagnostics and checking before automatic reload.
+
 [Plugins/version.json](Plugins/version.json) identifies the distribution with an
 incrementing integer. The normal TOP/CHOP build commands in `packages/native-webgpu`
 refresh this folder and the downloadable ZIP automatically; `npm run td:pack`

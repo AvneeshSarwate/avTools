@@ -25,6 +25,14 @@ for(const [marker,name] of [['current.txt','AvToolsSketch'],['current-chop.txt',
 for(const tag of compilerTags)cpSync(resolve(prebuilt,'native-build',tag),resolve(release,'Plugins/native-build',tag),{recursive:true});
 
 if(compilerTags.size)writeFileSync(resolve(release,'Plugins/native-build/current.txt'),[...compilerTags].at(-1)+'\n');
+// The CLI is statically linked and needs only system libraries. Ship it directly
+// beside the plugins so offline agents can check sources without a TD session.
+const cliTag=readFileSync(resolve(prebuilt,'native-build/current.txt'),'utf8').trim();
+if(!/^[a-f0-9]{12}$/.test(cliTag))throw new Error(`Invalid CLI compiler tag: ${cliTag}`);
+const cliSource=resolve(prebuilt,'native-build',cliTag);
+cpSync(resolve(cliSource,'avtools-build'),resolve(release,'Plugins/avtools-build'));
+cpSync(resolve(cliSource,'THIRD_PARTY_NOTICES.txt'),resolve(release,'Plugins/avtools-build-NOTICES.txt'));
+writeFileSync(resolve(release,'Plugins/avtools-build-VERSION.txt'),`compiler ${cliTag}\n`+readFileSync(resolve(cliSource,'VERSION'),'utf8'));
 cpSync(resolve(prebuilt,'README.md'),resolve(release,'Plugins/README.md'));
 const version=writeDistributionVersion(resolve(release,'Plugins'),projectPlugins);
 mkdirSync(resolve(root,'artifacts'),{recursive:true});
