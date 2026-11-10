@@ -1,323 +1,86 @@
-# avTools – Deno, Node, Browser, and TouchDesigner Workspace
+# avTools
 
-This repo is both a set of libraries and a specifically built project-setup for creative coding. It is a Deno‑workspace monorepo that unifies browser/Vite apps, Deno notebooks (aka Jupyter notebooks using the Deno kernel), shared TypeScript packages, and native Rust helpers. The goal is to create a set of Typescript based libraries for creative coding that can run both "natively" via Deno and/or also in the browser. The goal of the project setup in this repo is to make VSCode intellisense work “out of the box” across all environments (Deno files, jupyter notebooks).
+avTools is a laboratory for building interactive audiovisual environments. The projects here try out different ways of composing music and graphics together—in the browser, in Deno notebooks, and inside TouchDesigner through C++ plugins. The environments themselves are part of the experiment, along with the pieces made in them.
 
-The repository also includes a **Node.js + Dawn implementation of P5GPU** and a
-**TouchDesigner custom TOP** built around the same renderer, plus a
-**V8/TimeContext CHOP** for stateful channel animation and buffer transforms. These are implemented
-integrations with runnable examples; start with the guides below when working on
-native graphics or TouchDesigner.
+Much of this work starts from the idea that composing a piece can also mean inventing an interface for it. A piano roll might be a useful starting point, but a new musical or visual form may need its own notation, editor, or way of interacting. The aim is to make those things easy to develop while composing, with code and graphical editing working together. That calls for live or very fast reload throughout the system, so changes to the tools can be tried as readily as changes to the piece. It also shapes the emphasis on coding-agent-friendly source, APIs, documentation, and development workflows: an agent should be able to help build an unfamiliar editor or change the platform that hosts it.
 
-TouchDesigner lifecycle and portable TimeContext imports: see [Build, Reload, and Reset](packages/native-webgpu/RELOAD.md). Each TOP/CHOP has independent Automatic Reload, Reload, and Reset controls.
+The intended workflow carries through into performance. Material developed during composition should be playable in the same system, with its interface adapted through rehearsal rather than ported into a separate performance environment. That makes rendering speed, predictable timing, and runtime stability part of the platform design from the beginning.
 
-## Why Deno (and notebooks?)
-The purpose of integrating Deno is to allow for a first-class livecoding experience for sketching and prototyping. Deno comes out of the box with support for Jupyter Notebooks. checkout the examples in `apps/deno-notebooks/examples`
+Two shared foundations support this work. **TimeContext**, the timing library, lets musical processes and graphical animation be composed together through a common model of time. **WebGPU** is the focus for rendering portability across browser and native hosts. Other useful tools are extracted as the experiments develop, so a new platform can reuse a scheduler, drawing editor, or shader workflow and concentrate on the ideas it is testing.
 
-TouchDesigner TOPs and CHOPs support per-instance **Wait for Current Result**
-(blocking or buffered execution with the same JavaScript API). See the
-[execution guide and ready-to-open example](packages/native-webgpu/EXECUTION_MODES.md).
+## Projects
 
-TOP and CHOP scripts also support [native MIDI input/output](packages/native-webgpu/MIDI.md),
-including script-declared device menus, shared controllers, batched delivery, and
-automatic cleanup on reload. The generated template includes MIDI examples and API docs.
+### Browser sketches and editors
 
-## Native P5GPU: Node/Dawn and TouchDesigner
+[`apps/browser-projections`](apps/browser-projections/) is a Vue/Vite application containing audiovisual sketches and the editors developed around them: piano rolls, drawing canvases, animation timelines, and parameter controls. Several of these editors are also built as [standalone web components](webcomponents/README.md) for use in notebooks and other applications.
 
-- **Node.js + Dawn:** [`packages/native-webgpu`](packages/native-webgpu/README.md)
-  exposes `P5GPU`, Dawn WebGPU device creation, native preview windows, and Syphon
-  output as `@avtools/native-webgpu`. It shares the portable renderer with the
-  Deno implementation and retains the Rust text engine. Its README covers setup,
-  builds, API usage, and checks. [`apps/node-livecode`](apps/node-livecode/README.md)
-  provides a minimal Node host for the existing livecode engine, with offscreen
-  rendering and optional window previews.
-- **TouchDesigner:** the [integration guide](packages/native-webgpu/TOUCHDESIGNER.md)
-  covers the avTools Sketch TOP, which embeds V8, Dawn, P5GPU, and Rust text inside
-  TouchDesigner; consumers do not need Node or Deno installed. It accepts a
-  JavaScript sketch DAT, CHOP controls, TOP inputs, and named pulse events, with
-  CPU TOP output by default and optional Syphon output. Source lives in
-  `packages/native-webgpu/native/td/`, with the embedded runtime in
-  `packages/native-webgpu/native/embedded/`.
+[Music Runners](apps/music-runners/README.md) takes one of those interactions further. It places piano rolls and procedural playback on a tldraw canvas, with editable source notes, previews of generated music, MIDI output, and connections between running instances. It is a small, standalone place to work on how musical algorithms can be edited and played.
 
-For a runnable TD project, open
-[`Sketch.toe`](packages/native-webgpu/native/td/example/Sketch.toe).
-It opens the example network and animated preview, automatically finding the
-checkout's [prebuilt plugin](packages/native-webgpu/prebuilt/README.md) or the
-release ZIP's adjacent `Plugins` directory. The macOS Apple Silicon binary is
-checked in, so a fresh clone does not need a native build for TD.
-The [example README](packages/native-webgpu/native/td/example/README.md)
-explains the controls and the reusable `Sketch.tox` component.
 
-For a new project, copy [apps/td-projects/Plugins](apps/td-projects/Plugins) beside
-your saved `.toe` and follow its [beginner GUI walkthrough](apps/td-projects/Plugins/README.md):
-load a plugin, generate a TypeScript template, and edit in VS Code. The
-[distribution guide](packages/native-webgpu/prebuilt/README.md) explains the
-[checked-in plugin ZIP](packages/native-webgpu/prebuilt/avtools-td-plugins-macos-arm64.zip),
-which includes these instructions alongside the binaries. Normal TOP/CHOP builds
-refresh the copyable folder and ZIP; `npm run td:pack` in `packages/native-webgpu`
-packages existing binaries. `Plugins/version.json` increments when shipped contents change.
+### Deno notebooks
 
-Every generated TypeScript project's [README](tools/td-native-build/template/README.md)
-contains the complete offline TD-facing API guide for users and coding agents:
-callbacks, inputs/outputs, controls, timing, reloads, files, OSC/UDP and diagnostics.
-New TOP templates initialize at 1280×720.
+[`apps/deno-notebooks`](apps/deno-notebooks/README.md) combines the incremental workflow of a TypeScript notebook with MIDI, WebGPU graphics, and interactive controls. Rust helpers provide native windows, text rendering, Syphon output, media decoding, and hardware access. The same directory contains standalone scripts and performance sketches using those facilities.
 
-The TOP also bundles [TimeContext](packages/native-webgpu/TIMING.md): independent
-realtime scheduling continues while TD playback is paused. Reload creates a fresh
-JavaScript environment; synchronous cleanup is best effort. Open [TimeContext.toe](packages/native-webgpu/native/td/example/TimeContext.toe)
-for a ready-to-run timing and pulse example.
+The [examples](apps/deno-notebooks/examples/) are a good place to see the parts working together: piano-roll and parameter-panel notebooks, controller experiments, and graphics driven by musical processes. [hanoiShow](apps/deno-notebooks/examples/hanoiShow/README.md) also demonstrates packaging a Deno performance sketch and its native dependencies as a standalone macOS app.
 
-The [avTools Channels CHOP](packages/native-webgpu/CHOP.md) runs independent
-TimeContext tasks against persistent channel state, with optional same-cook input
-transforms and bulk arrays for XY point buffers. Open
-[Channels.toe](packages/native-webgpu/native/td/chop-example/Channels.toe) directly,
-or use [the channels IDE project](apps/td-projects/channels/README.md). Its separate
-prebuilt plugin is selected by `prebuilt/macos-arm64/current-chop.txt`.
+### The livecode environment
 
-TouchDesigner TOP/CHOP scripts support ordinary `console.log/info/warn/error/debug` with per-operator Info DAT history. See [logging controls](packages/native-webgpu/LOGGING.md) and [Logging.toe](packages/native-webgpu/native/td/logging-example/Logging.toe) for the ready-to-open example.
+The [livecode environment](docs/livecode/README.md) puts code editors and editable views of running program data on the same canvas. A musical process can read a melody while it is being edited in a piano roll; code can also write back into the material shown by the interface. Custom views let a piece acquire its own notation and controls as it develops.
 
-For **TypeScript builds inside TouchDesigner**, open
-[the native project](apps/td-projects/native/project.toe) and edit its folder in
-VS Code. The TOP and CHOP share a native compiler/watcher: no Node, npm, or terminal
-watcher is required. TypeScript File selects the entry directly; no manifest is
-needed. Create Template Project optionally scaffolds sources from the operator. Errors retain
-the last working bundle. Read [the native workflow](apps/td-projects/native/README.md)
-and [build-core guide](tools/td-native-build/README.md) for the local SDK, shader
-generators, CLI, and implementation details.
-The native builder also accepts installed npm packages, external shared sources and
-workspace symlinks. Its [TD type environment](packages/native-webgpu/TD_TYPES.md)
-provides runtime-accurate completion without default browser or Node globals.
+[`apps/livecode-tldraw`](apps/livecode-tldraw/README.md) is the React/tldraw interface. The [Deno server](apps/deno-notebooks/livecode/README.md) handles projects, source analysis, persistence, and editor services, while execution and live state are factored into [`livecode-engine`](packages/livecode-engine/) and [`livecode-protocol`](packages/livecode-protocol/). 
 
-The earlier Node-based workflow remains supported. For that workflow, read the
-[`apps/td-projects` workflow guide](apps/td-projects/README.md) and start with
-[the starter project](apps/td-projects/starter/README.md). A project holds a
-`.toe`, multiple TypeScript sketches, shared helpers, and local WGSL shaders.
-`npm run dev` generates typed raw shader wrappers and rebuilds one JavaScript
-bundle per sketch; file-backed TOPs and CHOPs restart when their bundle changes. The reusable
-[`tools/td-sketch-build`](tools/td-sketch-build/README.md) runner owns builds,
-watching, compatibility checks, and embedded-runtime smoke tests.
+The [example projects](apps/livecode-tldraw/example-projects/README.md) cover timing, drawing, animation, piano rolls, MIDI, synthesis, and custom project UI. Read the [workflow goals](docs/livecode/user-level-project-goals.md) for the composition and performance model, or the [documentation index](docs/livecode/README.md) to work on the platform itself.
 
-These native integrations currently target **macOS Apple Silicon**; the Node
-build is validated with **Node 22.20.0**. The full livecode editor/server remains
-Deno-hosted. Root `setup.sh` does not build the Dawn package or TD plugin: follow
-their dedicated guides. See [validation results and limitations](packages/native-webgpu/VALIDATION.md)
-before extending or testing these paths.
+### TouchDesigner
 
-## First‑Time Setup Checklist
+The [TouchDesigner integration](packages/native-webgpu/TOUCHDESIGNER.md) brings TypeScript, TimeContext, and WebGPU into TouchDesigner through C++ plugins embedding V8 and Dawn. The **Sketch TOP** runs P5GPU graphics with TOP inputs and CHOP controls. The **[Channels CHOP](packages/native-webgpu/CHOP.md)** runs timed processes and transforms channel or point buffers. Scripts can declare operator parameters, handle MIDI, and communicate through files, OSC/UDP, and WebSockets.
 
-Requirements:
-- `bash` (the setup script is a bash script)
-- Internet access (to download toolchains and dependencies)
+The [native TypeScript workflow](apps/td-projects/native/README.md) watches and compiles source inside TouchDesigner, so editing a sketch or its controls does not require a separate Node or Deno process. The [project guide](apps/td-projects/README.md) also covers the Node-based build workflow.
 
-Run:
-```
+[TD Canvas](apps/td-canvas/README.md) connects this work back to the browser editors. It wraps the shared drawing component in a customizable Vue app and streams shapes to TOPs and CHOPs over WebSockets. The browser interface and the TouchDesigner process can be developed together around the same drawing.
+
+Start with the [plugin walkthrough](apps/td-projects/Plugins/README.md) or the [Sketch example](packages/native-webgpu/native/td/example/README.md). [Prebuilt plugins](packages/native-webgpu/prebuilt/README.md) are available for macOS Apple Silicon. Separate guides cover [timing](packages/native-webgpu/TIMING.md), [parameters](packages/native-webgpu/PARAMETERS.md), [reload and reset](packages/native-webgpu/RELOAD.md), [execution modes](packages/native-webgpu/EXECUTION_MODES.md), [MIDI](packages/native-webgpu/MIDI.md), and [I/O](packages/native-webgpu/IO.md).
+
+### Node and native rendering
+
+[`packages/native-webgpu`](packages/native-webgpu/README.md) provides P5GPU rendering through Node/Dawn, with native preview windows, text rendering, and Syphon output. It shares rendering code with the Deno implementation and provides the native foundation for the TouchDesigner plugins.
+
+[`apps/node-livecode`](apps/node-livecode/README.md) is a minimal Node host for the shared livecode engine, supporting offscreen rendering and optional previews. The full editor and coordination server still run in Deno. These native integrations currently target macOS Apple Silicon; the Node path is validated on Node 22.20.0. See the [validation notes](packages/native-webgpu/VALIDATION.md) for details.
+
+## Shared tools
+
+The most central library is [`core-timing`](packages/core-timing/README.md). Its TimeContext scheduler supports musical waits, tempo changes, concurrent branches, cancellation, frame-aware browser execution, and offline execution. A sequence of notes and an animation can use the same timing relationships, making it possible to compose how they develop together. The scheduler is reused across hosts, including inside the TouchDesigner plugins.
+
+Rendering work centers on WebGPU and WGSL, with libraries for geometry, shader effects, and typed shader generation. Some browser experiments also use WebGL, Three.js, and Babylon.js. Portability is handled through shared logic and adapters for each host's graphics, device access, and lifecycle.
+
+The main extractions are:
+
+| Area | Packages |
+| --- | --- |
+| Music | [`midi`](packages/midi/README.md) provides a common browser and Deno/native MIDI API. [`music-types`](packages/music-types/) contains scales, clip data, and interpolation helpers. [`six-sines`](packages/six-sines/README.md) contains the browser synth and editor distribution from the separate Six Sines port. |
+| Geometry and rendering | [`power2d`](packages/power2d/) contains 2D geometry and stroke rendering; [`shader-fx`](packages/shader-fx/) supplies shader effects; [`creative-algs`](packages/creative-algs/) contains shape, transform, and geometry helpers. |
+| Shader generation | [`power2d-codegen`](packages/power2d-codegen/), [`shader-fx-codegen`](packages/shader-fx-codegen/), and [`compute-shader-codegen`](packages/compute-shader-codegen/) generate typed wrappers using [`codegen-common`](packages/codegen-common/). Generated compute wrappers live in [`compute-shader`](packages/compute-shader/). |
+| Interfaces | [`webcomponents`](webcomponents/README.md) contains embeddable editors and controls. [`ui-bridge`](packages/ui-bridge/) connects them to notebooks and running processes. |
+| Editable data | [`drawing-document`](packages/drawing-document/) represents drawings independently of the canvas editor and converts them into renderable geometry. [`tracked-state`](packages/tracked-state/README.md) provides mutable JSON state with snapshots, reconciliation, and change patches. |
+
+Build tools live under [`tools`](tools/): shader generation is connected to Vite and Deno watchers, and the [native](tools/td-native-build/README.md) and [Node-based](tools/td-sketch-build/README.md) TouchDesigner builders handle sketch compilation and templates.
+
+For video preparation, [`encoder-gui`](encoder-gui/README.md) is a Rust/egui application that encodes HAP/HAP-Q video and packages it as `.happack` media. It can be distributed as a standalone macOS app. The local [`hysnappy2`](packages/hysnappy2/README.md) fork adds decode-into-buffer support for media playback.
+
+## Getting started
+
+Pick a project above and follow its guide; the browser, notebook, and native workflows have different requirements. For the main Deno/notebook and browser development environment, run from the repository root:
+
+```sh
 ./setup.sh
 ```
 
-If missing, `setup.sh` will install:
-- Rust toolchain (via rustup)
-- Deno, pinned to 2.9.7 (see [Deno version pin](#deno-version-pin-297))
-- uv (Python package manager)
-- Node.js (via nvm)
+This can install missing Rust, Deno, uv, and Node toolchains. It builds notebook native helpers, caches Deno dependencies, creates the Jupyter environment and custom Deno kernel, installs dependencies for `browser-projections` and `livecode-tldraw`, and builds the piano-roll bundle. The script pins Deno 2.9.7; rebuild the native window helper with the checkout when using windowed sketches.
 
-Then it will:
-- Build native Rust/FFI helpers
-- Cache Deno dependencies
-- Create the uv venv and install Jupyter
-- Install the custom **Deno (avtools unstable)** Jupyter kernel
-- Install npm dependencies for `apps/browser-projections`
-- Build the piano-roll web component bundle used by livecode/tldraw views
-- Install npm dependencies for `apps/livecode-tldraw`
+Open [`avtools.code-workspace`](avtools.code-workspace) in VS Code for the Deno, notebook, and browser TypeScript configuration. The [notebook guide](apps/deno-notebooks/README.md) covers kernel setup. Browser sketches run with `npm install` and `npm run dev` from `apps/browser-projections`; the livecode environment has its own [startup instructions](docs/livecode/current/testing-and-operations.md).
 
-After that:
-1. Open `avtools.code-workspace` in VS Code - this should 
+TouchDesigner users can start with the [prebuilt plugin walkthrough](apps/td-projects/Plugins/README.md). To build the Node/Dawn package, follow its [native build guide](packages/native-webgpu/README.md). The root setup script does not build either of those integrations.
 
-### Deno version pin (2.9.7)
+Most application work lives in `apps/`, extracted libraries in `packages/`, and reusable UI bundles in `webcomponents/`. The root [`deno.json`](deno.json) defines the Deno workspace and import map; shared TypeScript packages generally use `@avtools/*` imports and explicit `.ts` extensions for local imports. Browser and native projects have their own build configurations.
 
-`setup.sh` installs, or switches an existing install to, **Deno 2.9.7**, set by
-`DENO_VERSION` at the top of the script. To switch by hand:
-
-```
-deno upgrade --version 2.9.7
-```
-
-Then rebuild the native window library (`./setup.sh` does this) so it has the
-fix described below.
-
-**Background:** from Deno 2.9.0, Apple Silicon macOS builds panicked as soon as a
-graphics window opened. That covered every windowed sketch built on
-`apps/deno-notebooks/window/` (`Deno.UnsafeWindowSurface`), including the
-hanoiShow live show:
-
-```
-thread 'main' panicked at .../raw-window-metal-1.1.0/src/observer.rs:162:14:
-requested change dictionary did not contain `NSKeyValueChangeNewKey`
-```
-
-- **Cause:** [denoland/deno#35341](https://github.com/denoland/deno/pull/35341),
-  released in 2.9.0, links release builds through
-  [lzld](https://github.com/littledivy/lzld). lzld loads Apple frameworks
-  lazily and stubs Foundation's `NSKeyValueChangeNewKey` constant to NULL.
-- **Why that panicked:** the window's view had no `CAMetalLayer`, so wgpu's
-  `raw-window-metal` added one and watched it via key-value observing. Reading
-  the change it was notified of looks up that constant, finds nothing, and the
-  code panics deliberately.
-- **Fix:** `native/deno_window` now installs a `CAMetalLayer` as the view's
-  root layer before Deno creates the surface, so wgpu uses it as-is and never
-  sets up the observer. The library updates the layer's scale itself when the
-  display scale changes.
-- **Verified** on an M1 Max: windows open without panicking and draw on screen
-  on 2.9.7, with the moving-circle sketch's render loop running. 2.8.3 still
-  works with the same library.
-- **Occluded windows:** since 2.8.3 (wgpu 29), a covered or minimized window
-  can't hand out a swapchain texture ("Invalid Surface Status"). The window
-  helpers skip on-screen frames until it returns and keep running.
-
-## VSCode Setup (Recommended)
-
-Open the workspace file:
-
-```
-avTools/avtools.code-workspace
-```
-
-This is configured to keep the Deno LSP enabled for the Deno packages + notebooks while letting the browser app use the standard TS/Vite tooling.
-
-When you open the repo in VS Code, you’ll be prompted to install the recommended extensions
-(Deno, Jupyter, Python, Vue language server, Rust analyzer). These are listed in
-`avTools/.vscode/extensions.json`.
-
-## High‑Level Layout
-
-The interactive livecode environment has a dedicated documentation entrypoint:
-[`docs/livecode/README.md`](docs/livecode/README.md). It covers the React/tldraw
-client in `apps/livecode-tldraw`, the Deno server in
-`apps/deno-notebooks/livecode`, their wire protocols, design principles,
-testing, known risks, and historical documents.
-
-```
-avTools/
-├─ deno.json                 # Deno workspace + import map
-├─ avtools.code-workspace    # Recommended VSCode multi‑root workspace
-├─ docs/livecode/            # Canonical livecode docs and agent entrypoint
-├─ packages/                 # Shared, Deno‑first TS libraries
-│  ├─ core-timing/
-│  ├─ creative-algs/
-│  ├─ music-types/
-│  ├─ native-webgpu/        # Node/Dawn P5GPU, Syphon, and embedded TouchDesigner TOP/CHOP
-│  ├─ ui-bridge/
-│  ├─ power2d/
-│  ├─ power2d-codegen/
-│  └─ shader-fx/
-├─ apps/
-│  ├─ browser-projections/   # Vue + Vite web app
-│  ├─ livecode-tldraw/       # React/tldraw livecode client
-│  ├─ node-livecode/         # Minimal Node/Dawn host for the livecode engine
-│  └─ deno-notebooks/        # Deno notebooks, livecode server, and Rust FFI libs
-├─ tools/
-│  ├─ vite-shader-plugin/    # Vite shader codegen wrapper
-│  └─ shader-watch/          # Deno watcher for shader codegen
-└─ webcomponents/            # Standalone webcomponent bundles for UI that runs in the notebooks
-```
-
-## Standalone Builds
-
-Two parts of the repo can be built as self-contained, double-clickable
-macOS `.app` bundles — no Homebrew, no Deno on PATH, no other host setup
-required. The build scripts walk the dylib chain, stage assets in
-`Contents/Resources/`, and ad-hoc sign so the kernel will launch them.
-Distribution outside the dev's own machine still needs a Developer ID
-cert + notarization; see the per-app READMEs.
-
-- **`encoder-gui/`** — Rust + egui frontend that drives `ffmpeg` to
-  encode video into HAP / HAP-Q `.happack` files. The bundled `.app`
-  ships its own `ffmpeg` + `ffprobe` and the full Homebrew dylib chain
-  they need, so end users don't need ffmpeg installed.
-  See [`encoder-gui/README.md`](encoder-gui/README.md).
-  Build: `cd encoder-gui && bundle/macos/build-app.sh`.
-
-- **`apps/deno-notebooks/examples/hanoiShow/`** — `combined_landscape.ts`
-  packaged as a Deno-compiled binary plus the four FFI Rust dylibs
-  (`deno_window`, `syphon_bridge`, `text_engine`, `midi_bridge`),
-  `Syphon.framework`, fonts, the poem, and the tweakpane / perf-pane
-  web bundles.
-  See [`apps/deno-notebooks/examples/hanoiShow/README.md`](apps/deno-notebooks/examples/hanoiShow/README.md).
-  Build: `cd apps/deno-notebooks && examples/hanoiShow/bundle/macos/build-app.sh`.
-
-A shared pattern, `apps/deno-notebooks/bundle_paths.ts`, handles the
-`deno compile` virtual-filesystem path mismatch by rewriting both
-`Deno.dlopen` and asset URLs to `Contents/Resources/...` when the
-binary is running compiled.
-
-## Architecture Notes
-
-- **Interactive livecode environment.** `apps/livecode-tldraw` is the active
-  spatial client; `apps/deno-notebooks/livecode` owns analysis, execution,
-  projects, snapshots, language-server proxying, and piano-roll state. Start at
-  [`docs/livecode/README.md`](docs/livecode/README.md), not the older Vue
-  visualizer plans.
-- **Deno workspace first.** The root `deno.json` defines all workspace members and the import map. Shared packages are Deno‑native and are referenced via `@avtools/*`.
-- **Browser app (Vue/Vite).** `apps/browser-projections` uses Vite and Vue. It aliases `@avtools/*` to the workspace packages so the browser app can import shared logic.
-- **Deno notebooks.** `apps/deno-notebooks` contains TypeScript notebooks and helpers. It also includes Rust FFI libraries:
-  - `native/fastsleep` – precise sleep for Deno
-  - `native/midi_bridge` – MIDI I/O via `midir`
-  - `native/deno_window` – windowed WebGPU surface for Deno to display graphics
-- **Power2D split.** Shader codegen lives in `packages/power2d-codegen`. The Vite plugin (`tools/vite-shader-plugin`) imports from that package directly.
-- **ShaderFX split.** Babylon/WGSL + Babylon/GL post-processing runtime now lives in `packages/shader-fx`, with generated fragment wrappers emitted to `packages/shader-fx/generated`.
-- **creative-algs** is a shared tools package used by both browser sketches and Deno notebooks.
-
-## Notes on Imports
-
-- Use `@avtools/*` for cross‑workspace imports.
-- For Deno + Vite compatibility, use explicit `.ts` extensions for local relative imports inside packages.
-
-## Docs to Improve (TODO)
-
-Most subtrees still lack a README. The two `.app`-bundle READMEs above
-are the most recent and detailed; the rest of this list is a punch-card
-of what's missing and what's stale, ordered roughly by how often you'd
-want to read it.
-
-### No README at all
-
-- **Native crates** under `apps/deno-notebooks/native/`:
-  `deno_window` (wry-based window + webview FFI),
-  `text_engine` (HarfBuzz shaping FFI),
-  `hap_decoder` (HAP frame decoder used by the encoder + browser
-  projections), `push2_display` (Ableton Push 2 RGB display FFI),
-  `fastsleep` (precise-sleep FFI).
-- **Shared packages** under `packages/`: `core-timing`,
-  `creative-algs`, `music-types`, `ui-bridge`, `power2d`,
-  `power2d-codegen`, `shader-fx`, `shader-fx-codegen`,
-  `compute-shader`, `compute-shader-codegen`, `codegen-common`.
-- **Tools** under `tools/`: `vite-shader-plugin`, `shader-watch`.
-
-### Exists but likely stale
-
-- [`apps/browser-projections/README.md`](apps/browser-projections/README.md)
-  — explicitly self-labelled "Documentation in progress, bugs
-  guaranteed". The repo has grown a lot since.
-- [`apps/browser-projections/src/pianoRoll/README.md`](apps/browser-projections/src/pianoRoll/README.md)
-  — Oct 2025, may have drifted from the Konva implementation.
-- [`apps/browser-projections/reaction-diffusion-webgl/README.md`](apps/browser-projections/reaction-diffusion-webgl/README.md)
-  — Oct 2025, single-component, may still be accurate.
-- [`webcomponents/README.md`](webcomponents/README.md) — short (15
-  lines); components have grown since it was written.
-
-TouchDesigner scripts can also [declare native operator controls](packages/native-webgpu/PARAMETERS.md)
-in TypeScript, with typed `host.params` / `frame.params` reads and named pulse events.
-
-The current TouchDesigner plugins are self-contained bundles with a static TypeScript compiler and libuv. Both TOP/CHOP hosts support [async file reads and OSC/UDP](packages/native-webgpu/IO.md); generated templates include examples, and [IO.toe](packages/native-webgpu/native/td/io-example/IO.toe) demonstrates them with TD OSC DATs.
-
-
-### Browser drawings into TouchDesigner
-
-[TD Canvas](apps/td-canvas/README.md) is a standalone Vue app that imports
-`CanvasRoot.vue`, serves a local WebSocket relay, and streams shapes to the
-JavaScript TOP or CHOP. Run `npm ci && npm run dev` in `apps/td-canvas`, then open
-[Canvas.toe](apps/td-canvas/td/Canvas.toe). The page layout is editable in
-`apps/td-canvas/src/App.vue`; TOP/CHOP examples live beside the `.toe`.
-
-Both native hosts expose [`host.webSocket`](packages/native-webgpu/IO.md#websocket-client-api-top-and-chop)
-for text/binary WebSocket clients, including TLS and DNS. Generated template
-projects contain the API docs and `sketches/websocket` examples. Connections
-run independently of cooking and are cleaned up on reload.
+The projects are at different stages of development. Their local guides, examples, and tests are the best references for what currently works.
