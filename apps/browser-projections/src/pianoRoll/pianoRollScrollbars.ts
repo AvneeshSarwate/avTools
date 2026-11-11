@@ -9,8 +9,9 @@ export type VerticalDragMode = 'move' | 'resize-start' | 'resize-end'
 const POINTER_DRAG_CAPTURE_PHASE = true
 
 const captureDragPointer = (event: PointerEvent): Element | null => {
-  const target = event.currentTarget
-  if (!(target instanceof Element)) return null
+  const target = event.currentTarget as Element | null
+  // Elements may originate in another window, or be adopted into a popup.
+  if (!target || typeof target.setPointerCapture !== 'function') return null
 
   try {
     target.setPointerCapture(event.pointerId)
@@ -36,6 +37,7 @@ export interface HorizontalDragState {
   mode: HorizontalDragMode
   pointerId: number
   captureTarget: Element | null
+  eventWindow: Window
   pointerStart: number
   trackRect: DOMRect
   startQuarter: number
@@ -50,6 +52,7 @@ export interface VerticalDragState {
   mode: VerticalDragMode
   pointerId: number
   captureTarget: Element | null
+  eventWindow: Window
   pointerStart: number
   trackRect: DOMRect
   topIndex: number
@@ -145,12 +148,15 @@ export class HorizontalScrollbarController {
       pointerOffset = event.clientX - (trackRect.left + endNormalized * trackRect.width)
     }
 
+    const eventWindow = track.ownerDocument.defaultView
+    if (!eventWindow) return
     const captureTarget = captureDragPointer(event)
 
     this.dragState = {
       mode,
       pointerId: event.pointerId,
       captureTarget,
+      eventWindow,
       pointerStart: event.clientX,
       trackRect,
       startQuarter,
@@ -161,9 +167,9 @@ export class HorizontalScrollbarController {
       pointerOffset
     }
 
-    window.addEventListener('pointermove', this.handlePointerMove, POINTER_DRAG_CAPTURE_PHASE)
-    window.addEventListener('pointerup', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
-    window.addEventListener('pointercancel', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
+    eventWindow.addEventListener('pointermove', this.handlePointerMove, POINTER_DRAG_CAPTURE_PHASE)
+    eventWindow.addEventListener('pointerup', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
+    eventWindow.addEventListener('pointercancel', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
 
     event.preventDefault()
   }
@@ -173,9 +179,9 @@ export class HorizontalScrollbarController {
     if (!drag) return
 
     releaseDragPointer(drag.captureTarget, drag.pointerId)
-    window.removeEventListener('pointermove', this.handlePointerMove, POINTER_DRAG_CAPTURE_PHASE)
-    window.removeEventListener('pointerup', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
-    window.removeEventListener('pointercancel', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
+    drag.eventWindow.removeEventListener('pointermove', this.handlePointerMove, POINTER_DRAG_CAPTURE_PHASE)
+    drag.eventWindow.removeEventListener('pointerup', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
+    drag.eventWindow.removeEventListener('pointercancel', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
     this.dragState = null
   }
 
@@ -318,12 +324,15 @@ export class VerticalScrollbarController {
       pointerOffset = event.clientY - (trackRect.top + bottomNormalized * trackRect.height)
     }
 
+    const eventWindow = track.ownerDocument.defaultView
+    if (!eventWindow) return
     const captureTarget = captureDragPointer(event)
 
     this.dragState = {
       mode,
       pointerId: event.pointerId,
       captureTarget,
+      eventWindow,
       pointerStart: event.clientY,
       trackRect,
       topIndex,
@@ -334,9 +343,9 @@ export class VerticalScrollbarController {
       pointerOffset
     }
 
-    window.addEventListener('pointermove', this.handlePointerMove, POINTER_DRAG_CAPTURE_PHASE)
-    window.addEventListener('pointerup', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
-    window.addEventListener('pointercancel', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
+    eventWindow.addEventListener('pointermove', this.handlePointerMove, POINTER_DRAG_CAPTURE_PHASE)
+    eventWindow.addEventListener('pointerup', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
+    eventWindow.addEventListener('pointercancel', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
 
     event.preventDefault()
   }
@@ -346,9 +355,9 @@ export class VerticalScrollbarController {
     if (!drag) return
 
     releaseDragPointer(drag.captureTarget, drag.pointerId)
-    window.removeEventListener('pointermove', this.handlePointerMove, POINTER_DRAG_CAPTURE_PHASE)
-    window.removeEventListener('pointerup', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
-    window.removeEventListener('pointercancel', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
+    drag.eventWindow.removeEventListener('pointermove', this.handlePointerMove, POINTER_DRAG_CAPTURE_PHASE)
+    drag.eventWindow.removeEventListener('pointerup', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
+    drag.eventWindow.removeEventListener('pointercancel', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
     this.dragState = null
   }
 
