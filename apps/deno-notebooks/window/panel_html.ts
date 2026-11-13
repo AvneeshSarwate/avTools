@@ -1,5 +1,6 @@
 import { renderTweakpaneShellHtml } from "../tools/tweakpane_shell_html.ts";
 import { resolveAsset } from "../bundle_paths.ts";
+import { fromFileUrl } from "jsr:@std/path@1";
 
 let _cachedClientModuleUrl: string | null = null;
 
@@ -26,8 +27,9 @@ function loadTweakpaneClientBundle(): string {
   }
 
   throw new Error(
-    "Could not find tweakpane-client.js. Tried: " +
-      candidates.map((candidate) => candidate.pathname).join(", "),
+    "Could not find tweakpane-client.js. Build it first (setup.sh does this):\n" +
+      "  cd apps/browser-projections && npm run buildTweakpane\n" +
+      "Tried: " + candidates.map((candidate) => fromFileUrl(candidate)).join(", "),
   );
 }
 

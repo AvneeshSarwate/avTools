@@ -9,6 +9,7 @@
  */
 
 import { getInspectorServer, type InspectorServerOptions } from "@avtools/ui-bridge"
+import { fromFileUrl } from "jsr:@std/path@1"
 
 /**
  * Open the Scene Inspector in a browser window.
@@ -22,7 +23,7 @@ import { getInspectorServer, type InspectorServerOptions } from "@avtools/ui-bri
 export async function openInspector(options?: InspectorServerOptions): Promise<string> {
   const server = getInspectorServer({
     openBrowser: true,
-    staticDir: new URL("../../../apps/scene-inspector/dist", import.meta.url).pathname,
+    staticDir: fromFileUrl(new URL("../../../apps/scene-inspector/dist", import.meta.url)),
     ...options,
   })
   return await server.start()

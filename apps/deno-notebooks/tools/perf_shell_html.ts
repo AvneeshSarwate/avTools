@@ -11,6 +11,7 @@
  */
 
 import { resolveAsset } from "../bundle_paths.ts"
+import { fromFileUrl } from "jsr:@std/path@1"
 
 let _cachedBundle: string | null = null
 
@@ -37,9 +38,9 @@ function loadPerfPaneBundle(): string {
     }
   }
   throw new Error(
-    "Could not find perf-pane.js. Build it first:\n" +
+    "Could not find perf-pane.js. Build it first (setup.sh does this):\n" +
       "  cd apps/browser-projections && npm run buildPerfPane\n" +
-      "Tried: " + candidates.map((c) => c.pathname).join(", "),
+      "Tried: " + candidates.map((c) => fromFileUrl(c)).join(", "),
   )
 }
 

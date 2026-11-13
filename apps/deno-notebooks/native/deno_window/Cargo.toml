@@ -11,8 +11,17 @@ winit = { version = "0.30", features = ["rwh_05"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-[target.'cfg(target_os = "macos")'.dependencies]
+# Native control panels (tweakpane) use a wry webview: WKWebView on macOS,
+# WebView2 on Windows. Linux would need GTK/WebKitGTK; panels fall back to the
+# browser there (see window/tweakpane_panel.ts).
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 wry = { version = "0.54", default-features = false, features = ["transparent"] }
+
+# Only to recognize WebView2 error codes; wry already depends on it.
+[target.'cfg(target_os = "windows")'.dependencies]
+webview2-com = "0.38"
+
+[target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
 objc = "0.2"
 raw-window-handle = { version = "0.6", features = ["std"] }

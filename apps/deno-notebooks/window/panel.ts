@@ -91,7 +91,8 @@ export class WindowPanel {
   pollMessages(): unknown[] {
     if (!this.#initialized || !this.#webviewState) return [];
     this.#lib.symbols.webview_sync_bounds(this.#webviewState);
-    // Pump the CFRunLoop so WKWebView can process its multi-process IPC
+    // Pump the native event loop so the webview can process its IPC
+    // (CFRunLoop for WKWebView on macOS, the Win32 queue for WebView2).
     this.#lib.symbols.webview_pump();
     const written = this.#lib.symbols.webview_poll_ipc(
       this.#webviewState,

@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ptr;
 use std::slice;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use winit::application::ApplicationHandler;
@@ -16,7 +17,7 @@ use winit::raw_window_handle_05::{
 };
 use winit::window::{Window, WindowId};
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use wry::WebViewBuilder;
 
 // ── CAMetalLayer pre-install (macOS) ─────────────────────────────────────
@@ -108,6 +109,7 @@ struct WindowSlot {
     defer_close: bool,
     /// GPU render windows get a pre-installed CAMetalLayer (macOS); webview
     /// panel windows don't.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     metal_layer: bool,
     events: Vec<WindowEventRecord>,
     last_cursor: (f64, f64),
@@ -405,6 +407,7 @@ fn pump_once(runtime: &mut GlobalRuntime) {
         .pump_app_events(Some(Duration::ZERO), &mut runtime.app);
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn pump_for_webview(runtime: &mut GlobalRuntime) {
     let _ = runtime
         .event_loop
@@ -721,13 +724,17 @@ pub extern "C" fn window_should_close(state: *mut WindowState) -> u32 {
 
 // ── Webview (wry) FFI ──────────────────────────────────────────────────
 //
+// Available on macOS (WKWebView) and Windows (WebView2); other platforms get
+// stubs that report failure, and window/tweakpane_panel.ts falls back to the
+// browser.
+//
 // GPU windows cannot host a child WKWebView on macOS once WebGPU installs a
 // CAMetalLayer. Instead, create a second ordinary winit window and attach the
 // webview as a child of that window's content view. This keeps winit in charge
 // of the native window while avoiding wry's non-child `build()` path, which
 // replaces the content view and conflicts with winit.
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 mod webview_impl {
     use super::*;
     use wry::{
@@ -739,6 +746,25 @@ mod webview_impl {
         pub token: u64,
         pub webview: Option<wry::WebView>,
         pub ipc_buffer: Arc<Mutex<Vec<String>>>,
+        // Declared after `webview` so it is dropped after it.
+        _web_context: wry::WebContext,
+    }
+
+    /// Where the webview keeps its profile. WebView2 defaults to a folder next
+    /// to the host executable (deno.exe), which may be read-only, so on
+    /// Windows it goes under %LOCALAPPDATA%. WKWebView manages its own.
+    fn web_context() -> wry::WebContext {
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(base) = std::env::var_os("LOCALAPPDATA") {
+                let dir = std::path::PathBuf::from(base)
+                    .join("avtools")
+                    .join("deno_window")
+                    .join("WebView2");
+                return wry::WebContext::new(Some(dir));
+            }
+        }
+        wry::WebContext::new(None)
     }
 
     fn bounds_for_size(width: u32, height: u32) -> Rect {
@@ -779,6 +805,7 @@ mod webview_impl {
 
         let ipc_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let ipc_buf_clone = ipc_buffer.clone();
+        let mut web_context = web_context();
         let result = {
             let Some(slot) = runtime.app.windows.get(&token) else {
                 eprintln!("[deno_window] create_webview: panel slot missing");
@@ -795,7 +822,7 @@ mod webview_impl {
             let bounds = bounds_for_size(logical_width, logical_height);
 
             let mut builder =
-                WebViewBuilder::new()
+                WebViewBuilder::new_with_web_context(&mut web_context)
                     .with_bounds(bounds)
                     .with_ipc_handler(move |request| {
                         if let Ok(mut buf) = ipc_buf_clone.lock() {
@@ -824,14 +851,36 @@ mod webview_impl {
                     token,
                     webview: Some(webview),
                     ipc_buffer,
+                    _web_context: web_context,
                 }))
             }
             Err(err) => {
                 eprintln!("[deno_window] create_webview: build failed: {err}");
+                #[cfg(target_os = "windows")]
+                if is_profile_busy(&err) {
+                    eprintln!(
+                        "[deno_window] The WebView2 profile is still held by a panel from a \
+                         force-killed run (e.g. taskkill /F). WebView2 releases it within \
+                         about a minute; until then controls open in the browser."
+                    );
+                }
                 runtime.app.remove_window(token);
                 None
             }
         }
+    }
+
+    /// ERROR_BUSY: the profile folder is still claimed by a WebView2 browser
+    /// whose host was terminated outright (TerminateProcess). Normal exits and
+    /// uncaught errors release it within seconds.
+    #[cfg(target_os = "windows")]
+    fn is_profile_busy(err: &wry::Error) -> bool {
+        const ERROR_BUSY_HRESULT: i32 = 0x800700AA_u32 as i32;
+        matches!(
+            err,
+            wry::Error::WebView2Error(webview2_com::Error::WindowsError(e))
+                if e.code().0 == ERROR_BUSY_HRESULT
+        )
     }
 
     pub fn sync_bounds(runtime: &mut GlobalRuntime, state: &WebviewState) {
@@ -884,13 +933,13 @@ mod webview_impl {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use webview_impl::WebviewState;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub struct WebviewState;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[no_mangle]
 pub extern "C" fn create_webview(
     _parent_state: *mut WindowState,
@@ -939,7 +988,7 @@ pub extern "C" fn create_webview(
     })
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[no_mangle]
 pub extern "C" fn create_webview(
     _parent_state: *mut WindowState,
@@ -953,7 +1002,7 @@ pub extern "C" fn create_webview(
     ptr::null_mut()
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[no_mangle]
 pub extern "C" fn webview_evaluate_script(
     state: *mut WebviewState,
@@ -983,7 +1032,7 @@ pub extern "C" fn webview_evaluate_script(
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[no_mangle]
 pub extern "C" fn webview_evaluate_script(
     _state: *mut WebviewState,
@@ -993,7 +1042,7 @@ pub extern "C" fn webview_evaluate_script(
     0
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[no_mangle]
 pub extern "C" fn webview_poll_ipc(
     _state: *mut WebviewState,
@@ -1003,7 +1052,7 @@ pub extern "C" fn webview_poll_ipc(
     0
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[no_mangle]
 pub extern "C" fn webview_poll_ipc(
     state: *mut WebviewState,
@@ -1034,7 +1083,7 @@ pub extern "C" fn webview_poll_ipc(
     bytes.len() as u32
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[no_mangle]
 pub extern "C" fn webview_set_visible(state: *mut WebviewState, visible: u32) {
     if state.is_null() {
@@ -1056,11 +1105,11 @@ pub extern "C" fn webview_set_visible(state: *mut WebviewState, visible: u32) {
     });
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[no_mangle]
 pub extern "C" fn webview_set_visible(_state: *mut WebviewState, _visible: u32) {}
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[no_mangle]
 pub extern "C" fn webview_pump() {
     GLOBAL_RUNTIME.with(|cell| {
@@ -1071,6 +1120,9 @@ pub extern "C" fn webview_pump() {
         pump_for_webview(runtime);
     });
 
+    // WKWebView's out-of-process IPC needs the CFRunLoop turned. WebView2's
+    // messages arrive on the Win32 queue that pump_for_webview already drains.
+    #[cfg(target_os = "macos")]
     unsafe {
         core_foundation::runloop::CFRunLoopRunInMode(
             core_foundation::runloop::kCFRunLoopDefaultMode,
@@ -1080,11 +1132,11 @@ pub extern "C" fn webview_pump() {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[no_mangle]
 pub extern "C" fn webview_pump() {}
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[no_mangle]
 pub extern "C" fn webview_sync_bounds(state: *mut WebviewState) {
     if state.is_null() {
@@ -1100,11 +1152,11 @@ pub extern "C" fn webview_sync_bounds(state: *mut WebviewState) {
     });
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[no_mangle]
 pub extern "C" fn webview_sync_bounds(_state: *mut WebviewState) {}
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[no_mangle]
 pub extern "C" fn webview_set_size(state: *mut WebviewState, width: u32, height: u32) {
     if state.is_null() || width == 0 || height == 0 {
@@ -1122,11 +1174,11 @@ pub extern "C" fn webview_set_size(state: *mut WebviewState, width: u32, height:
     });
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[no_mangle]
 pub extern "C" fn webview_set_size(_state: *mut WebviewState, _width: u32, _height: u32) {}
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[no_mangle]
 pub extern "C" fn webview_destroy(state: *mut WebviewState) {
     if state.is_null() {
@@ -1144,6 +1196,6 @@ pub extern "C" fn webview_destroy(state: *mut WebviewState) {
     });
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[no_mangle]
 pub extern "C" fn webview_destroy(_state: *mut WebviewState) {}

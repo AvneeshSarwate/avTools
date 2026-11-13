@@ -87,7 +87,7 @@ export class WindowTweakpane extends TweakpaneServer {
   }
 
   /** @internal */
-  _attachPanel(panel: WindowPanel, gpuWindow?: GpuWindow): void {
+  _attachPanel(panel: WindowPanel | null, gpuWindow?: GpuWindow): void {
     this.#panel = panel;
 
     if (!gpuWindow || this.#window === gpuWindow) {
@@ -103,7 +103,7 @@ export class WindowTweakpane extends TweakpaneServer {
     gpuWindow.pollEvents = () => {
       const events = originalPollEvents();
       for (const event of events) {
-        panel.handleEvent(event);
+        panel?.handleEvent(event);
       }
       this.processMessages();
       if (this.#lastError) {
@@ -313,8 +313,19 @@ export function createWindowTweakpane(
   });
 
   const html = pane._createPanelHtml(options?.renderShell);
-  panel.init(html);
-  pane._attachPanel(panel, gpuWindow);
+  try {
+    panel.init(html);
+    pane._attachPanel(panel, gpuWindow);
+  } catch (err) {
+    // No native webview here (Linux, or WebView2 unavailable). The server
+    // still serves the same controls over HTTP, so keep the sketch running.
+    pane._attachPanel(null, gpuWindow);
+    const url = pane.getSessionEditorUrl(pane.ensureClientSession("browser"), "loopback");
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[tweakpane] Native control panel unavailable (${reason}). Open the controls in a browser: ${url}`,
+    );
+  }
 
   return pane;
 }

@@ -12,8 +12,8 @@
 #   3) Caches Deno dependencies
 #   4) Creates a uv-managed Python venv and installs Jupyter
 #   5) Installs the custom Deno Jupyter kernelspec
-#   6) Installs browser-projections npm dependencies and builds piano-roll
-#      web component assets
+#   6) Installs browser-projections npm dependencies and builds the piano-roll,
+#      tweakpane and perf-pane web component bundles (window control panels)
 #   7) Installs livecode-tldraw npm dependencies
 #
 # Run (macOS/Linux): ./setup.sh
@@ -278,6 +278,22 @@ fi
 
 echo ""
 
+# Native control panels are WebView2 windows on Windows. Windows 11 ships the
+# runtime; some Windows 10 installs lack it. Detection per Microsoft's docs.
+if [ "$PLATFORM" = "windows" ]; then
+  # `//v`: Git Bash would rewrite a lone `/v` as a path.
+  webview2_machine='HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+  webview2_user='HKCU\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+  if reg query "$webview2_machine" //v pv >/dev/null 2>&1 ||
+     reg query "$webview2_user" //v pv >/dev/null 2>&1; then
+    echo "WebView2 Runtime present (control panels)."
+  else
+    echo "WARNING: WebView2 Runtime not found. Sketch control panels will open in"
+    echo "  the browser instead. Install: https://developer.microsoft.com/microsoft-edge/webview2/"
+  fi
+  echo ""
+fi
+
 echo "[2/7] Building native Rust/FFI helpers..."
 
 # One-liners for rebuilding specific FFI pieces (run from repo root):
@@ -418,6 +434,10 @@ if ensure_in_path npm; then
   pushd "$BROWSER_PROJECTIONS_DIR" >/dev/null
   npm install
   npm run buildPianoRoll
+  # Control-panel UIs for windowed sketches (window/tweakpane_panel.ts):
+  # webcomponents/tweakpane/dist and webcomponents/perf-pane/dist.
+  npm run buildTweakpane
+  npm run buildPerfPane
   popd >/dev/null
 else
   echo "npm not available; skipping browser-projections install."
