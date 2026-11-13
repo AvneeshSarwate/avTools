@@ -1,3 +1,13 @@
 upstream/
 artifacts/
 *.tgz
+# TouchDesigner plugin builds are distributed via GitHub Releases (tag td-plugins),
+# not git. Fetch: node scripts/fetch-td-plugins.mjs  Publish: node scripts/release-td.mjs
+prebuilt/*.zip
+prebuilt/macos-arm64/*.plugin/
+prebuilt/macos-arm64/native-build/
+prebuilt/macos-arm64/current*.txt
+prebuilt/windows-x64/*.dll
+prebuilt/windows-x64/current*.txt
+prebuilt/windows-x64/native-build/
+prebuilt/windows-x64/notices/

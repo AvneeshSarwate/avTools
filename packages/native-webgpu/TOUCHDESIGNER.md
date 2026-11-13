@@ -9,10 +9,12 @@ adapter; there is no speculative cross-platform framework.
 
 ## Loading
 
-The [prebuilt macOS Apple Silicon plugin](prebuilt/README.md) is checked into this
-repository. Fresh clones can open `native/td/example/Sketch.toe` directly with TD
-installed; no native build is required. `prebuilt/macos-arm64/current.txt` names
-the versioned bundle. The `.toe` examples resolve it automatically.
+The [prebuilt macOS Apple Silicon plugin](prebuilt/README.md) is published as a
+GitHub release download, not committed. In a fresh clone, run
+`node scripts/fetch-td-plugins.mjs` (or `npm run td:fetch`); then
+`native/td/example/Sketch.toe` opens directly with TD installed, with no native
+build. `prebuilt/macos-arm64/current.txt` names the versioned bundle. The `.toe`
+examples resolve it automatically.
 
 The reusable repository fixture is [native/td/example/Sketch.tox](native/td/example/Sketch.tox).
 See its [quick-start README](native/td/example/README.md) for the checkout loader,
@@ -202,9 +204,9 @@ repeat/skip animation frames. See
 ## Build and runtime ownership
 
 This section is for rebuilding the plugin from source. Sketch authors can use
-the [checked-in binary](prebuilt/README.md) and skip these steps. `td:build` writes
-new versioned bundles under `prebuilt/macos-arm64/` and updates `current.txt`;
-commit the selected bundle together with matching source changes.
+the [released binary](prebuilt/README.md) and skip these steps. `td:build` writes
+new versioned bundles under `prebuilt/macos-arm64/` (gitignored) and updates
+`current.txt`; commit source changes and publish binaries with `npm run td:release`.
 
 Installed TD headers were found at
 `/Applications/TouchDesigner.app/Contents/Resources/tfs/Samples/CPlusPlus/CPUMemoryTOP/`.
@@ -219,7 +221,7 @@ node scripts/syphon.mjs --embedded
 node scripts/embedding.mjs
 node scripts/build-td-plugin.mjs
 node scripts/build-bridge-probe.mjs
-# Packages the current TOP, CHOP, builder, and GUI guide into the checked-in ZIP:
+# Packages the current TOP, CHOP, builder, and GUI guide into the release ZIP:
 node scripts/package-td.mjs
 # Optional larger archive containing the checked-in example projects:
 node scripts/package-td.mjs --examples

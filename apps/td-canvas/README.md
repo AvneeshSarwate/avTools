@@ -82,8 +82,9 @@ npm run build
 
 Native runtime source is in `packages/native-webgpu/native/embedded/WebSocket.mm`
 and `src/td-websocket.ts`; API documentation is in
-[IO.md](../../packages/native-webgpu/IO.md). Standard plugin builds update
-[apps/td-projects/Plugins](../td-projects/Plugins/README.md) and the checked-in ZIP.
+[IO.md](../../packages/native-webgpu/IO.md). Standard plugin builds update the local
+`apps/td-projects/Plugins` folder and the release ZIP
+([downloads](../../packages/native-webgpu/prebuilt/README.md)).
 Generated template projects include WebSocket types, README API docs, and generic
 TOP/CHOP examples under `examples/websocket`, plus complete canvas clients under
 `examples/canvas`. The generated canvas clients include their geometry library

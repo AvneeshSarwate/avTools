@@ -22,6 +22,8 @@
     "test:soak": "node --expose-gc test/soak.mjs",
     "td:build": "node scripts/build-td-plugin.mjs",
     "td:pack": "node scripts/package-td.mjs",
+    "td:fetch": "node scripts/fetch-td-plugins.mjs",
+    "td:release": "node scripts/release-td.mjs",
     "test:timing": "node test/timing/run.mjs",
     "td:build:chop": "node scripts/build-td-plugin.mjs --chop",
     "test:chop": "node test/chop/run.mjs",

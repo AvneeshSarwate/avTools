@@ -104,3 +104,6 @@ Icon
 !/tools/td-native-build/template/sdk/dependencies/@webgpu/types/dist/**
 !/apps/td-projects/native/sdk/dependencies/@webgpu/types/dist/
 !/apps/td-projects/native/sdk/dependencies/@webgpu/types/dist/**
+
+# TouchDesigner plugin distribution (GitHub Releases; fetched or built locally)
+/apps/td-projects/Plugins/

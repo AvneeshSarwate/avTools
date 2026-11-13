@@ -30,10 +30,11 @@ TypeScript compiler, libuv, template SDK and private graphics runtime. Keep the
 entire bundle intact. You may copy just the TOP or just the CHOP if that is all
 you need; no sibling `native-build` directory or command-line executable is needed.
 
-If you downloaded the **repository**, copy the entire
-`apps/td-projects/Plugins` folder beside your saved `.toe`. It contains the current
-TOP and CHOP with their embedded TypeScript builders. Use a project-local copy; this folder
-is refreshed by native plugin builds.
+If you cloned the **repository**, run
+`node packages/native-webgpu/scripts/fetch-td-plugins.mjs` to download the latest
+release into `apps/td-projects/Plugins`, then copy that entire folder beside your
+saved `.toe`. Use a project-local copy; this folder is replaced by fetches and
+native plugin builds.
 
 ## 2. Load your first operator
 
@@ -150,15 +151,14 @@ before moving it. Include any additional assets your sketches read.
 
 ## Download and packaging notes
 
-The clean ZIP is checked into the repository at
-`packages/native-webgpu/prebuilt/avtools-td-plugins-macos-arm64.zip`. On GitHub,
-open that file and click **Download raw file**. Extract the ZIP and copy its
-`Plugins` folder as described above. This downloads the distribution without the
-rest of the repository or any historical plugin versions.
+Download the latest ZIP directly:
+[avtools-td-plugins-macos-arm64.zip](https://github.com/AvneeshSarwate/avTools/releases/download/td-plugins/avtools-td-plugins-macos-arm64.zip)
+(the rolling [`td-plugins` release](https://github.com/AvneeshSarwate/avTools/releases/tag/td-plugins)).
+Extract it and copy its `Plugins` folder as described above. This link always
+serves the latest build, without the rest of the repository.
 
-GitHub's **Code → Download ZIP** instead downloads the whole source repository.
-The source `macos-arm64` folder retains older versions; the packaged ZIP contains
-only the current pair and their required builder version(s).
+GitHub's **Code → Download ZIP** instead downloads the source repository, which
+does not contain plugin binaries.
 
 ## Source, builds, and distribution versions
 
@@ -173,7 +173,7 @@ Source lives in the avTools repository:
 
 From `packages/native-webgpu`, **`npm run td:build`** and
 **`npm run td:build:chop`** build their operator and then automatically refresh
-`apps/td-projects/Plugins` and the checked-in ZIP. The package contains the latest
+`apps/td-projects/Plugins` and the local ZIP. The package contains the latest
 built version of each operator; rebuild both after shared runtime/compiler changes.
 The native build prerequisites are documented in `packages/native-webgpu/TOUCHDESIGNER.md`
 and `tools/td-native-build/README.md`.
@@ -187,8 +187,9 @@ It increments when shipped files change, including documentation or builder asse
 identical packaging keeps the same number. It identifies the complete TOP/CHOP/builder
 set, independently of SDK versions and internal content-hashed bundle names.
 Keep this file when copying Plugins so you can identify a project's installed version.
-Commit the refreshed folder (including `version.json`) and ZIP together with source
-changes. Do not edit generated files in `apps/td-projects/Plugins` directly.
+Binaries are not committed: publish the ZIP with **`npm run td:release`**, which
+replaces the macOS asset of the rolling `td-plugins` GitHub release. Do not edit
+generated files in `apps/td-projects/Plugins` directly.
 
 To update an existing project, close it in TouchDesigner and replace its entire
 Plugins folder with the new copy. Node and native build tools are only needed by

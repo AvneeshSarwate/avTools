@@ -39,7 +39,7 @@ The [native TypeScript workflow](apps/td-projects/native/README.md) watches and 
 
 [TD Canvas](apps/td-canvas/README.md) connects this work back to the browser editors. It wraps the shared drawing component in a customizable Vue app and streams shapes to TOPs and CHOPs over WebSockets. The browser interface and the TouchDesigner process can be developed together around the same drawing.
 
-Start with the [plugin walkthrough](apps/td-projects/Plugins/README.md) or the [Sketch example](packages/native-webgpu/native/td/example/README.md). [Prebuilt plugins](packages/native-webgpu/prebuilt/README.md) are available for macOS Apple Silicon. Separate guides cover [timing](packages/native-webgpu/TIMING.md), [parameters](packages/native-webgpu/PARAMETERS.md), [reload and reset](packages/native-webgpu/RELOAD.md), [execution modes](packages/native-webgpu/EXECUTION_MODES.md), [MIDI](packages/native-webgpu/MIDI.md), and [I/O](packages/native-webgpu/IO.md).
+Start with the [plugin walkthrough](packages/native-webgpu/prebuilt/macos-arm64/README.md) or the [Sketch example](packages/native-webgpu/native/td/example/README.md). [Prebuilt plugins](packages/native-webgpu/prebuilt/README.md) are published as [GitHub release downloads](https://github.com/AvneeshSarwate/avTools/releases/tag/td-plugins). Separate guides cover [timing](packages/native-webgpu/TIMING.md), [parameters](packages/native-webgpu/PARAMETERS.md), [reload and reset](packages/native-webgpu/RELOAD.md), [execution modes](packages/native-webgpu/EXECUTION_MODES.md), [MIDI](packages/native-webgpu/MIDI.md), and [I/O](packages/native-webgpu/IO.md).
 
 ### Node and native rendering
 
@@ -79,7 +79,7 @@ This can install missing Rust, Deno, uv, and Node toolchains. It builds notebook
 
 Open [`avtools.code-workspace`](avtools.code-workspace) in VS Code for the Deno, notebook, and browser TypeScript configuration. The [notebook guide](apps/deno-notebooks/README.md) covers kernel setup. Browser sketches run with `npm install` and `npm run dev` from `apps/browser-projections`; the livecode environment has its own [startup instructions](docs/livecode/current/testing-and-operations.md).
 
-TouchDesigner users can start with the [prebuilt plugin walkthrough](apps/td-projects/Plugins/README.md). To build the Node/Dawn package, follow its [native build guide](packages/native-webgpu/README.md). The root setup script does not build either of those integrations.
+TouchDesigner users can start with the [prebuilt plugin walkthrough](packages/native-webgpu/prebuilt/macos-arm64/README.md) and [download the latest plugins](packages/native-webgpu/prebuilt/README.md). To build the Node/Dawn package, follow its [native build guide](packages/native-webgpu/README.md). The root setup script does not build either of those integrations.
 
 Most application work lives in `apps/`, extracted libraries in `packages/`, and reusable UI bundles in `webcomponents/`. The root [`deno.json`](deno.json) defines the Deno workspace and import map; shared TypeScript packages generally use `@avtools/*` imports and explicit `.ts` extensions for local imports. Browser and native projects have their own build configurations.
 
