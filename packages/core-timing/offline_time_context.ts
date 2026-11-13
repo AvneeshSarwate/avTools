@@ -1437,7 +1437,10 @@ export class TimeScheduler {
   private stopRafIfIdle() {
     if (this.frameWaiters.size || !this.rafRunning) return;
     this.rafRunning = false;
-    if (this.rafHandle !== null) globalThis.cancelAnimationFrame?.(this.rafHandle);
+    if (this.rafHandle !== null) {
+      (globalThis as { cancelAnimationFrame?: (handle: number) => void })
+        .cancelAnimationFrame?.(this.rafHandle);
+    }
     this.rafHandle = null;
   }
 

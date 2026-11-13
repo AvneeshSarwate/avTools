@@ -1,11 +1,13 @@
 import { assertEquals } from "jsr:@std/assert@1";
+import { normalize } from "jsr:@std/path@1";
 import { resolveContainedUrlPath } from "../visualizer/contained_path.ts";
 
 Deno.test("contained URL paths reject traversal and prefix collisions", () => {
   const root = "/tmp/livecode-project";
   assertEquals(
     resolveContainedUrlPath(root, "modules%2Fsketch.ts"),
-    "/tmp/livecode-project/modules/sketch.ts",
+    // normalize() so the expectation uses the host separator (\ on Windows).
+    normalize("/tmp/livecode-project/modules/sketch.ts"),
   );
   assertEquals(resolveContainedUrlPath(root, "%2e%2e%2Fsecret.ts"), null);
   assertEquals(

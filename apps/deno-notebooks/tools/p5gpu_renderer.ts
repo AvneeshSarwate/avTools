@@ -785,7 +785,7 @@ export class P5GPU {
     if (this._textVertexCount > 0) {
       const textData = new Float32Array(this._textVertices);
       this._ensureTextVertexBuffer(textData.byteLength);
-      this.device.queue.writeBuffer(this._textVertexBuffer!, 0, textData.buffer, textData.byteOffset, textData.byteLength);
+      this.device.queue.writeBuffer(this._textVertexBuffer!, 0, textData);
       hasText = this._syncTextBindGroup() || this._batches.some(batch => batch.kind === "image");
     }
 
