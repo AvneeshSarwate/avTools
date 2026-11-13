@@ -1,20 +1,26 @@
 # TouchDesigner sketch projects
 
-For a new project, copy the entire **[Plugins](Plugins)** folder beside your saved
-`.toe`. It is the ready-to-use macOS Apple Silicon distribution, including both
-operators and the native TypeScript builder. Follow **[Plugins/README.md](Plugins/README.md)**
-for the GUI setup, template generation, source locations, and update instructions.
-No Node install or native build is needed to use it.
+For a new project, [download the plugins](../../packages/native-webgpu/prebuilt/README.md)
+for your platform (macOS Apple Silicon or Windows x64) and copy the ZIP's `Plugins`
+folder beside your saved `.toe`. It contains both operators and the native
+TypeScript builder; its README covers GUI setup, template generation and updates.
+No Node install or native build is needed to use it. The ZIP's `Examples` folder
+holds ready-to-open example projects.
 
-Coding agents can typecheck without TD or `tsc` using the included
-`Plugins/avtools-build check-file /path/to/entry.ts top` (or `chop`).
-The plugin README explains diagnostics and checking before automatic reload.
+In this repository, `Plugins/` here is a local, gitignored copy: run
+`node packages/native-webgpu/scripts/fetch-td-plugins.mjs` to download the latest
+release into it, or build the plugins (`npm run td:build` in `packages/native-webgpu`,
+which refreshes it automatically). The projects below find it, or the local build
+markers, on their own.
 
-[Plugins/version.json](Plugins/version.json) identifies the distribution with an
-incrementing integer. The normal TOP/CHOP build commands in `packages/native-webgpu`
-refresh this folder and the downloadable ZIP automatically; `npm run td:pack`
-refreshes them from existing binaries. Versions increment only when shipped contents
-change. Commit both outputs together. Edit their sources, not this generated folder.
+Coding agents can typecheck without TD or `tsc` using the distribution's
+`Plugins/avtools-build check-file /path/to/entry.ts top` (or `chop`; `avtools-build.exe`
+on Windows). Agents can smoke-test a project in TD with
+`python packages/native-webgpu/scripts/td-smoke-test.py <project.toe>`.
+
+`Plugins/version.json` identifies a distribution with an incrementing integer that
+changes only when shipped contents change. Builds are published as GitHub release
+assets (`npm run td:release`), not committed.
 
 Current lifecycle: [Build, Reload, and Reset](../../packages/native-webgpu/RELOAD.md). Automatic Reload is per operator; Reload adopts available source, Reset restarts active source. Each activation creates a fresh isolate. SDK 3 supports ordinary TimeContext imports.
 

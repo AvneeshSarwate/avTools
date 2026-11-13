@@ -28,8 +28,17 @@ let lifetime:SketchLifetime|undefined,sketchP:EmbeddedP5GPU|undefined;
 const latestControls=()=>Object.freeze({...controlsMeta,channels:Object.freeze(channels.map(c=>Object.freeze({name:c.name,samples:c.samples.slice()})))});
 const chop=(name:string,index=0)=>channels.find(channel=>channel.name===name)?.samples[index]??0;
 (async()=>{
-  const gpu=nativeGPU.create(['backend=metal','avtools-event-driven=1']);
-  const adapter=await gpu.requestAdapter();if(!adapter)throw new Error('No Metal adapter');
+  // Ordered backend preference from the host: macOS "metal"; Windows "d3d12,vulkan"
+  // (automatic Vulkan fallback), or a single backend forced via AVTOOLS_GPU_BACKEND.
+  // Prefer the discrete GPU on hybrid laptops, which TouchDesigner normally uses too.
+  const backends=(typeof g.__avGPUBackend==='string'&&g.__avGPUBackend?g.__avGPUBackend:'metal').split(',').map((b:string)=>b.trim()).filter(Boolean);
+  let adapter:any=null;
+  for(const backend of backends){
+    const gpu=nativeGPU.create([`backend=${backend}`,'avtools-event-driven=1']);
+    adapter=await gpu.requestAdapter({powerPreference:'high-performance'});
+    if(adapter){g.__avGPUBackendUsed=backend;break;}
+  }
+  if(!adapter)throw new Error(`No GPU adapter (tried ${backends.join(', ')})`);
   device=await adapter.requestDevice();
   device.addEventListener('uncapturederror',event=>{g.__avError=event.error.message;blocked=true;});
   device.lost.then(info=>{blocked=true;g.__avError=`Device lost: ${info.message}; reset the operator`;});
@@ -71,7 +80,7 @@ g.__avRender=async()=>{
     frame.controls=Object.freeze({sampleRate:frame.sampleRate,startIndex:frame.startIndex,channels});
     frame.chop=chop;
     frame.top=(index:number)=>images[index];
-    if(syphonName!==__avSyphonName){syphon?.dispose();syphon=undefined;syphonName=__avSyphonName;if(syphonName)syphon=new (nativeGPU as any).NativeSyphon(device,syphonName,false);}
+    if(syphonName!==__avSyphonName){syphon?.dispose();syphon=undefined;syphonName=__avSyphonName;if(syphonName){const Syphon=(nativeGPU as any).NativeSyphon;if(!Syphon)throw new Error('Syphon output is only available on macOS');syphon=new Syphon(device,syphonName,false);}}
     if(frame.syphonOnly&&!syphon)throw new Error('Syphon-only output requires an enabled, named Syphon channel');
     const drawStart=g.hostNow();
     p.beginFrame();

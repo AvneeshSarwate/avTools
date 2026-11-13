@@ -5,8 +5,9 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
-#include <dlfcn.h>
+#include "Platform.h"
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -87,6 +88,13 @@ struct AVSketch {
     }
     std::vector<std::string> fonts;for(const auto& entry:std::filesystem::directory_iterator(resources+"/fonts")){auto ext=entry.path().extension().string();if(ext==".ttf"||ext==".otf"||ext==".woff"||ext==".woff2")fonts.push_back(entry.path().string());}std::sort(fonts.begin(),fonts.end());
     std::string json="[";for(const auto& font:fonts){if(json.size()>1)json+=',';json+=quoted(font);}json+=']';runtime->setString("__avFontsJSON",json);
+#ifdef _WIN32
+    // Ordered preference: D3D12, then Vulkan if no D3D12 adapter exists.
+    // AVTOOLS_GPU_BACKEND=vulkan (or d3d12) forces a single backend.
+    {const char* backend=std::getenv("AVTOOLS_GPU_BACKEND");runtime->setString("__avGPUBackend",backend&&*backend?backend:"d3d12,vulkan");}
+#else
+    runtime->setString("__avGPUBackend","metal");
+#endif
     std::ifstream file(resources+"/renderer.js");if(!file)throw std::runtime_error("Missing bundled renderer.js");std::string source((std::istreambuf_iterator<char>(file)),{});
     eval(source,1000);applyMidi();wait(5000);auto failure=runtime->value("__avError");if(!failure.empty())throw std::runtime_error(failure);poisoned=false;
   }
@@ -183,7 +191,7 @@ static AVSketch* createSketch(const char* resources,char* error,size_t size,bool
   try{
     if(!resources)throw std::runtime_error("Missing runtime resources path");
     // V8's shared platform is process-lived. Keep its code loaded even after every TOP is deleted.
-    static void* pinned=[](){Dl_info info{};if(!dladdr(reinterpret_cast<void*>(&avCreateDeferred),&info))return static_cast<void*>(nullptr);return dlopen(info.dli_fname,RTLD_NOW|RTLD_LOCAL|RTLD_NODELETE);}();
+    static const bool pinned=avtools::platform::pinModule(reinterpret_cast<const void*>(&avCreateDeferred));
     if(!pinned)throw std::runtime_error("Unable to pin embedded runtime library");
     return new AVSketch(resources,chop);
   }catch(const std::exception& e){report(error,size,e.what());return nullptr;}

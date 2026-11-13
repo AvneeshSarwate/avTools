@@ -23,7 +23,7 @@ export function distributionHash(directory) {
   return hash.digest('hex');
 }
 
-export function writeDistributionVersion(stagedPlugins, currentPlugins) {
+export function writeDistributionVersion(stagedPlugins, currentPlugins, platform = 'macos-arm64') {
   const previousPath = resolve(currentPlugins, 'version.json');
   const previous = existsSync(previousPath) ? JSON.parse(readFileSync(previousPath, 'utf8')) : null;
   if (previous && (previous.schema !== 1 || !Number.isSafeInteger(previous.version) ||
@@ -32,7 +32,7 @@ export function writeDistributionVersion(stagedPlugins, currentPlugins) {
   }
   const sha256 = distributionHash(stagedPlugins);
   const version = previous ? previous.version + (previous.sha256 === sha256 ? 0 : 1) : 1;
-  const manifest = {schema: 1, version, platform: 'macos-arm64', sha256};
+  const manifest = {schema: 1, version, platform, sha256};
   writeFileSync(resolve(stagedPlugins, 'version.json'), JSON.stringify(manifest, null, 2) + '\n');
   return manifest;
 }

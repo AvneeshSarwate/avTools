@@ -1,0 +1,20 @@
+--- a/src/dawn/node/napi_v8/napi_v8.cpp
++++ b/src/dawn/node/napi_v8/napi_v8.cpp
+@@ -258,6 +258,17 @@
+     invocation_info.data = binding->user_data;
+ 
+     v8::HandleScope scope(env->isolate);
++    // avTools: a construct call's receiver is a fresh object. V8 initializes its
++    // internal fields to undefined, and reading one as an aligned pointer before it
++    // was set is unspecified: it reads as null without pointer compression but not
++    // with it (Windows), making napi_wrap report "Object is already wrapped". Make
++    // the unwrapped state explicit so napi_wrap/unwrap/remove_wrap are well-defined.
++    if (v8_info.IsConstructCall()) {
++        v8::Local<v8::Object> self = v8_info.This();
++        if (self->InternalFieldCount() > 0) {
++            self->SetAlignedPointerInInternalField(0, nullptr, v8::kEmbedderDataTypeTagDefault);
++        }
++    }
+     napi_value return_val = binding->callback(env, &invocation_info);
+     if (return_val != nullptr) {
+         v8_info.GetReturnValue().Set(dawn::napi_v8::ToV8(return_val));

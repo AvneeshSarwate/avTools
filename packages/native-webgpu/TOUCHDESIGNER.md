@@ -227,6 +227,38 @@ node scripts/package-td.mjs
 node scripts/package-td.mjs --examples
 ```
 
+### Windows x64
+
+The same commands work on Windows; each script dispatches to a `*-win.mjs`
+implementation. Prerequisites (developer machine only): Visual Studio 2026 Build
+Tools with the C++ workload, Windows SDK 10.0.28000 (the versions the pinned
+Chromium build configuration packages), Rust via rustup, Node 22 and git.
+TouchDesigner must be installed for its C++ headers (`TOUCHDESIGNER_INSTALL`
+overrides `C:\Program Files\Derivative\TouchDesigner`).
+
+```powershell
+npm ci                                  # in packages/native-webgpu
+node scripts/embedding.mjs fetch        # node-webgpu/Dawn/V8 at C:\src\avtools-upstream (+ upstream\ junction)
+node scripts/syphon.mjs --embedded      # no-op: Syphon is macOS-only
+node scripts/embedding.mjs              # patches, libuv, Rust, gn gen, embedded-probe.exe
+# CLI: build from its own folder so cargo picks up rust-toolchain.toml (1.99.1) and
+# .cargo/config.toml (static CRT); --manifest-path from elsewhere silently skips both.
+(cd ../../tools/td-native-build && cargo build --release)
+node ../../tools/td-native-build/scripts/package.mjs   # avtools-build.exe
+node scripts/build-td-plugin.mjs        # AvToolsSketch-<tag>.dll
+node scripts/build-td-plugin.mjs --chop # AvToolsChannels-<tag>.dll, then the ZIP
+```
+
+Each operator is **one self-contained DLL**: TD glue, V8, Dawn (D3D12 default,
+Vulkan via `AVTOOLS_GPU_BACKEND=vulkan`), libuv and a single Rust staticlib
+(`native/rust-windows`: compiler + MIDI + text), all with the static C runtime.
+Resources are embedded as RCDATA and extracted per content hash to
+`%LOCALAPPDATA%\avTools\resources`. A `<Dll>-resources` folder beside a DLL
+overrides them for development. Output: `prebuilt/windows-x64/` and
+`prebuilt/avtools-td-plugins-windows-x64.zip` (expanded copy in
+`apps/td-projects/Plugins`); publish with `npm run td:release`. Design and status:
+[plans/windows-build-plan.md](plans/windows-build-plan.md).
+
 The pinned Chromium Clang archive is checksum verified. Apple CLT supplies the
 SDK and the two symbol inspection tools omitted from that archive. The standalone
 V8 build has no ICU, Wasm, external startup blob, Node runtime, or non-Metal

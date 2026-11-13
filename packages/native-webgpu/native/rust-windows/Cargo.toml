@@ -1,0 +1,23 @@
+[package]
+name = "avtools-windows-native"
+version = "0.1.0"
+edition = "2021"
+
+# Windows links one operator DLL. Two Rust staticlibs in one MSVC link collide
+# on std/panic symbols, so the TypeScript compiler (macOS: separate image) joins
+# the MIDI/text runtime dependencies in this single staticlib.
+[workspace]
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+avtools-build = { path = "../../../../tools/td-native-build" }
+midi_bridge = { path = "../../../../apps/deno-notebooks/native/midi_bridge" }
+text_engine = { path = "../../../../apps/deno-notebooks/native/text_engine" }
+
+[profile.release]
+# The compiler FFI relies on catch_unwind; keep unwinding (macOS runtime deps use abort).
+panic = "unwind"
+lto = "thin"
+strip = "symbols"

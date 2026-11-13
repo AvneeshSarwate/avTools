@@ -66,7 +66,7 @@ impl Service {
         service
     }
     pub fn subscribe(self: &Arc<Self>, root: &Path) -> Result<Subscription> {
-        self.subscribe_selected(&root.canonicalize()?, None)
+        self.subscribe_selected(&crate::paths::canonicalize(root)?, None)
     }
     pub fn subscribe_file(self: &Arc<Self>, entry: &Path, target: &str) -> Result<Subscription> {
         let selection = crate::entry_build::Selection::discover(entry, target)?;
@@ -360,7 +360,7 @@ impl Project {
             while let Some(p) = parent {
                 if p.is_dir() {
                     if p.components().count() > 2 {
-                        wanted.insert(p.canonicalize()?);
+                        wanted.insert(crate::paths::canonicalize(p)?);
                     }
                     break;
                 }

@@ -1,11 +1,15 @@
 """Locate the enclosing checkout after moving the example within avTools."""
+import sys as _avtools_sys
+# Plugin lookup is per platform: .plugin bundles on macOS, .dll files on Windows.
+PLATFORM = 'windows-x64' if _avtools_sys.platform == 'win32' else 'macos-arm64'
+PLUGIN = '.dll' if _avtools_sys.platform == 'win32' else '.plugin'
 from pathlib import Path
 
 def onStart():
     folder=Path(project.folder)
-    repo=next((p for p in (folder,*folder.parents) if (p/'packages/native-webgpu/prebuilt/macos-arm64/current.txt').is_file()),None)
+    repo=next((p for p in (folder,*folder.parents) if (p/('packages/native-webgpu/prebuilt/'+PLATFORM)/'current.txt').is_file()),None)
     if repo is None:raise RuntimeError('Keep Parameters.toe in avTools, or copy Plugins and generate a local template project.')
-    pre=repo/'packages/native-webgpu/prebuilt/macos-arm64'
+    pre=repo/('packages/native-webgpu/prebuilt/'+PLATFORM)
     sources=repo/'packages/native-webgpu/native/td/parameter-example'
     root=me.parent()
     for name,marker,file in [('picture','current.txt','picture.ts'),('channels','current-chop.txt','channels.ts')]:

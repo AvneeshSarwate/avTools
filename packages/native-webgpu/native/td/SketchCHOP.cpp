@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
-#include <dlfcn.h>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -19,7 +18,7 @@
 using namespace TD;
 namespace {
 using Clock=std::chrono::steady_clock;
-const std::string& resources(){static const std::string path=[](){Dl_info info{};if(!dladdr(reinterpret_cast<void*>(&resources),&info))throw std::runtime_error("Cannot locate plugin resources");return (std::filesystem::path(info.dli_fname).parent_path().parent_path()/"Resources").string();}();return path;}
+const std::string& resources(){static const std::string path=avtools::platform::pluginResources(reinterpret_cast<const void*>(&resources)).generic_string();return path;}
 std::vector<std::string> channelNames(const OP_Inputs* inputs){
   std::istringstream stream(inputs->getParString("Outputchannels"));std::vector<std::string> names;std::set<std::string> seen;std::string name;
   while(stream>>name){
@@ -124,7 +123,7 @@ class SketchCHOP final:public CHOP_CPlusPlusBase {
 };
 }
 extern "C" {
-__attribute__((visibility("default"))) DLLEXPORT void FillCHOPPluginInfo(CHOP_PluginInfo* info){if(!info->setAPIVersion(CHOPCPlusPlusAPIVersion))return;info->customOPInfo.opType->setString("Avtoolschannels");info->customOPInfo.opLabel->setString("avTools Channels");info->customOPInfo.opIcon->setString("AVC");info->customOPInfo.authorName->setString("avTools");info->customOPInfo.minInputs=0;info->customOPInfo.maxInputs=4;info->customOPInfo.cookOnStart=true;}
-__attribute__((visibility("default"))) DLLEXPORT CHOP_CPlusPlusBase* CreateCHOPInstance(const OP_NodeInfo* info){return new SketchCHOP(info);}
-__attribute__((visibility("default"))) DLLEXPORT void DestroyCHOPInstance(CHOP_CPlusPlusBase* instance){delete static_cast<SketchCHOP*>(instance);}
+AV_API DLLEXPORT void FillCHOPPluginInfo(CHOP_PluginInfo* info){if(!info->setAPIVersion(CHOPCPlusPlusAPIVersion))return;info->customOPInfo.opType->setString("Avtoolschannels");info->customOPInfo.opLabel->setString("avTools Channels");info->customOPInfo.opIcon->setString("AVC");info->customOPInfo.authorName->setString("avTools");info->customOPInfo.minInputs=0;info->customOPInfo.maxInputs=4;info->customOPInfo.cookOnStart=true;}
+AV_API DLLEXPORT CHOP_CPlusPlusBase* CreateCHOPInstance(const OP_NodeInfo* info){return new SketchCHOP(info);}
+AV_API DLLEXPORT void DestroyCHOPInstance(CHOP_CPlusPlusBase* instance){delete static_cast<SketchCHOP*>(instance);}
 }

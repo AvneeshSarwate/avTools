@@ -20,7 +20,7 @@
 #include <unordered_set>
 #include <cmath>
 #include <algorithm>
-#include <Security/SecRandom.h>
+#include "Platform.h"
 Napi::Object Initialize(Napi::Env, Napi::Object);
 napi_value InitializeAvToolsText(napi_env, napi_value);
 void InitializeSyphon(Napi::Env, Napi::Object);
@@ -175,7 +175,7 @@ struct Runtime::State {
     i->EnqueueMicrotask(v8::Function::New(c,runMicrotask,data).ToLocalChecked());
   }
   static void monotonic(const v8::FunctionCallbackInfo<v8::Value>& a){auto& s=get(a.GetIsolate());a.GetReturnValue().Set(std::chrono::duration<double,std::milli>(Clock::now()-s.start).count());}
-  static void uuid(const v8::FunctionCallbackInfo<v8::Value>& a){unsigned char b[16];if(SecRandomCopyBytes(kSecRandomDefault,sizeof(b),b)!=errSecSuccess){a.GetIsolate()->ThrowException(v8::Exception::Error(str(a.GetIsolate(),"OS entropy unavailable")));return;}b[6]=(b[6]&15)|64;b[8]=(b[8]&63)|128;char out[37];snprintf(out,sizeof(out),"%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",b[0],b[1],b[2],b[3],b[4],b[5],b[6],b[7],b[8],b[9],b[10],b[11],b[12],b[13],b[14],b[15]);a.GetReturnValue().Set(str(a.GetIsolate(),out));}
+  static void uuid(const v8::FunctionCallbackInfo<v8::Value>& a){unsigned char b[16];if(!avtools::platform::secureRandom(b,sizeof(b))){a.GetIsolate()->ThrowException(v8::Exception::Error(str(a.GetIsolate(),"OS entropy unavailable")));return;}b[6]=(b[6]&15)|64;b[8]=(b[8]&63)|128;char out[37];snprintf(out,sizeof(out),"%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",b[0],b[1],b[2],b[3],b[4],b[5],b[6],b[7],b[8],b[9],b[10],b[11],b[12],b[13],b[14],b[15]);a.GetReturnValue().Set(str(a.GetIsolate(),out));}
   static void registerGeneration(const v8::FunctionCallbackInfo<v8::Value>& a){auto& s=get(a.GetIsolate());auto id=++s.nextGeneration;s.active.insert(id);a.GetReturnValue().Set(double(id));}
   static void setGeneration(const v8::FunctionCallbackInfo<v8::Value>& a){auto& s=get(a.GetIsolate());auto prior=s.generation();if(a.Length()&&a[0]->IsNumber())s.generation(uint64_t(a[0].As<v8::Number>()->Value()));a.GetReturnValue().Set(double(prior));}
   static void invalidateGeneration(const v8::FunctionCallbackInfo<v8::Value>& a){auto& s=get(a.GetIsolate());if(a.Length()&&a[0]->IsNumber())s.invalidate(uint64_t(a[0].As<v8::Number>()->Value()));}

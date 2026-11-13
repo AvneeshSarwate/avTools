@@ -3,6 +3,8 @@ import {readFileSync,writeFileSync,mkdirSync,cpSync,existsSync,symlinkSync} from
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
 import {createHash} from 'node:crypto';
+// Windows x64: same commands (fetch / build), separate implementation.
+if(process.platform==='win32'){await import('./embedding-win.mjs');process.exit(0);}
 const root=fileURLToPath(new URL('../',import.meta.url));
 const dawn=resolve(root,'upstream/node-webgpu/third_party/dawn');
 const run=(cmd,args,cwd=root)=>execFileSync(cmd,args,{cwd,stdio:'inherit'});

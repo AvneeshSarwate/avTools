@@ -3,6 +3,9 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
 import {distributionHash,writeDistributionVersion} from './td-distribution-version.mjs';
+import {copyExamples} from './td-examples.mjs';
+// Windows x64: single-DLL distribution ZIP; separate implementation.
+if(process.platform==='win32'){await import('./package-td-win.mjs');process.exit(0);}
 const root=fileURLToPath(new URL('../',import.meta.url));
 const prebuilt=resolve(root,'prebuilt/macos-arm64');
 const projectPlugins=resolve(root,'../../apps/td-projects/Plugins');
@@ -37,13 +40,16 @@ cpSync(resolve(prebuilt,'README.md'),resolve(release,'Plugins/README.md'));
 const version=writeDistributionVersion(resolve(release,'Plugins'),projectPlugins);
 mkdirSync(resolve(root,'artifacts'),{recursive:true});
 if(pluginsOnly){
-  writeFileSync(resolve(release,'README.md'),`# avTools for TouchDesigner — distribution ${version.version}\n\nStart with [Plugins/README.md](Plugins/README.md) for the GUI setup walkthrough.\n`);
+  writeFileSync(resolve(release,'README.md'),`# avTools for TouchDesigner — distribution ${version.version}\n\nStart with [Plugins/README.md](Plugins/README.md) for the GUI setup walkthrough.\nThen open the example projects in [Examples](Examples/README.md).\n`);
+  // Example projects beside Plugins/ (not part of version.json: that identifies the plugins).
+  copyExamples(resolve(root,'../..'),release);
   const archive=resolve(root,'prebuilt/avtools-td-plugins-macos-arm64.zip');
   const temporaryArchive=resolve(staging,'plugins.zip');
   const unchanged=existsSync(resolve(projectPlugins,'version.json')) &&
     readFileSync(resolve(projectPlugins,'version.json'),'utf8')===readFileSync(resolve(release,'Plugins/version.json'),'utf8') &&
     distributionHash(projectPlugins)===version.sha256;
-  if(!unchanged || !existsSync(archive)){
+  // Always re-zip: the ZIP also carries Examples/, and it is a release asset (not committed).
+  {
     execFileSync('ditto',['-c','-k','--sequesterRsrc','--keepParent',release,temporaryArchive],{stdio:'inherit'});
     renameSync(temporaryArchive,archive);
   }

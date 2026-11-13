@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, cpSync, symlinkSyn
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 const root = fileURLToPath(new URL('../', import.meta.url));
+if (process.platform === 'win32') { console.log('Syphon is macOS-only; nothing to build on Windows.'); process.exit(0); }
 const embedded=process.argv.includes('--embedded');
 const frameworkName=embedded?'AVToolsSyphon':'Syphon';
 const source = resolve(root, 'upstream/syphon'), build = resolve(root, embedded?'build/syphon-embedded':'build/syphon');

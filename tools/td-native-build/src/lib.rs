@@ -16,3 +16,4 @@ pub mod entry_build;
 pub mod template;
 
 pub mod parameters;
+pub mod paths;

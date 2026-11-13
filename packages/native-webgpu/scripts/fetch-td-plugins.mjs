@@ -34,16 +34,19 @@ try {
   renameSync(plugins, target);
   const version = JSON.parse(readFileSync(resolve(target, 'version.json'), 'utf8'));
   console.log(`Installed distribution ${version.version} (${version.platform}) at ${target}`);
-  // The checked-in example projects (native/td/*) resolve prebuilt/macos-arm64/current*.txt.
-  // Install the released bundles there too, under versioned names (never overwrite one TD may use).
-  if (platform === 'macos-arm64' && hostPlatform === 'macos-arm64') {
-    const prebuilt = resolve(root, 'prebuilt/macos-arm64');
+  // Repository fixtures without a Plugins/ ancestor (packages/native-webgpu/native/td/*)
+  // resolve prebuilt/<platform>/current*.txt. Install the released plugins there too,
+  // under versioned names (never overwrite one a running TD may have loaded).
+  if (platform === hostPlatform) {
+    const prebuilt = resolve(root, 'prebuilt', platform);
+    const suffix = platform === 'windows-x64' ? '.dll' : '.plugin';
+    mkdirSync(prebuilt, {recursive: true});
     for (const [name, marker] of [['AvToolsSketch', 'current.txt'], ['AvToolsChannels', 'current-chop.txt']]) {
-      const bundle = `${name}-r${version.version}.plugin`;
-      if (!existsSync(resolve(prebuilt, bundle))) cpSync(resolve(target, `${name}.plugin`), resolve(prebuilt, bundle), {recursive: true, verbatimSymlinks: true});
-      writeFileSync(resolve(prebuilt, marker), bundle + '\n');
+      const installed = `${name}-r${version.version}${suffix}`;
+      if (!existsSync(resolve(prebuilt, installed))) cpSync(resolve(target, `${name}${suffix}`), resolve(prebuilt, installed), {recursive: true, verbatimSymlinks: true});
+      writeFileSync(resolve(prebuilt, marker), installed + '\n');
     }
-    console.log(`Example projects will load ${prebuilt}/AvTools*-r${version.version}.plugin`);
+    console.log(`Repository fixtures will load ${prebuilt}/AvTools*-r${version.version}${suffix}`);
   }
 } finally {
   rmSync(staging, {recursive: true, force: true});

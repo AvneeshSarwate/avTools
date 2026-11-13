@@ -10,7 +10,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
-#include <dlfcn.h>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -25,7 +24,7 @@ using namespace TD;
 namespace {
 using Clock=std::chrono::steady_clock;
 double elapsed(Clock::time_point start){return std::chrono::duration<double,std::milli>(Clock::now()-start).count();}
-const std::string& resources(){static const std::string path=[](){Dl_info info{};if(!dladdr(reinterpret_cast<void*>(&resources),&info))throw std::runtime_error("Could not locate plugin resources");return (std::filesystem::path(info.dli_fname).parent_path().parent_path()/"Resources").string();}();return path;}
+const std::string& resources(){static const std::string path=avtools::platform::pluginResources(reinterpret_cast<const void*>(&resources)).generic_string();return path;}
 class SketchTOP final:public TOP_CPlusPlusBase {
   struct Channel {std::string name;std::vector<float> samples;};
   struct Job {
@@ -199,7 +198,7 @@ class SketchTOP final:public TOP_CPlusPlusBase {
 };
 }
 extern "C" {
-__attribute__((visibility("default"))) DLLEXPORT void FillTOPPluginInfo(TOP_PluginInfo* info){if(!info->setAPIVersion(TOPCPlusPlusAPIVersion))return;info->executeMode=TOP_ExecuteMode::CPUMem;info->customOPInfo.opType->setString("Avtoolssketch");info->customOPInfo.opLabel->setString("avTools Sketch");info->customOPInfo.opIcon->setString("AVS");info->customOPInfo.authorName->setString("avTools");info->customOPInfo.minInputs=0;info->customOPInfo.maxInputs=4;info->customOPInfo.cookOnStart=true;}
-__attribute__((visibility("default"))) DLLEXPORT TOP_CPlusPlusBase* CreateTOPInstance(const OP_NodeInfo* info,TOP_Context* context){return new SketchTOP(context,info);}
-__attribute__((visibility("default"))) DLLEXPORT void DestroyTOPInstance(TOP_CPlusPlusBase* instance,TOP_Context*){delete instance;}
+AV_API DLLEXPORT void FillTOPPluginInfo(TOP_PluginInfo* info){if(!info->setAPIVersion(TOPCPlusPlusAPIVersion))return;info->executeMode=TOP_ExecuteMode::CPUMem;info->customOPInfo.opType->setString("Avtoolssketch");info->customOPInfo.opLabel->setString("avTools Sketch");info->customOPInfo.opIcon->setString("AVS");info->customOPInfo.authorName->setString("avTools");info->customOPInfo.minInputs=0;info->customOPInfo.maxInputs=4;info->customOPInfo.cookOnStart=true;}
+AV_API DLLEXPORT TOP_CPlusPlusBase* CreateTOPInstance(const OP_NodeInfo* info,TOP_Context* context){return new SketchTOP(context,info);}
+AV_API DLLEXPORT void DestroyTOPInstance(TOP_CPlusPlusBase* instance,TOP_Context*){delete instance;}
 }

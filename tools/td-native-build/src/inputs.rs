@@ -59,7 +59,7 @@ fn observe(path: &Path, kind: Kind) -> Option<Vec<u8>> {
             let p = if kind == Kind::Link {
                 fs::read_link(path)
             } else {
-                fs::canonicalize(path)
+                crate::paths::canonicalize(path)
             }
             .ok()?;
             Some(p.to_string_lossy().as_bytes().to_vec())
@@ -239,7 +239,7 @@ impl Inputs {
                 path: path.clone(),
                 kind: *kind,
                 digest: digest(value),
-                resolved: fs::canonicalize(path).ok(),
+                resolved: crate::paths::canonicalize(path).ok(),
             })
             .collect()
     }

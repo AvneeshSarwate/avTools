@@ -1,15 +1,19 @@
 """Resolve the prebuilt plugins and editable project after moving this example."""
+import sys as _avtools_sys
+# Plugin lookup is per platform: .plugin bundles on macOS, .dll files on Windows.
+PLATFORM = 'windows-x64' if _avtools_sys.platform == 'win32' else 'macos-arm64'
+PLUGIN = '.dll' if _avtools_sys.platform == 'win32' else '.plugin'
 from pathlib import Path
 
 def onStart():
     folder=Path(project.folder)
     repository=None
     for ancestor in [folder,*folder.parents]:
-        if (ancestor/'packages/native-webgpu/prebuilt/macos-arm64/current.txt').is_file():
+        if (ancestor/('packages/native-webgpu/prebuilt/'+PLATFORM)/'current.txt').is_file():
             repository=ancestor;break
     if repository is None:
         raise RuntimeError('Keep this example in avTools, or set the plugin paths to your copied distribution.')
-    prebuilt=repository/'packages/native-webgpu/prebuilt/macos-arm64'
+    prebuilt=repository/('packages/native-webgpu/prebuilt/'+PLATFORM)
     sources=folder if (folder/'tsconfig.json').is_file() else repository/'apps/td-projects/native'
     component=op('/project1/native_build_test')
     for kind,marker,entry in [('channels','current-chop.txt','channels'),('background','current.txt','background')]:

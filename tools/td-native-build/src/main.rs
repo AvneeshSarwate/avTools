@@ -59,7 +59,7 @@ fn run() -> Result<()> {
         }
     }
     if command == "build" || command == "check" {
-        let root = root.canonicalize()?;
+        let root = avtools_build::paths::canonicalize(&root)?;
         let result = avtools_build::build::build(&root, command == "check")?;
         println!("{}", serde_json::to_string_pretty(&result)?);
         if result.state != "ready" {
@@ -68,7 +68,7 @@ fn run() -> Result<()> {
         return Ok(());
     }
     if command == "soak" {
-        let root = root.canonicalize()?;
+        let root = avtools_build::paths::canonicalize(&root)?;
         let count = args
             .get(3)
             .and_then(|s| s.parse::<usize>().ok())

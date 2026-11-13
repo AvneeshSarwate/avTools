@@ -1,4 +1,8 @@
 """Embedded in Channels.toe; resolves the checked-in plugin after a fresh clone."""
+import sys as _avtools_sys
+# Plugin lookup is per platform: .plugin bundles on macOS, .dll files on Windows.
+PLATFORM = 'windows-x64' if _avtools_sys.platform == 'win32' else 'macos-arm64'
+PLUGIN = '.dll' if _avtools_sys.platform == 'win32' else '.plugin'
 from pathlib import Path
 FILE_BACKED = True
 
@@ -22,14 +26,14 @@ def layout(c, display):
 
 def onStart():
     folder = Path(project.folder)
-    plugin = folder / 'Plugins/AvToolsChannels.plugin'
-    if not plugin.is_dir():
+    plugin = folder / ('Plugins/AvToolsChannels'+PLUGIN)
+    if not plugin.exists():
         for ancestor in [folder, *folder.parents]:
-            prebuilt = ancestor / 'packages/native-webgpu/prebuilt/macos-arm64'
+            prebuilt = ancestor / ('packages/native-webgpu/prebuilt/'+PLATFORM)
             if (prebuilt / 'current-chop.txt').is_file():
                 plugin = prebuilt / (prebuilt / 'current-chop.txt').read_text().strip()
                 break
-    if not plugin.is_dir():
+    if not plugin.exists():
         raise RuntimeError('Missing avTools Channels plugin; see the adjacent README.md.')
     c = op('/project1/avtools_channels_example')
     c.par.Pluginpath = str(plugin.resolve())

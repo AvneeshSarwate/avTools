@@ -21,11 +21,15 @@ await collect(dawn, 'Dawn');
 // Include notices from the pinned native dependency checkout, including build-only
 // dependencies. Presence in this notice bundle does not imply runtime linkage.
 await collect(`${dawn}/third_party`, 'Dawn/third_party', 3);
-await collect(`${root}/upstream/syphon`, 'Syphon', 0);
+const windows = process.platform === 'win32';
+if (!windows) await collect(`${root}/upstream/syphon`, 'Syphon', 0);
 await collect(`${root}/node_modules/earcut`, 'earcut');
 const crates = new Set();
-for (const manifest of [`${root}/native/rust/Cargo.toml`, `${repo}/apps/deno-notebooks/native/deno_window/Cargo.toml`]) {
-  const metadata = JSON.parse(execFileSync('cargo', ['metadata', '--format-version', '1', '--locked', '--offline', '--filter-platform', 'aarch64-apple-darwin',
+// Windows links one Rust staticlib (compiler + MIDI + text) into each operator DLL.
+const manifests = windows ? [`${root}/native/rust-windows/Cargo.toml`]
+  : [`${root}/native/rust/Cargo.toml`, `${repo}/apps/deno-notebooks/native/deno_window/Cargo.toml`];
+for (const manifest of manifests) {
+  const metadata = JSON.parse(execFileSync('cargo', ['metadata', '--format-version', '1', '--locked', '--offline', '--filter-platform', windows ? 'x86_64-pc-windows-msvc' : 'aarch64-apple-darwin',
     '--manifest-path', manifest], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 }));
   for (const crate of metadata.packages) {
     if (!crate.source || crates.has(crate.id)) continue;

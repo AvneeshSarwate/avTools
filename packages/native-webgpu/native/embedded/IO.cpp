@@ -2,6 +2,9 @@
 #include <uv.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#ifndef S_ISREG // Windows CRT lacks the POSIX test; libuv still reports S_IFREG bits.
+#define S_ISREG(m) (((m)&S_IFMT)==S_IFREG)
+#endif
 #include <deque>
 #include <map>
 #include <set>
@@ -88,7 +91,7 @@ struct IO::Impl {
     }
     r->stage=3;if(r->fd>=0){int e=uv_fs_close(&s.loop,req,r->fd,readDone);if(e<0){req->result=e;readDone(req);}}else{req->result=0;readDone(req);}
   }
-  void read(uint64_t id,uint64_t gen,std::string path){if(dead(gen))return;if(reads>=4){result(id,gen,UV_EBUSY);return;}++reads;auto* r=new Read{{},this,id,gen,std::move(path)};r->req.data=r;int e=uv_fs_open(&loop,&r->req,r->path.c_str(),O_RDONLY|O_NONBLOCK,0,readDone);if(e<0){r->req.result=e;readDone(&r->req);}}
+  void read(uint64_t id,uint64_t gen,std::string path){if(dead(gen))return;if(reads>=4){result(id,gen,UV_EBUSY);return;}++reads;auto* r=new Read{{},this,id,gen,std::move(path)};r->req.data=r;int e=uv_fs_open(&loop,&r->req,r->path.c_str(),UV_FS_O_RDONLY|UV_FS_O_NONBLOCK,0,readDone);if(e<0){r->req.result=e;readDone(&r->req);}}
 };
 IO::IO(std::function<void()> wake):impl_(std::make_unique<Impl>(std::move(wake))){}
 IO::~IO()=default;

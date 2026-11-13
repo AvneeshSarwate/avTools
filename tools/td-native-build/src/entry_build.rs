@@ -46,7 +46,7 @@ impl Selection {
         let relative = entry.strip_prefix(&root)?.to_path_buf();
         // FSEvents reports physical root paths (/private/var, not /var). Canonicalize
         // the project directory, keeping workspace links inside it logical.
-        let root = root.canonicalize()?;
+        let root = crate::paths::canonicalize(&root)?;
         let entry = root.join(relative);
         let key = format!("{}\n{target}", entry.strip_prefix(&root)?.display());
         let hash = format!("{:x}", Sha256::digest(key.as_bytes()));

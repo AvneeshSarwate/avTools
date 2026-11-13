@@ -1,4 +1,22 @@
 """Embedded in Channels.toe; resolves the checked-in plugin after a fresh clone."""
+import sys as _avtools_sys
+# Plugin lookup is per platform: .plugin bundles on macOS, .dll files on Windows.
+PLATFORM = 'windows-x64' if _avtools_sys.platform == 'win32' else 'macos-arm64'
+PLUGIN = '.dll' if _avtools_sys.platform == 'win32' else '.plugin'
+
+
+def find_plugin(folder, name, marker):
+    """Plugins/<name> beside or above the project (release ZIP, copied project), else
+    this checkout's local build/fetch (prebuilt/<platform>/<marker>, gitignored)."""
+    for directory in [folder, *folder.parents]:
+        candidate = directory / 'Plugins' / (name + PLUGIN)
+        if candidate.exists():
+            return candidate
+    for directory in [folder, *folder.parents]:
+        prebuilt = directory / 'packages/native-webgpu/prebuilt' / PLATFORM
+        if (prebuilt / marker).is_file():
+            return prebuilt / (prebuilt / marker).read_text().strip()
+    raise RuntimeError('avTools ' + name + ' plugin not found: put the Plugins folder beside or above this project (see Plugins/README.md).')
 from pathlib import Path
 FILE_BACKED = False
 
@@ -22,15 +40,7 @@ def layout(c, display):
 
 def onStart():
     folder = Path(project.folder)
-    plugin = folder / 'Plugins/AvToolsChannels.plugin'
-    if not plugin.is_dir():
-        for ancestor in [folder, *folder.parents]:
-            prebuilt = ancestor / 'packages/native-webgpu/prebuilt/macos-arm64'
-            if (prebuilt / 'current-chop.txt').is_file():
-                plugin = prebuilt / (prebuilt / 'current-chop.txt').read_text().strip()
-                break
-    if not plugin.is_dir():
-        raise RuntimeError('Missing avTools Channels plugin; see the adjacent README.md.')
+    plugin = find_plugin(folder, 'AvToolsChannels', 'current-chop.txt')
     c = op('/project1/avtools_channels_example')
     c.par.Pluginpath = str(plugin.resolve())
     for name in ['animation1','animation2','pass1','pass2','pass3','pass4','points1']:

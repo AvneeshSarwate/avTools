@@ -5,6 +5,8 @@ import {cpSync,mkdirSync,writeFileSync,readFileSync,existsSync,readdirSync,renam
 import {fileURLToPath} from 'node:url';
 import {resolve,basename} from 'node:path';
 import {createHash} from 'node:crypto';
+// Windows x64: one self-contained DLL per operator; separate implementation.
+if(process.platform==='win32'){await import('./build-td-plugin-win.mjs');process.exit(0);}
 const root=fileURLToPath(new URL('../',import.meta.url));
 const chop=process.argv.includes('--chop');
 const name=chop?'AvToolsChannels':'AvToolsSketch';

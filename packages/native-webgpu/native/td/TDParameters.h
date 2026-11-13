@@ -1,5 +1,5 @@
 #pragma once
-#include <dlfcn.h>
+#include "../embedded/Platform.h"
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -7,7 +7,7 @@
 // use TD's resident Python C API without loading another interpreter.
 class TDParameters {
   using Object=void;
-  template<class T> static T symbol(const char* name){auto p=reinterpret_cast<T>(dlsym(RTLD_DEFAULT,name));if(!p)throw std::runtime_error("TD Python API unavailable");return p;}
+  template<class T> static T symbol(const char* name){auto p=reinterpret_cast<T>(avtools::platform::hostSymbol(name));if(!p)throw std::runtime_error("TD Python API unavailable");return p;}
   int (*ensure)()=symbol<int(*)()>("PyGILState_Ensure");
   void (*release)(int)=symbol<void(*)(int)>("PyGILState_Release");
   Object* (*item)(Object*,long)=symbol<Object*(*)(Object*,long)>("PyTuple_GetItem");
@@ -63,8 +63,8 @@ class TDParameters {
     Object* result=(fn&&argument)?callArgs(fn,argument,nullptr):nullptr;drop(argument);drop(fn);return text(result);
   }
   std::string scriptDirectory(const std::string& identity){
-    if(identity.rfind("ts:",0)==0)return std::filesystem::path(path("Typescript")).parent_path().string();
-    if(identity.rfind("file:",0)==0)return std::filesystem::path(path("Sourcefile")).parent_path().string();
+    if(identity.rfind("ts:",0)==0)return std::filesystem::path(path("Typescript")).parent_path().generic_string();
+    if(identity.rfind("file:",0)==0)return std::filesystem::path(path("Sourcefile")).parent_path().generic_string();
     if(identity.rfind("project:",0)==0)return path("Projectdir");
     return expression("project.folder");
   }

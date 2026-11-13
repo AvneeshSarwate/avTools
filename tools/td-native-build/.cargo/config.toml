@@ -1,0 +1,4 @@
+# Windows: link the C runtime statically so avtools-build.exe (and the operator
+# DLLs' Rust code) need no VC++ redistributable on users' machines. No effect on macOS.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

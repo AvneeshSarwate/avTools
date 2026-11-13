@@ -1,12 +1,16 @@
 """Resolve the repo and assign available local OSC ports after native builds finish."""
+import sys as _avtools_sys
+# Plugin lookup is per platform: .plugin bundles on macOS, .dll files on Windows.
+PLATFORM = 'windows-x64' if _avtools_sys.platform == 'win32' else 'macos-arm64'
+PLUGIN = '.dll' if _avtools_sys.platform == 'win32' else '.plugin'
 from pathlib import Path
 import socket
 
 def onStart():
     folder=Path(project.folder)
-    repo=next((p for p in (folder,*folder.parents) if (p/'packages/native-webgpu/prebuilt/macos-arm64/current.txt').is_file()),None)
+    repo=next((p for p in (folder,*folder.parents) if (p/('packages/native-webgpu/prebuilt/'+PLATFORM)/'current.txt').is_file()),None)
     if repo is None:raise RuntimeError('Keep IO.toe in avTools, or generate a local template project from a copied plugin.')
-    root=me.parent();pre=repo/'packages/native-webgpu/prebuilt/macos-arm64'
+    root=me.parent();pre=repo/('packages/native-webgpu/prebuilt/'+PLATFORM)
     sources=repo/'packages/native-webgpu/native/td/io-example'
     for name,marker in [('picture','current.txt'),('channels','current-chop.txt')]:
         n=root.op(name);n.par.plugin=str(pre/(pre/marker).read_text(encoding='utf-8').strip());n.cook(force=True)
