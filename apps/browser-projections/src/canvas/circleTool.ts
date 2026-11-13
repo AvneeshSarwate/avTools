@@ -2,9 +2,7 @@
 /* eslint-disable prefer-const */
 import Konva from "konva"
 import type { CircleRenderData, FlattenedCircle, CircleShapeRuntime } from "./canvasState"
-import { executeCommand, pushCommandWithStates } from "./commands"
-import { getCurrentFreehandStateString } from './freehandTool'
-import { getCurrentPolygonStateString } from './polygonTool'
+import { captureCommandState, executeCommand, pushCommandWithStates } from "./commands"
 import { uid } from './canvasUtils'
 import { createCircleItem, createGroupItem, getCanvasItem, removeCanvasItem } from './CanvasItem'
 import * as selectionStore from './selectionStore'
@@ -46,23 +44,13 @@ export const attachCircleHandlers = (state: CanvasRuntimeState, node: Konva.Circ
 
 // Circle drag tracking for undo/redo
 export const startCircleDragTracking = (state: CanvasRuntimeState) => {
-  // Capture combined state for unified undo/redo
-  const before = JSON.stringify({
-    freehand: getCurrentFreehandStateString(state),
-    polygon: getCurrentPolygonStateString(state),
-    circle: getCurrentCircleStateString(state)
-  })
-  state.circle.dragStartState = before
+  state.circle.dragStartState = captureCommandState(state)
 }
 
 export const finishCircleDragTracking = (state: CanvasRuntimeState, nodeName: string) => {
   if (!state.circle.dragStartState) return
 
-  const endCombined = JSON.stringify({
-    freehand: getCurrentFreehandStateString(state),
-    polygon: getCurrentPolygonStateString(state),
-    circle: getCurrentCircleStateString(state)
-  })
+  const endCombined = captureCommandState(state)
   if (state.circle.dragStartState !== endCombined) {
     // Push into unified command stack with combined state
     pushCommandWithStates(state, `Transform ${nodeName}`, state.circle.dragStartState, endCombined)
@@ -70,147 +58,6 @@ export const finishCircleDragTracking = (state: CanvasRuntimeState, nodeName: st
   }
 
   state.circle.dragStartState = null
-}
-
-// Get current circle state for undo/redo
-export const getCurrentCircleState = (
-  state: CanvasRuntimeState
-) => {
-  return selectionStore.withSelectionHighlightSuppressed(state, () => {
-    const circleShapesGroup = state.groups.circleShapes
-    const stageRef = state.stage
-    if (!stageRef || !circleShapesGroup) return null
-
-    try {
-      const layerData = circleShapesGroup.toObject()
-      // Serialize runtime data to plain objects (no Konva node references)
-      const circlesData = Array.from(state.circle.shapes.entries()).map(([id, c]) => [
-        id,
-        {
-          id: c.id,
-          x: c.shape?.x() ?? c.x,
-          y: c.shape?.y() ?? c.y,
-          r: c.shape?.radius() ?? c.r,
-          creationTime: c.creationTime,
-        },
-      ])
-
-      const circleState = {
-        layer: layerData,
-        circles: circlesData,
-      }
-
-      return circleState
-    } catch (error) {
-      console.warn('Failed to get current circle state:', error)
-      return null
-    }
-  })
-}
-
-export const getCurrentCircleStateString = (
-  state: CanvasRuntimeState
-): string => {
-  const circleState = getCurrentCircleState(state)
-  return JSON.stringify(circleState)
-}
-
-// Restore circle state from string
-export const restoreCircleState = (
-  canvasState: CanvasRuntimeState,
-  stateString: string
-) => {
-  if (!stateString) return
-  try {
-    deserializeCircleState(canvasState, stateString)
-  } catch (error) {
-    console.warn('Failed to restore circle state:', error)
-  }
-}
-
-// Circle state serialization functions
-export const serializeCircleState = (
-  canvasState: CanvasRuntimeState
-) => {
-  const circleShapesGroup = canvasState.groups.circleShapes
-  const stageRef = canvasState.stage
-  if (!stageRef || !circleShapesGroup) return
-
-  try {
-    const circleState = getCurrentCircleState(canvasState)
-    if (!circleState) return
-
-    canvasState.circle.serializedState = JSON.stringify(circleState)
-    canvasState.callbacks.syncAppState?.(canvasState)
-    console.log('Serialized circle state:', {
-      layerChildren: circleState.layer?.children?.length || 0,
-      circles: circleState.circles.length,
-    })
-  } catch (error) {
-    console.warn('Failed to serialize circle state:', error)
-  }
-}
-
-export const deserializeCircleState = (
-  canvasState: CanvasRuntimeState,
-  stateString: string
-) => {
-  const circleShapesGroup = canvasState.groups.circleShapes
-  const stageRef = canvasState.stage
-  if (!stateString || !stageRef || !circleShapesGroup) return
-
-  try {
-    const circleState = JSON.parse(stateString)
-    console.log('Deserializing circle state:', {
-      layerChildren: circleState.layer?.children?.length || 0,
-      circles: circleState.circles?.length || 0,
-    })
-
-    circleShapesGroup.destroyChildren()
-    canvasState.circle.shapes.clear()
-    selectionStore.clear(canvasState)
-
-    const layerData = circleState.layer
-    if (layerData && layerData.children) {
-      console.log('Restoring', layerData.children.length, 'circle shapes')
-      layerData.children.forEach((childData: any, index: number) => {
-        console.log('Creating circle node', index, 'of type', childData.className)
-        const node = Konva.Node.create(childData)
-        circleShapesGroup.add(node)
-        console.log('Added circle node to layer:', node.id(), node.isVisible())
-
-        if (node instanceof Konva.Group) {
-          createGroupItem(canvasState, node)
-        }
-      })
-    }
-
-    // Rebuild runtime map by traversing all circles (including nested in groups)
-    const allCircles = circleShapesGroup.find('Circle') as unknown as Konva.Circle[]
-    canvasState.circle.shapes.clear()
-    allCircles.forEach(shape => {
-      if (!shape.id()) shape.id(uid('circle_'))
-      const circle: CircleShapeRuntime = {
-        id: shape.id(),
-        x: shape.x(),
-        y: shape.y(),
-        r: shape.radius(),
-        creationTime: shape.getAttr('creationTime') ?? Date.now(),
-        shape,
-      }
-      canvasState.circle.shapes.set(circle.id, circle)
-      attachCircleHandlers(canvasState, shape)
-      createCircleItem(canvasState, shape)
-    })
-
-    circleShapesGroup.getLayer()?.batchDraw()
-    canvasState.circle.serializedState = stateString
-    updateBakedCircleData(canvasState)
-
-    console.log('Circle state restored from hotreload')
-  } catch (error) {
-    console.warn('Failed to deserialize circle state:', error)
-  }
 }
 
 // Circle tool functions
@@ -221,6 +68,8 @@ export const handleCirclePointerDown = (state: CanvasRuntimeState, pos: { x: num
   state.circle.isDrawing.value = true
   state.circle.currentCenter.value = pos
   state.circle.currentRadius.value = 0
+  state.circle.currentId = uid('circle_')
+  state.circle.currentCreationTime = Date.now()
   
   // Clear any existing preview
   circlePreviewGroup.destroyChildren()
@@ -278,50 +127,81 @@ export const handleCirclePointerUp = (state: CanvasRuntimeState) => {
   if (!center || radius < 2) return
 
   executeCommand(state, 'Create Circle', () => {
-    const circleId = uid('circle_')
-    const creationTime = Date.now()
-    const circle: CircleShapeRuntime = {
-      id: circleId,
+    createCircleNode(state, state.circle.currentId ?? uid('circle_'), {
       x: center.x,
       y: center.y,
-      r: radius,
-      creationTime: creationTime
-    }
-    
-    // Create Konva shape
-    const circleShape = new Konva.Circle({
-      x: center.x,
-      y: center.y,
-      radius: radius,
-      stroke: '#000',
-      strokeWidth: 2,
-      fill: 'rgba(0, 100, 255, 0.1)',
-      draggable: false,
-      id: circleId
+      radius,
+      creationTime: state.circle.currentCreationTime || Date.now()
     })
-    
-    // Store creationTime in node attrs for persistence
-    circleShape.setAttr('creationTime', creationTime)
 
-    attachCircleHandlers(state, circleShape)
-    
-    circle.shape = circleShape
-    circleShapes(state).set(circleId, circle)
-    circleShapesGroup?.add(circleShape)
-    
-    // Register as CanvasItem
-    createCircleItem(state, circleShape)
-    
     // Reset drawing state
     state.circle.currentCenter.value = null
     state.circle.currentRadius.value = 0
     
     // Serialize circle state for hotreload
-    serializeCircleState(state)
+    updateBakedCircleData(state)
     
     circleShapesGroup?.getLayer()?.batchDraw()
     updateBakedCircleData(state) // Update baked data after creating circle
   })
+}
+
+export interface CreateCircleNodeOptions {
+  x: number
+  y: number
+  radius: number
+  /** Vertical stretch relative to `radius`; 1 for a true circle. */
+  scaleY?: number
+  /** Degrees, Konva's rotation unit. */
+  rotation?: number
+  creationTime: number
+  /** Container to add the node to; the circle layer by default. */
+  parent?: Konva.Container
+}
+
+// Create a circle node with the canvas's circle style, register its runtime
+// record and CanvasItem, and add it to its parent.
+export const createCircleNode = (
+  state: CanvasRuntimeState,
+  id: string,
+  options: CreateCircleNodeOptions
+): Konva.Circle => {
+  const circle: CircleShapeRuntime = {
+    id,
+    x: options.x,
+    y: options.y,
+    r: options.radius,
+    creationTime: options.creationTime
+  }
+
+  const circleShape = new Konva.Circle({
+    x: options.x,
+    y: options.y,
+    radius: options.radius,
+    scaleY: options.scaleY ?? 1,
+    rotation: options.rotation ?? 0,
+    stroke: '#000',
+    strokeWidth: 2,
+    strokeScaleEnabled: false, // the outline keeps its width when scaled into an ellipse
+    fill: 'rgba(0, 100, 255, 0.1)',
+    draggable: false,
+    id
+  })
+
+  // Store creationTime in node attrs for persistence
+  circleShape.setAttr('creationTime', options.creationTime)
+
+  attachCircleHandlers(state, circleShape)
+
+  circle.shape = circleShape
+  circleShapes(state).set(id, circle)
+  const parent = options.parent ?? state.groups.circleShapes
+  parent?.add(circleShape)
+
+  // Register as CanvasItem
+  createCircleItem(state, circleShape)
+
+  return circleShape
 }
 
 // Function to generate baked circle data for external rendering (p5, three.js, etc.)
@@ -334,9 +214,11 @@ export const generateBakedCircleData = (
   // Track circle indices and group map
   let circleIndex = 0
   const groupMap: Record<string, number[]> = {}
+  const bakedCircles: FlattenedCircle[] = []
 
-  // Helper function to process a Konva node recursively
-  const processNode = (node: Konva.Node): FlattenedCircle | null => {
+  // Walk the layer recursively; every circle, grouped or not, is appended in
+  // document order so the group map's indices point at real entries.
+  const processNode = (node: Konva.Node): void => {
     if (node instanceof Konva.Circle) {
       const r = node.radius()
       const t = node.getAbsoluteTransform()
@@ -368,7 +250,7 @@ export const generateBakedCircleData = (
       // Increment circle index for this concrete circle
       circleIndex++
 
-      return {
+      bakedCircles.push({
         type: 'circle',
         id: circleId,
         center: { x: c.x, y: c.y },
@@ -377,7 +259,7 @@ export const generateBakedCircleData = (
         ry,
         rotation,
         ...(metadata && { metadata }) // Only include metadata if it exists
-      }
+      })
     } else if (node instanceof Konva.Group) {
       // Track circle indices for this group
       const groupStartIndex = circleIndex
@@ -401,21 +283,11 @@ export const generateBakedCircleData = (
       if (groupKey) {
         groupMap[groupKey] = groupCircleIndices
       }
-
-      return null
     }
-
-    return null
   }
 
-  // Collect all processed circles
-  const bakedCircles: FlattenedCircle[] = []
-
   circleShapesGroup.getChildren().forEach(child => {
-    const processed = processNode(child)
-    if (processed) {
-      bakedCircles.push(processed)
-    }
+    processNode(child)
   })
 
   return { data: bakedCircles, groupMap }
@@ -425,8 +297,8 @@ export const generateBakedCircleData = (
 export const updateBakedCircleData = (
   canvasState: CanvasRuntimeState
 ) => {
-  const result = generateBakedCircleData(canvasState)
-  canvasState.circle.bakedRenderData = result.data
-  canvasState.circle.bakedGroupMap = result.groupMap
+  // Baked data is derived from the document lazily (canvasBake.ts); mark it
+  // stale and notify.
+  canvasState.bake.dirty = true
   canvasState.callbacks.syncAppState?.(canvasState)
 }

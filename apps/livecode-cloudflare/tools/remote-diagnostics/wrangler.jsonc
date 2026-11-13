@@ -1,0 +1,17 @@
+{
+  "name": "livecode-remote-diagnostics",
+  "main": "index.js",
+  "compatibility_date": "2026-08-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "Sandbox", "class_name": "Sandbox", "script_name": "livecode" }
+    ]
+  },
+  "r2_buckets": [
+    { "binding": "LIVECODE_STATE", "bucket_name": "avtools-livecode-state" }
+  ],
+  "services": [
+    { "binding": "LIVECODE", "service": "livecode" }
+  ]
+}

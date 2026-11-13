@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, inject } from 'vue'
+import type { Ref } from 'vue'
 import type { TrackType, PrecisionDraft, FuncArg, EditorAction } from '../types'
 import { PRECISION_MODAL_WIDTH } from '../constants'
 
@@ -16,6 +17,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   action: [action: EditorAction]
 }>()
+
+const overlayRoot = inject<Ref<HTMLElement | null> | null>('animationEditorOverlayRoot', null)
+const teleportTarget = computed(() => overlayRoot?.value ?? 'body')
 
 // Local draft for immediate UI updates
 const localDraft = ref<PrecisionDraft>({ ...props.draft })
@@ -43,14 +47,14 @@ function close() {
 
 function onTimeChange(e: Event) {
   const value = parseFloat((e.target as HTMLInputElement).value)
-  if (!isNaN(value) && value >= 0) {
+  if (Number.isFinite(value)) {
     updateDraft({ time: value })
   }
 }
 
 function onValueChange(e: Event) {
   const value = parseFloat((e.target as HTMLInputElement).value)
-  if (!isNaN(value)) {
+  if (Number.isFinite(value)) {
     updateDraft({ value })
   }
 }
@@ -98,24 +102,32 @@ function handleBackdropClick(e: MouseEvent) {
 </script>
 
 <template>
-  <Teleport to="body">
-    <div v-if="open" class="modal-backdrop" @click="handleBackdropClick">
+  <Teleport :to="teleportTarget">
+    <div
+      v-if="open"
+      class="modal-backdrop"
+      data-component="PrecisionEditor"
+      data-region="precision-modal"
+      :data-field-type="fieldType"
+      :data-dirty="dirty || undefined"
+      @click="handleBackdropClick"
+    >
       <div class="modal">
-        <div class="modal-header">
+        <div class="modal-header" data-region="precision-modal-header">
           <div class="header-content">
             <span class="header-title">Edit Element</span>
             <span class="track-badge">{{ trackName }}</span>
           </div>
-          <button class="close-btn" @click="close">
+          <button class="close-btn" data-testid="precision-close" @click="close">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M18 6L6 18M6 6l12 12"/>
             </svg>
           </button>
         </div>
 
-        <div class="modal-body">
+        <div class="modal-body" data-region="precision-modal-body">
           <!-- Time (all types) -->
-          <div class="field-row">
+          <div class="field-row" data-region="precision-field-time">
             <label>Time</label>
             <input
               type="number"
@@ -124,12 +136,13 @@ function handleBackdropClick(e: MouseEvent) {
               min="0"
               @change="onTimeChange"
               class="input"
+              data-testid="precision-time"
             />
           </div>
 
           <!-- Number value -->
           <template v-if="fieldType === 'number'">
-            <div class="field-row">
+            <div class="field-row" data-region="precision-field-number-value">
               <label>Value</label>
               <input
                 type="number"
@@ -137,18 +150,20 @@ function handleBackdropClick(e: MouseEvent) {
                 step="0.01"
                 @change="onValueChange"
                 class="input"
+                data-testid="precision-number-value"
               />
             </div>
           </template>
 
           <!-- Enum value -->
           <template v-if="fieldType === 'enum'">
-            <div class="field-row">
+            <div class="field-row" data-region="precision-field-enum-value">
               <label>Value</label>
               <select
                 :value="localDraft.enumValue"
                 @change="onEnumChange"
                 class="input select"
+                data-testid="precision-enum-value"
               >
                 <option v-for="opt in enumOptions" :key="opt" :value="opt">
                   {{ opt }}
@@ -159,30 +174,42 @@ function handleBackdropClick(e: MouseEvent) {
 
           <!-- Func name and args -->
           <template v-if="fieldType === 'func'">
-            <div class="field-row">
+            <div class="field-row" data-region="precision-field-func-name">
               <label>Function</label>
               <input
                 type="text"
                 :value="localDraft.funcName"
                 @input="onFuncNameChange"
                 class="input"
+                data-testid="precision-func-name"
                 placeholder="functionName"
               />
             </div>
 
-            <div class="args-section">
+            <div class="args-section" data-region="precision-func-args">
               <div class="args-header">
                 <span class="args-label">Arguments</span>
-                <button v-if="funcArgs.length < 5" class="add-arg-btn" @click="addArg">
+                <button
+                  v-if="funcArgs.length < 5"
+                  class="add-arg-btn"
+                  data-testid="precision-arg-add"
+                  @click="addArg"
+                >
                   + Add
                 </button>
               </div>
               <div class="args-list" v-if="funcArgs.length > 0">
-                <div v-for="(arg, index) in funcArgs" :key="index" class="arg-row">
+                <div
+                  v-for="(arg, index) in funcArgs"
+                  :key="index"
+                  class="arg-row"
+                  :data-arg-index="index"
+                >
                   <select
                     :value="arg.type"
                     @change="(e) => updateArgType(index, (e.target as HTMLSelectElement).value as 'text' | 'number')"
                     class="arg-type"
+                    data-testid="precision-arg-type"
                   >
                     <option value="text">Text</option>
                     <option value="number">Num</option>
@@ -192,9 +219,14 @@ function handleBackdropClick(e: MouseEvent) {
                     :value="arg.value"
                     @input="(e) => updateArgValue(index, (e.target as HTMLInputElement).value)"
                     class="arg-value"
+                    data-testid="precision-arg-value"
                     :placeholder="arg.type === 'number' ? '0' : 'value'"
                   />
-                  <button class="remove-arg-btn" @click="removeArg(index)">×</button>
+                  <button
+                    class="remove-arg-btn"
+                    data-testid="precision-arg-remove"
+                    @click="removeArg(index)"
+                  >×</button>
                 </div>
               </div>
               <div v-else class="no-args">No arguments</div>
@@ -202,11 +234,20 @@ function handleBackdropClick(e: MouseEvent) {
           </template>
         </div>
 
-        <div class="modal-footer">
-          <button class="btn btn-secondary" @click="revert" :disabled="!dirty">
+        <div class="modal-footer" data-region="precision-modal-footer">
+          <button
+            class="btn btn-secondary"
+            data-testid="precision-revert"
+            @click="revert"
+            :disabled="!dirty"
+          >
             Revert
           </button>
-          <button class="btn btn-primary" @click="save">
+          <button
+            class="btn btn-primary"
+            data-testid="precision-save"
+            @click="save"
+          >
             Save
           </button>
         </div>
@@ -231,10 +272,10 @@ function handleBackdropClick(e: MouseEvent) {
 
 .modal {
   width: v-bind('PRECISION_MODAL_WIDTH + "px"');
-  background: #1a1c20;
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  border: 1px solid #2a2d30;
+  background: var(--ae-panel);
+  max-width: calc(100vw - 32px);
+  border-radius: 0;
+  border: 1px solid var(--ae-border);
 }
 
 .modal-header {
@@ -242,27 +283,33 @@ function handleBackdropClick(e: MouseEvent) {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid #2a2d30;
+  border-bottom: 1px solid var(--ae-border);
 }
 
 .header-content {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 4px;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
 }
 
 .header-title {
   font-size: 13px;
   font-weight: 500;
-  color: #e0e0e0;
+  color: var(--ae-text);
 }
 
 .track-badge {
   font-size: 11px;
-  color: #888;
-  background: #252830;
-  padding: 2px 8px;
-  border-radius: 3px;
+  color: var(--ae-muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0;
+  border-radius: 0;
 }
 
 .close-btn {
@@ -274,15 +321,14 @@ function handleBackdropClick(e: MouseEvent) {
   justify-content: center;
   background: transparent;
   border: none;
-  color: #666;
+  color: var(--ae-muted);
   cursor: pointer;
-  border-radius: 4px;
-  transition: all 0.15s ease;
+  border-radius: 0;
 }
 
 .close-btn:hover {
-  background: #2a2d30;
-  color: #c8c8c8;
+  background: var(--ae-border);
+  color: var(--ae-text);
 }
 
 .modal-body {
@@ -300,7 +346,7 @@ function handleBackdropClick(e: MouseEvent) {
   flex-shrink: 0;
   width: 60px;
   font-size: 11px;
-  color: #888;
+  color: var(--ae-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -308,17 +354,16 @@ function handleBackdropClick(e: MouseEvent) {
 .input {
   flex: 1;
   padding: 6px 10px;
-  background: #141618;
-  border: 1px solid #2a2d30;
-  border-radius: 4px;
-  color: #c8c8c8;
+  background: var(--ae-panel);
+  border: 1px solid var(--ae-border);
+  border-radius: 0;
+  color: var(--ae-text);
   font-size: 13px;
-  transition: border-color 0.15s ease;
 }
 
 .input:focus {
   outline: none;
-  border-color: #3a7ca5;
+  border-color: var(--ae-accent);
 }
 
 .input.select {
@@ -328,7 +373,7 @@ function handleBackdropClick(e: MouseEvent) {
 .args-section {
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid #2a2d30;
+  border-top: 1px solid var(--ae-border);
 }
 
 .args-header {
@@ -340,7 +385,7 @@ function handleBackdropClick(e: MouseEvent) {
 
 .args-label {
   font-size: 11px;
-  color: #888;
+  color: var(--ae-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -348,18 +393,17 @@ function handleBackdropClick(e: MouseEvent) {
 .add-arg-btn {
   padding: 4px 10px;
   background: transparent;
-  border: 1px solid #2a2d30;
-  border-radius: 3px;
-  color: #888;
+  border: 1px solid var(--ae-border);
+  border-radius: 0;
+  color: var(--ae-muted);
   font-size: 11px;
   cursor: pointer;
-  transition: all 0.15s ease;
 }
 
 .add-arg-btn:hover {
-  background: #252830;
-  color: #c8c8c8;
-  border-color: #3a3d42;
+  background: var(--ae-control);
+  color: var(--ae-text);
+  border-color: var(--ae-border);
 }
 
 .args-list {
@@ -377,10 +421,10 @@ function handleBackdropClick(e: MouseEvent) {
 .arg-type {
   width: 70px;
   padding: 5px 6px;
-  background: #141618;
-  border: 1px solid #2a2d30;
-  border-radius: 3px;
-  color: #c8c8c8;
+  background: var(--ae-panel);
+  border: 1px solid var(--ae-border);
+  border-radius: 0;
+  color: var(--ae-text);
   font-size: 11px;
   cursor: pointer;
 }
@@ -388,17 +432,17 @@ function handleBackdropClick(e: MouseEvent) {
 .arg-value {
   flex: 1;
   padding: 5px 8px;
-  background: #141618;
-  border: 1px solid #2a2d30;
-  border-radius: 3px;
-  color: #c8c8c8;
+  background: var(--ae-panel);
+  border: 1px solid var(--ae-border);
+  border-radius: 0;
+  color: var(--ae-text);
   font-size: 12px;
 }
 
 .arg-value:focus,
 .arg-type:focus {
   outline: none;
-  border-color: #3a7ca5;
+  border-color: var(--ae-accent);
 }
 
 .remove-arg-btn {
@@ -407,11 +451,10 @@ function handleBackdropClick(e: MouseEvent) {
   padding: 0;
   background: transparent;
   border: none;
-  color: #555;
+  color: var(--ae-muted);
   font-size: 14px;
   cursor: pointer;
-  border-radius: 3px;
-  transition: all 0.15s ease;
+  border-radius: 0;
 }
 
 .remove-arg-btn:hover {
@@ -421,7 +464,7 @@ function handleBackdropClick(e: MouseEvent) {
 
 .no-args {
   font-size: 11px;
-  color: #555;
+  color: var(--ae-muted);
   text-align: center;
   padding: 8px;
 }
@@ -431,27 +474,26 @@ function handleBackdropClick(e: MouseEvent) {
   justify-content: flex-end;
   gap: 8px;
   padding: 10px 16px;
-  border-top: 1px solid #2a2d30;
+  border-top: 1px solid var(--ae-border);
 }
 
 .btn {
   padding: 6px 14px;
-  border-radius: 4px;
+  border-radius: 0;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   border: none;
-  transition: all 0.15s ease;
 }
 
 .btn-secondary {
-  background: #252830;
-  color: #b0b0b0;
+  background: var(--ae-control);
+  color: var(--ae-muted);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: #2d3038;
-  color: #e0e0e0;
+  background: var(--ae-hover);
+  color: var(--ae-text);
 }
 
 .btn-secondary:disabled {
@@ -460,11 +502,11 @@ function handleBackdropClick(e: MouseEvent) {
 }
 
 .btn-primary {
-  background: #3a7ca5;
-  color: #fff;
+  background: var(--ae-accent);
+  color: var(--ae-on-accent);
 }
 
 .btn-primary:hover {
-  background: #4a8cb5;
+  background: var(--ae-accent-hover);
 }
 </style>

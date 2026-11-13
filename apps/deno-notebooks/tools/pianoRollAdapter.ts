@@ -26,7 +26,9 @@
 import {
   DenoNotebookBridge,
   type ComponentAdapter,
-  type Session
+  type Session,
+  getInspectorRegistry,
+  getInspectorServer,
 } from "@avtools/ui-bridge"
 import {
   PianoRollWebSocketClient,
@@ -137,6 +139,9 @@ export class ClipMap {
   private bindings = new Map<string, Set<string>>()
   private bridge?: PianoRollBridge
 
+  /** @internal Called when a new clip name is first added */
+  _onNewClip?: (name: string) => void
+
   /** @internal Set by createPianoRollBridge */
   _setBridge(bridge: PianoRollBridge): void {
     this.bridge = bridge
@@ -151,7 +156,12 @@ export class ClipMap {
   }
 
   set(name: string, clip: AbletonClip, options?: { excludeSession?: string }): this {
+    const isNew = !this.clips.has(name)
     this.clips.set(name, clip)
+
+    if (isNew && this._onNewClip) {
+      this._onNewClip(name)
+    }
 
     const sessions = this.bindings.get(name)
     if (sessions && this.bridge) {
@@ -414,6 +424,43 @@ export function createPianoRollBridge(): PianoRollBridgeAPI {
   const clips = new ClipMap()
   clips._setBridge(bridge)
 
+  // Auto-register new clips with the inspector
+  clips._onNewClip = (name: string) => registerInspectorEntry(name)
+
+  // Helper to register with inspector (idempotent — safe to call multiple times)
+  const registerInspectorEntry = (name: string) => {
+    const registry = getInspectorRegistry()
+    const server = getInspectorServer()
+    const baseUrl = bridge.getBaseUrl()
+
+    registry.register({
+      name,
+      componentType: 'piano-roll',
+      bridgeBaseUrl: baseUrl,
+      registeredAt: Date.now(),
+    })
+
+    server.registerSessionFactory(name, {
+      createSession: () => {
+        const sessionId = bridge.generateSessionId()
+        const sessionData: PianoRollSessionData = {
+          type: 'bound',
+          clipMap: clips,
+          clipName: name,
+        }
+        bridge.registerSession(sessionId, sessionData)
+        clips.bind(name, sessionId)
+        const addr = new URL(baseUrl)
+        const wsUrl = `ws://127.0.0.1:${addr.port}/ws?id=${sessionId}`
+        return { sessionId, wsUrl }
+      },
+      destroySession: (sessionId: string) => {
+        clips.unbind(name, sessionId)
+        bridge.removeSession(sessionId)
+      },
+    })
+  }
+
   return {
     clips,
 
@@ -438,6 +485,13 @@ export function createPianoRollBridge(): PianoRollBridgeAPI {
     },
 
     shutdown(): void {
+      // Unregister all entries from inspector
+      const registry = getInspectorRegistry()
+      const server = getInspectorServer()
+      for (const name of clips.keys()) {
+        registry.unregister(name)
+        server.unregisterSessionFactory(name)
+      }
       bridge.shutdown()
     }
   }

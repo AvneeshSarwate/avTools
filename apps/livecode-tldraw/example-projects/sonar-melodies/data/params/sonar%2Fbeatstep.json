@@ -1,0 +1,54 @@
+{
+  "type": "params",
+  "name": "sonar/beatstep",
+  "savedAt": "2026-10-05T20:11:27.233Z",
+  "values": {
+    "device": "Arturia BeatStep",
+    "focus": "d7mel",
+    "followFocus": true,
+    "encoderMode": "relative1",
+    "status": "listening to Arturia BeatStep"
+  },
+  "meta": {
+    "device": {
+      "label": "BeatStep input",
+      "options": {
+        "(none)": "",
+        "IAC Driver Bus 1": "IAC Driver Bus 1",
+        "IAC Driver Bus 2": "IAC Driver Bus 2",
+        "IAC Driver Bus 3": "IAC Driver Bus 3",
+        "IAC Driver Bus 4": "IAC Driver Bus 4",
+        "IAC Driver Bus 5": "IAC Driver Bus 5",
+        "IAC Driver Bus 6": "IAC Driver Bus 6",
+        "IAC Driver Bus 7": "IAC Driver Bus 7",
+        "IAC Driver Bus 8": "IAC Driver Bus 8",
+        "Arturia BeatStep": "Arturia BeatStep",
+        "LinnStrument MIDI": "LinnStrument MIDI"
+      }
+    },
+    "focus": {
+      "label": "encoders edit",
+      "options": {
+        "dscale5": "dscale5",
+        "dscale7": "dscale7",
+        "d7mel": "d7mel"
+      }
+    },
+    "followFocus": {
+      "label": "switcher moves canvas focus"
+    },
+    "encoderMode": {
+      "label": "encoder mode",
+      "options": {
+        "delta (factory absolute encoders)": "delta",
+        "absolute (jumps on focus change)": "absolute",
+        "relative #1 (64 ± n)": "relative1",
+        "relative #2 (two's complement)": "relative2",
+        "relative #3 (16 ± n)": "relative3"
+      }
+    },
+    "status": {
+      "label": "status"
+    }
+  }
+}

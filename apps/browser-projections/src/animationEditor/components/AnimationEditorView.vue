@@ -1,15 +1,50 @@
 <script setup lang="ts">
 import { ref, provide, onMounted, onUnmounted, computed, shallowRef, reactive, watch } from 'vue'
-import type { TrackDef, EditorMode, TrackElement, NumberElement, EnumElement, FuncElementData } from '../types'
+import type {
+  TrackDef,
+  EditorMode,
+  PlayheadMarker,
+} from '../types'
 import { Core } from '../core'
 import { RenderScheduler } from '../renderScheduler'
-import { NAME_COLUMN_WIDTH, EDIT_SIDEBAR_WIDTH } from '../constants'
+import { NAME_COLUMN_WIDTH, EDITOR_THEME } from '../constants'
 import TimeRibbon from './TimeRibbon.vue'
 import TrackList from './TrackList.vue'
 import Playhead from './Playhead.vue'
+import PlayheadMarkers from './PlayheadMarkers.vue'
 import EditModeView from './EditModeView.vue'
 import ToastContainer from './ToastContainer.vue'
-import { AnimationEditorWebSocketController, coreToTrackData, type TrackData } from '../animationEditorWebSocket'
+import {
+  AnimationEditorWebSocketController,
+  coreToTrackData,
+  type AnimationTimelineValue,
+  type TrackData,
+} from '../animationEditorWebSocket'
+
+const MIN_SIDEBAR_WIDTH = 120
+const MAX_SIDEBAR_WIDTH = 500
+const MIN_TIMELINE_WIDTH = 180
+const SIDEBAR_WIDTH_STORAGE_KEY = 'animationEditor.sidebarWidth'
+
+function clampSidebarWidth(w: number, availableWidth?: number): number {
+  const widthLimit = Number.isFinite(availableWidth)
+    ? Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, (availableWidth as number) - MIN_TIMELINE_WIDTH))
+    : MAX_SIDEBAR_WIDTH
+  return Math.max(MIN_SIDEBAR_WIDTH, Math.min(widthLimit, w))
+}
+
+function loadStoredSidebarWidth(): number {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)
+    if (raw !== null) {
+      const n = parseInt(raw, 10)
+      if (Number.isFinite(n)) return clampSidebarWidth(n)
+    }
+  } catch {
+    // localStorage unavailable (SSR, private mode) — fall through
+  }
+  return NAME_COLUMN_WIDTH
+}
 
 const props = withDefaults(defineProps<{
   duration?: number
@@ -18,6 +53,10 @@ const props = withDefaults(defineProps<{
 }>(), {
   interactive: true
 })
+
+const emit = defineEmits<{
+  'timeline-change': [value: AnimationTimelineValue]
+}>()
 
 // WebSocket-overridable config
 const wsConfig = reactive({
@@ -30,13 +69,25 @@ const effectiveInteractive = computed(() => wsConfig.interactive ?? props.intera
 
 // WebSocket controller
 const wsController = shallowRef<AnimationEditorWebSocketController | null>(null)
+let lastTrackSignature = ''
+let lastStateSignature = ''
 
 // Core state
 const core = new Core(props.duration)
 const scheduler = new RenderScheduler()
+const timelineDuration = ref(core.duration)
+
+// Bumped on every core mutation so Vue recomputes derived state (e.g. hideEmptyTracks filter)
+const trackDataVersion = ref(0)
 
 // Wire up invalidation
-core.setInvalidateCallback(() => scheduler.invalidate())
+core.setInvalidateCallback((kind) => {
+  if (kind === 'tracks') {
+    timelineDuration.value = core.duration
+    trackDataVersion.value++
+    scheduler.invalidate()
+  }
+})
 
 // Editor mode
 const mode = ref<EditorMode>('view')
@@ -44,6 +95,7 @@ const mode = ref<EditorMode>('view')
 // Reactive state that shadows core state for Vue reactivity
 const currentTime = ref(0)
 const trackIds = ref<string[]>([])
+const playheadMarkers = ref<PlayheadMarker[]>([])
 
 // Track selection for edit mode (checkboxes in view mode)
 const selectedTrackIdsForEdit = ref<Set<string>>(new Set())
@@ -58,20 +110,34 @@ const livePlayhead = ref(0)
 // Search filter
 const searchFilter = ref('')
 
+// Toggle: only show tracks that have keyframes
+const hideEmptyTracks = ref(false)
+
+// Draggable sidebar / name-column width (shared across view and edit modes)
+const sidebarWidth = ref(loadStoredSidebarWidth())
+const editorBodyRef = ref<HTMLElement | null>(null)
+const editorBodyWidth = ref<number | undefined>(undefined)
+const overlayRootRef = ref<HTMLElement | null>(null)
+
 // ResizeObserver reference for cleanup
 let resizeObserver: ResizeObserver | null = null
 
 // Track list container ref for playhead positioning
 const trackListRef = ref<HTMLElement | null>(null)
-const canvasAreaWidth = ref(0)
+const trackListContainerWidth = ref(0)
+const canvasAreaWidth = computed(() =>
+  Math.max(0, trackListContainerWidth.value - sidebarWidth.value)
+)
 
 // Provide to children
 provide('core', core)
+provide('trackDataVersion', trackDataVersion)
 provide('scheduler', scheduler)
 provide('windowStart', windowStart)
 provide('windowEnd', windowEnd)
 provide('searchFilter', searchFilter)
 provide('selectedTrackIdsForEdit', selectedTrackIdsForEdit)
+provide('animationEditorOverlayRoot', overlayRootRef)
 
 // Toggle track selection for edit mode
 function toggleTrackSelection(trackId: string) {
@@ -87,70 +153,125 @@ function toggleTrackSelection(trackId: string) {
 provide('toggleTrackSelection', toggleTrackSelection)
 
 // Computed: filtered track IDs (uses reactive trackIds)
+// trackDataVersion dependency ensures recomputation when core data mutates
 const filteredTrackIds = computed(() => {
-  const filter = searchFilter.value.toLowerCase().trim()
-  if (!filter) return trackIds.value
+  void trackDataVersion.value
+  let ids = trackIds.value
 
-  return trackIds.value.filter(id => {
+  if (hideEmptyTracks.value) {
+    ids = ids.filter(id => {
+      const track = core.getTrackById(id)
+      return track && track.elementData.length > 0
+    })
+  }
+
+  const filter = searchFilter.value.toLowerCase().trim()
+  if (!filter) return ids
+
+  return ids.filter(id => {
     const track = core.getTrackById(id)
     return track && track.def.name.toLowerCase().includes(filter)
   })
 })
 
-// Computed: TimeRibbon spacer width based on mode
-const ribbonSpacerWidth = computed(() => {
-  return mode.value === 'view'
-    ? NAME_COLUMN_WIDTH
-    : EDIT_SIDEBAR_WIDTH
-})
+// TimeRibbon spacer width follows the draggable sidebar in both modes
+const ribbonSpacerWidth = computed(() => sidebarWidth.value)
 
-// Helper: Convert TrackData from WebSocket to TrackDef for Core
-function trackDataToCoreTracks(tracks: TrackData[], trackOrder: string[]) {
-  // Clear existing tracks
-  for (const id of [...core.orderedTrackIds]) {
-    core.deleteTrack(id)
-  }
+function applyTracks(tracks: TrackData[], trackOrder: string[]) {
+  if (!core.reconcileTracks(tracks, trackOrder)) return
 
-  // Add tracks in order
-  for (const trackId of trackOrder) {
-    const trackData = tracks.find(t => t.id === trackId)
-    if (!trackData) continue
-
-    // Create track definition (without callbacks - those are on Deno side)
-    const def: TrackDef = {
-      name: trackData.name,
-      fieldType: trackData.fieldType,
-      data: trackData.elementData.map(elem => {
-        if (trackData.fieldType === 'number') {
-          const e = elem as { time: number; value: number }
-          return { time: e.time, element: e.value }
-        } else if (trackData.fieldType === 'enum') {
-          const e = elem as { time: number; value: string }
-          return { time: e.time, element: e.value }
-        } else {
-          const e = elem as { time: number; value: { funcName: string; args: unknown[] } }
-          return { time: e.time, element: e.value }
-        }
-      }),
-      low: trackData.low,
-      high: trackData.high
-    }
-
-    core.addTrack(def)
-  }
-
-  // Update reactive state
   trackIds.value = [...core.orderedTrackIds]
-  windowEnd.value = core.duration
+  applyConfiguredDuration(wsConfig.duration, { suppressWsState: true })
+  markTrackSignature()
+  markStateSignature()
   scheduler.invalidate()
 }
 
+function setTimeline(value: AnimationTimelineValue) {
+  applyTracks(value.tracks, value.trackOrder)
+}
+
+function getTimeline(): AnimationTimelineValue {
+  return getTrackPayload()
+}
+
+function setPlayheadMarkers(markers: readonly PlayheadMarker[]): void {
+  playheadMarkers.value = markers.map((marker) => ({ ...marker }))
+}
+
+function getPlayheadMarkers(): PlayheadMarker[] {
+  return playheadMarkers.value.map((marker) => ({ ...marker }))
+}
+
+function getTrackExtent(): number {
+  let maxTime = 0
+  for (const track of core.getOrderedTracks()) {
+    const lastTime = track.times[track.times.length - 1]
+    if (lastTime !== undefined && lastTime > maxTime) {
+      maxTime = lastTime
+    }
+  }
+  return maxTime
+}
+
+function applyConfiguredDuration(
+  requestedDuration: number | undefined,
+  options?: { suppressWsState?: boolean }
+) {
+  const previousDuration = core.duration
+  const wasFullWindow = windowStart.value === 0 && windowEnd.value === previousDuration
+  const baseDuration = requestedDuration ?? props.duration ?? core.duration
+  const normalizedDuration = Number.isFinite(baseDuration) ? Math.max(0, baseDuration) : core.duration
+  const nextDuration = Math.max(normalizedDuration, getTrackExtent())
+
+  core.duration = nextDuration
+  timelineDuration.value = nextDuration
+  currentTime.value = Math.min(currentTime.value, nextDuration)
+  livePlayhead.value = Math.min(livePlayhead.value, nextDuration)
+  windowStart.value = Math.min(windowStart.value, nextDuration)
+  windowEnd.value = wasFullWindow ? nextDuration : Math.min(windowEnd.value, nextDuration)
+
+  if (options?.suppressWsState) {
+    markStateSignature()
+  }
+}
+
+function getTrackPayload() {
+  return coreToTrackData(core.tracksById, core.orderedTrackIds)
+}
+
+function getTrackSignature(payload = getTrackPayload()) {
+  return JSON.stringify({
+    trackOrder: payload.trackOrder,
+    tracks: payload.tracks,
+  })
+}
+
+function getStateSignature() {
+  return JSON.stringify({
+    currentTime: currentTime.value,
+    duration: core.duration,
+    windowStart: windowStart.value,
+    windowEnd: windowEnd.value,
+  })
+}
+
+function markTrackSignature(payload = getTrackPayload()) {
+  lastTrackSignature = getTrackSignature(payload)
+}
+
+function markStateSignature() {
+  lastStateSignature = getStateSignature()
+}
+
 // Helper: Send tracks update via WebSocket
-function sendTracksUpdate(source?: 'tracks' | 'time' | 'window' | 'other') {
+function sendTracksUpdate(
+  source?: 'tracks' | 'time' | 'window' | 'other',
+  payload = getTrackPayload()
+) {
   if (!wsController.value?.isConnected) return
 
-  const { tracks, trackOrder } = coreToTrackData(core.tracksById, core.orderedTrackIds)
-  wsController.value.sendTracksUpdate(tracks, trackOrder, source)
+  wsController.value.sendTracksUpdate(payload.tracks, payload.trackOrder, source)
 }
 
 // Helper: Send state update via WebSocket
@@ -166,17 +287,27 @@ function sendStateUpdate(source?: 'tracks' | 'time' | 'window' | 'other') {
   )
 }
 
-// Update canvas area width on resize
+// Update track-list container width on resize
 onMounted(() => {
-  const updateWidth = () => {
+  const updateLayoutMetrics = () => {
+    if (editorBodyRef.value) {
+      editorBodyWidth.value = editorBodyRef.value.clientWidth
+      const clampedWidth = clampSidebarWidth(sidebarWidth.value, editorBodyWidth.value)
+      if (clampedWidth !== sidebarWidth.value) {
+        sidebarWidth.value = clampedWidth
+      }
+    }
     if (trackListRef.value) {
-      canvasAreaWidth.value = trackListRef.value.clientWidth - NAME_COLUMN_WIDTH
+      trackListContainerWidth.value = trackListRef.value.clientWidth
     }
   }
 
-  updateWidth()
+  updateLayoutMetrics()
 
-  resizeObserver = new ResizeObserver(updateWidth)
+  resizeObserver = new ResizeObserver(updateLayoutMetrics)
+  if (editorBodyRef.value) {
+    resizeObserver.observe(editorBodyRef.value)
+  }
   if (trackListRef.value) {
     resizeObserver.observe(trackListRef.value)
   }
@@ -189,11 +320,10 @@ onMounted(() => {
     wsController.value = new AnimationEditorWebSocketController(props.wsAddress)
     wsController.value.setHandlers({
       onSetTracks: (tracks, trackOrder) => {
-        trackDataToCoreTracks(tracks, trackOrder)
-        // Don't echo back to sender
+        applyTracks(tracks, trackOrder)
       },
       onScrubToTime: (time) => {
-        scrubToTime(time)
+        scrubToTime(time, { suppressWsState: true })
       },
       onSetLivePlayhead: (position) => {
         livePlayhead.value = position
@@ -201,7 +331,11 @@ onMounted(() => {
       },
       onSetConfig: (config) => {
         if (config.interactive !== undefined) wsConfig.interactive = config.interactive
-        if (config.duration !== undefined) wsConfig.duration = config.duration
+        if (config.duration !== undefined) {
+          wsConfig.duration = config.duration
+          applyConfiguredDuration(config.duration, { suppressWsState: true })
+          scheduler.invalidate()
+        }
       },
       onGetState: (requestId) => {
         const { tracks, trackOrder } = coreToTrackData(core.tracksById, core.orderedTrackIds)
@@ -220,6 +354,28 @@ onMounted(() => {
   }
 })
 
+watch(trackDataVersion, () => {
+  const payload = getTrackPayload()
+  const signature = getTrackSignature(payload)
+  if (signature === lastTrackSignature) return
+
+  lastTrackSignature = signature
+  sendTracksUpdate('tracks', payload)
+  emit('timeline-change', payload)
+}, { flush: 'post' })
+
+watch(
+  () => [currentTime.value, windowStart.value, windowEnd.value, trackDataVersion.value],
+  () => {
+    const signature = getStateSignature()
+    if (signature === lastStateSignature) return
+
+    lastStateSignature = signature
+    sendStateUpdate('other')
+  },
+  { flush: 'post' }
+)
+
 onUnmounted(() => {
   wsController.value?.disconnect()
   resizeObserver?.disconnect()
@@ -227,6 +383,7 @@ onUnmounted(() => {
 })
 
 function toggleMode() {
+  if (!effectiveInteractive.value) return
   mode.value = mode.value === 'view' ? 'edit' : 'view'
   // Refresh track IDs when switching back to view mode
   if (mode.value === 'view') {
@@ -247,22 +404,28 @@ function addTrack(def: TrackDef, options?: { suppressWsUpdate?: boolean }): bool
     trackIds.value = [...core.orderedTrackIds]
     // Update window end if duration changed
     windowEnd.value = core.duration
-    // Send WebSocket update unless suppressed
-    if (!options?.suppressWsUpdate) {
-      sendTracksUpdate('tracks')
+    if (options?.suppressWsUpdate) {
+      markTrackSignature()
+      markStateSignature()
     }
   }
   return result
 }
 
-function scrubToTime(t: number): void {
+function scrubToTime(t: number, options?: { suppressWsState?: boolean }): void {
   core.scrubToTime(t)
   currentTime.value = t
+  if (options?.suppressWsState) {
+    markStateSignature()
+  }
 }
 
-function jumpToTime(t: number): void {
+function jumpToTime(t: number, options?: { suppressWsState?: boolean }): void {
   core.jumpToTime(t)
   currentTime.value = t
+  if (options?.suppressWsState) {
+    markStateSignature()
+  }
 }
 
 function setWindowRange(start: number, end: number): void {
@@ -271,71 +434,163 @@ function setWindowRange(start: number, end: number): void {
   scheduler.invalidate()
 }
 
+// Undo / redo — core's invalidate callback cascades through trackDataVersion,
+// so EditModeView's dataVersion watch rebuilds the lanes automatically.
+function handleUndo() {
+  core.undo()
+}
+
+function handleRedo() {
+  core.redo()
+}
+
+// Sidebar width drag-to-resize
+let resizeStartX = 0
+let resizeStartWidth = 0
+
+function onResizeStart(e: MouseEvent) {
+  e.preventDefault()
+  resizeStartX = e.clientX
+  resizeStartWidth = sidebarWidth.value
+  window.addEventListener('mousemove', onResizeMove)
+  window.addEventListener('mouseup', onResizeEnd)
+}
+
+function onResizeMove(e: MouseEvent) {
+  const delta = e.clientX - resizeStartX
+  sidebarWidth.value = clampSidebarWidth(resizeStartWidth + delta, editorBodyWidth.value)
+}
+
+function onResizeEnd() {
+  window.removeEventListener('mousemove', onResizeMove)
+  window.removeEventListener('mouseup', onResizeEnd)
+  try {
+    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth.value))
+  } catch {
+    // localStorage unavailable — width is still applied for this session
+  }
+}
+
 defineExpose({
   addTrack,
   scrubToTime,
   jumpToTime,
   setWindowRange,
+  setTimeline,
+  getTimeline,
+  setPlayheadMarkers,
+  getPlayheadMarkers,
   core,
   mode,
 })
 </script>
 
 <template>
-  <div class="animation-editor">
-    <!-- Mode toggle header -->
-    <div class="mode-header">
-      <button class="mode-toggle" @click="toggleMode">
+  <div
+    class="animation-editor"
+    data-component="AnimationEditorView"
+    :data-mode="mode"
+    :style="{ ...EDITOR_THEME, '--sidebar-width': sidebarWidth + 'px' }"
+  >
+    <!-- Control header: mode toggle + mode-specific controls -->
+    <div class="control-header" data-region="control-header">
+      <button
+        class="mode-toggle"
+        data-testid="mode-toggle"
+        :disabled="!effectiveInteractive"
+        @click="toggleMode"
+      >
         {{ mode === 'view' ? 'Switch to Edit Mode' : 'Switch to View Mode' }}
       </button>
       <span class="mode-label">{{ mode === 'view' ? 'View Mode' : 'Edit Mode' }}</span>
+
+      <!-- View-mode controls -->
+      <div class="view-controls" data-region="view-controls" v-if="mode === 'view'">
+        <input
+          v-model="searchFilter"
+          type="text"
+          placeholder="Search tracks..."
+          class="search-input"
+          data-testid="search-input"
+        />
+        <label class="hide-empty-toggle">
+          <input type="checkbox" v-model="hideEmptyTracks" data-testid="hide-empty-toggle" />
+          <span>Hide empty</span>
+        </label>
+      </div>
+
+      <!-- Edit-mode controls -->
+      <div class="edit-controls" data-region="edit-controls" v-else>
+        <button class="header-btn" data-testid="undo" @click="handleUndo" title="Undo">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
+          </svg>
+        </button>
+        <button class="header-btn" data-testid="redo" @click="handleRedo" title="Redo">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/>
+          </svg>
+        </button>
+      </div>
     </div>
 
-    <!-- Time ribbon (always visible, controls zoom/pan) -->
-    <TimeRibbon
-      :duration="core.duration"
-      v-model:window-start="windowStart"
-      v-model:window-end="windowEnd"
-      :spacer-width="ribbonSpacerWidth"
-      @update:window-start="onWindowChange"
-      @update:window-end="onWindowChange"
-    />
+    <!-- Body: ribbon + content + resize handle (handle is scoped here so it spans from ribbon to bottom, not over the control header) -->
+    <div class="editor-body" data-region="editor-body" ref="editorBodyRef">
+      <!-- Time ribbon (always visible, controls zoom/pan) -->
+      <TimeRibbon
+        :duration="timelineDuration"
+        v-model:window-start="windowStart"
+        v-model:window-end="windowEnd"
+        :spacer-width="ribbonSpacerWidth"
+        @update:window-start="onWindowChange"
+        @update:window-end="onWindowChange"
+      />
 
-    <!-- View Mode -->
-    <template v-if="mode === 'view'">
-      <!-- Track list with playhead overlay -->
-      <div class="track-list-container" ref="trackListRef">
-        <!-- Search row aligned with track names -->
-        <div class="search-row">
-          <div class="name-column-header">
-            <input
-              v-model="searchFilter"
-              type="text"
-              placeholder="Search tracks..."
-              class="search-input"
-            />
-          </div>
+      <!-- View Mode -->
+      <template v-if="mode === 'view'">
+        <div class="track-list-container" data-region="track-list-container" ref="trackListRef">
+          <TrackList :track-ids="filteredTrackIds" />
+          <Playhead
+            :current-time="currentTime"
+            :window-start="windowStart"
+            :window-end="windowEnd"
+            :canvas-width="canvasAreaWidth"
+            :left-offset="sidebarWidth"
+          />
+          <PlayheadMarkers
+            :markers="playheadMarkers"
+            :window-start="windowStart"
+            :window-end="windowEnd"
+            :canvas-width="canvasAreaWidth"
+            :left-offset="sidebarWidth"
+          />
         </div>
-        <TrackList :track-ids="filteredTrackIds" />
-        <Playhead
-          :current-time="currentTime"
-          :window-start="windowStart"
-          :window-end="windowEnd"
-          :canvas-width="canvasAreaWidth"
-          :left-offset="NAME_COLUMN_WIDTH"
-        />
-      </div>
-    </template>
+      </template>
 
-    <!-- Edit Mode -->
-    <EditModeView
-      v-else
-      :core="core"
-      :window-start="windowStart"
-      :window-end="windowEnd"
-      :current-time="currentTime"
-      :initial-enabled-track-ids="selectedTrackIdsForEdit"
-    />
+      <!-- Edit Mode -->
+      <EditModeView
+        v-else
+        :core="core"
+        :window-start="windowStart"
+        :window-end="windowEnd"
+        :current-time="currentTime"
+        :playhead-markers="playheadMarkers"
+        :data-version="trackDataVersion"
+        :duration="timelineDuration"
+        :initial-enabled-track-ids="selectedTrackIdsForEdit"
+      />
+
+      <!-- Column resize handle (both modes) -->
+      <div
+        class="sidebar-resize-handle"
+        data-testid="sidebar-resize-handle"
+        :style="{ left: (sidebarWidth - 2) + 'px' }"
+        @mousedown="onResizeStart"
+      ></div>
+    </div>
+
+    <!-- Local overlay target for teleported UI so it stays inside the editor shadow root -->
+    <div ref="overlayRootRef" class="overlay-root" data-region="overlay-root"></div>
 
     <!-- Toast notifications -->
     <ToastContainer />
@@ -346,87 +601,167 @@ defineExpose({
 .animation-editor {
   display: flex;
   flex-direction: column;
-  background: #121416;
-  color: #c8c8c8;
+  position: relative;
+  background: var(--ae-bg);
+  color: var(--ae-text);
+  color-scheme: dark;
+  font-variant-numeric: tabular-nums;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   height: 100%;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
 }
 
-.mode-header {
+.animation-editor :deep(button:focus-visible),
+.animation-editor :deep(input:focus-visible),
+.animation-editor :deep(select:focus-visible) {
+  outline: 2px solid var(--ae-accent);
+  outline-offset: 2px;
+}
+
+.animation-editor :deep(input[type="checkbox"]) {
+  accent-color: var(--ae-accent);
+}
+
+.animation-editor :deep(button:disabled) {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.control-header {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 8px 16px;
-  background: #0e1012;
-  border-bottom: 1px solid #2a2d30;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--ae-header);
+  border-bottom: 1px solid var(--ae-border);
+  flex-shrink: 0;
 }
 
 .mode-toggle {
   padding: 6px 14px;
-  background: #3a7ca5;
+  background: var(--ae-accent);
   border: none;
-  border-radius: 4px;
-  color: #fff;
+  border-radius: 0;
+  color: var(--ae-on-accent);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s ease;
 }
 
 .mode-toggle:hover {
-  background: #4a8cb5;
+  background: var(--ae-accent-hover);
 }
 
 .mode-label {
   font-size: 11px;
-  color: #666;
-  text-transform: uppercase;
-  letter-spacing: 1px;
+  color: var(--ae-muted);
+  letter-spacing: 0;
   font-weight: 500;
 }
 
-.search-row {
+.view-controls,
+.edit-controls {
   display: flex;
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  background: #141618;
-}
-
-.name-column-header {
-  width: v-bind('NAME_COLUMN_WIDTH + "px"');
-  min-width: v-bind('NAME_COLUMN_WIDTH + "px"');
-  padding: 6px 8px;
-  box-sizing: border-box;
-  background: #141618;
-  border-bottom: 1px solid #2a2d30;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .search-input {
-  width: 100%;
+  width: 180px;
   padding: 6px 10px;
-  background: #1a1c20;
-  border: 1px solid #2a2d30;
-  border-radius: 4px;
-  color: #c8c8c8;
+  background: var(--ae-input);
+  border: 1px solid var(--ae-border);
+  border-radius: 0;
+  color: var(--ae-text);
   font-size: 12px;
-  transition: border-color 0.15s ease;
 }
 
 .search-input:focus {
   outline: none;
-  border-color: #3a7ca5;
+  border-color: var(--ae-accent);
 }
 
 .search-input::placeholder {
-  color: #555;
+  color: var(--ae-muted);
+}
+
+.hide-empty-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--ae-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.hide-empty-toggle input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.hide-empty-toggle:hover {
+  color: var(--ae-text);
+}
+
+.header-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ae-control);
+  border: 1px solid var(--ae-border);
+  border-radius: 0;
+  color: var(--ae-muted);
+  cursor: pointer;
+}
+
+.header-btn:hover {
+  background: var(--ae-hover);
+  color: var(--ae-text);
+}
+
+.editor-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.overlay-root {
+  position: relative;
+  z-index: 200;
 }
 
 .track-list-container {
   flex: 1;
   position: relative;
+  min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  z-index: 50;
+  background: transparent;
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle:active {
+  background: var(--ae-accent);
 }
 </style>

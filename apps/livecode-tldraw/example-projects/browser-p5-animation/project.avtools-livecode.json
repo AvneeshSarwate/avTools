@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "name": "browser-p5-animation",
+  "engineTarget": "browser",
+  "modules": [
+    {
+      "id": "p5-anim/state",
+      "path": "modules/state.ts",
+      "sourcePath": "modules/state.orig.ts",
+      "runtimePath": "modules/state.ts",
+      "kind": "runnable",
+      "title": "shared state",
+      "sourceVersion": 2,
+      "x": 80,
+      "y": 80,
+      "w": 560,
+      "h": 300
+    },
+    {
+      "id": "p5-anim/sketch",
+      "path": "modules/sketch.ts",
+      "sourcePath": "modules/sketch.orig.ts",
+      "runtimePath": "modules/sketch.ts",
+      "kind": "runnable",
+      "title": "p5 sketch (draws in the engine tab)",
+      "sourceVersion": 2,
+      "x": 80,
+      "y": 420,
+      "w": 560,
+      "h": 520
+    },
+    {
+      "id": "p5-anim/player",
+      "path": "modules/player.ts",
+      "sourcePath": "modules/player.orig.ts",
+      "runtimePath": "modules/player.ts",
+      "kind": "runnable",
+      "title": "animation player",
+      "sourceVersion": 2,
+      "x": 80,
+      "y": 980,
+      "w": 560,
+      "h": 460
+    }
+  ],
+  "canvas": {
+    "pianoRollViews": [],
+    "paramPaneViews": [],
+    "animationEditorViews": [
+      {
+        "id": "shape:p5-anim-xy-editor",
+        "animationName": "p5-anim_xy",
+        "x": 700,
+        "y": 80,
+        "w": 620,
+        "h": 420
+      }
+    ],
+    "scopeViews": []
+  },
+  "data": [
+    {
+      "type": "animationTimeline",
+      "name": "p5-anim_xy",
+      "path": "data/animationTimeline/p5-anim_xy.json"
+    }
+  ]
+}

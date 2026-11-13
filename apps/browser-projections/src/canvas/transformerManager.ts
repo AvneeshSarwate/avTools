@@ -1,15 +1,28 @@
 import Konva from 'konva'
 import { watch } from 'vue'
 
-import { pushCommandWithStates } from './commands'
+import { captureCommandState, pushCommandWithStates } from './commands'
 import type { CanvasRuntimeState } from './canvasState'
+import { bakeFreehandNodeScale } from './freehandTool'
 import { updateMetadataHighlight } from './metadata/highlight'
+
+const isUnder = (node: Konva.Node, ancestor: Konva.Node | undefined): boolean => {
+  let current: Konva.Node | null = node.getParent()
+  while (current) {
+    if (current === ancestor) return true
+    current = current.getParent()
+  }
+  return false
+}
 
 const createTransformer = (state: CanvasRuntimeState, container: Konva.Group) => {
   const transformer = new Konva.Transformer({
     rotateEnabled: true,
     keepRatio: false,
-    padding: 6
+    padding: 6,
+    // Shapes keep their stroke width under scale (strokeScaleEnabled is off
+    // on every shape), so the box fits the geometry, not the stroke.
+    ignoreStroke: true
   })
 
   state.layers.transformer = transformer
@@ -26,6 +39,18 @@ const createTransformer = (state: CanvasRuntimeState, container: Konva.Group) =>
   }
 
   transformer.on('transformend', () => {
+    // A resized stroke keeps its thickness: the scale moves into its points
+    // before the command (and the committed document) captures the result.
+    let baked = false
+    for (const node of transformer.nodes()) {
+      if (isUnder(node, state.groups.freehandShape)) {
+        baked = bakeFreehandNodeScale(state, node) || baked
+      }
+    }
+    if (baked) {
+      transformer.forceUpdate()
+      state.groups.freehandShape?.getLayer()?.batchDraw()
+    }
     finishTransformTrackingWithState(state, 'Transform')
     syncHighlight()
   })
@@ -73,36 +98,15 @@ function updateTransformerWithState(state: CanvasRuntimeState, selectedNodes: Ko
 
 // State-based transform tracking
 function startTransformTrackingWithState(state: CanvasRuntimeState) {
-  // Import dynamically to avoid circular dependencies
-  import('./freehandTool').then(({ getCurrentFreehandStateString }) => {
-    import('./polygonTool').then(({ getCurrentPolygonStateString }) => {
-      const startState = JSON.stringify({
-        freehand: getCurrentFreehandStateString(state),
-        polygon: getCurrentPolygonStateString(state)
-      })
-      // Store in state rather than module global
-      state.selection.transformStartState = startState
-    })
-  })
+  state.selection.transformStartState = captureCommandState(state)
 }
 
 function finishTransformTrackingWithState(state: CanvasRuntimeState, operationName: string) {
   const dragStartState = state.selection.transformStartState
   if (!dragStartState) return
-  
-  // Import dynamically to avoid circular dependencies
-  import('./freehandTool').then(({ getCurrentFreehandStateString }) => {
-    import('./polygonTool').then(({ getCurrentPolygonStateString }) => {
-      const endState = JSON.stringify({
-        freehand: getCurrentFreehandStateString(state),
-        polygon: getCurrentPolygonStateString(state)
-      })
-
-      if (dragStartState !== endState) {
-        pushCommandWithStates(state, operationName, dragStartState!, endState)
-      }
-
-      state.selection.transformStartState = ''
-    })
-  })
+  const endState = captureCommandState(state)
+  if (dragStartState !== endState) {
+    pushCommandWithStates(state, operationName, dragStartState, endState)
+  }
+  state.selection.transformStartState = ''
 }

@@ -1,0 +1,389 @@
+/**
+ * Project wire types: the on-disk manifest, the module/canvas records it
+ * holds, and the `/project/*` request and response bodies.
+ */
+
+import type { RuntimeModuleStatus } from "./runtime.ts";
+
+export type ProjectModuleKind = "runnable";
+
+export interface ProjectModuleRecord {
+  id: string;
+  path: string;
+  sourcePath: string;
+  runtimePath: string;
+  kind: ProjectModuleKind;
+  title: string;
+  sourceVersion: number;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+}
+
+/**
+ * What one piano-roll view is looking at: zoom as pixels per beat and per
+ * pitch row, scroll as the first visible beat and pitch row. View state, so it
+ * lives with the view, not in the roll entity (whose `viewport` is unused).
+ */
+export interface PianoRollViewState {
+  quarterNoteWidth: number;
+  noteHeight: number;
+  startBeat: number;
+  topRow: number;
+}
+
+export interface ProjectCanvasPianoRollView {
+  id: string;
+  rollName: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  view?: PianoRollViewState;
+}
+
+export interface ProjectCanvasParamPaneView {
+  id: string;
+  paramsName: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface ProjectCanvasAnimationEditorView {
+  id: string;
+  animationName: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * A signal-scope view. Unlike the two above it names a binding rather than an
+ * entity: the source it watches may be ephemeral (a signal, which this project
+ * never saves) or one leaf of a durable params entity. Only the binding is
+ * persisted — never any of the samples the scope drew.
+ */
+export interface ProjectCanvasScopeView {
+  id: string;
+  sourceType: "signal" | "params";
+  name: string;
+  /** Dot-joined field path into the bound value; empty for whole values. */
+  path: string;
+  windowSec: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface ProjectCanvasDrawingView {
+  id: string;
+  drawingName: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * A view mirroring a module's named canvas (`canvasSurface(name)`). The name
+ * is a DOM convention between module and UI, not an entity reference.
+ */
+export interface ProjectCanvasSurfaceView {
+  id: string;
+  surfaceName: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface ProjectCanvasSixSinesView {
+  id: string;
+  synthName: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * A view whose shape type the project's own UI code defines (`ui/index.tsx`).
+ * Saved as tldraw sees it: the props are the shape's own, and by convention
+ * hold the binding (`entityType`, `entityName`), layout, and presentation,
+ * never domain data, which lives in an entity.
+ */
+export interface ProjectCanvasProjectShape {
+  id: string;
+  type: string;
+  x: number;
+  y: number;
+  props: Record<string, unknown>;
+}
+
+export interface ProjectCanvasState {
+  sixSinesViews?: ProjectCanvasSixSinesView[];
+  pianoRollViews?: ProjectCanvasPianoRollView[];
+  paramPaneViews?: ProjectCanvasParamPaneView[];
+  animationEditorViews?: ProjectCanvasAnimationEditorView[];
+  scopeViews?: ProjectCanvasScopeView[];
+  drawingViews?: ProjectCanvasDrawingView[];
+  canvasSurfaceViews?: ProjectCanvasSurfaceView[];
+  projectShapes?: ProjectCanvasProjectShape[];
+}
+
+/**
+ * One durable entity's saved JSON file. Deliberately top-level in the manifest
+ * rather than inside `canvas`, which `/project/canvas` whole-replaces. `path`
+ * is project-relative and ends in `.json`; the entry carries the true entity
+ * name, so the filename never has to be decoded.
+ */
+export interface ProjectDataEntry {
+  type: string;
+  name: string;
+  path: string;
+}
+
+export interface LivecodeProjectManifest {
+  version: 1;
+  name: string;
+  /**
+   * Which world this project's modules execute in, which is also the world
+   * they are typechecked against: "browser" runs the shadow `deno check`
+   * under a browser lib (DOM globals legal, `Deno.*` a type error), "deno"
+   * under the default Deno lib. Absent means "follow the server's engine
+   * mode" — a `--engine remote` server materializes for the browser, so its
+   * projects check against browser truth by default.
+   */
+  engineTarget?: "deno" | "browser";
+  modules: ProjectModuleRecord[];
+  canvas?: ProjectCanvasState;
+  data?: ProjectDataEntry[];
+}
+
+export interface ProjectModuleInput {
+  id?: string;
+  path: string;
+  kind?: ProjectModuleKind;
+  title?: string;
+  sourceText?: string;
+  sourceVersion?: number;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+}
+
+export interface CreateProjectRequest {
+  projectPath?: string;
+  name?: string;
+  modules?: ProjectModuleInput[];
+}
+
+export interface OpenProjectRequest {
+  projectPath: string;
+}
+
+export interface ProjectModuleLocator {
+  id?: string;
+  path?: string;
+}
+
+export interface AddProjectModuleRequest extends ProjectModuleInput {}
+
+export interface UpdateProjectModuleRequest extends ProjectModuleInput {}
+
+export interface WriteProjectModuleRequest extends ProjectModuleLocator {
+  sourceText: string;
+  sourceVersion?: number;
+  /**
+   * Refuse (HTTP 409, `ProjectModuleWriteConflict`) instead of writing when the
+   * file changed on disk since the server last wrote or loaded it, unless the
+   * file already holds `sourceText`. The editor sets this so a keystroke cannot
+   * silently overwrite an edit made outside it; a deliberate overwrite omits it.
+   */
+  refuseIfChangedOnDisk?: boolean;
+}
+
+/** The 409 body of a write refused by `refuseIfChangedOnDisk`. */
+export interface ProjectModuleWriteConflict {
+  ok: false;
+  conflict: "changedOnDisk";
+  error: string;
+}
+
+export interface ReloadProjectModuleRequest extends ProjectModuleLocator {}
+
+export interface RemoveProjectModuleRequest extends ProjectModuleLocator {}
+
+export interface ProjectCurrentResponse {
+  ok: true;
+  project: {
+    root: string;
+    manifestPath: string;
+    manifest: LivecodeProjectManifest;
+  } | null;
+}
+
+export interface ProjectModuleStatus extends ProjectModuleRecord {
+  diskHash: string | null;
+  editorHash: string | null;
+  lastLoadedHash: string | null;
+  runHash: string | null;
+  dirty: boolean;
+  changedOnDisk: boolean;
+  conflict: boolean;
+  running: boolean;
+  runningStale: boolean;
+  dependencies: string[];
+  dependents: string[];
+  changedDependencies: string[];
+}
+
+/**
+ * One module's disk truth on the `/project/sources` WebSocket. `diskHash` is
+ * null when the canonical source cannot be read. `changedOnDisk` means the file
+ * differs from what the server last wrote or loaded for it: an edit made
+ * outside the editor that no client has reloaded yet.
+ */
+export interface ProjectSourceStatusEntry {
+  moduleId: string;
+  path: string;
+  diskHash: string | null;
+  changedOnDisk: boolean;
+}
+
+/**
+ * Pushed on `/project/sources` once at connect and then whenever any entry
+ * changes (the server stats sources about every 250 ms while a client
+ * listens). Each message is a complete snapshot for the current project;
+ * `projectRoot` is null when no project is open.
+ */
+export interface ProjectSourceStatusMessage {
+  type: "projectSourceStatus";
+  projectRoot: string | null;
+  modules: ProjectSourceStatusEntry[];
+}
+
+/**
+ * Informational, warning-tier dirty state for one durable entity. `unsaved`
+ * compares the store's cached latest JSON against what the last save/open
+ * recorded; a saved-but-absent entity reports as an unsaved deletion. Nothing
+ * ever auto-saves off the back of this.
+ */
+export interface ProjectDataEntityStatus {
+  type: string;
+  name: string;
+  unsaved: boolean;
+  error?: string;
+}
+
+export interface ProjectStatusResponse {
+  ok: true;
+  project: ProjectCurrentResponse["project"];
+  modules: ProjectModuleStatus[];
+  activeModules: RuntimeModuleStatus[];
+  projectSourceHash: string | null;
+  data: ProjectDataEntityStatus[];
+}
+
+interface ProjectSaveEntityIdentity {
+  type: string;
+  name: string;
+  path: string;
+}
+
+export type ProjectSaveEntityResult = ProjectSaveEntityIdentity &
+  ({ ok: true } | { ok: false; error: string });
+
+/** An entity save deliberately skipped, with the reason for the operator. */
+export interface ProjectSaveSkippedEntity {
+  type: string;
+  name: string;
+  reason: string;
+}
+
+export interface ProjectSaveResponse extends ProjectCurrentResponse {
+  data: ProjectSaveEntityResult[];
+  skipped: ProjectSaveSkippedEntity[];
+}
+
+export interface ProjectDependencyEdge {
+  fromModuleId: string;
+  toModuleId?: string;
+  specifier: string;
+  kind: "static" | "dynamic";
+  resolvedPath?: string;
+  external?: boolean;
+  unresolved?: boolean;
+}
+
+export interface ProjectShadowDiagnostic {
+  source: "deno" | "visualizer";
+  moduleId?: string;
+  path?: string;
+  code: string;
+  message: string;
+  line?: number;
+  column?: number;
+  from?: number;
+  to?: number;
+  raw: string;
+}
+
+export interface ProjectShadowModuleStatus {
+  moduleId: string;
+  path: string;
+  dependencies: string[];
+  dependents: string[];
+  changedDependencies: string[];
+  diagnostics: ProjectShadowDiagnostic[];
+  dependencyDiagnostics: ProjectShadowDiagnostic[];
+  hasDependencyWarnings: boolean;
+}
+
+export interface ProjectShadowCheckResponse {
+  ok: true;
+  project: ProjectCurrentResponse["project"];
+  checkedAt: string;
+  shadowRoot: string;
+  projectSourceHash: string | null;
+  edges: ProjectDependencyEdge[];
+  modules: ProjectShadowModuleStatus[];
+  diagnostics: ProjectShadowDiagnostic[];
+  denoCheck: {
+    success: boolean;
+    code: number;
+    output: string;
+  };
+}
+
+export interface ProjectModuleSourceResponse {
+  ok: true;
+  module: ProjectModuleRecord;
+  sourceText: string;
+}
+
+/** One project discovered by `GET /projects/list`. */
+export interface ProjectIndexEntry {
+  /** Absolute project directory; pass it as `projectPath` to open the project. */
+  root: string;
+  manifestPath: string;
+  /** Manifest name, or the directory name when the manifest is unreadable. */
+  name: string;
+  engineTarget?: "deno" | "browser";
+  moduleCount: number;
+  /** Present when the manifest exists but could not be read or parsed. */
+  error?: string;
+}
+
+export interface ProjectsListResponse {
+  ok: true;
+  /** The absolute directories that were scanned. */
+  roots: string[];
+  projects: ProjectIndexEntry[];
+}

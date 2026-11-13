@@ -3,7 +3,7 @@
 import type { BlitPipeline } from "./blit.ts";
 import { blit } from "./blit.ts";
 import type { WindowEvent } from "./events.ts";
-import type { GpuWindow } from "./window.ts";
+import { createSwapSkipLog, type GpuWindow, tryGetSwapTexture } from "./window.ts";
 
 export interface FramePublisher {
   publishFrame(): bigint | number;
@@ -20,6 +20,7 @@ export interface RenderLoopOptions {
 export function startRenderLoop(options: RenderLoopOptions): { stop(): void } {
   let running = true;
   let frame = 0;
+  const skips = createSwapSkipLog("render_loop");
 
   const loop = async () => {
     while (running) {
@@ -37,26 +38,24 @@ export function startRenderLoop(options: RenderLoopOptions): { stop(): void } {
       const outputView = options.onFrame(frame);
       frame += 1;
 
-      let swapTexture: GPUTexture;
-      try {
-        swapTexture = options.window.ctx.getCurrentTexture();
-      } catch (err) {
-        console.error("render_loop: getCurrentTexture failed", err);
-        break;
+      // Null while the window is occluded on Deno 2.8.3+ (wgpu 29): skip
+      // the on-screen blit but keep running and publishing.
+      const swapTexture = tryGetSwapTexture(options.window.ctx, skips);
+      if (swapTexture) {
+        const encoder = options.window.device.createCommandEncoder();
+        blit(
+          options.window.device,
+          encoder,
+          options.blitPipeline,
+          outputView,
+          swapTexture.createView(),
+        );
+        options.window.device.queue.submit([encoder.finish()]);
       }
-      const swapView = swapTexture.createView();
-
-      const encoder = options.window.device.createCommandEncoder();
-      blit(
-        options.window.device,
-        encoder,
-        options.blitPipeline,
-        outputView,
-        swapView,
-      );
-      options.window.device.queue.submit([encoder.finish()]);
       options.syphon?.publishFrame();
-      options.window.present();
+      if (swapTexture) {
+        options.window.present();
+      }
 
       await new Promise((resolve) => setTimeout(resolve, 0));
     }

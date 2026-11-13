@@ -1,0 +1,458 @@
+/* Port of the scoped styles in PianoRollRoot.vue, NoteMetadataEditor.vue and
+   MetadataNode.vue, on the dark palette of the livecode-tldraw piano-roll
+   shape. The Konva stage keeps the Vue component's own grid colors. */
+
+.pr-root {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  box-sizing: content-box;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #111412;
+  color: #eef5f1;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 11px;
+  outline: none;
+}
+
+.pr-root:focus-visible {
+  box-shadow: 0 0 0 2px rgba(106, 168, 255, 0.5);
+}
+
+.pr-control-panel {
+  background: #171c19;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 8px;
+  row-gap: 6px;
+  align-self: stretch;
+  box-sizing: border-box;
+  justify-content: center;
+}
+
+.pr-control-panel button {
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+  background: #263029;
+  color: #eef5f1;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.pr-control-panel button:hover:not(:disabled) {
+  background: #33403a;
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.pr-control-panel button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pr-separator {
+  color: rgba(255, 255, 255, 0.18);
+  font-size: 10px;
+}
+
+.pr-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pr-control-panel button.pr-toggle.active {
+  background: #eef5f1;
+  border-color: #eef5f1;
+  color: #111412;
+}
+
+.pr-info {
+  color: #9ca8a2;
+  font-size: 10px;
+}
+
+.pr-control-panel label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #c3cdc8;
+}
+
+.pr-control-panel select {
+  padding: 3px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+  font-size: 11px;
+  background: #263029;
+  color: #eef5f1;
+  cursor: pointer;
+}
+
+.pr-control-panel select:focus {
+  outline: none;
+  border-color: #6aa8ff;
+}
+
+.pr-container {
+  background-color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: default;
+  box-sizing: content-box;
+  border-radius: 4px;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.pr-container.is-disabled {
+  pointer-events: none;
+  cursor: not-allowed;
+}
+
+.pr-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pr-scrollbar-gap, 1px);
+}
+
+.pr-stage-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pr-scrollbar-gap, 1px);
+  align-items: stretch;
+}
+
+.pr-scrollbar {
+  position: relative;
+  background: #1d2420;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  box-sizing: border-box;
+  user-select: none;
+  touch-action: none;
+}
+
+.pr-scrollbar.horizontal {
+  height: var(--pr-scrollbar-thickness, 12px);
+}
+
+.pr-scrollbar.vertical {
+  width: var(--pr-scrollbar-thickness, 12px);
+}
+
+.pr-scrollbar.is-disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.pr-scrollbar-thumb {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: calc(var(--pr-scrollbar-thickness, 12px) * 0.66);
+  min-height: calc(var(--pr-scrollbar-thickness, 12px) * 0.66);
+  cursor: grab;
+  transition: background 0.1s;
+  box-sizing: border-box;
+}
+
+.pr-scrollbar-thumb.horizontal-thumb {
+  top: 0;
+  height: 100%;
+  align-items: stretch;
+}
+
+.pr-scrollbar-thumb.vertical-thumb {
+  left: 0;
+  width: 100%;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: stretch;
+}
+
+.pr-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.32);
+}
+
+.pr-scrollbar-body {
+  flex: 1;
+  height: 100%;
+  cursor: grab;
+}
+
+.pr-scrollbar-body.vertical-body {
+  width: 100%;
+}
+
+.pr-scrollbar-handle {
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+
+.handle-left,
+.handle-right {
+  width: calc(var(--pr-scrollbar-thickness, 12px) / 3);
+  height: 100%;
+  cursor: ew-resize;
+}
+
+.handle-top,
+.handle-bottom {
+  width: 100%;
+  height: calc(var(--pr-scrollbar-thickness, 12px) / 3);
+  cursor: ns-resize;
+}
+
+.pr-metadata-wrapper {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  box-sizing: border-box;
+}
+
+/* ---------- metadata tree editor ---------- */
+
+.pr-metadata-editor {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  padding: 4px 6px;
+  background: #171c19;
+  font-size: 12px;
+  color: #eef5f1;
+}
+
+.pr-meta-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+}
+
+.pr-meta-title {
+  color: #c3cdc8;
+}
+
+.pr-meta-dirty {
+  color: #f2c26b;
+}
+
+.pr-meta-spacer {
+  flex: 1;
+}
+
+.pr-meta-btn {
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 2px;
+  background: #263029;
+  font-size: 11px;
+  line-height: 1;
+  color: #eef5f1;
+  cursor: pointer;
+}
+
+.pr-meta-btn:hover:not(:disabled) {
+  background: #33403a;
+}
+
+.pr-meta-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pr-meta-btn.primary:not(:disabled) {
+  background: #2f6fd8;
+  border-color: #2f6fd8;
+  color: #fff;
+}
+
+.pr-meta-tree {
+  margin-top: 2px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.pr-meta-line {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.pr-meta-line.warn {
+  color: #f2c26b;
+}
+
+.pr-meta-muted {
+  color: #9ca8a2;
+}
+
+.pr-meta-pad {
+  padding: 2px 0;
+}
+
+.pr-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.pr-meta-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.pr-meta-node.pending > .pr-meta-row {
+  background: rgba(106, 168, 255, 0.18);
+}
+
+.pr-meta-node.warned > .pr-meta-row {
+  background: rgba(255, 217, 138, 0.18);
+}
+
+.pr-meta-node.invalid > .pr-meta-row {
+  background: rgba(255, 110, 110, 0.2);
+}
+
+.pr-meta-twisty,
+.pr-meta-twisty-space {
+  width: 12px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #9ca8a2;
+  font-size: 10px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.pr-meta-key {
+  flex: none;
+  min-width: 60px;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: Menlo, Consolas, monospace;
+  color: #eef5f1;
+}
+
+.pr-meta-obj {
+  color: #9ca8a2;
+  font-family: Menlo, Consolas, monospace;
+}
+
+.pr-meta-value,
+.pr-meta-key-input {
+  flex: 1 1 80px;
+  min-width: 0;
+  height: 16px;
+  padding: 0 3px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 2px;
+  font: 12px Menlo, Consolas, monospace;
+  background: #0d100e;
+  color: #eef5f1;
+}
+
+.pr-meta-key-input {
+  flex: 0 1 120px;
+}
+
+.pr-meta-value:focus,
+.pr-meta-key-input:focus {
+  outline: none;
+  border-color: #6aa8ff;
+}
+
+.pr-meta-value.empty {
+  font-style: italic;
+}
+
+.pr-meta-swatch {
+  width: 18px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 2px;
+  background: none;
+  cursor: pointer;
+  flex: none;
+}
+
+.pr-meta-check {
+  margin: 0;
+}
+
+.pr-meta-badge,
+.pr-meta-warn,
+.pr-meta-err {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 2px;
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.pr-meta-badge {
+  color: #c3cdc8;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.pr-meta-warn {
+  color: #3a2300;
+  background: #ffd98a;
+}
+
+.pr-meta-err {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #4a0909;
+  background: #ffc4c4;
+}
+
+.pr-meta-act {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: none;
+  color: #9ca8a2;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.pr-meta-row:hover .pr-meta-act,
+.pr-meta-row.add .pr-meta-act {
+  opacity: 1;
+}
+
+.pr-meta-act:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #eef5f1;
+}

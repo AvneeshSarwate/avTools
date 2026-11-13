@@ -1,0 +1,6 @@
+.td/
+generated/
+dist/
+*.toe.dir/
+*.toe.toc
+Backup/

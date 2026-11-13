@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { AnimationEditorView } from '@/animationEditor'
 import type { TrackDef } from '@/animationEditor'
+import { EDITOR_THEME } from '@/animationEditor/constants'
 
 const editorRef = ref<InstanceType<typeof AnimationEditorView> | null>(null)
 const currentTime = ref(0)
@@ -100,6 +101,16 @@ onMounted(() => {
     editorRef.value.addTrack(mockNumberTrack3)
     editorRef.value.addTrack(mockEnumTrack)
     editorRef.value.addTrack(mockFuncTrack)
+    editorRef.value.addTrack({
+      name: 'postprocessing.feedback.amount', fieldType: 'number', low: 0, high: 1,
+      data: Array.from({ length: 21 }, (_, i) => ({ time: i * 0.5, element: 0.45 + Math.sin(i * 0.7) * 0.35 })),
+    })
+    editorRef.value.addTrack({
+      name: 'lighting.palette', fieldType: 'enum',
+      data: ['warm', 'cool', 'neutral', 'warm', 'cool', 'neutral'].map((element, i) => ({ time: i * 1.5, element })),
+    })
+    editorRef.value.addTrack({ name: 'camera.position.z', fieldType: 'number', low: -10, high: 10, data: [] })
+    editorRef.value.addTrack({ name: 'events.sceneTransitions', fieldType: 'func', data: [] })
   }
 })
 
@@ -111,7 +122,7 @@ function onSliderInput(e: Event) {
 </script>
 
 <template>
-  <div class="app">
+  <div class="app" :style="EDITOR_THEME">
     <!-- Demo display panel -->
     <div class="demo-panel">
       <div class="demo-item">
@@ -194,17 +205,19 @@ function onSliderInput(e: Event) {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: #0d0d1a;
+  background: var(--ae-bg);
+  color: var(--ae-text);
+  font: 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-variant-numeric: tabular-nums;
+  color-scheme: dark;
 }
 
 .demo-panel {
   display: flex;
-  /* flex-direction: column; */
-  max-width: 1000px;
-  gap: 24px;
-  padding: 12px 16px;
-  background: #12122a;
-  border-bottom: 1px solid #333;
+  gap: 12px 24px;
+  padding: 12px;
+  background: var(--ae-panel);
+  border-bottom: 1px solid var(--ae-border);
   flex-wrap: wrap;
 }
 
@@ -212,110 +225,95 @@ function onSliderInput(e: Event) {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .demo-item label {
-  color: #888;
-  font-family: system-ui, sans-serif;
-  font-size: 12px;
+  color: var(--ae-muted);
+  font-size: 11px;
   white-space: nowrap;
 }
 
-.demo-slider {
-  width: 120px;
-  height: 6px;
-  -webkit-appearance: none;
+.demo-slider,
+.time-slider {
   appearance: none;
-  background: #333;
-  border-radius: 3px;
-  outline: none;
+  height: 4px;
+  margin: 0;
+  background: var(--ae-input);
+  border-radius: 0;
 }
 
-.demo-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
+.demo-slider {
+  width: 80px;
+}
+
+.demo-slider::-webkit-slider-thumb,
+.time-slider::-webkit-slider-thumb {
   appearance: none;
-  width: 12px;
-  height: 12px;
-  background: #4cc9f0;
-  border-radius: 50%;
+  width: 6px;
+  height: 14px;
+  background: var(--ae-muted);
+  border: none;
+  border-radius: 0;
+}
+
+.demo-slider::-moz-range-thumb,
+.time-slider::-moz-range-thumb {
+  width: 6px;
+  height: 14px;
+  background: var(--ae-muted);
+  border: none;
+  border-radius: 0;
 }
 
 .demo-value {
-  color: #4cc9f0;
-  font-family: monospace;
-  font-size: 12px;
-  min-width: 50px;
+  min-width: 40px;
 }
 
-.enum-display {
-  background: #1a1a2e;
-  padding: 4px 12px;
-  border-radius: 4px;
-  color: #f0a500;
-  font-family: monospace;
-  font-size: 12px;
-  min-width: 80px;
-  text-align: center;
-}
-
+.enum-display,
 .func-display {
-  background: #1a1a2e;
-  padding: 4px 12px;
-  border-radius: 4px;
-  color: #f72585;
-  font-family: monospace;
+  padding: 4px 0;
   font-size: 11px;
-  min-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .controls {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 12px 16px;
-  background: #1a1a2e;
-  border-bottom: 1px solid #333;
+  padding: 12px;
+  background: var(--ae-panel);
+  border-bottom: 1px solid var(--ae-border);
 }
 
 .time-label {
-  color: #e0e0e0;
-  font-family: system-ui, sans-serif;
-  font-size: 14px;
-  min-width: 100px;
+  min-width: 88px;
 }
 
 .time-slider {
   flex: 1;
-  height: 8px;
-  -webkit-appearance: none;
-  appearance: none;
-  background: #333;
-  border-radius: 4px;
-  outline: none;
+  min-width: 0;
+  cursor: pointer;
 }
 
 .time-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 16px;
-  height: 16px;
-  background: #7b2cbf;
-  border-radius: 50%;
-  cursor: pointer;
+  background: var(--ae-accent);
 }
 
 .time-slider::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
-  background: #7b2cbf;
-  border-radius: 50%;
-  cursor: pointer;
-  border: none;
+  background: var(--ae-accent);
+}
+
+.time-slider:focus-visible {
+  outline: 2px solid var(--ae-accent);
+  outline-offset: 4px;
 }
 
 .editor-container {
-  width: 1000px;
-  height: 600px;
+  width: 100%;
+  min-height: 0;
   flex: 1;
   overflow: hidden;
 }

@@ -3,6 +3,10 @@
   "workspace": [
     "./packages/core-timing",
     "./packages/creative-algs",
+    "./packages/drawing-document",
+    "./packages/livecode-engine",
+    "./packages/livecode-protocol",
+    "./packages/midi",
     "./packages/music-types",
     "./packages/ui-bridge",
     "./packages/power2d",
@@ -12,12 +16,22 @@
     "./packages/compute-shader-codegen",
     "./packages/shader-fx-codegen",
     "./apps/browser-projections",
-    "./apps/deno-notebooks"
+    "./apps/deno-notebooks",
+    "./packages/tracked-state"
   ],
   "imports": {
+    "six-sines-store": "./packages/livecode-engine/six_sines_store.ts",
     "@std/random": "jsr:@std/random@^0.1.4",
     "@avtools/core-timing": "./packages/core-timing/mod.ts",
     "@avtools/creative-algs": "./packages/creative-algs/mod.ts",
+    "@avtools/drawing-document": "./packages/drawing-document/mod.ts",
+    "@avtools/livecode-engine": "./packages/livecode-engine/mod.ts",
+    "@avtools/livecode-engine/": "./packages/livecode-engine/",
+    "@avtools/livecode-protocol": "./packages/livecode-protocol/mod.ts",
+    "@avtools/midi": "./packages/midi/mod.ts",
+    "@avtools/midi/browser": "./packages/midi/browser.ts",
+    "@avtools/midi/native": "./packages/midi/native.ts",
+    "@avtools/six-sines": "./packages/six-sines/six-sines-node.js",
     "@avtools/music-types": "./packages/music-types/mod.ts",
     "@avtools/ui-bridge": "./packages/ui-bridge/mod.ts",
     "@avtools/power2d": "./packages/power2d/mod.ts",
@@ -41,7 +55,20 @@
     "@img/png": "jsr:@img/png@^0.1.6",
     "babylonjs": "npm:babylonjs@^8.20.0",
     "earcut": "npm:earcut@^3.0.0",
+    "canvas-events": "./apps/deno-notebooks/livecode/helpers/canvas_events.ts",
+    "ui-events": "./apps/deno-notebooks/livecode/helpers/ui_events.ts",
+    "canvas-params": "./apps/deno-notebooks/livecode/helpers/canvas_params.ts",
+    "canvas-signals": "./apps/deno-notebooks/livecode/helpers/canvas_signals.ts",
+    "animation-timeline": "./apps/deno-notebooks/livecode/helpers/animation_timeline.ts",
+    "canvas-drawing": "./apps/deno-notebooks/livecode/helpers/canvas_drawing.ts",
+    "canvas-surface": "./apps/deno-notebooks/livecode/helpers/canvas_surface.ts",
+    "midi-helpers": "./apps/deno-notebooks/livecode/helpers/midi_helpers.ts",
+    "piano-roll-helpers": "./apps/deno-notebooks/livecode/helpers/piano_roll_helpers.ts",
+    "piano-roll-store": "./packages/livecode-engine/piano_roll_store.ts",
     "seedrandom": "npm:seedrandom@^3.0.5",
-    "wgsl_reflect": "npm:wgsl_reflect@^1.2.3"
+    "three": "npm:three@^0.178.0",
+    "p5": "npm:p5@^2",
+    "wgsl_reflect": "npm:wgsl_reflect@^1.2.3",
+    "@avtools/tracked-state": "./packages/tracked-state/mod.ts"
   }
 }

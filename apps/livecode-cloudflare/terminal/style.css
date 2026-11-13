@@ -1,0 +1,95 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #111216;
+  color: #e8e8ec;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+header {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 12px;
+  background: #1a1b21;
+  border-bottom: 1px solid #30313a;
+  font-size: 13px;
+}
+
+header > div, nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#connection-status, #claude-status {
+  border: 1px solid #454650;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: #b8bac5;
+  white-space: nowrap;
+}
+
+#connection-status[data-state="connected"] {
+  color: #7fd79a;
+  border-color: #2f6b3f;
+}
+
+#connection-status[data-state="disconnected"],
+#claude-status[data-state="needs-auth"] {
+  color: #e0a08b;
+  border-color: #6b4030;
+}
+
+a, button {
+  color: #d7e8ff;
+  background: #282a32;
+  border: 1px solid #454650;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+a:hover, button:hover { background: #343640; }
+
+#keep-awake[data-enabled="true"] {
+  color: #7fd79a;
+  border-color: #2f6b3f;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+#terminal {
+  min-width: 0;
+  min-height: 0;
+  padding: 8px;
+  background: #111216;
+}
+
+#terminal .xterm { height: 100%; }
+
+@media (max-width: 760px) {
+  header { align-items: flex-start; }
+  header > div { align-items: flex-start; flex-direction: column; gap: 4px; }
+  #claude-status { white-space: normal; }
+}

@@ -1,0 +1,1435 @@
+import {
+  createContext,
+  type PropsWithChildren,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import type { LSClient } from "@valtown/codemirror-ls";
+import {
+  createDenoLspConnection,
+  type DenoLspConnection,
+  livecodeDocumentUri,
+  type LspDiagnosticSummary,
+  type LspStatus,
+  retireLspConnection,
+} from "./denoLsp";
+import type {
+  AnalyzeResponse,
+  HealthResponse,
+  HistoryEntry,
+  LaunchModuleRequest,
+  LaunchModuleResponse,
+  PreparedBuild,
+  ProjectModuleSourceResponse,
+  ProjectModuleWriteConflict,
+  ProjectShadowCheckResponse,
+  ProjectSourceStatusMessage,
+  RunEntity,
+  RuntimeModuleRunState,
+  RuntimeStateResponse,
+  VisualizerDiagnostic,
+  VisualizerManifestMessage,
+} from "./livecodeProtocol";
+import {
+  buildIdentity,
+  type BuildLifecycle,
+  buildMatchesIdentity,
+  type BuildStatus,
+  buildStatusOf,
+  identitiesMatch,
+  isCurrentAnalysis,
+  lifecycleCanProduce,
+} from "./buildLifecycle";
+import {
+  acknowledgeRunLaunch,
+  beginRunLaunch,
+  correlateRun,
+  createRunCorrelation,
+  rejectRunLaunch,
+  type RunCorrelation,
+} from "./runCorrelation";
+import { RuntimeViewStore, type ScopedRuntimeApi } from "./runtimeViewStore";
+import { retainModuleLookupValues } from "./moduleLookupView";
+import {
+  maxSeq,
+  useModuleVizSync,
+  useRunsSync,
+  useSyncActions,
+  useSyncLifecycle,
+} from "./syncRuntime";
+import { createReconnectingSocket } from "./reconnectingSocket";
+
+const BUILD_DEBOUNCE_MS = 100;
+const PROJECT_DIAGNOSTICS_POLL_MS = 2_500;
+
+export type ConnectionStatus = "closed" | "connecting" | "open" | "error";
+export type { BuildStatus } from "./buildLifecycle";
+export type RunStatus =
+  "idle" | "running" | "stopping" | "stopped" | "error" | "unknown";
+
+/**
+ * How a project module's editor text relates to its file on disk:
+ * - `synced`: the editor owns the file (write-through as usual);
+ * - `reloaded`: an edit made outside the editor replaced the text, and nobody
+ *   has typed since;
+ * - `conflict`: the file changed outside the editor while it held unsaved
+ *   typing; writes are held until the user picks a side.
+ */
+export type DiskState = "synced" | "reloaded" | "conflict";
+
+export interface RunModuleOptions {
+  /** Ask the server to stop this module's running run and start this one. */
+  replaceRunning?: boolean;
+}
+
+export interface ModuleViewState {
+  moduleId: string;
+  projectModulePath?: string;
+  sourceText: string;
+  sourceVersion: number;
+  buildStatus: BuildStatus;
+  runStatus: RunStatus;
+  diagnostics: VisualizerDiagnostic[];
+  manifest: VisualizerManifestMessage | null;
+  history: HistoryEntry[];
+  activeIds: string[];
+  pianoRollLookups: Record<string, string>;
+  lastSnapshotSeq: number | null;
+  latestError: string | null;
+  /** The engine-minted identity of the run currently represented here. */
+  runToken: string | null;
+  /** Number of times this module has entered user code in this engine process. */
+  executionCount: number;
+  /**
+   * The module is running code other than what the editor shows: its run was
+   * launched from a different source than the current text. Replace applies
+   * the editor text.
+   */
+  editorStale: boolean;
+  diskState: DiskState;
+  /**
+   * Bumped whenever the runtime replaces the text from disk, so the editor
+   * shape (which owns the displayed text) knows to adopt `sourceText`.
+   */
+  diskReloadSeq: number;
+}
+
+type ModuleRecord =
+  & Omit<ModuleViewState, "buildStatus" | "editorStale">
+  & {
+    build: BuildLifecycle;
+    nextAnalyzeRequestId: number;
+    runCorrelation: RunCorrelation;
+    /** Source hash of the active run (from its run entity); null when not running. */
+    runSourceHash: string | null;
+    /** Text and server hash of the newest successful analysis. */
+    lastPrepared: { sourceText: string; sourceHash: string | undefined } | null;
+    /** The text this client last wrote to, or loaded from, the module's file. */
+    syncedSourceText: string;
+    /** Set by "keep mine": the next write goes out without the disk guard. */
+    forceNextWrite: boolean;
+    diskReloadInFlight: boolean;
+  };
+
+/** A guarded project write the server refused because the file changed on disk. */
+class DiskConflictError extends Error {}
+export interface LivecodeRuntimeApi {
+  serverBaseUrl: string;
+  setServerBaseUrl(next: string): void;
+  connectionStatus: ConnectionStatus;
+  lspStatus: LspStatus;
+  lspSessionId: string | null;
+  lspClient: LSClient | null;
+  lspDiagnosticsByUri: Record<string, LspDiagnosticSummary[]>;
+  health: HealthResponse | null;
+  projectDiagnostics: ProjectShadowCheckResponse | null;
+  projectDiagnosticsError: string | null;
+  connectionError: string | null;
+  modules: Record<string, ModuleViewState>;
+  connect(): Promise<void>;
+  disconnect(): void;
+  registerModule(
+    moduleId: string,
+    sourceText: string,
+    projectModulePath?: string,
+  ): void;
+  unregisterModule(moduleId: string): void;
+  setModuleSource(moduleId: string, sourceText: string): void;
+  runModule(moduleId: string, options?: RunModuleOptions): Promise<void>;
+  /** Run over the module's own running run: `runModule` with explicit consent. */
+  replaceModule(moduleId: string): Promise<void>;
+  stopModule(moduleId: string): Promise<void>;
+  /**
+   * Settle a `conflict`: "disk" discards the editor text for the file's,
+   * "mine" overwrites the file with the editor text.
+   */
+  resolveDiskConflict(moduleId: string, keep: "disk" | "mine"): void;
+}
+
+const LivecodeRuntimeContext = createContext<RuntimeViewStore | null>(null);
+
+export function useLivecodeRuntime(): LivecodeRuntimeApi;
+export function useLivecodeRuntime(
+  moduleId: string,
+  documentUri?: string,
+): ScopedRuntimeApi;
+export function useLivecodeRuntime(
+  moduleId?: string,
+  documentUri?: string,
+): ScopedRuntimeApi {
+  const store = useContext(LivecodeRuntimeContext);
+  if (!store) {
+    throw new Error(
+      "useLivecodeRuntime must be used inside LivecodeRuntimeProvider",
+    );
+  }
+  const read = useCallback(
+    () => store.getSnapshot(moduleId, documentUri),
+    [documentUri, moduleId, store],
+  );
+  const subscribe = useCallback(
+    (listener: () => void) => store.subscribe(listener, moduleId, documentUri),
+    [documentUri, moduleId, store],
+  );
+  return useSyncExternalStore(subscribe, read, read);
+}
+
+export function LivecodeRuntimeProvider({ children }: PropsWithChildren) {
+  // The server URL and the socket now belong to the sync provider above this
+  // one; this provider re-exposes them so every consumer's API is unchanged.
+  const syncActions = useSyncActions();
+  const syncLifecycle = useSyncLifecycle();
+  const { runs, latestSeq: runsSeq } = useRunsSync();
+  const { moduleWaits, moduleLookups, latestSeq: vizSeq } = useModuleVizSync();
+  const serverBaseUrl = syncActions.serverBaseUrl;
+  const runsRef = useRef(runs);
+  runsRef.current = runs;
+  const moduleWaitsRef = useRef(moduleWaits);
+  moduleWaitsRef.current = moduleWaits;
+  const moduleLookupsRef = useRef(moduleLookups);
+  moduleLookupsRef.current = moduleLookups;
+  const runsSeqRef = useRef(runsSeq);
+  runsSeqRef.current = runsSeq;
+  const vizSeqRef = useRef(vizSeq);
+  vizSeqRef.current = vizSeq;
+
+  const serverBaseUrlRef = useRef(serverBaseUrl);
+  serverBaseUrlRef.current = serverBaseUrl;
+  // Connect is a gesture, and the sync socket is not: the socket opens at mount
+  // so entity data flows, while everything Connect actually governs (health,
+  // LSP, rehydration, analysis scheduling) waits until this flag is armed. The
+  // open-sequence runs at socket-open if already armed, and immediately at
+  // Connect if the socket is already open.
+  const [armed, setArmed] = useState(false);
+  const armedRef = useRef(false);
+  const [connectionStatus, setConnectionStatus] =
+    useState<ConnectionStatus>("closed");
+  const connectionStatusRef = useRef<ConnectionStatus>("closed");
+  const [lspStatus, setLspStatus] = useState<LspStatus>("closed");
+  const [lspSessionId, setLspSessionId] = useState<string | null>(null);
+  const [lspClient, setLspClient] = useState<LSClient | null>(null);
+  const [lspDiagnosticsByUri, setLspDiagnosticsByUri] = useState<
+    Record<string, LspDiagnosticSummary[]>
+  >({});
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [projectDiagnostics, setProjectDiagnostics] =
+    useState<ProjectShadowCheckResponse | null>(null);
+  const [projectDiagnosticsError, setProjectDiagnosticsError] = useState<
+    string | null
+  >(null);
+  const [modules, setModules] = useState<Record<string, ModuleViewState>>({});
+  const [viewStore] = useState(() => new RuntimeViewStore());
+  const modulesRef = useRef(new Map<string, ModuleRecord>());
+  const appliedRunsRef = useRef(new Map<string, RunEntity | undefined>());
+  const appliedWaitsRef = useRef(new Map<string, unknown>());
+  const appliedLookupsRef = useRef(new Map<string, unknown>());
+  const connectRef = useRef<() => Promise<void>>(async () => {});
+  const disconnectRef = useRef<() => void>(() => {});
+  const pendingStopsRef = useRef<string[]>([]);
+  const lspConnectionRef = useRef<DenoLspConnection | null>(null);
+  const syncOpenRef = useRef<() => void>(() => {});
+  const syncCloseRef = useRef<() => void>(() => {});
+  const syncErrorRef = useRef<(message: string) => void>(() => {});
+  const reconnectAfterUrlChangeRef = useRef(false);
+  // Bumped by every open-sequence start and by disconnect, so a slow health
+  // response cannot land on a session that has since been superseded.
+  const openSequenceRef = useRef(0);
+
+  const publishModule = useCallback((record: ModuleRecord) => {
+    setModules((current) => {
+      const prior = current[record.moduleId];
+      if (prior && viewMatchesRecord(prior, record)) return current;
+      return { ...current, [record.moduleId]: toViewState(record) };
+    });
+  }, []);
+
+  const publishAllModules = useCallback(() => {
+    setModules((current) => {
+      let changed = Object.keys(current).length !== modulesRef.current.size;
+      const next: Record<string, ModuleViewState> = {};
+      for (const record of modulesRef.current.values()) {
+        const prior = current[record.moduleId];
+        if (prior && viewMatchesRecord(prior, record)) {
+          next[record.moduleId] = prior;
+        } else {
+          next[record.moduleId] = toViewState(record);
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, []);
+
+  const setConnectionStatusRef = useCallback((next: ConnectionStatus) => {
+    connectionStatusRef.current = next;
+    setConnectionStatus(next);
+  }, []);
+
+  const markModulesUnknown = useCallback(() => {
+    appliedRunsRef.current.clear();
+    appliedWaitsRef.current.clear();
+    appliedLookupsRef.current.clear();
+    for (const record of modulesRef.current.values()) {
+      cancelQueuedBuild(record);
+      record.build = { phase: "disconnected" };
+      record.runStatus = "unknown";
+      record.activeIds = [];
+      record.pianoRollLookups = {};
+      record.lastSnapshotSeq = null;
+    }
+    publishAllModules();
+  }, [publishAllModules]);
+
+  const setServerBaseUrl = useCallback(
+    (next: string) => {
+      const normalized = normalizeServerBaseUrl(next);
+      if (serverBaseUrlRef.current === normalized) return;
+      const reconnectAfterChange = connectionStatusRef.current !== "closed";
+      disconnectRef.current();
+      // The sync provider owns the URL and its socket, so it is what actually
+      // re-points; this side only has to re-arm if it was armed before.
+      reconnectAfterUrlChangeRef.current = reconnectAfterChange;
+      syncActions.setServerBaseUrl(normalized);
+    },
+    [syncActions],
+  );
+
+  useEffect(() => {
+    if (!reconnectAfterUrlChangeRef.current) return;
+    reconnectAfterUrlChangeRef.current = false;
+    void connectRef.current();
+  }, [serverBaseUrl]);
+
+  const reconnectDenoLsp = useCallback(() => {
+    const oldConnection = lspConnectionRef.current;
+    const sessionId = `lsp-${crypto.randomUUID()}`;
+
+    setLspStatus("connecting");
+    setLspSessionId(sessionId);
+    setLspDiagnosticsByUri({});
+
+    const connection = createDenoLspConnection({
+      serverBaseUrl: serverBaseUrlRef.current,
+      sessionId,
+      onStatus: setLspStatus,
+      onDiagnostics: (uri, diagnostics) => {
+        setLspDiagnosticsByUri((current) => ({
+          ...current,
+          [uri]: diagnostics,
+        }));
+      },
+      onError: (message) => {
+        setConnectionError(message);
+      },
+    });
+
+    lspConnectionRef.current = connection;
+    setLspClient(connection.client);
+    retireLspConnection(oldConnection);
+
+    void connection.transport.connect().catch((error) => {
+      if (lspConnectionRef.current !== connection) return;
+      setLspStatus("error");
+      setConnectionError(
+        error instanceof Error ? error.message : String(error),
+      );
+    });
+  }, []);
+
+  const postJson = useCallback(
+    async <T,>(path: string, body: unknown): Promise<T> => {
+      const response = await fetch(`${serverBaseUrlRef.current}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        throw new Error(
+          `${path} failed with ${response.status}: ${await response.text()}`,
+        );
+      }
+      return (await response.json()) as T;
+    },
+    [],
+  );
+
+  const fetchProjectDiagnostics = useCallback(async () => {
+    if (connectionStatusRef.current !== "open") return null;
+    try {
+      const response = await fetch(
+        `${serverBaseUrlRef.current}/project/diagnostics`,
+      );
+      if (!response.ok) {
+        throw new Error(
+          `/project/diagnostics failed with ${response.status}: ${await response.text()}`,
+        );
+      }
+      const diagnostics = (await response.json()) as ProjectShadowCheckResponse;
+      setProjectDiagnostics(diagnostics);
+      setProjectDiagnosticsError(null);
+      return diagnostics;
+    } catch (error) {
+      setProjectDiagnosticsError(
+        error instanceof Error ? error.message : String(error),
+      );
+      return null;
+    }
+  }, []);
+
+  const rehydrateRuntimeState = useCallback(async () => {
+    const response = await fetch(`${serverBaseUrlRef.current}/runtime/state`);
+    if (!response.ok) {
+      throw new Error(
+        `/runtime/state failed with ${response.status}: ${await response.text()}`,
+      );
+    }
+    const state = (await response.json()) as RuntimeStateResponse;
+    const activeByModule = new Map(
+      state.activeModules.map((moduleEntry) => [
+        moduleEntry.moduleId,
+        moduleEntry,
+      ]),
+    );
+
+    for (const record of modulesRef.current.values()) {
+      const active = activeByModule.get(record.moduleId);
+      const run = state.moduleRuns[record.moduleId];
+      const latestPrepared = state.latestPreparedByModule[record.moduleId];
+      record.runCorrelation = rejectRunLaunch();
+      if (run) {
+        record.runToken = run.runToken;
+        record.executionCount = run.executionCount;
+      }
+      record.runSourceHash = active?.sourceHash ?? null;
+      if (active) {
+        record.runStatus = "running";
+        record.manifest = active.manifest ?? record.manifest;
+        record.latestError = null;
+      } else {
+        record.activeIds = [];
+        record.runStatus = run ? moduleRunStateToRunStatus(run.state) : "idle";
+        if (run?.state === "error") {
+          record.latestError = run.message ?? record.latestError;
+        }
+        if (latestPrepared?.manifest) {
+          record.manifest = latestPrepared.manifest;
+        }
+      }
+    }
+    publishAllModules();
+  }, [publishAllModules]);
+
+  const flushPendingStops = useCallback(async () => {
+    const pending = [...new Set(pendingStopsRef.current)];
+    pendingStopsRef.current = [];
+    await Promise.all(
+      pending.map((moduleId) =>
+        postJson("/runtime/stop", { moduleId }).catch(() => undefined),
+      ),
+    );
+  }, [postJson]);
+
+  // Disk-conflict handling needs scheduleAnalyze, which is defined after the
+  // analysis path that detects the conflict; this ref closes that loop.
+  const onDiskConflictRef = useRef<(record: ModuleRecord) => void>(() => {});
+
+  const writeProjectSource = useCallback(
+    async (
+      record: ModuleRecord,
+      sourceText: string,
+      sourceVersion: number,
+      force: boolean,
+    ) => {
+      const response = await fetch(
+        `${serverBaseUrlRef.current}/project/modules/write`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            path: record.projectModulePath,
+            sourceText,
+            sourceVersion,
+            ...(force ? {} : { refuseIfChangedOnDisk: true }),
+          }),
+        },
+      );
+      if (response.status === 409) {
+        const body = await response.json().catch(() => null) as
+          | ProjectModuleWriteConflict
+          | null;
+        if (body?.conflict === "changedOnDisk") throw new DiskConflictError();
+      }
+      if (!response.ok) {
+        throw new Error(
+          `/project/modules/write failed with ${response.status}: ${await response.text()}`,
+        );
+      }
+      // The file now holds exactly this text, whatever the editor did since.
+      record.syncedSourceText = sourceText;
+      if (record.diskState === "conflict") record.diskState = "synced";
+    },
+    [],
+  );
+
+  const analyzeNow = useCallback(
+    async (
+      record: ModuleRecord,
+      sourceText: string,
+    ): Promise<PreparedBuild | null> => {
+      const identity = {
+        sourceText,
+        serverBaseUrl: serverBaseUrlRef.current,
+      };
+      if (connectionStatusRef.current !== "open") {
+        record.build = { phase: "disconnected" };
+        publishModule(record);
+        return null;
+      }
+
+      const sourceVersion = record.sourceVersion + 1;
+      const requestId = record.nextAnalyzeRequestId + 1;
+      record.sourceVersion = sourceVersion;
+      record.nextAnalyzeRequestId = requestId;
+      record.latestError = null;
+
+      const analyzeRequest = record.projectModulePath
+        ? {
+            moduleId: record.moduleId,
+            sourceVersion,
+            projectModulePath: record.projectModulePath,
+          }
+        : {
+            moduleId: record.moduleId,
+            sourceVersion,
+            sourceUri: `livecode-editor://${record.moduleId}.ts`,
+            sourceText,
+          };
+
+      const promise = (async () => {
+        if (record.projectModulePath) {
+          const force = record.forceNextWrite;
+          record.forceNextWrite = false;
+          // Held while in conflict: each keystroke would only be refused again.
+          if (record.diskState === "conflict" && !force) {
+            throw new DiskConflictError();
+          }
+          await writeProjectSource(record, sourceText, sourceVersion, force);
+        }
+        return await postJson<AnalyzeResponse>(
+          "/runtime/analyze",
+          analyzeRequest,
+        );
+      })()
+        .then((response): PreparedBuild | null => {
+          if (!isCurrentAnalysis(record.build, requestId)) return null;
+          if (record.projectModulePath) {
+            void fetchProjectDiagnostics();
+          }
+
+          if (response.type === "analyzeSuccess") {
+            record.lastPrepared = {
+              sourceText,
+              sourceHash: response.sourceHash,
+            };
+            const prepared: PreparedBuild = {
+              ...response,
+              sourceText,
+              serverBaseUrl: identity.serverBaseUrl,
+            };
+            record.build = { phase: "ready", build: prepared };
+            record.manifest = response.manifest;
+            record.diagnostics = [];
+            record.history = [
+              {
+                generatedRunId: response.generatedRunId,
+                sourceVersion: response.sourceVersion,
+                callsiteCount: response.manifest.callsites.length,
+                transformedModuleUri: response.transformedModuleUri,
+              },
+              ...record.history,
+            ].slice(0, 50);
+            publishModule(record);
+            return prepared;
+          }
+
+          record.build = { phase: "failed", identity };
+          record.manifest = null;
+          record.diagnostics = response.diagnostics;
+          record.activeIds = [];
+          record.pianoRollLookups = {};
+          publishModule(record);
+          return null;
+        })
+        .catch((error: unknown) => {
+          const conflict = error instanceof DiskConflictError;
+          // A refusal stands even when a newer analysis superseded this one:
+          // the newer write meets the same changed file.
+          if (conflict) onDiskConflictRef.current(record);
+          if (!isCurrentAnalysis(record.build, requestId)) return null;
+          record.build = { phase: "failed", identity };
+          record.manifest = null;
+          record.diagnostics = [];
+          record.activeIds = [];
+          record.pianoRollLookups = {};
+          record.latestError = conflict
+            ? "file changed outside the editor: load the disk version or keep yours"
+            : error instanceof Error
+            ? error.message
+            : String(error);
+          publishModule(record);
+          return null;
+        });
+
+      record.build = {
+        phase: "analyzing",
+        identity,
+        requestId,
+        promise,
+      };
+      publishModule(record);
+
+      return promise;
+    },
+    [fetchProjectDiagnostics, publishModule, writeProjectSource],
+  );
+
+  const scheduleAnalyze = useCallback(
+    (record: ModuleRecord, delayMs = BUILD_DEBOUNCE_MS) => {
+      cancelQueuedBuild(record);
+      if (connectionStatusRef.current !== "open") {
+        record.build = { phase: "disconnected" };
+        publishModule(record);
+        return;
+      }
+
+      const identity = buildIdentity(
+        record.sourceText,
+        serverBaseUrlRef.current,
+      );
+      if (delayMs <= 0) {
+        void analyzeNow(record, identity.sourceText);
+        return;
+      }
+
+      const timer = window.setTimeout(() => {
+        if (record.build.phase !== "queued") return;
+        if (record.build.timer !== timer) return;
+        void analyzeNow(record, record.build.identity.sourceText);
+      }, delayMs);
+      record.build = { phase: "queued", identity, timer };
+      publishModule(record);
+    },
+    [analyzeNow, publishModule],
+  );
+
+  /**
+   * Adopt the file's text into the editor. Deliberately not the server's reload
+   * route: that resets the server's record of what the editor last loaded,
+   * which would let a write already in flight with the old buffer pass the disk
+   * guard. The write-through that follows sends the file's own text, which the
+   * guard always allows, and that write is what re-syncs the server.
+   */
+  const reloadFromDisk = useCallback(
+    async (record: ModuleRecord, options: { discardLocal?: boolean } = {}) => {
+      const path = record.projectModulePath;
+      if (!path || record.diskReloadInFlight) return;
+      record.diskReloadInFlight = true;
+      const textBeforeReload = record.sourceText;
+      try {
+        const response = await fetch(
+          `${serverBaseUrlRef.current}/project/modules/source?path=${
+            encodeURIComponent(path)
+          }`,
+        );
+        if (!response.ok) {
+          throw new Error(
+            `/project/modules/source failed with ${response.status}: ${await response.text()}`,
+          );
+        }
+        const { sourceText } =
+          (await response.json()) as ProjectModuleSourceResponse;
+        if (modulesRef.current.get(record.moduleId) !== record) return;
+        if (!options.discardLocal && record.sourceText !== textBeforeReload) {
+          // Typed while the reload was in flight: that typing is unsaved work.
+          record.diskState = "conflict";
+          publishModule(record);
+          return;
+        }
+        cancelQueuedBuild(record);
+        record.forceNextWrite = false;
+        record.syncedSourceText = sourceText;
+        record.diskState = sourceText === textBeforeReload
+          ? "synced"
+          : "reloaded";
+        if (sourceText !== record.sourceText) {
+          record.sourceText = sourceText;
+          record.manifest = null;
+          record.diagnostics = [];
+          record.activeIds = [];
+          record.pianoRollLookups = {};
+          record.diskReloadSeq += 1;
+        }
+        record.latestError = null;
+        scheduleAnalyze(record, 0);
+      } catch (error) {
+        record.latestError = `reload from disk failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
+        publishModule(record);
+      } finally {
+        record.diskReloadInFlight = false;
+      }
+    },
+    [publishModule, scheduleAnalyze],
+  );
+
+  /** The file changed outside the editor (pushed, or a refused write). */
+  const onDiskChanged = useCallback(
+    (record: ModuleRecord) => {
+      if (record.diskReloadInFlight || record.diskState === "conflict") return;
+      if (record.sourceText === record.syncedSourceText) {
+        void reloadFromDisk(record);
+        return;
+      }
+      record.diskState = "conflict";
+      publishModule(record);
+    },
+    [publishModule, reloadFromDisk],
+  );
+  onDiskConflictRef.current = onDiskChanged;
+
+  const resolveDiskConflict = useCallback(
+    (moduleId: string, keep: "disk" | "mine") => {
+      const record = modulesRef.current.get(moduleId);
+      if (!record) return;
+      if (keep === "disk") {
+        void reloadFromDisk(record, { discardLocal: true });
+        return;
+      }
+      record.forceNextWrite = true;
+      record.diskState = "synced";
+      record.latestError = null;
+      scheduleAnalyze(record, 0);
+    },
+    [reloadFromDisk, scheduleAnalyze],
+  );
+
+  const ensureBuild = useCallback(
+    async (record: ModuleRecord): Promise<PreparedBuild | null> => {
+      // A superseded analysis resolves null even though the analysis that
+      // superseded it is about to succeed, so a Run pressed mid-reanalysis
+      // must keep following the freshest build/pending pair rather than
+      // treating that null as a failure. Null is terminal only when nothing
+      // newer is in flight or already landed.
+      while (true) {
+        const identity = buildIdentity(
+          record.sourceText,
+          serverBaseUrlRef.current,
+        );
+        const lifecycle = record.build;
+        if (
+          lifecycle.phase === "ready" &&
+          buildMatchesIdentity(lifecycle.build, identity)
+        ) {
+          return lifecycle.build;
+        }
+
+        let result: PreparedBuild | null;
+        if (
+          lifecycle.phase === "analyzing" &&
+          identitiesMatch(lifecycle.identity, identity)
+        ) {
+          result = await lifecycle.promise;
+        } else {
+          cancelQueuedBuild(record);
+          result = await analyzeNow(record, identity.sourceText);
+        }
+        if (
+          result &&
+          buildMatchesIdentity(
+            result,
+            buildIdentity(record.sourceText, serverBaseUrlRef.current),
+          )
+        ) {
+          return result;
+        }
+
+        const nextIdentity = buildIdentity(
+          record.sourceText,
+          serverBaseUrlRef.current,
+        );
+        if (lifecycleCanProduce(record.build, nextIdentity)) continue;
+        return null;
+      }
+    },
+    [analyzeNow],
+  );
+
+  /**
+   * The open-sequence, unchanged in content and moved onto the sync socket:
+   * health → LSP reconnect → `/runtime/state` rehydration → flush pending stops
+   * → re-analyze every record. It runs on EVERY armed socket open, not just a
+   * manual connect, so an auto-reconnect after a server restart restores the
+   * LSP session and the run state exactly as the first connect did.
+   */
+  const runOpenSequence = useCallback(() => {
+    const openSequenceId = ++openSequenceRef.current;
+    setConnectionStatusRef("open");
+    void (async () => {
+      try {
+        const response = await fetch(`${serverBaseUrlRef.current}/health`);
+        if (!response.ok) {
+          throw new Error(
+            `/health failed with ${response.status}: ${await response.text()}`,
+          );
+        }
+        const healthResponse = (await response.json()) as HealthResponse;
+        // A newer open (or a disconnect) supersedes this one; the socket
+        // identity check this replaces did the same job.
+        if (openSequenceRef.current !== openSequenceId) return;
+        setHealth(healthResponse);
+        reconnectDenoLsp();
+        await rehydrateRuntimeState();
+        await flushPendingStops();
+        for (const record of modulesRef.current.values()) {
+          scheduleAnalyze(record, 0);
+        }
+      } catch (error) {
+        if (openSequenceRef.current !== openSequenceId) return;
+        setConnectionError(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    })();
+  }, [
+    flushPendingStops,
+    reconnectDenoLsp,
+    rehydrateRuntimeState,
+    scheduleAnalyze,
+    setConnectionStatusRef,
+  ]);
+
+  // Armed + open is what the Connect UI reflects, so pre-Connect the app never
+  // renders "connected" even though the sync socket is already carrying rolls,
+  // params, and signals.
+  syncOpenRef.current = () => {
+    if (!armedRef.current) return;
+    runOpenSequence();
+  };
+
+  syncCloseRef.current = () => {
+    if (!armedRef.current) return;
+    markModulesUnknown();
+    // The controller is already retrying with backoff, and an armed client is
+    // still trying to be connected: "connecting" is what that is.
+    if (connectionStatusRef.current !== "connecting") {
+      setConnectionStatusRef("connecting");
+    }
+  };
+
+  syncErrorRef.current = (message) => {
+    if (!armedRef.current) return;
+    setConnectionError(message);
+    setConnectionStatusRef("error");
+  };
+
+  useEffect(() => {
+    return syncLifecycle.addListener({
+      onOpen: () => syncOpenRef.current(),
+      onClose: () => syncCloseRef.current(),
+      onError: (message) => syncErrorRef.current(message),
+    });
+  }, [syncLifecycle]);
+
+  const connect = useCallback(async () => {
+    setConnectionError(null);
+    armedRef.current = true;
+    setArmed(true);
+    if (syncLifecycle.isOpen()) {
+      // Armed after the socket already opened: the open edge is never coming
+      // back on its own, so the sequence runs right now.
+      runOpenSequence();
+      return;
+    }
+    setConnectionStatusRef("connecting");
+  }, [runOpenSequence, setConnectionStatusRef, syncLifecycle]);
+
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
+
+  const disconnect = useCallback(() => {
+    // The sync socket stays open — it is the transport for rolls, params, and
+    // signals, which were never gated on Connect. Disarming is what stops the
+    // runtime domain: no open-sequence, no run/wait state applied.
+    armedRef.current = false;
+    setArmed(false);
+    openSequenceRef.current += 1;
+    setConnectionError(null);
+    setProjectDiagnostics(null);
+    setProjectDiagnosticsError(null);
+    const lspConnection = lspConnectionRef.current;
+    lspConnectionRef.current = null;
+    setLspClient(null);
+    setLspSessionId(null);
+    setLspDiagnosticsByUri({});
+    setLspStatus("closed");
+    retireLspConnection(lspConnection);
+    setConnectionStatusRef("closed");
+    markModulesUnknown();
+  }, [markModulesUnknown, setConnectionStatusRef]);
+
+  // Runs, waits, and lookups arrive per entity and changed-only. Everything the
+  // legacy snapshot handler did per message happens here per delivered batch,
+  // gated on the Connect arming: a disarmed client reports "unknown", and
+  // letting server truth quietly overwrite that would make Disconnect a lie.
+  useEffect(() => {
+    if (!armed || connectionStatusRef.current !== "open") return;
+    for (const record of modulesRef.current.values()) {
+      const moduleId = record.moduleId;
+      const runChanged = updateAppliedEntity(
+        appliedRunsRef.current,
+        moduleId,
+        runs[moduleId],
+      );
+      const waitsChanged = updateAppliedEntity(
+        appliedWaitsRef.current,
+        moduleId,
+        moduleWaits[moduleId],
+      );
+      const lookupsChanged = updateAppliedEntity(
+        appliedLookupsRef.current,
+        moduleId,
+        moduleLookups[moduleId],
+      );
+      if (!runChanged && !waitsChanged && !lookupsChanged) continue;
+      if (waitsChanged) {
+        record.activeIds =
+          moduleWaits[moduleId]?.callsiteIds ?? EMPTY_ACTIVE_IDS;
+      }
+      if (lookupsChanged) {
+        record.pianoRollLookups = retainModuleLookupValues(
+          record.pianoRollLookups,
+          moduleLookups[moduleId]?.lookups ?? EMPTY_PIANO_ROLL_LOOKUPS,
+        );
+      }
+      if (runChanged) applyRunEntity(record, runs[moduleId]);
+      record.lastSnapshotSeq = maxSeq(
+        runChanged ? runsSeq : null,
+        waitsChanged || lookupsChanged ? vizSeq : null,
+      );
+      publishModule(record);
+    }
+  }, [
+    armed,
+    connectionStatus,
+    moduleLookups,
+    moduleWaits,
+    publishModule,
+    runs,
+    runsSeq,
+    vizSeq,
+  ]);
+
+  useEffect(() => {
+    if (connectionStatus !== "open") return;
+    void fetchProjectDiagnostics();
+    const timer = window.setInterval(
+      () => void fetchProjectDiagnostics(),
+      PROJECT_DIAGNOSTICS_POLL_MS,
+    );
+    return () => window.clearInterval(timer);
+  }, [connectionStatus, fetchProjectDiagnostics]);
+
+  // The server pushes each module's disk status; an edit made outside the
+  // editor (a coding agent, another editor) reloads an untouched module and
+  // flags a conflict on one holding unsaved typing. Writes only happen while
+  // connected, so the watch is gated the same way.
+  useEffect(() => {
+    if (connectionStatus !== "open") return;
+    const base = serverBaseUrl.trim().replace(/\/+$/, "");
+    if (!base || base === "none") return;
+    const controller = createReconnectingSocket({
+      makeUrl: () => `${base.replace(/^http/, "ws")}/project/sources`,
+      onMessage: (event) => {
+        if (typeof event.data !== "string") return;
+        let message: ProjectSourceStatusMessage;
+        try {
+          message = JSON.parse(event.data) as ProjectSourceStatusMessage;
+        } catch {
+          return;
+        }
+        if (message.type !== "projectSourceStatus") return;
+        for (const entry of message.modules) {
+          if (!entry.changedOnDisk) continue;
+          for (const record of modulesRef.current.values()) {
+            if (record.projectModulePath === entry.path) onDiskChanged(record);
+          }
+        }
+      },
+    });
+    controller.connect();
+    return () => controller.close();
+  }, [connectionStatus, onDiskChanged, serverBaseUrl]);
+
+  useEffect(() => {
+    return () => retireLspConnection(lspConnectionRef.current);
+  }, []);
+
+  const registerModule = useCallback(
+    (moduleId: string, sourceText: string, projectModulePath?: string) => {
+      const existing = modulesRef.current.get(moduleId);
+      if (existing) return;
+      const record = makeModuleRecord(moduleId, sourceText, projectModulePath);
+      modulesRef.current.set(moduleId, record);
+      if (armedRef.current && connectionStatusRef.current === "open") {
+        hydrateCurrentSyncView(
+          record,
+          runsRef.current,
+          moduleWaitsRef.current,
+          moduleLookupsRef.current,
+          runsSeqRef.current,
+          vizSeqRef.current,
+        );
+      }
+      appliedRunsRef.current.set(moduleId, runsRef.current[moduleId]);
+      appliedWaitsRef.current.set(moduleId, moduleWaitsRef.current[moduleId]);
+      appliedLookupsRef.current.set(
+        moduleId,
+        moduleLookupsRef.current[moduleId],
+      );
+      publishModule(record);
+      if (connectionStatusRef.current === "open") {
+        scheduleAnalyze(record, 0);
+      }
+    },
+    [publishModule, scheduleAnalyze],
+  );
+
+  const unregisterModule = useCallback(
+    (moduleId: string) => {
+      const record = modulesRef.current.get(moduleId);
+      if (!record) return;
+      cancelQueuedBuild(record);
+      modulesRef.current.delete(moduleId);
+      appliedRunsRef.current.delete(moduleId);
+      appliedWaitsRef.current.delete(moduleId);
+      appliedLookupsRef.current.delete(moduleId);
+      setModules((current) => {
+        const next = { ...current };
+        delete next[moduleId];
+        return next;
+      });
+      const documentUri = livecodeDocumentUri(moduleId);
+      setLspDiagnosticsByUri((current) => {
+        const next = { ...current };
+        delete next[documentUri];
+        return next;
+      });
+      if (connectionStatusRef.current === "open") {
+        void postJson("/runtime/stop", { moduleId }).catch(() => undefined);
+      } else {
+        pendingStopsRef.current.push(moduleId);
+      }
+    },
+    [postJson],
+  );
+
+  const setModuleSource = useCallback(
+    (moduleId: string, sourceText: string) => {
+      const record = modulesRef.current.get(moduleId);
+      if (!record) return;
+      if (record.sourceText === sourceText) return;
+      record.sourceText = sourceText;
+      if (record.diskState === "reloaded") record.diskState = "synced";
+      record.manifest = null;
+      record.diagnostics = [];
+      record.activeIds = [];
+      record.pianoRollLookups = {};
+      scheduleAnalyze(record);
+    },
+    [scheduleAnalyze],
+  );
+
+  const runModule = useCallback(
+    async (moduleId: string, options: RunModuleOptions = {}) => {
+      const record = modulesRef.current.get(moduleId);
+      if (!record) return;
+      record.runStatus = "running";
+      record.latestError = null;
+      publishModule(record);
+
+      const build = await ensureBuild(record);
+      if (!build) {
+        record.runStatus = "error";
+        record.latestError =
+          record.latestError ?? "module did not analyze successfully";
+        publishModule(record);
+        return;
+      }
+
+      try {
+        if (record.projectModulePath) {
+          const diagnostics = await fetchProjectDiagnostics();
+          if (!diagnostics) {
+            record.runStatus = "error";
+            record.latestError = "project diagnostics are not available";
+            publishModule(record);
+            return;
+          }
+          if (!diagnostics.denoCheck.success) {
+            record.runStatus = "error";
+            record.latestError = summarizeProjectDiagnostics(
+              record.moduleId,
+              diagnostics,
+            );
+            publishModule(record);
+            return;
+          }
+        }
+
+        record.runCorrelation = beginRunLaunch();
+        const launch = await postJson<LaunchModuleResponse>("/runtime/launch", {
+          moduleId: build.moduleId,
+          transformedModuleUri: build.transformedModuleUri,
+          generatedRunId: build.generatedRunId,
+          sourceHash: build.sourceHash,
+          projectSourceHash: build.projectSourceHash,
+          projectModulePath: build.projectModulePath,
+          manifest: build.manifest,
+          ...(options.replaceRunning ? { replaceRunning: true } : {}),
+        } satisfies LaunchModuleRequest);
+        record.runCorrelation = acknowledgeRunLaunch(launch.runToken);
+        record.runToken = launch.runToken;
+        record.runStatus = "running";
+        record.latestError = null;
+        applyRunEntity(record, runsRef.current[record.moduleId]);
+        publishModule(record);
+      } catch (error) {
+        record.runStatus = "error";
+        record.runCorrelation = rejectRunLaunch();
+        record.latestError =
+          error instanceof Error ? error.message : String(error);
+        publishModule(record);
+      }
+    },
+    [ensureBuild, fetchProjectDiagnostics, postJson, publishModule],
+  );
+
+  // Replacement is an explicit gesture, never an implicit consequence of Run:
+  // the server refuses a launch over a running module unless this flag says the
+  // user asked for it.
+  const replaceModule = useCallback(
+    (moduleId: string) => runModule(moduleId, { replaceRunning: true }),
+    [runModule],
+  );
+
+  const stopModule = useCallback(
+    async (moduleId: string) => {
+      const record = modulesRef.current.get(moduleId);
+      if (!record) return;
+      record.runStatus = "stopping";
+      publishModule(record);
+
+      try {
+        await postJson("/runtime/stop", { moduleId });
+        record.runStatus = "stopping";
+        record.latestError = null;
+      } catch (error) {
+        record.runStatus = "error";
+        record.latestError =
+          error instanceof Error ? error.message : String(error);
+      }
+      publishModule(record);
+    },
+    [postJson, publishModule],
+  );
+
+  useEffect(() => {
+    disconnectRef.current = disconnect;
+  }, [disconnect]);
+
+  const value = useMemo<LivecodeRuntimeApi>(
+    () => ({
+      serverBaseUrl,
+      setServerBaseUrl,
+      connectionStatus,
+      lspStatus,
+      lspSessionId,
+      lspClient,
+      lspDiagnosticsByUri,
+      health,
+      projectDiagnostics,
+      projectDiagnosticsError,
+      connectionError,
+      modules,
+      connect,
+      disconnect,
+      registerModule,
+      unregisterModule,
+      setModuleSource,
+      runModule,
+      replaceModule,
+      stopModule,
+      resolveDiskConflict,
+    }),
+    [
+      serverBaseUrl,
+      setServerBaseUrl,
+      connectionStatus,
+      lspStatus,
+      lspSessionId,
+      lspClient,
+      lspDiagnosticsByUri,
+      health,
+      projectDiagnostics,
+      projectDiagnosticsError,
+      connectionError,
+      modules,
+      connect,
+      disconnect,
+      registerModule,
+      unregisterModule,
+      setModuleSource,
+      runModule,
+      replaceModule,
+      stopModule,
+      resolveDiskConflict,
+    ],
+  );
+
+  viewStore.initialize(value);
+  useLayoutEffect(() => viewStore.publish(value), [value, viewStore]);
+
+  return (
+    <LivecodeRuntimeContext.Provider value={viewStore}>
+      {children}
+    </LivecodeRuntimeContext.Provider>
+  );
+}
+
+function cancelQueuedBuild(record: ModuleRecord): void {
+  if (record.build.phase !== "queued") return;
+  window.clearTimeout(record.build.timer);
+}
+
+function makeModuleRecord(
+  moduleId: string,
+  sourceText: string,
+  projectModulePath?: string,
+): ModuleRecord {
+  return {
+    moduleId,
+    projectModulePath,
+    sourceText,
+    sourceVersion: 0,
+    build: { phase: "idle" },
+    runStatus: "idle",
+    diagnostics: [],
+    manifest: null,
+    history: [],
+    activeIds: [],
+    pianoRollLookups: {},
+    lastSnapshotSeq: null,
+    latestError: null,
+    runToken: null,
+    executionCount: 0,
+    runCorrelation: createRunCorrelation(),
+    nextAnalyzeRequestId: 0,
+    runSourceHash: null,
+    lastPrepared: null,
+    syncedSourceText: sourceText,
+    forceNextWrite: false,
+    diskReloadInFlight: false,
+    diskState: "synced",
+    diskReloadSeq: 0,
+  };
+}
+
+function applyRunEntity(record: ModuleRecord, run: RunEntity | undefined) {
+  if (!run) return;
+  const decision = correlateRun(record.runCorrelation, run);
+  record.runCorrelation = decision.next;
+  if (!decision.apply) return;
+
+  record.executionCount = run.executionCount;
+  if (run.state === "launching" || run.state === "running") {
+    record.runSourceHash = run.sourceHash ?? null;
+    record.runToken = run.runToken;
+    if (record.runStatus !== "stopping") record.runStatus = "running";
+    return;
+  }
+
+  record.runToken = run.runToken;
+  record.runSourceHash = null;
+  record.activeIds = [];
+  if (run.state === "error") {
+    record.runStatus = "error";
+    record.latestError = run.message ?? record.latestError;
+  } else if (run.state === "stopped") {
+    record.runStatus = "stopped";
+  }
+}
+
+function moduleRunStateToRunStatus(state: RuntimeModuleRunState): RunStatus {
+  if (state === "launching" || state === "running") return "unknown";
+  return state;
+}
+
+function toViewState(record: ModuleRecord): ModuleViewState {
+  return {
+    moduleId: record.moduleId,
+    projectModulePath: record.projectModulePath,
+    sourceText: record.sourceText,
+    sourceVersion: record.sourceVersion,
+    buildStatus: buildStatusOf(record.build),
+    runStatus: record.runStatus,
+    diagnostics: record.diagnostics,
+    manifest: record.manifest,
+    history: record.history,
+    activeIds: record.activeIds,
+    pianoRollLookups: record.pianoRollLookups,
+    lastSnapshotSeq: record.lastSnapshotSeq,
+    latestError: record.latestError,
+    runToken: record.runToken,
+    executionCount: record.executionCount,
+    editorStale: isEditorStale(record),
+    diskState: record.diskState,
+    diskReloadSeq: record.diskReloadSeq,
+  };
+}
+
+/**
+ * Whether the active run executes code other than the editor text. The run
+ * entity carries the hash of the source it launched from; the newest analysis
+ * pairs a hash with its text. Without an analysis to compare (before the first
+ * one lands) the answer is unknown, reported as not stale.
+ */
+function isEditorStale(record: ModuleRecord): boolean {
+  if (record.runStatus !== "running" || !record.runSourceHash) return false;
+  const prepared = record.lastPrepared;
+  if (!prepared?.sourceHash) return false;
+  return prepared.sourceHash !== record.runSourceHash ||
+    prepared.sourceText !== record.sourceText;
+}
+
+const EMPTY_ACTIVE_IDS: string[] = Object.freeze([]) as unknown as string[];
+const EMPTY_PIANO_ROLL_LOOKUPS: Record<string, string> = Object.freeze({});
+
+function viewMatchesRecord(
+  view: ModuleViewState,
+  record: ModuleRecord,
+): boolean {
+  return (
+    view.moduleId === record.moduleId &&
+    view.projectModulePath === record.projectModulePath &&
+    view.sourceText === record.sourceText &&
+    view.sourceVersion === record.sourceVersion &&
+    view.buildStatus === buildStatusOf(record.build) &&
+    view.runStatus === record.runStatus &&
+    view.diagnostics === record.diagnostics &&
+    view.manifest === record.manifest &&
+    view.history === record.history &&
+    view.activeIds === record.activeIds &&
+    view.pianoRollLookups === record.pianoRollLookups &&
+    view.lastSnapshotSeq === record.lastSnapshotSeq &&
+    view.latestError === record.latestError &&
+    view.runToken === record.runToken &&
+    view.executionCount === record.executionCount &&
+    view.editorStale === isEditorStale(record) &&
+    view.diskState === record.diskState &&
+    view.diskReloadSeq === record.diskReloadSeq
+  );
+}
+
+function updateAppliedEntity<T>(
+  applied: Map<string, T | undefined>,
+  moduleId: string,
+  entity: T | undefined,
+): boolean {
+  if (!applied.has(moduleId)) {
+    applied.set(moduleId, entity);
+    return entity !== undefined;
+  }
+  if (Object.is(applied.get(moduleId), entity)) return false;
+  applied.set(moduleId, entity);
+  return true;
+}
+
+function hydrateCurrentSyncView(
+  record: ModuleRecord,
+  runs: Record<string, RunEntity>,
+  waits: Record<string, { callsiteIds: string[] }>,
+  lookups: Record<string, { lookups: Record<string, string> }>,
+  runsSeq: number | null,
+  vizSeq: number | null,
+): void {
+  const run = runs[record.moduleId];
+  const moduleWaits = waits[record.moduleId];
+  const moduleLookups = lookups[record.moduleId];
+  if (run) applyRunEntity(record, run);
+  if (moduleWaits) record.activeIds = moduleWaits.callsiteIds;
+  if (moduleLookups) {
+    record.pianoRollLookups = retainModuleLookupValues(
+      record.pianoRollLookups,
+      moduleLookups.lookups,
+    );
+  }
+  if (run || moduleWaits || moduleLookups) {
+    record.lastSnapshotSeq = maxSeq(
+      run ? runsSeq : null,
+      moduleWaits || moduleLookups ? vizSeq : null,
+    );
+  }
+}
+
+function summarizeProjectDiagnostics(
+  moduleId: string,
+  diagnostics: ProjectShadowCheckResponse,
+) {
+  const moduleDiagnostics = diagnostics.modules.find(
+    (moduleEntry) => moduleEntry.moduleId === moduleId,
+  );
+  const directDiagnostic =
+    moduleDiagnostics?.diagnostics[0] ??
+    moduleDiagnostics?.dependencyDiagnostics[0] ??
+    diagnostics.diagnostics[0];
+  const count = diagnostics.diagnostics.length;
+  if (!directDiagnostic) {
+    return `project typecheck failed (${count} diagnostics)`;
+  }
+  const location =
+    directDiagnostic.path ?? directDiagnostic.moduleId ?? "project";
+  return `project typecheck failed (${count} diagnostics): ${location} ${directDiagnostic.code}: ${directDiagnostic.message}`;
+}
+
+function normalizeServerBaseUrl(value: string) {
+  return value.trim().replace(/\/+$/, "");
+}

@@ -153,14 +153,15 @@ function onMouseUp() {
 </script>
 
 <template>
-  <div class="time-ribbon-wrapper">
+  <div class="time-ribbon-wrapper" data-component="TimeRibbon">
     <!-- Viewport selector row -->
-    <div class="time-ribbon-container">
+    <div class="time-ribbon-container" data-region="ribbon-viewport-row">
       <div class="name-spacer"></div>
-      <div class="ribbon" ref="ribbonRef">
+      <div class="ribbon" data-region="ribbon-track" ref="ribbonRef">
         <!-- Viewport selector -->
         <div
           class="viewport"
+          data-testid="ribbon-viewport"
           :style="{
             left: viewportLeftPercent + '%',
             width: viewportWidthPercent + '%',
@@ -170,11 +171,13 @@ function onMouseUp() {
           <!-- Start handle -->
           <div
             class="handle handle-start"
+            data-testid="ribbon-handle-start"
             @mousedown.stop="onMouseDown($event, 'start')"
           ></div>
           <!-- End handle -->
           <div
             class="handle handle-end"
+            data-testid="ribbon-handle-end"
             @mousedown.stop="onMouseDown($event, 'end')"
           ></div>
         </div>
@@ -182,7 +185,7 @@ function onMouseUp() {
     </div>
 
     <!-- Time ticks row -->
-    <div class="time-ticks-container">
+    <div class="time-ticks-container" data-region="ribbon-ticks-row">
       <div class="name-spacer ticks-spacer"></div>
       <div class="ticks-area" ref="ticksRef">
         <div
@@ -201,43 +204,52 @@ function onMouseUp() {
 
 <style scoped>
 .time-ribbon-wrapper {
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   background: v-bind('RIBBON_BG_COLOR');
+  width: 100%;
+  min-width: 0;
 }
 
 .time-ribbon-container {
   display: flex;
   height: v-bind('TIME_RIBBON_HEIGHT + "px"');
+  width: 100%;
+  min-width: 0;
 }
 
 .time-ticks-container {
   display: flex;
   height: v-bind('TIME_TICKS_HEIGHT + "px"');
-  border-bottom: 1px solid #2a2d30;
+  border-bottom: 1px solid var(--ae-border);
+  width: 100%;
+  min-width: 0;
 }
 
 .name-spacer {
   width: v-bind('spacerWidth + "px"');
   min-width: v-bind('spacerWidth + "px"');
-  background: #141618;
+  background: var(--ae-panel);
 }
 
 .ticks-spacer {
-  border-bottom: 1px solid #2a2d30;
+  border-bottom: 1px solid var(--ae-border);
 }
 
 .ribbon {
   flex: 1;
   position: relative;
   background: v-bind('RIBBON_BG_COLOR');
-  border-bottom: 1px solid #2a2d30;
+  border-bottom: 1px solid var(--ae-border);
+  min-width: 0;
 }
 
 .ticks-area {
   flex: 1;
   position: relative;
-  background: #141618;
+  background: var(--ae-panel);
+  min-width: 0;
 }
 
 .viewport {
@@ -245,7 +257,7 @@ function onMouseUp() {
   top: 4px;
   bottom: 4px;
   background: v-bind('RIBBON_VIEWPORT_COLOR');
-  border-radius: 4px;
+  border-radius: 0;
   cursor: grab;
 }
 
@@ -261,7 +273,6 @@ function onMouseUp() {
   background: v-bind('RIBBON_HANDLE_COLOR');
   cursor: ew-resize;
   opacity: 0.7;
-  transition: opacity 0.15s;
 }
 
 .handle:hover {
@@ -270,12 +281,12 @@ function onMouseUp() {
 
 .handle-start {
   left: 0;
-  border-radius: 4px 0 0 4px;
+  border-radius: 0;
 }
 
 .handle-end {
   right: 0;
-  border-radius: 0 4px 4px 0;
+  border-radius: 0;
 }
 
 .tick {
@@ -285,6 +296,16 @@ function onMouseUp() {
   display: flex;
   flex-direction: column;
   align-items: center;
+}
+
+.tick:first-child {
+  transform: none;
+  align-items: flex-start;
+}
+
+.tick:last-child {
+  transform: translateX(-100%);
+  align-items: flex-end;
 }
 
 .tick-mark {

@@ -1,0 +1,902 @@
+{
+  "td_build": "2025.31550",
+  "date": "2026-10-23",
+  "results": {
+    "inspect": {
+      "probePars": [],
+      "ops": {
+        "probe": {
+          "appendCustomPage": false,
+          "destroyCustomPars": false,
+          "errors": "",
+          "appendError": "tdAttributeError(\"'td.cplusplusCHOP' object has no attribute 'appendCustomPage' Context:/avtools_parameter_probe/probe\")"
+        },
+        "actual_top": {
+          "appendCustomPage": false,
+          "destroyCustomPars": false,
+          "errors": "",
+          "appendError": "tdAttributeError(\"'td.cplusplusTOP' object has no attribute 'appendCustomPage' Context:/avtools_parameter_probe/actual_top\")"
+        },
+        "actual_chop": {
+          "appendCustomPage": false,
+          "destroyCustomPars": false,
+          "errors": "",
+          "appendError": "tdAttributeError(\"'td.cplusplusCHOP' object has no attribute 'appendCustomPage' Context:/avtools_parameter_probe/actual_chop\")"
+        }
+      },
+      "parMethods": [
+        "bindExpr",
+        "bindMaster",
+        "bindRange",
+        "bindReferences",
+        "defaultBindExpr",
+        "destroy",
+        "evalExport",
+        "exportOP",
+        "exportSource"
+      ],
+      "snapshot": {}
+    },
+    "lifecycle": [
+      {
+        "stage": "initial",
+        "channels": {
+          "generation": 1.0,
+          "schema": 1.0,
+          "cooks": 2.0,
+          "speed": 1.0,
+          "expr": 2.0,
+          "exported": 3.0,
+          "bound": 4.0,
+          "pulses": 0.0
+        },
+        "pars": {
+          "Speed": {
+            "value": 1.0,
+            "mode": "ParMode.CONSTANT",
+            "style": "Float",
+            "default": 1.0,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 10.0
+          },
+          "Expr": {
+            "value": 2.0,
+            "mode": "ParMode.CONSTANT",
+            "style": "Float",
+            "default": 2.0,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 10.0
+          },
+          "Exportvalue": {
+            "value": 3.0,
+            "mode": "ParMode.CONSTANT",
+            "style": "Float",
+            "default": 3.0,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 10.0
+          },
+          "Boundvalue": {
+            "value": 4.0,
+            "mode": "ParMode.CONSTANT",
+            "style": "Float",
+            "default": 4.0,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 10.0
+          },
+          "Gone": {
+            "value": 5.0,
+            "mode": "ParMode.CONSTANT",
+            "style": "Float",
+            "default": 5.0,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 10.0
+          },
+          "Typetest": {
+            "value": 6.0,
+            "mode": "ParMode.CONSTANT",
+            "style": "Float",
+            "default": 6.0,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 10.0
+          },
+          "Trigger": {
+            "value": false,
+            "mode": "ParMode.CONSTANT",
+            "style": "Pulse",
+            "default": false,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 1.0
+          }
+        }
+      },
+      {
+        "stage": "configured",
+        "channels": {
+          "generation": 1.0,
+          "schema": 1.0,
+          "cooks": 3.0,
+          "speed": 7.0,
+          "expr": 5.0,
+          "exported": 13.0,
+          "bound": 23.0,
+          "pulses": 1.0
+        },
+        "pars": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT",
+            "style": "Float",
+            "default": 1.0,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 10.0
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION",
+            "style": "Float",
+            "default": 2.0,
+            "expr": "2 + 3",
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 10.0
+          },
+          "Exportvalue": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT",
+            "style": "Float",
+            "default": 3.0,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "13.0",
+            "max": 1.0,
+            "normMax": 10.0
+          },
+          "Boundvalue": {
+            "value": 23.0,
+            "mode": "ParMode.BIND",
+            "style": "Float",
+            "default": 4.0,
+            "expr": null,
+            "bindExpr": "parent().par.Master",
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 10.0
+          },
+          "Gone": {
+            "value": 5.0,
+            "mode": "ParMode.CONSTANT",
+            "style": "Float",
+            "default": 5.0,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 10.0
+          },
+          "Typetest": {
+            "value": 42.0,
+            "mode": "ParMode.CONSTANT",
+            "style": "Float",
+            "default": 6.0,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 10.0
+          },
+          "Trigger": {
+            "value": true,
+            "mode": "ParMode.CONSTANT",
+            "style": "Pulse",
+            "default": false,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 1.0
+          }
+        }
+      },
+      {
+        "stage": "schema2_reinit",
+        "channels": {
+          "generation": 2.0,
+          "schema": 2.0,
+          "cooks": 2.0,
+          "speed": 7.0,
+          "expr": 5.0,
+          "exported": 13.0,
+          "bound": 23.0,
+          "pulses": 0.0
+        },
+        "pars": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT",
+            "style": "Float",
+            "default": 2.0,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 100.0
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION",
+            "style": "Float",
+            "default": 2.0,
+            "expr": "2 + 3",
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 100.0
+          },
+          "Exportvalue": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT",
+            "style": "Float",
+            "default": 3.0,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "13.0",
+            "max": 1.0,
+            "normMax": 100.0
+          },
+          "Boundvalue": {
+            "value": 23.0,
+            "mode": "ParMode.BIND",
+            "style": "Float",
+            "default": 4.0,
+            "expr": null,
+            "bindExpr": "parent().par.Master",
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 100.0
+          },
+          "Added": {
+            "value": 9.0,
+            "mode": "ParMode.CONSTANT",
+            "style": "Float",
+            "default": 9.0,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 100.0
+          },
+          "Typetest": {
+            "value": 42.0,
+            "mode": "ParMode.CONSTANT",
+            "style": "Float",
+            "default": 6.0,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 100.0
+          },
+          "Trigger": {
+            "value": false,
+            "mode": "ParMode.CONSTANT",
+            "style": "Pulse",
+            "default": false,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 1.0
+          }
+        }
+      },
+      {
+        "stage": "schema3_typechange",
+        "channels": {
+          "generation": 3.0,
+          "schema": 3.0,
+          "cooks": 2.0,
+          "speed": 7.0,
+          "expr": 5.0,
+          "exported": 13.0,
+          "bound": 23.0,
+          "pulses": 0.0
+        },
+        "pars": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT",
+            "style": "Float",
+            "default": 2.0,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 100.0
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION",
+            "style": "Float",
+            "default": 2.0,
+            "expr": "2 + 3",
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 100.0
+          },
+          "Exportvalue": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT",
+            "style": "Float",
+            "default": 3.0,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "13.0",
+            "max": 1.0,
+            "normMax": 100.0
+          },
+          "Boundvalue": {
+            "value": 23.0,
+            "mode": "ParMode.BIND",
+            "style": "Float",
+            "default": 4.0,
+            "expr": null,
+            "bindExpr": "parent().par.Master",
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 100.0
+          },
+          "Added": {
+            "value": 9.0,
+            "mode": "ParMode.CONSTANT",
+            "style": "Float",
+            "default": 9.0,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 100.0
+          },
+          "Typetest": {
+            "value": "42",
+            "mode": "ParMode.CONSTANT",
+            "style": "Str",
+            "default": "new default",
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 1.0
+          },
+          "Trigger": {
+            "value": false,
+            "mode": "ParMode.CONSTANT",
+            "style": "Pulse",
+            "default": false,
+            "expr": null,
+            "bindExpr": null,
+            "exportSource": "None",
+            "max": 1.0,
+            "normMax": 1.0
+          }
+        }
+      }
+    ],
+    "runtime": {
+      "passed": true,
+      "stage": 6,
+      "error": "",
+      "records": [
+        {
+          "stage": 0,
+          "elapsed_ms": 1849.6556669997517,
+          "value": 1.0,
+          "ticks": 6.0,
+          "pulses": 0.0,
+          "parameters": {
+            "runtime_chop": {
+              "Probespeed": {
+                "value": 7.0,
+                "mode": "ParMode.CONSTANT"
+              },
+              "Probeexpr": {
+                "value": 5.0,
+                "mode": "ParMode.EXPRESSION"
+              },
+              "Probeexport": {
+                "value": 13.0,
+                "mode": "ParMode.EXPORT"
+              },
+              "Probebind": {
+                "value": 23.0,
+                "mode": "ParMode.BIND"
+              }
+            },
+            "runtime_top": {
+              "Probespeed": {
+                "value": 7.0,
+                "mode": "ParMode.CONSTANT"
+              },
+              "Probeexpr": {
+                "value": 5.0,
+                "mode": "ParMode.EXPRESSION"
+              },
+              "Probeexport": {
+                "value": 13.0,
+                "mode": "ParMode.EXPORT"
+              },
+              "Probebind": {
+                "value": 23.0,
+                "mode": "ParMode.BIND"
+              }
+            }
+          },
+          "state": "build_state\tready\r\nbuild_diagnostics\tReady (28 ms), revision 9aece72bc363\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_chop/sketches/channels/main.ts; available=70ad2f23e34f751d; active=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_chop/sketches/channels/main.ts@70ad2f23e34f751d\r\nlog_retained\t2\r\nlog_evicted\t0\r\nlog_dropped\t0\r\nlog_truncated\t0\r\n"
+        },
+        {
+          "stage": 1,
+          "elapsed_ms": 155.9291250014212,
+          "value": 2.0,
+          "ticks": 1.0,
+          "pulses": 0.0,
+          "parameters": {
+            "runtime_chop": {
+              "Probespeed": {
+                "value": 7.0,
+                "mode": "ParMode.CONSTANT"
+              },
+              "Probeexpr": {
+                "value": 5.0,
+                "mode": "ParMode.EXPRESSION"
+              },
+              "Probeexport": {
+                "value": 13.0,
+                "mode": "ParMode.EXPORT"
+              },
+              "Probebind": {
+                "value": 23.0,
+                "mode": "ParMode.BIND"
+              }
+            },
+            "runtime_top": {
+              "Probespeed": {
+                "value": 7.0,
+                "mode": "ParMode.CONSTANT"
+              },
+              "Probeexpr": {
+                "value": 5.0,
+                "mode": "ParMode.EXPRESSION"
+              },
+              "Probeexport": {
+                "value": 13.0,
+                "mode": "ParMode.EXPORT"
+              },
+              "Probebind": {
+                "value": 23.0,
+                "mode": "ParMode.BIND"
+              }
+            }
+          },
+          "state": "build_state\tready\r\nbuild_diagnostics\tReady (29 ms), revision 63680994f4a2\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_chop/sketches/channels/main.ts; available=2a4fd331b4573542; active=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_chop/sketches/channels/main.ts@2a4fd331b4573542\r\nlog_retained\t3\r\nlog_evicted\t0\r\nlog_dropped\t0\r\nlog_truncated\t0\r\n",
+          "native_reinit_ms": [
+            44.895083992742,
+            57.53175000427291
+          ]
+        },
+        {
+          "stage": 2,
+          "elapsed_ms": 181.50820801383816,
+          "value": 2.0,
+          "ticks": 6.0,
+          "pulses": 0.0,
+          "parameters": {
+            "runtime_chop": {
+              "Probespeed": {
+                "value": 7.0,
+                "mode": "ParMode.CONSTANT"
+              },
+              "Probeexpr": {
+                "value": 5.0,
+                "mode": "ParMode.EXPRESSION"
+              },
+              "Probeexport": {
+                "value": 13.0,
+                "mode": "ParMode.EXPORT"
+              },
+              "Probebind": {
+                "value": 23.0,
+                "mode": "ParMode.BIND"
+              }
+            },
+            "runtime_top": {
+              "Probespeed": {
+                "value": 7.0,
+                "mode": "ParMode.CONSTANT"
+              },
+              "Probeexpr": {
+                "value": 5.0,
+                "mode": "ParMode.EXPRESSION"
+              },
+              "Probeexport": {
+                "value": 13.0,
+                "mode": "ParMode.EXPORT"
+              },
+              "Probebind": {
+                "value": 23.0,
+                "mode": "ParMode.BIND"
+              }
+            }
+          },
+          "state": "build_state\tready\r\nbuild_diagnostics\tReady (28 ms), revision 63680994f4a2\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_chop/sketches/channels/main.ts; available=2a4fd331b4573542; active=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_chop/sketches/channels/main.ts@2a4fd331b4573542\r\nlog_retained\t1\r\nlog_evicted\t0\r\nlog_dropped\t0\r\nlog_truncated\t0\r\n"
+        },
+        {
+          "stage": 3,
+          "elapsed_ms": 208.60812498722225,
+          "value": 2.0,
+          "ticks": 26.0,
+          "pulses": 0.0,
+          "parameters": {
+            "runtime_chop": {
+              "Probespeed": {
+                "value": 7.0,
+                "mode": "ParMode.CONSTANT"
+              },
+              "Probeexpr": {
+                "value": 5.0,
+                "mode": "ParMode.EXPRESSION"
+              },
+              "Probeexport": {
+                "value": 13.0,
+                "mode": "ParMode.EXPORT"
+              },
+              "Probebind": {
+                "value": 23.0,
+                "mode": "ParMode.BIND"
+              }
+            },
+            "runtime_top": {
+              "Probespeed": {
+                "value": 7.0,
+                "mode": "ParMode.CONSTANT"
+              },
+              "Probeexpr": {
+                "value": 5.0,
+                "mode": "ParMode.EXPRESSION"
+              },
+              "Probeexport": {
+                "value": 13.0,
+                "mode": "ParMode.EXPORT"
+              },
+              "Probebind": {
+                "value": 23.0,
+                "mode": "ParMode.BIND"
+              }
+            }
+          },
+          "state": "build_state\terror\r\nbuild_diagnostics\t/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_chop/sketches/channels/main.ts:8:1 TS2304 Cannot find name 'missingFunction'.\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_chop/sketches/channels/main.ts; available=2a4fd331b4573542; active=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_chop/sketches/channels/main.ts@2a4fd331b4573542\r\nlog_retained\t1\r\nlog_evicted\t0\r\nlog_dropped\t0\r\nlog_truncated\t0\r\n"
+        },
+        {
+          "stage": 4,
+          "elapsed_ms": 149.917375005316,
+          "value": 2.0,
+          "ticks": 42.0,
+          "pulses": 0.0,
+          "parameters": {
+            "runtime_chop": {
+              "Probespeed": {
+                "value": 7.0,
+                "mode": "ParMode.CONSTANT"
+              },
+              "Probeexpr": {
+                "value": 5.0,
+                "mode": "ParMode.EXPRESSION"
+              },
+              "Probeexport": {
+                "value": 13.0,
+                "mode": "ParMode.EXPORT"
+              },
+              "Probebind": {
+                "value": 23.0,
+                "mode": "ParMode.BIND"
+              }
+            },
+            "runtime_top": {
+              "Probespeed": {
+                "value": 7.0,
+                "mode": "ParMode.CONSTANT"
+              },
+              "Probeexpr": {
+                "value": 5.0,
+                "mode": "ParMode.EXPRESSION"
+              },
+              "Probeexport": {
+                "value": 13.0,
+                "mode": "ParMode.EXPORT"
+              },
+              "Probebind": {
+                "value": 23.0,
+                "mode": "ParMode.BIND"
+              }
+            }
+          },
+          "state": "build_state\tready\r\nbuild_diagnostics\tReady (30 ms), revision ddc0d8439058\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tPending Reload\r\nsource_identity\tselected=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_chop/sketches/channels/main.ts; available=160d149b5a571e33; active=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_chop/sketches/channels/main.ts@2a4fd331b4573542\r\nlog_retained\t1\r\nlog_evicted\t0\r\nlog_dropped\t0\r\nlog_truncated\t0\r\n"
+        },
+        {
+          "stage": 5,
+          "elapsed_ms": 23.279415996512398,
+          "value": 3.0,
+          "ticks": 1.0,
+          "pulses": 0.0,
+          "parameters": {
+            "runtime_chop": {
+              "Probespeed": {
+                "value": 7.0,
+                "mode": "ParMode.CONSTANT"
+              },
+              "Probeexpr": {
+                "value": 5.0,
+                "mode": "ParMode.EXPRESSION"
+              },
+              "Probeexport": {
+                "value": 13.0,
+                "mode": "ParMode.EXPORT"
+              },
+              "Probebind": {
+                "value": 23.0,
+                "mode": "ParMode.BIND"
+              }
+            },
+            "runtime_top": {
+              "Probespeed": {
+                "value": 7.0,
+                "mode": "ParMode.CONSTANT"
+              },
+              "Probeexpr": {
+                "value": 5.0,
+                "mode": "ParMode.EXPRESSION"
+              },
+              "Probeexport": {
+                "value": 13.0,
+                "mode": "ParMode.EXPORT"
+              },
+              "Probebind": {
+                "value": 23.0,
+                "mode": "ParMode.BIND"
+              }
+            }
+          },
+          "state": "build_state\tready\r\nbuild_diagnostics\tReady (30 ms), revision ddc0d8439058\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_chop/sketches/channels/main.ts; available=160d149b5a571e33; active=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_chop/sketches/channels/main.ts@160d149b5a571e33\r\nlog_retained\t2\r\nlog_evicted\t0\r\nlog_dropped\t0\r\nlog_truncated\t0\r\n"
+        },
+        {
+          "stage": 6,
+          "elapsed_ms": 9.410541009856388,
+          "value": 3.0,
+          "ticks": 2.0,
+          "pulses": 1.0,
+          "parameters": {
+            "runtime_chop": {
+              "Probespeed": {
+                "value": 7.0,
+                "mode": "ParMode.CONSTANT"
+              },
+              "Probeexpr": {
+                "value": 5.0,
+                "mode": "ParMode.EXPRESSION"
+              },
+              "Probeexport": {
+                "value": 13.0,
+                "mode": "ParMode.EXPORT"
+              },
+              "Probebind": {
+                "value": 23.0,
+                "mode": "ParMode.BIND"
+              }
+            },
+            "runtime_top": {
+              "Probespeed": {
+                "value": 7.0,
+                "mode": "ParMode.CONSTANT"
+              },
+              "Probeexpr": {
+                "value": 5.0,
+                "mode": "ParMode.EXPRESSION"
+              },
+              "Probeexport": {
+                "value": 13.0,
+                "mode": "ParMode.EXPORT"
+              },
+              "Probebind": {
+                "value": 23.0,
+                "mode": "ParMode.BIND"
+              }
+            }
+          },
+          "state": "build_state\tready\r\nbuild_diagnostics\tReady (30 ms), revision ddc0d8439058\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_chop/sketches/channels/main.ts; available=160d149b5a571e33; active=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_chop/sketches/channels/main.ts@160d149b5a571e33\r\nlog_retained\t2\r\nlog_evicted\t0\r\nlog_dropped\t0\r\nlog_truncated\t0\r\n"
+        }
+      ],
+      "scope": "Probe parameters read a schema file in setupParameters. TypeScript is compiled/reloaded by the real runtime. Exported TS declarations are not yet connected to C++ schema creation."
+    },
+    "persistence": {
+      "loaded": "/avtools_parameter_probe1",
+      "nodes": {
+        "/avtools_parameter_probe/runtime_chop": {
+          "values": {
+            "Probespeed": {
+              "value": 7.0,
+              "mode": "ParMode.CONSTANT"
+            },
+            "Probeexpr": {
+              "value": 5.0,
+              "mode": "ParMode.EXPRESSION"
+            },
+            "Probeexport": {
+              "value": 13.0,
+              "mode": "ParMode.EXPORT"
+            },
+            "Probebind": {
+              "value": 23.0,
+              "mode": "ParMode.BIND"
+            }
+          },
+          "entry": "/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_chop/sketches/channels/main.ts",
+          "errors": ""
+        },
+        "/avtools_parameter_probe/runtime_top": {
+          "values": {
+            "Probespeed": {
+              "value": 7.0,
+              "mode": "ParMode.CONSTANT"
+            },
+            "Probeexpr": {
+              "value": 5.0,
+              "mode": "ParMode.EXPRESSION"
+            },
+            "Probeexport": {
+              "value": 13.0,
+              "mode": "ParMode.EXPORT"
+            },
+            "Probebind": {
+              "value": 23.0,
+              "mode": "ParMode.BIND"
+            }
+          },
+          "entry": "/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_top/sketches/background/main.ts",
+          "errors": ""
+        },
+        "/avtools_parameter_probe1/runtime_chop": {
+          "values": {
+            "Probespeed": {
+              "value": 7.0,
+              "mode": "ParMode.CONSTANT"
+            },
+            "Probeexpr": {
+              "value": 5.0,
+              "mode": "ParMode.EXPRESSION"
+            },
+            "Probeexport": {
+              "value": 13.0,
+              "mode": "ParMode.EXPORT"
+            },
+            "Probebind": {
+              "value": 23.0,
+              "mode": "ParMode.BIND"
+            }
+          },
+          "entry": "/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_chop/sketches/channels/main.ts",
+          "errors": ""
+        },
+        "/avtools_parameter_probe1/runtime_top": {
+          "values": {
+            "Probespeed": {
+              "value": 7.0,
+              "mode": "ParMode.CONSTANT"
+            },
+            "Probeexpr": {
+              "value": 5.0,
+              "mode": "ParMode.EXPRESSION"
+            },
+            "Probeexport": {
+              "value": 13.0,
+              "mode": "ParMode.EXPORT"
+            },
+            "Probebind": {
+              "value": 23.0,
+              "mode": "ParMode.BIND"
+            }
+          },
+          "entry": "/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/parameters/runtime_top/sketches/background/main.ts",
+          "errors": ""
+        }
+      },
+      "passed": true,
+      "independent_instances": true
+    },
+    "bootstrap-result": {
+      "initial": {
+        "entry": "",
+        "schema": 1.0
+      },
+      "reinit": {
+        "entry": "schema2",
+        "schema": 1.0,
+        "second_present": false
+      },
+      "loaded": {
+        "entry": "schema2",
+        "schema": 1.0,
+        "second_present": false
+      },
+      "confirmed_unavailable_during_setup": true
+    },
+    "storage-result": {
+      "initial": {
+        "entry": "",
+        "schema": 1.0
+      },
+      "reinit": {
+        "entry": "schema2",
+        "schema": 2.0,
+        "value": 17.0
+      },
+      "loaded": {
+        "entry": "schema2",
+        "schema": 2.0,
+        "second": 17.0
+      },
+      "metadata_changes": {
+        "label": {
+          "error": "Custom parameter expected. Value:type:Par name:Second owner:/avtools_parameter_probe/storageprobe value:17.0 Type:<class 'td.Par'>."
+        },
+        "normMax": {
+          "error": "Custom parameter expected. Value:type:Par name:Second owner:/avtools_parameter_probe/storageprobe value:17.0 Type:<class 'td.Par'>."
+        },
+        "default": {
+          "error": "Custom parameter expected. Value:type:Par name:Second owner:/avtools_parameter_probe/storageprobe value:17.0 Type:<class 'td.Par'>."
+        }
+      },
+      "destroy": {
+        "error": "Can only destroy sequential or custom parameters. Value:type:Par name:Second owner:/avtools_parameter_probe/storageprobe value:17.0 Type:<class 'td.Par'>."
+      }
+    },
+    "pending-reload": {
+      "confirmed_reinit_adopts_pending": true,
+      "records": [
+        {
+          "stage": "pending",
+          "value": 3.0,
+          "autoreload": false
+        },
+        {
+          "stage": "after_native_reinit",
+          "value": 4.0,
+          "autoreload": false
+        }
+      ]
+    }
+  }
+}

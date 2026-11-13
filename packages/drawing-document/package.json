@@ -1,0 +1,6 @@
+{
+  "name": "@avtools/drawing-document",
+  "private": true,
+  "type": "module",
+  "exports": "./mod.ts"
+}

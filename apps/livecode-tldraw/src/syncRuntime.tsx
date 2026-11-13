@@ -1,0 +1,927 @@
+// Resets replace a per-type map, and a sequence gap recovers by resubscribing.
+// A stable external store publishes frames to entity-specific subscribers.
+
+import {
+  type Context,
+  createContext,
+  type PropsWithChildren,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type {
+  SixSinesData,
+  SixSinesEntity,
+  AnimationTimelineData,
+  AnimationTimelineEntity,
+  AnimationTimelineSetResult,
+  DrawingDocument,
+  DrawingEntity,
+  DrawingNodeDelete,
+  DrawingNodeUpsert,
+  DrawingPatchRequest,
+  DrawingPatchResult,
+  DrawingSetResult,
+  ModuleLookupsEntity,
+  ModuleWaitsEntity,
+  ParamsEntity,
+  ParamsValues,
+  PianoRollData,
+  PianoRollObject,
+  PianoRollSetResult,
+  RunEntity,
+  SetAnimationTimelineRequest,
+  SetDrawingRequest,
+  SetPianoRollRequest,
+  SignalEntity,
+  SyncMessage,
+} from "@avtools/livecode-protocol";
+import { SYNC_ENTITY_TYPES } from "@avtools/livecode-protocol";
+import type { ReconnectingSocketController } from "./reconnectingSocket";
+import {
+  engineAction,
+  serverWebSocketUrl,
+  setPortActionSender,
+} from "./serverRequests";
+import {
+  applySyncMessageToState,
+  emptySyncState,
+  type SyncEntityTypeKey,
+  type SyncSlice,
+  type SyncState,
+} from "./syncState";
+import {
+  configuredSyncTransport,
+  createBroadcastSyncTransport,
+  createInProcessSyncTransport,
+  createWebSocketSyncTransport,
+  type SyncPort,
+  type SyncTransportCallbacks,
+} from "./syncTransport";
+import { readBootParam } from "./bootParams";
+
+import { SyncStore } from "./syncStore";
+import { deliverUiEventBatch } from "./uiEvents";
+import { SyncStoreProvider, useSyncSlice } from "./syncSubscriptions";
+
+export { useSyncEntityNames, useSyncSelector } from "./syncSubscriptions";
+
+export type { SyncSlice } from "./syncState";
+
+/** Same bound as the BroadcastChannel action lane. */
+const SOCKET_ACTION_TIMEOUT_MS = 10_000;
+
+export type SyncConnectionStatus = "closed" | "connecting" | "open" | "error";
+
+/**
+ * Every kind this client watches — the protocol package's canonical list,
+ * shared with the engine's hello/detach resets. One subscribe carries the
+ * whole list, and a subscribe REPLACES the socket's set — so this is also the
+ * gap-recovery message, resent verbatim.
+ */
+export { SYNC_ENTITY_TYPES };
+
+/** Connection lifecycle is independent of high-frequency entity traffic. */
+export interface SyncConnection {
+  connectionStatus: SyncConnectionStatus;
+  connectionError: string | null;
+}
+
+export interface SyncActions {
+  setSixSinesParameters(
+    name: string,
+    changes: Array<{ id: number; value: number }>,
+    options?: { originId?: string },
+  ): Promise<void>;
+  setSixSinesPreset(
+    name: string,
+    data: SixSinesData,
+    options?: { originId?: string },
+  ): Promise<void>;
+  serverBaseUrl: string;
+  setServerBaseUrl(next: string): void;
+  setRollCursor(name: string, position: number, options?: {originId?:string}): Promise<PianoRollSetResult>;
+  setRoll(
+    name: string,
+    data: PianoRollData,
+    options?: { originId?: string; label?: string },
+  ): Promise<PianoRollSetResult>;
+  undoRoll(name: string, originId?: string): Promise<void>;
+  redoRoll(name: string, originId?: string): Promise<void>;
+  setParams(
+    name: string,
+    values: ParamsValues,
+    options?: { originId?: string },
+  ): Promise<ParamsEntity>;
+  /** Save a preset from explicit values, or a snapshot of the live values when omitted. */
+  setParamsPreset(
+    name: string,
+    label: string,
+    options?: { values?: ParamsValues; originId?: string },
+  ): Promise<ParamsEntity>;
+  deleteParamsPreset(
+    name: string,
+    label: string,
+    options?: { originId?: string },
+  ): Promise<ParamsEntity>;
+  setAnimationTimeline(
+    name: string,
+    data: AnimationTimelineData,
+    options?: { originId?: string; expectedRev?: number },
+  ): Promise<AnimationTimelineSetResult>;
+  setDrawing(
+    name: string,
+    data: DrawingDocument,
+    options?: { originId?: string; expectedRev?: number },
+  ): Promise<DrawingSetResult>;
+  /** Node-level edits: the in-gesture stream. Same ordered lane as setDrawing. */
+  patchDrawing(
+    name: string,
+    edits: { upserts?: DrawingNodeUpsert[]; deletes?: DrawingNodeDelete[] },
+    options?: { originId?: string; expectedRev?: number },
+  ): Promise<DrawingPatchResult>;
+}
+
+/**
+ * Socket-lifecycle edges, delivered imperatively rather than through React
+ * state. The livecode runtime hangs its open-sequence (health → LSP → rehydrate
+ * → flush pending stops → re-analyze) off these, and that sequence must run once
+ * per real socket open: a close and reopen batched into one React commit would
+ * collapse into no state change at all and skip the recovery.
+ */
+export interface SyncLifecycle {
+  isOpen(): boolean;
+  addListener(listener: SyncLifecycleListener): () => void;
+}
+
+export interface SyncLifecycleListener {
+  onOpen?: () => void;
+  onClose?: () => void;
+  onError?: (message: string) => void;
+}
+
+const SyncConnectionContext = createContext<SyncConnection | null>(null);
+const SyncActionsContext = createContext<SyncActions | null>(null);
+const SyncLifecycleContext = createContext<SyncLifecycle | null>(null);
+
+/** Active-ness is derived client-side now; the transport has no active list. */
+export function isRunActive(run: RunEntity): boolean {
+  return run.state === "launching" || run.state === "running";
+}
+
+export function useSyncConnection(): SyncConnection {
+  return useRequiredContext(SyncConnectionContext, "useSyncConnection");
+}
+
+export function useSyncActions(): SyncActions {
+  return useRequiredContext(SyncActionsContext, "useSyncActions");
+}
+
+export function useSyncLifecycle(): SyncLifecycle {
+  return useRequiredContext(SyncLifecycleContext, "useSyncLifecycle");
+}
+
+export function useSixSinesSync(name?: string | null) {
+  const slice = useSyncSlice("sixSines", name);
+  const connection = useSyncConnection();
+  const { setSixSinesParameters, setSixSinesPreset } = useSyncActions();
+  return {
+    ...connection,
+    synths: slice.entities,
+    latestSeq: slice.latestSeq,
+    setSixSinesParameters,
+    setSixSinesPreset,
+  };
+}
+
+export interface PianoRollsSyncApi {
+  connectionStatus: SyncConnectionStatus;
+  connectionError: string | null;
+  rolls: Record<string, PianoRollObject>;
+  latestSeq: number | null;
+  setRoll: SyncActions["setRoll"];
+  setRollCursor: SyncActions["setRollCursor"];
+  undoRoll: SyncActions["undoRoll"];
+  redoRoll: SyncActions["redoRoll"];
+}
+
+export function usePianoRollsSync(name?: string | null): PianoRollsSyncApi {
+  const slice = useSyncSlice("pianoRoll", name);
+  const { connectionStatus, connectionError } = useSyncConnection();
+  const { setRoll, setRollCursor, undoRoll, redoRoll } = useSyncActions();
+  return useMemo(
+    () => ({
+      connectionStatus,
+      connectionError,
+      rolls: slice.entities,
+      latestSeq: slice.latestSeq,
+      setRoll,
+      setRollCursor,
+      undoRoll,
+      redoRoll,
+    }),
+    [connectionError, connectionStatus, redoRoll, setRoll, setRollCursor, slice, undoRoll],
+  );
+}
+
+export interface ParamsSyncApi {
+  connectionStatus: SyncConnectionStatus;
+  connectionError: string | null;
+  params: Record<string, ParamsEntity>;
+  latestSeq: number | null;
+  setParams: SyncActions["setParams"];
+  setParamsPreset: SyncActions["setParamsPreset"];
+  deleteParamsPreset: SyncActions["deleteParamsPreset"];
+}
+
+export function useParamsSync(name?: string | null): ParamsSyncApi {
+  const slice = useSyncSlice("params", name);
+  const { connectionStatus, connectionError } = useSyncConnection();
+  const { setParams, setParamsPreset, deleteParamsPreset } = useSyncActions();
+  return useMemo(
+    () => ({
+      connectionStatus,
+      connectionError,
+      params: slice.entities,
+      latestSeq: slice.latestSeq,
+      setParams,
+      setParamsPreset,
+      deleteParamsPreset,
+    }),
+    [
+      connectionError,
+      connectionStatus,
+      deleteParamsPreset,
+      setParams,
+      setParamsPreset,
+      slice,
+    ],
+  );
+}
+
+export interface AnimationTimelinesSyncApi {
+  connectionStatus: SyncConnectionStatus;
+  connectionError: string | null;
+  timelines: Record<string, AnimationTimelineEntity>;
+  latestSeq: number | null;
+  setTimeline: SyncActions["setAnimationTimeline"];
+}
+
+export function useAnimationTimelinesSync(
+  name?: string | null,
+): AnimationTimelinesSyncApi {
+  const slice = useSyncSlice("animationTimeline", name);
+  const { connectionStatus, connectionError } = useSyncConnection();
+  const { setAnimationTimeline } = useSyncActions();
+  return useMemo(
+    () => ({
+      connectionStatus,
+      connectionError,
+      timelines: slice.entities,
+      latestSeq: slice.latestSeq,
+      setTimeline: setAnimationTimeline,
+    }),
+    [connectionError, connectionStatus, setAnimationTimeline, slice],
+  );
+}
+
+export interface DrawingsSyncApi {
+  connectionStatus: SyncConnectionStatus;
+  connectionError: string | null;
+  drawings: Record<string, DrawingEntity>;
+  latestSeq: number | null;
+  setDrawing: SyncActions["setDrawing"];
+  patchDrawing: SyncActions["patchDrawing"];
+}
+
+export function useDrawingsSync(name?: string | null): DrawingsSyncApi {
+  const slice = useSyncSlice("drawing", name);
+  const { connectionStatus, connectionError } = useSyncConnection();
+  const { setDrawing, patchDrawing } = useSyncActions();
+  return useMemo(
+    () => ({
+      connectionStatus,
+      connectionError,
+      drawings: slice.entities,
+      latestSeq: slice.latestSeq,
+      setDrawing,
+      patchDrawing,
+    }),
+    [connectionError, connectionStatus, patchDrawing, setDrawing, slice],
+  );
+}
+
+export interface SignalsSyncApi {
+  connectionStatus: SyncConnectionStatus;
+  connectionError: string | null;
+  signals: Record<string, SignalEntity>;
+  latestSeq: number | null;
+}
+
+/** Read-only by construction: signals are published by running code. */
+export function useSignalsSync(name?: string | null): SignalsSyncApi {
+  const slice = useSyncSlice("signal", name);
+  const { connectionStatus, connectionError } = useSyncConnection();
+  return useMemo(
+    () => ({
+      connectionStatus,
+      connectionError,
+      signals: slice.entities,
+      latestSeq: slice.latestSeq,
+    }),
+    [connectionError, connectionStatus, slice],
+  );
+}
+
+export interface RunsSyncApi {
+  runs: Record<string, RunEntity>;
+  latestSeq: number | null;
+}
+
+export function useRunsSync(name?: string | null): RunsSyncApi {
+  const slice = useSyncSlice("run", name);
+  return useMemo(
+    () => ({ runs: slice.entities, latestSeq: slice.latestSeq }),
+    [slice],
+  );
+}
+
+export interface ModuleVizSyncApi {
+  /** moduleId → the callsites that module is currently awaiting. */
+  moduleWaits: Record<string, ModuleWaitsEntity>;
+  /** moduleId → callsiteId → the roll name that callsite last resolved to. */
+  moduleLookups: Record<string, ModuleLookupsEntity>;
+  latestSeq: number | null;
+}
+
+/** Runtime observation state consumed by the editor's inline decorations. */
+export function useModuleVizSync(moduleId?: string | null): ModuleVizSyncApi {
+  const waits = useSyncSlice("moduleWaits", moduleId);
+  const lookups = useSyncSlice("moduleLookups", moduleId);
+  return useMemo(
+    () => ({
+      moduleWaits: waits.entities,
+      moduleLookups: lookups.entities,
+      latestSeq: maxSeq(waits.latestSeq, lookups.latestSeq),
+    }),
+    [lookups, waits],
+  );
+}
+
+export function maxSeq(a: number | null, b: number | null): number | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return Math.max(a, b);
+}
+
+/**
+ * How this page receives watched state. "ws" is the default `/sync` socket;
+ * "broadcast" (URL param `sync=broadcast`) reads the engine tab's
+ * BroadcastChannel sync host on the same origin — stage 2 of
+ * docs/livecode/history/browser-engine-plan-2026-08.md — and never opens the
+ * socket; "inprocess" (`engine=inprocess`) observes this tab's own engine
+ * directly. Writes and every other route stay HTTP against `serverBaseUrl`,
+ * except that the in-process and baked topologies execute entity writes on
+ * the engine themselves (see serverRequests.ts).
+ */
+export function SyncRuntimeProvider({ children }: PropsWithChildren) {
+  const isLocalDevelopment = ["localhost", "127.0.0.1", "::1"].includes(
+    window.location.hostname,
+  );
+  const initialServerUrl =
+    readBootParam("serverBaseUrl") ??
+    (isLocalDevelopment ? "http://localhost:7777" : window.location.origin);
+
+  const [serverBaseUrl, setServerBaseUrlState] = useState(initialServerUrl);
+  const serverBaseUrlRef = useRef(initialServerUrl);
+  const [connectionStatus, setConnectionStatus] =
+    useState<SyncConnectionStatus>("connecting");
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [store] = useState(() => new SyncStore());
+
+  // The authoritative maps live in a ref and are mutated as messages land; React
+  // state is a per-frame projection of them. Nothing downstream needs to see two
+  // messages from the same frame separately.
+  const pendingRef = useRef<SyncState>(emptySyncState());
+  const dirtyTypesRef = useRef(new Set<SyncEntityTypeKey>());
+  const rafRef = useRef<number | null>(null);
+  const lastSeqRef = useRef<number | null>(null);
+  const controllerRef = useRef<ReconnectingSocketController | null>(null);
+  const listenersRef = useRef(new Set<SyncLifecycleListener>());
+  const openRef = useRef(false);
+
+  const flush = useCallback(() => {
+    rafRef.current = null;
+    const dirty = dirtyTypesRef.current;
+    if (dirty.size === 0) return;
+    dirty.clear();
+    store.publish({ ...pendingRef.current });
+  }, [store]);
+
+  const scheduleFlush = useCallback(() => {
+    if (rafRef.current !== null) return;
+    rafRef.current = window.requestAnimationFrame(flush);
+  }, [flush]);
+
+  const subscribe = useCallback((port: SyncPort) => {
+    if (!port.isOpen()) return;
+    port.sendMessage({
+      type: "subscribe",
+      entityTypes: [...SYNC_ENTITY_TYPES],
+    });
+  }, []);
+
+  const applyMessage = useCallback(
+    (message: SyncMessage, port: SyncPort) => {
+      const previousSeq = lastSeqRef.current;
+      lastSeqRef.current = message.seq;
+
+      let dirty: Iterable<SyncEntityTypeKey>;
+      try {
+        dirty = applySyncMessageToState(pendingRef.current, message);
+      } catch (error) {
+        // A sparse change whose baseline this client lacks (a lost reset, a
+        // delta before any reset). The resubscribe's resets replace the
+        // affected maps whole, so nothing partial survives.
+        console.warn("[livecode-tldraw] sync message not applicable", error);
+        subscribe(port);
+        return;
+      }
+      for (const entityType of dirty) {
+        dirtyTypesRef.current.add(entityType);
+      }
+
+      scheduleFlush();
+
+      // Gap detection last, so this message's own content still lands: the
+      // resubscribe's resets replace it wholesale a moment later anyway.
+      if (previousSeq !== null && message.seq !== previousSeq + 1) {
+        subscribe(port);
+      } else if (previousSeq === null && !message.resets) {
+        // Joining a broadcast mid-stream: the first thing heard can be plain
+        // changes (or another tab's reply), so ask for our own resets. A
+        // fresh WebSocket never hits this — its first message answers our
+        // subscribe and carries resets.
+        subscribe(port);
+      }
+    },
+    [scheduleFlush, subscribe],
+  );
+
+  // Actions in flight over the sync port, by requestId. Rejected on close:
+  // the transport's reconnect is a new world and a reply will never come.
+  const pendingActionsRef = useRef(
+    new Map<
+      string,
+      { resolve: (body: unknown) => void; reject: (error: Error) => void }
+    >(),
+  );
+  const rejectPendingActions = useCallback((reason: string) => {
+    const pending = pendingActionsRef.current;
+    for (const entry of pending.values()) entry.reject(new Error(reason));
+    pending.clear();
+  }, []);
+
+  const transportCallbacks = useMemo<SyncTransportCallbacks>(
+    () => ({
+      onOpen: (port) => {
+        openRef.current = true;
+        setPortActionSender((op) =>
+          new Promise((resolve, reject) => {
+            if (!port.isOpen()) {
+              reject(new Error("sync socket is not open"));
+              return;
+            }
+            const requestId = crypto.randomUUID();
+            const timer = window.setTimeout(() => {
+              if (pendingActionsRef.current.delete(requestId)) {
+                reject(new Error(`engine action ${op.kind} timed out`));
+              }
+            }, SOCKET_ACTION_TIMEOUT_MS);
+            pendingActionsRef.current.set(requestId, {
+              resolve: (body) => {
+                window.clearTimeout(timer);
+                resolve(body);
+              },
+              reject: (error) => {
+                window.clearTimeout(timer);
+                reject(error);
+              },
+            });
+            try {
+              port.sendMessage({ type: "action", requestId, op });
+            } catch (error) {
+              pendingActionsRef.current.delete(requestId);
+              window.clearTimeout(timer);
+              reject(error instanceof Error ? error : new Error(String(error)));
+            }
+          })
+        );
+        // A fresh transport is owed no state. Subscribe is both registration and
+        // the full reset that hydrates this client.
+        lastSeqRef.current = null;
+        subscribe(port);
+        setConnectionStatus("open");
+        setConnectionError(null);
+        for (const listener of [...listenersRef.current]) listener.onOpen?.();
+      },
+      onMessage: applyMessage,
+      onUiEvents: deliverUiEventBatch,
+      onActionResult: (message) => {
+        const entry = pendingActionsRef.current.get(message.requestId);
+        if (!entry) return;
+        pendingActionsRef.current.delete(message.requestId);
+        if (message.ok) entry.resolve(message.body);
+        else entry.reject(new Error(message.error));
+      },
+      onClose: () => {
+        openRef.current = false;
+        setPortActionSender(null);
+        rejectPendingActions("sync socket closed");
+        setConnectionStatus((current) =>
+          current === "error" ? current : "closed",
+        );
+        for (const listener of [...listenersRef.current]) listener.onClose?.();
+      },
+      onError: (message) => {
+        openRef.current = false;
+        setPortActionSender(null);
+        rejectPendingActions(message);
+        setConnectionError(message);
+        setConnectionStatus("error");
+        for (const listener of [...listenersRef.current]) {
+          listener.onError?.(message);
+        }
+      },
+    }),
+    [applyMessage, rejectPendingActions, subscribe],
+  );
+
+  if (controllerRef.current === null) {
+    controllerRef.current =
+      configuredSyncTransport === "inprocess"
+        ? createInProcessSyncTransport(transportCallbacks, {
+            // A serverless bake (`serverBaseUrl=none`) has no server link to
+            // wait for; otherwise "open" means this tab's engine is attached.
+            requireUplink:
+              initialServerUrl.trim().replace(/\/+$/, "") !== "none",
+          })
+        : configuredSyncTransport === "broadcast"
+          ? createBroadcastSyncTransport(transportCallbacks)
+          : createWebSocketSyncTransport(
+              () => serverWebSocketUrl(serverBaseUrlRef.current, "/sync"),
+              transportCallbacks,
+            );
+  }
+
+  // Connects at MOUNT, not at Connect: piano-roll, params, and signals data has
+  // always flowed without pressing Connect, and this socket carries them. What
+  // Connect governs (LSP, health, rehydration, analysis) is armed separately in
+  // livecodeRuntime.
+  useEffect(() => {
+    const controller = controllerRef.current;
+    setConnectionStatus("connecting");
+    controller?.connect();
+    return () => {
+      controller?.close();
+      // A deliberate close does not run the socket's own `onclose` path (the
+      // controller has already disowned it), so the open flag is cleared here
+      // or `isOpen()` would keep reporting a socket that is gone.
+      openRef.current = false;
+      if (rafRef.current !== null) window.cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    };
+  }, [serverBaseUrl]);
+
+  const setServerBaseUrl = useCallback(
+    (next: string) => {
+      const normalized = next.trim().replace(/\/+$/, "");
+      if (serverBaseUrlRef.current === normalized) return;
+      serverBaseUrlRef.current = normalized;
+      // A different server is a different world: drop every map rather than let
+      // the old server's entities linger until the new one's resets land.
+      pendingRef.current = emptySyncState();
+      dirtyTypesRef.current.clear();
+      lastSeqRef.current = null;
+      store.publish(emptySyncState());
+      setServerBaseUrlState(normalized);
+    },
+    [store],
+  );
+
+  const setRollCursor = useCallback(async (name: string, position: number, options: {originId?:string} = {}) => {
+    const body = {name,position,...options};
+    return await engineAction<PianoRollSetResult>({kind:"pianoRollCursorSet",request:body},serverBaseUrlRef.current,"/piano-roll/cursor",body);
+  }, []);
+
+  const setRoll = useCallback(
+    async (
+      name: string,
+      data: PianoRollData,
+      options: { originId?: string; label?: string } = {},
+    ) => {
+      const body: SetPianoRollRequest = {
+        name,
+        data,
+        originId: options.originId,
+        label: options.label ?? "Edit piano roll",
+        source: "client",
+        undoable: true,
+      };
+      return await engineAction<PianoRollSetResult>(
+        { kind: "pianoRollSet", request: body },
+        serverBaseUrlRef.current,
+        "/piano-roll/set",
+        body,
+      );
+    },
+    [],
+  );
+
+  const undoRoll = useCallback(async (name: string, originId?: string) => {
+    await engineAction(
+      { kind: "pianoRollHistory", action: "undo", request: { name, originId } },
+      serverBaseUrlRef.current,
+      "/piano-roll/undo",
+      { name, originId },
+    );
+  }, []);
+
+  const redoRoll = useCallback(async (name: string, originId?: string) => {
+    await engineAction(
+      { kind: "pianoRollHistory", action: "redo", request: { name, originId } },
+      serverBaseUrlRef.current,
+      "/piano-roll/redo",
+      { name, originId },
+    );
+  }, []);
+
+  // Panes send nested leaf patches and never an expectedRev: compare-and-set is
+  // reserved for agent/HTTP callers.
+  const setParams = useCallback(
+    async (
+      name: string,
+      values: ParamsValues,
+      options: { originId?: string } = {},
+    ) => {
+      const entity = await engineAction<ParamsEntity | null>(
+        {
+          kind: "paramsSet",
+          request: { name, values, originId: options.originId },
+        },
+        serverBaseUrlRef.current,
+        "/params/set",
+        { name, values, originId: options.originId },
+      );
+      if (!entity) throw new Error(`No params entity "${name}"`);
+      return entity;
+    },
+    [],
+  );
+
+  const setParamsPreset = useCallback(
+    async (
+      name: string,
+      label: string,
+      options: { values?: ParamsValues; originId?: string } = {},
+    ) => {
+      const body = {
+        name,
+        label,
+        values: options.values,
+        originId: options.originId,
+      };
+      const entity = await engineAction<ParamsEntity | null>(
+        { kind: "paramsPresetSet", request: body },
+        serverBaseUrlRef.current,
+        "/params/preset/set",
+        body,
+      );
+      if (!entity) throw new Error(`No params entity "${name}"`);
+      return entity;
+    },
+    [],
+  );
+
+  const deleteParamsPreset = useCallback(
+    async (
+      name: string,
+      label: string,
+      options: { originId?: string } = {},
+    ) => {
+      const body = { name, label, originId: options.originId };
+      const entity = await engineAction<ParamsEntity | null>(
+        { kind: "paramsPresetDelete", request: body },
+        serverBaseUrlRef.current,
+        "/params/preset/delete",
+        body,
+      );
+      if (!entity) throw new Error(`No params entity "${name}"`);
+      return entity;
+    },
+    [],
+  );
+
+  const setAnimationTimeline = useCallback(
+    async (
+      name: string,
+      data: AnimationTimelineData,
+      options: { originId?: string; expectedRev?: number } = {},
+    ) => {
+      const body: SetAnimationTimelineRequest = {
+        name,
+        data,
+        originId: options.originId,
+        expectedRev: options.expectedRev,
+      };
+      return await engineAction<AnimationTimelineSetResult>(
+        { kind: "animationTimelineSet", request: body },
+        serverBaseUrlRef.current,
+        "/animation-timeline/set",
+        body,
+      );
+    },
+    [],
+  );
+
+  const setSixSinesParameters = useCallback(
+    async (
+      name: string,
+      changes: Array<{ id: number; value: number }>,
+      options: { originId?: string } = {},
+    ) => {
+      const request = {
+        name,
+        changes: Object.fromEntries(
+          changes.map((change) => [String(change.id), change.value]),
+        ),
+        originId: options.originId,
+      };
+      const result = await engineAction<{ ok: boolean; error?: string }>(
+        { kind: "sixSinesParametersSet", request },
+        serverBaseUrlRef.current,
+        "/six-sines/parameters",
+        request,
+      );
+      if (!result.ok)
+        throw new Error(result.error ?? "Six Sines parameter edit rejected");
+    },
+    [],
+  );
+  const setSixSinesPreset = useCallback(
+    async (
+      name: string,
+      data: SixSinesData,
+      options: { originId?: string } = {},
+    ) => {
+      const request = { name, data, originId: options.originId };
+      const result = await engineAction<{ ok: boolean; error?: string }>(
+        { kind: "sixSinesPresetSet", request },
+        serverBaseUrlRef.current,
+        "/six-sines/preset",
+        request,
+      );
+      if (!result.ok)
+        throw new Error(result.error ?? "Six Sines preset edit rejected");
+    },
+    [],
+  );
+
+  const setDrawing = useCallback(
+    async (
+      name: string,
+      data: DrawingDocument,
+      options: { originId?: string; expectedRev?: number } = {},
+    ) => {
+      const body: SetDrawingRequest = {
+        name,
+        data,
+        originId: options.originId,
+        expectedRev: options.expectedRev,
+      };
+      return await engineAction<DrawingSetResult>(
+        { kind: "drawingSet", request: body },
+        serverBaseUrlRef.current,
+        "/drawing/set",
+        body,
+      );
+    },
+    [],
+  );
+
+  const patchDrawing = useCallback(
+    async (
+      name: string,
+      edits: { upserts?: DrawingNodeUpsert[]; deletes?: DrawingNodeDelete[] },
+      options: { originId?: string; expectedRev?: number } = {},
+    ) => {
+      const body: DrawingPatchRequest = {
+        name,
+        upserts: edits.upserts,
+        deletes: edits.deletes,
+        originId: options.originId,
+        expectedRev: options.expectedRev,
+      };
+      return await engineAction<DrawingPatchResult>(
+        { kind: "drawingPatch", request: body },
+        serverBaseUrlRef.current,
+        "/drawing/patch",
+        body,
+      );
+    },
+    [],
+  );
+
+  // A tiny window hook so tests and agents can read the live sync maps
+  // without a server round trip — the only entity reader that exists in the
+  // serverless baked topology.
+  useEffect(() => {
+    (window as unknown as Record<string, unknown>).__livecodeSyncDebug = {
+      getEntities: (entityType: SyncEntityTypeKey) => ({
+        ...pendingRef.current[entityType]?.entities,
+      }),
+      latestSeq: () => lastSeqRef.current,
+      setParams,
+    };
+    return () => {
+      delete (window as unknown as Record<string, unknown>).__livecodeSyncDebug;
+    };
+  }, [setParams]);
+
+  const lifecycleRef = useRef<SyncLifecycle | null>(null);
+  if (lifecycleRef.current === null) {
+    lifecycleRef.current = {
+      isOpen: () => openRef.current,
+      addListener: (listener) => {
+        listenersRef.current.add(listener);
+        return () => {
+          listenersRef.current.delete(listener);
+        };
+      },
+    };
+  }
+
+  const connection = useMemo<SyncConnection>(
+    () => ({ connectionStatus, connectionError }),
+    [connectionError, connectionStatus],
+  );
+
+  const actions = useMemo<SyncActions>(
+    () => ({
+      serverBaseUrl,
+      setServerBaseUrl,
+      setRoll,
+      setRollCursor,
+      undoRoll,
+      redoRoll,
+      setParams,
+      setParamsPreset,
+      deleteParamsPreset,
+      setAnimationTimeline,
+      setDrawing,
+      patchDrawing,
+      setSixSinesParameters,
+      setSixSinesPreset,
+    }),
+    [
+      deleteParamsPreset,
+      patchDrawing,
+      redoRoll,
+      serverBaseUrl,
+      setAnimationTimeline,
+      setDrawing,
+      setSixSinesParameters,
+      setSixSinesPreset,
+      setParams,
+      setParamsPreset,
+      setRoll,
+      setRollCursor,
+      setServerBaseUrl,
+      undoRoll,
+    ],
+  );
+
+  return (
+    <SyncLifecycleContext.Provider value={lifecycleRef.current}>
+      <SyncActionsContext.Provider value={actions}>
+        <SyncConnectionContext.Provider value={connection}>
+          <SyncStoreProvider store={store}>{children}</SyncStoreProvider>
+        </SyncConnectionContext.Provider>
+      </SyncActionsContext.Provider>
+    </SyncLifecycleContext.Provider>
+  );
+}
+
+function useRequiredContext<T>(
+  context: Context<T | null>,
+  hookName: string,
+): T {
+  const value = useContext(context);
+  if (!value) {
+    throw new Error(`${hookName} must be used inside SyncRuntimeProvider`);
+  }
+  return value;
+}

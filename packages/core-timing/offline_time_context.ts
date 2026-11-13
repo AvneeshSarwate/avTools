@@ -1,7 +1,6 @@
 /* eslint-disable no-constant-condition */
 // deno-lint-ignore-file no-unused-vars
 
-
 // chat for implementing/fixing offline mode - https://chatgpt.com/c/69343bfc-5394-832f-a246-c0be525623fd
 
 /**
@@ -20,7 +19,6 @@
  *
  * The key idea: user code never sleeps “for N ms”. Instead it sleeps until an *absolute logical deadline*.
  * Logical time is advanced in discrete *timeslices* determined by the earliest pending deadline(s).
- *
  *
  * Goals
  * -----
@@ -43,7 +41,6 @@
  * 5) Ergonomic offline rendering:
  *    - OfflineRunner can step time or frames and run the same timed code without wall-clock delays.
  *
- *
  * Environment Differences
  * -----------------------
  * Observed: the cancellation test "noteoff_handleCancel_guaranteed_on_cancel"
@@ -58,9 +55,8 @@
  * Fix: avoid Promise.finally for cancel-only cleanup. Use handleCancel(...)
  * on the returned task handle (or attach a .catch to the finally promise) to prevent
  * unhandled rejections and keep cancellation cleanup deterministic.
- * 
- * This difference can be seen running finally_test.ts in different environemnts.
  *
+ * This difference can be seen running finally_test.ts in different environemnts.
  *
  * Capabilities / Public API Summary
  * --------------------------------
@@ -78,7 +74,6 @@
  * - ctx.cancel(): cancel this context and its entire subtree
  * - ctx.setBpm(bpm): interactive tempo change (stamped at “root current time”)
  * - ctx.rampBpmTo(bpm, durSec): optional tempo ramp helper
- *
  *
  * Key Concepts
  * ------------
@@ -104,7 +99,6 @@
  *   - beatPQs: map tempoId -> min-heap for beat waits by absolute targetBeat
  *   - tempoHeadPQ: min-heap of “head waiter due-time per tempo” (derived from beatPQs)
  *   - frameWaiters: set of waitFrame waiters (resolved at RAF ticks or offline frame ticks)
- *
  *
  * Wait Semantics
  * -------------
@@ -136,7 +130,6 @@
  *   - insensitive to microtask ordering differences
  * - After a tempo change, only that tempoId’s head dueTime is recomputed (refreshTempoHead()).
  *
- *
  * Structured Concurrency Semantics
  * -------------------------------
  * branch(fn):
@@ -156,7 +149,6 @@
  * - Each context has an AbortController.
  * - ctx.cancel() aborts itself and recursively cancels all child contexts.
  * - wait primitives attach abort listeners and remove them on resolve/cancel.
- *
  *
  * Offline vs Realtime — Why the Same Scheduler Works
  * --------------------------------------------------
@@ -184,7 +176,6 @@
  *   (Promise continuations / .finally / Promise.all chains / barrier logic).
  * - Without macrotask yields, offline can advance to later timeslices before user continuations
  *   from earlier slices have scheduled their next waits, breaking semantics.
- *
  *
  * Core Algorithm (Pseudo / Dataflow)
  * ---------------------------------
@@ -254,7 +245,6 @@
  *     offlineNow = target
  *     await nextMacrotask() // flush any remaining .finally / Promise.all microtasks
  *
- *
  * Invariants / Assumptions (Important)
  * ------------------------------------
  * 1) Timeslice ordering:
@@ -283,7 +273,6 @@
  *      the scheduler’s control and break logical-time semantics.
  *    - Guideline: only await engine waits/barriers for logical scheduling.
  *
- *
  * Gotchas / Practical Notes
  * -------------------------
  * - wait(0) / waitSec(0):
@@ -309,21 +298,63 @@
  *     but logical times (ctx.time) remain exact.
  *
  * - Performance:
- *   - Beat waiters retime efficiently (head-only). Many tempo changes per second are possible,
- *     but extremely high-rate tempo modulation may still be heavy; use user guidance or coarser updates.
+ *   - Beat waiters retime efficiently (head-only), and tempo history compacts to a bounded
+ *     segment count, so continuous high-rate tempo modulation (e.g. a 30-120fps control loop
+ *     calling setBpm/rampBpmTo every tick for rubato) is cheap: each edit costs one
+ *     O(log segments) head retime. Verified by the tempo_modulation_* cases in timing_tests.ts.
+ *
+ * - Root context tick rate determines branch launch latency:
+ *   - A branch()'s child starts at root.mostRecentDescendentTime — the logical time of the last
+ *     resolved wait in the tree. The branch block does not execute until the scheduler's next
+ *     timeslice, which is the next scheduled wait in the tree.
+ *   - If the root context ticks infrequently (e.g. waitSec(1) in a while(true) loop), a branch
+ *     created mid-interval won't run until the root's next tick. By then ctx.progTime is already
+ *     non-zero when the branch's first line executes.
+ *   - Concrete failure: root ticks every 1s, animation branch duration = 2s. User triggers branch
+ *     0.5s after the last root tick. The branch first runs at the next root tick (0.5s later), at
+ *     which point ctx.progTime ≈ 0.5 — the animation appears to start halfway through its range.
+ *   - Fix: match the root tick rate to the desired branch launch precision. For frame-rate
+ *     animations, use waitSec(1/60) in the root loop so branches start within one frame.
+ *   - Also initialize any external render state to the intended start value before adding it to a
+ *     live collection, so the render loop shows the correct position during the one-frame gap
+ *     before the branch's first iteration runs.
  */
-
-
 
 import { PriorityQueue } from "./priority_queue.ts";
 import seedrandom, { type PRNG as SeedrandomPRNG } from "./seedrandom_shim.ts";
+
+/**
+ * Zero-advance stall guard: the maximum number of CONSECUTIVE timeslices the
+ * scheduler will process at an unchanged logical time before rejecting the
+ * waiters at that instant. A `wait(0)`/`waitSec(0)` hot loop schedules
+ * infinite work at a single logical instant; under logical-time semantics
+ * that legitimately starves all later-scheduled work (offline advanceTo has
+ * the analogous MAX_TIMESLICES bound and throws). Instead of reordering
+ * slices (which would break realtime/offline determinism parity and
+ * realtime re-run order-determinism), the offending waits are rejected with
+ * an error — the stalled branch tears down like any module error and every
+ * other context's timing is untouched. Applies in BOTH realtime and offline
+ * modes (shared slice-processing path), so the failure itself is
+ * deterministic across modes.
+ */
+export const MAX_ZERO_ADVANCE_SLICES = 10_000;
+
+function zeroAdvanceStallError(t: number): Error {
+  return new Error(
+    `Logical time stalled at t=${t}: more than ${MAX_ZERO_ADVANCE_SLICES} ` +
+      "consecutive zero-advance timeslices (wait(0) hot loop?); " +
+      "rejecting stalled waits",
+  );
+}
 
 export type RandomSeed = string | number;
 export type SetTimeoutFn = (callback: () => void, ms: number) => number;
 export type ClearTimeoutFn = (id: number) => void;
 
-const DEFAULT_SET_TIMEOUT: SetTimeoutFn = (callback, ms) =>
-  (globalThis.setTimeout(callback, ms) as unknown as number);
+const DEFAULT_SET_TIMEOUT: SetTimeoutFn = (
+  callback,
+  ms,
+) => (globalThis.setTimeout(callback, ms) as unknown as number);
 const DEFAULT_CLEAR_TIMEOUT: ClearTimeoutFn = (id) => {
   globalThis.clearTimeout(id as unknown as number);
 };
@@ -338,19 +369,31 @@ function deriveSeed(parentSeed: string, forkIndex: number): string {
   return `${parentSeed}::fork:${forkIndex}`;
 }
 
+// Optional host capability: the embedded TD runtime has setImmediate but no MessageChannel.
+// Keep feature detection typed without requiring browser ambient declarations.
+type OptionalTaskHost = {
+  setImmediate?: (cb: () => void) => void;
+  MessageChannel?: new () => {
+    port1: { onmessage: (() => void) | null; start?(): void };
+    port2: { postMessage(value: unknown): void };
+  };
+};
+
 // A "macrotask yield" primitive.
 // This is the rigorous way to ensure the JS runtime drains the microtask queue to empty,
 // matching realtime behavior (microtask checkpoint after each timer callback).
-const createYieldToMacrotask = (setTimeoutFn: SetTimeoutFn): (() => Promise<void>) => {
-  const g = globalThis as typeof globalThis & { setImmediate?: (cb: () => void) => void };
+const createYieldToMacrotask = (
+  setTimeoutFn: SetTimeoutFn,
+): () => Promise<void> => {
+  const g = globalThis as unknown as OptionalTaskHost;
 
   if (typeof g.setImmediate === "function") {
     const setImmediateFn = g.setImmediate;
     return () => new Promise<void>((res) => setImmediateFn(res));
   }
 
-  if (typeof MessageChannel !== "undefined") {
-    const mc = new MessageChannel();
+  if (typeof g.MessageChannel === "function") {
+    const mc = new g.MessageChannel();
     const q: Array<() => void> = [];
 
     mc.port1.onmessage = () => {
@@ -374,8 +417,10 @@ const createYieldToMacrotask = (setTimeoutFn: SetTimeoutFn): (() => Promise<void
 // Schedule a callback in the next macrotask (no real-time delay intended).
 // This gives the runtime a microtask checkpoint boundary (drains Promise reactions),
 // which is essential for deterministic ordering between logical timeslices.
-const createScheduleMacrotask = (setTimeoutFn: SetTimeoutFn): ((cb: () => void) => void) => {
-  const g = globalThis as typeof globalThis & { setImmediate?: (cb: () => void) => void };
+const createScheduleMacrotask = (
+  setTimeoutFn: SetTimeoutFn,
+): (cb: () => void) => void => {
+  const g = globalThis as unknown as OptionalTaskHost;
 
   // Node.js / some runtimes
   if (typeof g.setImmediate === "function") {
@@ -384,8 +429,8 @@ const createScheduleMacrotask = (setTimeoutFn: SetTimeoutFn): ((cb: () => void) 
   }
 
   // Browsers / modern runtimes (fast, not clamped like setTimeout(0) often is)
-  if (typeof MessageChannel !== "undefined") {
-    const mc = new MessageChannel();
+  if (typeof g.MessageChannel === "function") {
+    const mc = new g.MessageChannel();
     const q: Array<() => void> = [];
     mc.port1.onmessage = () => {
       const fn = q.shift();
@@ -414,17 +459,60 @@ export const wallNow = () => performance.now() / 1000 - wallStart;
 /* ---------------------------------------------------------------------------------------------- */
 
 export class CancelablePromiseProxy<T> implements Promise<T> {
-  public promise?: Promise<T>;
   public abortController: AbortController;
   public timeContext?: TimeContext;
 
+  // Consumers (then/catch/finally) await this deferred rather than the raw
+  // block promise, so cancelSafe(value) can settle the join with a value
+  // even though the underlying block will later reject on cancellation.
+  // First settle wins. The pre-attached no-op catch marks the deferred as
+  // handled so an unawaited proxy whose block rejects on cancel does not
+  // emit a process-fatal unhandled rejection in Deno.
+  // Typed as unknown internally so CancelablePromiseProxy stays covariant in
+  // T (a typed resolve parameter would make instantiations non-assignable to
+  // CancelablePromiseProxy<unknown>, which TimeContext.cancelPromise uses).
+  private settledResolve!: (value: unknown) => void;
+  private settledReject!: (reason: unknown) => void;
+  private settled: Promise<T>;
+  private blockPromise?: Promise<T>;
+
   constructor(ab: AbortController) {
     this.abortController = ab;
+    this.settled = new Promise<T>((resolve, reject) => {
+      this.settledResolve = resolve as (value: unknown) => void;
+      this.settledReject = reject;
+    });
+    this.settled.catch(() => {});
+  }
+
+  /** The raw block promise. Assigning it wires the deferred consumers await. */
+  public get promise(): Promise<T> | undefined {
+    return this.blockPromise;
+  }
+
+  public set promise(blockPromise: Promise<T> | undefined) {
+    this.blockPromise = blockPromise;
+    blockPromise?.then(
+      (value) => this.settledResolve(value),
+      (reason) => this.settledReject(reason),
+    );
   }
 
   public cancel() {
     this.abortController.abort();
     this.timeContext?.cancel();
+  }
+
+  /**
+   * Graceful cancel: settle the awaited join with `value`, then cancel the
+   * context subtree. A parent awaiting a branchWait proxy receives `value`
+   * instead of a cancellation rejection ("yield with an arg"). For
+   * CancelablePromiseProxy<void>, call with no argument. Plain cancel()
+   * remains the hard path that rejects the awaiting parent.
+   */
+  public cancelSafe(value: T) {
+    this.settledResolve(value);
+    this.cancel();
   }
 
   /**
@@ -456,20 +544,29 @@ export class CancelablePromiseProxy<T> implements Promise<T> {
   [Symbol.toStringTag] = "[object CancelablePromiseProxy]";
 
   then<TResult1 = T, TResult2 = never>(
-    onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null,
-    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | undefined | null,
+    onfulfilled?:
+      | ((value: T) => TResult1 | PromiseLike<TResult1>)
+      | undefined
+      | null,
+    onrejected?:
+      | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+      | undefined
+      | null,
   ): Promise<TResult1 | TResult2> {
-    return this.promise!.then(onfulfilled, onrejected);
+    return this.settled.then(onfulfilled, onrejected);
   }
 
   catch<TResult = never>(
-    onrejected?: ((reason: unknown) => TResult | PromiseLike<TResult>) | undefined | null,
+    onrejected?:
+      | ((reason: unknown) => TResult | PromiseLike<TResult>)
+      | undefined
+      | null,
   ): Promise<T | TResult> {
-    return this.promise!.catch(onrejected);
+    return this.settled.catch(onrejected);
   }
 
   finally(onfinally?: (() => void) | undefined | null): Promise<T> {
-    return this.promise!.finally(onfinally);
+    return this.settled.finally(onfinally);
   }
 }
 
@@ -491,6 +588,8 @@ function clampPos(x: number) {
 }
 
 export class TempoMap {
+  private static readonly MAX_HISTORICAL_SEGMENTS = 16;
+
   public id: string;
   public version = 0;
 
@@ -600,6 +699,7 @@ export class TempoMap {
       beats1: Infinity,
     });
 
+    this.compactHistoryBefore(time);
     this.version++;
   }
 
@@ -647,6 +747,7 @@ export class TempoMap {
       beats1: Infinity,
     });
 
+    this.compactHistoryBefore(time);
     this.version++;
   }
 
@@ -656,7 +757,7 @@ export class TempoMap {
     let lo = 0;
     let hi = this.segs.length - 1;
     while (lo < hi) {
-      const mid = ((lo + hi + 1) >> 1);
+      const mid = (lo + hi + 1) >> 1;
       if (this.segs[mid].t0 <= t) lo = mid;
       else hi = mid - 1;
     }
@@ -664,7 +765,9 @@ export class TempoMap {
   }
 
   /** Split the active segment at time t (conceptually), returning bpm/beats at t and segment index. */
-  private splitAt(t: number): { bpmAtT: number; beatsAtT: number; segIndex: number } {
+  private splitAt(
+    t: number,
+  ): { bpmAtT: number; beatsAtT: number; segIndex: number } {
     const time = Math.max(0, t);
     const s = this.segmentAtTime(time)!;
     const segIndex = this.segs.indexOf(s);
@@ -673,6 +776,54 @@ export class TempoMap {
     const bpmAtT = this.bpmAtTime(time);
 
     return { bpmAtT, beatsAtT, segIndex };
+  }
+
+  /**
+   * Bounds unbounded tempo-segment growth by merging all segments before a boundary
+   * into a single averaged constant-bpm segment. This preserves beatsAtTime exactly
+   * at t=0 and at t>=boundaryTime, but for times STRICTLY INSIDE the merged region
+   * beatsAtTime returns a linear approximation of the true (piecewise) beat count.
+   *
+   * Engine-internal queries never observe this approximation: contexts cache their
+   * startBeats at creation (see TimeContext.startBeats / createAndLaunchContext) and
+   * scheduler paths only ever query current/future times. Only direct user calls to
+   * tempo.beatsAtTime(historicT) may see approximated values, and only after more
+   * than MAX_HISTORICAL_SEGMENTS (16) tempo edits have accumulated.
+   */
+  private compactHistoryBefore(time: number) {
+    const boundaryIndex = this.segmentIndexAtTime(time);
+    if (boundaryIndex <= TempoMap.MAX_HISTORICAL_SEGMENTS) return;
+
+    const keepStart = boundaryIndex - TempoMap.MAX_HISTORICAL_SEGMENTS;
+    const boundary = this.segs[keepStart];
+    if (!boundary || boundary.t0 <= 0) return;
+
+    const boundaryTime = boundary.t0;
+    const boundaryBeats = this.beatsAtTime(boundaryTime);
+    const averageBpm = clampPos((boundaryBeats * 60) / boundaryTime);
+
+    const merged: TempoSegment = {
+      t0: 0,
+      t1: boundaryTime,
+      bpm0: averageBpm,
+      bpm1: averageBpm,
+      beats0: 0,
+      beats1: boundaryBeats,
+    };
+
+    this.segs = [merged, ...this.segs.slice(keepStart)];
+  }
+
+  private segmentIndexAtTime(t: number): number {
+    if (t <= 0) return 0;
+    let lo = 0;
+    let hi = this.segs.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (this.segs[mid].t0 <= t) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
   }
 }
 
@@ -717,16 +868,19 @@ export class TimeScheduler {
   public readonly mode: SchedulerMode;
 
   // Most recent logical time-slice processed by the scheduler.
-  // Used to deterministically stamp tempo writes that occur as immediate continuations of waits.
+  // Used by the zero-advance stall guard to detect consecutive slices at an
+  // unchanged logical time. (Tempo writes do NOT read this — setBpm/rampBpmTo
+  // stamp at root.mostRecentDescendentTime; see TimeContext.setBpm.)
   private lastProcessedTime: number = 0;
 
-  // True during the microtask phase immediately after processing a slice.
-  // Cleared via queueMicrotask() after promise continuations for that slice run.
-  private inTimesliceMicrotaskPhase: boolean = false;
+  // Zero-advance stall guard state (see MAX_ZERO_ADVANCE_SLICES). Counts
+  // consecutive slices processed at an unchanged logical time; once tripped,
+  // waiters at that instant are rejected until logical time advances.
+  private zeroAdvanceSliceCount = 0;
+  private zeroAdvanceGuardTripped = false;
 
   // Deterministic tie-break sequence for events scheduled in this root.
   private seqCounter = 0;
-
 
   private timePQ = new PriorityQueue<TimeWaitMeta>();
   private beatPQs = new Map<string, PriorityQueue<BeatWaitMeta>>();
@@ -759,7 +913,11 @@ export class TimeScheduler {
 
   constructor(
     mode: SchedulerMode,
-    opts?: { rate?: number; setTimeout?: SetTimeoutFn; clearTimeout?: ClearTimeoutFn },
+    opts?: {
+      rate?: number;
+      setTimeout?: SetTimeoutFn;
+      clearTimeout?: ClearTimeoutFn;
+    },
   ) {
     this.mode = mode;
     this.setTimeoutFn = opts?.setTimeout ?? DEFAULT_SET_TIMEOUT;
@@ -798,16 +956,6 @@ export class TimeScheduler {
     this.scheduleNext();
   }
 
-  public tempoWriteTime(): number {
-    // If setBpm() is called by a coroutine continuation resumed at logical time T,
-    // stamp the tempo change at exactly T. This avoids:
-    // - realtime stamping slightly after T due to setTimeout jitter
-    // - offline stamping at the advanceTo() target time
-    if (this.inTimesliceMicrotaskPhase) return this.lastProcessedTime;
-    return this.now();
-  }
-
-
   /* ------------------------------- wait primitives ------------------------------- */
 
   public sleepUntilTime(ctx: TimeContext, targetTime: number): Promise<void> {
@@ -843,7 +991,11 @@ export class TimeScheduler {
     });
   }
 
-  public sleepUntilBeats(ctx: TimeContext, tempo: TempoMap, targetBeat: number): Promise<void> {
+  public sleepUntilBeats(
+    ctx: TimeContext,
+    tempo: TempoMap,
+    targetBeat: number,
+  ): Promise<void> {
     const b = Math.max(targetBeat, 0);
 
     if (ctx.isCanceled) return Promise.reject(new Error("context canceled"));
@@ -859,6 +1011,7 @@ export class TimeScheduler {
         ctx.abortController.signal.removeEventListener("abort", abortListener);
         reject(new Error("aborted"));
         this.refreshTempoHead(tempoId);
+        this.deleteBeatQueueIfEmpty(tempoId);
         this.requestPumpOrWake();
       };
 
@@ -896,7 +1049,10 @@ export class TimeScheduler {
 
         const abortListener = () => {
           this.frameWaiters.delete(id);
-          ctx.abortController.signal.removeEventListener("abort", abortListener);
+          ctx.abortController.signal.removeEventListener(
+            "abort",
+            abortListener,
+          );
           reject(new Error("aborted"));
         };
 
@@ -910,10 +1066,12 @@ export class TimeScheduler {
       requestAnimationFrame?: (cb: (ts: number) => void) => number;
     };
     if (typeof rafGlobal.requestAnimationFrame !== "function") {
-      return Promise.reject(new Error("waitFrame requires requestAnimationFrame (use DateTimeContext outside browsers)"));
+      return Promise.reject(
+        new Error(
+          "waitFrame requires requestAnimationFrame (use DateTimeContext outside browsers)",
+        ),
+      );
     }
-
-    this.ensureRafLoop();
 
     return new Promise<void>((resolve, reject) => {
       const seq = this.allocSeq();
@@ -921,12 +1079,14 @@ export class TimeScheduler {
 
       const abortListener = () => {
         this.frameWaiters.delete(id);
+        this.stopRafIfIdle();
         ctx.abortController.signal.removeEventListener("abort", abortListener);
         reject(new Error("aborted"));
       };
 
       ctx.abortController.signal.addEventListener("abort", abortListener);
       this.frameWaiters.set(id, { seq, ctx, resolve, reject, abortListener });
+      this.ensureRafLoop();
     });
   }
 
@@ -971,12 +1131,11 @@ export class TimeScheduler {
     await this.yieldToMacrotask();
   }
 
-
-
-
   /** Offline: resolve all waitFrame() calls once per frame tick at the current offline time. */
   public async resolveFrameTick(): Promise<void> {
-    if (this.mode !== "offline") throw new Error("resolveFrameTick() is offline-only");
+    if (this.mode !== "offline") {
+      throw new Error("resolveFrameTick() is offline-only");
+    }
     const t = this.offlineNow;
 
     this.resolveAllFrameWaitersAt(t);
@@ -986,7 +1145,6 @@ export class TimeScheduler {
 
     await this.advanceTo(this.offlineNow);
   }
-
 
   /* ------------------------------- internal scheduling ------------------------------- */
 
@@ -1043,15 +1201,14 @@ export class TimeScheduler {
     };
 
     if (stillDue()) {
-    // CRITICAL: continue in a MACROTASK, not a microtask.
-    // This guarantees that all promise continuations spawned by resolving the
-    // current timeslice have run (microtask checkpoint) before we advance
-    // to the next logical timeslice.
-    this.queuePumpMacrotask();
-  } else {
-    this.scheduleNext();
-  }
-
+      // CRITICAL: continue in a MACROTASK, not a microtask.
+      // This guarantees that all promise continuations spawned by resolving the
+      // current timeslice have run (microtask checkpoint) before we advance
+      // to the next logical timeslice.
+      this.queuePumpMacrotask();
+    } else {
+      this.scheduleNext();
+    }
   }
 
   private queuePumpMacrotask() {
@@ -1065,7 +1222,6 @@ export class TimeScheduler {
       this.pumpDue();
     });
   }
-
 
   private scheduleNext() {
     if (this.mode === "offline") return;
@@ -1118,6 +1274,7 @@ export class TimeScheduler {
 
     if (!head) {
       this.tempoHeadPQ.remove(tempoHeadId);
+      this.deleteBeatQueueIfEmpty(tempoId);
       return;
     }
 
@@ -1140,10 +1297,16 @@ export class TimeScheduler {
 
   private processOneTimeslice(tSlice: number) {
     const sliceTime = tSlice;
-    // Mark the current logical time slice as the authoritative "root current time"
-    // for immediate continuation work (microtasks) spawned by resolving waits at this slice.
+    if (sliceTime === this.lastProcessedTime) {
+      this.zeroAdvanceSliceCount += 1;
+      if (this.zeroAdvanceSliceCount > MAX_ZERO_ADVANCE_SLICES) {
+        this.zeroAdvanceGuardTripped = true;
+      }
+    } else {
+      this.zeroAdvanceSliceCount = 0;
+      this.zeroAdvanceGuardTripped = false;
+    }
     this.lastProcessedTime = sliceTime;
-    this.inTimesliceMicrotaskPhase = true;
 
     // Decide whether the next slice is from timePQ or tempoHeadPQ (re-check peeks).
     const timeHead = this.timePQ.peek();
@@ -1157,15 +1320,6 @@ export class TimeScheduler {
     } else {
       this.processBeatWaitersForTempoHead();
     }
-
-    // IMPORTANT: do NOT clear immediately. Clear after the promise continuations
-    // for this slice have had a chance to run.
-    queueMicrotask(() => {
-      // Only clear if nothing advanced lastProcessedTime in the meantime.
-      if (this.lastProcessedTime === sliceTime) {
-        this.inTimesliceMicrotaskPhase = false;
-      }
-    });
   }
 
   private processTimeWaitersAt(t: number) {
@@ -1189,8 +1343,16 @@ export class TimeScheduler {
         continue;
       }
 
+      if (this.zeroAdvanceGuardTripped) {
+        w.reject(zeroAdvanceStallError(t));
+        continue;
+      }
+
       ctx.time = Math.max(ctx.time, w.targetTime);
-      ctx.rootContext!.mostRecentDescendentTime = Math.max(ctx.rootContext!.mostRecentDescendentTime, ctx.time);
+      ctx.rootContext!.mostRecentDescendentTime = Math.max(
+        ctx.rootContext!.mostRecentDescendentTime,
+        ctx.time,
+      );
 
       w.resolve();
     }
@@ -1243,17 +1405,41 @@ export class TimeScheduler {
         continue;
       }
 
+      if (this.zeroAdvanceGuardTripped) {
+        w.reject(zeroAdvanceStallError(dueTime));
+        continue;
+      }
+
       ctx.time = Math.max(ctx.time, dueTime);
-      ctx.rootContext!.mostRecentDescendentTime = Math.max(ctx.rootContext!.mostRecentDescendentTime, ctx.time);
+      ctx.rootContext!.mostRecentDescendentTime = Math.max(
+        ctx.rootContext!.mostRecentDescendentTime,
+        ctx.time,
+      );
 
       w.resolve();
     }
 
     // Refresh tempo head for remaining beat waiters
     this.refreshTempoHead(tempoId);
+    this.deleteBeatQueueIfEmpty(tempoId);
+  }
+
+  private deleteBeatQueueIfEmpty(tempoId: string) {
+    const pq = this.beatPQs.get(tempoId);
+    if (pq?.isEmpty()) {
+      this.beatPQs.delete(tempoId);
+      this.tempoHeadPQ.remove(`tempohead:${tempoId}`);
+    }
   }
 
   /* ------------------------------- frames ------------------------------- */
+
+  private stopRafIfIdle() {
+    if (this.frameWaiters.size || !this.rafRunning) return;
+    this.rafRunning = false;
+    if (this.rafHandle !== null) globalThis.cancelAnimationFrame?.(this.rafHandle);
+    this.rafHandle = null;
+  }
 
   private ensureRafLoop() {
     if (this.rafRunning) return;
@@ -1271,13 +1457,15 @@ export class TimeScheduler {
     const tick = () => {
       if (!this.rafRunning) return;
 
+      this.rafRunning = false;
+      this.rafHandle = null;
       const t = this.now();
       this.resolveAllFrameWaitersAt(t);
 
       // If timers were delayed, frame ticks can help “catch up” quickly.
       this.queuePump();
 
-      this.rafHandle = rafFn(() => tick());
+      // A continuation registering another frame starts a new subscription.
     };
 
     this.rafHandle = rafFn(() => tick());
@@ -1301,8 +1489,15 @@ export class TimeScheduler {
       }
 
       // Frame waits "sync" you up to the frame time.
-      ctx.time = Math.max(ctx.time, t, ctx.rootContext!.mostRecentDescendentTime);
-      ctx.rootContext!.mostRecentDescendentTime = Math.max(ctx.rootContext!.mostRecentDescendentTime, ctx.time);
+      ctx.time = Math.max(
+        ctx.time,
+        t,
+        ctx.rootContext!.mostRecentDescendentTime,
+      );
+      ctx.rootContext!.mostRecentDescendentTime = Math.max(
+        ctx.rootContext!.mostRecentDescendentTime,
+        ctx.time,
+      );
 
       w.resolve();
     }
@@ -1338,6 +1533,14 @@ function barrierStoreKey(rootId: number, key: string): string {
   return `${rootId}\u0000${key}`;
 }
 
+/** Drop all barrier state belonging to a root tree (called on root cleanup). */
+function purgeBarriersForRoot(rootId: number): void {
+  const prefix = `${rootId}\u0000`;
+  for (const storeKey of barrierMap.keys()) {
+    if (storeKey.startsWith(prefix)) barrierMap.delete(storeKey);
+  }
+}
+
 function getBarrier(key: string, rootId: number): BarrierState {
   const storeKey = barrierStoreKey(rootId, key);
   const existing = barrierMap.get(storeKey);
@@ -1356,20 +1559,22 @@ function getBarrier(key: string, rootId: number): BarrierState {
   return b;
 }
 
-
 export function startBarrier(key: string, ctx: TimeContext) {
   const rootId = ctx.rootContext!.id;
   const b = getBarrier(key, rootId);
 
-  // Resolve any stale in-progress cycle to avoid deadlocks.
-  if (b.inProgress) {
-    resolveBarrier(key, ctx);
+  // Starting a barrier NEVER releases waiters — release happens only via an
+  // explicit resolveBarrier call. If a cycle is already in progress (e.g. a
+  // producer module was stopped mid-cycle and relaunched), the new starter
+  // ADOPTS that cycle: parked waiters stay aligned and are released by the
+  // new starter's next resolveBarrier, instead of being force-released early
+  // and unaligned. A producer that wants release-on-restart semantics should
+  // call resolveBarrier explicitly at the top of its loop.
+  if (!b.inProgress) {
+    b.inProgress = true;
+    b.startTime = ctx.time;
   }
-
-  b.inProgress = true;
-  b.startTime = ctx.time;
 }
-
 
 export function resolveBarrier(key: string, ctx: TimeContext) {
   const rootId = ctx.rootContext!.id;
@@ -1394,12 +1599,14 @@ export function resolveBarrier(key: string, ctx: TimeContext) {
     }
 
     w.ctx.time = Math.max(w.ctx.time, t);
-    w.ctx.rootContext!.mostRecentDescendentTime = Math.max(w.ctx.rootContext!.mostRecentDescendentTime, w.ctx.time);
+    w.ctx.rootContext!.mostRecentDescendentTime = Math.max(
+      w.ctx.rootContext!.mostRecentDescendentTime,
+      w.ctx.time,
+    );
     w.resolve();
   }
   b.waiters.clear();
 }
-
 
 export function awaitBarrier(key: string, ctx: TimeContext): Promise<void> {
   const rootId = ctx.rootContext!.id;
@@ -1414,7 +1621,10 @@ export function awaitBarrier(key: string, ctx: TimeContext): Promise<void> {
   // If a resolve happened at/after our logical time, don't accidentally wait for the next cycle.
   if (b.lastResolvedTime >= ctx.time) {
     ctx.time = Math.max(ctx.time, b.lastResolvedTime);
-    ctx.rootContext!.mostRecentDescendentTime = Math.max(ctx.rootContext!.mostRecentDescendentTime, ctx.time);
+    ctx.rootContext!.mostRecentDescendentTime = Math.max(
+      ctx.rootContext!.mostRecentDescendentTime,
+      ctx.time,
+    );
     return Promise.resolve();
   }
 
@@ -1432,7 +1642,6 @@ export function awaitBarrier(key: string, ctx: TimeContext): Promise<void> {
     b.waiters.add(w);
   });
 }
-
 
 /* ---------------------------------------------------------------------------------------------- */
 /* Context tree + API                                                                              */
@@ -1458,7 +1667,12 @@ export type BranchOptions = {
   rng?: "forked" | "shared"; // default forked
 };
 
-type Constructor<T> = new (time: number, ab: AbortController, id: number, cancelPromise: CancelablePromiseProxy<unknown>) => T;
+type Constructor<T> = new (
+  time: number,
+  ab: AbortController,
+  id: number,
+  cancelPromise: CancelablePromiseProxy<unknown>,
+) => T;
 
 export abstract class TimeContext {
   public rootContext: TimeContext | undefined;
@@ -1469,6 +1683,11 @@ export abstract class TimeContext {
 
   public time: number;
   public startTime: number;
+  // Beat position captured at context creation (after tempo is wired). Cached here
+  // instead of recomputed via tempo.beatsAtTime(startTime) so that history compaction
+  // (which merges old segments into a single averaged segment) cannot retroactively
+  // shift a long-lived context's beat origin. See compactHistoryBefore.
+  public startBeats = 0;
   public isCanceled = false;
 
   public id: number;
@@ -1483,7 +1702,12 @@ export abstract class TimeContext {
   public rngSeed!: string;
   private rngForkCounter = 0;
 
-  constructor(time: number, ab: AbortController, id: number, cancelPromise: CancelablePromiseProxy<unknown>) {
+  constructor(
+    time: number,
+    ab: AbortController,
+    id: number,
+    cancelPromise: CancelablePromiseProxy<unknown>,
+  ) {
     this.time = time;
     this.startTime = time;
     this.abortController = ab;
@@ -1506,7 +1730,7 @@ export abstract class TimeContext {
   }
 
   public get progBeats(): number {
-    return this.tempo.beatsAtTime(this.time) - this.tempo.beatsAtTime(this.startTime);
+    return this.tempo.beatsAtTime(this.time) - this.startBeats;
   }
 
   /** Deterministic random in [0,1). Use this instead of Math.random(). */
@@ -1538,13 +1762,14 @@ export abstract class TimeContext {
     this.rootContext!.scheduler.onTempoChanged(this.tempo);
   }
 
-
   public connectChildContext(childContext: TimeContext, opts?: BranchOptions) {
     childContext.rootContext = this.rootContext;
     childContext.scheduler = this.rootContext!.scheduler;
 
     const tempoMode = opts?.tempo ?? "shared";
-    childContext.tempo = tempoMode === "shared" ? this.tempo : this.tempo.clone();
+    childContext.tempo = tempoMode === "shared"
+      ? this.tempo
+      : this.tempo.clone();
 
     const rngMode = opts?.rng ?? "forked";
     if (rngMode === "shared") {
@@ -1569,7 +1794,11 @@ export abstract class TimeContext {
     block: (ctx: TimeContext) => Promise<T>,
     debugName = "",
     opts?: BranchOptions,
-  ): { cancel: () => void; finally: (f: () => void) => void; handleCancel: (f: () => void) => () => void } {
+  ): {
+    cancel: () => void;
+    finally: (f: () => void) => Promise<T>;
+    handleCancel: (f: () => void) => () => void;
+  } {
     const promise = createAndLaunchContext(
       block,
       this.rootContext!.mostRecentDescendentTime,
@@ -1580,13 +1809,22 @@ export abstract class TimeContext {
       opts,
     );
     return {
-      finally: (finalFunc: () => void) => promise.finally(finalFunc),
+      finally: (finalFunc: () => void) => {
+        const chained = promise.finally(finalFunc);
+        chained.catch(() => {});
+        return chained;
+      },
       cancel: () => promise.cancel(),
-      handleCancel: (cancelFunc: () => void) => promise.handleCancel(cancelFunc),
+      handleCancel: (cancelFunc: () => void) =>
+        promise.handleCancel(cancelFunc),
     };
   }
 
-  public branchWait<T>(block: (ctx: TimeContext) => Promise<T>, debugName = "", opts?: BranchOptions): CancelablePromiseProxy<T> {
+  public branchWait<T>(
+    block: (ctx: TimeContext) => Promise<T>,
+    debugName = "",
+    opts?: BranchOptions,
+  ): CancelablePromiseProxy<T> {
     return createAndLaunchContext(
       block,
       this.time,
@@ -1609,20 +1847,29 @@ export abstract class TimeContext {
       // Treat wait(0) as an engine-controlled yield/sync point.
       // Important for offline: Promise.resolve() is invisible to the scheduler and can cause advanceTo()
       // to return before follow-up waits are enqueued (requires multiple microtask hops).
-      const baseTime = Math.max(this.rootContext!.mostRecentDescendentTime, this.time);
+      const baseTime = Math.max(
+        this.rootContext!.mostRecentDescendentTime,
+        this.time,
+      );
 
       // Schedule a time-wait at baseTime. This yields without advancing logical time
       // (unless we were behind the root, in which case it syncs us forward).
       return this.rootContext!.scheduler.sleepUntilTime(this, baseTime);
     }
 
-
     // Align to global time, then wait in beats.
-    const baseTime = Math.max(this.rootContext!.mostRecentDescendentTime, this.time);
+    const baseTime = Math.max(
+      this.rootContext!.mostRecentDescendentTime,
+      this.time,
+    );
     const baseBeats = this.tempo.beatsAtTime(baseTime);
     const targetBeat = baseBeats + delta;
 
-    return this.rootContext!.scheduler.sleepUntilBeats(this, this.tempo, targetBeat);
+    return this.rootContext!.scheduler.sleepUntilBeats(
+      this,
+      this.tempo,
+      targetBeat,
+    );
   }
 }
 
@@ -1634,7 +1881,10 @@ export class DateTimeContext extends TimeContext {
     let s = Number.isFinite(sec) ? sec : 0;
     if (s < 0) s = 0;
 
-    const baseTime = Math.max(this.rootContext!.mostRecentDescendentTime, this.time);
+    const baseTime = Math.max(
+      this.rootContext!.mostRecentDescendentTime,
+      this.time,
+    );
     const targetTime = baseTime + s;
 
     return this.rootContext!.scheduler.sleepUntilTime(this, targetTime);
@@ -1671,7 +1921,12 @@ export function createAndLaunchContext<T, C extends TimeContext>(
   const abortController = new AbortController();
   const promiseProxy = new CancelablePromiseProxy<T>(abortController);
 
-  const newContext = new ctor(rootTime, abortController, contextId++, promiseProxy);
+  const newContext = new ctor(
+    rootTime,
+    abortController,
+    contextId++,
+    promiseProxy,
+  );
   newContext.debugName = debugName;
   promiseProxy.timeContext = newContext;
 
@@ -1692,6 +1947,12 @@ export function createAndLaunchContext<T, C extends TimeContext>(
     newContext.rng = seedrandom(seedStr);
   }
 
+  // Cache the starting beat position now that the tempo map is wired (covers both
+  // the child branch above and the root-setup branch, and correctly handles a
+  // cloned tempo). Freezing this at creation makes progBeats immune to later
+  // history compaction approximating interior times of the merged region.
+  newContext.startBeats = newContext.tempo.beatsAtTime(newContext.time);
+
   const blockPromise = block(newContext);
 
   promiseProxy.promise = blockPromise;
@@ -1703,14 +1964,19 @@ export function createAndLaunchContext<T, C extends TimeContext>(
 
   if (!parentContext) {
     rootContexts.add(newContext);
-    const cleanupRoot = () => rootContexts.delete(newContext);
+    const cleanupRoot = () => {
+      rootContexts.delete(newContext);
+      purgeBarriersForRoot(newContext.id);
+    };
     promiseProxy.handleCancel(cleanupRoot);
-    promiseProxy.finally(cleanupRoot);
+    bp.finally(cleanupRoot);
   }
 
   if (parentContext) {
     bp.finally(() => {
-      if (updateParent) parentContext.time = Math.max(newContext.time, parentContext.time);
+      if (updateParent) {
+        parentContext.time = Math.max(newContext.time, parentContext.time);
+      }
       parentContext.childContexts.delete(newContext);
     });
   }
@@ -1798,7 +2064,14 @@ export class OfflineRunner<T> {
 
   constructor(
     block: (ctx: OfflineTimeContext) => Promise<T>,
-    opts?: { bpm?: number; fps?: number; debugName?: string; seed?: RandomSeed; setTimeout?: SetTimeoutFn; clearTimeout?: ClearTimeoutFn },
+    opts?: {
+      bpm?: number;
+      fps?: number;
+      debugName?: string;
+      seed?: RandomSeed;
+      setTimeout?: SetTimeoutFn;
+      clearTimeout?: ClearTimeoutFn;
+    },
   ) {
     this.scheduler = new TimeScheduler("offline", {
       setTimeout: opts?.setTimeout,

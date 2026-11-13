@@ -25,6 +25,15 @@ import { WebSocketClientBase } from "@avtools/ui-bridge";
 // Type Definitions (readonly versions for server-side state)
 // ============================================================================
 
+/** Per-note 0..127 expression curve (pressure or timbre); `time` is 0..1 of the note. */
+export interface MpeValueCurve {
+  readonly points: ReadonlyArray<{
+    readonly time: number
+    readonly value: number
+    readonly metadata?: Readonly<Record<string, unknown>>
+  }>
+}
+
 export interface NoteData {
   readonly id: string
   readonly pitch: number // 0-127
@@ -39,6 +48,8 @@ export interface NoteData {
       readonly rooted?: boolean
     }>
   }
+  readonly mpePressure?: MpeValueCurve
+  readonly mpeTimbre?: MpeValueCurve
   readonly metadata?: Readonly<Record<string, unknown>>
 }
 
@@ -56,6 +67,8 @@ export interface NoteDataInput {
       readonly rooted?: boolean
     }>
   }
+  readonly mpePressure?: MpeValueCurve
+  readonly mpeTimbre?: MpeValueCurve
   readonly metadata?: Readonly<Record<string, unknown>>
 }
 

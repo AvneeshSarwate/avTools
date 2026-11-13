@@ -637,7 +637,7 @@ export function generateStrokeMaterialTypesSource(shaderCode: string, shaderBase
   tsLines.push('      device.queue.writeBuffer(builtinsBuffer, 0, builtinsData);');
   tsLines.push('    },');
   tsLines.push('    setTexture: (name, texture) => {');
-  tsLines.push('      textureViews[name] = texture;');
+  tsLines.push("      textureViews[name] = 'createView' in texture ? texture.createView() : texture;");
   tsLines.push('      rebuildBindGroup();');
   tsLines.push('    },');
   tsLines.push('    setCanvasSize: (width, height) => {');

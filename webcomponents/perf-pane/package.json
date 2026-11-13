@@ -1,0 +1,6 @@
+{
+  "name": "@avtools/perf-pane",
+  "version": "0.0.0",
+  "private": true,
+  "main": "dist/perf-pane.js"
+}

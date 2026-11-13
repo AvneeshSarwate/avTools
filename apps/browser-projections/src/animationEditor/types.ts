@@ -8,15 +8,21 @@
 
 export type TrackType = 'number' | 'enum' | 'func'
 
+export type PlayheadMarker = {
+  id: string
+  position: number
+  color?: string
+}
+
 export type FuncElement = {
   funcName: string
   args: unknown[]
 }
 
-// Input types (from user, no IDs required)
-export type NumberDatum = { time: number; element: number }
-export type EnumDatum = { time: number; element: string }
-export type FuncDatum = { time: number; element: FuncElement }
+// Input types. IDs are optional so imported remote state can preserve identity.
+export type NumberDatum = { id?: string; time: number; element: number }
+export type EnumDatum = { id?: string; time: number; element: string }
+export type FuncDatum = { id?: string; time: number; element: FuncElement }
 export type TrackDatum = NumberDatum | EnumDatum | FuncDatum
 
 // Runtime types (with IDs for editing)
@@ -26,9 +32,11 @@ export type FuncElementData = { id: string; time: number; value: FuncElement }
 export type TrackElement = NumberElement | EnumElement | FuncElementData
 
 export type TrackDef = {
+  id?: string
   name: string
   fieldType: TrackType
   data: TrackDatum[]
+  enumOptions?: string[]
 
   // Callbacks - only one should be defined based on fieldType
   updateNumber?: (v: number) => void
@@ -143,6 +151,7 @@ export type EditorAction =
   | { type: 'EDIT/REDO' }
   // Selection
   | { type: 'ELEMENT/SELECT'; fieldType: TrackType; trackId: string; elementId: string }
+  | { type: 'ELEMENT/TOGGLE_SELECTION'; fieldType: TrackType; trackId: string; elementId: string }
   | { type: 'ELEMENT/DESELECT'; fieldType: TrackType }
   // Precision editor
   | { type: 'PRECISION/OPEN'; fieldType: TrackType; trackId: string; elementId: string }
@@ -150,6 +159,7 @@ export type EditorAction =
   | { type: 'PRECISION/SAVE' }
   | { type: 'PRECISION/REVERT' }
   | { type: 'PRECISION/CLOSE' }
+  | { type: 'DRAG/CANCEL' }
   // Number lane
   | { type: 'NUMBER/ADD'; trackId: string; time: number; value: number }
   | { type: 'NUMBER/DELETE'; trackId: string; elementId: string }

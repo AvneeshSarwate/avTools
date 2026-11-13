@@ -202,6 +202,8 @@ mod macos {
         debug_last_hook_count: AtomicU64,
         last_width: AtomicU32,
         last_height: AtomicU32,
+        publish_region_width: AtomicU32,
+        publish_region_height: AtomicU32,
     }
 
     pub struct HeadlessSyphonState {
@@ -423,11 +425,23 @@ mod macos {
             self.last_width.store(width as u32, Ordering::Relaxed);
             self.last_height.store(height as u32, Ordering::Relaxed);
 
+            let region_w = self.publish_region_width.load(Ordering::Relaxed);
+            let region_h = self.publish_region_height.load(Ordering::Relaxed);
+            let pub_w = if region_w > 0 && (region_w as u64) <= width {
+                region_w as f64
+            } else {
+                width as f64
+            };
+            let pub_h = if region_h > 0 && (region_h as u64) <= height {
+                region_h as f64
+            } else {
+                height as f64
+            };
             let image_region = NSRect {
                 origin: NSPoint { x: 0.0, y: 0.0 },
                 size: NSSize {
-                    width: width as f64,
-                    height: height as f64,
+                    width: pub_w,
+                    height: pub_h,
                 },
             };
             let flipped = if self.publish_flipped.load(Ordering::Relaxed) != 0 {
@@ -1216,6 +1230,8 @@ mod macos {
             debug_last_hook_count: AtomicU64::new(0),
             last_width: AtomicU32::new(0),
             last_height: AtomicU32::new(0),
+            publish_region_width: AtomicU32::new(0),
+            publish_region_height: AtomicU32::new(0),
         });
 
         if debug_enabled {
@@ -1281,6 +1297,20 @@ mod macos {
         state
             .publish_flipped
             .store(u32::from(flipped != 0), Ordering::Relaxed);
+    }
+
+    #[no_mangle]
+    pub extern "C" fn syphon_set_publish_region(
+        state: *mut SyphonState,
+        width: u32,
+        height: u32,
+    ) {
+        if state.is_null() {
+            return;
+        }
+        let state = unsafe { &*state };
+        state.publish_region_width.store(width, Ordering::Relaxed);
+        state.publish_region_height.store(height, Ordering::Relaxed);
     }
 
     #[no_mangle]
@@ -1801,6 +1831,14 @@ mod macos {
 
     #[no_mangle]
     pub extern "C" fn syphon_set_flipped(_state: *mut SyphonState, _flipped: u32) {}
+
+    #[no_mangle]
+    pub extern "C" fn syphon_set_publish_region(
+        _state: *mut SyphonState,
+        _width: u32,
+        _height: u32,
+    ) {
+    }
 
     #[no_mangle]
     pub extern "C" fn syphon_headless_init(

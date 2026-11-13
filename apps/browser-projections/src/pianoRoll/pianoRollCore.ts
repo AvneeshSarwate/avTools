@@ -1,5 +1,6 @@
 import Konva from 'konva'
 import type { PianoRollState, NoteData, MpePitchPoint } from './pianoRollState'
+import { labelColorFor, noteFillColor } from './noteMetadataRules'
 import {
   uid,
   screenToPitchPosition,
@@ -17,6 +18,7 @@ import {
   quantize
 } from './pianoRollUtils'
 import { CommandStack } from './commandStack'
+import { getNoteAreaHeight } from './pianoRollViewport'
 
 const MPE_PITCH_OFFSET_RANGE = 24
 const MPE_FINE_DRAG_FACTOR = 0.2
@@ -25,6 +27,9 @@ const MPE_HANDLE_RADIUS = 4
 const MPE_HANDLE_FILL_DEFAULT = '#000000'
 const MPE_HANDLE_FILL_ROOTED = '#39d353'
 const MPE_HANDLE_FILL_SELECTED = '#ff8c00'
+// Default marker stroke: distinct from the queue (green) and live (orange)
+// playheads, so an externally published marker never reads as either of them.
+const PLAYHEAD_MARKER_COLOR = '#2f7fff'
 
 // ================= State Serialization =================
 
@@ -52,7 +57,7 @@ function selectionSetsDiffer(previous: Set<string>, current: Set<string>): boole
   return false
 }
 
-function mutateSelection(state: PianoRollState, mutate: () => void): boolean {
+export function mutateSelection(state: PianoRollState, mutate: () => void): boolean {
   const before = new Set(state.selection.selectedIds)
   mutate()
   const changed = selectionSetsDiffer(before, state.selection.selectedIds)
@@ -79,6 +84,13 @@ export function initializeLayers(state: PianoRollState, stage: Konva.Stage, onCo
   })
   stage.add(notesLayer)
   state.layers.notes = notesLayer
+
+  // Expression lanes (pressure/timbre) under the notes; drawn by pianoRollLanes.ts
+  const lanesLayer = new Konva.Layer({
+    name: 'lanes-layer'
+  })
+  stage.add(lanesLayer)
+  state.layers.lanes = lanesLayer
 
   // Overlay layer (for UI elements)
   const overlayLayer = new Konva.Layer({
@@ -138,7 +150,11 @@ export function renderGrid(state: PianoRollState) {
 
   const stage = state.stage
   const viewportWidth = stage.width()
-  const viewportHeight = stage.height()
+  const viewportHeight = getNoteAreaHeight(state, stage.height())
+  // Notes and grid stop where the expression lanes begin.
+  const noteAreaClip = { x: 0, y: 0, width: viewportWidth, height: viewportHeight }
+  gridLayer.clip(noteAreaClip)
+  state.layers.notes?.clip(noteAreaClip)
 
   // Only redraw if viewport or subdivision changed
   if (gridCache.lastScrollX === state.viewport.scrollX &&
@@ -254,13 +270,14 @@ export function renderVisibleNotes(state: PianoRollState) {
     const displayDuration = getNoteDisplayDuration(state, id, note.duration)
     const width = displayDuration * quarterNoteWidth
     const isHidden = state.interaction.hiddenNoteIds.has(id)
+    const fill = noteFillColor(note.metadata, state.grid.noteColor)
 
     const rect = new Konva.Rect({
       x: screen.x,
       y: screen.y,
       width,
       height: noteHeight,
-      fill: state.grid.noteColor,
+      fill,
       stroke: '#000',
       strokeWidth: 1,
       opacity: isHidden ? 0.3 : 1.0,
@@ -276,7 +293,7 @@ export function renderVisibleNotes(state: PianoRollState) {
       y: screen.y + 2,
       text: labelText,
       fontSize: 14,
-      fill: '#000',
+      fill: labelColorFor(fill),
       listening: false
     })
     notesLayer.add(label)
@@ -298,15 +315,19 @@ export function renderVisibleNotes(state: PianoRollState) {
     // Selected notes use their actual duration (not truncated)
     const width = note.duration * quarterNoteWidth
     const isHidden = state.interaction.hiddenNoteIds.has(id)
+    // A note with its own color keeps it while selected and shows selection
+    // through a heavy stroke instead; the default swaps the fill as before.
+    const ownColor = noteFillColor(note.metadata, '')
+    const fill = ownColor || state.grid.selectedNoteColor
 
     const rect = new Konva.Rect({
       x: screen.x,
       y: screen.y,
       width,
       height: noteHeight,
-      fill: state.grid.selectedNoteColor,
-      stroke: '#000',
-      strokeWidth: 1,
+      fill,
+      stroke: ownColor ? state.grid.selectedNoteColor : '#000',
+      strokeWidth: ownColor ? 3 : 1,
       opacity: isHidden ? 0.3 : 1.0,
       listening: true
     })
@@ -320,7 +341,7 @@ export function renderVisibleNotes(state: PianoRollState) {
       y: screen.y + 2,
       text: labelText,
       fontSize: 14,
-      fill: '#000',
+      fill: labelColorFor(fill),
       listening: false
     })
     notesLayer.add(label)
@@ -805,7 +826,7 @@ function getMpeHandlesInRect(state: PianoRollState, noteId: string, rect: { x: n
   return selected
 }
 
-function getMpeSelectedBlocks(indices: number[]) {
+export function getMpeSelectedBlocks(indices: number[]) {
   if (indices.length === 0) return []
   const sorted = [...indices].sort((a, b) => a - b)
   const blocks: Array<{ start: number; end: number }> = []
@@ -832,7 +853,7 @@ function formatPitchOffset(value: number) {
   return `${sign}${safe.toFixed(2)}`
 }
 
-function createMpeDragTooltip(state: PianoRollState) {
+export function createMpeDragTooltip(state: PianoRollState) {
   const overlay = state.layers.overlay
   if (!overlay) return undefined
   const padding = 6
@@ -853,14 +874,15 @@ function createMpeDragTooltip(state: PianoRollState) {
   return { group, background, text, padding }
 }
 
-function updateMpeDragTooltip(
+export function updateMpeDragTooltip(
   tooltip: NonNullable<PianoRollState['interaction']['mpeDrag']>['tooltip'],
   x: number,
   y: number,
-  pitchOffset: number
+  pitchOffset: number,
+  labelOverride?: string
 ) {
   if (!tooltip) return
-  const label = formatPitchOffset(pitchOffset)
+  const label = labelOverride ?? formatPitchOffset(pitchOffset)
   tooltip.text.text(label)
   const textWidth = tooltip.text.width()
   const textHeight = tooltip.text.height()
@@ -1012,17 +1034,82 @@ export function updateLivePlayheadPosition(state: PianoRollState) {
   state.layers.overlay?.batchDraw()
 }
 
+/**
+ * The many-marker counterpart of updateLivePlayheadPosition: one labeled line
+ * per entry in `state.playheadMarkers.markers`, reconciled by id so a marker
+ * that disappears takes its line with it. Konva nodes are created and destroyed
+ * here only when the id set changes; a moving marker is a single x() write.
+ */
+export function updatePlayheadMarkers(state: PianoRollState) {
+  const overlayLayer = state.layers.overlay
+  if (!overlayLayer) return
+
+  const { markers, elements } = state.playheadMarkers
+  const { scrollX } = state.viewport
+  const pianoRollHeight = 128 * state.grid.noteHeight
+  const seen = new Set<string>()
+
+  markers.forEach((marker) => {
+    seen.add(marker.id)
+    const color = marker.color ?? PLAYHEAD_MARKER_COLOR
+    const x = marker.position * state.grid.quarterNoteWidth - scrollX
+
+    let entry = elements.get(marker.id)
+    if (!entry) {
+      const line = new Konva.Line({
+        points: [0, 0, 0, pianoRollHeight],
+        stroke: color,
+        strokeWidth: 2,
+        listening: false,
+        name: 'playhead-marker'
+      })
+      const label = new Konva.Text({
+        text: marker.id,
+        fontSize: 11,
+        fill: color,
+        listening: false,
+        name: 'playhead-marker-label'
+      })
+      overlayLayer.add(line)
+      overlayLayer.add(label)
+      entry = { line, label }
+      elements.set(marker.id, entry)
+    }
+
+    if (entry.line.stroke() !== color) entry.line.stroke(color)
+    if (entry.label.fill() !== color) entry.label.fill(color)
+    entry.line.x(x)
+    entry.label.x(x + 3)
+    entry.label.y(2)
+  })
+
+  for (const [id, entry] of elements) {
+    if (seen.has(id)) continue
+    entry.line.destroy()
+    entry.label.destroy()
+    elements.delete(id)
+  }
+
+  overlayLayer.batchDraw()
+}
+
 // ================= Interaction Handlers =================
 
 export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage) {
   const notesLayer = state.layers.notes
   const gridLayer = state.layers.grid
 
+  // Pointer positions below the note grid belong to the expression lanes
+  // (pianoRollLanes.ts). Checked by position, not only by target: a lane click
+  // can destroy the node under the pointer, and Konva then reports the stage.
+  const isInLaneArea = (pos: { y: number } | null | undefined) =>
+    !!pos && pos.y >= getNoteAreaHeight(state, stage.height())
+
   // Double-click on background → Add note
   stage.on('dblclick', (e) => {
     if (e.target === stage || e.target.getLayer() === gridLayer) {
       const pos = stage.getPointerPosition()
-      if (!pos) return
+      if (!pos || isInLaneArea(pos)) return
 
       const { pitch, position } = screenToPitchPosition(pos, state)
       const quantizedPos = quantizeToGrid(position, state.grid.subdivision)
@@ -1045,6 +1132,9 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage) {
   // Click on note or handle
   stage.on('mousedown touchstart', (e) => {
     const target = e.target
+    // The expression lanes handle their own pointer input (pianoRollLanes.ts).
+    if (target !== stage && target.getLayer() === state.layers.lanes) return
+    if (isInLaneArea(stage.getPointerPosition())) return
     const isShift = !!(e.evt as MouseEvent | PointerEvent | TouchEvent | undefined)?.shiftKey
 
     // Check if clicking on resize handle
@@ -1197,7 +1287,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage) {
       // If it was a click (not a drag), move queue playhead to clicked position
       if (wasClick && e.target === stage || e.target.getLayer() === gridLayer) {
         const pos = stage.getPointerPosition()
-        if (pos) {
+        if (pos && !isInLaneArea(pos)) {
           const { position } = screenToPitchPosition(pos, state)
           const quantizedPos = quantizeToGrid(position, state.grid.subdivision)
           state.queuePlayhead.position = Math.max(0, Math.min(quantizedPos, state.grid.maxLength))

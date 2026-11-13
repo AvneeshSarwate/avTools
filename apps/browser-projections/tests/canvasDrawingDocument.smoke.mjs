@@ -1,0 +1,455 @@
+// Headless check of the handwriting-canvas web component's document surface:
+//   document -> Konva scene -> document is exact,
+//   the component's Konva bake agrees with the Konva-free package bake,
+//   a stroke's outline covers its stored points and no shape scales its stroke,
+//   a transformer resize folds a stroke's scale into its points,
+//   hydration never emits `document-update`,
+//   and the legacy serialized-state round trip yields the same document.
+//
+// Run from apps/browser-projections after `npm run buildCanvas`:
+//   npm run test:canvas
+// Needs Node >= 22.6 (type stripping imports the package source directly).
+// Set PW_CHROMIUM_PATH to a Chromium binary when Playwright's own download is
+// unavailable (e.g. PW_CHROMIUM_PATH=/opt/pw-browsers/chromium).
+import { chromium } from 'playwright'
+import { readFileSync, existsSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { bakeDrawingDocument, normalizeDrawingDocument } from '../../../packages/drawing-document/mod.ts'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const BUNDLE = path.resolve(__dirname, '../../../webcomponents/handwriting-canvas/dist/handwriting-canvas.js')
+if (!existsSync(BUNDLE)) {
+  console.error(`missing ${BUNDLE}; run \`npm run buildCanvas\` first`)
+  process.exit(1)
+}
+
+// A document exercising everything the baked format erases: layer and group
+// transforms, nested groups on two layers, stroke timing, an open polygon,
+// metadata, an ellipse produced by scale plus rotation, and curved polygons
+// under non-uniform scale and skew (whose curve must be computed locally).
+const input = normalizeDrawingDocument({
+  freehand: {
+    transform: { x: 4, scaleX: 1.5 },
+    nodes: [
+      {
+        type: 'stroke', id: 'stroke-a', creationTime: 1000, isFreehand: true,
+        points: [10, 10, 20, 15, 35, 30, 50, 32], timestamps: [0, 16, 33, 49],
+        metadata: { name: 'alpha', weight: 2 },
+      },
+      {
+        type: 'group', id: 'group_1', transform: { x: 100, y: 20, rotation: 30, scaleY: 0.8 }, metadata: { name: 'letters' },
+        children: [
+          { type: 'stroke', id: 'stroke-b', creationTime: 2000, isFreehand: true, points: [100, 100, 120, 90, 140, 120], timestamps: [0, 20, 40], transform: { x: 105, y: 91 } },
+          {
+            type: 'group', id: 'group_2', transform: { skewX: 0.2 }, metadata: { nested: true },
+            children: [
+              { type: 'stroke', id: 'stroke-c', creationTime: 3000, isFreehand: false, points: [200, 200, 210, 220, 230, 240], timestamps: [0, 0, 0], metadata: { name: 'c' } },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  polygon: {
+    nodes: [
+      { type: 'polygon', id: 'poly-1', creationTime: 4000, closed: true, points: [300, 50, 350, 60, 330, 110], transform: { x: -10, scaleX: 1.2 }, metadata: { kind: 'zone' } },
+      { type: 'polygon', id: 'poly-open', creationTime: 4500, closed: false, points: [10, 200, 60, 210, 40, 260] },
+      { type: 'polygon', id: 'curve-closed', creationTime: 4600, closed: true, tension: 0.5, points: [200, 300, 260, 290, 280, 350, 220, 370], transform: { x: 15, scaleX: 1.8, scaleY: 0.6, rotation: 20, skewX: 0.1 } },
+      { type: 'polygon', id: 'curve-open', creationTime: 4700, closed: false, tension: 0.35, points: [20, 300, 70, 330, 110, 290, 150, 340] },
+    ],
+    transform: { y: 6, scaleY: 1.1 },
+  },
+  circle: {
+    transform: { y: 3 },
+    nodes: [
+      { type: 'circle', id: 'circ-1', creationTime: 5000, radius: 20, transform: { x: 80, y: 220 }, metadata: { tag: 'round' } },
+      {
+        type: 'group', id: 'circle-group', transform: { x: 260, y: 240, rotation: 30 }, metadata: { name: 'ring' },
+        children: [
+          { type: 'circle', id: 'circ-2', creationTime: 6000, radius: 30, transform: { scaleY: 0.4 } },
+        ],
+      },
+    ],
+  },
+})
+
+const failures = []
+const check = (cond, msg) => { if (!cond) failures.push(msg) }
+const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps
+
+const launchOptions = process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : {}
+const browser = await chromium.launch(launchOptions)
+const page = await browser.newPage()
+const consoleErrors = []
+page.on('pageerror', (e) => consoleErrors.push(String(e)))
+page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()) })
+
+await page.setContent('<!doctype html><html><body></body></html>')
+await page.addScriptTag({ content: readFileSync(BUNDLE, 'utf8') })
+
+const result = await page.evaluate(async (input) => {
+  const el = document.createElement('handwriting-canvas')
+  el.width = 500
+  el.height = 400
+  document.body.appendChild(el)
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  for (let i = 0; i < 100 && !el.canvasState?.stage; i++) await wait(20)
+  if (!el.canvasState?.stage) return { error: 'component never mounted' }
+
+  const clone = (v) => JSON.parse(JSON.stringify(v))
+  let documentUpdates = 0
+  el.addEventListener('document-update', () => { documentUpdates += 1 })
+
+  el.setDrawingDocument(clone(input))
+  await wait(50)
+  const doc1 = clone(el.getDrawingDocument())
+  // The Konva-walking bake (what Konva actually holds) is what the parity
+  // check below compares with the package bake; getCanvasRenderData() is the
+  // package bake of the element's own document and must equal it exactly.
+  const render1 = clone(el.getKonvaRenderData())
+  const renderFromDocument = clone(el.getCanvasRenderData())
+  const updatesAfterHydrate = documentUpdates
+
+  // getCanvasState() is the document as a string, and setCanvasState still
+  // accepts the format that predates it: Konva's own serialization per tool.
+  // Build one of those from the live scene, the way the old code did.
+  const serialized = el.getCanvasState()
+  const stateIsDocument = JSON.stringify(JSON.parse(serialized)) === JSON.stringify(doc1)
+  const st = el.canvasState
+  const legacy = JSON.stringify({
+    version: 1,
+    freehand: {
+      layer: st.groups.freehandShape.toObject(),
+      strokes: [...st.freehand.strokes.entries()].map(([id, s]) => [id, { id: s.id, points: s.points, timestamps: s.timestamps, originalPath: s.originalPath, creationTime: s.creationTime, isFreehand: s.isFreehand }]),
+      strokeGroups: [...st.freehand.strokeGroups.entries()].map(([id, g]) => [id, { id: g.id, strokeIds: g.strokeIds }]),
+    },
+    polygon: {
+      layer: st.groups.polygonShapes.toObject(),
+      polygons: [...st.polygon.shapes.entries()].map(([id, p]) => [id, { id: p.id, points: p.points, closed: p.closed, creationTime: p.creationTime }]),
+      polygonGroups: [],
+    },
+    circle: {
+      layer: st.groups.circleShapes.toObject(),
+      circles: [...st.circle.shapes.entries()].map(([id, c]) => [id, { id: c.id, x: c.shape?.x(), y: c.shape?.y(), r: c.shape?.radius(), creationTime: c.creationTime }]),
+    },
+  })
+  el.setDrawingDocument({ version: 1, freehand: { nodes: [] }, polygon: { nodes: [] }, circle: { nodes: [] } })
+  await wait(50)
+  const emptied = clone(el.getDrawingDocument())
+  el.setCanvasState(legacy)
+  await wait(100)
+  const doc2 = clone(el.getDrawingDocument())
+  // And the document string round-trips exactly, layer transforms included.
+  el.setCanvasState(serialized)
+  await wait(50)
+  const doc2b = clone(el.getDrawingDocument())
+
+  // An invalid document is rejected without touching the scene.
+  let rejected = null
+  try { el.setDrawingDocument({ version: 7 }) } catch (e) { rejected = String(e.message ?? e) }
+  const doc3 = clone(el.getDrawingDocument())
+
+  // A real edit (through the command stack, as a tool would) emits exactly once.
+  const before = documentUpdates
+  el.canvasState.command.executeCommand('smoke: delete stroke', () => {
+    const item = el.canvasState.canvasItems.get('stroke-a')
+    item?.konvaNode.destroy()
+    el.canvasState.canvasItems.delete('stroke-a')
+    el.canvasState.freehand.strokes.delete('stroke-a')
+  })
+  await wait(50)
+  const updatesAfterEdit = documentUpdates - before
+  const doc4 = clone(el.getDrawingDocument())
+
+  const itemCount = el.canvasState.canvasItems.size
+
+  // A document that differs in one node rebuilds that node only: every other
+  // Konva node keeps its identity, and a selection on one of them survives.
+  // In simple mode it also produces exactly one state-update, whose diff
+  // names that node alone.
+  let stateUpdates = []
+  const onStateUpdate = (e) => stateUpdates.push(e.detail[0])
+  el.addEventListener('state-update', onStateUpdate)
+  const freehandGroup = el.canvasState.groups.freehandShape
+  const keepItem = el.canvasState.canvasItems.get('group_1')
+  el.canvasState.selection.items.add(keepItem)
+  const nodesBefore = new Map(freehandGroup.getChildren().map((n) => [n.id(), n]))
+  const nudged = clone(doc4)
+  nudged.polygon.nodes.find((n) => n.id === 'poly-1').points[0] += 1
+  el.setDrawingDocument(nudged)
+  await wait(50)
+  const after = new Map(freehandGroup.getChildren().map((n) => [n.id(), n]))
+  const identityKept = [...nodesBefore].every(([id, node]) => after.get(id) === node)
+  const selectionKept = el.canvasState.selection.items.has(keepItem)
+  const polyRebuilt = el.canvasState.stage.findOne('#poly-1')?.points()[0] === nudged.polygon.nodes.find((n) => n.id === 'poly-1').points[0]
+  el.canvasState.selection.items.delete(keepItem)
+  el.removeEventListener('state-update', onStateUpdate)
+  const nudgeUpdates = stateUpdates.map((u) => ({
+    changed: ['freehand', 'polygon', 'circle'].map((l) => u.changed[l].bakedRenderData.map((i) => i.id)),
+    added: ['freehand', 'polygon', 'circle'].map((l) => u.added[l].bakedRenderData.map((i) => i.id)),
+    deleted: ['freehand', 'polygon', 'circle'].map((l) => u.deleted[l].bakedRenderData.map((i) => i.id)),
+    polygons: u.polygon.bakedRenderData.length,
+  }))
+
+  // Tension survives the document undo/redo path.
+  el.canvasState.command.executeCommand('smoke: straighten curve', () => {
+    el.canvasState.stage.findOne('#curve-open').tension(0)
+  })
+  await wait(50)
+  const straightened = clone(el.getDrawingDocument())
+  el.canvasState.command.stack.undo()
+  await wait(50)
+  const undone = clone(el.getDrawingDocument())
+
+  return { doc1, render1, renderFromDocument, updatesAfterHydrate, emptied, doc2, doc2b, stateIsDocument, rejected, doc3, updatesAfterEdit, doc4, itemCount, identityKept, selectionKept, polyRebuilt, nudgeUpdates, straightened, undone }
+}, input)
+
+// The outline the canvas draws must cover the points the document stores (a
+// sparse stroke shrank under perfect-freehand's streamline smoothing), and no
+// shape may scale its stroke, or the selection highlight and outlines thicken
+// under the transformer.
+const fidelity = await page.evaluate((input) => {
+  const el = document.querySelector('handwriting-canvas')
+  el.setDrawingDocument(input)
+  const st = el.canvasState
+  const strokes = []
+  const walk = (items) => { for (const it of items) { if (it.type === 'stroke') strokes.push(it); else walk(it.children) } }
+  walk(el.getKonvaRenderData().freehand)
+  const outlines = strokes.map((s) => {
+    const rect = st.stage.findOne('#' + s.id).getClientRect({ skipStroke: true, relativeTo: st.stage })
+    const xs = s.points.map((p) => p.x), ys = s.points.map((p) => p.y)
+    return { id: s.id, rect: [rect.x, rect.y, rect.x + rect.width, rect.y + rect.height], points: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] }
+  })
+  const scaledStrokes = [st.groups.freehandShape, st.groups.polygonShapes, st.groups.circleShapes]
+    .flatMap((g) => g.find('Path, Line, Circle')).filter((n) => n.strokeScaleEnabled()).map((n) => n.id())
+  return { outlines, scaledStrokes, ignoreStroke: st.layers.transformer.ignoreStroke() }
+}, input)
+for (const o of fidelity.outlines) {
+  const eps = 1e-6
+  check(o.rect[0] <= o.points[0] + eps && o.rect[1] <= o.points[1] + eps && o.rect[2] >= o.points[2] - eps && o.rect[3] >= o.points[3] - eps, `outline of ${o.id} does not cover its points: outline ${o.rect.map((v) => v.toFixed(1))}, points ${o.points.map((v) => v.toFixed(1))}`)
+}
+check(fidelity.scaledStrokes.length === 0, `shapes scale their strokes: ${fidelity.scaledStrokes}`)
+check(fidelity.ignoreStroke, 'the transformer box includes strokes')
+
+// In-gesture previews: a drawn stroke and a select-tool drag each stream
+// node-level `document-preview` batches under the id the commit then uses,
+// throttled to the sync tick, with the committed `document-update` last.
+await page.evaluate(() => {
+  if (!crypto.randomUUID) crypto.randomUUID = () => Math.random().toString(16).slice(2)
+  const el = document.querySelector('handwriting-canvas')
+  window.__log = []
+  el.addEventListener('document-preview', (e) => window.__log.push({ t: performance.now(), kind: 'preview', upserts: e.detail[0].upserts.map((u) => `${u.layer}:${u.node.id}`) }))
+  el.addEventListener('document-update', (e) => window.__log.push({ t: performance.now(), kind: 'update', ids: e.detail[0].freehand.nodes.map((n) => n.id) }))
+  el.addEventListener('interaction-start', () => window.__log.push({ kind: 'start' }))
+  el.addEventListener('interaction-end', () => window.__log.push({ kind: 'end' }))
+})
+const stageBox = await page.evaluate(() => {
+  const r = document.querySelector('handwriting-canvas').canvasState.stage.container().getBoundingClientRect()
+  return { x: r.x, y: r.y }
+})
+const readLog = () => page.evaluate(() => { const l = window.__log; window.__log = []; return l })
+const gesture = async (from, steps) => {
+  await page.mouse.move(stageBox.x + from[0], stageBox.y + from[1])
+  await page.mouse.down()
+  for (let i = 1; i <= steps; i++) { await page.mouse.move(stageBox.x + from[0] + i * 6, stageBox.y + from[1] + i * 2); await page.waitForTimeout(12) }
+  await page.mouse.up()
+  await page.waitForTimeout(80)
+}
+// A fresh, untransformed document: the freehand layer above carries a scale,
+// which would put a stroke drawn at stage coordinates somewhere else.
+await page.evaluate(() => document.querySelector('handwriting-canvas').setDrawingDocument({ version: 1, freehand: { nodes: [] }, polygon: { nodes: [] }, circle: { nodes: [] } }))
+await page.locator('handwriting-canvas').locator('select.tool-dropdown').selectOption('freehand')
+await readLog()
+// The stage is 500x400: keep the whole gesture inside it.
+await gesture([60, 300], 25)
+const strokeLog = await readLog()
+const strokePreviews = strokeLog.filter((e) => e.kind === 'preview')
+const strokeIds = new Set(strokePreviews.flatMap((e) => e.upserts))
+check(strokePreviews.length >= 3, `drawing a stroke streamed ${strokePreviews.length} previews`)
+check(strokeIds.size === 1 && [...strokeIds][0].startsWith('freehand:stroke-'), `stroke previews share one id: ${[...strokeIds]}`)
+check(strokePreviews.slice(1).every((e, i) => e.t - strokePreviews[i].t >= 30), 'stroke previews are throttled to the sync tick')
+const lastPreviewAt = strokeLog.indexOf(strokePreviews.at(-1))
+const commit = strokeLog.slice(lastPreviewAt).find((e) => e.kind === 'update')
+check(commit && commit.ids.includes([...strokeIds][0].slice('freehand:'.length)), 'the commit after the last preview carries the previewed id')
+check(strokeLog.indexOf(strokePreviews[0]) > strokeLog.findIndex((e) => e.kind === 'start') && strokeLog.at(-1).kind === 'end', `gesture edges bracket the stream: ${strokeLog.map((e) => e.kind).join(' ')}`)
+
+await page.locator('handwriting-canvas').locator('select.tool-dropdown').selectOption('select')
+await page.mouse.click(stageBox.x + 120, stageBox.y + 320)
+await page.waitForTimeout(60)
+await readLog()
+await gesture([120, 320], 12)
+const dragLog = await readLog()
+const dragPreviews = dragLog.filter((e) => e.kind === 'preview')
+check(dragPreviews.length >= 2 && dragPreviews.every((e) => e.upserts.length === 1 && e.upserts[0] === [...strokeIds][0]), `moving the stroke streamed it: ${JSON.stringify(dragPreviews.map((e) => e.upserts))}`)
+check(dragLog.some((e) => e.kind === 'update') && dragLog.at(-1).kind === 'end', 'the move committed and ended the gesture')
+
+// A transformer rotation streams too. Konva fires `transform` without
+// bubbling, so this only works when the preview listens on the transformer.
+const rotater = await page.evaluate(() => {
+  const tr = document.querySelector('handwriting-canvas').canvasState.layers.transformer
+  const anchor = tr.findOne('.rotater').getAbsolutePosition()
+  const box = tr.getClientRect()
+  return { anchor, center: { x: box.x + box.width / 2, y: box.y + box.height / 2 }, nodes: tr.nodes().length }
+})
+check(rotater.nodes === 1, `the moved stroke is under the transformer (${rotater.nodes} nodes)`)
+await readLog()
+const radius = Math.hypot(rotater.anchor.x - rotater.center.x, rotater.anchor.y - rotater.center.y)
+const angle0 = Math.atan2(rotater.anchor.y - rotater.center.y, rotater.anchor.x - rotater.center.x)
+await page.mouse.move(stageBox.x + rotater.anchor.x, stageBox.y + rotater.anchor.y)
+await page.mouse.down()
+for (let i = 1; i <= 12; i++) {
+  const a = angle0 + (i / 12) * 0.8
+  await page.mouse.move(stageBox.x + rotater.center.x + Math.cos(a) * radius, stageBox.y + rotater.center.y + Math.sin(a) * radius)
+  await page.waitForTimeout(25)
+}
+await page.mouse.up()
+await page.waitForTimeout(80)
+const rotateLog = await readLog()
+const rotatePreviews = rotateLog.filter((e) => e.kind === 'preview')
+check(rotatePreviews.length >= 2 && rotatePreviews.every((e) => e.upserts[0] === [...strokeIds][0]), `rotating the stroke streamed it: ${rotatePreviews.length} previews`)
+check(rotateLog.some((e) => e.kind === 'update') && rotateLog.at(-1).kind === 'end', 'the rotation committed and ended the gesture')
+
+// A resize streams like a rotation, then folds the scale into the stroke's
+// points: the path and the committed node carry no scale, the stroke grew,
+// and its outline still covers the points the package bakes from the commit.
+// Resize anchors sit outside the padded box, so grab a corner anchor's client
+// rect centre (one still inside the stage after the rotation) and pull it
+// away from the box centre, which grows both dimensions.
+const resizeStart = await page.evaluate(() => {
+  const el = document.querySelector('handwriting-canvas')
+  const st = el.canvasState
+  const tr = st.layers.transformer
+  const node = st.groups.freehandShape.getChildren()[0]
+  const box = tr.getClientRect()
+  const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  for (const name of ['top-right', 'bottom-right', 'top-left', 'bottom-left']) {
+    const r = tr.findOne('.' + name).getClientRect()
+    const c = { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+    if (c.x < 8 || c.y < 8 || c.x > st.stage.width() - 8 || c.y > st.stage.height() - 8) continue
+    const len = Math.hypot(c.x - center.x, c.y - center.y)
+    const rect = node.getClientRect({ skipStroke: true, relativeTo: st.stage })
+    return { anchor: name, x: c.x, y: c.y, dx: (c.x - center.x) / len, dy: (c.y - center.y) / len, width: rect.width, height: rect.height }
+  }
+  return null
+})
+check(resizeStart, 'no resize anchor lies inside the stage')
+await readLog()
+await page.mouse.move(stageBox.x + resizeStart.x, stageBox.y + resizeStart.y)
+await page.mouse.down()
+for (let i = 1; i <= 10; i++) {
+  await page.mouse.move(stageBox.x + resizeStart.x + resizeStart.dx * i * 4, stageBox.y + resizeStart.y + resizeStart.dy * i * 4)
+  await page.waitForTimeout(25)
+}
+await page.mouse.up()
+await page.waitForTimeout(80)
+const resizeLog = await readLog()
+const resizePreviews = resizeLog.filter((e) => e.kind === 'preview')
+check(resizePreviews.length >= 2 && resizePreviews.every((e) => e.upserts[0] === [...strokeIds][0]), `resizing the stroke streamed it: ${resizePreviews.length} previews`)
+check(resizeLog.some((e) => e.kind === 'update') && resizeLog.at(-1).kind === 'end', 'the resize committed and ended the gesture')
+const resized = await page.evaluate(() => {
+  const el = document.querySelector('handwriting-canvas')
+  const st = el.canvasState
+  const node = st.groups.freehandShape.getChildren()[0]
+  const rect = node.getClientRect({ skipStroke: true, relativeTo: st.stage })
+  return { scale: [node.scaleX(), node.scaleY()], doc: JSON.parse(JSON.stringify(el.getDrawingDocument())), rect: [rect.x, rect.y, rect.x + rect.width, rect.y + rect.height], width: rect.width, height: rect.height }
+})
+const resizedNode = resized.doc.freehand.nodes[0]
+check(resized.scale[0] === 1 && resized.scale[1] === 1, `the resize left scale on the path: ${resized.scale}`)
+check(resizedNode.transform?.scaleX === undefined && resizedNode.transform?.scaleY === undefined, `the resize left scale in the document: ${JSON.stringify(resizedNode.transform)}`)
+check(resized.width > resizeStart.width + 5 && resized.height > resizeStart.height + 5, `the resize did not grow the stroke: ${resizeStart.width}x${resizeStart.height} -> ${resized.width}x${resized.height}`)
+{
+  const baked = bakeDrawingDocument(resized.doc).freehand[0].children[0].points
+  const xs = baked.map((p) => p.x), ys = baked.map((p) => p.y)
+  const eps = 1e-6
+  check(resized.rect[0] <= Math.min(...xs) + eps && resized.rect[1] <= Math.min(...ys) + eps && resized.rect[2] >= Math.max(...xs) - eps && resized.rect[3] >= Math.max(...ys) - eps, `after the resize the outline does not cover the baked points: outline ${resized.rect.map((v) => v.toFixed(1))}, points ${[Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)].map((v) => v.toFixed(1))}`)
+}
+
+await browser.close()
+
+if (result.error) { console.error(result.error); process.exit(1) }
+const { doc1, render1, renderFromDocument, updatesAfterHydrate, emptied, doc2, doc2b, stateIsDocument, rejected, doc3, updatesAfterEdit, doc4, itemCount, identityKept, selectionKept, polyRebuilt, nudgeUpdates, straightened, undone } = result
+check(JSON.stringify(nudgeUpdates) === JSON.stringify([{ changed: [[], ['poly-1'], []], added: [[], [], []], deleted: [[], [], []], polygons: 4 }]), `one-node change emitted ${JSON.stringify(nudgeUpdates)}`)
+check(identityKept, 'a one-node document change rebuilt untouched nodes')
+check(selectionKept, 'a one-node document change dropped the selection')
+check(polyRebuilt, 'the changed node was not rebuilt')
+check(stateIsDocument, 'getCanvasState is the document as JSON')
+
+check(JSON.stringify(doc1) === JSON.stringify(input), 'document round trip is not exact')
+check(updatesAfterHydrate === 0, `hydration emitted document-update ${updatesAfterHydrate} times`)
+check(emptied.freehand.nodes.length === 0 && emptied.polygon.nodes.length === 0 && emptied.circle.nodes.length === 0, 'empty document did not clear the scene')
+// The legacy Konva serialization predates layer transforms and restores only
+// layer children, so compare it without the layer-container transforms. The
+// document path restores them; that is one of the things it exists for.
+const withoutLayerTransforms = (doc) => {
+  const copy = JSON.parse(JSON.stringify(doc))
+  for (const layer of ['freehand', 'polygon', 'circle']) delete copy[layer].transform
+  return copy
+}
+check(JSON.stringify(withoutLayerTransforms(doc2)) === JSON.stringify(withoutLayerTransforms(input)), 'legacy Konva state import changed the document')
+check(JSON.stringify(doc2b) === JSON.stringify(input), 'document state string round trip is not exact')
+check(rejected && rejected.includes('version'), `invalid document was not rejected: ${rejected}`)
+check(JSON.stringify(doc3) === JSON.stringify(doc2b), 'a rejected document altered the scene')
+check(updatesAfterEdit >= 1, 'an edit did not emit document-update')
+check(doc4.freehand.nodes.length === input.freehand.nodes.length - 1, 'edited document does not reflect the deletion')
+// 3 strokes + 2 freehand groups + 4 polygons + 2 circles + 1 circle group, minus the deleted stroke.
+check(itemCount === 11, `canvasItems registered after edit: ${itemCount} (expected 11)`)
+check(input.version === 2, `a document with curves should normalize to version 2, got ${input.version}`)
+const curveOpen = (doc) => doc.polygon.nodes.find((n) => n.id === 'curve-open')
+check(curveOpen(straightened) && !('tension' in curveOpen(straightened)), 'a zero tension was not dropped from the document')
+check(curveOpen(undone)?.tension === 0.35, `undo did not restore tension: ${JSON.stringify(curveOpen(undone))}`)
+
+// Konva bake vs. package bake; and the element's own render data is the package bake.
+const expected = bakeDrawingDocument(input)
+for (const layer of ['freehand', 'polygon', 'circle']) {
+  check(JSON.stringify(renderFromDocument[layer]) === JSON.stringify(expected[layer]), `getCanvasRenderData.${layer} is not the package bake of the document`)
+}
+const flatStrokes = (groups, out = []) => {
+  for (const g of groups) for (const c of g.children) c.type === 'stroke' ? out.push(c) : flatStrokes([c], out)
+  return out
+}
+const a = flatStrokes(render1.freehand)
+const b = flatStrokes(expected.freehand)
+check(a.length === b.length, `stroke count ${a.length} != ${b.length}`)
+for (let i = 0; i < Math.min(a.length, b.length); i++) {
+  check(a[i].id === b[i].id, `stroke order differs at ${i}: ${a[i].id} vs ${b[i].id}`)
+  check(a[i].points.length === b[i].points.length, `stroke ${a[i].id} point count differs`)
+  a[i].points.forEach((p, j) => {
+    const q = b[i].points[j]
+    check(q && near(p.x, q.x, 1e-6) && near(p.y, q.y, 1e-6) && p.ts === q.ts, `stroke ${a[i].id} point ${j}: canvas ${JSON.stringify(p)} vs bake ${JSON.stringify(q)}`)
+  })
+  check(JSON.stringify(a[i].metadata) === JSON.stringify(b[i].metadata), `stroke ${a[i].id} metadata differs`)
+}
+check(JSON.stringify(render1.freehand.map((g) => g.id)) === JSON.stringify(expected.freehand.map((g) => g.id)), 'top-level freehand ids differ')
+check(JSON.stringify(render1.freehand[1]?.children.map((c) => c.id)) === JSON.stringify(expected.freehand[1]?.children.map((c) => c.id)), 'group nesting differs')
+check(render1.polygon.length === expected.polygon.length, 'polygon count differs')
+render1.polygon.forEach((p, i) => {
+  const q = expected.polygon[i]
+  check(q && p.id === q.id && p.points.every((pt, j) => near(pt.x, q.points[j].x, 1e-6) && near(pt.y, q.points[j].y, 1e-6)), `polygon ${p.id} differs`)
+  check(JSON.stringify(p.metadata) === JSON.stringify(q?.metadata), `polygon ${p.id} metadata differs`)
+  // Curved polygons: the canvas's segments come from Konva's getTensionPoints,
+  // the package's from its port, so this checks the port against real Konva.
+  check((p.segments === undefined) === (q?.segments === undefined), `polygon ${p.id} segments presence differs`)
+  if (p.segments && q?.segments) {
+    check(p.segments.length === q.segments.length, `polygon ${p.id} segment count ${p.segments.length} != ${q.segments.length}`)
+    p.segments.forEach((seg, j) => {
+      const other = q.segments[j]
+      const keys = seg.type === 'quadratic' ? ['from', 'control', 'to'] : ['from', 'control1', 'control2', 'to']
+      check(other && other.type === seg.type && keys.every((k) => near(seg[k].x, other[k].x, 1e-6) && near(seg[k].y, other[k].y, 1e-6)),
+        `polygon ${p.id} segment ${j}: canvas ${JSON.stringify(seg)} vs bake ${JSON.stringify(other)}`)
+    })
+  }
+})
+check(expected.polygon.filter((p) => p.segments).length === 2, 'expected two curved polygons in the bake')
+check(render1.circle.length === expected.circle.length, 'circle count differs')
+render1.circle.forEach((c, i) => {
+  const q = expected.circle[i]
+  check(q && c.id === q.id && near(c.center.x, q.center.x, 1e-6) && near(c.center.y, q.center.y, 1e-6) && near(c.rx, q.rx, 1e-6) && near(c.ry, q.ry, 1e-6) && near(c.rotation, q.rotation, 1e-9) && (c.r === undefined) === (q.r === undefined), `circle ${c.id}: canvas ${JSON.stringify(c)} vs bake ${JSON.stringify(q)}`)
+})
+check(JSON.stringify(consoleErrors) === '[]', `console errors: ${consoleErrors.join(' | ')}`)
+
+if (failures.length) {
+  console.error('FAILURES:\n- ' + failures.join('\n- '))
+  process.exit(1)
+}
+console.log('drawing document round trip and bake parity OK')

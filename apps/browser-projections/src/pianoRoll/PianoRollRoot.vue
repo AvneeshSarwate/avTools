@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue'
-import { createPianoRollState, type PianoRollState, type NoteData, type NoteDataInput } from './pianoRollState'
+import {
+  createPianoRollState,
+  type PianoRollState,
+  type NoteData,
+  type NoteDataInput,
+  type PlayheadMarker
+} from './pianoRollState'
 import { PianoRollWebSocketController, type UpdateSource } from './pianoRollWebSocket'
 import {
   initializeLayers,
@@ -10,16 +16,22 @@ import {
   renderResizeHandles,
   updateQueuePlayheadPosition,
   updateLivePlayheadPosition,
+  updatePlayheadMarkers,
   captureState,
   restoreState
 } from './pianoRollCore'
 import { executeOverlapChanges } from './pianoRollUtils'
+import { renderLanes } from './pianoRollLanes'
 import {
   applyHorizontalZoom,
   applyVerticalZoom,
   fitZoomToNotes as fitZoomToNotesHelper,
   getHorizontalViewportRange,
+  getLaneAreaHeight,
   getVerticalViewportRange,
+  getView as getViewHelper,
+  setView as setViewHelper,
+  type PianoRollView,
   updateScrollBounds
 } from './pianoRollViewport'
 import {
@@ -32,6 +44,7 @@ import { createCommandHandlers } from './pianoRollCommands'
 import { createKeyboardController } from './pianoRollKeyboard'
 import { StageManager } from './pianoRollStageManager'
 import NoteMetadataEditor from './NoteMetadataEditor.vue'
+import { applyPlan, type EditPlan, type JsonObject } from './metadataGroupEdit'
 
 const props = withDefaults(defineProps<{
   width?: number
@@ -41,12 +54,17 @@ const props = withDefaults(defineProps<{
   showControlPanel?: boolean
   interactive?: boolean
   wsAddress?: string
+  /** Initial visibility of the expression lanes; the control panel toggles them after. */
+  showPressureLane?: boolean
+  showTimbreLane?: boolean
 }>(), {
   width: 640,
   height: 360,
   initialNotes: () => [],
   showControlPanel: true,
-  interactive: true
+  interactive: true,
+  showPressureLane: false,
+  showTimbreLane: false
 })
 
 // WebSocket-overridable config
@@ -89,6 +107,14 @@ const scale = computed(() => {
 
 const scaledWidth = computed(() => Math.round(maxWidth.value * scale.value))
 const scaledHeight = computed(() => Math.round(maxHeight.value * scale.value))
+// The vertical scrollbar spans only the notes; the lanes sit below them.
+const noteAreaHeight = computed(() => {
+  // Read the reactive lane fields so this recomputes when they change.
+  void state.lanes.showPressure
+  void state.lanes.showTimbre
+  void state.lanes.laneHeight
+  return Math.max(0, scaledHeight.value - getLaneAreaHeight(state, scaledHeight.value))
+})
 const minWidth = computed(() => Math.round(maxWidth.value * MIN_SCALE))
 const shellMaxWidth = computed(() => Math.round(maxWidth.value + stageInset.value))
 const shellMinWidth = computed(() => Math.round(minWidth.value + stageInset.value))
@@ -97,6 +123,7 @@ const shellMinWidth = computed(() => Math.round(minWidth.value + stageInset.valu
 const wsController = shallowRef<PianoRollWebSocketController | null>(null)
 
 const emit = defineEmits<{
+  (event: 'cursor-change', position: number): void
   (event: 'notes-update', notes: Array<[string, NoteData]>): void
 }>()
 
@@ -105,6 +132,9 @@ const state: PianoRollState = createPianoRollState()
 state.viewport = reactive(state.viewport) as PianoRollState['viewport']
 state.grid = reactive(state.grid) as PianoRollState['grid']
 state.mpe = reactive(state.mpe) as PianoRollState['mpe']
+state.lanes = reactive(state.lanes) as PianoRollState['lanes']
+state.lanes.showPressure = props.showPressureLane
+state.lanes.showTimbre = props.showTimbreLane
 
 // Refs
 const konvaContainer = ref<HTMLDivElement>()
@@ -115,11 +145,13 @@ const canRedo = ref(false)
 const gridSubdivision = ref(state.grid.subdivision)
 const showMetadataEditor = ref(false)
 const showMpePointMetadataEditor = ref(false)
+// The single selected note, for MPE point editing; null for any other count.
 const selectedNoteId = ref<string | null>(null)
-const selectedNoteMetadata = ref<Record<string, any> | null>(null)
+const selectedNoteIds = ref<string[]>([])
+const selectedNoteDocs = ref<JsonObject[] | null>(null)
 const selectedMpePointIndex = ref<number | null>(null)
 const selectedMpePointIndices = ref<number[]>([])
-const selectedMpePointMetadata = ref<Record<string, any> | null>(null)
+const selectedMpePointDocs = ref<JsonObject[] | null>(null)
 const selectedMpePointRooted = ref<boolean | null>(null)
 const mpeMode = ref(false)
 
@@ -128,9 +160,11 @@ const noteCount = ref(state.notes.size)
 const selectionCount = ref(state.selection.selectedIds.size)
 const isInteractive = computed(() => effectiveInteractive.value)
 const isControlPanelVisible = computed(() => effectiveShowControlPanel.value)
-const canEditMetadata = computed(() => selectedNoteId.value !== null && isInteractive.value)
+const editableNoteDocs = computed(() => (isInteractive.value ? selectedNoteDocs.value : null))
+const editableMpePointDocs = computed(() =>
+  isInteractive.value && state.mpe.enabled ? selectedMpePointDocs.value : null
+)
 const metadataEditorVisible = computed(() => isControlPanelVisible.value && showMetadataEditor.value)
-const canEditMpePointMetadata = computed(() => selectedMpePointIndex.value !== null && isInteractive.value && state.mpe.enabled)
 const canEditMpePointRooted = computed(() => selectedMpePointIndices.value.length > 0 && isInteractive.value && state.mpe.enabled)
 const mpePointEditorVisible = computed(() => isControlPanelVisible.value && showMpePointMetadataEditor.value)
 
@@ -148,15 +182,14 @@ const normalizeMetadata = (metadata: any) => {
 const syncUiCounters = () => {
   noteCount.value = state.notes.size
   selectionCount.value = state.selection.selectedIds.size
-  if (state.selection.selectedIds.size === 1) {
-    const [id] = Array.from(state.selection.selectedIds)
-    const note = state.notes.get(id)
-    selectedNoteId.value = note?.id ?? null
-    selectedNoteMetadata.value = note ? normalizeMetadata(note.metadata) : {}
-  } else {
-    selectedNoteId.value = null
-    selectedNoteMetadata.value = null
-  }
+  const selectedNotes = Array.from(state.selection.selectedIds)
+    .map((id) => state.notes.get(id))
+    .filter((note): note is NoteData => note !== undefined)
+  selectedNoteIds.value = selectedNotes.map((note) => note.id)
+  selectedNoteDocs.value = selectedNotes.length > 0
+    ? selectedNotes.map((note) => normalizeMetadata(note.metadata))
+    : null
+  selectedNoteId.value = selectedNotes.length === 1 ? selectedNotes[0]!.id : null
 
   if (state.mpe.enabled && state.selection.selectedIds.size === 1 && state.mpe.selectedHandles.size > 0) {
     const [id] = Array.from(state.selection.selectedIds)
@@ -169,14 +202,14 @@ const syncUiCounters = () => {
       const point = note?.mpePitch?.points?.[handleIndex ?? -1]
       if (point) {
         selectedMpePointIndex.value = handleIndex ?? null
-        selectedMpePointMetadata.value = normalizeMetadata(point.metadata)
+        selectedMpePointDocs.value = [normalizeMetadata(point.metadata)]
       } else {
         selectedMpePointIndex.value = null
-        selectedMpePointMetadata.value = null
+        selectedMpePointDocs.value = null
       }
     } else {
       selectedMpePointIndex.value = null
-      selectedMpePointMetadata.value = null
+      selectedMpePointDocs.value = null
     }
 
     if (note?.mpePitch?.points) {
@@ -193,7 +226,7 @@ const syncUiCounters = () => {
   } else {
     selectedMpePointIndex.value = null
     selectedMpePointIndices.value = []
-    selectedMpePointMetadata.value = null
+    selectedMpePointDocs.value = null
     selectedMpePointRooted.value = null
   }
 }
@@ -208,6 +241,15 @@ const focusPianoRoll = () => {
 
 const fitZoomToNotes = () => {
   fitZoomToNotesHelper(state, scaledWidth.value, scaledHeight.value, notifyViewportChange)
+}
+
+/** Frame the notes: the public name for the fit the control panel's button does. */
+const fitToContent = () => fitZoomToNotes()
+
+const getView = (): PianoRollView => getViewHelper(state)
+
+const setView = (view: PianoRollView) => {
+  setViewHelper(state, view, scaledWidth.value, scaledHeight.value, notifyViewportChange)
 }
 
 const enforceScrollBounds = () => {
@@ -281,6 +323,15 @@ watch(gridSubdivision, (newValue) => {
   props.syncState?.(state)
 })
 
+watch(
+  () => [state.lanes.showPressure, state.lanes.showTimbre, state.lanes.laneHeight],
+  () => {
+    if (!state.lanes.showPressure && !state.lanes.showTimbre) state.lanes.selectedHandles = null
+    state.needsRedraw = true
+    enforceScrollBounds()
+  }
+)
+
 watch(mpeMode, (enabled) => {
   state.mpe.enabled = enabled
   if (enabled) {
@@ -297,6 +348,7 @@ watch(mpeMode, (enabled) => {
 })
 
 type EmitStateOptions = {
+  silent?: boolean
   source?: UpdateSource
   suppressWsNotes?: boolean
 }
@@ -305,7 +357,8 @@ const emitStateUpdate = (options: EmitStateOptions = {}) => {
   const source = options.source ?? 'notes'
   syncUiCounters()
   const notesArray = Array.from(state.notes.entries())
-  emit('notes-update', notesArray)
+  if (!options.silent && source === 'notes') emit('notes-update', notesArray)
+  if (source === 'playhead') emit('cursor-change', state.queuePlayhead.position)
   props.syncState?.(state)
 
   // Send via WebSocket if connected
@@ -324,46 +377,27 @@ watch(isControlPanelVisible, (visible) => {
   }
 })
 
-const handleApplyNoteMetadata = (metadata: any) => {
-  if (!selectedNoteId.value) {
-    return
-  }
-
-  const noteId = selectedNoteId.value
-  const note = state.notes.get(noteId)
-  if (!note) {
-    return
-  }
-
-  const normalizedIncoming = metadata ?? {}
-  const normalizedExisting = note.metadata ?? {}
-
-  if (JSON.stringify(normalizedExisting) === JSON.stringify(normalizedIncoming)) {
-    return
-  }
+// One undo step for the whole selection. The stack drops the command when the
+// plan changes nothing.
+const handleApplyNoteMetadata = (plan: EditPlan) => {
+  const noteIds = selectedNoteIds.value
+  if (noteIds.length === 0 || plan.ops.length === 0) return
 
   state.command.stack?.executeCommand('Edit Note Metadata', () => {
-    const target = state.notes.get(noteId)
-    if (!target) {
-      return
+    for (const noteId of noteIds) {
+      const target = state.notes.get(noteId)
+      if (!target) continue
+      const nextMetadata = applyPlan(target.metadata, plan)
+      const updatedNote: NoteData = { ...target, metadata: nextMetadata }
+      if (!nextMetadata) delete (updatedNote as any).metadata
+      state.notes.set(noteId, updatedNote)
     }
-    const nextMetadata = normalizedIncoming && Object.keys(normalizedIncoming).length === 0
-      ? undefined
-      : normalizedIncoming
-    const updatedNote: NoteData = {
-      ...target,
-      metadata: nextMetadata
-    }
-    if (!nextMetadata) {
-      delete (updatedNote as any).metadata
-    }
-    state.notes.set(noteId, updatedNote)
     state.needsRedraw = true
   })
 }
 
-const handleApplyMpePointMetadata = (metadata: any) => {
-  if (!selectedNoteId.value || selectedMpePointIndex.value === null) {
+const handleApplyMpePointMetadata = (plan: EditPlan) => {
+  if (!selectedNoteId.value || selectedMpePointIndex.value === null || plan.ops.length === 0) {
     return
   }
 
@@ -375,21 +409,12 @@ const handleApplyMpePointMetadata = (metadata: any) => {
     return
   }
 
-  const normalizedIncoming = metadata ?? {}
-  const normalizedExisting = point.metadata ?? {}
-
-  if (JSON.stringify(normalizedExisting) === JSON.stringify(normalizedIncoming)) {
-    return
-  }
-
   state.command.stack?.executeCommand('Edit MPE Point Metadata', () => {
     const target = state.notes.get(noteId)
     if (!target?.mpePitch) {
       return
     }
-    const nextMetadata = normalizedIncoming && Object.keys(normalizedIncoming).length === 0
-      ? undefined
-      : normalizedIncoming
+    const nextMetadata = applyPlan(target.mpePitch.points[pointIndex]?.metadata, plan)
     const updatedPoints = target.mpePitch.points.map((entry, idx) => {
       if (idx !== pointIndex) return entry
       const updated: Record<string, any> = { ...entry }
@@ -466,8 +491,10 @@ const stageManager = new StageManager({
   renderGrid,
   renderVisibleNotes,
   renderResizeHandles,
+  renderLanes,
   updateQueuePlayheadPosition,
   updateLivePlayheadPosition,
+  updatePlayheadMarkers,
   handleCommandStackUpdate,
   syncUiCounters,
   enforceScrollBounds,
@@ -573,15 +600,54 @@ const setLivePlayheadPosition = (position: number) => {
   state.needsRedraw = true
 }
 
+/** Silent hydration of the committed edit cursor (independent of live markers). */
+const setPlayStartPosition = (position: number) => {
+  if (!Number.isFinite(position) || position < 0) throw new Error('Invalid piano-roll cursor')
+  state.grid.maxLength = Math.max(state.grid.maxLength, position)
+  state.queuePlayhead.position = position
+  state.needsRedraw = true
+}
+
 const getPlayStartPosition = (): number => {
   return state.queuePlayhead.position
 }
 
+/**
+ * Replace the set of labeled playhead markers, which is independent of the
+ * single live playhead above: any number of them can be shown at once (one per
+ * publisher). Entries without a finite numeric position are dropped rather than
+ * rendered at 0, and a later id wins over an earlier duplicate.
+ */
+const setPlayheadMarkers = (markers: PlayheadMarker[]) => {
+  const next = new Map<string, PlayheadMarker>()
+  for (const marker of Array.isArray(markers) ? markers : []) {
+    const id = typeof marker?.id === 'string' ? marker.id : ''
+    if (!id || !Number.isFinite(marker?.position)) continue
+    next.set(id, {
+      id,
+      position: Math.max(0, Math.min(marker.position, state.grid.maxLength)),
+      ...(typeof marker.color === 'string' ? { color: marker.color } : {})
+    })
+  }
+  state.playheadMarkers.markers = Array.from(next.values())
+  state.needsRedraw = true
+}
+
+/** What the roll is currently showing; hosts and tests read markers back here. */
+const getPlayheadMarkers = (): PlayheadMarker[] =>
+  state.playheadMarkers.markers.map((marker) => ({ ...marker }))
+
 defineExpose({
   setNotes,
   setLivePlayheadPosition,
+  setPlayheadMarkers,
+  getPlayheadMarkers,
   getPlayStartPosition,
-  fitZoomToNotes
+  setPlayStartPosition,
+  fitZoomToNotes,
+  fitToContent,
+  getView,
+  setView
 })
 </script>
 
@@ -622,6 +688,22 @@ defineExpose({
           @click="mpeMode = !mpeMode"
         >
           MPE
+        </button>
+        <button
+          class="lane-toggle"
+          :class="{ active: state.lanes.showPressure }"
+          title="Show the per-note pressure lane"
+          @click="state.lanes.showPressure = !state.lanes.showPressure"
+        >
+          Pressure
+        </button>
+        <button
+          class="lane-toggle"
+          :class="{ active: state.lanes.showTimbre }"
+          title="Show the per-note timbre (CC74) lane"
+          @click="state.lanes.showTimbre = !state.lanes.showTimbre"
+        >
+          Timbre
         </button>
         <span class="separator">|</span>
         <button
@@ -676,7 +758,7 @@ defineExpose({
           ref="verticalTrack"
           class="scrollbar vertical"
           :class="{ 'is-disabled': !isInteractive }"
-          :style="{ height: scaledHeight + 'px' }"
+          :style="{ height: noteAreaHeight + 'px' }"
           @pointerdown.self="onVerticalTrackPointerDown"
         >
           <div class="scrollbar-thumb vertical-thumb" :style="verticalThumbStyle">
@@ -698,18 +780,15 @@ defineExpose({
       <div v-if="isControlPanelVisible" class="metadata-editor-wrapper">
         <NoteMetadataEditor
           :visible="metadataEditorVisible"
-          :metadata="selectedNoteMetadata ?? undefined"
-          :can-edit="canEditMetadata"
+          :documents="editableNoteDocs"
           @apply="handleApplyNoteMetadata"
         />
         <NoteMetadataEditor
           :visible="mpePointEditorVisible"
-          :metadata="selectedMpePointMetadata ?? undefined"
-          :can-edit="canEditMpePointMetadata"
+          :documents="editableMpePointDocs"
           :show-rooted="true"
           :rooted-value="selectedMpePointRooted"
           :can-edit-rooted="canEditMpePointRooted"
-          help-text="Edit the selected MPE point metadata as JSON:"
           empty-text="Select exactly one MPE point to edit its metadata."
           @apply="handleApplyMpePointMetadata"
           @set-rooted="handleSetMpePointRooted"
@@ -722,6 +801,8 @@ defineExpose({
 <style scoped>
 .piano-roll-root {
   display: flex;
+  width: 100%;
+  box-sizing: border-box;
   flex-direction: column;
   align-items: center;
   padding: 8px 10px;
@@ -780,6 +861,7 @@ defineExpose({
 
 .metadata-toggle,
 .mpe-point-toggle,
+.lane-toggle,
 .mpe-toggle {
   display: flex;
   align-items: center;
@@ -788,6 +870,7 @@ defineExpose({
 
 .metadata-toggle.active,
 .mpe-point-toggle.active,
+.lane-toggle.active,
 .mpe-toggle.active {
   background: #333;
   border-color: #333;
@@ -936,7 +1019,7 @@ select:focus {
   width: 100%;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 8px;
+  align-items: stretch;
+  gap: 4px;
 }
 </style>

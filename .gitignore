@@ -16,6 +16,9 @@ lerna-debug.log*
 .env
 .env.*
 !.env.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
 
 # Node / tooling
 node_modules/
@@ -28,6 +31,9 @@ node_modules/
 **/.nuxt/
 **/.svelte-kit/
 **/.cache/
+# Native TypeScript builder caches beside project configurations.
+.avtools/
+.playwright-cli/
 **/dist/
 **/build/
 **/out/
@@ -39,6 +45,7 @@ node_modules/
 # Deno
 .deno/
 **/.deno/
+apps/deno-notebooks/.avtools-livecode-sessions/
 
 # Rust
 **/target/
@@ -48,6 +55,10 @@ node_modules/
 **/*.rlib
 **/*.pdb
 **/*.exe
+
+# Distributable TD runtime; fresh clones can run without native build tooling.
+!/packages/native-webgpu/prebuilt/macos-arm64/**/*.dylib
+!/apps/td-projects/Plugins/**/*.dylib
 
 # Python
 __pycache__/
@@ -80,5 +91,16 @@ clonedCompanionRepos*
 .claude
 
 
+
+
 Icon
 
+
+# Local report produced by the checked-in CHOP stress fixture.
+/packages/native-webgpu/native/td/chop-example/stress-results.json
+
+# Copyable native TypeScript SDK includes WebGPU declarations and earcut assets.
+!/tools/td-native-build/template/sdk/dependencies/@webgpu/types/dist/
+!/tools/td-native-build/template/sdk/dependencies/@webgpu/types/dist/**
+!/apps/td-projects/native/sdk/dependencies/@webgpu/types/dist/
+!/apps/td-projects/native/sdk/dependencies/@webgpu/types/dist/**

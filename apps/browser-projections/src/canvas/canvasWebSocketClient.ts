@@ -66,16 +66,13 @@ export interface FlattenedCircle {
 
 export interface CanvasStateSnapshotBase {
   readonly freehand: {
-    readonly serializedState: string
     readonly bakedRenderData: ReadonlyArray<FlattenedStrokeGroup>
     readonly bakedGroupMap: Readonly<Record<string, ReadonlyArray<number>>>
   }
   readonly polygon: {
-    readonly serializedState: string
     readonly bakedRenderData: ReadonlyArray<FlattenedPolygon>
   }
   readonly circle: {
-    readonly serializedState: string
     readonly bakedRenderData: ReadonlyArray<FlattenedCircle>
     readonly bakedGroupMap: Readonly<Record<string, ReadonlyArray<number>>>
   }
@@ -85,6 +82,8 @@ export interface CanvasStateSnapshot extends CanvasStateSnapshotBase {
   readonly added: CanvasStateSnapshotBase
   readonly deleted: CanvasStateSnapshotBase
   readonly changed: CanvasStateSnapshotBase
+  /** The whole document as a string; `setCanvasState` restores it. */
+  readonly documentState: string
 }
 
 export type CanvasTool = 'select' | 'freehand' | 'polygon' | 'circle'
@@ -127,16 +126,6 @@ interface SetCanvasStateMessage {
   state: string
 }
 
-interface SetFreehandStateMessage {
-  type: 'setFreehandState'
-  state: string
-}
-
-interface SetPolygonStateMessage {
-  type: 'setPolygonState'
-  state: string
-}
-
 interface UndoMessage {
   type: 'undo'
 }
@@ -167,8 +156,6 @@ interface SetToolMessage {
 
 type OutgoingMessage =
   | SetCanvasStateMessage
-  | SetFreehandStateMessage
-  | SetPolygonStateMessage
   | UndoMessage
   | RedoMessage
   | GetCanvasStateMessage
@@ -338,22 +325,6 @@ export class CanvasWebSocketClient {
    */
   setCanvasState(state: string): void {
     this.send({ type: 'setCanvasState', state })
-  }
-
-  /**
-   * Set only the freehand drawing state.
-   * @param state - Serialized freehand state
-   */
-  setFreehandState(state: string): void {
-    this.send({ type: 'setFreehandState', state })
-  }
-
-  /**
-   * Set only the polygon state.
-   * @param state - Serialized polygon state
-   */
-  setPolygonState(state: string): void {
-    this.send({ type: 'setPolygonState', state })
   }
 
   /**

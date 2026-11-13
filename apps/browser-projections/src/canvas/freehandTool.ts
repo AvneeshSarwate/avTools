@@ -4,7 +4,7 @@ import Konva from "konva"
 import getStroke from "perfect-freehand"
 import { type ShallowReactive, shallowReactive, ref, computed, watch } from "vue"
 import type { FreehandRenderData, FlattenedStroke, FlattenedStrokeGroup } from "./canvasState"
-import { executeCommand, pushCommandWithStates } from "../canvas/commands"
+import { captureCommandState, executeCommand, pushCommandWithStates } from "../canvas/commands"
 
 
 // Import shared utilities
@@ -374,78 +374,15 @@ export const maxInterStrokeDelay = 300
 
 
 
-// Get current canvas state for undo/redo (freehand only)
-const getCurrentFreehandState = (
-  state: CanvasRuntimeState
-) => {
-  return selectionStore.withSelectionHighlightSuppressed(state, () => {
-    const freehandShapeGroup = state.groups.freehandShape
-    const stageRef = state.stage
-    if (!stageRef || !freehandShapeGroup) return null
-
-    try {
-      const layerData = freehandShapeGroup.toObject()
-      const strokesData = Array.from(state.freehand.strokes.entries())
-      const strokeGroupsData = Array.from(state.freehand.strokeGroups.entries())
-
-      const canvasState = {
-        layer: layerData,
-        strokes: strokesData,
-        strokeGroups: strokeGroupsData,
-      }
-
-      return canvasState
-    } catch (error) {
-      console.warn('Failed to get current state:', error)
-      return null
-    }
-  })
-}
-
-export const getCurrentFreehandStateString = (
-  state: CanvasRuntimeState
-): string => {
-  const snapshot = getCurrentFreehandState(state)
-  return JSON.stringify(snapshot)
-}
-
-// Restore state from string (freehand only)
-interface RestoreFreehandStateOptions {
-  handleTimeUpdate?: (time: number) => void
-}
-
-export const restoreFreehandState = (
-  canvasState: CanvasRuntimeState,
-  stateString: string,
-  options: RestoreFreehandStateOptions = {}
-) => {
-  if (!stateString) return
-
-  try {
-    const wasAnimating = canvasState.freehand.currentPlaybackTime.value > 0
-    canvasState.freehand.currentPlaybackTime.value = 0
-    canvasState.freehand.isAnimating.value = false
-
-    deserializeFreehandState(canvasState, stateString)
-
-    if (wasAnimating) {
-      options.handleTimeUpdate?.(0)
-    }
-  } catch (error) {
-    console.warn('Failed to restore state:', error)
-  }
-}
-
-
 // Transform tracking for drag operations
 export const startFreehandDragTracking = (state: CanvasRuntimeState) => {
-  state.freehand.freehandDragStartState = getCurrentFreehandStateString(state)
+  state.freehand.freehandDragStartState = captureCommandState(state)
 }
 
 export const finishFreehandDragTracking = (state: CanvasRuntimeState, nodeName: string) => {
   if (!state.freehand.freehandDragStartState) return
 
-  const endState = getCurrentFreehandStateString(state)
+  const endState = captureCommandState(state)
   if (state.freehand.freehandDragStartState !== endState) {
     // Use the global command system instead of the redundant freehand-specific one
     pushCommandWithStates(
@@ -475,157 +412,6 @@ export const refreshStrokeConnections = (state: CanvasRuntimeState) => {
   })
 }
 
-// Serialization functions for hotreloading
-export const serializeFreehandState = (
-  canvasState: CanvasRuntimeState
-) => {
-  const freehandShapeGroup = canvasState.groups.freehandShape
-  const stageRef = canvasState.stage
-  if (!stageRef || !freehandShapeGroup) return
-
-  try {
-    const snapshot = getCurrentFreehandState(canvasState)
-    if (!snapshot) return
-
-    canvasState.freehand.serializedState = JSON.stringify(snapshot)
-    canvasState.callbacks.syncAppState?.(canvasState)
-    console.log('Serialized canvas state:', {
-      layerChildren: snapshot.layer?.children?.length || 0,
-      strokes: snapshot.strokes.length,
-      strokeGroups: snapshot.strokeGroups.length
-    })
-  } catch (error) {
-    console.warn('Failed to serialize Konva state:', error)
-  }
-}
-
-// Download/Upload functionality
-export const downloadFreehandDrawing = (state: CanvasRuntimeState) => {
-  const stateString = getCurrentFreehandStateString(state)
-  if (!stateString) {
-    console.warn('No drawing data to download')
-    return
-  }
-
-  const blob = new Blob([stateString], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `freehand_drawing_${new Date().toISOString().slice(0, 16).replace(/:/g, '-')}.json`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
-}
-
-export const uploadFreehandDrawing = (canvasState: CanvasRuntimeState) => {
-  const input = document.createElement('input')
-  input.type = 'file'
-  input.accept = '.json'
-  input.onchange = (event) => {
-    const file = (event.target as HTMLInputElement).files?.[0]
-    if (!file) return
-
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      try {
-        const content = e.target?.result as string
-        // Validate it's valid JSON
-        JSON.parse(content)
-
-        // Set the state string and deserialize
-        deserializeFreehandState(canvasState, content)
-        
-        console.log('Successfully loaded drawing from file:', file.name)
-      } catch (error) {
-        console.error('Failed to parse uploaded file:', error)
-        alert('Invalid JSON file. Please upload a valid freehand drawing file.')
-      }
-    }
-    reader.readAsText(file)
-  }
-  input.click()
-}
-
-export const deserializeFreehandState = (
-  canvasState: CanvasRuntimeState,
-  stateString: string
-) => {
-  const freehandShapeGroup = canvasState.groups.freehandShape
-  const stageRef = canvasState.stage
-  if (!stateString || !stageRef || !freehandShapeGroup) return
-
-  try {
-    const parsedState = JSON.parse(stateString)
-    console.log('Deserializing canvas state:', {
-      layerChildren: parsedState.layer?.children?.length || 0,
-      strokes: parsedState.strokes?.length || 0,
-      strokeGroups: parsedState.strokeGroups?.length || 0
-    })
-
-    freehandShapeGroup.destroyChildren()
-    clearStrokesInState(canvasState)
-    selectionStore.clear(canvasState)
-
-    const layerData = parsedState.layer
-    if (layerData && layerData.children) {
-      console.log('Restoring', layerData.children.length, 'children')
-      layerData.children.forEach((childData: any, index: number) => {
-        console.log('Creating node', index, 'of type', childData.className)
-        const node = Konva.Node.create(JSON.stringify(childData))
-        freehandShapeGroup.add(node)
-        console.log('Added node to layer:', node.id(), node.isVisible())
-
-        attachHandlersRecursively(canvasState, node)
-        registerCanvasItemsRecursively(canvasState, node)
-      })
-    }
-
-    if (parsedState.strokes) {
-      parsedState.strokes.forEach(([id, strokeData]: [string, any]) => {
-        const shape = stageRef.findOne(`#${id}`) as Konva.Path
-        console.log('Restoring stroke:', id, 'found shape:', !!shape)
-        const stroke: FreehandStroke = {
-          id: strokeData.id,
-          points: strokeData.points,
-          timestamps: strokeData.timestamps,
-          originalPath: strokeData.originalPath,
-          creationTime: strokeData.creationTime,
-          isFreehand: strokeData.isFreehand,
-          shape: shape,
-        }
-        setStrokeInState(canvasState, id, stroke)
-      })
-    }
-
-    if (parsedState.strokeGroups) {
-      parsedState.strokeGroups.forEach(([id, groupData]: [string, any]) => {
-        const group: FreehandStrokeGroup = {
-          id: groupData.id,
-          strokeIds: groupData.strokeIds,
-          group: stageRef.findOne(`#${id}`) as Konva.Group,
-        }
-        setStrokeGroupInState(canvasState, id, group)
-      })
-    }
-
-    refreshStrokeConnections(canvasState)
-    updateFreehandDraggableStates(canvasState)
-
-    freehandShapeGroup.getLayer()?.batchDraw()
-
-    console.log('Konva canvas state restored from hotreload')
-
-    canvasState.freehand.serializedState = stateString
-    setTimeout(() => {
-      freehandShapeGroup.getLayer()?.batchDraw()
-      updateBakedFreehandData(canvasState)
-    }, 30)
-  } catch (error) {
-    console.warn('Failed to deserialize Konva state:', error)
-  }
-}
-
 // Function to update draggable state based on mode and group membership
 export const updateFreehandDraggableStates = (state: CanvasRuntimeState) => {
   // In the unified system, node-level dragging is disabled in Select tool because we implement
@@ -643,7 +429,16 @@ export const updateFreehandDraggableStates = (state: CanvasRuntimeState) => {
   }
 }
 
-// Helper function to convert points to perfect-freehand stroke
+/** The perfect-freehand outline width, in stage pixels, of an unscaled stroke. */
+export const STROKE_OUTLINE_SIZE = 8
+
+// The outline the canvas draws for a stroke. It must follow the stored points
+// exactly: those points are what the document holds and what the engine
+// renders, so any smoothing that moves the centreline (perfect-freehand's
+// `streamline`, meant for live pointer input) would make the canvas show a
+// different shape from the store; sparse strokes written from code shrank
+// visibly under it. `last` closes the end cap so the outline covers the final
+// point too.
 export const getStrokePath = (points: number[], normalize: boolean = false): string => {
   if (points.length < 4) return ''
 
@@ -655,11 +450,12 @@ export const getStrokePath = (points: number[], normalize: boolean = false): str
 
   // Get stroke outline using perfect-freehand
   const strokePoints = getStroke(inputPoints, {
-    size: 8,
+    size: STROKE_OUTLINE_SIZE,
     thinning: 0.5,
     smoothing: 0.5,
-    streamline: 0.5,
+    streamline: 0,
     simulatePressure: true,
+    last: true,
   })
 
   // Convert to SVG path
@@ -707,6 +503,8 @@ export const createStrokeShape = (state: CanvasRuntimeState, points: number[], i
     data: getStrokePath(normalizedPoints),
     fill: 'black',
     strokeWidth: 0,
+    // The selection highlight is a stroke; keep it the same width at any scale.
+    strokeScaleEnabled: false,
     id: id,
     x: bounds.minX,
     y: bounds.minY,
@@ -729,6 +527,76 @@ export const createStrokeShape = (state: CanvasRuntimeState, points: number[], i
   createStrokeItem(state, path)
 
   return path
+}
+
+/**
+ * Fold a stroke's scale and skew into its points, leaving position and
+ * rotation as the node's transform, and regenerate the outline from the new
+ * points at the fixed outline size. A resized stroke therefore keeps its
+ * thickness, as it does in the engine, which draws every stroke at its
+ * metadata width. Konva's local matrix is translate · rotate · scale · skew,
+ * so scale · skew is what moves into the points; the points are then
+ * re-normalized to their new minimum corner, which sits at rotate(corner)
+ * from the old position. Returns whether anything changed.
+ */
+export const bakeStrokeScale = (state: CanvasRuntimeState, path: Konva.Path): boolean => {
+  const stroke = state.freehand.strokes.get(path.id())
+  if (!stroke) return false
+  const sx = path.scaleX()
+  const sy = path.scaleY()
+  const kx = path.skewX()
+  const ky = path.skewY()
+  if (sx === 1 && sy === 1 && kx === 0 && ky === 0) return false
+
+  const bounds = getPointsBounds(stroke.points)
+  const scaled: number[] = []
+  for (let i = 0; i < stroke.points.length; i += 2) {
+    const px = stroke.points[i] - bounds.minX
+    const py = stroke.points[i + 1] - bounds.minY
+    // Konva's skew matrix is [1, skewY, skewX, 1]: skew first, then scale.
+    scaled.push((px + kx * py) * sx, (ky * px + py) * sy)
+  }
+  const next = getPointsBounds(scaled)
+  const normalized = scaled.map((value, index) => value - (index % 2 === 0 ? next.minX : next.minY))
+  const radians = (path.rotation() * Math.PI) / 180
+  const cos = Math.cos(radians)
+  const sin = Math.sin(radians)
+  const x = path.x() + next.minX * cos - next.minY * sin
+  const y = path.y() + next.minX * sin + next.minY * cos
+
+  stroke.points = normalized.map((value, index) => value + (index % 2 === 0 ? x : y))
+  stroke.originalPath = getStrokePath(normalized)
+  path.setAttrs({ x, y, scaleX: 1, scaleY: 1, skewX: 0, skewY: 0, data: stroke.originalPath })
+  return true
+}
+
+/**
+ * The same for a stroke or a group of strokes under the transformer: a
+ * group's scale and skew move into each child's local transform (their
+ * absolute placement is preserved) and from there into stroke points.
+ */
+export const bakeFreehandNodeScale = (state: CanvasRuntimeState, node: Konva.Node): boolean => {
+  if (node instanceof Konva.Path) return bakeStrokeScale(state, node)
+  if (!(node instanceof Konva.Group)) return false
+  if (node.scaleX() === 1 && node.scaleY() === 1 && node.skewX() === 0 && node.skewY() === 0) return false
+  const children = node.getChildren().slice()
+  const absolutes = children.map((child) => child.getAbsoluteTransform().copy())
+  node.setAttrs({ scaleX: 1, scaleY: 1, skewX: 0, skewY: 0 })
+  const parentInverse = node.getAbsoluteTransform().copy().invert()
+  children.forEach((child, index) => {
+    const local = parentInverse.copy().multiply(absolutes[index]).decompose()
+    child.setAttrs({
+      x: local.x,
+      y: local.y,
+      scaleX: local.scaleX,
+      scaleY: local.scaleY,
+      rotation: local.rotation,
+      skewX: local.skewX,
+      skewY: local.skewY
+    })
+    bakeFreehandNodeScale(state, child)
+  })
+  return true
 }
 
 // Handle timeline updates and stroke animation - restored full logic
@@ -938,7 +806,8 @@ export const handleTimeUpdate = (state: CanvasRuntimeState, time: number) => {
 
 
 // Function to generate baked stroke data for external rendering (p5, three.js, etc.)
-const generateBakedStrokeData = (
+/** The Konva-walking bake, kept to check the document bake against what Konva holds. */
+export const generateBakedStrokeData = (
   canvasState: CanvasRuntimeState
 ): { data: FreehandRenderData, groupMap: Record<string, number[]> } => {
   const freehandShapeGroup = canvasState.groups.freehandShape
@@ -982,10 +851,12 @@ const generateBakedStrokeData = (
       if (!stroke) return null
 
       const transformedPoints = transformPoints(stroke.points, node)
+      // `timestamps` already holds one entry per point pair, so it indexes
+      // one-to-one with the transformed points.
       const flattenedPoints = transformedPoints.map((point, index) => ({
         x: point.x,
         y: point.y,
-        ts: stroke.timestamps[Math.floor(index / 2)] || 0 // Match timestamp to point pair
+        ts: stroke.timestamps[index] || 0
       }))
 
       // Extract metadata from the Konva node
@@ -1071,12 +942,12 @@ const generateBakedStrokeData = (
 }
 
 // Function to update baked data in app state
+// Baked data is derived from the document lazily (canvasBake.ts); this entry
+// point, called after every freehand edit, marks it stale and notifies.
 export const updateBakedFreehandData = (
   canvasState: CanvasRuntimeState
 ) => {
-  const result = generateBakedStrokeData(canvasState)
-  canvasState.freehand.bakedRenderData = result.data
-  canvasState.freehand.bakedGroupMap = result.groupMap
+  canvasState.bake.dirty = true
   canvasState.callbacks.syncAppState?.(canvasState)
 }
 

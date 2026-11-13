@@ -347,7 +347,13 @@ watch(() => props.track.id, () => {
 </script>
 
 <template>
-  <canvas ref="canvasRef" class="track-canvas"></canvas>
+  <canvas
+    ref="canvasRef"
+    class="track-canvas"
+    data-component="TrackCanvas"
+    :data-track-id="track.id"
+    :data-track-type="track.def.fieldType"
+  ></canvas>
 </template>
 
 <style scoped>

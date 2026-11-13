@@ -1,0 +1,379 @@
+# Current Client Architecture
+
+Status: sync subscription boundaries checked against `apps/livecode-tldraw/src` on 2026-09-11.
+
+Use `apps/livecode-tldraw/architecture.md` for the local file index. This
+document explains how the client's state machines and registries meet; component
+props and UI details belong in source.
+
+## State layers and provider order
+
+`SyncRuntimeProvider` must wrap `LivecodeRuntimeProvider`:
+
+- `syncRuntime.tsx` owns the server URL, public contexts/hooks, write actions,
+  sequence-gap recovery, and lifecycle notifications. `syncState.ts` applies
+  sync truth; `syncTransport.ts` adapts WebSocket and `BroadcastChannel`.
+- `livecodeRuntime.tsx` consumes run/wait/lookup slices and socket edges. It
+  owns Connect, health/LSP/rehydration, module analysis, launch/stop, and the
+  mutable coordination record behind each published module view, with build and
+  run transitions isolated in `buildLifecycle.ts` and `runCorrelation.ts`.
+- `App.tsx` joins those services to the tldraw store. `TopBar.tsx`,
+  `projectCanvas.ts`, and `clientControlBridge.ts` own the corresponding UI,
+  canvas/project helpers, and automation bridge.
+
+`syncStore.ts` holds the UI copy behind a stable context; `syncSubscriptions.tsx`
+uses React external-store subscriptions. A bound shape must pass its entity name
+to its typed sync hook. For one facet of one entity (a preset bank, a single
+leaf) use `useSyncEntitySelector`, which retains its result while the facet is
+unchanged; the `@livecode-ui` facet hooks are built on it. A change to another entity, including one of the same
+kind, must not invalidate that subscription. Omitting the name subscribes to the
+whole kind; reserve that for aggregate consumers. Passing `null` disables a
+subscription when a view switches between kinds.
+
+Use names-only subscriptions for menus. For derived cross-entity views such as
+playheads, use a selector with equality on the displayed result; unrelated
+signals must not invalidate the editor. Connection status is separate from sync
+sequence numbers. Incoming messages are applied in order and published once per
+animation frame, retaining unchanged entity identities, including identical
+resets. Do not put changing entity maps or a global sequence back into a shared
+React context. These guarantees isolate sync-driven updates; selection, local
+interaction, connection changes, and a view's explicit additional dependencies
+can still legitimately render it.
+
+`syncState.ts` materializes full values and ordered patches into the same
+per-kind entity maps. It copies changed ancestors and retains untouched
+branches; components continue receiving state, not wire envelopes. Do not
+mutate these published objects, even when same-tab delivery shares references.
+A patch optimization does not require every component to implement a patch
+protocol or a reactive subscription graph.
+
+Code editors use `useLivecodeRuntime(moduleId, documentUri)` to select their
+module view and diagnostics. The runtime adapter retains unchanged module
+records when applying run/wait/lookup batches; wait and lookup decoration
+updates additionally compare their visible result before dispatching to
+CodeMirror. The unscoped hook is for aggregate app controls.
+
+For an expensive editor, follow
+[`SixSinesShape.tsx`](../../../apps/livecode-tldraw/src/SixSinesShape.tsx): full
+hydrate on a new baseline, silently apply changed values, and send user edits
+through explicit engine operations. The Vue element owns ordinary reactive
+state; the wrapper owns transport and accepted truth. Full preset loading on
+every scalar update would defeat the optimization and reset editor state.
+The tracker package's in-place patch helper is not interchangeable with the
+client's immutable materializer; use it only when the adapter owns a mutable
+receiver and adopts its returned root.
+
+Socket open/close edges are also delivered through listeners rather than
+inferred from React state. A close and reopen can be batched into one commit;
+losing the edge would skip the recovery sequence.
+
+## Connect and recovery
+
+The sync transport opens at provider mount. Connect is a separate armed flag:
+when armed on a real socket open, the client performs health, creates a fresh
+LSP session, adopts `/runtime/state`, flushes stops queued for shapes deleted
+while offline, and reanalyzes registered modules.
+
+A sync sequence gap has no replay. The client resubscribes, and each returned
+reset replaces that kind's complete map. On connection loss an armed runtime
+marks run/wait/lookup presentation unknown and clears transient decorations;
+entity views retain/recover truth through the sync layer.
+
+`?sync=broadcast` and `?actions=broadcast` select the same-origin baked/served
+browser-engine paths. They must preserve the WebSocket/HTTP semantics even
+though their transport is a `BroadcastChannel`. `serverBaseUrl=none` selects a
+baked project boot from `baked.json`.
+
+Entity actions (writes, patches, cursor moves, events) take the sync port's
+action lane on every transport: the `/sync` socket, the engine tab's
+BroadcastChannel, or a direct call into this tab's engine. The lane is ordered
+with the sync it will be observed through and answers the op's result as-is.
+The HTTP entity routes are the fallback while no port is open (a socket still
+connecting), and what `actions=broadcast` governs is the remaining
+server-only helpers (entity create/duplicate/delete, capture) in a serverless
+bake.
+
+`?engine=inprocess` makes this tab the engine (`inProcessEngine.ts`). The page
+dynamically imports `./engine/engine_host.js` from the served asset tree, never
+a Vite-bundled engine, and `index.html` carries the same module import map as
+the engine page (kept identical by `browser_host_import_map_test.ts`). Sync is
+then a same-realm observer and entity actions call `executeEngineOp` directly;
+launch, analysis, project, and LSP stay HTTP. The transport reports "open" only
+while the engine has attached to the server over its uplink (or immediately
+when `serverBaseUrl=none`), so the runtime's connect sequence and project open
+wait for the engine the server will forward to. Entity truth flows regardless
+of that link; takeover or shutdown clears the local entity maps, while a
+server-link outage retains them. Boot parameters are read through
+`bootParams.ts`, which falls back to `window.livecodeBootDefaults`, the values
+a bake stamps into its copied
+`index.html` so its bare root URL opens in this form. That HTML also owns
+`#livecode-stage` (off-screen, not `display:none`) before any scripts start:
+modules can boot before React mounts, so the stage must not be React-owned.
+Modules draw into it, and the topbar shows an engine pill with the same takeover
+the engine page offers. Reloading the page restarts the engine.
+
+## Analysis and launch ordering
+
+Each module has one build lifecycle rather than independent pending flags. A
+queued build owns its debounce timer, an analyzing build owns its request and
+promise, and a ready build owns its preparation. Work is identified by source
+plus server; late callbacks apply only while their request is still current.
+Pressing Run follows the freshest buffer rather than whichever build completed
+first.
+
+For project modules, buffer write-through and a successful shadow diagnostic
+check precede the launch request. Direct server callers do not receive this
+guard.
+
+Each project module record also tracks its file. `syncedSourceText` is the text
+it last wrote or loaded. Its `diskState` is `synced`, `reloaded` (an outside
+edit replaced the text and nobody has typed since), or `conflict`. On a
+`/project/sources` push, or a write the server refused, an untouched module
+fetches the file's text and adopts it; a module with unsaved typing goes to
+`conflict` and holds its writes until the user picks a side. Adoption
+deliberately avoids the server's reload route: resetting the server's baseline
+there would let a write already in flight with the old buffer pass the disk
+guard. The runtime owns the adopted text; `diskReloadSeq` tells the editor
+shape, which owns displayed text, to copy it.
+
+`editorStale` compares the active run's source hash (carried on its `run`
+entity, so it covers runs launched by any client) with the newest analysis's
+hash and text. Before the first analysis the answer is unknown and reported as
+not stale.
+
+The client begins launch correlation before HTTP returns because a terminal
+`run` entity can cross the acknowledgement (instant failure is the important
+case). While the request is pending, that terminal remains in the sync store but
+is not applied to the module view. After acknowledgement the client reapplies
+current sync truth and accepts only the acknowledged `runToken`. Never correlate
+by `generatedRunId`: an unchanged build can be launched more than once.
+
+Run and Replace are intentionally different gestures. Run never asks to replace
+an occupied module; while one is active, the control reads Replace and sends
+`replaceRunning: true`. Edits do not stop an older version automatically.
+
+## Canvas views and domain entities
+
+A tldraw shape is a view, not the entity it displays. Deleting a view never
+deletes engine data, and deleting an entity leaves its views in a waiting
+state. The standard tldraw Duplicate action (context menu, quick actions, and
+Cmd/Ctrl+D) clones each distinct durable entity in the selection once and binds
+its duplicated views to the clone. Names advance through `name v2`, `name v3`,
+etc., skipping names already in the engine. Multiple views may legitimately
+point to the same entity; Alt-drag and clipboard copies retain that binding,
+as do duplicated signal scopes and canvas-surface monitors.
+
+`duplicateCanvasEntities.ts` overrides the UI action and scopes a synchronous
+before-create hook to tldraw's stock duplication, preserving its layout,
+group/binding handling, and history. Entity cloning finishes before any copied
+view mounts. Canvas undo removes only views; redo reuses the cloned entities.
+If a selection changes or a later clone fails during the asynchronous work, no
+views are created and a toast identifies any entities already created. These
+remain available: multi-entity duplication is not an engine transaction.
+
+`CANVAS_VIEW_CODECS` in `canvasViews.ts` is the client extension point. One
+codec supplies shape registration, project collection/restoration,
+change detection, optional durable-entity reference, and view construction.
+This drives project layout, topbar actions, inline entity widgets, and test
+helpers. Do not add a parallel switch in `App.tsx` for a new canvas view.
+
+The server's `/project/canvas` operation replaces the whole object, so every
+post must collect all registered view kinds together. Restores reuse saved
+shape IDs and skip an already-present ID. Only module and registered-view
+layout is project-persisted; arbitrary tldraw shapes require a `.tldr` save.
+
+A project's own views (`ui/index.tsx`) register through the same codec list:
+one generic entry persists every project-defined type as its shape's props
+and binds Duplicate through `entityType`/`entityName`. Their utils must be
+known before `<Tldraw>` mounts, so `App.tsx` loads the entry first;
+[project UI](project-ui.md) owns that contract.
+
+## Shape boundaries
+
+`LivecodeEditorShape` keeps source and module identity in tldraw props while the
+runtime record mirrors coordination state. `projectSourceUri` makes CodeMirror
+and Deno LSP address the real `*.orig.ts`, not a synthetic transient document.
+Manifest offsets are joined with runtime waits/lookups to create CodeMirror
+effects; editor decorations do not own runtime state.
+
+Entity-call widgets are derived from manifest entries. Piano-roll names may be
+resolved at runtime, with a literal fallback marked tentative; params,
+animation-timeline, drawing, and signal declarations need a static literal
+name. The
+widget focuses an existing registered view or creates one. Computed declaration
+names deliberately have no widget because there is no runtime declaration-name
+stream.
+
+Domain bridges retain distinct semantics:
+
+- Piano-roll and animation-editor custom elements receive accepted engine
+  truth. Writes are serialized; animation replaces a whole timeline with
+  compare-and-set. A component must not treat its optimistic edit as canonical.
+  The piano-roll green start cursor is durable `data.playStartPosition`, default
+  zero. Its dedicated `pianoRollCursorSet` operation preserves current notes and
+  does not add undo history; note history preserves the current cursor. Cursor
+  hydration is silent and must not reload notes or reset selection. Live signal
+  markers remain separate, ephemeral observations.
+- A piano-roll view's zoom and scroll are view state, kept in the shape's
+  `meta` and saved with canvas layout, never in the roll entity, so views of
+  one roll can differ and scrolling never edits content (the roll data's
+  `viewport` field is unused). A view opens on its saved view or, failing
+  that, framed on its notes, and saves only after a user gesture or an
+  explicit fit, so opening a project does not rewrite its layout.
+- Params panes edit a live declared object through leaf merges. Creating a pane
+  does not create a schema; a not-yet-declared entity can correctly render
+  empty/unavailable. Leaf metadata may provide `options: {label: primitive}`
+  for a dropdown; the live value and partial-write API remain ordinary primitives.
+- The drawing view hydrates the handwriting-canvas element from the entity's
+  lossless document and writes committed edits back whole with compare-and-set.
+  The element must not emit `document-update` while a document is being pushed
+  in, and the view must not write before its first hydration; either breaks the
+  loop (an echo, or a fresh view erasing the entity). A hydration that throws
+  counts as no hydration: the view blocks writes until one succeeds. The
+  element's baked `state-update` snapshot is not the entity value.
+- During a gesture (drag, transform, drawing) the element emits
+  `document-preview` batches of node upserts/deletes by id, at most every
+  33 ms, bracketed by `interaction-start`/`interaction-end`. The view streams
+  them as `drawingPatch` actions without compare-and-set (one in flight,
+  later batches coalesced per node) over the sync socket, so the committed
+  `document-update` that ends the gesture stays the last write on the lane;
+  that commit waits for the last preview's acknowledgement and expects its
+  revision. A foreign change arriving mid-gesture is applied when the
+  gesture ends rather than rebuilding the scene under the pointer. Previews
+  never enter the element's undo stack.
+- What the element draws is what the document holds. A stroke's outline is
+  generated from its stored points with no centreline smoothing, and shapes
+  keep their stroke width under scale (Konva's `strokeScaleEnabled` is off,
+  the transformer ignores strokes). A resized stroke keeps its thickness the
+  way the engine draws it: at the end of the transform the scale is folded
+  into the stroke's points (a group's scale into its children first) and only
+  position and rotation stay in the node's transform, so the previews of that
+  gesture carry a scale and the commit carries new points.
+- The element serves two surfaces, chosen at instantiation with
+  `mode="simple"` (default) or `mode="document"`; the view uses the latter.
+  Simple mode emits `state-update` (baked render data plus an
+  added/changed/deleted diff) for sketches that draw from the element;
+  document mode does not, so a change costs only the nodes it touches.
+  Underneath, one core: the document is the element's truth and
+  `setDrawingDocument` reconciles the scene to it by top-level node id,
+  rebuilding only nodes that differ (untouched Konva nodes keep identity and
+  selection), and the undo stack stores documents. The element's baked
+  render data is the package's Konva-free bake of that document, computed
+  lazily once per document change (`canvasBake.ts`); the `state-update`
+  diff compares top-level nodes by canonical JSON, and neither
+  `state-update` nor `document-update` fires when the document did not
+  change. A second view of the same drawing therefore follows a streamed
+  gesture at a few milliseconds per revision. `getCanvasState()` /
+  `setCanvasState()` are that document as a string, and `state-update`
+  carries it as `documentState`; the format that predates documents
+  (Konva's own serialization per tool, still in older saves and the
+  sketches' preset files) is converted on input by `legacyCanvasState.ts`
+  and never produced.
+- Curved polygons are Konva `Line` tension, set from the polygon toolbar for
+  new shapes or the select toolbar for selected ones. The bake reports them as
+  world-space Bézier `segments`, computed in the node's local space and then
+  transformed (Konva's curve is not preserved by non-uniform scale or skew, so
+  it cannot be rebuilt from the baked vertices).
+- Signal playhead markers are derived by `signalPlayheadMarkers.ts` from signal
+  anchors. Piano-roll anchors interpret position in beats; animation anchors
+  interpret it in seconds. One signal sent to both must choose compatible units.
+- Signal scopes keep local numeric histories. They can also resolve a params
+  leaf by path. Rebind, unmount, or reload discards history; an ended source
+  freezes/dims rather than fabricating samples.
+- Canvas views (`CanvasSurfaceShape.tsx`) mirror a module's named canvas
+  (`canvasSurface(name)` from the `canvas-surface` helper) with one
+  `drawImage` per animation frame. The source is found by DOM lookup under
+  `#livecode-stage`, never through sync, so a view only shows pixels when the
+  engine runs in this tab; elsewhere it says so. The source keeps its own
+  resolution and the view letterboxes it. Nothing about the view reaches the
+  module.
+
+After changing the Vue piano-roll, animation-editor, or handwriting-canvas
+component, rebuild its checked-in/ignored bundle before testing this app.
+`setupLivecode` prepares these locally sourced component bundles.
+
+The Six Sines element is compiled from the sibling synth repository and copied
+to `packages/six-sines/ui`; `setupLivecode` does not rebuild that external
+source. Follow its [distribution instructions](../../../packages/six-sines/README.md#vue-preset-editor-webcomponent)
+when updating it. Its entity view works across tabs; only DOM canvas mirroring
+requires the engine and view to share a realm. Audio objects remain in engine
+module state, never in the editor or durable entity.
+
+## Engine-to-UI events
+
+This app is one consumer of engine-to-UI events; another UI reads the same
+wire message without any of this code. Each sync transport hands batches to
+`uiEvents.ts`, where anything on the page can subscribe. The `tldraw.*` types
+are this app's vocabulary, not the platform's. Its handler table is the
+extension point for a new UI reaction, and `tldraw.focusEntity` is the
+exemplar: it frames an existing view and never creates one. Nothing is
+replayed to a listener that arrives late or a tab that was disconnected.
+
+## DOM event boundary
+
+Interactive DOM inside a tldraw shape must stop pointer/touch/wheel propagation
+before tldraw interprets the gesture; text inputs must also shield relevant key
+events. Stop keyboard bubbling after the embedded component receives it;
+a capture-phase stop on its ancestor prevents the component's own handlers
+from running. A body whose component owns keyboard gestures (the piano roll's
+arrow-key note moves, delete, undo, copy/paste) needs a native bubble-phase
+`keydown`/`keyup` listener on the body, not a React handler of either phase:
+React delegates at the app root, above tldraw's `.tl-container`, where tldraw's
+own native keydown listener lives, so `onKeyDownCapture` stops the key before
+the component sees it and `onKeyDown` stops it only after tldraw has acted on
+it. Headers remain draggable while component bodies are interactive.
+Widgets stop pointerdown and click. Components needing document-wide drag
+tracking should use pointer capture or capture-phase listeners, because the
+shape boundary intentionally blocks normal bubbling.
+
+Scrollable bodies must shield wheel events with a native listener on the body
+(see `ParamPaneShape.tsx`). React's delegated `onWheel` runs after tldraw's
+native canvas listener, which can already have prevented the browser's default
+scrolling. Stop propagation without preventing default so the body scrolls.
+
+## Projects index page
+
+`projects.html` (`src/projectsIndex.ts`) is a standalone page beside the app,
+not part of the provider tree: it probes candidate hosts for `/health`,
+lists `/projects/list`, and opens a project by navigating to the app with
+`serverBaseUrl` and `projectPath` query params. For "engine in browser" it
+may `POST /server/engine-mode` (dropping every live connection) and opens the
+`/engine/` tab itself; it does not check a project's library compatibility
+with the chosen world — an incompatible project fails at run time.
+
+The open operation is a small explicit workflow: request a mode switch, wait
+for `/health` to confirm the restarted server, then open the engine/UI, or end
+in a retryable failure. Health polling and manual server selection cannot race
+that workflow; stale discovery and project-list responses carry generations
+and are ignored.
+
+Three behaviors exist for the served-UI/remote-dev deployment (the
+Cloudflare plan in `history/`): the page's own origin outranks every
+remembered or default candidate, and plain-`http` candidates are skipped on
+an `https` page; health polling pauses while the tab is hidden, so a
+background tab cannot hold a wake-on-request container awake; and a
+same-origin "engine in browser" open appends `sync=broadcast` (toggleable)
+so sync and entity writes ride the engine tab's BroadcastChannel instead of a
+WAN round trip, while analysis, project, and LSP stay HTTP.
+
+## Project and control caveats
+
+URL-driven project load suppresses per-shape registration churn while restoring
+the canvas, then synchronizes modules and connects. Client-command project open
+does not currently share every one of those guards, and project save/layout UI
+is keyed from the initial `projectPath` URL rather than a live project
+selection. Those human-facing gaps are tracked in `known-risks.md`.
+
+The client-control bridge is an automation surface, not a second state owner.
+Its `getState` joins local shapes with a fresh server status read; if that read
+fails, the current implementation reports no server-running modules, which is
+unknown disguised as empty.
+
+## Parameter action buttons
+
+`button(...)` declarations travel as static params metadata, not editable values.
+The pane renders Tweakpane buttons with pointer/keyboard down/up handling. Release
+outside the button, pointer cancellation, focus loss, and view disposal end a
+held gesture once. The UI serializes global event sends across panes so separate
+HTTP requests cannot reorder a quick press/release; errors surface without retry.
+Abrupt tab/network loss can still lose a release. No reconnect replay is attempted.

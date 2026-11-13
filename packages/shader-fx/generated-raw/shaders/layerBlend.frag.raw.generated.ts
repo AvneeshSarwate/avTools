@@ -79,6 +79,7 @@ export type LayerBlendMaterialHandles = MaterialHandles<LayerBlendUniforms, Laye
 export interface LayerBlendMaterialOptions {
   name?: string;
   passIndex?: number;
+  sampleMode?: 'nearest' | 'linear';
 }
 
 export function createLayerBlendMaterial(device: GPUDevice, format: GPUTextureFormat, options: LayerBlendMaterialOptions = {}): LayerBlendMaterialHandles {
@@ -107,7 +108,8 @@ export function createLayerBlendMaterial(device: GPUDevice, format: GPUTextureFo
   const samplers: Record<string, GPUSampler> = {};
   const textureViews: Record<string, GPUTextureView> = {};
   for (const name of LayerBlendTextureNames) {
-    samplers[name] = device.createSampler({ magFilter: "linear", minFilter: "linear" });
+    const filter = options.sampleMode ?? "linear";
+    samplers[name] = device.createSampler({ magFilter: filter, minFilter: filter });
     const placeholder = device.createTexture({ size: { width: 1, height: 1 }, format, usage: GPUTextureUsage.TEXTURE_BINDING });
     textureViews[name] = placeholder.createView();
   }
@@ -150,9 +152,9 @@ export function createLayerBlendMaterial(device: GPUDevice, format: GPUTextureFo
 export class LayerBlendEffect extends CustomShaderEffect<LayerBlendUniforms, LayerBlendInputs> {
   override effectName = 'LayerBlend';
 
-  constructor(device: GPUDevice, inputs: LayerBlendInputs, width = 1280, height = 720, format: GPUTextureFormat = 'rgba16float', clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 }) {
+  constructor(device: GPUDevice, inputs: LayerBlendInputs, width = 1280, height = 720, format: GPUTextureFormat = 'rgba16float', clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 }, sampleMode: 'nearest' | 'linear' = 'linear') {
     super(device, inputs, {
-      factory: (deviceRef, formatRef, options) => createLayerBlendMaterial(deviceRef, formatRef, options),
+      factory: (deviceRef, formatRef, options) => createLayerBlendMaterial(deviceRef, formatRef, { ...options, sampleMode }),
       textureInputKeys: ['src1', 'src2'],
       textureBindingKeys: LayerBlendTextureNames,
       passTextureSources: LayerBlendPassTextureSources,

@@ -1,0 +1,136 @@
+{
+  "passed": true,
+  "records": [
+    {
+      "template": "top",
+      "relative_directory": true,
+      "selected": "sketches/background/main.ts",
+      "preserved_existing_files": true
+    },
+    {
+      "template": "chop",
+      "relative_directory": true,
+      "selected": "sketches/channels/main.ts",
+      "preserved_existing_files": true
+    },
+    {
+      "stage": "ready",
+      "values": [
+        14.0,
+        114.0
+      ],
+      "latency_ms": 149.95962499233428
+    },
+    {
+      "stage": "isolated_error",
+      "values": [
+        14.0,
+        114.0
+      ],
+      "latency_ms": 129.1045830002986
+    },
+    {
+      "stage": "shared_helper_edit",
+      "values": [
+        14.0,
+        121.0
+      ],
+      "latency_ms": 150.5246669985354
+    },
+    {
+      "stage": "repair",
+      "values": [
+        21.0,
+        121.0
+      ],
+      "latency_ms": 133.8629589881748
+    },
+    {
+      "stage": "restore",
+      "values": [
+        14.0,
+        114.0
+      ],
+      "latency_ms": 148.97608300088905
+    },
+    {
+      "stage": "relative_entry_missing",
+      "values": [
+        14.0,
+        114.0
+      ],
+      "latency_ms": 133.19387499359436
+    },
+    {
+      "stage": "relative_entry_repaired",
+      "values": [
+        14.0,
+        114.0
+      ],
+      "latency_ms": 133.2891659985762
+    }
+  ],
+  "fixture": [
+    {
+      "name": "channels1",
+      "entry": "sketches/channels/main.ts",
+      "errors": "",
+      "state": "build_state\tready\r\nbuild_diagnostics\tReady (25 ms), revision 6793b12cd516\r\nexecution\tBlocking: waits for current inputs\r\n",
+      "value": 14.0
+    },
+    {
+      "name": "channels2",
+      "entry": "sketches/offset/main.ts",
+      "errors": "",
+      "state": "build_state\tready\r\nbuild_diagnostics\tReady (15 ms), revision b6e1751a1b98\r\nexecution\tBlocking: waits for current inputs\r\n",
+      "value": 114.0
+    },
+    {
+      "name": "channels3",
+      "entry": "sketches/channels/main.ts",
+      "errors": "",
+      "state": "build_state\tready\r\nbuild_diagnostics\tReady (25 ms), revision 6793b12cd516\r\nexecution\tBlocking: waits for current inputs\r\n",
+      "value": 14.0
+    },
+    {
+      "name": "channels4",
+      "entry": "sketches/offset/main.ts",
+      "errors": "",
+      "state": "build_state\tready\r\nbuild_diagnostics\tReady (15 ms), revision b6e1751a1b98\r\nexecution\tBlocking: waits for current inputs\r\n",
+      "value": 114.0
+    },
+    {
+      "name": "background1",
+      "entry": "sketches/background/main.ts",
+      "errors": "",
+      "state": "transport\tRGBA8 CPU input/output; buffered worker; normally one frame latency\r\nstatus\tready\r\nruntime\tV8 + Dawn Metal + Rust text; one worker/isolate per TOP\r\nsyphon\tclients=0 published=0 dropped=0\r\nbuild_state\tready\r\nbuild_diagnostics\tReady (15 ms), revision 81096b580358\r\n",
+      "value": null
+    },
+    {
+      "name": "background2",
+      "entry": "sketches/orbit/main.ts",
+      "errors": "",
+      "state": "transport\tRGBA8 CPU input/output; buffered worker; normally one frame latency\r\nstatus\tready\r\nruntime\tV8 + Dawn Metal + Rust text; one worker/isolate per TOP\r\nsyphon\tclients=0 published=0 dropped=0\r\nbuild_state\tready\r\nbuild_diagnostics\tReady (15 ms), revision 0191ad0d4011\r\n",
+      "value": null
+    },
+    {
+      "name": "background3",
+      "entry": "sketches/background/main.ts",
+      "errors": "",
+      "state": "transport\tRGBA8 CPU input/output; buffered worker; normally one frame latency\r\nstatus\tready\r\nruntime\tV8 + Dawn Metal + Rust text; one worker/isolate per TOP\r\nsyphon\tclients=0 published=0 dropped=0\r\nbuild_state\tready\r\nbuild_diagnostics\tReady (15 ms), revision 81096b580358\r\n",
+      "value": null
+    },
+    {
+      "name": "background4",
+      "entry": "sketches/orbit/main.ts",
+      "errors": "",
+      "state": "transport\tRGBA8 CPU input/output; buffered worker; normally one frame latency\r\nstatus\tready\r\nruntime\tV8 + Dawn Metal + Rust text; one worker/isolate per TOP\r\nsyphon\tclients=0 published=0 dropped=0\r\nbuild_state\tready\r\nbuild_diagnostics\tReady (15 ms), revision 0191ad0d4011\r\n",
+      "value": null
+    }
+  ],
+  "shipping": {
+    "top": "AvToolsSketch-527d29e59b10.plugin",
+    "chop": "AvToolsChannels-8ee959346ba6.plugin",
+    "compiler": "4badcd1278c2"
+  }
+}

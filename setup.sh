@@ -12,6 +12,9 @@
 #   3) Caches Deno dependencies
 #   4) Creates a uv-managed Python venv and installs Jupyter
 #   5) Installs the custom Deno Jupyter kernelspec
+#   6) Installs browser-projections npm dependencies and builds piano-roll
+#      web component assets
+#   7) Installs livecode-tldraw npm dependencies
 #
 # Run (macOS/Linux): ./setup.sh
 # Run (Windows/MSYS2/Git Bash):
@@ -26,13 +29,19 @@ IFS=$'\n\t'
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NOTEBOOK_DIR="$ROOT_DIR/apps/deno-notebooks"
+BROWSER_PROJECTIONS_DIR="$ROOT_DIR/apps/browser-projections"
+LIVECODE_TLDRAW_DIR="$ROOT_DIR/apps/livecode-tldraw"
+
+# Pinned Deno version. 2.9.x needs the CAMetalLayer pre-install in
+# native/deno_window to open graphics windows on Apple Silicon (see "Deno
+# version pin" in README.md); rebuild the native libs when switching.
+DENO_VERSION="2.9.7"
 
 # Platform detection
 case "$(uname -s)" in
   Darwin)       PLATFORM="macos" ;;
   MINGW*|MSYS*) PLATFORM="windows" ;;
-  Linux)        PLATFORM="linux" ;;
-  *)            PLATFORM="unknown" ;;
+  *)            PLATFORM="linux" ;;
 esac
 
 echo "================================================"
@@ -48,6 +57,19 @@ ensure_in_path() {
     return 1
   fi
   return 0
+}
+
+node_major_version() {
+  if ! ensure_in_path node; then
+    return 1
+  fi
+  node -p "Number(process.versions.node.split('.')[0])" 2>/dev/null
+}
+
+node_supports_browser_apps() {
+  local major
+  major="$(node_major_version)" || return 1
+  [ "$major" -ge 20 ]
 }
 
 confirm_toolchain_install() {
@@ -100,8 +122,8 @@ install_rust() {
 }
 
 install_deno() {
-  echo "[toolchain] Installing Deno..."
-  curl -fsSL https://deno.land/install.sh | sh
+  echo "[toolchain] Installing Deno $DENO_VERSION..."
+  curl -fsSL https://deno.land/install.sh | sh -s "v$DENO_VERSION"
   export DENO_INSTALL="${DENO_INSTALL:-$HOME/.deno}"
   export PATH="$DENO_INSTALL/bin:$PATH"
   echo "Deno $(deno --version | head -n1) installed."
@@ -184,7 +206,7 @@ ensure_syphon_framework_links() {
   echo "Syphon.framework links verified/repaired."
 }
 
-echo "[1/6] Ensuring toolchains are installed..."
+echo "[1/7] Ensuring toolchains are installed..."
 
 want_install_toolchains=true
 if ! confirm_toolchain_install; then
@@ -216,7 +238,17 @@ if ! ensure_in_path deno; then
     missing_toolchains+=("Deno")
   fi
 else
-  echo "Deno already installed: $(deno --version | head -n1)"
+  installed_deno_version="$(deno --version | head -n1 | awk '{print $2}')"
+  if [ "$installed_deno_version" = "$DENO_VERSION" ]; then
+    echo "Deno already installed: $(deno --version | head -n1)"
+  elif [ "$want_install_toolchains" = true ]; then
+    echo "[toolchain] Deno $installed_deno_version installed; switching to pinned $DENO_VERSION..."
+    deno upgrade --version "$DENO_VERSION" ||
+      echo "WARNING: could not switch Deno to $DENO_VERSION (installed via a package manager?). Windowed sketches may crash; see README.md."
+  else
+    echo "WARNING: Deno $installed_deno_version installed, but this repo pins $DENO_VERSION."
+    echo "  Windowed sketches may crash on other versions. Fix: deno upgrade --version $DENO_VERSION"
+  fi
 fi
 
 if ! ensure_in_path uv; then
@@ -229,11 +261,11 @@ else
   echo "uv already installed: $(uv --version)"
 fi
 
-if ! ensure_in_path node || ! ensure_in_path npm; then
+if ! ensure_in_path node || ! ensure_in_path npm || ! node_supports_browser_apps; then
   if [ "$want_install_toolchains" = true ]; then
     install_node
   else
-    missing_toolchains+=("Node.js + npm")
+    missing_toolchains+=("Node.js 20+ + npm")
   fi
 else
   echo "Node already installed: $(node --version)"
@@ -246,7 +278,7 @@ fi
 
 echo ""
 
-echo "[2/6] Building native Rust/FFI helpers..."
+echo "[2/7] Building native Rust/FFI helpers..."
 
 # One-liners for rebuilding specific FFI pieces (run from repo root):
 #   cargo build --release --manifest-path apps/deno-notebooks/native/fastsleep/Cargo.toml
@@ -254,12 +286,14 @@ echo "[2/6] Building native Rust/FFI helpers..."
 #   bash apps/deno-notebooks/scripts/build_syphon_bridge.sh
 #   bash apps/deno-notebooks/scripts/build_midi_bridge.sh
 #   bash apps/deno-notebooks/scripts/build_text_engine.sh
+#   bash apps/deno-notebooks/scripts/build_hap_decoder.sh
 
 if ensure_in_path cargo; then
   # Cross-platform crates
   cargo build --release --manifest-path "$NOTEBOOK_DIR/native/fastsleep/Cargo.toml"
   cargo build --release --manifest-path "$NOTEBOOK_DIR/native/deno_window/Cargo.toml"
   bash "$NOTEBOOK_DIR/scripts/build_text_engine.sh"
+  bash "$NOTEBOOK_DIR/scripts/build_hap_decoder.sh"
 
   # Platform-specific crates
   if [ "$PLATFORM" = "macos" ]; then
@@ -280,7 +314,7 @@ fi
 echo "Native helpers built."
 echo ""
 
-echo "[3/6] Caching Deno dependencies..."
+echo "[3/7] Caching Deno dependencies..."
 
 shopt -s nullglob
 cache_targets=(
@@ -345,7 +379,7 @@ else
 fi
 echo ""
 
-echo "[4/6] Setting up Python venv with uv + Jupyter..."
+echo "[4/7] Setting up Python venv with uv + Jupyter..."
 
 if ! ensure_in_path uv; then
   echo "uv not found after install step. Aborting."
@@ -364,7 +398,7 @@ popd >/dev/null
 echo "Python venv ready at $NOTEBOOK_DIR/.venv"
 echo ""
 
-echo "[5/6] Installing avtools Deno Jupyter kernel..."
+echo "[5/7] Installing avtools Deno Jupyter kernel..."
 
 if ensure_in_path deno; then
   if [ "$PLATFORM" = "windows" ]; then
@@ -378,14 +412,26 @@ else
 fi
 
 echo ""
-echo "[6/6] Installing browser-projections npm dependencies..."
+echo "[6/7] Installing browser-projections npm dependencies..."
 
 if ensure_in_path npm; then
-  pushd "$ROOT_DIR/apps/browser-projections" >/dev/null
+  pushd "$BROWSER_PROJECTIONS_DIR" >/dev/null
   npm install
+  npm run buildPianoRoll
   popd >/dev/null
 else
   echo "npm not available; skipping browser-projections install."
+fi
+
+echo ""
+echo "[7/7] Installing livecode-tldraw npm dependencies..."
+
+if ensure_in_path npm; then
+  pushd "$LIVECODE_TLDRAW_DIR" >/dev/null
+  npm install
+  popd >/dev/null
+else
+  echo "npm not available; skipping livecode-tldraw install."
 fi
 
 echo ""

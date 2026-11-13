@@ -1,0 +1,842 @@
+{
+  "passed": true,
+  "stage": 10,
+  "error": "",
+  "records": [
+    {
+      "stage": 0,
+      "elapsed_ms": 608.7710830033757,
+      "versions": [
+        1.0,
+        1.0
+      ],
+      "pixel": [
+        10,
+        1,
+        0
+      ],
+      "controls": {
+        "channels": {
+          "Speed": {
+            "value": 1.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 0.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Exported": {
+            "value": 0.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Bound": {
+            "value": 0.0,
+            "mode": "ParMode.CONSTANT"
+          }
+        },
+        "buffered": {
+          "Speed": {
+            "value": 1.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 0.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Exported": {
+            "value": 0.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Bound": {
+            "value": 0.0,
+            "mode": "ParMode.CONSTANT"
+          }
+        },
+        "picture": {
+          "Speed": {
+            "value": 1.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 0.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Exported": {
+            "value": 0.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Bound": {
+            "value": 0.0,
+            "mode": "ParMode.CONSTANT"
+          }
+        }
+      }
+    },
+    {
+      "stage": 1,
+      "elapsed_ms": 9.673749998910353,
+      "versions": [
+        1.0,
+        1.0
+      ],
+      "pixel": [
+        70,
+        1,
+        1
+      ],
+      "controls": {
+        "channels": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "buffered": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "picture": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        }
+      }
+    },
+    {
+      "stage": 2,
+      "elapsed_ms": 400.4596250015311,
+      "versions": [
+        2.0,
+        2.0
+      ],
+      "pixel": [
+        70,
+        2,
+        0
+      ],
+      "controls": {
+        "channels": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "buffered": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "picture": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        }
+      }
+    },
+    {
+      "stage": 3,
+      "elapsed_ms": 178.09462500736117,
+      "versions": [
+        3.0,
+        3.0
+      ],
+      "pixel": [
+        70,
+        3,
+        0
+      ],
+      "controls": {
+        "channels": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "buffered": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "picture": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        }
+      }
+    },
+    {
+      "stage": 4,
+      "elapsed_ms": 214.32383300270885,
+      "versions": [
+        3.0,
+        3.0
+      ],
+      "pixel": [
+        70,
+        3,
+        0
+      ],
+      "controls": {
+        "channels": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "buffered": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "picture": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        }
+      }
+    },
+    {
+      "stage": 5,
+      "elapsed_ms": 165.87195798638277,
+      "versions": [
+        3.0,
+        3.0
+      ],
+      "pixel": [
+        70,
+        3,
+        0
+      ],
+      "controls": {
+        "channels": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "buffered": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "picture": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        }
+      }
+    },
+    {
+      "stage": 6,
+      "elapsed_ms": 312.03066700254567,
+      "versions": [
+        3.0,
+        3.0
+      ],
+      "pixel": [
+        70,
+        3,
+        0
+      ],
+      "controls": {
+        "channels": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "buffered": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "picture": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        }
+      }
+    },
+    {
+      "stage": 7,
+      "elapsed_ms": 314.6529170044232,
+      "versions": [
+        3.0,
+        3.0
+      ],
+      "pixel": [
+        70,
+        3,
+        0
+      ],
+      "controls": {
+        "channels": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "buffered": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "picture": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        }
+      }
+    },
+    {
+      "stage": 8,
+      "elapsed_ms": 367.69704200560227,
+      "versions": [
+        4.0,
+        4.0
+      ],
+      "pixel": [
+        70,
+        4,
+        1
+      ],
+      "controls": {
+        "channels": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "buffered": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "picture": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        }
+      }
+    },
+    {
+      "stage": 9,
+      "elapsed_ms": 506.1617089959327,
+      "versions": [
+        4.0,
+        4.0
+      ],
+      "pixel": [
+        70,
+        4,
+        1
+      ],
+      "controls": {
+        "channels": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "buffered": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "picture": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        }
+      }
+    },
+    {
+      "stage": 10,
+      "elapsed_ms": 514.1989999974612,
+      "versions": [
+        4.0,
+        4.0
+      ],
+      "pixel": [
+        70,
+        4,
+        1
+      ],
+      "controls": {
+        "channels": {
+          "Speed": {
+            "value": 6.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "buffered": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        },
+        "picture": {
+          "Speed": {
+            "value": 7.0,
+            "mode": "ParMode.CONSTANT"
+          },
+          "Expr": {
+            "value": 5.0,
+            "mode": "ParMode.EXPRESSION"
+          },
+          "Exported": {
+            "value": 13.0,
+            "mode": "ParMode.EXPORT"
+          },
+          "Bound": {
+            "value": 23.0,
+            "mode": "ParMode.BIND"
+          }
+        }
+      }
+    }
+  ],
+  "states": {
+    "channels": "build_state\tready\r\nbuild_diagnostics\tReady (21 ms), revision 0b6c2150c905\r\nexecution\tBlocking: waits for current inputs\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/declared-parameters/project/chop.ts; available=996ea638a113b3a7; active=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/declared-parameters/project/chop.ts@996ea638a113b3a7\r\nlog_retained\t1\r\nlog_evicted\t0\r\nlog_dropped\t0\r\nlog_truncated\t0\r\n",
+    "buffered": "build_state\tready\r\nbuild_diagnostics\tReady (21 ms), revision 0b6c2150c905\r\nexecution\tBuffered: latest complete output; pending inputs coalesce\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/declared-parameters/project/chop.ts; available=996ea638a113b3a7; active=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/declared-parameters/project/chop.ts@996ea638a113b3a7\r\nlog_retained\t1\r\nlog_evicted\t0\r\nlog_dropped\t0\r\nlog_truncated\t0\r\n",
+    "picture": "transport\tRGBA8 CPU input/output; same cook (blocking)\r\nstatus\tready\r\nruntime\tV8 + Dawn Metal + Rust text; one worker/isolate per TOP\r\nsyphon\tclients=0 published=0 dropped=0\r\nbuild_state\tready\r\nbuild_diagnostics\tReady (21 ms), revision 57b5ed08391b\r\nreload_state\tActive (see runtime diagnostics)\r\nsource_identity\tselected=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/declared-parameters/project/top.ts; available=3493369c13518da7; active=ts:/Users/avneeshsarwate/agentCombine/avTools/packages/native-webgpu/artifacts/declared-parameters/project/top.ts@3493369c13518da7\r\nlog_retained\t1\r\nlog_evicted\t0\r\nlog_dropped\t0\r\nlog_truncated\t0\r\n"
+  },
+  "warnings": {
+    "channels": "",
+    "buffered": "",
+    "picture": ""
+  },
+  "errors": {
+    "channels": "",
+    "buffered": "",
+    "picture": ""
+  },
+  "controls": {
+    "channels": {
+      "Speed": {
+        "value": 6.0,
+        "mode": "ParMode.CONSTANT"
+      },
+      "Expr": {
+        "value": 5.0,
+        "mode": "ParMode.EXPRESSION"
+      },
+      "Exported": {
+        "value": 13.0,
+        "mode": "ParMode.EXPORT"
+      },
+      "Bound": {
+        "value": 23.0,
+        "mode": "ParMode.BIND"
+      }
+    },
+    "buffered": {
+      "Speed": {
+        "value": 7.0,
+        "mode": "ParMode.CONSTANT"
+      },
+      "Expr": {
+        "value": 5.0,
+        "mode": "ParMode.EXPRESSION"
+      },
+      "Exported": {
+        "value": 13.0,
+        "mode": "ParMode.EXPORT"
+      },
+      "Bound": {
+        "value": 23.0,
+        "mode": "ParMode.BIND"
+      }
+    },
+    "picture": {
+      "Speed": {
+        "value": 7.0,
+        "mode": "ParMode.CONSTANT"
+      },
+      "Expr": {
+        "value": 5.0,
+        "mode": "ParMode.EXPRESSION"
+      },
+      "Exported": {
+        "value": 13.0,
+        "mode": "ParMode.EXPORT"
+      },
+      "Bound": {
+        "value": 23.0,
+        "mode": "ParMode.BIND"
+      }
+    }
+  },
+  "pixel": [
+    70,
+    4,
+    1
+  ]
+}

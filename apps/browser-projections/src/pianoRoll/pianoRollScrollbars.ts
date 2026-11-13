@@ -1,14 +1,43 @@
 import type { Ref } from 'vue'
 import type { PianoRollState } from './pianoRollState'
 import { MIN_HORIZONTAL_SPAN, MIN_VERTICAL_SPAN, TOTAL_PITCHES } from './pianoRollConstants'
-import { clamp, getStageHeight, getStageWidth } from './pianoRollViewport'
+import { clamp, getNoteAreaHeight, getStageWidth } from './pianoRollViewport'
 
 export type HorizontalDragMode = 'move' | 'resize-start' | 'resize-end'
 export type VerticalDragMode = 'move' | 'resize-start' | 'resize-end'
 
+const POINTER_DRAG_CAPTURE_PHASE = true
+
+const captureDragPointer = (event: PointerEvent): Element | null => {
+  const target = event.currentTarget as Element | null
+  // Elements may originate in another window, or be adopted into a popup.
+  if (!target || typeof target.setPointerCapture !== 'function') return null
+
+  try {
+    target.setPointerCapture(event.pointerId)
+    return target
+  } catch {
+    return null
+  }
+}
+
+const releaseDragPointer = (target: Element | null, pointerId: number) => {
+  if (!target) return
+
+  try {
+    if (target.hasPointerCapture(pointerId)) {
+      target.releasePointerCapture(pointerId)
+    }
+  } catch {
+    // Pointer capture can already be gone if the browser cancelled the pointer.
+  }
+}
+
 export interface HorizontalDragState {
   mode: HorizontalDragMode
   pointerId: number
+  captureTarget: Element | null
+  eventWindow: Window
   pointerStart: number
   trackRect: DOMRect
   startQuarter: number
@@ -22,6 +51,8 @@ export interface HorizontalDragState {
 export interface VerticalDragState {
   mode: VerticalDragMode
   pointerId: number
+  captureTarget: Element | null
+  eventWindow: Window
   pointerStart: number
   trackRect: DOMRect
   topIndex: number
@@ -117,9 +148,15 @@ export class HorizontalScrollbarController {
       pointerOffset = event.clientX - (trackRect.left + endNormalized * trackRect.width)
     }
 
+    const eventWindow = track.ownerDocument.defaultView
+    if (!eventWindow) return
+    const captureTarget = captureDragPointer(event)
+
     this.dragState = {
       mode,
       pointerId: event.pointerId,
+      captureTarget,
+      eventWindow,
       pointerStart: event.clientX,
       trackRect,
       startQuarter,
@@ -130,16 +167,21 @@ export class HorizontalScrollbarController {
       pointerOffset
     }
 
-    window.addEventListener('pointermove', this.handlePointerMove)
-    window.addEventListener('pointerup', this.stopDrag)
+    eventWindow.addEventListener('pointermove', this.handlePointerMove, POINTER_DRAG_CAPTURE_PHASE)
+    eventWindow.addEventListener('pointerup', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
+    eventWindow.addEventListener('pointercancel', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
 
     event.preventDefault()
   }
 
   stopDrag = () => {
-    if (!this.dragState) return
-    window.removeEventListener('pointermove', this.handlePointerMove)
-    window.removeEventListener('pointerup', this.stopDrag)
+    const drag = this.dragState
+    if (!drag) return
+
+    releaseDragPointer(drag.captureTarget, drag.pointerId)
+    drag.eventWindow.removeEventListener('pointermove', this.handlePointerMove, POINTER_DRAG_CAPTURE_PHASE)
+    drag.eventWindow.removeEventListener('pointerup', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
+    drag.eventWindow.removeEventListener('pointercancel', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
     this.dragState = null
   }
 
@@ -230,7 +272,7 @@ export class VerticalScrollbarController {
     if (total <= 0) return { start: 0, size: 1 }
 
     const noteHeight = this.options.state.grid.noteHeight
-    const stageHeight = getStageHeight(this.options.state, this.options.getFallbackHeight())
+    const stageHeight = getNoteAreaHeight(this.options.state, this.options.getFallbackHeight())
     if (noteHeight <= 0 || stageHeight <= 0) return { start: 0, size: 1 }
 
     const topIndex = this.options.state.viewport.scrollY / noteHeight
@@ -270,7 +312,7 @@ export class VerticalScrollbarController {
 
     const { topIndex, bottomIndex } = this.options.getViewportRange()
     const span = Math.max(MIN_VERTICAL_SPAN, bottomIndex - topIndex)
-    const stageHeight = getStageHeight(this.options.state, this.options.getFallbackHeight())
+    const stageHeight = getNoteAreaHeight(this.options.state, this.options.getFallbackHeight())
     if (stageHeight <= 0) return
 
     const topNormalized = topIndex / TOTAL_PITCHES
@@ -282,9 +324,15 @@ export class VerticalScrollbarController {
       pointerOffset = event.clientY - (trackRect.top + bottomNormalized * trackRect.height)
     }
 
+    const eventWindow = track.ownerDocument.defaultView
+    if (!eventWindow) return
+    const captureTarget = captureDragPointer(event)
+
     this.dragState = {
       mode,
       pointerId: event.pointerId,
+      captureTarget,
+      eventWindow,
       pointerStart: event.clientY,
       trackRect,
       topIndex,
@@ -295,16 +343,21 @@ export class VerticalScrollbarController {
       pointerOffset
     }
 
-    window.addEventListener('pointermove', this.handlePointerMove)
-    window.addEventListener('pointerup', this.stopDrag)
+    eventWindow.addEventListener('pointermove', this.handlePointerMove, POINTER_DRAG_CAPTURE_PHASE)
+    eventWindow.addEventListener('pointerup', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
+    eventWindow.addEventListener('pointercancel', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
 
     event.preventDefault()
   }
 
   stopDrag = () => {
-    if (!this.dragState) return
-    window.removeEventListener('pointermove', this.handlePointerMove)
-    window.removeEventListener('pointerup', this.stopDrag)
+    const drag = this.dragState
+    if (!drag) return
+
+    releaseDragPointer(drag.captureTarget, drag.pointerId)
+    drag.eventWindow.removeEventListener('pointermove', this.handlePointerMove, POINTER_DRAG_CAPTURE_PHASE)
+    drag.eventWindow.removeEventListener('pointerup', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
+    drag.eventWindow.removeEventListener('pointercancel', this.stopDrag, POINTER_DRAG_CAPTURE_PHASE)
     this.dragState = null
   }
 

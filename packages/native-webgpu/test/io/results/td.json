@@ -1,0 +1,21 @@
+{
+  "passed": true,
+  "records": [
+    {
+      "isolated_plugin_template_top_and_chop": true,
+      "async_relative_config_reads": true,
+      "native_td_osc_replies": true,
+      "top_position_pixels": true,
+      "timecontext_easing": true
+    },
+    {
+      "reset_same_port": true,
+      "save_rebuild_reload_same_port": true
+    }
+  ],
+  "temporary_projects": "/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-io-isolated-qftyr0wn",
+  "plugins": [
+    "/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-io-isolated-qftyr0wn/top/AvToolsSketch-b19aaa347d38.plugin",
+    "/var/folders/ps/mqlxdzjj2td9jqrx9c1_zwz80000gn/T/avtools-io-isolated-qftyr0wn/chop/AvToolsChannels-828fd4e46b80.plugin"
+  ]
+}

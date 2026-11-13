@@ -1,0 +1,65 @@
+{
+  "compilerOptions": {
+    "paths": {
+      "@avtools/core-timing": [
+        "./packages/core-timing/mod.ts"
+      ],
+      "@avtools/creative-algs": [
+        "./packages/creative-algs/mod.ts"
+      ],
+      "@avtools/drawing-document": [
+        "./packages/drawing-document/mod.ts"
+      ],
+      "@avtools/power2d": [
+        "./packages/power2d/mod.ts"
+      ],
+      "@avtools/power2d/core": [
+        "./packages/power2d/core/mod.ts"
+      ],
+      "@avtools/power2d/raw": [
+        "./packages/power2d/raw/mod.ts"
+      ],
+      "@avtools/power2d/generated/*": [
+        "./packages/power2d/generated/*"
+      ],
+      "@avtools/power2d/generated-raw/*": [
+        "./packages/power2d/generated-raw/*"
+      ],
+      "@avtools/shader-fx": [
+        "./packages/shader-fx/mod.ts"
+      ],
+      "@avtools/shader-fx/raw": [
+        "./packages/shader-fx/raw/mod.ts"
+      ],
+      "@avtools/shader-fx/generated/*": [
+        "./packages/shader-fx/generated/*"
+      ],
+      "@avtools/shader-fx/generated-raw/*": [
+        "./packages/shader-fx/generated-raw/*"
+      ],
+      "@avtools/native-webgpu/td-midi": [
+        "./packages/native-webgpu/td-midi.d.ts"
+      ],
+      "@avtools/native-webgpu/td-io": [
+        "./packages/native-webgpu/td-io.d.ts"
+      ],
+      "@avtools/native-webgpu/td-parameters": [
+        "./packages/native-webgpu/td-parameters.d.ts"
+      ],
+      "@avtools/native-webgpu/td-chop": [
+        "./packages/native-webgpu/td-chop.d.ts"
+      ],
+      "@avtools/native-webgpu/td-sketch": [
+        "./packages/native-webgpu/td-sketch.d.ts"
+      ],
+      "@avtools/native-webgpu/td-p5": [
+        "./packages/native-webgpu/td-types/p5.d.ts"
+      ]
+    },
+    "types": [],
+    "skipLibCheck": true
+  },
+  "files": [
+    "./packages/native-webgpu/td-runtime.d.ts"
+  ]
+}

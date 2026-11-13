@@ -1,0 +1,81 @@
+{
+  "type": "animationTimeline",
+  "name": "p5-anim_xy",
+  "savedAt": "2026-08-26T00:00:00.000Z",
+  "data": {
+    "tracks": [
+      {
+        "id": "x-track",
+        "name": "x",
+        "fieldType": "number",
+        "low": 0,
+        "high": 1,
+        "elementData": [
+          {
+            "id": "x-0",
+            "time": 0,
+            "value": 0.15
+          },
+          {
+            "id": "x-1",
+            "time": 1,
+            "value": 0.85
+          },
+          {
+            "id": "x-2",
+            "time": 2,
+            "value": 0.7
+          },
+          {
+            "id": "x-3",
+            "time": 3,
+            "value": 0.3
+          },
+          {
+            "id": "x-4",
+            "time": 4,
+            "value": 0.15
+          }
+        ]
+      },
+      {
+        "id": "y-track",
+        "name": "y",
+        "fieldType": "number",
+        "low": 0,
+        "high": 1,
+        "elementData": [
+          {
+            "id": "y-0",
+            "time": 0,
+            "value": 0.8
+          },
+          {
+            "id": "y-1",
+            "time": 0.75,
+            "value": 0.2
+          },
+          {
+            "id": "y-2",
+            "time": 1.75,
+            "value": 0.65
+          },
+          {
+            "id": "y-3",
+            "time": 2.75,
+            "value": 0.25
+          },
+          {
+            "id": "y-4",
+            "time": 4,
+            "value": 0.8
+          }
+        ]
+      }
+    ],
+    "trackOrder": [
+      "x-track",
+      "y-track"
+    ]
+  }
+}

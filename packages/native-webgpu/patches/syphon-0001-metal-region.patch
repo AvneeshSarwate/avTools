@@ -1,0 +1,40 @@
+diff --git a/SyphonServerRendererMetal.m b/SyphonServerRendererMetal.m
+index a6a6c36..1be2910 100644
+--- a/SyphonServerRendererMetal.m
++++ b/SyphonServerRendererMetal.m
+@@ -81,23 +81,28 @@ - (void)renderFromTexture:(id<MTLTexture>)offScreenTexture inTexture:(id<MTLText
+         return;
+     }
+     
+-    const MTLViewport viewport = (MTLViewport){region.origin.x, region.origin.y, region.size.width, region.size.height, -1.0, 1.0 };
++    const MTLViewport viewport = (MTLViewport){0, 0, region.size.width, region.size.height, -1.0, 1.0 };
+     vector_uint2 viewportSize = simd_make_uint2(viewport.width, viewport.height);
+     
+     const float w = viewport.width/2;
+     const float h = viewport.height/2;
+     const float flipValue = flip ? 1 : -1;
+     
++    const float u0 = region.origin.x / offScreenTexture.width;
++    const float v0 = region.origin.y / offScreenTexture.height;
++    const float u1 = (region.origin.x + region.size.width) / offScreenTexture.width;
++    const float v1 = (region.origin.y + region.size.height) / offScreenTexture.height;
++
+     const SYPHONTextureVertex quadVertices[] =
+     {
+         // Pixel positions (NDC), Texture coordinates
+-        { {  w,   flipValue * h },  { 1.f, 1.f } },
+-        { { -w,   flipValue * h },  { 0.f, 1.f } },
+-        { { -w,  flipValue * -h },  { 0.f, 0.f } },
++        { {  w,   flipValue * h },  { u1, v1 } },
++        { { -w,   flipValue * h },  { u0, v1 } },
++        { { -w,  flipValue * -h },  { u0, v0 } },
+         
+-        { {  w,  flipValue * h },  { 1.f, 1.f } },
+-        { { -w,  flipValue * -h },  { 0.f, 0.f } },
+-        { {  w,  flipValue * -h },  { 1.f, 0.f } },
++        { {  w,  flipValue * h },  { u1, v1 } },
++        { { -w,  flipValue * -h },  { u0, v0 } },
++        { {  w,  flipValue * -h },  { u1, v0 } },
+     };
+     
+     const NSUInteger numberOfVertices = sizeof(quadVertices) / sizeof(SYPHONTextureVertex);

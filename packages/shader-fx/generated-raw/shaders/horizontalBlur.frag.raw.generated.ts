@@ -131,6 +131,7 @@ export type HorizontalBlurMaterialHandles = MaterialHandles<HorizontalBlurUnifor
 export interface HorizontalBlurMaterialOptions {
   name?: string;
   passIndex?: number;
+  sampleMode?: 'nearest' | 'linear';
 }
 
 export function createHorizontalBlurMaterial(device: GPUDevice, format: GPUTextureFormat, options: HorizontalBlurMaterialOptions = {}): HorizontalBlurMaterialHandles {
@@ -167,7 +168,8 @@ export function createHorizontalBlurMaterial(device: GPUDevice, format: GPUTextu
   const samplers: Record<string, GPUSampler> = {};
   const textureViews: Record<string, GPUTextureView> = {};
   for (const name of HorizontalBlurTextureNames) {
-    samplers[name] = device.createSampler({ magFilter: "linear", minFilter: "linear" });
+    const filter = options.sampleMode ?? "linear";
+    samplers[name] = device.createSampler({ magFilter: filter, minFilter: filter });
     const placeholder = device.createTexture({ size: { width: 1, height: 1 }, format, usage: GPUTextureUsage.TEXTURE_BINDING });
     textureViews[name] = placeholder.createView();
   }
@@ -212,9 +214,9 @@ export function createHorizontalBlurMaterial(device: GPUDevice, format: GPUTextu
 export class HorizontalBlurEffect extends CustomShaderEffect<HorizontalBlurUniforms, HorizontalBlurInputs> {
   override effectName = 'HorizontalBlur';
 
-  constructor(device: GPUDevice, inputs: HorizontalBlurInputs, width = 1280, height = 720, format: GPUTextureFormat = 'rgba16float', clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 }) {
+  constructor(device: GPUDevice, inputs: HorizontalBlurInputs, width = 1280, height = 720, format: GPUTextureFormat = 'rgba16float', clearColor: GPUColor = { r: 0, g: 0, b: 0, a: 1 }, sampleMode: 'nearest' | 'linear' = 'linear') {
     super(device, inputs, {
-      factory: (deviceRef, formatRef, options) => createHorizontalBlurMaterial(deviceRef, formatRef, options),
+      factory: (deviceRef, formatRef, options) => createHorizontalBlurMaterial(deviceRef, formatRef, { ...options, sampleMode }),
       textureInputKeys: ['src'],
       textureBindingKeys: HorizontalBlurTextureNames,
       passTextureSources: HorizontalBlurPassTextureSources,

@@ -1,0 +1,37 @@
+{
+  "name": "livecode-tldraw",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "type-check": "tsc --noEmit",
+    "test:e2e": "node tests/livecodeTldraw.e2e.mjs",
+    "setupLivecode": "node scripts/setupLivecode.mjs",
+    "test:sync-rendering": "node tests/syncRendering.e2e.mjs && node tests/runtimeRendering.e2e.mjs"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.8.1",
+    "@codemirror/lang-javascript": "^6.2.4",
+    "@codemirror/lint": "^6.8.5",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/theme-one-dark": "^6.1.3",
+    "@codemirror/view": "^6.38.0",
+    "@valtown/codemirror-ls": "^0.2.4",
+    "codemirror": "^6.0.2",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "tldraw": "^5.0.1",
+    "tweakpane": "^4.0.5"
+  },
+  "devDependencies": {
+    "@tweakpane/core": "^2.0.5",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.0.0",
+    "playwright": "^1.60.0",
+    "typescript": "^5.5.3",
+    "vite": "^7.0.4"
+  }
+}

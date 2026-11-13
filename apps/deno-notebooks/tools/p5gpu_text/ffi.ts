@@ -1,50 +1,12 @@
 /// <reference lib="dom" />
 
+import { resolveAssetDir, resolveNativeLib } from "../../bundle_paths.ts";
+
 const textEncoder = new TextEncoder();
 
-export interface TextLayoutRequest {
-  text: string;
-  family: string;
-  fontSize: number;
-  lineHeight: number;
-  width: number | null;
-  height: number | null;
-  alignH: 0 | 1 | 2;
-  wrapMode: 0 | 1 | 2;
-  weight: number;
-  style: 0 | 1 | 2;
-  axisQuantization: number;
-  axes: Record<string, number>;
-}
-
-export interface TextLayoutGlyph {
-  key: bigint;
-  x: number;
-  y: number;
-}
-
-export interface TextLayoutResult {
-  glyphs: TextLayoutGlyph[];
-  tightWidth: number;
-  fontWidth: number;
-  ascent: number;
-  descent: number;
-  fontAscent: number;
-  fontDescent: number;
-  fontCapHeight: number;
-  firstBaseline: number;
-  totalHeight: number;
-  lineCount: number;
-}
-
-export interface RasterizedGlyph {
-  width: number;
-  height: number;
-  left: number;
-  top: number;
-  contentType: number;
-  pixels: Uint8Array;
-}
+import type { TextLayoutRequest, TextLayoutResult, RasterizedGlyph } from "./types.ts";
+export type { TextLayoutRequest, TextLayoutGlyph, TextLayoutResult, RasterizedGlyph } from "./types.ts";
+import { parseBinaryLayout } from "./layout.ts";
 
 export const FFI_SYMBOLS = {
   text_engine_create: { parameters: [], result: "pointer" },
@@ -75,6 +37,7 @@ export const FFI_SYMBOLS = {
       "f32", // axis_quantization
       "pointer", // axes_json_ptr
       "u32", // axes_json_len
+      "u32", // disable_ligatures (0 / 1)
       "pointer", // out_ptr
       "u32", // out_cap
     ],
@@ -112,7 +75,7 @@ function defaultLibUrl(): URL {
       : ["libtext_engine.so"];
 
   for (const name of candidates) {
-    const url = new URL(name, base);
+    const url = resolveNativeLib(base, name);
     try {
       const test = Deno.dlopen(url, FFI_SYMBOLS);
       test.close();
@@ -142,70 +105,11 @@ function encodeString(input: string): { bytes: Uint8Array; ptr: Deno.PointerValu
   };
 }
 
-function parseBinaryLayout(buffer: Uint8Array, byteLength: number): TextLayoutResult {
-  const emptyResult: TextLayoutResult = {
-    glyphs: [],
-    tightWidth: 0,
-    fontWidth: 0,
-    ascent: 0,
-    descent: 0,
-    fontAscent: 0,
-    fontDescent: 0,
-    fontCapHeight: 0,
-    firstBaseline: 0,
-    totalHeight: 0,
-    lineCount: 0,
-  };
-
-  // Header is 44 bytes minimum
-  if (byteLength < 44) return emptyResult;
-
-  const dv = new DataView(buffer.buffer, buffer.byteOffset, byteLength);
-
-  const tightWidth = dv.getFloat32(0, true);
-  const fontWidth = dv.getFloat32(4, true);
-  const ascent = dv.getFloat32(8, true);
-  const descent = dv.getFloat32(12, true);
-  const fontAscent = dv.getFloat32(16, true);
-  const fontDescent = dv.getFloat32(20, true);
-  const fontCapHeight = dv.getFloat32(24, true);
-  const firstBaseline = dv.getFloat32(28, true);
-  const totalHeight = dv.getFloat32(32, true);
-  const lineCount = dv.getFloat32(36, true);
-  const glyphCount = dv.getUint32(40, true);
-
-  const expectedSize = 44 + glyphCount * 16;
-  if (byteLength < expectedSize) return emptyResult;
-
-  const glyphs: TextLayoutGlyph[] = new Array(glyphCount);
-  let offset = 44;
-  for (let i = 0; i < glyphCount; i++) {
-    const key = dv.getBigUint64(offset, true);
-    const x = dv.getInt32(offset + 8, true);
-    const y = dv.getInt32(offset + 12, true);
-    glyphs[i] = { key, x, y };
-    offset += 16;
-  }
-
-  return {
-    glyphs,
-    tightWidth,
-    fontWidth,
-    ascent,
-    descent,
-    fontAscent,
-    fontDescent,
-    fontCapHeight,
-    firstBaseline,
-    totalHeight,
-    lineCount,
-  };
-}
 
 export class NativeTextEngine {
   private readonly _lib: TextEngineLibrary;
   private _enginePtr: Deno.PointerValue;
-  private _layoutBuffer: Uint8Array = new Uint8Array(65536);
+  private _layoutBuffer: Uint8Array<ArrayBuffer> = new Uint8Array(new ArrayBuffer(65536));
   private _layoutCache = new Map<string, TextLayoutResult>();
   private static readonly _LAYOUT_CACHE_MAX = 16384;
 
@@ -259,7 +163,8 @@ export class NativeTextEngine {
     const width = req.width ?? -1;
     const height = req.height ?? -1;
     const axesKey = Object.keys(req.axes).length === 0 ? "" : JSON.stringify(req.axes);
-    const cacheKey = `${req.text}\0${req.family}\0${req.fontSize}\0${req.lineHeight}\0${width}\0${height}\0${req.alignH}\0${req.wrapMode}\0${weight}\0${req.style}\0${req.axisQuantization}\0${axesKey}`;
+    const disableLigaturesFlag = req.disableLigatures ? 1 : 0;
+    const cacheKey = `${req.text}\0${req.family}\0${req.fontSize}\0${req.lineHeight}\0${width}\0${height}\0${req.alignH}\0${req.wrapMode}\0${weight}\0${req.style}\0${req.axisQuantization}\0${axesKey}\0${disableLigaturesFlag}`;
 
     const cached = this._layoutCache.get(cacheKey);
     if (cached) return cached;
@@ -287,6 +192,7 @@ export class NativeTextEngine {
       req.axisQuantization,
       axesJson.ptr,
       axesJson.len,
+      disableLigaturesFlag,
       outPtr,
       this._layoutBuffer.length,
     );
@@ -300,7 +206,7 @@ export class NativeTextEngine {
       result = parseBinaryLayout(this._layoutBuffer, needed);
     } else {
       // Overflow: grow the buffer and make one more call.
-      this._layoutBuffer = new Uint8Array(needed);
+      this._layoutBuffer = new Uint8Array(new ArrayBuffer(needed));
       const grownPtr = Deno.UnsafePointer.of(this._layoutBuffer);
       const written = this._lib.symbols.text_engine_layout_json(
         this._enginePtr,
@@ -319,6 +225,7 @@ export class NativeTextEngine {
         req.axisQuantization,
         axesJson.ptr,
         axesJson.len,
+        disableLigaturesFlag,
         grownPtr,
         this._layoutBuffer.length,
       );
@@ -389,7 +296,7 @@ export class NativeTextEngine {
 
   private loadBundledFonts(): void {
     try {
-      const fontsDir = new URL("../../assets/fonts/", import.meta.url);
+      const fontsDir = resolveAssetDir("../../assets/fonts/", import.meta.url);
       const entries = Array.from(Deno.readDirSync(fontsDir))
         .filter((entry) => entry.isFile && /\.(ttf|otf|woff2?)$/i.test(entry.name))
         .sort((a, b) => a.name.localeCompare(b.name));

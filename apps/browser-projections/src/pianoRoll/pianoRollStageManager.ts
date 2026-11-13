@@ -10,8 +10,10 @@ export interface StageManagerDependencies {
   renderGrid: (state: PianoRollState) => void
   renderVisibleNotes: (state: PianoRollState) => void
   renderResizeHandles: (state: PianoRollState) => void
+  renderLanes: (state: PianoRollState) => void
   updateQueuePlayheadPosition: (state: PianoRollState) => void
   updateLivePlayheadPosition: (state: PianoRollState) => void
+  updatePlayheadMarkers: (state: PianoRollState) => void
   handleCommandStackUpdate: () => void
   syncUiCounters: () => void
   enforceScrollBounds: () => void
@@ -37,8 +39,10 @@ export class StageManager {
       this.deps.renderGrid(this.deps.state)
       this.deps.renderVisibleNotes(this.deps.state)
       this.deps.renderResizeHandles(this.deps.state)
+      this.deps.renderLanes(this.deps.state)
       this.deps.updateQueuePlayheadPosition(this.deps.state)
       this.deps.updateLivePlayheadPosition(this.deps.state)
+      this.deps.updatePlayheadMarkers(this.deps.state)
       this.deps.state.needsRedraw = false
     }
     this.deps.state.rafHandle = requestAnimationFrame(this.renderFrame)
@@ -130,6 +134,9 @@ export class StageManager {
   unmount() {
     this.stopRenderLoop()
     this.disableInteractivity()
+    // Destroying the stage takes the marker nodes with it; the id->node map has
+    // to forget them too, or a remount would reuse destroyed nodes.
+    this.deps.state.playheadMarkers.elements.clear()
     this.deps.state.stage?.destroy()
     this.deps.state.stage = undefined
     this.deps.state.konvaContainer = undefined

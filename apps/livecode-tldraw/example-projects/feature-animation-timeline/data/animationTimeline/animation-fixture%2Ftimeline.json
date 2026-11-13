@@ -1,0 +1,58 @@
+{
+  "type": "animationTimeline",
+  "name": "animation-fixture/timeline",
+  "savedAt": "2026-08-23T00:00:00.000Z",
+  "data": {
+    "tracks": [
+      {
+        "id": "gain-track",
+        "name": "gain",
+        "fieldType": "number",
+        "low": 0,
+        "high": 1,
+        "elementData": [
+          { "id": "gain-0", "time": 0, "value": 0.2 },
+          { "id": "gain-1", "time": 1, "value": 0.85 },
+          { "id": "gain-2", "time": 2.5, "value": 0.35 },
+          { "id": "gain-3", "time": 4, "value": 0.2 }
+        ]
+      },
+      {
+        "id": "scene-track",
+        "name": "scene",
+        "fieldType": "enum",
+        "low": 0,
+        "high": 1,
+        "enumOptions": ["intro", "pulse", "outro"],
+        "elementData": [
+          { "id": "scene-0", "time": 0, "value": "intro" },
+          { "id": "scene-1", "time": 1.5, "value": "pulse" },
+          { "id": "scene-2", "time": 3, "value": "outro" }
+        ]
+      },
+      {
+        "id": "cue-track",
+        "name": "cue",
+        "fieldType": "func",
+        "low": 0,
+        "high": 1,
+        "elementData": [
+          {
+            "id": "cue-0",
+            "time": 1,
+            "value": {
+              "funcName": "flash",
+              "args": [{ "color": "cyan", "strength": 0.8 }]
+            }
+          },
+          {
+            "id": "cue-1",
+            "time": 3,
+            "value": { "funcName": "settle", "args": [0.5] }
+          }
+        ]
+      }
+    ],
+    "trackOrder": ["gain-track", "scene-track", "cue-track"]
+  }
+}

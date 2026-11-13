@@ -10,4 +10,5 @@ if (!customElements.get(tagName)) {
 }
 
 export { CanvasElement }
-export type { CanvasStateSnapshot, CanvasStateSnapshotBase } from './canvasState'
+export type { CanvasRenderData, CanvasStateSnapshot, CanvasStateSnapshotBase } from './canvasState'
+export type { DrawingDocument } from '@avtools/drawing-document'

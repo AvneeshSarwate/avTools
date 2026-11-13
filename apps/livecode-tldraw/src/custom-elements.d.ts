@@ -1,0 +1,104 @@
+import type React from "react";
+import type {
+  AnimationTimelineData,
+  DrawingDocument,
+  DrawingNodeDelete,
+  DrawingNodeUpsert,
+  NoteData,
+  NoteDataInput,
+  PianoRollViewState,
+} from "@avtools/livecode-protocol";
+
+declare module "@avtools/piano-roll";
+declare module "@avtools/animation-editor";
+declare module "@avtools/handwriting-canvas";
+
+/** One labeled playhead line in a component's native position unit. */
+export interface PlayheadMarker {
+  id: string;
+  position: number;
+  color?: string;
+}
+
+export type PianoRollPlayheadMarker = PlayheadMarker;
+
+/**
+ * The imperative surface `<piano-roll-component>` exposes. Every member is
+ * optional because the element is upgraded by the bundled web component after
+ * React creates it: a ref can be read before the definition lands.
+ */
+export interface PianoRollComponentElement extends HTMLElement {
+  getPlayStartPosition?: () => number;
+  setPlayStartPosition?: (position: number) => void;
+  width?: number;
+  height?: number;
+  initialNotes?: Array<[string, NoteData]>;
+  interactive?: boolean;
+  showControlPanel?: boolean;
+  setNotes?: (notes: NoteDataInput[], options?: {silent?:boolean}) => void;
+  setPlayheadMarkers?: (markers: PlayheadMarker[]) => void;
+  getPlayheadMarkers?: () => PlayheadMarker[];
+  fitZoomToNotes?: () => void;
+  /** Frame the notes (the public name for the control panel's fit). */
+  fitToContent?: () => void;
+  getView?: () => PianoRollViewState;
+  setView?: (view: PianoRollViewState) => void;
+}
+
+export interface AnimationEditorComponentElement extends HTMLElement {
+  interactive?: boolean;
+  setTimeline?: (value: AnimationTimelineData) => void;
+  getTimeline?: () => AnimationTimelineData;
+  setPlayheadMarkers?: (markers: PlayheadMarker[]) => void;
+  getPlayheadMarkers?: () => PlayheadMarker[];
+}
+
+/** The `document-preview` event's detail: node edits streamed during a gesture. */
+export interface HandwritingCanvasPreview {
+  upserts: DrawingNodeUpsert[];
+  deletes: DrawingNodeDelete[];
+}
+
+/**
+ * The imperative surface `<handwriting-canvas>` exposes. Documents are the
+ * lossless form (`@avtools/drawing-document`); the element emits
+ * `document-update` (detail `[DrawingDocument]`) on every committed edit and
+ * never while a document is being pushed in, and `document-preview`
+ * (detail `[HandwritingCanvasPreview]`) between `interaction-start` and
+ * `interaction-end`.
+ */
+export interface HandwritingCanvasElement extends HTMLElement {
+  width?: number | string;
+  height?: number | string;
+  /** "document": the host owns the document and `state-update` is not emitted. */
+  mode?: "simple" | "document";
+  showTimeline?: boolean;
+  showVisualizations?: boolean;
+  showSnapshots?: boolean;
+  showRescale?: boolean;
+  setDrawingDocument?: (value: DrawingDocument) => void;
+  getDrawingDocument?: () => DrawingDocument;
+  setCanvasState?: (serialized: string) => void;
+  getCanvasState?: () => string;
+}
+
+declare module "react" {
+  namespace JSX {
+    interface IntrinsicElements {
+      "piano-roll-component": React.DetailedHTMLProps<
+        React.HTMLAttributes<PianoRollComponentElement>,
+        PianoRollComponentElement
+      >;
+      "animation-editor-component": React.DetailedHTMLProps<
+        React.HTMLAttributes<AnimationEditorComponentElement>,
+        AnimationEditorComponentElement
+      >;
+      "handwriting-canvas": React.DetailedHTMLProps<
+        React.HTMLAttributes<HandwritingCanvasElement> & {
+          mode?: "simple" | "document";
+        },
+        HandwritingCanvasElement
+      >;
+    }
+  }
+}

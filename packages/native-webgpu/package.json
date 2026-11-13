@@ -1,0 +1,97 @@
+{
+  "name": "@avtools/native-webgpu",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.20.0 <23"
+  },
+  "scripts": {
+    "test:baseline": "node --expose-gc test/offscreen.mjs",
+    "build": "node scripts/build.mjs",
+    "dawn:fetch": "node scripts/dawn.mjs fetch",
+    "dawn:patch": "node scripts/dawn.mjs patch",
+    "dawn:build": "node scripts/dawn.mjs build --extension",
+    "typecheck": "tsc -p tsconfig.json",
+    "test:p5": "node --expose-gc test/p5.mjs",
+    "test:lifetime": "node --expose-gc test/lifetime.mjs",
+    "test:window": "node --expose-gc test/window.mjs",
+    "test:image": "node test/image.mjs",
+    "test:syphon": "node test/syphon.mjs",
+    "test:touchengine": "node test/touchengine.mjs",
+    "test:soak": "node --expose-gc test/soak.mjs",
+    "td:build": "node scripts/build-td-plugin.mjs",
+    "td:pack": "node scripts/package-td.mjs",
+    "test:timing": "node test/timing/run.mjs",
+    "td:build:chop": "node scripts/build-td-plugin.mjs --chop",
+    "test:chop": "node test/chop/run.mjs",
+    "test:io": "node --test test/io/codec.mjs && node test/io/run.mjs",
+    "test:midi": "node --test test/midi/adapter.mjs test/midi/sdk.mjs && node test/midi/run.mjs && node test/midi/barrier.mjs",
+    "test:websocket": "node test/websocket/transport.mjs && node test/websocket/run.mjs && node --test test/websocket/sdk.mjs"
+  },
+  "dependencies": {
+    "@webgpu/types": "0.1.72",
+    "@types/seedrandom": "3.0.8"
+  },
+  "devDependencies": {
+    "@types/earcut": "3.0.0",
+    "@types/node": "22.19.0",
+    "earcut": "3.0.2",
+    "esbuild": "0.25.12",
+    "seedrandom": "3.0.5",
+    "typescript": "5.9.3",
+    "webgpu": "0.6.1"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/types/packages/native-webgpu/src/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./td-sketch": {
+      "types": "./td-sketch.d.ts"
+    },
+    "./td-parameters": {
+      "types": "./td-parameters.d.ts"
+    },
+    "./td-chop": {
+      "types": "./td-chop.d.ts"
+    },
+    "./td-runtime": {
+      "types": "./td-runtime.d.ts"
+    },
+    "./td-top-runtime": {
+      "types": "./td-top-runtime.d.ts"
+    },
+    "./td-p5": {
+      "types": "./td-types/p5.d.ts"
+    },
+    "./td-io": {
+      "types": "./td-io.d.ts"
+    },
+    "./td-midi": {
+      "types": "./td-midi.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "native-manifest.json",
+    "README.md",
+    "VALIDATION.md",
+    "TOUCHDESIGNER.md",
+    "PARAMETERS.md",
+    "td-sketch.d.ts",
+    "TIMING.md",
+    "TIMING_VALIDATION.md",
+    "td-chop.d.ts",
+    "td-parameters.d.ts",
+    "CHOP.md",
+    "td-runtime.d.ts",
+    "td-top-runtime.d.ts",
+    "td-types",
+    "TD_TYPES.md",
+    "td-io.d.ts",
+    "IO.md",
+    "td-midi.d.ts",
+    "MIDI.md"
+  ]
+}

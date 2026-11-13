@@ -146,6 +146,11 @@ export class SyphonServer {
     const name = encodeString(value);
     this.#lib.symbols.syphon_set_name(this.#state, name.ptr, name.len);
   }
+
+  setPublishRegion(width: number, height: number): void {
+    if (!this.#state) return;
+    this.#lib.symbols.syphon_set_publish_region(this.#state, width, height);
+  }
 }
 
 export interface SyphonWindowOptions extends WindowOptions {

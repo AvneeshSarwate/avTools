@@ -1,0 +1,169 @@
+# Current Testing and Operations
+
+Status: checked against `apps/deno-notebooks/deno.json`, the tldraw package
+scripts, and current test files on 2026-08-24.
+
+## Start and verify
+
+From `apps/deno-notebooks`, start the local server with:
+
+```sh
+deno task livecode:server
+```
+
+From `apps/livecode-tldraw`, run `npm run setupLivecode` once after checkout or
+after a bundled web component changes, then `npm run dev`.
+
+`deno task livecode:check <projectDir>` (also from `apps/deno-notebooks`) runs
+the Run button's whole-project shadow check without a server. It is the check
+for an agent iterating on project source; see the
+[authoring guide](../project-authoring-guide.md#checking-without-the-server).
+
+The drawing-document round trip, the parity between the element's Konva
+bake and the package's Konva-free bake (including curved polygons, where the
+package's port of Konva's curve maths is compared with Konva's own
+`getTensionPoints`), the in-gesture `document-preview` stream, and the
+per-node reconcile (a one-node change keeps every other Konva node and the
+selection) are checked by `npm run test:canvas` in
+`apps/browser-projections`, against the built bundle. It is not part of any
+`deno task`; run it after changing the canvas element or
+`packages/drawing-document`.
+
+With both running, `projects.html` on the Vite origin (e.g.
+`http://localhost:5173/projects.html`) is the human entry point: it discovers
+the server via `/health` probes, lists `/projects/list`, and opens a project
+with the engine on the server, in a separate browser tab, or in the UI tab —
+including asking the server to restart itself into the required mode. All three
+launch buttons open the UI in a new tab and keep the project picker open. Choose
+**Open · engine in same tab** for examples that mirror canvas outputs into
+tldraw; reloading that tab restarts the engine. Opening a project by hand means
+composing `/index.html?serverBaseUrl=<server>&projectPath=<abs project dir>`
+yourself, adding `&engine=inprocess` for the same-tab form.
+
+For a cross-boundary change, the canonical gate is:
+
+```sh
+cd apps/deno-notebooks
+deno task test:livecode:full
+```
+
+Important naming trap: `deno task test:livecode` aliases
+`test:livecode:fast`, not `:full`. Fast includes Deno unit/repro/server tests and
+client typecheck/build. Full adds the Playwright tldraw E2E and the browser
+engine/remote/baked topology scripts. `test:livecode:p5gpu` remains separate
+because it needs native/window/WebGPU support.
+
+Read the task definitions in `apps/deno-notebooks/deno.json` for the current
+file list rather than maintaining it here.
+
+## Pick tests by seam
+
+- Analyzer/generated-code behavior: `analyzer_transform_test.ts`,
+  `runtime_counts_test.ts`, `dynamic_import_execution_test.ts`.
+- Launch/replacement/stop races: `launch_race_test.ts`,
+  `run_correlation_test.ts`, and the run portions of `sync_transport_test.ts`.
+- Stores/durability: the concrete store test plus `entity_registry_test.ts`.
+- Transport or remote-plane behavior: `sync_transport_test.ts`,
+  `ui_events_test.ts`, `protocol_smoke_test.ts`,
+  `execution_plane_state_test.ts`, `engine_attach_replay_test.ts`, and the
+  topology E2E scripts.
+- Project graph/targets/LSP: project shadow, browser-target, and LSP tests.
+- Outside edits and the disk guard: `project_source_status_test.ts` (server),
+  and `LIVECODE_E2E_CASE=externalEdit npm run test:e2e` in
+  `apps/livecode-tldraw` for reload, staleness, and both conflict choices. The
+  E2E holds the editor's write request in flight to make the conflict
+  deterministic.
+- React entity subscription isolation: `npm run test:sync-rendering` in
+  `apps/livecode-tldraw` mounts real React subscribers in Chromium, including the
+  runtime provider and actual tldraw shapes. It checks all nine kinds, resets,
+  patches, rebinding, module/document selection, and connection-context isolation.
+  It runs in the full gate; hydration decision tests run in the unit gate.
+- Visible canvas/reconnect/save behavior: `apps/livecode-tldraw/tests/livecodeTldraw.e2e.mjs`.
+
+`browser_engine_slice.e2e.mjs` also checks that the host's first ready status
+has a usable snapshot and that shutdown releases its lock without page close.
+`baked_project.e2e.mjs` covers both bake forms in one run: the two-tab
+BroadcastChannel pair, then the single-page in-process form opened at the bare
+root URL (boot defaults, in-process sync and actions, and a canvas view
+mirroring a module canvas checked by pixel, plus sync-map clearing on takeover).
+`timing_examples.e2e.mjs <project>` bakes a
+checked-in timing gallery (`timing-examples`, `timing-composition`) and checks
+every canvas view draws and that the in-process params action freezes and
+resumes an example's rendered scene. The in-process form against a live server
+is not E2E-covered, and neither is engine-to-UI event delivery through the
+in-process host: the `uiEvents` tldraw case covers the socket, the uplink
+relay, and the BroadcastChannel only. `browser_host_import_map_test.ts` keeps
+the client and engine-page import maps identical.
+
+For tracking work, the [package verification guide](../../../packages/tracked-state/README.md#verification-and-benchmarks)
+owns library tests and benchmarks; these are separate from the livecode test
+tasks. Library correctness does not prove engine gate/drain integration or
+client baseline recovery. Use the sparse reference kind and
+[entity recipe's seam checks](adding-an-entity-kind.md#6-prove-the-seams).
+The Six Sines example has same-tab manual browser validation; its separate-tab
+workflow and gap recovery are not established by that check. Node benchmarks
+and small wire payloads are not browser engine/audio deadline guarantees.
+
+The tldraw E2E is broad but monolithic; it is not a substitute for deterministic
+unit/server coverage of a race or validation rule. Prefer condition-based
+polling over sleeps. Tests that assert generated-code spelling should do so only
+when the emitted text itself is the contract.
+
+For the standard canvas Duplicate action, run
+`LIVECODE_E2E_CASE=duplicate npm run test:e2e` from `apps/livecode-tldraw`.
+This isolates the menu/keyboard, grouping, undo, collision, and failure checks.
+After building the client, add `LIVECODE_E2E_ENGINE=remote
+LIVECODE_E2E_UI=served LIVECODE_E2E_ACTIONS=broadcast` to exercise browser-engine
+actions instead of HTTP (the HTTP response-delay test is skipped there).
+
+## Feature fixtures
+
+A user-visible feature should leave one project under
+`apps/livecode-tldraw/example-projects/` that both people and automation open.
+Its README owns the manual flow. Tests must copy it before save/delete/layout
+mutations rather than reconstructing its payloads or modifying tracked files.
+`feature-animation-timeline` is the reference.
+
+## High-risk manual checks
+
+Automation does not currently prove all recovery and device behavior. Before a
+release affecting these seams, manually check the applicable item:
+
+1. reload a tab during a long run, verify token/manifest/waits rehydrate, then
+   stop it;
+2. restart the server and verify sync resubscribe replaces every map, LSP
+   returns, and a stop queued while offline is flushed;
+3. edit a project dependency and distinguish shadow diagnostics, materialized
+   bytes, cached module instances, and currently running code;
+4. exercise browser-engine visibility/throttling, takeover, and real Web MIDI
+   permission/panic on the target browser;
+5. open an external-repository project and verify relative imports in LSP.
+
+## Environment and artifacts
+
+For restricted Linux agent sessions with missing procfs, proxy-selection
+problems, or browser launch failures, follow
+[`restricted-workspace-e2e.md`](restricted-workspace-e2e.md). It separates a bake
+pass from partial browser validation and an unchanged E2E pass.
+
+
+For the Cloudflare remote dev box, see
+[`apps/livecode-cloudflare/README.md`](../../../apps/livecode-cloudflare/README.md)
+for packed R2 checkpoint migration/recovery, offline checks, and startup timing.
+Its Deno session files are disposable local artifacts; canonical projects, Git
+state, and credentials persist separately. Older container boot scripts cannot
+read packed checkpoints, so rollback requires exporting the latest workspace
+and private agent state to their legacy mirrors first.
+
+Cold Deno caches require network access to JSR and npm. The server uses broad
+permissions plus unstable WebGPU/FFI flags; a healthy ordinary test process may
+still lack window-surface capability. MIDI is optional and tests normally inject
+a fake backend. Browser E2E needs Node, Playwright, and Chromium.
+
+Deno scripts physically under `apps/livecode-tldraw` need `--no-config` or an
+explicit workspace config because that npm app is not a root Deno workspace
+member. Session directories/logs survive shutdown and can accumulate.
+
+On tldraw E2E failure, the runner prints a temporary artifact directory with a
+full-page screenshot, browser errors, and server/Vite output. Inspect it before
+rerunning an intermittent failure.

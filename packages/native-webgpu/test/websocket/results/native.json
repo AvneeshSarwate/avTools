@@ -1,0 +1,9 @@
+{
+  "passed": true,
+  "platform": "darwin",
+  "arch": "arm64",
+  "output": [
+    "four_idle_websocket_cpu_percent=0.0027",
+    "PASS: four V8 workers, no-cook callbacks, text/binary copies, send errors, timers, 30 reloads, failed setup, teardown"
+  ]
+}

@@ -13,6 +13,7 @@ export default defineConfig({
     alias: [
       { find: '@', replacement: fileURLToPath(new URL('./src', import.meta.url)) },
       { find: '@avtools/core-timing', replacement: fileURLToPath(new URL('../../packages/core-timing/mod.ts', import.meta.url)) },
+      { find: '@avtools/drawing-document', replacement: fileURLToPath(new URL('../../packages/drawing-document/mod.ts', import.meta.url)) },
       { find: '@avtools/creative-algs', replacement: fileURLToPath(new URL('../../packages/creative-algs/mod.ts', import.meta.url)) },
       { find: '@avtools/music-types', replacement: fileURLToPath(new URL('../../packages/music-types/mod.ts', import.meta.url)) },
       { find: '@avtools/ui-bridge', replacement: fileURLToPath(new URL('../../packages/ui-bridge/mod.ts', import.meta.url)) },

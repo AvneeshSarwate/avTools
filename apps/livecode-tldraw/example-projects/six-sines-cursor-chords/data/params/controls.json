@@ -1,0 +1,125 @@
+{
+  "type": "params",
+  "name": "cursor-chords/controls",
+  "savedAt": "2026-09-12T00:00:00Z",
+  "values": {
+    "macro1": {
+      "rateHz": 1,
+      "depth": 0.5,
+      "rateSpreadHz": 0.08,
+      "mode": "off"
+    },
+    "macro2": {
+      "rateHz": 1,
+      "depth": 0.5,
+      "rateSpreadHz": 0.16,
+      "mode": "off"
+    },
+    "macro3": {
+      "rateHz": 1,
+      "depth": 0.5,
+      "rateSpreadHz": 0.24,
+      "mode": "off"
+    }
+  },
+  "meta": {
+    "macro1": {
+      "rateHz": {
+        "label": "Rate Hz / ramp speed",
+        "min": 0,
+        "max": 12,
+        "step": 0.01
+      },
+      "depth": {
+        "label": "Depth (+/-)",
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "rateSpreadHz": {
+        "label": "Rate spread (next notes)",
+        "min": 0,
+        "max": 8,
+        "step": 0.01
+      },
+      "mode": {
+        "label": "Mode",
+        "options": {
+          "Off": "off",
+          "On (sine)": "on",
+          "Random ramp": "random-ramp"
+        }
+      }
+    },
+    "macro2": {
+      "rateHz": {
+        "label": "Rate Hz / ramp speed",
+        "min": 0,
+        "max": 12,
+        "step": 0.01
+      },
+      "depth": {
+        "label": "Depth (+/-)",
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "rateSpreadHz": {
+        "label": "Rate spread (next notes)",
+        "min": 0,
+        "max": 8,
+        "step": 0.01
+      },
+      "mode": {
+        "label": "Mode",
+        "options": {
+          "Off": "off",
+          "On (sine)": "on",
+          "Random ramp": "random-ramp"
+        }
+      }
+    },
+    "macro3": {
+      "rateHz": {
+        "label": "Rate Hz / ramp speed",
+        "min": 0,
+        "max": 12,
+        "step": 0.01
+      },
+      "depth": {
+        "label": "Depth (+/-)",
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "rateSpreadHz": {
+        "label": "Rate spread (next notes)",
+        "min": 0,
+        "max": 8,
+        "step": 0.01
+      },
+      "mode": {
+        "label": "Mode",
+        "options": {
+          "Off": "off",
+          "On (sine)": "on",
+          "Random ramp": "random-ramp"
+        }
+      }
+    },
+    "play": {
+      "label": "Play at cursor",
+      "button": {
+        "type": "cursor-chords/play",
+        "body": {}
+      }
+    },
+    "off": {
+      "label": "Off",
+      "button": {
+        "type": "cursor-chords/off",
+        "body": {}
+      }
+    }
+  }
+}

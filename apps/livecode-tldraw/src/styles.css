@@ -1,0 +1,1006 @@
+:root {
+  color: #e8ece9;
+  background: #171a18;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  color: #edf3ef;
+  background: #2b3430;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: #35413c;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+input {
+  width: 250px;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  color: #edf3ef;
+  background: #101311;
+  padding: 7px 9px;
+}
+
+.app-shell {
+  position: fixed;
+  inset: 0;
+  min-width: 0;
+  min-height: 0;
+  background: #151816;
+}
+
+.canvas-shell {
+  position: fixed;
+  inset: 0;
+}
+
+/*
+ * The in-process engine's stage: user-module canvases live here and are
+ * mirrored into canvas view shapes. Off-screen rather than display:none so
+ * the canvases keep painting (a display:none canvas still draws, but p5's
+ * pixel density probing wants a laid-out element).
+ */
+.livecode-stage {
+  position: fixed;
+  left: -100000px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.status-pill--engine-blocked button {
+  margin-left: 6px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+
+.topbar {
+  position: fixed;
+  z-index: 1000;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(20, 24, 22, 0.92);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(10px);
+  pointer-events: all;
+}
+
+.topbar__brand {
+  color: #f1f6f3;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+}
+
+.topbar__actions,
+.topbar__save {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+}
+
+.topbar__group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.topbar__menu {
+  position: relative;
+}
+
+.topbar__menu summary {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 7px 9px;
+  color: #dce5e0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.topbar__menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.topbar__menu summary::after {
+  margin-left: 6px;
+  color: #849089;
+  content: "▾";
+  font-size: 10px;
+}
+
+.topbar__menu summary:hover,
+.topbar__menu[open] summary {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: #2b3430;
+}
+
+.topbar__panel {
+  position: fixed;
+  top: 72px;
+  left: 12px;
+  display: flex;
+  width: min(360px, calc(100vw - 24px));
+  max-height: calc(100vh - 84px);
+  align-items: end;
+  gap: 8px;
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(20, 24, 22, 0.98);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+}
+
+.topbar__panel--stack {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.topbar__panel label {
+  color: #b4c0ba;
+  font-size: 12px;
+}
+
+.topbar__panel input {
+  width: 100%;
+}
+
+.topbar__panel--stack > button,
+.topbar__panel--stack > .topbar__group > button:only-child {
+  width: 100%;
+  text-align: left;
+}
+
+.topbar__selection-name {
+  overflow: hidden;
+  color: #aeb9b3;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar__primary {
+  border-color: rgba(37, 176, 141, 0.4);
+  background: rgba(37, 176, 141, 0.2);
+}
+
+.topbar__danger {
+  border-color: rgba(255, 128, 128, 0.34);
+  color: #ffb3a9;
+}
+
+.topbar__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  justify-content: flex-end;
+  overflow: hidden;
+  color: #b9c3bd;
+  font-size: 13px;
+}
+
+.topbar__status > * {
+  flex: none;
+}
+
+.topbar__notice {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar__error {
+  max-width: 420px;
+  overflow: hidden;
+  color: #ffb3a9;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .topbar {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .topbar__status {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .topbar__panel {
+    top: 106px;
+    max-height: calc(100vh - 118px);
+  }
+}
+
+@media (max-width: 640px) {
+  .topbar {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .topbar__brand {
+    display: none;
+  }
+
+  .topbar__actions {
+    flex-wrap: wrap;
+  }
+
+  .topbar__status {
+    grid-column: 1;
+  }
+
+  .topbar__secondary-status {
+    display: none;
+  }
+
+  .topbar__panel {
+    top: 118px;
+    max-height: calc(100vh - 130px);
+  }
+}
+
+.livecode-shape {
+  display: grid;
+  grid-template-rows: 48px 34px auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid rgba(236, 244, 239, 0.18);
+  border-radius: 8px;
+  color: #eef5f1;
+  background: #111412;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  pointer-events: all;
+}
+
+.livecode-shape__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: #1b211e;
+}
+
+.livecode-shape__title {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.livecode-shape__title strong {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.livecode-shape__title span {
+  overflow: hidden;
+  color: #88968f;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.livecode-shape__actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.livecode-shape__actions button {
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.livecode-shape__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  color: #aab5af;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.livecode-shape__editor {
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Disk/staleness notices. Always rendered so the grid rows stay fixed; it
+   collapses to zero height when there is nothing to say. */
+.livecode-shape__source-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+}
+
+/* Not display: none, which would pull the element out of its grid row and
+   shift the editor into this auto row. */
+.livecode-shape__source-notice:empty {
+  padding: 0;
+  border-bottom: none;
+}
+
+.livecode-shape__source-notice button {
+  font-size: 12px;
+}
+
+.source-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.source-pill--stale,
+.source-pill--reloaded {
+  border-color: rgba(246, 201, 107, 0.35);
+  color: #f2d38b;
+  background: rgba(246, 201, 107, 0.1);
+}
+
+.source-pill--conflict {
+  border-color: rgba(255, 128, 128, 0.42);
+  color: #ffb3a9;
+  background: rgba(255, 128, 128, 0.12);
+}
+
+.livecode-codemirror {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.livecode-shape__footer {
+  min-height: 34px;
+  max-height: 78px;
+  overflow: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: #171c19;
+}
+
+/* tldraw sets user-select: none on every element in its container; error and
+   diagnostic text should still be selectable for copying. The footer stops
+   pointerdown from reaching tldraw, so a drag selects instead of moving the
+   shape. */
+.tl-container .livecode-shape__footer,
+.tl-container .livecode-shape__footer * {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+
+.diagnostic {
+  padding: 7px 10px;
+  color: #ffb3a9;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.diagnostic--quiet {
+  color: #83908a;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  min-height: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: #dce5df;
+  background: #28302c;
+  font-size: 12px;
+}
+
+.status-pill--open,
+.status-pill--ready,
+.status-pill--running,
+.status-pill--saved {
+  color: #c6f6e2;
+  background: rgba(37, 176, 141, 0.22);
+  border-color: rgba(37, 176, 141, 0.34);
+}
+
+.status-pill--error,
+.status-pill--not-connected {
+  color: #ffd0c9;
+  background: rgba(218, 72, 59, 0.22);
+  border-color: rgba(218, 72, 59, 0.34);
+}
+
+.status-pill--queued,
+.status-pill--analyzing,
+.status-pill--connecting,
+.status-pill--stopping,
+.status-pill--unsaved,
+.status-pill--unknown {
+  color: #ffe7b8;
+  background: rgba(190, 136, 35, 0.24);
+  border-color: rgba(190, 136, 35, 0.36);
+}
+
+.dependency-pill {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  min-height: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.dependency-pill--changed {
+  border-color: rgba(246, 201, 107, 0.35);
+  color: #f2d38b;
+  background: rgba(246, 201, 107, 0.1);
+}
+
+.dependency-pill--error {
+  border-color: rgba(255, 128, 128, 0.42);
+  color: #ffb3a9;
+  background: rgba(255, 128, 128, 0.12);
+}
+
+.piano-roll-shape {
+  display: grid;
+  grid-template-rows: 52px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(236, 244, 239, 0.18);
+  border-radius: 8px;
+  color: #eef5f1;
+  background: #111412;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  pointer-events: all;
+}
+
+.piano-roll-shape__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #171c19;
+  cursor: grab;
+}
+
+.piano-roll-shape__title {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.piano-roll-shape__title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.piano-roll-shape__title span {
+  overflow: hidden;
+  color: #9ca8a2;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.piano-roll-shape__actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.piano-roll-shape__actions button {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: #eef5f1;
+  background: #263029;
+  cursor: pointer;
+}
+
+.piano-roll-shape__actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.piano-roll-shape__body {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+  background: #f5f5f5;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
+}
+
+.piano-roll-shape__viewport {
+  width: max-content;
+  min-width: 100%;
+  min-height: 100%;
+}
+
+.piano-roll-shape__viewport piano-roll-component {
+  display: block;
+}
+
+.piano-roll-shape__empty {
+  display: grid;
+  height: 100%;
+  place-content: center;
+  gap: 8px;
+  color: #2c332f;
+  font-size: 13px;
+}
+
+.param-pane-shape {
+  display: grid;
+  grid-template-rows: 52px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(236, 244, 239, 0.18);
+  border-radius: 8px;
+  color: #eef5f1;
+  background: #111412;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  pointer-events: all;
+}
+
+.param-pane-shape__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #171c19;
+  cursor: grab;
+}
+
+.param-pane-shape__title {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.param-pane-shape__title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.param-pane-shape__title span {
+  overflow: hidden;
+  color: #9ca8a2;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entity-error-badge {
+  flex: none;
+  border: 1px solid rgba(255, 128, 128, 0.42);
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: #ffb3a9;
+  background: rgba(255, 128, 128, 0.12);
+  font-size: 11px;
+}
+
+.param-pane-shape__body {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
+}
+
+.param-pane-shape__empty {
+  display: grid;
+  gap: 6px;
+  padding: 8px 2px;
+  color: #9ca8a2;
+  font-size: 12px;
+}
+
+.animation-editor-shape {
+  display: grid;
+  grid-template-rows: 48px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(236, 244, 239, 0.18);
+  border-radius: 8px;
+  color: #eef5f1;
+  background: #111412;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  pointer-events: all;
+}
+
+.animation-editor-shape__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #171c19;
+  cursor: grab;
+}
+
+.animation-editor-shape__header > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.animation-editor-shape__header strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.animation-editor-shape__header span {
+  color: #9ca8a2;
+  font-size: 11px;
+}
+
+.animation-editor-shape__body {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.animation-editor-shape__empty {
+  display: grid;
+  height: 100%;
+  place-content: center;
+  gap: 8px;
+  color: #9ca8a2;
+  font-size: 12px;
+}
+
+.drawing-shape {
+  display: grid;
+  grid-template-rows: 48px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(236, 244, 239, 0.18);
+  border-radius: 8px;
+  color: #eef5f1;
+  background: #111412;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  pointer-events: all;
+}
+
+.drawing-shape__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #171c19;
+  cursor: grab;
+}
+
+.drawing-shape__header > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.drawing-shape__header strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawing-shape__header span {
+  color: #9ca8a2;
+  font-size: 11px;
+}
+
+/* The component brings its own toolbar and light theme; let it scroll rather than clip. */
+.drawing-shape__body {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: #f4f4f4;
+  color: #202020;
+}
+
+.drawing-shape__body handwriting-canvas {
+  display: block;
+}
+
+.drawing-shape__empty {
+  display: grid;
+  height: 100%;
+  place-content: center;
+  gap: 8px;
+  color: #9ca8a2;
+  font-size: 12px;
+  background: #111412;
+}
+
+.signal-scope-shape {
+  display: grid;
+  grid-template-rows: 40px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(236, 244, 239, 0.18);
+  border-radius: 8px;
+  color: #eef5f1;
+  background: #111412;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  pointer-events: all;
+}
+
+/* An ended source freezes its trace; dimming says so without erasing it. */
+.signal-scope-shape--ended .signal-scope-shape__title,
+.signal-scope-shape--ended .signal-scope-shape__canvas {
+  opacity: 0.45;
+}
+
+.signal-scope-shape__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #171c19;
+  cursor: grab;
+}
+
+.signal-scope-shape__title {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.signal-scope-shape__title strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signal-scope-shape__title span {
+  overflow: hidden;
+  color: #9ca8a2;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signal-scope-shape__body {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.signal-scope-shape__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.signal-scope-shape__empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  padding: 8px 10px;
+  color: #9ca8a2;
+  font-size: 12px;
+}
+
+.canvas-surface-shape {
+  display: grid;
+  grid-template-rows: 40px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(236, 244, 239, 0.18);
+  border-radius: 8px;
+  color: #eef5f1;
+  background: #111412;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  pointer-events: all;
+}
+
+.canvas-surface-shape__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #171c19;
+  cursor: grab;
+}
+
+.canvas-surface-shape__title {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.canvas-surface-shape__title strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-surface-shape__title span {
+  overflow: hidden;
+  color: #9ca8a2;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-surface-shape__body {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.canvas-surface-shape__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The class's display would otherwise outrank the `hidden` attribute. */
+.canvas-surface-shape__empty[hidden] {
+  display: none;
+}
+
+.canvas-surface-shape__empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  padding: 8px 12px;
+  color: #9ca8a2;
+  font-size: 12px;
+  text-align: center;
+}
+
+.six-sines-shape {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #56565d;
+  border-radius: 10px;
+  background: #18181a;
+  color: #ddd;
+}
+.six-sines-shape__header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 44px;
+  padding: 0 14px;
+  background: #242428;
+}
+.six-sines-shape__header > span {
+  font-size: 12px;
+  opacity: 0.8;
+}
+.six-sines-shape__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  pointer-events: all;
+}
+.six-sines-shape__body six-sines-editor {
+  display: block;
+  min-width: 1180px;
+  width: 100%;
+  height: 100%;
+}
+
+.project-ui-error {
+  padding: 6px 12px;
+  background: #4a1d1d;
+  color: #ffd9d9;
+  font: 13px/1.4 system-ui, sans-serif;
+  border-bottom: 1px solid #7a2e2e;
+}
+
+.project-entity-shape {
+  overflow: hidden;
+  border: 1px solid rgba(236, 244, 239, 0.18);
+  border-radius: 8px;
+  color: #eef5f1;
+  background: #111412;
+  pointer-events: all;
+}

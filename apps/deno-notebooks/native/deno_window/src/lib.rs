@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ptr;
 use std::slice;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -15,6 +16,65 @@ use winit::raw_window_handle_05::{
 };
 use winit::window::{Window, WindowId};
 
+#[cfg(target_os = "macos")]
+use wry::WebViewBuilder;
+
+// ── CAMetalLayer pre-install (macOS) ─────────────────────────────────────
+//
+// GPU windows get a CAMetalLayer as their content view's root layer before
+// Deno creates the WebGPU surface. wgpu (via raw-window-metal) then uses that
+// layer as-is. Without it, raw-window-metal adds its own sublayer and syncs it
+// with key-value observing, and that path panics on Deno 2.9.0+ (Apple
+// Silicon): those builds load Foundation lazily through lzld, which stubs
+// NSKeyValueChangeNewKey to NULL ("requested change dictionary did not
+// contain `NSKeyValueChangeNewKey`"). See "Deno version pin" in the repo
+// README. Because nothing observes the layer for us, contentsScale is
+// updated here on ScaleFactorChanged; AppKit keeps the root layer's bounds
+// in step with the view.
+#[cfg(target_os = "macos")]
+mod metal_layer {
+    use objc::runtime::{Object, YES};
+    use objc::{class, msg_send, sel, sel_impl};
+    use winit::raw_window_handle_05::{HasRawWindowHandle, RawWindowHandle};
+    use winit::window::Window;
+
+    // CAMetalLayer lives in QuartzCore; link it so class!(CAMetalLayer)
+    // resolves even when the host process hasn't loaded the framework.
+    #[link(name = "QuartzCore", kind = "framework")]
+    extern "C" {}
+
+    fn ns_view(window: &Window) -> Option<*mut Object> {
+        match window.raw_window_handle() {
+            RawWindowHandle::AppKit(handle) if !handle.ns_view.is_null() => {
+                Some(handle.ns_view as *mut Object)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn install(window: &Window) {
+        let Some(view) = ns_view(window) else { return };
+        unsafe {
+            let layer: *mut Object = msg_send![class!(CAMetalLayer), layer];
+            let _: () = msg_send![layer, setContentsScale: window.scale_factor()];
+            // Layer-hosting: assign the layer before enabling wantsLayer so
+            // AppKit uses ours instead of creating a backing layer.
+            let _: () = msg_send![view, setLayer: layer];
+            let _: () = msg_send![view, setWantsLayer: YES];
+        }
+    }
+
+    pub fn update_scale(window: &Window, scale_factor: f64) {
+        let Some(view) = ns_view(window) else { return };
+        unsafe {
+            let layer: *mut Object = msg_send![view, layer];
+            if !layer.is_null() {
+                let _: () = msg_send![layer, setContentsScale: scale_factor];
+            }
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(tag = "type")]
 enum WindowEventRecord {
@@ -23,7 +83,12 @@ enum WindowEventRecord {
     #[serde(rename = "mouse_move")]
     MouseMove { x: f64, y: f64 },
     #[serde(rename = "mouse_button")]
-    MouseButton { button: u32, down: bool, x: f64, y: f64 },
+    MouseButton {
+        button: u32,
+        down: bool,
+        x: f64,
+        y: f64,
+    },
     #[serde(rename = "scroll")]
     Scroll { dx: f64, dy: f64 },
     #[serde(rename = "resize")]
@@ -38,6 +103,12 @@ struct WindowSlot {
     width: u32,
     height: u32,
     title: String,
+    hide_on_close: bool,
+    // Native surface owners must release their surface before the NSWindow.
+    defer_close: bool,
+    /// GPU render windows get a pre-installed CAMetalLayer (macOS); webview
+    /// panel windows don't.
+    metal_layer: bool,
     events: Vec<WindowEventRecord>,
     last_cursor: (f64, f64),
     should_close: bool,
@@ -60,13 +131,16 @@ impl WindowSlot {
         }
     }
 
-    fn new(width: u32, height: u32, title: String) -> Self {
+    fn new(width: u32, height: u32, title: String, hide_on_close: bool, metal_layer: bool) -> Self {
         Self {
             window: None,
             window_id: None,
             width,
             height,
             title,
+            hide_on_close,
+            defer_close: false,
+            metal_layer,
             events: Vec::new(),
             last_cursor: (0.0, 0.0),
             should_close: false,
@@ -93,6 +167,10 @@ impl WindowSlot {
                 self.cached_display_handle = handle_from_raw_display(display_handle);
                 self.cached_window_system = window_system_id(win_handle, display_handle);
                 self.debug_log_handles("ensure_window");
+                #[cfg(target_os = "macos")]
+                if self.metal_layer {
+                    metal_layer::install(&window);
+                }
                 self.window = Some(window);
             }
             Err(err) => {
@@ -106,7 +184,8 @@ impl WindowSlot {
             Key::Character(text) => text.to_string(),
             other => format!("{other:?}"),
         };
-        self.events.push(WindowEventRecord::Key { key: key_str, down });
+        self.events
+            .push(WindowEventRecord::Key { key: key_str, down });
     }
 
     fn record_resize(&mut self, size: PhysicalSize<u32>) {
@@ -141,9 +220,19 @@ impl MultiWindowApp {
         }
     }
 
-    fn insert_window(&mut self, token: u64, width: u32, height: u32, title: String) {
-        self.windows
-            .insert(token, WindowSlot::new(width, height, title));
+    fn insert_window(
+        &mut self,
+        token: u64,
+        width: u32,
+        height: u32,
+        title: String,
+        hide_on_close: bool,
+        metal_layer: bool,
+    ) {
+        self.windows.insert(
+            token,
+            WindowSlot::new(width, height, title, hide_on_close, metal_layer),
+        );
     }
 
     fn remove_window(&mut self, token: u64) {
@@ -207,16 +296,31 @@ impl ApplicationHandler for MultiWindowApp {
 
         match event {
             WindowEvent::CloseRequested => {
+                if slot.hide_on_close {
+                    if let Some(window) = slot.window.as_ref() {
+                        window.set_visible(false);
+                    }
+                    return;
+                }
                 slot.events.push(WindowEventRecord::Close);
                 slot.should_close = true;
+                if slot.defer_close {
+                    return;
+                }
                 if let Some(existing_id) = slot.window_id.take() {
                     self.window_id_to_token.remove(&existing_id);
                 }
                 slot.window = None;
             }
             WindowEvent::Resized(size) => slot.record_resize(size),
-            WindowEvent::ScaleFactorChanged { .. } => {
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 if let Some(window) = slot.window.as_ref() {
+                    #[cfg(target_os = "macos")]
+                    if slot.metal_layer {
+                        metal_layer::update_scale(window, scale_factor);
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    let _ = scale_factor;
                     slot.record_resize(window.inner_size());
                 }
             }
@@ -301,6 +405,12 @@ fn pump_once(runtime: &mut GlobalRuntime) {
         .pump_app_events(Some(Duration::ZERO), &mut runtime.app);
 }
 
+fn pump_for_webview(runtime: &mut GlobalRuntime) {
+    let _ = runtime
+        .event_loop
+        .pump_app_events(Some(Duration::from_millis(1)), &mut runtime.app);
+}
+
 fn state_token(state: *mut WindowState) -> Option<u64> {
     if state.is_null() {
         return None;
@@ -372,7 +482,9 @@ pub extern "C" fn create_window(
 
         let runtime = runtime_opt.as_mut().expect("runtime initialized");
         let token = runtime.allocate_token();
-        runtime.app.insert_window(token, width, height, title);
+        runtime
+            .app
+            .insert_window(token, width, height, title, false, true);
 
         // Pump a few times to ensure the window is created.
         for _ in 0..8 {
@@ -584,3 +696,454 @@ pub extern "C" fn destroy_window(state: *mut WindowState) {
         drop(Box::from_raw(state));
     }
 }
+
+#[no_mangle]
+pub extern "C" fn set_window_deferred_close(state: *mut WindowState, enabled: u32) {
+    let Some(token) = state_token(state) else { return; };
+    GLOBAL_RUNTIME.with(|cell| {
+        if let Some(runtime) = cell.borrow_mut().as_mut() {
+            if let Some(slot) = runtime.app.windows.get_mut(&token) {
+                slot.defer_close = enabled != 0;
+            }
+        }
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn window_should_close(state: *mut WindowState) -> u32 {
+    let Some(token) = state_token(state) else { return 1; };
+    GLOBAL_RUNTIME.with(|cell| {
+        cell.borrow().as_ref()
+            .and_then(|runtime| runtime.app.windows.get(&token))
+            .map(|slot| u32::from(slot.should_close)).unwrap_or(1)
+    })
+}
+
+// ── Webview (wry) FFI ──────────────────────────────────────────────────
+//
+// GPU windows cannot host a child WKWebView on macOS once WebGPU installs a
+// CAMetalLayer. Instead, create a second ordinary winit window and attach the
+// webview as a child of that window's content view. This keeps winit in charge
+// of the native window while avoiding wry's non-child `build()` path, which
+// replaces the content view and conflicts with winit.
+
+#[cfg(target_os = "macos")]
+mod webview_impl {
+    use super::*;
+    use wry::{
+        dpi::{LogicalPosition as WebLogicalPosition, LogicalSize as WebLogicalSize},
+        Rect,
+    };
+
+    pub struct WebviewState {
+        pub token: u64,
+        pub webview: Option<wry::WebView>,
+        pub ipc_buffer: Arc<Mutex<Vec<String>>>,
+    }
+
+    fn bounds_for_size(width: u32, height: u32) -> Rect {
+        Rect {
+            position: WebLogicalPosition::new(0, 0).into(),
+            size: WebLogicalSize::new(width, height).into(),
+        }
+    }
+
+    fn logical_size_for_window(window: &Window, fallback_width: u32, fallback_height: u32) -> (u32, u32) {
+        let size = window.inner_size();
+        if size.width == 0 || size.height == 0 {
+            return (fallback_width, fallback_height);
+        }
+        let logical = size.to_logical::<u32>(window.scale_factor());
+        (logical.width, logical.height)
+    }
+
+    pub fn create(
+        runtime: &mut GlobalRuntime,
+        html: &str,
+        width: u32,
+        height: u32,
+        title: &str,
+    ) -> Option<Box<WebviewState>> {
+        let webview_debug = std::env::var("DENO_WINDOW_WEBVIEW_DEBUG").is_ok();
+        let token = runtime.allocate_token();
+        runtime
+            .app
+            .insert_window(token, width, height, title.to_string(), true, false);
+
+        for _ in 0..8 {
+            pump_once(runtime);
+            if runtime.app.window_is_ready(token) {
+                break;
+            }
+        }
+
+        let ipc_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let ipc_buf_clone = ipc_buffer.clone();
+        let result = {
+            let Some(slot) = runtime.app.windows.get(&token) else {
+                eprintln!("[deno_window] create_webview: panel slot missing");
+                runtime.app.remove_window(token);
+                return None;
+            };
+            let Some(window) = slot.window.as_ref() else {
+                eprintln!("[deno_window] create_webview: panel window was not created");
+                runtime.app.remove_window(token);
+                return None;
+            };
+
+            let (logical_width, logical_height) = logical_size_for_window(window, width, height);
+            let bounds = bounds_for_size(logical_width, logical_height);
+
+            let mut builder =
+                WebViewBuilder::new()
+                    .with_bounds(bounds)
+                    .with_ipc_handler(move |request| {
+                        if let Ok(mut buf) = ipc_buf_clone.lock() {
+                            buf.push(request.body().to_string());
+                        }
+                    });
+
+            if webview_debug {
+                builder = builder.with_on_page_load_handler(|event, url| {
+                    let label = match event {
+                        wry::PageLoadEvent::Started => "started",
+                        wry::PageLoadEvent::Finished => "finished",
+                    };
+                    eprintln!("[deno_window] webview page load: {label} {url}");
+                });
+            }
+
+            builder.with_html(html).build_as_child(window)
+        };
+
+        match result {
+            Ok(webview) => {
+                let _ = webview.focus();
+                pump_once(runtime);
+                Some(Box::new(WebviewState {
+                    token,
+                    webview: Some(webview),
+                    ipc_buffer,
+                }))
+            }
+            Err(err) => {
+                eprintln!("[deno_window] create_webview: build failed: {err}");
+                runtime.app.remove_window(token);
+                None
+            }
+        }
+    }
+
+    pub fn sync_bounds(runtime: &mut GlobalRuntime, state: &WebviewState) {
+        let Some(webview) = state.webview.as_ref() else {
+            return;
+        };
+        let Some(slot) = runtime.app.windows.get_mut(&state.token) else {
+            return;
+        };
+        let Some(window) = slot.window.as_ref() else {
+            return;
+        };
+
+        let (logical_width, logical_height) = logical_size_for_window(window, slot.width, slot.height);
+        slot.width = logical_width;
+        slot.height = logical_height;
+
+        let _ = webview.set_bounds(bounds_for_size(logical_width, logical_height));
+    }
+
+    pub fn set_window_size(runtime: &mut GlobalRuntime, state: &WebviewState, width: u32, height: u32) {
+        let Some(slot) = runtime.app.windows.get_mut(&state.token) else {
+            return;
+        };
+        let Some(window) = slot.window.as_ref() else {
+            return;
+        };
+
+        slot.width = width;
+        slot.height = height;
+        let _ = window.request_inner_size(LogicalSize::new(width as f64, height as f64));
+    }
+
+    pub fn set_window_visible(runtime: &mut GlobalRuntime, token: u64, visible: bool) {
+        let Some(slot) = runtime.app.windows.get(&token) else {
+            return;
+        };
+        let Some(window) = slot.window.as_ref() else {
+            return;
+        };
+
+        window.set_visible(visible);
+        if visible {
+            window.focus_window();
+        }
+    }
+
+    pub fn destroy(runtime: &mut GlobalRuntime, token: u64) {
+        runtime.app.remove_window(token);
+    }
+}
+
+#[cfg(target_os = "macos")]
+use webview_impl::WebviewState;
+
+#[cfg(not(target_os = "macos"))]
+pub struct WebviewState;
+
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub extern "C" fn create_webview(
+    _parent_state: *mut WindowState,
+    html_ptr: *const u8,
+    html_len: u32,
+    width: u32,
+    height: u32,
+    title_ptr: *const u8,
+    title_len: u32,
+) -> *mut WebviewState {
+    if html_ptr.is_null() || html_len == 0 {
+        return ptr::null_mut();
+    }
+    let html = unsafe {
+        let slice = slice::from_raw_parts(html_ptr, html_len as usize);
+        match std::str::from_utf8(slice) {
+            Ok(s) => s,
+            Err(_) => return ptr::null_mut(),
+        }
+    };
+    let title = if title_ptr.is_null() || title_len == 0 {
+        "Controls"
+    } else {
+        let slice = unsafe { slice::from_raw_parts(title_ptr, title_len as usize) };
+        std::str::from_utf8(slice).unwrap_or("Controls")
+    };
+
+    GLOBAL_RUNTIME.with(|cell| {
+        let mut runtime_opt = cell.borrow_mut();
+        if runtime_opt.is_none() {
+            let event_loop = match EventLoop::new() {
+                Ok(loop_handle) => loop_handle,
+                Err(err) => {
+                    eprintln!("Failed to create event loop: {err}");
+                    return ptr::null_mut();
+                }
+            };
+            *runtime_opt = Some(GlobalRuntime::new(event_loop));
+        }
+
+        let runtime = runtime_opt.as_mut().expect("runtime initialized");
+        match webview_impl::create(runtime, html, width, height, title) {
+            Some(state) => Box::into_raw(state),
+            None => ptr::null_mut(),
+        }
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+#[no_mangle]
+pub extern "C" fn create_webview(
+    _parent_state: *mut WindowState,
+    _html_ptr: *const u8,
+    _html_len: u32,
+    _width: u32,
+    _height: u32,
+    _title_ptr: *const u8,
+    _title_len: u32,
+) -> *mut WebviewState {
+    ptr::null_mut()
+}
+
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub extern "C" fn webview_evaluate_script(
+    state: *mut WebviewState,
+    js_ptr: *const u8,
+    js_len: u32,
+) -> u32 {
+    if state.is_null() || js_ptr.is_null() || js_len == 0 {
+        return 0;
+    }
+    let js = unsafe {
+        let slice = slice::from_raw_parts(js_ptr, js_len as usize);
+        match std::str::from_utf8(slice) {
+            Ok(s) => s,
+            Err(_) => return 0,
+        }
+    };
+    let wv_state = unsafe { &*state };
+    let Some(webview) = wv_state.webview.as_ref() else {
+        return 0;
+    };
+    match webview.evaluate_script(js) {
+        Ok(()) => 1,
+        Err(err) => {
+            eprintln!("[deno_window] evaluate_script failed: {err}");
+            0
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[no_mangle]
+pub extern "C" fn webview_evaluate_script(
+    _state: *mut WebviewState,
+    _js_ptr: *const u8,
+    _js_len: u32,
+) -> u32 {
+    0
+}
+
+#[cfg(not(target_os = "macos"))]
+#[no_mangle]
+pub extern "C" fn webview_poll_ipc(
+    _state: *mut WebviewState,
+    _buf_ptr: *mut u8,
+    _buf_cap: u32,
+) -> u32 {
+    0
+}
+
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub extern "C" fn webview_poll_ipc(
+    state: *mut WebviewState,
+    buf_ptr: *mut u8,
+    buf_cap: u32,
+) -> u32 {
+    if state.is_null() || buf_ptr.is_null() || buf_cap == 0 {
+        return 0;
+    }
+    let wv_state = unsafe { &*state };
+    let mut ipc = match wv_state.ipc_buffer.lock() {
+        Ok(guard) => guard,
+        Err(_) => return 0,
+    };
+    if ipc.is_empty() {
+        return 0;
+    }
+    let joined = ipc.join("\n");
+    ipc.clear();
+    drop(ipc);
+    let bytes = joined.as_bytes();
+    if bytes.len() > buf_cap as usize {
+        return 0;
+    }
+    unsafe {
+        ptr::copy_nonoverlapping(bytes.as_ptr(), buf_ptr, bytes.len());
+    }
+    bytes.len() as u32
+}
+
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub extern "C" fn webview_set_visible(state: *mut WebviewState, visible: u32) {
+    if state.is_null() {
+        return;
+    }
+    let wv_state = unsafe { &*state };
+    GLOBAL_RUNTIME.with(|cell| {
+        let mut runtime_opt = cell.borrow_mut();
+        let Some(runtime) = runtime_opt.as_mut() else {
+            return;
+        };
+        let should_show = visible != 0;
+        webview_impl::set_window_visible(runtime, wv_state.token, should_show);
+        if should_show {
+            if let Some(webview) = wv_state.webview.as_ref() {
+                let _ = webview.focus();
+            }
+        }
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+#[no_mangle]
+pub extern "C" fn webview_set_visible(_state: *mut WebviewState, _visible: u32) {}
+
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub extern "C" fn webview_pump() {
+    GLOBAL_RUNTIME.with(|cell| {
+        let mut runtime_opt = cell.borrow_mut();
+        let Some(runtime) = runtime_opt.as_mut() else {
+            return;
+        };
+        pump_for_webview(runtime);
+    });
+
+    unsafe {
+        core_foundation::runloop::CFRunLoopRunInMode(
+            core_foundation::runloop::kCFRunLoopDefaultMode,
+            0.002,
+            0,
+        );
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[no_mangle]
+pub extern "C" fn webview_pump() {}
+
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub extern "C" fn webview_sync_bounds(state: *mut WebviewState) {
+    if state.is_null() {
+        return;
+    }
+    let wv_state = unsafe { &*state };
+    GLOBAL_RUNTIME.with(|cell| {
+        let mut runtime_opt = cell.borrow_mut();
+        let Some(runtime) = runtime_opt.as_mut() else {
+            return;
+        };
+        webview_impl::sync_bounds(runtime, wv_state);
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+#[no_mangle]
+pub extern "C" fn webview_sync_bounds(_state: *mut WebviewState) {}
+
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub extern "C" fn webview_set_size(state: *mut WebviewState, width: u32, height: u32) {
+    if state.is_null() || width == 0 || height == 0 {
+        return;
+    }
+    let wv_state = unsafe { &*state };
+    GLOBAL_RUNTIME.with(|cell| {
+        let mut runtime_opt = cell.borrow_mut();
+        let Some(runtime) = runtime_opt.as_mut() else {
+            return;
+        };
+        webview_impl::set_window_size(runtime, wv_state, width, height);
+        pump_for_webview(runtime);
+        webview_impl::sync_bounds(runtime, wv_state);
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+#[no_mangle]
+pub extern "C" fn webview_set_size(_state: *mut WebviewState, _width: u32, _height: u32) {}
+
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub extern "C" fn webview_destroy(state: *mut WebviewState) {
+    if state.is_null() {
+        return;
+    }
+    let mut wv_state = unsafe { Box::from_raw(state) };
+    let token = wv_state.token;
+    wv_state.webview = None;
+    GLOBAL_RUNTIME.with(|cell| {
+        let mut runtime_opt = cell.borrow_mut();
+        let Some(runtime) = runtime_opt.as_mut() else {
+            return;
+        };
+        webview_impl::destroy(runtime, token);
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+#[no_mangle]
+pub extern "C" fn webview_destroy(_state: *mut WebviewState) {}

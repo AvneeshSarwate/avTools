@@ -1,0 +1,12 @@
+{
+  "name": "@avtools/tweakpane-client",
+  "version": "0.0.0",
+  "private": true,
+  "main": "dist/tweakpane-client.js",
+  "scripts": {
+    "build": "cd ../../apps/browser-projections && npm run buildTweakpane"
+  },
+  "dependencies": {
+    "tweakpane": "^4.0.5"
+  }
+}

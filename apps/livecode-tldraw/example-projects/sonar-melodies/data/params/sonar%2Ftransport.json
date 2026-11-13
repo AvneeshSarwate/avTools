@@ -1,0 +1,54 @@
+{
+  "type": "params",
+  "name": "sonar/transport",
+  "savedAt": "2026-10-05T20:11:27.233Z",
+  "values": {
+    "bpm": 120,
+    "baseOutput": "IAC Driver Bus 1",
+    "delayOutput": "IAC Driver Bus 2",
+    "channel": 0,
+    "dryRun": false,
+    "recordInput": "",
+    "recordQuantize": 0,
+    "fitAfterRecording": true
+  },
+  "meta": {
+    "bpm": {
+      "min": 20,
+      "max": 300
+    },
+    "channel": {
+      "min": 0,
+      "max": 15,
+      "step": 1
+    },
+    "recordInput": {
+      "label": "record input",
+      "options": {
+        "(none)": "",
+        "IAC Driver Bus 1": "IAC Driver Bus 1",
+        "IAC Driver Bus 2": "IAC Driver Bus 2",
+        "IAC Driver Bus 3": "IAC Driver Bus 3",
+        "IAC Driver Bus 4": "IAC Driver Bus 4",
+        "IAC Driver Bus 5": "IAC Driver Bus 5",
+        "IAC Driver Bus 6": "IAC Driver Bus 6",
+        "IAC Driver Bus 7": "IAC Driver Bus 7",
+        "IAC Driver Bus 8": "IAC Driver Bus 8",
+        "Arturia BeatStep": "Arturia BeatStep",
+        "LinnStrument MIDI": "LinnStrument MIDI"
+      }
+    },
+    "recordQuantize": {
+      "label": "record quantize",
+      "options": {
+        "off": 0,
+        "1/4": 1,
+        "1/8": 0.5,
+        "1/16": 0.25
+      }
+    },
+    "fitAfterRecording": {
+      "label": "fit roll views after recording"
+    }
+  }
+}

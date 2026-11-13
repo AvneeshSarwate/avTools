@@ -7,7 +7,7 @@ defineProps<{
 </script>
 
 <template>
-  <div class="track-list">
+  <div class="track-list" data-component="TrackList">
     <TrackRow
       v-for="trackId in trackIds"
       :key="trackId"
@@ -28,7 +28,7 @@ defineProps<{
 .empty-message {
   padding: 20px;
   text-align: center;
-  color: #666;
+  color: var(--ae-muted);
   font-size: 14px;
 }
 </style>

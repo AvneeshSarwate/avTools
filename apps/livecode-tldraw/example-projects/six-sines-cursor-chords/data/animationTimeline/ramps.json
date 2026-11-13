@@ -1,0 +1,211 @@
+{
+  "type": "animationTimeline",
+  "name": "cursor-chords/ramps",
+  "savedAt": "2026-09-12T00:00:00Z",
+  "data": {
+    "tracks": [
+      {
+        "id": "ramp-0",
+        "name": "MSEG 1",
+        "fieldType": "number",
+        "low": -1,
+        "high": 1,
+        "elementData": [
+          {
+            "id": "ramp-0-0",
+            "time": 0.0,
+            "value": 0
+          },
+          {
+            "id": "ramp-0-1",
+            "time": 0.47,
+            "value": -0.001
+          },
+          {
+            "id": "ramp-0-2",
+            "time": 0.94,
+            "value": -0.831
+          },
+          {
+            "id": "ramp-0-3",
+            "time": 1.41,
+            "value": -0.148
+          },
+          {
+            "id": "ramp-0-4",
+            "time": 1.88,
+            "value": -0.887
+          },
+          {
+            "id": "ramp-0-5",
+            "time": 2.35,
+            "value": -0.409
+          },
+          {
+            "id": "ramp-0-6",
+            "time": 2.82,
+            "value": 0.401
+          },
+          {
+            "id": "ramp-0-7",
+            "time": 3.29,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "id": "ramp-1",
+        "name": "MSEG 2",
+        "fieldType": "number",
+        "low": -1,
+        "high": 1,
+        "elementData": [
+          {
+            "id": "ramp-1-0",
+            "time": 0.0,
+            "value": 0
+          },
+          {
+            "id": "ramp-1-1",
+            "time": 0.4671,
+            "value": -0.602
+          },
+          {
+            "id": "ramp-1-2",
+            "time": 0.9343,
+            "value": 0.394
+          },
+          {
+            "id": "ramp-1-3",
+            "time": 1.4014,
+            "value": -0.978
+          },
+          {
+            "id": "ramp-1-4",
+            "time": 1.8686,
+            "value": -0.282
+          },
+          {
+            "id": "ramp-1-5",
+            "time": 2.3357,
+            "value": 0.765
+          },
+          {
+            "id": "ramp-1-6",
+            "time": 2.8029,
+            "value": -0.939
+          },
+          {
+            "id": "ramp-1-7",
+            "time": 3.27,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "id": "ramp-2",
+        "name": "MSEG 3",
+        "fieldType": "number",
+        "low": -1,
+        "high": 1,
+        "elementData": [
+          {
+            "id": "ramp-2-0",
+            "time": 0.0,
+            "value": 0
+          },
+          {
+            "id": "ramp-2-1",
+            "time": 0.5486,
+            "value": -0.274
+          },
+          {
+            "id": "ramp-2-2",
+            "time": 1.0971,
+            "value": -0.034
+          },
+          {
+            "id": "ramp-2-3",
+            "time": 1.6457,
+            "value": 0.235
+          },
+          {
+            "id": "ramp-2-4",
+            "time": 2.1943,
+            "value": -0.534
+          },
+          {
+            "id": "ramp-2-5",
+            "time": 2.7429,
+            "value": -0.973
+          },
+          {
+            "id": "ramp-2-6",
+            "time": 3.2914,
+            "value": -0.845
+          },
+          {
+            "id": "ramp-2-7",
+            "time": 3.84,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "id": "ramp-3",
+        "name": "MSEG 4",
+        "fieldType": "number",
+        "low": -1,
+        "high": 1,
+        "elementData": [
+          {
+            "id": "ramp-3-0",
+            "time": 0.0,
+            "value": 0
+          },
+          {
+            "id": "ramp-3-1",
+            "time": 0.46,
+            "value": 0.528
+          },
+          {
+            "id": "ramp-3-2",
+            "time": 0.92,
+            "value": -0.836
+          },
+          {
+            "id": "ramp-3-3",
+            "time": 1.38,
+            "value": 0.453
+          },
+          {
+            "id": "ramp-3-4",
+            "time": 1.84,
+            "value": -0.967
+          },
+          {
+            "id": "ramp-3-5",
+            "time": 2.3,
+            "value": -0.573
+          },
+          {
+            "id": "ramp-3-6",
+            "time": 2.76,
+            "value": 0.814
+          },
+          {
+            "id": "ramp-3-7",
+            "time": 3.22,
+            "value": 0
+          }
+        ]
+      }
+    ],
+    "trackOrder": [
+      "ramp-0",
+      "ramp-1",
+      "ramp-2",
+      "ramp-3"
+    ]
+  }
+}

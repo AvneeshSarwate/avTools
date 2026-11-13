@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 
-import type { NativeTextEngine, RasterizedGlyph } from "./ffi.ts";
+import type { TextEngine, RasterizedGlyph } from "./types.ts";
 
 export interface GlyphAtlasOptions {
   initialSize?: number;
@@ -171,7 +171,7 @@ export class GlyphAtlas {
     return this.texture.createView();
   }
 
-  ensureGlyph(key: bigint, engine: NativeTextEngine): GlyphAtlasEntry | null {
+  ensureGlyph(key: bigint, engine: TextEngine): GlyphAtlasEntry | null {
     const existing = this._entries.get(key);
     if (existing) {
       existing.lastUsedFrame = this._frameId;

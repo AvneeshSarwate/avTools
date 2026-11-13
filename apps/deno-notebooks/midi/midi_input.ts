@@ -23,10 +23,13 @@ import type {
 import type { MPEConfig } from "./mpe.ts";
 import { MPEInput } from "./mpe.ts";
 
+export const FLAG_RAW_CC = 1;
+
 export type MidiInputOptions = {
   rateHz?: number;
   flags?: number;
   keepAlive?: boolean;
+  rawCC?: boolean;
 };
 
 type Listener<T> = (event: T) => void;

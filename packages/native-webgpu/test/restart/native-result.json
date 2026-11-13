@@ -1,0 +1,24 @@
+{
+  "CHOP": {
+    "restart_p50_ms": 4.53267,
+    "restart_p95_ms": 6.86321,
+    "steady_p50_ms": 0.170708,
+    "memory_first_mib": 8.55188,
+    "memory_last_mib": 24.4551,
+    "memory_mid_mib": 24.2042
+  },
+  "TOP4": {
+    "restart_plus_frame_p50_ms": 24.1745,
+    "restart_plus_frame_p95_ms": 49.2344,
+    "steady_per_top_p50_ms": 1.10225,
+    "memory_warm_mib": 143.629,
+    "memory_last_mib": 143.785,
+    "memory_peak_mib": 223.426
+  },
+  "passed": true,
+  "plugins": [
+    "AvToolsSketch-fb99bddcf431.plugin",
+    "AvToolsChannels-ab5e3d6d5fef.plugin"
+  ],
+  "compiler": "9c2ef39d35ed"
+}
