@@ -2,7 +2,8 @@
 // React owns the wrapper, control panel, scrollbars, metadata panel and the
 // lifecycle; Konva is driven imperatively by core.ts exactly as in the Vue
 // version (visible-note culling, needsRedraw flag, one batchDraw per layer per
-// RAF frame). MPE pitch curves and expression lanes are not ported.
+// RAF frame). MPE pitch curves are drawn read-only; expression lanes and curve
+// editing are not ported. Live MIDI input is an overlay set through the handle.
 import {
   forwardRef,
   useCallback,
@@ -17,7 +18,7 @@ import {
 import { proxy, useSnapshot } from 'valtio'
 import './pianoRoll.css'
 import { ControlPanel } from './ControlPanel'
-import type { JsonObject, PianoRollHandle, PianoRollNote, PianoRollProps, PianoRollView, PlayheadMarker } from './types'
+import type { JsonObject, LiveInput, PianoRollHandle, PianoRollNote, PianoRollProps, PianoRollView, PlayheadMarker } from './types'
 import { createPianoRollState, type NoteData, type PianoRollState } from './state'
 import {
   initializeLayers,
@@ -28,9 +29,11 @@ import {
   renderResizeHandles,
   updateQueuePlayheadPosition,
   updatePlayheadMarkers,
-  mutateSelection
+  mutateSelection,
+  captureState
 } from './core'
 import { cloneNote, executeOverlapChanges } from './utils'
+import { invalidateNoteIndex } from './noteIndex'
 import {
   applyHorizontalZoom,
   applyVerticalZoom,
@@ -521,7 +524,29 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
         })
         state.needsRedraw = true
       },
-      focus: () => wrapperRef.current?.focus({ preventScroll: true })
+      focus: () => wrapperRef.current?.focus({ preventScroll: true }),
+      setLiveInput: (input: LiveInput) => {
+        const current = state.liveInput
+        // Idle input sends empty overlays every tick: redraw only on change.
+        if (current.keys.length === 0 && current.notes.length === 0 && input.keys.length === 0 && input.notes.length === 0) return
+        state.liveInput = input
+        state.dirty.overlay = true
+      },
+      commitExternalEdit: (label, before, after) => {
+        const stack = state.command.stack
+        const snapshotOf = (notes: PianoRollNote[]) =>
+          JSON.stringify({ notes: notes.map((note) => [note.id, cloneNote(note)]), selection: [] })
+        state.notes = new Map(after.map((note) => [note.id, cloneNote(note)]))
+        for (const id of Array.from(state.selection.selectedIds)) {
+          if (!state.notes.has(id)) state.selection.selectedIds.delete(id)
+        }
+        invalidateNoteIndex(state)
+        state.needsRedraw = true
+        controllers.enforceScrollBounds()
+        // pushCommand emits the new notes through onNotesChange.
+        if (stack) stack.pushCommand(label, snapshotOf(before), captureState(state))
+        else controllers.syncUi()
+      }
     }),
     [controllers, state]
   )

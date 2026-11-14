@@ -525,6 +525,13 @@ function drawNotes(state: PianoRollState, ctx: CanvasRenderingContext2D) {
       ctx.strokeRect(x, y, width, noteHeight)
     }
 
+    const bendPoints = note.mpePitch?.points
+    if (bendPoints && bendPoints.length > 0) {
+      setAlpha(opacity)
+      drawPitchCurve(ctx, x, y + noteHeight / 2, width, noteHeight, bendPoints, labelColor(fill))
+      lineWidth = -1
+    }
+
     if (!showText) return
     setAlpha(opacity)
     const textFill = labelColor(fill)
@@ -576,6 +583,91 @@ function drawNotes(state: PianoRollState, ctx: CanvasRenderingContext2D) {
   }
 }
 
+/** A note's MPE pitch curve: a line from its row centre, one row per semitone. */
+function drawPitchCurve(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  centerY: number,
+  width: number,
+  noteHeight: number,
+  points: ReadonlyArray<{ time: number; pitchOffset: number }>,
+  color: string
+) {
+  ctx.strokeStyle = color
+  ctx.lineWidth = 1.5
+  ctx.beginPath()
+  if (points[0]!.time > 0) ctx.moveTo(x, centerY - points[0]!.pitchOffset * noteHeight)
+  for (let i = 0; i < points.length; i++) {
+    const point = points[i]!
+    const px = x + point.time * width
+    const py = centerY - point.pitchOffset * noteHeight
+    if (i === 0 && point.time <= 0) ctx.moveTo(px, py)
+    else ctx.lineTo(px, py)
+  }
+  const last = points[points.length - 1]!
+  if (last.time < 1) ctx.lineTo(x + width, centerY - last.pitchOffset * noteHeight)
+  ctx.stroke()
+}
+
+const LIVE_KEY_COLOR = '255, 82, 82'
+const LIVE_NOTE_FILL = '#ff5252'
+const LIVE_BEND_TICK = 28
+
+/** Held input keys (row highlights) and notes being recorded (growing notes). */
+function drawLiveInput(state: PianoRollState, ctx: CanvasRenderingContext2D, stageWidth: number) {
+  const { keys, notes } = state.liveInput
+  if (keys.length === 0 && notes.length === 0) return
+  const { scrollX, scrollY } = state.viewport
+  const { quarterNoteWidth, noteHeight } = state.grid
+
+  for (const key of keys) {
+    const y = (127 - key.pitch) * noteHeight - scrollY
+    const strength = 0.12 + 0.25 * (key.velocity / 127)
+    ctx.fillStyle = `rgba(${LIVE_KEY_COLOR}, ${strength})`
+    ctx.fillRect(0, y, stageWidth, noteHeight)
+    ctx.fillStyle = `rgb(${LIVE_KEY_COLOR})`
+    ctx.fillRect(0, y, 6, noteHeight)
+    if (Math.abs(key.pitchOffset) > 0.02) {
+      // The bend as a short tick from the key's edge marker to where it sounds.
+      const bentY = y + noteHeight / 2 - key.pitchOffset * noteHeight
+      ctx.strokeStyle = `rgb(${LIVE_KEY_COLOR})`
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(3, y + noteHeight / 2)
+      ctx.lineTo(3, bentY)
+      ctx.lineTo(LIVE_BEND_TICK, bentY)
+      ctx.stroke()
+    }
+  }
+
+  for (const note of notes) {
+    const x = note.position * quarterNoteWidth - scrollX
+    const y = (127 - note.pitch) * noteHeight - scrollY
+    const width = Math.max(2, note.duration * quarterNoteWidth)
+    ctx.globalAlpha = 0.55 + 0.45 * (note.velocity / 127)
+    ctx.fillStyle = LIVE_NOTE_FILL
+    ctx.fillRect(x, y, width, noteHeight)
+    ctx.globalAlpha = 1
+    ctx.strokeStyle = '#000'
+    ctx.lineWidth = 1
+    ctx.strokeRect(x, y, width, noteHeight)
+    const curve = note.curve
+    if (curve && curve.length > 1) {
+      const centerY = y + noteHeight / 2
+      ctx.strokeStyle = '#fff'
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      for (let i = 0; i < curve.length; i++) {
+        const px = curve[i]!.position * quarterNoteWidth - scrollX
+        const py = centerY - curve[i]!.pitchOffset * noteHeight
+        if (i === 0) ctx.moveTo(px, py)
+        else ctx.lineTo(px, py)
+      }
+      ctx.stroke()
+    }
+  }
+}
+
 function drawOverlay(state: PianoRollState, ctx: CanvasRenderingContext2D) {
   const stage = state.stage
   if (!stage) return
@@ -583,6 +675,8 @@ function drawOverlay(state: PianoRollState, ctx: CanvasRenderingContext2D) {
   const { scrollX } = state.viewport
   const { quarterNoteWidth } = state.grid
   const stageHeight = stage.height()
+
+  drawLiveInput(state, ctx, stage.width())
 
   // Marquee selection rectangle
   const { marqueeStart, marqueeCurrent, isMarqueeSelecting } = state.interaction

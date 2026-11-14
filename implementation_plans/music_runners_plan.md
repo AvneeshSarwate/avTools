@@ -246,6 +246,38 @@ both cases, so the headroom is for larger pieces, not a visible fix.
    leaves about 2.6 ms of unavoidable rect fill and stroke. Before/after
    screenshots under `demo/screenshots/` are pixel-identical.
 
+## Live input, recording and MPE (2026-11-14)
+
+Added per instance: a MIDI input selector, thru, Rec, an MPE output toggle and
+a bend range (shape props `midiInputName`, `midiThru`, `mpe`, `bendRange`, with
+a tldraw props migration so older projects load). Behaviour is in the app
+README; the decisions worth carrying into the livecode port:
+
+- **Data shape is livecode's.** Notes carry `mpePitch` / `mpePressure` /
+  `mpeTimbre` with `time` 0..1 across the note, as in
+  `packages/music-types/ableton_clip.ts` and the livecode recorder
+  (`apps/livecode-tldraw/example-projects/feature-midi-recording`). Capture
+  rules (per-channel tracking, values at note-on, thinning tolerances, rest
+  values) are copied from that recorder.
+- **Rec follows Ableton session view**, not livecode's take-replaces-roll
+  toggle: overdub at the loop position while playing, Play+overdub when idle
+  with notes, and a free take on an empty bank that sets the loop length to
+  whole bars on stop. Notes join the bank at their note-off so later passes
+  play them; the take is pushed as one undo step through a new roll handle
+  method (`commitExternalEdit`).
+- **Live preview is per-frame data**: held keys and growing notes go through
+  the roll handle (`setLiveInput`) from the existing playhead tick, never
+  through props or valtio, per the rendering rules above.
+- **MPE output**: one member channel per sounding note, pooled per output port
+  (`src/model/mpe.ts`), expression sent before note-on and then at ~100 Hz.
+  Off means channel 0 and no expression, so non-MPE synths are unaffected.
+- Open: no pressure/timbre lanes or curve editing in the roll; no MPE
+  Configuration Message is sent (the synth's zone and bend range are set on
+  the synth); thru keeps controller channels, which can overlap playback's
+  channels on a shared port; a free take does not start looping on stop.
+- Verified with `apps/music-runners/demo/recording.e2e.mjs` (fake Web MIDI in
+  headless Chromium); not yet with a physical MPE controller.
+
 ## Verification
 
 - `tsc --noEmit` in the app; `deno check` is not involved.

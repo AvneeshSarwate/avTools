@@ -70,6 +70,13 @@ label { display: inline-flex; align-items: center; gap: 4px; }
 .runner-shape__param output { min-width: 34px; font-variant-numeric: tabular-nums; }
 .runner-shape__transport { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .runner-shape__run { border-color: var(--mr-run); }
+.runner-shape__input { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.runner-shape__input label { display: inline-flex; gap: 4px; align-items: center; }
+.runner-shape__input select { max-width: 180px; }
+.runner-shape__bend { width: 44px; }
+.runner-shape__rec { border-color: var(--mr-error); color: var(--mr-error); }
+.runner-shape__rec--on { background: var(--mr-error); color: #fff; }
+.runner-shape__rec-state { color: var(--mr-error); font-variant-numeric: tabular-nums; }
 .runner-shape__state { padding: 1px 8px; border-radius: 10px; background: var(--mr-panel-2); color: var(--mr-muted); }
 .runner-shape__state--run { color: var(--mr-run); }
 .runner-shape__state--play { color: var(--mr-play); }

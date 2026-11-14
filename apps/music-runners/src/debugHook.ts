@@ -8,12 +8,13 @@ import { ensureMidi, midiStore } from "./store/midi";
 import { playbackStore, regenerate, startPlay, startRun, stopAll, stopInstance } from "./store/playback";
 import { projectStore, saveProject } from "./store/project";
 import { createInstance, listInstances } from "./shapes";
-import { sourceRollHandles } from "./runners/base/RunnerShape";
+import { sourceRollHandles } from "./store/rollHandles";
+import { recordingStore, setInstanceInput, startRecording, stopRecording, liveInputFor } from "./store/recording";
 
 export function installDebugHook(editor: Editor): void {
   (window as unknown as { __musicRunners: unknown }).__musicRunners = {
     editor,
-    stores: { banksStore, clockStore, midiStore, playbackStore, projectStore, eventLogStore },
+    stores: { banksStore, clockStore, midiStore, playbackStore, projectStore, eventLogStore, recordingStore },
     snapshot,
     banks: { createBank, setBankNotes, setBankLoopLength },
     clock: { setBpm, nowBeats },
@@ -22,6 +23,7 @@ export function installDebugHook(editor: Editor): void {
     playback: { startRun, startPlay, stopInstance, stopAll, regenerate },
     project: { saveProject },
     shapes: { createInstance, listInstances },
+    recording: { setInstanceInput, startRecording, stopRecording, liveInputFor },
     sourceRollHandles,
   };
 }

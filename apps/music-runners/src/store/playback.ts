@@ -22,6 +22,16 @@ import { getRootContext, nowBeats } from "./clock";
 import { getEditor } from "./editorRef";
 import { emitEvent, onEvent } from "./events";
 import { getOutput, getOutputSync } from "./midi";
+import {
+  allocateMemberChannel,
+  DEFAULT_BEND_RANGE,
+  pitchOffsetAt,
+  pressureAt,
+  releaseMemberChannel,
+  semitonesToBend,
+  TIMBRE_CC,
+  timbreAt,
+} from "../model/mpe";
 import { proxy } from "valtio";
 
 export type InstanceMode = "idle" | "play" | "run";
@@ -98,6 +108,10 @@ export interface InstanceProps {
   bankId: string;
   midiOutputName: string;
   params: Params;
+  /** Each note on its own member channel with its expression (MPE lower zone). */
+  mpe: boolean;
+  /** Semitones at full pitch bend, for recorded input and MPE output. */
+  bendRange: number;
 }
 
 function readInstanceProps(shapeId: string): InstanceProps | null {
@@ -111,6 +125,8 @@ function readInstanceProps(shapeId: string): InstanceProps | null {
     bankId: props.bankId,
     midiOutputName: props.midiOutputName ?? "",
     params: props.params ?? {},
+    mpe: props.mpe ?? false,
+    bendRange: props.bendRange ?? DEFAULT_BEND_RANGE,
   };
 }
 
@@ -122,6 +138,37 @@ function liveParams(shapeId: string, def: RunnerDefinition): Params {
 const NOTE_OFF_VELOCITY = 0;
 const CHANNEL = 0;
 
+/** Ticks per second for sending a held MPE note's curves. */
+const MPE_TICK_HZ = 100;
+
+/**
+ * Put a member channel into the note's state at `time` (0..1). Sent before the
+ * note-on (an MPE synth reads the channel's bend/pressure/timbre at note start)
+ * and then on every tick; values equal to the last ones sent are skipped.
+ */
+interface ChannelExpression {
+  bend: number;
+  pressure: number;
+  timbre: number;
+}
+
+function sendExpression(output: MidiOutput, channel: number, note: PianoRollNote, time: number, bendRange: number, last: ChannelExpression | null): ChannelExpression {
+  const next: ChannelExpression = {
+    bend: semitonesToBend(pitchOffsetAt(note, time), bendRange),
+    pressure: Math.round(pressureAt(note, time)),
+    timbre: Math.round(timbreAt(note, time)),
+  };
+  if (output.closed) return next;
+  if (!last || last.bend !== next.bend) output.pitchBend(channel, next.bend);
+  if (!last || last.pressure !== next.pressure) output.channelPressure(channel, next.pressure);
+  if (!last || last.timbre !== next.timbre) output.cc(channel, TIMBRE_CC, next.timbre);
+  return next;
+}
+
+function curveChanges(note: PianoRollNote): boolean {
+  return [note.mpePitch, note.mpePressure, note.mpeTimbre].some((curve) => (curve?.points.length ?? 0) > 1);
+}
+
 /** Audition a note on the instance's output (Ableton-style click preview). */
 export function auditionNote(shapeId: string, pitch: number, velocity: number, durationMs = 180): void {
   const props = readInstanceProps(shapeId);
@@ -130,9 +177,12 @@ export function auditionNote(shapeId: string, pitch: number, velocity: number, d
   const sounding = clampPitch(pitch + transpose);
   const play = (output: MidiOutput | null) => {
     if (!output || output.closed) return;
-    output.noteOn(CHANNEL, sounding, velocity);
+    const channel = props.mpe ? allocateMemberChannel(props.midiOutputName) : CHANNEL;
+    if (props.mpe) sendExpression(output, channel, { id: "", pitch, position: 0, duration: 1, velocity }, 0, props.bendRange, null);
+    output.noteOn(channel, sounding, velocity);
     window.setTimeout(() => {
-      if (!output.closed) output.noteOff(CHANNEL, sounding, NOTE_OFF_VELOCITY);
+      if (!output.closed) output.noteOff(channel, sounding, NOTE_OFF_VELOCITY);
+      if (props.mpe) releaseMemberChannel(props.midiOutputName, channel);
     }, durationMs);
   };
   const open = getOutputSync(props.midiOutputName);
@@ -141,18 +191,28 @@ export function auditionNote(shapeId: string, pitch: number, velocity: number, d
 }
 
 function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outputName: string): RunnerApi & { releaseAll(): void } {
-  // pitch -> token of the sounding that owns the note-off. A retrigger of a
-  // pitch replaces the token so the earlier branch's release becomes a no-op.
-  const active = new Map<number, number>();
+  // "channel:pitch" -> the sounding that owns the note-off. A retrigger of a
+  // key replaces the entry so the earlier branch's release becomes a no-op.
+  // Without MPE every note is on channel 0, so the key is the pitch; with MPE
+  // each note has its own channel and same-pitch notes may overlap.
+  const active = new Map<string, { token: number; channel: number; pitch: number }>();
   let lastPlayed: PianoRollNote | null = null;
   let playedCounter = 0;
   let soundingCounter = 0;
 
-  const send = (kind: "on" | "off", pitch: number, velocity: number) => {
+  const send = (kind: "on" | "off", channel: number, pitch: number, velocity: number) => {
     const output = getOutputSync(outputName);
     if (!output || output.closed) return;
-    if (kind === "on") output.noteOn(CHANNEL, pitch, velocity);
-    else output.noteOff(CHANNEL, pitch, NOTE_OFF_VELOCITY);
+    if (kind === "on") output.noteOn(channel, pitch, velocity);
+    else output.noteOff(channel, pitch, NOTE_OFF_VELOCITY);
+  };
+
+  const release = (key: string) => {
+    const entry = active.get(key);
+    if (!entry) return;
+    active.delete(key);
+    send("off", entry.channel, entry.pitch, 0);
+    if (entry.channel !== CHANNEL) releaseMemberChannel(outputName, entry.channel);
   };
 
   const transposeNow = () => Math.round(liveParams(shapeId, def).transpose ?? 0);
@@ -178,19 +238,36 @@ function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outpu
   const soundNote = (note: PianoRollNote, durationBeatsScaled: number, speed: number, color?: string) => {
     const pitch = clampPitch(note.pitch + transposeNow());
     const token = ++soundingCounter;
-    // Re-triggering a pitch that is still sounding: release it first.
-    if (active.has(pitch)) send("off", pitch, 0);
-    send("on", pitch, clampPitch(note.velocity));
-    active.set(pitch, token);
+    const props = readInstanceProps(shapeId);
+    const mpe = props?.mpe ?? false;
+    const bendRange = props?.bendRange ?? DEFAULT_BEND_RANGE;
+    const channel = mpe ? allocateMemberChannel(outputName) : CHANNEL;
+    const key = `${channel}:${pitch}`;
+    // Re-triggering a key that is still sounding: release it first.
+    release(key);
+    const output = getOutputSync(outputName);
+    let sent: ChannelExpression | null = null;
+    if (mpe && output) sent = sendExpression(output, channel, note, 0, bendRange, null);
+    send("on", channel, pitch, clampPitch(note.velocity));
+    active.set(key, { token, channel, pitch });
     recordPlayed(note, speed, color);
+    const durationBeats = Math.max(0.01, durationBeatsScaled);
     const handle = ctx.branch(async (noteCtx) => {
       try {
-        await noteCtx.wait(Math.max(0.01, durationBeatsScaled));
-      } finally {
-        if (active.get(pitch) === token) {
-          active.delete(pitch);
-          send("off", pitch, 0);
+        if (mpe && output && curveChanges(note)) {
+          // The note's curves span its duration: step through them while held.
+          const seconds = durationBeats * (60 / Math.max(1, noteCtx.bpm ?? 120));
+          const steps = Math.max(1, Math.ceil(seconds * MPE_TICK_HZ));
+          for (let step = 1; step <= steps; step += 1) {
+            await noteCtx.wait(durationBeats / steps);
+            if (active.get(key)?.token !== token) return;
+            if (step < steps) sent = sendExpression(output, channel, note, step / steps, bendRange, sent);
+          }
+        } else {
+          await noteCtx.wait(durationBeats);
         }
+      } finally {
+        if (active.get(key)?.token === token) release(key);
       }
     }, `note-${pitch}`);
     handle.finally(() => {}).catch(() => {});
@@ -247,8 +324,7 @@ function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outpu
       patchRuntime(shapeId, (prev) => ({ logs: [message, ...prev.logs].slice(0, 6) }));
     },
     releaseAll() {
-      for (const pitch of active.keys()) send("off", pitch, 0);
-      active.clear();
+      for (const key of [...active.keys()]) release(key);
     },
   };
 }

@@ -33,3 +33,14 @@ export function nowBeats(): number {
   if (!root) return 0;
   return root.tempo.beatsAtTime(root.scheduler.now());
 }
+
+/** Seconds on the shared clock's scheduler (starts the clock if needed). */
+export function nowSec(): number {
+  return (root ?? (getRootContext() as BrowserTimeContext)).scheduler.now();
+}
+
+/** Beat position of the shared clock at scheduler time `sec`. */
+export function beatsAtSec(sec: number): number {
+  const context = root ?? (getRootContext() as BrowserTimeContext);
+  return context.tempo.beatsAtTime(sec);
+}

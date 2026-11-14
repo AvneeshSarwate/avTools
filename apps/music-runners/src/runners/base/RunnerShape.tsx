@@ -4,6 +4,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BaseBoxShapeUtil,
+  createShapePropsMigrationIds,
+  createShapePropsMigrationSequence,
   HTMLContainer,
   type RecordProps,
   T,
@@ -15,7 +17,17 @@ import type { GhostNote, MetadataPanelProps, PianoRollHandle, PianoRollNote, Pia
 import { banksStore, createBank, listBanks, setBankLoopLength, setBankNotes } from "../../store/banks";
 import { eventLogStore } from "../../store/events";
 import type { Bank } from "../../model/types";
-import { defaultOutputName, ensureMidi, getOutput, midiStore } from "../../store/midi";
+import { defaultOutputName, ensureMidi, getOutput, midiStore, refreshPorts } from "../../store/midi";
+import {
+  closeInput,
+  freeTakePlayhead,
+  liveInputFor,
+  recordingStore,
+  type RecordingUi,
+  setInstanceInput,
+  startRecording,
+  stopRecording,
+} from "../../store/recording";
 import { useSnapshot } from "valtio";
 import {
   auditionNote,
@@ -28,9 +40,10 @@ import {
   startRun,
   stopInstance,
 } from "../../store/playback";
+import { sourceRollHandles } from "../../store/rollHandles";
 import { runnerShapeType } from "../registry";
 import { BASE_PARAMS, defaultParams, type Params, type RunnerDefinition, tagValue } from "../runnerTypes";
-import { DEFAULT_INSTANCE_HEIGHT, DEFAULT_INSTANCE_WIDTH, type RunnerInstanceProps } from "./instanceProps";
+import { DEFAULT_INPUT_PROPS, DEFAULT_INSTANCE_HEIGHT, DEFAULT_INSTANCE_WIDTH, type RunnerInstanceProps } from "./instanceProps";
 import { TagEditor, toggleTag } from "./TagEditor";
 
 const SHAPE_PADDING = 10;
@@ -39,8 +52,6 @@ const OUTPUT_STAGE_HEIGHT = 180;
 const PLAYHEAD_INTERVAL_MS = 33;
 const VIEW_META_KEY = "sourceView";
 
-/** Source roll handles by shape id, for scripts and the console. */
-export const sourceRollHandles = new Map<string, PianoRollHandle>();
 
 function viewFromMeta(meta: unknown): PianoRollView | null {
   const view = (meta as Record<string, unknown> | undefined)?.[VIEW_META_KEY] as Record<string, unknown> | undefined;
@@ -64,14 +75,34 @@ export function defineRunnerShape(def: RunnerDefinition) {
     return <RunnerInstanceView shape={shape} def={def} />;
   }
 
+  const versions = createShapePropsMigrationIds(type, { AddLiveInput: 1 });
+  const migrations = createShapePropsMigrationSequence({
+    sequence: [
+      {
+        id: versions.AddLiveInput,
+        up(props: Record<string, unknown>) {
+          for (const [key, value] of Object.entries(DEFAULT_INPUT_PROPS)) props[key] ??= value;
+        },
+        down(props: Record<string, unknown>) {
+          for (const key of Object.keys(DEFAULT_INPUT_PROPS)) delete props[key];
+        },
+      },
+    ],
+  });
+
   class RunnerShapeUtil extends BaseBoxShapeUtil<TLBaseBoxShape> {
     static override type = type as TLBaseBoxShape["type"];
+    static override migrations = migrations;
     static override props = {
       w: T.number,
       h: T.number,
       runnerType: T.string,
       bankId: T.string,
       midiOutputName: T.string,
+      midiInputName: T.string,
+      midiThru: T.boolean,
+      mpe: T.boolean,
+      bendRange: T.number,
       params: T.dict(T.string, T.number),
       queued: T.boolean,
       showSource: T.boolean,
@@ -102,6 +133,7 @@ export function defineRunnerShape(def: RunnerDefinition) {
         runnerType: def.type,
         bankId: "",
         midiOutputName: "",
+        ...DEFAULT_INPUT_PROPS,
         params: defaultParams(def),
         queued: false,
         showSource: true,
@@ -126,27 +158,40 @@ export function defineRunnerShape(def: RunnerDefinition) {
 }
 
 /**
- * Drives the playhead line on the given rolls through their imperative handle,
- * never through React state: nothing in the shape re-renders per tick.
+ * Drives the playhead line on the given rolls, and the live input overlay
+ * (held keys, notes being recorded) on the source roll, through their
+ * imperative handles, never through React state: nothing in the shape
+ * re-renders per tick. A free take has no loop, so its playhead comes from
+ * the recorder.
  */
-function usePlayhead(shapeId: string, active: boolean, rolls: React.RefObject<PianoRollHandle | null>[]): void {
+function usePlayhead(
+  shapeId: string,
+  active: boolean,
+  rolls: React.RefObject<PianoRollHandle | null>[],
+  sourceRoll: React.RefObject<PianoRollHandle | null>,
+): void {
   useEffect(() => {
     const push = (markers: { id: string; position: number; color?: string }[]) => {
       for (const roll of rolls) roll.current?.setPlayheadMarkers(markers);
     };
-    if (!active) {
+    const clear = () => {
       push([]);
+      sourceRoll.current?.setLiveInput({ keys: [], notes: [] });
+    };
+    if (!active) {
+      clear();
       return;
     }
     const tick = () => {
-      const position = playheadBeats(getRuntime(shapeId));
+      const position = freeTakePlayhead(shapeId) ?? playheadBeats(getRuntime(shapeId));
       push(position === null ? [] : [{ id: "▶", position, color: "#ff5252" }]);
+      sourceRoll.current?.setLiveInput(liveInputFor(shapeId));
     };
     tick();
     const id = window.setInterval(tick, PLAYHEAD_INTERVAL_MS);
     return () => {
       window.clearInterval(id);
-      push([]);
+      clear();
     };
     // The refs are stable objects; only the active flag matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -169,7 +214,8 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
   const generatedRollRef = useRef<PianoRollHandle | null>(null);
   const previewRollRef = useRef<PianoRollHandle | null>(null);
   const playheadRolls = useMemo(() => [sourceRollRef, generatedRollRef], []);
-  usePlayhead(shapeId, runtime.mode !== "idle", playheadRolls);
+  const recording = (useSnapshot(recordingStore).byShape[shapeId] ?? EMPTY_RECORDING) as RecordingUi;
+  usePlayhead(shapeId, runtime.mode !== "idle" || recording.listening !== null, playheadRolls, sourceRollRef);
   const selectedIdsRef = useRef<string[]>([]);
   // The three rolls share one view so they read as a score: the source roll
   // owns it, the read-only rolls follow, and it is saved in the shape's meta.
@@ -267,6 +313,19 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     if (midi.status === "ready" && props.midiOutputName) void getOutput(props.midiOutputName);
   }, [midi.status, props.midiOutputName]);
 
+  // The live input follows the shape prop once MIDI is ready, and closes
+  // (ending any take) when the shape goes away.
+  const midiInputName = props.midiInputName ?? "";
+  useEffect(() => {
+    if (midi.status === "ready") void setInstanceInput(shapeId, midiInputName);
+  }, [midi.status, midiInputName, shapeId]);
+  useEffect(() => () => closeInput(shapeId), [shapeId]);
+
+  // An overdub ends with the playback it was recorded over.
+  useEffect(() => {
+    if (runtime.mode === "idle" && recording.recording === "overdub") stopRecording(shapeId);
+  }, [runtime.mode, recording.recording, shapeId]);
+
   // A fresh instance picks a default output once MIDI is ready.
   useEffect(() => {
     if (props.midiOutputName || midi.status !== "ready") return;
@@ -280,6 +339,9 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
   const bankOptions = listBanks(def.type);
   const outputNames = midi.outputs.map((port) => port.name);
   if (props.midiOutputName && !outputNames.includes(props.midiOutputName)) outputNames.unshift(props.midiOutputName);
+  const inputNames = midi.inputs.map((port) => port.name);
+  if (midiInputName && !inputNames.includes(midiInputName)) inputNames.unshift(midiInputName);
+  const bendRange = props.bendRange ?? DEFAULT_INPUT_PROPS.bendRange;
 
   const stageWidth = Math.max(320, Math.round(props.w - SHAPE_PADDING * 2 - 42));
 
@@ -500,6 +562,65 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
           {runtime.logs[0] ? <span className="runner-shape__log">{runtime.logs[0]}</span> : null}
         </div>
 
+        <div className="runner-shape__input" title="live MIDI input: held keys show on the source roll; Rec records into the bank">
+          <label>
+            in
+            <select
+              value={midiInputName}
+              onPointerDown={() => {
+                void ensureMidi().then(() => refreshPorts());
+              }}
+              onChange={(e) => updateProps({ midiInputName: e.target.value })}
+            >
+              <option value="">{midi.status === "ready" ? "(none)" : "(connect MIDI)"}</option>
+              {inputNames.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            className={`runner-shape__rec ${recording.recording ? "runner-shape__rec--on" : ""}`}
+            disabled={!bank || (!recording.recording && recording.listening === null)}
+            onClick={() => (recording.recording ? stopRecording(shapeId) : startRecording(shapeId))}
+            title="while playing: overdub at the loop position · idle with notes: start Play and overdub · empty bank: free take, loop length set on stop"
+          >
+            {recording.recording ? "■ Rec" : "● Rec"}
+          </button>
+          <label title="echo the input to this instance's output, with transpose">
+            <input type="checkbox" checked={props.midiThru ?? true} onChange={(e) => updateProps({ midiThru: e.target.checked })} />
+            thru
+          </label>
+          <label title="MPE out: each note on its own channel (2-16) with its recorded pitch bend, pressure and timbre (CC74)">
+            <input type="checkbox" checked={props.mpe ?? false} onChange={(e) => updateProps({ mpe: e.target.checked })} />
+            MPE
+          </label>
+          <label title="semitones at full pitch bend, for recording and MPE output (48 is the MPE default, ordinary keyboards are usually 2)">
+            bend
+            <input
+              className="runner-shape__bend"
+              type="number"
+              min={1}
+              max={96}
+              step={1}
+              value={bendRange}
+              onChange={(e) => {
+                const value = Number(e.target.value);
+                if (Number.isFinite(value) && value >= 1 && value <= 96) updateProps({ bendRange: value });
+              }}
+            />
+          </label>
+          {recording.recording ? (
+            <span className="runner-shape__rec-state">
+              {recording.recording === "free" ? "free take" : "overdub"} · {recording.recorded} notes
+            </span>
+          ) : recording.status ? (
+            <span className="runner-shape__log">{recording.status}</span>
+          ) : null}
+        </div>
+
         {runtime.error ? (
           <div className="runner-shape__error" role="alert">
             could not start: {runtime.error}
@@ -571,6 +692,7 @@ const EMPTY_NOTES: PianoRollNote[] = [];
 const EMPTY_GHOSTS: GhostNote[] = [];
 const EMPTY_LOG: readonly never[] = [];
 const EMPTY_RUNTIME = getRuntime("__none__");
+const EMPTY_RECORDING: RecordingUi = { listening: null, recording: null, recorded: 0, status: "" };
 const UNPLAYED_COLOR = "#b9b4ae";
 
 function formatParam(value: number): string {

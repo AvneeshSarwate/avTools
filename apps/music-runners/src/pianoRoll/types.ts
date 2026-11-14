@@ -12,6 +12,10 @@ export interface PianoRollNote {
   duration: number; // beats
   velocity: number; // 0..127
   metadata?: JsonObject;
+  /** Per-note MPE expression, `time` 0..1 across the note (see src/model/mpe.ts). */
+  mpePitch?: { points: { time: number; pitchOffset: number }[] };
+  mpePressure?: { points: { time: number; value: number }[] };
+  mpeTimbre?: { points: { time: number; value: number }[] };
 }
 
 /** Zoom and scroll of one view; never part of musical data. */
@@ -42,6 +46,35 @@ export interface GhostNote {
   opacity?: number;
   label?: string;
   linkTo?: string;
+}
+
+/**
+ * Live MIDI input drawn over the roll, Ableton style: `keys` are the pitches
+ * held on the input right now (a row highlight, offset by their bend), `notes`
+ * are notes being recorded, growing until their note-off. Per-frame data:
+ * pushed through `PianoRollHandle.setLiveInput`, never through props.
+ */
+export interface LiveInputKey {
+  pitch: number;
+  /** Current bend in semitones. */
+  pitchOffset: number;
+  /** 0..127, shown as the highlight's strength. */
+  velocity: number;
+}
+
+export interface LiveInputNote {
+  id: string;
+  pitch: number;
+  position: number;
+  duration: number;
+  velocity: number;
+  /** Recorded bend so far, absolute beats. */
+  curve?: { position: number; pitchOffset: number }[];
+}
+
+export interface LiveInput {
+  keys: LiveInputKey[];
+  notes: LiveInputNote[];
 }
 
 export interface MetadataPanelProps {
@@ -96,4 +129,12 @@ export interface PianoRollHandle {
   getSelectedIds(): string[];
   selectNotes(ids: string[]): void;
   focus(): void;
+  /** Live input overlay (held keys, notes being recorded); see LiveInput. */
+  setLiveInput(input: LiveInput): void;
+  /**
+   * Replace the notes with `after` as one undoable step whose undo restores
+   * `before`. For edits made outside the roll that should still undo as one
+   * (a recorded take). Emits through onNotesChange like any edit.
+   */
+  commitExternalEdit(label: string, before: PianoRollNote[], after: PianoRollNote[]): void;
 }

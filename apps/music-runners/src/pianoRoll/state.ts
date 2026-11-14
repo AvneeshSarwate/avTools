@@ -1,6 +1,6 @@
 import type Konva from 'konva'
 import type { CommandStack } from './commandStack'
-import type { GhostNote, JsonObject, PianoRollNote, PlayheadMarker } from './types'
+import type { GhostNote, JsonObject, LiveInput, PianoRollNote, PlayheadMarker } from './types'
 import type { NoteIndex } from './noteIndex'
 import {
   BASE_NOTE_HEIGHT,
@@ -166,6 +166,9 @@ export interface PianoRollState {
   // Read-only notes drawn on their own layer between the grid and the notes.
   ghostNotes: GhostNote[]
 
+  /** Live MIDI input overlay, drawn on the overlay layer. */
+  liveInput: LiveInput
+
   hooks: PianoRollHooks
 
   // Optional callback to notify external listeners when state changes outside command stack
@@ -285,6 +288,8 @@ export const createPianoRollState = (): PianoRollState => {
     },
 
     ghostNotes: [],
+
+    liveInput: { keys: [], notes: [] },
 
     hooks: {},
 
