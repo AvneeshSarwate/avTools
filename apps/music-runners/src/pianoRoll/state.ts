@@ -206,10 +206,10 @@ export const createPianoRollState = (): PianoRollState => {
       loopLength: DEFAULT_LOOP_LENGTH,
       snapToGrid: true,
       drawMode: false,
-      backgroundColor1: '#ddd',
-      backgroundColor2: '#bbb',
+      backgroundColor1: '#262626',
+      backgroundColor2: '#222222',
       noteColor: '#f23',
-      selectedNoteColor: '#2ee'
+      selectedNoteColor: '#64b5ff'
     },
 
     interaction: {

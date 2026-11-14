@@ -1,120 +1,66 @@
-/* Port of the scoped styles in PianoRollRoot.vue, NoteMetadataEditor.vue and
-   MetadataNode.vue, on the dark palette of the livecode-tldraw piano-roll
-   shape. The Konva stage keeps the Vue component's own grid colors. */
+/* Piano roll chrome on the app's tokens (src/styles.css), with fallbacks so
+   the standalone demo renders without them. The metadata tree styles are a
+   port of NoteMetadataEditor.vue and MetadataNode.vue. */
 
 .pr-root {
   display: inline-flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 8px;
+  gap: 4px;
   box-sizing: content-box;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: #111412;
-  color: #eef5f1;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  padding: 0;
+  color: var(--c-text, #d9d9d9);
   font-size: 11px;
   outline: none;
 }
 
-.pr-root:focus-visible {
-  box-shadow: 0 0 0 2px rgba(106, 168, 255, 0.5);
+.pr-root:focus-visible .pr-container {
+  border-color: var(--c-select, #64b5ff);
 }
 
+/* Tool row: a single line of compact controls (see ControlPanel.tsx). When a
+   host renders it into its own header it inherits that header's background. */
 .pr-control-panel {
-  background: #171c19;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
-  padding: 6px 10px;
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  column-gap: 8px;
-  row-gap: 6px;
-  align-self: stretch;
-  box-sizing: border-box;
-  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 0;
+  min-width: 0;
 }
 
-.pr-control-panel button {
-  padding: 4px 8px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 3px;
-  background: #263029;
-  color: #eef5f1;
-  font-size: 11px;
-  cursor: pointer;
-  transition: background 0.1s, border-color 0.1s;
+.pr-root > .pr-control-panel {
+  padding: 3px 4px;
+  background: var(--c-surface-3, #2c2c2c);
 }
 
-.pr-control-panel button:hover:not(:disabled) {
-  background: #33403a;
-  border-color: rgba(255, 255, 255, 0.35);
+.pr-control-panel .ui-group {
+  gap: 1px;
+  padding: 0 5px;
 }
 
-.pr-control-panel button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.pr-separator {
-  color: rgba(255, 255, 255, 0.18);
-  font-size: 10px;
-}
-
-.pr-toggle {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.pr-control-panel button.pr-toggle.active {
-  background: #eef5f1;
-  border-color: #eef5f1;
-  color: #111412;
+.pr-control-panel .ui-group:last-child {
+  padding-right: 0;
 }
 
 .pr-info {
-  color: #9ca8a2;
-  font-size: 10px;
-}
-
-.pr-control-panel label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: #c3cdc8;
-}
-
-.pr-control-panel select {
-  padding: 3px 6px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 3px;
-  font-size: 11px;
-  background: #263029;
-  color: #eef5f1;
-  cursor: pointer;
-}
-
-.pr-control-panel select:focus {
-  outline: none;
-  border-color: #6aa8ff;
+  color: var(--c-text-faint, #5f5f5f);
+  white-space: nowrap;
+  padding-right: 8px;
 }
 
 .pr-container {
-  background-color: white;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background-color: var(--c-surface-1, #1b1b1b);
+  border: 1px solid var(--c-line, #0b0b0b);
   cursor: default;
   box-sizing: content-box;
-  border-radius: 4px;
+  border-radius: 0;
   overflow: hidden;
   touch-action: none;
 }
 
 .pr-container.is-disabled {
   pointer-events: none;
-  cursor: not-allowed;
+  cursor: default;
 }
 
 .pr-layout {
@@ -130,11 +76,10 @@
   align-items: stretch;
 }
 
+/* Scrollbars: flat tracks; the thumb's ends resize (zoom), its body scrolls. */
 .pr-scrollbar {
   position: relative;
-  background: #1d2420;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
+  background: var(--c-surface-1, #1b1b1b);
   box-sizing: border-box;
   user-select: none;
   touch-action: none;
@@ -149,40 +94,42 @@
 }
 
 .pr-scrollbar.is-disabled {
-  opacity: 0.4;
   pointer-events: none;
+}
+
+.pr-scrollbar.is-disabled .pr-scrollbar-thumb {
+  opacity: 0.4;
 }
 
 .pr-scrollbar-thumb {
   position: absolute;
-  background: rgba(255, 255, 255, 0.22);
-  border-radius: 4px;
+  background: var(--c-surface-4, #363636);
+  border-radius: 1px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   min-width: calc(var(--pr-scrollbar-thickness, 12px) * 0.66);
   min-height: calc(var(--pr-scrollbar-thickness, 12px) * 0.66);
   cursor: grab;
-  transition: background 0.1s;
   box-sizing: border-box;
 }
 
 .pr-scrollbar-thumb.horizontal-thumb {
-  top: 0;
-  height: 100%;
+  top: 2px;
+  bottom: 2px;
   align-items: stretch;
 }
 
 .pr-scrollbar-thumb.vertical-thumb {
-  left: 0;
-  width: 100%;
+  left: 2px;
+  right: 2px;
   flex-direction: column;
   justify-content: space-between;
   align-items: stretch;
 }
 
 .pr-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.32);
+  background: var(--c-surface-5, #424242);
 }
 
 .pr-scrollbar-body {
@@ -196,14 +143,17 @@
 }
 
 .pr-scrollbar-handle {
-  background: rgba(255, 255, 255, 0.4);
-  border-radius: 3px;
+  background: var(--c-text-faint, #5f5f5f);
   flex: 0 0 auto;
+}
+
+.pr-scrollbar-thumb:hover .pr-scrollbar-handle {
+  background: var(--c-text-dim, #959595);
 }
 
 .handle-left,
 .handle-right {
-  width: calc(var(--pr-scrollbar-thickness, 12px) / 3);
+  width: 3px;
   height: 100%;
   cursor: ew-resize;
 }
@@ -211,7 +161,7 @@
 .handle-top,
 .handle-bottom {
   width: 100%;
-  height: calc(var(--pr-scrollbar-thickness, 12px) / 3);
+  height: 3px;
   cursor: ns-resize;
 }
 
@@ -229,12 +179,12 @@
 .pr-metadata-editor {
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--c-line, #0b0b0b);
   border-radius: 3px;
   padding: 4px 6px;
-  background: #171c19;
+  background: var(--c-surface-1, #1b1b1b);
   font-size: 12px;
-  color: #eef5f1;
+  color: var(--c-text, #d9d9d9);
 }
 
 .pr-meta-bar {
@@ -245,11 +195,11 @@
 }
 
 .pr-meta-title {
-  color: #c3cdc8;
+  color: var(--c-text-dim, #959595);
 }
 
 .pr-meta-dirty {
-  color: #f2c26b;
+  color: var(--c-warn, #e6c84a);
 }
 
 .pr-meta-spacer {
@@ -259,17 +209,17 @@
 .pr-meta-btn {
   height: 18px;
   padding: 0 6px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid var(--c-line, #0b0b0b);
   border-radius: 2px;
-  background: #263029;
+  background: var(--c-surface-4, #363636);
   font-size: 11px;
   line-height: 1;
-  color: #eef5f1;
+  color: var(--c-text, #d9d9d9);
   cursor: pointer;
 }
 
 .pr-meta-btn:hover:not(:disabled) {
-  background: #33403a;
+  background: var(--c-surface-5, #424242);
 }
 
 .pr-meta-btn:disabled {
@@ -278,9 +228,9 @@
 }
 
 .pr-meta-btn.primary:not(:disabled) {
-  background: #2f6fd8;
-  border-color: #2f6fd8;
-  color: #fff;
+  background: var(--c-select, #64b5ff);
+  border-color: var(--c-select, #64b5ff);
+  color: var(--c-on-tone, #111);
 }
 
 .pr-meta-tree {
@@ -296,11 +246,11 @@
 }
 
 .pr-meta-line.warn {
-  color: #f2c26b;
+  color: var(--c-warn, #e6c84a);
 }
 
 .pr-meta-muted {
-  color: #9ca8a2;
+  color: var(--c-text-dim, #959595);
 }
 
 .pr-meta-pad {
@@ -339,7 +289,7 @@
   padding: 0;
   border: 0;
   background: none;
-  color: #9ca8a2;
+  color: var(--c-text-dim, #959595);
   font-size: 10px;
   cursor: pointer;
   text-align: center;
@@ -353,11 +303,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: Menlo, Consolas, monospace;
-  color: #eef5f1;
+  color: var(--c-text, #d9d9d9);
 }
 
 .pr-meta-obj {
-  color: #9ca8a2;
+  color: var(--c-text-dim, #959595);
   font-family: Menlo, Consolas, monospace;
 }
 
@@ -367,11 +317,11 @@
   min-width: 0;
   height: 16px;
   padding: 0 3px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid var(--c-line, #0b0b0b);
   border-radius: 2px;
   font: 12px Menlo, Consolas, monospace;
-  background: #0d100e;
-  color: #eef5f1;
+  background: var(--c-base, #121212);
+  color: var(--c-text, #d9d9d9);
 }
 
 .pr-meta-key-input {
@@ -381,7 +331,7 @@
 .pr-meta-value:focus,
 .pr-meta-key-input:focus {
   outline: none;
-  border-color: #6aa8ff;
+  border-color: var(--c-select, #64b5ff);
 }
 
 .pr-meta-value.empty {
@@ -389,18 +339,52 @@
 }
 
 .pr-meta-swatch {
+  appearance: none;
+  -webkit-appearance: none;
   width: 18px;
   height: 16px;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  border: 1px solid var(--c-line, #0b0b0b);
   border-radius: 2px;
   background: none;
   cursor: pointer;
   flex: none;
 }
 
+.pr-meta-swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.pr-meta-swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 1px;
+}
+
+.pr-meta-swatch::-moz-color-swatch {
+  border: none;
+}
+
+/* Flat check box: a filled square when on. */
 .pr-meta-check {
+  appearance: none;
+  -webkit-appearance: none;
   margin: 0;
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border: 1px solid var(--c-line, #0b0b0b);
+  border-radius: 2px;
+  background: var(--c-surface-1, #1b1b1b);
+  cursor: pointer;
+}
+
+.pr-meta-check:checked {
+  background: var(--c-select, #64b5ff);
+  box-shadow: inset 0 0 0 2px var(--c-surface-1, #1b1b1b);
+}
+
+.pr-meta-check:indeterminate {
+  background: linear-gradient(var(--c-select, #64b5ff), var(--c-select, #64b5ff)) center / 6px 2px no-repeat var(--c-surface-1, #1b1b1b);
 }
 
 .pr-meta-badge,
@@ -415,7 +399,7 @@
 }
 
 .pr-meta-badge {
-  color: #c3cdc8;
+  color: var(--c-text-dim, #959595);
   background: rgba(255, 255, 255, 0.1);
 }
 
@@ -440,7 +424,7 @@
   border: 1px solid transparent;
   border-radius: 2px;
   background: none;
-  color: #9ca8a2;
+  color: var(--c-text-dim, #959595);
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
@@ -454,5 +438,5 @@
 
 .pr-meta-act:hover {
   border-color: rgba(255, 255, 255, 0.3);
-  color: #eef5f1;
+  color: var(--c-text, #d9d9d9);
 }

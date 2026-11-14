@@ -1,5 +1,8 @@
-// The control row above the stage: port of the Vue control panel without the
-// MPE and lane toggles, plus snap, draw, zoom and fit controls.
+// The roll's tool row: edit history, grid, zoom, delete, the metadata panel,
+// and the note count. One compact row of icon controls (names in tooltips);
+// a host can render it into its own header through `toolbarTarget`.
+import { Button, Chooser, Toggle } from '../ui/controls/controls'
+
 export interface ControlPanelProps {
   interactive: boolean
   canUndo: boolean
@@ -22,74 +25,74 @@ export interface ControlPanelProps {
   onMetadataToggle: () => void
 }
 
+const GRID_OPTIONS = [
+  { value: '4', label: '1/4' },
+  { value: '8', label: '1/8' },
+  { value: '16', label: '1/16' },
+  { value: '32', label: '1/32' }
+]
+
 export function ControlPanel(props: ControlPanelProps) {
   const { interactive } = props
   return (
     <div className="pr-control-panel">
-      <button type="button" onClick={props.onUndo} disabled={!interactive || !props.canUndo} title="Undo (Cmd/Ctrl+Z)">
-        {'↶'} Undo
-      </button>
-      <button type="button" onClick={props.onRedo} disabled={!interactive || !props.canRedo} title="Redo (Shift+Cmd/Ctrl+Z)">
-        {'↷'} Redo
-      </button>
-      <span className="pr-separator">|</span>
-      <label>
-        Grid:
-        <select
-          value={props.subdivision}
-          disabled={!interactive}
-          onChange={(event) => props.onSubdivisionChange(Number(event.target.value))}
-        >
-          <option value={4}>Quarter</option>
-          <option value={8}>Eighth</option>
-          <option value={16}>16th</option>
-          <option value={32}>32nd</option>
-        </select>
-      </label>
-      <button
-        type="button"
-        className={'pr-toggle pr-snap-toggle' + (props.snapToGrid ? ' active' : '')}
-        disabled={!interactive}
-        onClick={props.onSnapToggle}
-        title="Snap moves, resizes and new notes to the grid"
-      >
-        Snap
-      </button>
-      <button
-        type="button"
-        className={'pr-toggle pr-draw-toggle' + (props.drawMode ? ' active' : '')}
-        disabled={!interactive}
-        onClick={props.onDrawToggle}
-        title="Draw: click-drag on the background creates a note (off: marquee select, double-click adds)"
-      >
-        {'✏️'} Draw
-      </button>
-      <span className="pr-separator">|</span>
-      <button type="button" className="pr-zoom-out" onClick={props.onZoomOut} disabled={!interactive} title="Zoom out (time)">
-        {'−'}
-      </button>
-      <button type="button" className="pr-zoom-in" onClick={props.onZoomIn} disabled={!interactive} title="Zoom in (time)">
-        +
-      </button>
-      <button type="button" className="pr-fit" onClick={props.onFit} disabled={!interactive} title="Fit the view to the notes">
-        Fit
-      </button>
-      <span className="pr-separator">|</span>
-      <button type="button" className="pr-delete" onClick={props.onDelete} disabled={!interactive || props.selectionCount === 0}>
-        {'🗑️'} Delete
-      </button>
-      <span className="pr-separator">|</span>
-      <button
-        type="button"
-        className={'pr-toggle pr-metadata-toggle' + (props.showMetadata ? ' active' : '')}
-        onClick={props.onMetadataToggle}
-      >
-        {'📝'} Metadata
-      </button>
-      <span className="pr-separator">|</span>
-      <span className="pr-info">
-        {props.noteCount} notes, {props.selectionCount} selected
+      <span className="pr-info" title="notes in the roll, selected">
+        {props.noteCount} notes{props.selectionCount ? `, ${props.selectionCount} selected` : ''}
       </span>
+      <div className="ui-group">
+        <Button icon="undo" quiet className="pr-undo" title="Undo (Cmd/Ctrl+Z)" onClick={props.onUndo} disabled={!interactive || !props.canUndo} />
+        <Button icon="redo" quiet className="pr-redo" title="Redo (Shift+Cmd/Ctrl+Z)" onClick={props.onRedo} disabled={!interactive || !props.canRedo} />
+      </div>
+      <div className="ui-group">
+        <Chooser
+          className="pr-grid"
+          title="Grid: snap and draw resolution"
+          value={String(props.subdivision)}
+          options={GRID_OPTIONS}
+          disabled={!interactive}
+          width={64}
+          onChange={(value) => props.onSubdivisionChange(Number(value))}
+        />
+        <Toggle
+          icon="magnet"
+          className="pr-snap-toggle"
+          on={props.snapToGrid}
+          disabled={!interactive}
+          onChange={props.onSnapToggle}
+          title="Snap moves, resizes and new notes to the grid"
+        />
+        <Toggle
+          icon="pencil"
+          className="pr-draw-toggle"
+          on={props.drawMode}
+          disabled={!interactive}
+          onChange={props.onDrawToggle}
+          title="Draw: click-drag on the background creates a note (off: marquee select, double-click adds)"
+        />
+      </div>
+      <div className="ui-group">
+        <Button icon="zoomOut" quiet className="pr-zoom-out" onClick={props.onZoomOut} disabled={!interactive} title="Zoom out (time)" />
+        <Button icon="zoomIn" quiet className="pr-zoom-in" onClick={props.onZoomIn} disabled={!interactive} title="Zoom in (time)" />
+        <Button icon="fit" quiet className="pr-fit" onClick={props.onFit} disabled={!interactive} title="Fit the view to the notes" />
+      </div>
+      <div className="ui-group">
+        <Button
+          icon="trash"
+          quiet
+          className="pr-delete"
+          onClick={props.onDelete}
+          disabled={!interactive || props.selectionCount === 0}
+          title="Delete the selected notes (Delete)"
+        />
+        <Toggle
+          icon="tag"
+          label="Tags"
+          className="pr-metadata-toggle"
+          on={props.showMetadata}
+          onChange={props.onMetadataToggle}
+          title="Metadata: tag and edit the selected notes"
+        />
+      </div>
     </div>
   )
 }

@@ -45,8 +45,15 @@ import { runnerShapeType } from "../registry";
 import { BASE_PARAMS, defaultParams, type Params, type RunnerDefinition, tagValue } from "../runnerTypes";
 import { DEFAULT_INPUT_PROPS, DEFAULT_INSTANCE_HEIGHT, DEFAULT_INSTANCE_WIDTH, type RunnerInstanceProps } from "./instanceProps";
 import { TagEditor, toggleTag } from "./TagEditor";
+import { Button, Chooser, Field, Lamp, NumberBox, Toggle } from "../../ui/controls/controls";
+import { Icon } from "../../ui/controls/icons";
 
-const SHAPE_PADDING = 10;
+/** Shape border (1px each side) around the content. */
+const SHAPE_BORDER = 2;
+/** Section body padding, roll border, scrollbar gap and vertical scrollbar. */
+const ROLL_CHROME_WIDTH = 6 * 2 + 2 + 1 + 12;
+/** Playhead colours: the play / run / rec tokens in styles.css. */
+const PLAYHEAD_COLORS = { play: "#62d26f", run: "#ffab3d", rec: "#ff4f4f" } as const;
 const SOURCE_STAGE_HEIGHT = 240;
 const OUTPUT_STAGE_HEIGHT = 180;
 const PLAYHEAD_INTERVAL_MS = 33;
@@ -167,6 +174,7 @@ export function defineRunnerShape(def: RunnerDefinition) {
 function usePlayhead(
   shapeId: string,
   active: boolean,
+  color: string,
   rolls: React.RefObject<PianoRollHandle | null>[],
   sourceRoll: React.RefObject<PianoRollHandle | null>,
 ): void {
@@ -184,7 +192,7 @@ function usePlayhead(
     }
     const tick = () => {
       const position = freeTakePlayhead(shapeId) ?? playheadBeats(getRuntime(shapeId));
-      push(position === null ? [] : [{ id: "▶", position, color: "#ff5252" }]);
+      push(position === null ? [] : [{ id: "▶", position, color }]);
       sourceRoll.current?.setLiveInput(liveInputFor(shapeId));
     };
     tick();
@@ -195,7 +203,7 @@ function usePlayhead(
     };
     // The refs are stable objects; only the active flag matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, shapeId]);
+  }, [active, color, shapeId]);
 }
 
 function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDefinition }) {
@@ -215,17 +223,15 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
   const previewRollRef = useRef<PianoRollHandle | null>(null);
   const playheadRolls = useMemo(() => [sourceRollRef, generatedRollRef], []);
   const recording = (useSnapshot(recordingStore).byShape[shapeId] ?? EMPTY_RECORDING) as RecordingUi;
-  usePlayhead(shapeId, runtime.mode !== "idle" || recording.listening !== null, playheadRolls, sourceRollRef);
+  const playheadColor = recording.recording === "free" ? PLAYHEAD_COLORS.rec : runtime.mode === "run" ? PLAYHEAD_COLORS.run : PLAYHEAD_COLORS.play;
+  usePlayhead(shapeId, runtime.mode !== "idle" || recording.listening !== null, playheadColor, playheadRolls, sourceRollRef);
   const selectedIdsRef = useRef<string[]>([]);
   // The three rolls share one view so they read as a score: the source roll
   // owns it, the read-only rolls follow, and it is saved in the shape's meta.
   const sourceViewRef = useRef<PianoRollView | null>(viewFromMeta(shape.meta));
   const saveViewTimerRef = useRef<number | undefined>(undefined);
-  const [loopLengthDraft, setLoopLengthDraft] = useState<string>(bank ? String(bank.loopLength) : "");
-  const bankLoopLength = bank?.loopLength;
-  useEffect(() => {
-    setLoopLengthDraft(bankLoopLength === undefined ? "" : String(bankLoopLength));
-  }, [bankLoopLength]);
+  // The source roll renders its tool row into the Source section header.
+  const [sourceToolbar, setSourceToolbar] = useState<HTMLElement | null>(null);
 
   const updateProps = useCallback(
     (patch: Partial<RunnerInstanceProps>, ignoreHistory = false) => {
@@ -300,7 +306,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     const el = contentRef.current;
     if (!el) return;
     const observer = new ResizeObserver(() => {
-      const next = Math.ceil(el.getBoundingClientRect().height / editor.getZoomLevel()) + SHAPE_PADDING * 2;
+      const next = Math.ceil(el.getBoundingClientRect().height / editor.getZoomLevel()) + SHAPE_BORDER;
       const current = editor.getShape(shapeId)?.props as RunnerInstanceProps | undefined;
       if (current && Math.abs(current.h - next) > 1) updateProps({ h: next }, true);
     });
@@ -343,7 +349,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
   if (midiInputName && !inputNames.includes(midiInputName)) inputNames.unshift(midiInputName);
   const bendRange = props.bendRange ?? DEFAULT_INPUT_PROPS.bendRange;
 
-  const stageWidth = Math.max(320, Math.round(props.w - SHAPE_PADDING * 2 - 42));
+  const stageWidth = Math.max(320, Math.round(props.w - SHAPE_BORDER - ROLL_CHROME_WIDTH));
 
   const sourceGhosts = useMemo<GhostNote[]>(() => (bank && def.sourceGhostNotes ? def.sourceGhostNotes(bank) : EMPTY_GHOSTS), [bank, def]);
   const noteBadge = useCallback(
@@ -421,13 +427,6 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     });
   };
 
-  const commitLoopLength = () => {
-    if (!bank) return;
-    const value = Number(loopLengthDraft);
-    if (Number.isFinite(value) && value > 0) setBankLoopLength(bank.id, value);
-    else setLoopLengthDraft(String(bank.loopLength));
-  };
-
   const onBankSelect = (value: string) => {
     if (value === "__new__") {
       const created = createBank(def.type);
@@ -436,277 +435,336 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
       updateProps({ bankId: value });
     }
   };
+  const onRegenerate = () => {
+    if (!props.showPreview) updateProps({ showPreview: true });
+    regenerate(shapeId);
+  };
 
   // Pointer events inside the body never reach tldraw (otherwise every click
-  // in a roll would select or drag the shape). The header is the exception:
+  // in a roll would select or drag the shape). The title bar is the exception:
   // its background is the grip for moving the shape and for starting an
-  // arrow with the arrow tool; only its own controls stop propagation.
+  // arrow with the arrow tool; only its own controls keep tldraw out.
   const stop = (event: React.SyntheticEvent) => event.stopPropagation();
-  // With any tool other than select (arrow, draw, ...), the whole header
-  // passes through so an arrow can be started from it; with the select tool,
-  // only its controls keep tldraw out so dropdowns and inputs work.
+  // With any tool other than select (arrow, draw, ...), the whole title bar
+  // passes through so an arrow can be started from it.
   const stopIfControl = (event: React.SyntheticEvent) => {
     if (editor.getCurrentToolId() !== "select") return;
     const target = event.target as HTMLElement;
-    if (target.closest("input, select, button, label")) event.stopPropagation();
+    if (target.closest("[data-control], input")) event.stopPropagation();
   };
-  const modeLabel = runtime.mode === "idle" ? "idle" : `${runtime.mode} · loop ${runtime.loopCount}`;
+
+  const recordingKind = recording.recording;
+  const modeText = runtime.mode === "idle" ? "idle" : `${runtime.mode} · loop ${runtime.loopCount}`;
   const lastEvent = eventLog[0];
+  const shapeState = recordingKind ? "recording" : runtime.mode;
+
+  const bankChoices = [
+    ...(bank ? [] : [{ value: "", label: "(no bank)", muted: true }]),
+    ...bankOptions.map((option) => ({ value: option.id, label: option.name })),
+    { value: "__new__", label: "+ new bank", divider: true },
+  ];
+  const portChoices = (names: string[], current: string, connected: string[]) => [
+    { value: "", label: midi.status === "ready" ? "none" : "connect MIDI", muted: true },
+    ...names.map((name) => ({ value: name, label: connected.includes(name) ? name : `${name} (missing)`, muted: !connected.includes(name) || undefined })),
+  ].filter((option, index) => index > 0 || current === "" || midi.status === "ready");
+  const connectedOutputs = midi.outputs.map((port) => port.name);
+  const connectedInputs = midi.inputs.map((port) => port.name);
+  const openPorts = () => {
+    void ensureMidi().then(() => refreshPorts());
+  };
 
   return (
-    <HTMLContainer className={`runner-shape runner-shape--${runtime.mode}`} style={{ width: props.w, height: props.h }}>
+    <HTMLContainer className={`runner-shape runner-shape--${shapeState}`} style={{ width: props.w, height: props.h }}>
       <div ref={contentRef} className="runner-shape__content" onKeyDown={stop} onKeyUp={stop}>
         <header
-          className="runner-shape__header"
+          className="runner-shape__title"
           title="drag here to move the shape; with the arrow tool, start an arrow here"
           onPointerDown={stopIfControl}
           onPointerMove={stopIfControl}
           onPointerUp={stopIfControl}
           onWheel={stopIfControl}
         >
-          <span className="runner-shape__grip" aria-hidden="true">⠿</span>
-          <strong className="runner-shape__title">{def.label}</strong>
-          <label>
-            bank
-            <select value={bank ? bank.id : ""} onChange={(e) => onBankSelect(e.target.value)}>
-              {!bank ? <option value="">(none)</option> : null}
-              {bankOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.name}
-                </option>
-              ))}
-              <option value="__new__">+ new bank</option>
-            </select>
-          </label>
-          <label>
-            midi
-            <select
-              value={props.midiOutputName}
-              onPointerDown={() => void ensureMidi()}
-              onChange={(e) => updateProps({ midiOutputName: e.target.value })}
-            >
-              {midi.status !== "ready" ? <option value={props.midiOutputName}>{props.midiOutputName || "(connect MIDI)"}</option> : null}
-              {midi.status === "ready" && !props.midiOutputName ? <option value="">(none)</option> : null}
-              {midi.status === "ready"
-                ? outputNames.map((name) => (
-                    <option key={name} value={name}>
-                      {name}
-                    </option>
-                  ))
-                : null}
-            </select>
-          </label>
-          <label>
-            loop
-            <input
+          <span className="runner-shape__grip" aria-hidden="true">
+            <Icon name="grip" />
+          </span>
+          <span className="runner-shape__name">{def.label}</span>
+          <Chooser value={bank ? bank.id : ""} options={bankChoices} onChange={onBankSelect} title="bank: the notes this instance plays" />
+          <Field label="loop" title="loop length in beats (notes past it stay in the bank)">
+            <NumberBox
               className="runner-shape__loop-length"
-              type="text"
-              inputMode="decimal"
-              value={loopLengthDraft}
+              value={bank ? bank.loopLength : null}
+              min={0.25}
+              max={256}
+              step={0.25}
+              perPixel={0.25}
+              format={(value) => (Number.isInteger(value) ? String(value) : value.toFixed(2))}
               disabled={!bank}
-              onChange={(e) => setLoopLengthDraft(e.target.value)}
-              onBlur={commitLoopLength}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  commitLoopLength();
-                }
-              }}
+              width={46}
+              onChange={(value) => bank && setBankLoopLength(bank.id, value)}
             />
-            beats
-          </label>
-          <label className="runner-shape__queue">
-            <input type="checkbox" checked={props.queued} onChange={(e) => updateProps({ queued: e.target.checked })} />
-            queue
-          </label>
+          </Field>
+          <span className="ui-spacer" />
+          <span className={`runner-shape__mode runner-shape__mode--${runtime.mode}`}>
+            <Lamp tone={runtime.mode === "idle" ? "off" : runtime.mode} />
+            {modeText}
+          </span>
+          <Toggle
+            label="Q"
+            className="runner-shape__queue"
+            on={props.queued}
+            onChange={(on) => updateProps({ queued: on })}
+            title="queue: started together by Play queued in the top bar"
+          />
         </header>
 
         <div className="runner-shape__body" onPointerDown={stop} onPointerMove={stop} onPointerUp={stop} onWheel={stop}>
-        <div className="runner-shape__params">
-          {[...BASE_PARAMS, ...def.params].map((spec) => (
-            <label key={spec.key} className="runner-shape__param" title={spec.hint}>
-              <span>{spec.label}</span>
-              <input
-                type="range"
-                min={spec.min}
-                max={spec.max}
-                step={spec.step}
-                value={params[spec.key] ?? spec.default}
-                onChange={(e) => setParam(spec.key, Number(e.target.value))}
+          <div className="runner-shape__strip">
+            <div className="ui-group">
+              <Button
+                icon="play"
+                label="Play"
+                tone="play"
+                active={runtime.mode === "play"}
+                disabled={!bank}
+                onClick={() => runtime.mode !== "play" && startPlay(shapeId)}
+                title="play the bank verbatim, looping"
               />
-              <output>{formatParam(params[spec.key] ?? spec.default)}</output>
-            </label>
-          ))}
-        </div>
-
-        <div className="runner-shape__transport">
-          <button type="button" className="runner-shape__run" disabled={!bank || runtime.mode === "run"} onClick={() => startRun(shapeId)}>
-            Run
-          </button>
-          <button type="button" disabled={!bank || runtime.mode === "play"} onClick={() => startPlay(shapeId)}>
-            Play
-          </button>
-          <button type="button" className="runner-shape__stop" onClick={() => stopInstance(shapeId)} title="always available: stops this instance and releases its notes">
-            Stop
-          </button>
-          <button type="button" disabled={!bank} onClick={() => regenerate(shapeId)} title="dry-run the algorithm into the Preview roll">
-            Regenerate
-          </button>
-          <span className={`runner-shape__state runner-shape__state--${runtime.mode}`}>{modeLabel}</span>
-          {lastEvent ? (
-            <span className="runner-shape__event" title={JSON.stringify(lastEvent.event)}>
-              {lastEvent.direction === "in" ? "←" : "→"} {lastEvent.event.type}
-              {typeof lastEvent.event.pitch === "number" ? ` ${lastEvent.event.pitch}` : ""}
-            </span>
-          ) : null}
-          {runtime.logs[0] ? <span className="runner-shape__log">{runtime.logs[0]}</span> : null}
-        </div>
-
-        <div className="runner-shape__input" title="live MIDI input: held keys show on the source roll; Rec records into the bank">
-          <label>
-            in
-            <select
-              value={midiInputName}
-              onPointerDown={() => {
-                void ensureMidi().then(() => refreshPorts());
-              }}
-              onChange={(e) => updateProps({ midiInputName: e.target.value })}
-            >
-              <option value="">{midi.status === "ready" ? "(none)" : "(connect MIDI)"}</option>
-              {inputNames.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            className={`runner-shape__rec ${recording.recording ? "runner-shape__rec--on" : ""}`}
-            disabled={!bank || (!recording.recording && recording.listening === null)}
-            onClick={() => (recording.recording ? stopRecording(shapeId) : startRecording(shapeId))}
-            title="while playing: overdub at the loop position · idle with notes: start Play and overdub · empty bank: free take, loop length set on stop"
-          >
-            {recording.recording ? "■ Rec" : "● Rec"}
-          </button>
-          <label title="echo the input to this instance's output, with transpose">
-            <input type="checkbox" checked={props.midiThru ?? true} onChange={(e) => updateProps({ midiThru: e.target.checked })} />
-            thru
-          </label>
-          <label title="MPE out: each note on its own channel (2-16) with its recorded pitch bend, pressure and timbre (CC74)">
-            <input type="checkbox" checked={props.mpe ?? false} onChange={(e) => updateProps({ mpe: e.target.checked })} />
-            MPE
-          </label>
-          <label title="semitones at full pitch bend, for recording and MPE output (48 is the MPE default, ordinary keyboards are usually 2)">
-            bend
-            <input
-              className="runner-shape__bend"
-              type="number"
-              min={1}
-              max={96}
-              step={1}
-              value={bendRange}
-              onChange={(e) => {
-                const value = Number(e.target.value);
-                if (Number.isFinite(value) && value >= 1 && value <= 96) updateProps({ bendRange: value });
-              }}
-            />
-          </label>
-          {recording.recording ? (
-            <span className="runner-shape__rec-state">
-              {recording.recording === "free" ? "free take" : "overdub"} · {recording.recorded} notes
-            </span>
-          ) : recording.status ? (
-            <span className="runner-shape__log">{recording.status}</span>
-          ) : null}
-        </div>
-
-        {runtime.error ? (
-          <div className="runner-shape__error" role="alert">
-            could not start: {runtime.error}
-          </div>
-        ) : null}
-
-        <Section title="source" open={props.showSource} onToggle={() => updateProps({ showSource: !props.showSource })} extra={bank ? `${bank.name} · ${bank.notes.length} notes` : "no bank"}>
-          {bank ? (
-            <div onKeyDownCapture={onSourceKeyDown}>
-              <PianoRoll
-                ref={setSourceRollRef}
-                notes={bank.notes as PianoRollNote[]}
-                onNotesChange={onSourceNotesChange}
-                loopLength={bank.loopLength}
-                width={stageWidth}
-                height={SOURCE_STAGE_HEIGHT}
-                interactive
-                showControlPanel
-                ghostNotes={sourceGhosts}
-                noteBadge={noteBadge}
-                noteColor={noteColor}
-                onSelectionChange={onSelectionChange}
-                onNotePreview={onNotePreview}
-                renderMetadataPanel={renderMetadataPanel}
-                initialView={sourceViewRef.current ?? undefined}
-                onViewChange={onSourceViewChange}
+              <Button
+                icon="run"
+                label="Run"
+                tone="run"
+                className="runner-shape__run"
+                active={runtime.mode === "run"}
+                disabled={!bank}
+                onClick={() => runtime.mode !== "run" && startRun(shapeId)}
+                title="run the runner's algorithm, looping"
+              />
+              <Button icon="stop" className="runner-shape__stop" onClick={() => stopInstance(shapeId)} title="stop this instance and release its notes" />
+              <Button
+                icon="record"
+                label="Rec"
+                tone="rec"
+                className="runner-shape__rec"
+                active={Boolean(recordingKind)}
+                disabled={!bank || (!recordingKind && recording.listening === null)}
+                onClick={() => (recordingKind ? stopRecording(shapeId) : startRecording(shapeId))}
+                title="record from the MIDI input · playing: overdub at the loop position · idle with notes: start Play and overdub · empty bank: free take, loop length set on stop"
               />
             </div>
-          ) : (
-            <div className="runner-shape__empty">Pick or create a bank.</div>
-          )}
-        </Section>
+            <div className="ui-group ui-group--io">
+              <span className="ui-caption">out</span>
+              <Chooser
+                className="runner-shape__output"
+                value={props.midiOutputName}
+                options={portChoices(outputNames, props.midiOutputName, connectedOutputs)}
+                onOpen={openPorts}
+                onChange={(value) => updateProps({ midiOutputName: value })}
+                title="MIDI output"
+              />
+              <span className="ui-caption">in</span>
+              <Chooser
+                className="runner-shape__input"
+                value={midiInputName}
+                options={portChoices(inputNames, midiInputName, connectedInputs)}
+                onOpen={openPorts}
+                onChange={(value) => updateProps({ midiInputName: value })}
+                title="MIDI input: held keys show on the source roll, Rec records from it"
+              />
+              <Toggle
+                label="Thru"
+                on={props.midiThru ?? true}
+                onChange={(on) => updateProps({ midiThru: on })}
+                title="echo the input to this instance's output, with transpose"
+              />
+              <Toggle
+                label="MPE"
+                on={props.mpe ?? false}
+                onChange={(on) => updateProps({ mpe: on })}
+                title="MPE out: each note on its own channel (2-16) with its recorded pitch bend, pressure and timbre (CC74)"
+              />
+              <Field label="bend" title="semitones at full pitch bend, for recording and MPE output (48 is the MPE default, ordinary keyboards are usually 2)">
+                <NumberBox className="runner-shape__bend" value={bendRange} min={1} max={96} step={1} width={34} onChange={(value) => updateProps({ bendRange: value })} />
+              </Field>
+            </div>
+          </div>
 
-        <Section title="generated" open={props.showGenerated} onToggle={() => updateProps({ showGenerated: !props.showGenerated })} extra={runtime.generated ? `${runtime.generated.notes.length} notes · ${runtime.played.length} played` : "nothing generated yet"}>
-          <PianoRoll
-            ref={generatedRollRef}
-            notes={(runtime.generated?.notes as PianoRollNote[] | undefined) ?? EMPTY_NOTES}
-            loopLength={runtime.generated?.loopLength ?? bank?.loopLength ?? 16}
-            width={stageWidth}
-            height={OUTPUT_STAGE_HEIGHT}
-            interactive={false}
-            showControlPanel={false}
-            ghostNotes={played}
-            noteBadge={noteBadge}
-            noteColor={generatedNoteColor}
-          />
-        </Section>
+          <div className="runner-shape__params">
+            {[...BASE_PARAMS, ...def.params].map((spec) => (
+              <label key={spec.key} className="runner-shape__param" title={spec.hint}>
+                <span className="runner-shape__param-label">{spec.label}</span>
+                <NumberBox
+                  bar
+                  value={params[spec.key] ?? spec.default}
+                  min={spec.min}
+                  max={spec.max}
+                  step={spec.step}
+                  format={formatParam}
+                  title={spec.hint ?? spec.label}
+                  onChange={(value) => setParam(spec.key, value)}
+                />
+              </label>
+            ))}
+          </div>
 
-        <Section title="preview" open={props.showPreview} onToggle={() => updateProps({ showPreview: !props.showPreview })} extra={runtime.preview ? `${runtime.preview.notes.length} notes` : "press Regenerate"}>
-          <PianoRoll
-            ref={previewRollRef}
-            notes={(runtime.preview?.notes as PianoRollNote[] | undefined) ?? EMPTY_NOTES}
-            loopLength={runtime.preview?.loopLength ?? bank?.loopLength ?? 16}
-            width={stageWidth}
-            height={OUTPUT_STAGE_HEIGHT}
-            interactive={false}
-            showControlPanel={false}
-            noteBadge={noteBadge}
-            noteColor={previewNoteColor}
-          />
-        </Section>
+          <Section
+            title="source"
+            open={props.showSource}
+            onToggle={() => updateProps({ showSource: !props.showSource })}
+            extra={bank ? undefined : "no bank"}
+            toolsRef={setSourceToolbar}
+          >
+            {bank ? (
+              <div onKeyDownCapture={onSourceKeyDown}>
+                <PianoRoll
+                  ref={setSourceRollRef}
+                  notes={bank.notes as PianoRollNote[]}
+                  onNotesChange={onSourceNotesChange}
+                  loopLength={bank.loopLength}
+                  width={stageWidth}
+                  height={SOURCE_STAGE_HEIGHT}
+                  interactive
+                  showControlPanel
+                  toolbarTarget={sourceToolbar}
+                  ghostNotes={sourceGhosts}
+                  noteBadge={noteBadge}
+                  noteColor={noteColor}
+                  onSelectionChange={onSelectionChange}
+                  onNotePreview={onNotePreview}
+                  renderMetadataPanel={renderMetadataPanel}
+                  initialView={sourceViewRef.current ?? undefined}
+                  onViewChange={onSourceViewChange}
+                />
+              </div>
+            ) : (
+              <div className="runner-shape__empty">Pick or create a bank.</div>
+            )}
+          </Section>
+
+          <Section
+            title="generated"
+            open={props.showGenerated}
+            onToggle={() => updateProps({ showGenerated: !props.showGenerated })}
+            extra={runtime.generated ? `${runtime.generated.notes.length} notes · ${runtime.played.length} played` : undefined}
+          >
+            {runtime.generated ? (
+              <PianoRoll
+                ref={generatedRollRef}
+                notes={runtime.generated.notes as PianoRollNote[]}
+                loopLength={runtime.generated.loopLength}
+                width={stageWidth}
+                height={OUTPUT_STAGE_HEIGHT}
+                interactive={false}
+                showControlPanel={false}
+                ghostNotes={played}
+                noteBadge={noteBadge}
+                noteColor={generatedNoteColor}
+              />
+            ) : (
+              <div className="runner-section__placeholder">Play or Run to see the loop that is sounding</div>
+            )}
+          </Section>
+
+          <Section
+            title="preview"
+            open={props.showPreview}
+            onToggle={() => updateProps({ showPreview: !props.showPreview })}
+            extra={runtime.preview ? `${runtime.preview.notes.length} notes` : undefined}
+            tools={
+              <Button
+                icon="regenerate"
+                label="Regenerate"
+                className="runner-shape__regenerate"
+                disabled={!bank}
+                onClick={onRegenerate}
+                title="dry-run the algorithm into the Preview roll"
+              />
+            }
+          >
+            {runtime.preview ? (
+              <PianoRoll
+                ref={previewRollRef}
+                notes={runtime.preview.notes as PianoRollNote[]}
+                loopLength={runtime.preview.loopLength}
+                width={stageWidth}
+                height={OUTPUT_STAGE_HEIGHT}
+                interactive={false}
+                showControlPanel={false}
+                noteBadge={noteBadge}
+                noteColor={previewNoteColor}
+              />
+            ) : (
+              <div className="runner-section__placeholder">Regenerate to preview one loop of the algorithm</div>
+            )}
+          </Section>
+          <div className="runner-shape__status" role="status">
+            {runtime.error ? (
+              <span className="runner-shape__status-error" role="alert">
+                could not start: {runtime.error}
+              </span>
+            ) : null}
+            {recordingKind ? (
+              <span className="runner-shape__status-rec">
+                recording {recordingKind === "free" ? "a free take" : "overdub"} · {recording.recorded} notes
+              </span>
+            ) : recording.status ? (
+              <span className="runner-shape__status-log">{recording.status}</span>
+            ) : null}
+            {lastEvent ? (
+              <span className="runner-shape__status-event" title={JSON.stringify(lastEvent.event)}>
+                {lastEvent.direction === "in" ? "←" : "→"} {lastEvent.event.type}
+                {typeof lastEvent.event.pitch === "number" ? ` ${lastEvent.event.pitch}` : ""}
+              </span>
+            ) : null}
+            {runtime.logs[0] ? <span className="runner-shape__status-log">{runtime.logs[0]}</span> : null}
+          </div>
         </div>
       </div>
     </HTMLContainer>
   );
 }
 
-const EMPTY_NOTES: PianoRollNote[] = [];
 const EMPTY_GHOSTS: GhostNote[] = [];
 const EMPTY_LOG: readonly never[] = [];
 const EMPTY_RUNTIME = getRuntime("__none__");
 const EMPTY_RECORDING: RecordingUi = { listening: null, recording: null, recorded: 0, status: "" };
-const UNPLAYED_COLOR = "#b9b4ae";
+const UNPLAYED_COLOR = "#8f8a85";
 
 function formatParam(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
 
-function Section({ title, open, onToggle, extra, children }: { title: string; open: boolean; onToggle: () => void; extra?: string; children: React.ReactNode }) {
+function Section({
+  title,
+  open,
+  onToggle,
+  extra,
+  tools,
+  toolsRef,
+  children,
+}: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  extra?: string;
+  /** The section's own controls, right-aligned in its header. */
+  tools?: React.ReactNode;
+  /** Header slot a roll renders its tool row into (only while open). */
+  toolsRef?: (el: HTMLElement | null) => void;
+  children: React.ReactNode;
+}) {
   return (
     <section className={`runner-section ${open ? "runner-section--open" : ""}`}>
-      <button type="button" className="runner-section__header" onClick={onToggle}>
-        <span className="runner-section__chevron">{open ? "▾" : "▸"}</span>
-        <span className="runner-section__title">{title}</span>
+      <div className="runner-section__header">
+        <button type="button" data-control className="runner-section__toggle" onClick={onToggle} aria-expanded={open}>
+          <Icon name={open ? "chevronDown" : "chevronRight"} size={10} />
+          <span className="runner-section__title">{title}</span>
+        </button>
         {extra ? <span className="runner-section__extra">{extra}</span> : null}
-      </button>
+        <span className="runner-section__tools">
+          {tools}
+          {open && toolsRef ? <span ref={toolsRef} className="runner-section__toolbar" /> : null}
+        </span>
+      </div>
       {open ? <div className="runner-section__body">{children}</div> : null}
     </section>
   );

@@ -2,6 +2,7 @@
 // notes, with field inputs when every selected note carries the tag. Rendered
 // through the piano roll's metadata panel slot, above the generic tree editor.
 import { useEffect, useState } from "react";
+import { Field, NumberBox, TextField, Toggle } from "../../ui/controls/controls";
 import type { JsonObject, MetadataPanelProps, PianoRollNote } from "../../pianoRoll/types";
 import { type RunnerDefinition, type TagFieldSpec, type TagSpec, tagDefaults, tagValue } from "../runnerTypes";
 
@@ -83,50 +84,55 @@ function FieldInput({ tag, field, selected, applyMetadata }: { tag: TagSpec; fie
 
   if (field.kind === "boolean") {
     return (
-      <label className="tag-field">
-        <input type="checkbox" checked={!mixed && Boolean(value)} ref={(el) => {
-            if (el) el.indeterminate = mixed;
-          }} onChange={(e) => setField(e.target.checked)} />
-        {field.label}
-      </label>
+      <span className="tag-field">
+        <Toggle label={field.label} on={!mixed && Boolean(value)} mixed={mixed} onChange={(on) => setField(on)} />
+      </span>
     );
   }
   if (field.kind === "number") {
-    return (
-      <label className="tag-field">
-        <span>{field.label}</span>
-        <input
-          type="number"
-          value={mixed || typeof value !== "number" ? "" : value}
-          placeholder={mixed ? "mixed" : String(field.default)}
-          min={field.min}
-          max={field.max}
-          step={field.step}
-          onChange={(e) => {
-            const n = Number(e.target.value);
-            if (Number.isFinite(n)) setField(n);
-          }}
-        />
-      </label>
-    );
+    return <NumberField field={field} mixed={mixed} value={typeof value === "number" ? value : null} onCommit={setField} />;
   }
   return (
-    <label className="tag-field">
-      <span>{field.label}</span>
-      <input
-        type="text"
+    <Field label={field.label}>
+      <TextField
+        className="tag-field__text"
         value={draft}
         placeholder={mixed ? "mixed" : textual && field.kind === "numberList" ? "60, 64, 67" : ""}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commitText}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            commitText();
-          }
-        }}
+        onChange={setDraft}
+        onCommit={commitText}
       />
-    </label>
+    </Field>
+  );
+}
+
+/** A number field that previews a drag locally and writes one undoable edit at its end. */
+function NumberField({
+  field,
+  mixed,
+  value,
+  onCommit,
+}: {
+  field: Extract<TagFieldSpec, { kind: "number" }>;
+  mixed: boolean;
+  value: number | null;
+  onCommit: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState<number | null>(null);
+  useEffect(() => setDraft(null), [value, mixed]);
+  return (
+    <span className="tag-field">
+      <Field label={field.label}>
+        <NumberBox
+          value={draft ?? (mixed ? null : value ?? field.default)}
+          placeholder="mixed"
+          min={field.min}
+          max={field.max}
+          step={field.step ?? 1}
+          onChange={setDraft}
+          onCommit={onCommit}
+        />
+      </Field>
+    </span>
   );
 }
 
@@ -142,7 +148,8 @@ export function TagEditor({ def, selected, applyMetadata }: TagEditorProps) {
             <button
               type="button"
               className="tag-chip"
-              style={{ borderColor: tag.color, background: state === "all" ? tag.color : undefined }}
+              data-control
+              style={tag.color ? ({ "--tag-color": tag.color } as React.CSSProperties) : undefined}
               title={tag.hotkey ? `hotkey: ${tag.hotkey}` : undefined}
               onClick={() => toggleTag(tag, selected, applyMetadata)}
             >

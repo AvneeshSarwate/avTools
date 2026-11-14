@@ -166,7 +166,12 @@ await sleep(300);
 s = await state();
 const n3 = s.bank.notes.find((n) => n.pitch === 67);
 console.log("overdub note", n3, "expected end near", expected);
-assert.ok(n3 && Math.abs(n3.position + n3.duration - expected) < 0.25, "overdub lands at loop position");
+// Compare around the loop: the note-off can land just after the wrap.
+const loopDistance = (a, b, length) => {
+  const d = (((a - b) % length) + length) % length;
+  return Math.min(d, length - d);
+};
+assert.ok(n3 && loopDistance(n3.position + n3.duration, expected, s.bank.loopLength) < 0.25, "overdub lands at loop position");
 assert.equal(s.bank.notes.length, 3);
 
 // --- undo the overdub as one step

@@ -1,106 +1,181 @@
-:root {
-  color-scheme: dark;
-  --mr-bg: #1b1d22;
-  --mr-panel: #24272e;
-  --mr-panel-2: #2c3038;
-  --mr-border: #3a3f49;
-  --mr-text: #e6e8ec;
-  --mr-muted: #9aa1ad;
-  --mr-accent: #5ad0ff;
-  --mr-run: #7be38a;
-  --mr-play: #f0c45a;
-  --mr-error: #ff6b6b;
-  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
-  font-size: 12px;
-}
+/* Visual system, after Ableton Live's dark themes: grey chrome in a few tonal
+   steps, flat controls, ~11px type, and colour only where it means something.
 
-html, body, #root { margin: 0; height: 100%; background: var(--mr-bg); color: var(--mr-text); }
+   Colour roles (keep them exclusive, so a colour always reads the same):
+   - play   green  Play transport, its playhead, lamps and shape outline
+   - run    amber  Run transport, same places
+   - rec    red    Rec, live MIDI input, error text. Never decoration.
+   - select blue   selection, focus, toggles that are on (SNAP, THRU, MPE, Q)
+   - warn   yellow unsaved state
+   Note fills are not part of the chrome: runners set them by convention.
+   Tokens and the control kit live in src/ui/controls/controls.css. */
+
+html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: var(--c-text); }
 
 .app-root { position: fixed; inset: 0; display: flex; flex-direction: column; }
 .app-body { flex: 1; display: flex; min-height: 0; }
 .app-canvas { flex: 1; position: relative; min-width: 0; }
 
-button, select, input { font: inherit; color: inherit; }
-button { background: var(--mr-panel-2); border: 1px solid var(--mr-border); border-radius: 4px; padding: 2px 8px; cursor: pointer; }
-button:hover:not(:disabled) { border-color: var(--mr-accent); }
-button:disabled { opacity: 0.45; cursor: default; }
-select, input[type="text"], input[type="number"] { background: var(--mr-bg); border: 1px solid var(--mr-border); border-radius: 4px; padding: 2px 6px; }
-label { display: inline-flex; align-items: center; gap: 4px; }
 
-/* Top bar */
-.top-bar { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; padding: 6px 10px; background: var(--mr-panel); border-bottom: 1px solid var(--mr-border); z-index: 2; }
-.top-bar__group { display: inline-flex; align-items: center; gap: 6px; }
-.top-bar__status { color: var(--mr-muted); }
-.top-bar__status--dirty { color: var(--mr-play); }
-.top-bar__status--saving { color: var(--mr-accent); }
-.top-bar__status--error, .top-bar__error { color: var(--mr-error); }
-.top-bar__play { border-color: var(--mr-run); }
+/* ---------- top bar (Ableton's control bar order) ---------- */
 
-/* Sidebar */
-.bank-sidebar { width: 230px; background: var(--mr-panel); border-right: 1px solid var(--mr-border); overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 10px; }
-.bank-sidebar--collapsed { width: auto; padding: 4px; }
-.bank-sidebar__header, .bank-group__header { display: flex; justify-content: space-between; align-items: center; }
-.bank-group { display: flex; flex-direction: column; gap: 3px; }
-.bank-group__header { color: var(--mr-muted); text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; }
-.bank-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 6px; padding: 4px 6px; border: 1px solid var(--mr-border); border-radius: 4px; background: var(--mr-panel-2); }
-.bank-row--empty { color: var(--mr-muted); border-style: dashed; }
-.bank-row__name { background: none; border: none; padding: 0; text-align: left; font-weight: 600; }
-.bank-row__meta { color: var(--mr-muted); grid-column: 1 / -1; }
-.bank-row__actions { grid-column: 1 / -1; display: flex; gap: 4px; }
-.bank-row__actions button { padding: 1px 6px; }
-.bank-row input { width: 100%; }
+.top-bar {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 8px;
+  background: var(--c-surface-2);
+  border-bottom: 1px solid var(--c-line);
+  z-index: 2;
+  overflow: hidden;
+}
+.top-bar .ui-group { height: 20px; }
+.top-bar__title { font-weight: 700; letter-spacing: 0.02em; margin-right: 6px; white-space: nowrap; }
+.top-bar__status { display: inline-flex; align-items: center; gap: 5px; color: var(--c-text-dim); white-space: nowrap; }
+.top-bar__error { color: var(--c-rec); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* Runner shape */
-.runner-shape { pointer-events: all; background: var(--mr-panel); border: 2px solid var(--mr-border); border-radius: 8px; overflow: hidden; color: var(--mr-text); }
-.runner-shape--run { border-color: var(--mr-run); }
-.runner-shape--play { border-color: var(--mr-play); }
-.runner-shape__content { padding: 10px; display: flex; flex-direction: column; gap: 6px; height: max-content; }
-.runner-shape__header { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; cursor: move; margin: -10px -10px 0; padding: 8px 10px; background: var(--mr-panel-2); border-bottom: 1px solid var(--mr-border); }
-.runner-shape__header label, .runner-shape__header select, .runner-shape__header input, .runner-shape__header button { cursor: default; }
-.runner-shape__grip { color: var(--mr-muted); font-size: 16px; line-height: 1; user-select: none; }
-.runner-shape__body { display: flex; flex-direction: column; gap: 6px; }
-.runner-shape__stop { border-color: var(--mr-error); }
-.runner-shape__title { font-size: 14px; margin-right: 4px; }
-.runner-shape__loop-length { width: 44px; }
-.runner-shape__queue { margin-left: auto; }
-.runner-shape__params { display: flex; flex-wrap: wrap; gap: 4px 14px; }
-.runner-shape__param { display: inline-flex; align-items: center; gap: 6px; }
-.runner-shape__param span { color: var(--mr-muted); min-width: 56px; }
-.runner-shape__param input[type="range"] { width: 110px; }
-.runner-shape__param output { min-width: 34px; font-variant-numeric: tabular-nums; }
-.runner-shape__transport { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.runner-shape__run { border-color: var(--mr-run); }
-.runner-shape__input { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
-.runner-shape__input label { display: inline-flex; gap: 4px; align-items: center; }
-.runner-shape__input select { max-width: 180px; }
-.runner-shape__bend { width: 44px; }
-.runner-shape__rec { border-color: var(--mr-error); color: var(--mr-error); }
-.runner-shape__rec--on { background: var(--mr-error); color: #fff; }
-.runner-shape__rec-state { color: var(--mr-error); font-variant-numeric: tabular-nums; }
-.runner-shape__state { padding: 1px 8px; border-radius: 10px; background: var(--mr-panel-2); color: var(--mr-muted); }
-.runner-shape__state--run { color: var(--mr-run); }
-.runner-shape__state--play { color: var(--mr-play); }
-.runner-shape__error { color: var(--mr-error); background: rgba(255, 107, 107, 0.12); border: 1px solid var(--mr-error); border-radius: 4px; padding: 6px 8px; font-weight: 600; }
-.runner-shape__event { color: var(--mr-accent); font-variant-numeric: tabular-nums; }
-.runner-shape__log { color: var(--mr-muted); }
-.runner-shape__empty { padding: 20px; color: var(--mr-muted); text-align: center; border: 1px dashed var(--mr-border); border-radius: 4px; }
+/* ---------- bank sidebar ---------- */
 
-.runner-section { border: 1px solid var(--mr-border); border-radius: 6px; overflow: hidden; }
-.runner-section__header { width: 100%; display: flex; gap: 8px; align-items: center; background: var(--mr-panel-2); border: none; border-radius: 0; padding: 4px 8px; text-align: left; }
-.runner-section__title { font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; }
-.runner-section__extra { color: var(--mr-muted); margin-left: auto; }
-.runner-section__body { padding: 6px; background: var(--mr-bg); }
+.bank-sidebar { width: 210px; flex: none; background: var(--c-surface-1); border-right: 1px solid var(--c-line); overflow-y: auto; display: flex; flex-direction: column; }
+.bank-sidebar--collapsed { width: 26px; align-items: center; padding-top: 3px; }
+.bank-sidebar__header { display: flex; align-items: center; justify-content: space-between; height: var(--h-row); padding: 0 3px 0 10px; border-bottom: 1px solid var(--c-line); }
+.bank-group { display: flex; flex-direction: column; padding-bottom: 4px; }
+.bank-group__header { display: flex; align-items: center; justify-content: space-between; height: var(--h-row); padding: 0 3px 0 10px; }
+.bank-row { display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 3px 0 10px; }
+.bank-row:hover { background: var(--c-surface-3); }
+.bank-row--empty { color: var(--c-text-faint); }
+.bank-row__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.bank-row__meta { color: var(--c-text-faint); white-space: nowrap; }
+.bank-row__actions { display: none; gap: 1px; }
+.bank-row:hover .bank-row__actions, .bank-row:focus-within .bank-row__actions { display: flex; }
+.bank-row:hover .bank-row__meta, .bank-row:focus-within .bank-row__meta { display: none; }
+.bank-row .ui-text { flex: 1; }
+
+/* ---------- runner instance ---------- */
+
+.runner-shape {
+  pointer-events: all;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-line);
+  box-shadow: 0 0 0 1px var(--c-surface-4);
+  border-radius: 3px;
+  overflow: hidden;
+  color: var(--c-text);
+}
+.runner-shape--play { box-shadow: 0 0 0 2px var(--c-play); }
+.runner-shape--run { box-shadow: 0 0 0 2px var(--c-run); }
+.runner-shape--recording { box-shadow: 0 0 0 2px var(--c-rec); }
+.runner-shape__content { display: flex; flex-direction: column; height: max-content; }
+
+/* Title bar: identity and the bank (the instance's "clip"), then state. */
+.runner-shape__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 6px 0 4px;
+  background: var(--c-surface-1);
+  border-bottom: 1px solid var(--c-line);
+  cursor: move;
+}
+.runner-shape__title [data-control] { cursor: default; }
+.runner-shape__title .ui-number { cursor: ns-resize; }
+.runner-shape__title .ui-chooser { max-width: 200px; }
+.runner-shape__grip { color: var(--c-text-faint); display: inline-flex; }
+.runner-shape__name { font-size: 12px; font-weight: 700; margin-right: 4px; white-space: nowrap; }
+.runner-shape__mode { display: inline-flex; align-items: center; gap: 5px; color: var(--c-text-dim); white-space: nowrap; }
+.runner-shape__mode--play { color: var(--c-play); }
+.runner-shape__mode--run { color: var(--c-run); }
+
+/* Fixed control strip: transport and I/O. Never wraps; choosers shrink. */
+.runner-shape__strip {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--c-line);
+  overflow: hidden;
+}
+.runner-shape__strip .ui-group { flex: none; }
+.runner-shape__strip .ui-group--io { flex: 1 1 0; min-width: 0; }
+.runner-shape__strip .ui-group--io .ui-chooser { flex: 1 1 0; max-width: 180px; min-width: 60px; }
+
+/* Params: the only region whose size depends on the runner. Wraps on a grid. */
+.runner-shape__params {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 4px 14px;
+  padding: 6px 8px;
+  background: var(--c-surface-1);
+  border-bottom: 1px solid var(--c-line);
+}
+.runner-shape__param { display: grid; grid-template-columns: 74px 1fr; align-items: center; gap: 6px; }
+/* Param labels are runner-defined text: sentence case, so long names fit. */
+.runner-shape__param-label { color: var(--c-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runner-shape__param .ui-number { width: 100%; }
+
+/* Status line: transient messages (events, logs, recording), Ableton's status bar. */
+.runner-shape__status {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 20px;
+  padding: 0 8px;
+  color: var(--c-text-faint);
+  background: var(--c-surface-1);
+  border-top: 1px solid var(--c-line);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.runner-shape__status > * { overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 60%; }
+.runner-shape__status-error { color: var(--c-rec); }
+.runner-shape__status-rec { color: var(--c-rec); }
+.runner-shape__status-event, .runner-shape__status-log { color: var(--c-text-dim); }
+
+.runner-shape__empty { padding: 14px; color: var(--c-text-faint); text-align: center; }
+
+/* Sections: a header row (title, stats, the section's own tools) over a roll. */
+.runner-section + .runner-section { border-top: 1px solid var(--c-line); }
+.runner-section__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 4px 0 2px;
+  background: var(--c-surface-3);
+  overflow: hidden;
+}
+.runner-section__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+  padding: 0 4px;
+  border: none;
+  background: none;
+  color: var(--c-text-dim);
+  font: inherit;
+  cursor: pointer;
+  flex: none;
+}
+.runner-section__toggle:hover .runner-section__title { color: var(--c-text); }
+.runner-section__title { font-size: 10px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--c-text-dim); }
+.runner-section__extra { color: var(--c-text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.runner-section__tools { margin-left: auto; display: flex; align-items: center; min-width: 0; flex: none; }
+.runner-section__body { padding: 4px 6px 6px; background: var(--c-surface-2); }
+.runner-section__placeholder { height: 26px; display: flex; align-items: center; justify-content: center; color: var(--c-text-faint); background: var(--c-surface-1); border: 1px dashed var(--c-line-soft); }
 
 /* Tag editor (inside the piano roll metadata panel) */
-.tag-editor { display: flex; flex-direction: column; gap: 6px; padding: 6px 0; }
-.tag-editor--empty { color: var(--mr-muted); padding: 6px 0; }
+.tag-editor { display: flex; flex-direction: column; gap: 4px; padding: 2px 0; }
+.tag-editor--empty { color: var(--c-text-faint); padding: 2px 0; }
 .tag-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.tag-chip { display: inline-flex; gap: 6px; align-items: center; border-width: 2px; }
-.tag-row--all .tag-chip { color: #111; font-weight: 600; }
-.tag-row--some .tag-chip { border-style: dashed; }
-.tag-chip kbd { font-size: 10px; padding: 0 4px; border: 1px solid currentColor; border-radius: 3px; opacity: 0.8; }
-.tag-fields { display: flex; flex-wrap: wrap; gap: 8px; }
-.tag-field { display: inline-flex; gap: 4px; align-items: center; }
-.tag-field span { color: var(--mr-muted); }
-.tag-field input[type="number"] { width: 64px; }
-.tag-field input[type="text"] { width: 120px; }
+.tag-chip { font: inherit; height: var(--h-control); display: inline-flex; gap: 6px; align-items: center; padding: 0 7px; border: 1px solid var(--c-line); border-left: 4px solid var(--tag-color, var(--c-text-dim)); border-radius: var(--radius); background: var(--c-surface-4); color: var(--c-text); cursor: pointer; }
+.tag-chip:hover { background: var(--c-surface-5); }
+.tag-row--all .tag-chip { background: var(--tag-color, var(--c-text)); color: var(--c-on-tone); font-weight: 600; }
+.tag-row--some .tag-chip { background: linear-gradient(135deg, color-mix(in srgb, var(--tag-color, #888) 55%, transparent) 0 50%, var(--c-surface-4) 50% 100%); }
+.tag-chip kbd { font: inherit; font-size: 9px; padding: 0 3px; border: 1px solid currentColor; border-radius: 2px; opacity: 0.7; }
+.tag-chip small { color: inherit; opacity: 0.8; }
+.tag-fields { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.tag-field .ui-text { width: 120px; }
+.tag-field .ui-number { width: 56px; }
+.tag-field { display: inline-flex; align-items: center; gap: 5px; }

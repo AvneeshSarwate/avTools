@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { Editor } from "tldraw";
 import { RUNNERS } from "../runners/registry";
 import { createInstance, listInstances } from "../shapes";
@@ -7,21 +7,14 @@ import { ensureMidi, midiStore, panicAllOutputs, refreshOutputs } from "../store
 import { useSnapshot } from "valtio";
 import { playbackStore, startRun, stopAll } from "../store/playback";
 import { listProjects, projectStore, saveProject, switchProject } from "../store/project";
+import { Button, Chooser, Field, Lamp, NumberBox, TextField } from "./controls/controls";
 
 export function TopBar({ editor }: { editor: Editor | null }) {
   const clock = useSnapshot(clockStore);
   const midi = useSnapshot(midiStore);
   const project = useSnapshot(projectStore);
   const playback = useSnapshot(playbackStore);
-  const [bpmDraft, setBpmDraft] = useState(String(clock.bpm));
-  useEffect(() => setBpmDraft(String(clock.bpm)), [clock.bpm]);
   const activeCount = Object.values(playback.instances).filter((runtime) => runtime.mode !== "idle").length;
-
-  const commitBpm = () => {
-    const value = Number(bpmDraft);
-    if (Number.isFinite(value) && value > 0) setBpm(value);
-    else setBpmDraft(String(clock.bpm));
-  };
 
   const playQueued = () => {
     if (!editor) return;
@@ -30,89 +23,71 @@ export function TopBar({ editor }: { editor: Editor | null }) {
   };
 
   const [newProjectName, setNewProjectName] = useState("");
+  const projectOptions = [project.name, ...project.available.filter((name) => name !== project.name)].map((name) => ({ value: name, label: name }));
+  const saveTone = project.status === "error" ? "rec" : project.status === "dirty" ? "warn" : project.status === "saving" ? "select" : "off";
+  const savedAt = project.lastSavedAt ? new Date(project.lastSavedAt).toLocaleTimeString() : "";
+  const midiTone = midi.status === "ready" ? "play" : midi.status === "error" ? "rec" : midi.status === "opening" ? "warn" : "off";
 
   return (
     <div className="top-bar">
-      <div className="top-bar__group">
-        <strong>music runners</strong>
-        <select
+      <div className="ui-group">
+        <span className="top-bar__title">music runners</span>
+        <Chooser
           value={project.name}
-          onPointerDown={() => void listProjects()}
-          onChange={(e) => {
-            if (e.target.value !== project.name) switchProject(e.target.value);
-          }}
-        >
-          {[project.name, ...project.available.filter((name) => name !== project.name)].map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-        </select>
-        <input
-          type="text"
-          placeholder="new project"
-          value={newProjectName}
-          onChange={(e) => setNewProjectName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && /^[a-zA-Z0-9_-]+$/.test(newProjectName)) switchProject(newProjectName);
-          }}
-          size={12}
+          options={projectOptions}
+          onOpen={() => void listProjects()}
+          onChange={(name) => switchProject(name)}
+          title="project (projects/<name>/project.json)"
+          width={130}
         />
-        <button type="button" onClick={() => void saveProject()}>
-          Save
-        </button>
-        <span className={`top-bar__status top-bar__status--${project.status}`} title={project.error ?? undefined}>
-          {project.status}
-          {project.lastSavedAt ? ` ${new Date(project.lastSavedAt).toLocaleTimeString()}` : ""}
+        <TextField
+          value={newProjectName}
+          onChange={setNewProjectName}
+          onCommit={() => {
+            if (/^[a-zA-Z0-9_-]+$/.test(newProjectName)) switchProject(newProjectName);
+          }}
+          placeholder="new project…"
+          title="type a name and press Enter to create or open it"
+          width={110}
+        />
+        <Button icon="save" quiet onClick={() => void saveProject()} title="save now (autosave runs a second after any change)" />
+        <span className="top-bar__status" title={project.error ?? undefined}>
+          <Lamp tone={saveTone} />
+          {project.status === "saved" && savedAt ? `saved ${savedAt}` : project.status}
         </span>
       </div>
 
-      <div className="top-bar__group">
-        <label>
-          bpm
-          <input
-            type="text"
-            inputMode="decimal"
-            value={bpmDraft}
-            size={5}
-            onChange={(e) => setBpmDraft(e.target.value)}
-            onBlur={commitBpm}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitBpm();
-            }}
-          />
-        </label>
-        <button type="button" className="top-bar__play" onClick={playQueued} disabled={!editor}>
-          ▶ play queued
-        </button>
-        <button type="button" onClick={stopAll} disabled={activeCount === 0}>
-          ■ stop all{activeCount ? ` (${activeCount})` : ""}
-        </button>
-        <button type="button" onClick={panicAllOutputs} title="all notes off on every open output">
-          panic
-        </button>
+      <span className="ui-spacer" />
+
+      <div className="ui-group">
+        <Field label="bpm">
+          <NumberBox value={clock.bpm} min={20} max={400} step={0.01} format={(value) => value.toFixed(2)} width={58} onChange={setBpm} title="tempo of the shared clock" />
+        </Field>
+      </div>
+      <div className="ui-group">
+        <Button icon="play" label="Play queued" tone="play" onClick={playQueued} disabled={!editor} title="run every instance with Q on, together" />
+        <Button icon="stop" label={activeCount ? `Stop all (${activeCount})` : "Stop all"} onClick={stopAll} disabled={activeCount === 0} />
+        <Button icon="panic" label="Panic" quiet onClick={panicAllOutputs} title="all notes off on every open output" />
       </div>
 
-      <div className="top-bar__group">
-        <span>midi: {midi.status}</span>
+      <span className="ui-spacer" />
+
+      <div className="ui-group">
+        <span className="top-bar__status" title={midi.error ?? `${midi.outputs.length} outputs, ${midi.inputs.length} inputs`}>
+          <Lamp tone={midiTone} />
+          MIDI {midi.status === "ready" ? `${midi.outputs.length} out · ${midi.inputs.length} in` : midi.status}
+        </span>
         {midi.status === "ready" ? (
-          <button type="button" onClick={refreshOutputs}>
-            refresh ({midi.outputs.length})
-          </button>
+          <Button icon="refresh" quiet onClick={refreshOutputs} title="re-scan MIDI ports" />
         ) : (
-          <button type="button" onClick={() => void ensureMidi()}>
-            connect
-          </button>
+          <Button label="Connect" onClick={() => void ensureMidi()} />
         )}
         {midi.error ? <span className="top-bar__error">{midi.error}</span> : null}
       </div>
-
-      <div className="top-bar__group">
-        <span>add</span>
+      <div className="ui-group">
+        <span className="ui-caption">add</span>
         {RUNNERS.map((def) => (
-          <button key={def.type} type="button" disabled={!editor} title={def.description} onClick={() => editor && createInstance(editor, def.type)}>
-            + {def.label}
-          </button>
+          <Button key={def.type} icon="plus" label={def.label} disabled={!editor} title={def.description} onClick={() => editor && createInstance(editor, def.type)} />
         ))}
       </div>
     </div>

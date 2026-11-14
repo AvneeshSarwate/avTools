@@ -1,0 +1,191 @@
+/* Design tokens and the control kit. Imported by controls.tsx, so anything
+   that renders these controls (the app, the standalone roll demo) gets them.
+   Colour roles are described in src/styles.css. */
+:root {
+  color-scheme: dark;
+  --c-base: #121212;
+  --c-surface-1: #1b1b1b;
+  --c-surface-2: #232323;
+  --c-surface-3: #2c2c2c;
+  --c-surface-4: #363636;
+  --c-surface-5: #424242;
+  --c-line: #0b0b0b;
+  --c-line-soft: #343434;
+  --c-text: #d9d9d9;
+  --c-text-dim: #959595;
+  --c-text-faint: #5f5f5f;
+  --c-play: #62d26f;
+  --c-run: #ffab3d;
+  --c-rec: #ff4f4f;
+  --c-select: #64b5ff;
+  --c-warn: #e6c84a;
+  --c-on-tone: #111;
+
+  --h-control: 20px;
+  --h-row: 24px;
+  --radius: 2px;
+
+  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A small uppercase caption: group names, section titles, field labels. */
+.ui-caption { font-size: 9.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--c-text-faint); white-space: nowrap; }
+
+/* ---------- controls (src/ui/controls) ---------- */
+
+.ui-icon { display: block; flex: none; }
+
+.ui-button, .ui-toggle, .ui-chooser {
+  font: inherit;
+  color: var(--c-text);
+  height: var(--h-control);
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius);
+  background: var(--c-surface-4);
+  cursor: pointer;
+  white-space: nowrap;
+  flex: none;
+}
+.ui-button.is-icon, .ui-toggle.is-icon { width: var(--h-control); padding: 0; justify-content: center; }
+.ui-button:hover:not(:disabled), .ui-toggle:hover:not(:disabled), .ui-chooser:hover:not(:disabled) { background: var(--c-surface-5); }
+.ui-button:disabled, .ui-toggle:disabled, .ui-chooser:disabled { opacity: 0.38; cursor: default; }
+.ui-button:focus-visible, .ui-toggle:focus-visible, .ui-chooser:focus-visible, .ui-number:focus-visible, .ui-text:focus-visible {
+  outline: 1px solid var(--c-select);
+  outline-offset: 0;
+}
+.ui-button.is-quiet { background: transparent; border-color: transparent; color: var(--c-text-dim); }
+.ui-button.is-quiet:hover:not(:disabled) { background: var(--c-surface-4); color: var(--c-text); }
+.ui-button__label { font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
+
+/* Tones: the icon takes the tone while idle, the fill takes it when active. */
+.ui-tone-play:not(.is-active) .ui-icon { color: var(--c-play); }
+.ui-tone-run:not(.is-active) .ui-icon { color: var(--c-run); }
+.ui-tone-rec:not(.is-active) .ui-icon { color: var(--c-rec); }
+.ui-button.ui-tone-play.is-active, .ui-toggle.ui-tone-play.is-active { background: var(--c-play); color: var(--c-on-tone); }
+.ui-button.ui-tone-run.is-active, .ui-toggle.ui-tone-run.is-active { background: var(--c-run); color: var(--c-on-tone); }
+.ui-button.ui-tone-rec.is-active, .ui-toggle.ui-tone-rec.is-active { background: var(--c-rec); color: #fff; }
+.ui-button.ui-tone-select.is-active, .ui-toggle.ui-tone-select.is-active { background: var(--c-select); color: var(--c-on-tone); }
+.ui-button.ui-tone-neutral.is-active, .ui-toggle.ui-tone-neutral.is-active { background: var(--c-text); color: var(--c-on-tone); }
+.is-active:hover:not(:disabled) { filter: brightness(1.08); }
+.ui-toggle.is-mixed { background: linear-gradient(135deg, var(--c-select) 0 50%, var(--c-surface-4) 50% 100%); }
+.ui-toggle:not(.is-active):not(.is-mixed) { color: var(--c-text-dim); }
+
+/* Value field: drag to change. */
+.ui-number {
+  position: relative;
+  height: var(--h-control);
+  min-width: 36px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 6px;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius);
+  background: var(--c-surface-1);
+  color: var(--c-text);
+  cursor: ns-resize;
+  user-select: none;
+  touch-action: none;
+  flex: none;
+  overflow: hidden;
+  outline: none;
+}
+.ui-number:hover:not(.is-disabled) { background: var(--c-base); }
+.ui-number.is-dragging { color: var(--c-select); }
+.ui-number.is-disabled { opacity: 0.38; cursor: default; }
+.ui-number.is-mixed .ui-number__value { color: var(--c-text-faint); }
+.ui-number.is-bar { justify-content: center; }
+.ui-number.is-bar::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--ui-fill-from, 0%);
+  width: var(--ui-fill, 0%);
+  min-width: 1px;
+  background: var(--c-surface-5);
+}
+.ui-number.is-bar.is-dragging::before { background: #2f4a63; }
+.ui-number__value { position: relative; }
+.ui-number__input {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  border: none;
+  outline: none;
+  padding: 0;
+  background: transparent;
+  color: var(--c-select);
+  font: inherit;
+  text-align: right;
+}
+
+/* Chooser */
+.ui-chooser { background: var(--c-surface-3); justify-content: space-between; min-width: 0; flex: 0 1 auto; }
+.ui-chooser .ui-icon { color: var(--c-text-dim); }
+.ui-chooser__label { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ui-chooser.is-muted .ui-chooser__label { color: var(--c-text-faint); }
+.ui-chooser.is-open { border-color: var(--c-select); }
+.ui-chooser__list {
+  position: fixed;
+  z-index: 1000;
+  box-sizing: border-box;
+  overflow-y: auto;
+  padding: 2px 0;
+  background: var(--c-surface-3);
+  border: 1px solid var(--c-line);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 11px;
+  color: var(--c-text);
+  outline: none;
+}
+.ui-chooser__option { padding: 3px 12px 3px 8px; white-space: nowrap; cursor: default; border-left: 2px solid transparent; }
+.ui-chooser__option.is-highlighted { background: var(--c-surface-5); }
+.ui-chooser__option.is-selected { border-left-color: var(--c-select); }
+.ui-chooser__option.is-muted { color: var(--c-text-faint); }
+.ui-chooser__option.has-divider { border-top: 1px solid var(--c-line); margin-top: 2px; padding-top: 4px; }
+.ui-chooser__empty { padding: 4px 10px; color: var(--c-text-faint); }
+
+.ui-text {
+  font: inherit;
+  height: var(--h-control);
+  box-sizing: border-box;
+  padding: 0 6px;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius);
+  background: var(--c-surface-1);
+  color: var(--c-text);
+  outline: none;
+  min-width: 0;
+}
+.ui-text::placeholder { color: var(--c-text-faint); }
+
+.ui-field { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.ui-field.is-stacked { flex-direction: column; align-items: stretch; gap: 2px; }
+.ui-field__label { font-size: 9.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--c-text-faint); white-space: nowrap; }
+
+.ui-lamp { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--c-text-faint); display: inline-block; }
+.ui-lamp--play { background: var(--c-play); }
+.ui-lamp--run { background: var(--c-run); }
+.ui-lamp--rec { background: var(--c-rec); }
+.ui-lamp--select { background: var(--c-select); }
+.ui-lamp--warn { background: var(--c-warn); }
+.ui-lamp--off { background: var(--c-surface-5); }
+.ui-lamp.is-pulsing { animation: ui-pulse 1s ease-in-out infinite; }
+@keyframes ui-pulse { 50% { opacity: 0.35; } }
+
+/* Groups inside a strip are separated by a hairline, not by gaps. */
+.ui-group { display: flex; align-items: center; gap: 3px; padding: 0 8px; min-width: 0; }
+.ui-group + .ui-group { border-left: 1px solid var(--c-line); }
+.ui-group:first-child { padding-left: 0; }
+.ui-spacer { flex: 1; }
+

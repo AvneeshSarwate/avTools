@@ -15,6 +15,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent
 } from 'react'
+import { createPortal } from 'react-dom'
 import { proxy, useSnapshot } from 'valtio'
 import './pianoRoll.css'
 import { ControlPanel } from './ControlPanel'
@@ -99,7 +100,8 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     onNotePreview,
     renderMetadataPanel,
     initialView,
-    snapToGrid
+    snapToGrid,
+    toolbarTarget
   } = props
 
   // Latest props for the stable controllers below.
@@ -595,28 +597,30 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     width: width + 2 + LAYOUT_GAP + SCROLLBAR_THICKNESS
   } as CSSProperties
 
+  const controlPanel = (
+    <ControlPanelSlot
+      interactive={interactive}
+      ui={ui}
+      subdivision={subdivision}
+      snap={snap}
+      drawMode={drawMode}
+      showMetadata={showMetadata}
+      onUndo={controllers.commandHandlers.undo}
+      onRedo={controllers.commandHandlers.redo}
+      onSubdivisionChange={setSubdivision}
+      onSnapToggle={() => setSnap((v) => !v)}
+      onDrawToggle={() => setDrawMode((v) => !v)}
+      onZoomIn={() => controllers.zoomBy(ZOOM_BUTTON_FACTOR)}
+      onZoomOut={() => controllers.zoomBy(1 / ZOOM_BUTTON_FACTOR)}
+      onFit={controllers.fitToContent}
+      onDelete={controllers.commandHandlers.deleteSelected}
+      onMetadataToggle={() => setShowMetadata((v) => !v)}
+    />
+  )
+
   return (
     <div ref={wrapperRef} className="pr-root" tabIndex={0} style={shellStyle}>
-      {showControlPanel && (
-        <ControlPanelSlot
-          interactive={interactive}
-          ui={ui}
-          subdivision={subdivision}
-          snap={snap}
-          drawMode={drawMode}
-          showMetadata={showMetadata}
-          onUndo={controllers.commandHandlers.undo}
-          onRedo={controllers.commandHandlers.redo}
-          onSubdivisionChange={setSubdivision}
-          onSnapToggle={() => setSnap((v) => !v)}
-          onDrawToggle={() => setDrawMode((v) => !v)}
-          onZoomIn={() => controllers.zoomBy(ZOOM_BUTTON_FACTOR)}
-          onZoomOut={() => controllers.zoomBy(1 / ZOOM_BUTTON_FACTOR)}
-          onFit={controllers.fitToContent}
-          onDelete={controllers.commandHandlers.deleteSelected}
-          onMetadataToggle={() => setShowMetadata((v) => !v)}
-        />
-      )}
+      {showControlPanel && (toolbarTarget ? createPortal(controlPanel, toolbarTarget) : controlPanel)}
       <div className="pr-layout">
         <div className="pr-stage-wrapper">
           <div

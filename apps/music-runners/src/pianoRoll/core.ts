@@ -21,18 +21,27 @@ import { getMaxLength, getNoteAreaHeight } from './viewport'
 import { DEFAULT_VELOCITY } from './constants'
 import { collectVisibleNotes, invalidateNoteIndex, type VisibleNote } from './noteIndex'
 
-// Default marker stroke: distinct from the queue (green) playhead, so an
-// externally published marker never reads as it.
-const PLAYHEAD_MARKER_COLOR = '#2f7fff'
-const LOOP_END_COLOR = '#d62839'
-const BEYOND_LOOP_FILL = 'rgba(0, 0, 0, 0.16)'
-const GHOST_DEFAULT_COLOR = '#555555'
+// Default canvas palette: a dark grid after Ableton's dark themes, neutral
+// structure lines, and the selection blue (app token --c-select) for the
+// marquee and paste cursor. Hosts colour playhead markers themselves.
+const PLAYHEAD_MARKER_COLOR = '#d9d9d9'
+const LOOP_END_COLOR = '#a8a8a8'
+const BEYOND_LOOP_FILL = 'rgba(0, 0, 0, 0.38)'
+const BLACK_KEY_ROW_FILL = 'rgba(0, 0, 0, 0.2)'
+const GRID_LINE_SUBDIVISION = '#2d2d2d'
+const GRID_LINE_BEAT = '#383838'
+const GRID_LINE_BAR = '#555555'
+const GRID_LINE_ROW = '#1c1c1c'
+const GRID_LINE_OCTAVE = '#3a3a3a'
+const BLACK_KEYS = new Set([1, 3, 6, 8, 10])
+const GHOST_DEFAULT_COLOR = '#8a8a8a'
 const GHOST_DEFAULT_OPACITY = 0.45
 const MIN_NOTE_DURATION = 0.25
 const HANDLE_RADIUS = 5
-const MARQUEE_STROKE = '#4A90E2'
-const MARQUEE_FILL = 'rgba(74, 144, 226, 0.1)'
-const QUEUE_PLAYHEAD_COLOR = '#00ff00'
+const HANDLE_COLOR = '#e6e6e6'
+const MARQUEE_STROKE = '#64b5ff'
+const MARQUEE_FILL = 'rgba(100, 181, 255, 0.1)'
+const QUEUE_PLAYHEAD_COLOR = 'rgba(100, 181, 255, 0.7)'
 const TWO_PI = Math.PI * 2
 
 // The fonts Konva.Text produced for these nodes (its defaults: Arial, normal
@@ -318,6 +327,14 @@ function drawGrid(state: PianoRollState, ctx: CanvasRenderingContext2D) {
     ctx.fillRect(i * measureWidth - scrollX, -scrollY, measureWidth, pianoRollHeight)
   }
 
+  // Black-key rows a step darker, so pitch reads without a keyboard strip
+  const firstRow = Math.max(0, Math.floor(scrollY / noteHeight))
+  const lastRow = Math.min(127, Math.ceil((scrollY + viewportHeight) / noteHeight))
+  ctx.fillStyle = BLACK_KEY_ROW_FILL
+  for (let row = firstRow; row <= lastRow; row++) {
+    if (BLACK_KEYS.has((127 - row) % 12)) ctx.fillRect(-scrollX, row * noteHeight - scrollY, contentWidth, noteHeight)
+  }
+
   // Vertical lines (time grid). Each line is its own stroke: Skia rasterizes
   // a many-segment path differently from single segments, so batching them
   // would not be pixel-identical to the Konva.Line nodes this replaces.
@@ -327,16 +344,12 @@ function drawGrid(state: PianoRollState, ctx: CanvasRenderingContext2D) {
   const firstVisibleLine = Math.floor(scrollX / vertLineSpace)
   const lastVisibleLine = Math.ceil((scrollX + viewportWidth) / vertLineSpace)
 
-  ctx.strokeStyle = '#000'
-  let lineWidth = 0
+  ctx.lineWidth = 1
+  const linesPerBeat = state.grid.subdivision / 4
+  const linesPerBar = linesPerBeat * timeSignature
   for (let i = firstVisibleLine; i <= lastVisibleLine && i <= numVertLines; i++) {
-    const xPos = i * vertLineSpace - scrollX
-    const isQuarterNote = (i * vertLineSpace) % quarterNoteWidth === 0
-    const strokeWidth = isQuarterNote ? 1.8 : 1
-    if (strokeWidth !== lineWidth) {
-      lineWidth = strokeWidth
-      ctx.lineWidth = strokeWidth
-    }
+    const xPos = Math.round(i * vertLineSpace - scrollX) + 0.5
+    ctx.strokeStyle = i % linesPerBar === 0 ? GRID_LINE_BAR : i % linesPerBeat === 0 ? GRID_LINE_BEAT : GRID_LINE_SUBDIVISION
     ctx.beginPath()
     ctx.moveTo(xPos, -scrollY)
     ctx.lineTo(xPos, pianoRollHeight - scrollY)
@@ -349,7 +362,9 @@ function drawGrid(state: PianoRollState, ctx: CanvasRenderingContext2D) {
 
   ctx.lineWidth = 1
   for (let i = firstVisiblePitch; i <= lastVisiblePitch && i < 128; i++) {
-    const yPos = i * noteHeight - scrollY
+    const yPos = Math.round(i * noteHeight - scrollY) + 0.5
+    // Row i's bottom edge is the line below pitch 127 - i: mark each C.
+    ctx.strokeStyle = (127 - i + 1) % 12 === 0 ? GRID_LINE_OCTAVE : GRID_LINE_ROW
     ctx.beginPath()
     ctx.moveTo(0 - scrollX, yPos)
     ctx.lineTo(contentWidth - scrollX, yPos)
@@ -365,7 +380,7 @@ function drawGrid(state: PianoRollState, ctx: CanvasRenderingContext2D) {
   }
   if (loopEndX >= -2 && loopEndX <= viewportWidth + 2) {
     ctx.strokeStyle = LOOP_END_COLOR
-    ctx.lineWidth = 2
+    ctx.lineWidth = 1.5
     ctx.beginPath()
     ctx.moveTo(loopEndX, 0)
     ctx.lineTo(loopEndX, viewportHeight)
@@ -564,7 +579,7 @@ function drawNotes(state: PianoRollState, ctx: CanvasRenderingContext2D) {
   // Resize handles on the selected, visible notes (on top of everything)
   if (selectedIds.size > 0) {
     setAlpha(1)
-    ctx.fillStyle = '#000'
+    ctx.fillStyle = HANDLE_COLOR
     for (let i = 0; i < visible.length; i++) {
       const entry = visible[i]!
       if (!selectedIds.has(entry.id)) continue
@@ -701,14 +716,16 @@ function drawOverlay(state: PianoRollState, ctx: CanvasRenderingContext2D) {
     }
   }
 
-  // Queue playhead (green)
-  const queueX = state.queuePlayhead.position * quarterNoteWidth - scrollX
-  ctx.strokeStyle = QUEUE_PLAYHEAD_COLOR
-  ctx.lineWidth = 2
-  ctx.beginPath()
-  ctx.moveTo(queueX, 0)
-  ctx.lineTo(queueX, stageHeight)
-  ctx.stroke()
+  // Queue playhead (the paste position): drawn only once it has been moved
+  if (state.queuePlayhead.position > 0) {
+    const queueX = state.queuePlayhead.position * quarterNoteWidth - scrollX
+    ctx.strokeStyle = QUEUE_PLAYHEAD_COLOR
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(queueX, 0)
+    ctx.lineTo(queueX, stageHeight)
+    ctx.stroke()
+  }
 
   // One labeled line per marker
   const { markers } = state.playheadMarkers
@@ -716,6 +733,7 @@ function drawOverlay(state: PianoRollState, ctx: CanvasRenderingContext2D) {
     ctx.font = MARKER_FONT
     ctx.textBaseline = 'middle'
     ctx.textAlign = 'left'
+    ctx.lineWidth = 1.5
     for (const marker of markers) {
       const color = marker.color ?? PLAYHEAD_MARKER_COLOR
       const x = marker.position * quarterNoteWidth - scrollX

@@ -278,6 +278,26 @@ README; the decisions worth carrying into the livecode port:
 - Verified with `apps/music-runners/demo/recording.e2e.mjs` (fake Web MIDI in
   headless Chromium); not yet with a physical MPE controller.
 
+## Chrome redesign (2026-11-14)
+
+Reorganized the instance chrome after Ableton Live (layout and conventions in
+the app README). Decisions:
+
+- Fixed regions: title bar (identity + bank data), a non-wrapping control
+  strip (transport + I/O, identical for every runner), a separate params
+  grid (the only runner-dependent region), sections whose headers hold their
+  own tools (roll toolbar portaled into the Source header via the roll's new
+  `toolbarTarget` prop; Regenerate on Preview), and a status line at the
+  bottom.
+- Runner customization is expected in the roll canvas (event handling and
+  drawing), not in the chrome, so the chrome is not a slot system.
+- Colour roles are exclusive (green play, amber run, red rec/live input,
+  blue selection). Note fills stay runner conventions and were not changed.
+- Custom controls replace every native widget (`src/ui/controls/`). Value
+  fields commit once per drag (`onCommit`) where an edit is undoable.
+- Canvas defaults went dark (grid, handles, selection colour). Measured with
+  `demo/perfRoll.mjs`: redraw per wheel event 1.58 ms before, 1.61 ms after.
+
 ## Verification
 
 - `tsc --noEmit` in the app; `deno check` is not involved.

@@ -44,7 +44,7 @@ npm run type-check
 Projects are saved to `projects/<name>/project.json` by the dev server
 (`server/projectFiles.ts`): the tldraw snapshot, every bank and the bpm, in
 one file. Autosave runs about a second after any change; the top bar also has
-Save, a project picker and a "new project" field (`?project=<name>` in the
+a save button, a project chooser and a "new project" field (`?project=<name>` in the
 URL). Nothing is kept in browser storage.
 
 Web MIDI needs a user gesture in some browsers; the first click on the page
@@ -66,27 +66,73 @@ unless an instance has **MPE** on (see below).
   (**Run** the algorithm, **Play** the bank verbatim), a queue toggle, and
   three collapsible rolls: **source** (editable, edits the bank), **generated**
   (the loop now sounding plus a live overlay of what actually played) and
-  **preview** (output of **Regenerate**, a dry run).
+  **preview** (output of **Regenerate**, a dry run). Layout below.
 - **Events**: an instance emits events to the instances that tldraw arrows
   drawn from it point at. Pick the arrow tool, press on the sending
-  instance's header bar (the strip with the grip, bank and MIDI selectors),
+  instance's title bar (the top row with the grip, name, bank and loop),
   drag onto the receiving instance anywhere, and release: the arrow binds to
-  both and the trill triggers reach the target. The header bar is also the
-  grip for moving an instance with the select tool; everything below it
-  belongs to the instance, so clicks there never reach the canvas.
+  both and the trill triggers reach the target. The title bar's background is
+  also the grip for moving an instance with the select tool; everything below
+  it belongs to the instance, so clicks there never reach the canvas.
 - **Clock**: one shared root `TimeContext` (`src/store/clock.ts`) with the
   global bpm; each running instance is a branch of it. **Play queued** starts
   every queued instance at once.
 
+## Instance layout and UI conventions
+
+The chrome follows Ableton Live's dark themes: grey surfaces in a few tonal
+steps, flat controls, about 11px type, and colour only where it means
+something. An instance is laid out top to bottom in fixed regions:
+
+| Region | Holds | Rule |
+| --- | --- | --- |
+| Title bar | grip, runner name, bank, loop length, mode readout, **Q** (queue) | identity and the bank's data; its background is the drag grip |
+| Control strip | **Play**, **Run**, stop, **Rec** · **out**, **in**, **Thru**, **MPE**, **bend** | the same items for every runner; never wraps (port choosers shrink) |
+| Params | transpose, speed, then the runner's own params | the only region whose size depends on the runner; a wrapping grid |
+| Sections | **source** (its header holds the roll's tools), **generated**, **preview** (header holds **Regenerate**) | an empty generated/preview roll collapses to a one-line hint |
+| Status line | errors, recording state, last event, runner log | transient text, at the bottom like Ableton's status bar |
+
+Colour roles, defined as tokens in `src/styles.css`, are exclusive so a colour
+always reads the same:
+
+| Colour | Meaning |
+| --- | --- |
+| green | Play: its button, mode lamp, playhead and shape outline |
+| amber | Run: the same places |
+| red | Rec and live MIDI input (held keys, notes being recorded), error text |
+| blue | selection and focus, toggles that are on (Snap, Thru, MPE, Q), selected notes |
+| yellow | unsaved project |
+
+Note fills are not chrome: runners pick them by convention (tag colours,
+`generatedNoteColor`).
+
+Controls come from `src/ui/controls/` and no native form widgets are shown:
+
+- **NumberBox**: drag up/down to change (Shift for fine steps), double-click
+  to type, arrow keys when focused. Params use its bar form, which fills from
+  zero for a bipolar range. `onCommit` fires once per gesture, for undoable
+  edits such as tag fields.
+- **Chooser**: a flat dropdown whose list opens over the canvas.
+- **Toggle**: a text or icon toggle, filled when on.
+- **Button**: label and/or icon; `tone` colours it by the roles above.
+- **TextField**, **Field** (a caption next to a control) and **Lamp** (a
+  status dot).
+
+Every control carries `data-control`, which the title bar uses to tell a
+control from its draggable background. Icons are SVGs in `icons.tsx`, not
+emoji. The roll's canvas defaults match: a dark grid, black-key rows a step
+darker, bar lines brighter than beat lines, the area past the loop shaded.
+
 ## Live input and recording
 
-The row under the transport on each instance is its live MIDI input:
+The **in** chooser and the toggles after it in the control strip are the
+instance's live MIDI input:
 
 | Control | Effect |
 | --- | --- |
-| **in** | The MIDI input this instance listens to. Several instances can share one input, like several armed tracks in a DAW. Opening the list re-scans ports, so a device plugged in later shows up. |
-| **● Rec** | Records into the instance's bank (see below). Needs an input. |
-| **thru** | Echoes the input to the instance's MIDI output, with transpose applied. Turn it off if the controller already drives the synth. |
+| **In** | The MIDI input this instance listens to. Several instances can share one input, like several armed tracks in a DAW. Opening the list re-scans ports, so a device plugged in later shows up. |
+| **Rec** | Records into the instance's bank (see below). Needs an input. |
+| **Thru** | Echoes the input to the instance's MIDI output, with transpose applied. Turn it off if the controller already drives the synth. |
 | **MPE** | MPE output: every played note gets its own member channel (2-16, lower zone) with its pitch bend, pressure and timbre. Off: everything on channel 0 and expression is not sent. |
 | **bend** | Semitones at full pitch bend, used both to read recorded bend and to send MPE bend. 48 is the MPE default; ordinary keyboards are usually 2. Must match the controller and the synth. |
 

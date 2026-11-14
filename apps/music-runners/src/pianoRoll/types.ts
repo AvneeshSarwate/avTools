@@ -114,6 +114,11 @@ export interface PianoRollProps {
   onViewChange?: (view: PianoRollView) => void;
   /** Toggled by the host; the component also exposes it in its control panel. */
   snapToGrid?: boolean;
+  /**
+   * Render the control panel into this element (a host's section header)
+   * instead of above the stage. Null while the host element is not mounted.
+   */
+  toolbarTarget?: HTMLElement | null;
 }
 
 export interface PianoRollHandle {

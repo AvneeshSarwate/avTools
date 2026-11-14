@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { type Editor, useValue } from "tldraw";
+import { Button, TextField } from "./controls/controls";
 import { RUNNERS } from "../runners/registry";
 import { createInstance, listInstances } from "../shapes";
 import { banksStore, createBank, deleteBank, duplicateBank, renameBank } from "../store/banks";
@@ -26,9 +27,7 @@ export function BankSidebar({ editor }: { editor: Editor | null }) {
   if (collapsed) {
     return (
       <aside className="bank-sidebar bank-sidebar--collapsed">
-        <button type="button" onClick={() => setCollapsed(false)} title="show banks">
-          ▸ banks
-        </button>
+        <Button icon="chevronRight" quiet onClick={() => setCollapsed(false)} title="show banks" />
       </aside>
     );
   }
@@ -41,10 +40,8 @@ export function BankSidebar({ editor }: { editor: Editor | null }) {
   return (
     <aside className="bank-sidebar">
       <div className="bank-sidebar__header">
-        <strong>banks</strong>
-        <button type="button" onClick={() => setCollapsed(true)} title="hide">
-          ◂
-        </button>
+        <span className="ui-caption">banks</span>
+        <Button icon="chevronLeft" quiet onClick={() => setCollapsed(true)} title="hide banks" />
       </div>
       {RUNNERS.map((def) => {
         const list = Object.values(banks)
@@ -53,54 +50,52 @@ export function BankSidebar({ editor }: { editor: Editor | null }) {
         return (
           <section key={def.type} className="bank-group">
             <div className="bank-group__header">
-              <span>{def.label}</span>
-              <button type="button" onClick={() => createBank(def.type)} title="new bank of this type">
-                + bank
-              </button>
+              <span className="ui-caption">{def.label}</span>
+              <Button icon="plus" quiet onClick={() => createBank(def.type)} title={`new ${def.label} bank`} />
             </div>
-            {list.length === 0 ? <div className="bank-row bank-row--empty">none yet</div> : null}
+            {list.length === 0 ? <div className="bank-row bank-row--empty">no banks yet</div> : null}
             {list.map((bank) => {
               const used = usage.get(bank.id) ?? 0;
               const isEditing = editing?.id === bank.id;
               return (
                 <div key={bank.id} className="bank-row">
                   {isEditing ? (
-                    <input
+                    <TextField
                       autoFocus
                       value={editing.draft}
-                      onChange={(e) => setEditing({ id: bank.id, draft: e.target.value })}
-                      onBlur={commitRename}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") commitRename();
-                        if (e.key === "Escape") setEditing(null);
-                      }}
+                      onChange={(draft) => setEditing({ id: bank.id, draft })}
+                      onCommit={commitRename}
+                      onCancel={() => setEditing(null)}
                     />
                   ) : (
-                    <button type="button" className="bank-row__name" title="rename" onClick={() => setEditing({ id: bank.id, draft: bank.name })}>
-                      {bank.name}
-                    </button>
-                  )}
-                  <span className="bank-row__meta">
-                    {bank.notes.length}n · {bank.loopLength}b{used ? ` · ${used} inst` : ""}
-                  </span>
-                  <span className="bank-row__actions">
-                    <button type="button" disabled={!editor} title="new instance using this bank" onClick={() => editor && createInstance(editor, def.type, bank.id)}>
-                      + inst
-                    </button>
-                    <button type="button" title="duplicate" onClick={() => duplicateBank(bank.id)}>
-                      dup
-                    </button>
-                    <button
-                      type="button"
-                      title={used ? "in use by an instance" : "delete"}
-                      disabled={used > 0}
-                      onClick={() => {
-                        if (window.confirm(`Delete bank "${bank.name}"?`)) deleteBank(bank.id);
-                      }}
+                    <span
+                      className="bank-row__name"
+                      title="double-click to rename"
+                      onDoubleClick={() => setEditing({ id: bank.id, draft: bank.name })}
                     >
-                      ×
-                    </button>
-                  </span>
+                      {bank.name}
+                    </span>
+                  )}
+                  {isEditing ? null : (
+                    <>
+                      <span className="bank-row__meta" title={`${bank.notes.length} notes · ${bank.loopLength} beats · ${used} instances`}>
+                        {bank.notes.length}n · {bank.loopLength}b{used ? ` · ${used}×` : ""}
+                      </span>
+                      <span className="bank-row__actions">
+                        <Button icon="plus" quiet disabled={!editor} title="new instance using this bank" onClick={() => editor && createInstance(editor, def.type, bank.id)} />
+                        <Button icon="copy" quiet title="duplicate bank" onClick={() => duplicateBank(bank.id)} />
+                        <Button
+                          icon="close"
+                          quiet
+                          title={used ? "in use by an instance" : "delete bank"}
+                          disabled={used > 0}
+                          onClick={() => {
+                            if (window.confirm(`Delete bank "${bank.name}"?`)) deleteBank(bank.id);
+                          }}
+                        />
+                      </span>
+                    </>
+                  )}
                 </div>
               );
             })}
