@@ -135,6 +135,7 @@ instance's live MIDI input:
 | **Thru** | Echoes the input to the instance's MIDI output, with transpose applied. Turn it off if the controller already drives the synth. |
 | **MPE** | MPE output: every played note gets its own member channel (2-16, lower zone) with its pitch bend, pressure and timbre. Off: everything on channel 0 and expression is not sent. |
 | **bend** | Semitones at full pitch bend, used both to read recorded bend and to send MPE bend. 48 is the MPE default; ordinary keyboards are usually 2. Must match the controller and the synth. |
+| **Root** and **¢** | Auto-root (on by default, 15 cents): recorded pitch-curve points where the pitch rests on a semitone are marked `rooted` (see below). |
 
 While an input is selected, held keys are highlighted on the source roll
 (their row, a marker at the left edge, and a tick showing their current bend),
@@ -175,7 +176,22 @@ is reused first. With all fifteen busy, the oldest is shared. Thru keeps the
 controller's own channels, which can overlap with channels used by playback on
 the same port.
 
-The roll draws a note's pitch curve over it. Pressure and timbre are stored
+**Rooted points.** A pitch-curve point marked `rooted` sits on a pitch rather
+than between pitches. Scale-aware transposition (`scaleTransposeMPE` in
+`packages/music-types/ableton_clip.ts`) moves each run of rooted points
+through the scale on its own and interpolates the points between, so a slide
+from one scale degree to another still lands on scale degrees after the
+transpose. Music runners has no scale-aware operations yet (its transpose is
+chromatic and moves every point equally), so the flag is metadata for runner
+algorithms to use. With **Root** on, a run of recorded points within the
+tolerance of one semitone is rooted when the pitch rests there at least
+60 ms (`ROOT_MIN_DWELL_SEC` in `src/model/mpe.ts`), so the note's start and a
+held target are rooted and a slide passing through a semitone is not. Each
+rooted run keeps its first and last point through curve thinning.
+
+The roll draws a note's pitch curve over it, light with a dark halo; at
+readable zoom its points show as filled dots when rooted and hollow ones
+otherwise. Pressure and timbre are stored
 and played but have no lanes yet, and curves cannot be edited in the roll.
 Dragging or resizing a note keeps its curves (their time axis is 0..1 across
 the note, so a resize stretches them).

@@ -543,7 +543,7 @@ function drawNotes(state: PianoRollState, ctx: CanvasRenderingContext2D) {
     const bendPoints = note.mpePitch?.points
     if (bendPoints && bendPoints.length > 0) {
       setAlpha(opacity)
-      drawPitchCurve(ctx, x, y + noteHeight / 2, width, noteHeight, bendPoints, labelColor(fill))
+      drawPitchCurve(ctx, x, y + noteHeight / 2, width, noteHeight, bendPoints)
       lineWidth = -1
     }
 
@@ -598,31 +598,54 @@ function drawNotes(state: PianoRollState, ctx: CanvasRenderingContext2D) {
   }
 }
 
-/** A note's MPE pitch curve: a line from its row centre, one row per semitone. */
+/**
+ * A note's MPE pitch curve: a line from its row centre, one row per semitone,
+ * light with a dark halo so it reads on any note fill and on the grid it
+ * bends out over. Points are drawn at zoom: filled when rooted (resting on a
+ * pitch), hollow otherwise.
+ */
 function drawPitchCurve(
   ctx: CanvasRenderingContext2D,
   x: number,
   centerY: number,
   width: number,
   noteHeight: number,
-  points: ReadonlyArray<{ time: number; pitchOffset: number }>,
-  color: string
+  points: ReadonlyArray<{ time: number; pitchOffset: number; rooted?: boolean }>
 ) {
-  ctx.strokeStyle = color
-  ctx.lineWidth = 1.5
-  ctx.beginPath()
-  if (points[0]!.time > 0) ctx.moveTo(x, centerY - points[0]!.pitchOffset * noteHeight)
-  for (let i = 0; i < points.length; i++) {
-    const point = points[i]!
-    const px = x + point.time * width
-    const py = centerY - point.pitchOffset * noteHeight
-    if (i === 0 && point.time <= 0) ctx.moveTo(px, py)
-    else ctx.lineTo(px, py)
-  }
+  const at = (point: { time: number; pitchOffset: number }) => [x + point.time * width, centerY - point.pitchOffset * noteHeight] as const
+  const first = points[0]!
   const last = points[points.length - 1]!
-  if (last.time < 1) ctx.lineTo(x + width, centerY - last.pitchOffset * noteHeight)
+  const trace = () => {
+    ctx.beginPath()
+    ctx.moveTo(x, centerY - first.pitchOffset * noteHeight)
+    for (const point of points) ctx.lineTo(...at(point))
+    if (last.time < 1) ctx.lineTo(x + width, centerY - last.pitchOffset * noteHeight)
+  }
+  trace()
+  ctx.strokeStyle = CURVE_HALO
+  ctx.lineWidth = 3.5
   ctx.stroke()
+  trace()
+  ctx.strokeStyle = CURVE_COLOR
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+
+  if (noteHeight < 8) return
+  for (const point of points) {
+    const [px, py] = at(point)
+    ctx.beginPath()
+    ctx.arc(px, py, CURVE_POINT_RADIUS, 0, TWO_PI, false)
+    ctx.fillStyle = point.rooted ? CURVE_COLOR : CURVE_HALO
+    ctx.fill()
+    ctx.lineWidth = 1.5
+    ctx.strokeStyle = point.rooted ? CURVE_HALO : CURVE_COLOR
+    ctx.stroke()
+  }
 }
+
+const CURVE_COLOR = '#f2f2f2'
+const CURVE_HALO = 'rgba(0, 0, 0, 0.75)'
+const CURVE_POINT_RADIUS = 2.5
 
 const LIVE_KEY_COLOR = '255, 82, 82'
 const LIVE_NOTE_FILL = '#ff5252'

@@ -298,6 +298,18 @@ the app README). Decisions:
 - Canvas defaults went dark (grid, handles, selection colour). Measured with
   `demo/perfRoll.mjs`: redraw per wheel event 1.58 ms before, 1.61 ms after.
 
+## Auto-root on record (2026-11-14)
+
+`rooted` on pitch points exists in `packages/music-types` (used by
+`scaleTransposeMPE`) and the livecode protocol type, but nothing marked it
+automatically; the livecode recorder does not set it. Music runners now does,
+behind a per-instance toggle (props `autoRoot`, `rootToleranceCents`; shape
+migration step 2). Decision: a point needs both closeness (tolerance, default
+15 cents) and a dwell (60 ms constant) so slides passing through a semitone
+are not rooted. Rooted runs are thinning anchors. No scale-aware operations
+exist in music runners; they belong to runner algorithms when needed. The roll
+shows rooted points as filled dots (display only, no curve editing yet).
+
 ## Verification
 
 - `tsc --noEmit` in the app; `deno check` is not involved.

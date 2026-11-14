@@ -95,6 +95,7 @@ assert.equal(s.rec.recording, "free");
 // note 1: channel 1, pitch 60, bend ramp up 2 semitones (48 range -> 8192*2/48 = 341), pressure ramp
 await midiIn([0xD1, 20]);
 await midiIn([0x91, 60, 110]);
+await sleep(100); // rest on the note's own pitch before sliding (auto-root dwell)
 for (let i = 1; i <= 10; i++) {
   const bend = 8192 + Math.round((341 * i) / 10);
   await midiIn([0xE1, bend & 0x7f, bend >> 7]);
@@ -123,6 +124,12 @@ assert.ok(n1.mpePitch && n1.mpePitch.points.at(-1).pitchOffset > 1.9, "bend curv
 assert.ok(n1.mpePressure && n1.mpePressure.points.at(-1).value > 90, "pressure curve");
 assert.ok(n1.mpeTimbre, "timbre curve");
 assert.ok(!n2.mpePitch, "flat note has no curve");
+// Auto-root (on by default, 15 cents, 60 ms dwell): the start (0) and the
+// held +2 are rooted; the slide between them, which passes +1, is not.
+const pts = n1.mpePitch.points;
+assert.ok(pts[0].rooted && pts.at(-1).rooted, "rest and target points rooted");
+assert.ok(pts.every((p) => !(p.rooted && p.pitchOffset > 0.15 && p.pitchOffset < 1.85)), "slide points not rooted");
+console.log("rooted", pts.map((p) => `${p.pitchOffset.toFixed(2)}${p.rooted ? "R" : ""}`).join(" "));
 assert.ok(n2.position > n1.position, "second note later");
 assert.equal(s.bank.loopLength, 4, "free take rounded up to one bar");
 await page.screenshot({ path: `${SHOTS}/rec-03-after-take.png` });

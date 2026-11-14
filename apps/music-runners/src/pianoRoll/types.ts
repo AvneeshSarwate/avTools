@@ -13,7 +13,7 @@ export interface PianoRollNote {
   velocity: number; // 0..127
   metadata?: JsonObject;
   /** Per-note MPE expression, `time` 0..1 across the note (see src/model/mpe.ts). */
-  mpePitch?: { points: { time: number; pitchOffset: number }[] };
+  mpePitch?: { points: { time: number; pitchOffset: number; rooted?: boolean }[] };
   mpePressure?: { points: { time: number; value: number }[] };
   mpeTimbre?: { points: { time: number; value: number }[] };
 }

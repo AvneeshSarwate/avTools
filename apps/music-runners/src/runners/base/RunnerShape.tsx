@@ -43,7 +43,7 @@ import {
 import { sourceRollHandles } from "../../store/rollHandles";
 import { runnerShapeType } from "../registry";
 import { BASE_PARAMS, defaultParams, type Params, type RunnerDefinition, tagValue } from "../runnerTypes";
-import { DEFAULT_INPUT_PROPS, DEFAULT_INSTANCE_HEIGHT, DEFAULT_INSTANCE_WIDTH, type RunnerInstanceProps } from "./instanceProps";
+import { DEFAULT_INPUT_PROPS, DEFAULT_ROOT_PROPS, DEFAULT_INSTANCE_HEIGHT, DEFAULT_INSTANCE_WIDTH, type RunnerInstanceProps } from "./instanceProps";
 import { TagEditor, toggleTag } from "./TagEditor";
 import { Button, Chooser, Field, Lamp, NumberBox, Toggle } from "../../ui/controls/controls";
 import { Icon } from "../../ui/controls/icons";
@@ -82,7 +82,7 @@ export function defineRunnerShape(def: RunnerDefinition) {
     return <RunnerInstanceView shape={shape} def={def} />;
   }
 
-  const versions = createShapePropsMigrationIds(type, { AddLiveInput: 1 });
+  const versions = createShapePropsMigrationIds(type, { AddLiveInput: 1, AddAutoRoot: 2 });
   const migrations = createShapePropsMigrationSequence({
     sequence: [
       {
@@ -92,6 +92,15 @@ export function defineRunnerShape(def: RunnerDefinition) {
         },
         down(props: Record<string, unknown>) {
           for (const key of Object.keys(DEFAULT_INPUT_PROPS)) delete props[key];
+        },
+      },
+      {
+        id: versions.AddAutoRoot,
+        up(props: Record<string, unknown>) {
+          for (const [key, value] of Object.entries(DEFAULT_ROOT_PROPS)) props[key] ??= value;
+        },
+        down(props: Record<string, unknown>) {
+          for (const key of Object.keys(DEFAULT_ROOT_PROPS)) delete props[key];
         },
       },
     ],
@@ -110,6 +119,8 @@ export function defineRunnerShape(def: RunnerDefinition) {
       midiThru: T.boolean,
       mpe: T.boolean,
       bendRange: T.number,
+      autoRoot: T.boolean,
+      rootToleranceCents: T.number,
       params: T.dict(T.string, T.number),
       queued: T.boolean,
       showSource: T.boolean,
@@ -141,6 +152,7 @@ export function defineRunnerShape(def: RunnerDefinition) {
         bankId: "",
         midiOutputName: "",
         ...DEFAULT_INPUT_PROPS,
+        ...DEFAULT_ROOT_PROPS,
         params: defaultParams(def),
         queued: false,
         showSource: true,
@@ -559,7 +571,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 options={portChoices(outputNames, props.midiOutputName, connectedOutputs)}
                 onOpen={openPorts}
                 onChange={(value) => updateProps({ midiOutputName: value })}
-                title="MIDI output"
+                title={props.midiOutputName ? `MIDI output: ${props.midiOutputName}` : "MIDI output"}
               />
               <span className="ui-caption">in</span>
               <Chooser
@@ -568,7 +580,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 options={portChoices(inputNames, midiInputName, connectedInputs)}
                 onOpen={openPorts}
                 onChange={(value) => updateProps({ midiInputName: value })}
-                title="MIDI input: held keys show on the source roll, Rec records from it"
+                title={`MIDI input${midiInputName ? `: ${midiInputName}` : ""} · held keys show on the source roll, Rec records from it`}
               />
               <Toggle
                 label="Thru"
@@ -576,6 +588,8 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 onChange={(on) => updateProps({ midiThru: on })}
                 title="echo the input to this instance's output, with transpose"
               />
+            </div>
+            <div className="ui-group">
               <Toggle
                 label="MPE"
                 on={props.mpe ?? false}
@@ -585,6 +599,25 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
               <Field label="bend" title="semitones at full pitch bend, for recording and MPE output (48 is the MPE default, ordinary keyboards are usually 2)">
                 <NumberBox className="runner-shape__bend" value={bendRange} min={1} max={96} step={1} width={34} onChange={(value) => updateProps({ bendRange: value })} />
               </Field>
+              <Toggle
+                label="Root"
+                className="runner-shape__auto-root"
+                on={props.autoRoot ?? DEFAULT_ROOT_PROPS.autoRoot}
+                onChange={(on) => updateProps({ autoRoot: on })}
+                title="auto-root: recorded pitch-curve points within the tolerance of a semitone are marked rooted (scale-aware transposition moves them with the scale; chromatic transpose ignores it). Filled dots on the roll."
+              />
+              <NumberBox
+                className="runner-shape__root-tolerance"
+                value={props.rootToleranceCents ?? DEFAULT_ROOT_PROPS.rootToleranceCents}
+                min={1}
+                max={50}
+                step={1}
+                unit="¢"
+                width={38}
+                disabled={!(props.autoRoot ?? DEFAULT_ROOT_PROPS.autoRoot)}
+                title="auto-root tolerance: cents either side of a semitone"
+                onChange={(value) => updateProps({ rootToleranceCents: value })}
+              />
             </div>
           </div>
 

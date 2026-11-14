@@ -8,6 +8,14 @@ import type { PianoRollNote } from "../pianoRoll/types";
 export interface MpePitchPoint {
   time: number;
   pitchOffset: number;
+  /**
+   * The point sits on a pitch (a semitone from the note), not between pitches.
+   * Scale-aware transposition (`scaleTransposeMPE` in packages/music-types)
+   * maps each run of rooted points through the scale on its own and
+   * interpolates the rest, so a slide between scale degrees stays between
+   * scale degrees. Chromatic transpose ignores it.
+   */
+  rooted?: boolean;
 }
 
 /** One 0..127 breakpoint (pressure or timbre); `time` is 0..1 across the note. */
@@ -20,6 +28,10 @@ export interface MpeValuePoint {
 export const REST_PITCH = 0;
 export const REST_PRESSURE = 0;
 export const REST_TIMBRE = 64;
+/** Auto-root: a recorded pitch point this close to a semitone is marked rooted. */
+export const DEFAULT_ROOT_TOLERANCE_CENTS = 15;
+/** ...when the pitch rests there at least this long, in seconds. */
+export const ROOT_MIN_DWELL_SEC = 0.06;
 /** The MPE default bend range (LinnStrument, Roli, most MPE synths). */
 export const DEFAULT_BEND_RANGE = 48;
 /** The roll's drawable pitch-curve range, in semitones either way. */
@@ -68,11 +80,19 @@ export function semitonesToBend(semitones: number, bendRange: number): number {
  * Endpoints are always kept. Every point becomes a handle once curves are
  * editable, so recorded curves are thinned to what is audible.
  */
-export function simplifyCurve<T extends { time: number }>(points: T[], tolerance: number, read: (point: T) => number): T[] {
+export function simplifyCurve<T extends { time: number }>(
+  points: T[],
+  tolerance: number,
+  read: (point: T) => number,
+  /** Indices that must survive (kept, and the line is split at them). */
+  anchors?: Iterable<number>,
+): T[] {
   if (points.length <= 2) return points;
   const keep = new Array<boolean>(points.length).fill(false);
   keep[0] = keep[points.length - 1] = true;
-  const stack: [number, number][] = [[0, points.length - 1]];
+  for (const index of anchors ?? []) if (index >= 0 && index < points.length) keep[index] = true;
+  const fixed = keep.flatMap((kept, index) => (kept ? [index] : []));
+  const stack: [number, number][] = fixed.slice(1).map((to, i) => [fixed[i], to]);
   while (stack.length > 0) {
     const [from, to] = stack.pop()!;
     const a = points[from];
@@ -151,4 +171,54 @@ export function releaseMemberChannel(outputName: string, channel: number): void 
   pool.busy.delete(channel);
   stamp += 1;
   pool.releasedAt.set(channel, stamp);
+}
+
+/** Whether a pitch offset is within `toleranceSemitones` of a whole semitone. */
+export function nearSemitone(pitchOffset: number, toleranceSemitones: number): boolean {
+  return Math.abs(pitchOffset - Math.round(pitchOffset)) <= toleranceSemitones;
+}
+
+/**
+ * Auto-root a recorded pitch curve (before thinning). A run of consecutive
+ * points within `toleranceSemitones` of one semitone is rooted when the pitch
+ * rests there for at least `minDwell` (same time units as `time`): a value is
+ * held until the next point, so a run lasts until the first point after it
+ * (or the curve's end at time 1). A slide that merely passes a semitone is
+ * not rooted; the note's start and a held target are.
+ *
+ * Returns the points with `rooted` set on rooted runs, and each rooted run's
+ * first and last index as thinning anchors, so a held target keeps its start
+ * and end even where it is straight enough for thinning to drop them.
+ */
+export function rootCurve(
+  points: readonly MpePitchPoint[],
+  toleranceSemitones: number,
+  minDwell: number,
+): { points: MpePitchPoint[]; anchors: number[] } {
+  const out = points.map(({ rooted: _previous, ...point }) => point as MpePitchPoint);
+  const anchors: number[] = [];
+  let start = -1;
+  let semitone = NaN;
+  const close = (end: number) => {
+    if (start < 0) return;
+    const until = end + 1 < points.length ? points[end + 1].time : 1;
+    if (until - points[start].time >= minDwell) {
+      for (let i = start; i <= end; i += 1) out[i] = { ...out[i], rooted: true };
+      anchors.push(start);
+      if (end !== start) anchors.push(end);
+    }
+    start = -1;
+  };
+  points.forEach((point, index) => {
+    const near = nearSemitone(point.pitchOffset, toleranceSemitones);
+    const nearest = Math.round(point.pitchOffset);
+    if (near && start >= 0 && nearest === semitone) return;
+    close(index - 1);
+    if (near) {
+      start = index;
+      semitone = nearest;
+    }
+  });
+  close(points.length - 1);
+  return { points: out, anchors };
 }

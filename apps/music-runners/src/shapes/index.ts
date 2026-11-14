@@ -2,7 +2,7 @@ import { type Editor, createShapeId, type TLShapeId } from "tldraw";
 import { createBank, getBank } from "../store/banks";
 import { defaultOutputName } from "../store/midi";
 import { defineRunnerShape } from "../runners/base/RunnerShape";
-import { DEFAULT_INPUT_PROPS, DEFAULT_INSTANCE_HEIGHT, DEFAULT_INSTANCE_WIDTH, type RunnerInstanceProps } from "../runners/base/instanceProps";
+import { DEFAULT_INPUT_PROPS, DEFAULT_ROOT_PROPS, DEFAULT_INSTANCE_HEIGHT, DEFAULT_INSTANCE_WIDTH, type RunnerInstanceProps } from "../runners/base/instanceProps";
 import { getRunner, RUNNERS, runnerShapeType } from "../runners/registry";
 import { defaultParams } from "../runners/runnerTypes";
 
@@ -31,6 +31,7 @@ export function createInstance(editor: Editor, runnerType: string, bankId?: stri
     bankId: bank.id,
     midiOutputName: defaultOutputName() ?? "",
     ...DEFAULT_INPUT_PROPS,
+    ...DEFAULT_ROOT_PROPS,
     params: defaultParams(def),
     queued: false,
     showSource: true,

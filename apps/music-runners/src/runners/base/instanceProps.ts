@@ -1,4 +1,4 @@
-import { DEFAULT_BEND_RANGE } from "../../model/mpe";
+import { DEFAULT_BEND_RANGE, DEFAULT_ROOT_TOLERANCE_CENTS } from "../../model/mpe";
 import type { Params } from "../runnerTypes";
 
 /** Props every runner instance shape carries. Run state is not here. */
@@ -16,6 +16,10 @@ export interface RunnerInstanceProps {
   mpe: boolean;
   /** Semitones at full pitch bend, for recorded input and MPE output. */
   bendRange: number;
+  /** Mark recorded pitch-curve points near a semitone as rooted. */
+  autoRoot: boolean;
+  /** How near, in cents. */
+  rootToleranceCents: number;
   params: Params;
   queued: boolean;
   showSource: boolean;
@@ -32,4 +36,10 @@ export const DEFAULT_INPUT_PROPS = {
   midiThru: true,
   mpe: false,
   bendRange: DEFAULT_BEND_RANGE,
+} satisfies Partial<RunnerInstanceProps>;
+
+/** Defaults for the auto-root props (shape migration step 2). */
+export const DEFAULT_ROOT_PROPS = {
+  autoRoot: true,
+  rootToleranceCents: DEFAULT_ROOT_TOLERANCE_CENTS,
 } satisfies Partial<RunnerInstanceProps>;

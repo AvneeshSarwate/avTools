@@ -25,6 +25,9 @@ import { newId } from "../model/types";
 import {
   bendToSemitones,
   DEFAULT_BEND_RANGE,
+  DEFAULT_ROOT_TOLERANCE_CENTS,
+  ROOT_MIN_DWELL_SEC,
+  rootCurve,
   MAX_PITCH_OFFSET,
   REST_PRESSURE,
   REST_TIMBRE,
@@ -119,6 +122,8 @@ interface InputProps {
   mpe: boolean;
   bendRange: number;
   transpose: number;
+  /** Semitones; null when auto-root is off. */
+  rootTolerance: number | null;
 }
 
 function readProps(shapeId: string): InputProps | null {
@@ -133,6 +138,9 @@ function readProps(shapeId: string): InputProps | null {
     mpe: props.mpe === true,
     bendRange: typeof props.bendRange === "number" && props.bendRange > 0 ? props.bendRange : DEFAULT_BEND_RANGE,
     transpose: Math.round(params.transpose ?? 0),
+    rootTolerance: props.autoRoot === false
+      ? null
+      : (typeof props.rootToleranceCents === "number" ? props.rootToleranceCents : DEFAULT_ROOT_TOLERANCE_CENTS) / 100,
   };
 }
 
@@ -400,7 +408,13 @@ function commitNote(recorder: Recorder, held: HeldNote, offSec: number, props: I
     pitchOffset: Math.max(-MAX_PITCH_OFFSET, Math.min(MAX_PITCH_OFFSET, bendToSemitones(value, bendRange))),
   }));
   if (pitch.some((point) => Math.abs(point.pitchOffset) >= 0.01)) {
-    note.mpePitch = { points: simplifyCurve(pitch, PITCH_TOLERANCE_SEMITONES, (point) => point.pitchOffset) };
+    // Auto-root: points where the pitch rests on a semitone are marked rooted
+    // (see rootCurve), and each such run keeps its ends through thinning.
+    const tolerance = props?.rootTolerance ?? null;
+    const rooted = tolerance === null ? null : rootCurve(pitch, tolerance, span > 0 ? ROOT_MIN_DWELL_SEC / span : 0);
+    note.mpePitch = {
+      points: simplifyCurve(rooted?.points ?? pitch, PITCH_TOLERANCE_SEMITONES, (point) => point.pitchOffset, rooted?.anchors),
+    };
   }
   const valueCurve = (samples: Sample[], rest: number) => {
     if (samples.every((sample) => sample.value === rest)) return undefined;
