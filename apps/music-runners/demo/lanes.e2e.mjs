@@ -175,6 +175,92 @@ console.log("pressure after add+drag", JSON.stringify(pts));
 assert.equal(pts.length, 4);
 assert.ok(pts[1].value > lineVal + 10);
 await shape.screenshot({ path: `${OUT}/lanes-test-mpe.png` });
+
+// ---------- hover zones, segment drag, Edit Value ----------
+await page.evaluate((b) => {
+  const mr = window.__musicRunners;
+  const bank = mr.stores.banksStore.banks[b];
+  mr.banks.setBankNotes(b, bank.notes.map((n) => n.id === "n2"
+    ? { ...JSON.parse(JSON.stringify(n)), mpePressure: { points: [{ time: 0, value: 20 }, { time: 0.5, value: 110 }, { time: 1, value: 60 }] } }
+    : JSON.parse(JSON.stringify(n))));
+}, ctx.bankId);
+await sleep(200);
+await page.evaluate(() => window.__musicRunners.sourceRollHandles.get(window.__id).selectNotes(["n2"]));
+await sleep(100);
+// Hover a point: tooltip with its value (visual check)
+const hoverP = await at(4 + 0.5 * 1.5, laneY(0, 110, 0));
+await page.mouse.move(hoverP.x, hoverP.y);
+await sleep(120);
+await shape.screenshot({ path: `${OUT}/lanes-hover-point.png` });
+// Within the tight zone of the line: the click adds a point locked to the line,
+// not at the pointer's height
+const lineP = await at(4 + 0.25 * 1.5, laneY(0, 65, 0) - 3);
+await page.mouse.move(lineP.x, lineP.y);
+await sleep(120);
+await shape.screenshot({ path: `${OUT}/lanes-hover-line.png` });
+await click(lineP);
+let pp = (await note("n2")).mpePressure.points;
+console.log("after locked add", JSON.stringify(pp));
+assert.equal(pp.length, 4);
+assert.ok(Math.abs(pp[1].value - 65) <= 6, "added on the line, not at the pointer");
+// Undo that, then grab the segment between (0.5,110) and (1,60) 8px off it and drag down
+await shape.locator(".pr-undo").click();
+await sleep(100);
+const segP = await at(4 + 0.75 * 1.5, laneY(0, 85, 0) - 8);
+await page.mouse.move(segP.x, segP.y);
+await sleep(120);
+await shape.screenshot({ path: `${OUT}/lanes-hover-segment.png` });
+await drag(segP, { x: segP.x, y: segP.y + 10 });
+pp = (await note("n2")).mpePressure.points;
+console.log("after segment drag", JSON.stringify(pp));
+assert.equal(pp.length, 3, "segment drag adds no points");
+assert.equal(pp[0].value, 20, "points outside the segment stay");
+const d1 = 110 - pp[1].value, d2 = 60 - pp[2].value;
+assert.ok(d1 > 10 && d1 === d2, "both end points move by the same delta");
+// Right-click a point: Edit Value
+const firstP = await at(4, laneY(0, 20, 0));
+await page.mouse.click(firstP.x, firstP.y, { button: "right" });
+await sleep(150);
+assert.equal(await page.locator(".pr-expression-menu").count(), 1, "menu opens");
+assert.equal(await page.evaluate(() => document.querySelectorAll("[data-radix-menu-content], .tlui-menu").length), 0, "no tldraw context menu");
+await page.screenshot({ path: `${OUT}/lanes-menu.png` });
+await page.locator(".pr-expression-menu .ui-chooser__option", { hasText: "Edit Value" }).click();
+await page.keyboard.press("Control+a");
+await page.keyboard.type("42");
+await page.keyboard.press("Enter");
+await sleep(120);
+assert.equal((await note("n2")).mpePressure.points[0].value, 42, "Edit Value sets it exactly");
+assert.equal(await page.locator(".pr-expression-menu").count(), 0, "menu closes");
+// Pitch point: add on the dashed line, then right-click > Root
+const pitchP = await at(4 + 0.5 * 1.5, await rowY(67));
+await click(pitchP);
+assert.equal((await note("n2")).mpePitch.points.length, 1);
+await page.mouse.click(pitchP.x, pitchP.y, { button: "right" });
+await sleep(120);
+await page.locator(".pr-expression-menu .ui-chooser__option", { hasText: /^Root$/ }).click();
+await sleep(100);
+assert.equal((await note("n2")).mpePitch.points[0].rooted, true, "Root from the menu");
+// Edit the pitch value with the "st" suffix
+await page.mouse.click(pitchP.x, pitchP.y, { button: "right" });
+await sleep(120);
+await page.locator(".pr-expression-menu .ui-chooser__option", { hasText: "Edit Value" }).click();
+await page.keyboard.press("Control+a");
+await page.keyboard.type("+2.73 st");
+await page.keyboard.press("Enter");
+await sleep(100);
+assert.equal((await note("n2")).mpePitch.points[0].pitchOffset, 2.73);
+// Velocity marker: right-click > Edit Value (Notes mode)
+await shape.locator(".pr-mode-notes").click();
+await sleep(150);
+const vP = await at(6, laneY(0, (await note("n3")).velocity));
+await page.mouse.click(vP.x, vP.y, { button: "right" });
+await sleep(120);
+await page.locator(".pr-expression-menu .ui-chooser__option", { hasText: "Edit Value" }).click();
+await page.keyboard.press("Control+a");
+await page.keyboard.type("33");
+await page.keyboard.press("Enter");
+await sleep(100);
+assert.equal((await note("n3")).velocity, 33, "velocity Edit Value");
 console.log("errors", errors);
 assert.equal(errors.length, 0);
 console.log("LANES OK");

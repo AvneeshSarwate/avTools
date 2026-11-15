@@ -19,6 +19,8 @@ import { createPortal } from 'react-dom'
 import { proxy, useSnapshot } from 'valtio'
 import './pianoRoll.css'
 import { ControlPanel, NoteCount } from './ControlPanel'
+import { ExpressionMenu, type ExpressionMenuActions, type ExpressionMenuState } from './ExpressionMenu'
+import { deletePoint, setNoteVelocity, setPointValue, togglePointRooted } from './expression'
 import { DEFAULT_SCALE } from './scale'
 import { drawGutter, GUTTER_WIDTH, gutterPitchAt } from './gutter'
 import { lanesHeight, LANE_HEIGHT } from './lanes'
@@ -146,6 +148,8 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
   const [expressionMode, setExpressionMode] = useState<'notes' | 'mpe'>('notes')
   const [lanesVisible, setLanesVisible] = useState<Record<ExpressionLane, boolean>>({ velocity: true, pressure: true, timbre: true })
   const gutterRef = useRef<HTMLCanvasElement>(null)
+  const [expressionMenu, setExpressionMenu] = useState<ExpressionMenuState | null>(null)
+  const closeExpressionMenu = useCallback(() => setExpressionMenu(null), [])
   // Controlled by the host when it passes `scale`; otherwise kept here.
   const [localScale, setLocalScale] = useState<PianoRollScale>(DEFAULT_SCALE)
   const scale = scaleProp ?? localScale
@@ -384,6 +388,16 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
       commandHandlers.updateCommandStackButtons()
     }
 
+    /** What the right-click menu does: each is one undo step. */
+    const expressionMenuActions: ExpressionMenuActions = {
+      setValue: (target, value) => {
+        if (target.kind === 'velocity') setNoteVelocity(state, target.noteId, value)
+        else setPointValue(state, target.area, target.noteId, target.index, value)
+      },
+      deletePoint: (target) => deletePoint(state, target.area, target.noteId, target.index),
+      toggleRooted: (target) => togglePointRooted(state, target.noteId, target.index)
+    }
+
     /** One undoable velocity edit for the selected notes (the lane bar's field). */
     const setSelectedVelocity = (velocity: number) => {
       const value = Math.max(1, Math.min(127, Math.round(velocity)))
@@ -420,7 +434,8 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
       onWheel,
       applyMetadata,
       applyMetadataPlan,
-      setSelectedVelocity
+      setSelectedVelocity,
+      expressionMenuActions
     }
   })
 
@@ -551,7 +566,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
   }, [subdivision, state])
 
   useEffect(() => {
-    state.hooks = { onNotePreview, noteBadge, noteColor }
+    state.hooks = { onNotePreview, noteBadge, noteColor, onExpressionMenu: setExpressionMenu }
     state.dirty.notes = true
   }, [onNotePreview, noteBadge, noteColor, state])
 
@@ -747,6 +762,11 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
             ref={konvaContainerRef}
             className={'pr-container' + (interactive ? '' : ' is-disabled')}
             style={{ width, height: stageHeight }}
+            onContextMenu={(event) => {
+              // The roll owns right-click: no browser or tldraw menu over it
+              event.preventDefault()
+              event.stopPropagation()
+            }}
             onPointerDown={focusWrapper}
           />
           <div
@@ -775,6 +795,9 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
           </div>
         </div>
       </div>
+      {expressionMenu ? (
+        <ExpressionMenu menu={expressionMenu} actions={controllers.expressionMenuActions} onClose={closeExpressionMenu} />
+      ) : null}
       {lanesEnabled && (
         <div className="pr-lane-bar" style={{ paddingLeft: GUTTER_WIDTH + LAYOUT_GAP }}>
           {expressionMode === 'notes' ? (
@@ -794,13 +817,13 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
                 onCommit={controllers.setSelectedVelocity}
                 title="Velocity of the selected notes"
               />
-              <span className="pr-lane-hint">drag a marker · Alt/Cmd-drag a note · draw mode paints</span>
+              <span className="pr-lane-hint">drag a marker · Alt/Cmd-drag a note · draw mode paints · right-click to edit</span>
             </>
           ) : (
             <>
               <Toggle label="Pressure" className="pr-lane-toggle" on={lanesVisible.pressure} onChange={(on) => setLanesVisible((v) => ({ ...v, pressure: on }))} title="Show the pressure lane" />
               <Toggle label="Timbre" className="pr-lane-toggle" on={lanesVisible.timbre} onChange={(on) => setLanesVisible((v) => ({ ...v, timbre: on }))} title="Show the timbre (CC74) lane" />
-              <span className="pr-lane-hint">click a line to add · click a point to delete · drag a column for a range · R rooted · Del</span>
+              <span className="pr-lane-hint">click the line to add · click a point to delete · drag near a segment to move it · drag a column for a range · right-click to edit · R rooted</span>
             </>
           )}
           <span className="ui-spacer" />

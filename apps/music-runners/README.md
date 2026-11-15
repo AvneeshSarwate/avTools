@@ -181,16 +181,26 @@ of Live 12):
   together, Shift for fine steps); Alt/Cmd-drag a note in the grid; with
   draw mode on, drag in the lane to paint velocities (only the selected notes
   when any are selected). The lane bar's field sets the selection's velocity.
+  Hovering a marker shows its value.
 - **MPE mode**: notes do not move, resize or get added; clicking selects.
   Unselected notes are greyed. Each selected note gets a translucent column
   through the grid and the lanes; its pitch envelope is edited on the note,
-  its **Pressure** and **Timbre** (CC74) envelopes in lanes. Click a line to
-  add a breakpoint, drag to move it (selected points move together and stay
-  between their neighbours), click a point to delete it, drag in the note's
-  column for a time-range selection (it stays shaded until the selection
-  changes), Delete removes the selection, R toggles rooted on selected pitch
-  points, Escape clears. Shift is fine adjustment; Cmd/Ctrl snaps pitch to
-  semitones. A note with no envelope shows a dashed line at the rest value.
+  its **Pressure** and **Timbre** (CC74) envelopes in lanes. Hover zones,
+  nearest first: on a point (it gets a ring and its value shows, e.g.
+  `+2.73 st`); within 4px of the line (a ghost point locked to the line
+  follows the pointer and a click adds it there); within 12px of a segment
+  (it highlights, and dragging it moves both of its points by the same delta;
+  the flat runs before the first and after the last point move that point).
+  Drag a point to move it (selected points move together and stay between
+  their neighbours; the value shows while dragging), click a point to delete
+  it, drag in the note's column for a time-range selection (it stays shaded
+  until the selection changes), Delete removes the selection, R toggles
+  rooted on selected pitch points, Escape clears. Shift is fine adjustment;
+  Cmd/Ctrl snaps pitch to semitones. A note with no envelope shows a dashed
+  line at the rest value.
+- **Right-click** a breakpoint or a velocity marker: **Edit Value** (type an
+  exact number; pitch accepts `+2.73 st`), **Delete**, and **Root / Unroot**
+  on pitch points. The roll keeps the browser's and tldraw's menus out.
 - **Lane bar** under the lanes: which lanes show, the lane's tools, and the
   note count.
 
@@ -198,6 +208,8 @@ Every edit is one step on the roll's undo stack. Lanes and the mode switch
 appear only on the editable Source roll; Generated and Preview show the
 keyboard column. Not done yet: Live's chance, velocity deviation, release
 velocity, randomize/ramp tools, curved segments and draw mode for envelopes.
+Right-click on a pressed point only opens the menu; only the primary button
+edits.
 The code is `src/pianoRoll/expression.ts` (lanes and gestures), `lanes.ts`
 (layout) and `gutter.ts` (keyboard column).
 

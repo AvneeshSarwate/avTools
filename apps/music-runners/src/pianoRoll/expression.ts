@@ -29,7 +29,7 @@ import {
   laneYToValue,
   noteAreaHeight
 } from './lanes'
-import type { EnvelopeArea, ExpressionLane, NoteData, PianoRollState, PointSelection } from './state'
+import type { EnvelopeArea, ExpressionHover, ExpressionLane, ExpressionMenuTarget, NoteData, PianoRollState, PointSelection } from './state'
 
 interface Point {
   time: number
@@ -43,7 +43,10 @@ const LANE_LABEL: Record<ExpressionLane, string> = { velocity: 'Velocity', press
 
 const POINT_RADIUS = 4
 const POINT_HIT = 7
-const LINE_HIT = 5
+/** Within this of the line, a ghost point locked to it follows the pointer; a click adds it. */
+const LINE_HIT = 4
+/** Beyond the line but within this, the segment under the pointer drags its end points together. */
+const SEGMENT_HIT = 12
 const MARKER_RADIUS = 3.5
 const DRAG_SLOP = 2
 const FINE = 0.2
@@ -61,6 +64,9 @@ const LANE_BEAT_LINE = '#2a2a2a'
 const LANE_BAR_LINE = '#3a3a3a'
 const COLUMN_FILL = 'rgba(100, 181, 255, 0.10)'
 const RANGE_FILL = 'rgba(255, 255, 255, 0.13)'
+const TOOLTIP_FILL = '#e6e6e6'
+const TOOLTIP_TEXT = '#111111'
+const TOOLTIP_FONT = 'normal normal 11px Arial'
 const TWO_PI = Math.PI * 2
 
 // ================= data access =================
@@ -189,11 +195,102 @@ export function drawExpression(state: PianoRollState, ctx: CanvasRenderingContex
     ctx.clip()
     drawRange(state, ctx, 'pitch', 0, gridHeight)
     for (const [id, note] of editable) drawEnvelope(state, ctx, 'pitch', id, note, null, width)
+    drawHover(state, ctx, 'pitch', null)
     ctx.restore()
   }
 
   for (const geometry of laneGeometries(state)) drawLane(state, ctx, geometry, width)
+  drawTooltip(state, ctx, width, stage.height())
   ctx.restore()
+}
+
+/** Hover feedback on an envelope: a ring on a point, a ghost point on the line, a highlighted segment. */
+function drawHover(state: PianoRollState, ctx: CanvasRenderingContext2D, area: EnvelopeArea, geometry: LaneGeometry | null) {
+  const hover = state.expression.hover
+  if (!hover || hover.area !== area) return
+  const note = state.notes.get(hover.noteId)
+  if (!note) return
+  const { x0, width: w } = column(state, note)
+  const at = (time: number, value: number) => [x0 + time * w, valueY(state, area, note, value, geometry)] as const
+  if (hover.kind === 'point') {
+    const p = readPoints(note, area)[hover.index]
+    if (!p) return
+    const [x, y] = at(p.time, p.value)
+    ctx.beginPath()
+    ctx.arc(x, y, POINT_RADIUS + 3, 0, TWO_PI)
+    ctx.strokeStyle = LINE
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+  } else if (hover.kind === 'line') {
+    const [x, y] = at(hover.time, hover.value)
+    ctx.beginPath()
+    ctx.arc(x, y, POINT_RADIUS, 0, TWO_PI)
+    ctx.fillStyle = HALO
+    ctx.fill()
+    ctx.strokeStyle = SELECT
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+  } else {
+    const [ax, ay] = at(hover.from.time, hover.from.value)
+    const [bx, by] = at(hover.to.time, hover.to.value)
+    ctx.beginPath()
+    ctx.moveTo(ax, ay)
+    ctx.lineTo(bx, by)
+    ctx.strokeStyle = SELECT
+    ctx.lineWidth = 3
+    ctx.stroke()
+  }
+}
+
+/** The value under the pointer or being dragged, as a small label (Ableton's "+2.73 st"). */
+function drawTooltip(state: PianoRollState, ctx: CanvasRenderingContext2D, stageWidth: number, stageHeight: number) {
+  const tip = tooltipTarget(state)
+  if (!tip) return
+  ctx.font = TOOLTIP_FONT
+  const width = ctx.measureText(tip.text).width + 10
+  const height = 17
+  const x = clamp(tip.x + 10, 2, stageWidth - width - 2)
+  const y = clamp(tip.y - height - 8, 2, stageHeight - height - 2)
+  ctx.globalAlpha = 1
+  ctx.fillStyle = TOOLTIP_FILL
+  ctx.fillRect(x, y, width, height)
+  ctx.strokeStyle = HALO
+  ctx.lineWidth = 1
+  ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1)
+  ctx.fillStyle = TOOLTIP_TEXT
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'left'
+  ctx.fillText(tip.text, x + 5, y + height / 2 + 0.5)
+}
+
+function tooltipTarget(state: PianoRollState): { x: number; y: number; text: string } | null {
+  const drag = state.expression.drag
+  const pointTip = (area: EnvelopeArea, noteId: string, index: number) => {
+    const note = state.notes.get(noteId)
+    const p = note ? readPoints(note, area)[index] : undefined
+    if (!note || !p) return null
+    const { x0, width: w } = column(state, note)
+    return { x: x0 + p.time * w, y: valueY(state, area, note, p.value, geometryFor(state, area)), text: formatExpressionValue(area, p.value) }
+  }
+  const velocityTip = (noteId: string) => {
+    const note = state.notes.get(noteId)
+    const geometry = laneGeometries(state).find((g) => g.lane === 'velocity')
+    if (!note || !geometry) return null
+    return { x: column(state, note).x0, y: laneValueToY(geometry, note.velocity), text: formatExpressionValue('velocity', note.velocity) }
+  }
+  if (drag?.kind === 'points') return drag.primary ? pointTip(drag.area, drag.primary.noteId, drag.primary.index) : null
+  if (drag?.kind === 'velocity') return drag.primary ? velocityTip(drag.primary) : null
+  if (drag) return null
+  const hover = state.expression.hover
+  if (hover?.kind === 'point') return pointTip(hover.area, hover.noteId, hover.index)
+  if (hover?.kind === 'line') {
+    const note = state.notes.get(hover.noteId)
+    if (!note) return null
+    const { x0, width: w } = column(state, note)
+    return { x: x0 + hover.time * w, y: valueY(state, hover.area, note, hover.value, geometryFor(state, hover.area)), text: formatExpressionValue(hover.area, hover.value) }
+  }
+  if (state.expression.mode === 'notes' && state.expression.hoverNoteId) return velocityTip(state.expression.hoverNoteId)
+  return null
 }
 
 function drawLane(state: PianoRollState, ctx: CanvasRenderingContext2D, geometry: LaneGeometry, width: number) {
@@ -245,6 +342,7 @@ function drawLane(state: PianoRollState, ctx: CanvasRenderingContext2D, geometry
       drawDimEnvelope(state, ctx, lane, note, geometry)
     }
     for (const [id, note] of editableNotes(state)) drawEnvelope(state, ctx, lane, id, note, geometry, width)
+    drawHover(state, ctx, lane, geometry)
   }
 
   ctx.restore()
@@ -384,15 +482,69 @@ function hitPoint(state: PianoRollState, area: EnvelopeArea, pos: { x: number; y
   return best
 }
 
-/** A selected note's envelope line under the pointer: where to add a point. */
-function hitLine(state: PianoRollState, area: EnvelopeArea, pos: { x: number; y: number }): { noteId: string; time: number; value: number } | null {
+/** The closest spot on a selected note's envelope to the pointer. */
+interface Nearest {
+  noteId: string
+  dist: number
+  /** The spot itself, locked to the line: where a click adds a point. */
+  time: number
+  value: number
+  /** The breakpoints bounding the segment it lies on (one for the flat runs before the first / after the last). */
+  indices: number[]
+  from: { time: number; value: number }
+  to: { time: number; value: number }
+}
+
+function nearestOnEnvelope(state: PianoRollState, area: EnvelopeArea, pos: { x: number; y: number }): Nearest | null {
   const geometry = geometryFor(state, area)
+  let best: Nearest | null = null
   for (const [id, note] of editableNotes(state)) {
+    const points = readPoints(note, area)
     const { x0, width: w } = column(state, note)
-    if (pos.x < x0 || pos.x > x0 + w) continue
-    const time = clamp((pos.x - x0) / w, 0, 1)
-    const value = valueAt(readPoints(note, area), time, REST[area])
-    if (Math.abs(pos.y - valueY(state, area, note, value, geometry)) <= LINE_HIT) return { noteId: id, time, value }
+    // The drawn envelope: flat from the note start to the first point, through
+    // the points, flat from the last point to the note end.
+    const nodes =
+      points.length === 0
+        ? [{ time: 0, value: REST[area], index: -1 }, { time: 1, value: REST[area], index: -1 }]
+        : [
+            { time: 0, value: points[0]!.value, index: -1 },
+            ...points.map((p, index) => ({ time: p.time, value: p.value, index })),
+            { time: 1, value: points[points.length - 1]!.value, index: -1 }
+          ]
+    for (let k = 0; k < nodes.length - 1; k++) {
+      const a = nodes[k]!
+      const b = nodes[k + 1]!
+      const ax = x0 + a.time * w
+      const ay = valueY(state, area, note, a.value, geometry)
+      const dx = x0 + b.time * w - ax
+      const dy = valueY(state, area, note, b.value, geometry) - ay
+      const length2 = dx * dx + dy * dy
+      const u = length2 > 0 ? clamp(((pos.x - ax) * dx + (pos.y - ay) * dy) / length2, 0, 1) : 0
+      const dist = Math.hypot(pos.x - (ax + u * dx), pos.y - (ay + u * dy))
+      if (best && dist >= best.dist) continue
+      best = {
+        noteId: id,
+        dist,
+        time: clamp(a.time + u * (b.time - a.time), 0, 1),
+        value: a.value + u * (b.value - a.value),
+        indices: [a.index, b.index].filter((index) => index >= 0),
+        from: { time: a.time, value: a.value },
+        to: { time: b.time, value: b.value }
+      }
+    }
+  }
+  return best
+}
+
+/** The MPE hover zone under the pointer: point, then line, then segment. */
+function hoverAt(state: PianoRollState, area: EnvelopeArea, pos: { x: number; y: number }): ExpressionHover | null {
+  const point = hitPoint(state, area, pos)
+  if (point) return { kind: 'point', area, noteId: point.noteId, index: point.index }
+  const near = nearestOnEnvelope(state, area, pos)
+  if (!near) return null
+  if (near.dist <= LINE_HIT) return { kind: 'line', area, noteId: near.noteId, time: near.time, value: near.value }
+  if (near.dist <= SEGMENT_HIT && near.indices.length > 0) {
+    return { kind: 'segment', area, noteId: near.noteId, indices: near.indices, from: near.from, to: near.to }
   }
   return null
 }
@@ -450,20 +602,20 @@ function setPointSelection(state: PianoRollState, selection: PointSelection | nu
   state.dirty.notes = true
 }
 
-function startVelocityDrag(state: PianoRollState, y: number, perPixel: number) {
+function startVelocityDrag(state: PianoRollState, y: number, perPixel: number, primary: string | null) {
   const base = new Map<string, number>()
   for (const id of state.selection.selectedIds) {
     const note = state.notes.get(id)
     if (note) base.set(id, note.velocity)
   }
-  state.expression.drag = { kind: 'velocity', startY: y, before: captureState(state), base, perPixel, moved: false }
+  state.expression.drag = { kind: 'velocity', startY: y, before: captureState(state), base, perPixel, moved: false, primary }
 }
 
 /** Alt/Cmd-drag on a selected note in Notes mode changes the selection's velocity (Ableton). */
-export function startVelocityDragFromNote(state: PianoRollState, stage: Konva.Stage) {
+export function startVelocityDragFromNote(state: PianoRollState, stage: Konva.Stage, noteId: string) {
   const pos = stage.getPointerPosition()
   if (!pos) return
-  startVelocityDrag(state, pos.y, 1)
+  startVelocityDrag(state, pos.y, 1, noteId)
 }
 
 /**
@@ -483,7 +635,7 @@ export function expressionPointerDown(state: PianoRollState, stage: Konva.Stage,
     const markerId = hitVelocityMarker(state, geometry, pos)
     if (markerId) {
       selectNotes(state, markerId, shift)
-      if (state.selection.selectedIds.has(markerId)) startVelocityDrag(state, pos.y, laneValuePerPixel(geometry))
+      if (state.selection.selectedIds.has(markerId)) startVelocityDrag(state, pos.y, laneValuePerPixel(geometry), markerId)
       state.dirty.notes = true
       return true
     }
@@ -514,21 +666,35 @@ export function expressionPointerDown(state: PianoRollState, stage: Konva.Stage,
     } else if (!already) {
       setPointSelection(state, { area: envelopeArea, points: new Map([[point.noteId, new Set([point.index])]]) })
     }
-    startPointsDrag(state, envelopeArea, pos, shift ? null : point)
+    startPointsDrag(state, envelopeArea, pos, shift ? null : point, point)
     return true
   }
 
-  const line = hitLine(state, envelopeArea, pos)
-  if (line) {
-    const note = state.notes.get(line.noteId)!
+  const near = nearestOnEnvelope(state, envelopeArea, pos)
+  if (near && near.dist <= LINE_HIT) {
+    // Add a point where the ghost point sits (locked to the line), and drag it
+    const note = state.notes.get(near.noteId)!
     const points = readPoints(note, envelopeArea)
     const before = captureState(state)
-    let index = points.findIndex((p) => p.time > line.time)
+    let index = points.findIndex((p) => p.time > near.time)
     if (index < 0) index = points.length
-    points.splice(index, 0, { time: line.time, value: clampValue(envelopeArea, line.value) })
-    state.notes.set(line.noteId, withPoints(note, envelopeArea, points))
-    setPointSelection(state, { area: envelopeArea, points: new Map([[line.noteId, new Set([index])]]) })
-    startPointsDrag(state, envelopeArea, pos, null, before)
+    points.splice(index, 0, { time: near.time, value: clampValue(envelopeArea, near.value) })
+    state.notes.set(near.noteId, withPoints(note, envelopeArea, points))
+    setPointSelection(state, { area: envelopeArea, points: new Map([[near.noteId, new Set([index])]]) })
+    startPointsDrag(state, envelopeArea, pos, null, { noteId: near.noteId, index }, before)
+    return true
+  }
+  if (near && near.dist <= SEGMENT_HIT && near.indices.length > 0) {
+    // Grab the segment: its end points move together by the same delta
+    const selection: PointSelection =
+      shift && state.expression.pointSelection?.area === envelopeArea
+        ? clonePointSelection(state.expression.pointSelection)
+        : { area: envelopeArea, points: new Map() }
+    const set = selection.points.get(near.noteId) ?? new Set<number>()
+    for (const index of near.indices) set.add(index)
+    selection.points.set(near.noteId, set)
+    setPointSelection(state, selection)
+    startPointsDrag(state, envelopeArea, pos, null, { noteId: near.noteId, index: near.indices[0]! })
     return true
   }
 
@@ -553,7 +719,15 @@ function clonePointSelection(selection: PointSelection): PointSelection {
   return { area: selection.area, points: new Map([...selection.points].map(([id, set]) => [id, new Set(set)])) }
 }
 
-function startPointsDrag(state: PianoRollState, area: EnvelopeArea, pos: { x: number; y: number }, clicked: PointHit | null, before?: string) {
+function startPointsDrag(
+  state: PianoRollState,
+  area: EnvelopeArea,
+  pos: { x: number; y: number },
+  clicked: PointHit | null,
+  primary: PointHit | null,
+  before?: string
+) {
+  state.expression.hover = null
   const base = new Map<string, Array<{ time: number; value: number }>>()
   for (const [id] of state.expression.pointSelection?.points ?? []) {
     const note = state.notes.get(id)
@@ -567,7 +741,8 @@ function startPointsDrag(state: PianoRollState, area: EnvelopeArea, pos: { x: nu
     before: before ?? captureState(state),
     base,
     moved: false,
-    clickDeletes: clicked
+    clickDeletes: clicked,
+    primary
   }
 }
 
@@ -721,10 +896,114 @@ export function expressionHover(state: PianoRollState, pos: { x: number; y: numb
     state.expression.hoverNoteId = hoverNote
     state.dirty.notes = true
   }
+  let hover: ExpressionHover | null = null
+  if (pos && state.expression.mode === 'mpe' && !state.expression.drag) {
+    const area = areaAt(state, pos.y)
+    if (area && area !== 'velocity') hover = hoverAt(state, area, pos)
+  }
+  if (JSON.stringify(hover) !== JSON.stringify(state.expression.hover)) {
+    state.expression.hover = hover
+    state.dirty.notes = true
+    setCursor(state, hover ? HOVER_CURSOR[hover.kind] : hoverNote ? 'ns-resize' : '')
+  } else if (!hover) {
+    setCursor(state, hoverNote ? 'ns-resize' : '')
+  }
   if (hoverPitch !== state.keyboard.hoverPitch) {
     state.keyboard.hoverPitch = hoverPitch
     state.dirty.gutter = true
   }
+}
+
+const HOVER_CURSOR: Record<ExpressionHover['kind'], string> = { point: 'move', line: 'copy', segment: 'grab' }
+
+/** Cursor on the stage's content element, so the container keeps its own (draw mode). */
+function setCursor(state: PianoRollState, cursor: string) {
+  const content = state.stage?.container().querySelector<HTMLElement>('.konvajs-content')
+  if (content && content.style.cursor !== cursor) content.style.cursor = cursor
+}
+
+// ================= right-click: Edit Value and friends =================
+
+/** Right-click on a breakpoint (MPE) or a velocity marker (Notes): ask the host for a menu. */
+export function expressionContextMenu(state: PianoRollState, stage: Konva.Stage, evt: MouseEvent): boolean {
+  const pos = stage.getPointerPosition()
+  if (!pos) return false
+  const area = areaAt(state, pos.y)
+  let target: ExpressionMenuTarget | null = null
+  if (state.expression.mode === 'mpe' && area && area !== 'velocity') {
+    const point = hitPoint(state, area, pos)
+    const note = point ? state.notes.get(point.noteId) : undefined
+    const p = note && point ? readPoints(note, area)[point.index] : undefined
+    if (point && p) target = { kind: 'point', area, noteId: point.noteId, index: point.index, value: p.value, rooted: !!p.rooted }
+  } else if (state.expression.mode === 'notes' && area === 'velocity') {
+    const geometry = laneGeometries(state).find((g) => g.lane === 'velocity')
+    const noteId = geometry ? hitVelocityMarker(state, geometry, pos) : null
+    const note = noteId ? state.notes.get(noteId) : undefined
+    if (noteId && note) target = { kind: 'velocity', noteId, value: note.velocity }
+  }
+  if (!target) return false
+  state.hooks.onExpressionMenu?.({ x: evt.clientX, y: evt.clientY, target })
+  return true
+}
+
+/** Set one breakpoint's value exactly (one undo step). */
+export function setPointValue(state: PianoRollState, area: EnvelopeArea, noteId: string, index: number, value: number) {
+  const note = state.notes.get(noteId)
+  if (!note) return
+  const points = readPoints(note, area)
+  if (!points[index]) return
+  points[index] = { ...points[index]!, value: clampValue(area, value) }
+  state.command.stack?.executeCommand('Set Value', () => {
+    state.notes.set(noteId, withPoints(note, area, points))
+  })
+  state.dirty.notes = true
+}
+
+export function deletePoint(state: PianoRollState, area: EnvelopeArea, noteId: string, index: number) {
+  const note = state.notes.get(noteId)
+  if (!note) return
+  const points = readPoints(note, area)
+  points.splice(index, 1)
+  state.command.stack?.executeCommand('Delete Point', () => {
+    state.notes.set(noteId, withPoints(note, area, points))
+  })
+  setPointSelection(state, null)
+}
+
+export function togglePointRooted(state: PianoRollState, noteId: string, index: number) {
+  const note = state.notes.get(noteId)
+  if (!note) return
+  const points = readPoints(note, 'pitch')
+  const p = points[index]
+  if (!p) return
+  const { rooted, ...rest } = p
+  points[index] = rooted ? rest : { ...rest, rooted: true }
+  state.command.stack?.executeCommand(rooted ? 'Unroot Point' : 'Root Point', () => {
+    state.notes.set(noteId, withPoints(note, 'pitch', points))
+  })
+  state.dirty.notes = true
+}
+
+export function setNoteVelocity(state: PianoRollState, noteId: string, velocity: number) {
+  const note = state.notes.get(noteId)
+  if (!note) return
+  const value = clamp(Math.round(velocity), 1, 127)
+  state.command.stack?.executeCommand('Set Velocity', () => {
+    state.notes.set(noteId, { ...note, velocity: value })
+  })
+  state.dirty.notes = true
+}
+
+/** Value text as Ableton shows it: "+2.73 st" for pitch, whole numbers otherwise. */
+export function formatExpressionValue(area: EnvelopeArea | 'velocity', value: number): string {
+  if (area === 'pitch') return `${value >= 0 ? '+' : ''}${value.toFixed(2)} st`
+  return String(Math.round(value))
+}
+
+/** Parse an edited value: "2.5", "+2.5 st", "-1"; null when not a number. */
+export function parseExpressionValue(text: string): number | null {
+  const value = Number(text.trim().replace(/\s*st$/i, ''))
+  return text.trim() !== '' && Number.isFinite(value) ? value : null
 }
 
 // ================= keyboard commands (MPE mode) =================

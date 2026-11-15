@@ -25,6 +25,7 @@ import { noteAreaHeight } from './lanes'
 import {
   cancelExpressionGesture,
   drawExpression,
+  expressionContextMenu,
   expressionHover,
   expressionPointerDown,
   expressionPointerMove,
@@ -1030,6 +1031,10 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
 
   // Click on note or handle
   stage.on('mousedown touchstart', (e) => {
+    // Only the primary button edits; right-click opens the expression menu
+    // (contextmenu below) and must not select, delete or drag.
+    const button = (e.evt as MouseEvent | undefined)?.button
+    if (typeof button === 'number' && button !== 0) return
     const isShift = !!(e.evt as PointerLikeEvent)?.shiftKey
     const downPos = stage.getPointerPosition()
     prevDownPos = movedSinceDown ? undefined : lastDownPos
@@ -1063,7 +1068,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
             state.selection.selectedIds.add(noteId)
           })
         }
-        startVelocityDragFromNote(state, stage)
+        startVelocityDragFromNote(state, stage, noteId)
         state.dirty.notes = true
         return
       }
@@ -1183,6 +1188,13 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
   // Mouse up
   stage.on('mouseleave', () => expressionHover(state, null))
 
+  // Right-click: Edit Value on breakpoints and velocity markers (the host
+  // wrapper keeps the browser's and tldraw's menus out of the roll)
+  stage.on('contextmenu', (e) => {
+    e.evt.preventDefault()
+    expressionContextMenu(state, stage, e.evt as MouseEvent)
+  })
+
   stage.on('mouseup touchend', () => {
     if (expressionPointerUp(state)) return
     if (state.interaction.isDragging) {
@@ -1255,7 +1267,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
     window.removeEventListener('pointerup', onWindowPointerUp, true)
     window.removeEventListener('pointercancel', endGesture, true)
     window.removeEventListener('blur', endGesture)
-    stage.off('dblclick dbltap mousedown touchstart mousemove touchmove mouseup touchend mouseleave')
+    stage.off('dblclick dbltap mousedown touchstart mousemove touchmove mouseup touchend mouseleave contextmenu')
   }
 }
 

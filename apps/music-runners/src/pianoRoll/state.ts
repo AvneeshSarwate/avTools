@@ -25,9 +25,33 @@ export type EnvelopeArea = 'pitch' | 'pressure' | 'timbre'
 /** Selected breakpoints: note id -> indices into that note's points, per area. */
 export type PointSelection = { area: EnvelopeArea; points: Map<string, Set<number>> }
 
+/**
+ * What an MPE-mode pointer is over (Ableton's hover zones, nearest first): a
+ * breakpoint; the line itself, where a click adds a point (shown as a ghost
+ * point locked to the line); or, a little further out, a segment, which drags
+ * its end points together.
+ */
+export type ExpressionHover =
+  | { kind: 'point'; area: EnvelopeArea; noteId: string; index: number }
+  | { kind: 'line'; area: EnvelopeArea; noteId: string; time: number; value: number }
+  | {
+      kind: 'segment'
+      area: EnvelopeArea
+      noteId: string
+      indices: number[]
+      /** The segment's ends (time 0..1 across the note, value), for drawing it highlighted. */
+      from: { time: number; value: number }
+      to: { time: number; value: number }
+    }
+
+/** A right-click target (expression.ts); the host renders the menu. */
+export type ExpressionMenuTarget =
+  | { kind: 'point'; area: EnvelopeArea; noteId: string; index: number; value: number; rooted: boolean }
+  | { kind: 'velocity'; noteId: string; value: number }
+
 /** An expression gesture in progress (see expression.ts). */
 export type ExpressionDrag =
-  | { kind: 'velocity'; startY: number; before: string; base: Map<string, number>; perPixel: number; moved: boolean }
+  | { kind: 'velocity'; startY: number; before: string; base: Map<string, number>; perPixel: number; moved: boolean; primary: string | null }
   | { kind: 'velocityDraw'; before: string; lane: 'velocity' }
   | {
       kind: 'points'
@@ -40,6 +64,8 @@ export type ExpressionDrag =
       moved: boolean
       /** Click on a point without moving deletes it (Ableton); a new point is never deleted that way. */
       clickDeletes: { noteId: string; index: number } | null
+      /** The point whose value the tooltip shows while dragging. */
+      primary: { noteId: string; index: number } | null
     }
   | { kind: 'range'; area: EnvelopeArea; startX: number; currentX: number; shift: boolean; initial: PointSelection | null }
 
@@ -48,6 +74,8 @@ export type ExternalChangeSource = 'notes' | 'selection' | 'playhead' | 'viewpor
 /** Host hooks the core calls directly; set by the React wrapper. */
 export interface PianoRollHooks {
   onNotePreview?: (note: { pitch: number; velocity: number }) => void
+  /** Right-click on a breakpoint or velocity marker (client coordinates). */
+  onExpressionMenu?: (menu: { x: number; y: number; target: ExpressionMenuTarget }) => void
   noteBadge?: (note: NoteData) => string | null
   noteColor?: (note: NoteData) => string | undefined
 }
@@ -219,6 +247,8 @@ export interface PianoRollState {
     drag: ExpressionDrag | null
     /** Velocity marker under the pointer (Ableton highlights it). */
     hoverNoteId: string | null
+    /** MPE-mode hover target (point, line or segment). */
+    hover: ExpressionHover | null
   }
 
   /** The keyboard column beside the grid (gutter.ts). */
@@ -358,7 +388,8 @@ export const createPianoRollState = (): PianoRollState => {
       pointSelection: null,
       range: null,
       drag: null,
-      hoverNoteId: null
+      hoverNoteId: null,
+      hover: null
     },
 
     keyboard: { pressedPitch: null, hoverPitch: null },

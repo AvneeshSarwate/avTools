@@ -479,3 +479,30 @@
   text-overflow: ellipsis;
   padding-left: 6px;
 }
+
+/* Right-click menu on breakpoints and velocity markers (ExpressionMenu.tsx) */
+.pr-expression-menu__value {
+  float: right;
+  padding-left: 12px;
+  color: var(--c-text-dim, #959595);
+}
+
+.pr-expression-menu__edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+}
+
+.pr-expression-menu__input {
+  width: 80px;
+}
+
+.pr-expression-menu__input.is-invalid {
+  border-color: var(--c-rec, #ff4f4f);
+}
+
+.pr-expression-menu__unit {
+  color: var(--c-text-faint, #5f5f5f);
+  white-space: nowrap;
+}
