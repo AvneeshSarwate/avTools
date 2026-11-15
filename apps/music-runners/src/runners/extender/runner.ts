@@ -35,7 +35,9 @@ async function runExtender(api: RunnerApi): Promise<void> {
       return;
     }
     const params = api.getParams();
-    const count = Math.max(2, Math.round(params.trillNotes ?? 8));
+    // The trigger may request a count (picked from its tag's list); otherwise our param
+    const requested = typeof event.count === "number" && Number.isFinite(event.count) ? event.count : null;
+    const count = Math.max(1, Math.round(requested ?? params.trillNotes ?? 8));
     const rate = Math.max(1, params.trillRate ?? 8);
     const incoming = event.pitch as number;
     const velocity = typeof event.velocity === "number" ? event.velocity : last.velocity;
@@ -64,10 +66,10 @@ async function runExtender(api: RunnerApi): Promise<void> {
 export const extenderRunner: RunnerDefinition = {
   type: "extender",
   label: "Extender",
-  description: "Each loop, one random note (not tagged 'noExtend') is held a full extra loop. A received trill event plays a trill between this runner's last pitch and the event's pitch.",
+  description: "Each loop, one random note (not tagged 'noExtend') is held a full extra loop. A received trill event plays a trill between this runner's last pitch and the event's pitch, with the event's requested note count or this runner's trill notes param.",
   tags: [{ key: NO_EXTEND_TAG, label: "never extend", hotkey: "x", color: "#999", badge: "X", fields: [] }],
   params: [
-    { key: "trillNotes", label: "trill notes", min: 2, max: 32, step: 1, default: 8 },
+    { key: "trillNotes", label: "trill notes", min: 2, max: 32, step: 1, default: 8, hint: "used when the trigger requests no count" },
     { key: "trillRate", label: "trill rate", min: 1, max: 32, step: 1, default: 8, hint: "notes per beat" },
   ],
   generate: generateExtenderLoop,

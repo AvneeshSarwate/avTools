@@ -97,7 +97,7 @@ function FieldInput({ tag, field, selected, applyMetadata }: { tag: TagSpec; fie
       <TextField
         className="tag-field__text"
         value={draft}
-        placeholder={mixed ? "mixed" : textual && field.kind === "numberList" ? "60, 64, 67" : ""}
+        placeholder={mixed ? "mixed" : textual && field.kind === "numberList" ? (field.placeholder ?? "60, 64, 67") : ""}
         onChange={setDraft}
         onCommit={commitText}
       />

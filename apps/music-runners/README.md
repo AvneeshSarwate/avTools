@@ -309,6 +309,10 @@ is 0..1 across the note, so a resize stretches them).
 ## Starting runners
 
 - **Variants**: tag notes `variant` (alt pitches + probability) and `trill`.
+  A trill trigger has a **probability** (0..1, chance it fires each time the
+  note plays) and **trill notes**, a list like `8` or `3 4 5`: each firing
+  picks one uniformly and sends it as the event's `count`; left empty, the
+  receiver uses its own trill notes param.
   Hotkeys `v` and `t` while the source roll has focus toggle them on the
   selection; the metadata panel edits the fields.
 - **Extender**: each loop one random note (not tagged `noExtend`, hotkey `x`)

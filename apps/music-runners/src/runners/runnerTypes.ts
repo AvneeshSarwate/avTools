@@ -8,7 +8,7 @@ export type TagFieldSpec =
   | { key: string; label: string; kind: "number"; default: number; min?: number; max?: number; step?: number }
   | { key: string; label: string; kind: "boolean"; default: boolean }
   | { key: string; label: string; kind: "string"; default: string }
-  | { key: string; label: string; kind: "numberList"; default: number[] };
+  | { key: string; label: string; kind: "numberList"; default: number[]; placeholder?: string };
 
 /** One annotation a runner understands, stored under `metadata[key]`. */
 export interface TagSpec {
