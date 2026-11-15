@@ -1,7 +1,10 @@
 // The roll's tool row: edit history, grid, zoom, delete, the metadata panel,
 // and the note count. One compact row of icon controls (names in tooltips);
 // a host can render it into its own header through `toolbarTarget`.
-import { Button, Chooser, Toggle } from '../ui/controls/controls'
+import { useEffect, useState } from 'react'
+import { Button, Chooser, TextField, Toggle } from '../ui/controls/controls'
+import { formatDegrees, parseDegrees, ROOT_NAMES, withRootPitchClass } from './scale'
+import type { PianoRollScale } from './types'
 
 export interface ControlPanelProps {
   interactive: boolean
@@ -23,6 +26,56 @@ export interface ControlPanelProps {
   onFit: () => void
   onDelete: () => void
   onMetadataToggle: () => void
+  scale: PianoRollScale
+  onScaleChange: (scale: PianoRollScale) => void
+}
+
+const ROOT_OPTIONS = ROOT_NAMES.map((name, pitchClass) => ({ value: String(pitchClass), label: name }))
+const INVALID_FLASH_MS = 900
+
+/** Root chooser plus the degree list, e.g. "0 2 4 5 7 9 11 12". */
+function ScaleControls({ scale, onChange }: { scale: PianoRollScale; onChange: (scale: PianoRollScale) => void }) {
+  const text = formatDegrees(scale.degrees)
+  const [draft, setDraft] = useState(text)
+  const [invalid, setInvalid] = useState(false)
+  useEffect(() => setDraft(text), [text])
+  useEffect(() => {
+    if (!invalid) return
+    const timer = window.setTimeout(() => setInvalid(false), INVALID_FLASH_MS)
+    return () => window.clearTimeout(timer)
+  }, [invalid])
+  const commit = () => {
+    if (draft === text) return
+    const degrees = parseDegrees(draft)
+    if (!degrees) {
+      setInvalid(true)
+      setDraft(text)
+      return
+    }
+    setDraft(formatDegrees(degrees))
+    onChange({ ...scale, degrees })
+  }
+  return (
+    <div className="ui-group pr-scale">
+      <Chooser
+        className="pr-scale-root"
+        title="Scale root: root rows are lighter, out-of-scale rows darker"
+        value={String(((scale.root % 12) + 12) % 12)}
+        options={ROOT_OPTIONS}
+        width={66}
+        onChange={(value) => onChange(withRootPitchClass(scale, Number(value)))}
+      />
+      <TextField
+        className={'pr-scale-degrees' + (invalid ? ' is-invalid' : '')}
+        title="Scale degrees: semitones above the root from 0, octave last (ionian: 0 2 4 5 7 9 11 12). Enter to apply."
+        value={draft}
+        width={118}
+        onChange={setDraft}
+        onCommit={commit}
+        onCancel={() => setDraft(text)}
+      />
+    </div>
+  )
 }
 
 const GRID_OPTIONS = [
@@ -43,6 +96,7 @@ export function ControlPanel(props: ControlPanelProps) {
         <Button icon="undo" quiet className="pr-undo" title="Undo (Cmd/Ctrl+Z)" onClick={props.onUndo} disabled={!interactive || !props.canUndo} />
         <Button icon="redo" quiet className="pr-redo" title="Redo (Shift+Cmd/Ctrl+Z)" onClick={props.onRedo} disabled={!interactive || !props.canRedo} />
       </div>
+      <ScaleControls scale={props.scale} onChange={props.onScaleChange} />
       <div className="ui-group">
         <Chooser
           className="pr-grid"

@@ -1,6 +1,6 @@
 import { proxy } from "valtio";
 import { type Bank, DEFAULT_LOOP_LENGTH, newId } from "../model/types";
-import type { PianoRollNote } from "../pianoRoll/types";
+import type { PianoRollNote, PianoRollScale } from "../pianoRoll/types";
 
 // UI-facing state lives in valtio proxies: components read through
 // useSnapshot and re-render only for the fields they touched. Nothing hot
@@ -33,6 +33,7 @@ export function createBank(runnerType: string, init: Partial<Bank> = {}): Bank {
     runnerType,
     notes: init.notes ?? [],
     loopLength: init.loopLength ?? DEFAULT_LOOP_LENGTH,
+    ...(init.scale ? { scale: { root: init.scale.root, degrees: [...init.scale.degrees] } } : {}),
     createdAt: init.createdAt ?? now,
     updatedAt: now,
   };
@@ -47,6 +48,7 @@ export function duplicateBank(id: string): Bank | undefined {
     name: `${source.name} copy`,
     notes: source.notes.map((note) => ({ ...note, metadata: note.metadata ? structuredClone(note.metadata) : undefined })),
     loopLength: source.loopLength,
+    scale: source.scale,
   });
 }
 
@@ -62,6 +64,13 @@ export function setBankLoopLength(id: string, loopLength: number): void {
   const bank = banksStore.banks[id];
   if (!bank || !Number.isFinite(loopLength) || loopLength <= 0) return;
   bank.loopLength = loopLength;
+  bank.updatedAt = Date.now();
+}
+
+export function setBankScale(id: string, scale: PianoRollScale): void {
+  const bank = banksStore.banks[id];
+  if (!bank) return;
+  bank.scale = { root: scale.root, degrees: [...scale.degrees] };
   bank.updatedAt = Date.now();
 }
 

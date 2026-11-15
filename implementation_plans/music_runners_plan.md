@@ -323,6 +323,18 @@ travelling along it (one trill event fans out into many notes in the
 receiver, so per-send is the right granularity). No accept-side typing yet.
 The one arrow in `projects/default` was migrated by hand (`eventType: "trill"`).
 
+## Bank scale (2026-11-15)
+
+Each bank has `scale?: { root, degrees }` in music-types' `Scale` shape
+(degrees from 0 with the octave last, root a MIDI note); missing = C major.
+The roll takes `scale` / `onScaleChange` props; its tool row has a root
+chooser (both spellings for accidentals) and a degree text field (validated:
+integers 0..24 including 0, sorted, octave appended if absent; invalid input
+flashes red and reverts). Row shading replaced the fixed black-key shading:
+root rows lighter, out-of-scale darker. Scale is musical data on the bank, not
+an instance prop, so every instance and roll of a bank agrees. Not on the
+roll's undo stack. No scale-aware playback yet.
+
 ## Verification
 
 - `tsc --noEmit` in the app; `deno check` is not involved.

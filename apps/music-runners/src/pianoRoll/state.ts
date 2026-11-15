@@ -1,6 +1,7 @@
 import type Konva from 'konva'
 import type { CommandStack } from './commandStack'
-import type { GhostNote, JsonObject, LiveInput, PianoRollNote, PlayheadMarker } from './types'
+import type { GhostNote, JsonObject, LiveInput, PianoRollNote, PianoRollScale, PlayheadMarker } from './types'
+import { DEFAULT_SCALE } from './scale'
 import type { NoteIndex } from './noteIndex'
 import {
   BASE_NOTE_HEIGHT,
@@ -53,6 +54,8 @@ export interface PianoRollState {
     timeSignature: number
     /** Loop length in beats: the end line. The scrollable extent is derived (see viewport.getMaxLength). */
     loopLength: number
+    /** Row shading: root rows lighter, out-of-scale rows darker. */
+    scale: PianoRollScale
     snapToGrid: boolean
     /** Click-drag on the background draws a note instead of a marquee. */
     drawMode: boolean
@@ -138,6 +141,7 @@ export interface PianoRollState {
       lastStageHeight: number
       lastLoopLength: number
       lastMaxLength: number
+      lastScale: PianoRollScale | null
     }
   }
 
@@ -204,6 +208,7 @@ export const createPianoRollState = (): PianoRollState => {
       subdivision: DEFAULT_SUBDIVISION,
       timeSignature: DEFAULT_TIME_SIGNATURE,
       loopLength: DEFAULT_LOOP_LENGTH,
+      scale: DEFAULT_SCALE,
       snapToGrid: true,
       drawMode: false,
       backgroundColor1: '#262626',
@@ -271,7 +276,8 @@ export const createPianoRollState = (): PianoRollState => {
         lastStageWidth: -1,
         lastStageHeight: -1,
         lastLoopLength: -1,
-        lastMaxLength: -1
+        lastMaxLength: -1,
+        lastScale: null
       }
     },
 

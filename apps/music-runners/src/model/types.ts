@@ -1,5 +1,5 @@
 import type { TLEditorSnapshot } from "tldraw";
-import type { PianoRollNote } from "../pianoRoll/types";
+import type { PianoRollNote, PianoRollScale } from "../pianoRoll/types";
 
 /** One piano roll's worth of data, tagged with the runner type whose metadata it carries. */
 export interface Bank {
@@ -9,6 +9,12 @@ export interface Bank {
   notes: PianoRollNote[];
   /** Beats. Notes past it stay in data; playback only covers [0, loopLength). */
   loopLength: number;
+  /**
+   * The bank's scale, in the shape `new Scale(degrees, root)` takes
+   * (packages/music-types). Shades the rolls; runners may read it. Missing
+   * means C major (DEFAULT_SCALE in src/pianoRoll/scale.ts).
+   */
+  scale?: PianoRollScale;
   createdAt: number;
   updatedAt: number;
 }

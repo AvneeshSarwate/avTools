@@ -5,6 +5,17 @@ import type { ReactNode } from "react";
 
 export type JsonObject = Record<string, unknown>;
 
+/**
+ * A scale in the shape `new Scale(degrees, root)` takes in packages/music-types
+ * (scale.ts): `degrees` are semitones above the root counted from 0, with the
+ * octave as the last degree (ionian is 0 2 4 5 7 9 11 12); `root` is a MIDI
+ * note (60 = C4). The roll only uses the pitch classes, for row shading.
+ */
+export interface PianoRollScale {
+  root: number;
+  degrees: number[];
+}
+
 export interface PianoRollNote {
   id: string;
   pitch: number; // MIDI 0..127
@@ -114,6 +125,13 @@ export interface PianoRollProps {
   onViewChange?: (view: PianoRollView) => void;
   /** Toggled by the host; the component also exposes it in its control panel. */
   snapToGrid?: boolean;
+  /**
+   * Scale for row shading (root rows lighter, out-of-scale rows darker).
+   * Default C major. Edited from the control panel; without onScaleChange
+   * the roll keeps edits to itself.
+   */
+  scale?: PianoRollScale;
+  onScaleChange?: (scale: PianoRollScale) => void;
   /**
    * Render the control panel into this element (a host's section header)
    * instead of above the stage. Null while the host element is not mounted.

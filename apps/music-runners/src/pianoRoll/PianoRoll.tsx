@@ -19,7 +19,8 @@ import { createPortal } from 'react-dom'
 import { proxy, useSnapshot } from 'valtio'
 import './pianoRoll.css'
 import { ControlPanel } from './ControlPanel'
-import type { JsonObject, LiveInput, PianoRollHandle, PianoRollNote, PianoRollProps, PianoRollView, PlayheadMarker } from './types'
+import { DEFAULT_SCALE } from './scale'
+import type { JsonObject, LiveInput, PianoRollHandle, PianoRollScale, PianoRollNote, PianoRollProps, PianoRollView, PlayheadMarker } from './types'
 import { createPianoRollState, type NoteData, type PianoRollState } from './state'
 import {
   initializeLayers,
@@ -101,7 +102,9 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     renderMetadataPanel,
     initialView,
     snapToGrid,
-    toolbarTarget
+    toolbarTarget,
+    scale: scaleProp,
+    onScaleChange
   } = props
 
   // Latest props for the stable controllers below.
@@ -131,6 +134,16 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
   const [snap, setSnap] = useState(snapToGrid ?? true)
   const [drawMode, setDrawMode] = useState(false)
   const [showMetadata, setShowMetadata] = useState(false)
+  // Controlled by the host when it passes `scale`; otherwise kept here.
+  const [localScale, setLocalScale] = useState<PianoRollScale>(DEFAULT_SCALE)
+  const scale = scaleProp ?? localScale
+  const changeScale = useCallback(
+    (next: PianoRollScale) => {
+      if (onScaleChange) onScaleChange(next)
+      if (!scaleProp) setLocalScale(next)
+    },
+    [onScaleChange, scaleProp]
+  )
 
   // The array last emitted or last hydrated from, by reference first and by
   // JSON second: echoes of our own emission (and identical re-sends) never
@@ -478,6 +491,14 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     if (snapToGrid !== undefined) setSnap(snapToGrid)
   }, [snapToGrid])
 
+  // The grid compares the scale by identity, so only a new scale redraws it.
+  const scaleKey = `${scale.root}:${scale.degrees.join(',')}`
+  useEffect(() => {
+    state.grid.scale = scale
+    state.needsRedraw = true
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scaleKey, state])
+
   useEffect(() => {
     state.grid.snapToGrid = snap
   }, [snap, state])
@@ -615,6 +636,8 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
       onFit={controllers.fitToContent}
       onDelete={controllers.commandHandlers.deleteSelected}
       onMetadataToggle={() => setShowMetadata((v) => !v)}
+      scale={scale}
+      onScaleChange={changeScale}
     />
   )
 
@@ -689,6 +712,8 @@ function ControlPanelSlot(props: {
   onFit: () => void
   onDelete: () => void
   onMetadataToggle: () => void
+  scale: PianoRollScale
+  onScaleChange: (scale: PianoRollScale) => void
 }) {
   const { ui, snap, ...rest } = props
   return (

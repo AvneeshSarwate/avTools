@@ -58,9 +58,18 @@ unless an instance has **MPE** on (see below).
   `run(api)` that loops until stopped. `src/runners/runnerTypes.ts` is the
   thin contract; copy a runner directory to make a new one and register it in
   `src/runners/registry.ts`.
-- **Bank**: one piano roll (notes, loop length, note metadata) tagged with a
-  runner type. The left sidebar lists banks by type. Several instances can
-  reference one bank.
+- **Bank**: one piano roll (notes, loop length, scale, note metadata) tagged
+  with a runner type. The left sidebar lists banks by type. Several instances
+  can reference one bank.
+- **Scale**: each bank has one, edited in the Source roll's tool row: a root
+  chooser (accidentals spelled both ways, F#/Gb) and a degree field, semitones
+  above the root from 0 with the octave last (ionian is `0 2 4 5 7 9 11 12`;
+  the 12 is added if left out). It is stored as `bank.scale = { root, degrees }`
+  with `root` a MIDI note (60 = C4), the shape `new Scale(degrees, root)` takes
+  in `packages/music-types`, so a runner can build one directly. Missing means
+  C major. All three rolls shade from it: root rows lighter, out-of-scale rows
+  darker (in C major the darker rows are the black keys). Scale edits are not
+  on the roll's undo stack (like loop length).
 - **Instance**: a tldraw shape (`runner-<type>`) bound to one bank, with a
   MIDI output, params (transpose now, speed at the next loop), two transports
   (**Run** the algorithm, **Play** the bank verbatim), a queue toggle, and
@@ -150,8 +159,9 @@ Controls come from `src/ui/controls/` and no native form widgets are shown:
 
 Every control carries `data-control`, which the title bar uses to tell a
 control from its draggable background. Icons are SVGs in `icons.tsx`, not
-emoji. The roll's canvas defaults match: a dark grid, black-key rows a step
-darker, bar lines brighter than beat lines, the area past the loop shaded.
+emoji. The roll's canvas defaults match: a dark grid, rows shaded by the
+bank's scale (root lighter, out-of-scale darker), bar lines brighter than beat
+lines, the area past the loop shaded.
 
 ## Live input and recording
 
@@ -265,7 +275,7 @@ demo.html + demo/           standalone piano roll demo and its Playwright checks
 ## Verifying
 
 - `npm run type-check`.
-- Unit tests: `npx tsx --test src/model/mpe.test.ts src/pianoRoll/metadata/groupEdit.test.ts`.
+- Unit tests: `npx tsx --test src/model/mpe.test.ts src/pianoRoll/scale.test.ts src/pianoRoll/metadata/groupEdit.test.ts`.
 - Connections without a device: `demo/connections.e2e.mjs` (same setup as
   the recording check below).
 - Recording and MPE playback without a device: `demo/recording.e2e.mjs`

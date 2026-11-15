@@ -13,8 +13,9 @@ import {
   useEditor,
 } from "tldraw";
 import { PianoRoll } from "../../pianoRoll/PianoRoll";
-import type { GhostNote, MetadataPanelProps, PianoRollHandle, PianoRollNote, PianoRollView } from "../../pianoRoll/types";
-import { banksStore, createBank, listBanks, setBankLoopLength, setBankNotes } from "../../store/banks";
+import type { GhostNote, MetadataPanelProps, PianoRollHandle, PianoRollNote, PianoRollScale, PianoRollView } from "../../pianoRoll/types";
+import { banksStore, createBank, listBanks, setBankLoopLength, setBankNotes, setBankScale } from "../../store/banks";
+import { DEFAULT_SCALE } from "../../pianoRoll/scale";
 import { eventLogStore } from "../../store/events";
 import type { Bank } from "../../model/types";
 import { defaultOutputName, ensureMidi, getOutput, midiStore, refreshPorts } from "../../store/midi";
@@ -402,6 +403,13 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     (note: { pitch: number; velocity: number }) => auditionNote(shapeId, note.pitch, note.velocity),
     [shapeId],
   );
+  const scale = (bank?.scale ?? DEFAULT_SCALE) as PianoRollScale;
+  const onScaleChange = useCallback(
+    (next: PianoRollScale) => {
+      if (bankId) setBankScale(bankId, next);
+    },
+    [bankId],
+  );
   const onSelectionChange = useCallback((ids: string[]) => {
     selectedIdsRef.current = ids;
   }, []);
@@ -658,6 +666,8 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                   interactive
                   showControlPanel
                   toolbarTarget={sourceToolbar}
+                  scale={scale}
+                  onScaleChange={onScaleChange}
                   ghostNotes={sourceGhosts}
                   noteBadge={noteBadge}
                   noteColor={noteColor}
@@ -691,6 +701,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 ghostNotes={played}
                 noteBadge={noteBadge}
                 noteColor={generatedNoteColor}
+                scale={scale}
               />
             ) : (
               <div className="runner-section__placeholder">Play or Run to see the loop that is sounding</div>
@@ -724,6 +735,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 showControlPanel={false}
                 noteBadge={noteBadge}
                 noteColor={previewNoteColor}
+                scale={scale}
               />
             ) : (
               <div className="runner-section__placeholder">Regenerate to preview one loop of the algorithm</div>

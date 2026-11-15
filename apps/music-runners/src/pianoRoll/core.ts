@@ -20,6 +20,7 @@ import { CommandStack, type CommandStackChange } from './commandStack'
 import { getMaxLength, getNoteAreaHeight } from './viewport'
 import { DEFAULT_VELOCITY } from './constants'
 import { collectVisibleNotes, invalidateNoteIndex, type VisibleNote } from './noteIndex'
+import { scalePitchClasses } from './scale'
 
 // Default canvas palette: a dark grid after Ableton's dark themes, neutral
 // structure lines, and the selection blue (app token --c-select) for the
@@ -27,13 +28,13 @@ import { collectVisibleNotes, invalidateNoteIndex, type VisibleNote } from './no
 const PLAYHEAD_MARKER_COLOR = '#d9d9d9'
 const LOOP_END_COLOR = '#a8a8a8'
 const BEYOND_LOOP_FILL = 'rgba(0, 0, 0, 0.38)'
-const BLACK_KEY_ROW_FILL = 'rgba(0, 0, 0, 0.2)'
+const OUT_OF_SCALE_ROW_FILL = 'rgba(0, 0, 0, 0.2)'
+const ROOT_ROW_FILL = 'rgba(255, 255, 255, 0.12)'
 const GRID_LINE_SUBDIVISION = '#2d2d2d'
 const GRID_LINE_BEAT = '#383838'
 const GRID_LINE_BAR = '#555555'
 const GRID_LINE_ROW = '#1c1c1c'
 const GRID_LINE_OCTAVE = '#3a3a3a'
-const BLACK_KEYS = new Set([1, 3, 6, 8, 10])
 const GHOST_DEFAULT_COLOR = '#8a8a8a'
 const GHOST_DEFAULT_OPACITY = 0.45
 const MIN_NOTE_DURATION = 0.25
@@ -327,12 +328,17 @@ function drawGrid(state: PianoRollState, ctx: CanvasRenderingContext2D) {
     ctx.fillRect(i * measureWidth - scrollX, -scrollY, measureWidth, pianoRollHeight)
   }
 
-  // Black-key rows a step darker, so pitch reads without a keyboard strip
+  // Scale shading: out-of-scale rows a step darker, root rows lighter (in
+  // C major the dark rows are the black keys)
   const firstRow = Math.max(0, Math.floor(scrollY / noteHeight))
   const lastRow = Math.min(127, Math.ceil((scrollY + viewportHeight) / noteHeight))
-  ctx.fillStyle = BLACK_KEY_ROW_FILL
+  const { inScale, root } = scalePitchClasses(state.grid.scale)
   for (let row = firstRow; row <= lastRow; row++) {
-    if (BLACK_KEYS.has((127 - row) % 12)) ctx.fillRect(-scrollX, row * noteHeight - scrollY, contentWidth, noteHeight)
+    const pitchClass = (127 - row) % 12
+    if (pitchClass === root) ctx.fillStyle = ROOT_ROW_FILL
+    else if (!inScale.has(pitchClass)) ctx.fillStyle = OUT_OF_SCALE_ROW_FILL
+    else continue
+    ctx.fillRect(-scrollX, row * noteHeight - scrollY, contentWidth, noteHeight)
   }
 
   // Vertical lines (time grid). Each line is its own stroke: Skia rasterizes
@@ -795,7 +801,8 @@ export function renderGrid(state: PianoRollState) {
     gridCache.lastStageWidth === viewportWidth &&
     gridCache.lastStageHeight === viewportHeight &&
     gridCache.lastLoopLength === state.grid.loopLength &&
-    gridCache.lastMaxLength === maxLength
+    gridCache.lastMaxLength === maxLength &&
+    gridCache.lastScale === state.grid.scale
   ) {
     return
   }
@@ -809,6 +816,7 @@ export function renderGrid(state: PianoRollState) {
   gridCache.lastStageHeight = viewportHeight
   gridCache.lastLoopLength = state.grid.loopLength
   gridCache.lastMaxLength = maxLength
+  gridCache.lastScale = state.grid.scale
 
   gridLayer.batchDraw()
 }
