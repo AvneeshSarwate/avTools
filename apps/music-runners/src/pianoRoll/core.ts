@@ -31,6 +31,7 @@ import {
   expressionPointerMove,
   expressionPointerUp,
   setGridNoteHover,
+  setStageCursor,
   startVelocityDragFromNote
 } from './expression'
 
@@ -50,8 +51,8 @@ const GRID_LINE_OCTAVE = '#3a3a3a'
 const GHOST_DEFAULT_COLOR = '#8a8a8a'
 const GHOST_DEFAULT_OPACITY = 0.45
 const MIN_NOTE_DURATION = 0.25
-const HANDLE_RADIUS = 5
-const HANDLE_COLOR = '#e6e6e6'
+/** Resize zone at each end of a note, in px (a third of the note when shorter). */
+const RESIZE_EDGE_ZONE = 6
 const MARQUEE_STROKE = '#64b5ff'
 const MARQUEE_FILL = 'rgba(100, 181, 255, 0.1)'
 const QUEUE_PLAYHEAD_COLOR = 'rgba(100, 181, 255, 0.7)'
@@ -625,27 +626,6 @@ function drawNotes(state: PianoRollState, ctx: CanvasRenderingContext2D) {
     if (selectedIds.has(entry.id)) drawNote(entry.id, entry.note, true)
   }
 
-  // Resize handles on the selected, visible notes (on top of everything);
-  // notes are not resized in MPE mode
-  if (selectedIds.size > 0 && state.expression.mode === 'notes') {
-    setAlpha(1)
-    ctx.fillStyle = HANDLE_COLOR
-    for (let i = 0; i < visible.length; i++) {
-      const entry = visible[i]!
-      if (!selectedIds.has(entry.id)) continue
-      const note = entry.note
-      const x = note.position * quarterNoteWidth - scrollX
-      const cy = (127 - note.pitch) * noteHeight - scrollY + noteHeight / 2
-      ctx.beginPath()
-      ctx.arc(x, cy, HANDLE_RADIUS, 0, TWO_PI, false)
-      ctx.closePath()
-      ctx.fill()
-      ctx.beginPath()
-      ctx.arc(x + note.duration * quarterNoteWidth, cy, HANDLE_RADIUS, 0, TWO_PI, false)
-      ctx.closePath()
-      ctx.fill()
-    }
-  }
 }
 
 /**
@@ -943,23 +923,6 @@ export function hitTest(state: PianoRollState, pos: { x: number; y: number }): H
   const { quarterNoteWidth, noteHeight } = state.grid
   const selectedIds = state.selection.selectedIds
 
-  // Handles: start and end circles of each selected, visible note
-  if (selectedIds.size > 0 && state.expression.mode === 'notes') {
-    const ids = Array.from(selectedIds)
-    const r2 = HANDLE_RADIUS * HANDLE_RADIUS
-    for (let i = ids.length - 1; i >= 0; i--) {
-      const id = ids[i]!
-      const note = state.notes.get(id)
-      if (!note || !isNoteVisible(note, state)) continue
-      const x = note.position * quarterNoteWidth - scrollX
-      const dy = pos.y - ((127 - note.pitch) * noteHeight - scrollY + noteHeight / 2)
-      const dxEnd = pos.x - (x + note.duration * quarterNoteWidth)
-      if (dxEnd * dxEnd + dy * dy <= r2) return { kind: 'handle', noteId: id, isEnd: true }
-      const dxStart = pos.x - x
-      if (dxStart * dxStart + dy * dy <= r2) return { kind: 'handle', noteId: id, isEnd: false }
-    }
-  }
-
   const visible = collectVisibleNotes(state, hitScratch)
 
   const hitsRect = (note: NoteData, width: number, strokeWidth: number) => {
@@ -969,14 +932,26 @@ export function hitTest(state: PianoRollState, pos: { x: number; y: number }): H
     return pos.x >= x - half && pos.x <= x + width + half && pos.y >= y - half && pos.y <= y + noteHeight + half
   }
 
+  // Near a note's left or right edge is its resize zone (Notes mode only;
+  // MPE mode does not resize). The zone shrinks on short notes so their
+  // middle still drags. The cursor shows it; nothing is drawn.
+  const edgeOrNote = (noteId: string, note: NoteData, width: number): HitResult => {
+    if (state.expression.mode === 'notes') {
+      const local = pos.x - (note.position * quarterNoteWidth - scrollX)
+      const zone = Math.min(RESIZE_EDGE_ZONE, width / 3)
+      if (local <= zone) return { kind: 'handle', noteId, isEnd: false }
+      if (local >= width - zone) return { kind: 'handle', noteId, isEnd: true }
+    }
+    return { kind: 'note', noteId }
+  }
+
   // Selected notes (front), last drawn first
   for (let i = visible.length - 1; i >= 0; i--) {
     const entry = visible[i]!
     if (!selectedIds.has(entry.id)) continue
     const ownColor = resolveNoteFill(state, entry.note, '')
-    if (hitsRect(entry.note, entry.note.duration * quarterNoteWidth, ownColor ? 3 : 1)) {
-      return { kind: 'note', noteId: entry.id }
-    }
+    const width = entry.note.duration * quarterNoteWidth
+    if (hitsRect(entry.note, width, ownColor ? 3 : 1)) return edgeOrNote(entry.id, entry.note, width)
   }
 
   // Unselected notes (back), last drawn first
@@ -984,9 +959,7 @@ export function hitTest(state: PianoRollState, pos: { x: number; y: number }): H
     const entry = visible[i]!
     if (selectedIds.has(entry.id)) continue
     const width = getNoteDisplayDuration(state, entry.id, entry.note.duration) * quarterNoteWidth
-    if (hitsRect(entry.note, width, 1)) {
-      return { kind: 'note', noteId: entry.id }
-    }
+    if (hitsRect(entry.note, width, 1)) return edgeOrNote(entry.id, entry.note, width)
   }
 
   return BACKGROUND_HIT
@@ -1074,8 +1047,16 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
 
     const hit = hitAt()
 
-    // Clicking on resize handle
+    // Pressing a note's edge: resize it (with the rest of the selection when
+    // it is selected; an unselected note is selected first, Shift adds it)
     if (hit.kind === 'handle') {
+      if (!state.selection.selectedIds.has(hit.noteId)) {
+        mutateSelection(state, () => {
+          if (!isShift) state.selection.selectedIds.clear()
+          state.selection.selectedIds.add(hit.noteId)
+        })
+        state.dirty.notes = true
+      }
       startResize(state, stage, hit.noteId, hit.isEnd)
       return
     }
@@ -1159,6 +1140,11 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
     const gesture = state.interaction.isDragging || state.interaction.isResizing || state.interaction.isDrawing || state.interaction.isMarqueeSelecting
     if (!gesture) {
       expressionHover(state, pos)
+      // A note edge in Notes mode: the resize cursor (expressionHover set the rest)
+      if (state.expression.mode === 'notes' && pos.y < noteAreaHeight(state) && !state.expression.hoverNoteId) {
+        const edge = hitTest(state, pos)
+        if (edge.kind === 'handle') setStageCursor(state, 'ew-resize')
+      }
       // The hover label follows the note while it is dragged, so it keeps the id then
       const found = pos.y < noteAreaHeight(state) ? hitTest(state, pos) : null
       setGridNoteHover(state, found?.kind === 'note' ? found.noteId : null)

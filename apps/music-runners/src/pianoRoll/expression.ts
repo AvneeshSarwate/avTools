@@ -923,9 +923,9 @@ export function expressionHover(state: PianoRollState, pos: { x: number; y: numb
   if (JSON.stringify(hover) !== JSON.stringify(state.expression.hover)) {
     state.expression.hover = hover
     state.dirty.notes = true
-    setCursor(state, hover ? HOVER_CURSOR[hover.kind] : hoverNote ? 'ns-resize' : '')
+    setStageCursor(state, hover ? HOVER_CURSOR[hover.kind] : hoverNote ? 'ns-resize' : '')
   } else if (!hover) {
-    setCursor(state, hoverNote ? 'ns-resize' : '')
+    setStageCursor(state, hoverNote ? 'ns-resize' : '')
   }
   if (hoverPitch !== state.keyboard.hoverPitch) {
     state.keyboard.hoverPitch = hoverPitch
@@ -936,7 +936,7 @@ export function expressionHover(state: PianoRollState, pos: { x: number; y: numb
 const HOVER_CURSOR: Record<ExpressionHover['kind'], string> = { point: 'move', line: 'copy', segment: 'grab' }
 
 /** Cursor on the stage's content element, so the container keeps its own (draw mode). */
-function setCursor(state: PianoRollState, cursor: string) {
+export function setStageCursor(state: PianoRollState, cursor: string) {
   const content = state.stage?.container().querySelector<HTMLElement>('.konvajs-content')
   if (content && content.style.cursor !== cursor) content.style.cursor = cursor
 }

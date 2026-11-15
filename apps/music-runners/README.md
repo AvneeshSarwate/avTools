@@ -203,6 +203,10 @@ of Live 12):
   on pitch points. The roll keeps the browser's and tldraw's menus out.
 - **Lane bar** under the lanes: which lanes show, the lane's tools, and the
   note count.
+- **Resizing notes**: there are no handles; near a note's left or right
+  edge (6px, a third of the note when it is short) the cursor becomes a
+  resize cursor, and dragging there resizes. An unselected note is selected
+  first (Shift adds it); a selection resizes together. Notes mode only.
 - **Auditioning**: clicking or drawing a note plays it. Moving notes replays
   the whole moved set at its new pitches (each pitch row a drag crosses, each
   arrow up/down), pressing a note of a multi-note selection plays the group,
@@ -359,6 +363,7 @@ demo.html + demo/           standalone piano roll demo and its Playwright checks
   the recording check below).
 - Velocity lane, keyboard column and MPE editing: `demo/lanes.e2e.mjs`
   (same setup).
+- Note resizing from the edges: `demo/resize.e2e.mjs` (same setup).
 - Auditioning moved notes and marquee selections: `demo/audition.e2e.mjs`
   (same setup).
 - Cmd-A scoping, focus, and the output rolls' view tools:
