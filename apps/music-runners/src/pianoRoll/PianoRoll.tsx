@@ -113,8 +113,10 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     scale: scaleProp,
     onScaleChange,
     expressionLanes,
-    pitchLabels = 'name'
+    pitchLabels = 'name',
+    navigable: navigableProp
   } = props
+  const navigable = navigableProp ?? interactive
   // Lanes and the Notes/MPE switch belong to an editable roll with tools.
   const lanesEnabled = expressionLanes ?? (interactive && showControlPanel)
 
@@ -125,6 +127,9 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
   sizeRef.current = { width, height }
   const interactiveRef = useRef(interactive)
   interactiveRef.current = interactive
+  // Scrolling and zooming; editing still needs `interactive`.
+  const navigableRef = useRef(navigable)
+  navigableRef.current = navigable
 
   const stateRef = useRef<PianoRollState | null>(null)
   if (!stateRef.current) stateRef.current = createPianoRollState()
@@ -270,7 +275,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     const horizontalScrollbar = new HorizontalScrollbarController({
       state,
       getTrack: () => horizontalTrackRef.current,
-      isInteractive: () => interactiveRef.current,
+      isInteractive: () => navigableRef.current,
       getViewportRange: () => getHorizontalViewportRange(state, sizeRef.current.width),
       applyHorizontalZoom: applyHorizontalZoomWithState,
       enforceScrollBounds,
@@ -281,7 +286,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     const verticalScrollbar = new VerticalScrollbarController({
       state,
       getTrack: () => verticalTrackRef.current,
-      isInteractive: () => interactiveRef.current,
+      isInteractive: () => navigableRef.current,
       getViewportRange: () => getVerticalViewportRange(state, sizeRef.current.height),
       applyVerticalZoom: applyVerticalZoomWithState,
       enforceScrollBounds,
@@ -342,7 +347,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     }
 
     const onWheel = (event: WheelEvent) => {
-      if (!interactiveRef.current || !state.stage) return
+      if (!navigableRef.current || !state.stage) return
       event.preventDefault()
       const rect = state.stage.container().getBoundingClientRect()
       const anchorX = event.clientX - rect.left
@@ -502,6 +507,8 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     if (!wrapper) return
     const shield = (event: KeyboardEvent) => {
       if (isEditableTarget(event.target)) return
+      // A read-only roll has no selection: Cmd-A does nothing (not the page's text)
+      if (!interactiveRef.current && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') event.preventDefault()
       event.stopPropagation()
     }
     wrapper.addEventListener('keydown', shield)
@@ -519,6 +526,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     state.expression.mode = lanesEnabled ? expressionMode : 'notes'
     state.expression.lanesVisible = lanesVisible
     state.expression.pointSelection = null
+    state.expression.activeArea = null
     state.expression.range = null
     controllers.stageManager.resize(width, height + lanesHeight(state))
     state.needsRedraw = true
@@ -597,6 +605,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     () => ({
       setPlayheadMarkers: (markers) => controllers.setPlayheadMarkers(markers),
       fitToContent: () => controllers.fitToContent(),
+      zoomBy: (factor) => controllers.zoomBy(factor),
       getView: () => getViewHelper(state),
       setView: (view) => controllers.setView(view),
       getSelectedIds: () => Array.from(state.selection.selectedIds),
@@ -705,6 +714,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
   }
   const onGutterPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     event.stopPropagation()
+    focusWrapper()
     if (event.button !== 0) return
     event.currentTarget.setPointerCapture(event.pointerId)
     pressKey(gutterPitchAt(state, gutterY(event)))
@@ -752,7 +762,17 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
 
   return (
     <div ref={wrapperRef} className="pr-root" tabIndex={0} style={shellStyle}>
-      {showControlPanel && (toolbarTarget ? createPortal(controlPanel, toolbarTarget) : controlPanel)}
+      {showControlPanel &&
+        (toolbarTarget
+          ? createPortal(
+              // The tool row sits in the host's header, outside this element:
+              // its keys still belong to the roll (Cmd-A, Delete, undo...)
+              <div className="pr-toolbar-scope" onKeyDown={(event) => controllers.keyboard.handleKeyDown(event.nativeEvent)}>
+                {controlPanel}
+              </div>,
+              toolbarTarget
+            )
+          : controlPanel)}
       <div className="pr-layout">
         <canvas
           ref={gutterRef}
@@ -767,7 +787,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
         <div className="pr-stage-wrapper">
           <div
             ref={konvaContainerRef}
-            className={'pr-container' + (interactive ? '' : ' is-disabled')}
+            className={'pr-container' + (navigable ? '' : ' is-disabled')}
             style={{ width, height: stageHeight }}
             onContextMenu={(event) => {
               // The roll owns right-click: no browser or tldraw menu over it
@@ -778,7 +798,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
           />
           <div
             ref={horizontalTrackRef}
-            className={'pr-scrollbar horizontal' + (interactive ? '' : ' is-disabled')}
+            className={'pr-scrollbar horizontal' + (navigable ? '' : ' is-disabled')}
             style={{ width }}
             onPointerDown={onHorizontalTrackPointerDown}
           >
@@ -791,7 +811,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
         </div>
         <div
           ref={verticalTrackRef}
-          className={'pr-scrollbar vertical' + (interactive ? '' : ' is-disabled')}
+          className={'pr-scrollbar vertical' + (navigable ? '' : ' is-disabled')}
           style={{ height }}
           onPointerDown={onVerticalTrackPointerDown}
         >

@@ -317,12 +317,53 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     [editor, shape.type, shapeId],
   );
 
+  // Generated and Preview follow the Source view until you scroll or zoom
+  // them yourself; Follow snaps them back (Ableton-style follow).
+  const [follow, setFollow] = useState<Record<"generated" | "preview", boolean>>({ generated: true, preview: true });
+  const followRef = useRef(follow);
+  followRef.current = follow;
   const followSourceView = useCallback(() => {
     const view = sourceViewRef.current;
     if (!view) return;
-    generatedRollRef.current?.setView(view);
-    previewRollRef.current?.setView(view);
+    if (followRef.current.generated) generatedRollRef.current?.setView(view);
+    if (followRef.current.preview) previewRollRef.current?.setView(view);
   }, []);
+  const outputRoll = (section: "generated" | "preview") => (section === "generated" ? generatedRollRef : previewRollRef);
+  const setFollowing = (section: "generated" | "preview", on: boolean) => {
+    followRef.current = { ...followRef.current, [section]: on };
+    setFollow(followRef.current);
+    if (on && sourceViewRef.current) outputRoll(section).current?.setView(sourceViewRef.current);
+  };
+  /** Wheel or a scrollbar drag in an output roll: it stops following. */
+  const unfollowOnNavigate = (section: "generated" | "preview") => ({
+    onWheelCapture: () => {
+      if (followRef.current[section]) setFollowing(section, false);
+    },
+    onPointerDownCapture: (event: React.PointerEvent) => {
+      if (followRef.current[section] && (event.target as HTMLElement).closest(".pr-scrollbar")) setFollowing(section, false);
+    },
+  });
+  const viewTools = (section: "generated" | "preview") => (
+    <span className="runner-section__view-tools">
+      <Toggle
+        icon="link"
+        label="Follow"
+        className={`runner-shape__follow-${section}`}
+        on={follow[section]}
+        onChange={(on) => setFollowing(section, on)}
+        title="follow the Source roll's view; scrolling or zooming here turns it off, turning it on snaps back"
+      />
+      <Button icon="zoomOut" quiet title="zoom out" onClick={() => { setFollowing(section, false); outputRoll(section).current?.zoomBy(1 / 1.25); }} />
+      <Button icon="zoomIn" quiet title="zoom in" onClick={() => { setFollowing(section, false); outputRoll(section).current?.zoomBy(1.25); }} />
+      <Button
+        icon="fit"
+        quiet
+        className={`runner-shape__fit-${section}`}
+        title="fit the notes, including played trills and other ghost notes"
+        onClick={() => { setFollowing(section, false); outputRoll(section).current?.fitToContent(); }}
+      />
+    </span>
+  );
 
   const onSourceViewChange = useCallback(
     (view: PianoRollView) => {
@@ -559,7 +600,18 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
 
   return (
     <HTMLContainer className={`runner-shape runner-shape--${shapeState}`} style={{ width: props.w, height: props.h }}>
-      <div ref={contentRef} className="runner-shape__content" onKeyDown={stop} onKeyUp={stop}>
+      <div
+        ref={contentRef}
+        className="runner-shape__content"
+        onKeyDown={(event) => {
+          // Cmd-A on the instance's own controls: not the page's text, not tldraw's shapes
+          const target = event.target as HTMLElement;
+          const editable = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+          if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a" && !editable) event.preventDefault();
+          stop(event);
+        }}
+        onKeyUp={stop}
+      >
         <header
           className="runner-shape__title"
           title="drag here to move the shape; with the arrow tool, start an arrow here"
@@ -757,8 +809,10 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
             onToggle={() => updateProps({ showGenerated: !props.showGenerated })}
             extra={runtime.generated ? `${runtime.generated.notes.length} notes · ${runtime.played.length} played` : undefined}
             onResizeStart={runtime.generated ? startRollResize("generated") : undefined}
+            tools={runtime.generated ? viewTools("generated") : undefined}
           >
             {runtime.generated ? (
+              <div {...unfollowOnNavigate("generated")}>
               <PianoRoll
                 ref={generatedRollRef}
                 notes={runtime.generated.notes as PianoRollNote[]}
@@ -772,7 +826,9 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 noteBadge={noteBadge}
                 noteColor={generatedNoteColor}
                 scale={scale}
+                navigable
               />
+              </div>
             ) : (
               <div className="runner-section__placeholder">Play or Run to see the loop that is sounding</div>
             )}
@@ -785,6 +841,8 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
             extra={runtime.preview ? `${runtime.preview.notes.length} notes` : undefined}
             onResizeStart={runtime.preview ? startRollResize("preview") : undefined}
             tools={
+              <>
+              {runtime.preview ? viewTools("preview") : null}
               <Button
                 icon="regenerate"
                 label="Regenerate"
@@ -793,9 +851,11 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 onClick={onRegenerate}
                 title="dry-run the algorithm into the Preview roll"
               />
+              </>
             }
           >
             {runtime.preview ? (
+              <div {...unfollowOnNavigate("preview")}>
               <PianoRoll
                 ref={previewRollRef}
                 notes={runtime.preview.notes as PianoRollNote[]}
@@ -808,7 +868,9 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 noteBadge={noteBadge}
                 noteColor={previewNoteColor}
                 scale={scale}
+                navigable
               />
+              </div>
             ) : (
               <div className="runner-section__placeholder">Regenerate to preview one loop of the algorithm</div>
             )}

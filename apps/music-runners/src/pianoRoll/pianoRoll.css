@@ -506,3 +506,8 @@
   color: var(--c-text-faint, #5f5f5f);
   white-space: nowrap;
 }
+
+/* The tool row portaled into a host header: a key-scope wrapper only. */
+.pr-toolbar-scope {
+  display: contents;
+}

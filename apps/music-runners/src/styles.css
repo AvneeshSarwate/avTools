@@ -243,3 +243,6 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 }
 .runner-section__resize:hover { background: var(--c-surface-3); }
 .runner-section__resize:hover::after { background: var(--c-text-dim); }
+
+/* View tools in the Generated / Preview headers: Follow, zoom, fit. */
+.runner-section__view-tools { display: inline-flex; align-items: center; gap: 1px; margin-right: 6px; }

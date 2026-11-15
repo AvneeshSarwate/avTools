@@ -27,7 +27,8 @@ export type IconName =
   | "close"
   | "save"
   | "grip"
-  | "regenerate";
+  | "regenerate"
+  | "link";
 
 const PATHS: Record<IconName, ReactElement> = {
   play: <path d="M3 2v8l7-4z" fill="currentColor" />,
@@ -75,6 +76,7 @@ const PATHS: Record<IconName, ReactElement> = {
       <circle cx="8" cy="9.5" r="0.9" />
     </g>
   ),
+  link: <path d="M5 7a2.5 2.5 0 003.5 0l2-2A2.5 2.5 0 007 1.5L6 2.5M7 5a2.5 2.5 0 00-3.5 0l-2 2A2.5 2.5 0 005 10.5L6 9.5" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />,
   regenerate: <path d="M1.8 6a4.2 4.2 0 017.4-2.7M10.2 6a4.2 4.2 0 01-7.4 2.7M9.5 1.2v2.4H7.1M2.5 10.8V8.4h2.4" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />,
 };
 

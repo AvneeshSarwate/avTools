@@ -1,6 +1,6 @@
 import type { PianoRollState, NoteData } from './state'
 import { uid } from './utils'
-import { clearPointSelection, deleteSelectedPoints, toggleRootedSelected } from './expression'
+import { clearPointSelection, deleteSelectedPoints, selectAllInContext, toggleRootedSelected } from './expression'
 
 export interface KeyboardControllerOptions {
   state: PianoRollState
@@ -53,6 +53,14 @@ export const createKeyboardController = ({
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && e.shiftKey) {
       e.preventDefault()
       redo()
+      return
+    }
+
+    // Cmd/Ctrl-A: notes, or the active envelope's breakpoints (expression.ts).
+    // Never the page's text and never tldraw's shapes.
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'a') {
+      e.preventDefault()
+      selectAllInContext(state)
       return
     }
 

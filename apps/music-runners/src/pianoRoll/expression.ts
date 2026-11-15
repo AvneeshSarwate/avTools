@@ -669,6 +669,7 @@ export function expressionPointerDown(state: PianoRollState, stage: Konva.Stage,
   if (!area || area === 'velocity') return true
   const envelopeArea = area as EnvelopeArea
   const point = hitPoint(state, envelopeArea, pos)
+  state.expression.activeArea = envelopeArea
   if (point) {
     const already = isPointSelected(state, envelopeArea, point.noteId, point.index)
     if (shift) {
@@ -721,6 +722,8 @@ export function expressionPointerDown(state: PianoRollState, stage: Konva.Stage,
     return true
   }
 
+  // Not on an envelope: Cmd-A goes back to selecting notes
+  state.expression.activeArea = null
   if (envelopeArea === 'pitch') {
     // Selecting notes works in the grid; notes do not move in MPE mode.
     const noteId = hitNote(pos)
@@ -1069,7 +1072,31 @@ export function toggleRootedSelected(state: PianoRollState): boolean {
 }
 
 export function clearPointSelection(state: PianoRollState): boolean {
+  state.expression.activeArea = null
   if (!state.expression.pointSelection) return false
   setPointSelection(state, null)
   return true
+}
+
+/**
+ * Cmd/Ctrl-A in an editable roll. MPE mode, with notes selected and an
+ * envelope last worked on: every breakpoint of the selected notes in that
+ * envelope. Otherwise: every note (in MPE mode that makes all envelopes
+ * editable).
+ */
+export function selectAllInContext(state: PianoRollState) {
+  const area = state.expression.activeArea
+  if (state.expression.mode === 'mpe' && area && state.selection.selectedIds.size > 0) {
+    const points = new Map<string, Set<number>>()
+    for (const [id, note] of editableNotes(state)) {
+      const count = readPoints(note, area).length
+      if (count > 0) points.set(id, new Set(Array.from({ length: count }, (_, index) => index)))
+    }
+    setPointSelection(state, { area, points })
+    return
+  }
+  mutateSelection(state, () => {
+    state.selection.selectedIds = new Set(state.notes.keys())
+  })
+  setPointSelection(state, null)
 }

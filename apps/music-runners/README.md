@@ -208,6 +208,18 @@ of Live 12):
   is saved with the project (`pitchLabels`). Hovering a note shows the other
   form above it (`MIDI 67`, or `G3` in MIDI mode), and the label follows the
   note while it is dragged.
+- **Cmd/Ctrl-A** depends on where focus is: in a text field it selects the
+  field's text; in the Source roll (its grid, keyboard column, lanes, lane bar
+  or tool row) it selects all notes, except in MPE mode right after working
+  on an envelope (a point, the line, a segment or a range) with notes
+  selected, where it selects all of that envelope's breakpoints on the
+  selected notes (Ableton's "click the envelope, Cmd-A"). In the Generated
+  and Preview rolls and on the instance's controls it does nothing (no page
+  text, no tldraw select-all). On the empty canvas it is tldraw's.
+- **Generated / Preview views** follow the Source roll's view by default.
+  Their headers have **Follow**, zoom and **Fit** (Fit includes ghost notes,
+  so trills come into view); scrolling or zooming one turns Follow off, and
+  turning Follow on snaps it back to the Source view.
 - **Roll heights**: drag the bar along the bottom of a section (Source,
   Generated, Preview) to make its roll taller or shorter (80 to 1200 px). The
   heights are saved per instance in the shape's meta (`rollHeights`), outside
@@ -338,6 +350,8 @@ demo.html + demo/           standalone piano roll demo and its Playwright checks
   the recording check below).
 - Velocity lane, keyboard column and MPE editing: `demo/lanes.e2e.mjs`
   (same setup).
+- Cmd-A scoping, focus, and the output rolls' view tools:
+  `demo/focus-and-views.e2e.mjs` (same setup).
 - Recording and MPE playback without a device: `demo/recording.e2e.mjs`
   replaces Web MIDI in the page with a fake input and output, then drives a
   free take, MPE playback, an overdub, undo and a reload (see its header for

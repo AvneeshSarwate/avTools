@@ -149,6 +149,11 @@ export interface PianoRollProps {
    */
   pitchLabels?: 'name' | 'midi';
   /**
+   * Scroll and zoom (wheel, scrollbars) even when not interactive: a
+   * read-only roll you can still look around in. Default: interactive.
+   */
+  navigable?: boolean;
+  /**
    * Render the control panel into this element (a host's section header)
    * instead of above the stage. Null while the host element is not mounted.
    */
@@ -162,7 +167,10 @@ export interface PianoRollHandle {
    * the overlay layer.
    */
   setPlayheadMarkers(markers: PlayheadMarker[]): void;
+  /** Fit the view to the notes and ghost notes. */
   fitToContent(): void;
+  /** Zoom time by a factor around the view's centre (>1 zooms in). */
+  zoomBy(factor: number): void;
   getView(): PianoRollView;
   setView(view: PianoRollView): void;
   getSelectedIds(): string[];

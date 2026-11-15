@@ -221,7 +221,8 @@ export const fitZoomToNotes = (
   const stageHeight = getNoteAreaHeight(state, fallbackHeight)
   if (stageWidth <= 0 || stageHeight <= 0) return
 
-  const notes = Array.from(state.notes.values())
+  // Ghost notes count too: a Generated roll's trills, a Source roll's variants
+  const notes: Array<{ pitch: number; position: number; duration: number }> = [...state.notes.values(), ...state.ghostNotes]
 
   if (notes.length === 0) {
     const targetSpanQuarter = MIN_FIT_HORIZONTAL_BEATS

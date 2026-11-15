@@ -253,6 +253,12 @@ export interface PianoRollState {
     hover: ExpressionHover | null
     /** The note under the pointer in the grid: its label shows the other pitch form. */
     hoverGridNoteId: string | null
+    /**
+     * The envelope last worked on in MPE mode (a point, the line, a segment or
+     * a range in it); Cmd-A then selects its breakpoints. Null after clicking
+     * a note or the background, so Cmd-A selects notes.
+     */
+    activeArea: EnvelopeArea | null
   }
 
   /** The keyboard column beside the grid (gutter.ts). */
@@ -395,7 +401,8 @@ export const createPianoRollState = (): PianoRollState => {
       drag: null,
       hoverNoteId: null,
       hover: null,
-      hoverGridNoteId: null
+      hoverGridNoteId: null,
+      activeArea: null
     },
 
     keyboard: { pressedPitch: null, hoverPitch: null },
