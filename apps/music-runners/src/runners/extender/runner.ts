@@ -69,6 +69,8 @@ export const extenderRunner: RunnerDefinition = {
   description: "Each loop, one random note (not tagged 'noExtend') is held a full extra loop. A received trill event plays a trill between this runner's last pitch and the event's pitch, with the event's requested note count or this runner's trill notes param.",
   tags: [{ key: NO_EXTEND_TAG, label: "never extend", hotkey: "x", color: "#999", badge: "X", fields: [] }],
   params: [
+    { key: "transpose", label: "transpose", min: -24, max: 24, step: 1, default: 0, hint: "semitones, immediate" },
+    { key: "speed", label: "speed", min: 0.25, max: 4, step: 0.05, default: 1, hint: "applies at next loop" },
     { key: "trillNotes", label: "trill notes", min: 2, max: 32, step: 1, default: 8, hint: "used when the trigger requests no count" },
     { key: "trillRate", label: "trill rate", min: 1, max: 32, step: 1, default: 8, hint: "notes per beat" },
   ],

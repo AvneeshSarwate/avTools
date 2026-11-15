@@ -80,7 +80,7 @@ const PATHS: Record<IconName, ReactElement> = {
   regenerate: <path d="M1.8 6a4.2 4.2 0 017.4-2.7M10.2 6a4.2 4.2 0 01-7.4 2.7M9.5 1.2v2.4H7.1M2.5 10.8V8.4h2.4" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />,
 };
 
-export function Icon({ name, size = 12 }: { name: IconName; size?: number }) {
+export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   return (
     <svg className="ui-icon" width={size} height={size} viewBox="0 0 12 12" aria-hidden="true" focusable="false">
       {PATHS[name]}

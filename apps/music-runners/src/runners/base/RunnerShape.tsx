@@ -18,6 +18,7 @@ import { banksStore, createBank, listBanks, setBankLoopLength, setBankNotes, set
 import { DEFAULT_SCALE } from "../../pianoRoll/scale";
 import { displayStore } from "../../store/display";
 import { GUTTER_WIDTH } from "../../pianoRoll/gutter";
+import { LAYOUT_GAP, SCROLLBAR_THICKNESS } from "../../pianoRoll/constants";
 import { eventLogStore } from "../../store/events";
 import type { Bank } from "../../model/types";
 import { defaultOutputName, ensureMidi, getOutput, midiStore, refreshPorts } from "../../store/midi";
@@ -47,7 +48,7 @@ import {
 } from "../../store/playback";
 import { sourceRollHandles } from "../../store/rollHandles";
 import { runnerShapeType } from "../registry";
-import { BASE_PARAMS, defaultParams, type Params, type RunnerDefinition, tagValue } from "../runnerTypes";
+import { defaultParams, type Params, type RunnerDefinition, tagValue } from "../runnerTypes";
 import { DEFAULT_INPUT_PROPS, DEFAULT_ROOT_PROPS, DEFAULT_INSTANCE_HEIGHT, DEFAULT_INSTANCE_WIDTH, type RunnerInstanceProps } from "./instanceProps";
 import { TagEditor, toggleTag } from "./TagEditor";
 import { Button, Chooser, Field, Lamp, NumberBox, Toggle } from "../../ui/controls/controls";
@@ -55,8 +56,8 @@ import { Icon } from "../../ui/controls/icons";
 
 /** Shape border (1px each side) around the content. */
 const SHAPE_BORDER = 2;
-/** Section body padding, keyboard column and its gap, roll border, scrollbar gap and vertical scrollbar. */
-const ROLL_CHROME_WIDTH = 6 * 2 + GUTTER_WIDTH + 1 + 2 + 1 + 12;
+/** Section body padding (8px each side, styles.css), keyboard column and its gap, roll border, scrollbar gap and vertical scrollbar. */
+const ROLL_CHROME_WIDTH = 8 * 2 + GUTTER_WIDTH + LAYOUT_GAP + 2 + LAYOUT_GAP + SCROLLBAR_THICKNESS;
 /** Playhead colours: the play / run / rec tokens in styles.css. */
 const PLAYHEAD_COLORS = { play: "#62d26f", run: "#ffab3d", rec: "#ff4f4f" } as const;
 /** Default grid heights per section; each is resizable from the section's bottom edge. */
@@ -635,7 +636,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
               perPixel={0.25}
               format={(value) => (Number.isInteger(value) ? String(value) : value.toFixed(2))}
               disabled={!bank}
-              width={46}
+              width={60}
               onChange={(value) => bank && setBankLoopLength(bank.id, value)}
             />
           </Field>
@@ -722,7 +723,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 title="MPE out: each note on its own channel (2-16) with its recorded pitch bend, pressure and timbre (CC74)"
               />
               <Field label="bend" title="semitones at full pitch bend, for recording and MPE output (48 is the MPE default, ordinary keyboards are usually 2)">
-                <NumberBox className="runner-shape__bend" value={bendRange} min={1} max={96} step={1} width={34} onChange={(value) => updateProps({ bendRange: value })} />
+                <NumberBox className="runner-shape__bend" value={bendRange} min={1} max={96} step={1} width={44} onChange={(value) => updateProps({ bendRange: value })} />
               </Field>
               <Toggle
                 label="Root"
@@ -738,7 +739,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 max={50}
                 step={1}
                 unit="¢"
-                width={38}
+                width={49}
                 disabled={!(props.autoRoot ?? DEFAULT_ROOT_PROPS.autoRoot)}
                 title="auto-root tolerance: cents either side of a semitone"
                 onChange={(value) => updateProps({ rootToleranceCents: value })}
@@ -747,7 +748,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
           </div>
 
           <div className="runner-shape__params">
-            {[...BASE_PARAMS, ...def.params].map((spec) => (
+            {def.params.map((spec) => (
               <label key={spec.key} className="runner-shape__param" title={spec.hint}>
                 <span className="runner-shape__param-label">{spec.label}</span>
                 <NumberBox
@@ -939,7 +940,7 @@ function Section({
     <section className={`runner-section ${open ? "runner-section--open" : ""}`}>
       <div className="runner-section__header">
         <button type="button" data-control className="runner-section__toggle" onClick={onToggle} aria-expanded={open}>
-          <Icon name={open ? "chevronDown" : "chevronRight"} size={10} />
+          <Icon name={open ? "chevronDown" : "chevronRight"} size={13} />
           <span className="runner-section__title">{title}</span>
         </button>
         {extra ? <span className="runner-section__extra">{extra}</span> : null}

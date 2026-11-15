@@ -89,13 +89,17 @@ export interface RunnerDefinition {
   run(api: RunnerApi): Promise<void>;
 }
 
-export const BASE_PARAMS: ParamSpec[] = [
-  { key: "transpose", label: "transpose", min: -24, max: 24, step: 1, default: 0, hint: "semitones, immediate" },
-  { key: "speed", label: "speed", min: 0.25, max: 4, step: 0.05, default: 1, hint: "applies at next loop" },
-];
-
+/**
+ * Each runner declares all of its params; nothing is shared between runners.
+ * The playback helpers (playLoop, playNote, auditioning, recording) honour
+ * params named `transpose` (semitones, applied immediately) and `speed`
+ * (multiplier, applied at the next loop) when a runner defines them, and use
+ * 0 and 1 otherwise. Copy these specs into a new runner to get them:
+ *   { key: "transpose", label: "transpose", min: -24, max: 24, step: 1, default: 0, hint: "semitones, immediate" }
+ *   { key: "speed", label: "speed", min: 0.25, max: 4, step: 0.05, default: 1, hint: "applies at next loop" }
+ */
 export function defaultParams(def: RunnerDefinition): Params {
-  return Object.fromEntries([...BASE_PARAMS, ...def.params].map((spec) => [spec.key, spec.default]));
+  return Object.fromEntries(def.params.map((spec) => [spec.key, spec.default]));
 }
 
 export function tagValue(note: PianoRollNote, key: string): JsonObject | true | undefined {

@@ -123,7 +123,10 @@ export const variantsRunner: RunnerDefinition = {
       ],
     },
   ],
-  params: [],
+  params: [
+    { key: "transpose", label: "transpose", min: -24, max: 24, step: 1, default: 0, hint: "semitones, immediate" },
+    { key: "speed", label: "speed", min: 0.25, max: 4, step: 0.05, default: 1, hint: "applies at next loop" },
+  ],
   emits: [TRILL_EVENT],
   generate: generateVariantsLoop,
   sourceGhostNotes: variantGhosts,

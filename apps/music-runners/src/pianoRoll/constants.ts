@@ -18,5 +18,5 @@ export const EXTENT_PADDING_BEATS = 8
 export const DEFAULT_VELOCITY = 100
 export const DEFAULT_LOOP_LENGTH = 16
 
-export const SCROLLBAR_THICKNESS = 12
+export const SCROLLBAR_THICKNESS = 24
 export const LAYOUT_GAP = 1

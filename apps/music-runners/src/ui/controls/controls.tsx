@@ -426,7 +426,7 @@ export function Chooser({ value, options, onChange, onOpen, placeholder = "—",
         }}
       >
         <span className="ui-chooser__label">{current?.label ?? placeholder}</span>
-        <Icon name="chevronDown" size={10} />
+        <Icon name="chevronDown" size={13} />
       </button>
       {open
         ? createPortal(

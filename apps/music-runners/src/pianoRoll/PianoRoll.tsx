@@ -839,7 +839,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
                 max={127}
                 step={1}
                 bar
-                width={72}
+                width={94}
                 disabled={!interactive || ui.selectionCount === 0}
                 onChange={() => {}}
                 onCommit={controllers.setSelectedVelocity}

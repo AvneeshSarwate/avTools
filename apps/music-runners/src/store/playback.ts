@@ -7,7 +7,6 @@ import type { Bank, RunnerEvent } from "../model/types";
 import type { GhostNote, PianoRollNote } from "../pianoRoll/types";
 import { getRunner } from "../runners/registry";
 import {
-  BASE_PARAMS,
   clampPitch,
   defaultParams,
   type LoopNotes,
@@ -450,5 +449,4 @@ export function clearRuntime(shapeId: string): void {
   delete playbackStore.instances[shapeId];
 }
 
-export { BASE_PARAMS };
 export type { Bank };

@@ -71,7 +71,8 @@ unless an instance has **MPE Out** on (see below).
   darker (in C major the darker rows are the black keys). Scale edits are not
   on the roll's undo stack (like loop length).
 - **Instance**: a tldraw shape (`runner-<type>`) bound to one bank, with a
-  MIDI output, params (transpose now, speed at the next loop), two transports
+  MIDI output, the runner's params (each runner declares its own; the ones here
+  have transpose, applied now, and speed, at the next loop), two transports
   (**Run** the algorithm, **Play** the bank verbatim), a queue toggle, and
   three collapsible rolls: **source** (editable, edits the bank), **generated**
   (the loop now sounding plus a live overlay of what actually played) and
@@ -126,14 +127,20 @@ pointing back at their own instance are not connections. The rules live in
 ## Instance layout and UI conventions
 
 The chrome follows Ableton Live's dark themes: grey surfaces in a few tonal
-steps, flat controls, about 11px type, and colour only where it means
+steps, flat controls (26px tall, about 14px type), and colour only where it means
 something. An instance is laid out top to bottom in fixed regions:
+
+The app top bar holds the project, save state, note labels, bpm, the
+transport for queued instances, MIDI status and an **Add runner** chooser
+(one entry per runner type, so the bar does not grow with each runner).
+Piano roll scrollbars are 24px thick. Instances default to 1000px wide so
+the control strip and the Source roll's tool row fit.
 
 | Region | Holds | Rule |
 | --- | --- | --- |
 | Title bar | grip, runner name, bank, loop length, mode readout, **Q** (queue) | identity and the bank's data; its background is the drag grip |
 | Control strip | **Play**, **Run**, stop, **Rec** · **out**, **in**, **Thru**, **MPE Out**, **bend** | the same items for every runner; never wraps (port choosers shrink) |
-| Params | transpose, speed, then the runner's own params | the only region whose size depends on the runner; a wrapping grid |
+| Params | the runner's params, all declared by the runner (no shared base params; playback honours `transpose` and `speed` when a runner defines them) | the only region whose size depends on the runner; a wrapping grid |
 | Sections | **source** (its header holds the roll's tools), **generated**, **preview** (header holds **Regenerate**) | an empty generated/preview roll collapses to a one-line hint |
 | Status line | errors, recording state, last event, runner log | transient text, at the bottom like Ableton's status bar |
 
