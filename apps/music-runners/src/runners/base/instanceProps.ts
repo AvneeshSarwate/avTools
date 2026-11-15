@@ -27,7 +27,7 @@ export interface RunnerInstanceProps {
   showPreview: boolean;
 }
 
-export const DEFAULT_INSTANCE_WIDTH = 1000;
+export const DEFAULT_INSTANCE_WIDTH = 1040;
 export const DEFAULT_INSTANCE_HEIGHT = 520;
 
 /** Defaults for the live-input props, also used by the shape migration. */

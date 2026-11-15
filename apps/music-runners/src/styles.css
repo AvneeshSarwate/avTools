@@ -70,6 +70,11 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 .runner-shape--run { box-shadow: 0 0 0 2px var(--c-run); }
 .runner-shape--recording { box-shadow: 0 0 0 2px var(--c-rec); }
 .runner-shape__content { display: flex; flex-direction: column; height: max-content; }
+/* tldraw sets 12px on everything in its canvas; instances (and connection
+   labels, also on the canvas) set their own, 30% up from that, so text that
+   inherits (chooser values, number fields, param labels, status) scales with
+   the controls */
+.runner-shape, .connection-layer { font-size: 15.5px; }
 
 /* Title bar: identity and the bank (the instance's "clip"), then state. */
 .runner-shape__title {

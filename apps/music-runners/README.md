@@ -133,7 +133,7 @@ something. An instance is laid out top to bottom in fixed regions:
 The app top bar holds the project, save state, note labels, bpm, the
 transport for queued instances, MIDI status and an **Add runner** chooser
 (one entry per runner type, so the bar does not grow with each runner).
-Piano roll scrollbars are 24px thick. Instances default to 1000px wide so
+Piano roll scrollbars are 24px thick. Instances default to 1040px wide so
 the control strip and the Source roll's tool row fit.
 
 | Region | Holds | Rule |
