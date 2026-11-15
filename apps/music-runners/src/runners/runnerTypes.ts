@@ -74,6 +74,11 @@ export interface RunnerDefinition {
   description: string;
   tags: TagSpec[];
   params: ParamSpec[];
+  /**
+   * Event types this runner sends with `api.emit`. Each connection arrow from
+   * an instance carries one of them (its label is a chooser over this list).
+   */
+  emits?: string[];
   /** Pure: one loop from the bank. Used by Run every pass and by the Preview roll's regenerate. */
   generate(bank: Bank, random: () => number): LoopNotes;
   /** Static overlays on the source roll (for example variant alternatives). */

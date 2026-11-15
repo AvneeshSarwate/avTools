@@ -310,6 +310,19 @@ are not rooted. Rooted runs are thinning anchors. No scale-aware operations
 exist in music runners; they belong to runner algorithms when needed. The roll
 shows rooted points as filled dots (display only, no curve editing yet).
 
+## Typed connections (2026-11-15)
+
+Arrows between instances now carry one event type each: the tuple
+(from, eventType, to), type in `meta.eventType`, label = a chooser over the
+sender runner's new `emits` declaration. Decisions: duplicates are allowed on
+the canvas but deduped at send time (oldest by `meta.connectedAt` wins, so an
+accidental new arrow never steals routing), parallel arrows auto-bend (5 bend
+slots), the built-in arrow text label is kept empty on connections, and the
+send pulse is a fade-out flash on the arrow and label rather than a dot
+travelling along it (one trill event fans out into many notes in the
+receiver, so per-send is the right granularity). No accept-side typing yet.
+The one arrow in `projects/default` was migrated by hand (`eventType: "trill"`).
+
 ## Verification
 
 - `tsc --noEmit` in the app; `deno check` is not involved.

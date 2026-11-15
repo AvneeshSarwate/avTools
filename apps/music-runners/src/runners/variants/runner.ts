@@ -7,6 +7,8 @@ import { clampPitch, type LoopNotes, notesInLoop, type RunnerApi, type RunnerDef
 
 export const VARIANT_TAG = "variant";
 export const TRILL_TAG = "trill";
+/** The event sent when a trill-tagged note plays: `{ pitch, velocity }`. */
+export const TRILL_EVENT = "trill";
 export const VARIANT_COLOR = "#f0a34a";
 export const TRILL_COLOR = "#6cd4ff";
 
@@ -62,7 +64,7 @@ async function runVariants(api: RunnerApi): Promise<void> {
     await api.playLoop(loop, {
       onNoteOn: (note) => {
         if (tagValue(note, TRILL_TAG)) {
-          api.emit({ type: "trill", pitch: note.pitch, velocity: note.velocity });
+          api.emit({ type: TRILL_EVENT, pitch: note.pitch, velocity: note.velocity });
         }
       },
     });
@@ -88,6 +90,7 @@ export const variantsRunner: RunnerDefinition = {
     { key: TRILL_TAG, label: "trill trigger", hotkey: "t", color: TRILL_COLOR, badge: "T", fields: [] },
   ],
   params: [],
+  emits: [TRILL_EVENT],
   generate: generateVariantsLoop,
   sourceGhostNotes: variantGhosts,
   generatedNoteColor: (note) => (note.metadata?.chosenVariant ? VARIANT_COLOR : tagValue(note, TRILL_TAG) ? TRILL_COLOR : undefined),

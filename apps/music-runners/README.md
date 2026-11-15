@@ -67,16 +67,46 @@ unless an instance has **MPE** on (see below).
   three collapsible rolls: **source** (editable, edits the bank), **generated**
   (the loop now sounding plus a live overlay of what actually played) and
   **preview** (output of **Regenerate**, a dry run). Layout below.
-- **Events**: an instance emits events to the instances that tldraw arrows
-  drawn from it point at. Pick the arrow tool, press on the sending
-  instance's title bar (the top row with the grip, name, bank and loop),
-  drag onto the receiving instance anywhere, and release: the arrow binds to
-  both and the trill triggers reach the target. The title bar's background is
-  also the grip for moving an instance with the select tool; everything below
-  it belongs to the instance, so clicks there never reach the canvas.
+- **Events**: plain objects (`{ type, ...fields }`) sent with `api.emit` and
+  received with `api.onEvent`. A runner lists the types it sends in its
+  definition's `emits`. Routing is by **connection arrows** (see below).
+  Pick the arrow tool, press on the sending instance's title bar (the top row
+  with the grip, name, bank and loop), drag onto the receiving instance
+  anywhere, and release. The title bar's background is also the grip for
+  moving an instance with the select tool; everything below it belongs to
+  the instance, so clicks there never reach the canvas.
 - **Clock**: one shared root `TimeContext` (`src/store/clock.ts`) with the
   global bpm; each running instance is a branch of it. **Play queued** starts
   every queued instance at once.
+
+## Connections
+
+An arrow from one instance to another is a connection for exactly one event
+type, the tuple (from, type, to). The type is stored in the arrow's
+`meta.eventType` and the arrow's label is a chooser over the sender's `emits`
+(`src/ui/ConnectionLayer.tsx`, drawn in tldraw's `OnTheCanvas` slot). An event
+goes along every connection from its sender whose type matches.
+
+- A new connection gets the sender's first declared type. A sender that emits
+  nothing shows "no events" and routes nothing.
+- Several arrows with the same tuple are duplicates: the oldest (by
+  `meta.connectedAt`, stamped when the arrow first became a connection) routes,
+  the others show a dashed "dup" label and do nothing. Delivery is once per
+  target either way.
+- A second (third, fourth) arrow between the same two instances, in either
+  direction, is bent automatically so parallel arrows fan out.
+- The arrow's own text label stays empty on connections, so free text cannot
+  disagree with the type.
+- When an event is sent, each arrow that carried it flashes (a bright stroke
+  and label that fade in about 0.4 s). Pulses come from the event bus
+  (`src/store/pulses.ts`) and never touch the tldraw store.
+- An event type a runner emits without declaring it still routes; the console
+  warns once so it gets added to `emits`.
+
+Arrows with a loose end, ending on something other than an instance, or
+pointing back at their own instance are not connections. The rules live in
+`src/store/connections.ts` (`installConnectionRules`, `listConnections`,
+`routesFrom`).
 
 ## Instance layout and UI conventions
 
@@ -220,8 +250,10 @@ outside React. Per-frame data (the playhead) goes through the roll's
 server/projectFiles.ts      Vite middleware: GET/PUT /api/projects/<name>
 src/model/mpe.ts            MPE curves, bend conversion, member-channel pool
 src/pianoRoll/              React + Konva piano roll (types.ts is the contract)
-src/store/                  banks, clock, midi, events, playback, project,
-                            recording (live input), rollHandles
+src/store/                  banks, clock, midi, events, connections, pulses,
+                            playback, project, recording (live input),
+                            rollHandles
+src/ui/ConnectionLayer.tsx  connection labels (type choosers) and send flashes
 src/runners/base/           RunnerShape (instance chrome + rolls), TagEditor
 src/runners/<name>/         one runner per directory
 src/shapes/                 shape util registration, createInstance
@@ -234,6 +266,8 @@ demo.html + demo/           standalone piano roll demo and its Playwright checks
 
 - `npm run type-check`.
 - Unit tests: `npx tsx --test src/model/mpe.test.ts src/pianoRoll/metadata/groupEdit.test.ts`.
+- Connections without a device: `demo/connections.e2e.mjs` (same setup as
+  the recording check below).
 - Recording and MPE playback without a device: `demo/recording.e2e.mjs`
   replaces Web MIDI in the page with a fake input and output, then drives a
   free take, MPE playback, an overdub, undo and a reload (see its header for

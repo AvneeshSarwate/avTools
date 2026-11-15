@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { type Editor, Tldraw, type TLComponents } from "tldraw";
 
 // Runner shapes have no tldraw styles; the style panel only got in the way.
-const TLDRAW_COMPONENTS: TLComponents = { StylePanel: null };
+const TLDRAW_COMPONENTS: TLComponents = { StylePanel: null, OnTheCanvas: ConnectionLayer };
 import { RUNNER_SHAPE_UTILS, isRunnerShapeType } from "./shapes";
 import { setEditor } from "./store/editorRef";
 import { ensureMidi } from "./store/midi";
@@ -11,6 +11,8 @@ import { loadProject, projectNameFromUrl, startAutosave, listProjects } from "./
 import { installDebugHook } from "./debugHook";
 import { BankSidebar } from "./ui/BankSidebar";
 import { TopBar } from "./ui/TopBar";
+import { ConnectionLayer } from "./ui/ConnectionLayer";
+import { installConnectionRules } from "./store/connections";
 
 export function App() {
   const [editor, setEditorState] = useState<Editor | null>(null);
@@ -26,10 +28,12 @@ export function App() {
       await loadProject(mounted, projectNameFromUrl());
       stopAutosave.current = startAutosave(mounted);
     })();
+    const removeConnectionRules = installConnectionRules(mounted);
     const removeDeleteHandler = mounted.sideEffects.registerAfterDeleteHandler("shape", (shape) => {
       if (isRunnerShapeType(shape.type)) clearRuntime(shape.id);
     });
     return () => {
+      removeConnectionRules();
       stopAutosave.current();
       removeDeleteHandler();
       stopAll();

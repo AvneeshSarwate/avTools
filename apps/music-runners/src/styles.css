@@ -179,3 +179,44 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 .tag-field .ui-text { width: 120px; }
 .tag-field .ui-number { width: 56px; }
 .tag-field { display: inline-flex; align-items: center; gap: 5px; }
+
+/* ---------- connections (src/ui/ConnectionLayer.tsx) ---------- */
+
+/* Page-space layer inside tldraw's html layer, above the shapes. */
+.connection-layer { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 100000; }
+
+/* Send flash: a bright stroke over the arrow that fades out. White, not a
+   role colour: an event is neither play, run, rec nor selection. */
+.connection-flash { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; transform-origin: 0 0; pointer-events: none; }
+.connection-flash path { fill: none; stroke: #fff; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; opacity: 0; }
+.connection-flash path.is-pulsing { animation: connection-flash 420ms ease-out; }
+@keyframes connection-flash {
+  0% { opacity: 0.9; stroke-width: 10; }
+  100% { opacity: 0; stroke-width: 3; }
+}
+
+/* The arrow's label: the event-type chooser. */
+.connection-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  pointer-events: all;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-line);
+  border-radius: 3px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+}
+.connection-label .ui-chooser { min-width: 64px; }
+.connection-label.is-pulsing { animation: connection-label-flash 420ms ease-out; }
+@keyframes connection-label-flash {
+  0% { background: var(--c-text); box-shadow: 0 0 12px rgba(255, 255, 255, 0.7); }
+  100% { background: var(--c-surface-2); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4); }
+}
+.connection-label.is-duplicate { border-style: dashed; border-color: var(--c-text-faint); opacity: 0.75; }
+.connection-label__dup { font-size: 9.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--c-text-faint); padding-right: 4px; }
+.connection-label__none { color: var(--c-text-faint); padding: 0 6px; }

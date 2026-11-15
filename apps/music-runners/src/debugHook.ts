@@ -4,6 +4,7 @@ import { snapshot } from "valtio";
 import { banksStore, createBank, setBankLoopLength, setBankNotes } from "./store/banks";
 import { clockStore, nowBeats, setBpm } from "./store/clock";
 import { arrowTargets, emitEvent, eventLogStore } from "./store/events";
+import { listConnections, routesFrom, setConnectionType } from "./store/connections";
 import { ensureMidi, midiStore } from "./store/midi";
 import { playbackStore, regenerate, startPlay, startRun, stopAll, stopInstance } from "./store/playback";
 import { projectStore, saveProject } from "./store/project";
@@ -20,6 +21,7 @@ export function installDebugHook(editor: Editor): void {
     clock: { setBpm, nowBeats },
     midi: { ensureMidi },
     events: { emitEvent, arrowTargets },
+    connections: { list: () => listConnections(editor), routesFrom: (from: Parameters<typeof routesFrom>[1], type: string) => routesFrom(editor, from, type), setType: (arrowId: Parameters<typeof setConnectionType>[1], type: string) => setConnectionType(editor, arrowId, type) },
     playback: { startRun, startPlay, stopInstance, stopAll, regenerate },
     project: { saveProject },
     shapes: { createInstance, listInstances },
