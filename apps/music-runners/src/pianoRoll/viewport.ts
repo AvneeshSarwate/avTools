@@ -1,4 +1,5 @@
 import type { PianoRollState } from './state'
+import { noteAreaHeight } from './lanes'
 import {
   DEFAULT_FIT_BOTTOM_NOTE,
   EXTENT_PADDING_BEATS,
@@ -26,8 +27,9 @@ export const getStageWidth = (state: PianoRollState, fallbackWidth: number) => {
  * Height of the note grid. The expression lanes of the Vue version are gone,
  * so this is the stage height; kept as a function so the callers read the same.
  */
+/** The note grid's height: the stage minus any expression lanes under it. */
 export const getNoteAreaHeight = (state: PianoRollState, fallbackHeight: number) => {
-  return Math.max(0, state.stage?.height() ?? fallbackHeight)
+  return state.stage ? noteAreaHeight(state) : Math.max(0, fallbackHeight)
 }
 
 /**

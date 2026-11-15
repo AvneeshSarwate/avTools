@@ -21,6 +21,16 @@ import { getMaxLength, getNoteAreaHeight } from './viewport'
 import { DEFAULT_VELOCITY } from './constants'
 import { collectVisibleNotes, invalidateNoteIndex, type VisibleNote } from './noteIndex'
 import { scalePitchClasses } from './scale'
+import { noteAreaHeight } from './lanes'
+import {
+  cancelExpressionGesture,
+  drawExpression,
+  expressionHover,
+  expressionPointerDown,
+  expressionPointerMove,
+  expressionPointerUp,
+  startVelocityDragFromNote
+} from './expression'
 
 // Default canvas palette: a dark grid after Ableton's dark themes, neutral
 // structure lines, and the selection blue (app token --c-select) for the
@@ -93,8 +103,12 @@ export function mutateSelection(state: PianoRollState, mutate: () => void): bool
   return changed
 }
 
+/** Unselected notes in MPE mode are greyed out (Ableton). */
+const MPE_DIMMED_NOTE_FILL = '#565656'
+
 /** The note's fill: host override, then metadata.color, then the default. */
 function resolveNoteFill(state: PianoRollState, note: NoteData, fallback: string): string {
+  if (state.expression.mode === 'mpe' && fallback !== '' && !state.selection.selectedIds.has(note.id)) return MPE_DIMMED_NOTE_FILL
   const override = state.hooks.noteColor?.(note)
   if (typeof override === 'string' && override) return override
   return noteFillColor(note.metadata, fallback)
@@ -266,7 +280,10 @@ export function initializeLayers(
   const notesShape = new Konva.Shape({
     listening: false,
     name: 'notes',
-    sceneFunc: (context) => drawNotes(state, context._context)
+    sceneFunc: (context) => {
+      drawNotes(state, context._context)
+      drawExpression(state, context._context)
+    }
   })
   notesLayer.add(notesShape)
 
@@ -546,7 +563,8 @@ function drawNotes(state: PianoRollState, ctx: CanvasRenderingContext2D) {
       ctx.strokeRect(x, y, width, noteHeight)
     }
 
-    const bendPoints = note.mpePitch?.points
+    // In MPE mode the selected notes' envelopes are drawn editable (expression.ts)
+    const bendPoints = selected && state.expression.mode === 'mpe' ? undefined : note.mpePitch?.points
     if (bendPoints && bendPoints.length > 0) {
       setAlpha(opacity)
       drawPitchCurve(ctx, x, y + noteHeight / 2, width, noteHeight, bendPoints)
@@ -582,8 +600,9 @@ function drawNotes(state: PianoRollState, ctx: CanvasRenderingContext2D) {
     if (selectedIds.has(entry.id)) drawNote(entry.id, entry.note, true)
   }
 
-  // Resize handles on the selected, visible notes (on top of everything)
-  if (selectedIds.size > 0) {
+  // Resize handles on the selected, visible notes (on top of everything);
+  // notes are not resized in MPE mode
+  if (selectedIds.size > 0 && state.expression.mode === 'notes') {
     setAlpha(1)
     ctx.fillStyle = HANDLE_COLOR
     for (let i = 0; i < visible.length; i++) {
@@ -663,6 +682,27 @@ function drawLiveInput(state: PianoRollState, ctx: CanvasRenderingContext2D, sta
   if (keys.length === 0 && notes.length === 0) return
   const { scrollX, scrollY } = state.viewport
   const { quarterNoteWidth, noteHeight } = state.grid
+  // Stay in the grid, above any expression lanes
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(0, 0, stageWidth, noteAreaHeight(state))
+  ctx.clip()
+  drawLiveInputClipped(state, ctx, stageWidth, keys, notes, scrollX, scrollY, quarterNoteWidth, noteHeight)
+  ctx.restore()
+}
+
+function drawLiveInputClipped(
+  state: PianoRollState,
+  ctx: CanvasRenderingContext2D,
+  stageWidth: number,
+  keys: PianoRollState['liveInput']['keys'],
+  notes: PianoRollState['liveInput']['notes'],
+  scrollX: number,
+  scrollY: number,
+  quarterNoteWidth: number,
+  noteHeight: number
+) {
+  void state
 
   for (const key of keys) {
     const y = (127 - key.pitch) * noteHeight - scrollY
@@ -879,7 +919,7 @@ export function hitTest(state: PianoRollState, pos: { x: number; y: number }): H
   const selectedIds = state.selection.selectedIds
 
   // Handles: start and end circles of each selected, visible note
-  if (selectedIds.size > 0) {
+  if (selectedIds.size > 0 && state.expression.mode === 'notes') {
     const ids = Array.from(selectedIds)
     const r2 = HANDLE_RADIUS * HANDLE_RADIUS
     for (let i = ids.length - 1; i >= 0; i--) {
@@ -958,6 +998,10 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
   // Double-click on background → Add note (select mode; draw mode already drew one on mousedown)
   stage.on('dblclick dbltap', () => {
     if (state.grid.drawMode) return
+    // Double-click adds notes only in Notes mode, in the grid
+    if (state.expression.mode !== 'notes') return
+    const dblPos = stage.getPointerPosition()
+    if (!dblPos || dblPos.y >= noteAreaHeight(state)) return
     if (!isStationaryDoubleClick()) return
     if (hitAt().kind === 'background') {
       const pos = stage.getPointerPosition()
@@ -992,6 +1036,13 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
     lastDownPos = downPos ? { x: downPos.x, y: downPos.y } : undefined
     movedSinceDown = false
 
+    // Expression lanes, and everything in MPE mode (expression.ts)
+    const noteAt = (p: { x: number; y: number }) => {
+      const found = hitTest(state, p)
+      return found.kind === 'note' ? found.noteId : null
+    }
+    if (expressionPointerDown(state, stage, e.evt as MouseEvent | undefined, noteAt)) return
+
     const hit = hitAt()
 
     // Clicking on resize handle
@@ -1003,6 +1054,19 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
     // Clicking on note
     if (hit.kind === 'note') {
       const noteId = hit.noteId
+      // Alt (Win) / Cmd (Mac) drag on a note changes the selection's velocity (Ableton)
+      const evt = e.evt as PointerLikeEvent
+      if (evt && 'altKey' in evt && (evt.altKey || evt.metaKey)) {
+        if (!state.selection.selectedIds.has(noteId)) {
+          mutateSelection(state, () => {
+            state.selection.selectedIds.clear()
+            state.selection.selectedIds.add(noteId)
+          })
+        }
+        startVelocityDragFromNote(state, stage)
+        state.dirty.notes = true
+        return
+      }
       const isSelected = state.selection.selectedIds.has(noteId)
 
       mutateSelection(state, () => {
@@ -1054,9 +1118,12 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
   })
 
   // Mouse move
-  stage.on('mousemove touchmove', () => {
+  stage.on('mousemove touchmove', (e) => {
     const pos = stage.getPointerPosition()
     if (!pos) return
+    if (expressionPointerMove(state, stage, e.evt as MouseEvent | undefined)) return
+    const gesture = state.interaction.isDragging || state.interaction.isResizing || state.interaction.isDrawing || state.interaction.isMarqueeSelecting
+    if (!gesture) expressionHover(state, pos)
     if (
       lastDownPos &&
       (state.interaction.isDragging || state.interaction.isResizing || state.interaction.isDrawing || state.interaction.isMarqueeSelecting) &&
@@ -1114,7 +1181,10 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
   })
 
   // Mouse up
+  stage.on('mouseleave', () => expressionHover(state, null))
+
   stage.on('mouseup touchend', () => {
+    if (expressionPointerUp(state)) return
     if (state.interaction.isDragging) {
       finishNoteDrag(state)
       return
@@ -1164,6 +1234,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
   const container = stage.container()
   const endGesture = () => {
     if (!state.stage) return
+    if (cancelExpressionGesture(state)) return
     if (state.interaction.isDragging) finishNoteDrag(state)
     else if (state.interaction.isResizing) finishNoteResize(state)
     else if (state.interaction.isDrawing) finishDraw(state)
@@ -1184,7 +1255,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
     window.removeEventListener('pointerup', onWindowPointerUp, true)
     window.removeEventListener('pointercancel', endGesture, true)
     window.removeEventListener('blur', endGesture)
-    stage.off('dblclick dbltap mousedown touchstart mousemove touchmove mouseup touchend')
+    stage.off('dblclick dbltap mousedown touchstart mousemove touchmove mouseup touchend mouseleave')
   }
 }
 

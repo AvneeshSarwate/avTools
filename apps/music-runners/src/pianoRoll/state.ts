@@ -15,6 +15,34 @@ import {
 export type NoteData = PianoRollNote
 export type { PlayheadMarker, GhostNote, JsonObject }
 
+/** Expression lanes under the grid (pitch is drawn on the notes, not a lane). */
+export type ExpressionLane = 'velocity' | 'pressure' | 'timbre'
+/** Where an MPE breakpoint lives: the note's pitch envelope or a lane. */
+export type ExpressionArea = 'pitch' | ExpressionLane
+/** Breakpoint areas in MPE mode (velocity has one value per note, no points). */
+export type EnvelopeArea = 'pitch' | 'pressure' | 'timbre'
+
+/** Selected breakpoints: note id -> indices into that note's points, per area. */
+export type PointSelection = { area: EnvelopeArea; points: Map<string, Set<number>> }
+
+/** An expression gesture in progress (see expression.ts). */
+export type ExpressionDrag =
+  | { kind: 'velocity'; startY: number; before: string; base: Map<string, number>; perPixel: number; moved: boolean }
+  | { kind: 'velocityDraw'; before: string; lane: 'velocity' }
+  | {
+      kind: 'points'
+      area: EnvelopeArea
+      startX: number
+      startY: number
+      before: string
+      /** Point copies at drag start, per note: index -> {time, value}. */
+      base: Map<string, Array<{ time: number; value: number }>>
+      moved: boolean
+      /** Click on a point without moving deletes it (Ableton); a new point is never deleted that way. */
+      clickDeletes: { noteId: string; index: number } | null
+    }
+  | { kind: 'range'; area: EnvelopeArea; startX: number; currentX: number; shift: boolean; initial: PointSelection | null }
+
 export type ExternalChangeSource = 'notes' | 'selection' | 'playhead' | 'viewport' | 'grid' | 'other'
 
 /** Host hooks the core calls directly; set by the React wrapper. */
@@ -153,6 +181,8 @@ export interface PianoRollState {
     ghosts: boolean
     notes: boolean
     overlay: boolean
+    /** The keyboard column; redrawn with any full redraw too. */
+    gutter: boolean
   }
   rafHandle?: number
 
@@ -172,6 +202,30 @@ export interface PianoRollState {
 
   /** Live MIDI input overlay, drawn on the overlay layer. */
   liveInput: LiveInput
+
+  /**
+   * Note expression, after Ableton: Notes mode edits notes and shows the
+   * velocity lane; MPE mode edits the selected notes' pitch envelopes (on the
+   * notes) and the pressure/timbre lanes, and does not move notes.
+   */
+  expression: {
+    /** Lanes are drawn at all (interactive rolls with a control panel). */
+    enabled: boolean
+    mode: 'notes' | 'mpe'
+    lanesVisible: Record<ExpressionLane, boolean>
+    pointSelection: PointSelection | null
+    /** A time range being dragged out in MPE mode, in stage px. */
+    range: { area: EnvelopeArea; x0: number; x1: number } | null
+    drag: ExpressionDrag | null
+    /** Velocity marker under the pointer (Ableton highlights it). */
+    hoverNoteId: string | null
+  }
+
+  /** The keyboard column beside the grid (gutter.ts). */
+  keyboard: {
+    pressedPitch: number | null
+    hoverPitch: number | null
+  }
 
   hooks: PianoRollHooks
 
@@ -282,7 +336,7 @@ export const createPianoRollState = (): PianoRollState => {
     },
 
     needsRedraw: false,
-    dirty: { ghosts: false, notes: false, overlay: false },
+    dirty: { ghosts: false, notes: false, overlay: false, gutter: false },
     rafHandle: undefined,
 
     queuePlayhead: {
@@ -296,6 +350,18 @@ export const createPianoRollState = (): PianoRollState => {
     ghostNotes: [],
 
     liveInput: { keys: [], notes: [] },
+
+    expression: {
+      enabled: false,
+      mode: 'notes',
+      lanesVisible: { velocity: true, pressure: true, timbre: true },
+      pointSelection: null,
+      range: null,
+      drag: null,
+      hoverNoteId: null
+    },
+
+    keyboard: { pressedPitch: null, hoverPitch: null },
 
     hooks: {},
 

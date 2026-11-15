@@ -18,8 +18,13 @@ import {
 import { createPortal } from 'react-dom'
 import { proxy, useSnapshot } from 'valtio'
 import './pianoRoll.css'
-import { ControlPanel } from './ControlPanel'
+import { ControlPanel, NoteCount } from './ControlPanel'
 import { DEFAULT_SCALE } from './scale'
+import { drawGutter, GUTTER_WIDTH, gutterPitchAt } from './gutter'
+import { lanesHeight, LANE_HEIGHT } from './lanes'
+import { NumberBox, Toggle } from '../ui/controls/controls'
+import type { ExpressionLane } from './state'
+import { DEFAULT_VELOCITY } from './constants'
 import type { JsonObject, LiveInput, PianoRollHandle, PianoRollScale, PianoRollNote, PianoRollProps, PianoRollView, PlayheadMarker } from './types'
 import { createPianoRollState, type NoteData, type PianoRollState } from './state'
 import {
@@ -104,8 +109,11 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     snapToGrid,
     toolbarTarget,
     scale: scaleProp,
-    onScaleChange
+    onScaleChange,
+    expressionLanes
   } = props
+  // Lanes and the Notes/MPE switch belong to an editable roll with tools.
+  const lanesEnabled = expressionLanes ?? (interactive && showControlPanel)
 
   // Latest props for the stable controllers below.
   const propsRef = useRef(props)
@@ -134,6 +142,10 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
   const [snap, setSnap] = useState(snapToGrid ?? true)
   const [drawMode, setDrawMode] = useState(false)
   const [showMetadata, setShowMetadata] = useState(false)
+  // Note expression (expression.ts): Notes or MPE mode, and which lanes show.
+  const [expressionMode, setExpressionMode] = useState<'notes' | 'mpe'>('notes')
+  const [lanesVisible, setLanesVisible] = useState<Record<ExpressionLane, boolean>>({ velocity: true, pressure: true, timbre: true })
+  const gutterRef = useRef<HTMLCanvasElement>(null)
   // Controlled by the host when it passes `scale`; otherwise kept here.
   const [localScale, setLocalScale] = useState<PianoRollScale>(DEFAULT_SCALE)
   const scale = scaleProp ?? localScale
@@ -306,6 +318,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
       updateQueuePlayheadPosition,
       updatePlayheadMarkers,
       afterRedraw: syncUi,
+      renderGutter: () => drawGutter(state, gutterRef.current),
       enforceScrollBounds,
       attachKeyboard: () => keyboard.attach(),
       detachKeyboard: () => keyboard.detach()
@@ -371,6 +384,19 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
       commandHandlers.updateCommandStackButtons()
     }
 
+    /** One undoable velocity edit for the selected notes (the lane bar's field). */
+    const setSelectedVelocity = (velocity: number) => {
+      const value = Math.max(1, Math.min(127, Math.round(velocity)))
+      state.command.stack?.executeCommand('Set Velocity', () => {
+        for (const id of state.selection.selectedIds) {
+          const note = state.notes.get(id)
+          if (note && note.velocity !== value) state.notes.set(id, { ...note, velocity: value })
+        }
+        state.dirty.notes = true
+      })
+      commandHandlers.updateCommandStackButtons()
+    }
+
     const applyMetadataPlan = (plan: EditPlan) => {
       const ids = Array.from(state.selection.selectedIds)
       if (ids.length === 0 || plan.ops.length === 0) return
@@ -393,7 +419,8 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
       zoomBy,
       onWheel,
       applyMetadata,
-      applyMetadataPlan
+      applyMetadataPlan,
+      setSelectedVelocity
     }
   })
 
@@ -437,9 +464,12 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
 
     const container = konvaContainerRef.current
     container?.addEventListener('wheel', controllers.onWheel, { passive: false })
+    const gutter = gutterRef.current
+    gutter?.addEventListener('wheel', controllers.onWheel, { passive: false })
 
     return () => {
       container?.removeEventListener('wheel', controllers.onWheel)
+      gutter?.removeEventListener('wheel', controllers.onWheel)
       window.clearTimeout(viewChangeTimerRef.current)
       controllers.horizontalScrollbar.stopDrag()
       controllers.verticalScrollbar.stopDrag()
@@ -469,8 +499,15 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
   // ---------- prop syncs ----------
 
   useEffect(() => {
-    controllers.stageManager.resize(width, height)
-  }, [width, height, controllers])
+    state.expression.enabled = lanesEnabled
+    state.expression.mode = lanesEnabled ? expressionMode : 'notes'
+    state.expression.lanesVisible = lanesVisible
+    state.expression.pointSelection = null
+    state.expression.range = null
+    controllers.stageManager.resize(width, height + lanesHeight(state))
+    state.needsRedraw = true
+    controllers.enforceScrollBounds()
+  }, [width, height, controllers, lanesEnabled, expressionMode, lanesVisible, state])
 
   useEffect(() => {
     controllers.stageManager.setInteractive(interactive)
@@ -615,8 +652,55 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
   const shellStyle = {
     '--pr-scrollbar-thickness': `${SCROLLBAR_THICKNESS}px`,
     '--pr-scrollbar-gap': `${LAYOUT_GAP}px`,
-    width: width + 2 + LAYOUT_GAP + SCROLLBAR_THICKNESS
+    width: GUTTER_WIDTH + LAYOUT_GAP + width + 2 + LAYOUT_GAP + SCROLLBAR_THICKNESS
   } as CSSProperties
+
+  const stageHeight = height + (lanesEnabled ? lanesHeightFor(lanesEnabled ? expressionMode : 'notes', lanesVisible) : 0)
+  const selectedVelocity = useMemo(() => {
+    const notes = ui.selectedNotes as NoteData[]
+    if (notes.length === 0) return null
+    const first = notes[0]!.velocity
+    return notes.every((note) => note.velocity === first) ? first : null
+  }, [ui.selectedNotes])
+
+  // Keyboard column: press a key to hear it (held while pressed, glide across keys).
+  const gutterY = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const scale = rect.height > 0 ? event.currentTarget.offsetHeight / rect.height : 1
+    return (event.clientY - rect.top) * scale
+  }
+  const pressKey = (pitch: number | null) => {
+    const previous = state.keyboard.pressedPitch
+    if (previous === pitch) return
+    const handler = propsRef.current.onKeyboardNote
+    if (previous !== null) handler?.(previous, false)
+    state.keyboard.pressedPitch = pitch
+    if (pitch !== null) {
+      if (handler) handler(pitch, true)
+      else propsRef.current.onNotePreview?.({ pitch, velocity: DEFAULT_VELOCITY })
+    }
+    state.dirty.gutter = true
+  }
+  const onGutterPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    event.stopPropagation()
+    if (event.button !== 0) return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    pressKey(gutterPitchAt(state, gutterY(event)))
+  }
+  const onGutterPointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const pitch = gutterPitchAt(state, gutterY(event))
+    if (state.keyboard.pressedPitch !== null) pressKey(pitch)
+    if (state.keyboard.hoverPitch !== pitch) {
+      state.keyboard.hoverPitch = pitch
+      state.dirty.gutter = true
+    }
+  }
+  const onGutterPointerUp = () => pressKey(null)
+  const onGutterPointerLeave = () => {
+    if (state.keyboard.pressedPitch !== null) return
+    state.keyboard.hoverPitch = null
+    state.dirty.gutter = true
+  }
 
   const controlPanel = (
     <ControlPanelSlot
@@ -638,6 +722,9 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
       onMetadataToggle={() => setShowMetadata((v) => !v)}
       scale={scale}
       onScaleChange={changeScale}
+      expressionMode={lanesEnabled ? expressionMode : null}
+      onExpressionModeChange={setExpressionMode}
+      showInfo={!lanesEnabled}
     />
   )
 
@@ -645,11 +732,21 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     <div ref={wrapperRef} className="pr-root" tabIndex={0} style={shellStyle}>
       {showControlPanel && (toolbarTarget ? createPortal(controlPanel, toolbarTarget) : controlPanel)}
       <div className="pr-layout">
+        <canvas
+          ref={gutterRef}
+          className="pr-gutter"
+          style={{ width: GUTTER_WIDTH, height: stageHeight }}
+          onPointerDown={onGutterPointerDown}
+          onPointerMove={onGutterPointerMove}
+          onPointerUp={onGutterPointerUp}
+          onPointerCancel={onGutterPointerUp}
+          onPointerLeave={onGutterPointerLeave}
+        />
         <div className="pr-stage-wrapper">
           <div
             ref={konvaContainerRef}
             className={'pr-container' + (interactive ? '' : ' is-disabled')}
-            style={{ width, height }}
+            style={{ width, height: stageHeight }}
             onPointerDown={focusWrapper}
           />
           <div
@@ -678,6 +775,38 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
           </div>
         </div>
       </div>
+      {lanesEnabled && (
+        <div className="pr-lane-bar" style={{ paddingLeft: GUTTER_WIDTH + LAYOUT_GAP }}>
+          {expressionMode === 'notes' ? (
+            <>
+              <Toggle label="Velocity" className="pr-lane-toggle" on={lanesVisible.velocity} onChange={(on) => setLanesVisible((v) => ({ ...v, velocity: on }))} title="Show the velocity lane" />
+              <NumberBox
+                className="pr-velocity-value"
+                value={selectedVelocity}
+                placeholder={ui.selectionCount ? 'mixed' : '—'}
+                min={1}
+                max={127}
+                step={1}
+                bar
+                width={72}
+                disabled={!interactive || ui.selectionCount === 0}
+                onChange={() => {}}
+                onCommit={controllers.setSelectedVelocity}
+                title="Velocity of the selected notes"
+              />
+              <span className="pr-lane-hint">drag a marker · Alt/Cmd-drag a note · draw mode paints</span>
+            </>
+          ) : (
+            <>
+              <Toggle label="Pressure" className="pr-lane-toggle" on={lanesVisible.pressure} onChange={(on) => setLanesVisible((v) => ({ ...v, pressure: on }))} title="Show the pressure lane" />
+              <Toggle label="Timbre" className="pr-lane-toggle" on={lanesVisible.timbre} onChange={(on) => setLanesVisible((v) => ({ ...v, timbre: on }))} title="Show the timbre (CC74) lane" />
+              <span className="pr-lane-hint">click a line to add · click a point to delete · drag a column for a range · R rooted · Del</span>
+            </>
+          )}
+          <span className="ui-spacer" />
+          <NoteCount noteCount={ui.noteCount} selectionCount={ui.selectionCount} />
+        </div>
+      )}
       {metadataOpen && (
         // Below the stage, so opening it on a selection never shifts the canvas
         // under a pressed pointer.
@@ -693,6 +822,12 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
 })
 
 const EMPTY_SELECTED: NoteData[] = []
+
+/** Lane height for a mode and visibility, before the core state exists (layout). */
+function lanesHeightFor(mode: 'notes' | 'mpe', visible: Record<ExpressionLane, boolean>): number {
+  const lanes: ExpressionLane[] = mode === 'notes' ? ['velocity'] : ['pressure', 'timbre']
+  return lanes.filter((lane) => visible[lane]).length * LANE_HEIGHT
+}
 
 // Thin adapter so the panel's props stay a flat list of primitives/callbacks.
 function ControlPanelSlot(props: {
@@ -714,6 +849,9 @@ function ControlPanelSlot(props: {
   onMetadataToggle: () => void
   scale: PianoRollScale
   onScaleChange: (scale: PianoRollScale) => void
+  expressionMode: 'notes' | 'mpe' | null
+  onExpressionModeChange: (mode: 'notes' | 'mpe') => void
+  showInfo: boolean
 }) {
   const { ui, snap, ...rest } = props
   return (

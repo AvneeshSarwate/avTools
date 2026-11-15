@@ -335,6 +335,22 @@ root rows lighter, out-of-scale darker. Scale is musical data on the bank, not
 an instance prop, so every instance and roll of a bank agrees. Not on the
 roll's undo stack. No scale-aware playback yet.
 
+## Piano roll expression editing (2026-11-15)
+
+Matched to Ableton Live 12 using the manual and user-provided screenshots:
+keyboard column (keys, C labels, hovered label, scale strip, held key
+orange, audition on press), Notes/MPE mode switch, velocity lane (circle +
+line markers, group drag, Alt/Cmd-drag on notes, draw-mode paint), MPE mode
+with selected-note columns, pitch envelopes on notes, pressure/timbre lanes,
+click-line-to-add / click-point-to-delete / time-range selection, R for
+rooted. Implementation keeps the immediate-mode core: lanes are the bottom
+of the same Konva stage (`getNoteAreaHeight` subtracts them), the keyboard is
+a separate canvas redrawn by the stage manager so grid x maths is
+unchanged, and gestures live in `expression.ts`, called first by the core's
+pointer handlers. The instance strip's MPE toggle was renamed "MPE Out" to
+avoid two "MPE" buttons. Skipped for now: chance, deviation, release
+velocity, ramp/randomize, curved segments, envelope draw mode.
+
 ## Verification
 
 - `tsc --noEmit` in the app; `deno check` is not involved.

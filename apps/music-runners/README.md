@@ -49,7 +49,7 @@ URL). Nothing is kept in browser storage.
 
 Web MIDI needs a user gesture in some browsers; the first click on the page
 opens it, and the top bar shows the status. Everything plays on channel 0
-unless an instance has **MPE** on (see below).
+unless an instance has **MPE Out** on (see below).
 
 ## Concepts
 
@@ -126,7 +126,7 @@ something. An instance is laid out top to bottom in fixed regions:
 | Region | Holds | Rule |
 | --- | --- | --- |
 | Title bar | grip, runner name, bank, loop length, mode readout, **Q** (queue) | identity and the bank's data; its background is the drag grip |
-| Control strip | **Play**, **Run**, stop, **Rec** · **out**, **in**, **Thru**, **MPE**, **bend** | the same items for every runner; never wraps (port choosers shrink) |
+| Control strip | **Play**, **Run**, stop, **Rec** · **out**, **in**, **Thru**, **MPE Out**, **bend** | the same items for every runner; never wraps (port choosers shrink) |
 | Params | transpose, speed, then the runner's own params | the only region whose size depends on the runner; a wrapping grid |
 | Sections | **source** (its header holds the roll's tools), **generated**, **preview** (header holds **Regenerate**) | an empty generated/preview roll collapses to a one-line hint |
 | Status line | errors, recording state, last event, runner log | transient text, at the bottom like Ableton's status bar |
@@ -139,7 +139,7 @@ always reads the same:
 | green | Play: its button, mode lamp, playhead and shape outline |
 | amber | Run: the same places |
 | red | Rec and live MIDI input (held keys, notes being recorded), error text |
-| blue | selection and focus, toggles that are on (Snap, Thru, MPE, Q), selected notes |
+| blue | selection and focus, toggles that are on (Snap, Thru, MPE Out, Q, Notes/MPE), selected notes |
 | yellow | unsaved project |
 
 Note fills are not chrome: runners pick them by convention (tag colours,
@@ -163,6 +163,44 @@ emoji. The roll's canvas defaults match: a dark grid, rows shaded by the
 bank's scale (root lighter, out-of-scale darker), bar lines brighter than beat
 lines, the area past the loop shaded.
 
+## Piano roll
+
+Laid out after Ableton Live's MIDI clip editor (checked against screenshots
+of Live 12):
+
+- **Keyboard column** left of the grid: piano keys on the note rows, C
+  labels plus the label of the row under the pointer, a purple strip on keys
+  in the bank's scale (lighter on the root), and value rulers beside the
+  lanes. Pressing a key plays it on the instance's output while held (the
+  key turns orange); dragging across keys glides. The wheel scrolls the grid.
+- **Notes / MPE** in the tool row switch the editing mode, like Live's Notes
+  and MPE tabs.
+- **Notes mode**: notes edit as before, with a **Velocity** lane under the
+  grid. Each note has a marker: a circle at its start at the height of its
+  velocity and a line to its end. Drag a marker (the selected notes move
+  together, Shift for fine steps); Alt/Cmd-drag a note in the grid; with
+  draw mode on, drag in the lane to paint velocities (only the selected notes
+  when any are selected). The lane bar's field sets the selection's velocity.
+- **MPE mode**: notes do not move, resize or get added; clicking selects.
+  Unselected notes are greyed. Each selected note gets a translucent column
+  through the grid and the lanes; its pitch envelope is edited on the note,
+  its **Pressure** and **Timbre** (CC74) envelopes in lanes. Click a line to
+  add a breakpoint, drag to move it (selected points move together and stay
+  between their neighbours), click a point to delete it, drag in the note's
+  column for a time-range selection (it stays shaded until the selection
+  changes), Delete removes the selection, R toggles rooted on selected pitch
+  points, Escape clears. Shift is fine adjustment; Cmd/Ctrl snaps pitch to
+  semitones. A note with no envelope shows a dashed line at the rest value.
+- **Lane bar** under the lanes: which lanes show, the lane's tools, and the
+  note count.
+
+Every edit is one step on the roll's undo stack. Lanes and the mode switch
+appear only on the editable Source roll; Generated and Preview show the
+keyboard column. Not done yet: Live's chance, velocity deviation, release
+velocity, randomize/ramp tools, curved segments and draw mode for envelopes.
+The code is `src/pianoRoll/expression.ts` (lanes and gestures), `lanes.ts`
+(layout) and `gutter.ts` (keyboard column).
+
 ## Live input and recording
 
 The **in** chooser and the toggles after it in the control strip are the
@@ -173,7 +211,7 @@ instance's live MIDI input:
 | **In** | The MIDI input this instance listens to. Several instances can share one input, like several armed tracks in a DAW. Opening the list re-scans ports, so a device plugged in later shows up. |
 | **Rec** | Records into the instance's bank (see below). Needs an input. |
 | **Thru** | Echoes the input to the instance's MIDI output, with transpose applied. Turn it off if the controller already drives the synth. |
-| **MPE** | MPE output: every played note gets its own member channel (2-16, lower zone) with its pitch bend, pressure and timbre. Off: everything on channel 0 and expression is not sent. |
+| **MPE Out** | MPE output: every played note gets its own member channel (2-16, lower zone) with its pitch bend, pressure and timbre. Off: everything on channel 0 and expression is not sent. |
 | **bend** | Semitones at full pitch bend, used both to read recorded bend and to send MPE bend. 48 is the MPE default; ordinary keyboards are usually 2. Must match the controller and the synth. |
 | **Root** and **¢** | Auto-root (on by default, 15 cents): recorded pitch-curve points where the pitch rests on a semitone are marked `rooted` (see below). |
 
@@ -231,10 +269,9 @@ rooted run keeps its first and last point through curve thinning.
 
 The roll draws a note's pitch curve over it, light with a dark halo; at
 readable zoom its points show as filled dots when rooted and hollow ones
-otherwise. Pressure and timbre are stored
-and played but have no lanes yet, and curves cannot be edited in the roll.
-Dragging or resizing a note keeps its curves (their time axis is 0..1 across
-the note, so a resize stretches them).
+otherwise. All three curves are edited in the roll's MPE mode (see "Piano
+roll" below). Dragging or resizing a note keeps its curves (their time axis
+is 0..1 across the note, so a resize stretches them).
 
 ## Starting runners
 
@@ -278,6 +315,8 @@ demo.html + demo/           standalone piano roll demo and its Playwright checks
 - Unit tests: `npx tsx --test src/model/mpe.test.ts src/pianoRoll/scale.test.ts src/pianoRoll/metadata/groupEdit.test.ts`.
 - Connections without a device: `demo/connections.e2e.mjs` (same setup as
   the recording check below).
+- Velocity lane, keyboard column and MPE editing: `demo/lanes.e2e.mjs`
+  (same setup).
 - Recording and MPE playback without a device: `demo/recording.e2e.mjs`
   replaces Web MIDI in the page with a fake input and output, then drives a
   free take, MPE playback, an overdub, undo and a reload (see its header for

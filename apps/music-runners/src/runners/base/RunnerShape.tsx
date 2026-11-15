@@ -16,6 +16,7 @@ import { PianoRoll } from "../../pianoRoll/PianoRoll";
 import type { GhostNote, MetadataPanelProps, PianoRollHandle, PianoRollNote, PianoRollScale, PianoRollView } from "../../pianoRoll/types";
 import { banksStore, createBank, listBanks, setBankLoopLength, setBankNotes, setBankScale } from "../../store/banks";
 import { DEFAULT_SCALE } from "../../pianoRoll/scale";
+import { GUTTER_WIDTH } from "../../pianoRoll/gutter";
 import { eventLogStore } from "../../store/events";
 import type { Bank } from "../../model/types";
 import { defaultOutputName, ensureMidi, getOutput, midiStore, refreshPorts } from "../../store/midi";
@@ -32,6 +33,8 @@ import {
 import { useSnapshot } from "valtio";
 import {
   auditionNote,
+  keyboardKeyDown,
+  keyboardKeyUp,
   getRuntime,
   type InstanceRuntime,
   playbackStore,
@@ -51,8 +54,8 @@ import { Icon } from "../../ui/controls/icons";
 
 /** Shape border (1px each side) around the content. */
 const SHAPE_BORDER = 2;
-/** Section body padding, roll border, scrollbar gap and vertical scrollbar. */
-const ROLL_CHROME_WIDTH = 6 * 2 + 2 + 1 + 12;
+/** Section body padding, keyboard column and its gap, roll border, scrollbar gap and vertical scrollbar. */
+const ROLL_CHROME_WIDTH = 6 * 2 + GUTTER_WIDTH + 1 + 2 + 1 + 12;
 /** Playhead colours: the play / run / rec tokens in styles.css. */
 const PLAYHEAD_COLORS = { play: "#62d26f", run: "#ffab3d", rec: "#ff4f4f" } as const;
 const SOURCE_STAGE_HEIGHT = 240;
@@ -410,6 +413,11 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     },
     [bankId],
   );
+  const onKeyboardNote = useCallback(
+    (pitch: number, on: boolean) => (on ? keyboardKeyDown(shapeId, pitch) : keyboardKeyUp(shapeId)),
+    [shapeId],
+  );
+  useEffect(() => () => keyboardKeyUp(shapeId), [shapeId]);
   const onSelectionChange = useCallback((ids: string[]) => {
     selectedIdsRef.current = ids;
   }, []);
@@ -599,7 +607,8 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
             </div>
             <div className="ui-group">
               <Toggle
-                label="MPE"
+                label="MPE Out"
+                className="runner-shape__mpe-out"
                 on={props.mpe ?? false}
                 onChange={(on) => updateProps({ mpe: on })}
                 title="MPE out: each note on its own channel (2-16) with its recorded pitch bend, pressure and timbre (CC74)"
@@ -668,6 +677,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                   toolbarTarget={sourceToolbar}
                   scale={scale}
                   onScaleChange={onScaleChange}
+                  onKeyboardNote={onKeyboardNote}
                   ghostNotes={sourceGhosts}
                   noteBadge={noteBadge}
                   noteColor={noteColor}

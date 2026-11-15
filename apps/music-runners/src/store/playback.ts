@@ -190,6 +190,35 @@ export function auditionNote(shapeId: string, pitch: number, velocity: number, d
   else void getOutput(props.midiOutputName).then(play);
 }
 
+/** Keys held from a roll's keyboard column: shape id -> the sounding note. */
+const heldKeys = new Map<string, { output: MidiOutput; channel: number; pitch: number; mpe: boolean; outputName: string }>();
+
+/** Keyboard-column press: sound the key until keyboardKeyUp (Ableton's held key). */
+export function keyboardKeyDown(shapeId: string, pitch: number, velocity = 100): void {
+  keyboardKeyUp(shapeId);
+  const props = readInstanceProps(shapeId);
+  if (!props) return;
+  const sounding = clampPitch(pitch + Math.round(props.params.transpose ?? 0));
+  const play = (output: MidiOutput | null) => {
+    if (!output || output.closed) return;
+    const channel = props.mpe ? allocateMemberChannel(props.midiOutputName) : CHANNEL;
+    if (props.mpe) sendExpression(output, channel, { id: "", pitch, position: 0, duration: 1, velocity }, 0, props.bendRange, null);
+    output.noteOn(channel, sounding, velocity);
+    heldKeys.set(shapeId, { output, channel, pitch: sounding, mpe: props.mpe, outputName: props.midiOutputName });
+  };
+  const open = getOutputSync(props.midiOutputName);
+  if (open) play(open);
+  else void getOutput(props.midiOutputName).then(play);
+}
+
+export function keyboardKeyUp(shapeId: string): void {
+  const held = heldKeys.get(shapeId);
+  if (!held) return;
+  heldKeys.delete(shapeId);
+  if (!held.output.closed) held.output.noteOff(held.channel, held.pitch, NOTE_OFF_VELOCITY);
+  if (held.mpe) releaseMemberChannel(held.outputName, held.channel);
+}
+
 function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outputName: string): RunnerApi & { releaseAll(): void } {
   // "channel:pitch" -> the sounding that owns the note-off. A retrigger of a
   // key replaces the entry so the earlier branch's release becomes a no-op.

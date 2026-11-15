@@ -28,6 +28,19 @@ export interface ControlPanelProps {
   onMetadataToggle: () => void
   scale: PianoRollScale
   onScaleChange: (scale: PianoRollScale) => void
+  /** Notes/MPE switch (Ableton's Notes and MPE tabs); null hides it. */
+  expressionMode: 'notes' | 'mpe' | null
+  onExpressionModeChange: (mode: 'notes' | 'mpe') => void
+  /** The note count; the lane bar shows it instead when there are lanes. */
+  showInfo: boolean
+}
+
+export function NoteCount({ noteCount, selectionCount }: { noteCount: number; selectionCount: number }) {
+  return (
+    <span className="pr-info" title="notes in the roll, selected">
+      {noteCount} notes{selectionCount ? `, ${selectionCount} selected` : ''}
+    </span>
+  )
 }
 
 const ROOT_OPTIONS = ROOT_NAMES.map((name, pitchClass) => ({ value: String(pitchClass), label: name }))
@@ -89,13 +102,29 @@ export function ControlPanel(props: ControlPanelProps) {
   const { interactive } = props
   return (
     <div className="pr-control-panel">
-      <span className="pr-info" title="notes in the roll, selected">
-        {props.noteCount} notes{props.selectionCount ? `, ${props.selectionCount} selected` : ''}
-      </span>
+      {props.showInfo ? <NoteCount noteCount={props.noteCount} selectionCount={props.selectionCount} /> : null}
       <div className="ui-group">
         <Button icon="undo" quiet className="pr-undo" title="Undo (Cmd/Ctrl+Z)" onClick={props.onUndo} disabled={!interactive || !props.canUndo} />
         <Button icon="redo" quiet className="pr-redo" title="Redo (Shift+Cmd/Ctrl+Z)" onClick={props.onRedo} disabled={!interactive || !props.canRedo} />
       </div>
+      {props.expressionMode ? (
+        <div className="ui-group pr-mode">
+          <Toggle
+            label="Notes"
+            className="pr-mode-notes"
+            on={props.expressionMode === 'notes'}
+            onChange={() => props.onExpressionModeChange('notes')}
+            title="Notes mode: edit notes; velocity lane below"
+          />
+          <Toggle
+            label="MPE"
+            className="pr-mode-mpe"
+            on={props.expressionMode === 'mpe'}
+            onChange={() => props.onExpressionModeChange('mpe')}
+            title="MPE mode: edit the selected notes' pitch envelopes (on the notes) and pressure / timbre lanes; notes do not move"
+          />
+        </div>
+      ) : null}
       <ScaleControls scale={props.scale} onChange={props.onScaleChange} />
       <div className="ui-group">
         <Chooser

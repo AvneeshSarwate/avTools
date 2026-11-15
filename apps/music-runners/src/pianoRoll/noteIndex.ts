@@ -7,6 +7,7 @@
 // skips them and they are scanned directly, so the index never has to be
 // rebuilt per pointer move. Gesture ends and command-stack changes invalidate.
 import type { NoteData, PianoRollState } from './state'
+import { noteAreaHeight } from './lanes'
 
 export interface NoteIndex {
   map: Map<string, NoteData>
@@ -151,7 +152,7 @@ export function collectVisibleNotes(state: PianoRollState, out: VisibleNote[]): 
   const { scrollX, scrollY } = state.viewport
   const { quarterNoteWidth, noteHeight } = state.grid
   const viewportWidth = stage.width()
-  const viewportHeight = Math.max(0, stage.height()) // the note area is the whole stage (viewport.getNoteAreaHeight)
+  const viewportHeight = noteAreaHeight(state) // the grid, above any expression lanes
   const visibleTimeStart = scrollX / quarterNoteWidth
   const visibleTimeEnd = (scrollX + viewportWidth) / quarterNoteWidth
   const visiblePitchMin = Math.floor(scrollY / noteHeight)

@@ -1,5 +1,6 @@
 import type { PianoRollState, NoteData } from './state'
 import { uid } from './utils'
+import { clearPointSelection, deleteSelectedPoints, toggleRootedSelected } from './expression'
 
 export interface KeyboardControllerOptions {
   state: PianoRollState
@@ -53,6 +54,27 @@ export const createKeyboardController = ({
       e.preventDefault()
       redo()
       return
+    }
+
+    // MPE mode edits breakpoints, never notes (expression.ts)
+    if (state.expression.mode === 'mpe') {
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        e.preventDefault()
+        if (deleteSelectedPoints(state)) updateCommandStackButtons()
+        return
+      }
+      if (!e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'r') {
+        if (toggleRootedSelected(state)) {
+          e.preventDefault()
+          updateCommandStackButtons()
+        }
+        return
+      }
+      if (e.key === 'Escape') {
+        clearPointSelection(state)
+        return
+      }
+      if (e.key.startsWith('Arrow')) return
     }
 
     if (e.key === 'Backspace' || e.key === 'Delete') {

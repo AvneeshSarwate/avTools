@@ -133,6 +133,17 @@ export interface PianoRollProps {
   scale?: PianoRollScale;
   onScaleChange?: (scale: PianoRollScale) => void;
   /**
+   * Expression lanes under the grid and the Notes/MPE mode switch (Ableton's
+   * velocity lane and Note Expression editor). Default: on for an
+   * interactive roll with its control panel.
+   */
+  expressionLanes?: boolean;
+  /**
+   * A key pressed (on: true) or released in the keyboard column. Without it a
+   * press auditions through onNotePreview.
+   */
+  onKeyboardNote?: (pitch: number, on: boolean) => void;
+  /**
    * Render the control panel into this element (a host's section header)
    * instead of above the stage. Null while the host element is not mounted.
    */

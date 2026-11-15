@@ -12,6 +12,8 @@ export interface StageManagerDependencies {
   renderResizeHandles: (state: PianoRollState) => void
   updateQueuePlayheadPosition: (state: PianoRollState) => void
   updatePlayheadMarkers: (state: PianoRollState) => void
+  /** The keyboard column beside the stage (gutter.ts). */
+  renderGutter: () => void
   /** Called after every frame that redrew; the wrapper syncs its counters here. */
   afterRedraw: () => void
   enforceScrollBounds: () => void
@@ -37,8 +39,9 @@ export class StageManager {
     const state = this.deps.state
     const all = state.needsRedraw
     const { dirty } = state
-    if (all || dirty.ghosts || dirty.notes || dirty.overlay) {
+    if (all || dirty.ghosts || dirty.notes || dirty.overlay || dirty.gutter) {
       if (all) this.deps.renderGrid(state)
+      if (all || dirty.gutter) this.deps.renderGutter()
       if (all || dirty.ghosts) this.deps.renderGhostNotes(state)
       if (all || dirty.notes) {
         this.deps.renderVisibleNotes(state)
@@ -53,6 +56,7 @@ export class StageManager {
       dirty.ghosts = false
       dirty.notes = false
       dirty.overlay = false
+      dirty.gutter = false
       // Counters and selection only move with the notes layer.
       if (notesChanged) this.deps.afterRedraw()
     }
