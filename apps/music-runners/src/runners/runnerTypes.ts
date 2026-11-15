@@ -2,7 +2,7 @@
 // customize per piece; keep this thin and let runner code be specific.
 import type { TimeContext } from "@avtools/core-timing";
 import type { Bank, RunnerEvent } from "../model/types";
-import type { GhostNote, JsonObject, PianoRollNote } from "../pianoRoll/types";
+import type { GhostNote, JsonObject, PianoRollNote, PianoRollScale } from "../pianoRoll/types";
 
 export type TagFieldSpec =
   | { key: string; label: string; kind: "number"; default: number; min?: number; max?: number; step?: number }
@@ -23,7 +23,9 @@ export interface TagSpec {
   fields: TagFieldSpec[];
 }
 
-export interface ParamSpec {
+/** A number param: a draggable bar in the params row. */
+export interface NumberParamSpec {
+  kind?: "number";
   key: string;
   label: string;
   min: number;
@@ -34,7 +36,34 @@ export interface ParamSpec {
   hint?: string;
 }
 
-export type Params = Record<string, number>;
+/**
+ * A scale param: a root chooser and a degree list, the shape `new Scale(degrees,
+ * root)` takes in packages/music-types (see PianoRollScale).
+ */
+export interface ScaleParamSpec {
+  kind: "scale";
+  key: string;
+  label: string;
+  default: PianoRollScale;
+  hint?: string;
+}
+
+export type ParamSpec = NumberParamSpec | ScaleParamSpec;
+export type ParamValue = number | PianoRollScale;
+export type Params = Record<string, ParamValue>;
+
+/** A number param, or `fallback` when it is missing or not a number. */
+export function numberParam(params: Params, key: string, fallback: number): number {
+  const value = params[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/** A scale param, or undefined when it is missing or malformed. */
+export function scaleParam(params: Params, key: string): PianoRollScale | undefined {
+  const value = params[key] as Partial<PianoRollScale> | undefined;
+  if (!value || typeof value !== "object" || typeof value.root !== "number" || !Array.isArray(value.degrees)) return undefined;
+  return { root: value.root, degrees: value.degrees.filter((d): d is number => typeof d === "number") };
+}
 
 export interface LoopNotes {
   notes: PianoRollNote[];
@@ -79,10 +108,13 @@ export interface RunnerDefinition {
    * an instance carries one of them (its label is a chooser over this list).
    */
   emits?: string[];
-  /** Pure: one loop from the bank. Used by Run every pass and by the Preview roll's regenerate. */
-  generate(bank: Bank, random: () => number): LoopNotes;
-  /** Static overlays on the source roll (for example variant alternatives). */
-  sourceGhostNotes?(bank: Bank): GhostNote[];
+  /**
+   * Pure: one loop from the bank, with the instance's params. Used by Run
+   * every pass and by the Preview roll's regenerate.
+   */
+  generate(bank: Bank, random: () => number, params: Params): LoopNotes;
+  /** Static overlays on the source roll (for example variant alternatives), with the instance's params. */
+  sourceGhostNotes?(bank: Bank, params: Params): GhostNote[];
   /** Fill for notes in the Generated and Preview rolls (for example a chosen variant). */
   generatedNoteColor?(note: PianoRollNote): string | undefined;
   /** Long-running: loop until the context is cancelled. */

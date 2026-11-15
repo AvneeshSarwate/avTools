@@ -3,7 +3,7 @@
 // arrow-target instance which pitch just played.
 import type { Bank } from "../../model/types";
 import type { GhostNote, PianoRollNote } from "../../pianoRoll/types";
-import { type LoopNotes, notesInLoop, type RunnerApi, type RunnerDefinition, tagValue } from "../runnerTypes";
+import { type LoopNotes, notesInLoop, type Params, type RunnerApi, type RunnerDefinition, scaleParam, tagValue } from "../runnerTypes";
 import { parseVariantSteps, resolveVariantStep, type VariantStep } from "./steps";
 
 export const VARIANT_TAG = "variant";
@@ -18,7 +18,7 @@ export const VARIANT_COLOR = "#f0a34a";
 export const TRILL_COLOR = "#6cd4ff";
 
 interface VariantTag {
-  /** Moves from the note in the bank's scale (steps.ts): "+1 -5 +2+". */
+  /** Moves from the note in the instance's scale param (steps.ts): "+1 -5 +2+". */
   steps: VariantStep[];
   probability: number;
 }
@@ -50,18 +50,28 @@ function readVariant(note: PianoRollNote): VariantTag | null {
   return { steps, probability };
 }
 
-export function generateVariantsLoop(bank: Bank, random: () => number): LoopNotes {
+/** C major: the scale param's default. */
+const C_MAJOR = { root: 60, degrees: [0, 2, 4, 5, 7, 9, 11, 12] };
+
+/** The scale the variant steps move in: this instance's `scale` param. */
+function variantScale(params: Params) {
+  return scaleParam(params, "scale") ?? C_MAJOR;
+}
+
+export function generateVariantsLoop(bank: Bank, random: () => number, params: Params): LoopNotes {
+  const scale = variantScale(params);
   const notes = notesInLoop(bank.notes, bank.loopLength).map((note) => {
     const variant = readVariant(note);
     if (!variant || variant.steps.length === 0 || random() >= variant.probability) return note;
     const step = variant.steps[Math.floor(random() * variant.steps.length)];
-    const pitch = resolveVariantStep(note.pitch, step, bank.scale);
+    const pitch = resolveVariantStep(note.pitch, step, scale);
     return { ...note, pitch, metadata: { ...(note.metadata ?? {}), chosenVariant: true, originalPitch: note.pitch, chosenStep: step.text } };
   });
   return { notes, loopLength: bank.loopLength };
 }
 
-function variantGhosts(bank: Bank): GhostNote[] {
+function variantGhosts(bank: Bank, params: Params): GhostNote[] {
+  const scale = variantScale(params);
   const ghosts: GhostNote[] = [];
   for (const note of bank.notes) {
     const variant = readVariant(note);
@@ -69,7 +79,7 @@ function variantGhosts(bank: Bank): GhostNote[] {
     variant.steps.forEach((step, index) => {
       ghosts.push({
         id: `${note.id}:variant:${index}`,
-        pitch: resolveVariantStep(note.pitch, step, bank.scale),
+        pitch: resolveVariantStep(note.pitch, step, scale),
         position: note.position,
         duration: note.duration,
         color: VARIANT_COLOR,
@@ -85,7 +95,7 @@ function variantGhosts(bank: Bank): GhostNote[] {
 async function runVariants(api: RunnerApi): Promise<void> {
   while (true) {
     const bank = api.getBank();
-    const loop = generateVariantsLoop(bank, api.random);
+    const loop = generateVariantsLoop(bank, api.random, api.getParams());
     api.publishLoop(loop);
     await api.playLoop(loop, {
       onNoteOn: (note) => {
@@ -101,7 +111,7 @@ async function runVariants(api: RunnerApi): Promise<void> {
 export const variantsRunner: RunnerDefinition = {
   type: "variants",
   label: "Variants",
-  description: "Notes tagged 'variant' are replaced, with the given probability each loop, by one of their alternative steps: scale degrees from the note in the bank's scale (+1, -5), optionally plus raw semitones (+2+ = 2 degrees and a semitone, +2+2 = 2 degrees and a whole tone). Notes tagged 'trill' emit a trill event with their pitch when they play, with the tag's probability, requesting a trill note count picked from the tag's list.",
+  description: "Notes tagged 'variant' are replaced, with the given probability each loop, by one of their alternative steps: scale degrees from the note in the runner's scale param (+1, -5), optionally plus raw semitones (+2+ = 2 degrees and a semitone, +2+2 = 2 degrees and a whole tone). Notes tagged 'trill' emit a trill event with their pitch when they play, with the tag's probability, requesting a trill note count picked from the tag's list.",
   tags: [
     {
       key: VARIANT_TAG,
@@ -127,6 +137,7 @@ export const variantsRunner: RunnerDefinition = {
     },
   ],
   params: [
+    { kind: "scale", key: "scale", label: "scale", default: C_MAJOR, hint: "the scale variant steps move in (+1 = one degree of this scale)" },
     { key: "transpose", label: "transpose", min: -24, max: 24, step: 1, default: 0, hint: "semitones, immediate" },
     { key: "speed", label: "speed", min: 0.25, max: 4, step: 0.05, default: 1, hint: "applies at next loop" },
   ],

@@ -58,6 +58,10 @@ unless an instance has **MPE Out** on (see below).
   `run(api)` that loops until stopped. `src/runners/runnerTypes.ts` is the
   thin contract; copy a runner directory to make a new one and register it in
   `src/runners/registry.ts`.
+  Params are numbers (a draggable bar) or, with `kind: "scale"`, a scale
+  (`{ root, degrees }`, edited with a root chooser and degree list); read
+  them with `numberParam` / `scaleParam` from `runnerTypes.ts`. `generate`
+  and `sourceGhostNotes` receive the instance's params.
 - **Bank**: one piano roll (notes, loop length, scale, note metadata) tagged
   with a runner type. The left sidebar lists banks by type. Several instances
   can reference one bank.
@@ -334,9 +338,9 @@ is 0..1 across the note, so a resize stretches them).
 ## Starting runners
 
 - **Variants**: tag notes `variant` (alt steps + probability) and `trill`.
-  Alt steps are moves from the note within the bank's scale (the Source
-  roll's root and degrees; C major when unset), so they follow the note when
-  it moves: `+1`, `-5` (scale degrees; no sign means up), `+2+` (two degrees
+  Alt steps are moves from the note within the instance's **scale** param
+  (a root chooser and degree list in the params row; C major by default), so
+  they follow the note when it moves: `+1`, `-5` (scale degrees; no sign means up), `+2+` (two degrees
   and a semitone; a bare trailing sign is 1), `+2+2` (two degrees and a whole
   tone), `-1-`, `+0+`. A note not in the scale counts from its nearest scale
   note. Ghost notes show each step's result, labelled with the step

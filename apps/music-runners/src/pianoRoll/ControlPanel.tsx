@@ -47,7 +47,7 @@ const ROOT_OPTIONS = ROOT_NAMES.map((name, pitchClass) => ({ value: String(pitch
 const INVALID_FLASH_MS = 900
 
 /** Root chooser plus the degree list, e.g. "0 2 4 5 7 9 11 12". */
-function ScaleControls({ scale, onChange }: { scale: PianoRollScale; onChange: (scale: PianoRollScale) => void }) {
+export function ScaleControls({ scale, onChange }: { scale: PianoRollScale; onChange: (scale: PianoRollScale) => void }) {
   const text = formatDegrees(scale.degrees)
   const [draft, setDraft] = useState(text)
   const [invalid, setInvalid] = useState(false)

@@ -3,7 +3,7 @@
 // plays a trill between the last pitch it sent and the event's pitch.
 import type { Bank } from "../../model/types";
 import type { PianoRollNote } from "../../pianoRoll/types";
-import { clampPitch, type LoopNotes, notesInLoop, type RunnerApi, type RunnerDefinition, tagValue } from "../runnerTypes";
+import { clampPitch, type LoopNotes, notesInLoop, numberParam, type RunnerApi, type RunnerDefinition, tagValue } from "../runnerTypes";
 
 export const NO_EXTEND_TAG = "noExtend";
 export const EXTENDED_COLOR = "#9be37a";
@@ -37,8 +37,8 @@ async function runExtender(api: RunnerApi): Promise<void> {
     const params = api.getParams();
     // The trigger may request a count (picked from its tag's list); otherwise our param
     const requested = typeof event.count === "number" && Number.isFinite(event.count) ? event.count : null;
-    const count = Math.max(1, Math.round(requested ?? params.trillNotes ?? 8));
-    const rate = Math.max(1, params.trillRate ?? 8);
+    const count = Math.max(1, Math.round(requested ?? numberParam(params, "trillNotes", 8)));
+    const rate = Math.max(1, numberParam(params, "trillRate", 8));
     const incoming = event.pitch as number;
     const velocity = typeof event.velocity === "number" ? event.velocity : last.velocity;
     const phrase = trillPhrase(last.pitch, incoming, count);

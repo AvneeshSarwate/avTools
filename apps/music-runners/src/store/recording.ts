@@ -36,7 +36,7 @@ import {
 } from "../model/mpe";
 import type { LiveInput, LiveInputKey, LiveInputNote, PianoRollNote } from "../pianoRoll/types";
 import { cloneNote } from "../pianoRoll/utils";
-import { clampPitch } from "../runners/runnerTypes";
+import { clampPitch, numberParam, type Params } from "../runners/runnerTypes";
 import { getBank, setBankLoopLength, setBankNotes } from "./banks";
 import { beatsAtSec, nowSec } from "./clock";
 import { getEditor } from "./editorRef";
@@ -130,14 +130,14 @@ function readProps(shapeId: string): InputProps | null {
   const shape = getEditor()?.getShape(shapeId as TLShapeId);
   if (!shape) return null;
   const props = shape.props as Record<string, unknown>;
-  const params = (props.params ?? {}) as Record<string, number>;
+  const params = (props.params ?? {}) as Params;
   return {
     bankId: typeof props.bankId === "string" ? props.bankId : "",
     midiOutputName: typeof props.midiOutputName === "string" ? props.midiOutputName : "",
     midiThru: props.midiThru !== false,
     mpe: props.mpe === true,
     bendRange: typeof props.bendRange === "number" && props.bendRange > 0 ? props.bendRange : DEFAULT_BEND_RANGE,
-    transpose: Math.round(params.transpose ?? 0),
+    transpose: Math.round(numberParam(params, "transpose", 0)),
     rootTolerance: props.autoRoot === false
       ? null
       : (typeof props.rootToleranceCents === "number" ? props.rootToleranceCents : DEFAULT_ROOT_TOLERANCE_CENTS) / 100,

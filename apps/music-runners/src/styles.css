@@ -291,3 +291,7 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 .runner-section__header { flex-wrap: wrap; height: auto; min-height: 44px; row-gap: 4px; }
 .runner-section__tools { flex-wrap: wrap; justify-content: flex-end; }
 .runner-section__tools .pr-control-panel { flex-wrap: wrap; row-gap: 4px; justify-content: flex-end; }
+
+/* A scale param (root chooser + degree list) takes two columns of the params grid */
+.runner-shape__param--scale { grid-column: span 2; }
+.runner-shape__param--scale .ui-group { padding: 0; }

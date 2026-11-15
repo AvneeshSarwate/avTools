@@ -64,7 +64,7 @@ function degreeOf(scale: Scale, pitch: number): number {
   return Math.round(scale.getIndFromPitch(pitch));
 }
 
-/** The pitch a step lands on from `pitch` in `scale` (the bank's scale; C major when unset). */
+/** The pitch a step lands on from `pitch` in `scale` (C major when undefined). */
 export function resolveVariantStep(pitch: number, step: VariantStep, scale: PianoRollScale | undefined): number {
   const s = toScale(scale);
   return clampPitch(s.getByIndex(degreeOf(s, pitch) + step.degrees) + step.semitones);

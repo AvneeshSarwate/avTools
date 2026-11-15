@@ -101,7 +101,7 @@ await shape.locator(".pr-undo").click();
 await shape.locator(".pr-mode-notes").click();
 
 // 5. a text field keeps its own select-all
-const degrees = shape.locator(".pr-scale-degrees");
+const degrees = shape.locator(".pr-control-panel .pr-scale-degrees"); // the roll tool row's (a scale param has one too)
 await degrees.click();
 await page.evaluate(() => window.__musicRunners.sourceRollHandles.get(window.__id).selectNotes(["n0"]));
 await degrees.focus();

@@ -11,6 +11,7 @@ import {
   defaultParams,
   type LoopNotes,
   notesInLoop,
+  numberParam,
   type Params,
   type PlayLoopOptions,
   type RunnerApi,
@@ -172,7 +173,7 @@ function curveChanges(note: PianoRollNote): boolean {
 export function auditionNote(shapeId: string, pitch: number, velocity: number, durationMs = 180): void {
   const props = readInstanceProps(shapeId);
   if (!props) return;
-  const transpose = Math.round(props.params.transpose ?? 0);
+  const transpose = Math.round(numberParam(props.params, "transpose", 0));
   const sounding = clampPitch(pitch + transpose);
   const play = (output: MidiOutput | null) => {
     if (!output || output.closed) return;
@@ -197,7 +198,7 @@ export function keyboardKeyDown(shapeId: string, pitch: number, velocity = 100):
   keyboardKeyUp(shapeId);
   const props = readInstanceProps(shapeId);
   if (!props) return;
-  const sounding = clampPitch(pitch + Math.round(props.params.transpose ?? 0));
+  const sounding = clampPitch(pitch + Math.round(numberParam(props.params, "transpose", 0)));
   const play = (output: MidiOutput | null) => {
     if (!output || output.closed) return;
     const channel = props.mpe ? allocateMemberChannel(props.midiOutputName) : CHANNEL;
@@ -243,7 +244,7 @@ function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outpu
     if (entry.channel !== CHANNEL) releaseMemberChannel(outputName, entry.channel);
   };
 
-  const transposeNow = () => Math.round(liveParams(shapeId, def).transpose ?? 0);
+  const transposeNow = () => Math.round(numberParam(liveParams(shapeId, def), "transpose", 0));
 
   const recordPlayed = (note: PianoRollNote, speed: number, color?: string) => {
     lastPlayed = note;
@@ -313,7 +314,7 @@ function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outpu
     getParams: () => liveParams(shapeId, def),
     random: () => ctx.random(),
     async playLoop(loop: LoopNotes, options: PlayLoopOptions = {}) {
-      const speed = Math.max(0.05, liveParams(shapeId, def).speed ?? 1);
+      const speed = Math.max(0.05, numberParam(liveParams(shapeId, def), "speed", 1));
       const loopLength = loop.loopLength;
       patchRuntime(shapeId, (prev) => ({
         loopStartBeats: nowBeats(),
@@ -440,7 +441,7 @@ export function regenerate(shapeId: string): void {
   const def = getRunner(props.runnerType);
   const bank = getBank(props.bankId);
   if (!bank) return;
-  const preview = def.generate(bank, Math.random);
+  const preview = def.generate(bank, Math.random, liveParams(shapeId, def));
   patchRuntime(shapeId, { preview });
 }
 

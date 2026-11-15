@@ -1,6 +1,6 @@
 // Variant steps: alternatives are scale-degree moves from the note in the
-// bank's scale ("+1 -5 +2+"), so ghosts and choices follow the note when it
-// moves or the scale changes. Project "zz_variants" is never saved.
+// instance's scale param ("+1 -5 +2+"), so ghosts and choices follow the note
+// when it moves or the scale changes. Project "zz_variants" is never saved.
 // With the dev server up:
 //   NODE_PATH=$(npm root -g) node demo/variants.e2e.mjs [screenshot dir]
 // Set PW_CHROMIUM_PATH when that Playwright has no browser of its own.
@@ -64,20 +64,27 @@ const choices = await page.evaluate(async (bankId) => {
   mr.banks.setBankNotes(bankId, bank.notes.map((n) => ({ ...JSON.parse(JSON.stringify(n)), pitch: 64, metadata: { variant: { steps: "+1 -2 +2+ +0+2", probability: 1 } } })));
   const { variantsRunner } = await import("/src/runners/variants/runner.ts");
   const seen = new Set();
-  for (let i = 0; i < 80; i++) seen.add(variantsRunner.generate(mr.stores.banksStore.banks[bankId], Math.random).notes[0].pitch);
+  for (let i = 0; i < 80; i++) seen.add(variantsRunner.generate(mr.stores.banksStore.banks[bankId], Math.random, {}).notes[0].pitch);
   return [...seen].sort((a, b) => a - b);
 }, ctx.bankId);
 console.log("choices from E4", choices);
 assert.deepEqual(choices, [60, 65, 66, 68]);
-// another scale on the bank: D major moves the result
-const dorian = await page.evaluate(async (bankId) => {
+// the instance's scale param, set through its params row: D major moves the result
+const scaleParam = shape.locator(".runner-shape__param--scale");
+await scaleParam.locator(".pr-scale-root").click();
+await page.locator(".ui-chooser__option", { hasText: /^D$/ }).click();
+await sleep(150);
+const stored = await page.evaluate((id) => JSON.parse(JSON.stringify(window.__musicRunners.editor.getShape(id).props.params.scale)), ctx.id);
+assert.deepEqual(stored, { root: 62, degrees: [0, 2, 4, 5, 7, 9, 11, 12] }, "scale param saved on the instance");
+const dorian = await page.evaluate(async ({ bankId, id }) => {
   const mr = window.__musicRunners;
   const { variantsRunner } = await import("/src/runners/variants/runner.ts");
-  mr.stores.banksStore.banks[bankId].scale = { root: 62, degrees: [0, 2, 4, 5, 7, 9, 11, 12] };
+  const params = mr.editor.getShape(id).props.params;
   const seen = new Set();
-  for (let i = 0; i < 80; i++) seen.add(variantsRunner.generate(mr.stores.banksStore.banks[bankId], Math.random).notes[0].pitch);
+  for (let i = 0; i < 80; i++) seen.add(variantsRunner.generate(mr.stores.banksStore.banks[bankId], Math.random, params).notes[0].pitch);
   return [...seen].sort((a, b) => a - b);
-}, ctx.bankId);
+}, ctx);
+await shape.screenshot({ path: `${OUT}/variants-scale-param.png` });
 console.log("choices from E4 in D major", dorian);
 // D major: E +1 is F#, -2 is C#, +2+ is G + 1, +0+2 is F#
 assert.deepEqual(dorian, [61, 66, 68], "the bank's scale drives the steps");

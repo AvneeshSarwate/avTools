@@ -48,7 +48,8 @@ import {
 } from "../../store/playback";
 import { sourceRollHandles } from "../../store/rollHandles";
 import { runnerShapeType } from "../registry";
-import { defaultParams, type Params, type RunnerDefinition, tagValue } from "../runnerTypes";
+import { defaultParams, numberParam, type ParamValue, type Params, type RunnerDefinition, scaleParam, tagValue } from "../runnerTypes";
+import { ScaleControls } from "../../pianoRoll/ControlPanel";
 import { DEFAULT_INPUT_PROPS, DEFAULT_ROOT_PROPS, DEFAULT_INSTANCE_HEIGHT, DEFAULT_INSTANCE_WIDTH, type RunnerInstanceProps } from "./instanceProps";
 import { TagEditor, toggleTag } from "./TagEditor";
 import { Button, Chooser, Field, Lamp, NumberBox, Toggle } from "../../ui/controls/controls";
@@ -142,7 +143,8 @@ export function defineRunnerShape(def: RunnerDefinition) {
       bendRange: T.number,
       autoRoot: T.boolean,
       rootToleranceCents: T.number,
-      params: T.dict(T.string, T.number),
+      // Numbers, or a { root, degrees } scale for a scale param
+      params: T.dict(T.string, T.jsonValue),
       queued: T.boolean,
       showSource: T.boolean,
       showGenerated: T.boolean,
@@ -454,7 +456,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
   }, [midi.status, props.midiOutputName, updateProps]);
 
   const params: Params = useMemo(() => ({ ...defaultParams(def), ...props.params }), [def, props.params]);
-  const setParam = (key: string, value: number) => updateProps({ params: { ...params, [key]: value } });
+  const setParam = (key: string, value: ParamValue) => updateProps({ params: { ...params, [key]: value } });
 
   const bankOptions = listBanks(def.type);
   const outputNames = midi.outputs.map((port) => port.name);
@@ -465,7 +467,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
 
   const stageWidth = Math.max(320, Math.round(props.w - SHAPE_BORDER - ROLL_CHROME_WIDTH));
 
-  const sourceGhosts = useMemo<GhostNote[]>(() => (bank && def.sourceGhostNotes ? def.sourceGhostNotes(bank) : EMPTY_GHOSTS), [bank, def]);
+  const sourceGhosts = useMemo<GhostNote[]>(() => (bank && def.sourceGhostNotes ? def.sourceGhostNotes(bank, params) : EMPTY_GHOSTS), [bank, def, params]);
   const noteBadge = useCallback(
     (note: PianoRollNote) => {
       const badges = def.tags.filter((tag) => tagValue(note, tag.key) !== undefined).map((tag) => tag.badge ?? tag.label.slice(0, 1).toUpperCase());
@@ -748,21 +750,29 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
           </div>
 
           <div className="runner-shape__params">
-            {def.params.map((spec) => (
-              <label key={spec.key} className="runner-shape__param" title={spec.hint}>
-                <span className="runner-shape__param-label">{spec.label}</span>
-                <NumberBox
-                  bar
-                  value={params[spec.key] ?? spec.default}
-                  min={spec.min}
-                  max={spec.max}
-                  step={spec.step}
-                  format={formatParam}
-                  title={spec.hint ?? spec.label}
-                  onChange={(value) => setParam(spec.key, value)}
-                />
-              </label>
-            ))}
+            {def.params.map((spec) =>
+              spec.kind === "scale" ? (
+                // A scale param: root chooser and degree list (the roll's tool row has the same pair)
+                <div key={spec.key} className="runner-shape__param runner-shape__param--scale" title={spec.hint}>
+                  <span className="runner-shape__param-label">{spec.label}</span>
+                  <ScaleControls scale={scaleParam(params, spec.key) ?? spec.default} onChange={(scale) => setParam(spec.key, scale)} />
+                </div>
+              ) : (
+                <label key={spec.key} className="runner-shape__param" title={spec.hint}>
+                  <span className="runner-shape__param-label">{spec.label}</span>
+                  <NumberBox
+                    bar
+                    value={numberParam(params, spec.key, spec.default)}
+                    min={spec.min}
+                    max={spec.max}
+                    step={spec.step}
+                    format={formatParam}
+                    title={spec.hint ?? spec.label}
+                    onChange={(value) => setParam(spec.key, value)}
+                  />
+                </label>
+              ),
+            )}
           </div>
 
           <Section
