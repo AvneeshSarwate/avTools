@@ -76,6 +76,12 @@ unless an instance has **MPE Out** on (see below).
   three collapsible rolls: **source** (editable, edits the bank), **generated**
   (the loop now sounding plus a live overlay of what actually played) and
   **preview** (output of **Regenerate**, a dry run). Layout below.
+  Duplicating an instance (right-click Duplicate, Cmd-D, Alt-drag, or
+  pasting a copied instance) gives the copy its own copy of the bank
+  (`<name> copy`), so the two diverge (`src/shapes/bankOnCopy.ts`); the
+  sidebar's **+ instance** makes one that shares the bank on purpose.
+  Undoing a duplicate removes the instance but leaves the copied bank in the
+  sidebar.
 - **Events**: plain objects (`{ type, ...fields }`) sent with `api.emit` and
   received with `api.onEvent`. A runner lists the types it sends in its
   definition's `emits`. Routing is by **connection arrows** (see below).
@@ -363,6 +369,7 @@ demo.html + demo/           standalone piano roll demo and its Playwright checks
   the recording check below).
 - Velocity lane, keyboard column and MPE editing: `demo/lanes.e2e.mjs`
   (same setup).
+- Duplicating instances and banks: `demo/duplicate.e2e.mjs` (same setup).
 - Note resizing from the edges: `demo/resize.e2e.mjs` (same setup).
 - Auditioning moved notes and marquee selections: `demo/audition.e2e.mjs`
   (same setup).

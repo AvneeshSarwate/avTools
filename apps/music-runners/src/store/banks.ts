@@ -1,6 +1,7 @@
 import { proxy } from "valtio";
 import { type Bank, DEFAULT_LOOP_LENGTH, newId } from "../model/types";
 import type { PianoRollNote, PianoRollScale } from "../pianoRoll/types";
+import { cloneNote } from "../pianoRoll/utils";
 
 // UI-facing state lives in valtio proxies: components read through
 // useSnapshot and re-render only for the fields they touched. Nothing hot
@@ -46,7 +47,8 @@ export function duplicateBank(id: string): Bank | undefined {
   if (!source) return undefined;
   return createBank(source.runnerType, {
     name: `${source.name} copy`,
-    notes: source.notes.map((note) => ({ ...note, metadata: note.metadata ? structuredClone(note.metadata) : undefined })),
+    // A plain deep copy: the source is live store data, which structuredClone rejects
+    notes: source.notes.map((note) => cloneNote(note)),
     loopLength: source.loopLength,
     scale: source.scale,
   });

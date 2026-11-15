@@ -13,6 +13,7 @@ import { BankSidebar } from "./ui/BankSidebar";
 import { TopBar } from "./ui/TopBar";
 import { ConnectionLayer } from "./ui/ConnectionLayer";
 import { installConnectionRules } from "./store/connections";
+import { installBankCopyOnDuplicate } from "./shapes/bankOnCopy";
 
 export function App() {
   const [editor, setEditorState] = useState<Editor | null>(null);
@@ -29,11 +30,13 @@ export function App() {
       stopAutosave.current = startAutosave(mounted);
     })();
     const removeConnectionRules = installConnectionRules(mounted);
+    const removeBankCopy = installBankCopyOnDuplicate(mounted);
     const removeDeleteHandler = mounted.sideEffects.registerAfterDeleteHandler("shape", (shape) => {
       if (isRunnerShapeType(shape.type)) clearRuntime(shape.id);
     });
     return () => {
       removeConnectionRules();
+      removeBankCopy();
       stopAutosave.current();
       removeDeleteHandler();
       stopAll();
