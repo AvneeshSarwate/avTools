@@ -3,7 +3,8 @@
 // arrow-target instance which pitch just played.
 import type { Bank } from "../../model/types";
 import type { GhostNote, PianoRollNote } from "../../pianoRoll/types";
-import { clampPitch, type LoopNotes, notesInLoop, type RunnerApi, type RunnerDefinition, tagValue } from "../runnerTypes";
+import { type LoopNotes, notesInLoop, type RunnerApi, type RunnerDefinition, tagValue } from "../runnerTypes";
+import { parseVariantSteps, resolveVariantStep, type VariantStep } from "./steps";
 
 export const VARIANT_TAG = "variant";
 export const TRILL_TAG = "trill";
@@ -17,7 +18,8 @@ export const VARIANT_COLOR = "#f0a34a";
 export const TRILL_COLOR = "#6cd4ff";
 
 interface VariantTag {
-  pitches: number[];
+  /** Moves from the note in the bank's scale (steps.ts): "+1 -5 +2+". */
+  steps: VariantStep[];
   probability: number;
 }
 
@@ -43,17 +45,18 @@ function readTrill(note: PianoRollNote): TrillTag | null {
 function readVariant(note: PianoRollNote): VariantTag | null {
   const value = tagValue(note, VARIANT_TAG);
   if (!value || value === true) return null;
-  const pitches = Array.isArray(value.pitches) ? value.pitches.filter((p): p is number => typeof p === "number") : [];
+  const steps = typeof value.steps === "string" ? parseVariantSteps(value.steps).steps : [];
   const probability = typeof value.probability === "number" ? value.probability : 0.5;
-  return { pitches, probability };
+  return { steps, probability };
 }
 
 export function generateVariantsLoop(bank: Bank, random: () => number): LoopNotes {
   const notes = notesInLoop(bank.notes, bank.loopLength).map((note) => {
     const variant = readVariant(note);
-    if (!variant || variant.pitches.length === 0 || random() >= variant.probability) return note;
-    const pitch = clampPitch(variant.pitches[Math.floor(random() * variant.pitches.length)]);
-    return { ...note, pitch, metadata: { ...(note.metadata ?? {}), chosenVariant: true, originalPitch: note.pitch } };
+    if (!variant || variant.steps.length === 0 || random() >= variant.probability) return note;
+    const step = variant.steps[Math.floor(random() * variant.steps.length)];
+    const pitch = resolveVariantStep(note.pitch, step, bank.scale);
+    return { ...note, pitch, metadata: { ...(note.metadata ?? {}), chosenVariant: true, originalPitch: note.pitch, chosenStep: step.text } };
   });
   return { notes, loopLength: bank.loopLength };
 }
@@ -63,15 +66,15 @@ function variantGhosts(bank: Bank): GhostNote[] {
   for (const note of bank.notes) {
     const variant = readVariant(note);
     if (!variant) continue;
-    variant.pitches.forEach((pitch, index) => {
+    variant.steps.forEach((step, index) => {
       ghosts.push({
         id: `${note.id}:variant:${index}`,
-        pitch: clampPitch(pitch),
+        pitch: resolveVariantStep(note.pitch, step, bank.scale),
         position: note.position,
         duration: note.duration,
         color: VARIANT_COLOR,
         opacity: 0.45,
-        label: index === 0 ? `${Math.round(variant.probability * 100)}%` : undefined,
+        label: index === 0 ? `${Math.round(variant.probability * 100)}% ${step.text}` : step.text,
         linkTo: note.id,
       });
     });
@@ -98,7 +101,7 @@ async function runVariants(api: RunnerApi): Promise<void> {
 export const variantsRunner: RunnerDefinition = {
   type: "variants",
   label: "Variants",
-  description: "Notes tagged 'variant' are replaced by one of their alternative pitches with the given probability each loop. Notes tagged 'trill' emit a trill event with their pitch when they play, with the tag's probability, requesting a trill note count picked from the tag's list.",
+  description: "Notes tagged 'variant' are replaced, with the given probability each loop, by one of their alternative steps: scale degrees from the note in the bank's scale (+1, -5), optionally plus raw semitones (+2+ = 2 degrees and a semitone, +2+2 = 2 degrees and a whole tone). Notes tagged 'trill' emit a trill event with their pitch when they play, with the tag's probability, requesting a trill note count picked from the tag's list.",
   tags: [
     {
       key: VARIANT_TAG,
@@ -107,7 +110,7 @@ export const variantsRunner: RunnerDefinition = {
       color: VARIANT_COLOR,
       badge: "V",
       fields: [
-        { key: "pitches", label: "alt pitches", kind: "numberList", default: [] },
+        { key: "steps", label: "alt steps", kind: "string", default: "", placeholder: "+1 -2 +2+" },
         { key: "probability", label: "probability", kind: "number", default: 0.5, min: 0, max: 1, step: 0.05 },
       ],
     },

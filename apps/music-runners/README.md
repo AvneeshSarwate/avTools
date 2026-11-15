@@ -333,7 +333,15 @@ is 0..1 across the note, so a resize stretches them).
 
 ## Starting runners
 
-- **Variants**: tag notes `variant` (alt pitches + probability) and `trill`.
+- **Variants**: tag notes `variant` (alt steps + probability) and `trill`.
+  Alt steps are moves from the note within the bank's scale (the Source
+  roll's root and degrees; C major when unset), so they follow the note when
+  it moves: `+1`, `-5` (scale degrees; no sign means up), `+2+` (two degrees
+  and a semitone; a bare trailing sign is 1), `+2+2` (two degrees and a whole
+  tone), `-1-`, `+0+`. A note not in the scale counts from its nearest scale
+  note. Ghost notes show each step's result, labelled with the step
+  (`src/runners/variants/steps.ts`, built on `Scale` from
+  `packages/music-types`).
   A trill trigger has a **probability** (0..1, chance it fires each time the
   note plays) and **trill notes**, a list like `8` or `3 4 5`: each firing
   picks one uniformly and sends it as the event's `count`; left empty, the
@@ -375,6 +383,9 @@ demo.html + demo/           standalone piano roll demo and its Playwright checks
 
 - `npm run type-check`.
 - Unit tests: `npx tsx --test src/model/mpe.test.ts src/pianoRoll/scale.test.ts src/pianoRoll/metadata/groupEdit.test.ts`.
+  Variant steps run under Deno (they import `packages/music-types`):
+  `deno test --no-check --sloppy-imports src/runners/variants/steps.test.ts`.
+- Variant steps in the app: `demo/variants.e2e.mjs`.
 - Connections without a device: `demo/connections.e2e.mjs` (same setup as
   the recording check below).
 - Velocity lane, keyboard column and MPE editing: `demo/lanes.e2e.mjs`
