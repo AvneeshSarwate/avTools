@@ -203,6 +203,15 @@ of Live 12):
   on pitch points. The roll keeps the browser's and tldraw's menus out.
 - **Lane bar** under the lanes: which lanes show, the lane's tools, and the
   note count.
+- **Pitch labels**: the top bar's **Name / MIDI** switch labels notes and
+  keyboard rows with note names (C3 = 60) or MIDI numbers, in every roll; it
+  is saved with the project (`pitchLabels`). Hovering a note shows the other
+  form above it (`MIDI 67`, or `G3` in MIDI mode), and the label follows the
+  note while it is dragged.
+- **Roll heights**: drag the bar along the bottom of a section (Source,
+  Generated, Preview) to make its roll taller or shorter (80 to 1200 px). The
+  heights are saved per instance in the shape's meta (`rollHeights`), outside
+  undo, like the saved view.
 
 Every edit is one step on the roll's undo stack. Lanes and the mode switch
 appear only on the editable Source roll; Generated and Preview show the

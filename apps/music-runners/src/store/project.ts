@@ -5,6 +5,7 @@ import { DEFAULT_BPM, type ProjectFile } from "../model/types";
 import { proxy, subscribe } from "valtio";
 import { banksStore, replaceAllBanks } from "./banks";
 import { clockStore, setBpm } from "./clock";
+import { displayStore, setPitchLabels } from "./display";
 
 export interface ProjectState {
   name: string;
@@ -63,6 +64,7 @@ export async function loadProject(editor: Editor, name: string): Promise<void> {
     const file = (await response.json()) as ProjectFile;
     replaceAllBanks(file.banks ?? []);
     setBpm(file.bpm ?? DEFAULT_BPM);
+    setPitchLabels(file.pitchLabels ?? "name");
     if (file.canvas) loadSnapshot(editor.store, file.canvas);
     patch({ status: "saved", lastSavedAt: file.savedAt ?? null });
   } catch (error) {
@@ -77,6 +79,7 @@ function buildFile(editor: Editor): ProjectFile {
     version: 1,
     name: projectStore.name,
     bpm: clockStore.bpm,
+    pitchLabels: displayStore.pitchLabels,
     banks: Object.values(banksStore.banks),
     canvas: getSnapshot(editor.store),
     savedAt: Date.now(),
@@ -129,7 +132,9 @@ export function startAutosave(editor: Editor): () => void {
     }
   });
   const unsubscribeStore = editor.store.listen(scheduleSave, { scope: "document", source: "user" });
+  const unsubscribeDisplay = subscribe(displayStore, scheduleSave);
   return () => {
+    unsubscribeDisplay();
     unsubscribeBanks();
     unsubscribeClock();
     unsubscribeStore();

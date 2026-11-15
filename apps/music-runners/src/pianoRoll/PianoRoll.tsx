@@ -112,7 +112,8 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     toolbarTarget,
     scale: scaleProp,
     onScaleChange,
-    expressionLanes
+    expressionLanes,
+    pitchLabels = 'name'
   } = props
   // Lanes and the Notes/MPE switch belong to an editable roll with tools.
   const lanesEnabled = expressionLanes ?? (interactive && showControlPanel)
@@ -542,6 +543,12 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
   useEffect(() => {
     if (snapToGrid !== undefined) setSnap(snapToGrid)
   }, [snapToGrid])
+
+  useEffect(() => {
+    state.grid.pitchLabels = pitchLabels
+    state.dirty.notes = true
+    state.dirty.gutter = true
+  }, [pitchLabels, state])
 
   // The grid compares the scale by identity, so only a new scale redraws it.
   const scaleKey = `${scale.root}:${scale.degrees.join(',')}`

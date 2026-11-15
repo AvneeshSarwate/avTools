@@ -16,6 +16,7 @@ import { PianoRoll } from "../../pianoRoll/PianoRoll";
 import type { GhostNote, MetadataPanelProps, PianoRollHandle, PianoRollNote, PianoRollScale, PianoRollView } from "../../pianoRoll/types";
 import { banksStore, createBank, listBanks, setBankLoopLength, setBankNotes, setBankScale } from "../../store/banks";
 import { DEFAULT_SCALE } from "../../pianoRoll/scale";
+import { displayStore } from "../../store/display";
 import { GUTTER_WIDTH } from "../../pianoRoll/gutter";
 import { eventLogStore } from "../../store/events";
 import type { Bank } from "../../model/types";
@@ -58,8 +59,23 @@ const SHAPE_BORDER = 2;
 const ROLL_CHROME_WIDTH = 6 * 2 + GUTTER_WIDTH + 1 + 2 + 1 + 12;
 /** Playhead colours: the play / run / rec tokens in styles.css. */
 const PLAYHEAD_COLORS = { play: "#62d26f", run: "#ffab3d", rec: "#ff4f4f" } as const;
-const SOURCE_STAGE_HEIGHT = 240;
-const OUTPUT_STAGE_HEIGHT = 180;
+/** Default grid heights per section; each is resizable from the section's bottom edge. */
+const DEFAULT_ROLL_HEIGHTS = { source: 240, generated: 180, preview: 180 } as const;
+type RollSection = keyof typeof DEFAULT_ROLL_HEIGHTS;
+const MIN_ROLL_HEIGHT = 80;
+const MAX_ROLL_HEIGHT = 1200;
+/** Shape meta key for the resized heights (layout, like the saved view). */
+const HEIGHTS_META_KEY = "rollHeights";
+
+function heightsFromMeta(meta: unknown): Partial<Record<RollSection, number>> {
+  const raw = (meta as Record<string, unknown> | undefined)?.[HEIGHTS_META_KEY] as Record<string, unknown> | undefined;
+  const out: Partial<Record<RollSection, number>> = {};
+  for (const key of Object.keys(DEFAULT_ROLL_HEIGHTS) as RollSection[]) {
+    const value = raw?.[key];
+    if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
+  }
+  return out;
+}
 const PLAYHEAD_INTERVAL_MS = 33;
 const VIEW_META_KEY = "sourceView";
 
@@ -239,6 +255,46 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
   const previewRollRef = useRef<PianoRollHandle | null>(null);
   const playheadRolls = useMemo(() => [sourceRollRef, generatedRollRef], []);
   const recording = (useSnapshot(recordingStore).byShape[shapeId] ?? EMPTY_RECORDING) as RecordingUi;
+  const pitchLabels = useSnapshot(displayStore).pitchLabels;
+
+  // Roll heights: saved in the shape's meta; a drag previews locally and
+  // writes the meta once, on release (like the saved view, outside undo).
+  const [draftHeights, setDraftHeights] = useState<Partial<Record<RollSection, number>>>({});
+  const savedHeights = heightsFromMeta(shape.meta);
+  const rollHeight = (section: RollSection) => draftHeights[section] ?? savedHeights[section] ?? DEFAULT_ROLL_HEIGHTS[section];
+  const startRollResize = (section: RollSection) => (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    event.preventDefault();
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    const startY = event.clientY;
+    const startHeight = rollHeight(section);
+    const zoom = editor.getZoomLevel() || 1;
+    let latest = startHeight;
+    const onMove = (move: PointerEvent) => {
+      latest = Math.round(Math.max(MIN_ROLL_HEIGHT, Math.min(MAX_ROLL_HEIGHT, startHeight + (move.clientY - startY) / zoom)));
+      setDraftHeights((prev) => ({ ...prev, [section]: latest }));
+    };
+    const onUp = () => {
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      handle.removeEventListener("pointercancel", onUp);
+      const current = editor.getShape(shapeId);
+      if (current && latest !== startHeight) {
+        const heights = { ...heightsFromMeta(current.meta), [section]: latest };
+        editor.run(() => editor.updateShape({ id: shapeId, type: current.type, meta: { ...current.meta, [HEIGHTS_META_KEY]: heights } }), { history: "ignore" });
+      }
+      setDraftHeights((prev) => {
+        const next = { ...prev };
+        delete next[section];
+        return next;
+      });
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+    handle.addEventListener("pointercancel", onUp);
+  };
   const playheadColor = recording.recording === "free" ? PLAYHEAD_COLORS.rec : runtime.mode === "run" ? PLAYHEAD_COLORS.run : PLAYHEAD_COLORS.play;
   usePlayhead(shapeId, runtime.mode !== "idle" || recording.listening !== null, playheadColor, playheadRolls, sourceRollRef);
   const selectedIdsRef = useRef<string[]>([]);
@@ -662,6 +718,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
             onToggle={() => updateProps({ showSource: !props.showSource })}
             extra={bank ? undefined : "no bank"}
             toolsRef={setSourceToolbar}
+            onResizeStart={bank ? startRollResize("source") : undefined}
           >
             {bank ? (
               <div onKeyDownCapture={onSourceKeyDown}>
@@ -671,7 +728,8 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                   onNotesChange={onSourceNotesChange}
                   loopLength={bank.loopLength}
                   width={stageWidth}
-                  height={SOURCE_STAGE_HEIGHT}
+                  height={rollHeight("source")}
+                  pitchLabels={pitchLabels}
                   interactive
                   showControlPanel
                   toolbarTarget={sourceToolbar}
@@ -698,6 +756,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
             open={props.showGenerated}
             onToggle={() => updateProps({ showGenerated: !props.showGenerated })}
             extra={runtime.generated ? `${runtime.generated.notes.length} notes · ${runtime.played.length} played` : undefined}
+            onResizeStart={runtime.generated ? startRollResize("generated") : undefined}
           >
             {runtime.generated ? (
               <PianoRoll
@@ -705,7 +764,8 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 notes={runtime.generated.notes as PianoRollNote[]}
                 loopLength={runtime.generated.loopLength}
                 width={stageWidth}
-                height={OUTPUT_STAGE_HEIGHT}
+                height={rollHeight("generated")}
+                pitchLabels={pitchLabels}
                 interactive={false}
                 showControlPanel={false}
                 ghostNotes={played}
@@ -723,6 +783,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
             open={props.showPreview}
             onToggle={() => updateProps({ showPreview: !props.showPreview })}
             extra={runtime.preview ? `${runtime.preview.notes.length} notes` : undefined}
+            onResizeStart={runtime.preview ? startRollResize("preview") : undefined}
             tools={
               <Button
                 icon="regenerate"
@@ -740,7 +801,8 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 notes={runtime.preview.notes as PianoRollNote[]}
                 loopLength={runtime.preview.loopLength}
                 width={stageWidth}
-                height={OUTPUT_STAGE_HEIGHT}
+                height={rollHeight("preview")}
+                pitchLabels={pitchLabels}
                 interactive={false}
                 showControlPanel={false}
                 noteBadge={noteBadge}
@@ -795,6 +857,7 @@ function Section({
   extra,
   tools,
   toolsRef,
+  onResizeStart,
   children,
 }: {
   title: string;
@@ -805,6 +868,8 @@ function Section({
   tools?: React.ReactNode;
   /** Header slot a roll renders its tool row into (only while open). */
   toolsRef?: (el: HTMLElement | null) => void;
+  /** Drag bar along the bottom edge that resizes the section's roll. */
+  onResizeStart?: (event: React.PointerEvent<HTMLDivElement>) => void;
   children: React.ReactNode;
 }) {
   return (
@@ -821,6 +886,9 @@ function Section({
         </span>
       </div>
       {open ? <div className="runner-section__body">{children}</div> : null}
+      {open && onResizeStart ? (
+        <div className="runner-section__resize" data-control title="drag to resize the roll" onPointerDown={onResizeStart} />
+      ) : null}
     </section>
   );
 }

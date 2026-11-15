@@ -7,7 +7,7 @@
 import { laneGeometries, laneRange, laneValueToY, noteAreaHeight } from './lanes'
 import { scalePitchClasses } from './scale'
 import type { PianoRollState } from './state'
-import { midiPitchToString } from './utils'
+import { pitchLabel } from './utils'
 
 /** Column width in CSS px: labels on the left, keys on the right. */
 export const GUTTER_WIDTH = 50
@@ -79,7 +79,7 @@ export function drawGutter(state: PianoRollState, canvas: HTMLCanvasElement | nu
     }
     if (showLabels && (pitchClass === 0 || pitch === hoverPitch)) {
       ctx.fillStyle = pitch === hoverPitch ? LABEL_HOVER : LABEL
-      ctx.fillText(midiPitchToString(pitch), 3, y + noteHeight / 2)
+      ctx.fillText(pitchLabel(pitch, state.grid.pitchLabels), 3, y + noteHeight / 2)
     }
   }
   ctx.restore()

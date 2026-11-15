@@ -225,7 +225,7 @@ assert.equal(await page.locator(".pr-expression-menu").count(), 1, "menu opens")
 assert.equal(await page.evaluate(() => document.querySelectorAll("[data-radix-menu-content], .tlui-menu").length), 0, "no tldraw context menu");
 await page.screenshot({ path: `${OUT}/lanes-menu.png` });
 await page.locator(".pr-expression-menu .ui-chooser__option", { hasText: "Edit Value" }).click();
-await page.keyboard.press("Control+a");
+await page.keyboard.press("ControlOrMeta+a");
 await page.keyboard.type("42");
 await page.keyboard.press("Enter");
 await sleep(120);
@@ -244,7 +244,7 @@ assert.equal((await note("n2")).mpePitch.points[0].rooted, true, "Root from the 
 await page.mouse.click(pitchP.x, pitchP.y, { button: "right" });
 await sleep(120);
 await page.locator(".pr-expression-menu .ui-chooser__option", { hasText: "Edit Value" }).click();
-await page.keyboard.press("Control+a");
+await page.keyboard.press("ControlOrMeta+a");
 await page.keyboard.type("+2.73 st");
 await page.keyboard.press("Enter");
 await sleep(100);
@@ -256,7 +256,7 @@ const vP = await at(6, laneY(0, (await note("n3")).velocity));
 await page.mouse.click(vP.x, vP.y, { button: "right" });
 await sleep(120);
 await page.locator(".pr-expression-menu .ui-chooser__option", { hasText: "Edit Value" }).click();
-await page.keyboard.press("Control+a");
+await page.keyboard.press("ControlOrMeta+a");
 await page.keyboard.type("33");
 await page.keyboard.press("Enter");
 await sleep(100);

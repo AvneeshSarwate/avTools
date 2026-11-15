@@ -14,7 +14,7 @@ import {
   applySnapToNoteStart,
   getGridUnitWidth,
   getGridUnitBeats,
-  midiPitchToString
+  pitchLabel
 } from './utils'
 import { CommandStack, type CommandStackChange } from './commandStack'
 import { getMaxLength, getNoteAreaHeight } from './viewport'
@@ -30,6 +30,7 @@ import {
   expressionPointerDown,
   expressionPointerMove,
   expressionPointerUp,
+  setGridNoteHover,
   startVelocityDragFromNote
 } from './expression'
 
@@ -575,7 +576,7 @@ function drawNotes(state: PianoRollState, ctx: CanvasRenderingContext2D) {
     if (!showText) return
     setAlpha(opacity)
     const textFill = labelColor(fill)
-    const label = midiPitchToString(note.pitch)
+    const label = pitchLabel(note.pitch, state.grid.pitchLabels)
     setFont(LABEL_FONT)
     ctx.fillStyle = textFill
     ctx.fillText(label, x + 4, y + 2 + LABEL_FONT_SIZE / 2)
@@ -1128,7 +1129,12 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
     if (!pos) return
     if (expressionPointerMove(state, stage, e.evt as MouseEvent | undefined)) return
     const gesture = state.interaction.isDragging || state.interaction.isResizing || state.interaction.isDrawing || state.interaction.isMarqueeSelecting
-    if (!gesture) expressionHover(state, pos)
+    if (!gesture) {
+      expressionHover(state, pos)
+      // The hover label follows the note while it is dragged, so it keeps the id then
+      const found = pos.y < noteAreaHeight(state) ? hitTest(state, pos) : null
+      setGridNoteHover(state, found?.kind === 'note' ? found.noteId : null)
+    }
     if (
       lastDownPos &&
       (state.interaction.isDragging || state.interaction.isResizing || state.interaction.isDrawing || state.interaction.isMarqueeSelecting) &&
@@ -1186,7 +1192,10 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
   })
 
   // Mouse up
-  stage.on('mouseleave', () => expressionHover(state, null))
+  stage.on('mouseleave', () => {
+    expressionHover(state, null)
+    if (!state.interaction.isDragging) setGridNoteHover(state, null)
+  })
 
   // Right-click: Edit Value on breakpoints and velocity markers (the host
   // wrapper keeps the browser's and tldraw's menus out of the roll)

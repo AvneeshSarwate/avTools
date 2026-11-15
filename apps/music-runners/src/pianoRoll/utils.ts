@@ -333,6 +333,18 @@ export function midiPitchToString(pitch: number): string {
   return pitchStrings[pitch % 12] + (Math.floor(pitch / 12) - 2)
 }
 
+/** How pitches are labelled: note names (C3 = 60) or MIDI numbers. */
+export type PitchLabelMode = 'name' | 'midi'
+
+export function pitchLabel(pitch: number, mode: PitchLabelMode): string {
+  return mode === 'midi' ? String(pitch) : midiPitchToString(pitch)
+}
+
+/** The other form, for the hover label: the MIDI number when notes show names, and back. */
+export function alternatePitchLabel(pitch: number, mode: PitchLabelMode): string {
+  return mode === 'midi' ? midiPitchToString(pitch) : `MIDI ${pitch}`
+}
+
 /** Deep clone a note so emitted arrays never alias internal state. */
 export function cloneNote(note: NoteData): NoteData {
   return JSON.parse(JSON.stringify(note)) as NoteData

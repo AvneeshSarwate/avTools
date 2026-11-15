@@ -31,6 +31,8 @@ export interface ProjectFile {
   version: 1;
   name: string;
   bpm: number;
+  /** Note labels: names or MIDI numbers (missing: names). */
+  pitchLabels?: "name" | "midi";
   banks: Bank[];
   canvas: TLEditorSnapshot | null;
   savedAt: number;

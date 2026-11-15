@@ -19,6 +19,7 @@
 // note, values are semitones (pitch) or 0..127 (lanes), the shapes
 // `mpePitch` / `mpePressure` / `mpeTimbre` use.
 import type Konva from 'konva'
+import { alternatePitchLabel } from './utils'
 import { captureState, mutateSelection } from './core'
 import {
   areaAt,
@@ -290,7 +291,22 @@ function tooltipTarget(state: PianoRollState): { x: number; y: number; text: str
     return { x: x0 + hover.time * w, y: valueY(state, hover.area, note, hover.value, geometryFor(state, hover.area)), text: formatExpressionValue(hover.area, hover.value) }
   }
   if (state.expression.mode === 'notes' && state.expression.hoverNoteId) return velocityTip(state.expression.hoverNoteId)
+  // A note in the grid: its pitch in the other form (MIDI number or name),
+  // anchored to the note so it follows a drag
+  const gridNote = state.expression.hoverGridNoteId ? state.notes.get(state.expression.hoverGridNoteId) : undefined
+  if (gridNote) {
+    const x = column(state, gridNote).x0
+    const y = (127 - gridNote.pitch) * state.grid.noteHeight - state.viewport.scrollY
+    return { x: x - 10, y: y + 6, text: alternatePitchLabel(gridNote.pitch, state.grid.pitchLabels) }
+  }
   return null
+}
+
+/** The note under the pointer in the grid (core.ts sets it on hover). */
+export function setGridNoteHover(state: PianoRollState, noteId: string | null) {
+  if (state.expression.hoverGridNoteId === noteId) return
+  state.expression.hoverGridNoteId = noteId
+  state.dirty.notes = true
 }
 
 function drawLane(state: PianoRollState, ctx: CanvasRenderingContext2D, geometry: LaneGeometry, width: number) {

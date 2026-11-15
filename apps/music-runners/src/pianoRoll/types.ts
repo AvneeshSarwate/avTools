@@ -144,6 +144,11 @@ export interface PianoRollProps {
    */
   onKeyboardNote?: (pitch: number, on: boolean) => void;
   /**
+   * Label notes and keyboard rows with note names ("C3" = 60, the default) or
+   * MIDI numbers; hovering a note shows the other form.
+   */
+  pitchLabels?: 'name' | 'midi';
+  /**
    * Render the control panel into this element (a host's section header)
    * instead of above the stage. Null while the host element is not mounted.
    */

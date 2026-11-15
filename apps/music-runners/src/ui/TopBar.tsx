@@ -7,12 +7,14 @@ import { ensureMidi, midiStore, panicAllOutputs, refreshOutputs } from "../store
 import { useSnapshot } from "valtio";
 import { playbackStore, startRun, stopAll } from "../store/playback";
 import { listProjects, projectStore, saveProject, switchProject } from "../store/project";
-import { Button, Chooser, Field, Lamp, NumberBox, TextField } from "./controls/controls";
+import { Button, Chooser, Field, Lamp, NumberBox, TextField, Toggle } from "./controls/controls";
+import { displayStore, setPitchLabels } from "../store/display";
 
 export function TopBar({ editor }: { editor: Editor | null }) {
   const clock = useSnapshot(clockStore);
   const midi = useSnapshot(midiStore);
   const project = useSnapshot(projectStore);
+  const display = useSnapshot(displayStore);
   const playback = useSnapshot(playbackStore);
   const activeCount = Object.values(playback.instances).filter((runtime) => runtime.mode !== "idle").length;
 
@@ -59,6 +61,11 @@ export function TopBar({ editor }: { editor: Editor | null }) {
 
       <span className="ui-spacer" />
 
+      <div className="ui-group">
+        <span className="ui-caption">notes</span>
+        <Toggle label="Name" on={display.pitchLabels === "name"} onChange={() => setPitchLabels("name")} title="label notes and keys with note names (C3 = 60); hover shows the MIDI number" />
+        <Toggle label="MIDI" on={display.pitchLabels === "midi"} onChange={() => setPitchLabels("midi")} title="label notes and keys with MIDI numbers; hover shows the note name" />
+      </div>
       <div className="ui-group">
         <Field label="bpm">
           <NumberBox value={clock.bpm} min={20} max={400} step={0.01} format={(value) => value.toFixed(2)} width={58} onChange={setBpm} title="tempo of the shared clock" />

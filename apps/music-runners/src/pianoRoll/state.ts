@@ -112,6 +112,8 @@ export interface PianoRollState {
     loopLength: number
     /** Row shading: root rows lighter, out-of-scale rows darker. */
     scale: PianoRollScale
+    /** Note and keyboard labels: note names or MIDI numbers. */
+    pitchLabels: 'name' | 'midi'
     snapToGrid: boolean
     /** Click-drag on the background draws a note instead of a marquee. */
     drawMode: boolean
@@ -249,6 +251,8 @@ export interface PianoRollState {
     hoverNoteId: string | null
     /** MPE-mode hover target (point, line or segment). */
     hover: ExpressionHover | null
+    /** The note under the pointer in the grid: its label shows the other pitch form. */
+    hoverGridNoteId: string | null
   }
 
   /** The keyboard column beside the grid (gutter.ts). */
@@ -293,6 +297,7 @@ export const createPianoRollState = (): PianoRollState => {
       timeSignature: DEFAULT_TIME_SIGNATURE,
       loopLength: DEFAULT_LOOP_LENGTH,
       scale: DEFAULT_SCALE,
+      pitchLabels: 'name',
       snapToGrid: true,
       drawMode: false,
       backgroundColor1: '#262626',
@@ -389,7 +394,8 @@ export const createPianoRollState = (): PianoRollState => {
       range: null,
       drag: null,
       hoverNoteId: null,
-      hover: null
+      hover: null,
+      hoverGridNoteId: null
     },
 
     keyboard: { pressedPitch: null, hoverPitch: null },

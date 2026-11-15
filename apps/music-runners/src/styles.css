@@ -220,3 +220,26 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 .connection-label.is-duplicate { border-style: dashed; border-color: var(--c-text-faint); opacity: 0.75; }
 .connection-label__dup { font-size: 9.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--c-text-faint); padding-right: 4px; }
 .connection-label__none { color: var(--c-text-faint); padding: 0 6px; }
+
+/* Drag bar under a section's roll: resizes the roll vertically. */
+.runner-section__resize {
+  height: 6px;
+  margin-top: -3px;
+  cursor: ns-resize;
+  background: transparent;
+  border-top: 1px solid transparent;
+  position: relative;
+}
+.runner-section__resize::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  width: 28px;
+  height: 2px;
+  margin-left: -14px;
+  border-radius: 1px;
+  background: var(--c-surface-5);
+}
+.runner-section__resize:hover { background: var(--c-surface-3); }
+.runner-section__resize:hover::after { background: var(--c-text-dim); }
