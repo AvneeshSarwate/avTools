@@ -203,6 +203,11 @@ of Live 12):
   on pitch points. The roll keeps the browser's and tldraw's menus out.
 - **Lane bar** under the lanes: which lanes show, the lane's tools, and the
   note count.
+- **Auditioning**: clicking or drawing a note plays it. Moving notes replays
+  the whole moved set at its new pitches (each pitch row a drag crosses, each
+  arrow up/down), pressing a note of a multi-note selection plays the group,
+  and a marquee plays notes as it reaches them (a note that leaves and comes
+  back plays again). At most 12 notes sound at once, one per pitch.
 - **Pitch labels**: the top bar's **Name / MIDI** switch labels notes and
   keyboard rows with note names (C3 = 60) or MIDI numbers, in every roll; it
   is saved with the project (`pitchLabels`). Hovering a note shows the other
@@ -353,6 +358,8 @@ demo.html + demo/           standalone piano roll demo and its Playwright checks
 - Connections without a device: `demo/connections.e2e.mjs` (same setup as
   the recording check below).
 - Velocity lane, keyboard column and MPE editing: `demo/lanes.e2e.mjs`
+  (same setup).
+- Auditioning moved notes and marquee selections: `demo/audition.e2e.mjs`
   (same setup).
 - Cmd-A scoping, focus, and the output rolls' view tools:
   `demo/focus-and-views.e2e.mjs` (same setup).

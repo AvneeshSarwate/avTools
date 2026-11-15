@@ -116,6 +116,29 @@ function resolveNoteFill(state: PianoRollState, note: NoteData, fallback: string
   return noteFillColor(note.metadata, fallback)
 }
 
+/** At most this many notes are auditioned at once (a big marquee or selection). */
+const MAX_PREVIEW_NOTES = 12
+
+/**
+ * Audition several notes together (a moved selection, notes a marquee just
+ * reached). One per pitch, capped, lowest first so a big set stays a chord.
+ */
+export function previewNotes(state: PianoRollState, notes: Iterable<NoteData>) {
+  const byPitch = new Map<number, NoteData>()
+  for (const note of notes) if (!byPitch.has(note.pitch)) byPitch.set(note.pitch, note)
+  const chord = [...byPitch.values()].sort((a, b) => a.pitch - b.pitch).slice(0, MAX_PREVIEW_NOTES)
+  for (const note of chord) previewNote(state, note)
+}
+
+function selectedNotes(state: PianoRollState): NoteData[] {
+  const out: NoteData[] = []
+  for (const id of state.selection.selectedIds) {
+    const note = state.notes.get(id)
+    if (note) out.push(note)
+  }
+  return out
+}
+
 function previewNote(state: PianoRollState, note: NoteData) {
   state.hooks.onNotePreview?.({ pitch: note.pitch, velocity: note.velocity })
 }
@@ -1090,8 +1113,13 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
         }
       })
 
+      // Pressing a note of a selection (the start of a group move) plays the
+      // group; a single note plays alone
       const clicked = state.notes.get(noteId)
-      if (clicked && state.selection.selectedIds.has(noteId)) previewNote(state, clicked)
+      if (clicked && state.selection.selectedIds.has(noteId)) {
+        if (isSelected && !isShift && state.selection.selectedIds.size > 1) previewNotes(state, selectedNotes(state))
+        else previewNote(state, clicked)
+      }
 
       // Start drag for selected notes
       startNoteDrag(state, stage, noteId)
@@ -1176,6 +1204,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
       }
 
       const intersecting = getNotesInRect(state, rect)
+      const before = new Set(state.selection.selectedIds)
 
       mutateSelection(state, () => {
         if (state.interaction.marqueeIsShift) {
@@ -1186,6 +1215,15 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
         }
         intersecting.forEach((id) => state.selection.selectedIds.add(id))
       })
+
+      // Notes the marquee just reached play (passing through notes plays them)
+      const reached: NoteData[] = []
+      for (const id of intersecting) {
+        if (before.has(id)) continue
+        const note = state.notes.get(id)
+        if (note) reached.push(note)
+      }
+      if (reached.length > 0) previewNotes(state, reached)
 
       state.dirty.notes = true
     }
@@ -1340,11 +1378,16 @@ function updateNoteDrag(state: PianoRollState, stage: Konva.Stage) {
   // Apply snap-to-note-start
   if (state.grid.snapToGrid) applySnapToNoteStart(state)
 
-  // Audition the primary note once per pitch row it crosses
+  // Replay every moved note each time the set crosses a pitch row
   const primary = state.interaction.dragPrimaryId ? state.notes.get(state.interaction.dragPrimaryId) : undefined
   if (primary && primary.pitch !== state.interaction.dragPreviewPitch) {
     state.interaction.dragPreviewPitch = primary.pitch
-    previewNote(state, primary)
+    const moved: NoteData[] = []
+    for (const id of state.interaction.draggedNoteInitialStates.keys()) {
+      const note = state.notes.get(id)
+      if (note) moved.push(note)
+    }
+    previewNotes(state, moved)
   }
 
   // Overlap detection & preview

@@ -1,5 +1,6 @@
 import type { PianoRollState, NoteData } from './state'
 import { uid } from './utils'
+import { previewNotes } from './core'
 import { clearPointSelection, deleteSelectedPoints, selectAllInContext, toggleRootedSelected } from './expression'
 
 export interface KeyboardControllerOptions {
@@ -122,6 +123,11 @@ export const createKeyboardController = ({
         executeOverlapChanges(state, state.selection.selectedIds)
         state.needsRedraw = true
       })
+
+      // Moving the selection up or down replays it at the new pitches
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        previewNotes(state, Array.from(state.selection.selectedIds, (id) => state.notes.get(id)).filter((note): note is NoteData => !!note))
+      }
 
       updateCommandStackButtons()
       return
