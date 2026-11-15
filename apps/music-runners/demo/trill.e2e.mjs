@@ -53,7 +53,8 @@ const ctx = await page.evaluate(async () => {
 await sleep(600);
 // Tag t0 as a trill trigger through the tag editor and type "3 4 5"
 await page.evaluate(() => window.__musicRunners.sourceRollHandles.get(window.__a).selectNotes(["t0"]));
-const shapeA = page.locator(".runner-shape").first();
+// By name: the two instances' order in the DOM is not fixed
+const shapeA = page.locator(".runner-shape", { has: page.locator(".runner-shape__name", { hasText: "Variants" }) });
 await shapeA.locator(".pr-metadata-toggle").click();
 await sleep(150);
 await shapeA.locator(".tag-chip", { hasText: "trill trigger" }).click();

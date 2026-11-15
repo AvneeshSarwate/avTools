@@ -84,7 +84,7 @@ function FieldInput({ tag, field, selected, applyMetadata }: { tag: TagSpec; fie
 
   if (field.kind === "boolean") {
     return (
-      <span className="tag-field">
+      <span className="tag-field tag-field--boolean">
         <Toggle label={field.label} on={!mixed && Boolean(value)} mixed={mixed} onChange={(on) => setField(on)} />
       </span>
     );
@@ -138,8 +138,11 @@ function NumberField({
 
 export function TagEditor({ def, selected, applyMetadata }: TagEditorProps) {
   if (selected.length === 0) return <div className="tag-editor tag-editor--empty">select notes to tag them</div>;
+  // One grid for every tag: chip, then a label column and an input column per
+  // field, so the same field position lines up across tags.
+  const fieldColumns = Math.max(1, ...def.tags.map((tag) => tag.fields.length));
   return (
-    <div className="tag-editor">
+    <div className="tag-editor" style={{ "--tag-field-columns": fieldColumns } as React.CSSProperties}>
       {def.tags.map((tag) => {
         const count = selected.filter((note) => tagValue(note, tag.key) !== undefined).length;
         const state = count === 0 ? "none" : count === selected.length ? "all" : "some";

@@ -794,6 +794,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                   onSelectionChange={onSelectionChange}
                   onNotePreview={onNotePreview}
                   renderMetadataPanel={renderMetadataPanel}
+                  rawMetadataEditor={false}
                   initialView={sourceViewRef.current ?? undefined}
                   onViewChange={onSourceViewChange}
                 />

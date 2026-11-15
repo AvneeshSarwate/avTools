@@ -154,6 +154,11 @@ export interface PianoRollProps {
    */
   navigable?: boolean;
   /**
+   * Show the raw JSON metadata tree under the host's metadata panel (default
+   * true). Hosts with a structured editor can hide it.
+   */
+  rawMetadataEditor?: boolean;
+  /**
    * Render the control panel into this element (a host's section header)
    * instead of above the stage. Null while the host element is not mounted.
    */

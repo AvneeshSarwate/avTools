@@ -166,19 +166,12 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 .runner-section__placeholder { height: 26px; display: flex; align-items: center; justify-content: center; color: var(--c-text-faint); background: var(--c-surface-1); border: 1px dashed var(--c-line-soft); }
 
 /* Tag editor (inside the piano roll metadata panel) */
-.tag-editor { display: flex; flex-direction: column; gap: 4px; padding: 2px 0; }
-.tag-editor--empty { color: var(--c-text-faint); padding: 2px 0; }
-.tag-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .tag-chip { font: inherit; height: var(--h-control); display: inline-flex; gap: 6px; align-items: center; padding: 0 7px; border: 1px solid var(--c-line); border-left: 4px solid var(--tag-color, var(--c-text-dim)); border-radius: var(--radius); background: var(--c-surface-4); color: var(--c-text); cursor: pointer; }
 .tag-chip:hover { background: var(--c-surface-5); }
 .tag-row--all .tag-chip { background: var(--tag-color, var(--c-text)); color: var(--c-on-tone); font-weight: 600; }
 .tag-row--some .tag-chip { background: linear-gradient(135deg, color-mix(in srgb, var(--tag-color, #888) 55%, transparent) 0 50%, var(--c-surface-4) 50% 100%); }
 .tag-chip kbd { font: inherit; font-size: 9px; padding: 0 3px; border: 1px solid currentColor; border-radius: 2px; opacity: 0.7; }
 .tag-chip small { color: inherit; opacity: 0.8; }
-.tag-fields { display: flex; flex-wrap: wrap; gap: 4px 10px; }
-.tag-field .ui-text { width: 120px; }
-.tag-field .ui-number { width: 56px; }
-.tag-field { display: inline-flex; align-items: center; gap: 5px; }
 
 /* ---------- connections (src/ui/ConnectionLayer.tsx) ---------- */
 
@@ -246,3 +239,22 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 
 /* View tools in the Generated / Preview headers: Follow, zoom, fit. */
 .runner-section__view-tools { display: inline-flex; align-items: center; gap: 1px; margin-right: 6px; }
+
+/* Tag editor (inside the piano roll metadata panel): one grid for all tags,
+   chip | label | input | label | input ..., so a field's label and entry sit
+   in the same columns on every row. Rows and field wrappers only group. */
+.tag-editor {
+  display: grid;
+  grid-template-columns: max-content repeat(var(--tag-field-columns, 1), max-content 112px);
+  justify-content: start;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 2px 0;
+}
+.tag-editor--empty { display: block; color: var(--c-text-faint); }
+.tag-row, .tag-fields, .tag-field, .tag-fields .ui-field { display: contents; }
+.tag-chip { grid-column: 1; justify-self: stretch; }
+.tag-fields .ui-field__label { padding-left: 6px; }
+.tag-fields .ui-text, .tag-fields .ui-number { width: 100%; }
+.tag-field--boolean { display: block; grid-column: span 2; }
+.tag-fields .ui-number { justify-content: flex-start; }

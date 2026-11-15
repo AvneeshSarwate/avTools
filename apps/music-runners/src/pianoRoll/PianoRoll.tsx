@@ -114,7 +114,8 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     onScaleChange,
     expressionLanes,
     pitchLabels = 'name',
-    navigable: navigableProp
+    navigable: navigableProp,
+    rawMetadataEditor = true
   } = props
   const navigable = navigableProp ?? interactive
   // Lanes and the Notes/MPE switch belong to an editable roll with tools.
@@ -864,7 +865,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
           {selectedForPanel.length > 0 && renderMetadataPanel
             ? renderMetadataPanel({ selected: selectedForPanel, applyMetadata: controllers.applyMetadata })
             : null}
-          <MetadataTree documents={metadataDocuments} onApply={controllers.applyMetadataPlan} />
+          {rawMetadataEditor ? <MetadataTree documents={metadataDocuments} onApply={controllers.applyMetadataPlan} /> : null}
         </div>
       )}
     </div>
