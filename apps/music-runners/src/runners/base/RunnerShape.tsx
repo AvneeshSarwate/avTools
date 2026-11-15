@@ -56,8 +56,8 @@ import { Icon } from "../../ui/controls/icons";
 
 /** Shape border (1px each side) around the content. */
 const SHAPE_BORDER = 2;
-/** Section body padding (8px each side, styles.css), keyboard column and its gap, roll border, scrollbar gap and vertical scrollbar. */
-const ROLL_CHROME_WIDTH = 8 * 2 + GUTTER_WIDTH + LAYOUT_GAP + 2 + LAYOUT_GAP + SCROLLBAR_THICKNESS;
+/** Section body padding (10.5px each side, styles.css), keyboard column and its gap, roll border, scrollbar gap and vertical scrollbar. */
+const ROLL_CHROME_WIDTH = 10.5 * 2 + GUTTER_WIDTH + LAYOUT_GAP + 2 + LAYOUT_GAP + SCROLLBAR_THICKNESS;
 /** Playhead colours: the play / run / rec tokens in styles.css. */
 const PLAYHEAD_COLORS = { play: "#62d26f", run: "#ffab3d", rec: "#ff4f4f" } as const;
 /** Default grid heights per section; each is resizable from the section's bottom edge. */
@@ -636,7 +636,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
               perPixel={0.25}
               format={(value) => (Number.isInteger(value) ? String(value) : value.toFixed(2))}
               disabled={!bank}
-              width={60}
+              width={78}
               onChange={(value) => bank && setBankLoopLength(bank.id, value)}
             />
           </Field>
@@ -723,7 +723,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 title="MPE out: each note on its own channel (2-16) with its recorded pitch bend, pressure and timbre (CC74)"
               />
               <Field label="bend" title="semitones at full pitch bend, for recording and MPE output (48 is the MPE default, ordinary keyboards are usually 2)">
-                <NumberBox className="runner-shape__bend" value={bendRange} min={1} max={96} step={1} width={44} onChange={(value) => updateProps({ bendRange: value })} />
+                <NumberBox className="runner-shape__bend" value={bendRange} min={1} max={96} step={1} width={57} onChange={(value) => updateProps({ bendRange: value })} />
               </Field>
               <Toggle
                 label="Root"
@@ -739,7 +739,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 max={50}
                 step={1}
                 unit="¢"
-                width={49}
+                width={64}
                 disabled={!(props.autoRoot ?? DEFAULT_ROOT_PROPS.autoRoot)}
                 title="auto-root tolerance: cents either side of a semitone"
                 onChange={(value) => updateProps({ rootToleranceCents: value })}

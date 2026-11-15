@@ -74,25 +74,25 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
    labels, also on the canvas) set their own, 30% up from that, so text that
    inherits (chooser values, number fields, param labels, status) scales with
    the controls */
-.runner-shape, .connection-layer { font-size: 15.5px; }
+.runner-shape, .connection-layer { font-size: 20px; }
 
 /* Title bar: identity and the bank (the instance's "clip"), then state. */
 .runner-shape__title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 36.5px;
-  padding: 0 8px 0 5px;
+  gap: 10.5px;
+  height: 47.5px;
+  padding: 0 10.5px 0 6.5px;
   background: var(--c-surface-1);
   border-bottom: 1px solid var(--c-line);
   cursor: move;
 }
 .runner-shape__title [data-control] { cursor: default; }
 .runner-shape__title .ui-number { cursor: ns-resize; }
-.runner-shape__title .ui-chooser { max-width: 260px; }
+.runner-shape__title .ui-chooser { max-width: 338px; }
 .runner-shape__grip { color: var(--c-text-faint); display: inline-flex; }
-.runner-shape__name { font-size: 15.5px; font-weight: 700; margin-right: 5px; white-space: nowrap; }
-.runner-shape__mode { display: inline-flex; align-items: center; gap: 6.5px; color: var(--c-text-dim); white-space: nowrap; }
+.runner-shape__name { font-size: 20px; font-weight: 700; margin-right: 6.5px; white-space: nowrap; }
+.runner-shape__mode { display: inline-flex; align-items: center; gap: 8.5px; color: var(--c-text-dim); white-space: nowrap; }
 .runner-shape__mode--play { color: var(--c-play); }
 .runner-shape__mode--run { color: var(--c-run); }
 
@@ -100,26 +100,26 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 .runner-shape__strip {
   display: flex;
   align-items: center;
-  height: 39px;
-  padding: 0 8px;
+  height: 50.5px;
+  padding: 0 10.5px;
   border-bottom: 1px solid var(--c-line);
   overflow: hidden;
 }
 .runner-shape__strip .ui-group { flex: none; }
 .runner-shape__strip .ui-group--io { flex: 1 1 0; min-width: 0; }
 .runner-shape__strip .ui-group--io { min-width: min-content; }
-.runner-shape__strip .ui-group--io .ui-chooser { flex: 1 1 0; max-width: 234px; min-width: 78px; }
+.runner-shape__strip .ui-group--io .ui-chooser { flex: 1 1 0; max-width: 304px; min-width: 101.5px; }
 
 /* Params: the only region whose size depends on the runner. Wraps on a grid. */
 .runner-shape__params {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(221px, 1fr));
-  gap: 5px 18px;
-  padding: 8px 10.5px;
+  grid-template-columns: repeat(auto-fill, minmax(287.5px, 1fr));
+  gap: 6.5px 23.5px;
+  padding: 10.5px 13.5px;
   background: var(--c-surface-1);
   border-bottom: 1px solid var(--c-line);
 }
-.runner-shape__param { display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: 8px; }
+.runner-shape__param { display: grid; grid-template-columns: 125px 1fr; align-items: center; gap: 10.5px; }
 /* Param labels are runner-defined text: sentence case, so long names fit. */
 .runner-shape__param-label { color: var(--c-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .runner-shape__param .ui-number { width: 100%; }
@@ -128,9 +128,9 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 .runner-shape__status {
   display: flex;
   align-items: center;
-  gap: 18px;
-  height: 26px;
-  padding: 0 10.5px;
+  gap: 23.5px;
+  height: 34px;
+  padding: 0 13.5px;
   color: var(--c-text-faint);
   background: var(--c-surface-1);
   border-top: 1px solid var(--c-line);
@@ -142,25 +142,25 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 .runner-shape__status-rec { color: var(--c-rec); }
 .runner-shape__status-event, .runner-shape__status-log { color: var(--c-text-dim); }
 
-.runner-shape__empty { padding: 18px; color: var(--c-text-faint); text-align: center; }
+.runner-shape__empty { padding: 23.5px; color: var(--c-text-faint); text-align: center; }
 
 /* Sections: a header row (title, stats, the section's own tools) over a roll. */
 .runner-section + .runner-section { border-top: 1px solid var(--c-line); }
 .runner-section__header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 34px;
-  padding: 0 5px 0 2.5px;
+  gap: 10.5px;
+  height: 44px;
+  padding: 0 6.5px 0 3px;
   background: var(--c-surface-3);
   overflow: hidden;
 }
 .runner-section__toggle {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6.5px;
   height: 100%;
-  padding: 0 5px;
+  padding: 0 6.5px;
   border: none;
   background: none;
   color: var(--c-text-dim);
@@ -169,18 +169,18 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
   flex: none;
 }
 .runner-section__toggle:hover .runner-section__title { color: var(--c-text); }
-.runner-section__title { font-size: 13px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--c-text-dim); }
+.runner-section__title { font-size: 17px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--c-text-dim); }
 .runner-section__extra { color: var(--c-text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .runner-section__tools { margin-left: auto; display: flex; align-items: center; min-width: 0; flex: none; }
-.runner-section__body { padding: 5px 8px 8px; background: var(--c-surface-2); }
-.runner-section__placeholder { height: 34px; display: flex; align-items: center; justify-content: center; color: var(--c-text-faint); background: var(--c-surface-1); border: 1px dashed var(--c-line-soft); }
+.runner-section__body { padding: 6.5px 10.5px 10.5px; background: var(--c-surface-2); }
+.runner-section__placeholder { height: 44px; display: flex; align-items: center; justify-content: center; color: var(--c-text-faint); background: var(--c-surface-1); border: 1px dashed var(--c-line-soft); }
 
 /* Tag editor (inside the piano roll metadata panel) */
-.tag-chip { font: inherit; height: var(--h-control); display: inline-flex; gap: 8px; align-items: center; padding: 0 9px; border: 1px solid var(--c-line); border-left: 4px solid var(--tag-color, var(--c-text-dim)); border-radius: var(--radius); background: var(--c-surface-4); color: var(--c-text); cursor: pointer; }
+.tag-chip { font: inherit; height: var(--h-control); display: inline-flex; gap: 10.5px; align-items: center; padding: 0 11.5px; border: 1px solid var(--c-line); border-left: 4px solid var(--tag-color, var(--c-text-dim)); border-radius: var(--radius); background: var(--c-surface-4); color: var(--c-text); cursor: pointer; }
 .tag-chip:hover { background: var(--c-surface-5); }
 .tag-row--all .tag-chip { background: var(--tag-color, var(--c-text)); color: var(--c-on-tone); font-weight: 600; }
 .tag-row--some .tag-chip { background: linear-gradient(135deg, color-mix(in srgb, var(--tag-color, #888) 55%, transparent) 0 50%, var(--c-surface-4) 50% 100%); }
-.tag-chip kbd { font: inherit; font-size: 11.5px; padding: 0 4px; border: 1px solid currentColor; border-radius: 2px; opacity: 0.7; }
+.tag-chip kbd { font: inherit; font-size: 15px; padding: 0 5px; border: 1px solid currentColor; border-radius: 2px; opacity: 0.7; }
 .tag-chip small { color: inherit; opacity: 0.8; }
 
 /* ---------- connections (src/ui/ConnectionLayer.tsx) ---------- */
@@ -205,8 +205,8 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
   top: 0;
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 2.5px;
+  gap: 6.5px;
+  padding: 3px;
   pointer-events: all;
   background: var(--c-surface-2);
   border: 1px solid var(--c-line);
@@ -214,19 +214,19 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
   white-space: nowrap;
 }
-.connection-label .ui-chooser { min-width: 83px; }
+.connection-label .ui-chooser { min-width: 108px; }
 .connection-label.is-pulsing { animation: connection-label-flash 420ms ease-out; }
 @keyframes connection-label-flash {
   0% { background: var(--c-text); box-shadow: 0 0 12px rgba(255, 255, 255, 0.7); }
   100% { background: var(--c-surface-2); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4); }
 }
 .connection-label.is-duplicate { border-style: dashed; border-color: var(--c-text-faint); opacity: 0.75; }
-.connection-label__dup { font-size: 12.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--c-text-faint); padding-right: 5px; }
-.connection-label__none { color: var(--c-text-faint); padding: 0 8px; }
+.connection-label__dup { font-size: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--c-text-faint); padding-right: 6.5px; }
+.connection-label__none { color: var(--c-text-faint); padding: 0 10.5px; }
 
 /* Drag bar under a section's roll: resizes the roll vertically. */
 .runner-section__resize {
-  height: 8px;
+  height: 10.5px;
   margin-top: -3px;
   cursor: ns-resize;
   background: transparent;
@@ -237,9 +237,9 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
   content: "";
   position: absolute;
   left: 50%;
-  top: 2.5px;
-  width: 36.5px;
-  height: 2.5px;
+  top: 3px;
+  width: 47.5px;
+  height: 3px;
   transform: translateX(-50%);
   border-radius: 1px;
   background: var(--c-surface-5);
@@ -248,23 +248,46 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 .runner-section__resize:hover::after { background: var(--c-text-dim); }
 
 /* View tools in the Generated / Preview headers: Follow, zoom, fit. */
-.runner-section__view-tools { display: inline-flex; align-items: center; gap: 1px; margin-right: 8px; }
+.runner-section__view-tools { display: inline-flex; align-items: center; gap: 1px; margin-right: 10.5px; }
 
 /* Tag editor (inside the piano roll metadata panel): one grid for all tags,
    chip | label | input | label | input ..., so a field's label and entry sit
    in the same columns on every row. Rows and field wrappers only group. */
 .tag-editor {
   display: grid;
-  grid-template-columns: max-content repeat(var(--tag-field-columns, 1), max-content 145.5px);
+  grid-template-columns: max-content repeat(var(--tag-field-columns, 1), max-content 189px);
   justify-content: start;
   align-items: center;
-  gap: 5px 10.5px;
-  padding: 2.5px 0;
+  gap: 6.5px 13.5px;
+  padding: 3px 0;
 }
 .tag-editor--empty { display: block; color: var(--c-text-faint); }
 .tag-row, .tag-fields, .tag-field, .tag-fields .ui-field { display: contents; }
 .tag-chip { grid-column: 1; justify-self: stretch; }
-.tag-fields .ui-field__label { padding-left: 8px; }
+.tag-fields .ui-field__label { padding-left: 10.5px; }
 .tag-fields .ui-text, .tag-fields .ui-number { width: 100%; }
 .tag-field--boolean { display: block; grid-column: span 2; }
 .tag-fields .ui-number { justify-content: flex-start; }
+
+/* Controls inside instances (and connection labels), 30% larger again than
+   the app's: they live in the zoomable canvas, usually seen at around half
+   zoom. The control kit's base sizes (controls.css) stay for the top bar and
+   sidebar; these override them in the canvas only. */
+.runner-shape, .connection-layer { --h-control: 34px; --h-row: 40px; }
+.runner-shape :is(.ui-button, .ui-toggle, .ui-chooser), .connection-layer .ui-chooser { padding: 0 11.5px; gap: 8.5px; }
+.runner-shape :is(.ui-button, .ui-toggle).is-icon { padding: 0; }
+.runner-shape .ui-button__label { font-size: 17px; }
+.runner-shape :is(.ui-caption, .ui-field__label), .connection-layer .connection-label__dup { font-size: 16px; }
+.runner-shape .ui-number { min-width: 61px; padding: 0 10.5px; }
+.runner-shape .ui-text { padding: 0 10.5px; }
+.runner-shape .ui-icon, .connection-layer .ui-icon { width: 21px; height: 21px; }
+.runner-shape .ui-lamp { width: 12px; height: 12px; }
+.runner-shape .ui-group { gap: 5px; padding: 0 13px; }
+.runner-shape .ui-field { gap: 8.5px; }
+
+/* At this size the control strip and the Source tool row can be wider than
+   an instance: they wrap onto a second line instead of being cut off. */
+.runner-shape__strip { flex-wrap: wrap; height: auto; min-height: 50.5px; row-gap: 6px; padding-top: 8px; padding-bottom: 8px; }
+.runner-section__header { flex-wrap: wrap; height: auto; min-height: 44px; row-gap: 4px; }
+.runner-section__tools { flex-wrap: wrap; justify-content: flex-end; }
+.runner-section__tools .pr-control-panel { flex-wrap: wrap; row-gap: 4px; justify-content: flex-end; }

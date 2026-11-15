@@ -75,14 +75,14 @@ function ScaleControls({ scale, onChange }: { scale: PianoRollScale; onChange: (
         title="Scale root: root rows are lighter, out-of-scale rows darker"
         value={String(((scale.root % 12) + 12) % 12)}
         options={ROOT_OPTIONS}
-        width={86}
+        width={112}
         onChange={(value) => onChange(withRootPitchClass(scale, Number(value)))}
       />
       <TextField
         className={'pr-scale-degrees' + (invalid ? ' is-invalid' : '')}
         title="Scale degrees: semitones above the root from 0, octave last (ionian: 0 2 4 5 7 9 11 12). Enter to apply."
         value={draft}
-        width={153}
+        width={199}
         onChange={setDraft}
         onCommit={commit}
         onCancel={() => setDraft(text)}
@@ -133,7 +133,7 @@ export function ControlPanel(props: ControlPanelProps) {
           value={String(props.subdivision)}
           options={GRID_OPTIONS}
           disabled={!interactive}
-          width={83}
+          width={108}
           onChange={(value) => props.onSubdivisionChange(Number(value))}
         />
         <Toggle
