@@ -1,9 +1,7 @@
-// The runner sidebar and loading a version 1 (bank-based) project. Serves
-// projects/default/project.json as project "zz_sidebar" (never written: PUTs
-// are captured), then checks that every instance got its own clip and its
-// bank's name, and drives the sidebar: + per runner type, Play/Run/Stop and
-// the row state, click to reveal, double-click to rename. With the dev
-// server up:
+// The runner sidebar. Serves projects/default/project.json as project
+// "zz_sidebar" (never written: PUTs are captured), then drives the sidebar:
+// one row per instance, + per runner type, Play/Run/Stop and the row state,
+// click to reveal, double-click to rename. With the dev server up:
 //   NODE_PATH=$(npm root -g) node demo/sidebar.e2e.mjs [screenshot dir]
 // Set PW_CHROMIUM_PATH when that Playwright has no browser of its own.
 import { createRequire } from "node:module";
@@ -16,19 +14,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const SHOTS = process.argv[2];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// A version 1 file: banks shared by reference. Make one bank shared by two
-// instances so the split into two clips (and the numbered name) is covered.
-const legacy = JSON.parse(await readFile(path.join(here, "../projects/default/project.json"), "utf8"));
-if (legacy.version !== 1) {
-  console.log("projects/default is no longer a version 1 file; using a built-in sample");
-}
-const store = legacy.canvas.document.store;
-const runnerShapes = Object.values(store).filter((r) => r.typeName === "shape" && r.type.startsWith("runner-"));
-assert.equal(legacy.version, 1, "this check needs a version 1 file");
-const banks = new Map(legacy.banks.map((b) => [b.id, b]));
-const sharedFrom = runnerShapes.find((r) => banks.get(r.props.bankId)?.notes.length);
-const sharedTo = runnerShapes.find((r) => r !== sharedFrom && r.type === sharedFrom.type);
-if (sharedTo) sharedTo.props.bankId = sharedFrom.props.bankId;
+const project = JSON.parse(await readFile(path.join(here, "../projects/default/project.json"), "utf8"));
+const runnerShapes = Object.values(project.canvas.document.store).filter((r) => r.typeName === "shape" && r.type.startsWith("runner-"));
 
 const browser = await chromium.launch(process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : {});
 const page = await browser.newPage({ viewport: { width: 1500, height: 950 } });
@@ -54,40 +41,21 @@ await page.route("**/api/projects/zz_sidebar", (r) => {
     saved.push(JSON.parse(r.request().postData()));
     return r.fulfill({ status: 200, body: "{}" });
   }
-  return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...legacy, name: "zz_sidebar" }) });
+  return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...project, name: "zz_sidebar" }) });
 });
 await page.goto("http://localhost:5190/?project=zz_sidebar");
 await page.waitForFunction(() => window.__musicRunners?.editor && window.__musicRunners.stores.projectStore.status !== "loading");
 await sleep(800);
 
-// --- version 1 conversion
+// --- every instance has its clip
 const loaded = await page.evaluate(() => {
   const mr = window.__musicRunners;
   return mr.editor.store.allRecords().filter((r) => r.typeName === "shape" && r.type.startsWith("runner-")).map((r) => ({
-    id: r.id, name: r.props.name, hasBankId: "bankId" in r.props, owner: r.meta.clipOwner,
-    clip: JSON.parse(JSON.stringify(mr.stores.clipsStore.clips[r.id] ?? null)),
+    id: r.id, name: r.props.name, clip: JSON.parse(JSON.stringify(mr.stores.clipsStore.clips[r.id] ?? null)),
   }));
 });
-console.log("loaded", JSON.stringify(loaded.map(({ clip, ...rest }) => ({ ...rest, notes: clip?.notes.length }))));
 assert.equal(loaded.length, runnerShapes.length);
-for (const shape of loaded) {
-  const raw = runnerShapes.find((r) => r.id === shape.id);
-  const bank = banks.get(raw.props.bankId);
-  assert.ok(!shape.hasBankId, "bankId is migrated away");
-  assert.equal(shape.owner, shape.id);
-  assert.ok(shape.clip, "every instance has a clip");
-  assert.equal(shape.clip.notes.length, bank?.notes.length ?? 0, "the clip holds its bank's notes");
-  assert.equal(shape.clip.loopLength, bank?.loopLength ?? 16);
-}
-assert.equal(new Set(loaded.map((s) => s.name)).size, loaded.length, "names are unique");
-if (sharedTo) {
-  const a = loaded.find((s) => s.id === sharedFrom.id), b = loaded.find((s) => s.id === sharedTo.id);
-  assert.equal(a.name, banks.get(sharedFrom.props.bankId).name);
-  assert.notEqual(b.name, a.name, "a second user of a shared bank gets its own name");
-  assert.doesNotMatch(b.name, /\d+ \d+$/, "numbered like a duplicate, not suffixed twice");
-  await page.evaluate((id) => window.__musicRunners.clips.setClipNotes(id, []), b.id);
-  assert.equal(await page.evaluate((id) => window.__musicRunners.stores.clipsStore.clips[id].notes.length, a.id), a.clip.notes.length, "a shared bank became two independent clips");
-}
+for (const shape of loaded) assert.deepEqual(shape.clip, project.clips[shape.id], "the clip loads as saved");
 
 // --- sidebar rows match the canvas
 const rowCount = await page.locator(".runner-row[data-shape-id]").count();
@@ -165,12 +133,10 @@ await sleep(200);
 assert.equal(await page.evaluate((id) => window.__musicRunners.editor.getShape(id).props.name, playing.id), "lead line");
 assert.equal(await page.locator(".runner-shape__instance-name").evaluateAll((els) => els.some((el) => el.value === "lead line")), true, "title bar shows the new name");
 
-// --- saving writes version 2: clips by shape id, no banks
+// --- saving writes one clip per instance
 await page.evaluate(() => window.__musicRunners.project.saveProject());
 await sleep(300);
 const file = saved[saved.length - 1];
-assert.equal(file.version, 2);
-assert.ok(!("banks" in file));
 const savedRunnerIds = Object.values(file.canvas.document.store).filter((r) => r.typeName === "shape" && r.type.startsWith("runner-")).map((r) => r.id).sort();
 assert.deepEqual(Object.keys(file.clips).sort(), savedRunnerIds, "one clip per instance");
 if (SHOTS) {

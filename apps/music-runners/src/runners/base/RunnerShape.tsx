@@ -4,8 +4,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BaseBoxShapeUtil,
-  createShapePropsMigrationIds,
-  createShapePropsMigrationSequence,
   HTMLContainer,
   type RecordProps,
   T,
@@ -15,7 +13,6 @@ import {
 import { PianoRoll } from "../../pianoRoll/PianoRoll";
 import type { GhostNote, MetadataPanelProps, PianoRollHandle, PianoRollNote, PianoRollScale, PianoRollView } from "../../pianoRoll/types";
 import { clipsStore, setClipLoopLength, setClipNotes, setClipScale } from "../../store/clips";
-import { DEFAULT_SCALE } from "../../pianoRoll/scale";
 import { displayStore } from "../../store/display";
 import { GUTTER_WIDTH } from "../../pianoRoll/gutter";
 import { LAYOUT_GAP, SCROLLBAR_THICKNESS } from "../../pianoRoll/constants";
@@ -50,7 +47,7 @@ import { sourceRollHandles } from "../../store/rollHandles";
 import { runnerShapeType } from "../registry";
 import { defaultParams, numberParam, type ParamValue, type Params, type RunnerDefinition, scaleParam, tagValue } from "../runnerTypes";
 import { ScaleControls } from "../../pianoRoll/ControlPanel";
-import { DEFAULT_INPUT_PROPS, DEFAULT_ROOT_PROPS, DEFAULT_INSTANCE_HEIGHT, DEFAULT_INSTANCE_WIDTH, type RunnerInstanceProps } from "./instanceProps";
+import { defaultInstanceProps, type RunnerInstanceProps } from "./instanceProps";
 import { TagEditor, toggleTag } from "./TagEditor";
 import { Button, Chooser, Field, Lamp, NumberBox, TextField, Toggle } from "../../ui/controls/controls";
 import { Icon } from "../../ui/controls/icons";
@@ -104,47 +101,8 @@ export function defineRunnerShape(def: RunnerDefinition) {
     return <RunnerInstanceView shape={shape} def={def} />;
   }
 
-  const versions = createShapePropsMigrationIds(type, { AddLiveInput: 1, AddAutoRoot: 2, ClipPerInstance: 3 });
-  const migrations = createShapePropsMigrationSequence({
-    sequence: [
-      {
-        id: versions.AddLiveInput,
-        up(props: Record<string, unknown>) {
-          for (const [key, value] of Object.entries(DEFAULT_INPUT_PROPS)) props[key] ??= value;
-        },
-        down(props: Record<string, unknown>) {
-          for (const key of Object.keys(DEFAULT_INPUT_PROPS)) delete props[key];
-        },
-      },
-      {
-        id: versions.AddAutoRoot,
-        up(props: Record<string, unknown>) {
-          for (const [key, value] of Object.entries(DEFAULT_ROOT_PROPS)) props[key] ??= value;
-        },
-        down(props: Record<string, unknown>) {
-          for (const key of Object.keys(DEFAULT_ROOT_PROPS)) delete props[key];
-        },
-      },
-      {
-        // Banks are gone: each instance owns its clip (src/store/clips.ts).
-        // Loading a version 1 project moves each bank's notes and name onto
-        // the instances that used it before this runs (src/store/project.ts).
-        id: versions.ClipPerInstance,
-        up(props: Record<string, unknown>) {
-          delete props.bankId;
-          if (typeof props.name !== "string") props.name = "";
-        },
-        down(props: Record<string, unknown>) {
-          delete props.name;
-          props.bankId = "";
-        },
-      },
-    ],
-  });
-
   class RunnerShapeUtil extends BaseBoxShapeUtil<TLBaseBoxShape> {
     static override type = type as TLBaseBoxShape["type"];
-    static override migrations = migrations;
     static override props = {
       w: T.number,
       h: T.number,
@@ -182,21 +140,7 @@ export function defineRunnerShape(def: RunnerDefinition) {
     }
 
     override getDefaultProps(): TLBaseBoxShape["props"] {
-      const props: RunnerInstanceProps = {
-        w: DEFAULT_INSTANCE_WIDTH,
-        h: DEFAULT_INSTANCE_HEIGHT,
-        runnerType: def.type,
-        name: "",
-        midiOutputName: "",
-        ...DEFAULT_INPUT_PROPS,
-        ...DEFAULT_ROOT_PROPS,
-        params: defaultParams(def),
-        queued: false,
-        showSource: true,
-        showGenerated: true,
-        showPreview: false,
-      };
-      return props as unknown as TLBaseBoxShape["props"];
+      return defaultInstanceProps(def) as unknown as TLBaseBoxShape["props"];
     }
 
     override component(shape: TLBaseBoxShape) {
@@ -261,7 +205,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
   const props = shape.props;
   // Snapshots: this view re-renders only for its clip, instance runtime, MIDI
   // and event-log fields it reads, not for other instances' activity.
-  const clip = useSnapshot(clipsStore).clips[shapeId] as Clip | undefined;
+  const clip = useSnapshot(clipsStore).clips[shapeId] as Clip;
   const runtime = (useSnapshot(playbackStore).instances[shapeId] ?? EMPTY_RUNTIME) as InstanceRuntime;
   const midi = useSnapshot(midiStore);
   const eventLog = useSnapshot(eventLogStore).byShape[shapeId] ?? EMPTY_LOG;
@@ -408,10 +352,8 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
 
   // Frame the source roll when it has no saved view yet (new instance or the
   // first notes arriving); otherwise restore the saved view.
-  const hasClip = clip !== undefined;
-  const hasNotes = (clip?.notes.length ?? 0) > 0;
+  const hasNotes = clip.notes.length > 0;
   useEffect(() => {
-    if (!hasClip) return;
     afterLayout(() => {
       const roll = sourceRollRef.current;
       if (!roll) return;
@@ -423,7 +365,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
       }
       followSourceView();
     });
-  }, [hasClip, hasNotes, props.showSource, followSourceView]);
+  }, [hasNotes, props.showSource, followSourceView]);
 
   const generatedLoop = runtime.generated;
   const previewLoop = runtime.preview;
@@ -451,7 +393,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
 
   // The live input follows the shape prop once MIDI is ready, and closes
   // (ending any take) when the shape goes away.
-  const midiInputName = props.midiInputName ?? "";
+  const midiInputName = props.midiInputName;
   useEffect(() => {
     if (midi.status === "ready") void setInstanceInput(shapeId, midiInputName);
   }, [midi.status, midiInputName, shapeId]);
@@ -476,11 +418,10 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
   if (props.midiOutputName && !outputNames.includes(props.midiOutputName)) outputNames.unshift(props.midiOutputName);
   const inputNames = midi.inputs.map((port) => port.name);
   if (midiInputName && !inputNames.includes(midiInputName)) inputNames.unshift(midiInputName);
-  const bendRange = props.bendRange ?? DEFAULT_INPUT_PROPS.bendRange;
 
   const stageWidth = Math.max(320, Math.round(props.w - SHAPE_BORDER - ROLL_CHROME_WIDTH));
 
-  const sourceGhosts = useMemo<GhostNote[]>(() => (clip && def.sourceGhostNotes ? def.sourceGhostNotes(clip, params) : EMPTY_GHOSTS), [clip, def, params]);
+  const sourceGhosts = useMemo<GhostNote[]>(() => (def.sourceGhostNotes ? def.sourceGhostNotes(clip, params) : EMPTY_GHOSTS), [clip, def, params]);
   const noteBadge = useCallback(
     (note: PianoRollNote) => {
       const badges = def.tags.filter((tag) => tagValue(note, tag.key) !== undefined).map((tag) => tag.badge ?? tag.label.slice(0, 1).toUpperCase());
@@ -517,7 +458,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     (note: { pitch: number; velocity: number }) => auditionNote(shapeId, note.pitch, note.velocity),
     [shapeId],
   );
-  const scale = (clip?.scale ?? DEFAULT_SCALE) as PianoRollScale;
+  const scale = clip.scale as PianoRollScale;
   const onScaleChange = useCallback((next: PianoRollScale) => setClipScale(shapeId, next), [shapeId]);
   const onKeyboardNote = useCallback(
     (pitch: number, on: boolean) => (on ? keyboardKeyDown(shapeId, pitch) : keyboardKeyUp(shapeId)),
@@ -640,13 +581,12 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
           <Field label="loop" title="loop length in beats (notes past it stay in the clip)">
             <NumberBox
               className="runner-shape__loop-length"
-              value={clip ? clip.loopLength : null}
+              value={clip.loopLength}
               min={0.25}
               max={256}
               step={0.25}
               perPixel={0.25}
               format={(value) => (Number.isInteger(value) ? String(value) : value.toFixed(2))}
-              disabled={!clip}
               width={78}
               onChange={(value) => setClipLoopLength(shapeId, value)}
             />
@@ -673,7 +613,6 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 label="Play"
                 tone="play"
                 active={runtime.mode === "play"}
-                disabled={!clip}
                 onClick={() => runtime.mode !== "play" && startPlay(shapeId)}
                 title="play the clip verbatim, looping"
               />
@@ -683,7 +622,6 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 tone="run"
                 className="runner-shape__run"
                 active={runtime.mode === "run"}
-                disabled={!clip}
                 onClick={() => runtime.mode !== "run" && startRun(shapeId)}
                 title="run the runner's algorithm, looping"
               />
@@ -694,7 +632,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 tone="rec"
                 className="runner-shape__rec"
                 active={Boolean(recordingKind)}
-                disabled={!clip || (!recordingKind && recording.listening === null)}
+                disabled={!recordingKind && recording.listening === null}
                 onClick={() => (recordingKind ? stopRecording(shapeId) : startRecording(shapeId))}
                 title="record from the MIDI input · playing: overdub at the loop position · idle with notes: start Play and overdub · empty clip: free take, loop length set on stop"
               />
@@ -734,24 +672,24 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 title="MPE out: each note on its own channel (2-16) with its recorded pitch bend, pressure and timbre (CC74)"
               />
               <Field label="bend" title="semitones at full pitch bend, for recording and MPE output (48 is the MPE default, ordinary keyboards are usually 2)">
-                <NumberBox className="runner-shape__bend" value={bendRange} min={1} max={96} step={1} width={57} onChange={(value) => updateProps({ bendRange: value })} />
+                <NumberBox className="runner-shape__bend" value={props.bendRange} min={1} max={96} step={1} width={57} onChange={(value) => updateProps({ bendRange: value })} />
               </Field>
               <Toggle
                 label="Root"
                 className="runner-shape__auto-root"
-                on={props.autoRoot ?? DEFAULT_ROOT_PROPS.autoRoot}
+                on={props.autoRoot}
                 onChange={(on) => updateProps({ autoRoot: on })}
                 title="auto-root: recorded pitch-curve points within the tolerance of a semitone are marked rooted (scale-aware transposition moves them with the scale; chromatic transpose ignores it). Filled dots on the roll."
               />
               <NumberBox
                 className="runner-shape__root-tolerance"
-                value={props.rootToleranceCents ?? DEFAULT_ROOT_PROPS.rootToleranceCents}
+                value={props.rootToleranceCents}
                 min={1}
                 max={50}
                 step={1}
                 unit="¢"
                 width={64}
-                disabled={!(props.autoRoot ?? DEFAULT_ROOT_PROPS.autoRoot)}
+                disabled={!(props.autoRoot)}
                 title="auto-root tolerance: cents either side of a semitone"
                 onChange={(value) => updateProps({ rootToleranceCents: value })}
               />
@@ -788,12 +726,10 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
             title="source"
             open={props.showSource}
             onToggle={() => updateProps({ showSource: !props.showSource })}
-            extra={clip ? undefined : "no clip"}
             toolsRef={setSourceToolbar}
-            onResizeStart={clip ? startRollResize("source") : undefined}
+            onResizeStart={startRollResize("source")}
           >
-            {clip ? (
-              <div onKeyDownCapture={onSourceKeyDown}>
+            <div onKeyDownCapture={onSourceKeyDown}>
                 <PianoRoll
                   ref={setSourceRollRef}
                   notes={clip.notes as PianoRollNote[]}
@@ -818,10 +754,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                   initialView={sourceViewRef.current ?? undefined}
                   onViewChange={onSourceViewChange}
                 />
-              </div>
-            ) : (
-              <div className="runner-shape__empty">This instance has no clip.</div>
-            )}
+            </div>
           </Section>
 
           <Section
@@ -868,7 +801,6 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 icon="regenerate"
                 label="Regenerate"
                 className="runner-shape__regenerate"
-                disabled={!clip}
                 onClick={onRegenerate}
                 title="dry-run the algorithm into the Preview roll"
               />

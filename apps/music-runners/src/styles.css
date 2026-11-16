@@ -153,7 +153,6 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 .runner-shape__status-rec { color: var(--c-rec); }
 .runner-shape__status-event, .runner-shape__status-log { color: var(--c-text-dim); }
 
-.runner-shape__empty { padding: 23.5px; color: var(--c-text-faint); text-align: center; }
 
 /* Sections: a header row (title, stats, the section's own tools) over a roll. */
 .runner-section + .runner-section { border-top: 1px solid var(--c-line); }

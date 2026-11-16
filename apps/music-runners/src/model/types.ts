@@ -13,17 +13,9 @@ export interface Clip {
   loopLength: number;
   /**
    * The clip's scale, in the shape `new Scale(degrees, root)` takes
-   * (packages/music-types). Shades the rolls; runners may read it. Missing
-   * means C major (DEFAULT_SCALE in src/pianoRoll/scale.ts).
+   * (packages/music-types). Shades the rolls; runners may read it.
    */
-  scale?: PianoRollScale;
-}
-
-/** Version 1 files kept notes in shared banks; loading converts them (src/store/project.ts). */
-export interface LegacyBank extends Clip {
-  id: string;
-  name: string;
-  runnerType: string;
+  scale: PianoRollScale;
 }
 
 /** What one runner instance sends to the instances its arrows point at. */
@@ -35,21 +27,14 @@ export interface RunnerEvent {
 }
 
 export interface ProjectFile {
-  version: 2;
   name: string;
   bpm: number;
-  /** Note labels: names or MIDI numbers (missing: names). */
-  pitchLabels?: "name" | "midi";
+  /** Note labels: names or MIDI numbers. */
+  pitchLabels: "name" | "midi";
   /** Each instance's clip, by shape id. */
   clips: Record<string, Clip>;
   canvas: TLEditorSnapshot | null;
   savedAt: number;
-}
-
-/** What a version 1 file adds (read only, converted on load). */
-export interface LegacyProjectFile extends Omit<ProjectFile, "version" | "clips"> {
-  version: 1;
-  banks?: LegacyBank[];
 }
 
 export const DEFAULT_LOOP_LENGTH = 16;

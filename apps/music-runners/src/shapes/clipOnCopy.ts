@@ -34,12 +34,12 @@ export function installClipCopyRules(editor: Editor): () => void {
     const isCopy = typeof owner === "string" && owner !== shape.id;
     if (!getClip(shape.id)) {
       const source = (snapshot as Clip | undefined) ?? (typeof owner === "string" ? getClip(owner) : undefined);
-      setClip(shape.id, source ?? {});
+      setClip(shape.id, source);
     }
     let props = shape.props;
     if (isCopy) {
       // A duplicate's name is taken by its original; a cut-and-paste keeps its own.
-      const current = (props as unknown as RunnerInstanceProps).name || "runner";
+      const current = (props as unknown as RunnerInstanceProps).name;
       const name = isNameTaken(editor, current, namedThisBatch) ? nextInstanceName(editor, current, { copy: true, extra: namedThisBatch }) : current;
       namedThisBatch.add(name);
       if (!clearQueued) {

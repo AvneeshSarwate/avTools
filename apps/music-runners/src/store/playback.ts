@@ -18,6 +18,7 @@ import {
   type RunnerDefinition,
 } from "../runners/runnerTypes";
 import { getClip } from "./clips";
+import type { RunnerInstanceProps } from "../runners/base/instanceProps";
 import { getRootContext, nowBeats } from "./clock";
 import { getEditor } from "./editorRef";
 import { emitEvent, onEvent } from "./events";
@@ -102,30 +103,10 @@ interface ActiveRun {
 
 const activeRuns = new Map<string, ActiveRun>();
 
-/** What the shape stores; read live so slider moves land mid-run. */
-export interface InstanceProps {
-  runnerType: string;
-  midiOutputName: string;
-  params: Params;
-  /** Each note on its own member channel with its expression (MPE lower zone). */
-  mpe: boolean;
-  /** Semitones at full pitch bend, for recorded input and MPE output. */
-  bendRange: number;
-}
-
-function readInstanceProps(shapeId: string): InstanceProps | null {
-  const editor = getEditor();
-  const shape = editor?.getShape(shapeId as TLShapeId);
-  if (!shape) return null;
-  const props = shape.props as Partial<InstanceProps>;
-  if (typeof props.runnerType !== "string") return null;
-  return {
-    runnerType: props.runnerType,
-    midiOutputName: props.midiOutputName ?? "",
-    params: props.params ?? {},
-    mpe: props.mpe ?? false,
-    bendRange: props.bendRange ?? DEFAULT_BEND_RANGE,
-  };
+/** The shape's props, read live so slider moves land mid-run. */
+function readInstanceProps(shapeId: string): RunnerInstanceProps | null {
+  const shape = getEditor()?.getShape(shapeId as TLShapeId);
+  return shape ? (shape.props as unknown as RunnerInstanceProps) : null;
 }
 
 function liveParams(shapeId: string, def: RunnerDefinition): Params {
@@ -303,11 +284,7 @@ function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outpu
   return {
     ctx,
     shapeId,
-    getClip: () => {
-      const clip = getClip(shapeId);
-      if (!clip) throw new Error("instance has no clip");
-      return clip;
-    },
+    getClip: () => getClip(shapeId)!,
     getParams: () => liveParams(shapeId, def),
     random: () => ctx.random(),
     async playLoop(loop: LoopNotes, options: PlayLoopOptions = {}) {
@@ -360,10 +337,6 @@ async function launch(shapeId: string, mode: Exclude<InstanceMode, "idle">): Pro
   const props = readInstanceProps(shapeId);
   if (!props) return;
   const def = getRunner(props.runnerType);
-  if (!getClip(shapeId)) {
-    patchRuntime(shapeId, { error: "instance has no clip" });
-    return;
-  }
   const output = await getOutput(props.midiOutputName);
   if (!output) {
     patchRuntime(shapeId, { error: props.midiOutputName ? `MIDI output "${props.midiOutputName}" not found` : "no MIDI output selected" });
@@ -439,9 +412,7 @@ export function regenerate(shapeId: string): void {
   const props = readInstanceProps(shapeId);
   if (!props) return;
   const def = getRunner(props.runnerType);
-  const clip = getClip(shapeId);
-  if (!clip) return;
-  const preview = def.generate(clip, Math.random, liveParams(shapeId, def));
+  const preview = def.generate(getClip(shapeId)!, Math.random, liveParams(shapeId, def));
   patchRuntime(shapeId, { preview });
 }
 

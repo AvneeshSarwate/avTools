@@ -2,6 +2,7 @@ import { proxy } from "valtio";
 import { type Clip, DEFAULT_LOOP_LENGTH } from "../model/types";
 import type { PianoRollNote, PianoRollScale } from "../pianoRoll/types";
 import { cloneNote } from "../pianoRoll/utils";
+import { DEFAULT_SCALE } from "../pianoRoll/scale";
 
 // Each runner instance owns one clip, keyed by its shape id. The clips live
 // here rather than in the shape's props so note edits stay on the roll's own
@@ -21,17 +22,21 @@ export function getClip(shapeId: string): Clip | undefined {
 }
 
 /** A plain deep copy (live store data is a proxy, which structuredClone rejects). */
-export function copyClip(source: Partial<Clip>): Clip {
+export function copyClip(source: Clip): Clip {
   return {
-    notes: (source.notes ?? []).map((note) => cloneNote(note)),
-    loopLength: source.loopLength ?? DEFAULT_LOOP_LENGTH,
-    ...(source.scale ? { scale: { root: source.scale.root, degrees: [...source.scale.degrees] } } : {}),
+    notes: source.notes.map((note) => cloneNote(note)),
+    loopLength: source.loopLength,
+    scale: { root: source.scale.root, degrees: [...source.scale.degrees] },
   };
 }
 
-/** Give `shapeId` a clip (a copy of `init`, or empty) and return the live record. */
-export function setClip(shapeId: string, init: Partial<Clip> = {}): Clip {
-  clipsStore.clips[shapeId] = copyClip(init);
+export function emptyClip(): Clip {
+  return { notes: [], loopLength: DEFAULT_LOOP_LENGTH, scale: DEFAULT_SCALE };
+}
+
+/** Give `shapeId` a copy of `clip` (or an empty clip) and return the live record. */
+export function setClip(shapeId: string, clip: Clip = emptyClip()): Clip {
+  clipsStore.clips[shapeId] = copyClip(clip);
   return clipsStore.clips[shapeId];
 }
 

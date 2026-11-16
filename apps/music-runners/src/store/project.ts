@@ -2,10 +2,10 @@
 // JSON file per project holds the tldraw snapshot, every instance's clip and
 // the bpm.
 import { type Editor, getSnapshot, loadSnapshot } from "tldraw";
-import { type Clip, DEFAULT_BPM, type LegacyProjectFile, type ProjectFile } from "../model/types";
+import { type Clip, DEFAULT_BPM, type ProjectFile } from "../model/types";
 import { proxy, subscribe } from "valtio";
-import { clipsStore, copyClip, replaceAllClips } from "./clips";
-import { CLIP_OWNER_META, isRunnerShapeType } from "../shapes";
+import { clipsStore, replaceAllClips } from "./clips";
+import { isRunnerShapeType } from "../shapes";
 import { clockStore, setBpm } from "./clock";
 import { displayStore, setPitchLabels } from "./display";
 
@@ -63,55 +63,17 @@ export async function loadProject(editor: Editor, name: string): Promise<void> {
       return;
     }
     if (!response.ok) throw new Error(`load failed: ${response.status}`);
-    const file = (await response.json()) as ProjectFile | LegacyProjectFile;
-    replaceAllClips(prepareCanvas(file));
-    setBpm(file.bpm ?? DEFAULT_BPM);
-    setPitchLabels(file.pitchLabels ?? "name");
+    const file = (await response.json()) as ProjectFile;
+    replaceAllClips(file.clips);
+    setBpm(file.bpm);
+    setPitchLabels(file.pitchLabels);
     if (file.canvas) loadSnapshot(editor.store, file.canvas);
-    patch({ status: "saved", lastSavedAt: file.savedAt ?? null });
+    patch({ status: "saved", lastSavedAt: file.savedAt });
   } catch (error) {
     patch({ status: "error", error: error instanceof Error ? error.message : String(error) });
   } finally {
     loading = false;
   }
-}
-
-interface RawShapeRecord {
-  id: string;
-  typeName: string;
-  type: string;
-  props: Record<string, unknown>;
-  meta?: Record<string, unknown>;
-}
-
-/**
- * Before the snapshot loads (tldraw runs no side effects while loading):
- * every instance gets a clip and its own id as clip owner. A version 1 file
- * kept notes in banks that several instances could share; each instance gets
- * its own copy of its bank's clip, and the bank's name as its name (numbered
- * when a bank was shared). The shape migration then drops `bankId`.
- */
-function prepareCanvas(file: ProjectFile | LegacyProjectFile): Record<string, Clip> {
-  const clips: Record<string, Clip> = file.version === 2 ? { ...file.clips } : {};
-  const banks = new Map(file.version === 2 ? [] : (file.banks ?? []).map((bank) => [bank.id, bank]));
-  const store = (file.canvas?.document?.store ?? {}) as unknown as Record<string, RawShapeRecord>;
-  const names = new Set<string>();
-  for (const record of Object.values(store)) {
-    if (record.typeName !== "shape" || !isRunnerShapeType(record.type)) continue;
-    record.meta = { ...record.meta, [CLIP_OWNER_META]: record.id };
-    if (file.version !== 2) {
-      const bank = banks.get(record.props.bankId as string);
-      clips[record.id] = copyClip(bank ?? {});
-      // Numbered like a duplicate when taken ("melody", "melody 2")
-      let name = bank?.name || String(record.props.runnerType ?? "runner");
-      const base = name.replace(/\s+\d+$/, "").trim() || name;
-      for (let n = 2; names.has(name); n += 1) name = `${base} ${n}`;
-      record.props.name = name;
-    }
-    if (typeof record.props.name === "string") names.add(record.props.name);
-    clips[record.id] ??= copyClip({});
-  }
-  return clips;
 }
 
 function buildFile(editor: Editor): ProjectFile {
@@ -123,7 +85,6 @@ function buildFile(editor: Editor): ProjectFile {
     if (clip) clips[id] = clip;
   }
   return {
-    version: 2,
     name: projectStore.name,
     bpm: clockStore.bpm,
     pitchLabels: displayStore.pitchLabels,

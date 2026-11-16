@@ -30,11 +30,10 @@ interface TrillTag {
   notes: number[];
 }
 
-/** The trill tag's fields; a bare `true` (an older flag) fires always with the receiver's count. */
+/** The trill tag's fields. */
 function readTrill(note: PianoRollNote): TrillTag | null {
   const value = tagValue(note, TRILL_TAG);
-  if (!value) return null;
-  if (value === true) return { probability: 1, notes: [] };
+  if (!value || value === true) return null;
   const probability = typeof value.probability === "number" ? value.probability : 1;
   const notes = Array.isArray(value.notes)
     ? value.notes.filter((n): n is number => typeof n === "number" && Number.isFinite(n) && n >= 1).map((n) => Math.round(n))

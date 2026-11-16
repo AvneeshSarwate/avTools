@@ -43,11 +43,8 @@ npm run type-check
 
 Projects are saved to `projects/<name>/project.json` by the dev server
 (`server/projectFiles.ts`): the tldraw snapshot, every instance's clip and
-the bpm, in one file. Version 1 files (from when notes lived in shared banks)
-still load: each instance gets its own copy of its bank's notes and the
-bank's name, and the next save writes version 2. Autosave runs about a
-second after any change; the top bar also has
-a save button, a project chooser and a "new project" field (`?project=<name>` in the
+the bpm, in one file. Autosave runs about a second after any change; the
+top bar also has a save button, a project chooser and a "new project" field (`?project=<name>` in the
 URL). Nothing is kept in browser storage.
 
 Web MIDI needs a user gesture in some browsers; the first click on the page
@@ -414,8 +411,8 @@ demo.html + demo/           standalone piano roll demo and its Playwright checks
   (same setup).
 - Duplicating, pasting and moving instances: `demo/duplicate.e2e.mjs`
   (same setup).
-- The sidebar (adding, transport state, reveal, rename) and loading a
-  version 1 project: `demo/sidebar.e2e.mjs` (same setup).
+- The sidebar (adding, transport state, reveal, rename):
+  `demo/sidebar.e2e.mjs` (same setup).
 - Note resizing from the edges: `demo/resize.e2e.mjs` (same setup).
 - Auditioning moved notes and marquee selections: `demo/audition.e2e.mjs`
   (same setup).

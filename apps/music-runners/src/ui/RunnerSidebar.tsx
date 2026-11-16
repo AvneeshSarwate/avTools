@@ -6,9 +6,9 @@ import { type Editor, type TLShapeId, useValue } from "tldraw";
 import { useSnapshot } from "valtio";
 import { Button, Lamp, TextField } from "./controls/controls";
 import { RUNNERS } from "../runners/registry";
-import type { RunnerDefinition } from "../runners/runnerTypes";
 import { createInstance, listInstances, revealInstance } from "../shapes";
 import { clipsStore } from "../store/clips";
+import type { Clip } from "../model/types";
 import { getRuntime, playbackStore, playheadBeats, startPlay, startRun, stopInstance } from "../store/playback";
 import { recordingStore } from "../store/recording";
 
@@ -67,7 +67,7 @@ export function RunnerSidebar({ editor }: { editor: Editor | null }) {
             </div>
             {instances.length === 0 ? <div className="runner-row runner-row--empty">none yet</div> : null}
             {instances.map((row) => (
-              <InstanceRowView key={row.id} editor={editor} def={def} row={row} selected={selected.has(row.id)} progressRef={progressBars(row.id)} />
+              <InstanceRowView key={row.id} editor={editor} row={row} selected={selected.has(row.id)} progressRef={progressBars(row.id)} />
             ))}
           </section>
         );
@@ -78,13 +78,11 @@ export function RunnerSidebar({ editor }: { editor: Editor | null }) {
 
 function InstanceRowView({
   editor,
-  def,
   row,
   selected,
   progressRef,
 }: {
   editor: Editor | null;
-  def: RunnerDefinition;
   row: InstanceRow;
   selected: boolean;
   progressRef: (el: HTMLDivElement | null) => void;
@@ -96,7 +94,7 @@ function InstanceRowView({
   const loopCount = runtime?.loopCount ?? 0;
   const error = runtime?.error ?? null;
   const recording = useSnapshot(recordingStore).byShape[row.id]?.recording ?? null;
-  const clip = useSnapshot(clipsStore).clips[row.id];
+  const clip = useSnapshot(clipsStore).clips[row.id] as Clip;
   const [draft, setDraft] = useState<string | null>(null);
 
   const state = recording ? "rec" : mode;
@@ -105,9 +103,7 @@ function InstanceRowView({
     ? "take"
     : recording || mode !== "idle"
       ? `loop ${loopCount}`
-      : clip
-        ? `${clip.notes.length}n · ${clip.loopLength}b`
-        : "";
+      : `${clip.notes.length}n · ${clip.loopLength}b`;
   const commitName = () => {
     const next = draft?.trim();
     const shape = editor?.getShape(row.id);
@@ -130,10 +126,10 @@ function InstanceRowView({
       ) : (
         <span
           className="runner-row__name"
-          title={`${row.name || def.type} · click to show it on the canvas, double-click to rename`}
+          title={`${row.name} · click to show it on the canvas, double-click to rename`}
           onDoubleClick={() => setDraft(row.name)}
         >
-          {row.name || def.type}
+          {row.name}
         </span>
       )}
       {draft !== null ? null : (
@@ -145,13 +141,13 @@ function InstanceRowView({
           ) : null}
           <span
             className={`runner-row__status${error ? " is-error" : ""}`}
-            title={error ?? `${recording ? "recording · " : mode !== "idle" ? `${mode} · ` : ""}${clip ? `${clip.notes.length} notes · loop ${clip.loopLength} beats` : ""}`}
+            title={error ?? `${recording ? "recording · " : mode !== "idle" ? `${mode} · ` : ""}${clip.notes.length} notes · loop ${clip.loopLength} beats`}
           >
             {error ? "error" : status}
           </span>
           <span className="runner-row__transport">
-            <Button icon="play" tone="play" quiet active={mode === "play"} disabled={!clip} title="Play: the clip verbatim, looping" onClick={() => mode !== "play" && startPlay(row.id)} />
-            <Button icon="run" tone="run" quiet active={mode === "run"} disabled={!clip} title="Run: the runner's algorithm, looping" onClick={() => mode !== "run" && startRun(row.id)} />
+            <Button icon="play" tone="play" quiet active={mode === "play"} title="Play: the clip verbatim, looping" onClick={() => mode !== "play" && startPlay(row.id)} />
+            <Button icon="run" tone="run" quiet active={mode === "run"} title="Run: the runner's algorithm, looping" onClick={() => mode !== "run" && startRun(row.id)} />
             <Button icon="stop" quiet disabled={mode === "idle"} title="stop" onClick={() => stopInstance(row.id)} />
           </span>
         </>

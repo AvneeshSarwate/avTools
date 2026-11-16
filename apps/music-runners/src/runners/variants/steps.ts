@@ -44,14 +44,6 @@ export function parseVariantSteps(text: string): { steps: VariantStep[]; invalid
   return { steps, invalid };
 }
 
-/** The shortest text for a step: "+2", "-1-", "+0+2". */
-export function formatVariantStep(degrees: number, semitones: number): string {
-  const head = `${degrees < 0 ? "-" : "+"}${Math.abs(degrees)}`;
-  if (semitones === 0) return head;
-  const sign = semitones < 0 ? "-" : "+";
-  return head + sign + (Math.abs(semitones) === 1 ? "" : String(Math.abs(semitones)));
-}
-
 const DEFAULT_SCALE: PianoRollScale = { root: 60, degrees: [0, 2, 4, 5, 7, 9, 11, 12] };
 
 function toScale(scale: PianoRollScale | undefined): Scale {
@@ -68,16 +60,4 @@ function degreeOf(scale: Scale, pitch: number): number {
 export function resolveVariantStep(pitch: number, step: VariantStep, scale: PianoRollScale | undefined): number {
   const s = toScale(scale);
   return clampPitch(s.getByIndex(degreeOf(s, pitch) + step.degrees) + step.semitones);
-}
-
-/**
- * The step that lands exactly on `target` from `pitch`: degrees to the
- * target's nearest scale note, plus the semitones left over. Used to migrate
- * absolute alternatives to steps.
- */
-export function stepToPitch(pitch: number, target: number, scale: PianoRollScale | undefined): string {
-  const s = toScale(scale);
-  const degrees = degreeOf(s, target) - degreeOf(s, pitch);
-  const semitones = target - s.getByIndex(degreeOf(s, pitch) + degrees);
-  return formatVariantStep(degrees, semitones);
 }

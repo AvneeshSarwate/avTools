@@ -2,9 +2,8 @@ import { type Editor, createShapeId, type TLShapeId } from "tldraw";
 import { setClip } from "../store/clips";
 import { defaultOutputName } from "../store/midi";
 import { defineRunnerShape } from "../runners/base/RunnerShape";
-import { DEFAULT_INPUT_PROPS, DEFAULT_ROOT_PROPS, DEFAULT_INSTANCE_HEIGHT, DEFAULT_INSTANCE_WIDTH, type RunnerInstanceProps } from "../runners/base/instanceProps";
+import { defaultInstanceProps, DEFAULT_INSTANCE_HEIGHT, DEFAULT_INSTANCE_WIDTH, type RunnerInstanceProps } from "../runners/base/instanceProps";
 import { getRunner, RUNNERS, runnerShapeType } from "../runners/registry";
-import { defaultParams } from "../runners/runnerTypes";
 
 export const RUNNER_SHAPE_UTILS = RUNNERS.map((def) => defineRunnerShape(def));
 export const RUNNER_SHAPE_TYPES = new Set(RUNNERS.map((def) => runnerShapeType(def.type)));
@@ -62,18 +61,9 @@ export function createInstance(editor: Editor, runnerType: string, at?: { x: num
   const x = at?.x ?? (last ? last.maxX + 40 : center.x - DEFAULT_INSTANCE_WIDTH / 2);
   const y = at?.y ?? (last ? last.minY : center.y - DEFAULT_INSTANCE_HEIGHT / 2);
   const props: RunnerInstanceProps = {
-    w: DEFAULT_INSTANCE_WIDTH,
-    h: DEFAULT_INSTANCE_HEIGHT,
-    runnerType,
+    ...defaultInstanceProps(def),
     name: nextInstanceName(editor, def.type),
     midiOutputName: defaultOutputName() ?? "",
-    ...DEFAULT_INPUT_PROPS,
-    ...DEFAULT_ROOT_PROPS,
-    params: defaultParams(def),
-    queued: false,
-    showSource: true,
-    showGenerated: true,
-    showPreview: false,
   };
   setClip(id);
   editor.createShape({ id, type: runnerShapeType(runnerType) as "geo", x, y, props: props as never, meta: { [CLIP_OWNER_META]: id } });

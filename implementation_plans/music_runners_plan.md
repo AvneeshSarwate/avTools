@@ -377,9 +377,12 @@ reuse. Decisions:
   meta, so a paste into another project brings the notes. Copies whose name
   is taken get the next number; a cut-and-paste keeps its name. Clips of
   deleted instances stay in memory for undo and are left out of the file.
-- **File format version 2**: `clips: Record<shapeId, Clip>`. Version 1 files
-  load by giving each instance a copy of its bank and the bank's name
-  (numbered when a bank was shared); shape migration step 3 drops `bankId`.
+- **No backwards compatibility**: this is a prototype, so the app reads only
+  the current file shape (`clips: Record<shapeId, Clip>`, no version field)
+  and the runner shapes have no tldraw props migrations (the earlier live
+  input and auto-root steps are gone too). `projects/default` was converted
+  once by a throwaway script. When a shape or file changes, convert the
+  checked-in projects the same way rather than adding load-time fallbacks.
 - **Sidebar** lists runner types with **+** (creation moved out of the top
   bar's chooser) and each type's instances with their transport state
   (lamp, loop count, a loop-progress bar written to the DOM on a timer,
@@ -388,7 +391,6 @@ reuse. Decisions:
 - Fixed on the way: switching an instance straight from Play to Run left it
   running but shown as idle (the cancelled run's late cleanup reset the new
   run's state).
-- Verified with `demo/duplicate.e2e.mjs`, `demo/sidebar.e2e.mjs` (loads the
-  version 1 `projects/default` through a route, never writes it) and the
-  existing e2e checks. `projects/default/project.json` is still version 1 on
-  disk; it converts on its next save.
+- Verified with `demo/duplicate.e2e.mjs`, `demo/sidebar.e2e.mjs` (loads
+  `projects/default` through a route, never writes it) and the existing e2e
+  checks.

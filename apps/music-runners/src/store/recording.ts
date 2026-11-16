@@ -25,7 +25,6 @@ import { newId } from "../model/types";
 import {
   bendToSemitones,
   DEFAULT_BEND_RANGE,
-  DEFAULT_ROOT_TOLERANCE_CENTS,
   ROOT_MIN_DWELL_SEC,
   rootCurve,
   MAX_PITCH_OFFSET,
@@ -36,8 +35,9 @@ import {
 } from "../model/mpe";
 import type { LiveInput, LiveInputKey, LiveInputNote, PianoRollNote } from "../pianoRoll/types";
 import { cloneNote } from "../pianoRoll/utils";
-import { clampPitch, numberParam, type Params } from "../runners/runnerTypes";
+import { clampPitch, numberParam } from "../runners/runnerTypes";
 import { getClip, setClipLoopLength, setClipNotes } from "./clips";
+import type { RunnerInstanceProps } from "../runners/base/instanceProps";
 import { beatsAtSec, nowSec } from "./clock";
 import { getEditor } from "./editorRef";
 import { getOutputSync, listenToInput } from "./midi";
@@ -127,17 +127,14 @@ interface InputProps {
 function readProps(shapeId: string): InputProps | null {
   const shape = getEditor()?.getShape(shapeId as TLShapeId);
   if (!shape) return null;
-  const props = shape.props as Record<string, unknown>;
-  const params = (props.params ?? {}) as Params;
+  const props = shape.props as unknown as RunnerInstanceProps;
   return {
-    midiOutputName: typeof props.midiOutputName === "string" ? props.midiOutputName : "",
-    midiThru: props.midiThru !== false,
-    mpe: props.mpe === true,
-    bendRange: typeof props.bendRange === "number" && props.bendRange > 0 ? props.bendRange : DEFAULT_BEND_RANGE,
-    transpose: Math.round(numberParam(params, "transpose", 0)),
-    rootTolerance: props.autoRoot === false
-      ? null
-      : (typeof props.rootToleranceCents === "number" ? props.rootToleranceCents : DEFAULT_ROOT_TOLERANCE_CENTS) / 100,
+    midiOutputName: props.midiOutputName,
+    midiThru: props.midiThru,
+    mpe: props.mpe,
+    bendRange: props.bendRange,
+    transpose: Math.round(numberParam(props.params, "transpose", 0)),
+    rootTolerance: props.autoRoot ? props.rootToleranceCents / 100 : null,
   };
 }
 

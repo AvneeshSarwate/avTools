@@ -1,5 +1,5 @@
 import { DEFAULT_BEND_RANGE, DEFAULT_ROOT_TOLERANCE_CENTS } from "../../model/mpe";
-import type { Params } from "../runnerTypes";
+import { defaultParams, type Params, type RunnerDefinition } from "../runnerTypes";
 
 /** Props every runner instance shape carries. Run state is not here. */
 export interface RunnerInstanceProps {
@@ -31,16 +31,24 @@ export interface RunnerInstanceProps {
 export const DEFAULT_INSTANCE_WIDTH = 1040;
 export const DEFAULT_INSTANCE_HEIGHT = 520;
 
-/** Defaults for the live-input props, also used by the shape migration. */
-export const DEFAULT_INPUT_PROPS = {
-  midiInputName: "",
-  midiThru: true,
-  mpe: false,
-  bendRange: DEFAULT_BEND_RANGE,
-} satisfies Partial<RunnerInstanceProps>;
-
-/** Defaults for the auto-root props (shape migration step 2). */
-export const DEFAULT_ROOT_PROPS = {
-  autoRoot: true,
-  rootToleranceCents: DEFAULT_ROOT_TOLERANCE_CENTS,
-} satisfies Partial<RunnerInstanceProps>;
+/** A new instance's props: `createInstance` fills in its name and output. */
+export function defaultInstanceProps(def: RunnerDefinition): RunnerInstanceProps {
+  return {
+    w: DEFAULT_INSTANCE_WIDTH,
+    h: DEFAULT_INSTANCE_HEIGHT,
+    runnerType: def.type,
+    name: def.type,
+    midiOutputName: "",
+    midiInputName: "",
+    midiThru: true,
+    mpe: false,
+    bendRange: DEFAULT_BEND_RANGE,
+    autoRoot: true,
+    rootToleranceCents: DEFAULT_ROOT_TOLERANCE_CENTS,
+    params: defaultParams(def),
+    queued: false,
+    showSource: true,
+    showGenerated: true,
+    showPreview: false,
+  };
+}
