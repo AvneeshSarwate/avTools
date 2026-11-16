@@ -33,21 +33,21 @@ const ctx = await page.evaluate(async () => {
   const mr = window.__musicRunners;
   const ed = mr.editor;
   await mr.midi.ensureMidi();
-  const id = mr.shapes.createInstance(ed, "variants", undefined, { x: 0, y: 0 });
+  const id = mr.shapes.createInstance(ed, "variants", { x: 0, y: 0 });
   const s = ed.getShape(id);
   const notes = [60, 64, 67, 72].map((p, i) => ({ id: "n" + i, pitch: p, position: i * 2, duration: 1.5, velocity: 64 }));
   notes[2].mpePressure = { points: [{ time: 0, value: 20 }, { time: 0.5, value: 110 }, { time: 1, value: 60 }] };
-  mr.banks.setBankNotes(s.props.bankId, notes);
+  mr.clips.setClipNotes(s.id, notes);
   ed.updateShape({ id, type: s.type, props: { showGenerated: false } });
   ed.selectNone();
   ed.setCamera({ x: -s.x + 20, y: -s.y + 20, z: 1 });
   window.__id = id;
-  return { id, bankId: s.props.bankId };
+  return { id, clipId: s.id };
 });
 await sleep(800);
 await page.evaluate(() => window.__musicRunners.sourceRollHandles.get(window.__id).fitToContent());
 await sleep(300);
-const notes = () => page.evaluate((b) => JSON.parse(JSON.stringify(window.__musicRunners.stores.banksStore.banks[b].notes)), ctx.bankId);
+const notes = () => page.evaluate((b) => JSON.parse(JSON.stringify(window.__musicRunners.stores.clipsStore.clips[b].notes)), ctx.clipId);
 const note = async (id) => (await notes()).find((n) => n.id === id);
 const shape = page.locator(".runner-shape").first();
 const container = shape.locator(".pr-container").first();
@@ -179,11 +179,11 @@ await shape.screenshot({ path: `${OUT}/lanes-test-mpe.png` });
 // ---------- hover zones, segment drag, Edit Value ----------
 await page.evaluate((b) => {
   const mr = window.__musicRunners;
-  const bank = mr.stores.banksStore.banks[b];
-  mr.banks.setBankNotes(b, bank.notes.map((n) => n.id === "n2"
+  const clip = mr.stores.clipsStore.clips[b];
+  mr.clips.setClipNotes(b, clip.notes.map((n) => n.id === "n2"
     ? { ...JSON.parse(JSON.stringify(n)), mpePressure: { points: [{ time: 0, value: 20 }, { time: 0.5, value: 110 }, { time: 1, value: 60 }] } }
     : JSON.parse(JSON.stringify(n))));
-}, ctx.bankId);
+}, ctx.clipId);
 await sleep(200);
 await page.evaluate(() => window.__musicRunners.sourceRollHandles.get(window.__id).selectNotes(["n2"]));
 await sleep(100);

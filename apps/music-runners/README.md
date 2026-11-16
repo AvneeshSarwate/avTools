@@ -42,8 +42,11 @@ npm run type-check
 ```
 
 Projects are saved to `projects/<name>/project.json` by the dev server
-(`server/projectFiles.ts`): the tldraw snapshot, every bank and the bpm, in
-one file. Autosave runs about a second after any change; the top bar also has
+(`server/projectFiles.ts`): the tldraw snapshot, every instance's clip and
+the bpm, in one file. Version 1 files (from when notes lived in shared banks)
+still load: each instance gets its own copy of its bank's notes and the
+bank's name, and the next save writes version 2. Autosave runs about a
+second after any change; the top bar also has
 a save button, a project chooser and a "new project" field (`?project=<name>` in the
 URL). Nothing is kept in browser storage.
 
@@ -54,7 +57,7 @@ unless an instance has **MPE Out** on (see below).
 ## Concepts
 
 - **Runner**: a template under `src/runners/<name>/`: a tag schema for note
-  metadata, params, a pure `generate(bank, random)` that makes one loop, and a
+  metadata, params, a pure `generate(clip, random, params)` that makes one loop, and a
   `run(api)` that loops until stopped. `src/runners/runnerTypes.ts` is the
   thin contract; copy a runner directory to make a new one and register it in
   `src/runners/registry.ts`.
@@ -62,36 +65,50 @@ unless an instance has **MPE Out** on (see below).
   (`{ root, degrees }`, edited with a root chooser and degree list); read
   them with `numberParam` / `scaleParam` from `runnerTypes.ts`. `generate`
   and `sourceGhostNotes` receive the instance's params.
-- **Bank**: one piano roll (notes, loop length, scale, note metadata) tagged
-  with a runner type. The left sidebar lists banks by type. Several instances
-  can reference one bank.
-- **Scale**: each bank has one, edited in the Source roll's tool row: a root
+- **Clip**: an instance's piano roll data: notes (with the runner's tag
+  metadata), loop length and scale. Every instance owns exactly one; nothing
+  is shared between instances. Clips live in `src/store/clips.ts`, keyed by
+  the instance's shape id, rather than in the shape's props, so note edits
+  stay on the roll's own undo stack and out of tldraw's history. To reuse
+  notes, duplicate the instance or copy notes from one roll and paste them
+  into another (Cmd-C / Cmd-V in the rolls).
+- **Scale**: each clip has one, edited in the Source roll's tool row: a root
   chooser (accidentals spelled both ways, F#/Gb) and a degree field, semitones
   above the root from 0 with the octave last (ionian is `0 2 4 5 7 9 11 12`;
-  the 12 is added if left out). It is stored as `bank.scale = { root, degrees }`
+  the 12 is added if left out). It is stored as `clip.scale = { root, degrees }`
   with `root` a MIDI note (60 = C4), the shape `new Scale(degrees, root)` takes
   in `packages/music-types`, so a runner can build one directly. Missing means
   C major. All three rolls shade from it: root rows lighter, out-of-scale rows
   darker (in C major the darker rows are the black keys). Scale edits are not
   on the roll's undo stack (like loop length).
-- **Instance**: a tldraw shape (`runner-<type>`) bound to one bank, with a
+- **Instance**: a tldraw shape (`runner-<type>`) with a name, its clip, a
   MIDI output, the runner's params (each runner declares its own; the ones here
   have transpose, applied now, and speed, at the next loop), two transports
-  (**Run** the algorithm, **Play** the bank verbatim), a queue toggle, and
-  three collapsible rolls: **source** (editable, edits the bank), **generated**
+  (**Run** the algorithm, **Play** the clip verbatim), a queue toggle, and
+  three collapsible rolls: **source** (editable, edits the clip), **generated**
   (the loop now sounding plus a live overlay of what actually played) and
   **preview** (output of **Regenerate**, a dry run). Layout below.
-  Duplicating an instance (right-click Duplicate, Cmd-D, Alt-drag, or
-  pasting a copied instance) gives the copy its own copy of the bank
-  (`<name> copy`), so the two diverge (`src/shapes/bankOnCopy.ts`); the
-  sidebar's **+ instance** makes one that shares the bank on purpose.
-  Undoing a duplicate removes the instance but leaves the copied bank in the
-  sidebar.
+  Duplicating an instance (right-click Duplicate, Cmd-D, Alt-drag) gives
+  the copy its own copy of the clip and the next free name (`melody` →
+  `melody 2`), so the two diverge. Copying an instance (Cmd-C) takes a
+  snapshot of its clip, so pasting, also into another project, brings the
+  notes as they were when copied; a cut-and-paste keeps the name. Undo,
+  redo and undoing a delete keep the clip (`src/shapes/clipOnCopy.ts`; the
+  shape's `meta.clipOwner` is how a fresh duplicate finds its original).
+- **Sidebar**: lists every runner type with a **+** that adds an instance
+  of it (placed right of the rightmost instance and brought into view), and
+  under each type its instances on the current page. A row shows the
+  instance's state with the transport colours: a lamp, the loop count while
+  playing or running (notes and loop length when idle, "error" when a start
+  failed) and a loop-progress bar along its bottom edge; **Q** when queued;
+  Play, Run and Stop buttons. Click a row to select the instance and bring it
+  into view; double-click its name to rename it (the title bar's name field
+  edits the same name).
 - **Events**: plain objects (`{ type, ...fields }`) sent with `api.emit` and
   received with `api.onEvent`. A runner lists the types it sends in its
   definition's `emits`. Routing is by **connection arrows** (see below).
   Pick the arrow tool, press on the sending instance's title bar (the top row
-  with the grip, name, bank and loop), drag onto the receiving instance
+  with the grip, name and loop), drag onto the receiving instance
   anywhere, and release. The title bar's background is also the grip for
   moving an instance with the select tool; everything below it belongs to
   the instance, so clicks there never reach the canvas.
@@ -135,8 +152,8 @@ steps, flat controls (26px tall, about 14px type), and colour only where it mean
 something. An instance is laid out top to bottom in fixed regions:
 
 The app top bar holds the project, save state, note labels, bpm, the
-transport for queued instances, MIDI status and an **Add runner** chooser
-(one entry per runner type, so the bar does not grow with each runner).
+transport for queued instances and MIDI status. New instances are made from
+the sidebar.
 Controls inside instances (and the connection labels) are a further 30%
 larger than the top bar's (34px, 20px text), since the canvas is usually seen
 zoomed out; the control strip and the Source tool row wrap onto a second line
@@ -145,7 +162,7 @@ the control strip and the Source roll's tool row fit.
 
 | Region | Holds | Rule |
 | --- | --- | --- |
-| Title bar | grip, runner name, bank, loop length, mode readout, **Q** (queue) | identity and the bank's data; its background is the drag grip |
+| Title bar | grip, runner type, instance name, loop length, mode readout, **Q** (queue) | identity and the clip's loop; its background is the drag grip |
 | Control strip | **Play**, **Run**, stop, **Rec** · **out**, **in**, **Thru**, **MPE Out**, **bend** | the same items for every runner; never wraps (port choosers shrink) |
 | Params | the runner's params, all declared by the runner (no shared base params; playback honours `transpose` and `speed` when a runner defines them) | the only region whose size depends on the runner; a wrapping grid |
 | Sections | **source** (its header holds the roll's tools), **generated**, **preview** (header holds **Regenerate**) | an empty generated/preview roll collapses to a one-line hint |
@@ -180,7 +197,7 @@ Controls come from `src/ui/controls/` and no native form widgets are shown:
 Every control carries `data-control`, which the title bar uses to tell a
 control from its draggable background. Icons are SVGs in `icons.tsx`, not
 emoji. The roll's canvas defaults match: a dark grid, rows shaded by the
-bank's scale (root lighter, out-of-scale darker), bar lines brighter than beat
+clip's scale (root lighter, out-of-scale darker), bar lines brighter than beat
 lines, the area past the loop shaded.
 
 ## Piano roll
@@ -190,7 +207,7 @@ of Live 12):
 
 - **Keyboard column** left of the grid: piano keys on the note rows, C
   labels plus the label of the row under the pointer, a purple strip on keys
-  in the bank's scale (lighter on the root), and value rulers beside the
+  in the clip's scale (lighter on the root), and value rulers beside the
   lanes. Pressing a key plays it on the instance's output while held (the
   key turns orange); dragging across keys glides. The wheel scrolls the grid.
 - **Notes / MPE** in the tool row switch the editing mode, like Live's Notes
@@ -271,7 +288,7 @@ instance's live MIDI input:
 | Control | Effect |
 | --- | --- |
 | **In** | The MIDI input this instance listens to. Several instances can share one input, like several armed tracks in a DAW. Opening the list re-scans ports, so a device plugged in later shows up. |
-| **Rec** | Records into the instance's bank (see below). Needs an input. |
+| **Rec** | Records into the instance's clip (see below). Needs an input. |
 | **Thru** | Echoes the input to the instance's MIDI output, with transpose applied. Turn it off if the controller already drives the synth. |
 | **MPE Out** | MPE output: every played note gets its own member channel (2-16, lower zone) with its pitch bend, pressure and timbre. Off: everything on channel 0 and expression is not sent. |
 | **bend** | Semitones at full pitch bend, used both to read recorded bend and to send MPE bend. 48 is the MPE default; ordinary keyboards are usually 2. Must match the controller and the synth. |
@@ -285,10 +302,10 @@ roll from its start until its note-off, with its bend drawn live.
 Rec behaves like Ableton's session view:
 
 - **Playing or running**: overdub. A note lands at the loop position it was
-  played at (wrapping at the loop end, scaled by speed) and joins the bank at
+  played at (wrapping at the loop end, scaled by speed) and joins the clip at
   its note-off, so the next pass plays it.
-- **Idle, bank has notes**: starts **Play** and overdubs.
-- **Idle, empty bank**: a free take from the moment Rec is pressed. Stopping
+- **Idle, clip has notes**: starts **Play** and overdubs.
+- **Idle, empty clip**: a free take from the moment Rec is pressed. Stopping
   sets the loop length to the take rounded up to a whole bar (4 beats). It
   does not start playback.
 
@@ -371,14 +388,15 @@ outside React. Per-frame data (the playhead) goes through the roll's
 server/projectFiles.ts      Vite middleware: GET/PUT /api/projects/<name>
 src/model/mpe.ts            MPE curves, bend conversion, member-channel pool
 src/pianoRoll/              React + Konva piano roll (types.ts is the contract)
-src/store/                  banks, clock, midi, events, connections, pulses,
+src/store/                  clips, clock, midi, events, connections, pulses,
                             playback, project, recording (live input),
                             rollHandles
 src/ui/ConnectionLayer.tsx  connection labels (type choosers) and send flashes
 src/runners/base/           RunnerShape (instance chrome + rolls), TagEditor
 src/runners/<name>/         one runner per directory
-src/shapes/                 shape util registration, createInstance
-src/ui/                     TopBar, BankSidebar
+src/shapes/                 shape util registration, createInstance,
+                            clip copying on duplicate and paste
+src/ui/                     TopBar, RunnerSidebar
 src/debugHook.ts            window.__musicRunners for scripts and the console
 demo.html + demo/           standalone piano roll demo and its Playwright checks
 ```
@@ -394,7 +412,10 @@ demo.html + demo/           standalone piano roll demo and its Playwright checks
   the recording check below).
 - Velocity lane, keyboard column and MPE editing: `demo/lanes.e2e.mjs`
   (same setup).
-- Duplicating instances and banks: `demo/duplicate.e2e.mjs` (same setup).
+- Duplicating, pasting and moving instances: `demo/duplicate.e2e.mjs`
+  (same setup).
+- The sidebar (adding, transport state, reveal, rename) and loading a
+  version 1 project: `demo/sidebar.e2e.mjs` (same setup).
 - Note resizing from the edges: `demo/resize.e2e.mjs` (same setup).
 - Auditioning moved notes and marquee selections: `demo/audition.e2e.mjs`
   (same setup).

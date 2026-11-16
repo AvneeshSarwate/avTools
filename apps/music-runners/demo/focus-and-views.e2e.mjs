@@ -30,15 +30,15 @@ const ctx = await page.evaluate(async () => {
   const mr = window.__musicRunners;
   const ed = mr.editor;
   await mr.midi.ensureMidi();
-  const id = mr.shapes.createInstance(ed, "variants", undefined, { x: 0, y: 0 });
+  const id = mr.shapes.createInstance(ed, "variants", { x: 0, y: 0 });
   const s = ed.getShape(id);
   const notes = [60, 64, 67, 72].map((p, i) => ({ id: "n" + i, pitch: p, position: i * 2, duration: 1.5, velocity: 90,
     mpePressure: { points: [{ time: 0, value: 20 }, { time: 1, value: 90 }] } }));
-  mr.banks.setBankNotes(s.props.bankId, notes);
+  mr.clips.setClipNotes(s.id, notes);
   ed.selectNone();
   ed.setCamera({ x: -s.x + 20, y: -s.y + 40, z: 1 });
   window.__id = id;
-  return { id, bankId: s.props.bankId };
+  return { id, clipId: s.id };
 });
 await sleep(700);
 await page.evaluate(() => window.__musicRunners.sourceRollHandles.get(window.__id).fitToContent());
@@ -48,7 +48,7 @@ const container = shape.locator(".pr-container").first();
 const sel = () => page.evaluate(() => window.__musicRunners.sourceRollHandles.get(window.__id).getSelectedIds().sort());
 const pageText = () => page.evaluate(() => window.getSelection().toString().length);
 const tlSel = () => page.evaluate(() => window.__musicRunners.editor.getSelectedShapeIds().length);
-const notes = () => page.evaluate((b) => JSON.parse(JSON.stringify(window.__musicRunners.stores.banksStore.banks[b].notes)), ctx.bankId);
+const notes = () => page.evaluate((b) => JSON.parse(JSON.stringify(window.__musicRunners.stores.clipsStore.clips[b].notes)), ctx.clipId);
 const box = await container.boundingBox();
 
 // 1. Notes mode: click the grid background, Cmd-A = all notes

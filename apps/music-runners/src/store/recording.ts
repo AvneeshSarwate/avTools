@@ -1,12 +1,12 @@
 // Live MIDI input per instance: monitoring (thru to the instance's output and
-// the held-key overlay on its source roll) and recording into its bank.
+// the held-key overlay on its source roll) and recording into its clip.
 //
 // Recording follows Ableton's session view:
 // - Rec while the instance plays or runs overdubs: notes land at the loop
-//   position they were played at, wrapping at the loop end, and join the bank
+//   position they were played at, wrapping at the loop end, and join the clip
 //   at their note-off, so the next pass plays them.
-// - Rec while idle on a bank with notes starts Play and overdubs.
-// - Rec on an empty bank records a free take from the moment Rec was pressed;
+// - Rec while idle on a clip with notes starts Play and overdubs.
+// - Rec on an empty clip records a free take from the moment Rec was pressed;
 //   stopping sets the loop length to the take rounded up to a whole bar.
 // The whole take is one undo step in the source roll (when it is open).
 //
@@ -37,7 +37,7 @@ import {
 import type { LiveInput, LiveInputKey, LiveInputNote, PianoRollNote } from "../pianoRoll/types";
 import { cloneNote } from "../pianoRoll/utils";
 import { clampPitch, numberParam, type Params } from "../runners/runnerTypes";
-import { getBank, setBankLoopLength, setBankNotes } from "./banks";
+import { getClip, setClipLoopLength, setClipNotes } from "./clips";
 import { beatsAtSec, nowSec } from "./clock";
 import { getEditor } from "./editorRef";
 import { getOutputSync, listenToInput } from "./midi";
@@ -81,7 +81,7 @@ interface HeldNote {
   /** The pitch sent to the output for thru, so its note-off matches. */
   thruPitch: number | null;
   thruChannel: number;
-  /** Set when the note started inside a take: its position in bank beats. */
+  /** Set when the note started inside a take: its position in clip beats. */
   take: Take | null;
   position: number;
   bends: Sample[];
@@ -91,9 +91,8 @@ interface HeldNote {
 
 interface Take {
   kind: TakeKind;
-  bankId: string;
   startSec: number;
-  /** Bank notes when the take started, for the take's undo step. */
+  /** Clip notes when the take started, for the take's undo step. */
   before: PianoRollNote[];
   recorded: number;
   channels: Set<number>;
@@ -116,7 +115,6 @@ const recorders = new Map<string, Recorder>();
 
 /** What the recorder reads from the instance shape, live. */
 interface InputProps {
-  bankId: string;
   midiOutputName: string;
   midiThru: boolean;
   mpe: boolean;
@@ -132,7 +130,6 @@ function readProps(shapeId: string): InputProps | null {
   const props = shape.props as Record<string, unknown>;
   const params = (props.params ?? {}) as Params;
   return {
-    bankId: typeof props.bankId === "string" ? props.bankId : "",
     midiOutputName: typeof props.midiOutputName === "string" ? props.midiOutputName : "",
     midiThru: props.midiThru !== false,
     mpe: props.mpe === true,
@@ -205,23 +202,22 @@ export function startRecording(shapeId: string): void {
     state.status = "pick a MIDI input first";
     return;
   }
-  const bank = props ? getBank(props.bankId) : undefined;
-  if (!props || !bank) {
-    state.status = "no bank";
+  const clip = getClip(shapeId);
+  if (!props || !clip) {
+    state.status = "no clip";
     return;
   }
   if (recorder.take) return;
   const runtime = getRuntime(shapeId);
   let kind: TakeKind = "overdub";
   if (runtime.mode === "idle") {
-    if (bank.notes.length === 0) kind = "free";
+    if (clip.notes.length === 0) kind = "free";
     else startPlay(shapeId);
   }
   recorder.take = {
     kind,
-    bankId: bank.id,
     startSec: nowSec(),
-    before: bank.notes.map((note) => cloneNote(note)),
+    before: clip.notes.map((note) => cloneNote(note)),
     recorded: 0,
     channels: new Set(),
   };
@@ -249,18 +245,18 @@ export function stopRecording(shapeId: string): void {
 
   if (take.kind === "free") {
     const bars = Math.max(1, Math.ceil((beatsAtSec(endSec) - beatsAtSec(take.startSec)) / BEATS_PER_BAR - 1e-6));
-    if (take.recorded > 0) setBankLoopLength(take.bankId, bars * BEATS_PER_BAR);
+    if (take.recorded > 0) setClipLoopLength(shapeId, bars * BEATS_PER_BAR);
   }
-  const bank = getBank(take.bankId);
-  if (bank && take.recorded > 0) {
+  const clip = getClip(shapeId);
+  if (clip && take.recorded > 0) {
     // One undo step for the whole take (the per-note commits above were not).
-    sourceRollHandles.get(shapeId)?.commitExternalEdit("Record Take", take.before, bank.notes.map((note) => cloneNote(note)));
+    sourceRollHandles.get(shapeId)?.commitExternalEdit("Record Take", take.before, clip.notes.map((note) => cloneNote(note)));
   }
   const mpeHint = take.channels.size > 1 && props && !props.mpe ? " · played on several channels: turn on MPE out to hear the expression" : "";
   state.status = take.recorded > 0 ? `recorded ${take.recorded} notes${mpeHint}` : "nothing recorded";
 }
 
-/** Bank-beat position of `sec` for the take. */
+/** Clip-beat position of `sec` for the take. */
 function takePosition(recorder: Recorder, take: Take, sec: number): number {
   if (take.kind === "free") return Math.max(0, beatsAtSec(sec) - beatsAtSec(take.startSec));
   const runtime = getRuntime(recorder.shapeId);
@@ -270,7 +266,7 @@ function takePosition(recorder: Recorder, take: Take, sec: number): number {
   return ((raw % length) + length) % length;
 }
 
-/** Note durations in bank beats: overdubs follow the instance's speed. */
+/** Note durations in clip beats: overdubs follow the instance's speed. */
 function beatSpan(recorder: Recorder, take: Take, fromSec: number, toSec: number): number {
   const speed = take.kind === "overdub" ? getRuntime(recorder.shapeId).loopSpeed || 1 : 1;
   return Math.max(0, (beatsAtSec(toSec) - beatsAtSec(fromSec)) * speed);
@@ -382,12 +378,12 @@ function releaseThru(recorder: Recorder, held: HeldNote): void {
   held.thruPitch = null;
 }
 
-/** Turn a finished held note into a bank note and add it to the bank. */
+/** Turn a finished held note into a clip note and add it to the clip. */
 function commitNote(recorder: Recorder, held: HeldNote, offSec: number, props: InputProps | null): void {
   const take = held.take;
   if (!take) return;
-  const bank = getBank(take.bankId);
-  if (!bank) return;
+  const clip = getClip(recorder.shapeId);
+  if (!clip) return;
   const last = (samples: Sample[]) => samples[samples.length - 1].value;
   held.bends.push({ sec: offSec, value: recorder.bend[held.channel] });
   held.pressures.push({ sec: offSec, value: last(held.pressures) });
@@ -426,7 +422,7 @@ function commitNote(recorder: Recorder, held: HeldNote, offSec: number, props: I
   if (pressure) note.mpePressure = pressure;
   if (timbre) note.mpeTimbre = timbre;
 
-  setBankNotes(bank.id, [...bank.notes, note]);
+  setClipNotes(recorder.shapeId, [...clip.notes, note]);
   take.recorded += 1;
   ui(recorder.shapeId).recorded = take.recorded;
 }
@@ -469,7 +465,7 @@ export function liveInputFor(shapeId: string): LiveInput {
   return { keys, notes };
 }
 
-/** The free take's playhead in bank beats, or null outside a free take. */
+/** The free take's playhead in clip beats, or null outside a free take. */
 export function freeTakePlayhead(shapeId: string): number | null {
   const take = recorders.get(shapeId)?.take;
   if (!take || take.kind !== "free") return null;

@@ -63,8 +63,8 @@ await sleep(600);
 const state = () => page.evaluate((id) => {
   const mr = window.__musicRunners;
   const shape = mr.editor.getShape(id);
-  const bank = mr.stores.banksStore.banks[shape.props.bankId];
-  return { props: shape.props, bank: JSON.parse(JSON.stringify(bank)), rec: JSON.parse(JSON.stringify(mr.stores.recordingStore.byShape[id] ?? null)), runtime: JSON.parse(JSON.stringify(mr.stores.playbackStore.instances[id] ?? null)) };
+  const clip = mr.stores.clipsStore.clips[shape.id];
+  return { props: shape.props, clip: JSON.parse(JSON.stringify(clip)), rec: JSON.parse(JSON.stringify(mr.stores.recordingStore.byShape[id] ?? null)), runtime: JSON.parse(JSON.stringify(mr.stores.playbackStore.instances[id] ?? null)) };
 }, shapeId);
 const midiIn = (bytes) => page.evaluate((b) => window.__midiIn(b), bytes);
 const sentSince = (t) => page.evaluate((t0) => window.__midiSent.filter((m) => m.t >= t0), t);
@@ -87,7 +87,7 @@ assert.ok(sent.some((m) => m.bytes[0] === 0xE1), "thru bend");
 assert.ok(sent.some((m) => m.bytes[0] === 0x81 && m.bytes[1] === 60), "thru note-off");
 await midiIn([0xE1, 0x00, 0x40]); // bend back to centre
 
-// --- free take on the empty bank
+// --- free take on the empty clip
 await page.click(".runner-shape__rec");
 await sleep(300);
 s = await state();
@@ -114,12 +114,12 @@ await sleep(200);
 await page.click(".runner-shape__rec");
 await sleep(400);
 s = await state();
-console.log("free take notes", JSON.stringify(s.bank.notes, null, 0).slice(0, 900));
-console.log("loopLength", s.bank.loopLength, "status", s.rec.status);
+console.log("free take notes", JSON.stringify(s.clip.notes, null, 0).slice(0, 900));
+console.log("loopLength", s.clip.loopLength, "status", s.rec.status);
 assert.equal(s.rec.recording, null);
-assert.equal(s.bank.notes.length, 2);
-const n1 = s.bank.notes.find((n) => n.pitch === 60);
-const n2 = s.bank.notes.find((n) => n.pitch === 64);
+assert.equal(s.clip.notes.length, 2);
+const n1 = s.clip.notes.find((n) => n.pitch === 60);
+const n2 = s.clip.notes.find((n) => n.pitch === 64);
 assert.ok(n1.mpePitch && n1.mpePitch.points.at(-1).pitchOffset > 1.9, "bend curve recorded in semitones");
 assert.ok(n1.mpePressure && n1.mpePressure.points.at(-1).value > 90, "pressure curve");
 assert.ok(n1.mpeTimbre, "timbre curve");
@@ -131,7 +131,7 @@ assert.ok(pts[0].rooted && pts.at(-1).rooted, "rest and target points rooted");
 assert.ok(pts.every((p) => !(p.rooted && p.pitchOffset > 0.15 && p.pitchOffset < 1.85)), "slide points not rooted");
 console.log("rooted", pts.map((p) => `${p.pitchOffset.toFixed(2)}${p.rooted ? "R" : ""}`).join(" "));
 assert.ok(n2.position > n1.position, "second note later");
-assert.equal(s.bank.loopLength, 4, "free take rounded up to one bar");
+assert.equal(s.clip.loopLength, 4, "free take rounded up to one bar");
 await page.screenshot({ path: `${SHOTS}/rec-03-after-take.png` });
 
 // --- MPE playback
@@ -171,21 +171,21 @@ await sleep(100);
 await page.click(".runner-shape__rec");
 await sleep(300);
 s = await state();
-const n3 = s.bank.notes.find((n) => n.pitch === 67);
+const n3 = s.clip.notes.find((n) => n.pitch === 67);
 console.log("overdub note", n3, "expected end near", expected);
 // Compare around the loop: the note-off can land just after the wrap.
 const loopDistance = (a, b, length) => {
   const d = (((a - b) % length) + length) % length;
   return Math.min(d, length - d);
 };
-assert.ok(n3 && loopDistance(n3.position + n3.duration, expected, s.bank.loopLength) < 0.25, "overdub lands at loop position");
-assert.equal(s.bank.notes.length, 3);
+assert.ok(n3 && loopDistance(n3.position + n3.duration, expected, s.clip.loopLength) < 0.25, "overdub lands at loop position");
+assert.equal(s.clip.notes.length, 3);
 
 // --- undo the overdub as one step
 await page.click(".pr-control-panel button[title*='Undo'], .pr-control-panel button:has-text('Undo')");
 await sleep(300);
 s = await state();
-assert.equal(s.bank.notes.length, 2, "undo removes the take");
+assert.equal(s.clip.notes.length, 2, "undo removes the take");
 await page.evaluate(() => window.__musicRunners.playback.stopAll());
 await sleep(200);
 await page.screenshot({ path: `${SHOTS}/rec-05-after-undo.png` });
@@ -199,7 +199,7 @@ await sleep(1200);
 s = await state();
 assert.equal(s.props.mpe, true);
 assert.equal(s.props.midiInputName, "Fake MPE Controller");
-assert.ok(s.bank.notes.find((n) => n.pitch === 60).mpePitch, "curves survive save/load");
+assert.ok(s.clip.notes.find((n) => n.pitch === 60).mpePitch, "curves survive save/load");
 await page.screenshot({ path: `${SHOTS}/rec-06-reloaded.png` });
 console.log("ALL OK");
 await browser.close();

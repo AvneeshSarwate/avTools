@@ -1,7 +1,7 @@
 // Runner 1: "variants". Some notes carry alternatives that replace them with a
 // probability each loop; some notes are trill triggers that tell every
 // arrow-target instance which pitch just played.
-import type { Bank } from "../../model/types";
+import type { Clip } from "../../model/types";
 import type { GhostNote, PianoRollNote } from "../../pianoRoll/types";
 import { type LoopNotes, notesInLoop, type Params, type RunnerApi, type RunnerDefinition, scaleParam, tagValue } from "../runnerTypes";
 import { parseVariantSteps, resolveVariantStep, type VariantStep } from "./steps";
@@ -58,22 +58,22 @@ function variantScale(params: Params) {
   return scaleParam(params, "scale") ?? C_MAJOR;
 }
 
-export function generateVariantsLoop(bank: Bank, random: () => number, params: Params): LoopNotes {
+export function generateVariantsLoop(clip: Clip, random: () => number, params: Params): LoopNotes {
   const scale = variantScale(params);
-  const notes = notesInLoop(bank.notes, bank.loopLength).map((note) => {
+  const notes = notesInLoop(clip.notes, clip.loopLength).map((note) => {
     const variant = readVariant(note);
     if (!variant || variant.steps.length === 0 || random() >= variant.probability) return note;
     const step = variant.steps[Math.floor(random() * variant.steps.length)];
     const pitch = resolveVariantStep(note.pitch, step, scale);
     return { ...note, pitch, metadata: { ...(note.metadata ?? {}), chosenVariant: true, originalPitch: note.pitch, chosenStep: step.text } };
   });
-  return { notes, loopLength: bank.loopLength };
+  return { notes, loopLength: clip.loopLength };
 }
 
-function variantGhosts(bank: Bank, params: Params): GhostNote[] {
+function variantGhosts(clip: Clip, params: Params): GhostNote[] {
   const scale = variantScale(params);
   const ghosts: GhostNote[] = [];
-  for (const note of bank.notes) {
+  for (const note of clip.notes) {
     const variant = readVariant(note);
     if (!variant) continue;
     variant.steps.forEach((step, index) => {
@@ -94,8 +94,8 @@ function variantGhosts(bank: Bank, params: Params): GhostNote[] {
 
 async function runVariants(api: RunnerApi): Promise<void> {
   while (true) {
-    const bank = api.getBank();
-    const loop = generateVariantsLoop(bank, api.random, api.getParams());
+    const clip = api.getClip();
+    const loop = generateVariantsLoop(clip, api.random, api.getParams());
     api.publishLoop(loop);
     await api.playLoop(loop, {
       onNoteOn: (note) => {

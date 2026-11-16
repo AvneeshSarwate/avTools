@@ -28,10 +28,10 @@ await sleep(500);
 await page.evaluate(async () => {
   const mr = window.__musicRunners; const ed = mr.editor;
   await mr.midi.ensureMidi();
-  const id = mr.shapes.createInstance(ed, "variants", undefined, { x: 0, y: 0 });
+  const id = mr.shapes.createInstance(ed, "variants", { x: 0, y: 0 });
   const s = ed.getShape(id);
   ed.updateShape({ id, type: s.type, props: { midiOutputName: "IAC Driver Bus 1", showGenerated: false } });
-  mr.banks.setBankNotes(s.props.bankId, [60, 64, 67, 71].map((p, i) => ({ id: "n" + i, pitch: p, position: i * 2, duration: 1, velocity: 100 })));
+  mr.clips.setClipNotes(s.id, [60, 64, 67, 71].map((p, i) => ({ id: "n" + i, pitch: p, position: i * 2, duration: 1, velocity: 100 })));
   ed.selectNone(); ed.setCamera({ x: 20, y: 40, z: 1 }); window.__id = id;
 });
 await sleep(800);

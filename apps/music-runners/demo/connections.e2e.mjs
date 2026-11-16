@@ -32,9 +32,9 @@ const ids = await page.evaluate(async () => {
   const mr = window.__musicRunners;
   const ed = mr.editor;
   await mr.midi.ensureMidi();
-  const a = mr.shapes.createInstance(ed, "variants", undefined, { x: 0, y: 0 });
-  const b = mr.shapes.createInstance(ed, "extender", undefined, { x: 1100, y: 0 });
-  const c = mr.shapes.createInstance(ed, "extender", undefined, { x: 1100, y: 800 });
+  const a = mr.shapes.createInstance(ed, "variants", { x: 0, y: 0 });
+  const b = mr.shapes.createInstance(ed, "extender", { x: 1100, y: 0 });
+  const c = mr.shapes.createInstance(ed, "extender", { x: 1100, y: 800 });
   for (const id of [a, b, c]) {
     const s = ed.getShape(id);
     ed.updateShape({ id, type: s.type, props: { showGenerated: false, showSource: false } });

@@ -34,9 +34,8 @@ Must reuse, as raw-TS workspace packages via Vite aliases (same mechanism as
   Multiple instances of one runner can exist. Runner code is a *soft pattern*
   for coding agents to copy and customize per piece, not a hard API for reuse.
 - **Bank** = one piano roll data object (`notes`, `loopLength`, metadata on
-  notes) tagged with a runner type. A sidebar lists all banks grouped by
-  runner type and has "new bank" per type. Many instances may reference one
-  bank.
+  notes) tagged with a runner type. (Superseded 2026-11-16: banks were replaced by one clip per instance; see
+  the last section.)
 - **Runner instance** = a tldraw shape that always references exactly one
   bank. Editing the source roll in the instance edits the bank in place.
 - **Events** = a minimal bus. An instance emits events; they are delivered to
@@ -358,3 +357,38 @@ velocity, ramp/randomize, curved segments, envelope draw mode.
 - MIDI: use the IAC bus and `packages/midi/tests/iac_browser_receiver.ts` to
   confirm note-on/off from the browser.
 - No Claude attribution trailers on commits (user rule).
+
+## Clips instead of banks; runner sidebar (2026-11-16)
+
+Banks are gone. A bank was a piano roll shared by reference between
+instances; in practice the indirection cost more than it gave, since
+duplicating an instance and copying notes between rolls already cover
+reuse. Decisions:
+
+- **Each instance owns one clip** (`notes`, `loopLength`, `scale`), stored in
+  `src/store/clips.ts` keyed by the shape id. Not in shape props: tldraw's
+  history stores whole records, so undoing a move would put back old notes,
+  and note edits belong on the roll's own undo stack. The instance's name is
+  a shape prop (`name`), since it is identity, not musical data.
+- **Copy semantics**: duplicate copies the live clip (the shape's
+  `meta.clipOwner` still names the original right after tldraw copies the
+  record; a before-create side effect copies the clip and resets it);
+  copy/paste carries a snapshot taken at copy time in the copied content's
+  meta, so a paste into another project brings the notes. Copies whose name
+  is taken get the next number; a cut-and-paste keeps its name. Clips of
+  deleted instances stay in memory for undo and are left out of the file.
+- **File format version 2**: `clips: Record<shapeId, Clip>`. Version 1 files
+  load by giving each instance a copy of its bank and the bank's name
+  (numbered when a bank was shared); shape migration step 3 drops `bankId`.
+- **Sidebar** lists runner types with **+** (creation moved out of the top
+  bar's chooser) and each type's instances with their transport state
+  (lamp, loop count, a loop-progress bar written to the DOM on a timer,
+  never through React), Play/Run/Stop, click to reveal, double-click to
+  rename.
+- Fixed on the way: switching an instance straight from Play to Run left it
+  running but shown as idle (the cancelled run's late cleanup reset the new
+  run's state).
+- Verified with `demo/duplicate.e2e.mjs`, `demo/sidebar.e2e.mjs` (loads the
+  version 1 `projects/default` through a route, never writes it) and the
+  existing e2e checks. `projects/default/project.json` is still version 1 on
+  disk; it converts on its next save.

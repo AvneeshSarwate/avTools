@@ -22,12 +22,12 @@ await page.waitForFunction(() => window.__musicRunners?.editor);
 await sleep(500);
 const ctx = await page.evaluate(() => {
   const mr = window.__musicRunners; const ed = mr.editor;
-  const id = mr.shapes.createInstance(ed, "variants", undefined, { x: 0, y: 0 });
+  const id = mr.shapes.createInstance(ed, "variants", { x: 0, y: 0 });
   const s = ed.getShape(id);
   ed.updateShape({ id, type: s.type, props: { showGenerated: false } });
-  mr.banks.setBankNotes(s.props.bankId, [{ id: "a", pitch: 60, position: 0, duration: 1, velocity: 100 }]);
+  mr.clips.setClipNotes(s.id, [{ id: "a", pitch: 60, position: 0, duration: 1, velocity: 100 }]);
   ed.selectNone(); ed.setCamera({ x: 20, y: 40, z: 0.8 }); window.__id = id;
-  return { id, bankId: s.props.bankId };
+  return { id, clipId: s.id };
 });
 await sleep(600);
 const shape = page.locator(".runner-shape").first();
@@ -45,8 +45,8 @@ await sleep(150);
 const ghosts = () => page.evaluate((id) => {
   const mr = window.__musicRunners;
   const shape = mr.editor.getShape(id);
-  const bank = mr.stores.banksStore.banks[shape.props.bankId];
-  return { notes: bank.notes.map((n) => [n.pitch, n.metadata?.variant?.steps]) };
+  const clip = mr.stores.clipsStore.clips[shape.id];
+  return { notes: clip.notes.map((n) => [n.pitch, n.metadata?.variant?.steps]) };
 }, ctx.id);
 console.log("stored", JSON.stringify(await ghosts()));
 // ghost pitches come from the runner (sourceGhostNotes) through the debug hook's registry
@@ -58,15 +58,15 @@ assert.deepEqual(await resolved(60, undefined), [62, 57, 65, 62], "C4: D, A3, F,
 assert.deepEqual(await resolved(64, undefined), [65, 60, 68, 66], "E4: the same steps follow the note (+2+ is G plus a semitone)");
 await shape.screenshot({ path: `${OUT}/variants-steps.png` });
 // moving the note moves the generated choices: run the generator many times
-const choices = await page.evaluate(async (bankId) => {
+const choices = await page.evaluate(async (clipId) => {
   const mr = window.__musicRunners;
-  const bank = mr.stores.banksStore.banks[bankId];
-  mr.banks.setBankNotes(bankId, bank.notes.map((n) => ({ ...JSON.parse(JSON.stringify(n)), pitch: 64, metadata: { variant: { steps: "+1 -2 +2+ +0+2", probability: 1 } } })));
+  const clip = mr.stores.clipsStore.clips[clipId];
+  mr.clips.setClipNotes(clipId, clip.notes.map((n) => ({ ...JSON.parse(JSON.stringify(n)), pitch: 64, metadata: { variant: { steps: "+1 -2 +2+ +0+2", probability: 1 } } })));
   const { variantsRunner } = await import("/src/runners/variants/runner.ts");
   const seen = new Set();
-  for (let i = 0; i < 80; i++) seen.add(variantsRunner.generate(mr.stores.banksStore.banks[bankId], Math.random, {}).notes[0].pitch);
+  for (let i = 0; i < 80; i++) seen.add(variantsRunner.generate(mr.stores.clipsStore.clips[clipId], Math.random, {}).notes[0].pitch);
   return [...seen].sort((a, b) => a - b);
-}, ctx.bankId);
+}, ctx.clipId);
 console.log("choices from E4", choices);
 assert.deepEqual(choices, [60, 65, 66, 68]);
 // the instance's scale param, set through its params row: D major moves the result
@@ -76,18 +76,18 @@ await page.locator(".ui-chooser__option", { hasText: /^D$/ }).click();
 await sleep(150);
 const stored = await page.evaluate((id) => JSON.parse(JSON.stringify(window.__musicRunners.editor.getShape(id).props.params.scale)), ctx.id);
 assert.deepEqual(stored, { root: 62, degrees: [0, 2, 4, 5, 7, 9, 11, 12] }, "scale param saved on the instance");
-const dorian = await page.evaluate(async ({ bankId, id }) => {
+const dorian = await page.evaluate(async ({ clipId, id }) => {
   const mr = window.__musicRunners;
   const { variantsRunner } = await import("/src/runners/variants/runner.ts");
   const params = mr.editor.getShape(id).props.params;
   const seen = new Set();
-  for (let i = 0; i < 80; i++) seen.add(variantsRunner.generate(mr.stores.banksStore.banks[bankId], Math.random, params).notes[0].pitch);
+  for (let i = 0; i < 80; i++) seen.add(variantsRunner.generate(mr.stores.clipsStore.clips[clipId], Math.random, params).notes[0].pitch);
   return [...seen].sort((a, b) => a - b);
 }, ctx);
 await shape.screenshot({ path: `${OUT}/variants-scale-param.png` });
 console.log("choices from E4 in D major", dorian);
 // D major: E +1 is F#, -2 is C#, +2+ is G + 1, +0+2 is F#
-assert.deepEqual(dorian, [61, 66, 68], "the bank's scale drives the steps");
+assert.deepEqual(dorian, [61, 66, 68], "the clip's scale drives the steps");
 console.log("errors", errors);
 assert.equal(errors.length, 0);
 console.log("VARIANTS OK");

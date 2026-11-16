@@ -20,14 +20,14 @@ await page.route("**/api/projects/zz_resize", (r) => r.request().method() === "P
 await page.goto("http://localhost:5190/?project=zz_resize");
 await page.waitForFunction(() => window.__musicRunners?.editor);
 await sleep(500);
-const bankId = await page.evaluate(() => {
+const clipId = await page.evaluate(() => {
   const mr = window.__musicRunners; const ed = mr.editor;
-  const id = mr.shapes.createInstance(ed, "variants", undefined, { x: 0, y: 0 });
+  const id = mr.shapes.createInstance(ed, "variants", { x: 0, y: 0 });
   const s = ed.getShape(id);
   ed.updateShape({ id, type: s.type, props: { showGenerated: false } });
-  mr.banks.setBankNotes(s.props.bankId, [60, 64, 67].map((p, i) => ({ id: "n" + i, pitch: p, position: i * 2, duration: 1, velocity: 100 })));
+  mr.clips.setClipNotes(s.id, [60, 64, 67].map((p, i) => ({ id: "n" + i, pitch: p, position: i * 2, duration: 1, velocity: 100 })));
   ed.selectNone(); ed.setCamera({ x: 20, y: 40, z: 1 }); window.__id = id;
-  return s.props.bankId;
+  return s.id;
 });
 await sleep(700);
 await page.evaluate(() => window.__musicRunners.sourceRollHandles.get(window.__id).fitToContent());
@@ -37,7 +37,7 @@ const box = await shape.locator(".pr-container").first().boundingBox();
 const view = await page.evaluate(() => window.__musicRunners.sourceRollHandles.get(window.__id).getView());
 const at = (beat, pitch) => ({ x: box.x + 1 + (beat - view.startBeat) * view.quarterNoteWidth, y: box.y + 1 + (127 - pitch - view.topRow) * view.noteHeight + view.noteHeight / 2 });
 const cursor = () => page.evaluate(() => getComputedStyle(document.querySelector(".runner-shape .konvajs-content")).cursor);
-const note = (id) => page.evaluate(({ b, id }) => JSON.parse(JSON.stringify(window.__musicRunners.stores.banksStore.banks[b].notes.find((n) => n.id === id))), { b: bankId, id });
+const note = (id) => page.evaluate(({ b, id }) => JSON.parse(JSON.stringify(window.__musicRunners.stores.clipsStore.clips[b].notes.find((n) => n.id === id))), { b: clipId, id });
 
 // hover: middle of a note = normal cursor; 2px inside either edge = resize cursor
 let p = at(2.5, 64);

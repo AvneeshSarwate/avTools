@@ -1,22 +1,29 @@
 import type { TLEditorSnapshot } from "tldraw";
 import type { PianoRollNote, PianoRollScale } from "../pianoRoll/types";
 
-/** One piano roll's worth of data, tagged with the runner type whose metadata it carries. */
-export interface Bank {
-  id: string;
-  name: string;
-  runnerType: string;
+/**
+ * One instance's piano roll: its notes (with the runner's tag metadata), loop
+ * length and scale. Every runner instance owns exactly one, stored by the
+ * instance's shape id (src/store/clips.ts); duplicating or pasting an
+ * instance copies it.
+ */
+export interface Clip {
   notes: PianoRollNote[];
   /** Beats. Notes past it stay in data; playback only covers [0, loopLength). */
   loopLength: number;
   /**
-   * The bank's scale, in the shape `new Scale(degrees, root)` takes
+   * The clip's scale, in the shape `new Scale(degrees, root)` takes
    * (packages/music-types). Shades the rolls; runners may read it. Missing
    * means C major (DEFAULT_SCALE in src/pianoRoll/scale.ts).
    */
   scale?: PianoRollScale;
-  createdAt: number;
-  updatedAt: number;
+}
+
+/** Version 1 files kept notes in shared banks; loading converts them (src/store/project.ts). */
+export interface LegacyBank extends Clip {
+  id: string;
+  name: string;
+  runnerType: string;
 }
 
 /** What one runner instance sends to the instances its arrows point at. */
@@ -28,14 +35,21 @@ export interface RunnerEvent {
 }
 
 export interface ProjectFile {
-  version: 1;
+  version: 2;
   name: string;
   bpm: number;
   /** Note labels: names or MIDI numbers (missing: names). */
   pitchLabels?: "name" | "midi";
-  banks: Bank[];
+  /** Each instance's clip, by shape id. */
+  clips: Record<string, Clip>;
   canvas: TLEditorSnapshot | null;
   savedAt: number;
+}
+
+/** What a version 1 file adds (read only, converted on load). */
+export interface LegacyProjectFile extends Omit<ProjectFile, "version" | "clips"> {
+  version: 1;
+  banks?: LegacyBank[];
 }
 
 export const DEFAULT_LOOP_LENGTH = 16;

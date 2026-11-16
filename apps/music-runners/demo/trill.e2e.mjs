@@ -30,13 +30,13 @@ const ctx = await page.evaluate(async () => {
   const ed = mr.editor;
   await mr.midi.ensureMidi();
   mr.clock.setBpm(480);
-  const a = mr.shapes.createInstance(ed, "variants", undefined, { x: 0, y: 0 });
-  const b = mr.shapes.createInstance(ed, "extender", undefined, { x: 1000, y: 0 });
+  const a = mr.shapes.createInstance(ed, "variants", { x: 0, y: 0 });
+  const b = mr.shapes.createInstance(ed, "extender", { x: 1000, y: 0 });
   const sa = ed.getShape(a), sb = ed.getShape(b);
-  mr.banks.setBankNotes(sa.props.bankId, [{ id: "t0", pitch: 72, position: 0, duration: 0.5, velocity: 100 }, { id: "t1", pitch: 60, position: 1, duration: 0.5, velocity: 100 }]);
-  mr.banks.setBankLoopLength(sa.props.bankId, 2);
-  mr.banks.setBankNotes(sb.props.bankId, [{ id: "e0", pitch: 64, position: 0, duration: 0.5, velocity: 100 }]);
-  mr.banks.setBankLoopLength(sb.props.bankId, 2);
+  mr.clips.setClipNotes(sa.id, [{ id: "t0", pitch: 72, position: 0, duration: 0.5, velocity: 100 }, { id: "t1", pitch: 60, position: 1, duration: 0.5, velocity: 100 }]);
+  mr.clips.setClipLoopLength(sa.id, 2);
+  mr.clips.setClipNotes(sb.id, [{ id: "e0", pitch: 64, position: 0, duration: 0.5, velocity: 100 }]);
+  mr.clips.setClipLoopLength(sb.id, 2);
   const arrow = "shape:arrow_t";
   ed.run(() => {
     ed.createShape({ id: arrow, type: "arrow", x: 0, y: 0, props: { start: { x: 0, y: 0 }, end: { x: 100, y: 0 } } });
@@ -48,7 +48,7 @@ const ctx = await page.evaluate(async () => {
   ed.selectNone();
   ed.setCamera({ x: 20, y: 40, z: 1 });
   window.__a = a;
-  return { a, b, bankA: sa.props.bankId };
+  return { a, b, clipA: sa.id };
 });
 await sleep(600);
 // Tag t0 as a trill trigger through the tag editor and type "3 4 5"
@@ -65,7 +65,7 @@ await notesField.click();
 await notesField.fill("3 4 5");
 await notesField.press("Enter");
 await sleep(150);
-const tag = await page.evaluate((b) => JSON.parse(JSON.stringify(window.__musicRunners.stores.banksStore.banks[b].notes.find((n) => n.id === "t0").metadata)), ctx.bankA);
+const tag = await page.evaluate((b) => JSON.parse(JSON.stringify(window.__musicRunners.stores.clipsStore.clips[b].notes.find((n) => n.id === "t0").metadata)), ctx.clipA);
 console.log("trill tag", JSON.stringify(tag));
 assert.deepEqual(tag.trill, { probability: 1, notes: [3, 4, 5] });
 // Run both; collect the counts the extender received
@@ -81,10 +81,10 @@ assert.ok(logs.some((l) => /x[345]$/.test(l)), "extender played the requested co
 // probability 0: no more trills
 await page.evaluate((b) => {
   const mr = window.__musicRunners;
-  const bank = mr.stores.banksStore.banks[b];
-  mr.banks.setBankNotes(b, bank.notes.map((n) => n.id === "t0" ? { ...JSON.parse(JSON.stringify(n)), metadata: { trill: { probability: 0, notes: [3, 4, 5] } } } : JSON.parse(JSON.stringify(n))));
+  const clip = mr.stores.clipsStore.clips[b];
+  mr.clips.setClipNotes(b, clip.notes.map((n) => n.id === "t0" ? { ...JSON.parse(JSON.stringify(n)), metadata: { trill: { probability: 0, notes: [3, 4, 5] } } } : JSON.parse(JSON.stringify(n))));
   mr.stores.eventLogStore.byShape[Object.keys(mr.stores.eventLogStore.byShape)[0]] = [];
-}, ctx.bankA);
+}, ctx.clipA);
 await page.evaluate((b) => { window.__musicRunners.stores.eventLogStore.byShape[b] = []; }, ctx.b);
 await sleep(3000);
 const after = await page.evaluate((b) => (window.__musicRunners.stores.eventLogStore.byShape[b] ?? []).length, ctx.b);
@@ -93,9 +93,9 @@ assert.equal(after, 0);
 // empty list: no count sent (receiver's param)
 await page.evaluate((b) => {
   const mr = window.__musicRunners;
-  const bank = mr.stores.banksStore.banks[b];
-  mr.banks.setBankNotes(b, bank.notes.map((n) => n.id === "t0" ? { ...JSON.parse(JSON.stringify(n)), metadata: { trill: { probability: 1, notes: [] } } } : JSON.parse(JSON.stringify(n))));
-}, ctx.bankA);
+  const clip = mr.stores.clipsStore.clips[b];
+  mr.clips.setClipNotes(b, clip.notes.map((n) => n.id === "t0" ? { ...JSON.parse(JSON.stringify(n)), metadata: { trill: { probability: 1, notes: [] } } } : JSON.parse(JSON.stringify(n))));
+}, ctx.clipA);
 await sleep(2000);
 const plain = await page.evaluate((b) => JSON.parse(JSON.stringify(window.__musicRunners.stores.eventLogStore.byShape[b] ?? [])), ctx.b);
 console.log("counts with empty list", plain.map((e) => e.event.count));

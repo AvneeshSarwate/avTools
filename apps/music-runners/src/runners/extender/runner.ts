@@ -1,7 +1,7 @@
 // Runner 2: "extender". Every loop one random note is stretched by a full
 // loop length so it rings into the next pass. On an incoming trill event it
 // plays a trill between the last pitch it sent and the event's pitch.
-import type { Bank } from "../../model/types";
+import type { Clip } from "../../model/types";
 import type { PianoRollNote } from "../../pianoRoll/types";
 import { clampPitch, type LoopNotes, notesInLoop, numberParam, type RunnerApi, type RunnerDefinition, tagValue } from "../runnerTypes";
 
@@ -9,15 +9,15 @@ export const NO_EXTEND_TAG = "noExtend";
 export const EXTENDED_COLOR = "#9be37a";
 export const TRILL_NOTE_COLOR = "#ff7eb6";
 
-export function generateExtenderLoop(bank: Bank, random: () => number): LoopNotes {
-  const notes: PianoRollNote[] = notesInLoop(bank.notes, bank.loopLength).map((note) => ({ ...note }));
+export function generateExtenderLoop(clip: Clip, random: () => number): LoopNotes {
+  const notes: PianoRollNote[] = notesInLoop(clip.notes, clip.loopLength).map((note) => ({ ...note }));
   const candidates = notes.filter((note) => !tagValue(note, NO_EXTEND_TAG));
   if (candidates.length > 0) {
     const chosen = candidates[Math.floor(random() * candidates.length)];
-    chosen.duration += bank.loopLength;
+    chosen.duration += clip.loopLength;
     chosen.metadata = { ...(chosen.metadata ?? {}), extended: true };
   }
-  return { notes, loopLength: bank.loopLength };
+  return { notes, loopLength: clip.loopLength };
 }
 
 function trillPhrase(from: number, to: number, count: number): number[] {
@@ -53,8 +53,8 @@ async function runExtender(api: RunnerApi): Promise<void> {
   });
   try {
     while (true) {
-      const bank = api.getBank();
-      const loop = generateExtenderLoop(bank, api.random);
+      const clip = api.getClip();
+      const loop = generateExtenderLoop(clip, api.random);
       api.publishLoop(loop);
       await api.playLoop(loop);
     }

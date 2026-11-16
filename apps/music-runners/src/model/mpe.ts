@@ -1,7 +1,7 @@
 // Per-note MPE expression: the curve shapes, conversions and thinning shared
 // by the recorder (src/store/recording.ts) and playback (src/store/playback.ts).
 // The note fields match `docs/livecode`'s piano roll (`PianoRollNoteLike` in
-// packages/music-types/ableton_clip.ts) so recorded banks port back as is.
+// packages/music-types/ableton_clip.ts) so recorded clips port back as is.
 import type { PianoRollNote } from "../pianoRoll/types";
 
 /** One pitch breakpoint; `time` is 0..1 across the note, `pitchOffset` semitones from its pitch. */

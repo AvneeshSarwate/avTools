@@ -9,11 +9,11 @@ import { ensureMidi } from "./store/midi";
 import { clearRuntime, stopAll } from "./store/playback";
 import { loadProject, projectNameFromUrl, startAutosave, listProjects } from "./store/project";
 import { installDebugHook } from "./debugHook";
-import { BankSidebar } from "./ui/BankSidebar";
+import { RunnerSidebar } from "./ui/RunnerSidebar";
 import { TopBar } from "./ui/TopBar";
 import { ConnectionLayer } from "./ui/ConnectionLayer";
 import { installConnectionRules } from "./store/connections";
-import { installBankCopyOnDuplicate } from "./shapes/bankOnCopy";
+import { installClipCopyRules } from "./shapes/clipOnCopy";
 
 export function App() {
   const [editor, setEditorState] = useState<Editor | null>(null);
@@ -30,13 +30,13 @@ export function App() {
       stopAutosave.current = startAutosave(mounted);
     })();
     const removeConnectionRules = installConnectionRules(mounted);
-    const removeBankCopy = installBankCopyOnDuplicate(mounted);
+    const removeClipCopy = installClipCopyRules(mounted);
     const removeDeleteHandler = mounted.sideEffects.registerAfterDeleteHandler("shape", (shape) => {
       if (isRunnerShapeType(shape.type)) clearRuntime(shape.id);
     });
     return () => {
       removeConnectionRules();
-      removeBankCopy();
+      removeClipCopy();
       stopAutosave.current();
       removeDeleteHandler();
       stopAll();
@@ -59,7 +59,7 @@ export function App() {
     <div className="app-root">
       <TopBar editor={editor} />
       <div className="app-body">
-        <BankSidebar editor={editor} />
+        <RunnerSidebar editor={editor} />
         <div className="app-canvas">
           <Tldraw shapeUtils={RUNNER_SHAPE_UTILS} onMount={onMount} components={TLDRAW_COMPONENTS} />
         </div>

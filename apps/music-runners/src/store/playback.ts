@@ -3,7 +3,7 @@
 import type { TimeContext } from "@avtools/core-timing";
 import type { MidiOutput } from "@avtools/midi/browser";
 import type { TLShapeId } from "tldraw";
-import type { Bank, RunnerEvent } from "../model/types";
+import type { Clip, RunnerEvent } from "../model/types";
 import type { GhostNote, PianoRollNote } from "../pianoRoll/types";
 import { getRunner } from "../runners/registry";
 import {
@@ -17,7 +17,7 @@ import {
   type RunnerApi,
   type RunnerDefinition,
 } from "../runners/runnerTypes";
-import { getBank } from "./banks";
+import { getClip } from "./clips";
 import { getRootContext, nowBeats } from "./clock";
 import { getEditor } from "./editorRef";
 import { emitEvent, onEvent } from "./events";
@@ -105,7 +105,6 @@ const activeRuns = new Map<string, ActiveRun>();
 /** What the shape stores; read live so slider moves land mid-run. */
 export interface InstanceProps {
   runnerType: string;
-  bankId: string;
   midiOutputName: string;
   params: Params;
   /** Each note on its own member channel with its expression (MPE lower zone). */
@@ -119,10 +118,9 @@ function readInstanceProps(shapeId: string): InstanceProps | null {
   const shape = editor?.getShape(shapeId as TLShapeId);
   if (!shape) return null;
   const props = shape.props as Partial<InstanceProps>;
-  if (typeof props.runnerType !== "string" || typeof props.bankId !== "string") return null;
+  if (typeof props.runnerType !== "string") return null;
   return {
     runnerType: props.runnerType,
-    bankId: props.bankId,
     midiOutputName: props.midiOutputName ?? "",
     params: props.params ?? {},
     mpe: props.mpe ?? false,
@@ -305,11 +303,10 @@ function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outpu
   return {
     ctx,
     shapeId,
-    getBank: () => {
-      const props = readInstanceProps(shapeId);
-      const bank = props ? getBank(props.bankId) : undefined;
-      if (!bank) throw new Error("instance has no bank");
-      return bank;
+    getClip: () => {
+      const clip = getClip(shapeId);
+      if (!clip) throw new Error("instance has no clip");
+      return clip;
     },
     getParams: () => liveParams(shapeId, def),
     random: () => ctx.random(),
@@ -363,9 +360,8 @@ async function launch(shapeId: string, mode: Exclude<InstanceMode, "idle">): Pro
   const props = readInstanceProps(shapeId);
   if (!props) return;
   const def = getRunner(props.runnerType);
-  const bank = getBank(props.bankId);
-  if (!bank) {
-    patchRuntime(shapeId, { error: "no bank selected" });
+  if (!getClip(shapeId)) {
+    patchRuntime(shapeId, { error: "instance has no clip" });
     return;
   }
   const output = await getOutput(props.midiOutputName);
@@ -388,7 +384,11 @@ async function launch(shapeId: string, mode: Exclude<InstanceMode, "idle">): Pro
   }, `${mode}:${shapeId}`);
   const finish = () => {
     api?.releaseAll();
-    if (activeRuns.get(shapeId)?.cancel === cancel) activeRuns.delete(shapeId);
+    // A cancelled run's branch settles later, possibly after a new run has
+    // started (Play straight to Run); the runtime is the new run's then.
+    const current = activeRuns.get(shapeId);
+    if (current && current.cancel !== cancel) return;
+    activeRuns.delete(shapeId);
     patchRuntime(shapeId, { mode: "idle", loopStartBeats: null });
   };
   const cancel = () => {
@@ -404,11 +404,11 @@ async function launch(shapeId: string, mode: Exclude<InstanceMode, "idle">): Pro
   });
 }
 
-/** The plain transport: the bank's notes verbatim, looping, transpose applied. */
+/** The plain transport: the clip's notes verbatim, looping, transpose applied. */
 async function playVerbatim(api: RunnerApi): Promise<void> {
   while (true) {
-    const bank = api.getBank();
-    const loop = { notes: bank.notes, loopLength: bank.loopLength };
+    const clip = api.getClip();
+    const loop = { notes: clip.notes, loopLength: clip.loopLength };
     api.publishLoop(loop);
     await api.playLoop(loop);
   }
@@ -439,9 +439,9 @@ export function regenerate(shapeId: string): void {
   const props = readInstanceProps(shapeId);
   if (!props) return;
   const def = getRunner(props.runnerType);
-  const bank = getBank(props.bankId);
-  if (!bank) return;
-  const preview = def.generate(bank, Math.random, liveParams(shapeId, def));
+  const clip = getClip(shapeId);
+  if (!clip) return;
+  const preview = def.generate(clip, Math.random, liveParams(shapeId, def));
   patchRuntime(shapeId, { preview });
 }
 
@@ -450,4 +450,4 @@ export function clearRuntime(shapeId: string): void {
   delete playbackStore.instances[shapeId];
 }
 
-export type { Bank };
+export type { Clip };

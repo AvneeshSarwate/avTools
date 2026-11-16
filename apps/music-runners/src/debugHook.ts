@@ -1,30 +1,30 @@
 // Everything a test script (or a curious console) needs, on window.__musicRunners.
 import type { Editor } from "tldraw";
 import { snapshot } from "valtio";
-import { banksStore, createBank, setBankLoopLength, setBankNotes } from "./store/banks";
+import { clipsStore, getClip, setClipLoopLength, setClipNotes, setClipScale } from "./store/clips";
 import { clockStore, nowBeats, setBpm } from "./store/clock";
 import { arrowTargets, emitEvent, eventLogStore } from "./store/events";
 import { listConnections, routesFrom, setConnectionType } from "./store/connections";
 import { ensureMidi, midiStore } from "./store/midi";
 import { playbackStore, regenerate, startPlay, startRun, stopAll, stopInstance } from "./store/playback";
 import { projectStore, saveProject } from "./store/project";
-import { createInstance, listInstances } from "./shapes";
+import { createInstance, listInstances, revealInstance } from "./shapes";
 import { sourceRollHandles } from "./store/rollHandles";
 import { recordingStore, setInstanceInput, startRecording, stopRecording, liveInputFor } from "./store/recording";
 
 export function installDebugHook(editor: Editor): void {
   (window as unknown as { __musicRunners: unknown }).__musicRunners = {
     editor,
-    stores: { banksStore, clockStore, midiStore, playbackStore, projectStore, eventLogStore, recordingStore },
+    stores: { clipsStore, clockStore, midiStore, playbackStore, projectStore, eventLogStore, recordingStore },
     snapshot,
-    banks: { createBank, setBankNotes, setBankLoopLength },
+    clips: { getClip, setClipNotes, setClipLoopLength, setClipScale },
     clock: { setBpm, nowBeats },
     midi: { ensureMidi },
     events: { emitEvent, arrowTargets },
     connections: { list: () => listConnections(editor), routesFrom: (from: Parameters<typeof routesFrom>[1], type: string) => routesFrom(editor, from, type), setType: (arrowId: Parameters<typeof setConnectionType>[1], type: string) => setConnectionType(editor, arrowId, type) },
     playback: { startRun, startPlay, stopInstance, stopAll, regenerate },
     project: { saveProject },
-    shapes: { createInstance, listInstances },
+    shapes: { createInstance, listInstances, revealInstance },
     recording: { setInstanceInput, startRecording, stopRecording, liveInputFor },
     sourceRollHandles,
   };

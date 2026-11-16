@@ -6,7 +6,8 @@ export interface RunnerInstanceProps {
   w: number;
   h: number;
   runnerType: string;
-  bankId: string;
+  /** Shown in the title bar and the sidebar; unique per project when made in the app. */
+  name: string;
   midiOutputName: string;
   /** Live input for monitoring and recording; "" for none. */
   midiInputName: string;

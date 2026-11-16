@@ -38,22 +38,32 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 .top-bar__status { display: inline-flex; align-items: center; gap: 6.5px; color: var(--c-text-dim); white-space: nowrap; }
 .top-bar__error { color: var(--c-rec); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* ---------- bank sidebar ---------- */
+/* ---------- runner sidebar ---------- */
 
-.bank-sidebar { width: 273px; flex: none; background: var(--c-surface-1); border-right: 1px solid var(--c-line); overflow-y: auto; display: flex; flex-direction: column; }
-.bank-sidebar--collapsed { width: 34px; align-items: center; padding-top: 4px; }
-.bank-sidebar__header { display: flex; align-items: center; justify-content: space-between; height: var(--h-row); padding: 0 4px 0 13px; border-bottom: 1px solid var(--c-line); }
-.bank-group { display: flex; flex-direction: column; padding-bottom: 5px; }
-.bank-group__header { display: flex; align-items: center; justify-content: space-between; height: var(--h-row); padding: 0 4px 0 13px; }
-.bank-row { display: flex; align-items: center; gap: 8px; height: 28.5px; padding: 0 4px 0 13px; }
-.bank-row:hover { background: var(--c-surface-3); }
-.bank-row--empty { color: var(--c-text-faint); }
-.bank-row__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
-.bank-row__meta { color: var(--c-text-faint); white-space: nowrap; }
-.bank-row__actions { display: none; gap: 1px; }
-.bank-row:hover .bank-row__actions, .bank-row:focus-within .bank-row__actions { display: flex; }
-.bank-row:hover .bank-row__meta, .bank-row:focus-within .bank-row__meta { display: none; }
-.bank-row .ui-text { flex: 1; }
+.runner-sidebar { width: 273px; flex: none; background: var(--c-surface-1); border-right: 1px solid var(--c-line); overflow-y: auto; display: flex; flex-direction: column; }
+.runner-sidebar--collapsed { width: 34px; align-items: center; padding-top: 4px; }
+.runner-sidebar__header { display: flex; align-items: center; justify-content: space-between; height: var(--h-row); padding: 0 4px 0 13px; border-bottom: 1px solid var(--c-line); }
+.runner-group { display: flex; flex-direction: column; padding-bottom: 5px; border-bottom: 1px solid var(--c-line); }
+.runner-group__header { display: flex; align-items: center; justify-content: space-between; height: var(--h-row); padding: 0 4px 0 13px; }
+.runner-group__label { font-weight: 600; }
+.runner-row { position: relative; display: flex; align-items: center; gap: 7px; height: 28.5px; padding: 0 4px 0 11px; border-left: 2px solid transparent; cursor: pointer; }
+.runner-row:hover { background: var(--c-surface-3); }
+.runner-row.is-selected { border-left-color: var(--c-select); background: var(--c-surface-2); }
+.runner-row--empty { color: var(--c-text-faint); cursor: default; }
+.runner-row--empty:hover { background: none; }
+.runner-row__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runner-row__status { color: var(--c-text-faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.runner-row--play .runner-row__status { color: var(--c-play); }
+.runner-row--run .runner-row__status { color: var(--c-run); }
+.runner-row--rec .runner-row__status, .runner-row__status.is-error { color: var(--c-rec); }
+.runner-row__queued { color: var(--c-select); font-weight: 700; font-size: 11px; }
+.runner-row__transport { display: flex; gap: 0; }
+.runner-row .ui-text { flex: 1; }
+/* Loop progress of an active instance, along the row's bottom edge */
+.runner-row__progress { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; transform-origin: left; transform: scaleX(0); pointer-events: none; }
+.runner-row--play .runner-row__progress { background: var(--c-play); }
+.runner-row--run .runner-row__progress { background: var(--c-run); }
+.runner-row--rec .runner-row__progress { background: var(--c-rec); }
 
 /* ---------- runner instance ---------- */
 
@@ -76,7 +86,7 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
    the controls */
 .runner-shape, .connection-layer { font-size: 20px; }
 
-/* Title bar: identity and the bank (the instance's "clip"), then state. */
+/* Title bar: identity (runner type, instance name) and the clip's loop length, then state. */
 .runner-shape__title {
   display: flex;
   align-items: center;
@@ -88,6 +98,7 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
   cursor: move;
 }
 .runner-shape__title [data-control] { cursor: default; }
+.runner-shape__title .ui-text { cursor: text; }
 .runner-shape__title .ui-number { cursor: ns-resize; }
 .runner-shape__title .ui-chooser { max-width: 338px; }
 .runner-shape__grip { color: var(--c-text-faint); display: inline-flex; }

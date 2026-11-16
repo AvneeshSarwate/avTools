@@ -1,7 +1,6 @@
 import { useState } from "react";
 import type { Editor } from "tldraw";
-import { RUNNERS } from "../runners/registry";
-import { createInstance, listInstances } from "../shapes";
+import { listInstances } from "../shapes";
 import { clockStore, setBpm } from "../store/clock";
 import { ensureMidi, midiStore, panicAllOutputs, refreshOutputs } from "../store/midi";
 import { useSnapshot } from "valtio";
@@ -90,18 +89,6 @@ export function TopBar({ editor }: { editor: Editor | null }) {
           <Button label="Connect" onClick={() => void ensureMidi()} />
         )}
         {midi.error ? <span className="top-bar__error">{midi.error}</span> : null}
-      </div>
-      <div className="ui-group">
-        {/* One chooser for every runner type: the bar does not grow with each runner */}
-        <Chooser
-          className="top-bar__add"
-          value=""
-          placeholder="+ Add runner"
-          options={RUNNERS.map((def) => ({ value: def.type, label: def.label }))}
-          disabled={!editor}
-          title="add a runner instance (with a new bank)"
-          onChange={(type) => editor && createInstance(editor, type)}
-        />
       </div>
     </div>
   );

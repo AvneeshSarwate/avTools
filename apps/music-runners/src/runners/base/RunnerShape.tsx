@@ -1,4 +1,4 @@
-// The base runner instance shape: chrome (bank, MIDI output, loop length,
+// The base runner instance shape: chrome (name, MIDI output, loop length,
 // params, transports, queue) plus three collapsible rolls. One tldraw shape
 // type per runner definition is produced by defineRunnerShape.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -14,13 +14,13 @@ import {
 } from "tldraw";
 import { PianoRoll } from "../../pianoRoll/PianoRoll";
 import type { GhostNote, MetadataPanelProps, PianoRollHandle, PianoRollNote, PianoRollScale, PianoRollView } from "../../pianoRoll/types";
-import { banksStore, createBank, listBanks, setBankLoopLength, setBankNotes, setBankScale } from "../../store/banks";
+import { clipsStore, setClipLoopLength, setClipNotes, setClipScale } from "../../store/clips";
 import { DEFAULT_SCALE } from "../../pianoRoll/scale";
 import { displayStore } from "../../store/display";
 import { GUTTER_WIDTH } from "../../pianoRoll/gutter";
 import { LAYOUT_GAP, SCROLLBAR_THICKNESS } from "../../pianoRoll/constants";
 import { eventLogStore } from "../../store/events";
-import type { Bank } from "../../model/types";
+import type { Clip } from "../../model/types";
 import { defaultOutputName, ensureMidi, getOutput, midiStore, refreshPorts } from "../../store/midi";
 import {
   closeInput,
@@ -52,7 +52,7 @@ import { defaultParams, numberParam, type ParamValue, type Params, type RunnerDe
 import { ScaleControls } from "../../pianoRoll/ControlPanel";
 import { DEFAULT_INPUT_PROPS, DEFAULT_ROOT_PROPS, DEFAULT_INSTANCE_HEIGHT, DEFAULT_INSTANCE_WIDTH, type RunnerInstanceProps } from "./instanceProps";
 import { TagEditor, toggleTag } from "./TagEditor";
-import { Button, Chooser, Field, Lamp, NumberBox, Toggle } from "../../ui/controls/controls";
+import { Button, Chooser, Field, Lamp, NumberBox, TextField, Toggle } from "../../ui/controls/controls";
 import { Icon } from "../../ui/controls/icons";
 
 /** Shape border (1px each side) around the content. */
@@ -104,7 +104,7 @@ export function defineRunnerShape(def: RunnerDefinition) {
     return <RunnerInstanceView shape={shape} def={def} />;
   }
 
-  const versions = createShapePropsMigrationIds(type, { AddLiveInput: 1, AddAutoRoot: 2 });
+  const versions = createShapePropsMigrationIds(type, { AddLiveInput: 1, AddAutoRoot: 2, ClipPerInstance: 3 });
   const migrations = createShapePropsMigrationSequence({
     sequence: [
       {
@@ -125,6 +125,20 @@ export function defineRunnerShape(def: RunnerDefinition) {
           for (const key of Object.keys(DEFAULT_ROOT_PROPS)) delete props[key];
         },
       },
+      {
+        // Banks are gone: each instance owns its clip (src/store/clips.ts).
+        // Loading a version 1 project moves each bank's notes and name onto
+        // the instances that used it before this runs (src/store/project.ts).
+        id: versions.ClipPerInstance,
+        up(props: Record<string, unknown>) {
+          delete props.bankId;
+          if (typeof props.name !== "string") props.name = "";
+        },
+        down(props: Record<string, unknown>) {
+          delete props.name;
+          props.bankId = "";
+        },
+      },
     ],
   });
 
@@ -135,7 +149,7 @@ export function defineRunnerShape(def: RunnerDefinition) {
       w: T.number,
       h: T.number,
       runnerType: T.string,
-      bankId: T.string,
+      name: T.string,
       midiOutputName: T.string,
       midiInputName: T.string,
       midiThru: T.boolean,
@@ -172,7 +186,7 @@ export function defineRunnerShape(def: RunnerDefinition) {
         w: DEFAULT_INSTANCE_WIDTH,
         h: DEFAULT_INSTANCE_HEIGHT,
         runnerType: def.type,
-        bankId: "",
+        name: "",
         midiOutputName: "",
         ...DEFAULT_INPUT_PROPS,
         ...DEFAULT_ROOT_PROPS,
@@ -245,10 +259,9 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
   const editor = useEditor();
   const shapeId = shape.id;
   const props = shape.props;
-  // Snapshots: this view re-renders only for the bank, instance runtime, MIDI
+  // Snapshots: this view re-renders only for its clip, instance runtime, MIDI
   // and event-log fields it reads, not for other instances' activity.
-  const bank = useSnapshot(banksStore).banks[props.bankId] as Bank | undefined;
-  const bankId = bank?.id;
+  const clip = useSnapshot(clipsStore).clips[shapeId] as Clip | undefined;
   const runtime = (useSnapshot(playbackStore).instances[shapeId] ?? EMPTY_RUNTIME) as InstanceRuntime;
   const midi = useSnapshot(midiStore);
   const eventLog = useSnapshot(eventLogStore).byShape[shapeId] ?? EMPTY_LOG;
@@ -393,11 +406,12 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     [shapeId],
   );
 
-  // Frame the source roll when it has no saved view yet (new instance, bank
-  // switch, or the first notes arriving); otherwise restore the saved view.
-  const hasNotes = (bank?.notes.length ?? 0) > 0;
+  // Frame the source roll when it has no saved view yet (new instance or the
+  // first notes arriving); otherwise restore the saved view.
+  const hasClip = clip !== undefined;
+  const hasNotes = (clip?.notes.length ?? 0) > 0;
   useEffect(() => {
-    if (!bankId) return;
+    if (!hasClip) return;
     afterLayout(() => {
       const roll = sourceRollRef.current;
       if (!roll) return;
@@ -409,7 +423,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
       }
       followSourceView();
     });
-  }, [bankId, hasNotes, props.showSource, followSourceView]);
+  }, [hasClip, hasNotes, props.showSource, followSourceView]);
 
   const generatedLoop = runtime.generated;
   const previewLoop = runtime.preview;
@@ -458,7 +472,6 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
   const params: Params = useMemo(() => ({ ...defaultParams(def), ...props.params }), [def, props.params]);
   const setParam = (key: string, value: ParamValue) => updateProps({ params: { ...params, [key]: value } });
 
-  const bankOptions = listBanks(def.type);
   const outputNames = midi.outputs.map((port) => port.name);
   if (props.midiOutputName && !outputNames.includes(props.midiOutputName)) outputNames.unshift(props.midiOutputName);
   const inputNames = midi.inputs.map((port) => port.name);
@@ -467,7 +480,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
 
   const stageWidth = Math.max(320, Math.round(props.w - SHAPE_BORDER - ROLL_CHROME_WIDTH));
 
-  const sourceGhosts = useMemo<GhostNote[]>(() => (bank && def.sourceGhostNotes ? def.sourceGhostNotes(bank, params) : EMPTY_GHOSTS), [bank, def, params]);
+  const sourceGhosts = useMemo<GhostNote[]>(() => (clip && def.sourceGhostNotes ? def.sourceGhostNotes(clip, params) : EMPTY_GHOSTS), [clip, def, params]);
   const noteBadge = useCallback(
     (note: PianoRollNote) => {
       const badges = def.tags.filter((tag) => tagValue(note, tag.key) !== undefined).map((tag) => tag.badge ?? tag.label.slice(0, 1).toUpperCase());
@@ -497,22 +510,15 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
   );
 
   const onSourceNotesChange = useCallback(
-    (notes: PianoRollNote[]) => {
-      if (bankId) setBankNotes(bankId, notes);
-    },
-    [bankId],
+    (notes: PianoRollNote[]) => setClipNotes(shapeId, notes),
+    [shapeId],
   );
   const onNotePreview = useCallback(
     (note: { pitch: number; velocity: number }) => auditionNote(shapeId, note.pitch, note.velocity),
     [shapeId],
   );
-  const scale = (bank?.scale ?? DEFAULT_SCALE) as PianoRollScale;
-  const onScaleChange = useCallback(
-    (next: PianoRollScale) => {
-      if (bankId) setBankScale(bankId, next);
-    },
-    [bankId],
-  );
+  const scale = (clip?.scale ?? DEFAULT_SCALE) as PianoRollScale;
+  const onScaleChange = useCallback((next: PianoRollScale) => setClipScale(shapeId, next), [shapeId]);
   const onKeyboardNote = useCallback(
     (pitch: number, on: boolean) => (on ? keyboardKeyDown(shapeId, pitch) : keyboardKeyUp(shapeId)),
     [shapeId],
@@ -526,24 +532,24 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     [def],
   );
 
-  // Tag hotkeys while the source roll has focus: applied straight to the bank.
+  // Tag hotkeys while the source roll has focus: applied straight to the clip.
   const onSourceKeyDown = (event: React.KeyboardEvent) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const tag = def.tags.find((candidate) => candidate.hotkey && candidate.hotkey === event.key);
-    if (!tag || !bank) return;
+    if (!tag) return;
     const target = event.target as HTMLElement;
     if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
-    const liveBank = banksStore.banks[bank.id];
-    if (!liveBank) return;
-    const selected = liveBank.notes.filter((note) => selectedIdsRef.current.includes(note.id));
+    const liveClip = clipsStore.clips[shapeId];
+    if (!liveClip) return;
+    const selected = liveClip.notes.filter((note) => selectedIdsRef.current.includes(note.id));
     if (selected.length === 0) return;
     event.preventDefault();
     event.stopPropagation();
     toggleTag(tag, selected, (_label, ids, update) => {
       const idSet = new Set(ids);
-      setBankNotes(
-        liveBank.id,
-        liveBank.notes.map((note) => {
+      setClipNotes(
+        shapeId,
+        liveClip.notes.map((note) => {
           if (!idSet.has(note.id)) return note;
           const metadata = update(note.metadata, note);
           const next = { ...note };
@@ -555,13 +561,12 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     });
   };
 
-  const onBankSelect = (value: string) => {
-    if (value === "__new__") {
-      const created = createBank(def.type);
-      updateProps({ bankId: created.id });
-    } else {
-      updateProps({ bankId: value });
-    }
+  // The name field edits a draft and commits on Enter or blur.
+  const [nameDraft, setNameDraft] = useState<string | null>(null);
+  const commitName = () => {
+    const next = nameDraft?.trim();
+    if (next && next !== props.name) updateProps({ name: next });
+    setNameDraft(null);
   };
   const onRegenerate = () => {
     if (!props.showPreview) updateProps({ showPreview: true });
@@ -586,11 +591,6 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
   const lastEvent = eventLog[0];
   const shapeState = recordingKind ? "recording" : runtime.mode;
 
-  const bankChoices = [
-    ...(bank ? [] : [{ value: "", label: "(no bank)", muted: true }]),
-    ...bankOptions.map((option) => ({ value: option.id, label: option.name })),
-    { value: "__new__", label: "+ new bank", divider: true },
-  ];
   const portChoices = (names: string[], current: string, connected: string[]) => [
     { value: "", label: midi.status === "ready" ? "none" : "connect MIDI", muted: true },
     ...names.map((name) => ({ value: name, label: connected.includes(name) ? name : `${name} (missing)`, muted: !connected.includes(name) || undefined })),
@@ -627,19 +627,28 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
             <Icon name="grip" />
           </span>
           <span className="runner-shape__name">{def.label}</span>
-          <Chooser value={bank ? bank.id : ""} options={bankChoices} onChange={onBankSelect} title="bank: the notes this instance plays" />
-          <Field label="loop" title="loop length in beats (notes past it stay in the bank)">
+          <TextField
+            className="runner-shape__instance-name"
+            value={nameDraft ?? props.name}
+            placeholder={def.type}
+            onChange={setNameDraft}
+            onCommit={commitName}
+            onCancel={() => setNameDraft(null)}
+            title="instance name (also in the sidebar)"
+            width={170}
+          />
+          <Field label="loop" title="loop length in beats (notes past it stay in the clip)">
             <NumberBox
               className="runner-shape__loop-length"
-              value={bank ? bank.loopLength : null}
+              value={clip ? clip.loopLength : null}
               min={0.25}
               max={256}
               step={0.25}
               perPixel={0.25}
               format={(value) => (Number.isInteger(value) ? String(value) : value.toFixed(2))}
-              disabled={!bank}
+              disabled={!clip}
               width={78}
-              onChange={(value) => bank && setBankLoopLength(bank.id, value)}
+              onChange={(value) => setClipLoopLength(shapeId, value)}
             />
           </Field>
           <span className="ui-spacer" />
@@ -664,9 +673,9 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 label="Play"
                 tone="play"
                 active={runtime.mode === "play"}
-                disabled={!bank}
+                disabled={!clip}
                 onClick={() => runtime.mode !== "play" && startPlay(shapeId)}
-                title="play the bank verbatim, looping"
+                title="play the clip verbatim, looping"
               />
               <Button
                 icon="run"
@@ -674,7 +683,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 tone="run"
                 className="runner-shape__run"
                 active={runtime.mode === "run"}
-                disabled={!bank}
+                disabled={!clip}
                 onClick={() => runtime.mode !== "run" && startRun(shapeId)}
                 title="run the runner's algorithm, looping"
               />
@@ -685,9 +694,9 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 tone="rec"
                 className="runner-shape__rec"
                 active={Boolean(recordingKind)}
-                disabled={!bank || (!recordingKind && recording.listening === null)}
+                disabled={!clip || (!recordingKind && recording.listening === null)}
                 onClick={() => (recordingKind ? stopRecording(shapeId) : startRecording(shapeId))}
-                title="record from the MIDI input · playing: overdub at the loop position · idle with notes: start Play and overdub · empty bank: free take, loop length set on stop"
+                title="record from the MIDI input · playing: overdub at the loop position · idle with notes: start Play and overdub · empty clip: free take, loop length set on stop"
               />
             </div>
             <div className="ui-group ui-group--io">
@@ -779,17 +788,17 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
             title="source"
             open={props.showSource}
             onToggle={() => updateProps({ showSource: !props.showSource })}
-            extra={bank ? undefined : "no bank"}
+            extra={clip ? undefined : "no clip"}
             toolsRef={setSourceToolbar}
-            onResizeStart={bank ? startRollResize("source") : undefined}
+            onResizeStart={clip ? startRollResize("source") : undefined}
           >
-            {bank ? (
+            {clip ? (
               <div onKeyDownCapture={onSourceKeyDown}>
                 <PianoRoll
                   ref={setSourceRollRef}
-                  notes={bank.notes as PianoRollNote[]}
+                  notes={clip.notes as PianoRollNote[]}
                   onNotesChange={onSourceNotesChange}
-                  loopLength={bank.loopLength}
+                  loopLength={clip.loopLength}
                   width={stageWidth}
                   height={rollHeight("source")}
                   pitchLabels={pitchLabels}
@@ -811,7 +820,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 />
               </div>
             ) : (
-              <div className="runner-shape__empty">Pick or create a bank.</div>
+              <div className="runner-shape__empty">This instance has no clip.</div>
             )}
           </Section>
 
@@ -859,7 +868,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                 icon="regenerate"
                 label="Regenerate"
                 className="runner-shape__regenerate"
-                disabled={!bank}
+                disabled={!clip}
                 onClick={onRegenerate}
                 title="dry-run the algorithm into the Preview roll"
               />

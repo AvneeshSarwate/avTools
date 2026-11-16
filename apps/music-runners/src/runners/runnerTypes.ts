@@ -1,7 +1,7 @@
 // The soft contract a runner follows. Runners are templates to copy and
 // customize per piece; keep this thin and let runner code be specific.
 import type { TimeContext } from "@avtools/core-timing";
-import type { Bank, RunnerEvent } from "../model/types";
+import type { Clip, RunnerEvent } from "../model/types";
 import type { GhostNote, JsonObject, PianoRollNote, PianoRollScale } from "../pianoRoll/types";
 
 export type TagFieldSpec =
@@ -80,7 +80,8 @@ export interface PlayLoopOptions {
 export interface RunnerApi {
   ctx: TimeContext;
   shapeId: string;
-  getBank(): Bank;
+  /** The instance's own clip (notes, loop length, scale), read live. */
+  getClip(): Clip;
   getParams(): Params;
   /** Seeded per run; use instead of Math.random. */
   random(): number;
@@ -109,12 +110,12 @@ export interface RunnerDefinition {
    */
   emits?: string[];
   /**
-   * Pure: one loop from the bank, with the instance's params. Used by Run
+   * Pure: one loop from the instance's clip, with the instance's params. Used by Run
    * every pass and by the Preview roll's regenerate.
    */
-  generate(bank: Bank, random: () => number, params: Params): LoopNotes;
+  generate(clip: Clip, random: () => number, params: Params): LoopNotes;
   /** Static overlays on the source roll (for example variant alternatives), with the instance's params. */
-  sourceGhostNotes?(bank: Bank, params: Params): GhostNote[];
+  sourceGhostNotes?(clip: Clip, params: Params): GhostNote[];
   /** Fill for notes in the Generated and Preview rolls (for example a chosen variant). */
   generatedNoteColor?(note: PianoRollNote): string | undefined;
   /** Long-running: loop until the context is cancelled. */
