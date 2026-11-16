@@ -28,7 +28,8 @@ export type IconName =
   | "save"
   | "grip"
   | "regenerate"
-  | "link";
+  | "link"
+  | "speaker";
 
 const PATHS: Record<IconName, ReactElement> = {
   play: <path d="M3 2v8l7-4z" fill="currentColor" />,
@@ -77,6 +78,7 @@ const PATHS: Record<IconName, ReactElement> = {
     </g>
   ),
   link: <path d="M5 7a2.5 2.5 0 003.5 0l2-2A2.5 2.5 0 007 1.5L6 2.5M7 5a2.5 2.5 0 00-3.5 0l-2 2A2.5 2.5 0 005 10.5L6 9.5" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />,
+  speaker: <path d="M1.5 4.5h2l3-2.5v8l-3-2.5h-2zM8.5 4.2a2.5 2.5 0 010 3.6M9.8 2.8a4.5 4.5 0 010 6.4" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />,
   regenerate: <path d="M1.8 6a4.2 4.2 0 017.4-2.7M10.2 6a4.2 4.2 0 01-7.4 2.7M9.5 1.2v2.4H7.1M2.5 10.8V8.4h2.4" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />,
 };
 

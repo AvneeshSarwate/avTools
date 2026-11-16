@@ -119,6 +119,8 @@ export interface PianoRollState {
     snapToGrid: boolean
     /** Click-drag on the background draws a note instead of a marquee. */
     drawMode: boolean
+    /** Sound notes through onNotePreview when they are added, clicked, moved or marqueed (the keyboard column always sounds). */
+    previewSound: boolean
     backgroundColor1: string
     backgroundColor2: string
     noteColor: string
@@ -311,6 +313,7 @@ export const createPianoRollState = (): PianoRollState => {
       pitchLabels: 'name',
       snapToGrid: true,
       drawMode: false,
+      previewSound: true,
       backgroundColor1: '#262626',
       backgroundColor2: '#222222',
       noteColor: '#f23',

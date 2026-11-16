@@ -145,6 +145,7 @@ function selectedNotes(state: PianoRollState): NoteData[] {
 }
 
 function previewNote(state: PianoRollState, note: NoteData) {
+  if (!state.grid.previewSound) return
   state.hooks.onNotePreview?.({ pitch: note.pitch, velocity: note.velocity })
 }
 

@@ -13,6 +13,7 @@ export interface ControlPanelProps {
   subdivision: number
   snapToGrid: boolean
   drawMode: boolean
+  previewSound: boolean
   showMetadata: boolean
   noteCount: number
   selectionCount: number
@@ -21,6 +22,7 @@ export interface ControlPanelProps {
   onSubdivisionChange: (value: number) => void
   onSnapToggle: () => void
   onDrawToggle: () => void
+  onPreviewSoundToggle: () => void
   onZoomIn: () => void
   onZoomOut: () => void
   onFit: () => void
@@ -151,6 +153,14 @@ export function ControlPanel(props: ControlPanelProps) {
           disabled={!interactive}
           onChange={props.onDrawToggle}
           title="Draw: click-drag on the background creates a note (off: marquee select, double-click adds)"
+        />
+        <Toggle
+          icon="speaker"
+          className="pr-preview-sound-toggle"
+          on={props.previewSound}
+          disabled={!interactive}
+          onChange={props.onPreviewSoundToggle}
+          title="Preview sound: play notes as they are added, clicked, moved or marqueed (the keyboard column always plays)"
         />
       </div>
       <div className="ui-group">

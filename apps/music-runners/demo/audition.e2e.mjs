@@ -86,6 +86,37 @@ console.log("marquee note-ons in order", ons);
 // (steps 2-3 moved the first three notes to 61, 65, 68)
 assert.deepEqual(order, [61, 65, 68, 71], "each note plays when the marquee reaches it, left to right");
 assert.equal(ons.length, 4, "no repeats while the notes stay inside");
+// 5. preview sound off: pressing, moving and marqueeing are silent; the keyboard column still plays
+await shape.locator(".pr-preview-sound-toggle").first().click();
+await page.evaluate(() => window.__musicRunners.sourceRollHandles.get(window.__id).selectNotes(["n0", "n1", "n2"]));
+await reset();
+p = at(2.5, 65);
+await page.mouse.move(p.x, p.y);
+await page.mouse.down();
+await page.mouse.move(p.x, p.y - view.noteHeight * 2, { steps: 6 });
+await page.mouse.up();
+await page.keyboard.press("ArrowDown");
+await page.mouse.move(from.x, from.y);
+await page.mouse.down();
+await page.mouse.move(to.x, to.y, { steps: 10 });
+await page.mouse.up();
+await sleep(100);
+assert.deepEqual(await noteOns(), [], "preview sound off: no note-ons from editing");
+const gutter = shape.locator(".pr-gutter, canvas.pr-keyboard").first();
+if (await gutter.count()) {
+  const g = await gutter.boundingBox();
+  await page.mouse.click(g.x + g.width / 2, g.y + 200);
+  await sleep(100);
+  assert.ok((await noteOns()).length > 0, "keyboard column still plays");
+}
+await shape.locator(".pr-preview-sound-toggle").first().click();
+await reset();
+p = at(2.5, 66);
+await page.mouse.move(p.x, p.y);
+await page.mouse.down();
+await page.mouse.up();
+await sleep(100);
+assert.ok((await noteOns()).length > 0, "preview sound back on: pressing plays");
 console.log("errors", errors);
 assert.equal(errors.length, 0);
 console.log("AUDITION OK");

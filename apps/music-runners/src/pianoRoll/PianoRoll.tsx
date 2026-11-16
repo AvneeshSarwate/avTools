@@ -151,6 +151,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
   const [subdivision, setSubdivision] = useState(DEFAULT_SUBDIVISION)
   const [snap, setSnap] = useState(snapToGrid ?? true)
   const [drawMode, setDrawMode] = useState(false)
+  const [previewSound, setPreviewSound] = useState(true)
   const [showMetadata, setShowMetadata] = useState(false)
   // Note expression (expression.ts): Notes or MPE mode, and which lanes show.
   const [expressionMode, setExpressionMode] = useState<'notes' | 'mpe'>('notes')
@@ -579,6 +580,10 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
   }, [drawMode, state])
 
   useEffect(() => {
+    state.grid.previewSound = previewSound
+  }, [previewSound, state])
+
+  useEffect(() => {
     state.grid.subdivision = subdivision
     state.needsRedraw = true
   }, [subdivision, state])
@@ -757,12 +762,14 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
       subdivision={subdivision}
       snap={snap}
       drawMode={drawMode}
+      previewSound={previewSound}
       showMetadata={showMetadata}
       onUndo={controllers.commandHandlers.undo}
       onRedo={controllers.commandHandlers.redo}
       onSubdivisionChange={setSubdivision}
       onSnapToggle={() => setSnap((v) => !v)}
       onDrawToggle={() => setDrawMode((v) => !v)}
+      onPreviewSoundToggle={() => setPreviewSound((v) => !v)}
       onZoomIn={() => controllers.zoomBy(ZOOM_BUTTON_FACTOR)}
       onZoomOut={() => controllers.zoomBy(1 / ZOOM_BUTTON_FACTOR)}
       onFit={controllers.fitToContent}
@@ -902,12 +909,14 @@ function ControlPanelSlot(props: {
   subdivision: number
   snap: boolean
   drawMode: boolean
+  previewSound: boolean
   showMetadata: boolean
   onUndo: () => void
   onRedo: () => void
   onSubdivisionChange: (value: number) => void
   onSnapToggle: () => void
   onDrawToggle: () => void
+  onPreviewSoundToggle: () => void
   onZoomIn: () => void
   onZoomOut: () => void
   onFit: () => void
