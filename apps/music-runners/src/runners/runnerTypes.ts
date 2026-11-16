@@ -2,7 +2,7 @@
 // customize per piece; keep this thin and let runner code be specific.
 import type { TimeContext } from "@avtools/core-timing";
 import type { Clip, RunnerEvent } from "../model/types";
-import type { GhostNote, JsonObject, PianoRollNote, PianoRollScale } from "../pianoRoll/types";
+import type { GhostNote, JsonObject, PianoRollNote, PianoRollScale, PlayheadMarker } from "../pianoRoll/types";
 
 export type TagFieldSpec =
   | { key: string; label: string; kind: "number"; default: number; min?: number; max?: number; step?: number }
@@ -48,14 +48,31 @@ export interface ScaleParamSpec {
   hint?: string;
 }
 
-export type ParamSpec = NumberParamSpec | ScaleParamSpec;
-export type ParamValue = number | PianoRollScale;
+/** A text param: a text field, committed on Enter or blur when `validate` accepts it. */
+export interface TextParamSpec {
+  kind: "text";
+  key: string;
+  label: string;
+  default: string;
+  hint?: string;
+  /** An error message for text that cannot be used (the field keeps the last good value), or null. */
+  validate?(text: string): string | null;
+}
+
+export type ParamSpec = NumberParamSpec | ScaleParamSpec | TextParamSpec;
+export type ParamValue = number | PianoRollScale | string;
 export type Params = Record<string, ParamValue>;
 
 /** A number param, or `fallback` when it is missing or not a number. */
 export function numberParam(params: Params, key: string, fallback: number): number {
   const value = params[key];
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/** A text param, or `fallback` when it is missing or not a string. */
+export function textParam(params: Params, key: string, fallback: string): string {
+  const value = params[key];
+  return typeof value === "string" ? value : fallback;
 }
 
 /** A scale param, or undefined when it is missing or malformed. */
@@ -68,6 +85,13 @@ export function scaleParam(params: Params, key: string): PianoRollScale | undefi
 export interface LoopNotes {
   notes: PianoRollNote[];
   loopLength: number;
+  /**
+   * Where the loop sits on the roll's timeline, in beats (default 0): its
+   * notes are at [start, start + loopLength) and the playhead runs from
+   * start. A runner whose loop is not the clip (an arpeggio over one chord)
+   * can put it under the material it came from.
+   */
+  start?: number;
 }
 
 export interface PlayLoopOptions {
@@ -75,6 +99,12 @@ export interface PlayLoopOptions {
   onNoteOn?: (note: PianoRollNote) => void;
   /** Color for the live overlay of played notes. */
   color?: string;
+}
+
+/** Instance state beyond the clip and params that `generate` may read. */
+export interface GenerateContext {
+  /** The source roll's cursor, in beats. */
+  cursor: number;
 }
 
 export interface RunnerApi {
@@ -89,8 +119,12 @@ export interface RunnerApi {
   playLoop(loop: LoopNotes, options?: PlayLoopOptions): Promise<void>;
   /** Fire one note now (transpose applied), as a branch that survives the current loop. */
   playNote(pitch: number, velocity: number, durationBeats: number, color?: string): void;
-  /** Show this loop in the instance's Generated roll. */
-  publishLoop(loop: LoopNotes): void;
+  /** Show this loop in the instance's Generated roll; null: nothing is sounding (clears it and the playhead). */
+  publishLoop(loop: LoopNotes | null): void;
+  /** The source roll's cursor, in beats (runners with `usesCursor`). */
+  getCursor(): number;
+  /** Extra lines on the source roll while running (labelled cursors), replacing the previous set. */
+  setMarkers(markers: PlayheadMarker[]): void;
   emit(event: RunnerEvent): void;
   onEvent(handler: (event: RunnerEvent) => void): () => void;
   /** Last note this instance sent a note-on for, from any source. */
@@ -110,10 +144,18 @@ export interface RunnerDefinition {
    */
   emits?: string[];
   /**
+   * The source roll's cursor (a click on the empty grid moves it) is part of
+   * this runner's input: it is always drawn, saved with the instance, and
+   * read with `api.getCursor()`.
+   */
+  usesCursor?: boolean;
+  /** False: no playhead on the source roll (the Generated roll keeps one), for loops that are not the clip. */
+  sourcePlayhead?: boolean;
+  /**
    * Pure: one loop from the instance's clip, with the instance's params. Used by Run
    * every pass and by the Preview roll's regenerate.
    */
-  generate(clip: Clip, random: () => number, params: Params): LoopNotes;
+  generate(clip: Clip, random: () => number, params: Params, context: GenerateContext): LoopNotes;
   /** Static overlays on the source roll (for example variant alternatives), with the instance's params. */
   sourceGhostNotes?(clip: Clip, params: Params): GhostNote[];
   /** Fill for notes in the Generated and Preview rolls (for example a chosen variant). */

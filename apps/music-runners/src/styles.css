@@ -304,4 +304,9 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 
 /* A scale param (root chooser + degree list) takes two columns of the params grid */
 .runner-shape__param--scale { grid-column: span 2; }
+.runner-shape__param--text { grid-column: span 2; grid-template-columns: 125px 1fr; }
+.runner-shape__text-param { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.runner-shape__text-param .ui-text { width: 100%; font-family: var(--font-mono, ui-monospace, monospace); }
+.runner-shape__text-param .ui-text.is-invalid { border-color: var(--c-rec); }
+.runner-shape__param-error { color: var(--c-rec); font-size: 0.8em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .runner-shape__param--scale .ui-group { padding: 0; }

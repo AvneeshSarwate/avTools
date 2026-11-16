@@ -112,6 +112,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     toolbarTarget,
     scale: scaleProp,
     onScaleChange,
+    cursor,
     expressionLanes,
     pitchLabels = 'name',
     navigable: navigableProp,
@@ -254,7 +255,8 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
         next.set(id, {
           id,
           position: Math.max(0, marker.position),
-          ...(typeof marker.color === 'string' ? { color: marker.color } : {})
+          ...(typeof marker.color === 'string' ? { color: marker.color } : {}),
+          ...(marker.span && Number.isFinite(marker.span.from) && Number.isFinite(marker.span.to) ? { span: { ...marker.span } } : {})
         })
       }
       state.playheadMarkers.markers = Array.from(next.values())
@@ -582,9 +584,22 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
   }, [subdivision, state])
 
   useEffect(() => {
-    state.hooks = { onNotePreview, noteBadge, noteColor, onExpressionMenu: setExpressionMenu }
+    state.hooks = {
+      onNotePreview,
+      noteBadge,
+      noteColor,
+      onExpressionMenu: setExpressionMenu,
+      // Read through propsRef so a new callback identity needs no effect
+      onCursorChange: (position) => propsRef.current.onCursorChange?.(position)
+    }
     state.dirty.notes = true
   }, [onNotePreview, noteBadge, noteColor, state])
+
+  useEffect(() => {
+    state.queuePlayhead.alwaysShow = cursor !== undefined
+    if (cursor !== undefined && Number.isFinite(cursor)) state.queuePlayhead.position = Math.max(0, cursor)
+    state.dirty.overlay = true
+  }, [cursor, state])
 
   useEffect(() => {
     if (playheadMarkers !== undefined) controllers.setPlayheadMarkers(playheadMarkers)

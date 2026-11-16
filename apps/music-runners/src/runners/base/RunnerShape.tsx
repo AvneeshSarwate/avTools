@@ -37,6 +37,7 @@ import {
   getRuntime,
   type InstanceRuntime,
   playbackStore,
+  markersFor,
   playheadBeats,
   regenerate,
   startPlay,
@@ -45,9 +46,9 @@ import {
 } from "../../store/playback";
 import { sourceRollHandles } from "../../store/rollHandles";
 import { runnerShapeType } from "../registry";
-import { defaultParams, numberParam, type ParamValue, type Params, type RunnerDefinition, scaleParam, tagValue } from "../runnerTypes";
+import { defaultParams, numberParam, type ParamValue, type Params, type RunnerDefinition, scaleParam, tagValue, textParam } from "../runnerTypes";
 import { ScaleControls } from "../../pianoRoll/ControlPanel";
-import { defaultInstanceProps, type RunnerInstanceProps } from "./instanceProps";
+import { CURSOR_META_KEY, cursorFromMeta, defaultInstanceProps, type RunnerInstanceProps } from "./instanceProps";
 import { TagEditor, toggleTag } from "./TagEditor";
 import { Button, Chooser, Field, Lamp, NumberBox, TextField, Toggle } from "../../ui/controls/controls";
 import { Icon } from "../../ui/controls/icons";
@@ -158,25 +159,25 @@ export function defineRunnerShape(def: RunnerDefinition) {
 }
 
 /**
- * Drives the playhead line on the given rolls, and the live input overlay
- * (held keys, notes being recorded) on the source roll, through their
- * imperative handles, never through React state: nothing in the shape
- * re-renders per tick. A free take has no loop, so its playhead comes from
- * the recorder.
+ * Drives the playhead line on the source and generated rolls (plus any
+ * lines the runner draws on the source roll, api.setMarkers), and the live
+ * input overlay (held keys, notes being recorded) on the source roll,
+ * through their imperative handles, never through React state: nothing in
+ * the shape re-renders per tick. A free take has no loop, so its playhead
+ * comes from the recorder.
  */
 function usePlayhead(
   shapeId: string,
   active: boolean,
   color: string,
-  rolls: React.RefObject<PianoRollHandle | null>[],
+  sourcePlayhead: boolean,
   sourceRoll: React.RefObject<PianoRollHandle | null>,
+  generatedRoll: React.RefObject<PianoRollHandle | null>,
 ): void {
   useEffect(() => {
-    const push = (markers: { id: string; position: number; color?: string }[]) => {
-      for (const roll of rolls) roll.current?.setPlayheadMarkers(markers);
-    };
     const clear = () => {
-      push([]);
+      sourceRoll.current?.setPlayheadMarkers([]);
+      generatedRoll.current?.setPlayheadMarkers([]);
       sourceRoll.current?.setLiveInput({ keys: [], notes: [] });
     };
     if (!active) {
@@ -184,8 +185,11 @@ function usePlayhead(
       return;
     }
     const tick = () => {
-      const position = freeTakePlayhead(shapeId) ?? playheadBeats(getRuntime(shapeId));
-      push(position === null ? [] : [{ id: "▶", position, color }]);
+      const free = freeTakePlayhead(shapeId);
+      const position = free ?? playheadBeats(getRuntime(shapeId));
+      const playhead = position === null ? [] : [{ id: "▶", position, color }];
+      sourceRoll.current?.setPlayheadMarkers([...(sourcePlayhead || free !== null ? playhead : []), ...markersFor(shapeId)]);
+      generatedRoll.current?.setPlayheadMarkers(playhead);
       sourceRoll.current?.setLiveInput(liveInputFor(shapeId));
     };
     tick();
@@ -196,7 +200,7 @@ function usePlayhead(
     };
     // The refs are stable objects; only the active flag matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, color, shapeId]);
+  }, [active, color, sourcePlayhead, shapeId]);
 }
 
 function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDefinition }) {
@@ -213,7 +217,6 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
   const sourceRollRef = useRef<PianoRollHandle | null>(null);
   const generatedRollRef = useRef<PianoRollHandle | null>(null);
   const previewRollRef = useRef<PianoRollHandle | null>(null);
-  const playheadRolls = useMemo(() => [sourceRollRef, generatedRollRef], []);
   const recording = (useSnapshot(recordingStore).byShape[shapeId] ?? EMPTY_RECORDING) as RecordingUi;
   const pitchLabels = useSnapshot(displayStore).pitchLabels;
 
@@ -256,7 +259,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     handle.addEventListener("pointercancel", onUp);
   };
   const playheadColor = recording.recording === "free" ? PLAYHEAD_COLORS.rec : runtime.mode === "run" ? PLAYHEAD_COLORS.run : PLAYHEAD_COLORS.play;
-  usePlayhead(shapeId, runtime.mode !== "idle" || recording.listening !== null, playheadColor, playheadRolls, sourceRollRef);
+  usePlayhead(shapeId, runtime.mode !== "idle" || recording.listening !== null, playheadColor, def.sourcePlayhead !== false, sourceRollRef, generatedRollRef);
   const selectedIdsRef = useRef<string[]>([]);
   // The three rolls share one view so they read as a score: the source roll
   // owns it, the read-only rolls follow, and it is saved in the shape's meta.
@@ -450,6 +453,16 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     [def, playedIds, runtime.mode],
   );
 
+  // The cursor is saved in the shape's meta, outside undo (like the view);
+  // a runner with usesCursor reads it live (api.getCursor).
+  const onCursorChange = useCallback(
+    (position: number) => {
+      const current = editor.getShape(shapeId);
+      if (!current || cursorFromMeta(current.meta) === position) return;
+      editor.run(() => editor.updateShape({ id: shapeId, type: current.type, meta: { ...current.meta, [CURSOR_META_KEY]: position } }), { history: "ignore" });
+    },
+    [editor, shapeId],
+  );
   const onSourceNotesChange = useCallback(
     (notes: PianoRollNote[]) => setClipNotes(shapeId, notes),
     [shapeId],
@@ -704,6 +717,11 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                   <span className="runner-shape__param-label">{spec.label}</span>
                   <ScaleControls scale={scaleParam(params, spec.key) ?? spec.default} onChange={(scale) => setParam(spec.key, scale)} />
                 </div>
+              ) : spec.kind === "text" ? (
+                <div key={spec.key} className="runner-shape__param runner-shape__param--text" title={spec.hint}>
+                  <span className="runner-shape__param-label">{spec.label}</span>
+                  <TextParam value={textParam(params, spec.key, spec.default)} validate={spec.validate} onCommit={(value) => setParam(spec.key, value)} />
+                </div>
               ) : (
                 <label key={spec.key} className="runner-shape__param" title={spec.hint}>
                   <span className="runner-shape__param-label">{spec.label}</span>
@@ -753,6 +771,8 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                   rawMetadataEditor={false}
                   initialView={sourceViewRef.current ?? undefined}
                   onViewChange={onSourceViewChange}
+                  cursor={def.usesCursor ? cursorFromMeta(shape.meta) : undefined}
+                  onCursorChange={onCursorChange}
                 />
             </div>
           </Section>
@@ -770,7 +790,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
               <PianoRoll
                 ref={generatedRollRef}
                 notes={runtime.generated.notes as PianoRollNote[]}
-                loopLength={runtime.generated.loopLength}
+                loopLength={(runtime.generated.start ?? 0) + runtime.generated.loopLength}
                 width={stageWidth}
                 height={rollHeight("generated")}
                 pitchLabels={pitchLabels}
@@ -812,7 +832,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
               <PianoRoll
                 ref={previewRollRef}
                 notes={runtime.preview.notes as PianoRollNote[]}
-                loopLength={runtime.preview.loopLength}
+                loopLength={(runtime.preview.start ?? 0) + runtime.preview.loopLength}
                 width={stageWidth}
                 height={rollHeight("preview")}
                 pitchLabels={pitchLabels}
@@ -860,6 +880,42 @@ const EMPTY_LOG: readonly never[] = [];
 const EMPTY_RUNTIME = getRuntime("__none__");
 const EMPTY_RECORDING: RecordingUi = { listening: null, recording: null, recorded: 0, status: "" };
 const UNPLAYED_COLOR = "#8f8a85";
+
+/**
+ * A text param: edits a draft, commits on Enter or blur when `validate`
+ * accepts it; otherwise the error shows under the field and the instance
+ * keeps the last good value. Escape reverts.
+ */
+function TextParam({ value, validate, onCommit }: { value: string; validate?: (text: string) => string | null; onCommit: (value: string) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    const problem = validate?.(draft) ?? null;
+    setError(problem);
+    if (problem) return;
+    if (draft !== value) onCommit(draft);
+    setDraft(null);
+  };
+  return (
+    <span className="runner-shape__text-param">
+      <TextField
+        className={error ? "is-invalid" : undefined}
+        value={draft ?? value}
+        onChange={(next) => {
+          setDraft(next);
+          if (error) setError(null);
+        }}
+        onCommit={commit}
+        onCancel={() => {
+          setDraft(null);
+          setError(null);
+        }}
+      />
+      {error ? <span className="runner-shape__param-error" role="alert">{error}</span> : null}
+    </span>
+  );
+}
 
 function formatParam(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);

@@ -1,8 +1,9 @@
 import type { RunnerDefinition } from "./runnerTypes";
 import { variantsRunner } from "./variants/runner";
 import { extenderRunner } from "./extender/runner";
+import { arpRunner } from "./arp/runner";
 
-export const RUNNERS: RunnerDefinition[] = [variantsRunner, extenderRunner];
+export const RUNNERS: RunnerDefinition[] = [variantsRunner, extenderRunner, arpRunner];
 
 const byType = new Map(RUNNERS.map((def) => [def.type, def]));
 

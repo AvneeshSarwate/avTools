@@ -93,6 +93,8 @@ function InstanceRowView({
   const mode = runtime?.mode ?? "idle";
   const loopCount = runtime?.loopCount ?? 0;
   const error = runtime?.error ?? null;
+  // Active with nothing sounding (an arp with no chord under its cursor)
+  const waiting = mode !== "idle" && runtime?.generated === null;
   const recording = useSnapshot(recordingStore).byShape[row.id]?.recording ?? null;
   const clip = useSnapshot(clipsStore).clips[row.id] as Clip;
   const [draft, setDraft] = useState<string | null>(null);
@@ -101,8 +103,10 @@ function InstanceRowView({
   // The lamp and the text colour say which transport; the text says how far
   const status = recording === "free"
     ? "take"
-    : recording || mode !== "idle"
-      ? `loop ${loopCount}`
+    : waiting && !recording
+      ? "waiting"
+      : recording || mode !== "idle"
+        ? `loop ${loopCount}`
       : `${clip.notes.length}n · ${clip.loopLength}b`;
   const commitName = () => {
     const next = draft?.trim();

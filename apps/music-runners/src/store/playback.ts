@@ -4,7 +4,7 @@ import type { TimeContext } from "@avtools/core-timing";
 import type { MidiOutput } from "@avtools/midi/browser";
 import type { TLShapeId } from "tldraw";
 import type { Clip, RunnerEvent } from "../model/types";
-import type { GhostNote, PianoRollNote } from "../pianoRoll/types";
+import type { GhostNote, PianoRollNote, PlayheadMarker } from "../pianoRoll/types";
 import { getRunner } from "../runners/registry";
 import {
   clampPitch,
@@ -18,7 +18,7 @@ import {
   type RunnerDefinition,
 } from "../runners/runnerTypes";
 import { getClip } from "./clips";
-import type { RunnerInstanceProps } from "../runners/base/instanceProps";
+import { cursorFromMeta, type RunnerInstanceProps } from "../runners/base/instanceProps";
 import { getRootContext, nowBeats } from "./clock";
 import { getEditor } from "./editorRef";
 import { emitEvent, onEvent } from "./events";
@@ -47,8 +47,10 @@ export interface InstanceRuntime {
   played: GhostNote[];
   /** Output of the last regenerate (Preview roll). */
   preview: LoopNotes | null;
-  /** For the playhead: beat position of the current loop's start and its speed. */
+  /** For the playhead: clock beat of the current loop's start and its speed. */
   loopStartBeats: number | null;
+  /** Where the current loop sits on the roll (LoopNotes.start). */
+  loopOffset: number;
   loopSpeed: number;
   loopLength: number;
   error: string | null;
@@ -70,6 +72,7 @@ function emptyRuntime(shapeId: string): InstanceRuntime {
     played: [],
     preview: null,
     loopStartBeats: null,
+    loopOffset: 0,
     loopSpeed: 1,
     loopLength: 16,
     error: null,
@@ -93,8 +96,17 @@ function patchRuntime(shapeId: string, patch: Partial<InstanceRuntime> | ((prev:
 export function playheadBeats(runtime: InstanceRuntime): number | null {
   if (runtime.loopStartBeats === null || runtime.mode === "idle") return null;
   const elapsed = (nowBeats() - runtime.loopStartBeats) * runtime.loopSpeed;
-  if (elapsed < 0) return 0;
-  return elapsed;
+  return runtime.loopOffset + Math.max(0, elapsed);
+}
+
+/**
+ * Lines a runner draws on its source roll while running (api.setMarkers).
+ * Read by the shape's playhead tick, so plain state, not a store.
+ */
+const runnerMarkers = new Map<string, PlayheadMarker[]>();
+
+export function markersFor(shapeId: string): PlayheadMarker[] {
+  return runnerMarkers.get(shapeId) ?? [];
 }
 
 interface ActiveRun {
@@ -290,22 +302,25 @@ function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outpu
     async playLoop(loop: LoopNotes, options: PlayLoopOptions = {}) {
       const speed = Math.max(0.05, numberParam(liveParams(shapeId, def), "speed", 1));
       const loopLength = loop.loopLength;
+      const start = loop.start ?? 0;
       patchRuntime(shapeId, (prev) => ({
         loopStartBeats: nowBeats(),
+        loopOffset: start,
         loopSpeed: speed,
         loopLength,
         played: [],
         loopCount: prev.loopCount + 1,
       }));
-      let cursor = 0;
-      for (const note of notesInLoop(loop.notes, loopLength)) {
+      let cursor = start;
+      const inWindow = loop.notes.filter((note) => note.position >= start);
+      for (const note of notesInLoop(inWindow, start + loopLength)) {
         const delta = note.position - cursor;
         if (delta > 0) await ctx.wait(delta / speed);
         cursor = note.position;
         soundNote(note, note.duration / speed, speed, options.color);
         options.onNoteOn?.(note);
       }
-      const tail = loopLength - cursor;
+      const tail = start + loopLength - cursor;
       if (tail > 0) await ctx.wait(tail / speed);
     },
     playNote(pitch, velocity, durationBeats, color) {
@@ -314,7 +329,13 @@ function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outpu
       soundNote(note, durationBeats / speed, speed, color ?? "#e8a");
     },
     publishLoop(loop) {
-      patchRuntime(shapeId, { generated: loop });
+      patchRuntime(shapeId, loop ? { generated: loop } : { generated: null, loopStartBeats: null, played: [] });
+    },
+    getCursor() {
+      return cursorFromMeta(getEditor()?.getShape(shapeId as TLShapeId)?.meta);
+    },
+    setMarkers(markers) {
+      runnerMarkers.set(shapeId, markers);
     },
     emit(event: RunnerEvent) {
       emitEvent(shapeId as TLShapeId, event);
@@ -362,6 +383,7 @@ async function launch(shapeId: string, mode: Exclude<InstanceMode, "idle">): Pro
     const current = activeRuns.get(shapeId);
     if (current && current.cancel !== cancel) return;
     activeRuns.delete(shapeId);
+    runnerMarkers.delete(shapeId);
     patchRuntime(shapeId, { mode: "idle", loopStartBeats: null });
   };
   const cancel = () => {
@@ -412,7 +434,8 @@ export function regenerate(shapeId: string): void {
   const props = readInstanceProps(shapeId);
   if (!props) return;
   const def = getRunner(props.runnerType);
-  const preview = def.generate(getClip(shapeId)!, Math.random, liveParams(shapeId, def));
+  const cursor = cursorFromMeta(getEditor()?.getShape(shapeId as TLShapeId)?.meta);
+  const preview = def.generate(getClip(shapeId)!, Math.random, liveParams(shapeId, def), { cursor });
   patchRuntime(shapeId, { preview });
 }
 

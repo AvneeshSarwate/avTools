@@ -66,6 +66,10 @@ const LABEL_FONT_SIZE = 14
 const BADGE_FONT = 'bold normal 11px Arial'
 const BADGE_FONT_SIZE = 11
 const MARKER_FONT = 'normal normal 11px Arial'
+/** Opacity of a marker's span band. */
+const MARKER_SPAN_ALPHA = 0.16
+/** The cursor when a host uses it as input (the selection blue). */
+const CURSOR_COLOR = '#4ea7ff'
 const MARKER_FONT_SIZE = 11
 const ghostFont = (fontSize: number) => `normal normal ${fontSize}px Arial`
 
@@ -790,15 +794,27 @@ function drawOverlay(state: PianoRollState, ctx: CanvasRenderingContext2D) {
     }
   }
 
-  // Queue playhead (the paste position): drawn only once it has been moved
-  if (state.queuePlayhead.position > 0) {
+  // Queue playhead (the cursor and paste position): drawn once it has been
+  // moved, or always when the host uses it
+  if (state.queuePlayhead.position > 0 || state.queuePlayhead.alwaysShow) {
     const queueX = state.queuePlayhead.position * quarterNoteWidth - scrollX
-    ctx.strokeStyle = QUEUE_PLAYHEAD_COLOR
-    ctx.lineWidth = 1
+    // A cursor the host uses as input is drawn bolder, with a head
+    const bold = state.queuePlayhead.alwaysShow
+    ctx.strokeStyle = bold ? CURSOR_COLOR : QUEUE_PLAYHEAD_COLOR
+    ctx.lineWidth = bold ? 2 : 1
     ctx.beginPath()
     ctx.moveTo(queueX, 0)
     ctx.lineTo(queueX, stageHeight)
     ctx.stroke()
+    if (bold) {
+      ctx.fillStyle = CURSOR_COLOR
+      ctx.beginPath()
+      ctx.moveTo(queueX - 6, 0)
+      ctx.lineTo(queueX + 6, 0)
+      ctx.lineTo(queueX, 8)
+      ctx.closePath()
+      ctx.fill()
+    }
   }
 
   // One labeled line per marker
@@ -810,6 +826,14 @@ function drawOverlay(state: PianoRollState, ctx: CanvasRenderingContext2D) {
     ctx.lineWidth = 1.5
     for (const marker of markers) {
       const color = marker.color ?? PLAYHEAD_MARKER_COLOR
+      if (marker.span) {
+        ctx.save()
+        ctx.globalAlpha = MARKER_SPAN_ALPHA
+        ctx.fillStyle = color
+        const fromX = marker.span.from * quarterNoteWidth - scrollX
+        ctx.fillRect(fromX, 0, (marker.span.to - marker.span.from) * quarterNoteWidth, stageHeight)
+        ctx.restore()
+      }
       const x = marker.position * quarterNoteWidth - scrollX
       ctx.strokeStyle = color
       ctx.beginPath()
@@ -1266,6 +1290,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
           state.queuePlayhead.position = Math.max(0, Math.min(quantizedPos, getMaxLength(state)))
           state.dirty.overlay = true
           state.notifyExternalChange?.('playhead') // for queue playhead update
+          state.hooks.onCursorChange?.(state.queuePlayhead.position)
         }
       }
     }

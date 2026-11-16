@@ -394,3 +394,42 @@ reuse. Decisions:
 - Verified with `demo/duplicate.e2e.mjs`, `demo/sidebar.e2e.mjs` (loads
   `projects/default` through a route, never writes it) and the existing e2e
   checks.
+
+## Arp runner (2026-11-16)
+
+A third runner, `arp`, arpeggiates the chord under the source roll's cursor
+with a Tidal/Strudel mini-notation pattern of chord indexes. Decisions:
+
+- **Parser**: `@strudel/mini` 1.2.6 (with `@strudel/core`), the real
+  mini-notation, rather than a hand-written subset. Only atoms are checked
+  (`getLeaves`: integers and `~`/`-` rests); every operator works. One
+  cycle is queried per pass (`queryArc(n, n + 1)`, onsets only), so `<>`
+  alternation advances per cycle. Licence: AGPL-3.0-or-later. Node resolves
+  `@kabelsalat/web` (a core dependency) to its CommonJS build and fails to
+  import, so the parser is exercised in the browser (Vite uses the ESM
+  build), from `demo/arp.e2e.mjs`.
+- **Index semantics**: modulo the chord size in both directions; an optional
+  `wrapShift` (semitones per wrap, default 0 = plain wrap as asked) makes it
+  climb or descend by octaves.
+- **The cursor is the roll's existing queue playhead** (the paste position,
+  set by clicking the empty grid). The roll now takes `cursor` /
+  `onCursorChange`; a host-controlled cursor is always drawn, bold with a
+  head. Saved in the shape's `meta.cursor` outside undo, like the view.
+- **Switching on the next cycle, visibly**: the chord is read at each cycle
+  start; the runner draws an amber "playing" marker with a tinted span over
+  the playing chord (new `PlayheadMarker.span`, `api.setMarkers`), so before
+  the switch both the playing chord and the cursor's chord are visible. No
+  sweeping playhead on the source roll (`sourcePlayhead: false`): the cycle
+  is not the clip. The generated loop sits at the cursor (`LoopNotes.start`)
+  so the Generated roll, following the source view, shows it under the
+  chord.
+- **No chord: wait, then start at once**: `publishLoop(null)` (generated and
+  playhead cleared, sidebar "waiting"), polling the cursor every 10 ms on
+  the instance's TimeContext; the next cycle starts when a chord appears,
+  not on the old cycle grid.
+- Runner contract additions (all optional): text params with `validate`,
+  `usesCursor`, `sourcePlayhead`, `api.getCursor`, `api.setMarkers`,
+  `LoopNotes.start`, `generate(..., { cursor })`.
+- Test fix on the way: two e2e scripts returned the tldraw editor from
+  `page.evaluate` (`editor.undo()` returns it), which intermittently
+  destroyed the page context; they now return nothing.

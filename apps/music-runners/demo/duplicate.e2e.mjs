@@ -78,7 +78,7 @@ assert.equal(list[2].name, "variants 3", "redo keeps the name");
 await page.evaluate((id) => { const ed = window.__musicRunners.editor; ed.markHistoryStoppingPoint("delete"); ed.deleteShapes([id]); }, list[0].id);
 await sleep(100);
 assert.equal((await instances()).length, 2);
-await page.evaluate(() => window.__musicRunners.editor.undo());
+await page.evaluate(() => { window.__musicRunners.editor.undo(); });
 await sleep(100);
 assert.equal((await clip(list[0].id)).notes.length, 1, "undoing a delete keeps the notes");
 

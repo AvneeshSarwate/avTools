@@ -28,6 +28,14 @@ export interface RunnerInstanceProps {
   showPreview: boolean;
 }
 
+/** Shape meta key for the source roll's cursor (beats), saved outside undo like the view. */
+export const CURSOR_META_KEY = "cursor";
+
+export function cursorFromMeta(meta: unknown): number {
+  const value = (meta as Record<string, unknown> | undefined)?.[CURSOR_META_KEY];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
 export const DEFAULT_INSTANCE_WIDTH = 1040;
 export const DEFAULT_INSTANCE_HEIGHT = 520;
 

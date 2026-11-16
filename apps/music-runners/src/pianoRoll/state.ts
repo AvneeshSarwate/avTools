@@ -78,6 +78,8 @@ export interface PianoRollHooks {
   onExpressionMenu?: (menu: { x: number; y: number; target: ExpressionMenuTarget }) => void
   noteBadge?: (note: NoteData) => string | null
   noteColor?: (note: NoteData) => string | undefined
+  /** A click on the empty grid moved the cursor (the queue playhead). */
+  onCursorChange?: (position: number) => void
 }
 
 export interface PianoRollState {
@@ -216,9 +218,12 @@ export interface PianoRollState {
   }
   rafHandle?: number
 
-  // Queue playhead (green) - where playback will start from
+  // Queue playhead: the cursor, set by clicking the empty grid. Pasted
+  // notes land here; hosts can read it (onCursorChange) and set it.
   queuePlayhead: {
     position: number // in quarter notes
+    /** Drawn even at 0 (a host that uses the cursor); otherwise only once moved. */
+    alwaysShow: boolean
   }
 
   // Named playhead markers (any number) - set from outside, drawn by the
@@ -381,7 +386,8 @@ export const createPianoRollState = (): PianoRollState => {
     rafHandle: undefined,
 
     queuePlayhead: {
-      position: 0
+      position: 0,
+      alwaysShow: false
     },
 
     playheadMarkers: {

@@ -58,10 +58,21 @@ unless an instance has **MPE Out** on (see below).
   `run(api)` that loops until stopped. `src/runners/runnerTypes.ts` is the
   thin contract; copy a runner directory to make a new one and register it in
   `src/runners/registry.ts`.
-  Params are numbers (a draggable bar) or, with `kind: "scale"`, a scale
-  (`{ root, degrees }`, edited with a root chooser and degree list); read
-  them with `numberParam` / `scaleParam` from `runnerTypes.ts`. `generate`
-  and `sourceGhostNotes` receive the instance's params.
+  Params are numbers (a draggable bar); with `kind: "scale"`, a scale
+  (`{ root, degrees }`, edited with a root chooser and degree list); or with
+  `kind: "text"`, a text field committed on Enter or blur, with an optional
+  `validate` that refuses bad text (its message shows under the field and
+  the last good value stays). Read them with `numberParam` / `scaleParam` /
+  `textParam` from `runnerTypes.ts`. `generate` and `sourceGhostNotes`
+  receive the instance's params; `generate` also gets `{ cursor }`.
+  Optional runner flags: `usesCursor` (the source roll's cursor is input:
+  always drawn, bold with a head, saved in the shape's `meta.cursor`, read
+  with `api.getCursor()`) and `sourcePlayhead: false` (no playhead on the
+  source roll, for loops that are not the clip). A runner can draw labelled
+  lines on its source roll while running with `api.setMarkers`, each with an
+  optional tinted `span`; a loop can sit anywhere on the timeline with
+  `LoopNotes.start`; `api.publishLoop(null)` says nothing is sounding (the
+  sidebar row shows "waiting").
 - **Clip**: an instance's piano roll data: notes (with the runner's tag
   metadata), loop length and scale. Every instance owns exactly one; nothing
   is shared between instances. Clips live in `src/store/clips.ts`, keyed by
@@ -369,6 +380,28 @@ is 0..1 across the note, so a resize stretches them).
 - **Extender**: each loop one random note (not tagged `noExtend`, hotkey `x`)
   is held a full extra loop. On a received trill event it plays a trill between
   its last pitch and the event's pitch.
+- **Arp**: arpeggiates the chord under the source roll's **cursor** (click
+  the empty grid to move it; it snaps to the roll's grid). The chord is the
+  notes sounding at the cursor, low to high, numbered 0, 1, 2, … The
+  **pattern** param is [Tidal/Strudel
+  mini-notation](https://strudel.cc/learn/mini-notation), parsed by
+  `@strudel/mini`, whose only atoms are those indexes and `~` rests:
+  `0 1 2`, `[0 1] 2`, `<0 2>` (one per cycle), `0*2`, `0(3,8)`, `[0,2]`
+  (together), `0@3 1`, `0?`, `0|2`, `{0 1 2}%4`. Indexes wrap around the
+  chord both ways (`-1` is the top note, `3` on a triad is the bottom
+  again); **wrap shift** adds semitones per wrap (0 wraps in place, 12 goes
+  up an octave, and `-1` lands an octave down). One cycle lasts **cycle**
+  beats; **gate** is the note length as a fraction of its step; velocity
+  comes from the chord note. The chord is read at the start of each cycle,
+  so a cursor move takes effect on the next one. Until then the source roll
+  shows two lines: the amber **playing** line, with the playing chord's
+  extent tinted, and the blue cursor over the next chord. The Generated
+  roll shows the cycle under the chord it came from. With no notes under the
+  cursor the arp goes quiet after the current cycle ("waiting" in the
+  sidebar) and starts a new cycle as soon as there is a chord under it
+  again. **Play** plays the clip's chords as written. Code:
+  `src/runners/arp/` (`pattern.ts` for parsing and chord lookup).
+  `@strudel/mini` and `@strudel/core` are AGPL-3.0-or-later.
 
 ## State management
 
@@ -405,6 +438,9 @@ demo.html + demo/           standalone piano roll demo and its Playwright checks
   Variant steps run under Deno (they import `packages/music-types`):
   `deno test --no-check --sloppy-imports src/runners/variants/steps.test.ts`.
 - Variant steps in the app: `demo/variants.e2e.mjs`.
+- The arp (pattern validation, cursor switch on the next cycle, waiting and
+  restarting, wrapping): `demo/arp.e2e.mjs` (same setup as the recording
+  check below).
 - Connections without a device: `demo/connections.e2e.mjs` (same setup as
   the recording check below).
 - Velocity lane, keyboard column and MPE editing: `demo/lanes.e2e.mjs`

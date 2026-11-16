@@ -41,6 +41,8 @@ export interface PlayheadMarker {
   id: string;
   position: number; // beats
   color?: string;
+  /** A tinted band behind the line, in beats (for example the chord the line picks). */
+  span?: { from: number; to: number };
 }
 
 /**
@@ -132,6 +134,13 @@ export interface PianoRollProps {
    */
   scale?: PianoRollScale;
   onScaleChange?: (scale: PianoRollScale) => void;
+  /**
+   * The cursor (the roll's queue playhead, where pastes land), in beats. A
+   * click on the empty grid moves it and reports through onCursorChange.
+   * Given, the roll draws it always (also at 0) and follows the prop.
+   */
+  cursor?: number;
+  onCursorChange?: (position: number) => void;
   /**
    * Expression lanes under the grid and the Notes/MPE mode switch (Ableton's
    * velocity lane and Note Expression editor). Default: on for an
