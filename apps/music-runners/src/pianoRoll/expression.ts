@@ -638,7 +638,17 @@ export function startVelocityDragFromNote(state: PianoRollState, stage: Konva.St
  * Pointer down. Returns true when the expression layer took the gesture (the
  * core's note editing then does nothing). In MPE mode it takes every press.
  */
-export function expressionPointerDown(state: PianoRollState, stage: Konva.Stage, evt: MouseEvent | undefined, hitNote: HitNote): boolean {
+/**
+ * Returns false to hand the press to the grid (core.ts): outside the lanes in
+ * Notes mode, and on a note's resize edge in MPE mode (breakpoints win).
+ */
+export function expressionPointerDown(
+  state: PianoRollState,
+  stage: Konva.Stage,
+  evt: MouseEvent | undefined,
+  hitNote: HitNote,
+  onNoteEdge: (pos: { x: number; y: number }) => boolean = () => false
+): boolean {
   const pos = stage.getPointerPosition()
   if (!pos) return false
   const area = areaAt(state, pos.y)
@@ -669,6 +679,8 @@ export function expressionPointerDown(state: PianoRollState, stage: Konva.Stage,
   if (!area || area === 'velocity') return true
   const envelopeArea = area as EnvelopeArea
   const point = hitPoint(state, envelopeArea, pos)
+  // A note's edge (and no breakpoint on it): the grid resizes the note
+  if (!point && envelopeArea === 'pitch' && onNoteEdge(pos)) return false
   state.expression.activeArea = envelopeArea
   if (point) {
     const already = isPointSelected(state, envelopeArea, point.noteId, point.index)
@@ -900,7 +912,11 @@ export function cancelExpressionGesture(state: PianoRollState): boolean {
 }
 
 /** Hover feedback (velocity marker highlight, keyboard label). */
-export function expressionHover(state: PianoRollState, pos: { x: number; y: number } | null) {
+export function expressionHover(
+  state: PianoRollState,
+  pos: { x: number; y: number } | null,
+  onNoteEdge: (pos: { x: number; y: number }) => boolean = () => false
+) {
   let hoverNote: string | null = null
   let hoverPitch: number | null = null
   if (pos) {
@@ -919,6 +935,8 @@ export function expressionHover(state: PianoRollState, pos: { x: number; y: numb
   if (pos && state.expression.mode === 'mpe' && !state.expression.drag) {
     const area = areaAt(state, pos.y)
     if (area && area !== 'velocity') hover = hoverAt(state, area, pos)
+    // On a note's edge a press resizes the note unless it is on a breakpoint
+    if (area === 'pitch' && hover?.kind !== 'point' && onNoteEdge(pos)) hover = null
   }
   if (JSON.stringify(hover) !== JSON.stringify(state.expression.hover)) {
     state.expression.hover = hover

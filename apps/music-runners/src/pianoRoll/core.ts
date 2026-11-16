@@ -957,16 +957,15 @@ export function hitTest(state: PianoRollState, pos: { x: number; y: number }): H
     return pos.x >= x - half && pos.x <= x + width + half && pos.y >= y - half && pos.y <= y + noteHeight + half
   }
 
-  // Near a note's left or right edge is its resize zone (Notes mode only;
-  // MPE mode does not resize). The zone shrinks on short notes so their
-  // middle still drags. The cursor shows it; nothing is drawn.
+  // Near a note's left or right edge is its resize zone (both modes; in MPE
+  // mode an envelope breakpoint under the pointer wins, see expression.ts).
+  // The zone shrinks on short notes so their middle still drags. The cursor
+  // shows it; nothing is drawn.
   const edgeOrNote = (noteId: string, note: NoteData, width: number): HitResult => {
-    if (state.expression.mode === 'notes') {
-      const local = pos.x - (note.position * quarterNoteWidth - scrollX)
-      const zone = Math.min(RESIZE_EDGE_ZONE, width / 3)
-      if (local <= zone) return { kind: 'handle', noteId, isEnd: false }
-      if (local >= width - zone) return { kind: 'handle', noteId, isEnd: true }
-    }
+    const local = pos.x - (note.position * quarterNoteWidth - scrollX)
+    const zone = Math.min(RESIZE_EDGE_ZONE, width / 3)
+    if (local <= zone) return { kind: 'handle', noteId, isEnd: false }
+    if (local >= width - zone) return { kind: 'handle', noteId, isEnd: true }
     return { kind: 'note', noteId }
   }
 
@@ -998,6 +997,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
   // Konva routed events to whatever its hit canvas found; everything now
   // reaches the stage and is resolved geometrically. A stage that is not
   // listening hits nothing, as before.
+  const onNoteEdge = (p: { x: number; y: number }) => p.y < noteAreaHeight(state) && hitTest(state, p).kind === 'handle'
   const hitAt = (): HitResult => {
     const pos = stage.getPointerPosition()
     if (!pos || !stage.isListening()) return BACKGROUND_HIT
@@ -1066,9 +1066,9 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
     // Expression lanes, and everything in MPE mode (expression.ts)
     const noteAt = (p: { x: number; y: number }) => {
       const found = hitTest(state, p)
-      return found.kind === 'note' ? found.noteId : null
+      return found.kind === 'note' || found.kind === 'handle' ? found.noteId : null
     }
-    if (expressionPointerDown(state, stage, e.evt as MouseEvent | undefined, noteAt)) return
+    if (expressionPointerDown(state, stage, e.evt as MouseEvent | undefined, noteAt, onNoteEdge)) return
 
     const hit = hitAt()
 
@@ -1164,9 +1164,10 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
     if (expressionPointerMove(state, stage, e.evt as MouseEvent | undefined)) return
     const gesture = state.interaction.isDragging || state.interaction.isResizing || state.interaction.isDrawing || state.interaction.isMarqueeSelecting
     if (!gesture) {
-      expressionHover(state, pos)
-      // A note edge in Notes mode: the resize cursor (expressionHover set the rest)
-      if (state.expression.mode === 'notes' && pos.y < noteAreaHeight(state) && !state.expression.hoverNoteId) {
+      expressionHover(state, pos, onNoteEdge)
+      // A note edge: the resize cursor (expressionHover set the rest; in MPE
+      // mode it leaves edges alone unless a breakpoint is under the pointer)
+      if (pos.y < noteAreaHeight(state) && !state.expression.hoverNoteId && !state.expression.hover) {
         const edge = hitTest(state, pos)
         if (edge.kind === 'handle') setStageCursor(state, 'ew-resize')
       }

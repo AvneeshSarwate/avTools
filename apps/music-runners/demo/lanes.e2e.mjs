@@ -249,6 +249,37 @@ await page.keyboard.type("+2.73 st");
 await page.keyboard.press("Enter");
 await sleep(100);
 assert.equal((await note("n2")).mpePitch.points[0].pitchOffset, 2.73);
+// MPE mode resizes notes from their edges (the envelope's points stay put)
+{
+  const n2b = await note("n2");
+  const qw = (await at(0, 0)).view.quarterNoteWidth;
+  const endP = await at(n2b.position + n2b.duration, await rowY(67));
+  endP.x -= 2;
+  await page.mouse.move(endP.x, endP.y);
+  await sleep(100);
+  assert.equal(await page.evaluate(() => document.querySelector(".runner-shape .konvajs-content").style.cursor), "ew-resize", "edge cursor in MPE mode");
+  await drag(endP, { x: endP.x + qw, y: endP.y });
+  const n2r = await note("n2");
+  console.log("MPE resize end", n2r.position, n2r.duration);
+  assert.equal(n2r.duration, n2b.duration + 1, "right edge drag lengthens the note in MPE mode");
+  assert.equal(n2r.position, n2b.position);
+  assert.deepEqual(n2r.mpePitch, n2b.mpePitch, "envelope unchanged");
+  // an unselected note's left edge
+  const n1b = await note("n1");
+  const startP = await at(n1b.position, await rowY(64));
+  startP.x += 2;
+  await drag(startP, { x: startP.x + qw / 2, y: startP.y });
+  const n1r = await note("n1");
+  console.log("MPE resize start", n1r.position, n1r.duration);
+  assert.equal(n1r.position, n1b.position + 0.5);
+  assert.equal(n1r.duration, n1b.duration - 0.5);
+  await shape.locator(".pr-undo").click();
+  await shape.locator(".pr-undo").click();
+  await sleep(100);
+  assert.equal((await note("n2")).duration, n2b.duration, "undo restores");
+  await page.evaluate(() => window.__musicRunners.sourceRollHandles.get(window.__id).selectNotes(["n2"]));
+  await sleep(80);
+}
 // Velocity marker: right-click > Edit Value (Notes mode)
 await shape.locator(".pr-mode-notes").click();
 await sleep(150);
