@@ -40,6 +40,7 @@ import {
   markersFor,
   playheadBeats,
   regenerate,
+  regenerateThrottled,
   startPlay,
   startRun,
   stopInstance,
@@ -77,6 +78,17 @@ function heightsFromMeta(meta: unknown): Partial<Record<RollSection, number>> {
   return out;
 }
 const PLAYHEAD_INTERVAL_MS = 33;
+/**
+ * Shape meta key for the Preview roll's auto-regenerate toggle (a view
+ * preference, outside undo like the heights). Missing means on.
+ */
+const AUTO_REGENERATE_META_KEY = "autoRegenerate";
+/** Auto-regenerate runs at most this often (~15 Hz), with a trailing run on the latest input. */
+const AUTO_REGENERATE_INTERVAL_MS = 66;
+
+function autoRegenerateFromMeta(meta: unknown): boolean {
+  return (meta as Record<string, unknown> | undefined)?.[AUTO_REGENERATE_META_KEY] !== false;
+}
 const VIEW_META_KEY = "sourceView";
 
 
@@ -527,6 +539,30 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     regenerate(shapeId);
   };
 
+  // Auto-regenerate: while the Preview roll is open, any change to what
+  // `generate` reads (notes and their tags, loop length, scale, params, the
+  // cursor) re-runs the dry run, throttled so a slider drag updates
+  // continuously. regenerate() is pure (no events, no MIDI); the button still
+  // re-rolls the randomness on unchanged input.
+  const autoRegenerate = autoRegenerateFromMeta(shape.meta);
+  const setAutoRegenerate = (on: boolean) => {
+    const current = editor.getShape(shapeId);
+    if (!current) return;
+    editor.run(() => editor.updateShape({ id: shapeId, type: current.type, meta: { ...current.meta, [AUTO_REGENERATE_META_KEY]: on } }), { history: "ignore" });
+  };
+  const autoActive = autoRegenerate && props.showPreview;
+  const generateCursor = cursorFromMeta(shape.meta);
+  useEffect(() => {
+    if (!autoActive) return;
+    // Checked again when a trailing run fires, so turning Auto off or closing
+    // the pane drops it.
+    const stillWanted = () => {
+      const current = editor.getShape(shapeId);
+      return !!current && (current.props as RunnerInstanceProps).showPreview && autoRegenerateFromMeta(current.meta);
+    };
+    regenerateThrottled(shapeId, AUTO_REGENERATE_INTERVAL_MS, stillWanted);
+  }, [autoActive, editor, shapeId, clip.notes, clip.loopLength, clip.scale, props.params, generateCursor]);
+
   // Pointer events inside the body never reach tldraw (otherwise every click
   // in a roll would select or drag the shape). The title bar is the exception:
   // its background is the grip for moving the shape and for starting an
@@ -817,6 +853,13 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
             tools={
               <>
               {runtime.preview ? viewTools("preview") : null}
+              <Toggle
+                label="Auto"
+                className="runner-shape__auto-regenerate"
+                on={autoRegenerate}
+                onChange={setAutoRegenerate}
+                title="auto-regenerate: while the Preview is open, re-run the dry run whenever the notes, their tags or the params change"
+              />
               <Button
                 icon="regenerate"
                 label="Regenerate"

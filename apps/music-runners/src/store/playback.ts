@@ -439,7 +439,47 @@ export function regenerate(shapeId: string): void {
   patchRuntime(shapeId, { preview });
 }
 
+/**
+ * Per-instance throttle state for regenerateThrottled. Kept here rather than
+ * in a view so every mounted view of one instance shares a single rate.
+ */
+const regenerateThrottles = new Map<string, { last: number; timer: ReturnType<typeof setTimeout> | null; stillWanted: () => boolean }>();
+
+/**
+ * regenerate at most once per `intervalMs`: a call after a quiet spell runs
+ * now, calls within the interval collapse into one trailing run (which reads
+ * the live clip and params, so it lands on the latest input). The trailing
+ * run is skipped when the latest `stillWanted` says no.
+ */
+export function regenerateThrottled(shapeId: string, intervalMs: number, stillWanted: () => boolean = () => true): void {
+  let state = regenerateThrottles.get(shapeId);
+  if (!state) regenerateThrottles.set(shapeId, (state = { last: -Infinity, timer: null, stillWanted }));
+  const throttle = state;
+  throttle.stillWanted = stillWanted;
+  const run = () => {
+    throttle.timer = null;
+    throttle.last = performance.now();
+    regenerate(shapeId);
+  };
+  if (throttle.timer) return;
+  const wait = intervalMs - (performance.now() - throttle.last);
+  if (wait <= 0) run();
+  else
+    throttle.timer = setTimeout(() => {
+      if (throttle.stillWanted()) run();
+      else throttle.timer = null;
+    }, wait);
+}
+
+/** Drop a pending trailing run from regenerateThrottled. */
+export function cancelThrottledRegenerate(shapeId: string): void {
+  const state = regenerateThrottles.get(shapeId);
+  if (state?.timer) clearTimeout(state.timer);
+  regenerateThrottles.delete(shapeId);
+}
+
 export function clearRuntime(shapeId: string): void {
+  cancelThrottledRegenerate(shapeId);
   stopInstance(shapeId);
   delete playbackStore.instances[shapeId];
 }
