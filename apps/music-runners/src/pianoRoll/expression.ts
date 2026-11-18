@@ -306,7 +306,7 @@ function tooltipTarget(state: PianoRollState): { x: number; y: number; text: str
 export function setGridNoteHover(state: PianoRollState, noteId: string | null) {
   if (state.expression.hoverGridNoteId === noteId) return
   state.expression.hoverGridNoteId = noteId
-  state.dirty.notes = true
+  state.requestRedraw('notes')
 }
 
 function drawLane(state: PianoRollState, ctx: CanvasRenderingContext2D, geometry: LaneGeometry, width: number) {
@@ -615,7 +615,7 @@ function selectNotes(state: PianoRollState, noteId: string, shift: boolean) {
 function setPointSelection(state: PianoRollState, selection: PointSelection | null, keepRange = false) {
   state.expression.pointSelection = selection
   if (!keepRange) state.expression.range = null
-  state.dirty.notes = true
+  state.requestRedraw('notes')
 }
 
 function startVelocityDrag(state: PianoRollState, y: number, perPixel: number, primary: string | null) {
@@ -662,7 +662,7 @@ export function expressionPointerDown(
     if (markerId) {
       selectNotes(state, markerId, shift)
       if (state.selection.selectedIds.has(markerId)) startVelocityDrag(state, pos.y, laneValuePerPixel(geometry), markerId)
-      state.dirty.notes = true
+      state.requestRedraw('notes')
       return true
     }
     if (state.grid.drawMode) {
@@ -671,7 +671,7 @@ export function expressionPointerDown(
       return true
     }
     if (!shift) mutateSelection(state, () => state.selection.selectedIds.clear())
-    state.dirty.notes = true
+    state.requestRedraw('notes')
     return true
   }
 
@@ -786,7 +786,7 @@ function paintVelocity(state: PianoRollState, pos: { x: number; y: number }, geo
     if (pos.x < x0 - MARKER_RADIUS || pos.x > x0 + Math.max(width, MARKER_RADIUS * 2)) continue
     if (note.velocity !== value) state.notes.set(id, { ...note, velocity: value })
   }
-  state.dirty.notes = true
+  state.requestRedraw('notes')
 }
 
 /** Pointer move during an expression gesture; false when none is running. */
@@ -806,7 +806,7 @@ export function expressionPointerMove(state: PianoRollState, stage: Konva.Stage,
       const velocity = clamp(Math.round(base + dy * drag.perPixel * fine), 1, 127)
       if (velocity !== note.velocity) state.notes.set(id, { ...note, velocity })
     }
-    state.dirty.notes = true
+    state.requestRedraw('notes')
     return true
   }
 
@@ -868,7 +868,7 @@ export function expressionPointerMove(state: PianoRollState, stage: Konva.Stage,
     })
     state.notes.set(id, withPoints(note, drag.area, points))
   }
-  state.dirty.notes = true
+  state.requestRedraw('notes')
   return true
 }
 
@@ -881,7 +881,7 @@ export function expressionPointerUp(state: PianoRollState): boolean {
   if (drag.kind === 'range') {
     // The range stays shaded with its selection (Ableton); a click clears both.
     if (Math.abs(drag.currentX - drag.startX) <= DRAG_SLOP && !drag.shift) setPointSelection(state, null)
-    state.dirty.notes = true
+    state.requestRedraw('notes')
     return true
   }
 
@@ -902,7 +902,7 @@ export function expressionPointerUp(state: PianoRollState): boolean {
     const label = drag.kind === 'points' ? 'Edit Expression' : 'Change Velocity'
     state.command.stack?.pushCommand(label, drag.before, after)
   }
-  state.dirty.notes = true
+  state.requestRedraw('notes')
   return true
 }
 
@@ -929,7 +929,7 @@ export function expressionHover(
   }
   if (hoverNote !== state.expression.hoverNoteId) {
     state.expression.hoverNoteId = hoverNote
-    state.dirty.notes = true
+    state.requestRedraw('notes')
   }
   let hover: ExpressionHover | null = null
   if (pos && state.expression.mode === 'mpe' && !state.expression.drag) {
@@ -940,14 +940,14 @@ export function expressionHover(
   }
   if (JSON.stringify(hover) !== JSON.stringify(state.expression.hover)) {
     state.expression.hover = hover
-    state.dirty.notes = true
+    state.requestRedraw('notes')
     setStageCursor(state, hover ? HOVER_CURSOR[hover.kind] : hoverNote ? 'ns-resize' : '')
   } else if (!hover) {
     setStageCursor(state, hoverNote ? 'ns-resize' : '')
   }
   if (hoverPitch !== state.keyboard.hoverPitch) {
     state.keyboard.hoverPitch = hoverPitch
-    state.dirty.gutter = true
+    state.requestRedraw('gutter')
   }
 }
 
@@ -993,7 +993,7 @@ export function setPointValue(state: PianoRollState, area: EnvelopeArea, noteId:
   state.command.stack?.executeCommand('Set Value', () => {
     state.notes.set(noteId, withPoints(note, area, points))
   })
-  state.dirty.notes = true
+  state.requestRedraw('notes')
 }
 
 export function deletePoint(state: PianoRollState, area: EnvelopeArea, noteId: string, index: number) {
@@ -1018,7 +1018,7 @@ export function togglePointRooted(state: PianoRollState, noteId: string, index: 
   state.command.stack?.executeCommand(rooted ? 'Unroot Point' : 'Root Point', () => {
     state.notes.set(noteId, withPoints(note, 'pitch', points))
   })
-  state.dirty.notes = true
+  state.requestRedraw('notes')
 }
 
 export function setNoteVelocity(state: PianoRollState, noteId: string, velocity: number) {
@@ -1028,7 +1028,7 @@ export function setNoteVelocity(state: PianoRollState, noteId: string, velocity:
   state.command.stack?.executeCommand('Set Velocity', () => {
     state.notes.set(noteId, { ...note, velocity: value })
   })
-  state.dirty.notes = true
+  state.requestRedraw('notes')
 }
 
 /** Value text as Ableton shows it: "+2.73 st" for pitch, whole numbers otherwise. */
@@ -1085,7 +1085,7 @@ export function toggleRootedSelected(state: PianoRollState): boolean {
       state.notes.set(id, withPoints(note, 'pitch', points))
     }
   })
-  state.dirty.notes = true
+  state.requestRedraw('notes')
   return true
 }
 

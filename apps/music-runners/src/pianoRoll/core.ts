@@ -87,7 +87,7 @@ export function restoreState(state: PianoRollState, snapshot: string) {
   state.notes = new Map(data.notes)
   state.selection.selectedIds = new Set(data.selection)
   invalidateNoteIndex(state)
-  state.needsRedraw = true
+  state.requestRedraw()
 }
 
 function selectionSetsDiffer(previous: Set<string>, current: Set<string>): boolean {
@@ -341,7 +341,7 @@ export function initializeLayers(
       (snapshot) => restoreState(state, snapshot),
       (change, name) => {
         invalidateNoteIndex(state)
-        state.needsRedraw = true
+        state.requestRedraw()
         onCommandStackChange?.(change, name)
       }
     )
@@ -903,19 +903,8 @@ export function renderVisibleNotes(state: PianoRollState) {
   notesLayer.batchDraw()
 }
 
-/** Handles are drawn by the notes shape; this redraws that layer. */
-export function renderResizeHandles(state: PianoRollState) {
-  const notesLayer = state.layers.notes
-  if (!notesLayer) return
-  notesLayer.batchDraw()
-}
-
 export function renderMarqueeRect(state: PianoRollState) {
   if (!state.interaction.marqueeStart || !state.interaction.marqueeCurrent) return
-  state.layers.overlay?.batchDraw()
-}
-
-export function updateQueuePlayheadPosition(state: PianoRollState) {
   state.layers.overlay?.batchDraw()
 }
 
@@ -1045,7 +1034,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
         }
         state.notes.set(note.id, note)
         created = note
-        state.needsRedraw = true
+        state.requestRedraw()
       })
       if (created) previewNote(state, created)
     }
@@ -1080,7 +1069,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
           if (!isShift) state.selection.selectedIds.clear()
           state.selection.selectedIds.add(hit.noteId)
         })
-        state.dirty.notes = true
+        state.requestRedraw('notes')
       }
       startResize(state, stage, hit.noteId, hit.isEnd)
       return
@@ -1099,7 +1088,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
           })
         }
         startVelocityDragFromNote(state, stage, noteId)
-        state.dirty.notes = true
+        state.requestRedraw('notes')
         return
       }
       const isSelected = state.selection.selectedIds.has(noteId)
@@ -1129,7 +1118,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
 
       // Start drag for selected notes
       startNoteDrag(state, stage, noteId)
-      state.dirty.notes = true
+      state.requestRedraw('notes')
       return
     }
 
@@ -1154,7 +1143,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
       })
     }
 
-    state.dirty.notes = true
+    state.requestRedraw('notes')
   })
 
   // Mouse move
@@ -1237,7 +1226,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
       }
       if (reached.length > 0) previewNotes(state, reached)
 
-      state.dirty.notes = true
+      state.requestRedraw('notes')
     }
   })
 
@@ -1290,7 +1279,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
           const { position } = screenToPitchPosition(pos, state)
           const quantizedPos = quantizeToGrid(position, state.grid.subdivision)
           state.queuePlayhead.position = Math.max(0, Math.min(quantizedPos, getMaxLength(state)))
-          state.dirty.overlay = true
+          state.requestRedraw('overlay')
           state.notifyExternalChange?.('playhead') // for queue playhead update
           state.hooks.onCursorChange?.(state.queuePlayhead.position)
         }
@@ -1406,7 +1395,7 @@ function updateNoteDrag(state: PianoRollState, stage: Konva.Stage) {
   // Overlap detection & preview
   updateOverlapPreview(state)
 
-  state.needsRedraw = true
+  state.requestRedraw()
 }
 
 function finishNoteDrag(state: PianoRollState) {
@@ -1423,7 +1412,7 @@ function finishNoteDrag(state: PianoRollState) {
   state.interaction.dragPreviewPitch = undefined
   clearOverlapPreview(state)
   invalidateNoteIndex(state)
-  state.needsRedraw = true
+  state.requestRedraw()
 }
 
 // ================= Resize Handlers =================
@@ -1488,7 +1477,7 @@ function updateNoteResize(state: PianoRollState, stage: Konva.Stage) {
   })
 
   updateOverlapPreview(state)
-  state.needsRedraw = true
+  state.requestRedraw()
 }
 
 function finishNoteResize(state: PianoRollState) {
@@ -1503,7 +1492,7 @@ function finishNoteResize(state: PianoRollState) {
   state.interaction.isResizing = false
   clearOverlapPreview(state)
   invalidateNoteIndex(state)
-  state.needsRedraw = true
+  state.requestRedraw()
 }
 
 // ================= Draw Handlers (draw mode) =================
@@ -1531,7 +1520,7 @@ function startDraw(state: PianoRollState, pos: { x: number; y: number }) {
   })
   previewNote(state, note)
   updateOverlapPreview(state)
-  state.needsRedraw = true
+  state.requestRedraw()
 }
 
 function updateDraw(state: PianoRollState, pos: { x: number; y: number }) {
@@ -1552,7 +1541,7 @@ function updateDraw(state: PianoRollState, pos: { x: number; y: number }) {
   note.duration = end - start
 
   updateOverlapPreview(state)
-  state.needsRedraw = true
+  state.requestRedraw()
 }
 
 function finishDraw(state: PianoRollState) {
@@ -1569,5 +1558,5 @@ function finishDraw(state: PianoRollState) {
   state.interaction.drawBeforeState = undefined
   clearOverlapPreview(state)
   invalidateNoteIndex(state)
-  state.needsRedraw = true
+  state.requestRedraw()
 }

@@ -1,9 +1,10 @@
-import { isSixSinesOutput, listSixSines, sixSinesOutputName } from "../../store/sixSines";
+import { isSixSinesOutput, sixSinesOutputOptions } from "../../store/sixSines";
 // The base runner instance shape: chrome (name, MIDI output, loop length,
 // params, transports, queue) plus three collapsible rolls. One tldraw shape
 // type per runner definition is produced by defineRunnerShape.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  atom,
   BaseBoxShapeUtil,
   HTMLContainer,
   type RecordProps,
@@ -41,8 +42,6 @@ import {
   playbackStore,
   markersFor,
   playheadBeats,
-  regenerate,
-  regenerateThrottled,
   startPlay,
   startRun,
   stopInstance,
@@ -52,6 +51,8 @@ import { runnerShapeType } from "../registry";
 import { defaultParams, numberParam, type ParamValue, type Params, type RunnerDefinition, scaleParam, tagValue, textParam } from "../runnerTypes";
 import { ScaleControls } from "../../pianoRoll/ControlPanel";
 import { CURSOR_META_KEY, cursorFromMeta, defaultInstanceProps, type RunnerInstanceProps } from "./instanceProps";
+import { GeneratedSection, PreviewSection } from "./OutputRollSections";
+import { RollSection } from "./RollSection";
 import { TagEditor, toggleTag } from "./TagEditor";
 import { Button, Chooser, Field, Lamp, NumberBox, TextField, Toggle } from "../../ui/controls/controls";
 import { Icon } from "../../ui/controls/icons";
@@ -64,33 +65,22 @@ const ROLL_CHROME_WIDTH = 10.5 * 2 + GUTTER_WIDTH + LAYOUT_GAP + 2 + LAYOUT_GAP 
 const PLAYHEAD_COLORS = { play: "#62d26f", run: "#ffab3d", rec: "#ff4f4f" } as const;
 /** Default grid heights per section; each is resizable from the section's bottom edge. */
 const DEFAULT_ROLL_HEIGHTS = { source: 240, generated: 180, preview: 180 } as const;
-type RollSection = keyof typeof DEFAULT_ROLL_HEIGHTS;
+type RollSectionName = keyof typeof DEFAULT_ROLL_HEIGHTS;
 const MIN_ROLL_HEIGHT = 80;
 const MAX_ROLL_HEIGHT = 1200;
 /** Shape meta key for the resized heights (layout, like the saved view). */
 const HEIGHTS_META_KEY = "rollHeights";
 
-function heightsFromMeta(meta: unknown): Partial<Record<RollSection, number>> {
+function heightsFromMeta(meta: unknown): Partial<Record<RollSectionName, number>> {
   const raw = (meta as Record<string, unknown> | undefined)?.[HEIGHTS_META_KEY] as Record<string, unknown> | undefined;
-  const out: Partial<Record<RollSection, number>> = {};
-  for (const key of Object.keys(DEFAULT_ROLL_HEIGHTS) as RollSection[]) {
+  const out: Partial<Record<RollSectionName, number>> = {};
+  for (const key of Object.keys(DEFAULT_ROLL_HEIGHTS) as RollSectionName[]) {
     const value = raw?.[key];
     if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
   }
   return out;
 }
 const PLAYHEAD_INTERVAL_MS = 33;
-/**
- * Shape meta key for the Preview roll's auto-regenerate toggle (a view
- * preference, outside undo like the heights). Missing means on.
- */
-const AUTO_REGENERATE_META_KEY = "autoRegenerate";
-/** Auto-regenerate runs at most this often (~15 Hz), with a trailing run on the latest input. */
-const AUTO_REGENERATE_INTERVAL_MS = 66;
-
-function autoRegenerateFromMeta(meta: unknown): boolean {
-  return (meta as Record<string, unknown> | undefined)?.[AUTO_REGENERATE_META_KEY] !== false;
-}
 const VIEW_META_KEY = "sourceView";
 
 
@@ -221,30 +211,22 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
   const editor = useEditor();
   const shapeId = shape.id;
   const props = shape.props;
-  // Snapshots: this view re-renders only for its clip, instance runtime, MIDI
-  // and event-log fields it reads, not for other instances' activity.
   const clip = useSnapshot(clipsStore).clips[shapeId] as Clip;
   const runtime = (useSnapshot(playbackStore).instances[shapeId] ?? EMPTY_RUNTIME) as InstanceRuntime;
   const midi = useSnapshot(midiStore);
-  const synthOptions = useValue("Six Sines outputs", () => listSixSines(editor).map(({ id, props }, index) => ({
-    value: sixSinesOutputName(id),
-    label: props.name,
-    divider: index === 0,
-  })), [editor]);
-  const eventLog = useSnapshot(eventLogStore).byShape[shapeId] ?? EMPTY_LOG;
+  const synthOptions = useValue(sixSinesOutputOptions(editor));
   const contentRef = useRef<HTMLDivElement | null>(null);
   const sourceRollRef = useRef<PianoRollHandle | null>(null);
   const generatedRollRef = useRef<PianoRollHandle | null>(null);
-  const previewRollRef = useRef<PianoRollHandle | null>(null);
   const recording = (useSnapshot(recordingStore).byShape[shapeId] ?? EMPTY_RECORDING) as RecordingUi;
   const pitchLabels = useSnapshot(displayStore).pitchLabels;
 
   // Roll heights: saved in the shape's meta; a drag previews locally and
   // writes the meta once, on release (like the saved view, outside undo).
-  const [draftHeights, setDraftHeights] = useState<Partial<Record<RollSection, number>>>({});
+  const [draftHeights, setDraftHeights] = useState<Partial<Record<RollSectionName, number>>>({});
   const savedHeights = heightsFromMeta(shape.meta);
-  const rollHeight = (section: RollSection) => draftHeights[section] ?? savedHeights[section] ?? DEFAULT_ROLL_HEIGHTS[section];
-  const startRollResize = (section: RollSection) => (event: React.PointerEvent<HTMLDivElement>) => {
+  const rollHeight = (section: RollSectionName) => draftHeights[section] ?? savedHeights[section] ?? DEFAULT_ROLL_HEIGHTS[section];
+  const startRollResize = (section: RollSectionName) => (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     event.stopPropagation();
     event.preventDefault();
@@ -278,11 +260,12 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     handle.addEventListener("pointercancel", onUp);
   };
   const playheadColor = recording.recording === "free" ? PLAYHEAD_COLORS.rec : runtime.mode === "run" ? PLAYHEAD_COLORS.run : PLAYHEAD_COLORS.play;
-  usePlayhead(shapeId, runtime.mode !== "idle" || recording.listening !== null, playheadColor, def.sourcePlayhead !== false, sourceRollRef, generatedRollRef);
+  const animateRolls = (runtime.mode !== "idle" && (props.showSource || props.showGenerated)) || (props.showSource && recording.listening !== null);
+  usePlayhead(shapeId, animateRolls, playheadColor, def.sourcePlayhead !== false, sourceRollRef, generatedRollRef);
   const selectedIdsRef = useRef<string[]>([]);
   // The three rolls share one view so they read as a score: the source roll
   // owns it, the read-only rolls follow, and it is saved in the shape's meta.
-  const sourceViewRef = useRef<PianoRollView | null>(viewFromMeta(shape.meta));
+  const [sourceView] = useState(() => atom<PianoRollView | null>("source roll view", viewFromMeta(shape.meta)));
   const saveViewTimerRef = useRef<number | undefined>(undefined);
   // The source roll renders its tool row into the Source section header.
   const [sourceToolbar, setSourceToolbar] = useState<HTMLElement | null>(null);
@@ -299,58 +282,9 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     [editor, shape.type, shapeId],
   );
 
-  // Generated and Preview follow the Source view until you scroll or zoom
-  // them yourself; Follow snaps them back (Ableton-style follow).
-  const [follow, setFollow] = useState<Record<"generated" | "preview", boolean>>({ generated: true, preview: true });
-  const followRef = useRef(follow);
-  followRef.current = follow;
-  const followSourceView = useCallback(() => {
-    const view = sourceViewRef.current;
-    if (!view) return;
-    if (followRef.current.generated) generatedRollRef.current?.setView(view);
-    if (followRef.current.preview) previewRollRef.current?.setView(view);
-  }, []);
-  const outputRoll = (section: "generated" | "preview") => (section === "generated" ? generatedRollRef : previewRollRef);
-  const setFollowing = (section: "generated" | "preview", on: boolean) => {
-    followRef.current = { ...followRef.current, [section]: on };
-    setFollow(followRef.current);
-    if (on && sourceViewRef.current) outputRoll(section).current?.setView(sourceViewRef.current);
-  };
-  /** Wheel or a scrollbar drag in an output roll: it stops following. */
-  const unfollowOnNavigate = (section: "generated" | "preview") => ({
-    onWheelCapture: () => {
-      if (followRef.current[section]) setFollowing(section, false);
-    },
-    onPointerDownCapture: (event: React.PointerEvent) => {
-      if (followRef.current[section] && (event.target as HTMLElement).closest(".pr-scrollbar")) setFollowing(section, false);
-    },
-  });
-  const viewTools = (section: "generated" | "preview") => (
-    <span className="runner-section__view-tools">
-      <Toggle
-        icon="link"
-        label="Follow"
-        className={`runner-shape__follow-${section}`}
-        on={follow[section]}
-        onChange={(on) => setFollowing(section, on)}
-        title="follow the Source roll's view; scrolling or zooming here turns it off, turning it on snaps back"
-      />
-      <Button icon="zoomOut" quiet title="zoom out" onClick={() => { setFollowing(section, false); outputRoll(section).current?.zoomBy(1 / 1.25); }} />
-      <Button icon="zoomIn" quiet title="zoom in" onClick={() => { setFollowing(section, false); outputRoll(section).current?.zoomBy(1.25); }} />
-      <Button
-        icon="fit"
-        quiet
-        className={`runner-shape__fit-${section}`}
-        title="fit the notes, including played trills and other ghost notes"
-        onClick={() => { setFollowing(section, false); outputRoll(section).current?.fitToContent(); }}
-      />
-    </span>
-  );
-
   const onSourceViewChange = useCallback(
     (view: PianoRollView) => {
-      sourceViewRef.current = view;
-      followSourceView();
+      sourceView.set(view);
       window.clearTimeout(saveViewTimerRef.current);
       saveViewTimerRef.current = window.setTimeout(() => {
         const current = editor.getShape(shapeId);
@@ -360,7 +294,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
         editor.run(() => editor.updateShape({ id: shapeId, type: current.type, meta: { ...current.meta, [VIEW_META_KEY]: rounded } }), { history: "ignore" });
       }, 400);
     },
-    [editor, followSourceView, shapeId],
+    [editor, sourceView, shapeId],
   );
   useEffect(() => () => window.clearTimeout(saveViewTimerRef.current), []);
   const setSourceRollRef = useCallback(
@@ -379,21 +313,14 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     afterLayout(() => {
       const roll = sourceRollRef.current;
       if (!roll) return;
-      const saved = sourceViewRef.current;
+      const saved = sourceView.get();
       if (saved) roll.setView(saved);
       else {
         roll.fitToContent();
-        sourceViewRef.current = roll.getView();
+        sourceView.set(roll.getView());
       }
-      followSourceView();
     });
-  }, [hasNotes, props.showSource, followSourceView]);
-
-  const generatedLoop = runtime.generated;
-  const previewLoop = runtime.preview;
-  useEffect(() => {
-    afterLayout(followSourceView);
-  }, [generatedLoop, previewLoop, props.showGenerated, props.showPreview, followSourceView]);
+  }, [hasNotes, props.showSource, sourceView]);
 
   // The shape's height follows its content: sections collapse and expand.
   useEffect(() => {
@@ -458,20 +385,6 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     },
     [def],
   );
-  const previewNoteColor = useCallback((note: PianoRollNote) => def.generatedNoteColor?.(note), [def]);
-  // In the Generated roll a note that has not sounded yet this loop is dimmed,
-  // so the live overlay reads as "played so far" even where it coincides with
-  // the note itself. Ad hoc notes (trills) still show as their own ghosts.
-  const played = runtime.played as GhostNote[];
-  const playedIds = useMemo(() => new Set(played.map((ghost) => ghost.linkTo)), [played]);
-  const generatedNoteColor = useCallback(
-    (note: PianoRollNote) => {
-      if (runtime.mode !== "idle" && !playedIds.has(note.id)) return UNPLAYED_COLOR;
-      return def.generatedNoteColor?.(note);
-    },
-    [def, playedIds, runtime.mode],
-  );
-
   // The cursor is saved in the shape's meta, outside undo (like the view);
   // a runner with usesCursor reads it live (api.getCursor).
   const onCursorChange = useCallback(
@@ -541,35 +454,6 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     if (next && next !== props.name) updateProps({ name: next });
     setNameDraft(null);
   };
-  const onRegenerate = () => {
-    if (!props.showPreview) updateProps({ showPreview: true });
-    regenerate(shapeId);
-  };
-
-  // Auto-regenerate: while the Preview roll is open, any change to what
-  // `generate` reads (notes and their tags, loop length, scale, params, the
-  // cursor) re-runs the dry run, throttled so a slider drag updates
-  // continuously. regenerate() is pure (no events, no MIDI); the button still
-  // re-rolls the randomness on unchanged input.
-  const autoRegenerate = autoRegenerateFromMeta(shape.meta);
-  const setAutoRegenerate = (on: boolean) => {
-    const current = editor.getShape(shapeId);
-    if (!current) return;
-    editor.run(() => editor.updateShape({ id: shapeId, type: current.type, meta: { ...current.meta, [AUTO_REGENERATE_META_KEY]: on } }), { history: "ignore" });
-  };
-  const autoActive = autoRegenerate && props.showPreview;
-  const generateCursor = cursorFromMeta(shape.meta);
-  useEffect(() => {
-    if (!autoActive) return;
-    // Checked again when a trailing run fires, so turning Auto off or closing
-    // the pane drops it.
-    const stillWanted = () => {
-      const current = editor.getShape(shapeId);
-      return !!current && (current.props as RunnerInstanceProps).showPreview && autoRegenerateFromMeta(current.meta);
-    };
-    regenerateThrottled(shapeId, AUTO_REGENERATE_INTERVAL_MS, stillWanted);
-  }, [autoActive, editor, shapeId, clip.notes, clip.loopLength, clip.scale, props.params, generateCursor]);
-
   // Pointer events inside the body never reach tldraw (otherwise every click
   // in a roll would select or drag the shape). The title bar is the exception:
   // its background is the grip for moving the shape and for starting an
@@ -585,7 +469,6 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
 
   const recordingKind = recording.recording;
   const modeText = runtime.mode === "idle" ? "idle" : `${runtime.mode} · loop ${runtime.loopCount}`;
-  const lastEvent = eventLog[0];
   const shapeState = recordingKind ? "recording" : runtime.mode;
 
   const portChoices = (names: string[], current: string, connected: string[]) => [
@@ -601,6 +484,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     outputChoices.push({ value: props.midiOutputName, label: "Six Sines (missing)", muted: true });
   }
   const connectedInputs = midi.inputs.map((port) => port.name);
+  const outputRollProps = { shape, def, sourceView, width: stageWidth, pitchLabels, noteBadge, scale };
   const openPorts = () => {
     void ensureMidi().then(() => refreshPorts());
   };
@@ -793,7 +677,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
             )}
           </div>
 
-          <Section
+          <RollSection
             title="source"
             open={props.showSource}
             onToggle={() => updateProps({ showSource: !props.showSource })}
@@ -822,124 +706,67 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
                   onNotePreview={onNotePreview}
                   renderMetadataPanel={renderMetadataPanel}
                   rawMetadataEditor={false}
-                  initialView={sourceViewRef.current ?? undefined}
+                  initialView={sourceView.get() ?? undefined}
                   onViewChange={onSourceViewChange}
                   cursor={def.usesCursor ? cursorFromMeta(shape.meta) : undefined}
                   onCursorChange={onCursorChange}
                 />
             </div>
-          </Section>
+          </RollSection>
 
-          <Section
-            title="generated"
-            open={props.showGenerated}
+          <GeneratedSection
+            {...outputRollProps}
+            rollRef={generatedRollRef}
+            height={rollHeight("generated")}
             onToggle={() => updateProps({ showGenerated: !props.showGenerated })}
-            extra={runtime.generated ? `${runtime.generated.notes.length} notes · ${runtime.played.length} played` : undefined}
-            onResizeStart={runtime.generated ? startRollResize("generated") : undefined}
-            tools={runtime.generated ? viewTools("generated") : undefined}
-          >
-            {runtime.generated ? (
-              <div {...unfollowOnNavigate("generated")}>
-              <PianoRoll
-                ref={generatedRollRef}
-                notes={runtime.generated.notes as PianoRollNote[]}
-                loopLength={(runtime.generated.start ?? 0) + runtime.generated.loopLength}
-                width={stageWidth}
-                height={rollHeight("generated")}
-                pitchLabels={pitchLabels}
-                interactive={false}
-                showControlPanel={false}
-                ghostNotes={played}
-                noteBadge={noteBadge}
-                noteColor={generatedNoteColor}
-                scale={scale}
-                navigable
-              />
-              </div>
-            ) : (
-              <div className="runner-section__placeholder">Play or Run to see the loop that is sounding</div>
-            )}
-          </Section>
-
-          <Section
-            title="preview"
-            open={props.showPreview}
+            onResizeStart={startRollResize("generated")}
+          />
+          <PreviewSection
+            {...outputRollProps}
+            height={rollHeight("preview")}
             onToggle={() => updateProps({ showPreview: !props.showPreview })}
-            extra={runtime.preview ? `${runtime.preview.notes.length} notes` : undefined}
-            onResizeStart={runtime.preview ? startRollResize("preview") : undefined}
-            tools={
-              <>
-              {runtime.preview ? viewTools("preview") : null}
-              <Toggle
-                label="Auto"
-                className="runner-shape__auto-regenerate"
-                on={autoRegenerate}
-                onChange={setAutoRegenerate}
-                title="auto-regenerate: while the Preview is open, re-run the dry run whenever the notes, their tags or the params change"
-              />
-              <Button
-                icon="regenerate"
-                label="Regenerate"
-                className="runner-shape__regenerate"
-                onClick={onRegenerate}
-                title="dry-run the algorithm into the Preview roll"
-              />
-              </>
-            }
-          >
-            {runtime.preview ? (
-              <div {...unfollowOnNavigate("preview")}>
-              <PianoRoll
-                ref={previewRollRef}
-                notes={runtime.preview.notes as PianoRollNote[]}
-                loopLength={(runtime.preview.start ?? 0) + runtime.preview.loopLength}
-                width={stageWidth}
-                height={rollHeight("preview")}
-                pitchLabels={pitchLabels}
-                interactive={false}
-                showControlPanel={false}
-                noteBadge={noteBadge}
-                noteColor={previewNoteColor}
-                scale={scale}
-                navigable
-              />
-              </div>
-            ) : (
-              <div className="runner-section__placeholder">Regenerate to preview one loop of the algorithm</div>
-            )}
-          </Section>
-          <div className="runner-shape__status" role="status">
-            {runtime.error ? (
-              <span className="runner-shape__status-error" role="alert">
-                could not start: {runtime.error}
-              </span>
-            ) : null}
-            {recordingKind ? (
-              <span className="runner-shape__status-rec">
-                recording {recordingKind === "free" ? "a free take" : "overdub"} · {recording.recorded} notes
-              </span>
-            ) : recording.status ? (
-              <span className="runner-shape__status-log">{recording.status}</span>
-            ) : null}
-            {lastEvent ? (
-              <span className="runner-shape__status-event" title={JSON.stringify(lastEvent.event)}>
-                {lastEvent.direction === "in" ? "←" : "→"} {lastEvent.event.type}
-                {typeof lastEvent.event.pitch === "number" ? ` ${lastEvent.event.pitch}` : ""}
-              </span>
-            ) : null}
-            {runtime.logs[0] ? <span className="runner-shape__status-log">{runtime.logs[0]}</span> : null}
-          </div>
+            onResizeStart={startRollResize("preview")}
+          />
+          <RunnerStatus shapeId={shapeId} />
         </div>
       </div>
     </HTMLContainer>
   );
 }
 
+function RunnerStatus({ shapeId }: { shapeId: string }) {
+  const runtime = useSnapshot(playbackStore).instances[shapeId] ?? EMPTY_RUNTIME;
+  const recording = useSnapshot(recordingStore).byShape[shapeId] ?? EMPTY_RECORDING;
+  const recordingKind = recording.recording;
+  const lastEvent = useSnapshot(eventLogStore).byShape[shapeId]?.[0];
+  return (
+    <div className="runner-shape__status" role="status">
+      {runtime.error ? (
+        <span className="runner-shape__status-error" role="alert">
+          could not start: {runtime.error}
+        </span>
+      ) : null}
+      {recordingKind ? (
+        <span className="runner-shape__status-rec">
+          recording {recordingKind === "free" ? "a free take" : "overdub"} · {recording.recorded} notes
+        </span>
+      ) : recording.status ? (
+        <span className="runner-shape__status-log">{recording.status}</span>
+      ) : null}
+      {lastEvent ? (
+        <span className="runner-shape__status-event" title={JSON.stringify(lastEvent.event)}>
+          {lastEvent.direction === "in" ? "←" : "→"} {lastEvent.event.type}
+          {typeof lastEvent.event.pitch === "number" ? ` ${lastEvent.event.pitch}` : ""}
+        </span>
+      ) : null}
+      {runtime.logs[0] ? <span className="runner-shape__status-log">{runtime.logs[0]}</span> : null}
+    </div>
+  );
+}
+
 const EMPTY_GHOSTS: GhostNote[] = [];
-const EMPTY_LOG: readonly never[] = [];
 const EMPTY_RUNTIME = getRuntime("__none__");
 const EMPTY_RECORDING: RecordingUi = { listening: null, recording: null, recorded: 0, status: "" };
-const UNPLAYED_COLOR = "#8f8a85";
 
 /**
  * A text param: edits a draft, commits on Enter or blur when `validate`
@@ -979,49 +806,6 @@ function TextParam({ value, validate, onCommit }: { value: string; validate?: (t
 
 function formatParam(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
-}
-
-function Section({
-  title,
-  open,
-  onToggle,
-  extra,
-  tools,
-  toolsRef,
-  onResizeStart,
-  children,
-}: {
-  title: string;
-  open: boolean;
-  onToggle: () => void;
-  extra?: string;
-  /** The section's own controls, right-aligned in its header. */
-  tools?: React.ReactNode;
-  /** Header slot a roll renders its tool row into (only while open). */
-  toolsRef?: (el: HTMLElement | null) => void;
-  /** Drag bar along the bottom edge that resizes the section's roll. */
-  onResizeStart?: (event: React.PointerEvent<HTMLDivElement>) => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className={`runner-section ${open ? "runner-section--open" : ""}`}>
-      <div className="runner-section__header">
-        <button type="button" data-control className="runner-section__toggle" onClick={onToggle} aria-expanded={open}>
-          <Icon name={open ? "chevronDown" : "chevronRight"} size={13} />
-          <span className="runner-section__title">{title}</span>
-        </button>
-        {extra ? <span className="runner-section__extra">{extra}</span> : null}
-        <span className="runner-section__tools">
-          {tools}
-          {open && toolsRef ? <span ref={toolsRef} className="runner-section__toolbar" /> : null}
-        </span>
-      </div>
-      {open ? <div className="runner-section__body">{children}</div> : null}
-      {open && onResizeStart ? (
-        <div className="runner-section__resize" data-control title="drag to resize the roll" onPointerDown={onResizeStart} />
-      ) : null}
-    </section>
-  );
 }
 
 export type { RunnerShape };

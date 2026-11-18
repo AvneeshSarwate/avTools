@@ -34,7 +34,7 @@ export const createCommandHandlers = ({ state, onButtonsChange }: CommandHandler
     state.command.stack?.executeCommand('Delete Selected', () => {
       state.selection.selectedIds.forEach((id) => state.notes.delete(id))
       state.selection.selectedIds.clear()
-      state.needsRedraw = true
+      state.requestRedraw()
     })
 
     updateCommandStackButtons()

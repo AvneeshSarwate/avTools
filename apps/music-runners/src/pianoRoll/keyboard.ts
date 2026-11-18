@@ -121,7 +121,7 @@ export const createKeyboardController = ({
         })
 
         executeOverlapChanges(state, state.selection.selectedIds)
-        state.needsRedraw = true
+        state.requestRedraw()
       })
 
       // Moving the selection up or down replays it at the new pitches
@@ -177,7 +177,7 @@ export const createKeyboardController = ({
           })
 
           executeOverlapChanges(state, state.selection.selectedIds)
-          state.needsRedraw = true
+          state.requestRedraw()
         })
 
         updateCommandStackButtons()

@@ -101,7 +101,7 @@ export const updateScrollBounds = (
   const clampedScrollX = clamp(state.viewport.scrollX, 0, maxScrollX)
   if (clampedScrollX !== state.viewport.scrollX) {
     state.viewport.scrollX = clampedScrollX
-    state.needsRedraw = true
+    state.requestRedraw()
     notifyViewportChange()
   }
 
@@ -109,7 +109,7 @@ export const updateScrollBounds = (
   const clampedScrollY = clamp(state.viewport.scrollY, 0, maxScrollY)
   if (clampedScrollY !== state.viewport.scrollY) {
     state.viewport.scrollY = clampedScrollY
-    state.needsRedraw = true
+    state.requestRedraw()
     notifyViewportChange()
   }
 }
@@ -132,7 +132,7 @@ export const applyHorizontalZoom = (
   state.viewport.scrollX = clampedStartQuarter * state.grid.quarterNoteWidth
 
   updateScrollBounds(state, fallbackWidth, fallbackHeight, notifyViewportChange)
-  state.needsRedraw = true
+  state.requestRedraw()
   notifyViewportChange()
 }
 
@@ -154,7 +154,7 @@ export const applyVerticalZoom = (
   state.viewport.scrollY = clampedTopIndex * state.grid.noteHeight
 
   updateScrollBounds(state, fallbackWidth, fallbackHeight, notifyViewportChange)
-  state.needsRedraw = true
+  state.requestRedraw()
   notifyViewportChange()
 }
 
@@ -280,6 +280,9 @@ export const setView = (
   fallbackHeight: number,
   notifyViewportChange: () => void
 ) => {
+  const current = getView(state)
+  if (view.quarterNoteWidth === current.quarterNoteWidth && view.noteHeight === current.noteHeight &&
+      view.startBeat === current.startBeat && view.topRow === current.topRow) return
   applyHorizontalZoom(state, view.quarterNoteWidth, view.startBeat, fallbackWidth, fallbackHeight, notifyViewportChange)
   applyVerticalZoom(state, view.noteHeight, view.topRow, fallbackWidth, fallbackHeight, notifyViewportChange)
 }

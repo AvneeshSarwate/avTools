@@ -1,11 +1,12 @@
 // React + Konva piano roll: a port of browser-projections' PianoRollRoot.vue.
 // React owns the wrapper, control panel, scrollbars, metadata panel and the
 // lifecycle; Konva is driven imperatively by core.ts exactly as in the Vue
-// version (visible-note culling, needsRedraw flag, one batchDraw per layer per
+// version (visible-note culling, on-demand redraws, one batchDraw per layer per
 // RAF frame). MPE pitch curves are drawn read-only; expression lanes and curve
 // editing are not ported. Live MIDI input is an overlay set through the handle.
 import {
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -35,8 +36,6 @@ import {
   renderGrid,
   renderGhostNotes,
   renderVisibleNotes,
-  renderResizeHandles,
-  updateQueuePlayheadPosition,
   updatePlayheadMarkers,
   mutateSelection,
   captureState
@@ -93,7 +92,7 @@ const isEditableTarget = (target: EventTarget | null) => {
   return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable
 }
 
-export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function PianoRoll(props, ref) {
+export const PianoRoll = memo(forwardRef<PianoRollHandle, PianoRollProps>(function PianoRoll(props, ref) {
   const {
     notes,
     loopLength,
@@ -247,6 +246,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     }
 
     const setPlayheadMarkers = (markers: PlayheadMarker[]) => {
+      if (!markers?.length && !state.playheadMarkers.markers.length) return
       // Entries without a finite numeric position are dropped rather than
       // rendered at 0, and a later id wins over an earlier duplicate.
       const next = new Map<string, PlayheadMarker>()
@@ -261,7 +261,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
         })
       }
       state.playheadMarkers.markers = Array.from(next.values())
-      state.dirty.overlay = true
+      state.requestRedraw('overlay')
     }
 
     const enforceScrollBounds = () => {
@@ -328,8 +328,6 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
       renderGrid,
       renderGhostNotes,
       renderVisibleNotes,
-      renderResizeHandles,
-      updateQueuePlayheadPosition,
       updatePlayheadMarkers,
       afterRedraw: syncUi,
       renderGutter: () => drawGutter(state, gutterRef.current),
@@ -371,7 +369,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
       state.viewport.scrollX += dx
       state.viewport.scrollY += dy
       enforceScrollBounds()
-      state.needsRedraw = true
+      state.requestRedraw()
       notifyViewportChange()
     }
 
@@ -393,7 +391,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
           else delete updated.metadata
           state.notes.set(noteId, updated)
         }
-        state.needsRedraw = true
+        state.requestRedraw()
       })
       commandHandlers.updateCommandStackButtons()
     }
@@ -416,7 +414,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
           const note = state.notes.get(id)
           if (note && note.velocity !== value) state.notes.set(id, { ...note, velocity: value })
         }
-        state.dirty.notes = true
+        state.requestRedraw('notes')
       })
       commandHandlers.updateCommandStackButtons()
     }
@@ -468,7 +466,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     for (const id of Array.from(state.selection.selectedIds)) {
       if (!state.notes.has(id)) state.selection.selectedIds.delete(id)
     }
-    state.needsRedraw = true
+    state.requestRedraw()
     controllers.enforceScrollBounds()
   }, [notes, state, controllers])
 
@@ -533,7 +531,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     state.expression.activeArea = null
     state.expression.range = null
     controllers.stageManager.resize(width, height + lanesHeight(state))
-    state.needsRedraw = true
+    state.requestRedraw()
     controllers.enforceScrollBounds()
   }, [width, height, controllers, lanesEnabled, expressionMode, lanesVisible, state])
 
@@ -547,7 +545,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
 
   useEffect(() => {
     state.grid.loopLength = Math.max(0, Number.isFinite(loopLength) ? loopLength : 0)
-    state.needsRedraw = true
+    state.requestRedraw()
     controllers.enforceScrollBounds()
     controllers.syncUi()
   }, [loopLength, state, controllers])
@@ -558,15 +556,15 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
 
   useEffect(() => {
     state.grid.pitchLabels = pitchLabels
-    state.dirty.notes = true
-    state.dirty.gutter = true
+    state.requestRedraw('notes')
+    state.requestRedraw('gutter')
   }, [pitchLabels, state])
 
   // The grid compares the scale by identity, so only a new scale redraws it.
   const scaleKey = `${scale.root}:${scale.degrees.join(',')}`
   useEffect(() => {
     state.grid.scale = scale
-    state.needsRedraw = true
+    state.requestRedraw()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scaleKey, state])
 
@@ -585,7 +583,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
 
   useEffect(() => {
     state.grid.subdivision = subdivision
-    state.needsRedraw = true
+    state.requestRedraw()
   }, [subdivision, state])
 
   useEffect(() => {
@@ -597,13 +595,13 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
       // Read through propsRef so a new callback identity needs no effect
       onCursorChange: (position) => propsRef.current.onCursorChange?.(position)
     }
-    state.dirty.notes = true
+    state.requestRedraw('notes')
   }, [onNotePreview, noteBadge, noteColor, state])
 
   useEffect(() => {
     state.queuePlayhead.alwaysShow = cursor !== undefined
     if (cursor !== undefined && Number.isFinite(cursor)) state.queuePlayhead.position = Math.max(0, cursor)
-    state.dirty.overlay = true
+    state.requestRedraw('overlay')
   }, [cursor, state])
 
   useEffect(() => {
@@ -612,7 +610,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
 
   useEffect(() => {
     state.ghostNotes = ghostNotes ?? []
-    state.dirty.ghosts = true
+    state.requestRedraw('ghosts')
   }, [ghostNotes, state])
 
   useEffect(() => {
@@ -634,7 +632,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
         mutateSelection(state, () => {
           state.selection.selectedIds = new Set(ids.filter((id) => state.notes.has(id)))
         })
-        state.needsRedraw = true
+        state.requestRedraw()
       },
       focus: () => wrapperRef.current?.focus({ preventScroll: true }),
       setLiveInput: (input: LiveInput) => {
@@ -642,7 +640,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
         // Idle input sends empty overlays every tick: redraw only on change.
         if (current.keys.length === 0 && current.notes.length === 0 && input.keys.length === 0 && input.notes.length === 0) return
         state.liveInput = input
-        state.dirty.overlay = true
+        state.requestRedraw('overlay')
       },
       commitExternalEdit: (label, before, after) => {
         const stack = state.command.stack
@@ -653,7 +651,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
           if (!state.notes.has(id)) state.selection.selectedIds.delete(id)
         }
         invalidateNoteIndex(state)
-        state.needsRedraw = true
+        state.requestRedraw()
         controllers.enforceScrollBounds()
         // pushCommand emits the new notes through onNotesChange.
         if (stack) stack.pushCommand(label, snapshotOf(before), captureState(state))
@@ -731,7 +729,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
       if (handler) handler(pitch, true)
       else propsRef.current.onNotePreview?.({ pitch, velocity: DEFAULT_VELOCITY })
     }
-    state.dirty.gutter = true
+    state.requestRedraw('gutter')
   }
   const onGutterPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     event.stopPropagation()
@@ -745,14 +743,14 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
     if (state.keyboard.pressedPitch !== null) pressKey(pitch)
     if (state.keyboard.hoverPitch !== pitch) {
       state.keyboard.hoverPitch = pitch
-      state.dirty.gutter = true
+      state.requestRedraw('gutter')
     }
   }
   const onGutterPointerUp = () => pressKey(null)
   const onGutterPointerLeave = () => {
     if (state.keyboard.pressedPitch !== null) return
     state.keyboard.hoverPitch = null
-    state.dirty.gutter = true
+    state.requestRedraw('gutter')
   }
 
   const controlPanel = (
@@ -892,7 +890,7 @@ export const PianoRoll = forwardRef<PianoRollHandle, PianoRollProps>(function Pi
       )}
     </div>
   )
-})
+}))
 
 const EMPTY_SELECTED: NoteData[] = []
 

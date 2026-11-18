@@ -1,5 +1,5 @@
 import type { MidiOutput } from "@avtools/midi/browser";
-import type { Editor, TLShapeId } from "tldraw";
+import { computed, isEqual, react, WeakCache, type Editor, type TLShapeId } from "tldraw";
 import { SixSinesNode } from "../../../../packages/six-sines/six-sines-node.js";
 import { SixSinesOutput } from "./sixSinesOutput";
 import type { SixSinesShape } from "../shapes/SixSinesShape";
@@ -10,10 +10,23 @@ export const isSixSinesOutput = (name: string | undefined) => name?.startsWith(O
 export const sixSinesOutputName = (id: TLShapeId) => OUTPUT_PREFIX + id;
 export const sixSinesAssets = () => new URL("./six-sines-ui/", document.baseURI);
 
+function createSynthDirectory(editor: Editor) {
+  const shapes = editor.store.query.records("shape", () => ({ type: { eq: SIX_SINES_TYPE } }));
+  const options = computed("Six Sines outputs", () => shapes.get().map((record, index) => {
+    const shape = record as SixSinesShape;
+    return { value: sixSinesOutputName(shape.id), label: shape.props.name, divider: index === 0 };
+  }), { isEqual });
+  return { shapes, options };
+}
+
+const directories = new WeakCache<Editor, ReturnType<typeof createSynthDirectory>>();
+
+export function sixSinesOutputOptions(editor: Editor) {
+  return directories.get(editor, createSynthDirectory).options;
+}
+
 export function listSixSines(editor: Editor) {
-  return [...editor.store.query.ids("shape").get()]
-    .map((id) => editor.getShape(id))
-    .filter((shape): shape is SixSinesShape => shape?.type === SIX_SINES_TYPE);
+  return directories.get(editor, createSynthDirectory).shapes.get() as SixSinesShape[];
 }
 
 const engines = new Map<string, SynthOutput>();
@@ -44,6 +57,7 @@ class SynthOutput {
   }
 
   update(props: SixSinesShape["props"]) {
+    if (props === this.props) return;
     const previous = this.props;
     this.props = props;
     const node = this.node;
@@ -145,14 +159,9 @@ export function installSixSines(editor: Editor) {
     engines.get(name)?.dispose();
     engines.delete(name);
   };
-  sync();
-  const unsubscribe = editor.store.listen(sync, { scope: "document" });
-  const unsubscribeDelete = editor.sideEffects.registerAfterDeleteHandler("shape", (shape) => {
-    if (shape.type === SIX_SINES_TYPE) remove(sixSinesOutputName(shape.id));
-  });
+  const unsubscribe = react("sync Six Sines engines", sync);
   return () => {
     unsubscribe();
-    unsubscribeDelete();
     for (const name of engines.keys()) remove(name);
     const audio = context;
     context = undefined;

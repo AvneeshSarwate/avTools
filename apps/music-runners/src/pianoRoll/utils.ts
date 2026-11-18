@@ -257,7 +257,7 @@ export function executeOverlapChanges(
     }
   })
 
-  state.needsRedraw = true
+  state.requestRedraw()
 
   if (!usedPreview) {
     state.interaction.hiddenNoteIds.clear()

@@ -3,7 +3,7 @@
 // the held key highlighted) and a value ruler beside each expression lane.
 // A plain 2D canvas outside the Konva stage, so grid x coordinates stay as
 // they are; it shares the grid's vertical scroll and zoom, and the stage
-// manager redraws it whenever the grid redraws or `dirty.gutter` is set.
+// manager redraws it whenever the grid redraws or the gutter requests a redraw.
 import { laneGeometries, laneRange, laneValueToY, noteAreaHeight } from './lanes'
 import { scalePitchClasses } from './scale'
 import type { PianoRollState } from './state'

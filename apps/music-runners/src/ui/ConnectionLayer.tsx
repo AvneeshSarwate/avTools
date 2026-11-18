@@ -71,19 +71,31 @@ export function ConnectionLayer() {
 
   // Pulses restart a CSS animation on the arrow's flash path and label.
   const layerRef = useRef<HTMLDivElement>(null);
-  useEffect(
-    () =>
-      onPulse((arrowId) => {
-        const nodes = layerRef.current?.querySelectorAll<HTMLElement | SVGElement>(`[data-arrow="${CSS.escape(arrowId)}"]`);
-        nodes?.forEach((node) => {
-          node.classList.remove("is-pulsing");
-          // Force a reflow so the animation restarts on back-to-back sends.
-          void (node as HTMLElement).getBoundingClientRect();
-          node.classList.add("is-pulsing");
-        });
-      }),
-    [],
-  );
+  useEffect(() => {
+    const pending = new Set<TLShapeId>();
+    let frame: number | undefined;
+    const flash = () => {
+      frame = undefined;
+      const layer = layerRef.current;
+      if (!layer) return;
+      const nodes = [...pending].flatMap((id) =>
+        Array.from(layer.querySelectorAll(`[data-arrow="${CSS.escape(id)}"]`)),
+      );
+      pending.clear();
+      // Restart simultaneous flashes with one layout read, outside event delivery.
+      for (const node of nodes) node.classList.remove("is-pulsing");
+      if (nodes.length) void layer.offsetWidth;
+      for (const node of nodes) node.classList.add("is-pulsing");
+    };
+    const unsubscribe = onPulse((arrowId) => {
+      pending.add(arrowId);
+      if (frame === undefined) frame = requestAnimationFrame(flash);
+    });
+    return () => {
+      unsubscribe();
+      if (frame !== undefined) cancelAnimationFrame(frame);
+    };
+  }, []);
 
   return (
     <div ref={layerRef} className="connection-layer">

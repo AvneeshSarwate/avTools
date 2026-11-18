@@ -1,5 +1,5 @@
 import Konva from 'konva'
-import type { PianoRollState, NoteData } from './state'
+import type { PianoRollState, NoteData, RedrawLayer } from './state'
 
 export interface StageManagerDependencies {
   state: PianoRollState
@@ -9,8 +9,6 @@ export interface StageManagerDependencies {
   renderGrid: (state: PianoRollState) => void
   renderGhostNotes: (state: PianoRollState) => void
   renderVisibleNotes: (state: PianoRollState) => void
-  renderResizeHandles: (state: PianoRollState) => void
-  updateQueuePlayheadPosition: (state: PianoRollState) => void
   updatePlayheadMarkers: (state: PianoRollState) => void
   /** The keyboard column beside the stage (gutter.ts). */
   renderGutter: () => void
@@ -35,43 +33,30 @@ export class StageManager {
 
   constructor(private readonly deps: StageManagerDependencies) {}
 
+  private pending = new Set<RedrawLayer>()
+  private frame?: number
+  private visible = true
+  private visibility?: IntersectionObserver
+
+  private requestRedraw = (layer: RedrawLayer = 'all') => {
+    this.pending.add(layer)
+    if (this.visible && this.frame === undefined) this.frame = requestAnimationFrame(this.renderFrame)
+  }
+
   private renderFrame = () => {
-    const state = this.deps.state
-    const all = state.needsRedraw
-    const { dirty } = state
-    if (all || dirty.ghosts || dirty.notes || dirty.overlay || dirty.gutter) {
-      if (all) this.deps.renderGrid(state)
-      if (all || dirty.gutter) this.deps.renderGutter()
-      if (all || dirty.ghosts) this.deps.renderGhostNotes(state)
-      if (all || dirty.notes) {
-        this.deps.renderVisibleNotes(state)
-        this.deps.renderResizeHandles(state)
-      }
-      if (all || dirty.overlay) {
-        this.deps.updateQueuePlayheadPosition(state)
-        this.deps.updatePlayheadMarkers(state)
-      }
-      const notesChanged = all || dirty.notes
-      state.needsRedraw = false
-      dirty.ghosts = false
-      dirty.notes = false
-      dirty.overlay = false
-      dirty.gutter = false
-      // Counters and selection only move with the notes layer.
-      if (notesChanged) this.deps.afterRedraw()
-    }
-    state.rafHandle = requestAnimationFrame(this.renderFrame)
-  }
-
-  private startRenderLoop() {
-    this.stopRenderLoop()
-    this.deps.state.rafHandle = requestAnimationFrame(this.renderFrame)
-  }
-
-  private stopRenderLoop() {
-    if (this.deps.state.rafHandle) {
-      cancelAnimationFrame(this.deps.state.rafHandle)
-      this.deps.state.rafHandle = undefined
+    this.frame = undefined
+    if (!this.visible) return
+    const dirty = this.pending
+    this.pending = new Set()
+    const { state } = this.deps
+    const all = dirty.has('all')
+    if (all) this.deps.renderGrid(state)
+    if (all || dirty.has('gutter')) this.deps.renderGutter()
+    if (all || dirty.has('ghosts')) this.deps.renderGhostNotes(state)
+    if (all || dirty.has('overlay')) this.deps.updatePlayheadMarkers(state)
+    if (all || dirty.has('notes')) {
+      this.deps.renderVisibleNotes(state)
+      this.deps.afterRedraw()
     }
   }
 
@@ -137,14 +122,26 @@ export class StageManager {
       this.deps.state.notes = new Map(initialNotes)
     }
 
-    this.startRenderLoop()
-    this.deps.state.needsRedraw = true
+    this.visible = true
+    this.visibility = new IntersectionObserver((entries) => {
+      const entry = entries[entries.length - 1]
+      if (!entry) return
+      this.visible = entry.isIntersecting
+      if (this.visible && this.pending.size) this.requestRedraw()
+    })
+    this.visibility.observe(container)
+    this.deps.state.requestRedraw = this.requestRedraw
+    this.requestRedraw()
 
     this.deps.enforceScrollBounds()
   }
 
   unmount() {
-    this.stopRenderLoop()
+    this.deps.state.requestRedraw = () => {}
+    if (this.frame !== undefined) cancelAnimationFrame(this.frame)
+    this.frame = undefined
+    this.pending.clear()
+    this.visibility?.disconnect()
     this.disableInteractivity()
     this.teardownEventHandlers?.()
     this.teardownEventHandlers = null
@@ -171,7 +168,7 @@ export class StageManager {
     if (!this.deps.state.stage) return
     this.deps.state.stage.width(width)
     this.deps.state.stage.height(height)
-    this.deps.state.needsRedraw = true
+    this.requestRedraw()
     this.deps.enforceScrollBounds()
   }
 }

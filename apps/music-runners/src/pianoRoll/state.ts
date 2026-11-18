@@ -207,18 +207,8 @@ export interface PianoRollState {
     }
   }
 
-  // RAF control. `needsRedraw` rebuilds every layer (scroll, zoom, note
-  // edits); the per-layer flags redraw just one layer and are what the
-  // high-frequency paths (playhead markers, ghost overlays, selection) use.
-  needsRedraw: boolean
-  dirty: {
-    ghosts: boolean
-    notes: boolean
-    overlay: boolean
-    /** The keyboard column; redrawn with any full redraw too. */
-    gutter: boolean
-  }
-  rafHandle?: number
+  /** Coalesce changes into a frame. Omitting the layer refreshes the whole viewport. */
+  requestRedraw: (layer?: RedrawLayer) => void
 
   // Queue playhead: the cursor, set by clicking the empty grid. Pasted
   // notes land here; hosts can read it (onCursorChange) and set it.
@@ -279,6 +269,8 @@ export interface PianoRollState {
   // Optional callback to notify external listeners when state changes outside command stack
   notifyExternalChange?: (source?: ExternalChangeSource) => void
 }
+
+export type RedrawLayer = 'all' | 'notes' | 'ghosts' | 'overlay' | 'gutter'
 
 export const createPianoRollState = (): PianoRollState => {
   const baseQuarterNoteWidth = BASE_QUARTER_NOTE_WIDTH
@@ -384,9 +376,7 @@ export const createPianoRollState = (): PianoRollState => {
       }
     },
 
-    needsRedraw: false,
-    dirty: { ghosts: false, notes: false, overlay: false, gutter: false },
-    rafHandle: undefined,
+    requestRedraw: () => {},
 
     queuePlayhead: {
       position: 0,

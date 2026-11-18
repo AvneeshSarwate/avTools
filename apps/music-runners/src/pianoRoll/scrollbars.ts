@@ -196,7 +196,7 @@ export class HorizontalScrollbarController {
 
       this.options.state.viewport.scrollX = newStartQuarter * this.options.state.grid.quarterNoteWidth
       this.options.enforceScrollBounds()
-      this.options.state.needsRedraw = true
+      this.options.state.requestRedraw()
       this.options.notifyViewportChange()
       return
     }
@@ -250,7 +250,7 @@ export class HorizontalScrollbarController {
 
     this.options.state.viewport.scrollX = targetStartQuarter * this.options.state.grid.quarterNoteWidth
     this.options.enforceScrollBounds()
-    this.options.state.needsRedraw = true
+    this.options.state.requestRedraw()
     this.options.notifyViewportChange()
   }
 }
@@ -368,7 +368,7 @@ export class VerticalScrollbarController {
 
       this.options.state.viewport.scrollY = newTopIndex * this.options.state.grid.noteHeight
       this.options.enforceScrollBounds()
-      this.options.state.needsRedraw = true
+      this.options.state.requestRedraw()
       this.options.notifyViewportChange()
       return
     }
@@ -421,7 +421,7 @@ export class VerticalScrollbarController {
 
     this.options.state.viewport.scrollY = targetTopIndex * this.options.state.grid.noteHeight
     this.options.enforceScrollBounds()
-    this.options.state.needsRedraw = true
+    this.options.state.requestRedraw()
     this.options.notifyViewportChange()
   }
 }
