@@ -41,6 +41,7 @@ import type { RunnerInstanceProps } from "../runners/base/instanceProps";
 import { beatsAtSec, nowSec } from "./clock";
 import { getEditor } from "./editorRef";
 import { getOutputSync, listenToInput } from "./midi";
+import { SixSinesOutput } from "./sixSinesOutput";
 import { getRuntime, startPlay } from "./playback";
 import { sourceRollHandles } from "./rollHandles";
 
@@ -81,6 +82,7 @@ interface HeldNote {
   /** The pitch sent to the output for thru, so its note-off matches. */
   thruPitch: number | null;
   thruChannel: number;
+  thruOutput: ReturnType<typeof getOutputSync>;
   /** Set when the note started inside a take: its position in clip beats. */
   take: Take | null;
   position: number;
@@ -179,7 +181,7 @@ export function closeInput(shapeId: string): void {
   const recorder = recorders.get(shapeId);
   if (!recorder) return;
   if (recorder.take) stopRecording(shapeId);
-  for (const held of recorder.held.values()) releaseThru(recorder, held);
+  for (const held of recorder.held.values()) releaseThru(held);
   recorder.held.clear();
   recorder.unsubscribe?.();
   recorders.delete(shapeId);
@@ -288,7 +290,13 @@ function onInputEvent(recorder: Recorder, event: MidiInputEvent): void {
   switch (event.type) {
     case "pitchBend":
       recorder.bend[event.channel] = event.bend;
-      thru(props, (output, channel) => output.pitchBend(channel, event.bend), event.channel);
+      thru(props, (output, channel) => {
+        if (output instanceof SixSinesOutput) {
+          output.setTuning(channel, bendToSemitones(event.bend, props?.bendRange ?? DEFAULT_BEND_RANGE));
+        } else {
+          output.pitchBend(channel, event.bend);
+        }
+      }, event.channel);
       for (const held of recorder.held.values()) {
         if (held.channel === event.channel && held.take) held.bends.push({ sec, value: event.bend });
       }
@@ -322,7 +330,7 @@ function onInputEvent(recorder: Recorder, event: MidiInputEvent): void {
       const key = `${event.channel}:${event.note}`;
       const previous = recorder.held.get(key);
       if (previous) {
-        releaseThru(recorder, previous);
+        releaseThru(previous);
         if (previous.take) commitNote(recorder, previous, sec, props);
         recorder.held.delete(key);
       }
@@ -334,6 +342,7 @@ function onInputEvent(recorder: Recorder, event: MidiInputEvent): void {
         onSec: sec,
         thruPitch: null,
         thruChannel: 0,
+        thruOutput: null,
         take,
         position: take ? takePosition(recorder, take, sec) : 0,
         bends: [{ sec, value: recorder.bend[event.channel] }],
@@ -344,8 +353,14 @@ function onInputEvent(recorder: Recorder, event: MidiInputEvent): void {
       if (props?.midiThru) {
         const output = getOutputSync(props.midiOutputName);
         if (output && !output.closed) {
+          held.thruOutput = output;
           held.thruPitch = clampPitch(event.note + props.transpose);
           held.thruChannel = props.mpe ? event.channel : 0;
+          if (output instanceof SixSinesOutput) {
+            output.setTuning(held.thruChannel, bendToSemitones(recorder.bend[event.channel], props.bendRange));
+            output.channelPressure(held.thruChannel, recorder.pressure[event.channel]);
+            output.cc(held.thruChannel, TIMBRE_CC, recorder.timbre[event.channel]);
+          }
           output.noteOn(held.thruChannel, held.thruPitch, event.velocity);
         }
       }
@@ -367,12 +382,12 @@ function thru(props: InputProps | null, send: (output: NonNullable<ReturnType<ty
   send(output, props.mpe ? channel : 0);
 }
 
-function releaseThru(recorder: Recorder, held: HeldNote): void {
+function releaseThru(held: HeldNote): void {
   if (held.thruPitch === null) return;
-  const props = readProps(recorder.shapeId);
-  const output = props ? getOutputSync(props.midiOutputName) : null;
+  const output = held.thruOutput;
   if (output && !output.closed) output.noteOff(held.thruChannel, held.thruPitch, 0);
   held.thruPitch = null;
+  held.thruOutput = null;
 }
 
 /** Turn a finished held note into a clip note and add it to the clip. */

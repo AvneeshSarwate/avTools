@@ -23,6 +23,8 @@ import { getRootContext, nowBeats } from "./clock";
 import { getEditor } from "./editorRef";
 import { emitEvent, onEvent } from "./events";
 import { getOutput, getOutputSync } from "./midi";
+import { isSixSinesOutput } from "./sixSines";
+import { SixSinesOutput } from "./sixSinesOutput";
 import {
   allocateMemberChannel,
   DEFAULT_BEND_RANGE,
@@ -114,6 +116,7 @@ interface ActiveRun {
 }
 
 const activeRuns = new Map<string, ActiveRun>();
+const pendingRuns = new Map<string, symbol>();
 
 /** The shape's props, read live so slider moves land mid-run. */
 function readInstanceProps(shapeId: string): RunnerInstanceProps | null {
@@ -144,13 +147,18 @@ interface ChannelExpression {
 }
 
 function sendExpression(output: MidiOutput, channel: number, note: PianoRollNote, time: number, bendRange: number, last: ChannelExpression | null): ChannelExpression {
+  const pitchOffset = pitchOffsetAt(note, time);
+  const native = output instanceof SixSinesOutput;
   const next: ChannelExpression = {
-    bend: semitonesToBend(pitchOffsetAt(note, time), bendRange),
+    bend: native ? pitchOffset : semitonesToBend(pitchOffset, bendRange),
     pressure: Math.round(pressureAt(note, time)),
     timbre: Math.round(timbreAt(note, time)),
   };
   if (output.closed) return next;
-  if (!last || last.bend !== next.bend) output.pitchBend(channel, next.bend);
+  if (!last || last.bend !== next.bend) {
+    if (native) output.setTuning(channel, next.bend);
+    else output.pitchBend(channel, next.bend);
+  }
   if (!last || last.pressure !== next.pressure) output.channelPressure(channel, next.pressure);
   if (!last || last.timbre !== next.timbre) output.cc(channel, TIMBRE_CC, next.timbre);
   return next;
@@ -182,6 +190,7 @@ export function auditionNote(shapeId: string, pitch: number, velocity: number, d
 }
 
 /** Keys held from a roll's keyboard column: shape id -> the sounding note. */
+const pendingKeys = new Map<string, symbol>();
 const heldKeys = new Map<string, { output: MidiOutput; channel: number; pitch: number; mpe: boolean; outputName: string }>();
 
 /** Keyboard-column press: sound the key until keyboardKeyUp (Ableton's held key). */
@@ -190,7 +199,11 @@ export function keyboardKeyDown(shapeId: string, pitch: number, velocity = 100):
   const props = readInstanceProps(shapeId);
   if (!props) return;
   const sounding = clampPitch(pitch + Math.round(numberParam(props.params, "transpose", 0)));
+  const request = Symbol();
+  pendingKeys.set(shapeId, request);
   const play = (output: MidiOutput | null) => {
+    if (pendingKeys.get(shapeId) !== request) return;
+    pendingKeys.delete(shapeId);
     if (!output || output.closed) return;
     const channel = props.mpe ? allocateMemberChannel(props.midiOutputName) : CHANNEL;
     if (props.mpe) sendExpression(output, channel, { id: "", pitch, position: 0, duration: 1, velocity }, 0, props.bendRange, null);
@@ -203,6 +216,7 @@ export function keyboardKeyDown(shapeId: string, pitch: number, velocity = 100):
 }
 
 export function keyboardKeyUp(shapeId: string): void {
+  pendingKeys.delete(shapeId);
   const held = heldKeys.get(shapeId);
   if (!held) return;
   heldKeys.delete(shapeId);
@@ -210,7 +224,7 @@ export function keyboardKeyUp(shapeId: string): void {
   if (held.mpe) releaseMemberChannel(held.outputName, held.channel);
 }
 
-function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outputName: string): RunnerApi & { releaseAll(): void } {
+function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outputName: string, synthOutput: MidiOutput | null): RunnerApi & { releaseAll(): void } {
   // "channel:pitch" -> the sounding that owns the note-off. A retrigger of a
   // key replaces the entry so the earlier branch's release becomes a no-op.
   // Without MPE every note is on channel 0, so the key is the pitch; with MPE
@@ -220,8 +234,9 @@ function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outpu
   let playedCounter = 0;
   let soundingCounter = 0;
 
+  const currentOutput = () => synthOutput ?? getOutputSync(outputName);
   const send = (kind: "on" | "off", channel: number, pitch: number, velocity: number) => {
-    const output = getOutputSync(outputName);
+    const output = currentOutput();
     if (!output || output.closed) return;
     if (kind === "on") output.noteOn(channel, pitch, velocity);
     else output.noteOff(channel, pitch, NOTE_OFF_VELOCITY);
@@ -265,7 +280,7 @@ function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outpu
     const key = `${channel}:${pitch}`;
     // Re-triggering a key that is still sounding: release it first.
     release(key);
-    const output = getOutputSync(outputName);
+    const output = currentOutput();
     let sent: ChannelExpression | null = null;
     if (mpe && output) sent = sendExpression(output, channel, note, 0, bendRange, null);
     send("on", channel, pitch, clampPitch(note.velocity));
@@ -358,18 +373,23 @@ async function launch(shapeId: string, mode: Exclude<InstanceMode, "idle">): Pro
   const props = readInstanceProps(shapeId);
   if (!props) return;
   const def = getRunner(props.runnerType);
+  const request = Symbol();
+  pendingRuns.set(shapeId, request);
   const output = await getOutput(props.midiOutputName);
-  if (!output) {
-    patchRuntime(shapeId, { error: props.midiOutputName ? `MIDI output "${props.midiOutputName}" not found` : "no MIDI output selected" });
+  if (pendingRuns.get(shapeId) !== request) return;
+  pendingRuns.delete(shapeId);
+  if (!output || output.closed) {
+    const name = props.midiOutputName;
+    const error = isSixSinesOutput(name) ? "Six Sines output unavailable"
+      : name ? `MIDI output "${name}" not found` : "no output selected";
+    patchRuntime(shapeId, { error });
     return;
   }
-  // The await above may have raced a Stop or another Start.
-  if (activeRuns.has(shapeId)) return;
   patchRuntime(shapeId, { mode, error: null, played: [], loopCount: 0 });
   const root = getRootContext();
   let api: ReturnType<typeof makeApi> | null = null;
   const handle = root.branch(async (ctx) => {
-    api = makeApi(shapeId, ctx, def, props.midiOutputName);
+    api = makeApi(shapeId, ctx, def, props.midiOutputName, isSixSinesOutput(props.midiOutputName) ? output : null);
     if (mode === "run") {
       await def.run(api);
     } else {
@@ -418,10 +438,12 @@ export function startPlay(shapeId: string): void {
 }
 
 export function stopInstance(shapeId: string): void {
+  pendingRuns.delete(shapeId);
   activeRuns.get(shapeId)?.cancel();
 }
 
 export function stopAll(): void {
+  pendingRuns.clear();
   for (const run of [...activeRuns.values()]) run.cancel();
 }
 
@@ -480,6 +502,7 @@ export function cancelThrottledRegenerate(shapeId: string): void {
 
 export function clearRuntime(shapeId: string): void {
   cancelThrottledRegenerate(shapeId);
+  keyboardKeyUp(shapeId);
   stopInstance(shapeId);
   delete playbackStore.instances[shapeId];
 }

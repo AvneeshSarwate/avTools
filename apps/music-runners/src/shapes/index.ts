@@ -1,5 +1,6 @@
 import { type Editor, createShapeId, type TLShapeId } from "tldraw";
 import { setClip } from "../store/clips";
+import { SIX_SINES_TYPE } from "../store/sixSines";
 import { defaultOutputName } from "../store/midi";
 import { defineRunnerShape } from "../runners/base/RunnerShape";
 import { defaultInstanceProps, DEFAULT_INSTANCE_HEIGHT, DEFAULT_INSTANCE_WIDTH, type RunnerInstanceProps } from "../runners/base/instanceProps";
@@ -47,19 +48,24 @@ export function nextInstanceName(editor: Editor, name: string, { copy = false, e
   }
 }
 
+/** Place new instruments beside the existing runners and synths. */
+export function instrumentPosition(editor: Editor, width: number, height: number) {
+  let rightmost: ReturnType<Editor["getShapePageBounds"]>;
+  for (const shape of editor.getCurrentPageShapes()) {
+    if (!isRunnerShapeType(shape.type) && shape.type !== SIX_SINES_TYPE) continue;
+    const bounds = editor.getShapePageBounds(shape.id);
+    if (bounds && (!rightmost || bounds.maxX > rightmost.maxX)) rightmost = bounds;
+  }
+  if (rightmost) return { x: rightmost.maxX + 40, y: rightmost.minY };
+  const center = editor.getViewportPageBounds().center;
+  return { x: center.x - width / 2, y: center.y - height / 2 };
+}
+
 /** Create an instance shape of `runnerType` with an empty clip. */
 export function createInstance(editor: Editor, runnerType: string, at?: { x: number; y: number }): TLShapeId {
   const def = getRunner(runnerType);
   const id = createShapeId();
-  // New instances go right of the rightmost one so they do not overlap.
-  let last: ReturnType<Editor["getShapePageBounds"]>;
-  for (const instance of listInstances(editor)) {
-    const bounds = editor.getShapePageBounds(instance.id);
-    if (bounds && (!last || bounds.maxX > last.maxX)) last = bounds;
-  }
-  const center = editor.getViewportPageBounds().center;
-  const x = at?.x ?? (last ? last.maxX + 40 : center.x - DEFAULT_INSTANCE_WIDTH / 2);
-  const y = at?.y ?? (last ? last.minY : center.y - DEFAULT_INSTANCE_HEIGHT / 2);
+  const { x, y } = at ?? instrumentPosition(editor, DEFAULT_INSTANCE_WIDTH, DEFAULT_INSTANCE_HEIGHT);
   const props: RunnerInstanceProps = {
     ...defaultInstanceProps(def),
     name: nextInstanceName(editor, def.type),

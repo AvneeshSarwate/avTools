@@ -310,3 +310,32 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 .runner-shape__text-param .ui-text.is-invalid { border-color: var(--c-rec); }
 .runner-shape__param-error { color: var(--c-rec); font-size: 0.8em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .runner-shape__param--scale .ui-group { padding: 0; }
+.six-sines-shape {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #56565d;
+  border-radius: 10px;
+  background: #18181a;
+  color: #ddd;
+}
+.six-sines-shape__header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 44px;
+  padding: 0 14px;
+  background: #242428;
+}
+.six-sines-shape__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  pointer-events: all;
+}
+.six-sines-shape__body six-sines-editor {
+  display: block;
+  min-width: 1180px;
+  width: 100%;
+  height: 100%;
+}

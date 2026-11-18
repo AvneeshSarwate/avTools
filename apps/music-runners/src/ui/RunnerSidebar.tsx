@@ -10,6 +10,7 @@ import { createInstance, listInstances, revealInstance } from "../shapes";
 import { clipsStore } from "../store/clips";
 import type { Clip } from "../model/types";
 import { getRuntime, playbackStore, playheadBeats, startPlay, startRun, stopInstance } from "../store/playback";
+import { createSixSinesShape } from "../shapes/SixSinesShape";
 import { recordingStore } from "../store/recording";
 
 interface InstanceRow {
@@ -72,6 +73,14 @@ export function RunnerSidebar({ editor }: { editor: Editor | null }) {
           </section>
         );
       })}
+      <section className="runner-group">
+        <div className="runner-group__header">
+          <span className="runner-group__label">Six Sines</span>
+          <Button icon="plus" quiet disabled={!editor} title="Add Six Sines synth" onClick={() => {
+            if (editor) revealInstance(editor, createSixSinesShape(editor));
+          }} />
+        </div>
+      </section>
     </aside>
   );
 }

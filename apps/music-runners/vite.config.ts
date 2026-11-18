@@ -3,8 +3,10 @@ import { fileURLToPath, URL } from "node:url";
 import { defineConfig, searchForWorkspaceRoot } from "vite";
 import { projectFilesPlugin } from "./server/projectFiles";
 
+import { sixSinesUiAssets } from "../livecode-tldraw/sixSinesUiAssets";
+
 export default defineConfig({
-  plugins: [react(), projectFilesPlugin()],
+  plugins: [react(), projectFilesPlugin(), sixSinesUiAssets({ engine: true })],
   server: {
     host: "0.0.0.0",
     port: 5190,

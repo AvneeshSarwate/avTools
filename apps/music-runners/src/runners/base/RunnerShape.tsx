@@ -1,3 +1,4 @@
+import { isSixSinesOutput, listSixSines, sixSinesOutputName } from "../../store/sixSines";
 // The base runner instance shape: chrome (name, MIDI output, loop length,
 // params, transports, queue) plus three collapsible rolls. One tldraw shape
 // type per runner definition is produced by defineRunnerShape.
@@ -9,6 +10,7 @@ import {
   T,
   type TLBaseBoxShape,
   useEditor,
+  useValue,
 } from "tldraw";
 import { PianoRoll } from "../../pianoRoll/PianoRoll";
 import type { GhostNote, MetadataPanelProps, PianoRollHandle, PianoRollNote, PianoRollScale, PianoRollView } from "../../pianoRoll/types";
@@ -224,6 +226,11 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
   const clip = useSnapshot(clipsStore).clips[shapeId] as Clip;
   const runtime = (useSnapshot(playbackStore).instances[shapeId] ?? EMPTY_RUNTIME) as InstanceRuntime;
   const midi = useSnapshot(midiStore);
+  const synthOptions = useValue("Six Sines outputs", () => listSixSines(editor).map(({ id, props }, index) => ({
+    value: sixSinesOutputName(id),
+    label: props.name,
+    divider: index === 0,
+  })), [editor]);
   const eventLog = useSnapshot(eventLogStore).byShape[shapeId] ?? EMPTY_LOG;
   const contentRef = useRef<HTMLDivElement | null>(null);
   const sourceRollRef = useRef<PianoRollHandle | null>(null);
@@ -403,7 +410,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
 
   // Open the instance's output as soon as it is known so the first audition sounds.
   useEffect(() => {
-    if (midi.status === "ready" && props.midiOutputName) void getOutput(props.midiOutputName);
+    if (midi.status === "ready" && props.midiOutputName && !isSixSinesOutput(props.midiOutputName)) void getOutput(props.midiOutputName);
   }, [midi.status, props.midiOutputName]);
 
   // The live input follows the shape prop once MIDI is ready, and closes
@@ -430,7 +437,7 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
   const setParam = (key: string, value: ParamValue) => updateProps({ params: { ...params, [key]: value } });
 
   const outputNames = midi.outputs.map((port) => port.name);
-  if (props.midiOutputName && !outputNames.includes(props.midiOutputName)) outputNames.unshift(props.midiOutputName);
+  if (props.midiOutputName && !isSixSinesOutput(props.midiOutputName) && !outputNames.includes(props.midiOutputName)) outputNames.unshift(props.midiOutputName);
   const inputNames = midi.inputs.map((port) => port.name);
   if (midiInputName && !inputNames.includes(midiInputName)) inputNames.unshift(midiInputName);
 
@@ -586,6 +593,13 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
     ...names.map((name) => ({ value: name, label: connected.includes(name) ? name : `${name} (missing)`, muted: !connected.includes(name) || undefined })),
   ].filter((option, index) => index > 0 || current === "" || midi.status === "ready");
   const connectedOutputs = midi.outputs.map((port) => port.name);
+  const outputChoices: Array<{ value: string; label: string; muted?: boolean; divider?: boolean }> = [
+    ...portChoices(outputNames, props.midiOutputName, connectedOutputs),
+    ...synthOptions,
+  ];
+  if (isSixSinesOutput(props.midiOutputName) && !synthOptions.some(({ value }) => value === props.midiOutputName)) {
+    outputChoices.push({ value: props.midiOutputName, label: "Six Sines (missing)", muted: true });
+  }
   const connectedInputs = midi.inputs.map((port) => port.name);
   const openPorts = () => {
     void ensureMidi().then(() => refreshPorts());
@@ -691,10 +705,13 @@ function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: RunnerDef
               <Chooser
                 className="runner-shape__output"
                 value={props.midiOutputName}
-                options={portChoices(outputNames, props.midiOutputName, connectedOutputs)}
+                options={outputChoices}
                 onOpen={openPorts}
-                onChange={(value) => updateProps({ midiOutputName: value })}
-                title={props.midiOutputName ? `MIDI output: ${props.midiOutputName}` : "MIDI output"}
+                onChange={(value) => {
+                  updateProps({ midiOutputName: value });
+                  if (isSixSinesOutput(value)) void getOutput(value);
+                }}
+                title="Runner output"
               />
               <span className="ui-caption">in</span>
               <Chooser

@@ -317,7 +317,7 @@ export interface ChooserProps {
 /**
  * A flat dropdown. The list renders in a portal on document.body (the runner
  * shapes clip their content), positioned under the button, and closes on a
- * choice, Escape, an outside press, or any scroll/wheel.
+ * choice, Escape, an outside press, or a wheel event outside the list.
  */
 export function Chooser({ value, options, onChange, onOpen, placeholder = "—", title, disabled, width, className }: ChooserProps) {
   const [open, setOpen] = useState(false);
@@ -381,6 +381,9 @@ export function Chooser({ value, options, onChange, onOpen, placeholder = "—",
       event.preventDefault();
       const delta = event.key === "ArrowDown" ? 1 : -1;
       setHighlight((index) => (index + delta + options.length) % Math.max(1, options.length));
+    } else if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      setHighlight(event.key === "Home" ? 0 : Math.max(0, options.length - 1));
     } else if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       const option = options[highlight];
@@ -391,8 +394,10 @@ export function Chooser({ value, options, onChange, onOpen, placeholder = "—",
   const listStyle: CSSProperties = rect
     ? (() => {
         const below = window.innerHeight - rect.bottom;
-        const maxHeight = Math.min(320, Math.max(below, rect.top) - 8);
-        const top = below >= Math.min(160, options.length * 22 + 8) || below >= rect.top ? rect.bottom + 2 : undefined;
+        const above = rect.top;
+        const openBelow = below >= Math.min(320, options.length * 26 + 8) || below >= above;
+        const maxHeight = Math.max(0, Math.min(320, (openBelow ? below : above) - 8));
+        const top = openBelow ? rect.bottom + 2 : undefined;
         return {
           left: rect.left,
           minWidth: rect.width,

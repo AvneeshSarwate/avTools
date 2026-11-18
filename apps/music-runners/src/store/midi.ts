@@ -1,5 +1,6 @@
 import { type MidiAccess, type MidiInput, type MidiInputEvent, type MidiOutput, type MidiPortInfo, openMidiAccess } from "@avtools/midi/browser";
 import { proxy } from "valtio";
+import { getSixSinesOutput, isSixSinesOutput, openSixSinesOutput, panicSixSines } from "./sixSines";
 
 export interface MidiState {
   status: "idle" | "opening" | "ready" | "error";
@@ -71,6 +72,7 @@ export function defaultOutputName(): string | undefined {
 }
 
 export async function getOutput(name: string | undefined): Promise<MidiOutput | null> {
+  if (name && isSixSinesOutput(name)) return openSixSinesOutput(name);
   const opened = await ensureMidi();
   if (!opened) return null;
   const port = findOutputPort(name);
@@ -95,6 +97,7 @@ export async function getOutput(name: string | undefined): Promise<MidiOutput | 
 
 /** Already-open output by name, for synchronous use (note audition). */
 export function getOutputSync(name: string | undefined): MidiOutput | null {
+  if (name && isSixSinesOutput(name)) return getSixSinesOutput(name);
   const port = findOutputPort(name);
   if (!port) return null;
   const output = openOutputs.get(port.id);
@@ -102,6 +105,7 @@ export function getOutputSync(name: string | undefined): MidiOutput | null {
 }
 
 export function panicAllOutputs(): void {
+  panicSixSines();
   for (const output of openOutputs.values()) {
     if (output.closed) continue;
     for (let channel = 0; channel < 16; channel += 1) output.allNotesOff(channel);
