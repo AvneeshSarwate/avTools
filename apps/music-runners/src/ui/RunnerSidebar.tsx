@@ -10,8 +10,9 @@ import { createInstance, listInstances, revealInstance } from "../shapes";
 import { clipsStore } from "../store/clips";
 import type { Clip } from "../model/types";
 import { getRuntime, playbackStore, playheadBeats, startPlay, startRun, stopInstance } from "../store/playback";
-import { createSixSinesShape } from "../shapes/SixSinesShape";
+import { createSixSinesShape, type SixSinesShape } from "../shapes/SixSinesShape";
 import { recordingStore } from "../store/recording";
+import { SIX_SINES_TYPE } from "../store/sixSines";
 
 interface InstanceRow {
   id: TLShapeId;
@@ -28,6 +29,11 @@ export function RunnerSidebar({ editor }: { editor: Editor | null }) {
   const rows = useValue(
     "runner rows",
     () => (editor ? listInstances(editor).map(({ id, props }) => ({ id, name: props.name, runnerType: props.runnerType, queued: props.queued })) : []),
+    [editor],
+  );
+  const synths = useValue(
+    "Six Sines rows",
+    () => editor?.getCurrentPageShapes().filter((shape) => shape.type === SIX_SINES_TYPE) ?? [],
     [editor],
   );
   const selected = useValue("selected ids", () => new Set(editor?.getSelectedShapeIds() ?? []), [editor]);
@@ -80,8 +86,53 @@ export function RunnerSidebar({ editor }: { editor: Editor | null }) {
             if (editor) revealInstance(editor, createSixSinesShape(editor));
           }} />
         </div>
+        {synths.length === 0 ? <div className="runner-row runner-row--empty">none yet</div> : null}
+        {editor && synths.map((shape) => (
+          <SynthRow key={shape.id} editor={editor} shape={shape} selected={selected.has(shape.id)} />
+        ))}
       </section>
     </aside>
+  );
+}
+
+function SynthRow({ editor, shape, selected }: { editor: Editor; shape: SixSinesShape; selected: boolean }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const name = shape.props.name;
+  const className = `runner-row runner-row--synth${selected ? " is-selected" : ""}`;
+  const commitName = () => {
+    const next = draft?.trim();
+    if (next && next !== name && editor.getShape(shape.id)) {
+      editor.markHistoryStoppingPoint("rename Six Sines");
+      editor.updateShape<SixSinesShape>({ id: shape.id, type: SIX_SINES_TYPE, props: { name: next } });
+    }
+    setDraft(null);
+  };
+
+  if (draft !== null) {
+    return (
+      <div className={className}>
+        <TextField autoFocus value={draft} onChange={setDraft} onCommit={commitName} onCancel={() => setDraft(null)} />
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className={className}
+      aria-pressed={selected}
+      title={`${name} · click to show it on the canvas, double-click to rename`}
+      onClick={() => revealInstance(editor, shape.id)}
+      onDoubleClick={() => setDraft(name)}
+      onKeyDown={(event) => {
+        if (event.key === "F2") {
+          event.preventDefault();
+          setDraft(name);
+        }
+      }}
+    >
+      <span className="runner-row__name">{name}</span>
+    </button>
   );
 }
 

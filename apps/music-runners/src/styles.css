@@ -47,6 +47,7 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 .runner-group__header { display: flex; align-items: center; justify-content: space-between; height: var(--h-row); padding: 0 4px 0 13px; }
 .runner-group__label { font-weight: 600; }
 .runner-row { position: relative; display: flex; align-items: center; gap: 7px; height: 28.5px; padding: 0 4px 0 11px; border-left: 2px solid transparent; cursor: pointer; }
+:where(button).runner-row--synth { width: 100%; appearance: none; border: 0; border-left: 2px solid transparent; background: none; color: inherit; font: inherit; text-align: left; }
 .runner-row:hover { background: var(--c-surface-3); }
 .runner-row.is-selected { border-left-color: var(--c-select); background: var(--c-surface-2); }
 .runner-row--empty { color: var(--c-text-faint); cursor: default; }
