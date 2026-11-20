@@ -63248,7 +63248,7 @@ var os = [
 				"aria-valuemax": a.value.max,
 				"aria-valuenow": o.value,
 				"aria-valuetext": L(Qo)(a.value, o.value),
-				"data-tip": `${a.value.name}: ${L(Qo)(a.value, o.value)} · Double-click to type · Alt-click to reset`,
+				"data-tip": `${a.value.name}: ${L(Qo)(a.value, o.value)}`,
 				"data-param-id": e.id,
 				onPointerdown: _,
 				onPointermove: v,
@@ -75678,39 +75678,42 @@ var Fs = {
 			x: 0,
 			y: 0,
 			above: !1
-		}), a = /* @__PURE__ */ I(!1), o = null, s = 0, c = 0;
-		function l() {
+		}), a = /* @__PURE__ */ I(!1), o = null, s = !1, c = 0, l = 0;
+		function u() {
 			return n.value?.offsetParent ?? null;
 		}
-		function u() {
-			let e = l();
-			if (!o || !e || !o.isConnected || (r.value = o.getAttribute("data-tip") ?? "", !r.value)) return f();
-			let t = e.getBoundingClientRect(), n = e.offsetWidth ? t.width / e.offsetWidth : 1, a = o.getBoundingClientRect(), s = (a.left + a.width / 2 - t.left) / n, d = (a.bottom - t.top) / n + 6, p = (a.top - t.top) / n - 6, m = d + 30 > e.scrollHeight;
+		function d() {
+			let e = u();
+			if (!o || !e || !o.isConnected || (r.value = o.getAttribute("data-tip") ?? "", !r.value)) return p();
+			let t = e.getBoundingClientRect(), n = e.offsetWidth ? t.width / e.offsetWidth : 1, a = o.getBoundingClientRect(), s = (a.left + a.width / 2 - t.left) / n, c = (a.bottom - t.top) / n + 6, f = (a.top - t.top) / n - 6, m = c + 30 > e.scrollHeight;
 			i.value = {
 				x: s,
-				y: m ? p : d,
+				y: m ? f : c,
 				above: m
-			}, c = requestAnimationFrame(u);
-		}
-		function d() {
-			a.value = !0, cancelAnimationFrame(c), u();
+			}, l = requestAnimationFrame(d);
 		}
 		function f() {
-			a.value = !1, window.clearTimeout(s), cancelAnimationFrame(c);
+			s || (a.value = !0, cancelAnimationFrame(l), d());
 		}
-		function p(e) {
-			let n = e.target?.closest?.("[data-tip]") ?? null;
-			n !== o && (o = n, f(), o && (s = window.setTimeout(d, t.delay)));
+		function p() {
+			a.value = !1, window.clearTimeout(c), cancelAnimationFrame(l);
 		}
 		function m(e) {
-			let t = e.relatedTarget;
-			o && t && o.contains(t) || t?.closest?.("[data-tip]") || (o = null, f());
+			let n = e.target?.closest?.("[data-tip]") ?? null;
+			n !== o && (o = n, s = !1, p(), o && (c = window.setTimeout(f, t.delay)));
 		}
-		let h = null;
+		function h() {
+			s = !0, p();
+		}
+		function g(e) {
+			let t = e.relatedTarget;
+			o && t && o.contains(t) || t?.closest?.("[data-tip]") || (o = null, p());
+		}
+		let _ = null;
 		return or(() => {
-			h = n.value?.parentElement ?? null, h?.addEventListener("pointerover", p), h?.addEventListener("pointerout", m);
+			_ = n.value?.parentElement ?? null, _?.addEventListener("pointerover", m), _?.addEventListener("pointerout", g), _?.addEventListener("dblclick", h);
 		}), lr(() => {
-			h?.removeEventListener("pointerover", p), h?.removeEventListener("pointerout", m), f();
+			_?.removeEventListener("pointerover", m), _?.removeEventListener("pointerout", g), _?.removeEventListener("dblclick", h), p();
 		}), (e, t) => (V(), H("div", {
 			ref_key: "tip",
 			ref: n,
