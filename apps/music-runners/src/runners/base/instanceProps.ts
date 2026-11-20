@@ -1,3 +1,4 @@
+import type { TLBaseBoxShape } from "tldraw";
 import { DEFAULT_BEND_RANGE, DEFAULT_ROOT_TOLERANCE_CENTS } from "../../model/mpe";
 import { defaultParams, type Params, type RunnerDefinition } from "../runnerTypes";
 
@@ -60,3 +61,6 @@ export function defaultInstanceProps(def: RunnerDefinition): RunnerInstanceProps
     showPreview: false,
   };
 }
+
+/** A runner instance shape (one tldraw type per runner definition). */
+export type RunnerShape = TLBaseBoxShape & { props: RunnerInstanceProps };

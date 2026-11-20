@@ -4,34 +4,11 @@
 import { useEffect, useState } from "react";
 import { Field, NumberBox, TextField, Toggle } from "../../ui/controls/controls";
 import type { JsonObject, MetadataPanelProps, PianoRollNote } from "../../pianoRoll/types";
-import { type RunnerDefinition, type TagFieldSpec, type TagSpec, tagDefaults, tagValue } from "../runnerTypes";
+import { toggleTag } from "./toggleTag";
+import { type RunnerDefinition, type TagFieldSpec, type TagSpec, tagValue } from "../runnerTypes";
 
 export interface TagEditorProps extends MetadataPanelProps {
   def: RunnerDefinition;
-}
-
-export function toggleTag(
-  tag: TagSpec,
-  selected: PianoRollNote[],
-  applyMetadata: MetadataPanelProps["applyMetadata"],
-): void {
-  const ids = selected.map((note) => note.id);
-  if (ids.length === 0) return;
-  const allHave = selected.every((note) => tagValue(note, tag.key) !== undefined);
-  if (allHave) {
-    applyMetadata(`Remove ${tag.label}`, ids, (metadata) => {
-      if (!metadata) return metadata;
-      const next = { ...metadata };
-      delete next[tag.key];
-      return Object.keys(next).length === 0 ? undefined : next;
-    });
-  } else {
-    applyMetadata(`Add ${tag.label}`, ids, (metadata, note) => {
-      const existing = tagValue(note, tag.key);
-      if (existing !== undefined) return metadata;
-      return { ...(metadata ?? {}), [tag.key]: tagDefaults(tag) };
-    });
-  }
 }
 
 function fieldValue(note: PianoRollNote, tag: TagSpec, field: TagFieldSpec): unknown {
