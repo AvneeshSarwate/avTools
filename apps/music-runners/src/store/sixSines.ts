@@ -7,6 +7,12 @@ import type { SixSinesShape } from "../shapes/SixSinesShape";
 export const SIX_SINES_TYPE = "six-sines";
 const OUTPUT_PREFIX = "six-sines:";
 export const isSixSinesOutput = (name: string | undefined) => name?.startsWith(OUTPUT_PREFIX) ?? false;
+/**
+ * Whether an instance sends per-note expression: its MPE Out toggle, or always
+ * for a Six Sines output (it takes each note's tuning, pressure and timbre
+ * natively, so there is no MPE setup on the receiving end to match).
+ */
+export const sendsMpe = (props: { mpe: boolean; midiOutputName: string }) => props.mpe || isSixSinesOutput(props.midiOutputName);
 export const sixSinesOutputName = (id: TLShapeId) => OUTPUT_PREFIX + id;
 export const sixSinesAssets = () => new URL("./six-sines-ui/", document.baseURI);
 

@@ -543,9 +543,12 @@ export function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: Ru
               <Toggle
                 label="MPE Out"
                 className="runner-shape__mpe-out"
-                on={props.mpe ?? false}
+                on={(props.mpe ?? false) || isSixSinesOutput(props.midiOutputName)}
+                disabled={isSixSinesOutput(props.midiOutputName)}
                 onChange={(on) => updateProps({ mpe: on })}
-                title="MPE out: each note on its own channel (2-16) with its recorded pitch bend, pressure and timbre (CC74)"
+                title={isSixSinesOutput(props.midiOutputName)
+                  ? "Six Sines always gets each note's pitch bend, pressure and timbre (no MPE setup needed)"
+                  : "MPE out: each note on its own channel (2-16) with its recorded pitch bend, pressure and timbre (CC74)"}
               />
               <Field label="bend" title="semitones at full pitch bend, for recording and MPE output (48 is the MPE default, ordinary keyboards are usually 2)">
                 <NumberBox className="runner-shape__bend" value={props.bendRange} min={1} max={96} step={1} width={57} onChange={(value) => updateProps({ bendRange: value })} />

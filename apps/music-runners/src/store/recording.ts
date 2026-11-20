@@ -41,6 +41,7 @@ import type { RunnerInstanceProps } from "../runners/base/instanceProps";
 import { beatsAtSec, nowSec } from "./clock";
 import { getEditor } from "./editorRef";
 import { getOutputSync, listenToInput } from "./midi";
+import { sendsMpe } from "./sixSines";
 import { SixSinesOutput } from "./sixSinesOutput";
 import { getRuntime, startPlay } from "./playback";
 import { sourceRollHandles } from "./rollHandles";
@@ -119,6 +120,7 @@ const recorders = new Map<string, Recorder>();
 interface InputProps {
   midiOutputName: string;
   midiThru: boolean;
+  /** Sends per-note expression: MPE Out, or a Six Sines output (sendsMpe). */
   mpe: boolean;
   bendRange: number;
   transpose: number;
@@ -133,7 +135,7 @@ function readProps(shapeId: string): InputProps | null {
   return {
     midiOutputName: props.midiOutputName,
     midiThru: props.midiThru,
-    mpe: props.mpe,
+    mpe: sendsMpe(props),
     bendRange: props.bendRange,
     transpose: Math.round(numberParam(props.params, "transpose", 0)),
     rootTolerance: props.autoRoot ? props.rootToleranceCents / 100 : null,

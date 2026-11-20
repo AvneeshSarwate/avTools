@@ -23,7 +23,7 @@ import { getRootContext, nowBeats } from "./clock";
 import { getEditor } from "./editorRef";
 import { emitEvent, onEvent } from "./events";
 import { getOutput, getOutputSync } from "./midi";
-import { isSixSinesOutput } from "./sixSines";
+import { isSixSinesOutput, sendsMpe } from "./sixSines";
 import { SixSinesOutput } from "./sixSinesOutput";
 import {
   allocateMemberChannel,
@@ -176,12 +176,13 @@ export function auditionNote(shapeId: string, pitch: number, velocity: number, d
   const sounding = clampPitch(pitch + transpose);
   const play = (output: MidiOutput | null) => {
     if (!output || output.closed) return;
-    const channel = props.mpe ? allocateMemberChannel(props.midiOutputName) : CHANNEL;
-    if (props.mpe) sendExpression(output, channel, { id: "", pitch, position: 0, duration: 1, velocity }, 0, props.bendRange, null);
+    const mpe = sendsMpe(props);
+    const channel = mpe ? allocateMemberChannel(props.midiOutputName) : CHANNEL;
+    if (mpe) sendExpression(output, channel, { id: "", pitch, position: 0, duration: 1, velocity }, 0, props.bendRange, null);
     output.noteOn(channel, sounding, velocity);
     window.setTimeout(() => {
       if (!output.closed) output.noteOff(channel, sounding, NOTE_OFF_VELOCITY);
-      if (props.mpe) releaseMemberChannel(props.midiOutputName, channel);
+      if (mpe) releaseMemberChannel(props.midiOutputName, channel);
     }, durationMs);
   };
   const open = getOutputSync(props.midiOutputName);
@@ -205,10 +206,11 @@ export function keyboardKeyDown(shapeId: string, pitch: number, velocity = 100):
     if (pendingKeys.get(shapeId) !== request) return;
     pendingKeys.delete(shapeId);
     if (!output || output.closed) return;
-    const channel = props.mpe ? allocateMemberChannel(props.midiOutputName) : CHANNEL;
-    if (props.mpe) sendExpression(output, channel, { id: "", pitch, position: 0, duration: 1, velocity }, 0, props.bendRange, null);
+    const mpe = sendsMpe(props);
+    const channel = mpe ? allocateMemberChannel(props.midiOutputName) : CHANNEL;
+    if (mpe) sendExpression(output, channel, { id: "", pitch, position: 0, duration: 1, velocity }, 0, props.bendRange, null);
     output.noteOn(channel, sounding, velocity);
-    heldKeys.set(shapeId, { output, channel, pitch: sounding, mpe: props.mpe, outputName: props.midiOutputName });
+    heldKeys.set(shapeId, { output, channel, pitch: sounding, mpe, outputName: props.midiOutputName });
   };
   const open = getOutputSync(props.midiOutputName);
   if (open) play(open);
@@ -274,7 +276,7 @@ function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outpu
     const pitch = clampPitch(note.pitch + transposeNow());
     const token = ++soundingCounter;
     const props = readInstanceProps(shapeId);
-    const mpe = props?.mpe ?? false;
+    const mpe = props ? sendsMpe({ mpe: props.mpe, midiOutputName: outputName }) : false;
     const bendRange = props?.bendRange ?? DEFAULT_BEND_RANGE;
     const channel = mpe ? allocateMemberChannel(outputName) : CHANNEL;
     const key = `${channel}:${pitch}`;

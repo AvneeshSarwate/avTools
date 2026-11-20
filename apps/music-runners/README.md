@@ -298,7 +298,7 @@ instance's live MIDI input:
 | **In** | The MIDI input this instance listens to. Several instances can share one input, like several armed tracks in a DAW. Opening the list re-scans ports, so a device plugged in later shows up. |
 | **Rec** | Records into the instance's clip (see below). Needs an input. |
 | **Thru** | Echoes the input to the instance's MIDI output, with transpose applied. Turn it off if the controller already drives the synth. |
-| **MPE Out** | MPE output: every played note gets its own member channel (2-16, lower zone) with its pitch bend, pressure and timbre. Off: everything on channel 0 and expression is not sent. |
+| **MPE Out** | MPE output: every played note gets its own member channel (2-16, lower zone) with its pitch bend, pressure and timbre. Off: everything on channel 0 and expression is not sent. Always on (and greyed out) for a Six Sines output, which takes each note's tuning, pressure and brightness natively. |
 | **bend** | Semitones at full pitch bend, used both to read recorded bend and to send MPE bend. 48 is the MPE default; ordinary keyboards are usually 2. Must match the controller and the synth. |
 | **Root** and **¢** | Auto-root (on by default, 15 cents): recorded pitch-curve points where the pitch rests on a semitone are marked `rooted` (see below). |
 
