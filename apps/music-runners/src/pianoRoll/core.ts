@@ -1001,7 +1001,14 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
   // two presses at the same spot with no movement.
   let lastDownPos: { x: number; y: number } | undefined
   let prevDownPos: { x: number; y: number } | undefined
+  let lastDownTime = -Infinity
+  let prevDownTime = -Infinity
   let movedSinceDown = false
+  // Konva's window: two presses this close (and still) are a double click
+  const DBLCLICK_MS = 400
+  // A press on one note of a multi-note selection: the group moves if it is
+  // dragged, otherwise the release selects just that note
+  let collapseSelectionTo: string | null = null
   const DBLCLICK_SLOP = 5
   const isStationaryDoubleClick = () =>
     !!lastDownPos &&
@@ -1009,39 +1016,6 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
     !movedSinceDown &&
     Math.abs(lastDownPos.x - prevDownPos.x) <= DBLCLICK_SLOP &&
     Math.abs(lastDownPos.y - prevDownPos.y) <= DBLCLICK_SLOP
-
-  // Double-click on background → Add note (select mode; draw mode already drew one on mousedown)
-  stage.on('dblclick dbltap', () => {
-    if (state.grid.drawMode) return
-    // Double-click adds notes only in Notes mode, in the grid
-    if (state.expression.mode !== 'notes') return
-    const dblPos = stage.getPointerPosition()
-    if (!dblPos || dblPos.y >= noteAreaHeight(state)) return
-    if (!isStationaryDoubleClick()) return
-    if (hitAt().kind === 'background') {
-      const pos = stage.getPointerPosition()
-      if (!pos) return
-
-      const { pitch, position } = screenToPitchPosition(pos, state)
-      const quantizedPos = state.grid.snapToGrid ? quantizeToGrid(position, state.grid.subdivision) : position
-      const quantizedPitch = Math.round(pitch)
-
-      let created: NoteData | undefined
-      state.command.stack?.executeCommand('Add Note', () => {
-        const note: NoteData = {
-          id: uid(),
-          pitch: quantizedPitch,
-          position: quantizedPos,
-          duration: getGridUnitBeats(state),
-          velocity: DEFAULT_VELOCITY
-        }
-        state.notes.set(note.id, note)
-        created = note
-        state.requestRedraw()
-      })
-      if (created) previewNote(state, created)
-    }
-  })
 
   // Click on note or handle
   stage.on('mousedown touchstart', (e) => {
@@ -1052,8 +1026,13 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
     const isShift = !!(e.evt as PointerLikeEvent)?.shiftKey
     const downPos = stage.getPointerPosition()
     prevDownPos = movedSinceDown ? undefined : lastDownPos
+    prevDownTime = lastDownTime
     lastDownPos = downPos ? { x: downPos.x, y: downPos.y } : undefined
+    lastDownTime = performance.now()
     movedSinceDown = false
+    collapseSelectionTo = null
+    // The second press of a double click (stationary, in time)
+    const isDoublePress = isStationaryDoubleClick() && lastDownTime - prevDownTime <= DBLCLICK_MS
 
     // Expression lanes, and everything in MPE mode (expression.ts)
     const noteAt = (p: { x: number; y: number }) => {
@@ -1095,6 +1074,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
         return
       }
       const isSelected = state.selection.selectedIds.has(noteId)
+      if (isSelected && !isShift && state.selection.selectedIds.size > 1) collapseSelectionTo = noteId
 
       mutateSelection(state, () => {
         if (isShift) {
@@ -1130,6 +1110,13 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
     if (!pos) return
 
     if (state.grid.drawMode && !isShift) {
+      startDraw(state, pos)
+      return
+    }
+
+    // Double click on the grid (Notes mode): add a note, selected; holding
+    // the second press and dragging draws its end out (as draw mode does)
+    if (isDoublePress && !isShift && state.expression.mode === 'notes' && pos.y < noteAreaHeight(state)) {
       startDraw(state, pos)
       return
     }
@@ -1250,6 +1237,15 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
     if (expressionPointerUp(state)) return
     if (state.interaction.isDragging) {
       finishNoteDrag(state)
+      // A click (no drag) on a note of a multi-note selection selects just it
+      const only = collapseSelectionTo
+      collapseSelectionTo = null
+      if (only && !movedSinceDown && state.notes.has(only)) {
+        mutateSelection(state, () => {
+          state.selection.selectedIds = new Set([only])
+        })
+        state.requestRedraw()
+      }
       return
     }
 
@@ -1319,7 +1315,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
     window.removeEventListener('pointerup', onWindowPointerUp, true)
     window.removeEventListener('pointercancel', endGesture, true)
     window.removeEventListener('blur', endGesture)
-    stage.off('dblclick dbltap mousedown touchstart mousemove touchmove mouseup touchend mouseleave contextmenu')
+    stage.off('mousedown touchstart mousemove touchmove mouseup touchend mouseleave contextmenu')
   }
 }
 

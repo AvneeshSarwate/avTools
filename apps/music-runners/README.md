@@ -259,7 +259,13 @@ of Live 12):
 - **Resizing notes**: there are no handles; near a note's left or right
   edge (6px, a third of the note when it is short) the cursor becomes a
   resize cursor, and dragging there resizes. An unselected note is selected
-  first (Shift adds it); a selection resizes together. Notes mode only.
+  first (Shift adds it); a selection resizes together. Both modes (in MPE
+  mode a breakpoint on the edge wins). Below one grid step the edge follows
+  the pointer, so notes can be shorter than the grid.
+- **Adding and selecting**: a double click on the grid adds a note and
+  leaves it selected; holding the second press and dragging draws its end out
+  (one undo step, as draw mode does). With several notes selected, a click on
+  one of them selects just it; dragging it moves the whole selection.
 - **Auditioning**: clicking or drawing a note plays it. Moving notes replays
   the whole moved set at its new pitches (each pitch row a drag crosses, each
   arrow up/down), pressing a note of a multi-note selection plays the group,
@@ -458,6 +464,7 @@ demo.html + demo/           standalone piano roll demo and its Playwright checks
 - The sidebar (adding, transport state, reveal, rename):
   `demo/sidebar.e2e.mjs` (same setup).
 - Note resizing from the edges: `demo/resize.e2e.mjs` (same setup).
+- Double-click add, double-press-and-drag, click to narrow a selection: `demo/click-edit.e2e.mjs`.
 - Auditioning moved notes and marquee selections: `demo/audition.e2e.mjs`
   (same setup).
 - Cmd-A scoping, focus, and the output rolls' view tools:
