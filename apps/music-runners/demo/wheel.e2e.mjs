@@ -50,5 +50,26 @@ const s3 = await state();
 assert.notEqual(s3.view.topRow, s2.view.topRow, "wheel scrolls the roll");
 assert.deepEqual(s3.cam, s2.cam, "wheel leaves the canvas");
 console.log("plain wheel: topRow", s2.view.topRow, "->", s3.view.topRow);
+// The roll scrolls no further than its loop (or the last note past it): no empty room after
+const extent = await page.evaluate(async () => {
+  const mr = window.__musicRunners, ed = mr.editor;
+  const id = mr.shapes.createInstance(ed, "variants", { x: 3000, y: 0 });
+  mr.clips.setClipLoopLength(id, 8);
+  mr.clips.setClipNotes(id, [{ id: "a", pitch: 60, position: 0, duration: 1, velocity: 100 }]);
+  await new Promise((r) => setTimeout(r, 400));
+  const roll = mr.sourceRollHandles.get(id);
+  roll.setView({ ...roll.getView(), quarterNoteWidth: 300, startBeat: 1000 });
+  await new Promise((r) => setTimeout(r, 100));
+  const loopOnly = roll.getView();
+  mr.clips.setClipNotes(id, [{ id: "a", pitch: 60, position: 0, duration: 1, velocity: 100 }, { id: "b", pitch: 62, position: 10, duration: 2, velocity: 100 }]);
+  await new Promise((r) => setTimeout(r, 200));
+  roll.setView({ ...roll.getView(), startBeat: 1000 });
+  await new Promise((r) => setTimeout(r, 100));
+  const pastLoop = roll.getView();
+  return { loopOnly, pastLoop };
+});
+console.log("scrolled to the end", JSON.stringify(extent));
+assert.ok(extent.loopOnly.startBeat > 4 && extent.loopOnly.startBeat < 8, "scrolls right up to the loop end, not past it");
+assert.ok(extent.pastLoop.startBeat > extent.loopOnly.startBeat && extent.pastLoop.startBeat < 12, "a note past the loop extends it only to that note's end");
 console.log("WHEEL OK");
 await browser.close();

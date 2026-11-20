@@ -230,7 +230,9 @@ Every control carries `data-control`, which the title bar uses to tell a
 control from its draggable background. Icons are SVGs in `icons.tsx`, not
 emoji. The roll's canvas defaults match: a dark grid, rows shaded by the
 clip's scale (root lighter, out-of-scale darker), bar lines brighter than beat
-lines, the area past the loop shaded.
+lines, the area past the loop shaded. A roll scrolls only as far as its loop
+end, or as far as a note (or ghost note) reaches past it; there is no empty
+room after (`getMaxLength` in `src/pianoRoll/viewport.ts`).
 
 ## Piano roll
 

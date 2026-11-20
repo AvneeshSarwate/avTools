@@ -13,8 +13,6 @@ export const DEFAULT_SUBDIVISION = 16
 export const DEFAULT_TIME_SIGNATURE = 4
 export const DEFAULT_STAGE_WIDTH = 640
 export const DEFAULT_STAGE_HEIGHT = 360
-/** Scrollable room past max(loopLength, last note end), in beats (two bars). */
-export const EXTENT_PADDING_BEATS = 8
 export const DEFAULT_VELOCITY = 100
 export const DEFAULT_LOOP_LENGTH = 16
 

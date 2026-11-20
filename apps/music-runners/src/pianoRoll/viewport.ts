@@ -2,7 +2,6 @@ import type { PianoRollState } from './state'
 import { noteAreaHeight } from './lanes'
 import {
   DEFAULT_FIT_BOTTOM_NOTE,
-  EXTENT_PADDING_BEATS,
   MIN_FIT_HORIZONTAL_BEATS,
   MIN_FIT_VERTICAL_NOTES,
   MIN_HORIZONTAL_SPAN,
@@ -47,11 +46,15 @@ export const getLastNoteEnd = (state: PianoRollState) => {
 }
 
 /**
- * The scrollable extent in beats: whichever of the loop and the notes reaches
- * further, plus a couple of bars. Replaces the Vue component's grid.maxLength.
+ * The scrollable extent in beats: the loop, or further only as far as a note
+ * or ghost note reaches past it (so it stays reachable), with no empty room after. Replaces
+ * the Vue component's grid.maxLength.
  */
 export const getMaxLength = (state: PianoRollState) => {
-  return Math.max(state.grid.loopLength, getLastNoteEnd(state)) + EXTENT_PADDING_BEATS
+  let end = Math.max(state.grid.loopLength, getLastNoteEnd(state))
+  // Ghosts too (played trills in Generated, which Fit brings into view)
+  for (const ghost of state.ghostNotes) end = Math.max(end, ghost.position + ghost.duration)
+  return end
 }
 
 export const getHorizontalContentWidth = (state: PianoRollState) => {
