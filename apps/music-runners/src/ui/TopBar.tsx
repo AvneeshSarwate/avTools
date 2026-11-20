@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { type Editor, useValue } from "tldraw";
 import { listInstances } from "../shapes";
 import { clockStore, setBpm } from "../store/clock";
 import { ensureMidi, midiStore, panicAllOutputs, refreshOutputs } from "../store/midi";
 import { useSnapshot } from "valtio";
 import { playbackStore, startPlay, startRun, stopAll } from "../store/playback";
-import { listProjects, projectStore, saveProject, switchProject } from "../store/project";
+import { listProjects, loadProjectFromFile, projectStore, saveProject, saveProjectToFile, switchProject } from "../store/project";
 import { Button, Chooser, Field, Lamp, NumberBox, TextField, Toggle } from "./controls/controls";
 import { displayStore, setPitchLabels } from "../store/display";
 
@@ -27,34 +27,65 @@ export function TopBar({ editor }: { editor: Editor | null }) {
   const projectOptions = [project.name, ...project.available.filter((name) => name !== project.name)].map((name) => ({ value: name, label: name }));
   const saveTone = project.status === "error" ? "rec" : project.status === "dirty" ? "warn" : project.status === "saving" ? "select" : "off";
   const savedAt = project.lastSavedAt ? new Date(project.lastSavedAt).toLocaleTimeString() : "";
+  const manual = project.backend === "manual";
+  const fileInput = useRef<HTMLInputElement>(null);
+  const statusText = project.status === "saved" && savedAt ? `saved ${savedAt}` : manual && project.status === "dirty" ? "unsaved" : manual && project.status === "idle" ? "not saved" : project.status;
   const midiTone = midi.status === "ready" ? "play" : midi.status === "error" ? "rec" : midi.status === "opening" ? "warn" : "off";
 
   return (
     <div className="top-bar">
       <div className="ui-group">
         <span className="top-bar__title">music runners</span>
-        <Chooser
-          value={project.name}
-          options={projectOptions}
-          onOpen={() => void listProjects()}
-          onChange={(name) => switchProject(name)}
-          title="project (projects/<name>/project.json)"
-          width={128}
+        {manual ? null : (
+          <>
+            <Chooser
+              value={project.name}
+              options={projectOptions}
+              onOpen={() => void listProjects()}
+              onChange={(name) => switchProject(name)}
+              title="project (projects/<name>/project.json)"
+              width={128}
+            />
+            <TextField
+              value={newProjectName}
+              onChange={setNewProjectName}
+              onCommit={() => {
+                if (/^[a-zA-Z0-9_-]+$/.test(newProjectName)) switchProject(newProjectName);
+              }}
+              placeholder="new project…"
+              title="type a name and press Enter to create or open it"
+              width={100}
+            />
+            <Button icon="save" quiet onClick={() => void saveProject()} title="save now (autosave runs a second after any change)" />
+          </>
+        )}
+        <Button
+          icon={manual ? "save" : undefined}
+          label={manual ? "Save" : "Export"}
+          onClick={saveProjectToFile}
+          disabled={!editor}
+          title={manual ? "save the project to a JSON file (nothing is saved automatically here)" : "download the project as a JSON file"}
         />
-        <TextField
-          value={newProjectName}
-          onChange={setNewProjectName}
-          onCommit={() => {
-            if (/^[a-zA-Z0-9_-]+$/.test(newProjectName)) switchProject(newProjectName);
+        <Button
+          label={manual ? "Load" : "Import"}
+          onClick={() => fileInput.current?.click()}
+          disabled={!editor}
+          title={manual ? "load a project from a JSON file, replacing what is open" : "replace this project's contents with a JSON file"}
+        />
+        <input
+          ref={fileInput}
+          type="file"
+          accept="application/json,.json"
+          hidden
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (file) void loadProjectFromFile(file);
           }}
-          placeholder="new project…"
-          title="type a name and press Enter to create or open it"
-          width={100}
         />
-        <Button icon="save" quiet onClick={() => void saveProject()} title="save now (autosave runs a second after any change)" />
         <span className="top-bar__status top-bar__status--save" title={project.error ?? (savedAt ? `last saved ${savedAt}` : undefined)}>
           <Lamp tone={saveTone} />
-          {project.status === "saved" && savedAt ? `saved ${savedAt}` : project.status}
+          {statusText}
         </span>
       </div>
 

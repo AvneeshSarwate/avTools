@@ -18,6 +18,9 @@ import { installSixSines, isSixSinesOutput } from "./store/sixSines";
 import { installClipCopyRules } from "./shapes/clipOnCopy";
 
 const SHAPE_UTILS = [...RUNNER_SHAPE_UTILS, SixSinesShapeUtil];
+// tldraw needs a licence key on a deployed site (not on localhost). Set
+// VITE_TLDRAW_LICENSE_KEY in .env.local; the key is tied to the site's domain.
+const TLDRAW_LICENSE_KEY = (import.meta as unknown as { env: Record<string, string | undefined> }).env.VITE_TLDRAW_LICENSE_KEY;
 
 export function App() {
   const [editor, setEditorState] = useState<Editor | null>(null);
@@ -73,7 +76,7 @@ export function App() {
       <div className="app-body">
         <RunnerSidebar editor={editor} />
         <div className="app-canvas">
-          <Tldraw shapeUtils={SHAPE_UTILS} onMount={onMount} components={TLDRAW_COMPONENTS} />
+          <Tldraw shapeUtils={SHAPE_UTILS} onMount={onMount} components={TLDRAW_COMPONENTS} licenseKey={TLDRAW_LICENSE_KEY} />
         </div>
       </div>
     </div>

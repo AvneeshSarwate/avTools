@@ -47,6 +47,24 @@ the bpm, in one file. Autosave runs about a second after any change; the
 top bar also has a save button, a project chooser and a "new project" field (`?project=<name>` in the
 URL). Nothing is kept in browser storage.
 
+**Export** and **Import** in the top bar save the open project to a JSON file
+and replace it from one.
+
+### As a static site
+
+A static build has no dev server, so there is no autosave and no project
+chooser. The app notices at startup (the request for the project list fails)
+and switches to manual persistence: it opens empty, **Save** downloads the
+project as a JSON file, **Load** opens one, and the status reads `unsaved`
+after any change, with the browser's leave-page warning while it does.
+
+`tools/deploy-pages.sh` at the repo root builds this app and `fm-explainer`
+and publishes them to GitHub Pages; `tools/deploy-pages.sh --build-only`
+builds into `.pages-build/` without publishing. A deployed tldraw canvas
+needs a licence key: put `VITE_TLDRAW_LICENSE_KEY=<key>` in
+`apps/music-runners/.env.local` (git-ignored). The key is tied to the site's
+domain.
+
 Web MIDI needs a user gesture in some browsers; the first click on the page
 opens it, and the top bar shows the status. Everything plays on channel 0
 unless an instance has **MPE Out** on (see below).

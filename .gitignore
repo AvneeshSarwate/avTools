@@ -107,3 +107,4 @@ Icon
 
 # TouchDesigner plugin distribution (GitHub Releases; fetched or built locally)
 /apps/td-projects/Plugins/
+/.pages-build/
