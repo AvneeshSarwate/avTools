@@ -109,10 +109,13 @@ unless an instance has **MPE Out** on (see below).
   under each type its instances on the current page. A row shows the
   instance's state with the transport colours: a lamp, the loop count while
   playing or running (notes and loop length when idle, "error" when a start
-  failed) and a loop-progress bar along its bottom edge; **Q** when queued;
-  Play, Run and Stop buttons. Click a row to select the instance and bring it
-  into view; double-click its name to rename it (the title bar's name field
-  edits the same name).
+  failed) and a loop-progress bar along its bottom edge; a **Q** toggle
+  (the instance's queue flag, same as its title bar's Q); Play, Run and Stop
+  buttons (Play/Run stop when pressed again). Click a row to select the
+  instance and bring it into view; double-click its name to rename it (the
+  title bar's name field edits the same name). Drag the sidebar's right edge
+  to resize it (220-640px, remembered in the browser; double-click the edge
+  for the default width); the chevron hides it.
 - **Events**: plain objects (`{ type, ...fields }`) sent with `api.emit` and
   received with `api.onEvent`. A runner lists the types it sends in its
   definition's `emits`. Routing is by **connection arrows** (see below).
@@ -128,7 +131,8 @@ unless an instance has **MPE Out** on (see below).
   through `ctx.setBpm`. Runner code waits in beats of its own tempo; a `speed`
   param multiplies on top (default 1). The top bar's bpm is the project tempo
   new instances start at. The playhead and overdubs use the instance's beats;
-  free takes are measured at its tempo setting. **Play queued** starts every
+  free takes are measured at its tempo setting. The top bar's **queued**
+  group (**Play**, **Run**) plays or runs every
   queued instance at once.
 
 ## Connections
@@ -461,7 +465,7 @@ demo.html + demo/           standalone piano roll demo and its Playwright checks
   (same setup).
 - Duplicating, pasting and moving instances: `demo/duplicate.e2e.mjs`
   (same setup).
-- The sidebar (adding, transport state, reveal, rename):
+- The sidebar (adding, transport state, reveal, rename, queue, resize):
   `demo/sidebar.e2e.mjs` (same setup).
 - Note resizing from the edges: `demo/resize.e2e.mjs` (same setup).
 - Double-click add, double-press-and-drag, click to narrow a selection: `demo/click-edit.e2e.mjs`.

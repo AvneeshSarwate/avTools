@@ -43,7 +43,10 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 
 /* ---------- runner sidebar ---------- */
 
-.runner-sidebar { width: 273px; flex: none; background: var(--c-surface-1); border-right: 1px solid var(--c-line); overflow-y: auto; display: flex; flex-direction: column; }
+.runner-sidebar { position: relative; width: 273px; flex: none; background: var(--c-surface-1); border-right: 1px solid var(--c-line); overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; }
+/* Drag strip on the right edge to resize (width set inline, remembered per browser) */
+.runner-sidebar__resize { position: absolute; top: 0; right: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 2; }
+.runner-sidebar__resize:hover, .runner-sidebar__resize:active { background: var(--c-surface-5); }
 .runner-sidebar--collapsed { width: 34px; align-items: center; padding-top: 4px; }
 .runner-sidebar__header { display: flex; align-items: center; justify-content: space-between; height: var(--h-row); padding: 0 4px 0 13px; border-bottom: 1px solid var(--c-line); }
 .runner-group { display: flex; flex-direction: column; padding-bottom: 5px; border-bottom: 1px solid var(--c-line); }
@@ -60,8 +63,9 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 .runner-row--play .runner-row__status { color: var(--c-play); }
 .runner-row--run .runner-row__status { color: var(--c-run); }
 .runner-row--rec .runner-row__status, .runner-row__status.is-error { color: var(--c-rec); }
-.runner-row__queued { color: var(--c-select); font-weight: 700; font-size: 11px; }
-.runner-row__transport { display: flex; gap: 0; }
+.runner-row__transport { display: flex; align-items: center; gap: 0; }
+/* The row's queue toggle: compact, same blue-when-on as the instance's Q */
+.runner-row .runner-row__queue { height: 22px; min-width: 22px; padding: 0 5px; margin-right: 3px; font-size: 11px; }
 .runner-row .ui-text { flex: 1; }
 /* Loop progress of an active instance, along the row's bottom edge */
 .runner-row__progress { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; transform-origin: left; transform: scaleX(0); pointer-events: none; }

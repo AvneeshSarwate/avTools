@@ -1,10 +1,10 @@
 import { useState } from "react";
-import type { Editor } from "tldraw";
+import { type Editor, useValue } from "tldraw";
 import { listInstances } from "../shapes";
 import { clockStore, setBpm } from "../store/clock";
 import { ensureMidi, midiStore, panicAllOutputs, refreshOutputs } from "../store/midi";
 import { useSnapshot } from "valtio";
-import { playbackStore, startRun, stopAll } from "../store/playback";
+import { playbackStore, startPlay, startRun, stopAll } from "../store/playback";
 import { listProjects, projectStore, saveProject, switchProject } from "../store/project";
 import { Button, Chooser, Field, Lamp, NumberBox, TextField, Toggle } from "./controls/controls";
 import { displayStore, setPitchLabels } from "../store/display";
@@ -17,10 +17,10 @@ export function TopBar({ editor }: { editor: Editor | null }) {
   const playback = useSnapshot(playbackStore);
   const activeCount = Object.values(playback.instances).filter((runtime) => runtime.mode !== "idle").length;
 
-  const playQueued = () => {
+  const queuedCount = useValue("queued count", () => (editor ? listInstances(editor).filter((instance) => instance.props.queued).length : 0), [editor]);
+  const startQueued = (start: (shapeId: string) => void) => {
     if (!editor) return;
-    const queued = listInstances(editor).filter((instance) => instance.props.queued);
-    for (const instance of queued) startRun(instance.id);
+    for (const instance of listInstances(editor)) if (instance.props.queued) start(instance.id);
   };
 
   const [newProjectName, setNewProjectName] = useState("");
@@ -67,12 +67,21 @@ export function TopBar({ editor }: { editor: Editor | null }) {
       </div>
       <div className="ui-group">
         <Field label="bpm">
-          <NumberBox value={clock.bpm} min={20} max={400} step={0.01} format={(value) => value.toFixed(2)} width={75} onChange={setBpm} title="tempo of the shared clock" />
+          <NumberBox value={clock.bpm} min={20} max={400} step={0.01} format={(value) => value.toFixed(2)} width={75} onChange={setBpm} title="project tempo: new instances start at it (each instance has its own tempo)" />
         </Field>
       </div>
       <div className="ui-group">
-        <Button icon="play" label="Play queued" tone="play" onClick={playQueued} disabled={!editor} title="run every instance with Q on, together" />
-        <Button icon="stop" label={activeCount ? `Stop all (${activeCount})` : "Stop all"} onClick={stopAll} disabled={activeCount === 0} />
+        <span className="ui-caption" title="instances with Q on (in the sidebar or their title bar)">{queuedCount ? `queued ${queuedCount}` : "queued"}</span>
+        <Button icon="play" label="Play" tone="play" className="top-bar__play-queued" onClick={() => startQueued(startPlay)} disabled={!editor || queuedCount === 0} title="Play every instance with Q on (their clips verbatim), together" />
+        <Button icon="run" label="Run" tone="run" className="top-bar__run-queued" onClick={() => startQueued(startRun)} disabled={!editor || queuedCount === 0} title="Run every instance with Q on (their runners' algorithms), together" />
+        <Button
+          icon="stop"
+          label={activeCount ? String(activeCount) : undefined}
+          className="top-bar__stop-all"
+          onClick={stopAll}
+          disabled={activeCount === 0}
+          title={activeCount ? `stop all (${activeCount} playing or running)` : "stop all (nothing playing)"}
+        />
         <Button icon="panic" quiet onClick={panicAllOutputs} title="panic: all notes off on every open output" />
       </div>
 

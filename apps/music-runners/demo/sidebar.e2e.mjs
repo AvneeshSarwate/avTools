@@ -1,7 +1,8 @@
 // The runner sidebar. Serves projects/default/project.json as project
 // "zz_sidebar" (never written: PUTs are captured), then drives the sidebar:
 // one row per instance, + per runner type, Play/Run/Stop and the row state,
-// click to reveal, double-click to rename. With the dev server up:
+// click to reveal, double-click to rename, the row's Q (queue) toggle with the
+// top bar's Play/Run queued, and dragging the sidebar's edge to resize it. With the dev server up:
 //   NODE_PATH=$(npm root -g) node demo/sidebar.e2e.mjs [screenshot dir]
 // Set PW_CHROMIUM_PATH when that Playwright has no browser of its own.
 import { createRequire } from "node:module";
@@ -132,6 +133,54 @@ await row.locator("input").press("Enter");
 await sleep(200);
 assert.equal(await page.evaluate((id) => window.__musicRunners.editor.getShape(id).props.name, playing.id), "lead line");
 assert.equal(await page.locator(".runner-shape__instance-name").evaluateAll((els) => els.some((el) => el.value === "lead line")), true, "title bar shows the new name");
+
+// --- queue from the sidebar; the top bar plays or runs the queued ones
+await page.evaluate(() => window.__musicRunners.playback.stopAll());
+const ids = await page.evaluate(() => window.__musicRunners.shapes.listInstances(window.__musicRunners.editor).map((i) => i.id));
+const queueOf = (id) => page.evaluate((id) => window.__musicRunners.editor.getShape(id).props.queued, id);
+for (const id of ids) {
+  if (await queueOf(id)) await page.locator(`.runner-row[data-shape-id="${id}"] .runner-row__queue`).click();
+}
+const [qa, qb, ...rest] = ids;
+await page.locator(`.runner-row[data-shape-id="${qa}"] .runner-row__queue`).click();
+await page.locator(`.runner-row[data-shape-id="${qb}"] .runner-row__queue`).click();
+await sleep(150);
+assert.equal(await queueOf(qa), true, "row Q queues the instance");
+assert.equal(await queueOf(qb), true);
+for (const id of rest) assert.equal(await queueOf(id), false);
+const modes = () => page.evaluate((ids) => ids.map((id) => window.__musicRunners.stores.playbackStore.instances[id]?.mode ?? "idle"), ids);
+await page.locator(".top-bar__play-queued").click();
+await sleep(400);
+let m = await modes();
+assert.deepEqual([m[0], m[1]], ["play", "play"], "Play queued plays the queued instances");
+assert.ok(m.slice(2).every((x) => x === "idle"), "and only them");
+await page.locator(".top-bar__run-queued").click();
+await sleep(400);
+m = await modes();
+assert.deepEqual([m[0], m[1]], ["run", "run"], "Run queued runs them");
+await page.locator(".top-bar__stop-all").click();
+await sleep(300);
+assert.ok((await modes()).every((x) => x === "idle"), "stop all");
+await page.locator(`.runner-row[data-shape-id="${qa}"] .runner-row__queue`).click();
+await sleep(100);
+assert.equal(await queueOf(qa), false, "row Q toggles off");
+
+// --- the sidebar's right edge resizes it; the width is remembered
+const sidebarWidth = () => page.evaluate(() => document.querySelector(".runner-sidebar").getBoundingClientRect().width);
+const w0 = await sidebarWidth();
+const edge = await page.locator(".runner-sidebar__resize").boundingBox();
+await page.mouse.move(edge.x + 3, edge.y + 300);
+await page.mouse.down();
+await page.mouse.move(edge.x + 123, edge.y + 300, { steps: 6 });
+await page.mouse.up();
+await sleep(150);
+const w1 = await sidebarWidth();
+console.log("sidebar width", w0, "->", w1);
+assert.ok(Math.abs(w1 - w0 - 120) <= 2, "dragging the edge widens the sidebar");
+assert.ok(Math.abs(Number(await page.evaluate(() => localStorage.getItem("music-runners:sidebar-width"))) - w1) <= 1, "remembered");
+await page.locator(".runner-sidebar__resize").dblclick();
+await sleep(100);
+assert.equal(await sidebarWidth(), w0, "double-click: back to the default width");
 
 // --- saving writes one clip per instance
 await page.evaluate(() => window.__musicRunners.project.saveProject());

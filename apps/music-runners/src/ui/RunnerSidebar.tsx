@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { type Editor, type TLShapeId, useValue } from "tldraw";
 import { useSnapshot } from "valtio";
-import { Button, Lamp, TextField } from "./controls/controls";
+import { Button, Lamp, TextField, Toggle } from "./controls/controls";
 import { RUNNERS } from "../runners/registry";
 import { createInstance, listInstances, revealInstance } from "../shapes";
 import { clipsStore } from "../store/clips";
@@ -21,11 +21,54 @@ interface InstanceRow {
   queued: boolean;
 }
 
+/** Sidebar width bounds and the per-viewer remembered width (browser storage). */
+const MIN_WIDTH = 220;
+const MAX_WIDTH = 640;
+const DEFAULT_WIDTH = 273;
+const WIDTH_KEY = "music-runners:sidebar-width";
+
+function storedWidth(): number {
+  try {
+    const value = Number(window.localStorage.getItem(WIDTH_KEY));
+    return Number.isFinite(value) && value >= MIN_WIDTH && value <= MAX_WIDTH ? value : DEFAULT_WIDTH;
+  } catch {
+    return DEFAULT_WIDTH;
+  }
+}
+
 /** How often the rows' loop-progress bars are redrawn (the shape's playhead rate). */
 const PROGRESS_INTERVAL_MS = 33;
 
 export function RunnerSidebar({ editor }: { editor: Editor | null }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [width, setWidth] = useState(storedWidth);
+  // Drag the right edge to widen or narrow the sidebar
+  const startResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const startWidth = width;
+    let next = startWidth;
+    const move = (e: PointerEvent) => {
+      next = Math.round(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + e.clientX - startX)));
+      setWidth(next);
+    };
+    const up = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      handle.removeEventListener("pointercancel", up);
+      try {
+        window.localStorage.setItem(WIDTH_KEY, String(next));
+      } catch {
+        // storage unavailable: the width just is not remembered
+      }
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+    handle.addEventListener("pointercancel", up);
+  };
   const rows = useValue(
     "runner rows",
     () => (editor ? listInstances(editor).map(({ id, props }) => ({ id, name: props.name, runnerType: props.runnerType, queued: props.queued })) : []),
@@ -48,7 +91,20 @@ export function RunnerSidebar({ editor }: { editor: Editor | null }) {
   }
 
   return (
-    <aside className="runner-sidebar">
+    <aside className="runner-sidebar" style={{ width }}>
+      <div
+        className="runner-sidebar__resize"
+        title="drag to resize the sidebar (double-click: default width)"
+        onPointerDown={startResize}
+        onDoubleClick={() => {
+          setWidth(DEFAULT_WIDTH);
+          try {
+            window.localStorage.removeItem(WIDTH_KEY);
+          } catch {
+            // ignore
+          }
+        }}
+      />
       <div className="runner-sidebar__header">
         <span className="ui-caption">runners</span>
         <Button icon="chevronLeft" quiet onClick={() => setCollapsed(true)} title="hide runners" />
@@ -198,11 +254,6 @@ function InstanceRowView({
       )}
       {draft !== null ? null : (
         <>
-          {row.queued ? (
-            <span className="runner-row__queued" title="queued: started by Play queued">
-              Q
-            </span>
-          ) : null}
           <span
             className={`runner-row__status${error ? " is-error" : ""}`}
             title={error ?? `${recording ? "recording · " : mode !== "idle" ? `${mode} · ` : ""}${clip.notes.length} notes · loop ${clip.loopLength} beats`}
@@ -210,6 +261,17 @@ function InstanceRowView({
             {error ? "error" : status}
           </span>
           <span className="runner-row__transport">
+            <Toggle
+              label="Q"
+              className="runner-row__queue"
+              on={row.queued}
+              disabled={!editor}
+              title="queue: started together by Play queued / Run queued in the top bar"
+              onChange={(on) => {
+                const shape = editor?.getShape(row.id);
+                if (editor && shape) editor.updateShape({ id: row.id, type: shape.type, props: { queued: on } as never });
+              }}
+            />
             <Button icon="play" tone="play" quiet active={mode === "play"} title={mode === "play" ? "Playing: click to stop" : "Play: the clip verbatim, looping"} onClick={() => (mode === "play" ? stopInstance(row.id) : startPlay(row.id))} />
             <Button icon="run" tone="run" quiet active={mode === "run"} title={mode === "run" ? "Running: click to stop" : "Run: the runner's algorithm, looping"} onClick={() => (mode === "run" ? stopInstance(row.id) : startRun(row.id))} />
             <Button icon="stop" quiet disabled={mode === "idle"} title="stop" onClick={() => stopInstance(row.id)} />

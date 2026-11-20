@@ -474,7 +474,7 @@ export function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: Ru
             className="runner-shape__queue"
             on={props.queued}
             onChange={(on) => updateProps({ queued: on })}
-            title="queue: started together by Play queued in the top bar"
+            title="queue: started together by Play queued / Run queued in the top bar"
           />
         </header>
 
