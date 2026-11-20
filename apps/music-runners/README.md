@@ -72,7 +72,13 @@ unless an instance has **MPE Out** on (see below).
   lines on its source roll while running with `api.setMarkers`, each with an
   optional tinted `span`; a loop can sit anywhere on the timeline with
   `LoopNotes.start`; `api.publishLoop(null)` says nothing is sounding (the
-  sidebar row shows "waiting").
+  sidebar row shows "waiting"). Optional `sidebarPhase(phase)` sets the
+  sidebar row's progress bar while the runner Runs: given the current pass
+  (`{ elapsed, loopLength, start, loopCount }`, beats in its own tempo with
+  speed applied) it returns 0..1 through whatever its cycle is, or null for
+  no bar. Without it (and always for Play) the bar is elapsed / loopLength of
+  the current pass. The arp returns the fraction of its cycle, so the bar
+  looks the same wherever the cursor started it.
 - **Clip**: an instance's piano roll data: notes (with the runner's tag
   metadata), loop length and scale. Every instance owns exactly one; nothing
   is shared between instances. Clips live in `src/store/clips.ts`, keyed by

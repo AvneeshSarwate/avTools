@@ -97,5 +97,7 @@ export const arpRunner: RunnerDefinition = {
   ],
   generate: generateArp,
   generatedNoteColor: () => PLAYING_COLOR,
+  // The bar is the current cycle, wherever on the roll the cursor started it
+  sidebarPhase: ({ elapsed, loopLength }) => (loopLength > 0 ? elapsed / loopLength : null),
   run: runArp,
 };

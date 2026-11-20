@@ -1,6 +1,7 @@
 // The arp runner against a fake Web MIDI output (no device needed): pattern
 // validation, the chord under the cursor, the cursor change taking effect on
 // the next cycle (with the "playing" line marking the old chord until then),
+// the sidebar's progress bar following the arp's cycle (its sidebarPhase),
 // waiting with no chord and restarting at once, index wrapping. Project
 // "zz_arp" is never saved. With the dev server up:
 //   NODE_PATH=$(npm root -g) node demo/arp.e2e.mjs [screenshot dir]
@@ -126,6 +127,22 @@ s = await state();
 assert.deepEqual(s.generated, [62, 65, 69, 72], "the next cycle plays D F A C");
 assert.deepEqual(s.markers.map((m) => m.position), [5], "the playing line moved to the new chord");
 assert.equal(s.start, 5, "the generated loop sits at the cursor");
+// The sidebar bar is the arp's own cycle (sidebarPhase), not the roll position:
+// with the cycle starting at beat 5 it still sweeps 0..1 each cycle
+const bar = page.locator(`.runner-row[data-shape-id="${id}"] .runner-row__progress`);
+const scales = [];
+const cycleMs = await page.evaluate((id) => {
+  const mr = window.__musicRunners;
+  const rt = mr.stores.playbackStore.instances[id];
+  return (rt.loopLength / rt.loopSpeed) * (60000 / mr.editor.getShape(id).props.tempo);
+}, id);
+for (let i = 0; i < 16; i++) {
+  scales.push(await bar.evaluate((el) => Number(/scaleX\(([\d.e-]+)\)/.exec(el.style.transform)?.[1] ?? NaN)));
+  await sleep(cycleMs / 12);
+}
+console.log("sidebar bar over ~1.3 cycles", scales.map((v) => v.toFixed(2)).join(" "));
+assert.ok(scales.every((v) => v >= 0 && v <= 1), "within 0..1");
+assert.ok(Math.min(...scales) < 0.25 && Math.max(...scales) > 0.75, "sweeps the cycle (not stuck full because the cursor is past one cycle)");
 if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "arp-switched.png") });
 
 // --- no notes under the cursor: quiet after the cycle ends, then waiting

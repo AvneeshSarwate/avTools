@@ -101,6 +101,18 @@ export interface PlayLoopOptions {
   color?: string;
 }
 
+/** Where a running instance is in its current pass (for `sidebarPhase`). */
+export interface LoopPhase {
+  /** Beats into the current pass (its own tempo, speed applied), from the pass's start. */
+  elapsed: number;
+  /** The pass's length in beats (`LoopNotes.loopLength`). */
+  loopLength: number;
+  /** Where the pass sits on the roll (`LoopNotes.start`; the cursor for the arp). */
+  start: number;
+  /** Passes started since the run began. */
+  loopCount: number;
+}
+
 /** Instance state beyond the clip and params that `generate` may read. */
 export interface GenerateContext {
   /** The source roll's cursor, in beats. */
@@ -160,6 +172,13 @@ export interface RunnerDefinition {
   sourceGhostNotes?(clip: Clip, params: Params): GhostNote[];
   /** Fill for notes in the Generated and Preview rolls (for example a chosen variant). */
   generatedNoteColor?(note: PianoRollNote): string | undefined;
+  /**
+   * Optional: the sidebar row's progress bar while this runner Runs, 0..1
+   * through whatever its cycle is, or null for no bar (when progress means
+   * nothing for it). Without it the bar is elapsed / loopLength of the
+   * current pass; Play always uses that.
+   */
+  sidebarPhase?(phase: LoopPhase): number | null;
   /** Long-running: loop until the context is cancelled. */
   run(api: RunnerApi): Promise<void>;
 }

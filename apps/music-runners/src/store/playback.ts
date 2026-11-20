@@ -10,6 +10,7 @@ import {
   clampPitch,
   defaultParams,
   type LoopNotes,
+  type LoopPhase,
   notesInLoop,
   numberParam,
   type Params,
@@ -120,6 +121,26 @@ export function instanceTempo(shapeId: string): number {
 
 export function instanceNowBeats(shapeId: string): number {
   return instanceBeatsAtSec(shapeId, nowSec());
+}
+
+/** Where the instance is in its current pass, or null when idle. */
+export function loopPhase(runtime: InstanceRuntime): LoopPhase | null {
+  if (runtime.loopStartBeats === null || runtime.mode === "idle") return null;
+  const elapsed = Math.max(0, (instanceNowBeats(runtime.shapeId) - runtime.loopStartBeats) * runtime.loopSpeed);
+  return { elapsed, loopLength: runtime.loopLength, start: runtime.loopOffset, loopCount: runtime.loopCount };
+}
+
+/** The sidebar bar without a runner's own `sidebarPhase`: how far through the current pass. */
+export function defaultSidebarPhase(phase: LoopPhase): number | null {
+  return phase.loopLength > 0 ? Math.min(1, phase.elapsed / phase.loopLength) : null;
+}
+
+/** The sidebar row's progress (0..1) or null for no bar: Run asks the runner, Play uses the default. */
+export function sidebarPhase(runtime: InstanceRuntime, def: RunnerDefinition | undefined): number | null {
+  const phase = loopPhase(runtime);
+  if (!phase) return null;
+  const value = runtime.mode === "run" && def?.sidebarPhase ? def.sidebarPhase(phase) : defaultSidebarPhase(phase);
+  return value === null || !Number.isFinite(value) ? null : Math.max(0, Math.min(1, value));
 }
 
 /** Playhead position in roll beats for the instance's current loop, or null. */

@@ -9,7 +9,7 @@ import { RUNNERS } from "../runners/registry";
 import { createInstance, listInstances, revealInstance } from "../shapes";
 import { clipsStore } from "../store/clips";
 import type { Clip } from "../model/types";
-import { getRuntime, playbackStore, playheadBeats, startPlay, startRun, stopInstance } from "../store/playback";
+import { getRuntime, playbackStore, sidebarPhase, startPlay, startRun, stopInstance } from "../store/playback";
 import { createSixSinesShape, type SixSinesShape } from "../shapes/SixSinesShape";
 import { recordingStore } from "../store/recording";
 import { SIX_SINES_TYPE } from "../store/sixSines";
@@ -292,14 +292,16 @@ function useLoopProgress(rows: InstanceRow[]): (id: string) => (el: HTMLDivEleme
   const callbacks = useRef(new Map<string, (el: HTMLDivElement | null) => void>());
   const active = useSnapshot(playbackStore).instances;
   const anyActive = rows.some((row) => (active[row.id]?.mode ?? "idle") !== "idle");
+  // Each row's runner type, for its runner's sidebarPhase
+  const types = useRef(new Map<string, string>());
+  types.current = new Map(rows.map((row) => [row.id, row.runnerType]));
 
   useEffect(() => {
     const draw = () => {
       for (const [id, el] of bars.current) {
-        const runtime = getRuntime(id);
-        const position = playheadBeats(runtime);
-        const fraction = position === null || runtime.loopLength <= 0 ? 0 : Math.min(1, position / runtime.loopLength);
-        el.style.transform = `scaleX(${fraction})`;
+        const type = types.current.get(id);
+        const phase = sidebarPhase(getRuntime(id), RUNNERS.find((def) => def.type === type));
+        el.style.transform = `scaleX(${phase ?? 0})`;
       }
     };
     draw();
