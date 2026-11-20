@@ -1,7 +1,15 @@
 // The base runner instance shape. One tldraw shape type per runner
 // definition is produced by defineRunnerShape; the view is
 // RunnerInstanceView.tsx (kept apart so that file Fast Refreshes).
-import { BaseBoxShapeUtil, type RecordProps, T, type TLBaseBoxShape } from "tldraw";
+import {
+  BaseBoxShapeUtil,
+  createShapePropsMigrationIds,
+  createShapePropsMigrationSequence,
+  type RecordProps,
+  T,
+  type TLBaseBoxShape,
+} from "tldraw";
+import { clockStore } from "../../store/clock";
 import { runnerShapeType } from "../registry";
 import type { RunnerDefinition } from "../runnerTypes";
 import { defaultInstanceProps, type RunnerShape } from "./instanceProps";
@@ -16,8 +24,29 @@ export function defineRunnerShape(def: RunnerDefinition) {
     return <RunnerInstanceView shape={shape} def={def} />;
   }
 
+  const versions = createShapePropsMigrationIds(type, { AddTempo: 1 });
+  // Instances saved before per-instance tempo: the project BPM (loaded before
+  // the snapshot) as their tempo, and speed back to 1 now that tempo carries
+  // the rate.
+  const migrations = createShapePropsMigrationSequence({
+    sequence: [
+      {
+        id: versions.AddTempo,
+        up: (props: Record<string, unknown>) => {
+          props.tempo = clockStore.bpm;
+          const params = props.params as Record<string, unknown> | undefined;
+          if (params && "speed" in params) params.speed = 1;
+        },
+        down: (props: Record<string, unknown>) => {
+          delete props.tempo;
+        },
+      },
+    ],
+  });
+
   class RunnerShapeUtil extends BaseBoxShapeUtil<TLBaseBoxShape> {
     static override type = type as TLBaseBoxShape["type"];
+    static override migrations = migrations;
     static override props = {
       w: T.number,
       h: T.number,
@@ -32,6 +61,7 @@ export function defineRunnerShape(def: RunnerDefinition) {
       rootToleranceCents: T.number,
       // Numbers, or a { root, degrees } scale for a scale param
       params: T.dict(T.string, T.jsonValue),
+      tempo: T.positiveNumber,
       queued: T.boolean,
       showSource: T.boolean,
       showGenerated: T.boolean,

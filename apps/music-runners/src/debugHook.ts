@@ -6,7 +6,7 @@ import { clockStore, nowBeats, setBpm } from "./store/clock";
 import { arrowTargets, emitEvent, eventLogStore } from "./store/events";
 import { listConnections, routesFrom, setConnectionType } from "./store/connections";
 import { ensureMidi, midiStore } from "./store/midi";
-import { markersFor, playbackStore, regenerate, startPlay, startRun, stopAll, stopInstance } from "./store/playback";
+import { getRuntime, markersFor, playbackStore, playheadBeats, regenerate, startPlay, startRun, stopAll, stopInstance } from "./store/playback";
 import { projectStore, saveProject } from "./store/project";
 import { createInstance, listInstances, revealInstance } from "./shapes";
 import { sourceRollHandles } from "./store/rollHandles";
@@ -22,7 +22,7 @@ export function installDebugHook(editor: Editor): void {
     midi: { ensureMidi },
     events: { emitEvent, arrowTargets },
     connections: { list: () => listConnections(editor), routesFrom: (from: Parameters<typeof routesFrom>[1], type: string) => routesFrom(editor, from, type), setType: (arrowId: Parameters<typeof setConnectionType>[1], type: string) => setConnectionType(editor, arrowId, type) },
-    playback: { startRun, startPlay, stopInstance, stopAll, regenerate, markersFor },
+    playback: { startRun, startPlay, stopInstance, stopAll, regenerate, markersFor, playhead: (shapeId: string) => playheadBeats(getRuntime(shapeId)) },
     project: { saveProject },
     shapes: { createInstance, listInstances, revealInstance },
     recording: { setInstanceInput, startRecording, stopRecording, liveInputFor },

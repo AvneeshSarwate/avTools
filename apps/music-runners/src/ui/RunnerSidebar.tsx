@@ -210,8 +210,8 @@ function InstanceRowView({
             {error ? "error" : status}
           </span>
           <span className="runner-row__transport">
-            <Button icon="play" tone="play" quiet active={mode === "play"} title="Play: the clip verbatim, looping" onClick={() => mode !== "play" && startPlay(row.id)} />
-            <Button icon="run" tone="run" quiet active={mode === "run"} title="Run: the runner's algorithm, looping" onClick={() => mode !== "run" && startRun(row.id)} />
+            <Button icon="play" tone="play" quiet active={mode === "play"} title={mode === "play" ? "Playing: click to stop" : "Play: the clip verbatim, looping"} onClick={() => (mode === "play" ? stopInstance(row.id) : startPlay(row.id))} />
+            <Button icon="run" tone="run" quiet active={mode === "run"} title={mode === "run" ? "Running: click to stop" : "Run: the runner's algorithm, looping"} onClick={() => (mode === "run" ? stopInstance(row.id) : startRun(row.id))} />
             <Button icon="stop" quiet disabled={mode === "idle"} title="stop" onClick={() => stopInstance(row.id)} />
           </span>
         </>

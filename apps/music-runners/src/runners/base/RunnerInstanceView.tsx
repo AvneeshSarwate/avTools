@@ -486,8 +486,8 @@ export function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: Ru
                 label="Play"
                 tone="play"
                 active={runtime.mode === "play"}
-                onClick={() => runtime.mode !== "play" && startPlay(shapeId)}
-                title="play the clip verbatim, looping"
+                onClick={() => (runtime.mode === "play" ? stopInstance(shapeId) : startPlay(shapeId))}
+                title={runtime.mode === "play" ? "playing: click to stop" : "play the clip verbatim, looping"}
               />
               <Button
                 icon="run"
@@ -495,8 +495,8 @@ export function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: Ru
                 tone="run"
                 className="runner-shape__run"
                 active={runtime.mode === "run"}
-                onClick={() => runtime.mode !== "run" && startRun(shapeId)}
-                title="run the runner's algorithm, looping"
+                onClick={() => (runtime.mode === "run" ? stopInstance(shapeId) : startRun(shapeId))}
+                title={runtime.mode === "run" ? "running: click to stop" : "run the runner's algorithm, looping"}
               />
               <Button icon="stop" className="runner-shape__stop" onClick={() => stopInstance(shapeId)} title="stop this instance and release its notes" />
               <Button
@@ -611,6 +611,22 @@ export function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: Ru
             open={props.showSource}
             onToggle={() => updateProps({ showSource: !props.showSource })}
             toolsRef={setSourceToolbar}
+            tools={
+              <Field label="tempo" title="this instance's tempo: its run plays on its own TimeContext tempo, in beats (changes apply live; speed multiplies on top)">
+                <NumberBox
+                  className="runner-shape__tempo"
+                  value={props.tempo}
+                  min={20}
+                  max={400}
+                  step={0.5}
+                  perPixel={0.5}
+                  format={(value) => value.toFixed(2)}
+                  unit="bpm"
+                  width={118}
+                  onChange={(value) => updateProps({ tempo: value })}
+                />
+              </Field>
+            }
             onResizeStart={startRollResize("source")}
           >
             <div onKeyDownCapture={onSourceKeyDown}>

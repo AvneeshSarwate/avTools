@@ -1,5 +1,6 @@
 import { type Editor, createShapeId, type TLShapeId } from "tldraw";
 import { setClip } from "../store/clips";
+import { clockStore } from "../store/clock";
 import { SIX_SINES_TYPE } from "../store/sixSines";
 import { defaultOutputName } from "../store/midi";
 import { defineRunnerShape } from "../runners/base/RunnerShape";
@@ -70,6 +71,7 @@ export function createInstance(editor: Editor, runnerType: string, at?: { x: num
     ...defaultInstanceProps(def),
     name: nextInstanceName(editor, def.type),
     midiOutputName: defaultOutputName() ?? "",
+    tempo: clockStore.bpm,
   };
   setClip(id);
   editor.createShape({ id, type: runnerShapeType(runnerType) as "geo", x, y, props: props as never, meta: { [CLIP_OWNER_META]: id } });

@@ -38,12 +38,12 @@ import { cloneNote } from "../pianoRoll/utils";
 import { clampPitch, numberParam } from "../runners/runnerTypes";
 import { getClip, setClipLoopLength, setClipNotes } from "./clips";
 import type { RunnerInstanceProps } from "../runners/base/instanceProps";
-import { beatsAtSec, nowSec } from "./clock";
+import { nowSec } from "./clock";
 import { getEditor } from "./editorRef";
 import { getOutputSync, listenToInput } from "./midi";
 import { sendsMpe } from "./sixSines";
 import { SixSinesOutput } from "./sixSinesOutput";
-import { getRuntime, startPlay } from "./playback";
+import { getRuntime, instanceBeatsAtSec, instanceTempo, startPlay } from "./playback";
 import { sourceRollHandles } from "./rollHandles";
 
 const PITCH_TOLERANCE_SEMITONES = 0.05;
@@ -245,7 +245,7 @@ export function stopRecording(shapeId: string): void {
   state.recording = null;
 
   if (take.kind === "free") {
-    const bars = Math.max(1, Math.ceil((beatsAtSec(endSec) - beatsAtSec(take.startSec)) / BEATS_PER_BAR - 1e-6));
+    const bars = Math.max(1, Math.ceil(freeBeats(shapeId, take.startSec, endSec) / BEATS_PER_BAR - 1e-6));
     if (take.recorded > 0) setClipLoopLength(shapeId, bars * BEATS_PER_BAR);
   }
   const clip = getClip(shapeId);
@@ -257,20 +257,30 @@ export function stopRecording(shapeId: string): void {
   state.status = take.recorded > 0 ? `recorded ${take.recorded} notes${mpeHint}` : "nothing recorded";
 }
 
-/** Clip-beat position of `sec` for the take. */
+/**
+ * Beats between two scheduler times for a free take, at the instance's tempo.
+ * A free take starts while the instance is stopped (no run, so no tempo map
+ * of its own), so it is measured at the tempo setting.
+ */
+function freeBeats(shapeId: string, fromSec: number, toSec: number): number {
+  return ((toSec - fromSec) * instanceTempo(shapeId)) / 60;
+}
+
+/** Clip-beat position of `sec` for the take: overdubs on the run's own beats. */
 function takePosition(recorder: Recorder, take: Take, sec: number): number {
-  if (take.kind === "free") return Math.max(0, beatsAtSec(sec) - beatsAtSec(take.startSec));
+  if (take.kind === "free") return Math.max(0, freeBeats(recorder.shapeId, take.startSec, sec));
   const runtime = getRuntime(recorder.shapeId);
   if (runtime.loopStartBeats === null) return 0;
   const length = runtime.loopLength > 0 ? runtime.loopLength : 1;
-  const raw = (beatsAtSec(sec) - runtime.loopStartBeats) * runtime.loopSpeed;
+  const raw = (instanceBeatsAtSec(recorder.shapeId, sec) - runtime.loopStartBeats) * runtime.loopSpeed;
   return ((raw % length) + length) % length;
 }
 
 /** Note durations in clip beats: overdubs follow the instance's speed. */
 function beatSpan(recorder: Recorder, take: Take, fromSec: number, toSec: number): number {
-  const speed = take.kind === "overdub" ? getRuntime(recorder.shapeId).loopSpeed || 1 : 1;
-  return Math.max(0, (beatsAtSec(toSec) - beatsAtSec(fromSec)) * speed);
+  if (take.kind === "free") return Math.max(0, freeBeats(recorder.shapeId, fromSec, toSec));
+  const speed = getRuntime(recorder.shapeId).loopSpeed || 1;
+  return Math.max(0, (instanceBeatsAtSec(recorder.shapeId, toSec) - instanceBeatsAtSec(recorder.shapeId, fromSec)) * speed);
 }
 
 function eventSec(recorder: Recorder, event: MidiInputEvent): number {
@@ -483,5 +493,5 @@ export function liveInputFor(shapeId: string): LiveInput {
 export function freeTakePlayhead(shapeId: string): number | null {
   const take = recorders.get(shapeId)?.take;
   if (!take || take.kind !== "free") return null;
-  return Math.max(0, beatsAtSec(nowSec()) - beatsAtSec(take.startSec));
+  return Math.max(0, freeBeats(shapeId, take.startSec, nowSec()));
 }

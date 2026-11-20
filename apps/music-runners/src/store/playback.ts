@@ -2,7 +2,7 @@
 // never persisted; it belongs to this page session.
 import type { TimeContext } from "@avtools/core-timing";
 import type { MidiOutput } from "@avtools/midi/browser";
-import type { TLShapeId } from "tldraw";
+import { react, type TLShapeId } from "tldraw";
 import type { Clip, RunnerEvent } from "../model/types";
 import type { GhostNote, PianoRollNote, PlayheadMarker } from "../pianoRoll/types";
 import { getRunner } from "../runners/registry";
@@ -19,7 +19,7 @@ import {
 } from "../runners/runnerTypes";
 import { getClip } from "./clips";
 import { cursorFromMeta, type RunnerInstanceProps } from "../runners/base/instanceProps";
-import { getRootContext, nowBeats } from "./clock";
+import { clockStore, getRootContext, nowSec } from "./clock";
 import { getEditor } from "./editorRef";
 import { emitEvent, onEvent } from "./events";
 import { getOutput, getOutputSync } from "./midi";
@@ -49,7 +49,7 @@ export interface InstanceRuntime {
   played: GhostNote[];
   /** Output of the last regenerate (Preview roll). */
   preview: LoopNotes | null;
-  /** For the playhead: clock beat of the current loop's start and its speed. */
+  /** For the playhead: the instance's beat (its own tempo) at the current loop's start, and its speed. */
   loopStartBeats: number | null;
   /** Where the current loop sits on the roll (LoopNotes.start). */
   loopOffset: number;
@@ -94,10 +94,38 @@ function patchRuntime(shapeId: string, patch: Partial<InstanceRuntime> | ((prev:
   Object.assign(runtime, next);
 }
 
+/**
+ * Each running instance's tempo map: its run branch's own clone of the root's
+ * (BranchOptions tempo "cloned"), set to the instance's tempo prop. Plain
+ * state, not in the store.
+ */
+const instanceTempos = new Map<string, TimeContext["tempo"]>();
+
+/**
+ * The instance's beat position at scheduler time `sec`: on its own tempo map
+ * while it runs, else at its tempo prop (a constant rate; only differences of
+ * these are used, for recording while stopped).
+ */
+export function instanceBeatsAtSec(shapeId: string, sec: number): number {
+  const tempo = instanceTempos.get(shapeId);
+  if (tempo) return tempo.beatsAtTime(sec);
+  return (sec * instanceTempo(shapeId)) / 60;
+}
+
+/** The instance's tempo setting in BPM (the project BPM if it has none). */
+export function instanceTempo(shapeId: string): number {
+  const bpm = readInstanceProps(shapeId)?.tempo;
+  return bpm && Number.isFinite(bpm) && bpm > 0 ? bpm : clockStore.bpm;
+}
+
+export function instanceNowBeats(shapeId: string): number {
+  return instanceBeatsAtSec(shapeId, nowSec());
+}
+
 /** Playhead position in roll beats for the instance's current loop, or null. */
 export function playheadBeats(runtime: InstanceRuntime): number | null {
   if (runtime.loopStartBeats === null || runtime.mode === "idle") return null;
-  const elapsed = (nowBeats() - runtime.loopStartBeats) * runtime.loopSpeed;
+  const elapsed = (instanceNowBeats(runtime.shapeId) - runtime.loopStartBeats) * runtime.loopSpeed;
   return runtime.loopOffset + Math.max(0, elapsed);
 }
 
@@ -257,8 +285,9 @@ function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outpu
   const recordPlayed = (note: PianoRollNote, speed: number, color?: string) => {
     lastPlayed = note;
     const runtime = getRuntime(shapeId);
-    const start = runtime.loopStartBeats ?? nowBeats();
-    const position = (nowBeats() - start) * speed;
+    const now = instanceNowBeats(shapeId);
+    const start = runtime.loopStartBeats ?? now;
+    const position = (now - start) * speed;
     const ghost: GhostNote = {
       id: `played_${playedCounter++}`,
       linkTo: note.id,
@@ -321,7 +350,7 @@ function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outpu
       const loopLength = loop.loopLength;
       const start = loop.start ?? 0;
       patchRuntime(shapeId, (prev) => ({
-        loopStartBeats: nowBeats(),
+        loopStartBeats: instanceNowBeats(shapeId),
         loopOffset: start,
         loopSpeed: speed,
         loopLength,
@@ -390,22 +419,33 @@ async function launch(shapeId: string, mode: Exclude<InstanceMode, "idle">): Pro
   patchRuntime(shapeId, { mode, error: null, played: [], loopCount: 0 });
   const root = getRootContext();
   let api: ReturnType<typeof makeApi> | null = null;
+  let stopTempo: (() => void) | null = null;
   const handle = root.branch(async (ctx) => {
+    // The run's own tempo (a clone of the root's map), following the
+    // instance's tempo prop live
+    instanceTempos.set(shapeId, ctx.tempo);
+    stopTempo = react(`tempo:${shapeId}`, () => {
+      const bpm = readInstanceProps(shapeId)?.tempo;
+      if (bpm && Number.isFinite(bpm) && bpm > 0 && Math.abs(ctx.bpm - bpm) > 1e-9) ctx.setBpm(bpm);
+    });
     api = makeApi(shapeId, ctx, def, props.midiOutputName, isSixSinesOutput(props.midiOutputName) ? output : null);
     if (mode === "run") {
       await def.run(api);
     } else {
       await playVerbatim(api);
     }
-  }, `${mode}:${shapeId}`);
+  }, `${mode}:${shapeId}`, { tempo: "cloned" });
   const finish = () => {
     api?.releaseAll();
+    stopTempo?.();
+    stopTempo = null;
     // A cancelled run's branch settles later, possibly after a new run has
     // started (Play straight to Run); the runtime is the new run's then.
     const current = activeRuns.get(shapeId);
     if (current && current.cancel !== cancel) return;
     activeRuns.delete(shapeId);
     runnerMarkers.delete(shapeId);
+    instanceTempos.delete(shapeId);
     patchRuntime(shapeId, { mode: "idle", loopStartBeats: null });
   };
   const cancel = () => {

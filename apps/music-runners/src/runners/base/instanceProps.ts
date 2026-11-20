@@ -1,5 +1,6 @@
 import type { TLBaseBoxShape } from "tldraw";
 import { DEFAULT_BEND_RANGE, DEFAULT_ROOT_TOLERANCE_CENTS } from "../../model/mpe";
+import { DEFAULT_BPM } from "../../model/types";
 import { defaultParams, type Params, type RunnerDefinition } from "../runnerTypes";
 
 /** Props every runner instance shape carries. Run state is not here. */
@@ -23,6 +24,13 @@ export interface RunnerInstanceProps {
   /** How near, in cents. */
   rootToleranceCents: number;
   params: Params;
+  /**
+   * The instance's own tempo in BPM: its run is a TimeContext branch with a
+   * cloned tempo map set to this (live), so its beats are its own. The speed
+   * param, where a runner has one, multiplies on top. New instances start at
+   * the project BPM.
+   */
+  tempo: number;
   queued: boolean;
   showSource: boolean;
   showGenerated: boolean;
@@ -55,6 +63,7 @@ export function defaultInstanceProps(def: RunnerDefinition): RunnerInstanceProps
     autoRoot: true,
     rootToleranceCents: DEFAULT_ROOT_TOLERANCE_CENTS,
     params: defaultParams(def),
+    tempo: DEFAULT_BPM,
     queued: false,
     showSource: true,
     showGenerated: true,

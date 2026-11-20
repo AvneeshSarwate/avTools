@@ -92,7 +92,8 @@ unless an instance has **MPE Out** on (see below).
 - **Instance**: a tldraw shape (`runner-<type>`) with a name, its clip, a
   MIDI output, the runner's params (each runner declares its own; the ones here
   have transpose, applied now, and speed, at the next loop), two transports
-  (**Run** the algorithm, **Play** the clip verbatim), a queue toggle, and
+  (**Run** the algorithm, **Play** the clip verbatim; pressing the lit one
+  again stops), its own **tempo**, a queue toggle, and
   three collapsible rolls: **source** (editable, edits the clip), **generated**
   (the loop now sounding plus a live overlay of what actually played) and
   **preview** (output of **Regenerate**, a dry run). Layout below.
@@ -120,9 +121,15 @@ unless an instance has **MPE Out** on (see below).
   anywhere, and release. The title bar's background is also the grip for
   moving an instance with the select tool; everything below it belongs to
   the instance, so clicks there never reach the canvas.
-- **Clock**: one shared root `TimeContext` (`src/store/clock.ts`) with the
-  global bpm; each running instance is a branch of it. **Play queued** starts
-  every queued instance at once.
+- **Clock**: one shared root `TimeContext` (`src/store/clock.ts`); each
+  running instance is a branch of it with its own cloned tempo map
+  (`branch(fn, name, { tempo: "cloned" })`), set to the instance's **tempo**
+  (the box in the source section's header, in BPM) and following it live
+  through `ctx.setBpm`. Runner code waits in beats of its own tempo; a `speed`
+  param multiplies on top (default 1). The top bar's bpm is the project tempo
+  new instances start at. The playhead and overdubs use the instance's beats;
+  free takes are measured at its tempo setting. **Play queued** starts every
+  queued instance at once.
 
 ## Connections
 
@@ -173,7 +180,7 @@ the control strip and the Source roll's tool row fit.
 | Title bar | grip, runner type, instance name, loop length, mode readout, **Q** (queue) | identity and the clip's loop; its background is the drag grip |
 | Control strip | **Play**, **Run**, stop, **Rec** · **out**, **in**, **Thru**, **MPE Out**, **bend** | the same items for every runner; never wraps (port choosers shrink) |
 | Params | the runner's params, all declared by the runner (no shared base params; playback honours `transpose` and `speed` when a runner defines them) | the only region whose size depends on the runner; a wrapping grid |
-| Sections | **source** (its header holds the roll's tools), **generated**, **preview** (header holds **Regenerate**) | an empty generated/preview roll collapses to a one-line hint |
+| Sections | **source** (its header holds the instance's **tempo** and the roll's tools), **generated**, **preview** (header holds **Regenerate**) | an empty generated/preview roll collapses to a one-line hint |
 | Status line | errors, recording state, last event, runner log | transient text, at the bottom like Ableton's status bar |
 
 Colour roles, defined as tokens in `src/styles.css`, are exclusive so a colour
