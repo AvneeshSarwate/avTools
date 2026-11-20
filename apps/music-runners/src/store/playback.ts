@@ -47,6 +47,12 @@ export interface InstanceRuntime {
   loopCount: number;
   /** The loop currently sounding (Generated roll). */
   generated: LoopNotes | null;
+  /**
+   * Display only (never played): the tails of earlier loops' notes that ring
+   * past their loop's end into this one, drawn from this loop's start. Built
+   * from the previous buffer when a loop is published.
+   */
+  carried: PianoRollNote[];
   /** Live overlay of notes that actually sounded during the current loop. */
   played: GhostNote[];
   /** Output of the last regenerate (Preview roll). */
@@ -63,6 +69,30 @@ export interface InstanceRuntime {
 
 export const playbackStore = proxy<{ instances: Record<string, InstanceRuntime> }>({ instances: {} });
 
+/**
+ * What of the previous buffer (its notes and what it carried itself) still
+ * sounds when `next` starts: each note that ends past the previous loop's end,
+ * cut to its remaining length and placed at `next`'s start. A note longer than
+ * two loops keeps carrying. Metadata is kept (so runner colours apply) plus
+ * `carried: true`.
+ */
+export function carriedTails(previous: LoopNotes | null, previousCarried: readonly PianoRollNote[], next: LoopNotes): PianoRollNote[] {
+  if (!previous) return [];
+  const previousStart = previous.start ?? 0;
+  const previousEnd = previousStart + previous.loopLength;
+  const nextStart = next.start ?? 0;
+  const sounding = [...previous.notes.filter((note) => note.position >= previousStart && note.position < previousEnd), ...previousCarried];
+  return sounding
+    .filter((note) => note.position + note.duration > previousEnd + 1e-9)
+    .map((note) => ({
+      ...note,
+      id: `carried_${note.id.replace(/^carried_/, "")}`,
+      position: nextStart,
+      duration: note.position + note.duration - previousEnd,
+      metadata: { ...(note.metadata ?? {}), carried: true },
+    }));
+}
+
 export function getRuntime(shapeId: string): InstanceRuntime {
   return playbackStore.instances[shapeId] ?? emptyRuntime(shapeId);
 }
@@ -73,6 +103,7 @@ function emptyRuntime(shapeId: string): InstanceRuntime {
     mode: "idle",
     loopCount: 0,
     generated: null,
+    carried: [],
     played: [],
     preview: null,
     loopStartBeats: null,
@@ -397,7 +428,11 @@ function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition): Runn
       soundNote(note, durationBeats / speed, speed, color ?? "#e8a");
     },
     publishLoop(loop) {
-      patchRuntime(shapeId, loop ? { generated: loop } : { generated: null, loopStartBeats: null, played: [] });
+      patchRuntime(shapeId, (prev) =>
+        loop
+          ? { generated: loop, carried: carriedTails(prev.generated, prev.carried, loop) }
+          : { generated: null, carried: [], loopStartBeats: null, played: [] },
+      );
     },
     getCursor() {
       return cursorFromMeta(getEditor()?.getShape(shapeId as TLShapeId)?.meta);
@@ -441,7 +476,7 @@ async function launch(shapeId: string, mode: Exclude<InstanceMode, "idle">): Pro
     patchRuntime(shapeId, { error });
     return;
   }
-  patchRuntime(shapeId, { mode, error: null, played: [], loopCount: 0 });
+  patchRuntime(shapeId, { mode, error: null, played: [], loopCount: 0, generated: null, carried: [] });
   const root = getRootContext();
   let api: ReturnType<typeof makeApi> | null = null;
   let stopTempo: (() => void) | null = null;

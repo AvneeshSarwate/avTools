@@ -304,6 +304,13 @@ of Live 12):
   Their headers have **Follow**, zoom and **Fit** (Fit includes ghost notes,
   so trills come into view); scrolling or zooming one turns Follow off, and
   turning Follow on snaps it back to the Source view.
+- **Roll-over in Generated**: a note that rings past its loop's end (the
+  extender's held note, or a long clip note in Play) is drawn past the end in
+  its own pass, and in the next pass its remaining tail is drawn from the
+  loop's start, already sounding. When a loop is published, the playback
+  layer keeps those tails of the previous buffer as `runtime.carried`
+  (`carriedTails` in `src/store/playback.ts`); they are display only, never
+  played, and a note longer than two loops keeps carrying.
 - **Roll heights**: drag the bar along the bottom of a section (Source,
   Generated, Preview) to make its roll taller or shorter (80 to 1200 px). The
   heights are saved per instance in the shape's meta (`rollHeights`), outside
@@ -486,6 +493,7 @@ demo.html + demo/           standalone piano roll demo and its Playwright checks
 - Note resizing from the edges: `demo/resize.e2e.mjs` (same setup).
 - Double-click add, double-press-and-drag, click to narrow a selection: `demo/click-edit.e2e.mjs`.
 - Switching the output mid-run (next note, old notes released on the old port): `demo/retarget.e2e.mjs`.
+- Roll-over of held notes into the next pass in the Generated roll: `demo/extender-carry.e2e.mjs`.
 - Auditioning moved notes and marquee selections: `demo/audition.e2e.mjs`
   (same setup).
 - Cmd-A scoping, focus, and the output rolls' view tools:

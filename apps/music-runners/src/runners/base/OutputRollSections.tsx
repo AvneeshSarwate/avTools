@@ -45,7 +45,11 @@ export function GeneratedSection({
   rollRef,
   ...appearance
 }: SectionProps & { rollRef: RollRef }) {
-  const loop = useSnapshot(playbackStore).instances[shape.id]?.generated;
+  const runtime = useSnapshot(playbackStore).instances[shape.id];
+  const loop = runtime?.generated;
+  const carried = runtime?.carried;
+  // The loop plus what the previous buffer still rings into it
+  const notes = useMemo(() => (loop ? [...(carried ?? []), ...loop.notes] : []) as PianoRollNote[], [loop, carried]);
   return (
     <OutputSection
       title="generated"
@@ -63,7 +67,7 @@ export function GeneratedSection({
           shapeId={shape.id}
           def={def}
           rollRef={rollRef}
-          notes={loop.notes as PianoRollNote[]}
+          notes={notes}
           loopLength={(loop.start ?? 0) + loop.loopLength}
           interactive={false}
           showControlPanel={false}
@@ -104,7 +108,8 @@ function GeneratedRoll({
   const playedIds = useMemo(() => new Set(played.map((ghost) => ghost.linkTo)), [played]);
   const generatedNoteColor = useCallback(
     (note: PianoRollNote) => {
-      if (active && !playedIds.has(note.id)) return UNPLAYED_COLOR;
+      // A carried tail is sounding from the loop's start (it began last loop)
+      if (active && !playedIds.has(note.id) && !note.metadata?.carried) return UNPLAYED_COLOR;
       return def.generatedNoteColor?.(note);
     },
     [def, playedIds, active],
