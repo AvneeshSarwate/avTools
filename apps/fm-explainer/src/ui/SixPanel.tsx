@@ -4,9 +4,7 @@ import { sixSines, sixSinesAssetBase } from "../audio/engine";
 
 // The editor is laid out for this size; the panel scales it to the page width.
 const EDITOR_WIDTH = 1180;
-const EDITOR_HEIGHT = 1096;
-const STORAGE_KEY = "fm-explainer:six-panel-open";
-
+const EDITOR_HEIGHT = 1040;
 // One editor element for the whole page. It is large to build, so it is
 // created on first use and moved between benches instead of being rebuilt.
 let editor: Promise<SixSinesEditorElement> | undefined;
@@ -28,17 +26,11 @@ function loadEditor() {
   return editor;
 }
 
-function readOpen() {
-  try {
-    return localStorage.getItem(STORAGE_KEY) !== "0";
-  } catch {
-    return true;
-  }
-}
-
-/** The Six Sines editor, showing whatever the engine currently holds. */
+/**
+ * The Six Sines editor, showing whatever the engine currently holds. It takes
+ * the place of the diagram and sliders while Six Sines is selected.
+ */
 export function SixPanel() {
-  const [open, setOpen] = useState(readOpen);
   const [zoom, setZoom] = useState(1);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const frame = useRef<HTMLDivElement>(null);
@@ -50,10 +42,9 @@ export function SixPanel() {
     const observer = new ResizeObserver(([entry]) => setZoom(Math.min(1, entry.contentRect.width / EDITOR_WIDTH)));
     observer.observe(element);
     return () => observer.disconnect();
-  }, [open]);
+  }, []);
 
   useEffect(() => {
-    if (!open) return;
     let element: SixSinesEditorElement | undefined;
     let unsubscribe = () => {};
     let disposed = false;
@@ -79,37 +70,19 @@ export function SixPanel() {
       unsubscribe();
       element?.remove();
     };
-  }, [open]);
-
-  const toggle = () => {
-    const next = !open;
-    setOpen(next);
-    try {
-      localStorage.setItem(STORAGE_KEY, next ? "1" : "0");
-    } catch {
-      // Not being able to remember the choice is fine.
-    }
-  };
+  }, []);
 
   return (
     <div className="six-panel">
-      <div className="six-panel-head">
-        <span className="bench-title">Six Sines editor: the patch you are hearing</span>
-        <button onClick={toggle}>{open ? "Hide" : "Show"}</button>
+      <div className="six-panel-frame" ref={frame} style={{ height: EDITOR_HEIGHT * zoom }}>
+        {status === "loading" && <span className="loading">loading editor…</span>}
+        {status === "error" && <span className="loading">The editor could not be loaded.</span>}
+        <div ref={host} style={{ width: EDITOR_WIDTH, height: EDITOR_HEIGHT, zoom }} />
       </div>
-      {open && (
-        <>
-          <p className="six-panel-note">
-            This follows the sliders above. You can also change anything here directly: it is heard straight away, is
-            not reflected in the diagram, and is undone when you leave this step.
-          </p>
-          <div className="six-panel-frame" ref={frame} style={{ height: EDITOR_HEIGHT * zoom }}>
-            {status === "loading" && <span className="loading">loading editor…</span>}
-            {status === "error" && <span className="loading">The editor could not be loaded.</span>}
-            <div ref={host} style={{ width: EDITOR_WIDTH, height: EDITOR_HEIGHT, zoom }} />
-          </div>
-        </>
-      )}
+      <p className="six-panel-note">
+        The editor shows the patch you are hearing. Anything you change in it is heard straight away and is undone when
+        you leave this step.
+      </p>
     </div>
   );
 }

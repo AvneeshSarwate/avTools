@@ -154,6 +154,9 @@ export function Bench({ step, id }: { step: Step; id: string }) {
   const [noteKey, setNoteKey] = useState(step.clip.notes[0]?.[0] ?? 60);
   const [answer, setAnswer] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  // Preset pages always play Six Sines; their switch only chooses what is shown.
+  const [presetEditor, setPresetEditor] = useState(false);
+  const editorView = source.kind === "preset" ? presetEditor : engine === "six";
   const instrument = useRef<Instrument | undefined>(undefined);
 
   const stages = useMemo(() => (preset ? presetStages(preset) : []), [preset]);
@@ -282,16 +285,45 @@ export function Bench({ step, id }: { step: Step; id: string }) {
                 ? `Six Sines factory preset${preset ? `: ${preset.name}${preset.author ? `, by ${preset.author}` : ""}` : ""}`
                 : engine === "raw"
                   ? "Operator worklet (phase modulation)"
-                  : "Six Sines, same patch"}
+                  : "Six Sines, playing the same patch"}
           </span>
+          {loading && <span className="loading">loading engine…</span>}
           {source.kind === "operators" && canSix && (
             <span className="engine-switch">
               <button className={engine === "raw" ? "on" : ""} onClick={() => setEngine("raw")}>Raw</button>
               <button className={engine === "six" ? "on" : ""} onClick={() => setEngine("six")}>Six Sines</button>
             </span>
           )}
-          {loading && <span className="loading">loading engine…</span>}
+          {source.kind === "preset" && (
+            <span className="engine-switch">
+              <button className={presetEditor ? "" : "on"} onClick={() => setPresetEditor(false)}>Breakdown</button>
+              <button className={presetEditor ? "on" : ""} onClick={() => setPresetEditor(true)}>Six Sines editor</button>
+            </span>
+          )}
         </div>
+
+        {editorView ? (
+          <>
+            <SixPanel />
+            {step.sixControls && (
+              <div className="controls">
+                {step.sixControls.map((control) => (
+                  <SixSlider
+                    key={control.id}
+                    control={control}
+                    value={sixValues.get(control.id) ?? control.initial}
+                    onChange={(v) => changeSix(control.id, v)}
+                  />
+                ))}
+              </div>
+            )}
+            <figure className="fig fig-wide fig-compact">
+              <Spectrum noteHz={noteHz} maxRatio={step.maxRatio ?? 16} predicted={predicted} hidden={hidden} />
+              <figcaption>Spectrum. Horizontal axis in multiples of the played note</figcaption>
+            </figure>
+          </>
+        ) : (
+          <>
 
         <div className="bench-top">
           <figure className="fig fig-graph">
@@ -318,7 +350,7 @@ export function Bench({ step, id }: { step: Step; id: string }) {
           </figcaption>
         </figure>
 
-        {(step.controls || (step.sixControls && engine === "six") || stages.length > 0) && (
+        {(step.controls || stages.length > 0) && (
           <div className="controls">
             {step.controls?.map((control) => (
               <Slider
@@ -328,15 +360,6 @@ export function Bench({ step, id }: { step: Step; id: string }) {
                 onChange={(v) => change(control.path, v)}
               />
             ))}
-            {engine === "six" &&
-              step.sixControls?.map((control) => (
-                <SixSlider
-                  key={control.id}
-                  control={control}
-                  value={sixValues.get(control.id) ?? control.initial}
-                  onChange={(v) => changeSix(control.id, v)}
-                />
-              ))}
             {stages.length > 0 && (
               <div className="stages">
                 <div className="control-label">Switch stages off to hear what each contributes (applies from the next note)</div>
@@ -351,14 +374,14 @@ export function Bench({ step, id }: { step: Step; id: string }) {
             )}
           </div>
         )}
-        {step.sixControls && engine === "raw" && canSix && (
+        {step.sixControls && canSix && (
           <p className="bench-note">Switch to Six Sines for this step’s extra controls.</p>
+        )}
+          </>
         )}
 
         <Roll clip={step.clip} instrument={() => instrument.current} onNote={setNoteKey} />
       </div>
-
-      {engine === "six" && <SixPanel />}
 
       {step.code && (
         <details className="code" open>
