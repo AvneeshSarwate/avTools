@@ -4,41 +4,18 @@
 import type { Clip } from "../../model/types";
 import type { GhostNote, PianoRollNote } from "../../pianoRoll/types";
 import { type LoopNotes, notesInLoop, type Params, type RunnerApi, type RunnerDefinition, scaleParam, tagValue } from "../runnerTypes";
+import { fireTrill, TRILL_COLOR, TRILL_EVENT, TRILL_TAG, trillTagSpec } from "../trillTrigger";
 import { parseVariantSteps, resolveVariantStep, type VariantStep } from "./steps";
 
+export { TRILL_COLOR, TRILL_EVENT, TRILL_TAG };
+
 export const VARIANT_TAG = "variant";
-export const TRILL_TAG = "trill";
-/**
- * The event sent when a trill-tagged note fires: `{ pitch, velocity, count? }`.
- * `count` is the number of trill notes requested (absent: the receiver's own
- * default).
- */
-export const TRILL_EVENT = "trill";
 export const VARIANT_COLOR = "#f0a34a";
-export const TRILL_COLOR = "#6cd4ff";
 
 interface VariantTag {
   /** Moves from the note in the instance's scale param (steps.ts): "+1 -5 +2+". */
   steps: VariantStep[];
   probability: number;
-}
-
-interface TrillTag {
-  /** Chance (0..1) that the trigger fires each time the note plays. */
-  probability: number;
-  /** Trill note counts to choose from uniformly; empty: the receiver's default. */
-  notes: number[];
-}
-
-/** The trill tag's fields. */
-function readTrill(note: PianoRollNote): TrillTag | null {
-  const value = tagValue(note, TRILL_TAG);
-  if (!value || value === true) return null;
-  const probability = typeof value.probability === "number" ? value.probability : 1;
-  const notes = Array.isArray(value.notes)
-    ? value.notes.filter((n): n is number => typeof n === "number" && Number.isFinite(n) && n >= 1).map((n) => Math.round(n))
-    : [];
-  return { probability, notes };
 }
 
 function readVariant(note: PianoRollNote): VariantTag | null {
@@ -97,12 +74,7 @@ async function runVariants(api: RunnerApi): Promise<void> {
     const loop = generateVariantsLoop(clip, api.random, api.getParams());
     api.publishLoop(loop);
     await api.playLoop(loop, {
-      onNoteOn: (note) => {
-        const trill = readTrill(note);
-        if (!trill || api.random() >= trill.probability) return;
-        const count = trill.notes.length > 0 ? trill.notes[Math.floor(api.random() * trill.notes.length)] : undefined;
-        api.emit({ type: TRILL_EVENT, pitch: note.pitch, velocity: note.velocity, ...(count !== undefined ? { count } : {}) });
-      },
+      onNoteOn: (note) => fireTrill(api, note, note.pitch, note.velocity),
     });
   }
 }
@@ -123,17 +95,7 @@ export const variantsRunner: RunnerDefinition = {
         { key: "probability", label: "probability", kind: "number", default: 0.5, min: 0, max: 1, step: 0.05 },
       ],
     },
-    {
-      key: TRILL_TAG,
-      label: "trill trigger",
-      hotkey: "t",
-      color: TRILL_COLOR,
-      badge: "T",
-      fields: [
-        { key: "probability", label: "probability", kind: "number", default: 1, min: 0, max: 1, step: 0.05 },
-        { key: "notes", label: "trill notes", kind: "numberList", default: [], placeholder: "8 or 3 4 5" },
-      ],
-    },
+    trillTagSpec,
   ],
   params: [
     { kind: "scale", key: "scale", label: "scale", default: C_MAJOR, hint: "the scale variant steps move in (+1 = one degree of this scale)" },

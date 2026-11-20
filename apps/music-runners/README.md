@@ -440,7 +440,11 @@ is 0..1 across the note, so a resize stretches them).
   came from is filled in the highlight colour. With no notes under the
   cursor the arp goes quiet after the current cycle ("waiting" in the
   sidebar) and starts a new cycle as soon as there is a chord under it
-  again. **Play** plays the clip's chords as written. Code:
+  again. Chord notes can carry the **trill trigger** tag, as in Variants: each
+  time an arp note drawn from a tagged chord note plays, a trill event goes
+  to the arp's arrow targets with that arp note's pitch (the tag and its
+  firing live in `src/runners/trillTrigger.ts`, shared with Variants).
+  **Play** plays the clip's chords as written. Code:
   `src/runners/arp/` (`pattern.ts` for parsing and chord lookup).
   `@strudel/mini` and `@strudel/core` are AGPL-3.0-or-later.
 
@@ -494,6 +498,7 @@ demo.html + demo/           standalone piano roll demo and its Playwright checks
 - Double-click add, double-press-and-drag, click to narrow a selection: `demo/click-edit.e2e.mjs`.
 - Switching the output mid-run (next note, old notes released on the old port): `demo/retarget.e2e.mjs`.
 - Roll-over of held notes into the next pass in the Generated roll: `demo/extender-carry.e2e.mjs`.
+- Arp notes firing trills from trill-tagged chord notes: `demo/arp-trill.e2e.mjs`.
 - Auditioning moved notes and marquee selections: `demo/audition.e2e.mjs`
   (same setup).
 - Cmd-A scoping, focus, and the output rolls' view tools:

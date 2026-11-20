@@ -9,6 +9,7 @@
 import type { Clip } from "../../model/types";
 import type { PianoRollNote } from "../../pianoRoll/types";
 import { type LoopNotes, numberParam, type Params, type RunnerApi, type RunnerDefinition, textParam } from "../runnerTypes";
+import { fireTrill, TRILL_EVENT, trillTagSpec } from "../trillTrigger";
 import { arpCycle, arpPatternError, chordAt, chordNote, parseArpPattern } from "./pattern";
 
 const DEFAULT_PATTERN = "0 1 2 <3 -1>";
@@ -103,7 +104,14 @@ async function runArp(api: RunnerApi): Promise<void> {
     const span = { from: Math.min(...chord.map((note) => note.position)), to: Math.max(...chord.map((note) => note.position + note.duration)) };
     api.setMarkers([{ id: "playing", position: cursor, color: PLAYING_COLOR, span }]);
     api.publishLoop(loop);
-    await api.playLoop(loop, { onNoteOn: (note) => sounding.start(note) });
+    await api.playLoop(loop, {
+      onNoteOn: (note) => {
+        sounding.start(note);
+        // A trill-tagged chord note fires for each arp note drawn from it
+        const source = chord.find((chordNote) => chordNote.id === note.metadata?.arpSource);
+        if (source) fireTrill(api, source, note.pitch, note.velocity);
+      },
+    });
   }
 }
 
@@ -111,8 +119,9 @@ export const arpRunner: RunnerDefinition = {
   type: "arp",
   label: "Arp",
   description:
-    "Arpeggiates the chord under the source roll's cursor (click the empty grid to move it) with a Tidal/Strudel mini-notation pattern of chord indexes: 0 is the lowest note, indexes wrap both ways. The chord is picked up at the start of each cycle; with no notes under the cursor the arp waits and restarts as soon as there is a chord.",
-  tags: [],
+    "Arpeggiates the chord under the source roll's cursor (click the empty grid to move it) with a Tidal/Strudel mini-notation pattern of chord indexes: 0 is the lowest note, indexes wrap both ways. The chord is picked up at the start of each cycle; with no notes under the cursor the arp waits and restarts as soon as there is a chord. A chord note tagged 'trill' emits a trill event (with the tag's probability) each time an arp note drawn from it plays, with that note's pitch.",
+  tags: [trillTagSpec],
+  emits: [TRILL_EVENT],
   usesCursor: true,
   sourcePlayhead: false,
   // One roll: what plays is shown on the source (the chord note) and in the
