@@ -50,7 +50,10 @@ const GRID_LINE_ROW = '#1c1c1c'
 const GRID_LINE_OCTAVE = '#3a3a3a'
 const GHOST_DEFAULT_COLOR = '#8a8a8a'
 const GHOST_DEFAULT_OPACITY = 0.45
-const MIN_NOTE_DURATION = 0.25
+/** Unsnapped new notes start this long (a 1/16). */
+const DEFAULT_FREE_NOTE_DURATION = 0.25
+/** The shortest a resize makes a note (a 1/256), so notes can be made shorter than the grid. */
+const MIN_NOTE_DURATION = 1 / 64
 /** Resize zone at each end of a note, in px (a third of the note when shorter). */
 const RESIZE_EDGE_ZONE = 6
 const MARQUEE_STROKE = '#64b5ff'
@@ -1459,21 +1462,22 @@ function updateNoteResize(state: PianoRollState, stage: Konva.Stage) {
     state.interaction.quantResizeActivated = true
   }
 
-  const positionDelta = xMove / state.grid.quarterNoteWidth
+  const snappedDelta = xMove / state.grid.quarterNoteWidth
+  const freeDelta = dx / state.grid.quarterNoteWidth
+  const isEnd = state.interaction.resizeIsEnd
 
-  // Update all selected notes
+  // Update all selected notes. The grid step applies while it leaves the
+  // note some length; below one step the edge follows the pointer, so a note
+  // can be made shorter than the grid (down to MIN_NOTE_DURATION).
   state.interaction.resizeInitialStates.forEach((initial, id) => {
     const note = state.notes.get(id)
     if (!note) return
-
-    if (state.interaction.resizeIsEnd) {
-      // Resize end: change duration
-      note.duration = Math.max(MIN_NOTE_DURATION, initial.duration + positionDelta)
-    } else {
-      // Resize start: change position AND duration
-      note.position = initial.position + positionDelta
-      note.duration = Math.max(MIN_NOTE_DURATION, initial.duration - positionDelta)
-    }
+    const lengthFor = (delta: number) => (isEnd ? initial.duration + delta : initial.duration - delta)
+    const snapped = lengthFor(snappedDelta)
+    const duration = Math.max(MIN_NOTE_DURATION, snapped >= MIN_NOTE_DURATION ? snapped : lengthFor(freeDelta))
+    note.duration = duration
+    // The start edge moves the start; the end stays put
+    if (!isEnd) note.position = initial.position + initial.duration - duration
   })
 
   updateOverlapPreview(state)
@@ -1504,7 +1508,7 @@ function startDraw(state: PianoRollState, pos: { x: number; y: number }) {
     id: uid(),
     pitch: Math.max(0, Math.min(127, Math.round(pitch))),
     position: start,
-    duration: state.grid.snapToGrid ? getGridUnitBeats(state) : MIN_NOTE_DURATION,
+    duration: state.grid.snapToGrid ? getGridUnitBeats(state) : DEFAULT_FREE_NOTE_DURATION,
     velocity: DEFAULT_VELOCITY
   }
 

@@ -1,6 +1,8 @@
 // Note resizing without handle dots: near a note's left/right edge the cursor
-// becomes a resize cursor (Notes mode only); pressing there resizes (an
-// unselected note is selected first; a selection resizes together).
+// becomes a resize cursor; pressing there resizes (an unselected note is
+// selected first; a selection resizes together). Below one grid step the edge
+// follows the pointer, so notes can be shorter than the grid. MPE mode
+// resizes from edges too.
 // Project "zz_resize" is never saved. With the dev server up:
 //   NODE_PATH=$(npm root -g) node demo/resize.e2e.mjs [screenshot dir]
 // Set PW_CHROMIUM_PATH when that Playwright has no browser of its own.
@@ -25,7 +27,10 @@ const clipId = await page.evaluate(() => {
   const id = mr.shapes.createInstance(ed, "variants", { x: 0, y: 0 });
   const s = ed.getShape(id);
   ed.updateShape({ id, type: s.type, props: { showGenerated: false } });
-  mr.clips.setClipNotes(s.id, [60, 64, 67].map((p, i) => ({ id: "n" + i, pitch: p, position: i * 2, duration: 1, velocity: 100 })));
+  mr.clips.setClipNotes(s.id, [
+    ...[60, 64, 67].map((p, i) => ({ id: "n" + i, pitch: p, position: i * 2, duration: 1, velocity: 100 })),
+    { id: "s", pitch: 72, position: 7, duration: 0.25, velocity: 100 },
+  ]);
   ed.selectNone(); ed.setCamera({ x: 20, y: 40, z: 1 }); window.__id = id;
   return s.id;
 });
@@ -73,13 +78,47 @@ await page.mouse.up();
 await sleep(100);
 assert.equal((await note("n0")).duration, 1.5);
 assert.equal((await note("n2")).duration, 1.5, "the other selected note too");
-// MPE mode: no resize cursor
+// shorter than the grid (1/16 = 0.25): a 1/16 note's edges follow the pointer
+const step = 0.25 * view.quarterNoteWidth;
+async function edgeDrag(beat, inset, dx) {
+  const q = at(beat, 72);
+  await page.mouse.move(q.x + inset, q.y);
+  await page.mouse.down();
+  await page.mouse.move(q.x + inset + dx, q.y, { steps: 6 });
+  await page.mouse.up();
+  await sleep(100);
+}
+await edgeDrag(7.25, -2, -step * 0.6);
+let sn = await note("s");
+console.log("right edge in", sn.position, sn.duration);
+assert.equal(sn.position, 7, "the start stays");
+assert.ok(Math.abs(sn.duration - 0.1) < 0.01, "right edge shrinks below the grid");
+await shape.locator(".pr-undo").click();
+await sleep(100);
+await edgeDrag(7, 2, step * 0.6);
+sn = await note("s");
+console.log("left edge in", sn.position, sn.duration);
+assert.ok(Math.abs(sn.position + sn.duration - 7.25) < 1e-9, "the end stays");
+assert.ok(Math.abs(sn.duration - 0.1) < 0.01, "left edge shrinks below the grid");
+await shape.locator(".pr-undo").click();
+await sleep(100);
+// dragging an edge past the other one stops at the minimum length, without
+// moving the note (right edge leftwards: it stays on the stage, which is the
+// only place Konva tracks the pointer)
+await edgeDrag(7.25, -2, -step * 1.2);
+sn = await note("s");
+console.log("right edge past the start", sn.position, sn.duration);
+assert.equal(sn.duration, 1 / 64);
+assert.equal(sn.position, 7, "the start still stays");
+await shape.locator(".pr-undo").click();
+await sleep(100);
+// MPE mode resizes from edges too
 await shape.locator(".pr-mode-mpe").click();
 await sleep(150);
-p = at(5, 67);
+p = at(4, 67);
 await page.mouse.move(p.x + 2, p.y);
 await sleep(50);
-assert.notEqual(await cursor(), "ew-resize", "MPE mode does not resize");
+assert.equal(await cursor(), "ew-resize", "MPE mode: edge cursor");
 console.log("errors", errors);
 assert.equal(errors.length, 0);
 console.log("RESIZE OK");
