@@ -85,7 +85,7 @@ export function App() {
             {step.body}
           </section>
 
-          <Bench key={`${lesson.id}/${where.step}`} step={step} />
+          <Bench key={`${lesson.id}/${where.step}`} id={`${lesson.id}/${where.step}`} step={step} />
 
           {step.tryThis && (
             <section className="prose try">

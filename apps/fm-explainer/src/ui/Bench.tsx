@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  fetchPresetText, keyToHz, NativeFm, Operators, SixSines, type Instrument, type NativeFmParams,
+  fetchPresetText, keyToHz, NativeFm, operators, sixSines, type Instrument, type NativeFmParams,
 } from "../audio/engine";
 import { clonePatch, getPath, setPath, type Patch } from "../audio/patch";
 import {
@@ -11,6 +11,7 @@ import { Graph, type GraphEdge, type GraphOp } from "../viz/Graph";
 import { Scope } from "../viz/Scope";
 import { Spectrum } from "../viz/Spectrum";
 import { Roll } from "./Roll";
+import { SixPanel } from "./SixPanel";
 
 const fmt = (v: number, digits = 2) =>
   Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(digits);
@@ -136,7 +137,7 @@ function presetStages(preset: DecodedPreset) {
   return stages;
 }
 
-export function Bench({ step }: { step: Step }) {
+export function Bench({ step, id }: { step: Step; id: string }) {
   const source = step.source;
   const canSix = source.kind === "operators" && translatable(source.patch);
   const [engine, setEngine] = useState<"raw" | "six">(
@@ -155,64 +156,78 @@ export function Bench({ step }: { step: Step }) {
   const [loading, setLoading] = useState(false);
   const instrument = useRef<Instrument | undefined>(undefined);
 
-  // Build the instrument for this engine. The parent keys the Bench by step,
-  // so a new step always starts from a fresh mount.
+  const stages = useMemo(() => (preset ? presetStages(preset) : []), [preset]);
+
+  /** Everything this step asks Six Sines to hold, from the bench's current state. */
+  const showSix = (patch: Patch | NativeFmParams | null, extra: Map<number, number>, muted: Set<string>) => {
+    if (source.kind === "operators") {
+      return sixSines.show({ key: id, params: new Map([...patchToSixSines(patch as Patch), ...extra]) });
+    }
+    if (source.kind === "preset") {
+      return sixSines.show({
+        key: id,
+        presetPath: source.path,
+        params: new Map(stages.filter((s) => muted.has(s.key)).map((s) => [s.id, 0])),
+      });
+    }
+  };
+
+  // Point the bench at the engine for this step. The worklet engines are
+  // page-wide and stay loaded; only what differs from their current state is
+  // sent, so switching back and forth is immediate.
   useEffect(() => {
     let disposed = false;
     if (source.kind === "native") {
       instrument.current = new NativeFm(state as NativeFmParams);
     } else if (source.kind === "operators" && engine === "raw") {
-      instrument.current = new Operators(state as Patch);
+      operators.update(state as Patch);
+      instrument.current = operators;
     } else {
-      const six = new SixSines();
-      instrument.current = six;
-      setLoading(true);
-      six.onReady = () => !disposed && setLoading(false);
-      if (source.kind === "operators") {
-        six.loadPatch(state as Patch);
-        six.setParams(sixValues);
-      } else {
-        void fetchPresetText(source.path).then((text) => {
-          if (disposed) return;
-          setPreset(decodePreset(text));
-          six.loadPreset(text);
-        });
-      }
+      instrument.current = sixSines;
+      setLoading(!sixSines.ready);
+      void showSix(state, sixValues, off)?.then(() => !disposed && setLoading(false));
     }
     const built = instrument.current;
     return () => {
       disposed = true;
       built?.panic();
-      if (built instanceof Operators) built.dispose();
       instrument.current = undefined;
     };
-    // state is deliberately read once: later changes go through update calls.
+    // state is deliberately read once: later changes go through the calls below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine]);
+
+  // The preset file drives the diagram and the stage switches on preset pages.
+  useEffect(() => {
+    if (source.kind !== "preset") return;
+    let disposed = false;
+    void fetchPresetText(source.path).then((text) => !disposed && setPreset(decodePreset(text)));
+    return () => {
+      disposed = true;
+    };
+  }, [source]);
 
   const change = (path: string, value: number) => {
     const next = setPath(state, path, value) as Patch | NativeFmParams;
     setState(next);
     const target = instrument.current;
     if (target instanceof NativeFm) target.update(next as NativeFmParams);
-    else if (target instanceof Operators) target.update(next as Patch);
-    else if (target instanceof SixSines) target.setParams(new Map([...patchToSixSines(next as Patch), ...sixValues]));
+    else if (target === operators) operators.update(next as Patch);
+    else if (target === sixSines) void showSix(next, sixValues, off);
   };
 
-  const changeSix = (id: number, value: number) => {
-    const next = new Map(sixValues).set(id, value);
+  const changeSix = (controlId: number, value: number) => {
+    const next = new Map(sixValues).set(controlId, value);
     setSixValues(next);
-    if (instrument.current instanceof SixSines) instrument.current.setParams(next);
+    if (instrument.current === sixSines) void showSix(state, next, off);
   };
 
-  const stages = useMemo(() => (preset ? presetStages(preset) : []), [preset]);
   const toggleStage = (key: string) => {
     const next = new Set(off);
     if (next.has(key)) next.delete(key);
     else next.add(key);
     setOff(next);
-    if (instrument.current instanceof SixSines)
-      instrument.current.setParams(new Map(stages.map((s) => [s.id, next.has(s.key) ? 0 : 1])));
+    if (instrument.current === sixSines) void showSix(state, sixValues, next);
   };
 
   const graph = useMemo(() => {
@@ -342,6 +357,8 @@ export function Bench({ step }: { step: Step }) {
 
         <Roll clip={step.clip} instrument={() => instrument.current} onNote={setNoteKey} />
       </div>
+
+      {engine === "six" && <SixPanel />}
 
       {step.code && (
         <details className="code" open>
