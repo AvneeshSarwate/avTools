@@ -350,11 +350,18 @@ export const PianoRoll = memo(forwardRef<PianoRollHandle, PianoRollProps>(functi
 
     const onWheel = (event: WheelEvent) => {
       if (!navigableRef.current || !state.stage) return
+      // A trackpad pinch arrives as a wheel event with ctrlKey set: the roll
+      // ignores it and lets it through, so it zooms the canvas as anywhere
+      // else. Cmd+wheel still zooms time.
+      if (event.ctrlKey) return
       event.preventDefault()
+      // The roll scrolls and zooms itself; the canvas (tldraw listens on an
+      // ancestor) must not also pan or zoom
+      event.stopPropagation()
       const rect = state.stage.container().getBoundingClientRect()
       const anchorX = event.clientX - rect.left
       const anchorY = event.clientY - rect.top
-      if (event.ctrlKey || event.metaKey) {
+      if (event.metaKey) {
         const factor = Math.exp(-event.deltaY * WHEEL_ZOOM_SENSITIVITY)
         zoomHorizontalBy(state, factor, anchorX, sizeRef.current.width, sizeRef.current.height, notifyViewportChange)
         return
