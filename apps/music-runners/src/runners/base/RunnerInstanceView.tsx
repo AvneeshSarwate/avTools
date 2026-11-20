@@ -575,37 +575,6 @@ export function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: Ru
             </div>
           </div>
 
-          <div className="runner-shape__params">
-            {def.params.map((spec) =>
-              spec.kind === "scale" ? (
-                // A scale param: root chooser and degree list (the roll's tool row has the same pair)
-                <div key={spec.key} className="runner-shape__param runner-shape__param--scale" title={spec.hint}>
-                  <span className="runner-shape__param-label">{spec.label}</span>
-                  <ScaleControls scale={scaleParam(params, spec.key) ?? spec.default} onChange={(scale) => setParam(spec.key, scale)} />
-                </div>
-              ) : spec.kind === "text" ? (
-                <div key={spec.key} className="runner-shape__param runner-shape__param--text" title={spec.hint}>
-                  <span className="runner-shape__param-label">{spec.label}</span>
-                  <TextParam value={textParam(params, spec.key, spec.default)} validate={spec.validate} onCommit={(value) => setParam(spec.key, value)} />
-                </div>
-              ) : (
-                <label key={spec.key} className="runner-shape__param" title={spec.hint}>
-                  <span className="runner-shape__param-label">{spec.label}</span>
-                  <NumberBox
-                    bar
-                    value={numberParam(params, spec.key, spec.default)}
-                    min={spec.min}
-                    max={spec.max}
-                    step={spec.step}
-                    format={formatParam}
-                    title={spec.hint ?? spec.label}
-                    onChange={(value) => setParam(spec.key, value)}
-                  />
-                </label>
-              ),
-            )}
-          </div>
-
           <RollSection
             title="source"
             open={props.showSource}
@@ -658,6 +627,42 @@ export function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: Ru
                 />
             </div>
           </RollSection>
+
+          {def.params.length > 0 ? (
+            <div className="runner-shape__params-panel">
+              <div className="runner-shape__params-title">{def.label} params</div>
+              <div className="runner-shape__params">
+                {def.params.map((spec) =>
+                  spec.kind === "scale" ? (
+                    // A scale param: root chooser and degree list (the roll's tool row has the same pair)
+                    <div key={spec.key} className="runner-shape__param runner-shape__param--scale" title={spec.hint}>
+                      <span className="runner-shape__param-label">{spec.label}</span>
+                      <ScaleControls scale={scaleParam(params, spec.key) ?? spec.default} onChange={(scale) => setParam(spec.key, scale)} />
+                    </div>
+                  ) : spec.kind === "text" ? (
+                    <div key={spec.key} className="runner-shape__param runner-shape__param--text" title={spec.hint}>
+                      <span className="runner-shape__param-label">{spec.label}</span>
+                      <TextParam value={textParam(params, spec.key, spec.default)} validate={spec.validate} onCommit={(value) => setParam(spec.key, value)} />
+                    </div>
+                  ) : (
+                    <label key={spec.key} className="runner-shape__param" title={spec.hint}>
+                      <span className="runner-shape__param-label">{spec.label}</span>
+                      <NumberBox
+                        bar
+                        value={numberParam(params, spec.key, spec.default)}
+                        min={spec.min}
+                        max={spec.max}
+                        step={spec.step}
+                        format={formatParam}
+                        title={spec.hint ?? spec.label}
+                        onChange={(value) => setParam(spec.key, value)}
+                      />
+                    </label>
+                  ),
+                )}
+              </div>
+            </div>
+          ) : null}
 
           <GeneratedSection
             {...outputRollProps}

@@ -125,14 +125,26 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 .runner-shape__strip .ui-group--io { min-width: min-content; }
 .runner-shape__strip .ui-group--io .ui-chooser { flex: 1 1 0; max-width: 304px; min-width: 101.5px; }
 
-/* Params: the only region whose size depends on the runner. Wraps on a grid. */
+/* Params: the runner's own controls (the only region whose size depends on the
+   runner), below the source roll so they never read as the roll's common
+   tools. Titled with the runner type; wraps on a grid. */
+.runner-shape__params-panel {
+  background: var(--c-surface-1);
+  border-top: 1px solid var(--c-line);
+  border-bottom: 1px solid var(--c-line);
+}
+.runner-shape__params-title {
+  padding: 8px 13.5px 0;
+  color: var(--c-text-dim);
+  font-size: 0.8em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
 .runner-shape__params {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(287.5px, 1fr));
   gap: 6.5px 23.5px;
-  padding: 10.5px 13.5px;
-  background: var(--c-surface-1);
-  border-bottom: 1px solid var(--c-line);
+  padding: 8px 13.5px 10.5px;
 }
 .runner-shape__param { display: grid; grid-template-columns: 125px 1fr; align-items: center; gap: 10.5px; }
 /* Param labels are runner-defined text: sentence case, so long names fit. */

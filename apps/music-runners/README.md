@@ -179,8 +179,9 @@ the control strip and the Source roll's tool row fit.
 | --- | --- | --- |
 | Title bar | grip, runner type, instance name, loop length, mode readout, **Q** (queue) | identity and the clip's loop; its background is the drag grip |
 | Control strip | **Play**, **Run**, stop, **Rec** · **out**, **in**, **Thru**, **MPE Out**, **bend** | the same items for every runner; never wraps (port choosers shrink) |
-| Params | the runner's params, all declared by the runner (no shared base params; playback honours `transpose` and `speed` when a runner defines them) | the only region whose size depends on the runner; a wrapping grid |
-| Sections | **source** (its header holds the instance's **tempo** and the roll's tools), **generated**, **preview** (header holds **Regenerate**) | an empty generated/preview roll collapses to a one-line hint |
+| Source section | **source** roll; its header holds the instance's **tempo** and the roll's common tools | the same for every runner |
+| Params | "<runner> params": the runner's own params, all declared by the runner (no shared base params; playback honours `transpose` and `speed` when a runner defines them) | below the source roll, titled, so they never read as the roll's common tools; the only region whose size depends on the runner; a wrapping grid |
+| Output sections | **generated**, **preview** (header holds **Regenerate**) | an empty generated/preview roll collapses to a one-line hint |
 | Status line | errors, recording state, last event, runner log | transient text, at the bottom like Ableton's status bar |
 
 Colour roles, defined as tokens in `src/styles.css`, are exclusive so a colour
