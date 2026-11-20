@@ -1,12 +1,18 @@
 // Operator diagram in the DX convention: audible operators along the bottom,
-// modulators stacked above the operator they feed.
+// modulators stacked above the operator they feed. Every number carries its
+// own label, so the picture reads without the surrounding text.
 
 export interface GraphOp {
   /** Number shown in the box (1-based). */
   number: number;
-  ratio: string;
+  /** The oscillator's frequency, e.g. "1 × note" or "5.00 Hz". */
+  freq: string;
   audible: boolean;
+  /** Self-modulation amount, e.g. "0.90 rad". */
   feedback?: string;
+  /** What the operator is for in this patch ("body", "snap"); defaults to its role. */
+  name?: string;
+  /** Extra line, such as a non-sine waveform. */
   note?: string;
 }
 
@@ -14,18 +20,22 @@ export interface GraphEdge {
   from: number;
   to: number;
   label: string;
+  /** Compact form, used where arrows arc over a row of boxes and space is tight. */
+  short?: string;
   /** 0..1, drawn as line weight. */
   weight: number;
   dashed?: boolean;
   muted?: boolean;
 }
 
-const BOX_W = 62;
-const BOX_H = 38;
-const GAP_X = 26;
-const GAP_Y = 44;
+const BOX_W = 104;
+const BOX_H = 46;
+const GAP_X = 30;
+const GAP_Y = 50;
 
 export function Graph({ ops, edges }: { ops: GraphOp[]; edges: GraphEdge[] }) {
+  // Role and frequency always; waveform and self-modulation lines when present.
+  const H = ops.some((o) => o.note && o.feedback) ? 59 : BOX_H;
   // Row: 0 for audible operators, otherwise one above the highest thing it feeds.
   const row = new Map<number, number>();
   const sorted = [...ops].sort((a, b) => b.number - a.number);
@@ -57,15 +67,23 @@ export function Graph({ ops, edges }: { ops: GraphOp[]; edges: GraphEdge[] }) {
   // Edges between operators on the same row arc over the boxes between them.
   const span = (e: GraphEdge) => Math.abs(col.get(e.to)! - col.get(e.from)!);
   const sameRow = (e: GraphEdge) => row.get(e.from) === row.get(e.to);
-  const arcHeight = (e: GraphEdge) => 12 + 13 * span(e);
+  const arcHeight = (e: GraphEdge) => 10 + 24 * span(e);
   const topPad = 12 + Math.max(0, ...edges.filter(sameRow).map(arcHeight));
-  const width = nextCol * (BOX_W + GAP_X) + GAP_X + 30;
-  const height = topPad + rows * (BOX_H + GAP_Y) - GAP_Y + 30;
+  const width = nextCol * (BOX_W + GAP_X) + GAP_X + 40;
+  const height = topPad + rows * (H + GAP_Y) - GAP_Y + 34;
+  const modulates = new Set(edges.map((e) => e.from));
+  const role = (o: GraphOp) =>
+    o.name ?? (o.audible ? (modulates.has(o.number) ? "carrier & mod" : "carrier") : modulates.has(o.number) ? "modulator" : "unused");
   const x = (n: number) => GAP_X + col.get(n)! * (BOX_W + GAP_X);
-  const y = (n: number) => topPad + (rows - 1 - row.get(n)!) * (BOX_H + GAP_Y);
+  const y = (n: number) => topPad + (rows - 1 - row.get(n)!) * (H + GAP_Y);
 
   return (
-    <svg className="graph" viewBox={`0 0 ${width} ${height}`} style={{ width: Math.min(width, 640), maxWidth: "100%" }}>
+    <svg className="graph" viewBox={`0 0 ${width} ${height}`} style={{ width: Math.min(width, 700), maxWidth: "100%" }}>
+      <defs>
+        <marker id="graph-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M 0 0 L 8 4 L 0 8 z" />
+        </marker>
+      </defs>
       {edges.map((e, i) => {
         const x1 = x(e.from) + BOX_W / 2;
         const x2 = x(e.to) + BOX_W / 2;
@@ -80,10 +98,10 @@ export function Graph({ ops, edges }: { ops: GraphOp[]; edges: GraphEdge[] }) {
           const top = y(e.from) - arcHeight(e);
           d = `M ${sx} ${y(e.from)} C ${sx} ${top}, ${tx} ${top}, ${tx} ${y(e.to)}`;
           lx = (sx + tx) / 2;
-          ly = y(e.from) - arcHeight(e) * 0.75 - 2;
+          ly = y(e.from) - arcHeight(e) * 0.75 - 3;
           anchor = "middle";
         } else {
-          const y1 = y(e.from) + BOX_H;
+          const y1 = y(e.from) + H;
           const y2 = y(e.to);
           d = `M ${x1} ${y1} C ${x1} ${y1 + GAP_Y * 0.6}, ${x2} ${y2 - GAP_Y * 0.6}, ${x2} ${y2}`;
           lx = x1 + 5;
@@ -91,26 +109,43 @@ export function Graph({ ops, edges }: { ops: GraphOp[]; edges: GraphEdge[] }) {
         }
         return (
           <g key={i} className={e.muted ? "edge muted" : "edge"}>
-            <path d={d} strokeWidth={1 + 3 * Math.min(1, e.weight)} strokeDasharray={e.dashed ? "4 3" : undefined} />
-            <text x={lx} y={ly} textAnchor={anchor}>{e.label}</text>
+            <path
+              d={d}
+              strokeWidth={1 + 2.5 * Math.min(1, e.weight)}
+              strokeDasharray={e.dashed ? "4 3" : undefined}
+              markerEnd="url(#graph-arrow)"
+            />
+            <text x={lx} y={ly} textAnchor={anchor}>{sameRow(e) ? e.short ?? e.label : e.label}</text>
           </g>
         );
       })}
       {ops.map((o) => (
         <g key={o.number} className={o.audible ? "op audible" : "op"}>
-          <rect x={x(o.number)} y={y(o.number)} width={BOX_W} height={BOX_H} />
-          <text className="op-number" x={x(o.number) + 6} y={y(o.number) + 13}>{o.number}</text>
-          <text className="op-ratio" x={x(o.number) + BOX_W / 2} y={y(o.number) + 25} textAnchor="middle">{o.ratio}</text>
+          <rect x={x(o.number)} y={y(o.number)} width={BOX_W} height={H} />
+          <text className="op-role" x={x(o.number) + 6} y={y(o.number) + 12}>
+            {o.number} · {role(o)}
+          </text>
+          <text className="op-freq" x={x(o.number) + 6} y={y(o.number) + 27}>
+            <tspan className="op-key">freq </tspan>
+            {o.freq}
+          </text>
           {o.note && (
-            <text className="op-note" x={x(o.number) + BOX_W / 2} y={y(o.number) + 35} textAnchor="middle">{o.note}</text>
+            <text className="op-note" x={x(o.number) + 6} y={y(o.number) + 40}>
+              <tspan className="op-key">wave </tspan>
+              {o.note}
+            </text>
           )}
           {o.feedback && (
-            <text className="op-fb" x={x(o.number) + BOX_W / 2} y={y(o.number) + BOX_H + 24} textAnchor="middle">
-              fb {o.feedback}
+            <text className="op-fb" x={x(o.number) + 6} y={y(o.number) + (o.note ? 53 : 40)}>
+              <tspan className="op-key">self-mod </tspan>
+              {o.feedback}
             </text>
           )}
           {o.audible && (
-            <path className="out" d={`M ${x(o.number) + BOX_W / 2} ${y(o.number) + BOX_H} v 12`} />
+            <>
+              <path className="out" d={`M ${x(o.number) + BOX_W / 2} ${y(o.number) + H} v 12`} markerEnd="url(#graph-arrow)" />
+              <text className="op-out" x={x(o.number) + BOX_W / 2 + 6} y={y(o.number) + H + 12}>out</text>
+            </>
           )}
         </g>
       ))}

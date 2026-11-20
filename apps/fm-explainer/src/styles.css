@@ -155,15 +155,18 @@ h1 { font-size: 34px; font-weight: 400; line-height: 1.15; margin: 6px 0 18px; l
 .graph .op rect { fill: var(--bench); stroke: var(--bench-ink-2); stroke-width: 1; }
 .graph .op.audible rect { stroke: var(--bench-ink); stroke-width: 1.5; }
 .graph text { fill: var(--bench-ink); font-family: var(--mono); font-size: 10px; }
-.graph .op-number { fill: var(--bench-ink-2); font-size: 9px; }
-.graph .op-ratio { font-size: 11.5px; }
-.graph .op-note { fill: var(--bench-ink-2); font-size: 7.5px; }
+.graph .op-role { fill: var(--bench-ink-2); font-size: 8px; }
+.graph .op-freq { font-size: 11px; }
+.graph .op-key { fill: var(--bench-ink-2); font-size: 8px; }
+.graph .op-note { font-size: 8.5px; }
+.graph .op-out { fill: var(--bench-ink-2); font-size: 8px; }
 .graph .edge path { fill: none; stroke: var(--trace); }
 .graph .op-fb { fill: var(--trace); font-size: 8.5px; }
 .graph .edge text { fill: var(--trace); font-size: 9px; }
 .graph .edge.muted path { stroke: var(--bench-rule); }
 .graph .edge.muted text { fill: var(--bench-rule); }
 .graph .out { stroke: var(--bench-ink); stroke-width: 1.5; fill: none; }
+.graph marker path { fill: context-stroke; }
 
 .controls { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px 22px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--bench-rule); }
 .control label { display: flex; justify-content: space-between; gap: 10px; }

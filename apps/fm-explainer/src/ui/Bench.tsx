@@ -74,23 +74,25 @@ function SixSlider({ control, value, onChange }: { control: SixControl; value: n
   );
 }
 
-const ratioText = (r: number) => `×${Number(r.toFixed(3))}`;
+const ratioText = (r: number) => `${Number(r.toFixed(r < 10 ? 2 : 1))} × note`;
 
 function patchGraph(patch: Patch): { ops: GraphOp[]; edges: GraphEdge[] } {
   return {
     ops: patch.ops.map((o, i) => ({
       number: i + 1,
-      ratio: o.fixed ? `${o.hz} Hz` : ratioText(o.ratio),
+      freq: o.fixed ? `${o.hz} Hz` : ratioText(o.ratio) + (o.hz ? ` ${o.hz > 0 ? "+" : "−"} ${Math.abs(o.hz)} Hz` : ""),
       audible: o.level > 0,
       feedback: o.feedback ? `${fmt(o.feedback)} rad` : undefined,
-      note: o.label,
+      name: o.label,
     })),
     edges: patch.edges.map((e) => {
       const mode = e.mode ?? "pm";
       return {
         from: e.from + 1,
         to: e.to + 1,
-        label: mode === "rm" ? `ring ${fmt(e.index)}` : mode === "fm" ? `${fmt(e.index)} Hz` : `${fmt(e.index)} rad`,
+        label:
+          mode === "rm" ? `ring mod ${fmt(e.index)}` : mode === "fm" ? `depth ±${fmt(e.index)} Hz` : `index ${fmt(e.index)} rad`,
+        short: mode === "rm" ? `ring ${fmt(e.index)}` : fmt(e.index),
         weight: mode === "pm" ? e.index / 8 : 0.4,
         dashed: mode === "rm",
       };
@@ -102,7 +104,7 @@ function presetGraph(preset: DecodedPreset, off: Set<string>): { ops: GraphOp[];
   return {
     ops: preset.ops.map((o) => ({
       number: o.index + 1,
-      ratio: o.keytrack ? ratioText(o.ratio) : "fixed",
+      freq: o.keytrack ? ratioText(o.ratio) : "fixed pitch",
       audible: o.level > 0.005 && !off.has(`mix${o.index}`),
       feedback:
         o.feedback && !off.has(`fb${o.index}`)
@@ -113,7 +115,8 @@ function presetGraph(preset: DecodedPreset, off: Set<string>): { ops: GraphOp[];
     edges: preset.edges.map((e) => ({
       from: e.from + 1,
       to: e.to + 1,
-      label: e.mode === "PM" ? `${fmt(e.radians)} rad` : `${e.mode} ${fmt(e.depth)}`,
+      label: e.mode === "PM" ? `index ${fmt(e.radians)} rad` : e.mode === "RM" ? `ring mod ${fmt(e.depth)}` : `${e.mode} ${fmt(e.depth)}`,
+      short: e.mode === "PM" ? fmt(e.radians) : e.mode === "RM" ? `ring ${fmt(e.depth)}` : `${e.mode} ${fmt(e.depth)}`,
       weight: e.mode === "PM" ? e.radians / 8 : 0.4,
       dashed: e.mode !== "PM",
       muted: off.has(`edge${e.from}-${e.to}`),
@@ -218,12 +221,12 @@ export function Bench({ step }: { step: Step }) {
     const p = state as NativeFmParams;
     return {
       ops: [
-        { number: 1, ratio: p.modHz !== undefined ? `${fmt(p.modHz)} Hz` : ratioText(p.ratio), audible: false, note: "modulator" },
-        { number: 2, ratio: "×1", audible: true, note: "carrier" },
+        { number: 1, freq: p.modHz !== undefined ? `${fmt(p.modHz)} Hz` : ratioText(p.ratio), audible: false },
+        { number: 2, freq: "1 × note", audible: true },
       ],
       edges: [{
         from: 1, to: 2, weight: 0.5,
-        label: p.deviationHz !== undefined ? `±${fmt(p.deviationHz)} Hz` : `index ${fmt(p.index)}`,
+        label: p.deviationHz !== undefined ? `depth ±${fmt(p.deviationHz)} Hz` : `index ${fmt(p.index)}`,
       }],
     };
   }, [source.kind, state, preset, off]);
@@ -278,7 +281,14 @@ export function Bench({ step }: { step: Step }) {
         <div className="bench-top">
           <figure className="fig fig-graph">
             {graph && <Graph ops={graph.ops} edges={graph.edges} />}
-            <figcaption>Routing. Boxes with a tail are heard; the rest only modulate.</figcaption>
+            <figcaption>
+              Each box is a sine oscillator with its frequency (“× note” is a multiple of the key you play). An orange
+              arrow means one oscillator bends another; the number on it is how strongly
+              {source.kind === "native" && (state as NativeFmParams).deviationHz !== undefined
+                ? ", here the number of hertz it pushes the pitch up and down"
+                : ", the index"}
+              . Boxes marked “out” are the ones you hear.
+            </figcaption>
           </figure>
           <figure className="fig">
             <Scope noteHz={noteHz} />
