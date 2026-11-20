@@ -129,12 +129,20 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
    runner), below the source roll so they never read as the roll's common
    tools. Titled with the runner type; wraps on a grid. */
 .runner-shape__params-panel {
-  background: var(--c-surface-1);
-  border-top: 1px solid var(--c-line);
-  border-bottom: 1px solid var(--c-line);
+  /* A card inset in its own band, not a full-width section: the runner's
+     controls, one level below the instance chrome. Neutral surfaces only
+     (accent colours are reserved for play/run/rec/selection). */
+  margin: 10px 13.5px;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-line-soft);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.04);
+  overflow: hidden;
 }
 .runner-shape__params-title {
-  padding: 8px 13.5px 0;
+  padding: 6px 13.5px;
+  background: var(--c-surface-3);
+  border-bottom: 1px solid var(--c-line-soft);
   color: var(--c-text-dim);
   font-size: 0.8em;
   letter-spacing: 0.06em;
@@ -144,7 +152,7 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(287.5px, 1fr));
   gap: 6.5px 23.5px;
-  padding: 8px 13.5px 10.5px;
+  padding: 10px 13.5px 11px;
 }
 .runner-shape__param { display: grid; grid-template-columns: 125px 1fr; align-items: center; gap: 10.5px; }
 /* Param labels are runner-defined text: sentence case, so long names fit. */
