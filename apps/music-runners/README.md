@@ -58,10 +58,10 @@ and switches to manual persistence: it opens empty, **Save** downloads the
 project as a JSON file, **Load** opens one, and the status reads `unsaved`
 after any change, with the browser's leave-page warning while it does.
 
-`tools/deploy-pages.sh` at the repo root builds this app and `fm-explainer`
-and publishes them to GitHub Pages; `tools/deploy-pages.sh --build-only`
-builds into `.pages-build/` without publishing. A deployed tldraw canvas
-needs a licence key: put `VITE_TLDRAW_LICENSE_KEY=<key>` in
+`tools/deploy-pages.sh` at the repo root publishes static builds to GitHub
+Pages. This app is not in its `APPS` list yet, because a deployed tldraw canvas
+goes blank after five seconds without a licence key. To include it, add
+`music-runners` to `APPS` and put `VITE_TLDRAW_LICENSE_KEY=<key>` in
 `apps/music-runners/.env.local` (git-ignored). The key is tied to the site's
 domain.
 

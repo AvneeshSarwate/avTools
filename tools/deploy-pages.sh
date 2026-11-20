@@ -12,7 +12,9 @@
 # Vite project whose asset URLs survive a --base sub-path.
 set -euo pipefail
 
-APPS=(fm-explainer music-runners)
+# music-runners also builds as a static site, but its tldraw canvas needs a
+# licence key once deployed; add it back here when the key is in place.
+APPS=(fm-explainer)
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$ROOT/.pages-build"
@@ -33,7 +35,7 @@ for app in "${APPS[@]}"; do
   )
 done
 
-if ! grep -qs '^VITE_TLDRAW_LICENSE_KEY=.' "$ROOT/apps/music-runners/.env.local" "$ROOT/apps/music-runners/.env.production.local" \
+if [[ " ${APPS[*]} " == *" music-runners "* ]] && ! grep -qs '^VITE_TLDRAW_LICENSE_KEY=.' "$ROOT/apps/music-runners/.env.local" "$ROOT/apps/music-runners/.env.production.local" \
    && [ -z "${VITE_TLDRAW_LICENSE_KEY:-}" ]; then
   echo "warning: no VITE_TLDRAW_LICENSE_KEY set; the deployed music-runners canvas will stop rendering after a few seconds." >&2
   echo "         put the key in apps/music-runners/.env.local (git-ignored)." >&2
