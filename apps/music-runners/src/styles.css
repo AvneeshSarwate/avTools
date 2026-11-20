@@ -36,6 +36,9 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 .top-bar > .ui-group { flex: none; }
 .top-bar__title { font-weight: 700; letter-spacing: 0.02em; margin-right: 8px; white-space: nowrap; }
 .top-bar__status { display: inline-flex; align-items: center; gap: 6.5px; color: var(--c-text-dim); white-space: nowrap; }
+/* Fixed width (the longest text, "saved 12:59:59 PM") so dirty / saving /
+   saved do not shift what follows */
+.top-bar__status--save { flex: none; width: calc(10px + 6.5px + 17ch); font-variant-numeric: tabular-nums; overflow: hidden; }
 .top-bar__error { color: var(--c-rec); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---------- runner sidebar ---------- */

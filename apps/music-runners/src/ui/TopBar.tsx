@@ -52,7 +52,7 @@ export function TopBar({ editor }: { editor: Editor | null }) {
           width={100}
         />
         <Button icon="save" quiet onClick={() => void saveProject()} title="save now (autosave runs a second after any change)" />
-        <span className="top-bar__status" title={project.error ?? undefined}>
+        <span className="top-bar__status top-bar__status--save" title={project.error ?? (savedAt ? `last saved ${savedAt}` : undefined)}>
           <Lamp tone={saveTone} />
           {project.status === "saved" && savedAt ? `saved ${savedAt}` : project.status}
         </span>
