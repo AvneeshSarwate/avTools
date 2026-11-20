@@ -113,7 +113,8 @@ await row.locator("button[title='stop']").click();
 await page.waitForFunction((id) => window.__musicRunners.stores.playbackStore.instances[id]?.mode === "idle", playing.id);
 await sleep(100);
 assert.ok(await row.evaluate((el) => el.classList.contains("runner-row--idle")), "row shows idle");
-assert.match(await row.locator(".runner-row__status").innerText(), /^\d+n · [\d.]+b$/, "idle rows show notes and loop length");
+assert.equal(await row.locator(".runner-row__status").innerText(), "", "idle rows show no status text");
+assert.equal(await row.locator(".ui-lamp").count(), 0, "no lamp before the name");
 
 // --- click a row: select and reveal
 await page.evaluate(() => { const ed = window.__musicRunners.editor; ed.selectNone(); ed.setCamera({ x: -20000, y: -20000, z: 0.5 }); });

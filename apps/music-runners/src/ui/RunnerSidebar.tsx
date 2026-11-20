@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { type Editor, type TLShapeId, useValue } from "tldraw";
 import { useSnapshot } from "valtio";
-import { Button, Lamp, TextField, Toggle } from "./controls/controls";
+import { Button, TextField, Toggle } from "./controls/controls";
 import { RUNNERS } from "../runners/registry";
 import { createInstance, listInstances, revealInstance } from "../shapes";
 import { clipsStore } from "../store/clips";
@@ -223,7 +223,7 @@ function InstanceRowView({
       ? "waiting"
       : recording || mode !== "idle"
         ? `loop ${loopCount}`
-      : `${clip.notes.length}n · ${clip.loopLength}b`;
+        : "";
   const commitName = () => {
     const next = draft?.trim();
     const shape = editor?.getShape(row.id);
@@ -240,7 +240,6 @@ function InstanceRowView({
         revealInstance(editor, row.id);
       }}
     >
-      <Lamp tone={state === "idle" ? "off" : state} pulse={state === "rec"} />
       {draft !== null ? (
         <TextField autoFocus value={draft} onChange={setDraft} onCommit={commitName} onCancel={() => setDraft(null)} />
       ) : (

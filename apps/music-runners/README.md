@@ -107,9 +107,9 @@ unless an instance has **MPE Out** on (see below).
 - **Sidebar**: lists every runner type with a **+** that adds an instance
   of it (placed right of the rightmost instance and brought into view), and
   under each type its instances on the current page. A row shows the
-  instance's state with the transport colours: a lamp, the loop count while
-  playing or running (notes and loop length when idle, "error" when a start
-  failed) and a loop-progress bar along its bottom edge; a **Q** toggle
+  instance's state with the transport colours: the loop count while playing
+  or running ("waiting", "take", or "error" when a start failed; nothing when
+  idle) and a loop-progress bar along its bottom edge; a **Q** toggle
   (the instance's queue flag, same as its title bar's Q); Play, Run and Stop
   buttons (Play/Run stop when pressed again). Click a row to select the
   instance and bring it into view; double-click its name to rename it (the
