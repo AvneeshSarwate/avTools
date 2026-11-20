@@ -276,30 +276,25 @@ export function keyboardKeyUp(shapeId: string): void {
   if (held.mpe) releaseMemberChannel(held.outputName, held.channel);
 }
 
-function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outputName: string, synthOutput: MidiOutput | null): RunnerApi & { releaseAll(): void } {
-  // "channel:pitch" -> the sounding that owns the note-off. A retrigger of a
-  // key replaces the entry so the earlier branch's release becomes a no-op.
-  // Without MPE every note is on channel 0, so the key is the pitch; with MPE
-  // each note has its own channel and same-pitch notes may overlap.
-  const active = new Map<string, { token: number; channel: number; pitch: number }>();
+function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition): RunnerApi & { releaseAll(): void } {
+  // "output|channel:pitch" -> the sounding that owns the note-off. A retrigger
+  // of a key replaces the entry so the earlier branch's release becomes a
+  // no-op. Without MPE every note is on channel 0, so the key is the pitch;
+  // with MPE each note has its own channel and same-pitch notes may overlap.
+  // The output is read at every note-on (switching the instance's target
+  // mid-run takes effect at the next note); each sounding note remembers its
+  // own, so its note-off and member channel go back to where it started.
+  const active = new Map<string, { token: number; channel: number; pitch: number; output: MidiOutput | null; outputName: string }>();
   let lastPlayed: PianoRollNote | null = null;
   let playedCounter = 0;
   let soundingCounter = 0;
-
-  const currentOutput = () => synthOutput ?? getOutputSync(outputName);
-  const send = (kind: "on" | "off", channel: number, pitch: number, velocity: number) => {
-    const output = currentOutput();
-    if (!output || output.closed) return;
-    if (kind === "on") output.noteOn(channel, pitch, velocity);
-    else output.noteOff(channel, pitch, NOTE_OFF_VELOCITY);
-  };
 
   const release = (key: string) => {
     const entry = active.get(key);
     if (!entry) return;
     active.delete(key);
-    send("off", entry.channel, entry.pitch, 0);
-    if (entry.channel !== CHANNEL) releaseMemberChannel(outputName, entry.channel);
+    if (entry.output && !entry.output.closed) entry.output.noteOff(entry.channel, entry.pitch, NOTE_OFF_VELOCITY);
+    if (entry.channel !== CHANNEL) releaseMemberChannel(entry.outputName, entry.channel);
   };
 
   const transposeNow = () => Math.round(numberParam(liveParams(shapeId, def), "transpose", 0));
@@ -327,17 +322,22 @@ function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outpu
     const pitch = clampPitch(note.pitch + transposeNow());
     const token = ++soundingCounter;
     const props = readInstanceProps(shapeId);
-    const mpe = props ? sendsMpe({ mpe: props.mpe, midiOutputName: outputName }) : false;
+    const outputName = props?.midiOutputName ?? "";
+    const output = getOutputSync(outputName);
+    // A target not open yet (just picked): open it for the following notes
+    if (!output && outputName) void getOutput(outputName);
+    const mpe = props ? sendsMpe(props) : false;
     const bendRange = props?.bendRange ?? DEFAULT_BEND_RANGE;
     const channel = mpe ? allocateMemberChannel(outputName) : CHANNEL;
-    const key = `${channel}:${pitch}`;
+    const key = `${outputName}|${channel}:${pitch}`;
     // Re-triggering a key that is still sounding: release it first.
     release(key);
-    const output = currentOutput();
     let sent: ChannelExpression | null = null;
-    if (mpe && output) sent = sendExpression(output, channel, note, 0, bendRange, null);
-    send("on", channel, pitch, clampPitch(note.velocity));
-    active.set(key, { token, channel, pitch });
+    if (output && !output.closed) {
+      if (mpe) sent = sendExpression(output, channel, note, 0, bendRange, null);
+      output.noteOn(channel, pitch, clampPitch(note.velocity));
+    }
+    active.set(key, { token, channel, pitch, output, outputName });
     recordPlayed(note, speed, color);
     const durationBeats = Math.max(0.01, durationBeatsScaled);
     const handle = ctx.branch(async (noteCtx) => {
@@ -453,7 +453,7 @@ async function launch(shapeId: string, mode: Exclude<InstanceMode, "idle">): Pro
       const bpm = readInstanceProps(shapeId)?.tempo;
       if (bpm && Number.isFinite(bpm) && bpm > 0 && Math.abs(ctx.bpm - bpm) > 1e-9) ctx.setBpm(bpm);
     });
-    api = makeApi(shapeId, ctx, def, props.midiOutputName, isSixSinesOutput(props.midiOutputName) ? output : null);
+    api = makeApi(shapeId, ctx, def);
     if (mode === "run") {
       await def.run(api);
     } else {

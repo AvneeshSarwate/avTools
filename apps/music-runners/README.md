@@ -485,6 +485,7 @@ demo.html + demo/           standalone piano roll demo and its Playwright checks
   `demo/sidebar.e2e.mjs` (same setup).
 - Note resizing from the edges: `demo/resize.e2e.mjs` (same setup).
 - Double-click add, double-press-and-drag, click to narrow a selection: `demo/click-edit.e2e.mjs`.
+- Switching the output mid-run (next note, old notes released on the old port): `demo/retarget.e2e.mjs`.
 - Auditioning moved notes and marquee selections: `demo/audition.e2e.mjs`
   (same setup).
 - Cmd-A scoping, focus, and the output rolls' view tools:
