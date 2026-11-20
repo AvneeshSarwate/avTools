@@ -951,7 +951,8 @@ export function expressionHover(
   }
 }
 
-const HOVER_CURSOR: Record<ExpressionHover['kind'], string> = { point: 'move', line: 'copy', segment: 'grab' }
+// The line keeps the plain arrow: its hover already draws the point a click adds
+const HOVER_CURSOR: Record<ExpressionHover['kind'], string> = { point: 'move', line: '', segment: 'grab' }
 
 /** Cursor on the stage's content element, so the container keeps its own (draw mode). */
 export function setStageCursor(state: PianoRollState, cursor: string) {
