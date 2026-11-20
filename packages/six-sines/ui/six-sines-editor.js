@@ -63165,30 +63165,44 @@ var ns = Symbol("six-sines-editor"), rs = /*#__PURE__*/ JSON.parse("[{\"name\":\
 	},
 	emits: ["select"],
 	setup(e, { emit: t }) {
-		let n = e, r = t, i = Mn(ns), a = J(() => Jo.get(n.id)), o = J(() => i.state.values[n.id] ?? a.value.default), s = J(() => Math.min(1, Math.max(0, (o.value - a.value.min) / (a.value.max - a.value.min)))), c = J(() => -135 + s.value * 270), l = J(() => a.value.min < 0 && a.value.max > 0 ? -a.value.min / (a.value.max - a.value.min) : 0), u = /* @__PURE__ */ F(!1), d = /* @__PURE__ */ F(""), f = 0, p = 0;
-		function m(e) {
-			n.disabled || e.button !== 0 || (r("select"), i.begin(), f = e.clientY, p = o.value, e.currentTarget.setPointerCapture(e.pointerId));
+		let n = e, r = t, i = Mn(ns), a = J(() => Jo.get(n.id)), o = J(() => i.state.values[n.id] ?? a.value.default), s = J(() => Math.min(1, Math.max(0, (o.value - a.value.min) / (a.value.max - a.value.min)))), c = J(() => -135 + s.value * 270), l = J(() => a.value.min < 0 && a.value.max > 0 ? -a.value.min / (a.value.max - a.value.min) : 0), u = /* @__PURE__ */ F(!1), d = /* @__PURE__ */ F(""), f = /* @__PURE__ */ F(null);
+		Fn(() => n.id, () => b()), Fn(o, () => {
+			u.value && !p && b();
+		});
+		let p = !1, m = 0, h = 0;
+		function g(e) {
+			n.disabled || e.button !== 0 || (r("select"), i.begin(), m = e.clientY, h = o.value, e.currentTarget.setPointerCapture(e.pointerId));
 		}
-		function h(e) {
-			!n.disabled && e.currentTarget.hasPointerCapture(e.pointerId) && i.set(n.id, p + (f - e.clientY) / (e.shiftKey ? 1600 : 160) * (a.value.max - a.value.min));
-		}
-		function g() {
-			i.end();
-		}
-		function _() {
-			n.disabled || (d.value = Zo(a.value, o.value), u.value = !0);
+		function _(e) {
+			!n.disabled && e.currentTarget.hasPointerCapture(e.pointerId) && i.set(n.id, h + (m - e.clientY) / (e.shiftKey ? 1600 : 160) * (a.value.max - a.value.min));
 		}
 		function v() {
-			try {
-				i.set(n.id, Qo(a.value, d.value)), u.value = !1;
-			} catch (e) {
-				i.error.value = String(e);
+			i.end();
+		}
+		function y() {
+			n.disabled || (d.value = Zo(a.value, o.value), u.value = !0, gn(() => {
+				f.value?.focus(), f.value?.select();
+			}));
+		}
+		function b() {
+			u.value = !1;
+		}
+		function x() {
+			if (u.value) {
+				if (d.value === Zo(a.value, o.value)) return b();
+				try {
+					p = !0, i.set(n.id, Qo(a.value, d.value)), u.value = !1;
+				} catch (e) {
+					i.error.value = String(e);
+				} finally {
+					p = !1;
+				}
 			}
 		}
-		function y(e) {
+		function S(e) {
 			if (n.disabled) return;
 			let t = a.value.type ? 1 : (a.value.max - a.value.min) / (e.shiftKey ? 1e3 : 100);
-			(e.key === "ArrowUp" || e.key === "ArrowRight") && (i.set(n.id, o.value + t), e.preventDefault()), (e.key === "ArrowDown" || e.key === "ArrowLeft") && (i.set(n.id, o.value - t), e.preventDefault()), e.key === "Home" && i.set(n.id, a.value.min), e.key === "End" && i.set(n.id, a.value.max), e.key === "Enter" && _();
+			(e.key === "ArrowUp" || e.key === "ArrowRight") && (i.set(n.id, o.value + t), e.preventDefault()), (e.key === "ArrowDown" || e.key === "ArrowLeft") && (i.set(n.id, o.value - t), e.preventDefault()), e.key === "Home" && i.set(n.id, a.value.min), e.key === "End" && i.set(n.id, a.value.max), e.key === "Enter" && y();
 		}
 		return (t, n) => (V(), H("div", { class: O(["knob-wrap", {
 			small: e.small,
@@ -63206,15 +63220,15 @@ var ns = Symbol("six-sines-editor"), rs = /*#__PURE__*/ JSON.parse("[{\"name\":\
 				"aria-valuetext": I(Zo)(a.value, o.value),
 				title: `${a.value.name}: ${I(Zo)(a.value, o.value)} · Double-click to type · Alt-click to reset`,
 				"data-param-id": e.id,
-				onPointerdown: m,
-				onPointermove: h,
-				onPointerup: g,
-				onLostpointercapture: g,
-				onDblclick: _,
-				onKeydown: y,
+				onPointerdown: g,
+				onPointermove: _,
+				onPointerup: v,
+				onLostpointercapture: v,
+				onDblclick: y,
+				onKeydown: S,
 				onClick: n[0] ||= vo((t) => !e.disabled && I(i).set(e.id, a.value.default), ["alt"])
 			}, [(V(), H("svg", as, [
-				n[3] ||= Gi("<defs><radialGradient id=\"face\"><stop offset=\"0\" stop-color=\"#626262\"></stop><stop offset=\"1\" stop-color=\"#4c4c4c\"></stop></radialGradient></defs><circle cx=\"32\" cy=\"32\" r=\"29\" fill=\"#111\"></circle><path d=\"M 12.2 51.8 A 28 28 0 1 1 51.8 51.8\" fill=\"none\" stroke=\"#424242\" stroke-width=\"4\"></path>", 3),
+				n[2] ||= Gi("<defs><radialGradient id=\"face\"><stop offset=\"0\" stop-color=\"#626262\"></stop><stop offset=\"1\" stop-color=\"#4c4c4c\"></stop></radialGradient></defs><circle cx=\"32\" cy=\"32\" r=\"29\" fill=\"#111\"></circle><path d=\"M 12.2 51.8 A 28 28 0 1 1 51.8 51.8\" fill=\"none\" stroke=\"#424242\" stroke-width=\"4\"></path>", 3),
 				U("path", {
 					d: "M 12.2 51.8 A 28 28 0 1 1 51.8 51.8",
 					fill: "none",
@@ -63224,7 +63238,7 @@ var ns = Symbol("six-sines-editor"), rs = /*#__PURE__*/ JSON.parse("[{\"name\":\
 					"stroke-dasharray": `${Math.abs(s.value - l.value) * 100} 100`,
 					"stroke-dashoffset": -Math.min(s.value, l.value) * 100
 				}, null, 8, os),
-				n[4] ||= U("circle", {
+				n[3] ||= U("circle", {
 					cx: "32",
 					cy: "32",
 					r: "23.5",
@@ -63241,11 +63255,13 @@ var ns = Symbol("six-sines-editor"), rs = /*#__PURE__*/ JSON.parse("[{\"name\":\
 			]))], 40, is),
 			u.value ? kn((V(), H("input", {
 				key: 0,
+				ref_key: "entry",
+				ref: f,
 				"onUpdate:modelValue": n[1] ||= (e) => d.value = e,
 				class: "knob-entry",
 				"aria-label": `${a.value.name} value`,
-				onKeydown: [bo(v, ["enter"]), n[2] ||= bo((e) => u.value = !1, ["esc"])],
-				onChange: v
+				onKeydown: [bo(x, ["enter"]), bo(b, ["esc"])],
+				onBlur: x
 			}, null, 40, cs)), [[uo, d.value]]) : K("", !0),
 			e.label ? (V(), H("span", ls, k(e.label), 1)) : K("", !0)
 		], 2));
