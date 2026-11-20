@@ -1,7 +1,8 @@
 // A runner instance's view: chrome (name, MIDI output, loop length, params,
 // transports, queue) plus three collapsible rolls. Components only, so it
 // Fast Refreshes; the shape util is in RunnerShape.tsx.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { HIGHLIGHT_COLOR, highlightsFor, paramHighlights, subscribeHighlights, type TextRange } from "../../store/highlights";
 import { atom, HTMLContainer, type TLBaseBoxShape, useEditor, useValue } from "tldraw";
 import { PianoRoll } from "../../pianoRoll/PianoRoll";
 import { isSixSinesOutput, sixSinesOutputOptions } from "../../store/sixSines";
@@ -109,6 +110,7 @@ function usePlayhead(
       sourceRoll.current?.setPlayheadMarkers([]);
       generatedRoll.current?.setPlayheadMarkers([]);
       sourceRoll.current?.setLiveInput({ keys: [], notes: [] });
+      sourceRoll.current?.setNoteHighlights([], HIGHLIGHT_COLOR);
     };
     if (!active) {
       clear();
@@ -121,6 +123,7 @@ function usePlayhead(
       sourceRoll.current?.setPlayheadMarkers([...(sourcePlayhead || free !== null ? playhead : []), ...markersFor(shapeId)]);
       generatedRoll.current?.setPlayheadMarkers(playhead);
       sourceRoll.current?.setLiveInput(liveInputFor(shapeId));
+      sourceRoll.current?.setNoteHighlights(highlightsFor(shapeId).notes, HIGHLIGHT_COLOR);
     };
     tick();
     const id = window.setInterval(tick, PLAYHEAD_INTERVAL_MS);
@@ -642,7 +645,13 @@ export function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: Ru
                   ) : spec.kind === "text" ? (
                     <div key={spec.key} className="runner-shape__param runner-shape__param--text" title={spec.hint}>
                       <span className="runner-shape__param-label">{spec.label}</span>
-                      <TextParam value={textParam(params, spec.key, spec.default)} validate={spec.validate} onCommit={(value) => setParam(spec.key, value)} />
+                      <TextParam
+                        shapeId={shapeId}
+                        paramKey={spec.key}
+                        value={textParam(params, spec.key, spec.default)}
+                        validate={spec.validate}
+                        onCommit={(value) => setParam(spec.key, value)}
+                      />
                     </div>
                   ) : (
                     <label key={spec.key} className="runner-shape__param" title={spec.hint}>
@@ -664,19 +673,23 @@ export function RunnerInstanceView({ shape, def }: { shape: RunnerShape; def: Ru
             </div>
           ) : null}
 
-          <GeneratedSection
-            {...outputRollProps}
-            rollRef={generatedRollRef}
-            height={rollHeight("generated")}
-            onToggle={() => updateProps({ showGenerated: !props.showGenerated })}
-            onResizeStart={startRollResize("generated")}
-          />
-          <PreviewSection
-            {...outputRollProps}
-            height={rollHeight("preview")}
-            onToggle={() => updateProps({ showPreview: !props.showPreview })}
-            onResizeStart={startRollResize("preview")}
-          />
+          {def.outputRolls === false ? null : (
+            <>
+              <GeneratedSection
+                {...outputRollProps}
+                rollRef={generatedRollRef}
+                height={rollHeight("generated")}
+                onToggle={() => updateProps({ showGenerated: !props.showGenerated })}
+                onResizeStart={startRollResize("generated")}
+              />
+              <PreviewSection
+                {...outputRollProps}
+                height={rollHeight("preview")}
+                onToggle={() => updateProps({ showPreview: !props.showPreview })}
+                onResizeStart={startRollResize("preview")}
+              />
+            </>
+          )}
           <RunnerStatus shapeId={shapeId} />
         </div>
       </div>
@@ -723,9 +736,24 @@ const EMPTY_RECORDING: RecordingUi = { listening: null, recording: null, recorde
  * accepts it; otherwise the error shows under the field and the instance
  * keeps the last good value. Escape reverts.
  */
-function TextParam({ value, validate, onCommit }: { value: string; validate?: (text: string) => string | null; onCommit: (value: string) => void }) {
+function TextParam({
+  shapeId,
+  paramKey,
+  value,
+  validate,
+  onCommit,
+}: {
+  shapeId: string;
+  paramKey: string;
+  value: string;
+  validate?: (text: string) => string | null;
+  onCommit: (value: string) => void;
+}) {
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // What the running instance says is playing in this text (Strudel-style);
+  // not while editing, since the ranges refer to the committed value
+  const ranges = useSyncExternalStore(subscribeHighlights, () => paramHighlights(shapeId, paramKey));
   const commit = () => {
     if (draft === null) return;
     const problem = validate?.(draft) ?? null;
@@ -736,6 +764,7 @@ function TextParam({ value, validate, onCommit }: { value: string; validate?: (t
   };
   return (
     <span className="runner-shape__text-param">
+      <span className="runner-shape__text-wrap">
       <TextField
         className={error ? "is-invalid" : undefined}
         value={draft ?? value}
@@ -749,7 +778,26 @@ function TextParam({ value, validate, onCommit }: { value: string; validate?: (t
           setError(null);
         }}
       />
+      {draft === null && ranges.length > 0 ? <TextHighlights text={value} ranges={ranges} /> : null}
+      </span>
       {error ? <span className="runner-shape__param-error" role="alert">{error}</span> : null}
+    </span>
+  );
+}
+
+/** Marks over a text field's characters: same font and padding, only the marks visible. */
+function TextHighlights({ text, ranges }: { text: string; ranges: TextRange[] }) {
+  const marked = new Array<boolean>(text.length).fill(false);
+  for (const [from, to] of ranges) for (let i = Math.max(0, from); i < Math.min(text.length, to); i++) marked[i] = true;
+  const parts: Array<{ text: string; mark: boolean }> = [];
+  for (let i = 0; i < text.length; i++) {
+    const last = parts[parts.length - 1];
+    if (last && last.mark === marked[i]) last.text += text[i];
+    else parts.push({ text: text[i], mark: marked[i] });
+  }
+  return (
+    <span className="runner-shape__text-marks" aria-hidden>
+      {parts.map((part, i) => (part.mark ? <mark key={i}>{part.text}</mark> : <span key={i}>{part.text}</span>))}
     </span>
   );
 }

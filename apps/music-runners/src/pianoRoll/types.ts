@@ -192,6 +192,8 @@ export interface PianoRollHandle {
   focus(): void;
   /** Live input overlay (held keys, notes being recorded); see LiveInput. */
   setLiveInput(input: LiveInput): void;
+  /** Fill these notes with `color` (what is playing); [] clears. Redraws only on change. */
+  setNoteHighlights(ids: string[], color: string): void;
   /**
    * Replace the notes with `after` as one undoable step whose undo restores
    * `before`. For edits made outside the roll that should still undo as one

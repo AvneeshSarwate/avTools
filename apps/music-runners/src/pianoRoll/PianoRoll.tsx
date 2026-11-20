@@ -649,6 +649,12 @@ export const PianoRoll = memo(forwardRef<PianoRollHandle, PianoRollProps>(functi
         state.liveInput = input
         state.requestRedraw('overlay')
       },
+      setNoteHighlights: (ids: string[], color: string) => {
+        const current = state.noteHighlight
+        if (current.color === color && current.ids.size === ids.length && ids.every((id) => current.ids.has(id))) return
+        state.noteHighlight = { ids: new Set(ids), color }
+        state.requestRedraw('notes')
+      },
       commitExternalEdit: (label, before, after) => {
         const stack = state.command.stack
         const snapshotOf = (notes: PianoRollNote[]) =>

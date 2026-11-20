@@ -7,6 +7,8 @@ declare module "@strudel/mini" {
   interface StrudelHap {
     whole: { begin: StrudelFraction; end: StrudelFraction } | undefined;
     value: unknown;
+    /** Source positions of the atoms that made this event (mini() adds them; offsets in the quoted code). */
+    context?: { locations?: Array<{ start: number; end: number }> };
     hasOnset(): boolean;
   }
   interface StrudelPattern {

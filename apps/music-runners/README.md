@@ -72,7 +72,12 @@ unless an instance has **MPE Out** on (see below).
   lines on its source roll while running with `api.setMarkers`, each with an
   optional tinted `span`; a loop can sit anywhere on the timeline with
   `LoopNotes.start`; `api.publishLoop(null)` says nothing is sounding (the
-  sidebar row shows "waiting"). Optional `sidebarPhase(phase)` sets the
+  sidebar row shows "waiting"). `api.setHighlights({ params, notes })` marks
+  what is playing right now, Strudel-style: character ranges in text params
+  (drawn over the field) and source-roll note ids (filled teal); stopping
+  clears them. `outputRolls: false` drops the Generated and Preview sections
+  for a runner that shows its output on the source roll that way. Optional
+  `sidebarPhase(phase)` sets the
   sidebar row's progress bar while the runner Runs: given the current pass
   (`{ elapsed, loopLength, start, loopCount }`, beats in its own tempo with
   speed applied) it returns 0..1 through whatever its cycle is, or null for
@@ -204,6 +209,7 @@ always reads the same:
 | red | Rec and live MIDI input (held keys, notes being recorded), error text |
 | blue | selection and focus, toggles that are on (Snap, Thru, MPE Out, Q, Notes/MPE), selected notes |
 | yellow | unsaved project |
+| teal | what a runner says is playing right now (`api.setHighlights`): the arp's pattern element and chord note |
 
 Note fills are not chrome: runners pick them by convention (tag colours,
 `generatedNoteColor`).
@@ -419,8 +425,12 @@ is 0..1 across the note, so a resize stretches them).
   comes from the chord note. The chord is read at the start of each cycle,
   so a cursor move takes effect on the next one. Until then the source roll
   shows two lines: the amber **playing** line, with the playing chord's
-  extent tinted, and the blue cursor over the next chord. The Generated
-  roll shows the cycle under the chord it came from. With no notes under the
+  extent tinted, and the blue cursor over the next chord. The arp has one
+  roll (`outputRolls: false`, no Generated or Preview): what plays is shown
+  Strudel-style on the source itself. While a note sounds, the
+  mini-notation element that made it is marked in the pattern field (from
+  the event's source location in `@strudel/mini`) and the chord note it
+  came from is filled in the highlight colour. With no notes under the
   cursor the arp goes quiet after the current cycle ("waiting" in the
   sidebar) and starts a new cycle as soon as there is a chord under it
   again. **Play** plays the clip's chords as written. Code:

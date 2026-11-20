@@ -135,6 +135,13 @@ export interface RunnerApi {
   publishLoop(loop: LoopNotes | null): void;
   /** The source roll's cursor, in beats (runners with `usesCursor`). */
   getCursor(): number;
+  /**
+   * Strudel-style projection: what is playing right now, as character ranges
+   * in text params (`params: { pattern: [[from, to]] }`) and source-roll note
+   * ids (`notes`), drawn in the highlight colour. Replaces the previous
+   * highlights; `{}` clears them (so does stopping).
+   */
+  setHighlights(highlights: { params?: Record<string, Array<[number, number]>>; notes?: string[] }): void;
   /** Extra lines on the source roll while running (labelled cursors), replacing the previous set. */
   setMarkers(markers: PlayheadMarker[]): void;
   emit(event: RunnerEvent): void;
@@ -163,6 +170,11 @@ export interface RunnerDefinition {
   usesCursor?: boolean;
   /** False: no playhead on the source roll (the Generated roll keeps one), for loops that are not the clip. */
   sourcePlayhead?: boolean;
+  /**
+   * False: only the source roll (no Generated or Preview sections), for
+   * runners that show what is playing on the source itself (setHighlights).
+   */
+  outputRolls?: boolean;
   /**
    * Pure: one loop from the instance's clip, with the instance's params. Used by Run
    * every pass and by the Preview roll's regenerate.

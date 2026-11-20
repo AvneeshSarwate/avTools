@@ -94,6 +94,12 @@ export interface PianoRollState {
     selectedIds: Set<string>
   }
 
+  /** Notes drawn in a highlight colour (what a host says is playing; setNoteHighlights). */
+  noteHighlight: {
+    ids: Set<string>
+    color: string
+  }
+
   // Viewport
   viewport: {
     scrollX: number // horizontal scroll in px
@@ -284,6 +290,11 @@ export const createPianoRollState = (): PianoRollState => {
 
     selection: {
       selectedIds: new Set()
+    },
+
+    noteHighlight: {
+      ids: new Set(),
+      color: ''
     },
 
     viewport: {

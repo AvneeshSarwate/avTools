@@ -32,7 +32,8 @@ function arpLoop(chord: PianoRollNote[], params: Params, cycle: number, start: n
       velocity: note.velocity,
       position: start + step.begin * cycleBeats,
       duration: Math.max(0.01, step.duration * cycleBeats * gate),
-      metadata: { arpIndex: step.index },
+      // Which chord note and which pattern text made it (the projection)
+      metadata: { arpIndex: step.index, arpSource: note.id, arpText: step.locations },
     };
   });
   return { notes, loopLength: cycleBeats, start };
@@ -42,7 +43,41 @@ function generateArp(clip: Clip, _random: () => number, params: Params, context:
   return arpLoop(chordAt(clip.notes, context.cursor), params, 0, context.cursor) ?? { notes: [], loopLength: numberParam(params, "cycle", 4), start: context.cursor };
 }
 
+/**
+ * Strudel-style projection: while an arp note sounds, its pattern element is
+ * marked in the pattern field and its chord note in the roll. Notes that
+ * overlap ([0,2], long gates) are all shown; each clears when it ends.
+ */
+function projection(api: RunnerApi) {
+  const active = new Map<number, { text: Array<[number, number]>; source: string }>();
+  let counter = 0;
+  const publish = () => {
+    const values = [...active.values()];
+    api.setHighlights(values.length ? { params: { pattern: values.flatMap((v) => v.text) }, notes: [...new Set(values.map((v) => v.source))] } : {});
+  };
+  return {
+    start(note: PianoRollNote) {
+      const text = (note.metadata?.arpText as Array<[number, number]> | undefined) ?? [];
+      const source = String(note.metadata?.arpSource ?? "");
+      const id = ++counter;
+      active.set(id, { text, source });
+      publish();
+      // Played durations are scaled by speed (playLoop)
+      const beats = note.duration / Math.max(0.05, numberParam(api.getParams(), "speed", 1));
+      const timer = api.ctx.branch(async (ctx) => {
+        await ctx.wait(beats);
+        active.delete(id);
+        publish();
+      }, "arp highlight");
+      timer.finally(() => {}).catch(() => {});
+      // (a stopped run's highlights are cleared by the playback layer; its
+      // pending timers are cancelled with it and publish nothing)
+    },
+  };
+}
+
 async function runArp(api: RunnerApi): Promise<void> {
+  const sounding = projection(api);
   /** The chord under the cursor and its loop; null without a chord (or with a bad pattern). */
   const next = (cycle: number) => {
     const cursor = api.getCursor();
@@ -68,7 +103,7 @@ async function runArp(api: RunnerApi): Promise<void> {
     const span = { from: Math.min(...chord.map((note) => note.position)), to: Math.max(...chord.map((note) => note.position + note.duration)) };
     api.setMarkers([{ id: "playing", position: cursor, color: PLAYING_COLOR, span }]);
     api.publishLoop(loop);
-    await api.playLoop(loop);
+    await api.playLoop(loop, { onNoteOn: (note) => sounding.start(note) });
   }
 }
 
@@ -80,6 +115,9 @@ export const arpRunner: RunnerDefinition = {
   tags: [],
   usesCursor: true,
   sourcePlayhead: false,
+  // One roll: what plays is shown on the source (the chord note) and in the
+  // pattern field (its element), Strudel-style
+  outputRolls: false,
   params: [
     {
       kind: "text",

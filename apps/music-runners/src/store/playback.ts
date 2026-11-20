@@ -24,6 +24,7 @@ import { clockStore, getRootContext, nowSec } from "./clock";
 import { getEditor } from "./editorRef";
 import { emitEvent, onEvent } from "./events";
 import { getOutput, getOutputSync } from "./midi";
+import { setHighlights } from "./highlights";
 import { isSixSinesOutput, sendsMpe } from "./sixSines";
 import { SixSinesOutput } from "./sixSinesOutput";
 import {
@@ -404,6 +405,9 @@ function makeApi(shapeId: string, ctx: TimeContext, def: RunnerDefinition, outpu
     setMarkers(markers) {
       runnerMarkers.set(shapeId, markers);
     },
+    setHighlights(highlights) {
+      setHighlights(shapeId, highlights);
+    },
     emit(event: RunnerEvent) {
       emitEvent(shapeId as TLShapeId, event);
     },
@@ -466,6 +470,7 @@ async function launch(shapeId: string, mode: Exclude<InstanceMode, "idle">): Pro
     if (current && current.cancel !== cancel) return;
     activeRuns.delete(shapeId);
     runnerMarkers.delete(shapeId);
+    setHighlights(shapeId, null);
     instanceTempos.delete(shapeId);
     patchRuntime(shapeId, { mode: "idle", loopStartBeats: null });
   };

@@ -2,6 +2,8 @@
 // validation, the chord under the cursor, the cursor change taking effect on
 // the next cycle (with the "playing" line marking the old chord until then),
 // the sidebar's progress bar following the arp's cycle (its sidebarPhase),
+// one roll with the playing element marked in the pattern and its chord note
+// highlighted (Strudel-style projection),
 // waiting with no chord and restarting at once, index wrapping. Project
 // "zz_arp" is never saved. With the dev server up:
 //   NODE_PATH=$(npm root -g) node demo/arp.e2e.mjs [screenshot dir]
@@ -100,6 +102,30 @@ assert.equal(s.mode, "run");
 assert.deepEqual(s.generated, [60, 64, 67, 67], "0 1 2 -1 over C E G (-1 wraps to the top)");
 assert.deepEqual(s.markers.map((m) => [m.id, m.position]), [["playing", 0]]);
 assert.ok((await noteOnsSince(t0)).includes(60), "notes are sent");
+
+// --- one roll, Strudel-style projection: the playing pattern element is
+// marked in the pattern field and its chord note highlighted in the roll
+const arpShape = page.locator(".runner-shape").filter({ has: page.locator(".runner-shape__text-param") }).first();
+assert.equal(await arpShape.locator(".runner-section__title").allTextContents().then((t) => t.join(",").toLowerCase()), "source", "only the source roll");
+const chordIds = { 0: "a0", 1: "a1", 2: "a2", "-1": "a2" };
+const seen = [];
+for (let i = 0; i < 24; i++) {
+  const sample = await page.evaluate(async (id) => {
+    const { highlightsFor } = await import("/src/store/highlights.ts");
+    const marks = [...document.querySelectorAll(".runner-shape__text-marks mark")].map((m) => m.textContent);
+    return { marks, notes: highlightsFor(id).notes };
+  }, id);
+  if (sample.marks.length === 1 && sample.notes.length === 1) seen.push([sample.marks[0], sample.notes[0]]);
+  await sleep(45);
+}
+console.log("projection samples", JSON.stringify(seen.filter((x, i) => i === 0 || x[0] !== seen[i - 1][0])));
+assert.ok(seen.length > 10, "something is marked most of the time");
+for (const [mark, note] of seen) {
+  assert.ok(mark in chordIds, `marked text is a pattern element: ${mark}`);
+  assert.equal(note, chordIds[mark], `element ${mark} highlights its chord note`);
+}
+assert.deepEqual([...new Set(seen.map(([m]) => m))].sort(), ["-1", "0", "1", "2"], "every element is marked in a cycle");
+if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "arp-projection.png") });
 
 // --- moving the cursor (a click on the empty grid at beat 5) takes effect on the next cycle
 const clickGridAt = async (beat, pitch) => {

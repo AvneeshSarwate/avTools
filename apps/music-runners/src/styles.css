@@ -336,6 +336,19 @@ html, body, #root { margin: 0; height: 100%; background: var(--c-base); color: v
 .runner-shape__text-param { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .runner-shape__text-param .ui-text { width: 100%; font-family: var(--font-mono, ui-monospace, monospace); }
 .runner-shape__text-param .ui-text.is-invalid { border-color: var(--c-rec); }
+/* Strudel-style projection: the playing element of a text param, marked over
+   the field (same font and padding; only the marks show) */
+.runner-shape__text-wrap { position: relative; display: block; }
+.runner-shape__text-marks {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  padding: 0 11.5px; /* the field's padding + its 1px border */
+  font-family: var(--font-mono, ui-monospace, monospace);
+  white-space: pre; overflow: hidden; color: transparent; pointer-events: none;
+}
+.runner-shape__text-marks mark {
+  color: transparent; background: rgb(47 212 184 / 0.28);
+  outline: 1.5px solid var(--c-highlight); border-radius: 2px;
+}
 .runner-shape__param-error { color: var(--c-rec); font-size: 0.8em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .runner-shape__param--scale .ui-group { padding: 0; }
 .six-sines-shape {

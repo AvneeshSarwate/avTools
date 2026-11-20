@@ -13,6 +13,8 @@ export interface ArpStep {
   begin: number;
   duration: number;
   index: number;
+  /** The pattern text that made this event, as [from, to) character ranges (for highlighting). */
+  locations: Array<[number, number]>;
 }
 
 export type ParsedArp = { ok: true; pattern: StrudelPattern } | { ok: false; error: string };
@@ -56,7 +58,9 @@ export function arpCycle(pattern: StrudelPattern, cycle: number): ArpStep[] {
   for (const hap of pattern.queryArc(cycle, cycle + 1)) {
     if (!hap.whole || !hap.hasOnset()) continue;
     const begin = hap.whole.begin.valueOf();
-    steps.push({ begin: begin - cycle, duration: hap.whole.end.valueOf() - begin, index: Number(hap.value) });
+    // mini() parses `"text"`: its offsets count the opening quote
+    const locations = (hap.context?.locations ?? []).map(({ start, end }): [number, number] => [start - 1, end - 1]);
+    steps.push({ begin: begin - cycle, duration: hap.whole.end.valueOf() - begin, index: Number(hap.value), locations });
   }
   return steps.sort((a, b) => a.begin - b.begin || a.index - b.index);
 }

@@ -116,8 +116,9 @@ export function mutateSelection(state: PianoRollState, mutate: () => void): bool
 /** Unselected notes in MPE mode are greyed out (Ableton). */
 const MPE_DIMMED_NOTE_FILL = '#565656'
 
-/** The note's fill: host override, then metadata.color, then the default. */
+/** The note's fill: a host highlight (playing), host override, then metadata.color, then the default. */
 function resolveNoteFill(state: PianoRollState, note: NoteData, fallback: string): string {
+  if (state.noteHighlight.ids.has(note.id) && state.noteHighlight.color) return state.noteHighlight.color
   if (state.expression.mode === 'mpe' && fallback !== '' && !state.selection.selectedIds.has(note.id)) return MPE_DIMMED_NOTE_FILL
   const override = state.hooks.noteColor?.(note)
   if (typeof override === 'string' && override) return override

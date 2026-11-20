@@ -19,6 +19,8 @@
   --c-rec: #ff4f4f;
   --c-select: #64b5ff;
   --c-warn: #e6c84a;
+  /* What a runner says is playing (pattern element, sounding note): HIGHLIGHT_COLOR in store/highlights.ts */
+  --c-highlight: #2fd4b8;
   --c-on-tone: #111;
 
   --h-control: 26px;
