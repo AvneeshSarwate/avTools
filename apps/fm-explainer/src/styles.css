@@ -195,13 +195,61 @@ h1 { font-size: 34px; font-weight: 400; line-height: 1.15; margin: 6px 0 18px; l
 .code summary { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-3); cursor: pointer; }
 .code pre { font-family: var(--mono); font-size: 12.5px; line-height: 1.5; background: var(--paper-2); border-left: 2px solid var(--ink-2); padding: 12px 16px; overflow-x: auto; margin: 8px 0 0; }
 
+/* ---------- narrow screens ---------- */
+
+.contents-toggle { display: none; }
+.masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.graph-scroll { display: flex; overflow-x: auto; }
+
 @media (max-width: 900px) {
-  .layout { grid-template-columns: 1fr; height: auto; }
-  .contents { border-right: 0; border-bottom: 1px solid var(--rule); max-height: 40vh; }
+  /* minmax(0, …) stops a wide code block from stretching the page sideways. */
+  .layout { grid-template-columns: minmax(0, 1fr); height: auto; }
   main { overflow: visible; }
-  article { padding: 28px 16px 60px; }
-  .bench-top { grid-template-columns: 1fr; }
+  article { padding: 24px 16px 60px; }
+  h1 { font-size: 28px; }
+
+  /* Contents fold away behind a button. */
+  .contents { border-right: 0; border-bottom: 1px solid var(--rule); padding: 14px 0 0; overflow: visible; }
+  .masthead { padding: 0 16px 14px; margin-bottom: 0; border-bottom: 0; align-items: center; }
+  .contents-toggle { display: block; font: inherit; font-family: var(--mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; background: none; color: var(--ink); border: 1px solid var(--ink-2); padding: 9px 14px; cursor: pointer; }
+  .toc { display: none; border-top: 1px solid var(--rule); padding-bottom: 16px; }
+  .contents.open .toc { display: block; }
+  .contents h2 { margin: 18px 16px 6px; }
+  .contents li a { padding: 9px 16px; font-size: 16px; }
+  .steps { flex-direction: column; gap: 0; }
+  .steps a { padding: 8px 0; }
+  .pager a { padding: 10px 0; }
+
+  /* The bench runs edge to edge, in one column. */
+  .bench-wrap { margin-left: -16px; margin-right: -16px; }
+  .predict, .code { margin-left: 16px; margin-right: 16px; }
+  .bench { padding: 12px 12px 14px; }
+  .bench-head { flex-wrap: wrap; }
+  .bench-top { grid-template-columns: minmax(0, 1fr); }
+  .fig figcaption { font-size: 11.5px; line-height: 1.45; }
+  /* Keep diagram labels legible: scroll a wide diagram sideways instead of shrinking it. */
+  .graph { max-width: none !important; min-width: calc(var(--natural) * 0.8); margin: 0; }
+  .plot { height: 120px; }
+  .fig-wide .plot { height: 170px; }
+
+  /* Controls sized for fingers. */
+  .controls { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .control { font-size: 13px; }
+  .control input[type="range"] { height: 30px; margin-top: 2px; }
+  .marks { gap: 8px; margin-top: 2px; }
+  .marks button, .stage-list button { padding: 8px 12px; font-size: 12px; }
+  .stage-list { gap: 8px; }
+  .engine-switch button { padding: 9px 14px; font-size: 12px; }
+  .play { padding: 10px 18px; font-size: 12px; }
+  .bpm input { padding: 8px 6px; font-size: 16px; width: 62px; }
+  .predict-options button { padding: 12px; }
   .hint { display: none; }
+
+  /* A vertical drag on the note grid scrolls the page; the key column still plays. */
+  .roll-frame .konvajs-content canvas { touch-action: pan-y !important; }
+
+  .prose table { font-size: 14px; }
+  .code pre { font-size: 11.5px; }
 }
 
 /* ---------- Six Sines editor, in place of the diagram ---------- */

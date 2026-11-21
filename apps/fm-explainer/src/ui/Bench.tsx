@@ -327,7 +327,7 @@ export function Bench({ step, id }: { step: Step; id: string }) {
 
         <div className="bench-top">
           <figure className="fig fig-graph">
-            {graph && <Graph ops={graph.ops} edges={graph.edges} />}
+            <div className="graph-scroll">{graph && <Graph ops={graph.ops} edges={graph.edges} />}</div>
             <figcaption>
               Each box is a sine oscillator with its frequency (“× note” is a multiple of the key you play). An orange
               arrow means one oscillator bends another; the number on it is how strongly

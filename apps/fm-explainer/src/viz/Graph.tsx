@@ -1,3 +1,5 @@
+import type { CSSProperties } from "react";
+
 // Operator diagram in the DX convention: audible operators along the bottom,
 // modulators stacked above the operator they feed. Every number carries its
 // own label, so the picture reads without the surrounding text.
@@ -78,7 +80,12 @@ export function Graph({ ops, edges }: { ops: GraphOp[]; edges: GraphEdge[] }) {
   const y = (n: number) => topPad + (rows - 1 - row.get(n)!) * (H + GAP_Y);
 
   return (
-    <svg className="graph" viewBox={`0 0 ${width} ${height}`} style={{ width: Math.min(width, 700), maxWidth: "100%" }}>
+    <svg
+      className="graph"
+      viewBox={`0 0 ${width} ${height}`}
+      // --natural lets the narrow-screen stylesheet keep the labels legible by scrolling instead of shrinking.
+      style={{ width: Math.min(width, 700), maxWidth: "100%", "--natural": `${width}px` } as CSSProperties}
+    >
       <defs>
         <marker id="graph-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
           <path d="M 0 0 L 8 4 L 0 8 z" />

@@ -11,10 +11,15 @@ function parseHash() {
 
 export function App() {
   const [where, setWhere] = useState(parseHash);
+  // On a narrow screen the contents list is folded away behind a button.
+  const [contentsOpen, setContentsOpen] = useState(false);
   useEffect(() => {
     const onHash = () => {
       setWhere(parseHash());
+      setContentsOpen(false);
+      // The article scrolls inside <main> on a wide screen and with the page on a narrow one.
       document.querySelector("main")?.scrollTo(0, 0);
+      window.scrollTo(0, 0);
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
@@ -35,11 +40,17 @@ export function App() {
 
   return (
     <div className="layout">
-      <nav className="contents">
+      <nav className={contentsOpen ? "contents open" : "contents"}>
         <div className="masthead">
-          <div className="masthead-title">FM Synthesis</div>
-          <div className="masthead-sub">A playable manual</div>
+          <div>
+            <div className="masthead-title">FM Synthesis</div>
+            <div className="masthead-sub">A playable manual</div>
+          </div>
+          <button className="contents-toggle" aria-expanded={contentsOpen} onClick={() => setContentsOpen(!contentsOpen)}>
+            {contentsOpen ? "Close" : "Contents"}
+          </button>
         </div>
+        <div className="toc">
         {parts.map((part) => (
           <section key={part}>
             <h2>{part}</h2>
@@ -57,6 +68,7 @@ export function App() {
             </ol>
           </section>
         ))}
+        </div>
       </nav>
 
       <main>
