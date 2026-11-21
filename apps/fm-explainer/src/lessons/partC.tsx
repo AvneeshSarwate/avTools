@@ -16,24 +16,12 @@ export const partC: Lesson[] = [
     refs: ["sixsines", "sos12"],
     steps: [
       {
-        title: "Ring modulation: exactly two sidebands",
+        title: "Ring modulation",
         body: (
           <>
-            <p>
-              Each cell of the Six Sines matrix can do something other than phase modulation. The most useful
-              alternative is ring modulation, where the modulator scales the carrier’s <em>amplitude</em>. Multiplying
-              two sines gives exactly two new partials, at the sum and the difference of their frequencies, and no
-              more however hard you drive it.
-            </p>
-            <p>
-              That makes it the precise tool where phase modulation is the broad one. A carrier at ratio 10
-              ring-modulated by an operator at ratio 1 gains partials at 9 and 11 and nothing else. The same pair
-              under phase modulation spreads a whole family around tick 10.
-            </p>
-            <p className="note">
-              Six Sines blends between the dry carrier and the product: output = carrier × (1 + depth × (modulator −
-              1)). At depth 1 the carrier itself disappears and only the two sidebands remain.
-            </p>
+            <p>Each cell of the Six Sines matrix can be set to act in other ways than by phase modulation. The most useful of these is ring modulation, in which the modulator multiplies the carrier’s amplitude. The product of two sine waves consists of exactly two partials, one at the sum of their frequencies and one at the difference, and no others appear however great the depth.</p>
+            <p>Ring modulation is therefore suited to adding particular partials, where phase modulation fills a region. A carrier at ratio 10, ring-modulated by an operator at ratio 1, acquires partials at 9 and 11 and nothing else. The same two operators under phase modulation would spread a family of partials about tick 10.</p>
+            <p className="note">Six Sines mixes the unmodulated carrier with the product according to the depth: the output is the carrier multiplied by 1 + depth × (modulator − 1). At a depth of 1 the carrier itself is absent and only the two new partials remain.</p>
           </>
         ),
         source: {
@@ -51,26 +39,20 @@ export const partC: Lesson[] = [
         clip: held(48, 8),
         maxRatio: 20,
         predict: {
-          question: "Carrier at 10, ring modulator at 1, depth 0.7. How many partials?",
-          options: ["One, at 10", "Three: 9, 10, 11", "A family spreading out from 10, as with phase modulation", "Two: 1 and 10"],
+          question: "The carrier is at 10 and is ring-modulated by an operator at 1, with a depth of 0.7. How many partials are there?",
+          options: ["One, at 10", "Three, at 9, 10 and 11", "A family spreading out from 10, as with phase modulation", "Two, at 1 and 10"],
           answer: 1,
           explain: (
-            <p>
-              Sum and difference, plus what is left of the carrier. Raising the depth changes their balance and never
-              adds a fourth. Compare with the next step, the same two operators under phase modulation.
-            </p>
+            <p>The two new partials are at the sum and the difference, and what is left of the carrier makes the third. A greater depth alters the balance among the three and never adds a fourth. The next step has the same two operators under phase modulation, for comparison.</p>
           ),
         },
       },
       {
         title: "The same pair under phase modulation",
         body: (
-          <p>
-            Same operators, same ratios, phase modulation instead. Sweep the index and count. Use ring modulation when
-            you want to add one specific pair of partials, for example a shimmer above a bell, and phase modulation
-            when you want a region to fill in. The factory preset “Nostalgic Bell Synth” in Part E uses both from the
-            same modulator.
-          </p>
+          <>
+            <p>This page has the same operators and the same ratios under phase modulation. Raise the index and count the partials. Ring modulation is the method to choose when one particular pair of partials is to be added, for example a faint high pair above a bell, and phase modulation when a region is to be filled. The factory preset “Nostalgic Bell Synth” in Part E applies both from one modulator.</p>
+          </>
         ),
         source: {
           kind: "operators",
@@ -87,17 +69,8 @@ export const partC: Lesson[] = [
         title: "Operators that are not sines",
         body: (
           <>
-            <p>
-              A Six Sines source does not have to be a sine. Its waveform menu has rounded squares and saws, the
-              half- and quarter-sine shapes from Yamaha’s later TX chips, and window shapes meant for amplitude work.
-              Used as a modulator, a non-sine waveform behaves like the feedback operator of lesson 5: it brings
-              several harmonics, each acting as a modulator, so one cell does the work of a stack.
-            </p>
-            <p>
-              This step only runs in Six Sines. Change the modulator’s waveform and watch the reach of the spectrum at
-              a fixed index. The factory bass presets lean on this heavily; many use no cross-modulation deeper than
-              one cell.
-            </p>
+            <p>A source in Six Sines need not be a sine wave. Its list of waveforms includes rounded square and sawtooth shapes, the half-sine and quarter-sine shapes of Yamaha’s later TX instruments, and window shapes intended for work with amplitude. When such a waveform is used as a modulator it behaves as the feedback operator of lesson 5 does: it supplies several harmonics, each of which modulates the carrier, so that one matrix cell does what would otherwise need operators in series.</p>
+            <p>This step runs only in Six Sines. Change the modulator’s waveform, and observe how far the spectrum reaches while the index is unchanged. Several of the factory bass presets depend on this, and use no modulation more than one cell deep.</p>
           </>
         ),
         source: {
@@ -113,8 +86,8 @@ export const partC: Lesson[] = [
         clip: phrase,
         maxRatio: 32,
         tryThis: [
-          <>Modulator on “Sawish” at index 1.5, against a sine modulator at the same index.</>,
-          <>Carrier on “TX 2” (a half sine) with the index at 0: the carrier alone already has harmonics, so FM now starts from a richer place.</>,
+          <>Set the modulator to “Sawish” at an index of 1.5, and compare the result with a sine-wave modulator at the same index.</>,
+          <>Set the carrier to “TX 2”, which is half a sine wave, and the index to 0. The carrier alone then has harmonics, so that modulation begins from a spectrum that is already complex.</>,
         ],
       },
     ],
@@ -123,25 +96,15 @@ export const partC: Lesson[] = [
     id: "motion",
     number: "8",
     part: PART,
-    title: "Motion: detune, drift and unison",
+    title: "Detuning, drift and unison",
     refs: ["chowning", "sixsines"],
     steps: [
       {
-        title: "Half a hertz on the modulator",
+        title: "A small offset on the modulator",
         body: (
           <>
-            <p>
-              With an exact whole-number ratio, reflected sidebands land precisely on existing partials and add or
-              cancel once and for all. The tone is frozen. Chowning’s fix is in the 1973 paper: add a small constant,
-              he suggests 0.5 Hz, to the modulating frequency. The reflected partials then miss by a hair, “producing a
-              beat frequency or tremulant of 1 c/s”.
-            </p>
-            <p>
-              The pitch does not waver, since the carrier has not moved. What moves is the balance between partials, a
-              slow internal shimmer. A fixed offset in hertz beats at the same rate on every key, which is usually
-              what you want; a ratio detune beats faster as you go up. Six Sines has both: the ratio itself, and an
-              “absolute offset” in Hz on each source.
-            </p>
+            <p>When the ratio is exactly a whole number, each reflected sideband falls exactly on another partial, and the two are added or subtracted in a proportion that never changes. The tone is consequently static. Chowning’s paper gives the remedy, which is to add a small constant to the modulating frequency. With an addition of 0.5 Hz, he says, the reflected partials no longer coincide with the others, “producing a beat frequency or tremulant of 1 c/s”.</p>
+            <p>The pitch is unaffected, because the carrier has not been altered. What changes is the balance among the partials, which now varies slowly. An offset fixed in hertz gives the same rate of beating on every key, and this is usually what is wanted, whereas a detuned ratio gives a rate that rises with the pitch. Six Sines provides both, the second by the ratio itself and the first by an offset in hertz on each source.</p>
           </>
         ),
         source: {
@@ -157,24 +120,16 @@ export const partC: Lesson[] = [
         ],
         clip: chords,
         tryThis: [
-          <>Set the offset to 0 and listen to how static the chord is. Then 0.5.</>,
-          <>Raise the index. A higher index means more reflected partials taking part, so the shimmer gets deeper without getting faster.</>,
+          <>Set the offset to 0 and listen to the chord, and then set it to 0.5.</>,
+          <>Raise the index. More reflected partials then take part, so that the variation is greater in extent though no faster.</>,
         ],
       },
       {
         title: "Slow change of index",
         body: (
           <>
-            <p>
-              The other source of life is a slow modulation of the index itself. In Six Sines every matrix cell has its
-              own LFO alongside its envelope, and several of the string and bell presets run a different slow LFO on
-              each cell so that no two partial families move together.
-            </p>
-            <p>
-              The raw engine has no LFO, so this bench fakes the simplest case with two pairs. They are identical
-              except that one modulator is 0.3 Hz off, which makes its timbre cycle while the other stays still. Mixed
-              together the result drifts in a way neither does alone.
-            </p>
+            <p>The same kind of slow variation can be obtained by modulating the index itself at a low rate. In Six Sines every matrix cell has a low-frequency oscillator of its own as well as an envelope, and several of the string and bell presets give each cell a different slow rate, so that no two families of partials move together.</p>
+            <p>The raw engine has no low-frequency oscillator, and this bench obtains a similar effect from two pairs. Each has a modulator offset by a fraction of a hertz, by different amounts, so that the timbres of the two pass through their cycles at different rates. The mixture drifts in a way that neither pair does alone.</p>
           </>
         ),
         source: {
@@ -201,16 +156,8 @@ export const partC: Lesson[] = [
         title: "Unison",
         body: (
           <>
-            <p>
-              Unison stacks several detuned copies of the whole voice. It thickens anything, but it interacts with FM
-              in a specific way: detuning the copies moves the carrier, so the result beats in <em>pitch</em>, where
-              the tricks in the last two steps moved only timbre. The two are complementary and the richest patches
-              use a little of each.
-            </p>
-            <p>
-              This step runs in Six Sines, where unison is a property of the whole patch. Set the voice count to 3 and
-              bring up the spread.
-            </p>
+            <p>Unison plays several copies of the whole voice, each slightly detuned. It thickens any sound, but its effect on an FM patch differs from that of the two methods just described. Detuning the copies moves their carriers, so that the result beats in pitch, whereas those methods changed only the timbre. Since the two kinds of movement are different, they may be used together.</p>
+            <p>This step runs in Six Sines, where unison is a property of the whole patch. Set the number of voices to 3 and raise the ratio shift.</p>
           </>
         ),
         source: {
@@ -227,7 +174,7 @@ export const partC: Lesson[] = [
           { label: "Unison ratio shift", id: 531, initial: 0.008, min: 0, max: 0.05, step: 0.0005 },
         ],
         clip: melody,
-        tryThis: [<>Three voices at a shift of 0.006 is a section. Five at 0.03 is a detuned stack.</>],
+        tryThis: [          <>Three voices with a shift of 0.006 resemble a section of players, and five with a shift of 0.03 resemble a deliberately detuned stack of oscillators.</>,],
       },
     ],
   },

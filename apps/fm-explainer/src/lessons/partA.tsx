@@ -33,24 +33,15 @@ export const partA: Lesson[] = [
     id: "vibrato",
     number: "0",
     part: PART,
-    title: "Vibrato that got too fast",
+    title: "From vibrato to timbre",
     refs: ["chowning", "sos12"],
     steps: [
       {
-        title: "From wobble to timbre",
+        title: "Speeding up a vibrato",
         body: (
           <>
-            <p>
-              Frequency modulation is vibrato. One oscillator, the <em>modulator</em>, pushes the pitch of another, the{" "}
-              <em>carrier</em>, up and down. At 5 Hz you hear a singer’s wobble. Nothing about the circuit changes as you
-              speed it up, but somewhere around 20 to 30 Hz your ear stops following the pitch movement and starts
-              hearing a single steady tone with a new colour.
-            </p>
-            <p>
-              Hold the note and drag the rate from left to right. Watch the spectrum while you do it: the single peak
-              grows neighbours, and the neighbours spread apart as the rate rises. Those neighbours are{" "}
-              <em>sidebands</em>, and the rest of this manual is about placing them where you want them.
-            </p>
+            <p>Frequency modulation is the same thing as vibrato. One oscillator, called the modulator, raises and lowers the pitch of another, called the carrier. When the modulator runs at 5 Hz the result is the wobble of a singer’s voice, and the ear follows the pitch as it moves. If the modulator is made faster and nothing else is changed, there comes a point, somewhere between 20 and 30 Hz, at which the ear can no longer follow the movement, and what is heard is a steady tone of a different colour.</p>
+            <p>Hold the note and drag the rate from left to right while watching the spectrum. The single peak acquires neighbours on either side, and the neighbours move further apart as the rate rises. These neighbours are called sidebands. The timbre of the tone is determined by where they lie and how strong they are, and the rest of this manual is concerned with how to place them.</p>
           </>
         ),
         source: { kind: "native", params: native({ modHz: 5, deviationHz: 40 }) },
@@ -62,8 +53,8 @@ export const partA: Lesson[] = [
         maxRatio: 8,
         code: NATIVE_CODE,
         tryThis: [
-          <>Set the rate to exactly 261.63 Hz, the frequency of the held C. The neighbours land on whole-number ticks: the tone becomes harmonic.</>,
-          <>At a rate of 110 Hz, raise the depth. More depth does not move the sidebands. It adds more of them.</>,
+          <>Set the rate to 261.63 Hz, which is the frequency of the held C. The sidebands then fall on the whole-number ticks, because their spacing equals the frequency of the note, and the tone has a definite pitch.</>,
+          <>With the rate at 110 Hz, raise the depth. The sidebands already present do not move, since their spacing depends only on the rate. What the greater depth does is to add more of them.</>,
         ],
       },
     ],
@@ -79,18 +70,8 @@ export const partA: Lesson[] = [
         title: "Where the partials sit",
         body: (
           <>
-            <p>
-              With a carrier at frequency <M>c</M> and a modulator at <M>m</M>, the output contains partials at{" "}
-              <M>c</M>, <M>c ± m</M>, <M>c ± 2m</M>, <M>c ± 3m</M> and so on. The modulator’s frequency sets the{" "}
-              <em>spacing</em>. From here on the modulator follows the keyboard, so we describe it as a ratio to the
-              played note.
-            </p>
-            <p>
-              How many of those partials are audible is set by the <em>modulation index</em>, written <M>I</M>: the peak
-              frequency swing divided by the modulator frequency. The orange bars are the theoretical heights. Each
-              pair of sidebands follows a Bessel function of the index, and the practical summary is Schottstaedt’s:
-              a sideband of order <M>n</M> stays close to zero until the index reaches <M>n</M>.
-            </p>
+            <p>Suppose the carrier has frequency <M>c</M> and the modulator frequency <M>m</M>. The output then contains a partial at <M>c</M>, and further partials at <M>c ± m</M>, <M>c ± 2m</M>, <M>c ± 3m</M> and so on. The modulator’s frequency therefore fixes the spacing of the partials. From this page onward the modulator follows the keyboard as the carrier does, and its frequency is accordingly given as a ratio to the note played.</p>
+            <p>How many of these partials are strong enough to hear depends on the modulation index, written <M>I</M>, which is the greatest departure of the carrier’s frequency from its resting value divided by the modulator’s frequency. The strength of each pair of sidebands is given by a Bessel function of the index, and the orange bars show the values so calculated. For most purposes it is enough to remember that the pair of order <M>n</M> remains close to zero until the index reaches about <M>n</M>.</p>
           </>
         ),
         source: { kind: "native", params: native({ ratio: 1, index: 1 }) },
@@ -103,23 +84,16 @@ export const partA: Lesson[] = [
         predicted: pairPrediction,
         code: NATIVE_CODE,
         tryThis: [
-          <>Sweep the index slowly from 0 to 10 at ratio 1. The carrier (tick 1) fades, vanishes near 2.4, and comes back. Energy is conserved: it only moves between partials.</>,
-          <>Re-strike a key after moving the ratio. The two oscillators restart in step, and the measured trace settles onto the orange prediction.</>,
+          <>At ratio 1, move the index slowly from 0 to 10. The carrier, at tick 1, grows weaker, disappears when the index is near 2.4, and then returns. The total energy is the same throughout, and raising the index only moves it from one partial to another.</>,
+          <>After changing the ratio, strike the key again. The two oscillators then restart together, and the measured spectrum settles on the predicted bars.</>,
         ],
       },
       {
         title: "Reflection",
         body: (
           <>
-            <p>
-              The lower sidebands march downward: <M>c − m</M>, <M>c − 2m</M>… and soon go below zero. A negative
-              frequency is not silent. It is the same sine wave running backwards, which is the same sine with its
-              sign flipped, so it folds back into the positive range. If it lands on a partial that is already there
-              the two add or cancel. Chowning puts the whole value of the technique here: “the special richness of this FM
-              technique lies in the fact that there are ratios of the carrier and modulating frequencies and values of
-              the index which will produce sideband components that fall in the negative frequency domain.” It is why
-              a ratio of 1 gives every harmonic and a ratio of 2 gives only the odd ones.
-            </p>
+            <p>The lower sidebands lie at <M>c − m</M>, <M>c − 2m</M> and so on, and when <M>m</M> is as large as <M>c</M> some of these frequencies are negative. A sine wave of negative frequency is the same wave as one of the corresponding positive frequency with its sign reversed. Such a sideband is therefore heard at the positive frequency, and if another partial already lies there the two are added, or, where their signs differ, subtracted.</p>
+            <p>Chowning regarded this as the source of the method’s usefulness: “the special richness of this FM technique lies in the fact that there are ratios of the carrier and modulating frequencies and values of the index which will produce sideband components that fall in the negative frequency domain.” It is the reason, for example, that a ratio of 1 yields every harmonic and a ratio of 2 only the odd ones, as the next lesson shows.</p>
           </>
         ),
         source: { kind: "native", params: native({ ratio: 3, index: 2.5 }) },
@@ -139,11 +113,7 @@ export const partA: Lesson[] = [
           ],
           answer: 1,
           explain: (
-            <p>
-              Upper sidebands: 1 + 3 = 4, then 7, 10. Lower sidebands: 1 − 3 = −2, which reflects to 2; then −5 → 5,
-              −8 → 8. So every harmonic is present except the multiples of 3. That missing-every-third pattern is the
-              hollow sound of a narrow pulse wave.
-            </p>
+            <p>The upper sidebands are at 1 + 3 = 4, and then at 7 and 10. The lower ones are at 1 − 3 = −2, which is heard at 2, and then at −5 and −8, which are heard at 5 and 8. Every harmonic is therefore present except the multiples of 3. This is the spectrum of a pulse wave whose pulse occupies a third of the cycle, and it has the same hollow sound.</p>
           ),
         },
       },
@@ -151,18 +121,8 @@ export const partA: Lesson[] = [
         title: "A rule for bandwidth",
         body: (
           <>
-            <p>
-              You rarely need the Bessel values. One rule covers most decisions: there are about <M>I + 1</M>{" "}
-              significant sidebands on each side of the carrier, so the sound occupies roughly{" "}
-              <M>2 · m · (I + 1)</M> hertz. Chowning writes the same thing as <M>2(d + m)</M>, with <M>d</M> the peak
-              frequency swing.
-            </p>
-            <p>
-              Two consequences follow, and both will come back in the topology lessons. Doubling the modulator ratio
-              doubles the bandwidth at the same index. And brightness is the product of ratio and index, so a high
-              ratio with a low index and a low ratio with a high index can be equally bright while sounding nothing
-              alike: one is a few widely spaced partials, the other is many close ones.
-            </p>
+            <p>The Bessel values are seldom needed in practice, because one rule answers most questions. There are about <M>I + 1</M> sidebands of appreciable strength on each side of the carrier, so that the sound occupies a band about <M>2 · m · (I + 1)</M> hertz wide. Chowning gives the same rule in the form <M>2(d + m)</M>, where <M>d</M> is the greatest departure of the frequency from its resting value.</p>
+            <p>Two consequences of this rule are used repeatedly in the lessons on topology. The first is that doubling the modulator’s ratio doubles the width of the band if the index is unchanged. The second is that the width depends on the product of the ratio and the index, so that a high ratio with a low index may reach as far up the spectrum as a low ratio with a high index. The two sounds are nevertheless quite different, since the first consists of a few partials far apart and the second of many close together.</p>
           </>
         ),
         source: { kind: "native", params: native({ ratio: 1, index: 6 }) },
@@ -174,7 +134,7 @@ export const partA: Lesson[] = [
         maxRatio: 24,
         predicted: pairPrediction,
         tryThis: [
-          <>Compare ratio 1 at index 6 with ratio 4 at index 1.5. Both reach about tick 8. The first is buzzy and saw-like; the second is hollow and glassy.</>,
+          <>Compare ratio 1 at index 6 with ratio 4 at index 1.5. Both reach about tick 8. The first has a partial at every tick and sounds like a sawtooth, while the second has partials only at the odd ticks and sounds hollow.</>,
         ],
       },
     ],
@@ -183,34 +143,27 @@ export const partA: Lesson[] = [
     id: "ratio",
     number: "2",
     part: PART,
-    title: "Ratio: harmonic or not",
+    title: "Harmonic and inharmonic ratios",
     refs: ["chowning", "sos13"],
     steps: [
       {
         title: "Whole-number ratios",
         body: (
           <>
-            <p>
-              When carrier and modulator are in a whole-number ratio, every sideband lands on a multiple of some common
-              fundamental and the tone has a clear pitch. The ratio decides <em>which</em> harmonics you get:
-            </p>
+            <p>When the frequencies of carrier and modulator are in the ratio of two whole numbers, every sideband is a multiple of one common fundamental, and the tone has a definite pitch. Which multiples are present depends on the ratio.</p>
             <table>
               <thead>
-                <tr><th>Carrier : modulator</th><th>Partials</th><th>Reads as</th></tr>
+                <tr><th>Carrier : modulator</th><th>Partials</th><th>Resembles</th></tr>
               </thead>
               <tbody>
-                <tr><td className="m">1 : 1</td><td>every harmonic</td><td>saw, brass</td></tr>
-                <tr><td className="m">1 : 2</td><td>odd harmonics only</td><td>square, clarinet</td></tr>
+                <tr><td className="m">1 : 1</td><td>every harmonic</td><td>sawtooth, brass</td></tr>
+                <tr><td className="m">1 : 2</td><td>odd harmonics only</td><td>square wave, clarinet</td></tr>
                 <tr><td className="m">1 : 3</td><td>all but every third</td><td>narrow pulse</td></tr>
-                <tr><td className="m">2 : 1</td><td>every harmonic, strongest at the 2nd</td><td>nasal, reedy</td></tr>
+                <tr><td className="m">2 : 1</td><td>every harmonic, strongest at the 2nd</td><td>nasal reed</td></tr>
                 <tr><td className="m">3 : 1</td><td>every harmonic, strongest at the 3rd</td><td>woodwind</td></tr>
               </tbody>
             </table>
-            <p>
-              The last two rows put the carrier <em>above</em> the modulator. The spacing is still the modulator
-              frequency, which is now the fundamental, and the carrier marks where the energy is centred. That is a
-              first glimpse of a formant: a fixed bump in the spectrum.
-            </p>
+            <p>In the last two rows the carrier is above the modulator. The spacing of the partials is still the modulator’s frequency, which is now the fundamental, while the carrier is the partial about which the energy is gathered. A region of the spectrum that is emphasised in this way is called a formant, and lesson 6d is devoted to it.</p>
           </>
         ),
         source: { kind: "operators", patch: pmPair(2, 2) },
@@ -225,14 +178,11 @@ export const partA: Lesson[] = [
           return simplePair(p.ops[1].ratio, p.ops[0].ratio, p.edges[0].index);
         },
         predict: {
-          question: "Carrier at 1, modulator at 2. Which harmonics will be present?",
+          question: "The carrier is at 1 and the modulator at 2. Which harmonics will be present?",
           options: ["All of them", "Only the odd ones: 1, 3, 5, 7 …", "Only the even ones: 2, 4, 6 …", "1, 2, 4, 8 … (octaves)"],
           answer: 1,
           explain: (
-            <p>
-              1 + 2k is always odd, and the reflected ones (1 − 2 = −1 → 1, −3 → 3) are odd too. Odd harmonics only is
-              the signature of a square wave and of a closed pipe such as a clarinet.
-            </p>
+            <p>The upper sidebands are at 1 + 2k, which is odd for every k. The lower ones are at −1, −3 and so on, which are heard at 1, 3 and so on, and are odd as well. A spectrum of odd harmonics alone is that of a square wave, and also that of a pipe closed at one end, of which the clarinet is the familiar example.</p>
           ),
         },
       },
@@ -240,19 +190,9 @@ export const partA: Lesson[] = [
         title: "Ratios that are not whole numbers",
         body: (
           <>
-            <p>
-              Move the modulator off a whole number and the sidebands no longer share a fundamental. The ear stops
-              fusing them into one pitch and hears the cluster of separate tones that we associate with struck metal:
-              bells, gongs, chimes. Chowning’s bell uses a carrier-to-modulator ratio of 1 : 1.4.
-            </p>
-            <p>
-              The loop here is a chord progression on purpose. Harmonic ratios keep the chords clean. Inharmonic ones
-              smear them, because every note brings partials that belong to no key.
-            </p>
-            <p className="note">
-              In this step the index also decays over time. Lesson 4 is about that; for now notice that the clangour is
-              in the attack and the note settles toward a pure tone.
-            </p>
+            <p>If the modulator’s ratio is not a whole number, the sidebands are no longer multiples of a common fundamental. The ear then ceases to hear them as one note with a timbre and hears them as a group of separate tones sounding together, which is the sound of struck metal: bells, gongs and chimes. Chowning’s bell has a carrier and modulator in the ratio 1 : 1.4.</p>
+            <p>The loop on this page is a progression of chords, because the difference is easiest to hear in harmony. With a whole-number ratio the chords are clear. With any other ratio they are confused, since each note contributes partials that belong to no chord.</p>
+            <p className="note">On this page the index falls during each note, a matter treated in lesson 4. The clangour is consequently strongest at the beginning of the note, and what remains at the end is nearly a pure tone.</p>
           </>
         ),
         source: {
@@ -269,8 +209,8 @@ export const partA: Lesson[] = [
         clip: chords,
         maxRatio: 20,
         tryThis: [
-          <>Step through the marks. 1 and 2 are instruments; 1.4, 2.76 and 3.5 are metal.</>,
-          <>Try 1.01. A ratio a hair off a whole number is still heard as harmonic, but it beats. Lesson 8 uses that on purpose.</>,
+          <>Try each of the marked ratios in turn. At 1 and 2 the chords are those of an ordinary instrument, and at 1.4, 2.76 and 3.5 they are those of a set of bells.</>,
+          <>Try 1.01. A ratio very close to a whole number is still heard as harmonic, but the reflected partials fall slightly to one side of the others and beat against them. Lesson 8 makes deliberate use of this.</>,
         ],
       },
     ],
@@ -279,23 +219,15 @@ export const partA: Lesson[] = [
     id: "fm-vs-pm",
     number: "3",
     part: PART,
-    title: "FM, PM, and what Six Sines really does",
+    title: "Frequency modulation and phase modulation",
     refs: ["sos12", "schottstaedt", "sixsines"],
     steps: [
       {
-        title: "The problem with literal FM",
+        title: "Modulating the frequency by a fixed swing",
         body: (
           <>
-            <p>
-              So far the depth control has been an <em>index</em>, and the code has quietly multiplied it by the
-              modulator frequency to get a swing in hertz. Here that compensation is removed: the modulator swings the
-              carrier by a fixed number of hertz, whatever the pitch. This is what you get if you patch two analogue
-              oscillators together.
-            </p>
-            <p>
-              Play the four octaves. The low note is harsh and the top note is nearly a sine. The index is the swing
-              divided by the modulator frequency, so each octave up halves it. Reid’s summary is that the index is proportional to the modulator’s amplitude and inversely proportional to its frequency.
-            </p>
+            <p>Until now the control has been the index, and the program has multiplied it by the modulator’s frequency to obtain the swing of the carrier in hertz. On this page that multiplication is omitted, so that the modulator swings the carrier by the same number of hertz at every pitch. This is what happens when two analogue oscillators are connected in the obvious way.</p>
+            <p>Play the four octaves. The lowest note is harsh and the highest is almost a sine wave. The reason is that the index is the swing divided by the modulator’s frequency, and each octave doubles that frequency, so that with a fixed swing each octave halves the index. Reid states the general rule: the index is proportional to the modulator’s amplitude and inversely proportional to its frequency.</p>
           </>
         ),
         source: { kind: "native", params: native({ ratio: 1, deviationHz: 500 }) },
@@ -304,24 +236,12 @@ export const partA: Lesson[] = [
         maxRatio: 20,
       },
       {
-        title: "Modulate the phase instead",
+        title: "Modulating the phase",
         body: (
           <>
-            <p>
-              Yamaha’s instruments, and Six Sines, do not touch the frequency at all. The modulator is added to the
-              carrier’s <em>phase</em>. An index of <M>I</M> then means “swing the phase by <M>I</M> radians”, and that
-              is the same amount of bending at every pitch. The spectrum of a note no longer depends on the key you
-              play.
-            </p>
-            <p>
-              The two are the same family: Schottstaedt’s one-line summary is “To go from FM to PM, integrate the FM modulating signal”, and for sine waves you cannot tell from the output which one was used. Phase
-              modulation wins on practical grounds. The index is pitch-independent, and a modulator with any DC offset
-              shifts the phase by a constant, which is inaudible, where in FM it would detune the note.
-            </p>
-            <p>
-              This is the worklet the rest of the manual runs on. The excerpt below is the whole of it: three ways an
-              operator can be bent by another, then one <M>sin()</M>.
-            </p>
+            <p>The instruments made by Yamaha, and Six Sines also, leave the carrier’s frequency alone and add the modulator to its phase. An index of <M>I</M> then means that the phase is advanced and retarded by <M>I</M> radians, which distorts the wave to the same degree at every pitch. The spectrum of a note, measured in multiples of its fundamental, is therefore the same whatever key is played.</p>
+            <p>The two methods are closely related. Schottstaedt states the relation in one sentence, “To go from FM to PM, integrate the FM modulating signal”, and when the modulator is a sine wave the output of one cannot be distinguished from that of the other. Phase modulation is preferred for two practical reasons. The index does not depend on the pitch, as has just been said. And if the modulator contains a constant offset, the effect in phase modulation is a constant shift of phase, which cannot be heard, whereas in frequency modulation it is a change of pitch.</p>
+            <p>The remaining lessons use the worklet of which the central part is printed below. An operator may be acted on by another in any of three ways, after which its sine is computed.</p>
           </>
         ),
         source: { kind: "operators", patch: pmPair(1, 3) },
@@ -348,30 +268,22 @@ phase[i] += 2 * Math.PI * (freq + freqOffset) / sampleRate;
 out[i]    = Math.sin(phase[i] + phaseOffset) * ring;`,
       },
       {
-        title: "Reading Six Sines’ knobs",
+        title: "The units of Six Sines",
         body: (
           <>
-            <p>
-              From here on most benches have a <M>Raw / Six Sines</M> switch. It sends the same patch to the Six Sines
-              engine, translated into its parameters. Three conversions are worth knowing, all read from the fork’s
-              source:
-            </p>
+            <p>Most of the benches from here on have a switch marked <M>Raw / Six Sines</M>, which sends the same patch to the Six Sines engine after translating it into that engine’s parameters and shows the Six Sines editor. To read a Six Sines preset the following conversions are needed. They are taken from the source code of the fork.</p>
             <table>
               <thead>
                 <tr><th>Six Sines control</th><th>Value</th><th>Meaning</th></tr>
               </thead>
               <tbody>
-                <tr><td>Matrix cell depth</td><td className="m">1.0</td><td>index of 4π ≈ 12.6 rad (two full cycles of phase)</td></tr>
-                <tr><td>Matrix cell overdrive</td><td className="m">on</td><td>that, times 10</td></tr>
-                <tr><td>Feedback level</td><td className="m">1.0</td><td>π/2 ≈ 1.57 rad, applied to the mean of the last two samples</td></tr>
-                <tr><td>Source ratio</td><td className="m">knob v</td><td>ratio of 2<sup>v</sup></td></tr>
+                <tr><td>Matrix cell depth</td><td className="m">1.0</td><td>an index of 4π, about 12.6 rad, which is two full cycles of phase</td></tr>
+                <tr><td>Matrix cell overdrive</td><td className="m">on</td><td>ten times that</td></tr>
+                <tr><td>Feedback level</td><td className="m">1.0</td><td>π/2, about 1.57 rad, applied to the mean of the last two samples</td></tr>
+                <tr><td>Source ratio</td><td className="m">knob v</td><td>a ratio of 2<sup>v</sup></td></tr>
               </tbody>
             </table>
-            <p>
-              So a preset whose matrix depth reads 0.08 has an index of 1, and one that reads 0.25 is at about 3. The
-              matrix is feed-forward only: operator 2 can modulate operators 3 to 6 but never operator 1. Every DX-style
-              algorithm is a subset of that triangle.
-            </p>
+            <p>A preset whose matrix depth is 0.08 therefore has an index of about 1, and one whose depth is 0.25 an index of about 3. The matrix allows an operator to modulate only those numbered after it, so that operator 2 may modulate operators 3 to 6 but not operator 1. Nearly every arrangement of operators found on a DX-style instrument can be made within this restriction, the exceptions being those in which a feedback path passes through more than one operator.</p>
           </>
         ),
         source: { kind: "operators", patch: pmPair(1, 3), engine: "six" },
@@ -385,7 +297,7 @@ out[i]    = Math.sin(phase[i] + phaseOffset) * ring;`,
           const p = state as Patch;
           return simplePair(1, p.ops[0].ratio, p.edges[0].index);
         },
-        tryThis: [<>Flip between the two engines at the same settings. The spectra should agree bar for bar.</>],
+        tryThis: [          <>Change engines without moving the sliders. The two spectra should agree.</>,],
       },
     ],
   },
@@ -393,24 +305,15 @@ out[i]    = Math.sin(phase[i] + phaseOffset) * ring;`,
     id: "index-envelopes",
     number: "4",
     part: PART,
-    title: "The index envelope is the timbre",
+    title: "Changing the index during a note",
     refs: ["chowning", "yamaha6"],
     steps: [
       {
-        title: "A filter sweep without a filter",
+        title: "A falling index",
         body: (
           <>
-            <p>
-              A static index gives a static spectrum, and static spectra sound like test equipment. Almost everything
-              that makes an FM patch sound like an instrument is the index <em>moving</em>. Chowning’s paper is built
-              on this: “the character of the temporal evolution of the spectral components is of critical importance
-              in the determination of timbre.”
-            </p>
-            <p>
-              Here the index starts high and decays. The partials collapse toward the carrier exactly as they would
-              under a closing low-pass filter, but there is no filter. Three numbers shape it: where the index starts,
-              how fast it falls, and where it settles.
-            </p>
+            <p>A fixed index gives a fixed spectrum, and a tone whose spectrum never changes is heard as the output of a machine. In an instrument the spectrum changes during every note, and in frequency modulation this is achieved by changing the index. Chowning made it the premise of his paper: “the character of the temporal evolution of the spectral components is of critical importance in the determination of timbre.”</p>
+            <p>On this page the index begins high and falls. As it falls the outer partials disappear first, exactly as they would if a low-pass filter were being closed, although no filter is present. The change is described by three quantities: the value from which the index starts, the time it takes to fall, and the value at which it comes to rest.</p>
           </>
         ),
         source: {
@@ -428,28 +331,17 @@ out[i]    = Math.sin(phase[i] + phaseOffset) * ring;`,
         ],
         clip: phrase,
         tryThis: [
-          <>Decay 0.05 s, sustain 0: a click on a sine. Decay 0.35 s: a pluck. Decay 3 s: a slow filter close.</>,
-          <>Set the attack to 0.4 s and the sustain to 1. The tone opens up after it starts, which is the brass gesture of lesson 9.</>,
+          <>With the sustain at 0, a decay of 0.05 s gives a click followed by a sine wave, a decay of 0.35 s gives a plucked sound, and a decay of 3 s gives the sound of a filter closing slowly.</>,
+          <>Set the attack to 0.4 s and the sustain to 1. The tone now grows brighter after it has begun, which is how a brass note behaves, and is the basis of recipe 9.1.</>,
         ],
       },
       {
         title: "Velocity and register",
         body: (
           <>
-            <p>
-              Real instruments get brighter when played harder, and they have fewer audible overtones at the top of
-              their range. In FM both are scalings of the index.
-            </p>
-            <p>
-              <strong>Velocity to index</strong> is the single most effective expressive mapping in FM. The loop
-              repeats one note at rising and falling velocity; with the amount at zero only the loudness changes.
-            </p>
-            <p>
-              <strong>Key scaling</strong> reduces the index as the pitch rises. Bandwidth is about{" "}
-              <M>m · (I + 1)</M>, and <M>m</M> doubles every octave, so a fixed index sounds thin at the bottom and
-              shrill at the top, and eventually runs past the sample-rate limit and aliases. Yamaha’s guide scales
-              both feedback and modulator level down above a break point for the same reason.
-            </p>
+            <p>An instrument played harder is brighter as well as louder, and at the top of its range it has fewer audible overtones than at the bottom. In frequency modulation both effects are obtained by scaling the index.</p>
+            <p>The first is obtained by letting the velocity of the key reduce the index for soft notes. The loop repeats one note at velocities that rise and then fall. When the amount is zero the notes differ only in loudness, and when it is raised they differ in brightness also. This is usually the first mapping to set up in a patch, because so much of the impression of a played instrument depends on it.</p>
+            <p>The second is obtained by reducing the index as the pitch rises, which is called key scaling. The need for it follows from the rule for bandwidth. The band extends about <M>m · (I + 1)</M> on each side of the carrier, and <M>m</M> doubles with each octave, so that an index which sounds right in the middle of the keyboard gives too narrow a band at the bottom and too wide a one at the top. At a sufficiently high pitch the upper partials pass half the sample rate and are reproduced at the wrong frequencies. Yamaha’s guide makes the same adjustment, reducing the level of the feedback and of the modulators above a chosen key.</p>
           </>
         ),
         source: {
@@ -466,7 +358,7 @@ out[i]    = Math.sin(phase[i] + phaseOffset) * ring;`,
         ],
         clip: velocityRamp(57),
         tryThis: [
-          <>Use the keyboard column to play the same patch at C2 and C6 with key scaling at 0, then at 0.7.</>,
+          <>Use the keyboard column to play the patch two octaves below the loop and two octaves above it, first with the key scaling at 0 and then at 0.7.</>,
         ],
       },
     ],
@@ -475,24 +367,15 @@ out[i]    = Math.sin(phase[i] + phaseOffset) * ring;`,
     id: "feedback",
     number: "5",
     part: PART,
-    title: "Feedback: one operator, many harmonics",
+    title: "Feedback",
     refs: ["schottstaedt", "sos13", "manny"],
     steps: [
       {
         title: "A sine that modulates itself",
         body: (
           <>
-            <p>
-              Route an operator’s output back into its own phase. Because it modulates itself, the ratio is always
-              1 : 1 and every sideband lands on a harmonic. As the amount rises the sine leans over into a sawtooth:
-              Schottstaedt describes the result as “a much broader, flatter spectrum” whose harmonics fall off as 1/n.
-            </p>
-            <p>
-              There is a ceiling. Tomisawa, who designed the scheme, recommends staying between 0 and 1.5, and
-              Schottstaedt’s advice is blunter: “keep the index below 1.0”. Past that the waveform develops a zig-zag
-              instability on its falling edge and the tone breaks into noise. Six Sines’ feedback knob tops out at
-              π/2 ≈ 1.57, right at the edge. Its overdrive switch goes ten times further.
-            </p>
+            <p>An operator’s output may be added to its own phase. Since it then modulates itself, the ratio of modulator to carrier is necessarily 1, and every sideband is a harmonic. As the amount of feedback is increased the sine wave leans forward until it resembles a sawtooth. Schottstaedt describes the result as “a much broader, flatter spectrum” than that of an ordinary pair, in which the harmonics diminish in proportion to their number.</p>
+            <p>The amount cannot be increased indefinitely. Tomisawa, who devised the method, recommended values between 0 and 1.5, and Schottstaedt’s advice is to “keep the index below 1.0”. Above these values the falling edge of the wave becomes unstable and the tone turns to noise. The feedback knob of Six Sines reaches π/2, or about 1.57, which is at the limit of Tomisawa’s range, and its overdrive switch multiplies this by ten.</p>
           </>
         ),
         source: { kind: "operators", patch: { ops: [op(1, 0.8, { feedback: 0.8, amp: env(0.005, 0, 1, 0.2) })], edges: [] } },
@@ -500,24 +383,16 @@ out[i]    = Math.sin(phase[i] + phaseOffset) * ring;`,
         clip: phrase,
         maxRatio: 32,
         tryThis: [
-          <>Watch the scope between 0 and 1.2: sine to saw. Then push to 3 and watch the falling edge shatter.</>,
-          <>Hold a low note at 1.57 and a high one. The high one breaks up first; there are fewer samples per cycle to keep the loop stable.</>,
+          <>Watch the waveform as the feedback goes from 0 to 1.2. Then raise it to 3 and watch the falling edge.</>,
+          <>With the feedback at 1.57, hold a low note and then a high one. The high note turns to noise first, probably because it has fewer samples in each cycle.</>,
         ],
       },
       {
-        title: "Feedback as a cheap modulator stack",
+        title: "A feedback operator as modulator",
         body: (
           <>
-            <p>
-              A feedback operator is most useful as a <em>modulator</em>. A plain sine modulator gives the carrier one
-              family of sidebands. A saw-like modulator already contains many harmonics, and each one acts as its own
-              modulator, so the carrier’s spectrum fills in densely. You get the richness of a two- or three-deep
-              stack of operators for the price of one.
-            </p>
-            <p>
-              This is how four-operator synths get big basses. Yamaha’s bass tutorial puts feedback on nearly every
-              operator and notes that its saw-type feedback adds all the integer overtones while a square type adds only the odd ones. In Six Sines a negative feedback level gives the squarer flavour.
-            </p>
+            <p>The chief use of an operator with feedback is as a modulator. A sine-wave modulator gives the carrier one family of sidebands. A modulator with feedback already contains several harmonics, each of which acts on the carrier as a modulator in its own right, so that the carrier’s spectrum is filled much more densely. One operator thus does the work for which two or three would otherwise be placed in series, an arrangement examined in lesson 6b.</p>
+            <p>Instruments with only four operators obtain their fuller bass sounds in this way. Yamaha’s tutorial on bass sounds puts feedback on nearly every operator, and observes that feedback of the sawtooth type adds all the harmonics while that of the square type adds only the odd ones. In Six Sines a negative feedback level gives a result of the second kind, because the signal fed back is then squared, which doubles its frequency and so makes the operator modulate itself at a ratio of 2.</p>
           </>
         ),
         source: {
@@ -541,16 +416,12 @@ out[i]    = Math.sin(phase[i] + phaseOffset) * ring;`,
           options: [
             "Nothing: the index into the carrier has not changed",
             "It gets brighter, with partials well beyond tick 3",
-            "It gets duller, because feedback steals energy",
+            "It gets duller, because the feedback takes energy from the modulator",
             "It turns inharmonic",
           ],
           answer: 1,
           explain: (
-            <p>
-              The bandwidth rule <M>m · (I + 1)</M> applies to each harmonic of the modulator separately. Its 4th
-              harmonic acts like a modulator at ratio 4, reaching four times as far. Everything stays harmonic because
-              every component is a whole multiple of the note.
-            </p>
+            <p>The rule for bandwidth applies separately to each harmonic of the modulator. Its fourth harmonic, for instance, acts as a modulator of ratio 4, and at a given index reaches four times as far as the fundamental does. Since every component is a whole multiple of the note, the result remains harmonic.</p>
           ),
         },
       },

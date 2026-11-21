@@ -19,24 +19,11 @@ export const partD: Lesson[] = [
     refs: ["chowning", "schottstaedt"],
     steps: [
       {
-        title: "Brightness follows loudness",
+        title: "The index follows the amplitude",
         body: (
           <>
-            <p>
-              <strong>What the ear expects.</strong> Chowning starts from Risset’s analysis of trumpet tones: all
-              harmonics present, the higher ones growing with intensity, and a fast attack that may overshoot the
-              steady level.
-            </p>
-            <p>
-              <strong>Topology.</strong> All harmonics means a ratio of 1 : 1. Nothing here needs a second ingredient,
-              so one pair is enough.
-            </p>
-            <p>
-              <strong>The decision.</strong> The index envelope has the same shape as the amplitude envelope. Chowning
-              uses one function for both, rising in a tenth of a second, sagging to three quarters, and holding, with
-              the index running from 0 to 5. The brighter-when-louder link is the whole recipe, and the overshoot is
-              the “blat” at the start of the note.
-            </p>
+            <p>Chowning based his brass tone on Risset’s analysis of the trumpet, from which he took three facts. All the harmonics are present. The higher ones grow stronger as the note grows louder. And the attack is fast, and may rise above the level at which the note then settles.</p>
+            <p>The first fact fixes the ratio at 1 : 1, and since nothing in the description calls for a second component, one pair is enough. The second fact is met by giving the index the same envelope as the amplitude, and this is what remains to be adjusted. Chowning uses one function for both: it rises in a tenth of a second, falls back to three quarters, and holds, while the index goes from 0 to 5. The overshoot at the start, which the third fact requires, is heard as the bite at the beginning of the note.</p>
           </>
         ),
         source: {
@@ -54,21 +41,19 @@ export const partD: Lesson[] = [
         ],
         clip: brassLine,
         tryThis: [
-          <>Make the index attack much faster than the amplitude attack (0.01 against 0.08). The note starts bright and stays; it now reads as a synth, not a horn.</>,
-          <>Sustain at 1 removes the overshoot: a softer, flugelhorn start. Sustain at 0.4 gives a hard sforzando.</>,
+          <>Make the index attack much shorter than the amplitude attack, say 0.01 s against 0.08 s. The note is then bright from the first instant, and is heard as a synthesizer and not as a horn.</>,
+          <>With the sustain at 1 there is no overshoot, and the note begins softly, as on a flugelhorn. With the sustain at 0.4 the beginning is a hard accent.</>,
         ],
       },
       {
-        title: "A bigger section",
+        title: "Three additions",
         body: (
           <>
-            <p>
-              Three additions take the textbook brass to something usable, and each is a topology choice from Part B.
-            </p>
+            <p>Three additions make the textbook tone more useful, and each applies a connection from Part B.</p>
             <ul>
-              <li>Feedback on the modulator makes it saw-like, so the top of the spectrum fills in without a higher index (lesson 5).</li>
-              <li>A second modulator at ratio 3 in parallel, short and velocity-driven, gives the edge on hard attacks (lesson 6f).</li>
-              <li>A second, slightly detuned carrier on the same modulator doubles the player (lesson 6e).</li>
+              <li>Feedback on the modulator gives it harmonics of its own, so that the upper part of the spectrum is filled without raising the index (lesson 5).</li>
+              <li>A second modulator at ratio 3, in parallel with the first, has a short envelope that depends on velocity, and supplies the edge on notes attacked hard (lesson 6f).</li>
+              <li>A second carrier on the same modulator, slightly detuned, gives the effect of a second player (lesson 6e).</li>
             </ul>
           </>
         ),
@@ -109,27 +94,16 @@ export const partD: Lesson[] = [
         title: "Carrier above the modulator",
         body: (
           <>
-            <p>
-              <strong>What the ear expects.</strong> In woodwinds and organ pipes, Chowning observes, the higher
-              harmonics are often the <em>first</em> to speak; the lower ones arrive as the tone settles. That is the
-              opposite of brass.
-            </p>
-            <p>
-              <strong>Topology.</strong> One pair, with the carrier placed on an upper harmonic. With the carrier at 3
-              and the modulator at 1, an index of zero gives the 3rd harmonic alone. As the index rises the sidebands
-              step down to 2 and 1 and up to 4 and 5: the fundamental arrives late.
-            </p>
-            <p>
-              <strong>The decision.</strong> Which harmonic the carrier sits on, and how far the index opens.
-              Chowning’s settings:
-            </p>
+            <p>In woodwinds and organ pipes, Chowning observes, the higher harmonics are often the first to sound, and the lower ones grow as the tone reaches its steady state. This is the reverse of what happens in brass.</p>
+            <p>The behaviour can be had from one pair by placing the carrier on an upper harmonic. With the carrier at 3 and the modulator at 1, an index of zero gives the third harmonic alone. As the index rises, sidebands appear at 2 and 1 below it and at 4 and 5 above, so that the fundamental arrives after the note has begun.</p>
+            <p>Two things are left to choose: the harmonic on which the carrier is placed, and the value the index reaches. Chowning’s settings are these.</p>
             <table>
               <thead>
                 <tr><th>Timbre</th><th>Carrier : modulator</th><th>Index</th></tr>
               </thead>
               <tbody>
-                <tr><td>Generic reed</td><td className="m">3 : 1</td><td className="m">0 → 2</td></tr>
-                <tr><td>Bassoon (low register)</td><td className="m">5 : 1</td><td className="m">0 → 1.5</td></tr>
+                <tr><td>Reed</td><td className="m">3 : 1</td><td className="m">0 → 2</td></tr>
+                <tr><td>Bassoon, in the lower octaves</td><td className="m">5 : 1</td><td className="m">0 → 1.5</td></tr>
                 <tr><td>Clarinet</td><td className="m">3 : 2</td><td className="m">4 → 2 (next step)</td></tr>
               </tbody>
             </table>
@@ -149,36 +123,26 @@ export const partD: Lesson[] = [
         ],
         clip: melody,
         predict: {
-          question: "Carrier at 3, modulator at 1, index rising from 0 to 2 over the attack. What do you hear first?",
+          question: "The carrier is at 3 and the modulator at 1, and the index rises from 0 to 2 during the attack. What is heard first?",
           options: [
             "The fundamental, with harmonics added above it",
-            "The 3rd harmonic, an octave and a fifth above the note, with the fundamental filling in underneath",
+            "The 3rd harmonic, an octave and a fifth above the note, after which the fundamental appears beneath it",
             "Noise, then tone",
             "All harmonics at once",
           ],
           answer: 1,
           explain: (
-            <p>
-              At index 0 only the carrier sounds, and the carrier is the 3rd harmonic. Slow the index attack right
-              down to hear it as two events. At normal speed the ear takes it as the “chiff” of a reed starting.
-            </p>
+            <p>At an index of 0 only the carrier sounds, and the carrier is the third harmonic. If the index attack is made very slow the two stages can be heard separately. At the ordinary speed the ear takes them together as the breathy beginning of a reed note.</p>
           ),
         },
-        tryThis: [<>Carrier 5, index 1.5, and play in the bottom octave: Chowning’s bassoon.</>],
+        tryThis: [          <>Put the carrier on 5, set the index to 1.5 and play in the lowest octave. This is Chowning’s bassoon.</>,],
       },
       {
-        title: "Clarinet: odd harmonics and a closing index",
+        title: "The clarinet",
         body: (
           <>
-            <p>
-              A clarinet has mostly odd harmonics. Chowning gets them from carrier 3, modulator 2: the fundamental is
-              then 1, and the sidebands at 3 ± 2k are all odd. He also turns the index envelope upside down, running
-              it from 4 down to 2, so “the bandwidth of the spectrum will decrease as the amplitude increases during
-              the attack”.
-            </p>
-            <p>
-              The modulator carries a 0.4 Hz offset here, his own suggestion for realism from lesson 8.
-            </p>
+            <p>The clarinet has mainly odd harmonics. Chowning obtains them with the carrier at 3 and the modulator at 2. The fundamental is then 1, and the sidebands, at 3 ± 2k, are all odd. He also reverses the envelope of the index, which falls from 4 to 2 during the attack, so that “the bandwidth of the spectrum will decrease as the amplitude increases during the attack”.</p>
+            <p>The modulator on this page has an offset of 0.4 Hz. This is the device described in lesson 8, and Chowning recommends it for these tones.</p>
           </>
         ),
         source: {
@@ -194,7 +158,7 @@ export const partD: Lesson[] = [
           { label: "Settling time", path: "edges.0.env.d", min: 0.01, max: 1, log: true, unit: "s" },
         ],
         clip: melody,
-        tryThis: [<>Play below the staff. Note that the keyboard pitch is the fundamental at 1; the roll’s C3 sounds as written.</>],
+        tryThis: [          <>Play in the octave below the loop. The pitch heard is that of the key, because the fundamental is at 1 although neither operator is tuned to it.</>,],
       },
     ],
   },
@@ -209,21 +173,9 @@ export const partD: Lesson[] = [
         title: "Three small modulators",
         body: (
           <>
-            <p>
-              <strong>What the ear expects.</strong> A dense harmonic spectrum with a broad hump, a slow onset as the
-              bow takes hold, constant small movement, and fewer audible overtones on the higher strings.
-            </p>
-            <p>
-              <strong>Topology.</strong> Schottstaedt’s fm-violin, the workhorse of a generation of computer music,
-              is three modulators in parallel on one carrier, at 1, 3 and 4 times the note. Parallel because each
-              needs its own index: the three indices shape the hump, which a single modulator at a higher index
-              cannot do.
-            </p>
-            <p>
-              <strong>The decision.</strong> The indices are small, and they shrink as the pitch rises. His formulas
-              divide each index by a function of the frequency. Here that is the key-scaling control from lesson 4.
-              The modulators are a fraction of a hertz off, for bow noise.
-            </p>
+            <p>A bowed string has a dense harmonic spectrum with a broad region of greatest strength, a slow beginning while the bow takes hold, slight continual variation, and fewer audible overtones on the higher strings.</p>
+            <p>Schottstaedt’s fm-violin, which was used in a great deal of computer music, has three modulators in parallel on one carrier, at 1, 3 and 4 times the note. They are in parallel because each needs an index of its own. The three indices together determine the shape of the broad region, which one modulator at a higher index could not do.</p>
+            <p>The indices are small, and they are made smaller as the pitch rises: in his formulas each is divided by a function of the frequency. On this page that is done by the key scaling of lesson 4, which is already set. The modulators are offset by a fraction of a hertz to give the variation. What remains to adjust is the three indices.</p>
           </>
         ),
         source: {
@@ -251,8 +203,8 @@ export const partD: Lesson[] = [
         clip: padChords,
         maxRatio: 24,
         tryThis: [
-          <>Zero the modulators at 3 and 4. What remains is a duller, flute-like tone: the upper two are the rosin.</>,
-          <>Shorten the bow attack to 0.02 s for a spiccato; the same spectrum reads as a different articulation.</>,
+          <>Set the indices of the modulators at 3 and 4 to zero. What remains is a duller tone, like that of a flute, which shows that the upper two supply the rasp of the bow.</>,
+          <>Shorten the bow attack to 0.02 s. The spectrum is unchanged, but the note is now heard as a short bounced stroke.</>,
         ],
       },
     ],
@@ -265,23 +217,12 @@ export const partD: Lesson[] = [
     refs: ["manny", "yamaha6"],
     steps: [
       {
-        title: "Fundamental first, then character",
+        title: "A fixed fundamental and two modulators",
         body: (
           <>
-            <p>
-              <strong>What the ear expects.</strong> Yamaha’s bass tutorial lists the requirements: a solid
-              fundamental, quick envelopes that suit short notes, and a tone whose brightness answers to velocity.
-            </p>
-            <p>
-              <strong>Topology.</strong> One carrier at ratio 1 keeps the fundamental solid whatever else happens.
-              Two modulators feed it in parallel. The first, with feedback, is the body: a saw-like modulator at
-              ratio 1. The second has its own short envelope and full velocity sensitivity, and exists only to snap
-              on hard notes. A fourth operator sits in series above the body modulator for extra growl.
-            </p>
-            <p>
-              <strong>The decision.</strong> How much of the brightness lives in feedback (static, buzzy) and how
-              much in the snap modulator (dynamic, percussive).
-            </p>
+            <p>Yamaha’s tutorial on bass sounds lists what a bass patch requires: a solid fundamental, envelopes quick enough for short notes, and a brightness that responds to velocity.</p>
+            <p>The fundamental is kept solid by a single carrier at ratio 1, which sounds it whatever the modulators do. Two modulators act on this carrier in parallel. The first has feedback, which makes it resemble a sawtooth, and it supplies the steady character of the tone. The second has a short envelope of its own and depends entirely on velocity, so that it is heard only as a snap at the beginning of notes struck hard. A fourth operator is placed in series above the first modulator, where a small index adds roughness.</p>
+            <p>The choice left open is how the brightness is divided between the two modulators. Brightness from the feedback is constant and buzzing, and brightness from the second modulator is momentary and percussive.</p>
           </>
         ),
         source: {
@@ -311,8 +252,8 @@ export const partD: Lesson[] = [
         clip: bassLine,
         maxRatio: 32,
         tryThis: [
-          <>Snap index to 0: the line loses its articulation but not its weight. Body index to 0: the reverse.</>,
-          <>Carrier ratio 0.5 puts the fundamental an octave down with the modulators now at 2 : 1 above it. The tutorial’s author found the same trick by accident and calls the result a much heavier bottom end.</>,
+          <>Set the snap index to 0. The line loses the definition of its attacks but keeps its weight. Then restore it and set the body index to 0, which has the opposite effect.</>,
+          <>Set the carrier ratio to 0.5. The fundamental is then an octave lower, with the modulators at twice its frequency. The author of the tutorial came on this by accident, and says that it gives a much heavier bottom end.</>,
         ],
       },
     ],
@@ -325,25 +266,12 @@ export const partD: Lesson[] = [
     refs: ["yamaha6"],
     steps: [
       {
-        title: "An attack stack and a body stack",
+        title: "A series for the attack and a series for the body",
         body: (
           <>
-            <p>
-              <strong>What the ear expects.</strong> A burst of dense, bright, briefly noisy partials as the string
-              leaves the plectrum, collapsing within a few tens of milliseconds to a tone that loses its upper
-              harmonics steadily as it rings.
-            </p>
-            <p>
-              <strong>Topology.</strong> Yamaha’s harp is two three-operator stacks side by side. One is the attack,
-              with very short envelopes, and one is the body. Series, because the attack needs density that a single
-              pair cannot give (lesson 6b), and two stacks because attack and body have different time behaviour
-              (lesson 6e).
-            </p>
-            <p>
-              <strong>The decision.</strong> The balance of the two decays. The modulators at ratio 0.5 under a carrier
-              at 0.5 give a full harmonic series an octave below the nominal ratio, which is where the weight of a
-              guitar string comes from.
-            </p>
+            <p>When a string is plucked there is first a burst of many bright partials, lasting a few hundredths of a second, as the string leaves the plectrum. It is followed by a tone that loses its upper harmonics steadily as it rings.</p>
+            <p>Yamaha’s harp patch uses two series of three operators side by side, one for the attack and one for the body. Operators are placed in series because the attack needs more density than one pair can give (lesson 6b), and there are two series because the attack and the body behave differently in time (lesson 6e). In each series the lower two operators are at a ratio of 0.5, which gives a complete harmonic series whose fundamental is an octave below the key, and the top operator, at about 8, adds the noise of the pick.</p>
+            <p>What is left to adjust is the relation between the two decays.</p>
           </>
         ),
         source: {
@@ -375,8 +303,8 @@ export const partD: Lesson[] = [
         clip: pluckArp,
         maxRatio: 32,
         tryThis: [
-          <>Shorten the body ring to 0.3 s for a palm mute. This is close to the factory preset “Muted Strat” in Part E, whose numbers these are.</>,
-          <>Lengthen the attack stack decay to 0.6 s. The pluck becomes a nasal honk: a clavinet.</>,
+          <>Shorten the body’s ring time to 0.3 s, as when the strings are damped with the palm. The patch is then close to the factory preset “Muted Strat” in Part E, from which its numbers are taken.</>,
+          <>Lengthen the decay of the attack series to 0.6 s. The pluck becomes a nasal honk, like that of a clavinet.</>,
         ],
       },
     ],
@@ -389,22 +317,12 @@ export const partD: Lesson[] = [
     refs: ["sixsines", "yamaha6"],
     steps: [
       {
-        title: "Body pair and tine pairs",
+        title: "A pair for the body and two for the tine",
         body: (
           <>
-            <p>
-              <strong>What the ear expects.</strong> A tine struck by a hammer: a high metallic “tink” that dies
-              quickly, over a mellow tone that rings and barks when hit hard.
-            </p>
-            <p>
-              <strong>Topology.</strong> Independent pairs, the textbook case. One body pair at 1 : 1. Two tine pairs
-              with the modulator near 7 times the carrier, detuned against each other so that the tink shimmers. The
-              numbers below are taken from the factory preset “Surge DX Piano Port”, the first breakdown in Part E.
-            </p>
-            <p>
-              <strong>The decision.</strong> Everything expressive is velocity into the body index. That one mapping
-              produces the bark. The tines mostly need to be short.
-            </p>
+            <p>In an electric piano a hammer strikes a metal tine. There is a high metallic sound that dies quickly, and beneath it a mellow tone that rings on and becomes rough when the key is struck hard.</p>
+            <p>These are two components with different behaviour in time, and the patch accordingly uses independent pairs. One pair, at 1 : 1, gives the body. Two more give the tine, each with its modulator at about 7 times its carrier, and the two are slightly detuned against each other so that the metallic sound shimmers. The numbers are taken from the factory preset “Surge DX Piano Port”, which is the first examined in Part E.</p>
+            <p>The expressive character of the instrument comes almost wholly from the effect of velocity on the index of the body pair, which produces the roughness of hard notes. The tine pairs need little adjustment beyond being short.</p>
           </>
         ),
         source: {
@@ -435,8 +353,8 @@ export const partD: Lesson[] = [
         clip: epChords,
         maxRatio: 24,
         tryThis: [
-          <>Set velocity → body index to 0. The chords flatten into an organ: the instrument was in that one control.</>,
-          <>Tine ratio 14 is the glassy “FM piano” of a thousand ballads. 10 is nearer a real tine.</>,
+          <>Set the effect of velocity on the body index to 0. The chords become as even as those of an organ, which shows how much depended on that one mapping.</>,
+          <>A tine ratio of 14 gives the glassy piano heard on many recordings of the 1980s, and a ratio of 10 is nearer to a real tine.</>,
         ],
       },
     ],
@@ -452,18 +370,9 @@ export const partD: Lesson[] = [
         title: "Bell",
         body: (
           <>
-            <p>
-              <strong>What the ear expects.</strong> Chowning’s two premises for percussive sounds: the partials are
-              not in the harmonic series, and “the evolution of the spectrum is from the complex to the simple”.
-            </p>
-            <p>
-              <strong>Topology.</strong> One pair. Inharmonicity needs only a ratio.
-            </p>
-            <p>
-              <strong>The decision.</strong> The ratio and the starting index. His bell: carrier 200 Hz, modulator
-              280 Hz (1 : 1.4), index 10 falling to 0 on the same 15-second exponential as the amplitude. As it rings
-              the spectrum thins until, as he puts it, the predominant frequency is the carrier alone.
-            </p>
+            <p>Chowning states two premises for percussive sounds: the partials are not usually in the harmonic series, and “the evolution of the spectrum is from the complex to the simple”.</p>
+            <p>Inharmonic partials need only a suitable ratio, so that one pair is enough. For his bell the carrier is at 200 Hz and the modulator at 280 Hz, a ratio of 1 : 1.4, and the index falls from 10 to 0 along the same exponential curve, 15 seconds long, as the amplitude. The spectrum therefore becomes simpler as the bell rings, until almost nothing but the carrier is left.</p>
+            <p>The ratio and the initial index are the two things to adjust.</p>
           </>
         ),
         source: {
@@ -482,22 +391,15 @@ export const partD: Lesson[] = [
         clip: bellTune,
         maxRatio: 20,
         tryThis: [
-          <>Make the index decay much shorter than the ring time (1 s against 9 s). A soft mallet on a bar: bright strike, long pure hum.</>,
+          <>Make the index decay much shorter than the ring time, say 1 s against 9 s. The result is a bar struck with a soft mallet, bright at the stroke and followed by a long pure hum.</>,
         ],
       },
       {
         title: "Drum",
         body: (
           <>
-            <p>
-              Same ratio, same routing. Chowning changes two numbers: the note lasts 0.2 seconds and the index starts
-              at 2 where the bell’s started at 10. “The principal difference from the bell sound, in addition to the
-              short duration, is the vastly reduced initial bandwidth of the spectrum.”
-            </p>
-            <p>
-              A bell and a tom are the same patch. That is the clearest demonstration in the paper that the index
-              contour, more than the routing, is the instrument.
-            </p>
+            <p>The drum has the same ratio and the same connection as the bell. Chowning changes two numbers: the note lasts 0.2 seconds, and the index begins at 2 where that of the bell began at 10. “The principal difference from the bell sound, in addition to the short duration, is the vastly reduced initial bandwidth of the spectrum.”</p>
+            <p>A bell and a tom-tom are thus the same patch with different values. The comparison shows how much of the identity of an instrument lies in the course of the index, and how little in the connection of the operators.</p>
           </>
         ),
         source: {
@@ -515,26 +417,20 @@ export const partD: Lesson[] = [
         clip: drums,
         maxRatio: 20,
         predict: {
-          question: "Starting from the drum, you raise the index to 10 and the length to 2 seconds, leaving everything else. What do you get?",
+          question: "Starting from the drum, the index is raised to 10 and the length to 2 seconds, and nothing else is changed. What is the result?",
           options: ["A longer drum", "A snare", "The bell from the previous step, shorter", "A bass note"],
           answer: 2,
-          explain: <p>The only differences between the two patches were those two numbers.</p>,
+          explain: (
+            <p>Those two numbers were the only differences between the two patches.</p>
+          ),
         },
       },
       {
         title: "Wood drum",
         body: (
           <>
-            <p>
-              The third percussion sound in the paper uses an extreme setting to get something that sounds like a
-              resonant body. Carrier 80 Hz, modulator 55 Hz, and an index of 25 that collapses to nothing within the
-              first 25 milliseconds while the amplitude dies more slowly.
-            </p>
-            <p>
-              An index of 25 on a 55 Hz modulator spreads energy over nearly 3 kHz. For an instant the sound is a
-              broadband thwack. Then the bandwidth shrinks to a sine. Chowning: this “has the perceptual effect of a
-              strong resonance”. Nothing resonant is being modelled; a very fast index sweep is heard as one.
-            </p>
+            <p>The third percussive sound in the paper uses an extreme setting to imitate a resonant body. The carrier is at 80 Hz and the modulator at 55 Hz, and the index starts at 25 and falls to nothing within the first 25 thousandths of a second, while the amplitude dies away more slowly.</p>
+            <p>An index of 25 with a modulator at 55 Hz spreads the energy over nearly 3000 Hz, so that for an instant the sound is a broad band of noise. The band then narrows rapidly to a single sine wave, and this, Chowning says, “has the perceptual effect of a strong resonance”. Nothing that resonates has been modelled. A very rapid fall of the index is simply heard as a resonance.</p>
           </>
         ),
         source: {
@@ -552,8 +448,8 @@ export const partD: Lesson[] = [
         clip: { ...drums, notes: drums.notes.map(([p, ...rest]) => [p - 12, ...rest]) as typeof drums.notes },
         maxRatio: 32,
         tryThis: [
-          <>Stretch the collapse time to 0.3 s. The resonance illusion breaks and you hear the sweep for what it is.</>,
-          <>Play up the keyboard: log drum, tabla, a plucked rubber band.</>,
+          <>Lengthen the collapse time to 0.3 s. The impression of a resonance is lost, and the fall of the index is heard as a sweep.</>,
+          <>Play higher on the keyboard, where the same patch suggests a log drum, a tabla, or a stretched rubber band.</>,
         ],
       },
     ],
@@ -566,24 +462,12 @@ export const partD: Lesson[] = [
     refs: ["sos13", "schottstaedt"],
     steps: [
       {
-        title: "Push a chain until the pitch goes",
+        title: "A series driven until the pitch is lost",
         body: (
           <>
-            <p>
-              <strong>What the ear expects.</strong> A hi-hat or cymbal has no pitch. Its spectrum is so dense and so
-              inharmonic that no fundamental can be picked out.
-            </p>
-            <p>
-              <strong>Topology.</strong> Everything Part B warned against. A deep chain, unrelated ratios, indices
-              far beyond the point where sidebands pass the top of the audio band and fold back, and feedback past
-              its stable limit. Reid notes that feedback between operators at unrelated frequencies quickly
-              degenerates into noise, and that this is useful for percussion; Schottstaedt places the onset of noise
-              bursts just above a feedback index of 1.
-            </p>
-            <p>
-              <strong>The decision.</strong> Only the amplitude envelope and the register. The useful exercise runs
-              the other way: turn stages down until a pitch reappears, and find where noise begins.
-            </p>
+            <p>A hi-hat or a cymbal has no pitch, because its spectrum is so dense and so inharmonic that the ear can find no fundamental in it.</p>
+            <p>Such a spectrum is produced by doing what Part B advised against. The operators are in a long series, their ratios have no simple relation, the indices are great enough to carry the sidebands beyond half the sample rate, and the feedback is beyond the limit at which it is stable. Reid observes that feedback between operators at unrelated frequencies soon turns to noise and is useful for percussion on that account, and Schottstaedt finds that bursts of noise begin when the feedback index is a little above 1.</p>
+            <p>Only the amplitude envelope and the register are left to adjust. It is more instructive to proceed in the other direction, reducing the stages one by one until a pitch can be heard again, and so finding where the noise begins.</p>
           </>
         ),
         source: {
@@ -609,8 +493,8 @@ export const partD: Lesson[] = [
         clip: hats,
         maxRatio: 48,
         tryThis: [
-          <>Length 0.6 s is an open hat, 1.5 s a ride. Play an octave up for a brighter cymbal.</>,
-          <>Bring all three indices down together. Somewhere around 2 a clangorous pitch emerges: a cowbell lives on the way from noise to tone.</>,
+          <>A length of 0.6 s gives an open hi-hat, and 1.5 s a ride cymbal. An octave higher the cymbal is brighter.</>,
+          <>Reduce all three indices together. At about 2 a clangorous pitch appears, which resembles a cowbell.</>,
         ],
       },
     ],
@@ -626,20 +510,9 @@ export const partD: Lesson[] = [
         title: "Carriers on the formants",
         body: (
           <>
-            <p>
-              <strong>What the ear expects.</strong> A harmonic buzz with three fixed regions of emphasis, a gentle
-              onset, and a pitch that is never quite still.
-            </p>
-            <p>
-              <strong>Topology.</strong> Parallel carriers on one modulator (lesson 6d): the carriers place the
-              formants and the shared modulator keeps them on one harmonic series. The modulator has feedback so that
-              each formant is a cluster, not a single line.
-            </p>
-            <p>
-              <strong>The decision.</strong> The three carrier ratios are the vowel, and their levels fall steeply:
-              Le Brun’s figures, as Schottstaedt reports them, are 0.86, 0.13 and 0.01 for the three formants. The
-              indices are small. A wide index smears a formant into its neighbours and the vowel is lost.
-            </p>
+            <p>A sung vowel is a harmonic buzz with three fixed regions of emphasis, a gentle beginning, and slight continual variation.</p>
+            <p>Parallel carriers on one modulator provide the regions (lesson 6d): each carrier places one formant, and the shared modulator keeps all three on one harmonic series. The modulator has feedback, so that each formant is a group of partials and not a single one, and a small offset in hertz, which supplies the variation.</p>
+            <p>The three carrier ratios determine the vowel. Their levels fall steeply from the first to the third, and Schottstaedt gives the amplitudes in Le Brun’s voice as 0.86, 0.13 and 0.01. The indices must be small, because a wide index spreads each formant into its neighbours and the vowel is lost.</p>
           </>
         ),
         source: {
@@ -664,8 +537,8 @@ export const partD: Lesson[] = [
         clip: { ...melody, bpm: 76 },
         maxRatio: 20,
         tryThis: [
-          <>2 / 5 / 10 is near “ah”. 1 / 9 / 12 is near “ee”. 2 / 3 / 10 is near “oo”.</>,
-          <>Raise the formant width past 2. The vowel dissolves into a generic bright tone.</>,
+          <>Ratios of 2, 5 and 10 are near “ah”, 1, 9 and 12 near “ee”, and 2, 3 and 10 near “oo”.</>,
+          <>Raise the formant width above 2. The vowel is lost, and what remains is an ordinary bright tone.</>,
         ],
       },
     ],

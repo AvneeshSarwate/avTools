@@ -20,15 +20,8 @@ export const partB: Lesson[] = [
         title: "Series",
         body: (
           <>
-            <p>
-              With more than two operators there are only four things you can do, and every algorithm on every FM synth
-              is a combination of them. Each has a job. The aim of this part is that you can look at a sound you want
-              and say which connection it calls for before touching a control.
-            </p>
-            <p>
-              <strong>Series.</strong> A modulates B, B modulates C. The carrier is bent by something that is already
-              a complex wave. This is the dense, bright, hard-to-steer connection. Lesson 6b.
-            </p>
+            <p>When a patch has more than two operators, there are four ways in which they can be connected, and every arrangement on every FM instrument is a combination of these four. Each does something the others cannot. The purpose of this part is to make it possible to decide, from a description of the sound wanted, which connection is required.</p>
+            <p>The first is the series connection, in which one operator modulates a second and the second modulates a third. The carrier is then modulated by a wave that is already complex. This connection gives the densest spectra and is the hardest to control, for reasons given in lesson 6b.</p>
           </>
         ),
         source: {
@@ -45,11 +38,9 @@ export const partB: Lesson[] = [
       {
         title: "Parallel modulators",
         body: (
-          <p>
-            <strong>Parallel modulators.</strong> A and B both modulate C. Two independent sets of sidebands share one
-            carrier, and each modulator can have its own ratio and its own envelope. This is the connection for
-            sounds with two spectral ingredients that move differently, such as a body and a bite. Lesson 6c.
-          </p>
+          <>
+            <p>In the second connection two operators modulate the same carrier. Each contributes its own family of sidebands, and since each has its own ratio and its own envelope, the two families can differ in spacing and can change differently during the note. It is the connection to use when a sound has two components of timbre that behave differently, for example a body that lasts and an edge that fades. Lesson 6c examines it.</p>
+          </>
         ),
         source: {
           kind: "operators",
@@ -65,11 +56,9 @@ export const partB: Lesson[] = [
       {
         title: "Parallel carriers",
         body: (
-          <p>
-            <strong>Parallel carriers.</strong> A modulates both B and C, which are both heard. If the carriers sit at
-            different ratios, each parks its cluster of sidebands in a different part of the spectrum. That is a
-            formant structure: fixed regions of emphasis, the thing that makes a vowel a vowel. Lesson 6d.
-          </p>
+          <>
+            <p>In the third connection one operator modulates two carriers, both of which are heard. If the carriers have different ratios, each gathers its sidebands about a different part of the spectrum. The result is a spectrum with fixed regions of emphasis, called formants, and it is by its formants that one vowel is distinguished from another. Lesson 6d examines this connection.</p>
+          </>
         ),
         source: {
           kind: "operators",
@@ -90,15 +79,8 @@ export const partB: Lesson[] = [
         title: "Independent pairs",
         body: (
           <>
-            <p>
-              <strong>Independent pairs.</strong> A modulates B, C modulates D, and the two results are mixed. Nothing
-              interacts. This is additive synthesis whose partials happen to be FM tones, and it is the workhorse of
-              practical patches: one pair for the attack, one for the body, each with its own envelopes. Lesson 6e.
-            </p>
-            <p className="note">
-              Six Sines lets every operator be heard and modulate later ones at once, so these four are not exclusive
-              choices there. Several factory presets in Part E are all four at the same time.
-            </p>
+            <p>In the fourth connection there are two separate pairs whose outputs are mixed, and neither affects the other. This is additive synthesis in which each component is an FM tone and not a sine wave. It is the connection most often used in practice, generally with one pair providing the beginning of the note and the other its continuation, each with its own envelopes. Lesson 6e examines it.</p>
+            <p className="note">In Six Sines every operator can be heard and can at the same time modulate those numbered after it, so that the four connections are not alternatives there. Several of the presets in Part E use all four at once.</p>
           </>
         ),
         source: {
@@ -122,22 +104,15 @@ export const partB: Lesson[] = [
     id: "series",
     number: "6b",
     part: PART,
-    title: "Series: bandwidth compounds",
+    title: "Operators in series",
     refs: ["schottstaedt", "yamaha6", "sos13"],
     steps: [
       {
         title: "A modulator that is not a sine",
         body: (
           <>
-            <p>
-              In a chain, the middle operator is already an FM tone by the time it reaches the carrier. Think of it as
-              a bundle of sine modulators, one per partial. Each of them wraps its own set of sidebands around the
-              carrier. Schottstaedt describes each component of the lower pair as surrounded by the spectrum of the upper pair, “sort of like a set of formant regions”.
-            </p>
-            <p>
-              The practical consequence is that the two indices multiply in effect. Small numbers at each stage produce
-              a wide spectrum, and a small move at the top of the chain moves everything below it.
-            </p>
+            <p>In a series of three operators the middle one has already been modulated when it reaches the carrier, and its output is a tone with several partials. Each of those partials acts on the carrier as a separate sine-wave modulator and surrounds it with its own set of sidebands. Schottstaedt describes each component of the lower pair as surrounded by the spectrum of the upper pair, “sort of like a set of formant regions”.</p>
+            <p>It follows that the widths produced by the two stages are multiplied and not added. A small index at each stage gives a wide spectrum, and a small change at the top of the series changes everything beneath it.</p>
           </>
         ),
         source: {
@@ -152,35 +127,23 @@ export const partB: Lesson[] = [
         maxRatio: 32,
         predict: {
           question:
-            "With the top index at 0 this is a plain pair at index 2, reaching about tick 4. You raise the top index to 2 as well. Roughly how far does the spectrum now reach?",
-          options: ["Still about tick 4", "About tick 6: the indices add", "About tick 10 or beyond: the reach multiplies", "It becomes inharmonic"],
+            "With the upper index at 0 this is a simple pair at an index of 2, which reaches about tick 4. If the upper index is raised to 2 as well, about how far does the spectrum reach?",
+          options: ["Still about tick 4", "About tick 6, because the indices are added", "Tick 10 or beyond, because the widths are multiplied", "It becomes inharmonic"],
           answer: 2,
           explain: (
-            <p>
-              The middle operator at index 2 has partials up to about its 3rd harmonic. Each one modulates the carrier:
-              the 3rd harmonic acts as a modulator at ratio 3, and <M>m · (I + 1)</M> with <M>m = 3</M> reaches three
-              times as far as the fundamental does. All ratios are whole numbers, so it stays harmonic.
-            </p>
+            <p>At an index of 2 the middle operator has partials of appreciable strength up to about its third harmonic, and each of them modulates the carrier. The third harmonic acts as a modulator of ratio 3, and by the rule <M>m · (I + 1)</M> it reaches three times as far as the fundamental does. Since all the ratios are whole numbers, the result is still harmonic.</p>
           ),
         },
         tryThis: [
-          <>Hold the bottom index at 1 and sweep only the top one. The whole spectrum breathes from one control. That is why chains make good “one knob” brightness.</>,
+          <>Leave the lower index at 1 and move only the upper one. The whole spectrum widens and narrows together, which is why a series is convenient when a single control is wanted for brightness.</>,
         ],
       },
       {
-        title: "Why chains make attacks",
+        title: "A series for the attack",
         body: (
           <>
-            <p>
-              Because a chain is so sensitive, a fast envelope at its top produces a burst of dense, rapidly changing
-              partials and then gets out of the way. That is a good description of the first few milliseconds of a
-              plucked or struck string. Yamaha’s guide goes as far as saying a realistic plucked string is nearly impossible without a stack, and gives the recipe: very short envelopes on the stack, and velocity
-              sensitivity so that it only speaks when the key is hit hard.
-            </p>
-            <p>
-              The top operator here is at ratio 8 with a small index. It contributes almost nothing once the note is
-              sounding. In the attack it roughens the middle operator, which roughens the carrier.
-            </p>
+            <p>Because a series responds so strongly to its upper index, a short envelope on that index produces a brief burst of many partials which change rapidly and then disappear. The first few thousandths of a second of a plucked or struck string are of this kind. Yamaha’s guide says that a convincing plucked string can hardly be made without operators in series, and it gives the method: very short envelopes on the series, and enough sensitivity to velocity that it is heard only when the key is struck hard.</p>
+            <p>In the patch on this page the top operator has a ratio of 8 and a small index. Once the note is sounding it contributes almost nothing. During the attack it roughens the middle operator, and the middle operator in turn roughens the carrier.</p>
           </>
         ),
         source: {
@@ -202,25 +165,16 @@ export const partB: Lesson[] = [
         clip: pluckArp,
         maxRatio: 32,
         tryThis: [
-          <>Set the top index to 0, then bring it back. Listen only to the first instant of each note.</>,
-          <>Lengthen the top decay to 1 s. The pick noise turns into a buzz that never leaves: chains want short envelopes.</>,
+          <>Set the upper index to 0 and then restore it, attending only to the first instant of each note.</>,
+          <>Lengthen the upper decay to 1 s. The noise of the pick is then heard as a buzz throughout the note, which shows why the envelope at the top of a series is kept short.</>,
         ],
       },
       {
-        title: "The limit, and the shortcut",
+        title: "The limit of a series",
         body: (
           <>
-            <p>
-              Chains do not scale. Each stage multiplies the bandwidth of the one above, so by the third or fourth
-              stage at moderate indices the partials are past the top of the audio band, folding back as aliasing, and
-              the ear hears noise. Yamaha’s author says of an eight-operator single stack that he cannot imagine a
-              practical use for it.
-            </p>
-            <p>
-              And you rarely need the depth. An operator with feedback is, in effect, an endless chain of itself at
-              ratio 1. This bench has both: a three-deep chain, and a single modulator with feedback. Try to match
-              them.
-            </p>
+            <p>A series cannot usefully be made much longer. Each stage multiplies the width given by the stage above, so that with three or four stages at moderate indices the partials extend beyond half the sample rate, where they are reproduced at the wrong frequencies and heard as noise. The author of Yamaha’s guide remarks of a single series of eight operators that he cannot think of a use for it.</p>
+            <p>Nor is great length often needed, since an operator with feedback behaves much like a long series of identical operators at a ratio of 1. The bench has a series of three operators and also a single modulator with feedback, so that the two can be compared.</p>
           </>
         ),
         source: {
@@ -239,7 +193,7 @@ export const partB: Lesson[] = [
         clip: held(48, 8),
         maxRatio: 32,
         tryThis: [
-          <>Note the chain’s spectrum. Zero both chain indices, then use the last two sliders to get the same reach from operator 3 alone. About 1.0 of feedback and 1.6 of index is close.</>,
+          <>Note the spectrum given by the series. Then set both of its indices to zero and use the last two sliders to obtain the same reach from operator 3 alone. A feedback of about 1.0 with an index of about 1.6 comes close.</>,
         ],
       },
     ],
@@ -248,22 +202,15 @@ export const partB: Lesson[] = [
     id: "parallel-modulators",
     number: "6c",
     part: PART,
-    title: "Parallel modulators: sums, until they are not",
+    title: "Two modulators on one carrier",
     refs: ["schottstaedt", "sos13", "yamaha6"],
     steps: [
       {
-        title: "At low index it looks additive",
+        title: "Low indices",
         body: (
           <>
-            <p>
-              Two modulators into one carrier. Popular guides describe the result as the sum of the two modulated
-              waveforms: Sound On Sound’s Synth Secrets says so, and Yamaha’s FM 101 says much the same. With both indices low that is a fair description. Modulator 1 at
-              ratio 1 gives the carrier neighbours at 2 and 3. Modulator 2 at ratio 5 gives it neighbours at 4 and 6.
-              You can see both families and nothing else.
-            </p>
-            <p>
-              Keep both indices under 1 for now and confirm that each slider controls its own family.
-            </p>
+            <p>When two modulators act on one carrier, the result is commonly described as the sum of two modulated waves. Sound On Sound’s series describes it so, and Yamaha’s FM 101 in much the same way. While both indices are low the description is nearly correct. The modulator at ratio 1 gives the carrier sidebands at 2 and 3, the modulator at ratio 5 gives it sidebands at 4 and 6, and nothing else of any strength appears.</p>
+            <p>Keep both indices below 1 for the present, and confirm that each slider controls one family of sidebands and leaves the other alone.</p>
           </>
         ),
         source: {
@@ -282,20 +229,11 @@ export const partB: Lesson[] = [
         },
       },
       {
-        title: "Raise the index: combination tones",
+        title: "Higher indices and combination tones",
         body: (
           <>
-            <p>
-              The sum picture is wrong in general, and it matters. The two modulators are added <em>inside</em> the
-              sine, not after it, and a sine of a sum is not a sum of sines. The true spectrum has a partial at{" "}
-              <M>c + k·m₁ + l·m₂</M> for every pair of whole numbers <M>k</M> and <M>l</M>, with a height that is the{" "}
-              <em>product</em> of two Bessel terms, <M>J_k(I₁) · J_l(I₂)</M>. Schottstaedt calls the cross terms
-              “sum and difference tones (intermodulation products)”.
-            </p>
-            <p>
-              At low index the product is tiny unless one of <M>k</M>, <M>l</M> is zero, which is why the sum picture
-              worked. Raise both and the cross terms fill the gaps. The orange bars use the product formula.
-            </p>
+            <p>The description is not correct in general, and the difference matters. The two modulators are added together inside the sine function and not after it, and the sine of a sum is not the sum of two sines. The spectrum in fact contains a partial at <M>c + k·m₁ + l·m₂</M> for every pair of whole numbers <M>k</M> and <M>l</M>, and its strength is the product of two Bessel terms, <M>J_k(I₁) · J_l(I₂)</M>. Schottstaedt calls the partials for which neither number is zero “sum and difference tones (intermodulation products)”.</p>
+            <p>When both indices are low, the product is negligible unless <M>k</M> or <M>l</M> is zero, and this is why the simpler description served. When both are raised, the remaining partials become strong and fill the gaps between the two families. The orange bars are calculated from the product.</p>
           </>
         ),
         source: {
@@ -314,39 +252,25 @@ export const partB: Lesson[] = [
         },
         predict: {
           question:
-            "Modulators at ratios 1 and 5, both raised to an index of 2. Under the “sum of two FM tones” picture you would see partials around 1–3 and at 1, 4, 6, 9, 11. What will actually appear?",
+            "The modulators are at ratios 1 and 5, and both are raised to an index of 2. If the result were the sum of two FM tones, there would be partials from 1 to 3 and at 4, 6, 9 and 11. What in fact appears?",
           options: [
             "Exactly those two families",
-            "Those, plus clusters around 6 and 11 (each ratio-5 sideband grows its own ratio-1 neighbours)",
-            "Only the ratio-5 family, because the higher modulator dominates",
+            "Those, and also groups about 6 and 11, because each sideband from the modulator at 5 acquires neighbours from the modulator at 1",
+            "Only the family from the modulator at 5, because the higher modulator dominates",
             "Noise",
           ],
           answer: 1,
           explain: (
-            <p>
-              Every sideband from the ratio-5 modulator is itself surrounded by the ratio-1 family: 6 ± 1, 6 ± 2,
-              11 ± 1 and so on. Compare with the series connection, where the spectrum reached further at the same
-              indices. Parallel modulators spread energy <em>between</em> the partials you already have; a chain pushes
-              it <em>outward</em>.
-            </p>
+            <p>Each sideband produced by the modulator at ratio 5 is itself surrounded by the family belonging to the modulator at ratio 1, so that there are partials at 6 ± 1, 6 ± 2, 11 ± 1 and so on. Compare this with the series connection, in which the same indices made the spectrum extend further. Two modulators in parallel put energy between the partials already present, whereas two in series put it beyond them.</p>
           ),
         },
       },
       {
-        title: "Two close ratios: built-in beating",
+        title: "Two nearly equal ratios",
         body: (
           <>
-            <p>
-              The cross terms have a musical use. Give the two modulators nearly equal ratios, here 3.1 and 2.9, and
-              the difference tone <M>m₁ − m₂</M> is a very low frequency: 0.2 of the note. Every partial acquires
-              neighbours that close, and you hear a rough, slowly churning metal. Because the gap is a ratio and not a
-              fixed number of hertz, the churn speeds up as you play higher.
-            </p>
-            <p>
-              Each modulator has its own decay here, so the texture changes over the note. That per-ingredient
-              envelope control is the reason to choose parallel modulators over a chain. The factory preset “Detuned
-              Metal” in Part E is this patch.
-            </p>
+            <p>The partials of this second kind can be put to use. If the two modulators are given nearly equal ratios, here 3.1 and 2.9, the difference between them is a very low frequency, 0.2 of the note. Every partial then has neighbours at that small distance, and what is heard is a rough metallic tone that churns slowly. Since the distance is a fraction of the note and not a fixed number of hertz, the churning is faster on higher notes.</p>
+            <p>Each modulator on this page has its own decay, so that the texture changes during the note. This independent control of each component is the reason for preferring two modulators in parallel to two in series. The factory preset “Detuned Metal”, examined in Part E, is this patch.</p>
           </>
         ),
         source: {
@@ -365,8 +289,8 @@ export const partB: Lesson[] = [
         clip: struck,
         maxRatio: 16,
         tryThis: [
-          <>Bring the two ratios together until they meet. The churn slows and stops.</>,
-          <>Zero one index. Inharmonic still, but static: no beating without the second modulator.</>,
+          <>Bring the two ratios together. The churning becomes slower, and stops when they are equal.</>,
+          <>Set one index to zero. The tone is still inharmonic, but it no longer changes, since the beating requires both modulators.</>,
         ],
       },
     ],
@@ -375,24 +299,15 @@ export const partB: Lesson[] = [
     id: "parallel-carriers",
     number: "6d",
     part: PART,
-    title: "Parallel carriers: formants",
+    title: "Two carriers on one modulator",
     refs: ["chowning", "schottstaedt"],
     steps: [
       {
         title: "Chowning’s second carrier",
         body: (
           <>
-            <p>
-              The last figure in Chowning’s 1973 paper adds one thing to the basic pair: a second carrier driven by the
-              same modulator. His numbers were a 300 Hz carrier and 300 Hz modulator, plus a second carrier at 2100 Hz
-              at one fifth the amplitude with its index scaled by a half. “The effect”, he writes, “is that of a
-              formant region added to the spectrum”, centred on the 7th harmonic.
-            </p>
-            <p>
-              That is the patch below. The second carrier does not add a new pitch, because its sidebands are spaced by
-              the same modulator and so fall on the same harmonic series. It adds a <em>region</em>. Move the second
-              carrier’s ratio and the bump slides along the harmonics without changing what note you hear.
-            </p>
+            <p>The last figure of Chowning’s paper adds one thing to the simple pair, a second carrier driven by the same modulator. In his example the first carrier and the modulator are both at 300 Hz, and the second carrier is at 2100 Hz, with a fifth of the amplitude and half the index. “The effect”, he writes, “is that of a formant region added to the spectrum”, centred on the seventh harmonic.</p>
+            <p>The patch on this page is the same. The second carrier does not add a new pitch, because its sidebands are spaced by the same modulator and therefore belong to the same harmonic series. What it adds is emphasis in one region. If its ratio is changed, the region moves to other harmonics and the note stays where it was.</p>
           </>
         ),
         source: {
@@ -411,38 +326,25 @@ export const partB: Lesson[] = [
         clip: melody,
         maxRatio: 20,
         predict: {
-          question: "You move the formant carrier from ratio 7 to ratio 10. What changes?",
+          question: "The formant carrier is moved from ratio 7 to ratio 10. What changes?",
           options: [
             "The pitch rises, because a louder high operator has been added",
             "The tone becomes inharmonic",
-            "The same harmonics are present; the emphasis moves from around the 7th to around the 10th",
+            "The same harmonics are present, and the emphasis moves from about the 7th to about the 10th",
             "Nothing audible",
           ],
           answer: 2,
           explain: (
-            <p>
-              Carrier ratio sets where a cluster is centred. Modulator ratio sets the spacing, and therefore the
-              fundamental. With a shared modulator at ratio 1 every cluster sits on the same harmonic series.
-            </p>
+            <p>The ratio of a carrier decides where its group of sidebands is centred. The ratio of the modulator decides their spacing, and therefore the fundamental. Since both carriers share a modulator at ratio 1, both groups lie on the same harmonic series.</p>
           ),
         },
       },
       {
-        title: "Three formants make a vowel",
+        title: "Three carriers for a vowel",
         body: (
           <>
-            <p>
-              A voice is a buzzing source filtered by three or four resonances whose positions define the vowel. Three
-              carriers on one modulator imitate that directly: Schottstaedt’s page describes Le Brun’s FM voice with
-              formants near 520, 1190 and 2390 Hz. Here the carriers are at ratios 2, 5 and 10, which at the pitch of
-              the loop is the same neighbourhood.
-            </p>
-            <p>
-              A real formant stays put in hertz while the pitch moves. A ratio-based carrier moves with the note, so
-              this vowel is only correct near one pitch. A full voice patch re-picks each carrier’s harmonic as the
-              note changes. For sound design the ratio version is often what you want anyway: a fixed <em>shape</em>{" "}
-              that follows the keyboard.
-            </p>
+            <p>A voice consists of a buzzing source followed by three or four resonances, and the positions of the resonances determine the vowel. Three carriers on one modulator imitate this arrangement directly. Schottstaedt describes an FM voice of this kind, due to Le Brun, with formants near 520, 1190 and 2390 Hz. On this page the carriers are at ratios 2, 5 and 10, which at the pitch of the loop puts them in the same neighbourhood.</p>
+            <p>In a real voice a formant keeps its frequency while the pitch changes, whereas a carrier defined by a ratio moves with the note. The vowel on this page is therefore right only near one pitch, and a complete voice patch chooses a different harmonic for each carrier as the note changes. For most purposes in sound design the simpler arrangement is the one wanted, namely a fixed shape of spectrum that follows the keyboard.</p>
           </>
         ),
         source: {
@@ -466,7 +368,7 @@ export const partB: Lesson[] = [
         clip: { ...melody, bpm: 80 },
         maxRatio: 20,
         tryThis: [
-          <>Formants at 2, 5, 10 lean toward “ah”. Try 1, 9, 12 for something nearer “ee”, and 2, 4, 10 for “oh”.</>,
+          <>Ratios of 2, 5 and 10 give something like “ah”. Try 1, 9 and 12 for something nearer “ee”, and 2, 4 and 10 for “oh”.</>,
         ],
       },
     ],
@@ -475,24 +377,15 @@ export const partB: Lesson[] = [
     id: "pairs",
     number: "6e",
     part: PART,
-    title: "Independent pairs: attack and body",
+    title: "Independent pairs",
     refs: ["yamaha6", "chowning"],
     steps: [
       {
-        title: "Two envelopes, two jobs",
+        title: "A pair for the attack and a pair for the body",
         body: (
           <>
-            <p>
-              Most acoustic instruments have a noisy, bright, inharmonic start and a simpler, harmonic sustain: the
-              hammer and then the string, the tongue and then the reed. A single pair cannot do both, because one
-              index envelope would have to describe two unrelated things. Two pairs can, and the ear fuses them into
-              one event as long as they start together.
-            </p>
-            <p>
-              The body pair is a 1 : 1 tone with a slow index decay. The attack pair is a high, slightly inharmonic
-              modulator on a carrier that is gone in a fifth of a second. Its level and index respond strongly to
-              velocity, following Yamaha’s advice that the attack component should be prominent only when the keys are struck hard.
-            </p>
+            <p>Most acoustic instruments begin a note with a short sound that is bright, noisy and often inharmonic, and continue with one that is simpler and harmonic. In a piano the first comes from the hammer and the second from the string. A single pair cannot produce both, because one envelope on the index would have to describe two unrelated changes. Two pairs can, and the ear takes them for one event provided that they begin together.</p>
+            <p>On this page the pair that supplies the body is a tone at 1 : 1 whose index decays slowly. The pair that supplies the attack has a high and slightly inharmonic modulator, and a carrier that is silent after a fifth of a second. Its level and its index depend strongly on velocity, in accordance with Yamaha’s advice that the attack should be prominent only when the key is struck hard.</p>
           </>
         ),
         source: {
@@ -520,23 +413,16 @@ export const partB: Lesson[] = [
         clip: velocityRamp(60),
         maxRatio: 24,
         tryThis: [
-          <>Attack ratio 7 gives a tine (electric piano). 11.3 gives a glassy tick. 3 gives a wooden knock.</>,
-          <>Stretch the attack length past 1 s. The two pairs stop fusing and you hear two instruments.</>,
+          <>An attack ratio of 7 gives the tine of an electric piano, 11.3 gives a glassy tick, and 3 gives a knock on wood.</>,
+          <>Lengthen the attack beyond 1 s. The two pairs are then heard as two instruments, because the attack now lasts as long as the body and the ear ceases to take the two for one event.</>,
         ],
       },
       {
-        title: "Detune the pairs against each other",
+        title: "Two pairs detuned",
         body: (
           <>
-            <p>
-              Independent pairs have a second use: thickness. Two copies of the same pair, one a fraction of a percent
-              sharp, beat against each other the way two strings of a piano note or two players in a section do. This
-              costs nothing in brightness control, because each pair still has its own index.
-            </p>
-            <p>
-              The classic DX electric piano is three pairs: one body, and two tine pairs detuned against each other.
-              Part E opens with exactly that.
-            </p>
+            <p>Two independent pairs can also be used to thicken a tone. If the second pair is a copy of the first, tuned a fraction of one per cent sharp, the two beat against each other as do the two or three strings of one note on a piano. Brightness remains under separate control, since each pair keeps its own index.</p>
+            <p>The well-known electric piano of the DX7 consists of three pairs, one for the body and two for the tine, the last two detuned against each other. The first preset examined in Part E is of this kind.</p>
           </>
         ),
         source: {
@@ -557,7 +443,7 @@ export const partB: Lesson[] = [
         ],
         clip: chords,
         tryThis: [
-          <>Detune only the modulator of the second pair and leave its carrier at 1. The pitch stays put but the timbre slowly cycles. Lesson 8 returns to this.</>,
+          <>Detune only the modulator of the second pair and leave its carrier at 1. The pitch does not change, but the timbre passes slowly through a cycle. Lesson 8 returns to this.</>,
         ],
       },
     ],
@@ -570,45 +456,39 @@ export const partB: Lesson[] = [
     refs: ["yamaha6", "chowning", "schottstaedt"],
     steps: [
       {
-        title: "Four questions",
+        title: "What the new operator must do",
         body: (
           <>
-            <p>Before reaching for an operator, ask what the new ingredient has to do.</p>
+            <p>Before adding an operator to a patch, it is worth deciding what the new component of the sound is required to do. The table gives the connection suited to each requirement, and the reason.</p>
             <table>
               <thead>
-                <tr><th>If the sound needs…</th><th>Use</th><th>Because</th></tr>
+                <tr><th>If the sound needs</th><th>Use</th><th>Because</th></tr>
               </thead>
               <tbody>
                 <tr>
-                  <td>two ingredients with different time behaviour (click + tone)</td>
+                  <td>two components that behave differently in time, such as a click and a tone</td>
                   <td>independent pairs</td>
-                  <td>each gets its own carrier envelope and index envelope</td>
+                  <td>each has its own carrier envelope and its own index envelope</td>
                 </tr>
                 <tr>
-                  <td>two colours on one pitch centre, each with its own index contour</td>
+                  <td>two colours on the same pitch, each with its own change of index</td>
                   <td>parallel modulators</td>
-                  <td>one carrier, separate sideband families, cross terms as a bonus</td>
+                  <td>there is one carrier and two families of sidebands, with the combination tones in addition</td>
                 </tr>
                 <tr>
-                  <td>a fixed region of emphasis, a vowel, a body resonance</td>
+                  <td>emphasis in a fixed region, as in a vowel or the resonance of a body</td>
                   <td>parallel carriers</td>
-                  <td>carrier ratio places a cluster; shared modulator keeps one pitch</td>
+                  <td>the carrier’s ratio places the group, and the shared modulator keeps one pitch</td>
                 </tr>
                 <tr>
-                  <td>density, a noisy transient, one-gesture brightness</td>
+                  <td>density, a noisy beginning, or brightness from a single control</td>
                   <td>series, or feedback</td>
-                  <td>bandwidth multiplies; a small move at the top moves everything</td>
+                  <td>the widths multiply, so that a small change at the top alters everything below</td>
                 </tr>
               </tbody>
             </table>
-            <p>
-              Yamaha’s DX7 manual adds a rule that survives every synth since: start with the least complex algorithm
-              that will do the job. An unused operator costs nothing. A chain you did not need costs you control.
-            </p>
-            <p>
-              The bench has all four connections available in one six-operator patch, with everything off but a sine.
-              Use it as a scratchpad for the questions in the next three steps.
-            </p>
+            <p>Yamaha’s manual for the DX7 adds a rule that applies equally to every later instrument: begin with the least complex arrangement that will do what is wanted. An operator left unused does no harm, whereas a series that was not needed makes the patch harder to control.</p>
+            <p>The bench has all four connections in one patch of six operators, with every index at zero, so that only a sine wave is heard. It may be used to try out answers to the three cases that follow.</p>
           </>
         ),
         source: {
@@ -639,12 +519,11 @@ export const partB: Lesson[] = [
         maxRatio: 24,
       },
       {
-        title: "Case: a marimba",
+        title: "First case: a marimba",
         body: (
-          <p>
-            A marimba bar gives a short woody knock and then a nearly pure tone that dies in about a second. The knock
-            is not part of the harmonic series of the note.
-          </p>
+          <>
+            <p>A bar of a marimba gives a short knock, like wood being struck, followed by a nearly pure tone that dies away in about a second. The partials of the knock do not belong to the harmonic series of the note.</p>
+          </>
         ),
         source: {
           kind: "operators",
@@ -665,31 +544,25 @@ export const partB: Lesson[] = [
         ],
         clip: struck,
         predict: {
-          question: "Which connection suits the knock?",
+          question: "Which connection should supply the knock?",
           options: [
             "A second modulator in parallel on the main carrier",
-            "Its own pair, with a very short carrier envelope",
-            "A modulator stacked in series above the main modulator",
+            "A pair of its own, with a very short carrier envelope",
+            "A modulator in series above the main modulator",
             "A second carrier sharing the main modulator",
           ],
           answer: 1,
           explain: (
-            <p>
-              The knock has to be inharmonic and has to vanish in under a tenth of a second while the tone rings on.
-              Different pitch content and different time behaviour: independent pair. A parallel modulator would
-              smear inharmonic sidebands across the ringing tone, and a second carrier on the shared modulator would
-              stay harmonic.
-            </p>
+            <p>The knock must be inharmonic, and it must be gone in less than a tenth of a second while the tone continues. Its partials and its behaviour in time both differ from those of the tone, and so it needs a pair of its own. A second modulator on the main carrier would spread inharmonic sidebands through the whole of the tone, and a second carrier on the main modulator would be harmonic.</p>
           ),
         },
       },
       {
-        title: "Case: a brass section swell",
+        title: "Second case: a brass swell",
         body: (
-          <p>
-            A brass tone is harmonic, and it gets brighter as it gets louder, continuously, across the whole note. On
-            hard attacks there is extra edge in the very top of the spectrum.
-          </p>
+          <>
+            <p>A brass tone is harmonic, and it grows brighter as it grows louder, continuously through the note. When a note is attacked hard there is in addition a brief edge at the top of the spectrum.</p>
+          </>
         ),
         source: {
           kind: "operators",
@@ -708,31 +581,25 @@ export const partB: Lesson[] = [
         ],
         clip: melody,
         predict: {
-          question: "The extra edge on hard attacks: where does it go?",
+          question: "Which connection should supply the edge on notes attacked hard?",
           options: [
-            "Its own pair, mixed in",
+            "A pair of its own, mixed with the first",
             "A second modulator at a higher whole-number ratio, in parallel on the same carrier",
             "A second carrier at a high ratio",
             "More feedback on the carrier",
           ],
           answer: 1,
           explain: (
-            <p>
-              It must stay on the same pitch centre and the same harmonic series, and it needs its own contour
-              (short, velocity-driven) separate from the main swell. Same carrier, separate index envelope: parallel
-              modulator. A separate pair would work too but would sound like a layered second instrument; a second
-              carrier would give a static bump, not an attack.
-            </p>
+            <p>The edge must be on the same pitch and in the same harmonic series as the rest, and it needs a change of index of its own, short and dependent on velocity, distinct from the slower swell. One carrier with a second index envelope means a second modulator in parallel. A separate pair would also serve, but would be heard as a second instrument added to the first, and a second carrier would give a constant emphasis where a momentary one is wanted.</p>
           ),
         },
       },
       {
-        title: "Case: a hollow, vocal pad",
+        title: "Third case: a vocal pad",
         body: (
-          <p>
-            A sustained pad with a nasal, slightly vocal emphasis around the 5th or 6th harmonic that does not move as
-            the note sustains.
-          </p>
+          <>
+            <p>The sound wanted is a sustained pad with a nasal emphasis, somewhat like that of a voice, about the fifth or sixth harmonic. The emphasis is to stay where it is for as long as the note lasts.</p>
+          </>
         ),
         source: {
           kind: "operators",
@@ -752,20 +619,16 @@ export const partB: Lesson[] = [
         ],
         clip: chords,
         predict: {
-          question: "How do you add the emphasis?",
+          question: "How should the emphasis be added?",
           options: [
             "Raise the index of the main pair",
             "Add a modulator at ratio 5 in parallel",
             "Add a second carrier at ratio 5 on the same modulator",
-            "Add a chain above the modulator",
+            "Add an operator in series above the modulator",
           ],
           answer: 2,
           explain: (
-            <p>
-              A region of emphasis is a carrier. A modulator at ratio 5 would instead add partials 5 steps either side
-              of the fundamental, changing the overall pattern. Raising the index or adding a chain brightens
-              everything, with no bump.
-            </p>
+            <p>Emphasis in a region is obtained from a carrier in that region. A modulator at ratio 5 would do something different, since it would add partials five steps on either side of the fundamental and so alter the whole pattern. Raising the index, or adding a series above the modulator, would brighten the whole spectrum without emphasising any part of it.</p>
           ),
         },
       },
