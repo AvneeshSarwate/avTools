@@ -60,6 +60,8 @@ export interface Step {
   maxRatio?: number;
   /** Theoretical partials to overlay, from the current parameter state. */
   predicted?: (state: unknown) => Partial[];
+  /** An extra figure under the spectrum, drawn from the current parameter state. */
+  figure?: (state: unknown) => ReactNode;
   /** Source excerpt shown under the bench. */
   code?: string;
   tryThis?: ReactNode[];

@@ -350,6 +350,8 @@ export function Bench({ step, id }: { step: Step; id: string }) {
           </figcaption>
         </figure>
 
+        {step.figure?.(state)}
+
         {(step.controls || stages.length > 0) && (
           <div className="controls">
             {step.controls?.map((control) => (

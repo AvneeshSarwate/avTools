@@ -1,6 +1,7 @@
 import type { NativeFmParams } from "../audio/engine";
 import { edge, env, op, type Patch } from "../audio/patch";
 import { simplePair } from "../viz/bessel";
+import { BesselPlot } from "../viz/BesselPlot";
 import { chords, held, octaves, phrase, velocityRamp } from "./clips";
 import type { Lesson } from "./types";
 
@@ -71,7 +72,7 @@ export const partA: Lesson[] = [
         body: (
           <>
             <p>Suppose the carrier has frequency <M>c</M> and the modulator frequency <M>m</M>. The output then contains a partial at <M>c</M>, and further partials at <M>c ± m</M>, <M>c ± 2m</M>, <M>c ± 3m</M> and so on. The modulator’s frequency therefore fixes the spacing of the partials. From this page onward the modulator follows the keyboard as the carrier does, and its frequency is accordingly given as a ratio to the note played.</p>
-            <p>How many of these partials are strong enough to hear depends on the modulation index, written <M>I</M>, which is the greatest departure of the carrier’s frequency from its resting value divided by the modulator’s frequency. The strength of each pair of sidebands is given by a Bessel function of the index, and the orange bars show the values so calculated. For most purposes it is enough to remember that the pair of order <M>n</M> remains close to zero until the index reaches about <M>n</M>.</p>
+            <p>How many of these partials are strong enough to hear depends on the modulation index, written <M>I</M>, which is the greatest departure of the carrier’s frequency from its resting value divided by the modulator’s frequency. The strength of each pair of sidebands is given by a Bessel function of the index, which the third step of this lesson explains, and the orange bars show the values so calculated. For most purposes it is enough to remember that the pair of order <M>n</M> remains close to zero until the index reaches about <M>n</M>.</p>
           </>
         ),
         source: { kind: "native", params: native({ ratio: 1, index: 1 }) },
@@ -116,6 +117,34 @@ export const partA: Lesson[] = [
             <p>The upper sidebands are at 1 + 3 = 4, and then at 7 and 10. The lower ones are at 1 − 3 = −2, which is heard at 2, and then at −5 and −8, which are heard at 5 and 8. Every harmonic is therefore present except the multiples of 3. This is the spectrum of a pulse wave whose pulse occupies a third of the cycle, and it has the same hollow sound.</p>
           ),
         },
+      },
+      {
+        title: "The Bessel functions",
+        body: (
+          <>
+            <p>The signal produced by the pair is <M>sin(ct + I·sin(mt))</M>, the sine of a quantity that itself contains a sine. It can be rewritten as a sum of ordinary sine waves, one at the carrier and one at each sideband. When this is done, the amplitude of the carrier is found to be a certain function of the index, written <M>J₀(I)</M>, and the amplitude of the <M>n</M>th pair of sidebands another function, <M>Jₙ(I)</M>. These are the Bessel functions. They are fixed curves, in the way that the sine is a fixed curve, and the figure beneath the spectrum shows the first six.</p>
+            <p>On this page the carrier is at 8 times the note and the modulator at 1, so that the sidebands lie at 7 and 9, at 6 and 10, and so on, and none is reflected. Each bar of the spectrum is therefore the height of one curve at the present index, taken without regard to its sign, and the vertical line in the figure marks that index.</p>
+            <p>Three properties of the curves account for most of what is heard. The curve of order <M>n</M> stays near zero until the index approaches <M>n</M> and then rises, which is why raising the index adds sidebands further from the carrier, and is the origin of the rule given in the next step. Each curve passes through zero repeatedly, so that a partial disappears at certain values of the index and then returns, the carrier doing so first at about 2.4. And the squares of all the values at any one index add up to 1, so that the total energy never changes, and what the index does is to distribute it among the partials.</p>
+            <p>Where a curve is below zero the partial is inverted. This cannot be heard in the partial itself, but it decides whether a reflected sideband strengthens or weakens the partial on which it falls, as in the preceding step.</p>
+          </>
+        ),
+        source: {
+          kind: "operators",
+          patch: {
+            ops: [op(1, 0, { label: "modulator" }), op(8, 0.8, { label: "carrier", amp: env(0.005, 0, 1, 0.25) })],
+            edges: [edge(0, 1, 1)],
+          },
+        },
+        controls: [{ label: "Index", path: "edges.0.index", min: 0, max: 7, step: 0.05, unit: "rad", marks: [1, 2.4, 3.83, 5.14] }],
+        clip: held(43, 8),
+        maxRatio: 16,
+        predicted: (state) => simplePair(8, 1, (state as Patch).edges[0].index),
+        figure: (state) => <BesselPlot index={(state as Patch).edges[0].index} />,
+        tryThis: [
+          <>Set the index to 2.4. The carrier, at tick 8, vanishes, because J₀ is zero there, while its neighbours are strong.</>,
+          <>Set the index to 3.83 and then to 5.14, at which J₁ and J₂ are zero. The first pair of sidebands vanishes at the one, and the second pair at the other.</>,
+          <>Raise the index slowly from 0. Each pair of bars appears later than the pair before it, and is strongest when the index is a little above its order.</>,
+        ],
       },
       {
         title: "A rule for bandwidth",
