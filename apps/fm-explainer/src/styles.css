@@ -182,7 +182,8 @@ h1 { font-size: 34px; font-weight: 400; line-height: 1.15; margin: 6px 0 18px; l
 .stage-list button:not(.on) { text-decoration: line-through; }
 .bench-note { color: var(--bench-ink-2); margin: 10px 0 0; }
 
-.roll { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--bench-rule); }
+/* The roll's own highlight colour, matched to the bench. */
+.roll { --c-select: #e2703a; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--bench-rule); }
 .roll-bar { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
 .play { border: 1px solid var(--bench-ink-2); color: var(--bench-ink); padding: 5px 14px; min-width: 92px; }
 .play.on { background: var(--trace); border-color: var(--trace); color: var(--bench); }

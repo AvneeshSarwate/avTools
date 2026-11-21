@@ -113,7 +113,8 @@ export function Roll({
           bpm
         </label>
         <span className="hint">
-          Click the keys to play. Double-click the grid to add a note, drag to move, Delete to remove.
+          Click the keys to play. Double-click the grid to add a note, drag to move, Delete to remove. Drag a marker in
+          the velocity lane to change how hard that note is struck.
         </span>
       </div>
       <div className="roll-frame" ref={frameRef}>
@@ -127,7 +128,7 @@ export function Roll({
             height={236}
             interactive
             showControlPanel={false}
-            expressionLanes={false}
+            expressionLanes
             rawMetadataEditor={false}
             noteColor={NOTE_COLOR}
             onKeyboardNote={(pitch, on) => {
