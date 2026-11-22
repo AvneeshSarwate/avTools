@@ -11,14 +11,24 @@
  *
  * Windowed usage:
  *   const { renderer, THREE } = await createDenoThreeRenderer(device, width, height, win.ctx);
+ *
+ * Also runs inside the TouchDesigner embedded V8 plugin (headless only), which
+ * has no `navigator`, `self` or `TextDecoder`. Pass `host.device` and draw the
+ * result with `p.image({ texture: outputTexture }, 0, 0, p.width, p.height)`.
+ * The headless output texture has TEXTURE_BINDING for that purpose.
  */
+
+// Static imports: the TD bundler rejects dynamic import(). Both resolve to the
+// same three.core.js, so there is one copy of every class.
+import * as THREE from "three";
+import { WebGPURenderer } from "three/webgpu";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type ThreeNamespace = typeof import("three");
-type WebGPURendererType = import("three/webgpu").WebGPURenderer;
+type ThreeNamespace = typeof THREE;
+type WebGPURendererType = WebGPURenderer;
 type ThreeShimGlobal = Record<string, unknown>;
 
 interface CanvasConfigureOptions {
@@ -40,6 +50,85 @@ export interface DenoThreeContext {
 }
 
 // ---------------------------------------------------------------------------
+// UTF-8 TextDecoder (installed only where the runtime lacks one)
+// ---------------------------------------------------------------------------
+
+/**
+ * WHATWG UTF-8 decoder, used by GLTFLoader (.glb JSON chunk) and FileLoader.
+ * Invalid sequences become U+FFFD exactly as the Encoding standard specifies
+ * (or throw with `fatal`). Only UTF-8 is supported; `stream` is not.
+ */
+class Utf8TextDecoder {
+  readonly encoding = "utf-8";
+  readonly fatal: boolean;
+  readonly ignoreBOM: boolean;
+
+  constructor(label = "utf-8", options: { fatal?: boolean; ignoreBOM?: boolean } = {}) {
+    const name = String(label).trim().toLowerCase();
+    if (!["utf-8", "utf8", "unicode-1-1-utf-8", "unicode11utf8", "unicode20utf8", "x-unicode20utf8"].includes(name)) {
+      throw new RangeError(`TextDecoder: only UTF-8 is supported, got "${label}"`);
+    }
+    this.fatal = !!options.fatal;
+    this.ignoreBOM = !!options.ignoreBOM;
+  }
+
+  decode(input?: ArrayBuffer | ArrayBufferView, options?: { stream?: boolean }): string {
+    if (options?.stream) throw new TypeError("TextDecoder: streaming is not supported");
+    if (input === undefined) return "";
+    const bytes = input instanceof ArrayBuffer
+      ? new Uint8Array(input)
+      : new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+    const units: number[] = [];
+    let out = "";
+    const flush = () => {
+      out += String.fromCharCode.apply(null, units);
+      units.length = 0;
+    };
+    const bad = () => {
+      if (this.fatal) throw new TypeError("TextDecoder: invalid UTF-8 data");
+      units.push(0xfffd);
+    };
+    let i = 0;
+    if (!this.ignoreBOM && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) i = 3;
+    while (i < bytes.length) {
+      const b = bytes[i++];
+      if (b < 0x80) {
+        units.push(b);
+      } else {
+        let need: number, cp: number, lower = 0x80, upper = 0xbf;
+        if (b >= 0xc2 && b <= 0xdf) { need = 1; cp = b & 0x1f; }
+        else if (b >= 0xe0 && b <= 0xef) {
+          need = 2; cp = b & 0xf;
+          if (b === 0xe0) lower = 0xa0;
+          if (b === 0xed) upper = 0x9f;
+        } else if (b >= 0xf0 && b <= 0xf4) {
+          need = 3; cp = b & 0x7;
+          if (b === 0xf0) lower = 0x90;
+          if (b === 0xf4) upper = 0x8f;
+        } else { bad(); continue; }
+        let ok = true;
+        for (let k = 0; k < need; k++) {
+          const c = bytes[i];
+          // Out-of-range continuation: emit U+FFFD and reprocess this byte.
+          if (i >= bytes.length || c < lower || c > upper) { ok = false; break; }
+          lower = 0x80; upper = 0xbf;
+          cp = (cp << 6) | (c & 0x3f);
+          i++;
+        }
+        if (!ok) { bad(); }
+        else if (cp > 0xffff) {
+          cp -= 0x10000;
+          units.push(0xd800 | (cp >> 10), 0xdc00 | (cp & 0x3ff));
+        } else units.push(cp);
+      }
+      if (units.length >= 0x4000) flush(); // stay under V8's argument limit
+    }
+    flush();
+    return out;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Global polyfills -- installed on first import
 // ---------------------------------------------------------------------------
 
@@ -54,6 +143,15 @@ if (typeof g.cancelAnimationFrame === "undefined") {
   g.cancelAnimationFrame = (id: number): void => {
     clearTimeout(id);
   };
+}
+
+// three's animation loop calls self.requestAnimationFrame (renderer.init()).
+if (typeof g.self === "undefined") {
+  g.self = globalThis;
+}
+
+if (typeof g.TextDecoder === "undefined") {
+  g.TextDecoder = Utf8TextDecoder;
 }
 
 if (typeof g.document === "undefined") {
@@ -101,9 +199,11 @@ class HeadlessGPUContext {
     this._texture = this._device.createTexture({
       size: { width: this._width, height: this._height },
       format: this._format,
+      // TEXTURE_BINDING lets the result be sampled, e.g. by p.image() in TD.
       usage:
         (config.usage ?? GPUTextureUsage.RENDER_ATTACHMENT) |
-        GPUTextureUsage.COPY_SRC,
+        GPUTextureUsage.COPY_SRC |
+        GPUTextureUsage.TEXTURE_BINDING,
     });
   }
 
@@ -217,14 +317,17 @@ export async function createDenoThreeRenderer(
     : new HeadlessGPUContext(width, height);
   const canvas = new DenoCanvasShim(width, height, ctx);
 
-  const THREE = await import("three") as ThreeNamespace;
-  const { WebGPURenderer } = await import("three/webgpu");
+  // Without navigator.gpu (TD embedded V8), three cannot ask for the preferred
+  // canvas format, so request 8-bit output explicitly (bgra8unorm).
+  const hasNavigatorGpu = typeof navigator !== "undefined" &&
+    typeof (navigator as { gpu?: GPU }).gpu?.getPreferredCanvasFormat === "function";
 
   const renderer = new WebGPURenderer({
     canvas: canvas as unknown as HTMLCanvasElement,
     device: device,
     antialias: false,
     alpha: false,
+    ...(hasNavigatorGpu ? {} : { outputType: THREE.UnsignedByteType }),
   });
 
   await renderer.init();
