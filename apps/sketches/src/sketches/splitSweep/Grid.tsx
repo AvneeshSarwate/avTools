@@ -128,6 +128,11 @@ function draw(g: CanvasRenderingContext2D, width: number, height: number, hover:
     g.fillStyle = region.colorB;
     g.fillRect(line, r.y, r.x + r.w - line, r.h);
     g.restore();
+    // The sweep line itself, drawn like the dividers (at the edges it is one)
+    if (mix > 0.0005 && mix < 0.9995) {
+      g.fillStyle = "#000";
+      g.fillRect(line - LINE / 2, r.y, LINE, r.h);
+    }
   }
 
   // Lines: every region's outline; shared edges overlap into one stroke.
