@@ -5,7 +5,7 @@ import { proxy, snapshot, subscribe } from "valtio";
 import { createHistory } from "../../shared/history";
 import { createProject } from "../../shared/project";
 import type { PianoRollNote } from "../../shared/pianoRoll/types";
-import { applyDelete, canSplit, RADIUS_REFERENCE_HEIGHT, clampAnchor, deletePlan, defaultDoc, splitRegion, type Region, type SketchDoc, type SplitAxis } from "./model";
+import { applyDelete, canSplit, REFERENCE_HEIGHT, clampAnchor, deletePlan, defaultDoc, splitRegion, type Region, type SketchDoc, type SplitAxis } from "./model";
 
 export const doc = proxy<SketchDoc>(defaultDoc());
 
@@ -81,6 +81,7 @@ function replaceDoc(next: SketchDoc) {
   doc.version = next.version;
   doc.regions = next.regions;
   doc.cornerRadius = next.cornerRadius;
+  doc.lineWidth = next.lineWidth;
   doc.synth = next.synth;
   if (ui.selectedId && !next.regions.some((r) => r.id === ui.selectedId)) ui.selectedId = null;
   ui.split = null;
@@ -151,11 +152,18 @@ export function deleteRegion(id: string) {
   if (ui.hoverId === id) ui.hoverId = null;
 }
 
-/** The global inner-corner radius, in px at RADIUS_REFERENCE_HEIGHT. */
+/** The global tile corner radius, in px at REFERENCE_HEIGHT. */
 export function setCornerRadius(pixels: number) {
   history.commit("corner radius", (d) => {
-    d.cornerRadius = Math.max(0, pixels) / RADIUS_REFERENCE_HEIGHT;
+    d.cornerRadius = Math.max(0, pixels) / REFERENCE_HEIGHT;
   }, { coalesce: "corner-radius" });
+}
+
+/** The global line thickness (dividers, frame, sweep line), in px at REFERENCE_HEIGHT. */
+export function setLineWidth(pixels: number) {
+  history.commit("line width", (d) => {
+    d.lineWidth = Math.max(1, pixels) / REFERENCE_HEIGHT;
+  }, { coalesce: "line-width" });
 }
 
 export function cancelSplit() {

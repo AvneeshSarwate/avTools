@@ -1,7 +1,7 @@
 {
   "kind": "split-sweep",
   "name": "split-sweep",
-  "savedAt": 1795557738287,
+  "savedAt": 1795564161636,
   "data": {
     "version": 1,
     "regions": [
@@ -168,6 +168,7 @@
         "sharpness": 0.5
       }
     ],
+    "cornerRadius": 0.05648148148148148,
     "synth": {
       "parameters": {
         "1605": 0.5844983458518982

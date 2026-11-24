@@ -24,14 +24,17 @@ export interface Region {
 export interface SketchDoc {
   version: 1;
   regions: Region[];
-  /** Radius of the tiles' inner corners, as a fraction of the canvas height (frame corners stay square). */
+  /** Radius of the tiles' corners inside the frame, as a fraction of the canvas height. */
   cornerRadius: number;
+  /** Thickness of the dividers, frame and sweep line, as a fraction of the canvas height. */
+  lineWidth: number;
   synth: SynthPatch;
 }
 
-/** The corner radius control works in pixels at this canvas height. */
-export const RADIUS_REFERENCE_HEIGHT = 1080;
-export const DEFAULT_CORNER_RADIUS = 12 / RADIUS_REFERENCE_HEIGHT;
+/** The corner radius and line width controls work in pixels at this canvas height. */
+export const REFERENCE_HEIGHT = 1080;
+export const DEFAULT_CORNER_RADIUS = 12 / REFERENCE_HEIGHT;
+export const DEFAULT_LINE_WIDTH = 7 / REFERENCE_HEIGHT;
 
 export type SplitAxis = "vertical" | "horizontal";
 
@@ -55,7 +58,7 @@ export function defaultRegion(): Region {
 }
 
 export function defaultDoc(): SketchDoc {
-  return { version: 1, regions: [defaultRegion()], cornerRadius: DEFAULT_CORNER_RADIUS, synth: { parameters: {} } };
+  return { version: 1, regions: [defaultRegion()], cornerRadius: DEFAULT_CORNER_RADIUS, lineWidth: DEFAULT_LINE_WIDTH, synth: { parameters: {} } };
 }
 
 export function regionAt(regions: readonly Region[], x: number, y: number): Region | undefined {

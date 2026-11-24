@@ -5,11 +5,15 @@
 import Konva from "konva";
 import { useEffect, useRef, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, memo } from "react";
 import { asBrowser, rootContext } from "../../shared/clock";
-import { deletePlan, regionAt, type Region } from "./model";
+import { DEFAULT_LINE_WIDTH, deletePlan, regionAt, type Region } from "./model";
 import { engine } from "./engine";
 import { doc, findRegion, placeAnchor, select, ui } from "./store";
 
-const LINE = 6;
+/**
+ * Divider / frame / sweep line thickness in px for the frame being drawn:
+ * set from doc.lineWidth at the start of each draw (it scales with the canvas).
+ */
+let LINE = 6;
 const OFF_FILL = "#ece8df";
 const SELECT = "#ffcc00";
 const HOVER = "#4fb3ff";
@@ -124,8 +128,9 @@ interface Tile {
 /**
  * A region's visible tile: its rectangle inset by half a divider inside the
  * canvas and by a whole one at the frame, so the black ground shows through
- * as the dividers and the frame. Corners inside the canvas are rounded;
- * corners on the frame stay square. `inset` shrinks it further (outlines).
+ * as the dividers and the frame. Every tile corner is rounded, including
+ * those against the frame (the frame's own outer corners, the canvas edge,
+ * stay square). `inset` shrinks it further (outlines).
  */
 function tileOf(region: Region, width: number, height: number, radius: number, inset = 0): Tile {
   const left = region.x < EDGE;
@@ -141,7 +146,7 @@ function tileOf(region: Region, width: number, height: number, radius: number, i
   const r = Math.max(0, Math.min(radius - inset, w / 2, h / 2));
   return {
     x: x0, y: y0, w, h,
-    radii: [left || top ? 0 : r, right || top ? 0 : r, right || bottom ? 0 : r, left || bottom ? 0 : r],
+    radii: [r, r, r, r],
   };
 }
 
@@ -168,6 +173,7 @@ function outlineTile(g: CanvasRenderingContext2D, region: Region, width: number,
 function draw(g: CanvasRenderingContext2D, width: number, height: number, hover: { x: number; y: number } | null) {
   const px = (r: Region) => ({ x: r.x * width, y: r.y * height, w: r.w * width, h: r.h * height });
   const radius = (doc.cornerRadius ?? 0) * height;
+  LINE = Math.max(1, (doc.lineWidth ?? DEFAULT_LINE_WIDTH) * height);
   // Black ground: what shows between the tiles is the dividers and the frame.
   g.fillStyle = "#000";
   g.fillRect(0, 0, width, height);

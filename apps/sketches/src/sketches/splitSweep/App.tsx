@@ -1,14 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSnapshot } from "valtio";
 import { Button, Field, NumberBox } from "../../shared/controls/controls";
-import { RADIUS_REFERENCE_HEIGHT } from "./model";
+import { REFERENCE_HEIGHT } from "./model";
 import { ProjectControls } from "../../shared/ProjectControls";
 import { engine } from "./engine";
 import { PaletteBar } from "./PaletteBar";
 import { RegionPanel } from "./RegionPanel";
 import { ASPECT, Grid } from "./Grid";
 import { SynthDock } from "./SynthDock";
-import { applySplit, cancelSplit, deleteRegion, doc, history, setCornerRadius, loadDoc, PANEL_MAX, PANEL_MIN, project, TOP_MIN, ui, view } from "./store";
+import { applySplit, cancelSplit, deleteRegion, doc, history, setCornerRadius, setLineWidth, loadDoc, PANEL_MAX, PANEL_MIN, project, TOP_MIN, ui, view } from "./store";
 
 /** Track a pointer drag on window until release. */
 function dragWith(event: React.PointerEvent, move: (dx: number, dy: number) => void) {
@@ -26,14 +26,21 @@ function dragWith(event: React.PointerEvent, move: (dx: number, dy: number) => v
   window.addEventListener("pointerup", onUp);
 }
 
-/** Global: the radius of the tiles' inner corners (frame corners stay square). */
-function CornerRadiusField() {
+/** Global look: line thickness and the radius of every tile corner inside the frame. */
+function StyleFields() {
   const snap = useSnapshot(doc);
+  const scale = `in px at ${REFERENCE_HEIGHT}p (scales with the canvas)`;
   return (
-    <Field label="Corners" title={`Inner corner radius, in px at ${RADIUS_REFERENCE_HEIGHT}p (scales with the canvas)`}>
-      <NumberBox value={Math.round(snap.cornerRadius * RADIUS_REFERENCE_HEIGHT)} min={0} max={80} step={1} unit="px" bar horizontal width={90}
-        onChange={setCornerRadius} />
-    </Field>
+    <>
+      <Field label="Lines" title={`Divider, frame and sweep line thickness, ${scale}`}>
+        <NumberBox value={Math.round(snap.lineWidth * REFERENCE_HEIGHT)} min={1} max={40} step={1} unit="px" bar horizontal width={80}
+          onChange={setLineWidth} />
+      </Field>
+      <Field label="Corners" title={`Tile corner radius, ${scale}`}>
+        <NumberBox value={Math.round(snap.cornerRadius * REFERENCE_HEIGHT)} min={0} max={80} step={1} unit="px" bar horizontal width={80}
+          onChange={setCornerRadius} />
+      </Field>
+    </>
   );
 }
 
@@ -52,6 +59,7 @@ function HistoryStatus() {
 
 /** The default view: the canvas alone, as large as the window allows, played by clicking. */
 function Presentation() {
+  const lineWidth = useSnapshot(doc).lineWidth;
   const frameRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(() => Math.floor(Math.min(window.innerWidth, window.innerHeight * ASPECT)));
   useLayoutEffect(() => {
@@ -68,8 +76,9 @@ function Presentation() {
     <div className="present" ref={frameRef}>
       <div className="present__canvas">
         <Grid width={width} />
-        {/* Inside the canvas's corner, so the black text is always on the canvas */}
-        <button className="present__edit" onClick={() => (ui.mode = "edit")}>edit</button>
+        {/* Inside the frame's corner, so the black text is always on a tile */}
+        <button className="present__edit" onClick={() => (ui.mode = "edit")}
+          style={{ top: lineWidth * (width / ASPECT) + 8, right: lineWidth * (width / ASPECT) + 12 }}>edit</button>
       </div>
     </div>
   );
@@ -158,7 +167,7 @@ export function SplitSweepApp() {
       <header className="topbar">
         <span className="topbar__title">split · sweep</span>
         <Button label="Present" onClick={() => (ui.mode = "present")} title="The canvas alone, full window, played" />
-        <CornerRadiusField />
+        <StyleFields />
         <div className="mode-switch">
           <Button label="Edit" active={state.mode === "edit"} tone="select" onClick={() => (ui.mode = "edit")} />
           <Button label="Play" active={state.mode === "play"} tone="play" onClick={() => {
