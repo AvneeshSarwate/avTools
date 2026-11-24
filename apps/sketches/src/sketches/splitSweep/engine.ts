@@ -26,6 +26,8 @@ import { doc, findRegion, ui } from "./store";
 const MACRO_LEVEL_IDS = [40000, 40250, 40500, 40750] as const;
 const DRONE_VELOCITY = 0.8;
 const PITCH_BEND_RANGE = 2;
+/** Seconds for a region to fade on (first click) or off (right click); the A/B sweep uses the region's slide duration. */
+const FADE_SEC = 0.2;
 
 const now = () => rootContext().scheduler.now();
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -166,7 +168,7 @@ class SweepEngine {
         this.noteOn(voice, region);
       }
       voice.levelTarget = 1;
-      voice.level.go(1, region.slideSec, () => {
+      voice.level.go(1, FADE_SEC, () => {
         if (rootContext().random() < 0.5) this.sweep(id);
       });
       return;
@@ -191,10 +193,9 @@ class SweepEngine {
   release(id: string) {
     const voice = this.voices.get(id);
     if (!voice || voice.levelTarget === 0) return;
-    const region = findRegion(id);
     voice.levelTarget = 0;
     this.noteOff(voice);
-    voice.level.go(-1, region?.slideSec ?? 1, () => voice.mix.set(0));
+    voice.level.go(-1, FADE_SEC, () => voice.mix.set(0));
   }
 
   releaseAll() {

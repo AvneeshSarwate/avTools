@@ -55,7 +55,7 @@ the whole panel. The panel's left edge and the bar above the synth dock drag
 to resize (double-click the bar to fit the panel again); sizes save with the
 project but are not part of undo.
 
-**Play mode**: everything starts off. Click an off region: it ramps in on A,
+**Play mode**: everything starts off. Click an off region: it fades in on A (0.2 s, `FADE_SEC` in engine.ts),
 then with 50% probability sweeps on to B. Click a sounding region: it sweeps
 to the other side; clicking mid-sweep reverses it. Right-click: fade out and
 release. The sweep line moves right-to-left for A to B (A left of the line, B
@@ -66,7 +66,7 @@ Macro 1/2/3 Level get the interpolated colour's R/G/B (0..1) and Macro 4
 Level gets the fade level, all as per-note offsets. Six Sines has no per-note
 volume: the ramp-in is heard through the patch's attack plus whatever you map
 Macro 4 to, and a right-click sends the note-off at once (the patch's release
-is the tail) while the colour fades over the slide duration. The dock at the bottom is the full Six Sines editor for the
+is the tail) while the colour fades out over 0.2 s. The dock at the bottom is the full Six Sines editor for the
 patch. Live MIDI input plays a second engine with the same patch, so it never
 steals drone voices.
 

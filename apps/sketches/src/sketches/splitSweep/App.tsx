@@ -38,6 +38,31 @@ function HistoryStatus() {
   );
 }
 
+/** The default view: the canvas alone, as large as the window allows, played by clicking. */
+function Presentation() {
+  const frameRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(() => Math.floor(Math.min(window.innerWidth, window.innerHeight * ASPECT)));
+  useLayoutEffect(() => {
+    const element = frameRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const { width: w, height: h } = entry.contentRect;
+      setWidth(Math.max(200, Math.floor(Math.min(w, h * ASPECT))));
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div className="present" ref={frameRef}>
+      <div className="present__canvas">
+        <Grid width={width} />
+        {/* Inside the canvas's corner, so the black text is always on the canvas */}
+        <button className="present__edit" onClick={() => (ui.mode = "edit")}>edit</button>
+      </div>
+    </div>
+  );
+}
+
 export function SplitSweepApp() {
   const state = useSnapshot(ui);
   const layout = useSnapshot(view);
@@ -60,13 +85,13 @@ export function SplitSweepApp() {
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [ready]);
+  }, [ready, state.mode === "present"]);
 
   // Mode changes start from silence: play mode opens with every region off.
   useEffect(() => {
     engine.releaseAll();
     ui.hoverId = null;
-    if (state.mode === "play") ui.split = null;
+    if (state.mode !== "edit") ui.split = null;
   }, [state.mode]);
 
   // Solo: only the selected region drones while editing.
@@ -98,6 +123,7 @@ export function SplitSweepApp() {
       }
       if (mod) return;
       if (event.key === "Tab") {
+        if (ui.mode === "present") return;
         event.preventDefault();
         ui.mode = ui.mode === "edit" ? "play" : "edit";
       } else if ((event.key === "Backspace" || event.key === "Delete") && ui.mode === "edit" && !ui.split && ui.selectedId) {
@@ -114,10 +140,12 @@ export function SplitSweepApp() {
   }, []);
 
   if (!ready) return <div className="loading">loading…</div>;
+  if (state.mode === "present") return <Presentation />;
   return (
     <div className="split-sweep">
       <header className="topbar">
         <span className="topbar__title">split · sweep</span>
+        <Button label="Present" onClick={() => (ui.mode = "present")} title="The canvas alone, full window, played" />
         <div className="mode-switch">
           <Button label="Edit" active={state.mode === "edit"} tone="select" onClick={() => (ui.mode = "edit")} />
           <Button label="Play" active={state.mode === "play"} tone="play" onClick={() => {

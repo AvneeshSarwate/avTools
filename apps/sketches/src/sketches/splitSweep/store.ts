@@ -10,7 +10,8 @@ import { applyDelete, canSplit, clampAnchor, deletePlan, defaultDoc, splitRegion
 export const doc = proxy<SketchDoc>(defaultDoc());
 
 export const ui = proxy<{
-  mode: "edit" | "play";
+  /** present: the canvas alone, played (the default view); edit / play: the editor. */
+  mode: "present" | "edit" | "play";
   selectedId: string | null;
   /** Region under the pointer in the palette sidebar: outlined on the grid. */
   hoverId: string | null;
@@ -24,7 +25,8 @@ export const ui = proxy<{
   canRedo: boolean;
   lastAction: string;
 }>({
-  mode: "edit",
+  // ?view=edit opens straight into the editor
+  mode: new URLSearchParams(location.search).get("view") === "edit" ? "edit" : "present",
   selectedId: null,
   hoverId: null,
   deletePreview: false,

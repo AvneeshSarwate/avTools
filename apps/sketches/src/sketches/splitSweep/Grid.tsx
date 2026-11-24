@@ -61,7 +61,8 @@ export const Grid = memo(function Grid({ width }: { width: number }) {
     if (!region) return;
     const right = event.button === 2;
     if (event.button !== 0 && !right) return;
-    if (ui.mode === "play") {
+    // Present and play: the performance gestures
+    if (ui.mode !== "edit") {
       if (right) engine.release(region.id);
       else engine.trigger(region.id);
       return;
