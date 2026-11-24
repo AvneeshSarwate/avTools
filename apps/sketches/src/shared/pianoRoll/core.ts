@@ -1,0 +1,1563 @@
+import Konva from 'konva'
+import type { PianoRollState, NoteData } from './state'
+import { labelColorFor, noteFillColor } from './metadata/rules'
+import {
+  uid,
+  screenToPitchPosition,
+  quantizeToGrid,
+  isNoteVisible,
+  getNotesInRect,
+  updateOverlapPreview,
+  clearOverlapPreview,
+  executeOverlapChanges,
+  getNoteDisplayDuration,
+  applySnapToNoteStart,
+  getGridUnitWidth,
+  getGridUnitBeats,
+  pitchLabel
+} from './utils'
+import { CommandStack, type CommandStackChange } from './commandStack'
+import { getMaxLength, getNoteAreaHeight } from './viewport'
+import { DEFAULT_VELOCITY } from './constants'
+import { collectVisibleNotes, invalidateNoteIndex, type VisibleNote } from './noteIndex'
+import { scalePitchClasses } from './scale'
+import { noteAreaHeight } from './lanes'
+import {
+  cancelExpressionGesture,
+  drawExpression,
+  expressionContextMenu,
+  expressionHover,
+  expressionPointerDown,
+  expressionPointerMove,
+  expressionPointerUp,
+  setGridNoteHover,
+  setStageCursor,
+  startVelocityDragFromNote
+} from './expression'
+
+// Default canvas palette: a dark grid after Ableton's dark themes, neutral
+// structure lines, and the selection blue (app token --c-select) for the
+// marquee and paste cursor. Hosts colour playhead markers themselves.
+const PLAYHEAD_MARKER_COLOR = '#d9d9d9'
+const LOOP_END_COLOR = '#a8a8a8'
+const BEYOND_LOOP_FILL = 'rgba(0, 0, 0, 0.38)'
+const OUT_OF_SCALE_ROW_FILL = 'rgba(0, 0, 0, 0.2)'
+const ROOT_ROW_FILL = 'rgba(255, 255, 255, 0.2)'
+const GRID_LINE_SUBDIVISION = '#2d2d2d'
+const GRID_LINE_BEAT = '#383838'
+const GRID_LINE_BAR = '#555555'
+const GRID_LINE_ROW = '#1c1c1c'
+const GRID_LINE_OCTAVE = '#3a3a3a'
+const GHOST_DEFAULT_COLOR = '#8a8a8a'
+const GHOST_DEFAULT_OPACITY = 0.45
+/** Unsnapped new notes start this long (a 1/16). */
+const DEFAULT_FREE_NOTE_DURATION = 0.25
+/** The shortest a resize makes a note (a 1/256), so notes can be made shorter than the grid. */
+const MIN_NOTE_DURATION = 1 / 64
+/** Resize zone at each end of a note, in px (a third of the note when shorter). */
+const RESIZE_EDGE_ZONE = 6
+const MARQUEE_STROKE = '#64b5ff'
+const MARQUEE_FILL = 'rgba(100, 181, 255, 0.1)'
+const QUEUE_PLAYHEAD_COLOR = 'rgba(100, 181, 255, 0.7)'
+const TWO_PI = Math.PI * 2
+
+// The fonts Konva.Text produced for these nodes (its defaults: Arial, normal
+// style and variant). Text sits at y + fontSize / 2 with a middle baseline,
+// which is how Konva.Text positions a single top-aligned line.
+const LABEL_FONT = 'normal normal 14px Arial'
+const LABEL_FONT_SIZE = 14
+const BADGE_FONT = 'bold normal 11px Arial'
+const BADGE_FONT_SIZE = 11
+const MARKER_FONT = 'normal normal 11px Arial'
+/** Opacity of a marker's span band. */
+const MARKER_SPAN_ALPHA = 0.16
+/** The cursor when a host uses it as input (the selection blue). */
+const CURSOR_COLOR = '#4ea7ff'
+const MARKER_FONT_SIZE = 11
+const ghostFont = (fontSize: number) => `normal normal ${fontSize}px Arial`
+
+// ================= State Serialization =================
+
+export function captureState(state: PianoRollState): string {
+  return JSON.stringify({
+    notes: Array.from(state.notes.entries()),
+    selection: Array.from(state.selection.selectedIds)
+  })
+}
+
+export function restoreState(state: PianoRollState, snapshot: string) {
+  const data = JSON.parse(snapshot) as { notes: Array<[string, NoteData]>; selection: string[] }
+  state.notes = new Map(data.notes)
+  state.selection.selectedIds = new Set(data.selection)
+  invalidateNoteIndex(state)
+  state.requestRedraw()
+}
+
+function selectionSetsDiffer(previous: Set<string>, current: Set<string>): boolean {
+  if (previous.size !== current.size) return true
+  for (const id of previous) {
+    if (!current.has(id)) {
+      return true
+    }
+  }
+  return false
+}
+
+export function mutateSelection(state: PianoRollState, mutate: () => void): boolean {
+  const before = new Set(state.selection.selectedIds)
+  mutate()
+  const changed = selectionSetsDiffer(before, state.selection.selectedIds)
+  if (changed) {
+    state.notifyExternalChange?.('selection')
+  }
+  return changed
+}
+
+/** Unselected notes in MPE mode are greyed out (Ableton). */
+const MPE_DIMMED_NOTE_FILL = '#565656'
+
+/** The note's fill: a host highlight (playing), host override, then metadata.color, then the default. */
+function resolveNoteFill(state: PianoRollState, note: NoteData, fallback: string): string {
+  if (state.noteHighlight.ids.has(note.id) && state.noteHighlight.color) return state.noteHighlight.color
+  if (state.expression.mode === 'mpe' && fallback !== '' && !state.selection.selectedIds.has(note.id)) return MPE_DIMMED_NOTE_FILL
+  const override = state.hooks.noteColor?.(note)
+  if (typeof override === 'string' && override) return override
+  return noteFillColor(note.metadata, fallback)
+}
+
+/** At most this many notes are auditioned at once (a big marquee or selection). */
+const MAX_PREVIEW_NOTES = 12
+
+/**
+ * Audition several notes together (a moved selection, notes a marquee just
+ * reached). One per pitch, capped, lowest first so a big set stays a chord.
+ */
+export function previewNotes(state: PianoRollState, notes: Iterable<NoteData>) {
+  const byPitch = new Map<number, NoteData>()
+  for (const note of notes) if (!byPitch.has(note.pitch)) byPitch.set(note.pitch, note)
+  const chord = [...byPitch.values()].sort((a, b) => a.pitch - b.pitch).slice(0, MAX_PREVIEW_NOTES)
+  for (const note of chord) previewNote(state, note)
+}
+
+function selectedNotes(state: PianoRollState): NoteData[] {
+  const out: NoteData[] = []
+  for (const id of state.selection.selectedIds) {
+    const note = state.notes.get(id)
+    if (note) out.push(note)
+  }
+  return out
+}
+
+function previewNote(state: PianoRollState, note: NoteData) {
+  if (!state.grid.previewSound) return
+  state.hooks.onNotePreview?.({ pitch: note.pitch, velocity: note.velocity })
+}
+
+// ================= Text helpers =================
+
+// Text is never measured per note per frame: widths are cached per
+// (font, string), measured on an offscreen context the way Konva.Text did.
+let measureContext: CanvasRenderingContext2D | null = null
+const textWidthCache = new Map<string, number>()
+const TEXT_WIDTH_CACHE_LIMIT = 4096
+
+function textWidth(font: string, text: string): number {
+  const key = font + '\u0000' + text
+  const cached = textWidthCache.get(key)
+  if (cached !== undefined) return cached
+  if (!measureContext) measureContext = document.createElement('canvas').getContext('2d')
+  if (!measureContext) return 0
+  measureContext.font = font
+  const width = measureContext.measureText(text).width
+  if (textWidthCache.size >= TEXT_WIDTH_CACHE_LIMIT) textWidthCache.clear()
+  textWidthCache.set(key, width)
+  return width
+}
+
+// Konva draws a shape that has a fill, a stroke and an opacity below 1 at
+// full alpha on a buffer canvas and composites the buffer once at that
+// opacity ("perfectDrawEnabled"), so the stroke never double-blends over the
+// fill. This does the same for one rect, through just the rect's own region.
+let bufferCanvas: HTMLCanvasElement | null = null
+let bufferContext: CanvasRenderingContext2D | null = null
+
+function compositeRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  fill: string,
+  stroke: string,
+  lineWidth: number,
+  dash: number[] | null,
+  opacity: number
+) {
+  const transform = ctx.getTransform()
+  const canvasWidth = ctx.canvas.width
+  const canvasHeight = ctx.canvas.height
+  if (!bufferCanvas || !bufferContext) {
+    bufferCanvas = document.createElement('canvas')
+    bufferContext = bufferCanvas.getContext('2d')
+    if (!bufferContext) return
+  }
+  if (bufferCanvas.width !== canvasWidth || bufferCanvas.height !== canvasHeight) {
+    bufferCanvas.width = canvasWidth
+    bufferCanvas.height = canvasHeight
+  }
+  // The region the rect and its stroke can touch, in device pixels.
+  const margin = lineWidth / 2 + 1
+  const corners = [
+    transform.transformPoint({ x: x - margin, y: y - margin }),
+    transform.transformPoint({ x: x + width + margin, y: y - margin }),
+    transform.transformPoint({ x: x - margin, y: y + height + margin }),
+    transform.transformPoint({ x: x + width + margin, y: y + height + margin })
+  ]
+  const dx0 = Math.max(0, Math.floor(Math.min(corners[0]!.x, corners[1]!.x, corners[2]!.x, corners[3]!.x)))
+  const dy0 = Math.max(0, Math.floor(Math.min(corners[0]!.y, corners[1]!.y, corners[2]!.y, corners[3]!.y)))
+  const dx1 = Math.min(canvasWidth, Math.ceil(Math.max(corners[0]!.x, corners[1]!.x, corners[2]!.x, corners[3]!.x)))
+  const dy1 = Math.min(canvasHeight, Math.ceil(Math.max(corners[0]!.y, corners[1]!.y, corners[2]!.y, corners[3]!.y)))
+  if (dx1 <= dx0 || dy1 <= dy0) return
+
+  const b = bufferContext
+  b.setTransform(1, 0, 0, 1, 0, 0)
+  b.clearRect(dx0, dy0, dx1 - dx0, dy1 - dy0)
+  b.setTransform(transform)
+  b.translate(x, y)
+  b.beginPath()
+  b.rect(0, 0, width, height)
+  b.closePath()
+  b.fillStyle = fill
+  b.fill()
+  b.strokeStyle = stroke
+  b.lineWidth = lineWidth
+  b.setLineDash(dash ?? [])
+  b.stroke()
+  b.setLineDash([])
+
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.globalAlpha = opacity
+  ctx.drawImage(bufferCanvas, dx0, dy0, dx1 - dx0, dy1 - dy0, dx0, dy0, dx1 - dx0, dy1 - dy0)
+  ctx.restore()
+}
+
+const labelColorCache = new Map<string, string>()
+function labelColor(fill: string): string {
+  let color = labelColorCache.get(fill)
+  if (color === undefined) {
+    color = labelColorFor(fill)
+    if (labelColorCache.size >= 1024) labelColorCache.clear()
+    labelColorCache.set(fill, color)
+  }
+  return color
+}
+
+// ================= Layer Initialization =================
+
+export function initializeLayers(
+  state: PianoRollState,
+  stage: Konva.Stage,
+  onCommandStackChange?: (change: CommandStackChange, name: string) => void
+) {
+  // Each layer holds one immediate-mode shape whose sceneFunc draws straight
+  // from `state` with raw canvas calls: no per-note nodes.
+
+  // Grid layer (bottom, non-interactive)
+  const gridLayer = new Konva.Layer({
+    listening: false,
+    name: 'grid-layer'
+  })
+  stage.add(gridLayer)
+  state.layers.grid = gridLayer
+  const gridShape = new Konva.Shape({
+    listening: false,
+    name: 'grid',
+    sceneFunc: (context) => drawGrid(state, context._context)
+  })
+  gridLayer.add(gridShape)
+
+  // Ghost notes (read-only, non-interactive) above the grid, below the notes
+  const ghostLayer = new Konva.Layer({
+    listening: false,
+    name: 'ghost-layer'
+  })
+  stage.add(ghostLayer)
+  state.layers.ghosts = ghostLayer
+  const ghostShape = new Konva.Shape({
+    listening: false,
+    name: 'ghosts',
+    sceneFunc: (context) => drawGhosts(state, context._context)
+  })
+  ghostLayer.add(ghostShape)
+
+  // Notes layer: the one transparent full-stage hit target (so pointer events
+  // reach the stage handlers, which hit-test geometrically) plus the notes.
+  const notesLayer = new Konva.Layer({
+    name: 'notes-layer'
+  })
+  stage.add(notesLayer)
+  state.layers.notes = notesLayer
+  const hitTarget = new Konva.Shape({
+    listening: true,
+    name: 'hit-target',
+    sceneFunc: () => {},
+    hitFunc: (context, shape) => {
+      const owner = shape.getStage()
+      if (!owner) return
+      context.beginPath()
+      context.rect(0, 0, owner.width(), owner.height())
+      context.closePath()
+      context.fillStrokeShape(shape)
+    }
+  })
+  notesLayer.add(hitTarget)
+  const notesShape = new Konva.Shape({
+    listening: false,
+    name: 'notes',
+    sceneFunc: (context) => {
+      drawNotes(state, context._context)
+      drawExpression(state, context._context)
+    }
+  })
+  notesLayer.add(notesShape)
+
+  // Overlay layer (marquee, queue playhead, playhead markers)
+  const overlayLayer = new Konva.Layer({
+    listening: false,
+    name: 'overlay-layer'
+  })
+  stage.add(overlayLayer)
+  state.layers.overlay = overlayLayer
+  const overlayShape = new Konva.Shape({
+    listening: false,
+    name: 'overlay',
+    sceneFunc: (context) => drawOverlay(state, context._context)
+  })
+  overlayLayer.add(overlayShape)
+
+  state.shapes = { grid: gridShape, ghosts: ghostShape, notes: notesShape, hitTarget, overlay: overlayShape }
+
+  // Initialize command stack (only once; a remount keeps the history)
+  if (!state.command.stack) {
+    state.command.stack = new CommandStack(
+      () => captureState(state),
+      (snapshot) => restoreState(state, snapshot),
+      (change, name) => {
+        invalidateNoteIndex(state)
+        state.requestRedraw()
+        onCommandStackChange?.(change, name)
+      }
+    )
+  }
+}
+
+// ================= Scene functions =================
+
+function drawGrid(state: PianoRollState, ctx: CanvasRenderingContext2D) {
+  const stage = state.stage
+  if (!stage) return
+
+  const viewportWidth = stage.width()
+  const viewportHeight = getNoteAreaHeight(state, stage.height())
+  const maxLength = getMaxLength(state)
+
+  const { scrollX, scrollY } = state.viewport
+  const { quarterNoteWidth, noteHeight, timeSignature } = state.grid
+
+  const pianoRollHeight = 128 * noteHeight
+  const pulsesPerMeasure = timeSignature * 4
+  const measureWidth = quarterNoteWidth * pulsesPerMeasure
+  const numMeasures = Math.ceil(maxLength / pulsesPerMeasure)
+  const contentWidth = maxLength * quarterNoteWidth
+
+  // Measure backgrounds
+  const firstVisibleMeasure = Math.floor(scrollX / measureWidth)
+  const lastVisibleMeasure = Math.ceil((scrollX + viewportWidth) / measureWidth)
+
+  for (let i = firstVisibleMeasure; i <= lastVisibleMeasure && i < numMeasures; i++) {
+    ctx.fillStyle = i % 2 === 0 ? state.grid.backgroundColor1 : state.grid.backgroundColor2
+    ctx.fillRect(i * measureWidth - scrollX, -scrollY, measureWidth, pianoRollHeight)
+  }
+
+  // Scale shading: out-of-scale rows a step darker, root rows lighter (in
+  // C major the dark rows are the black keys)
+  const firstRow = Math.max(0, Math.floor(scrollY / noteHeight))
+  const lastRow = Math.min(127, Math.ceil((scrollY + viewportHeight) / noteHeight))
+  const { inScale, root } = scalePitchClasses(state.grid.scale)
+  for (let row = firstRow; row <= lastRow; row++) {
+    const pitchClass = (127 - row) % 12
+    if (pitchClass === root) ctx.fillStyle = ROOT_ROW_FILL
+    else if (!inScale.has(pitchClass)) ctx.fillStyle = OUT_OF_SCALE_ROW_FILL
+    else continue
+    ctx.fillRect(-scrollX, row * noteHeight - scrollY, contentWidth, noteHeight)
+  }
+
+  // Vertical lines (time grid). Each line is its own stroke: Skia rasterizes
+  // a many-segment path differently from single segments, so batching them
+  // would not be pixel-identical to the Konva.Line nodes this replaces.
+  const numVertLines = Math.ceil(maxLength * (state.grid.subdivision / 4))
+  const vertLineSpace = quarterNoteWidth * (4 / state.grid.subdivision)
+
+  const firstVisibleLine = Math.floor(scrollX / vertLineSpace)
+  const lastVisibleLine = Math.ceil((scrollX + viewportWidth) / vertLineSpace)
+
+  ctx.lineWidth = 1
+  const linesPerBeat = state.grid.subdivision / 4
+  const linesPerBar = linesPerBeat * timeSignature
+  for (let i = firstVisibleLine; i <= lastVisibleLine && i <= numVertLines; i++) {
+    const xPos = Math.round(i * vertLineSpace - scrollX) + 0.5
+    ctx.strokeStyle = i % linesPerBar === 0 ? GRID_LINE_BAR : i % linesPerBeat === 0 ? GRID_LINE_BEAT : GRID_LINE_SUBDIVISION
+    ctx.beginPath()
+    ctx.moveTo(xPos, -scrollY)
+    ctx.lineTo(xPos, pianoRollHeight - scrollY)
+    ctx.stroke()
+  }
+
+  // Horizontal lines (pitch boundaries)
+  const firstVisiblePitch = Math.floor(scrollY / noteHeight)
+  const lastVisiblePitch = Math.ceil((scrollY + viewportHeight) / noteHeight)
+
+  ctx.lineWidth = 1
+  for (let i = firstVisiblePitch; i <= lastVisiblePitch && i < 128; i++) {
+    const yPos = Math.round(i * noteHeight - scrollY) + 0.5
+    // Row i's bottom edge is the line below pitch 127 - i: mark each C.
+    ctx.strokeStyle = (127 - i + 1) % 12 === 0 ? GRID_LINE_OCTAVE : GRID_LINE_ROW
+    ctx.beginPath()
+    ctx.moveTo(0 - scrollX, yPos)
+    ctx.lineTo(contentWidth - scrollX, yPos)
+    ctx.stroke()
+  }
+
+  // Loop end: shade everything past it, then the end line itself
+  const loopEndX = state.grid.loopLength * quarterNoteWidth - scrollX
+  if (loopEndX < viewportWidth) {
+    const x = Math.max(loopEndX, 0)
+    ctx.fillStyle = BEYOND_LOOP_FILL
+    ctx.fillRect(x, 0, Math.max(0, viewportWidth - x), viewportHeight)
+  }
+  if (loopEndX >= -2 && loopEndX <= viewportWidth + 2) {
+    ctx.strokeStyle = LOOP_END_COLOR
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.moveTo(loopEndX, 0)
+    ctx.lineTo(loopEndX, viewportHeight)
+    ctx.stroke()
+  }
+}
+
+function drawGhosts(state: PianoRollState, ctx: CanvasRenderingContext2D) {
+  if (!state.stage || state.ghostNotes.length === 0) return
+
+  const { scrollX, scrollY } = state.viewport
+  const { quarterNoteWidth, noteHeight } = state.grid
+  let alpha = 1
+  const setAlpha = (value: number) => {
+    if (value !== alpha) {
+      alpha = value
+      ctx.globalAlpha = value
+    }
+  }
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'left'
+
+  for (const ghost of state.ghostNotes) {
+    const visible = isNoteVisible(ghost, state)
+    const x = ghost.position * quarterNoteWidth - scrollX
+    const y = (127 - ghost.pitch) * noteHeight - scrollY
+    const width = ghost.duration * quarterNoteWidth
+    const color = ghost.color ?? GHOST_DEFAULT_COLOR
+    const opacity = ghost.opacity ?? GHOST_DEFAULT_OPACITY
+
+    // Connector to the source note, drawn even when only one end is on screen
+    if (ghost.linkTo) {
+      const source = state.notes.get(ghost.linkTo)
+      if (source) {
+        const sourceX = source.position * quarterNoteWidth - scrollX
+        const sourceY = (127 - source.pitch) * noteHeight - scrollY
+        setAlpha(Math.min(1, opacity + 0.4))
+        ctx.strokeStyle = color
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([4, 3])
+        ctx.beginPath()
+        ctx.moveTo(sourceX + 2, sourceY + noteHeight / 2)
+        ctx.lineTo(x + 2, y + noteHeight / 2)
+        ctx.stroke()
+      }
+    }
+
+    if (!visible) continue
+
+    if (opacity !== 1) {
+      compositeRect(ctx, x, y, width, noteHeight, color, '#000', 1, [3, 2], opacity)
+    } else {
+      setAlpha(1)
+      ctx.save()
+      ctx.translate(x, y)
+      ctx.beginPath()
+      ctx.rect(0, 0, width, noteHeight)
+      ctx.closePath()
+      ctx.fillStyle = color
+      ctx.fill()
+      ctx.strokeStyle = '#000'
+      ctx.lineWidth = 1
+      ctx.setLineDash([3, 2])
+      ctx.stroke()
+      ctx.restore()
+    }
+
+    if (ghost.label && noteHeight >= 8) {
+      const fontSize = Math.min(12, Math.max(8, noteHeight - 6))
+      setAlpha(Math.min(1, opacity + 0.3))
+      ctx.save()
+      ctx.translate(x + 4, y + 2)
+      ctx.font = ghostFont(fontSize)
+      ctx.fillStyle = labelColor(color)
+      ctx.fillText(ghost.label, 0, fontSize / 2)
+      ctx.restore()
+    }
+  }
+}
+
+const drawScratch: VisibleNote[] = []
+
+function drawNotes(state: PianoRollState, ctx: CanvasRenderingContext2D) {
+  if (!state.stage) return
+
+  const visible = collectVisibleNotes(state, drawScratch)
+  const { scrollX, scrollY } = state.viewport
+  const { quarterNoteWidth, noteHeight, noteColor, selectedNoteColor } = state.grid
+  const selectedIds = state.selection.selectedIds
+  const hiddenNoteIds = state.interaction.hiddenNoteIds
+  const truncatedNotes = state.interaction.truncatedNotes
+  // Overlap preview state is empty outside gestures: skip the lookups then.
+  const anyHidden = hiddenNoteIds.size > 0
+  const anyTruncated = truncatedNotes.size > 0
+  const showText = noteHeight >= 8
+  const badgeHook = state.hooks.noteBadge
+
+  let alpha = 1
+  let lineWidth = 0
+  let font = ''
+  const setAlpha = (value: number) => {
+    if (value !== alpha) {
+      alpha = value
+      ctx.globalAlpha = value
+    }
+  }
+  const setLineWidth = (value: number) => {
+    if (value !== lineWidth) {
+      lineWidth = value
+      ctx.lineWidth = value
+    }
+  }
+  const setFont = (value: string) => {
+    if (value !== font) {
+      font = value
+      ctx.font = value
+    }
+  }
+  if (showText) {
+    ctx.textBaseline = 'middle'
+    ctx.textAlign = 'left'
+  }
+
+  const drawNote = (id: string, note: NoteData, selected: boolean) => {
+    const x = note.position * quarterNoteWidth - scrollX
+    const y = (127 - note.pitch) * noteHeight - scrollY
+    let width: number
+    let fill: string
+    let stroke: string
+    let strokeWidth: number
+    if (selected) {
+      // Selected notes use their actual duration (not truncated). A note with
+      // its own color keeps it while selected and shows selection through a
+      // heavy stroke instead; the default swaps the fill as before.
+      width = note.duration * quarterNoteWidth
+      const ownColor = resolveNoteFill(state, note, '')
+      fill = ownColor || selectedNoteColor
+      stroke = ownColor ? selectedNoteColor : '#000'
+      strokeWidth = ownColor ? 3 : 1
+    } else {
+      // Use display duration (may be truncated)
+      width = (anyTruncated ? (truncatedNotes.get(id) ?? note.duration) : note.duration) * quarterNoteWidth
+      fill = resolveNoteFill(state, note, noteColor)
+      stroke = '#000'
+      strokeWidth = 1
+    }
+    const opacity = anyHidden && hiddenNoteIds.has(id) ? 0.3 : 1
+    if (opacity !== 1) {
+      // Hidden (overlap preview) notes composite as one translucent shape
+      compositeRect(ctx, x, y, width, noteHeight, fill, stroke, strokeWidth, null, opacity)
+    } else {
+      setAlpha(1)
+      ctx.fillStyle = fill
+      ctx.fillRect(x, y, width, noteHeight)
+      setLineWidth(strokeWidth)
+      ctx.strokeStyle = stroke
+      ctx.strokeRect(x, y, width, noteHeight)
+    }
+
+    // In MPE mode the selected notes' envelopes are drawn editable (expression.ts)
+    const bendPoints = selected && state.expression.mode === 'mpe' ? undefined : note.mpePitch?.points
+    if (bendPoints && bendPoints.length > 0) {
+      setAlpha(opacity)
+      drawPitchCurve(ctx, x, y + noteHeight / 2, width, noteHeight, bendPoints)
+      lineWidth = -1
+    }
+
+    if (!showText) return
+    setAlpha(opacity)
+    const textFill = labelColor(fill)
+    const label = pitchLabel(note.pitch, state.grid.pitchLabels)
+    setFont(LABEL_FONT)
+    ctx.fillStyle = textFill
+    ctx.fillText(label, x + 4, y + 2 + LABEL_FONT_SIZE / 2)
+
+    // Host badge on the right side, only when the note has room for it
+    const badgeText = badgeHook?.(note)
+    if (badgeText) {
+      const badgeWidth = textWidth(BADGE_FONT, badgeText)
+      if (textWidth(LABEL_FONT, label) + badgeWidth + 14 <= width) {
+        setFont(BADGE_FONT)
+        ctx.fillText(badgeText, x + width - badgeWidth - 4, y + 3 + BADGE_FONT_SIZE / 2)
+      }
+    }
+  }
+
+  // Unselected notes first (back), selected notes last (front)
+  for (let i = 0; i < visible.length; i++) {
+    const entry = visible[i]!
+    if (!selectedIds.has(entry.id)) drawNote(entry.id, entry.note, false)
+  }
+  for (let i = 0; i < visible.length; i++) {
+    const entry = visible[i]!
+    if (selectedIds.has(entry.id)) drawNote(entry.id, entry.note, true)
+  }
+
+}
+
+/**
+ * A note's MPE pitch curve: a line from its row centre, one row per semitone,
+ * light with a dark halo so it reads on any note fill and on the grid it
+ * bends out over. Points are drawn at zoom: filled when rooted (resting on a
+ * pitch), hollow otherwise.
+ */
+function drawPitchCurve(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  centerY: number,
+  width: number,
+  noteHeight: number,
+  points: ReadonlyArray<{ time: number; pitchOffset: number; rooted?: boolean }>
+) {
+  const at = (point: { time: number; pitchOffset: number }) => [x + point.time * width, centerY - point.pitchOffset * noteHeight] as const
+  const first = points[0]!
+  const last = points[points.length - 1]!
+  const trace = () => {
+    ctx.beginPath()
+    ctx.moveTo(x, centerY - first.pitchOffset * noteHeight)
+    for (const point of points) ctx.lineTo(...at(point))
+    if (last.time < 1) ctx.lineTo(x + width, centerY - last.pitchOffset * noteHeight)
+  }
+  trace()
+  ctx.strokeStyle = CURVE_HALO
+  ctx.lineWidth = 3.5
+  ctx.stroke()
+  trace()
+  ctx.strokeStyle = CURVE_COLOR
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+
+  if (noteHeight < 8) return
+  for (const point of points) {
+    const [px, py] = at(point)
+    ctx.beginPath()
+    ctx.arc(px, py, CURVE_POINT_RADIUS, 0, TWO_PI, false)
+    ctx.fillStyle = point.rooted ? CURVE_COLOR : CURVE_HALO
+    ctx.fill()
+    ctx.lineWidth = 1.5
+    ctx.strokeStyle = point.rooted ? CURVE_HALO : CURVE_COLOR
+    ctx.stroke()
+  }
+}
+
+const CURVE_COLOR = '#f2f2f2'
+const CURVE_HALO = 'rgba(0, 0, 0, 0.75)'
+const CURVE_POINT_RADIUS = 2.5
+
+const LIVE_KEY_COLOR = '255, 82, 82'
+const LIVE_NOTE_FILL = '#ff5252'
+const LIVE_BEND_TICK = 28
+
+/** Held input keys (row highlights) and notes being recorded (growing notes). */
+function drawLiveInput(state: PianoRollState, ctx: CanvasRenderingContext2D, stageWidth: number) {
+  const { keys, notes } = state.liveInput
+  if (keys.length === 0 && notes.length === 0) return
+  const { scrollX, scrollY } = state.viewport
+  const { quarterNoteWidth, noteHeight } = state.grid
+  // Stay in the grid, above any expression lanes
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(0, 0, stageWidth, noteAreaHeight(state))
+  ctx.clip()
+  drawLiveInputClipped(state, ctx, stageWidth, keys, notes, scrollX, scrollY, quarterNoteWidth, noteHeight)
+  ctx.restore()
+}
+
+function drawLiveInputClipped(
+  state: PianoRollState,
+  ctx: CanvasRenderingContext2D,
+  stageWidth: number,
+  keys: PianoRollState['liveInput']['keys'],
+  notes: PianoRollState['liveInput']['notes'],
+  scrollX: number,
+  scrollY: number,
+  quarterNoteWidth: number,
+  noteHeight: number
+) {
+  void state
+
+  for (const key of keys) {
+    const y = (127 - key.pitch) * noteHeight - scrollY
+    const strength = 0.12 + 0.25 * (key.velocity / 127)
+    ctx.fillStyle = `rgba(${LIVE_KEY_COLOR}, ${strength})`
+    ctx.fillRect(0, y, stageWidth, noteHeight)
+    ctx.fillStyle = `rgb(${LIVE_KEY_COLOR})`
+    ctx.fillRect(0, y, 6, noteHeight)
+    if (Math.abs(key.pitchOffset) > 0.02) {
+      // The bend as a short tick from the key's edge marker to where it sounds.
+      const bentY = y + noteHeight / 2 - key.pitchOffset * noteHeight
+      ctx.strokeStyle = `rgb(${LIVE_KEY_COLOR})`
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(3, y + noteHeight / 2)
+      ctx.lineTo(3, bentY)
+      ctx.lineTo(LIVE_BEND_TICK, bentY)
+      ctx.stroke()
+    }
+  }
+
+  for (const note of notes) {
+    const x = note.position * quarterNoteWidth - scrollX
+    const y = (127 - note.pitch) * noteHeight - scrollY
+    const width = Math.max(2, note.duration * quarterNoteWidth)
+    ctx.globalAlpha = 0.55 + 0.45 * (note.velocity / 127)
+    ctx.fillStyle = LIVE_NOTE_FILL
+    ctx.fillRect(x, y, width, noteHeight)
+    ctx.globalAlpha = 1
+    ctx.strokeStyle = '#000'
+    ctx.lineWidth = 1
+    ctx.strokeRect(x, y, width, noteHeight)
+    const curve = note.curve
+    if (curve && curve.length > 1) {
+      const centerY = y + noteHeight / 2
+      ctx.strokeStyle = '#fff'
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      for (let i = 0; i < curve.length; i++) {
+        const px = curve[i]!.position * quarterNoteWidth - scrollX
+        const py = centerY - curve[i]!.pitchOffset * noteHeight
+        if (i === 0) ctx.moveTo(px, py)
+        else ctx.lineTo(px, py)
+      }
+      ctx.stroke()
+    }
+  }
+}
+
+function drawOverlay(state: PianoRollState, ctx: CanvasRenderingContext2D) {
+  const stage = state.stage
+  if (!stage) return
+
+  const { scrollX } = state.viewport
+  const { quarterNoteWidth } = state.grid
+  const stageHeight = stage.height()
+
+  drawLiveInput(state, ctx, stage.width())
+
+  // Marquee selection rectangle
+  const { marqueeStart, marqueeCurrent, isMarqueeSelecting } = state.interaction
+  if (isMarqueeSelecting && marqueeStart && marqueeCurrent) {
+    const x = Math.min(marqueeStart.x, marqueeCurrent.x)
+    const y = Math.min(marqueeStart.y, marqueeCurrent.y)
+    const width = Math.abs(marqueeCurrent.x - marqueeStart.x)
+    const height = Math.abs(marqueeCurrent.y - marqueeStart.y)
+    if (width > 5 || height > 5) {
+      ctx.save()
+      ctx.translate(x, y)
+      ctx.beginPath()
+      ctx.rect(0, 0, width, height)
+      ctx.closePath()
+      ctx.fillStyle = MARQUEE_FILL
+      ctx.fill()
+      ctx.strokeStyle = MARQUEE_STROKE
+      ctx.lineWidth = 1
+      ctx.setLineDash([3, 3])
+      ctx.stroke()
+      ctx.restore()
+    }
+  }
+
+  // Queue playhead (the cursor and paste position): drawn once it has been
+  // moved, or always when the host uses it
+  if (state.queuePlayhead.position > 0 || state.queuePlayhead.alwaysShow) {
+    const queueX = state.queuePlayhead.position * quarterNoteWidth - scrollX
+    // A cursor the host uses as input is drawn bolder, with a head
+    const bold = state.queuePlayhead.alwaysShow
+    ctx.strokeStyle = bold ? CURSOR_COLOR : QUEUE_PLAYHEAD_COLOR
+    ctx.lineWidth = bold ? 2 : 1
+    ctx.beginPath()
+    ctx.moveTo(queueX, 0)
+    ctx.lineTo(queueX, stageHeight)
+    ctx.stroke()
+    if (bold) {
+      ctx.fillStyle = CURSOR_COLOR
+      ctx.beginPath()
+      ctx.moveTo(queueX - 6, 0)
+      ctx.lineTo(queueX + 6, 0)
+      ctx.lineTo(queueX, 8)
+      ctx.closePath()
+      ctx.fill()
+    }
+  }
+
+  // One labeled line per marker
+  const { markers } = state.playheadMarkers
+  if (markers.length > 0) {
+    ctx.font = MARKER_FONT
+    ctx.textBaseline = 'middle'
+    ctx.textAlign = 'left'
+    ctx.lineWidth = 1.5
+    for (const marker of markers) {
+      const color = marker.color ?? PLAYHEAD_MARKER_COLOR
+      if (marker.span) {
+        ctx.save()
+        ctx.globalAlpha = MARKER_SPAN_ALPHA
+        ctx.fillStyle = color
+        const fromX = marker.span.from * quarterNoteWidth - scrollX
+        ctx.fillRect(fromX, 0, (marker.span.to - marker.span.from) * quarterNoteWidth, stageHeight)
+        ctx.restore()
+      }
+      const x = marker.position * quarterNoteWidth - scrollX
+      ctx.strokeStyle = color
+      ctx.beginPath()
+      ctx.moveTo(x, 0)
+      ctx.lineTo(x, stageHeight)
+      ctx.stroke()
+      ctx.fillStyle = color
+      ctx.fillText(marker.id, x + 3, 2 + MARKER_FONT_SIZE / 2)
+    }
+  }
+}
+
+// ================= Rendering Functions =================
+// A redraw of a layer is a batchDraw(): its shape draws from the live state.
+
+export function renderGrid(state: PianoRollState) {
+  const gridLayer = state.layers.grid
+  if (!gridLayer || !state.stage) return
+
+  const gridCache = state.renderCache.grid
+
+  const stage = state.stage
+  const viewportWidth = stage.width()
+  const viewportHeight = getNoteAreaHeight(state, stage.height())
+  const maxLength = getMaxLength(state)
+
+  // Only redraw if viewport, subdivision or extent changed
+  if (
+    gridCache.lastScrollX === state.viewport.scrollX &&
+    gridCache.lastScrollY === state.viewport.scrollY &&
+    gridCache.lastSubdivision === state.grid.subdivision &&
+    gridCache.lastQuarterNoteWidth === state.grid.quarterNoteWidth &&
+    gridCache.lastNoteHeight === state.grid.noteHeight &&
+    gridCache.lastStageWidth === viewportWidth &&
+    gridCache.lastStageHeight === viewportHeight &&
+    gridCache.lastLoopLength === state.grid.loopLength &&
+    gridCache.lastMaxLength === maxLength &&
+    gridCache.lastScale === state.grid.scale
+  ) {
+    return
+  }
+
+  gridCache.lastScrollX = state.viewport.scrollX
+  gridCache.lastScrollY = state.viewport.scrollY
+  gridCache.lastSubdivision = state.grid.subdivision
+  gridCache.lastQuarterNoteWidth = state.grid.quarterNoteWidth
+  gridCache.lastNoteHeight = state.grid.noteHeight
+  gridCache.lastStageWidth = viewportWidth
+  gridCache.lastStageHeight = viewportHeight
+  gridCache.lastLoopLength = state.grid.loopLength
+  gridCache.lastMaxLength = maxLength
+  gridCache.lastScale = state.grid.scale
+
+  gridLayer.batchDraw()
+}
+
+export function renderGhostNotes(state: PianoRollState) {
+  const ghostLayer = state.layers.ghosts
+  if (!ghostLayer || !state.stage) return
+  ghostLayer.batchDraw()
+}
+
+export function renderVisibleNotes(state: PianoRollState) {
+  const notesLayer = state.layers.notes
+  if (!notesLayer || !state.stage) return
+  notesLayer.batchDraw()
+}
+
+export function renderMarqueeRect(state: PianoRollState) {
+  if (!state.interaction.marqueeStart || !state.interaction.marqueeCurrent) return
+  state.layers.overlay?.batchDraw()
+}
+
+/** Markers are drawn from `state.playheadMarkers.markers` on every overlay redraw. */
+export function updatePlayheadMarkers(state: PianoRollState) {
+  state.layers.overlay?.batchDraw()
+}
+
+// ================= Hit testing =================
+
+export type HitResult =
+  | { kind: 'handle'; noteId: string; isEnd: boolean }
+  | { kind: 'note'; noteId: string }
+  | { kind: 'background' }
+
+const BACKGROUND_HIT: HitResult = { kind: 'background' }
+const hitScratch: VisibleNote[] = []
+
+/**
+ * What is under a stage point, using the geometry the notes shape draws:
+ * resize handles (drawn last) win over notes, selected notes (drawn after
+ * the unselected ones) win over unselected, and later-drawn notes win over
+ * earlier ones. Rect hits include half the stroke width, as Konva's hit
+ * canvas did.
+ */
+export function hitTest(state: PianoRollState, pos: { x: number; y: number }): HitResult {
+  if (!state.stage) return BACKGROUND_HIT
+
+  const { scrollX, scrollY } = state.viewport
+  const { quarterNoteWidth, noteHeight } = state.grid
+  const selectedIds = state.selection.selectedIds
+
+  const visible = collectVisibleNotes(state, hitScratch)
+
+  const hitsRect = (note: NoteData, width: number, strokeWidth: number) => {
+    const half = strokeWidth / 2
+    const x = note.position * quarterNoteWidth - scrollX
+    const y = (127 - note.pitch) * noteHeight - scrollY
+    return pos.x >= x - half && pos.x <= x + width + half && pos.y >= y - half && pos.y <= y + noteHeight + half
+  }
+
+  // Near a note's left or right edge is its resize zone (both modes; in MPE
+  // mode an envelope breakpoint under the pointer wins, see expression.ts).
+  // The zone shrinks on short notes so their middle still drags. The cursor
+  // shows it; nothing is drawn.
+  const edgeOrNote = (noteId: string, note: NoteData, width: number): HitResult => {
+    const local = pos.x - (note.position * quarterNoteWidth - scrollX)
+    const zone = Math.min(RESIZE_EDGE_ZONE, width / 3)
+    if (local <= zone) return { kind: 'handle', noteId, isEnd: false }
+    if (local >= width - zone) return { kind: 'handle', noteId, isEnd: true }
+    return { kind: 'note', noteId }
+  }
+
+  // Selected notes (front), last drawn first
+  for (let i = visible.length - 1; i >= 0; i--) {
+    const entry = visible[i]!
+    if (!selectedIds.has(entry.id)) continue
+    const ownColor = resolveNoteFill(state, entry.note, '')
+    const width = entry.note.duration * quarterNoteWidth
+    if (hitsRect(entry.note, width, ownColor ? 3 : 1)) return edgeOrNote(entry.id, entry.note, width)
+  }
+
+  // Unselected notes (back), last drawn first
+  for (let i = visible.length - 1; i >= 0; i--) {
+    const entry = visible[i]!
+    if (selectedIds.has(entry.id)) continue
+    const width = getNoteDisplayDuration(state, entry.id, entry.note.duration) * quarterNoteWidth
+    if (hitsRect(entry.note, width, 1)) return edgeOrNote(entry.id, entry.note, width)
+  }
+
+  return BACKGROUND_HIT
+}
+
+// ================= Interaction Handlers =================
+
+type PointerLikeEvent = MouseEvent | PointerEvent | TouchEvent | undefined
+
+export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): () => void {
+  // Konva routed events to whatever its hit canvas found; everything now
+  // reaches the stage and is resolved geometrically. A stage that is not
+  // listening hits nothing, as before.
+  const onNoteEdge = (p: { x: number; y: number }) => p.y < noteAreaHeight(state) && hitTest(state, p).kind === 'handle'
+  const hitAt = (): HitResult => {
+    const pos = stage.getPointerPosition()
+    if (!pos || !stage.isListening()) return BACKGROUND_HIT
+    return hitTest(state, pos)
+  }
+
+  // Konva counts any two mouseups within its dblClickWindow as a double click,
+  // even with a drag in between, so a real double click is recognised here:
+  // two presses at the same spot with no movement.
+  let lastDownPos: { x: number; y: number } | undefined
+  let prevDownPos: { x: number; y: number } | undefined
+  let lastDownTime = -Infinity
+  let prevDownTime = -Infinity
+  let movedSinceDown = false
+  // Konva's window: two presses this close (and still) are a double click
+  const DBLCLICK_MS = 400
+  // A press on one note of a multi-note selection: the group moves if it is
+  // dragged, otherwise the release selects just that note
+  let collapseSelectionTo: string | null = null
+  const DBLCLICK_SLOP = 5
+  const isStationaryDoubleClick = () =>
+    !!lastDownPos &&
+    !!prevDownPos &&
+    !movedSinceDown &&
+    Math.abs(lastDownPos.x - prevDownPos.x) <= DBLCLICK_SLOP &&
+    Math.abs(lastDownPos.y - prevDownPos.y) <= DBLCLICK_SLOP
+
+  // Click on note or handle
+  stage.on('mousedown touchstart', (e) => {
+    // Only the primary button edits; right-click opens the expression menu
+    // (contextmenu below) and must not select, delete or drag.
+    const button = (e.evt as MouseEvent | undefined)?.button
+    if (typeof button === 'number' && button !== 0) return
+    const isShift = !!(e.evt as PointerLikeEvent)?.shiftKey
+    const downPos = stage.getPointerPosition()
+    prevDownPos = movedSinceDown ? undefined : lastDownPos
+    prevDownTime = lastDownTime
+    lastDownPos = downPos ? { x: downPos.x, y: downPos.y } : undefined
+    lastDownTime = performance.now()
+    movedSinceDown = false
+    collapseSelectionTo = null
+    // The second press of a double click (stationary, in time)
+    const isDoublePress = isStationaryDoubleClick() && lastDownTime - prevDownTime <= DBLCLICK_MS
+
+    // Expression lanes, and everything in MPE mode (expression.ts)
+    const noteAt = (p: { x: number; y: number }) => {
+      const found = hitTest(state, p)
+      return found.kind === 'note' || found.kind === 'handle' ? found.noteId : null
+    }
+    if (expressionPointerDown(state, stage, e.evt as MouseEvent | undefined, noteAt, onNoteEdge)) return
+
+    const hit = hitAt()
+
+    // Pressing a note's edge: resize it (with the rest of the selection when
+    // it is selected; an unselected note is selected first, Shift adds it)
+    if (hit.kind === 'handle') {
+      if (!state.selection.selectedIds.has(hit.noteId)) {
+        mutateSelection(state, () => {
+          if (!isShift) state.selection.selectedIds.clear()
+          state.selection.selectedIds.add(hit.noteId)
+        })
+        state.requestRedraw('notes')
+      }
+      startResize(state, stage, hit.noteId, hit.isEnd)
+      return
+    }
+
+    // Clicking on note
+    if (hit.kind === 'note') {
+      const noteId = hit.noteId
+      // Alt (Win) / Cmd (Mac) drag on a note changes the selection's velocity (Ableton)
+      const evt = e.evt as PointerLikeEvent
+      if (evt && 'altKey' in evt && (evt.altKey || evt.metaKey)) {
+        if (!state.selection.selectedIds.has(noteId)) {
+          mutateSelection(state, () => {
+            state.selection.selectedIds.clear()
+            state.selection.selectedIds.add(noteId)
+          })
+        }
+        startVelocityDragFromNote(state, stage, noteId)
+        state.requestRedraw('notes')
+        return
+      }
+      const isSelected = state.selection.selectedIds.has(noteId)
+      if (isSelected && !isShift && state.selection.selectedIds.size > 1) collapseSelectionTo = noteId
+
+      mutateSelection(state, () => {
+        if (isShift) {
+          if (isSelected) {
+            state.selection.selectedIds.delete(noteId)
+          } else {
+            state.selection.selectedIds.add(noteId)
+          }
+          return
+        }
+        if (!isSelected) {
+          state.selection.selectedIds.clear()
+          state.selection.selectedIds.add(noteId)
+        }
+      })
+
+      // Pressing a note of a selection (the start of a group move) plays the
+      // group; a single note plays alone
+      const clicked = state.notes.get(noteId)
+      if (clicked && state.selection.selectedIds.has(noteId)) {
+        if (isSelected && !isShift && state.selection.selectedIds.size > 1) previewNotes(state, selectedNotes(state))
+        else previewNote(state, clicked)
+      }
+
+      // Start drag for selected notes
+      startNoteDrag(state, stage, noteId)
+      state.requestRedraw('notes')
+      return
+    }
+
+    // Clicking on background → draw a note (draw mode) or start marquee selection
+    const pos = stage.getPointerPosition()
+    if (!pos) return
+
+    if (state.grid.drawMode && !isShift) {
+      startDraw(state, pos)
+      return
+    }
+
+    // Double click on the grid (Notes mode): add a note, selected; holding
+    // the second press and dragging draws its end out (as draw mode does)
+    if (isDoublePress && !isShift && state.expression.mode === 'notes' && pos.y < noteAreaHeight(state)) {
+      startDraw(state, pos)
+      return
+    }
+
+    state.interaction.isMarqueeSelecting = true
+    state.interaction.marqueeStart = pos
+    state.interaction.marqueeCurrent = pos
+    state.interaction.marqueeIsShift = isShift
+    state.interaction.marqueeInitialSelection = isShift ? new Set(state.selection.selectedIds) : new Set()
+
+    if (!isShift) {
+      mutateSelection(state, () => {
+        state.selection.selectedIds.clear()
+      })
+    }
+
+    state.requestRedraw('notes')
+  })
+
+  // Mouse move
+  stage.on('mousemove touchmove', (e) => {
+    const pos = stage.getPointerPosition()
+    if (!pos) return
+    if (expressionPointerMove(state, stage, e.evt as MouseEvent | undefined)) return
+    const gesture = state.interaction.isDragging || state.interaction.isResizing || state.interaction.isDrawing || state.interaction.isMarqueeSelecting
+    if (!gesture) {
+      expressionHover(state, pos, onNoteEdge)
+      // A note edge: the resize cursor (expressionHover set the rest; in MPE
+      // mode it leaves edges alone unless a breakpoint is under the pointer)
+      if (pos.y < noteAreaHeight(state) && !state.expression.hoverNoteId && !state.expression.hover) {
+        const edge = hitTest(state, pos)
+        if (edge.kind === 'handle') setStageCursor(state, 'ew-resize')
+      }
+      // The hover label follows the note while it is dragged, so it keeps the id then
+      const found = pos.y < noteAreaHeight(state) ? hitTest(state, pos) : null
+      setGridNoteHover(state, found?.kind === 'note' ? found.noteId : null)
+    }
+    if (
+      lastDownPos &&
+      (state.interaction.isDragging || state.interaction.isResizing || state.interaction.isDrawing || state.interaction.isMarqueeSelecting) &&
+      (Math.abs(pos.x - lastDownPos.x) > DBLCLICK_SLOP || Math.abs(pos.y - lastDownPos.y) > DBLCLICK_SLOP)
+    ) {
+      movedSinceDown = true
+    }
+
+    // Handle drag
+    if (state.interaction.isDragging) {
+      updateNoteDrag(state, stage)
+      return
+    }
+
+    // Handle resize
+    if (state.interaction.isResizing) {
+      updateNoteResize(state, stage)
+      return
+    }
+
+    // Handle draw
+    if (state.interaction.isDrawing) {
+      updateDraw(state, pos)
+      return
+    }
+
+    // Handle marquee selection
+    if (state.interaction.isMarqueeSelecting) {
+      state.interaction.marqueeCurrent = pos
+
+      renderMarqueeRect(state)
+
+      // Update selection based on intersection
+      const rect = {
+        x: Math.min(state.interaction.marqueeStart!.x, pos.x),
+        y: Math.min(state.interaction.marqueeStart!.y, pos.y),
+        width: Math.abs(pos.x - state.interaction.marqueeStart!.x),
+        height: Math.abs(pos.y - state.interaction.marqueeStart!.y)
+      }
+
+      const intersecting = getNotesInRect(state, rect)
+      const before = new Set(state.selection.selectedIds)
+
+      mutateSelection(state, () => {
+        if (state.interaction.marqueeIsShift) {
+          const base = state.interaction.marqueeInitialSelection ?? new Set<string>()
+          state.selection.selectedIds = new Set(base)
+        } else {
+          state.selection.selectedIds.clear()
+        }
+        intersecting.forEach((id) => state.selection.selectedIds.add(id))
+      })
+
+      // Notes the marquee just reached play (passing through notes plays them)
+      const reached: NoteData[] = []
+      for (const id of intersecting) {
+        if (before.has(id)) continue
+        const note = state.notes.get(id)
+        if (note) reached.push(note)
+      }
+      if (reached.length > 0) previewNotes(state, reached)
+
+      state.requestRedraw('notes')
+    }
+  })
+
+  // Mouse up
+  stage.on('mouseleave', () => {
+    expressionHover(state, null)
+    if (!state.interaction.isDragging) setGridNoteHover(state, null)
+  })
+
+  // Right-click: Edit Value on breakpoints and velocity markers (the host
+  // wrapper keeps the browser's and tldraw's menus out of the roll)
+  stage.on('contextmenu', (e) => {
+    e.evt.preventDefault()
+    expressionContextMenu(state, stage, e.evt as MouseEvent)
+  })
+
+  stage.on('mouseup touchend', () => {
+    if (expressionPointerUp(state)) return
+    if (state.interaction.isDragging) {
+      finishNoteDrag(state)
+      // A click (no drag) on a note of a multi-note selection selects just it
+      const only = collapseSelectionTo
+      collapseSelectionTo = null
+      if (only && !movedSinceDown && state.notes.has(only)) {
+        mutateSelection(state, () => {
+          state.selection.selectedIds = new Set([only])
+        })
+        state.requestRedraw()
+      }
+      return
+    }
+
+    if (state.interaction.isResizing) {
+      finishNoteResize(state)
+      return
+    }
+
+    if (state.interaction.isDrawing) {
+      finishDraw(state)
+      return
+    }
+
+    if (state.interaction.isMarqueeSelecting) {
+      const wasClick =
+        state.interaction.marqueeStart &&
+        state.interaction.marqueeCurrent &&
+        Math.abs(state.interaction.marqueeStart.x - state.interaction.marqueeCurrent.x) < 5 &&
+        Math.abs(state.interaction.marqueeStart.y - state.interaction.marqueeCurrent.y) < 5
+
+      state.interaction.isMarqueeSelecting = false
+      state.interaction.marqueeInitialSelection = undefined
+      // The overlay no longer draws the marquee once the gesture is over
+      state.layers.overlay?.batchDraw()
+
+      // If it was a click (not a drag), move queue playhead to clicked position
+      if (wasClick && hitAt().kind === 'background') {
+        const pos = stage.getPointerPosition()
+        if (pos) {
+          const { position } = screenToPitchPosition(pos, state)
+          const quantizedPos = quantizeToGrid(position, state.grid.subdivision)
+          state.queuePlayhead.position = Math.max(0, Math.min(quantizedPos, getMaxLength(state)))
+          state.requestRedraw('overlay')
+          state.notifyExternalChange?.('playhead') // for queue playhead update
+          state.hooks.onCursorChange?.(state.queuePlayhead.position)
+        }
+      }
+    }
+  })
+
+  // A pointer released outside the stage ends the gesture (the Vue version
+  // left it hanging; see notes.md there). Registered in the CAPTURE phase so a
+  // host that stops propagation inside its own wrapper (tldraw shields do)
+  // cannot swallow it; a cancelled pointer or a lost window focus ends the
+  // gesture the same way.
+  const container = stage.container()
+  const endGesture = () => {
+    if (!state.stage) return
+    if (cancelExpressionGesture(state)) return
+    if (state.interaction.isDragging) finishNoteDrag(state)
+    else if (state.interaction.isResizing) finishNoteResize(state)
+    else if (state.interaction.isDrawing) finishDraw(state)
+    else if (state.interaction.isMarqueeSelecting) {
+      state.interaction.isMarqueeSelecting = false
+      state.interaction.marqueeInitialSelection = undefined
+      state.layers.overlay?.batchDraw()
+    }
+  }
+  const onWindowPointerUp = (event: PointerEvent) => {
+    if (event.target instanceof Node && container.contains(event.target)) return
+    endGesture()
+  }
+  window.addEventListener('pointerup', onWindowPointerUp, true)
+  window.addEventListener('pointercancel', endGesture, true)
+  window.addEventListener('blur', endGesture)
+  return () => {
+    window.removeEventListener('pointerup', onWindowPointerUp, true)
+    window.removeEventListener('pointercancel', endGesture, true)
+    window.removeEventListener('blur', endGesture)
+    stage.off('mousedown touchstart mousemove touchmove mouseup touchend mouseleave contextmenu')
+  }
+}
+
+// ================= Drag Handlers =================
+
+function startNoteDrag(state: PianoRollState, stage: Konva.Stage, primaryId: string) {
+  const pos = stage.getPointerPosition()
+  if (!pos) return
+
+  state.interaction.isDragging = true
+  state.interaction.dragStartPos = pos
+  state.interaction.quantDragActivated = false
+  state.interaction.dragBeforeState = captureState(state)
+  state.interaction.dragPrimaryId = primaryId
+  state.interaction.dragPreviewPitch = state.notes.get(primaryId)?.pitch
+
+  // Store initial states for all selected notes
+  state.interaction.draggedNoteInitialStates.clear()
+  state.selection.selectedIds.forEach((id) => {
+    const note = state.notes.get(id)
+    if (note) {
+      state.interaction.draggedNoteInitialStates.set(id, {
+        position: note.position,
+        pitch: note.pitch
+      })
+    }
+  })
+}
+
+function updateNoteDrag(state: PianoRollState, stage: Konva.Stage) {
+  const pos = stage.getPointerPosition()
+  if (!pos || !state.interaction.dragStartPos) return
+
+  const dx = pos.x - state.interaction.dragStartPos.x
+  const dy = pos.y - state.interaction.dragStartPos.y
+
+  // Quantization logic
+  const quantWidth = getGridUnitWidth(state)
+  let xMove
+  if (!state.grid.snapToGrid) {
+    xMove = dx
+  } else if (Math.abs(dx) < quantWidth * 0.9 && !state.interaction.quantDragActivated) {
+    xMove = dx
+  } else {
+    xMove = Math.round(dx / quantWidth) * quantWidth
+    state.interaction.quantDragActivated = true
+  }
+
+  // Pitch quantization (always snapped)
+  const pitchDelta = Math.round(dy / state.grid.noteHeight)
+
+  // Update all selected notes
+  state.interaction.draggedNoteInitialStates.forEach((initial, id) => {
+    const note = state.notes.get(id)
+    if (note) {
+      note.position = Math.max(0, initial.position + xMove / state.grid.quarterNoteWidth)
+      note.pitch = Math.max(0, Math.min(127, initial.pitch - pitchDelta))
+    }
+  })
+
+  // Apply snap-to-note-start
+  if (state.grid.snapToGrid) applySnapToNoteStart(state)
+
+  // Replay every moved note each time the set crosses a pitch row
+  const primary = state.interaction.dragPrimaryId ? state.notes.get(state.interaction.dragPrimaryId) : undefined
+  if (primary && primary.pitch !== state.interaction.dragPreviewPitch) {
+    state.interaction.dragPreviewPitch = primary.pitch
+    const moved: NoteData[] = []
+    for (const id of state.interaction.draggedNoteInitialStates.keys()) {
+      const note = state.notes.get(id)
+      if (note) moved.push(note)
+    }
+    previewNotes(state, moved)
+  }
+
+  // Overlap detection & preview
+  updateOverlapPreview(state)
+
+  state.requestRedraw()
+}
+
+function finishNoteDrag(state: PianoRollState) {
+  // Execute overlap changes (truncate/delete notes)
+  executeOverlapChanges(state)
+
+  const after = captureState(state)
+  if (state.interaction.dragBeforeState && state.interaction.dragBeforeState !== after) {
+    state.command.stack?.pushCommand('Move Notes', state.interaction.dragBeforeState, after)
+  }
+
+  state.interaction.isDragging = false
+  state.interaction.dragPrimaryId = undefined
+  state.interaction.dragPreviewPitch = undefined
+  clearOverlapPreview(state)
+  invalidateNoteIndex(state)
+  state.requestRedraw()
+}
+
+// ================= Resize Handlers =================
+
+function startResize(state: PianoRollState, stage: Konva.Stage, noteId: string, isEnd: boolean) {
+  const pos = stage.getPointerPosition()
+  if (!pos) return
+
+  state.interaction.isResizing = true
+  state.interaction.resizeTargetId = noteId
+  state.interaction.resizeIsEnd = isEnd
+  state.interaction.quantResizeActivated = false
+  state.interaction.dragStartPos = pos
+  state.interaction.resizeBeforeState = captureState(state)
+
+  // Store initial states for ALL selected notes
+  state.interaction.resizeInitialStates.clear()
+  state.selection.selectedIds.forEach((id) => {
+    const note = state.notes.get(id)
+    if (note) {
+      state.interaction.resizeInitialStates.set(id, {
+        position: note.position,
+        duration: note.duration
+      })
+    }
+  })
+}
+
+function updateNoteResize(state: PianoRollState, stage: Konva.Stage) {
+  const pos = stage.getPointerPosition()
+  if (!pos || !state.interaction.dragStartPos) return
+
+  const dx = pos.x - state.interaction.dragStartPos.x
+
+  // Apply same quantization as drag
+  const quantWidth = getGridUnitWidth(state)
+  let xMove
+  if (!state.grid.snapToGrid) {
+    xMove = dx
+  } else if (Math.abs(dx) < quantWidth * 0.9 && !state.interaction.quantResizeActivated) {
+    xMove = dx
+  } else {
+    xMove = Math.round(dx / quantWidth) * quantWidth
+    state.interaction.quantResizeActivated = true
+  }
+
+  const snappedDelta = xMove / state.grid.quarterNoteWidth
+  const freeDelta = dx / state.grid.quarterNoteWidth
+  const isEnd = state.interaction.resizeIsEnd
+
+  // Update all selected notes. The grid step applies while it leaves the
+  // note some length; below one step the edge follows the pointer, so a note
+  // can be made shorter than the grid (down to MIN_NOTE_DURATION).
+  state.interaction.resizeInitialStates.forEach((initial, id) => {
+    const note = state.notes.get(id)
+    if (!note) return
+    const lengthFor = (delta: number) => (isEnd ? initial.duration + delta : initial.duration - delta)
+    const snapped = lengthFor(snappedDelta)
+    const duration = Math.max(MIN_NOTE_DURATION, snapped >= MIN_NOTE_DURATION ? snapped : lengthFor(freeDelta))
+    note.duration = duration
+    // The start edge moves the start; the end stays put
+    if (!isEnd) note.position = initial.position + initial.duration - duration
+  })
+
+  updateOverlapPreview(state)
+  state.requestRedraw()
+}
+
+function finishNoteResize(state: PianoRollState) {
+  // Execute overlap changes (truncate/delete notes)
+  executeOverlapChanges(state)
+
+  const after = captureState(state)
+  if (state.interaction.resizeBeforeState && state.interaction.resizeBeforeState !== after) {
+    state.command.stack?.pushCommand('Resize Notes', state.interaction.resizeBeforeState, after)
+  }
+
+  state.interaction.isResizing = false
+  clearOverlapPreview(state)
+  invalidateNoteIndex(state)
+  state.requestRedraw()
+}
+
+// ================= Draw Handlers (draw mode) =================
+
+function startDraw(state: PianoRollState, pos: { x: number; y: number }) {
+  const { pitch, position } = screenToPitchPosition(pos, state)
+  const start = state.grid.snapToGrid ? quantizeToGrid(position, state.grid.subdivision) : Math.max(0, position)
+  const note: NoteData = {
+    id: uid(),
+    pitch: Math.max(0, Math.min(127, Math.round(pitch))),
+    position: start,
+    duration: state.grid.snapToGrid ? getGridUnitBeats(state) : DEFAULT_FREE_NOTE_DURATION,
+    velocity: DEFAULT_VELOCITY
+  }
+
+  state.interaction.isDrawing = true
+  state.interaction.drawBeforeState = captureState(state)
+  state.interaction.drawNoteId = note.id
+  state.interaction.drawStartPosition = start
+
+  state.notes.set(note.id, note)
+  mutateSelection(state, () => {
+    state.selection.selectedIds.clear()
+    state.selection.selectedIds.add(note.id)
+  })
+  previewNote(state, note)
+  updateOverlapPreview(state)
+  state.requestRedraw()
+}
+
+function updateDraw(state: PianoRollState, pos: { x: number; y: number }) {
+  const id = state.interaction.drawNoteId
+  const start = state.interaction.drawStartPosition
+  if (!id || start === undefined) return
+  const note = state.notes.get(id)
+  if (!note) return
+
+  const { position } = screenToPitchPosition(pos, state)
+  let end: number
+  if (state.grid.snapToGrid) {
+    const unit = getGridUnitBeats(state)
+    end = Math.max(start + unit, quantizeToGrid(position, state.grid.subdivision) + unit)
+  } else {
+    end = Math.max(start + MIN_NOTE_DURATION, position)
+  }
+  note.duration = end - start
+
+  updateOverlapPreview(state)
+  state.requestRedraw()
+}
+
+function finishDraw(state: PianoRollState) {
+  executeOverlapChanges(state)
+
+  const after = captureState(state)
+  if (state.interaction.drawBeforeState && state.interaction.drawBeforeState !== after) {
+    state.command.stack?.pushCommand('Draw Note', state.interaction.drawBeforeState, after)
+  }
+
+  state.interaction.isDrawing = false
+  state.interaction.drawNoteId = undefined
+  state.interaction.drawStartPosition = undefined
+  state.interaction.drawBeforeState = undefined
+  clearOverlapPreview(state)
+  invalidateNoteIndex(state)
+  state.requestRedraw()
+}

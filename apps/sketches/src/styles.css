@@ -1,0 +1,44 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--c-base); color: var(--c-text); font-size: 12px; }
+.dim { color: var(--c-text-dim); }
+.warn { color: var(--c-warn); }
+.hint { color: var(--c-text-dim); align-self: center; }
+.spacer { flex: 1; }
+.loading { padding: 24px; color: var(--c-text-dim); }
+
+/* One page scroll: the top row is as tall as the properties panel, the synth dock below at its natural height. */
+.split-sweep { display: flex; flex-direction: column; min-height: 100vh; }
+
+.topbar { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: var(--c-surface-1); border-bottom: 1px solid var(--c-line); }
+.topbar__title { font-weight: 600; letter-spacing: 0.04em; margin-right: 6px; }
+.mode-switch { display: flex; gap: 2px; }
+.save { color: var(--c-text-faint); font-variant-numeric: tabular-nums; }
+.save--error { color: var(--c-rec); }
+
+.workspace { flex: none; display: flex; min-height: 560px; }
+.stage { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; }
+.grid-canvas { cursor: crosshair; touch-action: none; box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
+
+.panel-slot { flex: none; width: 420px; background: var(--c-surface-1); border-left: 1px solid var(--c-line); }
+.panel-slot.is-hidden > * { visibility: hidden; }
+.panel { width: 100%; }
+.panel--empty { padding: 16px; color: var(--c-text-dim); }
+.panel__section { padding: 10px 14px; border-bottom: 1px solid var(--c-line-soft); }
+.panel__section > header { font-weight: 600; margin-bottom: 8px; display: flex; gap: 8px; align-items: baseline; }
+.panel__section > header .dim { font-weight: 400; font-size: 11px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.color-field { display: flex; align-items: center; gap: 6px; }
+.color-field input { width: 38px; height: 26px; padding: 0; border: 1px solid var(--c-line); background: none; cursor: pointer; }
+.color-field code { color: var(--c-text-dim); font-size: 11px; }
+.swatch-ramp { flex: 1; min-width: 60px; height: 14px; border: 1px solid var(--c-line); }
+.curve { color: var(--c-select); }
+.roll-frame { display: inline-block; border: 1px solid var(--c-line); }
+
+.synth-dock { flex: 1; display: flex; flex-direction: column; border-top: 1px solid var(--c-line); background: #18181a; }
+.synth-dock__bar { display: flex; align-items: center; gap: 10px; padding: 5px 12px; background: var(--c-surface-2); }
+.synth-dock__title { font-weight: 600; }
+.synth-dock__editor { overflow-x: auto; }
+/* The editor is laid out for ~1180px; shown at 60% (CSS zoom keeps its pointer math right). */
+.six-sines-panel six-sines-editor { display: block; zoom: 0.6; min-width: 1180px; }

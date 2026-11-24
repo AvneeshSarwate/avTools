@@ -1,0 +1,524 @@
+/* Piano roll chrome on the app's tokens (src/styles.css), with fallbacks so
+   the standalone demo renders without them. The metadata tree styles are a
+   port of NoteMetadataEditor.vue and MetadataNode.vue. */
+
+.pr-root {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  box-sizing: content-box;
+  padding: 0;
+  color: var(--c-text, #d9d9d9);
+  font-size: inherit; /* the host's size (an instance, the app) */
+  outline: none;
+}
+
+.pr-root:focus-visible .pr-container {
+  border-color: var(--c-select, #64b5ff);
+}
+
+/* Tool row: a single line of compact controls (see ControlPanel.tsx). When a
+   host renders it into its own header it inherits that header's background. */
+.pr-control-panel {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 0;
+  min-width: 0;
+}
+
+.pr-root > .pr-control-panel {
+  padding: 5px 6.5px;
+  background: var(--c-surface-3, #2c2c2c);
+}
+
+.pr-control-panel .ui-group {
+  gap: 1px;
+  padding: 0 8.5px;
+}
+
+.pr-control-panel .ui-group:last-child {
+  padding-right: 0;
+}
+
+.pr-info {
+  color: var(--c-text-faint, #5f5f5f);
+  white-space: nowrap;
+  padding-right: 13.5px;
+}
+
+.pr-container {
+  background-color: var(--c-surface-1, #1b1b1b);
+  border: 1px solid var(--c-line, #0b0b0b);
+  cursor: default;
+  box-sizing: content-box;
+  border-radius: 0;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.pr-container.is-disabled {
+  pointer-events: none;
+  cursor: default;
+}
+
+.pr-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pr-scrollbar-gap, 1px);
+}
+
+.pr-stage-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pr-scrollbar-gap, 1px);
+  align-items: stretch;
+}
+
+/* Scrollbars: flat tracks; the thumb's ends resize (zoom), its body scrolls. */
+.pr-scrollbar {
+  position: relative;
+  background: var(--c-surface-1, #1b1b1b);
+  box-sizing: border-box;
+  user-select: none;
+  touch-action: none;
+}
+
+.pr-scrollbar.horizontal {
+  height: var(--pr-scrollbar-thickness, 12px);
+}
+
+.pr-scrollbar.vertical {
+  width: var(--pr-scrollbar-thickness, 12px);
+}
+
+.pr-scrollbar.is-disabled {
+  pointer-events: none;
+}
+
+.pr-scrollbar.is-disabled .pr-scrollbar-thumb {
+  opacity: 0.4;
+}
+
+.pr-scrollbar-thumb {
+  position: absolute;
+  background: var(--c-surface-4, #363636);
+  border-radius: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: calc(var(--pr-scrollbar-thickness, 12px) * 0.66);
+  min-height: calc(var(--pr-scrollbar-thickness, 12px) * 0.66);
+  cursor: grab;
+  box-sizing: border-box;
+}
+
+.pr-scrollbar-thumb.horizontal-thumb {
+  top: 4px;
+  bottom: 4px;
+  align-items: stretch;
+}
+
+.pr-scrollbar-thumb.vertical-thumb {
+  left: 4px;
+  right: 4px;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: stretch;
+}
+
+.pr-scrollbar-thumb:hover {
+  background: var(--c-surface-5, #424242);
+}
+
+.pr-scrollbar-body {
+  flex: 1;
+  height: 100%;
+  cursor: grab;
+}
+
+.pr-scrollbar-body.vertical-body {
+  width: 100%;
+}
+
+.pr-scrollbar-handle {
+  background: var(--c-text-faint, #5f5f5f);
+  flex: 0 0 auto;
+}
+
+.pr-scrollbar-thumb:hover .pr-scrollbar-handle {
+  background: var(--c-text-dim, #959595);
+}
+
+.handle-left,
+.handle-right {
+  width: 6px;
+  height: 100%;
+  cursor: ew-resize;
+}
+
+.handle-top,
+.handle-bottom {
+  width: 100%;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.pr-metadata-wrapper {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  box-sizing: border-box;
+}
+
+/* ---------- metadata tree editor ---------- */
+
+.pr-metadata-editor {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--c-line, #0b0b0b);
+  border-radius: 3px;
+  padding: 5px 8px;
+  background: var(--c-surface-1, #1b1b1b);
+  font-size: 15.5px;
+  color: var(--c-text, #d9d9d9);
+}
+
+.pr-meta-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28.5px;
+}
+
+.pr-meta-title {
+  color: var(--c-text-dim, #959595);
+}
+
+.pr-meta-dirty {
+  color: var(--c-warn, #e6c84a);
+}
+
+.pr-meta-spacer {
+  flex: 1;
+}
+
+.pr-meta-btn {
+  height: 23.5px;
+  padding: 0 8px;
+  border: 1px solid var(--c-line, #0b0b0b);
+  border-radius: 2px;
+  background: var(--c-surface-4, #363636);
+  font-size: 14.5px;
+  line-height: 1;
+  color: var(--c-text, #d9d9d9);
+  cursor: pointer;
+}
+
+.pr-meta-btn:hover:not(:disabled) {
+  background: var(--c-surface-5, #424242);
+}
+
+.pr-meta-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pr-meta-btn.primary:not(:disabled) {
+  background: var(--c-select, #64b5ff);
+  border-color: var(--c-select, #64b5ff);
+  color: var(--c-on-tone, #111);
+}
+
+.pr-meta-tree {
+  margin-top: 2.5px;
+  max-height: 338px;
+  overflow: auto;
+}
+
+.pr-meta-line {
+  margin-top: 2.5px;
+  font-size: 14.5px;
+  line-height: 14px;
+}
+
+.pr-meta-line.warn {
+  color: var(--c-warn, #e6c84a);
+}
+
+.pr-meta-muted {
+  color: var(--c-text-dim, #959595);
+}
+
+.pr-meta-pad {
+  padding: 2.5px 0;
+}
+
+.pr-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  font-size: 15.5px;
+  line-height: 1;
+}
+
+.pr-meta-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.pr-meta-node.pending > .pr-meta-row {
+  background: rgba(106, 168, 255, 0.18);
+}
+
+.pr-meta-node.warned > .pr-meta-row {
+  background: rgba(255, 217, 138, 0.18);
+}
+
+.pr-meta-node.invalid > .pr-meta-row {
+  background: rgba(255, 110, 110, 0.2);
+}
+
+.pr-meta-twisty,
+.pr-meta-twisty-space {
+  width: 15.5px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--c-text-dim, #959595);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.pr-meta-key {
+  flex: none;
+  min-width: 78px;
+  max-width: 208px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: Menlo, Consolas, monospace;
+  color: var(--c-text, #d9d9d9);
+}
+
+.pr-meta-obj {
+  color: var(--c-text-dim, #959595);
+  font-family: Menlo, Consolas, monospace;
+}
+
+.pr-meta-value,
+.pr-meta-key-input {
+  flex: 1 1 80px;
+  min-width: 0;
+  height: 21px;
+  padding: 0 4px;
+  border: 1px solid var(--c-line, #0b0b0b);
+  border-radius: 2px;
+  font: 12px Menlo, Consolas, monospace;
+  background: var(--c-base, #121212);
+  color: var(--c-text, #d9d9d9);
+}
+
+.pr-meta-key-input {
+  flex: 0 1 120px;
+}
+
+.pr-meta-value:focus,
+.pr-meta-key-input:focus {
+  outline: none;
+  border-color: var(--c-select, #64b5ff);
+}
+
+.pr-meta-value.empty {
+  font-style: italic;
+}
+
+.pr-meta-swatch {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 23.5px;
+  height: 21px;
+  padding: 0;
+  border: 1px solid var(--c-line, #0b0b0b);
+  border-radius: 2px;
+  background: none;
+  cursor: pointer;
+  flex: none;
+}
+
+.pr-meta-swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.pr-meta-swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 1px;
+}
+
+.pr-meta-swatch::-moz-color-swatch {
+  border: none;
+}
+
+/* Flat check box: a filled square when on. */
+.pr-meta-check {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  width: 15.5px;
+  height: 15.5px;
+  flex: none;
+  border: 1px solid var(--c-line, #0b0b0b);
+  border-radius: 2px;
+  background: var(--c-surface-1, #1b1b1b);
+  cursor: pointer;
+}
+
+.pr-meta-check:checked {
+  background: var(--c-select, #64b5ff);
+  box-shadow: inset 0 0 0 2px var(--c-surface-1, #1b1b1b);
+}
+
+.pr-meta-check:indeterminate {
+  background: linear-gradient(var(--c-select, #64b5ff), var(--c-select, #64b5ff)) center / 6px 2px no-repeat var(--c-surface-1, #1b1b1b);
+}
+
+.pr-meta-badge,
+.pr-meta-warn,
+.pr-meta-err {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 2px;
+  font-size: 13px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.pr-meta-badge {
+  color: var(--c-text-dim, #959595);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.pr-meta-warn {
+  color: #3a2300;
+  background: #ffd98a;
+}
+
+.pr-meta-err {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #4a0909;
+  background: #ffc4c4;
+}
+
+.pr-meta-act {
+  flex: none;
+  width: 21px;
+  height: 21px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: none;
+  color: var(--c-text-dim, #959595);
+  font-size: 15.5px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.pr-meta-row:hover .pr-meta-act,
+.pr-meta-row.add .pr-meta-act {
+  opacity: 1;
+}
+
+.pr-meta-act:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  color: var(--c-text, #d9d9d9);
+}
+
+/* Scale controls: the degree field flashes red when its text is not a scale. */
+.pr-scale-degrees.is-invalid {
+  border-color: var(--c-rec, #ff4f4f);
+  color: var(--c-rec, #ff4f4f);
+}
+
+/* Keyboard column (gutter.ts) */
+.pr-gutter {
+  display: block;
+  flex: none;
+  cursor: pointer;
+  touch-action: none;
+  /* Top and bottom borders match the stage's, so rows line up. */
+  border-top: 1px solid var(--c-line, #0b0b0b);
+  border-bottom: 1px solid var(--c-line, #0b0b0b);
+  box-sizing: content-box;
+}
+
+/* Lane bar under the lanes (Ableton's): lane toggles and the lane's tools. */
+.pr-lane-bar {
+  display: flex;
+  align-items: center;
+  gap: 6.5px;
+  min-height: 40.5px;
+  padding: 3px 6.5px;
+  background: var(--c-surface-3, #2c2c2c);
+  border-top: 1px solid var(--c-line, #0b0b0b);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.pr-lane-hint {
+  color: var(--c-text-faint, #5f5f5f);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-left: 10.5px;
+}
+
+/* Right-click menu on breakpoints and velocity markers (ExpressionMenu.tsx) */
+.pr-expression-menu__value {
+  float: right;
+  padding-left: 15.5px;
+  color: var(--c-text-dim, #959595);
+}
+
+.pr-expression-menu__edit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+}
+
+.pr-expression-menu__input {
+  width: 104px;
+}
+
+.pr-expression-menu__input.is-invalid {
+  border-color: var(--c-rec, #ff4f4f);
+}
+
+.pr-expression-menu__unit {
+  color: var(--c-text-faint, #5f5f5f);
+  white-space: nowrap;
+}
+
+/* The tool row portaled into a host header: a key-scope wrapper only. */
+.pr-toolbar-scope {
+  display: contents;
+}
+
+/* The tool row's groups keep their width and the row wraps when it does not
+   fit (a narrow roll, larger controls), rather than groups overlapping. */
+.pr-control-panel .ui-group {
+  flex: none;
+}
+
+.pr-root > .pr-control-panel {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}

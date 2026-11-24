@@ -1,0 +1,172 @@
+{
+  "version": 1,
+  "regions": [
+    {
+      "id": "26khommc",
+      "x": 0,
+      "y": 0,
+      "w": 0.20645878232758622,
+      "h": 1,
+      "colorA": "#e4572e",
+      "colorB": "#2e86ab",
+      "notes": [
+        {
+          "id": "f43uxspm",
+          "pitch": 60,
+          "position": 0,
+          "duration": 1,
+          "velocity": 100
+        },
+        {
+          "id": "hj512juw",
+          "pitch": 67,
+          "position": 1,
+          "duration": 1,
+          "velocity": 100
+        }
+      ],
+      "slideSec": 2,
+      "sharpness": 0.5
+    },
+    {
+      "id": "vfnzv6j9",
+      "x": 0.20645878232758622,
+      "y": 0,
+      "w": 0.12559328990055876,
+      "h": 0.7345181169181034,
+      "colorA": "#6977bf",
+      "colorB": "#2ead94",
+      "notes": [
+        {
+          "id": "aorrebr6",
+          "pitch": 62,
+          "position": 0,
+          "duration": 1,
+          "velocity": 100
+        },
+        {
+          "id": "089anix1",
+          "pitch": 69,
+          "position": 1,
+          "duration": 1,
+          "velocity": 100
+        }
+      ],
+      "slideSec": 4.5,
+      "sharpness": 0.39
+    },
+    {
+      "id": "tx9astde",
+      "x": 0.332052072228145,
+      "y": 0,
+      "w": 0.21580990138592754,
+      "h": 0.7345181169181034,
+      "colorA": "#6977bf",
+      "colorB": "#2ead94",
+      "notes": [
+        {
+          "id": "stzubjf1",
+          "pitch": 62,
+          "position": 0,
+          "duration": 1,
+          "velocity": 100
+        },
+        {
+          "id": "wewa2wtt",
+          "pitch": 69,
+          "position": 1,
+          "duration": 1,
+          "velocity": 100
+        }
+      ],
+      "slideSec": 4.5,
+      "sharpness": 0.39
+    },
+    {
+      "id": "dnt1vpj6",
+      "x": 0.5478619736140725,
+      "y": 0,
+      "w": 0.45213802638592754,
+      "h": 0.1808490175189394,
+      "colorA": "#6977bf",
+      "colorB": "#2ead94",
+      "notes": [
+        {
+          "id": "97itabx0",
+          "pitch": 64,
+          "position": 0,
+          "duration": 1,
+          "velocity": 100
+        },
+        {
+          "id": "wd4jprgb",
+          "pitch": 67,
+          "position": 1,
+          "duration": 1,
+          "velocity": 100
+        }
+      ],
+      "slideSec": 4.5,
+      "sharpness": 0.39
+    },
+    {
+      "id": "zdpibt34",
+      "x": 0.5478619736140725,
+      "y": 0.1808490175189394,
+      "w": 0.45213802638592754,
+      "h": 0.553669099399164,
+      "colorA": "#6977bf",
+      "colorB": "#2ead94",
+      "notes": [
+        {
+          "id": "ea32knjz",
+          "pitch": 68,
+          "position": 0,
+          "duration": 1,
+          "velocity": 100
+        },
+        {
+          "id": "ryocwdb0",
+          "pitch": 72,
+          "position": 1,
+          "duration": 1,
+          "velocity": 100
+        }
+      ],
+      "slideSec": 4.5,
+      "sharpness": 0.39
+    },
+    {
+      "id": "1wo5e59d",
+      "x": 0.20645878232758622,
+      "y": 0.7345181169181034,
+      "w": 0.7935412176724138,
+      "h": 0.2654818830818966,
+      "colorA": "#697a38",
+      "colorB": "#054209",
+      "notes": [
+        {
+          "id": "lujhtroj",
+          "pitch": 48,
+          "position": 0,
+          "duration": 1,
+          "velocity": 100
+        },
+        {
+          "id": "tqkpmrye",
+          "pitch": 56,
+          "position": 1,
+          "duration": 1,
+          "velocity": 100
+        }
+      ],
+      "slideSec": 2,
+      "sharpness": 0.5
+    }
+  ],
+  "synth": {
+    "parameters": {
+      "1605": 0.5844983458518982
+    }
+  }
+}
