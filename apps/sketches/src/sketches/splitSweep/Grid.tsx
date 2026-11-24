@@ -109,57 +109,104 @@ export const Grid = memo(function Grid({ width }: { width: number }) {
   );
 });
 
+/** Unit-square edges within this of the border count as on it. */
+const EDGE = 1e-6;
+
+interface Tile {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Corner radii: top-left, top-right, bottom-right, bottom-left. */
+  radii: [number, number, number, number];
+}
+
+/**
+ * A region's visible tile: its rectangle inset by half a divider inside the
+ * canvas and by a whole one at the frame, so the black ground shows through
+ * as the dividers and the frame. Corners inside the canvas are rounded;
+ * corners on the frame stay square. `inset` shrinks it further (outlines).
+ */
+function tileOf(region: Region, width: number, height: number, radius: number, inset = 0): Tile {
+  const left = region.x < EDGE;
+  const top = region.y < EDGE;
+  const right = region.x + region.w > 1 - EDGE;
+  const bottom = region.y + region.h > 1 - EDGE;
+  const x0 = region.x * width + (left ? LINE : LINE / 2) + inset;
+  const y0 = region.y * height + (top ? LINE : LINE / 2) + inset;
+  const x1 = (region.x + region.w) * width - (right ? LINE : LINE / 2) - inset;
+  const y1 = (region.y + region.h) * height - (bottom ? LINE : LINE / 2) - inset;
+  const w = Math.max(0, x1 - x0);
+  const h = Math.max(0, y1 - y0);
+  const r = Math.max(0, Math.min(radius - inset, w / 2, h / 2));
+  return {
+    x: x0, y: y0, w, h,
+    radii: [left || top ? 0 : r, right || top ? 0 : r, right || bottom ? 0 : r, left || bottom ? 0 : r],
+  };
+}
+
+function tilePath(g: CanvasRenderingContext2D, t: Tile) {
+  g.beginPath();
+  g.roundRect(t.x, t.y, t.w, t.h, t.radii);
+}
+
+/** An outline just inside a tile, with a black underlay so it reads on any region colour. */
+function outlineTile(g: CanvasRenderingContext2D, region: Region, width: number, height: number, radius: number, color: string, dash?: number[]) {
+  const t = tileOf(region, width, height, radius, 3);
+  g.save();
+  tilePath(g, t);
+  g.strokeStyle = "#000";
+  g.lineWidth = dash ? 5 : 7;
+  g.stroke();
+  g.strokeStyle = color;
+  g.lineWidth = 3;
+  if (dash) g.setLineDash(dash);
+  g.stroke();
+  g.restore();
+}
+
 function draw(g: CanvasRenderingContext2D, width: number, height: number, hover: { x: number; y: number } | null) {
   const px = (r: Region) => ({ x: r.x * width, y: r.y * height, w: r.w * width, h: r.h * height });
-  g.fillStyle = OFF_FILL;
+  const radius = (doc.cornerRadius ?? 0) * height;
+  // Black ground: what shows between the tiles is the dividers and the frame.
+  g.fillStyle = "#000";
   g.fillRect(0, 0, width, height);
 
   for (const region of doc.regions) {
+    const t = tileOf(region, width, height, radius);
     const { level, mix } = engine.display(region.id);
-    if (level <= 0.0005) continue;
-    const r = px(region);
-    // The sweep line: A to its left, B to its right. Fully A puts it on the
-    // right edge, so A -> B moves it right to left.
-    const line = r.x + r.w * (1 - mix);
     g.save();
-    g.globalAlpha = level;
-    g.fillStyle = region.colorA;
-    g.fillRect(r.x, r.y, line - r.x, r.h);
-    g.fillStyle = region.colorB;
-    g.fillRect(line, r.y, r.x + r.w - line, r.h);
-    g.restore();
-    // The sweep line itself, drawn like the dividers (at the edges it is one)
-    if (mix > 0.0005 && mix < 0.9995) {
-      g.fillStyle = "#000";
-      g.fillRect(line - LINE / 2, r.y, LINE, r.h);
+    tilePath(g, t);
+    g.clip();
+    g.fillStyle = OFF_FILL;
+    g.fillRect(t.x, t.y, t.w, t.h);
+    if (level > 0.0005) {
+      // The sweep line: A to its left, B to its right. Fully A puts it on the
+      // right edge, so A -> B moves it right to left.
+      const line = t.x + t.w * (1 - mix);
+      g.globalAlpha = level;
+      g.fillStyle = region.colorA;
+      g.fillRect(t.x, t.y, line - t.x, t.h);
+      g.fillStyle = region.colorB;
+      g.fillRect(line, t.y, t.x + t.w - line, t.h);
+      g.globalAlpha = 1;
+      // The sweep line itself, drawn like the dividers (at the edges it is one)
+      if (mix > 0.0005 && mix < 0.9995) {
+        g.fillStyle = "#000";
+        g.fillRect(line - LINE / 2, t.y, LINE, t.h);
+      }
     }
+    g.restore();
   }
-
-  // Lines: every region's outline; shared edges overlap into one stroke.
-  g.strokeStyle = "#000";
-  g.lineWidth = LINE;
-  for (const region of doc.regions) {
-    const r = px(region);
-    g.strokeRect(r.x, r.y, r.w, r.h);
-  }
-  g.strokeRect(LINE / 2, LINE / 2, width - LINE, height - LINE);
 
   const hovered = findRegion(ui.hoverId);
   if (hovered) {
-    const r = px(hovered);
     g.save();
+    tilePath(g, tileOf(hovered, width, height, radius));
     g.fillStyle = "rgba(255,255,255,0.18)";
-    g.fillRect(r.x, r.y, r.w, r.h);
-    // Region fills are user colours: a black underlay keeps the outline
-    // readable on any of them, including a blue one.
-    const inset = LINE / 2 + 3;
-    g.strokeStyle = "#000";
-    g.lineWidth = 7;
-    g.strokeRect(r.x + inset, r.y + inset, r.w - 2 * inset, r.h - 2 * inset);
-    g.strokeStyle = HOVER;
-    g.lineWidth = 3;
-    g.strokeRect(r.x + inset, r.y + inset, r.w - 2 * inset, r.h - 2 * inset);
+    g.fill();
     g.restore();
+    outlineTile(g, hovered, width, height, radius, HOVER);
   }
 
   if (ui.mode !== "edit") return;
@@ -170,8 +217,10 @@ function draw(g: CanvasRenderingContext2D, width: number, height: number, hover:
   // will grow over it washed and outlined.
   const plan = ui.deletePreview ? deletePlan(doc.regions, selected.id) : null;
   if (plan) {
-    const d = px(selected);
+    const d = tileOf(selected, width, height, radius);
     g.save();
+    tilePath(g, d);
+    g.clip();
     g.fillStyle = "rgba(0,0,0,0.35)";
     g.fillRect(d.x, d.y, d.w, d.h);
     g.beginPath();
@@ -185,34 +234,21 @@ function draw(g: CanvasRenderingContext2D, width: number, height: number, hover:
     g.strokeStyle = DELETE;
     g.lineWidth = 4;
     g.stroke();
+    g.restore();
     for (const id of plan.absorbers) {
       const n = findRegion(id);
       if (!n) continue;
-      const r = px(n);
-      const inset = LINE / 2 + 3;
+      g.save();
+      tilePath(g, tileOf(n, width, height, radius));
       g.fillStyle = "rgba(255,255,255,0.2)";
-      g.fillRect(r.x, r.y, r.w, r.h);
-      g.strokeStyle = "#000";
-      g.lineWidth = 7;
-      g.strokeRect(r.x + inset, r.y + inset, r.w - 2 * inset, r.h - 2 * inset);
-      g.strokeStyle = HOVER;
-      g.lineWidth = 3;
-      g.strokeRect(r.x + inset, r.y + inset, r.w - 2 * inset, r.h - 2 * inset);
+      g.fill();
+      g.restore();
+      outlineTile(g, n, width, height, radius, HOVER);
     }
-    g.restore();
     return;
   }
+  outlineTile(g, selected, width, height, radius, SELECT, [8, 5]);
   const r = px(selected);
-  g.save();
-  const inset = LINE / 2 + 3;
-  g.strokeStyle = "#000";
-  g.lineWidth = 5;
-  g.strokeRect(r.x + inset, r.y + inset, r.w - 2 * inset, r.h - 2 * inset);
-  g.strokeStyle = SELECT;
-  g.lineWidth = 3;
-  g.setLineDash([8, 5]);
-  g.strokeRect(r.x + inset, r.y + inset, r.w - 2 * inset, r.h - 2 * inset);
-  g.restore();
 
   const split = ui.split;
   if (!split) return;

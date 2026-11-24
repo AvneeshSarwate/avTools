@@ -1,13 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSnapshot } from "valtio";
-import { Button } from "../../shared/controls/controls";
+import { Button, Field, NumberBox } from "../../shared/controls/controls";
+import { RADIUS_REFERENCE_HEIGHT } from "./model";
 import { ProjectControls } from "../../shared/ProjectControls";
 import { engine } from "./engine";
 import { PaletteBar } from "./PaletteBar";
 import { RegionPanel } from "./RegionPanel";
 import { ASPECT, Grid } from "./Grid";
 import { SynthDock } from "./SynthDock";
-import { applySplit, cancelSplit, deleteRegion, history, loadDoc, PANEL_MAX, PANEL_MIN, project, TOP_MIN, ui, view } from "./store";
+import { applySplit, cancelSplit, deleteRegion, doc, history, setCornerRadius, loadDoc, PANEL_MAX, PANEL_MIN, project, TOP_MIN, ui, view } from "./store";
 
 /** Track a pointer drag on window until release. */
 function dragWith(event: React.PointerEvent, move: (dx: number, dy: number) => void) {
@@ -23,6 +24,17 @@ function dragWith(event: React.PointerEvent, move: (dx: number, dy: number) => v
   document.body.classList.add("is-resizing");
   window.addEventListener("pointermove", onMove);
   window.addEventListener("pointerup", onUp);
+}
+
+/** Global: the radius of the tiles' inner corners (frame corners stay square). */
+function CornerRadiusField() {
+  const snap = useSnapshot(doc);
+  return (
+    <Field label="Corners" title={`Inner corner radius, in px at ${RADIUS_REFERENCE_HEIGHT}p (scales with the canvas)`}>
+      <NumberBox value={Math.round(snap.cornerRadius * RADIUS_REFERENCE_HEIGHT)} min={0} max={80} step={1} unit="px" bar horizontal width={90}
+        onChange={setCornerRadius} />
+    </Field>
+  );
 }
 
 /** Undo/redo and save status: its own subscriber, so edits and autosaves re-render only this. */
@@ -146,6 +158,7 @@ export function SplitSweepApp() {
       <header className="topbar">
         <span className="topbar__title">split · sweep</span>
         <Button label="Present" onClick={() => (ui.mode = "present")} title="The canvas alone, full window, played" />
+        <CornerRadiusField />
         <div className="mode-switch">
           <Button label="Edit" active={state.mode === "edit"} tone="select" onClick={() => (ui.mode = "edit")} />
           <Button label="Play" active={state.mode === "play"} tone="play" onClick={() => {

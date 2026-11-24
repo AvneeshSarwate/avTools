@@ -5,7 +5,7 @@ import { proxy, snapshot, subscribe } from "valtio";
 import { createHistory } from "../../shared/history";
 import { createProject } from "../../shared/project";
 import type { PianoRollNote } from "../../shared/pianoRoll/types";
-import { applyDelete, canSplit, clampAnchor, deletePlan, defaultDoc, splitRegion, type Region, type SketchDoc, type SplitAxis } from "./model";
+import { applyDelete, canSplit, RADIUS_REFERENCE_HEIGHT, clampAnchor, deletePlan, defaultDoc, splitRegion, type Region, type SketchDoc, type SplitAxis } from "./model";
 
 export const doc = proxy<SketchDoc>(defaultDoc());
 
@@ -80,6 +80,7 @@ subscribe(view, () => project.changed());
 function replaceDoc(next: SketchDoc) {
   doc.version = next.version;
   doc.regions = next.regions;
+  doc.cornerRadius = next.cornerRadius;
   doc.synth = next.synth;
   if (ui.selectedId && !next.regions.some((r) => r.id === ui.selectedId)) ui.selectedId = null;
   ui.split = null;
@@ -148,6 +149,13 @@ export function deleteRegion(id: string) {
   ui.split = null;
   if (ui.selectedId === id) ui.selectedId = plan.absorbers[0] ?? null;
   if (ui.hoverId === id) ui.hoverId = null;
+}
+
+/** The global inner-corner radius, in px at RADIUS_REFERENCE_HEIGHT. */
+export function setCornerRadius(pixels: number) {
+  history.commit("corner radius", (d) => {
+    d.cornerRadius = Math.max(0, pixels) / RADIUS_REFERENCE_HEIGHT;
+  }, { coalesce: "corner-radius" });
 }
 
 export function cancelSplit() {
