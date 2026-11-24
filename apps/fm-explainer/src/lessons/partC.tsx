@@ -1,6 +1,6 @@
 import { edge, env, op } from "../audio/patch";
 import { SOURCE, WAVEFORMS } from "../audio/sixSinesMap";
-import { chords, held, melody, padChords, phrase } from "./clips";
+import { bellTune, chords, held, melody, padChords, phrase } from "./clips";
 import type { Lesson } from "./types";
 
 const PART = "C · Beyond plain PM";
@@ -21,6 +21,7 @@ export const partC: Lesson[] = [
           <>
             <p>Each cell of the Six Sines matrix can be set to act in other ways than by phase modulation. The most useful of these is ring modulation, in which the modulator multiplies the carrier’s amplitude. The product of two sine waves consists of exactly two partials, one at the sum of their frequencies and one at the difference, and no others appear however great the depth.</p>
             <p>Ring modulation is therefore suited to adding particular partials, where phase modulation fills a region. A carrier at ratio 10, ring-modulated by an operator at ratio 1, acquires partials at 9 and 11 and nothing else. The same two operators under phase modulation would spread a family of partials about tick 10.</p>
+            <p>If the modulator’s ratio is not a whole number, the two new partials are no longer harmonics of the note. There are still only two of them, however, and they lie at equal distances above and below the carrier, so that the change is heard as the retuning of two tones and not as a change of timbre. Phase modulation at such a ratio displaces a great many partials at once, and it is this that destroys the sense of a single pitch.</p>
             <p className="note">Six Sines mixes the unmodulated carrier with the product according to the depth: the output is the carrier multiplied by 1 + depth × (modulator − 1). At a depth of 1 the carrier itself is absent and only the two new partials remain.</p>
           </>
         ),
@@ -34,10 +35,13 @@ export const partC: Lesson[] = [
         controls: [
           { label: "Ring depth", path: "edges.0.index", min: 0, max: 1, step: 0.01 },
           { label: "Carrier ratio", path: "ops.1.ratio", min: 1, max: 14, step: 1 },
-          { label: "Modulator ratio", path: "ops.0.ratio", min: 0.5, max: 6, step: 0.5 },
+          { label: "Modulator ratio", path: "ops.0.ratio", min: 0.5, max: 6, step: 0.01, marks: [1, 1.3, 2, 2.76] },
         ],
         clip: held(48, 8),
         maxRatio: 20,
+        tryThis: [
+          <>Set the modulator’s ratio to 1.3 and then to 2.76. The two new partials move away from the ticks, but the carrier stays at 10 and the tone keeps its pitch.</>,
+        ],
         predict: {
           question: "The carrier is at 10 and is ring-modulated by an operator at 1, with a depth of 0.7. How many partials are there?",
           options: ["One, at 10", "Three, at 9, 10 and 11", "A family spreading out from 10, as with phase modulation", "Two, at 1 and 10"],
@@ -64,6 +68,38 @@ export const partC: Lesson[] = [
         ],
         clip: held(48, 8),
         maxRatio: 20,
+      },
+      {
+        title: "Ring modulation of a tone with harmonics",
+        body: (
+          <>
+            <p>The result is different when the carrier has harmonics of its own. Ring modulation then gives a sum and a difference for every harmonic of the carrier, so that a carrier with ten audible harmonics acquires twenty new partials. If the modulator’s ratio is a whole number, these fall on harmonics of the note. If it is not, every one of them is inharmonic, and the tone is that of a bell or a gong, which is the sound for which the ring modulator is best known.</p>
+            <p>On this page the carrier is at the pitch of the note and has feedback, which gives it harmonics that diminish in proportion to their number, as in lesson 5. The modulator is a sine wave at a ratio of 1.4. The harmonic of the carrier at <M>k</M> therefore produces partials at <M>k + 1.4</M> and <M>k − 1.4</M>, and where the second of these is negative it is reflected, as in lesson 1. The modulator can be given feedback as well, in which case each of its harmonics acts in the same way, and the partials become too many to follow.</p>
+          </>
+        ),
+        source: {
+          kind: "operators",
+          patch: {
+            ops: [
+              op(1.4, 0, { feedback: 0, label: "modulator" }),
+              op(1, 0.8, { feedback: 1, label: "carrier", amp: env(0.002, 3, 0, 1.2) }),
+            ],
+            edges: [edge(0, 1, 0.8, { mode: "rm" })],
+          },
+        },
+        controls: [
+          { label: "Modulator ratio", path: "ops.0.ratio", min: 0.5, max: 6, step: 0.01, marks: [1, 1.4, 2, 2.76, 3.5] },
+          { label: "Ring depth", path: "edges.0.index", min: 0, max: 1, step: 0.01 },
+          { label: "Carrier feedback", path: "ops.1.feedback", min: 0, max: 1.5, step: 0.01, unit: "rad" },
+          { label: "Modulator feedback", path: "ops.0.feedback", min: 0, max: 1.5, step: 0.01, unit: "rad" },
+        ],
+        clip: bellTune,
+        maxRatio: 10,
+        tryThis: [
+          <>Set the modulator’s ratio to 1 and then to 2. All the partials are then harmonics of the note, and the result is an ordinary bright tone.</>,
+          <>Set the carrier’s feedback to 0. Only three partials remain, as in the first step, and the sound of a bell is lost.</>,
+          <>Compare the ratios 1.4, 2.76 and 3.5, which give three different bells from the same carrier.</>,
+        ],
       },
       {
         title: "Operators that are not sines",
