@@ -51,7 +51,7 @@ export const partC: Lesson[] = [
         title: "The same pair under phase modulation",
         body: (
           <>
-            <p>This page has the same operators and the same ratios under phase modulation. Raise the index and count the partials. Ring modulation is the method to choose when one particular pair of partials is to be added, for example a faint high pair above a bell, and phase modulation when a region is to be filled. The factory preset “Nostalgic Bell Synth” in Part E applies both from one modulator.</p>
+            <p>The operators here are those of the preceding step, a carrier at ratio 10 and a modulator at ratio 1, but the cell is set to phase modulation where before it was set to ring modulation. Raise the index and count the partials. Ring modulation is the method to choose when one particular pair of partials is to be added, for example a faint high pair above a bell, and phase modulation when a region is to be filled. The factory preset “Nostalgic Bell Synth” in Part E applies both from one modulator.</p>
           </>
         ),
         source: {
@@ -128,7 +128,7 @@ export const partC: Lesson[] = [
         title: "Slow change of index",
         body: (
           <>
-            <p>The same kind of slow variation can be obtained by modulating the index itself at a low rate. In Six Sines every matrix cell has a low-frequency oscillator of its own as well as an envelope, and several of the string and bell presets give each cell a different slow rate, so that no two families of partials move together.</p>
+            <p>A slow variation of timbre, like that which the small offset of the preceding step produces, can also be obtained by modulating the index itself at a low rate. In Six Sines every matrix cell has a low-frequency oscillator of its own as well as an envelope, and several of the string and bell presets give each cell a different slow rate, so that no two families of partials move together.</p>
             <p>The raw engine has no low-frequency oscillator, and this bench obtains a similar effect from two pairs. Each has a modulator offset by a fraction of a hertz, by different amounts, so that the timbres of the two pass through their cycles at different rates. The mixture drifts in a way that neither pair does alone.</p>
           </>
         ),
@@ -156,7 +156,7 @@ export const partC: Lesson[] = [
         title: "Unison",
         body: (
           <>
-            <p>Unison plays several copies of the whole voice, each slightly detuned. It thickens any sound, but its effect on an FM patch differs from that of the two methods just described. Detuning the copies moves their carriers, so that the result beats in pitch, whereas those methods changed only the timbre. Since the two kinds of movement are different, they may be used together.</p>
+            <p>Unison plays several copies of the whole voice, each slightly detuned. It thickens any sound, but its effect on an FM patch differs from that of the offset on the modulator and the slow change of index, which the two preceding steps described. Detuning the copies moves their carriers, so that the result beats in pitch, whereas those methods changed only the timbre. Since the two kinds of movement are different, they may be used together.</p>
             <p>This step runs in Six Sines, where unison is a property of the whole patch. Set the number of voices to 3 and raise the ratio shift.</p>
           </>
         ),

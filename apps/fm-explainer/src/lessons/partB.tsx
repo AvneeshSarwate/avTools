@@ -232,7 +232,7 @@ export const partB: Lesson[] = [
         title: "Higher indices and combination tones",
         body: (
           <>
-            <p>The description is not correct in general, and the difference matters. The two modulators are added together inside the sine function and not after it, and the sine of a sum is not the sum of two sines. The spectrum in fact contains a partial at <M>c + k·m₁ + l·m₂</M> for every pair of whole numbers <M>k</M> and <M>l</M>, and its strength is the product of two Bessel terms, <M>J_k(I₁) · J_l(I₂)</M>. Schottstaedt calls the partials for which neither number is zero “sum and difference tones (intermodulation products)”.</p>
+            <p>The preceding step described the result of two modulators on one carrier as the sum of two modulated waves, and at low indices that description was nearly right. It is not right in general, because the two modulators are added together inside the sine function and not after it, and the sine of a sum is not the sum of two sines. The spectrum in fact contains a partial at <M>c + k·m₁ + l·m₂</M> for every pair of whole numbers <M>k</M> and <M>l</M>, and its strength is the product of two Bessel terms, <M>J_k(I₁) · J_l(I₂)</M>. Schottstaedt calls the partials for which neither number is zero “sum and difference tones (intermodulation products)”.</p>
             <p>When both indices are low, the product is negligible unless <M>k</M> or <M>l</M> is zero, and this is why the simpler description served. When both are raised, the remaining partials become strong and fill the gaps between the two families. The orange bars are calculated from the product.</p>
           </>
         ),
@@ -269,7 +269,7 @@ export const partB: Lesson[] = [
         title: "Two nearly equal ratios",
         body: (
           <>
-            <p>The partials of this second kind can be put to use. If the two modulators are given nearly equal ratios, here 3.1 and 2.9, the difference between them is a very low frequency, 0.2 of the note. Every partial then has neighbours at that small distance, and what is heard is a rough metallic tone that churns slowly. Since the distance is a fraction of the note and not a fixed number of hertz, the churning is faster on higher notes.</p>
+            <p>The combination tones of the preceding step, which are the partials that arise from both modulators together and from neither alone, can be put to use. If the two modulators are given nearly equal ratios, here 3.1 and 2.9, the difference between them is a very low frequency, 0.2 of the note. Every partial then has neighbours at that small distance, and what is heard is a rough metallic tone that churns slowly. Since the distance is a fraction of the note and not a fixed number of hertz, the churning is faster on higher notes.</p>
             <p>Each modulator on this page has its own decay, so that the texture changes during the note. This independent control of each component is the reason for preferring two modulators in parallel to two in series. The factory preset “Detuned Metal”, examined in Part E, is this patch.</p>
           </>
         ),

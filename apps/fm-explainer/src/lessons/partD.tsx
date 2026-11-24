@@ -49,7 +49,7 @@ export const partD: Lesson[] = [
         title: "Three additions",
         body: (
           <>
-            <p>Three additions make the textbook tone more useful, and each applies a connection from Part B.</p>
+            <p>The brass tone of the preceding step is a single pair with one envelope. Three additions make it more useful, and each applies a connection from Part B.</p>
             <ul>
               <li>Feedback on the modulator gives it harmonics of its own, so that the upper part of the spectrum is filled without raising the index (lesson 5).</li>
               <li>A second modulator at ratio 3, in parallel with the first, has a short envelope that depends on velocity, and supplies the edge on notes attacked hard (lesson 6f).</li>
@@ -398,7 +398,7 @@ export const partD: Lesson[] = [
         title: "Drum",
         body: (
           <>
-            <p>The drum has the same ratio and the same connection as the bell. Chowning changes two numbers: the note lasts 0.2 seconds, and the index begins at 2 where that of the bell began at 10. “The principal difference from the bell sound, in addition to the short duration, is the vastly reduced initial bandwidth of the spectrum.”</p>
+            <p>The drum has the same ratio, 1 : 1.4, and the same single pair as the bell of the preceding step. Chowning changes two numbers: the note lasts 0.2 seconds, and the index begins at 2 where that of the bell began at 10. “The principal difference from the bell sound, in addition to the short duration, is the vastly reduced initial bandwidth of the spectrum.”</p>
             <p>A bell and a tom-tom are thus the same patch with different values. The comparison shows how much of the identity of an instrument lies in the course of the index, and how little in the connection of the operators.</p>
           </>
         ),
