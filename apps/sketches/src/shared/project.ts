@@ -5,8 +5,10 @@
 //   disk    the dev server's /api/projects middleware answers; projects load
 //           from and autosave to projects/<name>/project.json.
 //   manual  no such server (a static build); nothing is saved automatically.
-//           The project lives in memory and is saved to and loaded from a
-//           JSON file by hand, with a warning on leaving while unsaved.
+//           It opens the project as committed to the repo (bundled into the
+//           build, see ProjectBinding.bundled), or empty if there is none;
+//           from there it is saved to and loaded from a JSON file by hand,
+//           with a warning on leaving while unsaved.
 // Saving to and loading from a file work on both.
 import { proxy } from "valtio";
 
@@ -27,6 +29,8 @@ export interface ProjectBinding<T> {
   /** Replace the open project; `null` starts an empty one. */
   apply(data: T | null): void;
   isValid(data: unknown): data is T;
+  /** Project files built into the app (the repo's projects/<name>/project.json), by name: what a static host opens. */
+  bundled?: Record<string, unknown>;
 }
 
 interface ProjectFile<T> {
@@ -178,9 +182,10 @@ export function createProject<T>(binding: ProjectBinding<T>) {
     const name = projectNameFromUrl(fallbackName);
     await listProjects();
     if (projectStore.backend === "manual") {
-      // Nothing to load from: start empty, with nothing to save yet.
-      apply(null);
-      patch({ name, status: "idle", error: null });
+      // No server: the committed copy of this project, else empty.
+      const file = binding.bundled?.[name] !== undefined ? unwrap(binding.bundled[name]) : null;
+      apply(file?.data ?? null);
+      patch(file ? { name, status: "saved", lastSavedAt: file.savedAt || null, error: null } : { name, status: "idle", error: null });
     } else {
       patch({ name, status: "loading", error: null });
       try {

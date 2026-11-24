@@ -1,12 +1,16 @@
 # sketches
 
-Small audiovisual sketches, one Vite app. Pick a sketch with `?sketch=<name>`
-(see `src/main.tsx`); the project file with `?project=<name>`.
+Small audiovisual sketches, one Vite app. The root page is a landing page
+listing them; each sketch is its own page at `<slug>/` (e.g. `split-sweep/`).
+To add one: an entry in `src/sketches/registry.ts` (the landing page reads
+it) and a `<slug>/index.html` pointing at its entry module (the build picks up
+every such folder, see `vite.config.ts`). Pick the project file with
+`?project=<name>`.
 
 ```sh
 cd apps/sketches
 npm install
-npm run dev          # http://localhost:5192
+npm run dev          # http://localhost:5192 (landing), /split-sweep/
 npm run type-check
 ```
 
@@ -19,8 +23,10 @@ has a project chooser, a "new project" field, save now, **Export** and
 
 A static build has no dev server, so there is no autosave and no project
 chooser. The app notices at startup (the request for the project list fails)
-and switches to manual persistence, as music-runners does: it opens empty,
-**Save** downloads the project as a JSON file, **Load** opens one, and the
+and switches to manual persistence, as music-runners does. It opens the
+project as committed to the repo: every `projects/<name>/project.json` is
+bundled into the build, so the deployed sketch shows what was last saved here
+(an empty project if there is none). **Save** downloads the project as a JSON file, **Load** opens one, and the
 status reads `unsaved` after any change, with the browser's leave-page warning
 while it does. `src/shared/project.ts` holds both backends; a sketch plugs in
 with `createProject({ kind, read, apply, isValid })`.

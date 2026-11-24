@@ -8,7 +8,9 @@ export interface SynthPatch {
   parameters: Record<string, number>;
 }
 
-export const sixSinesAssets = () => new URL("./six-sines-ui/", document.baseURI);
+// Served at the app root (dev middleware, or copied there by the build), not
+// beside each sketch page: resolve from the base URL, not the page.
+export const sixSinesAssets = () => new URL(`${import.meta.env.BASE_URL}six-sines-ui/`, location.origin);
 
 function reportError(error: unknown) {
   console.error("[Six Sines]", error);

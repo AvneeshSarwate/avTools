@@ -56,8 +56,16 @@ export const view = proxy<ViewLayout>({ ...DEFAULT_VIEW });
 type SavedData = SketchDoc & { view?: Partial<ViewLayout> };
 
 /** Saved with the dev server, or to / from JSON files on a static host (shared/project.ts). */
+// The repo's project files, built in: a static host opens these (by ?project=,
+// default split-sweep). Files of other sketches are refused by `kind`.
+const bundled = Object.fromEntries(
+  Object.entries(import.meta.glob("../../../projects/*/project.json", { eager: true, import: "default" }))
+    .map(([path, data]) => [path.split("/").at(-2)!, data]),
+);
+
 export const project = createProject<SavedData>({
   kind: "split-sweep",
+  bundled,
   read: () => ({ ...(snapshot(doc) as SketchDoc), view: snapshot(view) }),
   isValid: (data): data is SavedData => !!data && typeof data === "object" && Array.isArray((data as SketchDoc).regions) && (data as SketchDoc).regions.length > 0,
   apply: (data) => {

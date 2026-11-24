@@ -1,11 +1,23 @@
 import react from "@vitejs/plugin-react";
+import { existsSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
 import { fileURLToPath, URL } from "node:url";
 import { defineConfig, searchForWorkspaceRoot } from "vite";
 import { projectFilesPlugin } from "./server/projectFiles";
 
 import { sixSinesUiAssets } from "../livecode-tldraw/sixSinesUiAssets";
 
+// Pages: the landing page plus every folder with an index.html (one per sketch).
+const root = fileURLToPath(new URL(".", import.meta.url));
+const pages: Record<string, string> = { index: resolve(root, "index.html") };
+for (const entry of readdirSync(root, { withFileTypes: true })) {
+  if (entry.isDirectory() && !["node_modules", "src", "server", "projects", "dist"].includes(entry.name) && existsSync(resolve(root, entry.name, "index.html"))) {
+    pages[entry.name] = resolve(root, entry.name, "index.html");
+  }
+}
+
 export default defineConfig({
+  build: { rollupOptions: { input: pages } },
   plugins: [react(), projectFilesPlugin(), sixSinesUiAssets({ engine: true })],
   server: {
     host: "0.0.0.0",
