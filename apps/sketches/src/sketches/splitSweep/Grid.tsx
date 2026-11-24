@@ -3,20 +3,22 @@
 // mode the selection and split preview). Pointer input is hit-tested against
 // the document rectangles directly.
 import Konva from "konva";
-import { useEffect, useRef, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, memo } from "react";
 import { asBrowser, rootContext } from "../../shared/clock";
-import { regionAt, type Region } from "./model";
+import { deletePlan, regionAt, type Region } from "./model";
 import { engine } from "./engine";
 import { doc, findRegion, placeAnchor, select, ui } from "./store";
 
 const LINE = 6;
 const OFF_FILL = "#ece8df";
 const SELECT = "#ffcc00";
+const HOVER = "#4fb3ff";
+const DELETE = "#ff4f4f";
 
 /** Width : height of the grid. Regions are stored in unit coordinates on both axes. */
 export const ASPECT = 16 / 9;
 
-export function Grid({ width }: { width: number }) {
+export const Grid = memo(function Grid({ width }: { width: number }) {
   const height = Math.round(width / ASPECT);
   const host = useRef<HTMLDivElement>(null);
   const sizeRef = useRef({ width, height });
@@ -81,7 +83,13 @@ export function Grid({ width }: { width: number }) {
   };
 
   const onPointerMove = (event: ReactPointerEvent) => {
-    hover.current = unit(event);
+    const point = unit(event);
+    hover.current = point;
+    // Edit mode: the region under the pointer gets the same hover as the
+    // palette and roll (outline here, its palette row, its notes in the roll).
+    // Not in play mode, where the grid is the piece; not while placing a split.
+    const id = ui.mode === "edit" && !ui.split ? (regionAt(doc.regions, point.x, point.y)?.id ?? null) : null;
+    if (ui.hoverId !== id) ui.hoverId = id;
   };
 
   return (
@@ -91,11 +99,14 @@ export function Grid({ width }: { width: number }) {
       style={{ width, height }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
-      onPointerLeave={() => (hover.current = null)}
+      onPointerLeave={() => {
+        hover.current = null;
+        ui.hoverId = null;
+      }}
       onContextMenu={(event: ReactMouseEvent) => event.preventDefault()}
     />
   );
-}
+});
 
 function draw(g: CanvasRenderingContext2D, width: number, height: number, hover: { x: number; y: number } | null) {
   const px = (r: Region) => ({ x: r.x * width, y: r.y * height, w: r.w * width, h: r.h * height });
@@ -127,15 +138,73 @@ function draw(g: CanvasRenderingContext2D, width: number, height: number, hover:
   }
   g.strokeRect(LINE / 2, LINE / 2, width - LINE, height - LINE);
 
+  const hovered = findRegion(ui.hoverId);
+  if (hovered) {
+    const r = px(hovered);
+    g.save();
+    g.fillStyle = "rgba(255,255,255,0.18)";
+    g.fillRect(r.x, r.y, r.w, r.h);
+    // Region fills are user colours: a black underlay keeps the outline
+    // readable on any of them, including a blue one.
+    const inset = LINE / 2 + 3;
+    g.strokeStyle = "#000";
+    g.lineWidth = 7;
+    g.strokeRect(r.x + inset, r.y + inset, r.w - 2 * inset, r.h - 2 * inset);
+    g.strokeStyle = HOVER;
+    g.lineWidth = 3;
+    g.strokeRect(r.x + inset, r.y + inset, r.w - 2 * inset, r.h - 2 * inset);
+    g.restore();
+  }
+
   if (ui.mode !== "edit") return;
   const selected = findRegion(ui.selectedId);
   if (!selected) return;
+
+  // Delete preview: the doomed region struck through, the neighbours that
+  // will grow over it washed and outlined.
+  const plan = ui.deletePreview ? deletePlan(doc.regions, selected.id) : null;
+  if (plan) {
+    const d = px(selected);
+    g.save();
+    g.fillStyle = "rgba(0,0,0,0.35)";
+    g.fillRect(d.x, d.y, d.w, d.h);
+    g.beginPath();
+    g.moveTo(d.x, d.y);
+    g.lineTo(d.x + d.w, d.y + d.h);
+    g.moveTo(d.x + d.w, d.y);
+    g.lineTo(d.x, d.y + d.h);
+    g.strokeStyle = "#000";
+    g.lineWidth = 8;
+    g.stroke();
+    g.strokeStyle = DELETE;
+    g.lineWidth = 4;
+    g.stroke();
+    for (const id of plan.absorbers) {
+      const n = findRegion(id);
+      if (!n) continue;
+      const r = px(n);
+      const inset = LINE / 2 + 3;
+      g.fillStyle = "rgba(255,255,255,0.2)";
+      g.fillRect(r.x, r.y, r.w, r.h);
+      g.strokeStyle = "#000";
+      g.lineWidth = 7;
+      g.strokeRect(r.x + inset, r.y + inset, r.w - 2 * inset, r.h - 2 * inset);
+      g.strokeStyle = HOVER;
+      g.lineWidth = 3;
+      g.strokeRect(r.x + inset, r.y + inset, r.w - 2 * inset, r.h - 2 * inset);
+    }
+    g.restore();
+    return;
+  }
   const r = px(selected);
   g.save();
+  const inset = LINE / 2 + 3;
+  g.strokeStyle = "#000";
+  g.lineWidth = 5;
+  g.strokeRect(r.x + inset, r.y + inset, r.w - 2 * inset, r.h - 2 * inset);
   g.strokeStyle = SELECT;
   g.lineWidth = 3;
   g.setLineDash([8, 5]);
-  const inset = LINE / 2 + 3;
   g.strokeRect(r.x + inset, r.y + inset, r.w - 2 * inset, r.h - 2 * inset);
   g.restore();
 

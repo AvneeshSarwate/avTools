@@ -52,7 +52,8 @@ export class StageManager {
     const all = dirty.has('all')
     if (all) this.deps.renderGrid(state)
     if (all || dirty.has('gutter')) this.deps.renderGutter()
-    if (all || dirty.has('ghosts')) this.deps.renderGhostNotes(state)
+    // Links follow their notes, so a notes redraw also redraws them
+    if (all || dirty.has('ghosts') || (dirty.has('notes') && state.links.length > 0)) this.deps.renderGhostNotes(state)
     if (all || dirty.has('overlay')) this.deps.updatePlayheadMarkers(state)
     if (all || dirty.has('notes')) {
       this.deps.renderVisibleNotes(state)

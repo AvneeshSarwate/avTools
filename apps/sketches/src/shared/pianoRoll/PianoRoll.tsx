@@ -102,6 +102,7 @@ export const PianoRoll = memo(forwardRef<PianoRollHandle, PianoRollProps>(functi
     showControlPanel = true,
     playheadMarkers,
     ghostNotes,
+    links,
     noteBadge,
     noteColor,
     onNotePreview,
@@ -610,10 +611,13 @@ export const PianoRoll = memo(forwardRef<PianoRollHandle, PianoRollProps>(functi
       noteColor,
       onExpressionMenu: setExpressionMenu,
       // Read through propsRef so a new callback identity needs no effect
-      onCursorChange: (position) => propsRef.current.onCursorChange?.(position)
+      onCursorChange: (position) => propsRef.current.onCursorChange?.(position),
+      // Present only when given: their presence makes ghosts pointer targets
+      onGhostHover: props.onGhostHover,
+      onGhostClick: props.onGhostClick
     }
     state.requestRedraw('notes')
-  }, [onNotePreview, noteBadge, noteColor, state])
+  }, [onNotePreview, noteBadge, noteColor, props.onGhostHover, props.onGhostClick, state])
 
   useEffect(() => {
     state.queuePlayhead.alwaysShow = cursor !== undefined
@@ -629,6 +633,11 @@ export const PianoRoll = memo(forwardRef<PianoRollHandle, PianoRollProps>(functi
     state.ghostNotes = ghostNotes ?? []
     state.requestRedraw('ghosts')
   }, [ghostNotes, state])
+
+  useEffect(() => {
+    state.links = links ?? []
+    state.requestRedraw('ghosts')
+  }, [links, state])
 
   useEffect(() => {
     if (!showControlPanel) setShowMetadata(false)

@@ -117,10 +117,10 @@ export function mutateSelection(state: PianoRollState, mutate: () => void): bool
 const MPE_DIMMED_NOTE_FILL = '#565656'
 
 /** The note's fill: a host highlight (playing), host override, then metadata.color, then the default. */
-function resolveNoteFill(state: PianoRollState, note: NoteData, fallback: string): string {
+function resolveNoteFill(state: PianoRollState, note: NoteData, fallback: string, selected = false): string {
   if (state.noteHighlight.ids.has(note.id) && state.noteHighlight.color) return state.noteHighlight.color
   if (state.expression.mode === 'mpe' && fallback !== '' && !state.selection.selectedIds.has(note.id)) return MPE_DIMMED_NOTE_FILL
-  const override = state.hooks.noteColor?.(note)
+  const override = state.hooks.noteColor?.(note, selected)
   if (typeof override === 'string' && override) return override
   return noteFillColor(note.metadata, fallback)
 }
@@ -446,8 +446,46 @@ function drawGrid(state: PianoRollState, ctx: CanvasRenderingContext2D) {
   }
 }
 
+function drawLinks(state: PianoRollState, ctx: CanvasRenderingContext2D) {
+  if (state.links.length === 0) return
+  const { scrollX, scrollY } = state.viewport
+  const { quarterNoteWidth, noteHeight } = state.grid
+  const ghosts = new Map(state.ghostNotes.map((ghost) => [ghost.id, ghost]))
+  const find = (id: string) => state.notes.get(id) ?? ghosts.get(id)
+  const steps = 32
+  ctx.save()
+  ctx.lineCap = 'round'
+  for (const link of state.links) {
+    const from = find(link.from)
+    const to = find(link.to)
+    if (!from || !to) continue
+    const inset = link.inset ?? 0
+    const x0 = (from.position + from.duration - inset) * quarterNoteWidth - scrollX
+    const y0 = (127 - from.pitch) * noteHeight - scrollY + noteHeight / 2
+    const x1 = (to.position + inset) * quarterNoteWidth - scrollX
+    const y1 = (127 - to.pitch) * noteHeight - scrollY + noteHeight / 2
+    const curve = link.curve ?? ((t: number) => t)
+    ctx.globalAlpha = link.opacity ?? 0.6
+    ctx.strokeStyle = link.color ?? GHOST_DEFAULT_COLOR
+    ctx.lineWidth = link.lineWidth ?? 1.5
+    ctx.setLineDash(link.dash ?? [])
+    ctx.beginPath()
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps
+      const x = x0 + (x1 - x0) * t
+      const y = y0 + (y1 - y0) * curve(t)
+      if (i === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    }
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
 function drawGhosts(state: PianoRollState, ctx: CanvasRenderingContext2D) {
-  if (!state.stage || state.ghostNotes.length === 0) return
+  if (!state.stage) return
+  drawLinks(state, ctx)
+  if (state.ghostNotes.length === 0) return
 
   const { scrollX, scrollY } = state.viewport
   const { quarterNoteWidth, noteHeight } = state.grid
@@ -574,7 +612,7 @@ function drawNotes(state: PianoRollState, ctx: CanvasRenderingContext2D) {
       // its own color keeps it while selected and shows selection through a
       // heavy stroke instead; the default swaps the fill as before.
       width = note.duration * quarterNoteWidth
-      const ownColor = resolveNoteFill(state, note, '')
+      const ownColor = resolveNoteFill(state, note, '', true)
       fill = ownColor || selectedNoteColor
       stroke = ownColor ? selectedNoteColor : '#000'
       strokeWidth = ownColor ? 3 : 1
@@ -607,9 +645,11 @@ function drawNotes(state: PianoRollState, ctx: CanvasRenderingContext2D) {
     }
 
     if (!showText) return
+    const label = pitchLabel(note.pitch, state.grid.pitchLabels)
+    // Only inside the note: no label on a row too short or a note too narrow for it
+    if (noteHeight < LABEL_FONT_SIZE + 2 || textWidth(LABEL_FONT, label) + 8 > width) return
     setAlpha(opacity)
     const textFill = labelColor(fill)
-    const label = pitchLabel(note.pitch, state.grid.pitchLabels)
     setFont(LABEL_FONT)
     ctx.fillStyle = textFill
     ctx.fillText(label, x + 4, y + 2 + LABEL_FONT_SIZE / 2)
@@ -966,7 +1006,7 @@ export function hitTest(state: PianoRollState, pos: { x: number; y: number }): H
   for (let i = visible.length - 1; i >= 0; i--) {
     const entry = visible[i]!
     if (!selectedIds.has(entry.id)) continue
-    const ownColor = resolveNoteFill(state, entry.note, '')
+    const ownColor = resolveNoteFill(state, entry.note, '', true)
     const width = entry.note.duration * quarterNoteWidth
     if (hitsRect(entry.note, width, ownColor ? 3 : 1)) return edgeOrNote(entry.id, entry.note, width)
   }
@@ -980,6 +1020,19 @@ export function hitTest(state: PianoRollState, pos: { x: number; y: number }): H
   }
 
   return BACKGROUND_HIT
+}
+
+/** The top ghost under a stage point: the last drawn wins. */
+function ghostAt(state: PianoRollState, pos: { x: number; y: number }): string | null {
+  const { scrollX, scrollY } = state.viewport
+  const { quarterNoteWidth, noteHeight } = state.grid
+  for (let i = state.ghostNotes.length - 1; i >= 0; i--) {
+    const ghost = state.ghostNotes[i]!
+    const x = ghost.position * quarterNoteWidth - scrollX
+    const y = (127 - ghost.pitch) * noteHeight - scrollY
+    if (pos.x >= x && pos.x <= x + ghost.duration * quarterNoteWidth && pos.y >= y && pos.y <= y + noteHeight) return ghost.id
+  }
+  return null
 }
 
 // ================= Interaction Handlers =================
@@ -1010,6 +1063,13 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
   // A press on one note of a multi-note selection: the group moves if it is
   // dragged, otherwise the release selects just that note
   let collapseSelectionTo: string | null = null
+  // The ghost last reported through onGhostHover
+  let hoveredGhost: string | null = null
+  const reportGhost = (id: string | null) => {
+    if (id === hoveredGhost) return
+    hoveredGhost = id
+    state.hooks.onGhostHover?.(id)
+  }
   const DBLCLICK_SLOP = 5
   const isStationaryDoubleClick = () =>
     !!lastDownPos &&
@@ -1110,6 +1170,15 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
     const pos = stage.getPointerPosition()
     if (!pos) return
 
+    // A ghost the host listens to: hand it the press instead
+    if (state.hooks.onGhostClick && !isShift && pos.y < noteAreaHeight(state)) {
+      const ghost = ghostAt(state, pos)
+      if (ghost) {
+        state.hooks.onGhostClick(ghost)
+        return
+      }
+    }
+
     if (state.grid.drawMode && !isShift) {
       startDraw(state, pos)
       return
@@ -1154,6 +1223,11 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
       // The hover label follows the note while it is dragged, so it keeps the id then
       const found = pos.y < noteAreaHeight(state) ? hitTest(state, pos) : null
       setGridNoteHover(state, found?.kind === 'note' ? found.noteId : null)
+      if (state.hooks.onGhostHover) {
+        const ghost = found && found.kind !== 'note' && found.kind !== 'handle' ? ghostAt(state, pos) : null
+        reportGhost(ghost)
+        if (ghost) setStageCursor(state, 'pointer')
+      }
     }
     if (
       lastDownPos &&
@@ -1223,6 +1297,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
 
   // Mouse up
   stage.on('mouseleave', () => {
+    reportGhost(null)
     expressionHover(state, null)
     if (!state.interaction.isDragging) setGridNoteHover(state, null)
   })

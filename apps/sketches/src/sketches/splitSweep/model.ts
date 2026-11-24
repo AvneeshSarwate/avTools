@@ -100,3 +100,67 @@ export function hexToRgb(hex: string): [number, number, number] {
   const value = Number.parseInt(hex.replace("#", "").padEnd(6, "0").slice(0, 6), 16);
   return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
 }
+
+// --- deleting a region ---------------------------------------------------------
+//
+// Regions only ever come from splitting a rectangle in two, so for any region
+// R some side is exactly tiled by the regions touching it (in the split tree,
+// that side is R's sibling). Stretching those neighbours across R removes it
+// and keeps every region a rectangle; no tree is needed. When several sides
+// qualify, the one with the fewest neighbours wins (a single full-edge
+// neighbour is a plain merge), then left, top, right, bottom.
+
+export type Side = "left" | "top" | "right" | "bottom";
+export interface DeletePlan {
+  side: Side;
+  absorbers: string[];
+}
+
+const EPS = 1e-6;
+
+export function deletePlan(regions: readonly Region[], id: string): DeletePlan | null {
+  const r = regions.find((region) => region.id === id);
+  if (!r || regions.length < 2) return null;
+  const plans: DeletePlan[] = [];
+  for (const side of ["left", "top", "right", "bottom"] as const) {
+    const vertical = side === "left" || side === "right";
+    const edge = side === "left" ? r.x : side === "right" ? r.x + r.w : side === "top" ? r.y : r.y + r.h;
+    const [lo, hi] = vertical ? [r.y, r.y + r.h] : [r.x, r.x + r.w];
+    const touching = regions.filter((n) => {
+      if (n.id === r.id) return false;
+      const facing = side === "left" ? n.x + n.w : side === "right" ? n.x : side === "top" ? n.y + n.h : n.y;
+      if (Math.abs(facing - edge) > EPS) return false;
+      const [a, b] = vertical ? [n.y, n.y + n.h] : [n.x, n.x + n.w];
+      return Math.min(b, hi) - Math.max(a, lo) > EPS;
+    });
+    if (touching.length === 0) continue;
+    const inside = touching.every((n) => {
+      const [a, b] = vertical ? [n.y, n.y + n.h] : [n.x, n.x + n.w];
+      return a >= lo - EPS && b <= hi + EPS;
+    });
+    const covered = touching.reduce((sum, n) => sum + (vertical ? n.h : n.w), 0);
+    if (inside && Math.abs(covered - (hi - lo)) < EPS * 10) plans.push({ side, absorbers: touching.map((n) => n.id) });
+  }
+  plans.sort((p, q) => p.absorbers.length - q.absorbers.length);
+  return plans[0] ?? null;
+}
+
+/** Stretch the plan's neighbours across the deleted region (mutates `regions`). */
+export function applyDelete(regions: Region[], id: string, plan: DeletePlan) {
+  const index = regions.findIndex((region) => region.id === id);
+  if (index < 0) return;
+  const r = regions[index];
+  for (const n of regions) {
+    if (!plan.absorbers.includes(n.id)) continue;
+    if (plan.side === "left") n.w += r.w;
+    else if (plan.side === "right") {
+      n.x = r.x;
+      n.w += r.w;
+    } else if (plan.side === "top") n.h += r.h;
+    else {
+      n.y = r.y;
+      n.h += r.h;
+    }
+  }
+  regions.splice(index, 1);
+}

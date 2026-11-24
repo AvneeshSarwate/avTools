@@ -1,19 +1,21 @@
 // UI-facing state: the document (valtio, persisted, undoable) and the UI
 // state (mode, selection, split tool). Runtime audio/animation state is not
 // here; it lives in engine.ts as plain objects.
-import { proxy } from "valtio";
+import { proxy, snapshot, subscribe } from "valtio";
 import { createHistory } from "../../shared/history";
-import { createAutosave, loadProject } from "../../shared/projectFiles";
+import { createProject } from "../../shared/project";
 import type { PianoRollNote } from "../../shared/pianoRoll/types";
-import { canSplit, clampAnchor, defaultDoc, splitRegion, type Region, type SketchDoc, type SplitAxis } from "./model";
-
-export const PROJECT = new URLSearchParams(location.search).get("project") ?? "split-sweep";
+import { applyDelete, canSplit, clampAnchor, deletePlan, defaultDoc, splitRegion, type Region, type SketchDoc, type SplitAxis } from "./model";
 
 export const doc = proxy<SketchDoc>(defaultDoc());
 
 export const ui = proxy<{
   mode: "edit" | "play";
   selectedId: string | null;
+  /** Region under the pointer in the palette sidebar: outlined on the grid. */
+  hoverId: string | null;
+  /** Hovering Delete: the grid previews which neighbours would absorb the selection. */
+  deletePreview: boolean;
   /** Split tool: active once "Split" is pressed; the anchor is placed by a click. */
   split: { anchor: { x: number; y: number } | null; hover: SplitAxis | null } | null;
   /** Edit mode: only the selected region drones. */
@@ -21,20 +23,49 @@ export const ui = proxy<{
   canUndo: boolean;
   canRedo: boolean;
   lastAction: string;
-  save: "loading" | "saved" | "saving" | "error" | "offline";
 }>({
   mode: "edit",
   selectedId: null,
+  hoverId: null,
+  deletePreview: false,
   split: null,
   solo: false,
   canUndo: false,
   canRedo: false,
   lastAction: "",
-  save: "loading",
 });
 
-const autosave = createAutosave(PROJECT, () => doc, (status) => (ui.save = status));
-let loaded = false;
+/**
+ * Layout of the page: saved with the project, outside undo. `topHeight` null
+ * means "as tall as the properties panel".
+ */
+export interface ViewLayout {
+  panelWidth: number;
+  topHeight: number | null;
+  /** The notes roll fills the properties panel; the other properties hide. */
+  rollFull: boolean;
+}
+export const PANEL_MIN = 320;
+export const PANEL_MAX = 1100;
+export const TOP_MIN = 300;
+const DEFAULT_VIEW: ViewLayout = { panelWidth: 420, topHeight: null, rollFull: false };
+export const view = proxy<ViewLayout>({ ...DEFAULT_VIEW });
+
+type SavedData = SketchDoc & { view?: Partial<ViewLayout> };
+
+/** Saved with the dev server, or to / from JSON files on a static host (shared/project.ts). */
+export const project = createProject<SavedData>({
+  kind: "split-sweep",
+  read: () => ({ ...(snapshot(doc) as SketchDoc), view: snapshot(view) }),
+  isValid: (data): data is SavedData => !!data && typeof data === "object" && Array.isArray((data as SketchDoc).regions) && (data as SketchDoc).regions.length > 0,
+  apply: (data) => {
+    replaceDoc({ ...defaultDoc(), ...(data ?? {}) });
+    Object.assign(view, DEFAULT_VIEW, data?.view ?? {});
+    history.reset();
+    ui.selectedId = doc.regions[0]?.id ?? null;
+  },
+});
+subscribe(view, () => project.changed());
 
 function replaceDoc(next: SketchDoc) {
   doc.version = next.version;
@@ -42,31 +73,17 @@ function replaceDoc(next: SketchDoc) {
   doc.synth = next.synth;
   if (ui.selectedId && !next.regions.some((r) => r.id === ui.selectedId)) ui.selectedId = null;
   ui.split = null;
-  if (loaded) autosave.schedule();
+  project.changed();
 }
 
 export const history = createHistory(doc, replaceDoc, (state) => {
   ui.canUndo = state.canUndo;
   ui.canRedo = state.canRedo;
   if (state.label) ui.lastAction = state.label;
-  if (loaded) autosave.schedule();
+  project.changed();
 });
 
-export async function loadDoc() {
-  try {
-    const saved = await loadProject<SketchDoc>(PROJECT);
-    if (saved?.regions?.length) replaceDoc({ ...defaultDoc(), ...saved });
-    ui.save = "saved";
-  } catch (error) {
-    console.error("[load]", error);
-    ui.save = "offline";
-  }
-  loaded = true;
-  history.reset();
-  ui.selectedId = doc.regions[0]?.id ?? null;
-}
-
-window.addEventListener("beforeunload", () => autosave.flush());
+export const loadDoc = () => project.start("split-sweep");
 
 export const findRegion = (id: string | null | undefined) => (id ? doc.regions.find((r) => r.id === id) : undefined);
 
@@ -110,6 +127,17 @@ export function applySplit(axis: SplitAxis) {
   });
   ui.split = null;
   ui.selectedId = first.id;
+}
+
+/** Delete a region: the neighbours that tile one of its sides grow over it. */
+export function deleteRegion(id: string) {
+  const plan = deletePlan(doc.regions, id);
+  if (!plan) return;
+  history.commit("delete region", (d) => applyDelete(d.regions, id, plan));
+  ui.deletePreview = false;
+  ui.split = null;
+  if (ui.selectedId === id) ui.selectedId = plan.absorbers[0] ?? null;
+  if (ui.hoverId === id) ui.hoverId = null;
 }
 
 export function cancelSplit() {

@@ -1,14 +1,47 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSnapshot } from "valtio";
 import { Button } from "../../shared/controls/controls";
+import { ProjectControls } from "../../shared/ProjectControls";
 import { engine } from "./engine";
+import { PaletteBar } from "./PaletteBar";
 import { RegionPanel } from "./RegionPanel";
 import { ASPECT, Grid } from "./Grid";
 import { SynthDock } from "./SynthDock";
-import { applySplit, cancelSplit, history, loadDoc, PROJECT, ui } from "./store";
+import { applySplit, cancelSplit, deleteRegion, history, loadDoc, PANEL_MAX, PANEL_MIN, project, TOP_MIN, ui, view } from "./store";
+
+/** Track a pointer drag on window until release. */
+function dragWith(event: React.PointerEvent, move: (dx: number, dy: number) => void) {
+  event.preventDefault();
+  const x0 = event.clientX;
+  const y0 = event.clientY;
+  const onMove = (e: PointerEvent) => move(e.clientX - x0, e.clientY - y0);
+  const onUp = () => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    document.body.classList.remove("is-resizing");
+  };
+  document.body.classList.add("is-resizing");
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+}
+
+/** Undo/redo and save status: its own subscriber, so edits and autosaves re-render only this. */
+function HistoryStatus() {
+  const state = useSnapshot(ui);
+  return (
+    <>
+      <Button icon="undo" onClick={() => history.undo()} disabled={!state.canUndo} title="Undo (Cmd-Z)" />
+      <Button icon="redo" onClick={() => history.redo()} disabled={!state.canRedo} title="Redo (Shift-Cmd-Z)" />
+      <span className="dim">{state.lastAction}</span>
+      <ProjectControls project={project} />
+    </>
+  );
+}
 
 export function SplitSweepApp() {
   const state = useSnapshot(ui);
+  const layout = useSnapshot(view);
+  const workspaceRef = useRef<HTMLElement>(null);
   const [ready, setReady] = useState(false);
   const stageRef = useRef<HTMLDivElement>(null);
   const [gridWidth, setGridWidth] = useState(640);
@@ -32,6 +65,7 @@ export function SplitSweepApp() {
   // Mode changes start from silence: play mode opens with every region off.
   useEffect(() => {
     engine.releaseAll();
+    ui.hoverId = null;
     if (state.mode === "play") ui.split = null;
   }, [state.mode]);
 
@@ -66,6 +100,9 @@ export function SplitSweepApp() {
       if (event.key === "Tab") {
         event.preventDefault();
         ui.mode = ui.mode === "edit" ? "play" : "edit";
+      } else if ((event.key === "Backspace" || event.key === "Delete") && ui.mode === "edit" && !ui.split && ui.selectedId) {
+        event.preventDefault();
+        deleteRegion(ui.selectedId);
       } else if (ui.split) {
         if (event.key === "Escape") cancelSplit();
         else if (event.key === "v" && ui.split.anchor) applySplit("vertical");
@@ -90,20 +127,37 @@ export function SplitSweepApp() {
         </div>
         <span className="dim">Tab switches · {state.mode === "play" ? "click: ramp in / sweep / reverse · right-click: off" : "click: select"}</span>
         <span className="spacer" />
-        <Button icon="undo" onClick={() => history.undo()} disabled={!state.canUndo} title="Undo (Cmd-Z)" />
-        <Button icon="redo" onClick={() => history.redo()} disabled={!state.canRedo} title="Redo (Shift-Cmd-Z)" />
-        <span className="dim">{state.lastAction}</span>
-        <span className={`save save--${state.save}`}>{PROJECT}: {state.save}</span>
+        <HistoryStatus />
       </header>
-      <main className="workspace">
+      <main className="workspace" ref={workspaceRef} style={{ height: layout.topHeight ?? undefined }}>
+        <PaletteBar />
         <div className="stage" ref={stageRef}>
           <Grid width={gridWidth} />
         </div>
         {/* Kept mounted in play mode (just hidden) so the row and the grid keep their size. */}
-        <div className={`panel-slot${state.mode === "play" ? " is-hidden" : ""}`}>
+        <div
+          className={`resizer resizer--col${state.mode === "play" ? " is-hidden" : ""}`}
+          title="Drag to resize the properties panel"
+          onPointerDown={(event) => {
+            const start = view.panelWidth;
+            dragWith(event, (dx) => (view.panelWidth = Math.min(PANEL_MAX, Math.max(PANEL_MIN, start - dx))));
+          }}
+        />
+        <div className={`panel-slot${state.mode === "play" ? " is-hidden" : ""}`} style={{ width: layout.panelWidth }}>
           <RegionPanel />
         </div>
       </main>
+      <div
+        className="resizer resizer--row"
+        title="Drag to resize; double-click to fit the properties panel"
+        onDoubleClick={() => {
+          if (!view.rollFull) view.topHeight = null;
+        }}
+        onPointerDown={(event) => {
+          const start = view.topHeight ?? workspaceRef.current?.clientHeight ?? 560;
+          dragWith(event, (_, dy) => (view.topHeight = Math.max(TOP_MIN, Math.round(start + dy))));
+        }}
+      />
       <SynthDock />
     </div>
   );

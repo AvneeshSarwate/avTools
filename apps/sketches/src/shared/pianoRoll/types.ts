@@ -114,10 +114,23 @@ export interface PianoRollProps {
   showControlPanel?: boolean;
   playheadMarkers?: PlayheadMarker[];
   ghostNotes?: GhostNote[];
+  /** Connections drawn under the ghosts and notes; endpoints are note or ghost ids, resolved live. */
+  links?: RollLink[];
+  /**
+   * Ghost notes as targets: the ghost under the pointer (null when none) and
+   * a press on one. Real notes win; among overlapping ghosts the last drawn
+   * (last in `ghostNotes`) is on top. A ghost press does not start a marquee.
+   */
+  onGhostHover?: (ghostId: string | null) => void;
+  onGhostClick?: (ghostId: string) => void;
   /** Short text drawn on a note (tag badges). */
   noteBadge?: (note: PianoRollNote) => string | null;
   /** Fill override; falls back to metadata.color then the default. */
-  noteColor?: (note: PianoRollNote) => string | undefined;
+  /**
+   * `selected` is whether the note is selected; return undefined for a
+   * selected note to keep the roll's own selection fill.
+   */
+  noteColor?: (note: PianoRollNote, selected: boolean) => string | undefined;
   onSelectionChange?: (ids: string[]) => void;
   /** Audition hook: fired when a note is created, clicked, or dragged to a new pitch. */
   onNotePreview?: (note: { pitch: number; velocity: number }) => void;
@@ -177,6 +190,25 @@ export interface PianoRollProps {
    * instead of above the stage. Null while the host element is not mounted.
    */
   toolbarTarget?: HTMLElement | null;
+}
+
+/**
+ * A drawn connection from one note to another (either may be a ghost): from
+ * `inset` beats before the end of `from` to `inset` beats after the start of
+ * `to`, so it reads as a diagonal between the two bars. `curve` maps 0..1
+ * along the line to 0..1 of the pitch change (default linear).
+ */
+export interface RollLink {
+  id: string;
+  from: string;
+  to: string;
+  color?: string;
+  opacity?: number;
+  lineWidth?: number;
+  dash?: number[];
+  curve?: (t: number) => number;
+  /** Beats into each note the line starts / ends (default 0). */
+  inset?: number;
 }
 
 export interface PianoRollHandle {

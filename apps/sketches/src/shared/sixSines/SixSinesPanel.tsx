@@ -57,12 +57,19 @@ export function SixSinesPanel({ patch, onParameters, onPreset }: {
   useEffect(() => {
     const element = widget.current;
     if (!element) return;
-    if (displayedPreset.current !== preset || Object.keys(displayedParameters.current).some((key) => !(key in parameters))) {
+    const reload = displayedPreset.current !== preset || Object.keys(displayedParameters.current).some((key) => !(key in parameters));
+    if (reload) {
       const bytes = preset ?? defaults.current;
       if (bytes) element.loadPreset(bytes);
       displayedPreset.current = preset;
+      displayedParameters.current = {};
     }
-    element.setParameters(Object.entries(parameters).map(([key, value]) => ({ id: Number(key), value })));
+    // Only what the widget is not already showing (its own edits come back
+    // through the host already displayed).
+    const changes = Object.entries(parameters)
+      .filter(([key, value]) => displayedParameters.current[key] !== value)
+      .map(([key, value]) => ({ id: Number(key), value }));
+    if (changes.length) element.setParameters(changes);
     displayedParameters.current = { ...parameters };
   }, [preset, parameters]);
 

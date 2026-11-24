@@ -14,7 +14,7 @@ set -euo pipefail
 
 # music-runners also builds as a static site, but its tldraw canvas needs a
 # licence key once deployed; add it back here when the key is in place.
-APPS=(fm-explainer)
+APPS=(fm-explainer sketches)
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$ROOT/.pages-build"

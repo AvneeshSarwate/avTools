@@ -1,6 +1,6 @@
 import type Konva from 'konva'
 import type { CommandStack } from './commandStack'
-import type { GhostNote, JsonObject, LiveInput, PianoRollNote, PianoRollScale, PlayheadMarker } from './types'
+import type { GhostNote, JsonObject, RollLink, LiveInput, PianoRollNote, PianoRollScale, PlayheadMarker } from './types'
 import { DEFAULT_SCALE } from './scale'
 import type { NoteIndex } from './noteIndex'
 import {
@@ -77,9 +77,13 @@ export interface PianoRollHooks {
   /** Right-click on a breakpoint or velocity marker (client coordinates). */
   onExpressionMenu?: (menu: { x: number; y: number; target: ExpressionMenuTarget }) => void
   noteBadge?: (note: NoteData) => string | null
-  noteColor?: (note: NoteData) => string | undefined
+  noteColor?: (note: NoteData, selected: boolean) => string | undefined
   /** A click on the empty grid moved the cursor (the queue playhead). */
   onCursorChange?: (position: number) => void
+  /** The ghost under the pointer (where no real note is), or null. Given, ghosts are hover / click targets. */
+  onGhostHover?: (ghostId: string | null) => void
+  /** A press on a ghost (where no real note is). */
+  onGhostClick?: (ghostId: string) => void
 }
 
 export interface PianoRollState {
@@ -232,6 +236,9 @@ export interface PianoRollState {
 
   // Read-only notes drawn on their own layer between the grid and the notes.
   ghostNotes: GhostNote[]
+
+  /** Note-to-note connections, drawn on the ghost layer. */
+  links: RollLink[]
 
   /** Live MIDI input overlay, drawn on the overlay layer. */
   liveInput: LiveInput
@@ -399,6 +406,8 @@ export const createPianoRollState = (): PianoRollState => {
     },
 
     ghostNotes: [],
+
+    links: [],
 
     liveInput: { keys: [], notes: [] },
 

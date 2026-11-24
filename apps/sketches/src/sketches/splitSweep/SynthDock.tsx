@@ -1,3 +1,4 @@
+import { memo } from "react";
 // Sound design: the Six Sines editor for the sketch's patch, and the live
 // MIDI input (played on a second engine with the same patch).
 import { useSnapshot } from "valtio";
@@ -10,7 +11,7 @@ import { doc, setSynthParameters, setSynthPreset } from "./store";
 
 const NONE = "__none__";
 
-export function SynthDock() {
+export const SynthDock = memo(function SynthDock() {
   const snap = useSnapshot(doc);
   const midi = useSnapshot(midiInputStore);
   const options = [
@@ -42,4 +43,4 @@ export function SynthDock() {
       </div>
     </div>
   );
-}
+});

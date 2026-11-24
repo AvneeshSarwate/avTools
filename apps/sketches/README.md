@@ -11,7 +11,22 @@ npm run type-check
 ```
 
 Projects autosave to `projects/<name>/project.json` through the dev server
-(`server/projectFiles.ts`, the same middleware as music-runners).
+(`server/projectFiles.ts`, the same middleware as music-runners). The top bar
+has a project chooser, a "new project" field, save now, **Export** and
+**Import** (JSON files).
+
+### As a static site
+
+A static build has no dev server, so there is no autosave and no project
+chooser. The app notices at startup (the request for the project list fails)
+and switches to manual persistence, as music-runners does: it opens empty,
+**Save** downloads the project as a JSON file, **Load** opens one, and the
+status reads `unsaved` after any change, with the browser's leave-page warning
+while it does. `src/shared/project.ts` holds both backends; a sketch plugs in
+with `createProject({ kind, read, apply, isValid })`.
+
+`tools/deploy-pages.sh` at the repo root builds and publishes it with the
+other apps (`sketches` is in its `APPS` list).
 
 `src/shared/` holds what sketches share: a copy of the music-runners piano roll
 and control kit (copied, not imported, so it can be edited freely here; the
@@ -30,6 +45,15 @@ and B, a piano roll whose first two notes (in time) are A and B, slide
 duration (seconds) and sharpness (`logisticSigmoid`, 0 linear .. 1 step).
 **Solo**: only the selected region drones; click it to trigger, right-click
 to stop. Cmd-Z / Shift-Cmd-Z undo everything (layout, region settings, synth).
+
+The notes roll shows every region at once: the selected region's notes in
+orange (A and B bright, any others dim) and editable, the others as faded
+ghosts. Each region's A→B is joined by a line drawn with that region's
+sigmoid, so you can see the glide's arc (orange for the selection, dashed grey
+for the rest). **Full height** hides the other properties and gives the roll
+the whole panel. The panel's left edge and the bar above the synth dock drag
+to resize (double-click the bar to fit the panel again); sizes save with the
+project but are not part of undo.
 
 **Play mode**: everything starts off. Click an off region: it ramps in on A,
 then with 50% probability sweeps on to B. Click a sounding region: it sweeps
