@@ -4,7 +4,7 @@
 // the document rectangles directly.
 import Konva from "konva";
 import { useEffect, useRef, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, memo } from "react";
-import { asBrowser, rootContext } from "../../shared/clock";
+import { onRender } from "../../shared/frameLoop";
 import { DEFAULT_LINE_WIDTH, deletePlan, regionAt, type Region } from "./model";
 import { engine } from "./engine";
 import { doc, findRegion, placeAnchor, select, ui } from "./store";
@@ -38,17 +38,15 @@ export const Grid = memo(function Grid({ width }: { width: number }) {
     });
     layer.add(shape);
     stage.add(layer);
-    const loop = rootContext().branch(async (ctx) => {
-      const frames = asBrowser(ctx);
-      while (true) {
-        await frames.waitFrame();
-        const size = sizeRef.current;
-        if (stage.width() !== size.width || stage.height() !== size.height) stage.size(size);
-        layer.batchDraw();
-      }
-    }, "square draw loop");
+    // Drawn in the page's frame loop, after the engine's update, synchronously
+    // (layer.draw, not batchDraw, which would defer to Konva's own RAF).
+    const off = onRender(() => {
+      const size = sizeRef.current;
+      if (stage.width() !== size.width || stage.height() !== size.height) stage.size(size);
+      layer.draw();
+    });
     return () => {
-      loop.cancel();
+      off();
       stage.destroy();
     };
   }, []);
@@ -181,28 +179,38 @@ function draw(g: CanvasRenderingContext2D, width: number, height: number, hover:
   for (const region of doc.regions) {
     const t = tileOf(region, width, height, radius);
     const { level, mix } = engine.display(region.id);
-    g.save();
-    tilePath(g, t);
-    g.clip();
-    g.fillStyle = OFF_FILL;
-    g.fillRect(t.x, t.y, t.w, t.h);
-    if (level > 0.0005) {
-      // The sweep line: A to its left, B to its right. Fully A puts it on the
-      // right edge, so A -> B moves it right to left.
-      const line = t.x + t.w * (1 - mix);
-      g.globalAlpha = level;
-      g.fillStyle = region.colorA;
-      g.fillRect(t.x, t.y, line - t.x, t.h);
-      g.fillStyle = region.colorB;
-      g.fillRect(line, t.y, t.x + t.w - line, t.h);
-      g.globalAlpha = 1;
-      // The sweep line itself, drawn like the dividers (at the edges it is one)
-      if (mix > 0.0005 && mix < 0.9995) {
-        g.fillStyle = "#000";
-        g.fillRect(line - LINE / 2, t.y, LINE, t.h);
+    // The sweep line: A to its left, B to its right. Fully A puts it on the
+    // right edge, so A -> B moves it right to left. Mid-sweep it is a gap of
+    // line width like a divider, and the two sides are rounded tiles of their
+    // own, so its corners round like the dividers' do. Each side's corners
+    // (outer ones too) shrink with it once it is narrower than twice the
+    // radius, so a side sweeping away narrows to a sliver, not a wedge.
+    const sweeping = level > 0.0005 && mix > 0.0005 && mix < 0.9995;
+    // The gap enters from just outside the right edge and leaves just
+    // outside the left (where it merges into the divider), so each side is
+    // exactly full width at mix 0 and 1: no jump when the sweep ends.
+    const line = t.x - LINE / 2 + (t.w + LINE) * (1 - mix);
+    const parts: { x: number; w: number; color: string }[] = sweeping
+      ? [
+        { x: t.x, w: Math.max(0, line - LINE / 2 - t.x), color: region.colorA },
+        { x: Math.max(t.x, line + LINE / 2), w: Math.max(0, t.x + t.w - Math.max(t.x, line + LINE / 2)), color: region.colorB },
+      ]
+      : [{ x: t.x, w: t.w, color: mix >= 0.5 ? region.colorB : region.colorA }];
+    // The tile's own radius (already capped by its size); the ground is black.
+    const tileRadius = t.radii[0];
+    for (const part of parts) {
+      if (part.w <= 0.25) continue;
+      g.beginPath();
+      g.roundRect(part.x, t.y, part.w, t.h, Math.max(0, Math.min(tileRadius, part.w / 2)));
+      g.fillStyle = OFF_FILL;
+      g.fill();
+      if (level > 0.0005) {
+        g.globalAlpha = level;
+        g.fillStyle = part.color;
+        g.fill();
+        g.globalAlpha = 1;
       }
     }
-    g.restore();
   }
 
   const hovered = findRegion(ui.hoverId);

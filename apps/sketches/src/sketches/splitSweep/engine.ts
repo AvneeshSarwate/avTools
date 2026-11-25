@@ -16,6 +16,7 @@ import { snapshot, subscribe } from "valtio";
 import { ClapNoteExpression, SixSinesEventType, type SixSinesEvent } from "../../../../../packages/six-sines/six-sines-node.js";
 import { audioContext } from "../../shared/audio";
 import { asBrowser, rootContext } from "../../shared/clock";
+import { onUpdate } from "../../shared/frameLoop";
 import { logisticSigmoid } from "../../shared/logisticSigmoid";
 import { setMidiListener } from "../../shared/midiInput";
 import { SixSinesSynth } from "../../shared/sixSines/synth";
@@ -132,13 +133,6 @@ class SweepEngine {
     syncPatch();
     subscribe(doc, syncPatch);
     setMidiListener((event) => this.onMidi(event));
-    rootContext().branch(async (ctx) => {
-      const frames = asBrowser(ctx);
-      while (true) {
-        await frames.waitFrame();
-        this.frame(now());
-      }
-    }, "split-sweep frame loop");
   }
 
   get audioStarted() {
@@ -239,7 +233,8 @@ class SweepEngine {
     }
   }
 
-  private frame(t: number) {
+  /** Advance to frame time `t`: display values for the grid, and per-voice updates to the synth. */
+  frame(t: number) {
     for (const [id, voice] of this.voices) {
       const region = findRegion(id);
       if (!region) {
@@ -372,6 +367,9 @@ class SweepEngine {
 }
 
 export const engine = new SweepEngine();
+// Animation values update in the page's frame loop (before the grid draws),
+// at the frame's time, whether or not audio has started.
+onUpdate((time) => engine.frame(time));
 
 // Debug handle for the console and browser checks.
 (globalThis as Record<string, unknown>).__splitSweep = { engine, doc, ui };

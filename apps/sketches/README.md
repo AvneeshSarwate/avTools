@@ -76,7 +76,11 @@ is the tail) while the colour fades out over 0.2 s. The dock at the bottom is th
 patch. Live MIDI input plays a second engine with the same patch, so it never
 steals drone voices.
 
-Timing: every animation is a core-timing branch of one root context
-(`src/shared/clock.ts`); a track's phase is computed from scheduler time and
-its arrival is a `waitSec` branch, and one `waitFrame` loop draws the Konva
-layer and sends per-voice updates.
+Timing: everything runs on one core-timing root context
+(`src/shared/clock.ts`). A track's phase is computed from scheduler time and
+its arrival (the 50% follow-on sweep, a fade's end) is a `waitSec` branch.
+Per-frame work goes through the page's single frame loop
+(`src/shared/frameLoop.ts`): each frame, at the frame's own time, the engine
+updates (display values, per-voice synth events) and then the grid draws
+synchronously. Nothing else schedules frames, and React is not involved in
+animation.
