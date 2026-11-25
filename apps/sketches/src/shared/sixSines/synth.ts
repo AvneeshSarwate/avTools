@@ -24,8 +24,11 @@ export class SixSinesSynth {
   private disposed = false;
   readonly ready: Promise<SixSinesNode>;
 
-  /** `onPresetLoaded` runs after a preset load, which silences every voice in the engine. */
-  constructor(context: AudioContext, private readonly onPresetLoaded: () => void = () => {}) {
+  /**
+   * `onPresetLoaded` runs after a preset load, which silences every voice in
+   * the engine. `output` is where it plays (the context's destination by default).
+   */
+  constructor(context: AudioContext, private readonly onPresetLoaded: () => void = () => {}, output: AudioNode = context.destination) {
     const assets = sixSinesAssets();
     this.ready = SixSinesNode.create(context, {
       workletUrl: new URL("six-sines-worklet.js", assets),
@@ -36,7 +39,7 @@ export class SixSinesSynth {
         void node.dispose();
         throw new Error("disposed");
       }
-      node.connect(context.destination);
+      node.connect(output);
       this.node = node;
       this.configure(true);
       return node;

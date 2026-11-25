@@ -97,6 +97,8 @@ function replaceDoc(next: SketchDoc) {
   doc.regions = next.regions;
   doc.cornerRadius = next.cornerRadius;
   doc.lineWidth = next.lineWidth;
+  doc.sweepBoostDb = next.sweepBoostDb;
+  doc.sweepBoostRampSec = next.sweepBoostRampSec;
   doc.synth = next.synth;
   if (ui.selectedId && !next.regions.some((r) => r.id === ui.selectedId)) ui.selectedId = null;
   ui.split = null;
@@ -175,6 +177,18 @@ export function setCornerRadius(pixels: number) {
 }
 
 /** The global line thickness (dividers, frame, sweep line), in px at REFERENCE_HEIGHT. */
+export function setSweepBoost(db: number) {
+  history.commit("sweep boost", (d) => {
+    d.sweepBoostDb = Math.max(0, db);
+  }, { coalesce: "sweep-boost" });
+}
+
+export function setSweepBoostRamp(ms: number) {
+  history.commit("sweep boost ramp", (d) => {
+    d.sweepBoostRampSec = Math.max(1, ms) / 1000;
+  }, { coalesce: "sweep-boost-ramp" });
+}
+
 export function setLineWidth(pixels: number) {
   history.commit("line width", (d) => {
     d.lineWidth = Math.max(1, pixels) / REFERENCE_HEIGHT;

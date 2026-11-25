@@ -3,6 +3,11 @@
 // that turns them into Six Sines events. Plain objects, no React: the canvas
 // reads `display()` each frame.
 //
+// Audio: every region has its own Six Sines engine (all on the doc's patch)
+// into its own gain, so one region's note can be made louder: the sweep boost
+// ramps that gain up when a sweep starts and back down when it ends (Six Sines
+// has no per-note volume). One more engine plays live MIDI and roll previews.
+//
 // Timing is core-timing throughout. A Track moves a phase u in 0..1 linearly
 // at 1/duration per second; its value at any time is computed from where and
 // when it last changed direction, so the frame loop can read it at the frame's
@@ -20,7 +25,7 @@ import { onUpdate } from "../../shared/frameLoop";
 import { logisticSigmoid } from "../../shared/logisticSigmoid";
 import { setMidiListener } from "../../shared/midiInput";
 import { SixSinesSynth } from "../../shared/sixSines/synth";
-import { hexToRgb, regionPitches, type Region } from "./model";
+import { DEFAULT_SWEEP_BOOST_DB, DEFAULT_SWEEP_BOOST_RAMP_SEC, hexToRgb, regionPitches, type Region } from "./model";
 import { doc, findRegion, ui } from "./store";
 
 /** Macro 1..3 Level take the colour's R, G, B (0..1); Macro 4 Level takes the fade level. */
@@ -29,6 +34,8 @@ const DRONE_VELOCITY = 0.8;
 const PITCH_BEND_RANGE = 2;
 /** Seconds for a region to fade on (first click) or off (right click); the A/B sweep uses the region's slide duration. */
 const FADE_SEC = 0.2;
+/** A removed region's engine stays up this long so its note's release can ring out. */
+const RETIRE_MS = 5000;
 
 const now = () => rootContext().scheduler.now();
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -94,6 +101,12 @@ class RegionVoice {
   sent = [NaN, NaN, NaN, NaN, NaN];
   /** Curved values for drawing, refreshed every frame. */
   shown = { level: 0, mix: 0 };
+  /** This region's engine and output gain (made once audio has started). */
+  synth: SixSinesSynth | null = null;
+  gain: GainNode | null = null;
+  /** The sweep boost: 0 normal .. 1 at `boostPeak` (linear gain). */
+  readonly boost = new Track();
+  boostPeak = 1;
 }
 
 export interface RegionDisplay {
@@ -105,7 +118,7 @@ const OFF: RegionDisplay = { level: 0, mix: 0 };
 
 class SweepEngine {
   private voices = new Map<string, RegionVoice>();
-  private synth: SixSinesSynth | null = null;
+  /** Live MIDI and roll previews. */
   private live: SixSinesSynth | null = null;
   private nextNoteId = 1;
   private previewNote: { noteId: number; key: number } | null = null;
@@ -121,17 +134,20 @@ class SweepEngine {
     }
     this.started = true;
     const context = audioContext();
-    this.synth = new SixSinesSynth(context, () => this.retrigger());
-    this.live = new SixSinesSynth(context, () => this.liveNotes.clear());
-    // Notes sent while the worklet was loading were dropped: sound them now.
-    void this.synth.ready.then(() => this.retrigger(), () => {});
-    const syncPatch = () => {
+    this.live = new SixSinesSynth(context, () => {
+      this.liveNotes.clear();
+      this.previewNote = null;
+    });
+    // Every region gets its engine up front (and new regions as they appear),
+    // so a first click sounds at once; all of them follow the patch.
+    const sync = () => {
       const patch = snapshot(doc).synth;
-      this.synth?.setPatch(patch);
       this.live?.setPatch(patch);
+      for (const region of doc.regions) this.voice(region.id);
+      for (const voice of this.voices.values()) voice.synth?.setPatch(patch);
     };
-    syncPatch();
-    subscribe(doc, syncPatch);
+    sync();
+    subscribe(doc, sync);
     setMidiListener((event) => this.onMidi(event));
   }
 
@@ -146,7 +162,57 @@ class SweepEngine {
   private voice(id: string) {
     let voice = this.voices.get(id);
     if (!voice) this.voices.set(id, (voice = new RegionVoice()));
+    if (this.started && !voice.synth) this.attachAudio(id, voice);
     return voice;
+  }
+
+  private attachAudio(id: string, voice: RegionVoice) {
+    const context = audioContext();
+    const gain = context.createGain();
+    gain.connect(context.destination);
+    const synth = new SixSinesSynth(context, () => this.retrigger(voice, id), gain);
+    synth.setPatch(snapshot(doc).synth);
+    voice.gain = gain;
+    voice.synth = synth;
+    // A note sent while the worklet was loading was dropped: sound it now.
+    void synth.ready.then(() => this.retrigger(voice, id), () => {});
+  }
+
+  /** A region gone (split away, deleted, undone): its note ends, its engine follows after the release. */
+  private retire(id: string, voice: RegionVoice) {
+    voice.level.set(0);
+    voice.mix.set(0);
+    voice.boost.set(0);
+    this.noteOff(voice);
+    this.voices.delete(id);
+    const { synth, gain } = voice;
+    voice.synth = null;
+    voice.gain = null;
+    if (synth) window.setTimeout(() => {
+      synth.dispose();
+      gain?.disconnect();
+    }, RETIRE_MS);
+  }
+
+  /**
+   * The sweep boost, `dir` +1 up (a sweep started) or -1 back to normal (it
+   * ended, or the region was released): a linear gain ramp from where it is,
+   * taking the remaining part of the ramp time.
+   */
+  private setBoost(voice: RegionVoice, dir: -1 | 1) {
+    const ramp = Math.max(0.001, doc.sweepBoostRampSec ?? DEFAULT_SWEEP_BOOST_RAMP_SEC);
+    const u = voice.boost.value();
+    if (dir > 0) voice.boostPeak = 10 ** ((doc.sweepBoostDb ?? DEFAULT_SWEEP_BOOST_DB) / 20);
+    if ((dir > 0 && u >= 1 && !voice.boost.moving) || (dir < 0 && u <= 0 && !voice.boost.moving)) return;
+    voice.boost.go(dir, ramp);
+    const gain = voice.gain;
+    if (!gain) return;
+    const t = gain.context.currentTime;
+    const from = 1 + (voice.boostPeak - 1) * u;
+    const remaining = (dir > 0 ? 1 - u : u) * ramp;
+    gain.gain.cancelScheduledValues(t);
+    gain.gain.setValueAtTime(from, t);
+    gain.gain.linearRampToValueAtTime(dir > 0 ? voice.boostPeak : 1, t + Math.max(0.001, remaining));
   }
 
   /** Left click: ramp in A (then maybe sweep to B), or sweep / reverse the sweep. */
@@ -177,7 +243,9 @@ class SweepEngine {
     if (!region || !voice || voice.levelTarget === 0) return;
     const mix = voice.mix;
     const dir = mix.moving ? (mix.dir > 0 ? -1 : 1) : mix.value() >= 0.5 ? -1 : 1;
-    mix.go(dir, region.slideSec);
+    // Louder while it moves; back to normal when it arrives (a reversal keeps it up)
+    mix.go(dir, region.slideSec, () => this.setBoost(voice, -1));
+    this.setBoost(voice, 1);
   }
 
   /**
@@ -189,6 +257,7 @@ class SweepEngine {
     if (!voice || voice.levelTarget === 0) return;
     voice.levelTarget = 0;
     this.noteOff(voice);
+    this.setBoost(voice, -1);
     voice.level.go(-1, FADE_SEC, () => voice.mix.set(0));
   }
 
@@ -211,25 +280,22 @@ class SweepEngine {
     voice.key = regionPitches(region).a;
     voice.noteId = this.nextNoteId++;
     voice.sent.fill(NaN);
-    this.synth?.send([{ type: SixSinesEventType.noteOn, noteId: voice.noteId, port: 0, channel: 0, key: voice.key, value: DRONE_VELOCITY }]);
+    voice.synth?.send([{ type: SixSinesEventType.noteOn, noteId: voice.noteId, port: 0, channel: 0, key: voice.key, value: DRONE_VELOCITY }]);
     this.update(voice, region, now());
   }
 
   private noteOff(voice: RegionVoice) {
     if (voice.noteId === null) return;
-    this.synth?.send([{ type: SixSinesEventType.noteOff, noteId: voice.noteId, port: 0, channel: 0, key: voice.key, value: 0 }]);
+    voice.synth?.send([{ type: SixSinesEventType.noteOff, noteId: voice.noteId, port: 0, channel: 0, key: voice.key, value: 0 }]);
     voice.noteId = null;
   }
 
-  /** A preset load silences the engine: start the sounding drones again. */
-  private retrigger() {
-    this.previewNote = null;
-    for (const [id, voice] of this.voices) {
-      const region = findRegion(id);
-      if (voice.noteId !== null && region) {
-        voice.noteId = null;
-        this.noteOn(voice, region);
-      }
+  /** A preset load silences an engine (and notes are dropped while it starts): sound its drone again. */
+  private retrigger(voice: RegionVoice, id: string) {
+    const region = findRegion(id);
+    if (voice.noteId !== null && region && this.voices.get(id) === voice) {
+      voice.noteId = null;
+      this.noteOn(voice, region);
     }
   }
 
@@ -238,11 +304,7 @@ class SweepEngine {
     for (const [id, voice] of this.voices) {
       const region = findRegion(id);
       if (!region) {
-        // Split away or undone: its voice goes with it.
-        voice.level.set(0);
-        voice.mix.set(0);
-        this.noteOff(voice);
-        this.voices.delete(id);
+        this.retire(id, voice);
         continue;
       }
       this.update(voice, region, t);
@@ -272,14 +334,14 @@ class SweepEngine {
         ? { type: SixSinesEventType.noteExpression, ...identity, expressionId: ClapNoteExpression.tuning, value }
         : { type: SixSinesEventType.paramMod, ...identity, paramId: MACRO_LEVEL_IDS[index - 1], value });
     });
-    this.synth?.send(events);
+    voice.synth?.send(events);
   }
 
   // --- previews from the piano roll ---------------------------------------------
 
-  /** Keyboard column: hold a key on the drone synth, coloured like the selected region's A. */
+  /** Keyboard column: hold a key (on the live engine), coloured like the selected region's A. */
   previewKey(pitch: number | null) {
-    const synth = this.synth;
+    const synth = this.live;
     if (!synth) return;
     if (this.previewNote) {
       synth.send([{ type: SixSinesEventType.noteOff, ...this.previewNote, port: 0, channel: 0, value: 0 }]);
@@ -293,7 +355,7 @@ class SweepEngine {
 
   /** A note clicked, added or dragged in the roll: a short audition. */
   audition(pitch: number) {
-    const synth = this.synth;
+    const synth = this.live;
     if (!synth) return;
     const note = { noteId: this.nextNoteId++, key: pitch };
     synth.send(this.previewEvents(note));
@@ -358,10 +420,13 @@ class SweepEngine {
       voice.noteId = null;
       voice.shown.level = 0;
       voice.shown.mix = 0;
+      voice.boost.set(0);
+      voice.gain?.gain.cancelScheduledValues(0);
+      voice.gain?.gain.setValueAtTime(1, voice.gain.context.currentTime);
+      voice.synth?.send([{ type: SixSinesEventType.allNotesOff }]);
     }
     this.previewNote = null;
     this.liveNotes.clear();
-    this.synth?.send([{ type: SixSinesEventType.allNotesOff }]);
     this.live?.send([{ type: SixSinesEventType.allNotesOff }]);
   }
 }

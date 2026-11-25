@@ -32,8 +32,15 @@ export interface SketchDoc {
   cornerRadius: number;
   /** Thickness of the dividers, frame and sweep line, as a fraction of the canvas height. */
   lineWidth: number;
+  /** How much louder (dB) a region's note is while it sweeps between A and B. */
+  sweepBoostDb: number;
+  /** Seconds for the boost to ramp up when a sweep starts, and back down when it ends. */
+  sweepBoostRampSec: number;
   synth: SynthPatch;
 }
+
+export const DEFAULT_SWEEP_BOOST_DB = 6;
+export const DEFAULT_SWEEP_BOOST_RAMP_SEC = 0.05;
 
 /** The corner radius and line width controls work in pixels at this canvas height. */
 export const REFERENCE_HEIGHT = 1080;
@@ -65,7 +72,8 @@ export function defaultRegion(): Region {
 }
 
 export function defaultDoc(): SketchDoc {
-  return { version: 1, regions: [defaultRegion()], cornerRadius: DEFAULT_CORNER_RADIUS, lineWidth: DEFAULT_LINE_WIDTH, synth: { parameters: {} } };
+  return { version: 1, regions: [defaultRegion()], cornerRadius: DEFAULT_CORNER_RADIUS, lineWidth: DEFAULT_LINE_WIDTH,
+    sweepBoostDb: DEFAULT_SWEEP_BOOST_DB, sweepBoostRampSec: DEFAULT_SWEEP_BOOST_RAMP_SEC, synth: { parameters: {} } };
 }
 
 export function regionAt(regions: readonly Region[], x: number, y: number): Region | undefined {
