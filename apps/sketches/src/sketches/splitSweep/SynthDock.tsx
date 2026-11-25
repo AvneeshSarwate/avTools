@@ -23,10 +23,10 @@ export const SynthDock = memo(function SynthDock() {
     <div className="synth-dock">
       <div className="synth-dock__bar">
         <span className="synth-dock__title">Six Sines</span>
-        <span className="dim">Macro 1/2/3 ← region R/G/B · Macro 4 ← fade level (all per voice)</span>
+        <span className="dim">Macro 1/2/3 ← region R/G/B · Macro 4 ← sweep boost (per voice; routed to Main Amplitude)</span>
         <span className="spacer" />
         <Field label="Sweep boost" title="How much louder a region's note is while it sweeps between A and B">
-          <NumberBox value={snap.sweepBoostDb} min={0} max={18} step={0.5} unit="dB" bar horizontal width={110} onChange={setSweepBoost} />
+          <NumberBox value={snap.sweepBoostDb} min={0} max={12} step={0.5} unit="dB" bar horizontal width={110} onChange={setSweepBoost} />
         </Field>
         <Field label="Ramp" title="Time for the boost to ramp up when a sweep starts, and back down when it ends">
           <NumberBox value={Math.round(snap.sweepBoostRampSec * 1000)} min={5} max={500} step={5} unit="ms" bar horizontal width={110} onChange={setSweepBoostRamp} />
