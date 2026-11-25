@@ -39,25 +39,33 @@ function HistoryStatus() {
   );
 }
 
-/** The default view: the canvas alone, as large as the window allows, played by clicking. */
+/**
+ * The default view: the canvas alone, as large as the window allows, played
+ * by clicking. Always landscape: on a portrait window (a phone held upright)
+ * the whole view is turned 90° to fill the screen sideways, since a page
+ * cannot lock the orientation (iOS never, Android only in fullscreen).
+ */
 function Presentation() {
   const lineWidth = useSnapshot(doc).lineWidth;
-  const frameRef = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(() => Math.floor(Math.min(window.innerWidth, window.innerHeight * ASPECT)));
-  useLayoutEffect(() => {
-    const element = frameRef.current;
-    if (!element) return;
-    const observer = new ResizeObserver(([entry]) => {
-      const { width: w, height: h } = entry.contentRect;
-      setWidth(Math.max(200, Math.floor(Math.min(w, h * ASPECT))));
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
+  const [viewport, setViewport] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
+  useEffect(() => {
+    const onResize = () => setViewport({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
   }, []);
+  const rotated = viewport.h > viewport.w;
+  // The landscape box the view lays out in (the window, sideways when rotated)
+  const boxW = rotated ? viewport.h : viewport.w;
+  const boxH = rotated ? viewport.w : viewport.h;
+  const width = Math.max(200, Math.floor(Math.min(boxW, boxH * ASPECT)));
   return (
-    <div className="present" ref={frameRef}>
+    <div className={`present${rotated ? " is-rotated" : ""}`} style={rotated ? { width: boxW, height: boxH } : undefined}>
       <div className="present__canvas">
-        <Grid width={width} />
+        <Grid width={width} rotated={rotated} />
         {/* Inside the frame's corner, so the black text is always on a tile */}
         <button className="present__edit" onClick={() => (ui.mode = "edit")}
           style={{ top: lineWidth * (width / ASPECT) + 8, right: lineWidth * (width / ASPECT) + 12 }}>edit</button>

@@ -20,7 +20,8 @@ const HOVER = "#4fb3ff";
 const DELETE = "#ff4f4f";
 
 
-export const Grid = memo(function Grid({ width }: { width: number }) {
+/** `rotated`: the grid is shown turned 90° clockwise (presentation on a portrait screen). */
+export const Grid = memo(function Grid({ width, rotated = false }: { width: number; rotated?: boolean }) {
   const height = Math.round(width / ASPECT);
   const host = useRef<HTMLDivElement>(null);
   const sizeRef = useRef({ width, height });
@@ -49,9 +50,13 @@ export const Grid = memo(function Grid({ width }: { width: number }) {
     };
   }, []);
 
+  // A pointer in the grid's own unit square. Turned 90° clockwise, the grid's
+  // x runs down the screen and its y runs right to left.
   const unit = (event: { clientX: number; clientY: number }) => {
     const rect = host.current!.getBoundingClientRect();
-    return { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height };
+    const across = (event.clientX - rect.left) / rect.width;
+    const down = (event.clientY - rect.top) / rect.height;
+    return rotated ? { x: down, y: 1 - across } : { x: across, y: down };
   };
 
   const onPointerDown = (event: ReactPointerEvent) => {
