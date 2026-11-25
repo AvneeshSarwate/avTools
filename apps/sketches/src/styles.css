@@ -14,12 +14,16 @@ body { background: var(--c-base); color: var(--c-text); font-size: 12px; }
 .topbar__title { font-weight: 600; letter-spacing: 0.04em; margin-right: 6px; }
 .mode-switch { display: flex; gap: 2px; }
 .project-controls { display: flex; align-items: center; gap: 6px; }
-.project-controls__status { display: flex; align-items: center; gap: 5px; color: var(--c-text-dim); font-variant-numeric: tabular-nums; min-width: 110px; }
+/* Fixed width (fits "saved 12:59:59 PM"), so the toolbar never shifts as the text changes */
+.project-controls__status { display: flex; align-items: center; gap: 5px; color: var(--c-text-dim); font-variant-numeric: tabular-nums; width: 9.5rem; flex: none; white-space: nowrap; overflow: hidden; }
 
 .workspace { flex: none; display: flex; min-height: 300px; }
 .workspace:not([style*="height"]) { min-height: 560px; }
 .palette { flex: none; width: 200px; overflow-y: auto; background: var(--c-surface-1); border-right: 1px solid var(--c-line); padding-bottom: 8px; }
-.palette > header { font-weight: 600; padding: 10px 12px 6px; }
+.palette > header, .sidebar__section > header { font-weight: 600; padding: 10px 12px 6px; }
+.sidebar__section { border-bottom: 1px solid var(--c-line-soft); padding-bottom: 10px; margin-bottom: 2px; }
+.sidebar__fields { display: flex; flex-direction: column; gap: 6px; padding: 0 12px; }
+.sidebar__fields .ui-field { justify-content: space-between; }
 .palette__row { display: flex; align-items: center; gap: 6px; padding: 4px 10px; cursor: pointer; border-left: 3px solid transparent; }
 .palette__row.is-hover { background: var(--c-surface-3); border-left-color: #4fb3ff; }
 .palette__row.is-selected { border-left-color: #ffcc00; }

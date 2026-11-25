@@ -84,7 +84,7 @@ function RegionEditor({ region }: { region: Region }) {
 
       <section className="panel__section panel__section--notes">
         <header>
-          Notes <span className="dim">A {noteName(a)} → B {noteName(b)} · double-click to add</span>
+          Notes <span className="dim">A {noteName(a)} → B {noteName(b)}</span>
           <span className="spacer" />
           <Toggle label="Full height" on={full} onChange={toggleFull} title="Show only the roll, at the panel's full height" />
         </header>
@@ -107,6 +107,14 @@ function RegionEditor({ region }: { region: Region }) {
             </div>
             <CurvePreview sharpness={region.sharpness} />
           </div>
+          <Field label="Direction" title="Which way the A -> B sweep runs (B -> A runs back)">
+            <div className="mode-switch">
+              <Button label="→" title="Left to right" active={(region.direction ?? "horizontal") === "horizontal"} tone="select"
+                onClick={() => updateRegion(id, "sweep direction", { direction: "horizontal" })} />
+              <Button label="↓" title="Top to bottom" active={region.direction === "vertical"} tone="select"
+                onClick={() => updateRegion(id, "sweep direction", { direction: "vertical" })} />
+            </div>
+          </Field>
         </section>
       )}
     </div>

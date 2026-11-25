@@ -19,7 +19,11 @@ export interface Region {
   slideSec: number;
   /** logisticSigmoid sharpness, 0 (linear) .. 1 (step). */
   sharpness: number;
+  /** The A -> B sweep: left to right (default) or top to bottom; B -> A runs back. */
+  direction?: SweepDirection;
 }
+
+export type SweepDirection = "horizontal" | "vertical";
 
 export interface SketchDoc {
   version: 1;
@@ -35,6 +39,9 @@ export interface SketchDoc {
 export const REFERENCE_HEIGHT = 1080;
 export const DEFAULT_CORNER_RADIUS = 12 / REFERENCE_HEIGHT;
 export const DEFAULT_LINE_WIDTH = 7 / REFERENCE_HEIGHT;
+
+/** Width : height of the grid. Regions are stored in unit coordinates on both axes. */
+export const ASPECT = 16 / 9;
 
 export type SplitAxis = "vertical" | "horizontal";
 

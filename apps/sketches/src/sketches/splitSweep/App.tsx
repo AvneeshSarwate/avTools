@@ -1,14 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSnapshot } from "valtio";
-import { Button, Field, NumberBox } from "../../shared/controls/controls";
-import { REFERENCE_HEIGHT } from "./model";
+import { Button } from "../../shared/controls/controls";
 import { ProjectControls } from "../../shared/ProjectControls";
 import { engine } from "./engine";
 import { PaletteBar } from "./PaletteBar";
 import { RegionPanel } from "./RegionPanel";
-import { ASPECT, Grid } from "./Grid";
+import { Grid } from "./Grid";
+import { ASPECT } from "./model";
 import { SynthDock } from "./SynthDock";
-import { applySplit, cancelSplit, deleteRegion, doc, history, setCornerRadius, setLineWidth, loadDoc, PANEL_MAX, PANEL_MIN, project, TOP_MIN, ui, view } from "./store";
+import { applySplit, cancelSplit, deleteRegion, doc, history, rememberDevView, loadDoc, PANEL_MAX, PANEL_MIN, project, TOP_MIN, ui, view } from "./store";
 
 /** Track a pointer drag on window until release. */
 function dragWith(event: React.PointerEvent, move: (dx: number, dy: number) => void) {
@@ -24,24 +24,6 @@ function dragWith(event: React.PointerEvent, move: (dx: number, dy: number) => v
   document.body.classList.add("is-resizing");
   window.addEventListener("pointermove", onMove);
   window.addEventListener("pointerup", onUp);
-}
-
-/** Global look: line thickness and the radius of every tile corner inside the frame. */
-function StyleFields() {
-  const snap = useSnapshot(doc);
-  const scale = `in px at ${REFERENCE_HEIGHT}p (scales with the canvas)`;
-  return (
-    <>
-      <Field label="Lines" title={`Divider, frame and sweep line thickness, ${scale}`}>
-        <NumberBox value={Math.round(snap.lineWidth * REFERENCE_HEIGHT)} min={1} max={40} step={1} unit="px" bar horizontal width={80}
-          onChange={setLineWidth} />
-      </Field>
-      <Field label="Corners" title={`Tile corner radius, ${scale}`}>
-        <NumberBox value={Math.round(snap.cornerRadius * REFERENCE_HEIGHT)} min={0} max={80} step={1} unit="px" bar horizontal width={80}
-          onChange={setCornerRadius} />
-      </Field>
-    </>
-  );
 }
 
 /** Undo/redo and save status: its own subscriber, so edits and autosaves re-render only this. */
@@ -112,8 +94,12 @@ export function SplitSweepApp() {
   useEffect(() => {
     engine.releaseAll();
     ui.hoverId = null;
+
     if (state.mode !== "edit") ui.split = null;
   }, [state.mode]);
+
+  // Dev: a reload comes back to this view and selection.
+  useEffect(rememberDevView, [state.mode, state.selectedId]);
 
   // Solo: only the selected region drones while editing.
   useEffect(() => {
@@ -167,7 +153,6 @@ export function SplitSweepApp() {
       <header className="topbar">
         <span className="topbar__title">split · sweep</span>
         <Button label="Present" onClick={() => (ui.mode = "present")} title="The canvas alone, full window, played" />
-        <StyleFields />
         <div className="mode-switch">
           <Button label="Edit" active={state.mode === "edit"} tone="select" onClick={() => (ui.mode = "edit")} />
           <Button label="Play" active={state.mode === "play"} tone="play" onClick={() => {

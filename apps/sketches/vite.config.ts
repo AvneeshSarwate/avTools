@@ -24,6 +24,11 @@ export default defineConfig({
     port: 5192,
     strictPort: true,
     fs: { allow: [searchForWorkspaceRoot(process.cwd())] },
+    // Autosave rewrites projects/*/project.json on every edit. Those files are
+    // also bundled (store.ts's import.meta.glob, for static hosts), so a
+    // watched save would hot-swap every module importing the store: a remount
+    // of the whole UI per edit. In dev the project API reads them from disk.
+    watch: { ignored: ["**/projects/**"] },
   },
   resolve: {
     alias: {

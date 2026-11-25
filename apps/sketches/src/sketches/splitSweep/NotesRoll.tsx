@@ -98,15 +98,33 @@ export function NotesRoll({ region, full }: { region: Region; full: boolean }) {
   const onGhostHover = useCallback((ghost: string | null) => {
     ui.hoverId = ghost ? ghost.slice(0, ghost.indexOf(":")) : null;
   }, []);
+  // A note clicked in another region: once that region is selected, select
+  // that note and leave the view where it is (it is under the pointer).
+  const pendingNote = useRef<string | null>(null);
   const onGhostClick = useCallback((ghost: string) => {
+    const regionId = ghost.slice(0, ghost.indexOf(":"));
+    const noteId = ghost.slice(ghost.indexOf(":") + 1);
+    const note = doc.regions.find((r) => r.id === regionId)?.notes.find((n) => n.id === noteId);
+    // Hear it, like clicking one of the selected region's notes
+    if (note) {
+      engine.start();
+      engine.audition(note.pitch);
+    }
     ui.hoverId = null;
-    select(ghost.slice(0, ghost.indexOf(":")));
+    pendingNote.current = noteId;
+    select(regionId);
   }, []);
 
   // One roll for every region: switching swaps its notes (the roll re-hydrates
   // from the prop) and frames them in the same commit, so there is no remount
   // and no frame of the old view. The roll's effects run before this one.
   useEffect(() => {
+    const note = pendingNote.current;
+    pendingNote.current = null;
+    if (note) {
+      roll.current?.selectNotes([note]);
+      return;
+    }
     roll.current?.selectNotes([]);
     roll.current?.fitToContent();
   }, [id]);

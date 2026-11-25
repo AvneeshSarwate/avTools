@@ -9,6 +9,20 @@ import { applyDelete, canSplit, REFERENCE_HEIGHT, clampAnchor, deletePlan, defau
 
 export const doc = proxy<SketchDoc>(defaultDoc());
 
+// --- dev reloads keep the view ------------------------------------------------
+// A full reload in development (editing a module like this one) would drop
+// back to the presentation; the view and selection are kept in
+// sessionStorage, in dev builds only. Deployed builds always open presenting.
+const DEV_VIEW_KEY = "split-sweep:dev-view";
+const devView: { mode?: "present" | "edit" | "play"; selectedId?: string | null } = import.meta.env.DEV
+  ? JSON.parse(sessionStorage.getItem(DEV_VIEW_KEY) ?? "{}")
+  : {};
+
+/** Dev only: remember the view and selection for the next reload. */
+export function rememberDevView() {
+  if (import.meta.env.DEV) sessionStorage.setItem(DEV_VIEW_KEY, JSON.stringify({ mode: ui.mode, selectedId: ui.selectedId }));
+}
+
 export const ui = proxy<{
   /** present: the canvas alone, played (the default view); edit / play: the editor. */
   mode: "present" | "edit" | "play";
@@ -25,8 +39,8 @@ export const ui = proxy<{
   canRedo: boolean;
   lastAction: string;
 }>({
-  // ?view=edit opens straight into the editor
-  mode: new URLSearchParams(location.search).get("view") === "edit" ? "edit" : "present",
+  // ?view=edit opens straight into the editor; in dev, a reload keeps the view
+  mode: new URLSearchParams(location.search).get("view") === "edit" ? "edit" : devView.mode ?? "present",
   selectedId: null,
   hoverId: null,
   deletePreview: false,
@@ -72,7 +86,8 @@ export const project = createProject<SavedData>({
     replaceDoc({ ...defaultDoc(), ...(data ?? {}) });
     Object.assign(view, DEFAULT_VIEW, data?.view ?? {});
     history.reset();
-    ui.selectedId = doc.regions[0]?.id ?? null;
+    const kept = devView.selectedId;
+    ui.selectedId = kept && doc.regions.some((r) => r.id === kept) ? kept : (doc.regions[0]?.id ?? null);
   },
 });
 subscribe(view, () => project.changed());

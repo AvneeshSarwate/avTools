@@ -1,5 +1,5 @@
 import Konva from 'konva'
-import type { PianoRollState, NoteData } from './state'
+import type { PianoRollState, NoteData, GhostNote } from './state'
 import { labelColorFor, noteFillColor } from './metadata/rules'
 import {
   uid,
@@ -132,8 +132,10 @@ const MAX_PREVIEW_NOTES = 12
  * Audition several notes together (a moved selection, notes a marquee just
  * reached). One per pitch, capped, lowest first so a big set stays a chord.
  */
-export function previewNotes(state: PianoRollState, notes: Iterable<NoteData>) {
-  const byPitch = new Map<number, NoteData>()
+type Audible = Pick<NoteData, 'pitch' | 'velocity'>
+
+export function previewNotes(state: PianoRollState, notes: Iterable<Audible>) {
+  const byPitch = new Map<number, Audible>()
   for (const note of notes) if (!byPitch.has(note.pitch)) byPitch.set(note.pitch, note)
   const chord = [...byPitch.values()].sort((a, b) => a.pitch - b.pitch).slice(0, MAX_PREVIEW_NOTES)
   for (const note of chord) previewNote(state, note)
@@ -148,7 +150,7 @@ function selectedNotes(state: PianoRollState): NoteData[] {
   return out
 }
 
-function previewNote(state: PianoRollState, note: NoteData) {
+function previewNote(state: PianoRollState, note: Audible) {
   if (!state.grid.previewSound) return
   state.hooks.onNotePreview?.({ pitch: note.pitch, velocity: note.velocity })
 }
@@ -1022,6 +1024,20 @@ export function hitTest(state: PianoRollState, pos: { x: number; y: number }): H
   return BACKGROUND_HIT
 }
 
+/** Ghosts a stage rectangle touches (the marquee). */
+function ghostsInRect(state: PianoRollState, rect: { x: number; y: number; width: number; height: number }): GhostNote[] {
+  const { scrollX, scrollY } = state.viewport
+  const { quarterNoteWidth, noteHeight } = state.grid
+  const out: GhostNote[] = []
+  for (const ghost of state.ghostNotes) {
+    const x = ghost.position * quarterNoteWidth - scrollX
+    const y = (127 - ghost.pitch) * noteHeight - scrollY
+    const w = ghost.duration * quarterNoteWidth
+    if (x + w >= rect.x && x <= rect.x + rect.width && y + noteHeight >= rect.y && y <= rect.y + rect.height) out.push(ghost)
+  }
+  return out
+}
+
 /** The top ghost under a stage point: the last drawn wins. */
 function ghostAt(state: PianoRollState, pos: { x: number; y: number }): string | null {
   const { scrollX, scrollY } = state.viewport
@@ -1192,6 +1208,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
     }
 
     state.interaction.isMarqueeSelecting = true
+    marqueeGhosts = new Set()
     state.interaction.marqueeStart = pos
     state.interaction.marqueeCurrent = pos
     state.interaction.marqueeIsShift = isShift
@@ -1205,6 +1222,52 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
 
     state.requestRedraw('notes')
   })
+
+  // The marquee follows the pointer, also outside the stage (clamped to its
+  // edges, from the window's pointer events) until the button is released.
+  let marqueeGhosts = new Set<string>()
+  const updateMarquee = (pos: { x: number; y: number }) => {
+    state.interaction.marqueeCurrent = pos
+
+    renderMarqueeRect(state)
+
+    // Update selection based on intersection
+    const rect = {
+      x: Math.min(state.interaction.marqueeStart!.x, pos.x),
+      y: Math.min(state.interaction.marqueeStart!.y, pos.y),
+      width: Math.abs(pos.x - state.interaction.marqueeStart!.x),
+      height: Math.abs(pos.y - state.interaction.marqueeStart!.y)
+    }
+
+    const intersecting = getNotesInRect(state, rect)
+    const before = new Set(state.selection.selectedIds)
+
+    mutateSelection(state, () => {
+      if (state.interaction.marqueeIsShift) {
+        const base = state.interaction.marqueeInitialSelection ?? new Set<string>()
+        state.selection.selectedIds = new Set(base)
+      } else {
+        state.selection.selectedIds.clear()
+      }
+      intersecting.forEach((id) => state.selection.selectedIds.add(id))
+    })
+
+    // Notes the marquee just reached play (passing through notes plays them)
+    const reached: NoteData[] = []
+    for (const id of intersecting) {
+      if (before.has(id)) continue
+      const note = state.notes.get(id)
+      if (note) reached.push(note)
+    }
+    // Other tracks' (ghost) notes it reaches play too, though they are not selected
+    const ghostsNow = ghostsInRect(state, rect)
+    const audible: Audible[] = [...reached]
+    for (const ghost of ghostsNow) if (!marqueeGhosts.has(ghost.id)) audible.push({ pitch: ghost.pitch, velocity: 100 })
+    marqueeGhosts = new Set(ghostsNow.map((ghost) => ghost.id))
+    if (audible.length > 0) previewNotes(state, audible)
+
+    state.requestRedraw('notes')
+  }
 
   // Mouse move
   stage.on('mousemove touchmove', (e) => {
@@ -1256,43 +1319,7 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
     }
 
     // Handle marquee selection
-    if (state.interaction.isMarqueeSelecting) {
-      state.interaction.marqueeCurrent = pos
-
-      renderMarqueeRect(state)
-
-      // Update selection based on intersection
-      const rect = {
-        x: Math.min(state.interaction.marqueeStart!.x, pos.x),
-        y: Math.min(state.interaction.marqueeStart!.y, pos.y),
-        width: Math.abs(pos.x - state.interaction.marqueeStart!.x),
-        height: Math.abs(pos.y - state.interaction.marqueeStart!.y)
-      }
-
-      const intersecting = getNotesInRect(state, rect)
-      const before = new Set(state.selection.selectedIds)
-
-      mutateSelection(state, () => {
-        if (state.interaction.marqueeIsShift) {
-          const base = state.interaction.marqueeInitialSelection ?? new Set<string>()
-          state.selection.selectedIds = new Set(base)
-        } else {
-          state.selection.selectedIds.clear()
-        }
-        intersecting.forEach((id) => state.selection.selectedIds.add(id))
-      })
-
-      // Notes the marquee just reached play (passing through notes plays them)
-      const reached: NoteData[] = []
-      for (const id of intersecting) {
-        if (before.has(id)) continue
-        const note = state.notes.get(id)
-        if (note) reached.push(note)
-      }
-      if (reached.length > 0) previewNotes(state, reached)
-
-      state.requestRedraw('notes')
-    }
+    if (state.interaction.isMarqueeSelecting) updateMarquee(pos)
   })
 
   // Mouse up
@@ -1380,15 +1407,27 @@ export function setupEventHandlers(state: PianoRollState, stage: Konva.Stage): (
       state.layers.overlay?.batchDraw()
     }
   }
+  const onWindowPointerMove = (event: PointerEvent) => {
+    if (!state.interaction.isMarqueeSelecting || !state.stage) return
+    if (event.target instanceof Node && container.contains(event.target)) return
+    if ((event.buttons & 1) === 0) return endGesture()
+    const box = container.getBoundingClientRect()
+    updateMarquee({
+      x: Math.max(0, Math.min(stage.width(), event.clientX - box.left)),
+      y: Math.max(0, Math.min(stage.height(), event.clientY - box.top))
+    })
+  }
   const onWindowPointerUp = (event: PointerEvent) => {
     if (event.target instanceof Node && container.contains(event.target)) return
     endGesture()
   }
   window.addEventListener('pointerup', onWindowPointerUp, true)
+  window.addEventListener('pointermove', onWindowPointerMove, true)
   window.addEventListener('pointercancel', endGesture, true)
   window.addEventListener('blur', endGesture)
   return () => {
     window.removeEventListener('pointerup', onWindowPointerUp, true)
+    window.removeEventListener('pointermove', onWindowPointerMove, true)
     window.removeEventListener('pointercancel', endGesture, true)
     window.removeEventListener('blur', endGesture)
     stage.off('mousedown touchstart mousemove touchmove mouseup touchend mouseleave contextmenu')
