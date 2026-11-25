@@ -82,10 +82,10 @@ body.is-resizing { user-select: none; cursor: grabbing; }
 /* Portrait window: the view is laid out landscape (size set inline) and turned 90° clockwise to fill it */
 .present.is-rotated { inset: auto; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(90deg); }
 .present .grid-canvas { box-shadow: none; cursor: pointer; }
-.present__edit {
-  position: absolute; top: 14px; right: 18px;
+.present__controls { position: absolute; display: flex; gap: 4px; }
+.present__button {
   background: transparent; border: none; padding: 4px 6px;
   color: #000; font: 500 13px/1 "Inter", ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.04em;
   cursor: pointer;
 }
-.present__edit:hover { text-decoration: underline; }
+.present__button:hover { text-decoration: underline; }

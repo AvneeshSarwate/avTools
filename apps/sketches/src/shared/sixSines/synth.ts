@@ -22,6 +22,9 @@ export class SixSinesSynth {
   private wanted: SynthPatch = { parameters: {} };
   private configuration = Promise.resolve();
   private disposed = false;
+  /** Set once the first patch (preset + parameter values) is in: notes before that are dropped. */
+  private configured = false;
+  /** Resolves when the engine is running and has the patch it was given. */
   readonly ready: Promise<SixSinesNode>;
 
   /**
@@ -42,13 +45,18 @@ export class SixSinesSynth {
       node.connect(output);
       this.node = node;
       this.configure(true);
-      return node;
+      // Not ready until the patch is loaded: a note played before then would
+      // sound the init patch and be cut off by the preset load.
+      return this.configuration.catch(() => {}).then(() => {
+        this.configured = true;
+        return node;
+      });
     });
     this.ready.catch(reportError);
   }
 
   get isReady(): boolean {
-    return this.node !== null;
+    return this.node !== null && this.configured;
   }
 
   setPatch(patch: SynthPatch) {
@@ -56,9 +64,9 @@ export class SixSinesSynth {
     if (this.node) this.configure(false);
   }
 
-  /** Untimed events: delivered on the next render quantum. Dropped until the engine is ready. */
+  /** Untimed events: delivered on the next render quantum. Dropped until the engine is ready (patch loaded). */
   send(events: SixSinesEvent[]) {
-    if (!this.node || this.disposed || events.length === 0) return;
+    if (!this.node || !this.configured || this.disposed || events.length === 0) return;
     void this.node.send(events).catch(reportError);
   }
 

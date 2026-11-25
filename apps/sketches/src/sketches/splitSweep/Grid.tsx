@@ -18,6 +18,9 @@ const OFF_FILL = "#ece8df";
 const SELECT = "#ffcc00";
 const HOVER = "#4fb3ff";
 const DELETE = "#ff4f4f";
+/** Two taps on a region this close in time and space turn it off. */
+const DOUBLE_TAP_MS = 300;
+const DOUBLE_TAP_PX = 40;
 
 
 /** `rotated`: the grid is shown turned 90° clockwise (presentation on a portrait screen). */
@@ -27,6 +30,7 @@ export const Grid = memo(function Grid({ width, rotated = false }: { width: numb
   const sizeRef = useRef({ width, height });
   sizeRef.current = { width, height };
   const hover = useRef<{ x: number; y: number } | null>(null);
+  const lastTap = useRef<{ id: string; time: number; x: number; y: number } | null>(null);
 
   useEffect(() => {
     const container = host.current!;
@@ -66,10 +70,26 @@ export const Grid = memo(function Grid({ width, rotated = false }: { width: numb
     if (!region) return;
     const right = event.button === 2;
     if (event.button !== 0 && !right) return;
-    // Present and play: the performance gestures
+    // Present and play: the performance gestures. Tap: ramp in / sweep /
+    // reverse. Right-click or double tap: off. A tap acts at once (no wait to
+    // see if a second follows), so a double tap's first tap has done its
+    // usual thing before the second turns the region off.
     if (ui.mode !== "edit") {
-      if (right) engine.release(region.id);
-      else engine.trigger(region.id);
+      if (right) {
+        engine.release(region.id);
+        return;
+      }
+      const tap = { id: region.id, time: event.timeStamp, x: event.clientX, y: event.clientY };
+      const previous = lastTap.current;
+      const double = previous && previous.id === tap.id && tap.time - previous.time < DOUBLE_TAP_MS &&
+        Math.hypot(tap.x - previous.x, tap.y - previous.y) < DOUBLE_TAP_PX;
+      if (double) {
+        lastTap.current = null;
+        engine.release(region.id);
+      } else {
+        lastTap.current = tap;
+        engine.trigger(region.id);
+      }
       return;
     }
     // Edit mode

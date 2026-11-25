@@ -39,6 +39,48 @@ function HistoryStatus() {
   );
 }
 
+// --- fullscreen -------------------------------------------------------------------
+// Fullscreen from a tap (browsers allow it only from a gesture), then a
+// landscape lock where the browser allows one (Android, in fullscreen only);
+// with the screen itself landscape, the presentation no longer turns. iPhone
+// Safari has no page fullscreen: the button is hidden there, and the turned
+// view (or Add to Home Screen) stands in.
+type WebkitDocument = Document & { webkitFullscreenEnabled?: boolean; webkitFullscreenElement?: Element | null; webkitExitFullscreen?: () => Promise<void> };
+type WebkitElement = HTMLElement & { webkitRequestFullscreen?: () => Promise<void> };
+type LockableOrientation = ScreenOrientation & { lock?: (orientation: string) => Promise<void> };
+
+const webkitDocument = document as WebkitDocument;
+const canFullscreen = !!(document.fullscreenEnabled || webkitDocument.webkitFullscreenEnabled);
+const fullscreenElement = () => document.fullscreenElement ?? webkitDocument.webkitFullscreenElement ?? null;
+
+async function toggleFullscreen() {
+  try {
+    if (fullscreenElement()) {
+      await (document.exitFullscreen?.() ?? webkitDocument.webkitExitFullscreen?.());
+      return;
+    }
+    const root = document.documentElement as WebkitElement;
+    await (root.requestFullscreen?.() ?? root.webkitRequestFullscreen?.());
+    await (screen.orientation as LockableOrientation | undefined)?.lock?.("landscape");
+  } catch {
+    // No lock here (iPad, desktop) or fullscreen refused: the view still turns itself
+  }
+}
+
+function useFullscreen() {
+  const [on, setOn] = useState(() => !!fullscreenElement());
+  useEffect(() => {
+    const update = () => setOn(!!fullscreenElement());
+    document.addEventListener("fullscreenchange", update);
+    document.addEventListener("webkitfullscreenchange", update);
+    return () => {
+      document.removeEventListener("fullscreenchange", update);
+      document.removeEventListener("webkitfullscreenchange", update);
+    };
+  }, []);
+  return on;
+}
+
 /**
  * The default view: the canvas alone, as large as the window allows, played
  * by clicking. Always landscape: on a portrait window (a phone held upright)
@@ -57,6 +99,7 @@ function Presentation() {
       window.removeEventListener("orientationchange", onResize);
     };
   }, []);
+  const fullscreen = useFullscreen();
   const rotated = viewport.h > viewport.w;
   // The landscape box the view lays out in (the window, sideways when rotated)
   const boxW = rotated ? viewport.h : viewport.w;
@@ -67,8 +110,12 @@ function Presentation() {
       <div className="present__canvas">
         <Grid width={width} rotated={rotated} />
         {/* Inside the frame's corner, so the black text is always on a tile */}
-        <button className="present__edit" onClick={() => (ui.mode = "edit")}
-          style={{ top: lineWidth * (width / ASPECT) + 8, right: lineWidth * (width / ASPECT) + 12 }}>edit</button>
+        <div className="present__controls" style={{ top: lineWidth * (width / ASPECT) + 8, right: lineWidth * (width / ASPECT) + 12 }}>
+          {canFullscreen ? (
+            <button className="present__button" onClick={() => void toggleFullscreen()}>{fullscreen ? "exit fullscreen" : "fullscreen"}</button>
+          ) : null}
+          <button className="present__button" onClick={() => (ui.mode = "edit")}>edit</button>
+        </div>
       </div>
     </div>
   );
@@ -168,7 +215,7 @@ export function SplitSweepApp() {
             ui.mode = "play";
           }} />
         </div>
-        <span className="dim">Tab switches · {state.mode === "play" ? "click: ramp in / sweep / reverse · right-click: off" : "click: select"}</span>
+        <span className="dim">Tab switches · {state.mode === "play" ? "click: ramp in / sweep / reverse · double-click or right-click: off" : "click: select"}</span>
         <span className="spacer" />
         <HistoryStatus />
       </header>
