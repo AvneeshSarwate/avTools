@@ -12,4 +12,9 @@ export const SKETCHES: SketchEntry[] = [
     title: "split · sweep",
     description: "A 16:9 canvas cut into regions; each drones a Six Sines voice and sweeps between two colours and two notes.",
   },
+  {
+    slug: "pointer-pressure",
+    title: "pointer · pressure",
+    description: "Shows the pressure, tilt, twist and contact size a pen, finger or mouse reports, and inks smooth pressure-width spline strokes (three.js ink, p5.js readout).",
+  },
 ];

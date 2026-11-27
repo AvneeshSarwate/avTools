@@ -84,3 +84,42 @@ Per-frame work goes through the page's single frame loop
 updates (display values, per-voice synth events) and then the grid draws
 synchronously. Nothing else schedules frames, and React is not involved in
 animation.
+## pointer-pressure
+
+Shows what the Pointer Events API reports for each pointer: pressure (and
+peak per stroke), tangential pressure, tiltX/Y, altitude/azimuth (from the
+browser, or derived from tilt where it doesn't report them), twist and contact
+size. Strokes leave ink whose width follows pressure and whose colour follows
+tilt; C clears it. Two canvases: three.js draws the ink underneath, p5.js draws
+the readout and per-pointer cursors (pressure ring, lean line, twist tick) on
+a transparent canvas on top that also takes the pointer events. One frame
+loop: p5's `draw()` renders the ink layer, then the HUD.
+
+Ink (`src/sketches/pointerPressure/strokes.ts`): a variable-width stroke is
+the union of discs swept along its path, drawn as a chain of tapered capsules
+(two discs plus their tangent lines), each shaded from its exact signed
+distance (Inigo Quilez's uneven capsule). That is right by construction at
+turns tighter than the half-width, where width changes faster than the stroke
+moves, at the ends (round caps come free) and where a stroke crosses itself,
+all of which an offset triangle strip gets wrong. Each stroke is drawn in two
+passes so every pixel is blended once: depth-only with the signed distance as
+depth (LESS), then colour with depth EQUAL plus a stencil, which gives the
+exact antialiased coverage of the union without darkened seams where
+capsules overlap.
+
+CPU side: coalesced pointer samples → One Euro filter (2D on position, so both
+axes share one cutoff; separately on pressure) → control points at least 2 px
+apart → centripetal Catmull-Rom spline, half-width on a monotone cubic over
+the same parameter → adaptive samples (offset-curve length and turning
+angle) → one capsule between consecutive samples.
+
+It is incremental: a spline segment depends on four control points, so only
+the newest segment is provisional (it extrapolates its far neighbour). Each
+frame re-tessellates from the first non-final segment and
+`capsuleBuffer.ts` uploads just that range (`addUpdateRange`, about 0.5 KB
+per frame while drawing; buffers double when full). The screen keeps its
+contents between frames (`preserveDrawingBuffer`), and a frame redraws only
+a scissor rect around the capsules that changed. Finished strokes are baked
+once into a persistent render target (which only grows, so resizing or
+rotating keeps the ink) and their buffers go back to a pool. Idle frames draw
+nothing.

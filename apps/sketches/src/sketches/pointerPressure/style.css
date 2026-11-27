@@ -1,0 +1,20 @@
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0d0d0f;
+  overscroll-behavior: none;
+}
+/* Pens and fingers must reach the page as pointer events, not scroll/zoom. */
+canvas {
+  display: block;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+/* Ink (three.js) below, HUD (p5, transparent, receives the pointer events) on top. */
+canvas {
+  position: fixed;
+  inset: 0;
+}
