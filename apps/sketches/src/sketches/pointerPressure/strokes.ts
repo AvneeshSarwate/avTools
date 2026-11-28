@@ -25,10 +25,11 @@
 // one shared buffer when the pen lifts) plus one per stroke in progress. No
 // depth or stencil buffer.
 //
-// Finished strokes keep their control points (and a snapshot of them as
-// drawn). Reshaping animations (scatter, restore) move the control points and
-// re-tessellate those strokes every frame, then rebuild the shared buffer, so
-// the ink stays a smooth spline while it moves.
+// Finished strokes keep their control points (with the time each was drawn,
+// and a snapshot of them as drawn). Reshaping animations (scatter, restore,
+// wander) are tweens over ranges of control points; each frame they move the
+// points, re-tessellate the strokes they touched and rebuild the shared
+// buffer, so the ink stays a smooth spline while it moves.
 //
 // CPU pipeline per stroke:
 //   pointer samples → One Euro filter (2D on position, separately on
@@ -72,7 +73,6 @@ const MAX_SAMPLES = 96; // per spline segment
 const FIT_TOL = 0.25; // px a capsule may deviate from the samples it spans
 const FIT_COLOR_TOL = 0.02; // per channel, 0..1: colour is interpolated linearly along a capsule
 const MAX_CAPSULE = 96; // px, longest capsule
-const RESHAPE_MS = 1000; // scatter / restore duration
 const MIN_HALF_WIDTH = 0.6;
 const MAX_HALF_WIDTH = 16;
 
@@ -202,27 +202,39 @@ class Stroke {
     return this.pending;
   }
 
-  /** Current control point positions, as x, y pairs. */
-  positions(): Float32Array {
-    const out = new Float32Array(this.n * 2);
-    for (let i = 0; i < this.n; i++) {
-      out[2 * i] = this.cps[i * CP];
-      out[2 * i + 1] = this.cps[i * CP + 1];
+  /** When each control point was drawn (seconds, pointer event time). */
+  readonly times: number[] = [];
+
+  get pointCount() {
+    return this.n;
+  }
+
+  /** Control point positions [i0, i1) as x, y pairs (default: all). */
+  positions(i0 = 0, i1 = this.n): Float32Array {
+    const out = new Float32Array((i1 - i0) * 2);
+    for (let i = i0; i < i1; i++) {
+      out[2 * (i - i0)] = this.cps[i * CP];
+      out[2 * (i - i0) + 1] = this.cps[i * CP + 1];
     }
     return out;
+  }
+
+  /** Overwrite control point positions from index i0 (x, y pairs); call rebuild() after. */
+  setPositions(i0: number, xy: Float32Array) {
+    const c = this.cps;
+    for (let k = 0; k < xy.length / 2; k++) {
+      c[(i0 + k) * CP] = xy[2 * k];
+      c[(i0 + k) * CP + 1] = xy[2 * k + 1];
+    }
   }
 
   snapshot() {
     this.original = this.positions();
   }
 
-  /** Move the control points (x, y pairs) and re-tessellate the whole stroke. */
-  reshape(xy: Float32Array) {
+  /** Re-tessellate the whole stroke from its current control points. */
+  rebuild() {
     const c = this.cps;
-    for (let i = 0; i < this.n; i++) {
-      c[i * CP] = xy[2 * i];
-      c[i * CP + 1] = xy[2 * i + 1];
-    }
     this.samples = c.slice(0, SP); // sample 0 is the first control point
     this.segSample = [1];
     this.finalSegs = 0;
@@ -245,6 +257,7 @@ class Stroke {
     }
     const hw = pressureToHalfWidth(p);
     this.cps.push(x, y, hw, s.r, s.g, s.b);
+    this.times.push(s.t);
     this.n++;
     if (this.n === 1) {
       this.samples.push(x, y, hw, s.r, s.g, s.b);
@@ -432,6 +445,31 @@ class Stroke {
   }
 }
 
+// Control points [i0, i1) of a stroke easing from `from` to `to` (x, y pairs).
+interface Tween {
+  stroke: Stroke;
+  i0: number;
+  i1: number;
+  from: Float32Array;
+  to: Float32Array;
+  start: number;
+  ms: number;
+  done?: boolean;
+}
+
+// A range wander has bent: control points i0..i1 (inclusive, ends pinned) and
+// their positions before the bend, which a restore returns to.
+interface WanderRange {
+  stroke: Stroke;
+  i0: number;
+  i1: number;
+  base: Float32Array;
+}
+
+const WANDER_FRAMES = 20; // a range is the points drawn within this many 60 Hz frames
+const WANDER_RESTORE_P = 0.3; // chance a step restores a range instead of bending one
+const WANDER_TRIES = 12; // random picks before a step gives up and restores instead
+
 export class StrokeLayer {
   readonly canvas: HTMLCanvasElement;
   private renderer: THREE.WebGLRenderer;
@@ -443,7 +481,8 @@ export class StrokeLayer {
   private strokes: Stroke[] = []; // finished, in the order they ended
   private order = 1;
   private frame = { width: 1, height: 1 }; // CSS px
-  private anim: { strokes: Stroke[]; from: Float32Array[]; to: Float32Array[]; start: number } | null = null;
+  private tweens: Tween[] = [];
+  private ranges: WanderRange[] = []; // ranges wander has bent and not yet restored
 
   constructor(parent: HTMLElement, background = 0x0d0d0f) {
     this.renderer = new THREE.WebGLRenderer({ antialias: false, depth: false, stencil: false });
@@ -510,50 +549,109 @@ export class StrokeLayer {
     for (const stroke of this.active.values()) this.scene.remove(stroke.buffer.mesh);
     this.active.clear();
     this.strokes = [];
-    this.anim = null;
+    this.tweens = [];
+    this.ranges = [];
     this.finished.clear();
   }
 
-  /** Bend every finished stroke: 10 points each move ~80 px (staying in frame), eased over a second. */
-  scatter() {
-    this.animateTo((s) => scatterTargets(s.positions(), this.frame));
-  }
-
-  /** Ease every finished stroke back to its shape as drawn. */
-  restore() {
-    this.animateTo((s) => s.original ?? s.positions());
-  }
-
-  // Start from wherever the strokes are now (mid-animation included).
-  private animateTo(target: (s: Stroke) => Float32Array) {
-    const strokes = [...this.strokes];
-    this.anim = {
-      strokes,
-      from: strokes.map((s) => s.positions()),
-      to: strokes.map(target),
-      start: performance.now(),
-    };
-  }
-
-  private stepAnimation() {
-    const a = this.anim;
-    if (!a) return;
-    const t = Math.min(1, (performance.now() - a.start) / RESHAPE_MS);
-    const e = easeOutExpo(t);
-    for (let i = 0; i < a.strokes.length; i++) {
-      const from = a.from[i], to = a.to[i];
-      const xy = new Float32Array(from.length);
-      for (let k = 0; k < xy.length; k++) xy[k] = from[k] + (to[k] - from[k]) * e;
-      a.strokes[i].reshape(xy);
+  /**
+   * Bend every finished stroke: `points` points along each move about
+   * `distance` px (staying in frame), eased over `ms`. Cancels wander's ranges.
+   */
+  scatter(points: number, distance: number, ms: number) {
+    this.tweens = [];
+    this.ranges = [];
+    for (const s of this.strokes) {
+      this.tween(s, 0, scatterTargets(s.positions(), this.frame, distance, points), ms);
     }
+  }
+
+  /** Ease every finished stroke back to its shape as drawn, over `ms`. Cancels wander's ranges. */
+  restore(ms: number) {
+    this.tweens = [];
+    this.ranges = [];
+    for (const s of this.strokes) this.tween(s, 0, s.original ?? s.positions(), ms);
+  }
+
+  /**
+   * One step of the wander process (main.ts calls it once a second while it
+   * is on). With probability WANDER_RESTORE_P, or when no free range turns up
+   * in WANDER_TRIES random picks, ease one bent range back; otherwise bend a
+   * new range: the control points drawn within WANDER_FRAMES frames from a
+   * random start on a random stroke, not overlapping any bent range. `points`
+   * picks inside it move about `distance` px with its two ends pinned, so the
+   * bend tapers into the rest of the stroke.
+   */
+  wanderStep(points: number, distance: number, ms: number) {
+    if (this.ranges.length > 0 && Math.random() < WANDER_RESTORE_P) {
+      this.restoreRange(ms);
+      return;
+    }
+    const range = this.pickRange();
+    if (!range) {
+      if (this.ranges.length > 0) this.restoreRange(ms);
+      return;
+    }
+    const { stroke, i0, i1 } = range;
+    const base = stroke.positions(i0, i1 + 1);
+    this.ranges.push({ stroke, i0, i1, base });
+    this.tween(stroke, i0, scatterTargets(base, this.frame, distance, points, true), ms);
+  }
+
+  // A random free range, or null after WANDER_TRIES misses.
+  private pickRange(): { stroke: Stroke; i0: number; i1: number } | null {
+    const candidates = this.strokes.filter((s) => s.pointCount >= 3);
+    if (candidates.length === 0) return null;
+    for (let tryNo = 0; tryNo < WANDER_TRIES; tryNo++) {
+      const stroke = candidates[Math.floor(Math.random() * candidates.length)];
+      const n = stroke.pointCount, times = stroke.times;
+      const i0 = Math.floor(Math.random() * (n - 2));
+      let i1 = i0 + 1;
+      while (i1 < n - 1 && times[i1 + 1] - times[i0] <= WANDER_FRAMES / 60) i1++;
+      if (i1 - i0 < 2) i1 = Math.min(n - 1, i0 + 2); // at least one point between the pinned ends
+      // Ranges may share an end point (it stays pinned in both).
+      const clash = this.ranges.some((r) => r.stroke === stroke && i0 < r.i1 && r.i0 < i1);
+      if (!clash) return { stroke, i0, i1 };
+    }
+    return null;
+  }
+
+  private restoreRange(ms: number) {
+    const k = Math.floor(Math.random() * this.ranges.length);
+    const [r] = this.ranges.splice(k, 1);
+    this.tween(r.stroke, r.i0, r.base, ms);
+  }
+
+  // Ease control points from index i0 to `to` (x, y pairs), starting from
+  // where they are now; replaces any tween already moving those points.
+  private tween(stroke: Stroke, i0: number, to: Float32Array, ms: number) {
+    const i1 = i0 + to.length / 2;
+    this.tweens = this.tweens.filter((t) => t.stroke !== stroke || t.i1 <= i0 || i1 <= t.i0);
+    this.tweens.push({ stroke, i0, i1, from: stroke.positions(i0, i1), to, start: performance.now(), ms });
+  }
+
+  private stepTweens() {
+    if (this.tweens.length === 0) return;
+    const now = performance.now();
+    const moved = new Set<Stroke>();
+    for (const t of this.tweens) {
+      const p = Math.min(1, (now - t.start) / t.ms);
+      const e = easeOutExpo(p);
+      const xy = new Float32Array(t.from.length);
+      for (let k = 0; k < xy.length; k++) xy[k] = t.from[k] + (t.to[k] - t.from[k]) * e;
+      t.stroke.setPositions(t.i0, xy);
+      moved.add(t.stroke);
+      t.done = p >= 1;
+    }
+    this.tweens = this.tweens.filter((t) => !t.done);
+    for (const s of moved) s.rebuild();
     this.finished.clear();
     for (const stroke of this.strokes) this.finished.append(stroke.buffer);
-    if (t >= 1) this.anim = null;
   }
 
   /** Bring the data up to date and draw every stroke. Call once per frame. */
   render() {
-    this.stepAnimation();
+    this.stepTweens();
     for (const stroke of this.active.values()) {
       if (stroke.needsTessellation) stroke.tessellate(false);
       stroke.buffer.flush();

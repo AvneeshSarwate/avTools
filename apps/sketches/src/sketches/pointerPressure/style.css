@@ -21,6 +21,13 @@ canvas {
   top: 0;
   left: 0;
 }
+/* Controls stack above both canvases: they are all position: fixed, and p5
+   appends its canvas after these are built, so DOM order alone would put the
+   HUD canvas (which takes pen events) on top of the params pane. */
+.button-bar,
+.params-pane {
+  z-index: 10;
+}
 .button-bar {
   position: fixed;
   left: 0;
@@ -51,4 +58,45 @@ canvas {
 .button-bar button:disabled {
   color: #555;
   background: #1f1f24;
+}
+.button-bar button.on {
+  background: #3d4a66;
+  border-color: #5b6c94;
+}
+/* The params pane: above the bar's right end, over the drawing. */
+.params-pane {
+  position: fixed;
+  right: 12px;
+  bottom: 84px; /* BAR_HEIGHT + 12 */
+  width: min(360px, calc(100vw - 24px));
+  box-sizing: border-box;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: rgba(24, 24, 28, 0.95);
+  border: 1px solid #3a3a44;
+  border-radius: 12px;
+  font: 14px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #ddd;
+  touch-action: manipulation;
+}
+.params-pane[hidden] {
+  display: none;
+}
+.params-pane label {
+  display: grid;
+  grid-template-columns: 6.5em 1fr 5em;
+  align-items: center;
+  gap: 10px;
+}
+.params-pane input[type="range"] {
+  width: 100%;
+  height: 28px; /* a finger-sized hit area */
+  margin: 0;
+  accent-color: #7b8fc4;
+}
+.params-pane .value {
+  text-align: right;
+  color: #fff;
 }

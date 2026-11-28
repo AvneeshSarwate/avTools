@@ -107,23 +107,79 @@ const strokes = new StrokeLayer(document.body);
 const BAR_HEIGHT = 72;
 const drawHeight = () => Math.max(1, window.innerHeight - BAR_HEIGHT);
 
+// Reshape parameters, edited in the params pane.
+const params = { points: 10, distance: 80, seconds: 1 };
+
+// The wander process (button 3): one step a second while it is on, run from
+// the frame loop.
+let wanderOn = false;
+let nextWander = 0;
+function tickWander(now: number) {
+  if (!wanderOn || now < nextWander) return;
+  strokes.wanderStep(params.points, params.distance, params.seconds * 1000);
+  nextWander = Math.max(nextWander + 1000, now - 1000); // catch up at most one step after a stall
+}
+
 const bar = document.createElement("div");
 bar.className = "button-bar";
-const buttons: Array<[string, (() => void) | null]> = [
-  ["scatter", () => strokes.scatter()],
-  ["restore", () => strokes.restore()],
-  ["3", null],
+const pane = buildParamsPane();
+const buttons: Array<[string, ((button: HTMLButtonElement) => void) | null]> = [
+  ["scatter", () => strokes.scatter(params.points, params.distance, params.seconds * 1000)],
+  ["restore", () => strokes.restore(params.seconds * 1000)],
+  ["wander", (button) => {
+    wanderOn = !wanderOn;
+    nextWander = performance.now();
+    button.classList.toggle("on", wanderOn);
+  }],
   ["4", null],
-  ["5", null],
+  ["params", (button) => {
+    const open = pane.hidden;
+    pane.hidden = !open;
+    button.classList.toggle("on", open);
+  }],
 ];
 for (const [label, action] of buttons) {
   const button = document.createElement("button");
   button.textContent = label;
-  if (action) button.addEventListener("click", action);
+  if (action) button.addEventListener("click", () => action(button));
   else button.disabled = true;
   bar.append(button);
 }
-document.body.append(bar);
+document.body.append(pane, bar);
+
+// A pane above the bar's right end: one slider per parameter, with its value.
+function buildParamsPane() {
+  const el = document.createElement("div");
+  el.className = "params-pane";
+  el.hidden = true;
+  const sliders: Array<{ key: keyof typeof params; label: string; min: number; max: number; step: number; format: (v: number) => string }> = [
+    { key: "points", label: "points", min: 5, max: 50, step: 1, format: (v) => `${v}` },
+    { key: "distance", label: "distance", min: 20, max: 300, step: 1, format: (v) => `${v} px` },
+    { key: "seconds", label: "lerp time", min: 0.2, max: 2, step: 0.05, format: (v) => `${v.toFixed(2)} s` },
+  ];
+  for (const s of sliders) {
+    const row = document.createElement("label");
+    const name = document.createElement("span");
+    name.textContent = s.label;
+    const value = document.createElement("span");
+    value.className = "value";
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = `${s.min}`;
+    input.max = `${s.max}`;
+    input.step = `${s.step}`;
+    input.value = `${params[s.key]}`;
+    const show = () => (value.textContent = s.format(params[s.key]));
+    input.addEventListener("input", () => {
+      params[s.key] = Number(input.value);
+      show();
+    });
+    show();
+    row.append(name, input, value);
+    el.append(row);
+  }
+  return el;
+}
 
 // Main-thread time spent in pointer handlers since the last frame.
 let inputMs = 0;
@@ -406,6 +462,7 @@ const sketch = (p: p5) => {
     const counted = lastFrameAt > 0;
     if (counted) intervals[slot] = start - lastFrameAt;
     lastFrameAt = start;
+    tickWander(start);
     strokes.render();
     const inkDone = performance.now();
     p.clear();

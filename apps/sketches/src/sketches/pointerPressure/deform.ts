@@ -10,17 +10,20 @@ export interface Frame {
   height: number;
 }
 
-const POINTS = 10; // picked per stroke (fewer if the stroke has fewer control points)
 const MARGIN = 24; // px a picked point's target keeps from the frame's edges
 const TRIES = 16; // random directions tried for a target inside the frame
 
 /**
- * Scatter targets: pick POINTS points spread along the stroke (one at a random
+ * Scatter targets: pick `points` points spread along the stroke (one at a random
  * spot in each equal stretch of its length), give each a random offset of
  * about `distance` px, and spread the offsets over the rest of the stroke with
  * a Catmull-Rom curve over arc length (constant past the first and last
  * picked points), so the stroke bends smoothly rather than kinking at the
  * picked points.
+ *
+ * With `pinEnds`, the first and last points stay put (picks come from the
+ * points between them, and their offsets taper to zero at the ends), for
+ * bending a range of a stroke without tearing it from the rest.
  *
  * Staying in `frame` (MARGIN px in): each picked point's direction is redrawn
  * until its own target lands inside (or, failing that, points roughly at the
@@ -28,30 +31,35 @@ const TRIES = 16; // random directions tried for a target inside the frame
  * outside, so then the picks around them take the overshoot back (the whole
  * neighbourhood bends inward rather than being clamped), a few rounds.
  */
-export function scatterTargets(xy: Float32Array, frame: Frame, distance = 80): Float32Array {
+export function scatterTargets(xy: Float32Array, frame: Frame, distance = 80, points = 10, pinEnds = false): Float32Array {
   const n = xy.length / 2;
-  if (n === 0) return new Float32Array(xy);
+  if (n === 0 || (pinEnds && n < 3)) return new Float32Array(xy);
 
   // Arc length at each point.
   const s = new Float32Array(n);
   for (let i = 1; i < n; i++) s[i] = s[i - 1] + Math.hypot(xy[2 * i] - xy[2 * i - 2], xy[2 * i + 1] - xy[2 * i - 1]);
   const total = s[n - 1];
 
-  // Picks: a random spot in each of POINTS equal stretches, snapped to a
+  // Picks: a random spot in each of `points` equal stretches, snapped to a
   // control point; duplicates (short strokes) collapse.
+  const lo = pinEnds ? 1 : 0, hi = pinEnds ? n - 2 : n - 1; // pickable points
   const picked = new Set<number>();
-  const k0 = Math.min(n, POINTS);
+  const k0 = Math.min(hi - lo + 1, points); // fewer if there are fewer points
   for (let b = 0; b < k0; b++) {
     const target = total * (b + Math.random()) / k0;
     let i = 0;
     while (i < n - 1 && s[i + 1] <= target) i++;
-    picked.add(target - s[i] > (s[Math.min(n - 1, i + 1)] - target) ? Math.min(n - 1, i + 1) : i);
+    const snapped = target - s[i] > (s[Math.min(n - 1, i + 1)] - target) ? Math.min(n - 1, i + 1) : i;
+    picked.add(Math.min(hi, Math.max(lo, snapped)));
   }
   const idx = [...picked].sort((a, b) => a - b);
+  if (pinEnds) idx.unshift(0), idx.push(n - 1); // zero-offset anchors at the ends
   const k = idx.length;
+  const pinned = (j: number) => pinEnds && (j === 0 || j === k - 1);
   const at = idx.map((i) => s[i]);
   const dx = new Float32Array(k), dy = new Float32Array(k);
   for (let j = 0; j < k; j++) {
+    if (pinned(j)) continue;
     const len = distance * (0.85 + 0.3 * Math.random());
     [dx[j], dy[j]] = offsetInside(xy[2 * idx[j]], xy[2 * idx[j] + 1], frame, len);
   }
@@ -77,6 +85,7 @@ export function scatterTargets(xy: Float32Array, frame: Frame, distance = 80): F
     }
     if (!outside) break;
     for (let q = 0; q < k; q++) {
+      if (pinned(q)) continue;
       dx[q] += pushX[q];
       dy[q] += pushY[q];
     }

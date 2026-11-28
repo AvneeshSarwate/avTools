@@ -109,8 +109,19 @@ still push other control points out, the picks around them take the
 overshoot back, so the stroke bends inward rather than being clamped. Moves are eased over 1 s with an exponential ease-out (most of the
 move at once, then settling). **restore** eases every stroke back, the same
 way, to a snapshot of its control points taken when the pen lifted. Either
-starts from wherever the strokes are, mid-animation included. Buttons 3-5 are
-placeholders. While a reshape runs, each stroke is re-tessellated from its
+starts from wherever the strokes are, mid-animation included; animations are
+tweens over ranges of control points, so several can run at once. **params** (button
+5) toggles a pane of sliders: points per stroke (5-50, default 10), scatter
+distance (20-300 px, default 80) and lerp time (0.2-2 s, default 1), used by
+the next scatter or restore. **wander** (button 3) toggles a background process
+that takes one step a second: with 30% chance (or when 12 random picks find
+no free range) it eases one bent range back to how it was before its bend;
+otherwise it picks a random stroke and a random start, takes the control
+points drawn within the next 20 frames (at 60 Hz, from each point's
+timestamp) as a range that must not overlap any range already bent, and bends
+it like scatter (params' points, distance and lerp time) with the range's two
+end points pinned so the bend tapers into the rest of the stroke. scatter and
+restore cancel wander's ranges. Button 4 is a placeholder. While a reshape runs, each stroke is re-tessellated from its
 moved control points every frame, so the ink stays a smooth spline.
 
 Ink (`src/sketches/pointerPressure/strokes.ts`): every frame redraws every
