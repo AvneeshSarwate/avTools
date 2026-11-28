@@ -54,8 +54,7 @@ function tiltToSpherical(tiltXDeg: number, tiltYDeg: number): { altitude: number
 // altitudeAngle / azimuthAngle are newer than some DOM typings; read them loosely.
 type AngledPointerEvent = PointerEvent & { altitudeAngle?: number; azimuthAngle?: number };
 
-function read(event: PointerEvent, canvas: HTMLCanvasElement, previous?: PointerReading): PointerReading {
-  const rect = canvas.getBoundingClientRect();
+function read(event: PointerEvent, rect: DOMRect, previous?: PointerReading): PointerReading {
   const angled = event as AngledPointerEvent;
   const reported = typeof angled.altitudeAngle === "number" && typeof angled.azimuthAngle === "number";
   const spherical = reported
@@ -98,45 +97,81 @@ function toSample(r: PointerReading, timeStampMs: number): StrokeSample {
   return { x: r.x, y: r.y, pressure: r.pressure, t: timeStampMs / 1000, r: cr, g: cg, b: cb };
 }
 
+// For checking frame rate on a device: ?hud=0 hides the readout and cursors
+// (the FPS meter stays).
+const showHud = new URLSearchParams(location.search).get("hud") !== "0";
+
 const strokes = new StrokeLayer(document.body);
+
+// The bottom bar: the drawing area is the window above it.
+const BAR_HEIGHT = 72;
+const drawHeight = () => Math.max(1, window.innerHeight - BAR_HEIGHT);
+
+const bar = document.createElement("div");
+bar.className = "button-bar";
+const buttons: Array<[string, (() => void) | null]> = [
+  ["scatter", () => strokes.scatter()],
+  ["restore", () => strokes.restore()],
+  ["3", null],
+  ["4", null],
+  ["5", null],
+];
+for (const [label, action] of buttons) {
+  const button = document.createElement("button");
+  button.textContent = label;
+  if (action) button.addEventListener("click", action);
+  else button.disabled = true;
+  bar.append(button);
+}
+document.body.append(bar);
+
+// Main-thread time spent in pointer handlers since the last frame.
+let inputMs = 0;
 
 const sketch = (p: p5) => {
 
   function attach(canvas: HTMLCanvasElement) {
     const onMove = (event: PointerEvent) => {
+      const t0 = performance.now();
+      const rect = canvas.getBoundingClientRect();
       // Coalesced events carry the full-rate samples between frames (pens
       // report at 120-240 Hz); fall back to the event itself where unsupported.
       const samples = event.getCoalescedEvents?.() ?? [];
       const list = samples.length ? samples : [event];
       for (const sample of list) {
         const previous = readings.get(event.pointerId);
-        const next = read(sample, canvas, previous);
+        const next = read(sample, rect, previous);
         next.id = event.pointerId; // coalesced samples may not carry it consistently
         readings.set(event.pointerId, next);
         if (next.down) strokes.add(event.pointerId, toSample(next, sample.timeStamp));
       }
       focusId = event.pointerId;
+      inputMs += performance.now() - t0;
     };
     const onDown = (event: PointerEvent) => {
+      const t0 = performance.now();
       event.preventDefault();
       try {
         canvas.setPointerCapture(event.pointerId); // keep the stroke when it leaves the canvas
       } catch {
         // Synthetic or already-released pointers can't be captured; inking still works.
       }
-      const next = read(event, canvas);
+      const next = read(event, canvas.getBoundingClientRect());
       readings.set(event.pointerId, next);
       focusId = event.pointerId;
       strokes.begin(event.pointerId, toSample(next, event.timeStamp));
+      inputMs += performance.now() - t0;
     };
     const onUp = (event: PointerEvent) => {
+      const t0 = performance.now();
       strokes.end(event.pointerId);
+      inputMs += performance.now() - t0;
       // Touch contacts vanish on lift; a pen or mouse stays as a hover reading.
       if (event.pointerType === "touch") {
         readings.delete(event.pointerId);
         if (focusId === event.pointerId) focusId = readings.keys().next().value ?? null;
       } else {
-        readings.set(event.pointerId, read(event, canvas, readings.get(event.pointerId)));
+        readings.set(event.pointerId, read(event, canvas.getBoundingClientRect(), readings.get(event.pointerId)));
       }
     };
     const onLeave = (event: PointerEvent) => {
@@ -154,15 +189,18 @@ const sketch = (p: p5) => {
   }
 
   p.setup = () => {
-    const renderer = p.createCanvas(p.windowWidth, p.windowHeight);
-    strokes.resize(p.windowWidth, p.windowHeight, window.devicePixelRatio || 1);
+    const renderer = p.createCanvas(p.windowWidth, drawHeight());
+    strokes.resize(p.windowWidth, drawHeight(), window.devicePixelRatio || 1);
     attach(renderer.elt as HTMLCanvasElement);
     p.textFont("ui-monospace, SFMono-Regular, Menlo, monospace");
+    // p5 caps draw() at 60 fps by default (it skips animation frames that come
+    // sooner); uncap it so 120 Hz displays get every frame.
+    p.frameRate(1000);
   };
 
   p.windowResized = () => {
-    p.resizeCanvas(p.windowWidth, p.windowHeight);
-    strokes.resize(p.windowWidth, p.windowHeight, window.devicePixelRatio || 1);
+    p.resizeCanvas(p.windowWidth, drawHeight());
+    strokes.resize(p.windowWidth, drawHeight(), window.devicePixelRatio || 1);
   };
 
   p.keyPressed = () => {
@@ -292,11 +330,97 @@ const sketch = (p: p5) => {
     p.circle(cx + Math.cos(r.azimuth) * lean * 36, cy + Math.sin(r.azimuth) * lean * 36, 9);
   }
 
+  // FPS meter: intervals between draw() calls (the real frame rate) and
+  // main-thread CPU time per frame, split into pointer handling, the ink layer
+  // (tessellation, uploads, issuing GL calls) and the p5 HUD. GPU and
+  // compositor time are not included: if fps drops while these stay small,
+  // the cost is there.
+  const FRAMES = 120;
+  const intervals = new Float32Array(FRAMES);
+  const inputT = new Float32Array(FRAMES);
+  const inkT = new Float32Array(FRAMES);
+  const hudT = new Float32Array(FRAMES);
+  let frameIndex = 0;
+  let lastFrameAt = 0;
+  const flags = showHud ? "" : "hud off";
+
+  function drawFps() {
+    const n = Math.min(frameIndex, FRAMES);
+    if (n < 2) return;
+    // Averages over the last ~half second of frames, worst over the whole window.
+    let sum = 0, count = 0, worst = 0, best = Infinity, inS = 0, inkS = 0, hudS = 0;
+    for (let k = 1; k <= n; k++) {
+      const i = (frameIndex - k + FRAMES) % FRAMES;
+      if (count < 30) {
+        sum += intervals[i];
+        inS += inputT[i];
+        inkS += inkT[i];
+        hudS += hudT[i];
+        count++;
+      }
+      if (intervals[i] > worst) worst = intervals[i];
+      if (intervals[i] < best) best = intervals[i];
+    }
+    // The display's refresh period: the shortest recent frame.
+    const refresh = Math.max(4, best);
+    const avg = sum / count;
+    const w = 196, h = flags ? 120 : 106;
+    const x = p.width - w - 12, y = 12;
+    p.noStroke();
+    p.fill(0, 170);
+    p.rect(x, y, w, h, 8);
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(20);
+    p.fill(255);
+    p.text(`${(1000 / avg).toFixed(0)} fps`, x + 10, y + 8);
+    p.textSize(11);
+    p.fill(255, 150);
+    p.text(`${avg.toFixed(1)} ms  worst ${worst.toFixed(1)}`, x + 10, y + 32);
+    p.text(`cpu ms  input ${(inS / count).toFixed(1)}`, x + 10, y + 46);
+    p.text(`ink ${(inkS / count).toFixed(1)}  hud ${(hudS / count).toFixed(1)}`, x + 52, y + 60);
+    if (flags) p.text(flags, x + 10, y + 74);
+
+    // Frame-time bars, newest on the right, coloured against the refresh
+    // period (green on time, amber one frame missed, red more); guides at
+    // 120 Hz and 60 Hz.
+    const gx = x + 10, gy = y + h - 30, gw = w - 20, gh = 22, scale = gh / 33.3;
+    const bars = Math.min(n, gw);
+    p.fill(255, 25);
+    p.rect(gx, gy, gw, gh);
+    for (let k = 0; k < bars; k++) {
+      const i = (frameIndex - 1 - k + FRAMES) % FRAMES;
+      const ms = intervals[i];
+      p.fill(ms > refresh * 2.5 ? p.color(255, 90, 70) : ms > refresh * 1.5 ? p.color(255, 200, 90) : p.color(120, 220, 140));
+      const bh = Math.min(gh, ms * scale);
+      p.rect(gx + gw - 1 - k, gy + gh - bh, 1, bh);
+    }
+    p.stroke(255, 70);
+    p.strokeWeight(1);
+    p.line(gx, gy + gh - 8.33 * scale, gx + gw, gy + gh - 8.33 * scale);
+    p.line(gx, gy + gh - 16.67 * scale, gx + gw, gy + gh - 16.67 * scale);
+  }
+
   p.draw = () => {
+    const start = performance.now();
+    const slot = frameIndex % FRAMES;
+    const counted = lastFrameAt > 0;
+    if (counted) intervals[slot] = start - lastFrameAt;
+    lastFrameAt = start;
     strokes.render();
+    const inkDone = performance.now();
     p.clear();
-    for (const r of readings.values()) drawCursor(r);
-    drawReadout(focusId !== null ? readings.get(focusId) : undefined);
+    if (showHud) {
+      for (const r of readings.values()) drawCursor(r);
+      drawReadout(focusId !== null ? readings.get(focusId) : undefined);
+    }
+    drawFps();
+    if (counted) {
+      inputT[slot] = inputMs;
+      inkT[slot] = inkDone - start;
+      hudT[slot] = performance.now() - inkDone;
+      frameIndex++;
+    }
+    inputMs = 0;
   };
 };
 

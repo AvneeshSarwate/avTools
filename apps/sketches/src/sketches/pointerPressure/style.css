@@ -13,8 +13,42 @@ canvas {
   -webkit-user-select: none;
   -webkit-touch-callout: none;
 }
-/* Ink (three.js) below, HUD (p5, transparent, receives the pointer events) on top. */
+/* Ink (three.js) below, HUD (p5, transparent, receives the pointer events) on
+   top, both the window's width and the height above the button bar (set from
+   main.ts). */
 canvas {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+}
+.button-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 72px; /* BAR_HEIGHT in main.ts */
+  box-sizing: border-box;
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #18181c;
+  border-top: 1px solid #2a2a30;
+  touch-action: manipulation; /* no double-tap zoom */
+}
+.button-bar button {
+  flex: 1;
+  font: 600 16px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #eee;
+  background: #2a2a32;
+  border: 1px solid #3a3a44;
+  border-radius: 10px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.button-bar button:active:not(:disabled) {
+  background: #3a3a46;
+}
+.button-bar button:disabled {
+  color: #555;
+  background: #1f1f24;
 }

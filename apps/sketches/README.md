@@ -93,33 +93,57 @@ size. Strokes leave ink whose width follows pressure and whose colour follows
 tilt; C clears it. Two canvases: three.js draws the ink underneath, p5.js draws
 the readout and per-pointer cursors (pressure ring, lean line, twist tick) on
 a transparent canvas on top that also takes the pointer events. One frame
-loop: p5's `draw()` renders the ink layer, then the HUD.
+loop: p5's `draw()` renders the ink layer, then the HUD. The top-right corner has
+an FPS meter: average fps and frame time, the worst frame in the last 120,
+the CPU time of `draw()` itself, and a bar per frame coloured against the
+display's refresh period. p5 caps `draw()` at 60 fps by default; the sketch
+lifts that (`frameRate(1000)`) so 120 Hz displays get every frame.
 
-Ink (`src/sketches/pointerPressure/strokes.ts`): a variable-width stroke is
-the union of discs swept along its path, drawn as a chain of tapered capsules
-(two discs plus their tangent lines), each shaded from its exact signed
-distance (Inigo Quilez's uneven capsule). That is right by construction at
-turns tighter than the half-width, where width changes faster than the stroke
-moves, at the ends (round caps come free) and where a stroke crosses itself,
-all of which an offset triangle strip gets wrong. Each stroke is drawn in two
-passes so every pixel is blended once: depth-only with the signed distance as
-depth (LESS), then colour with depth EQUAL plus a stencil, which gives the
-exact antialiased coverage of the union without darkened seams where
-capsules overlap.
+The drawing area stops above a bar of five buttons. **scatter** bends every
+finished stroke: 10 points spread along each (one at a random spot in each
+tenth of its length) move ~80 px in random directions, the offsets spread
+smoothly along the stroke (Catmull-Rom over arc length, `deform.ts`). It stays
+in the drawing area (24 px in): a point's direction is redrawn until its
+target lands inside (else it heads for the centre), and if blended offsets
+still push other control points out, the picks around them take the
+overshoot back, so the stroke bends inward rather than being clamped. Moves are eased over 1 s with an exponential ease-out (most of the
+move at once, then settling). **restore** eases every stroke back, the same
+way, to a snapshot of its control points taken when the pen lifted. Either
+starts from wherever the strokes are, mid-animation included. Buttons 3-5 are
+placeholders. While a reshape runs, each stroke is re-tessellated from its
+moved control points every frame, so the ink stays a smooth spline.
+
+Ink (`src/sketches/pointerPressure/strokes.ts`): every frame redraws every
+stroke from its capsule data (nothing is baked into pixels, so the data can be
+varied procedurally later). A variable-width stroke is the union of discs
+swept along its path, drawn as a chain of tapered capsules (two discs plus
+their tangent lines) shaded from an exact signed distance (Inigo Quilez's
+uneven capsule). That is right by construction at turns tighter than the
+half-width, where width changes faster than the stroke moves, and at the ends
+(round caps come free).
+
+Overlap: capsules are drawn in time order with normal blending, and a GPU
+blends one draw call's primitives in order, so later passes and later strokes
+lie on top, antialiased. Each capsule also carries its neighbours (previous
+start, next end) and discards pixels a neighbour is nearer to, so along a
+stroke every pixel is shaded once and joints don't double up their soft
+edges. The pixel position comes from `gl_FragCoord`, so neighbours compare at
+exactly the same point, and a 0.001 px tolerance turns any rounding tie into a
+double-drawn pixel rather than a hole. One draw call covers all finished
+strokes (their capsules are appended to a shared buffer when the pen lifts),
+plus one per stroke in progress; no depth or stencil buffer.
 
 CPU side: coalesced pointer samples → One Euro filter (2D on position, so both
 axes share one cutoff; separately on pressure) → control points at least 2 px
 apart → centripetal Catmull-Rom spline, half-width on a monotone cubic over
-the same parameter → adaptive samples (offset-curve length and turning
-angle) → one capsule between consecutive samples.
+the same parameter → fine samples (every ~2 px and 0.1 rad of turn) →
+capsules fitted greedily over the samples: each spans as many as stay within
+0.25 px (position plus radius) and 2% colour of it. Straight and gently
+curving stretches become a few long capsules, which matters because fragment
+cost scales with how many capsule quads cover a pixel.
 
 It is incremental: a spline segment depends on four control points, so only
-the newest segment is provisional (it extrapolates its far neighbour). Each
-frame re-tessellates from the first non-final segment and
-`capsuleBuffer.ts` uploads just that range (`addUpdateRange`, about 0.5 KB
-per frame while drawing; buffers double when full). The screen keeps its
-contents between frames (`preserveDrawingBuffer`), and a frame redraws only
-a scissor rect around the capsules that changed. Finished strokes are baked
-once into a persistent render target (which only grows, so resizing or
-rotating keeps the ink) and their buffers go back to a pool. Idle frames draw
-nothing.
+the newest segment is provisional. Each frame re-samples from the first
+non-final segment, keeps every capsule whose fit only saw unchanged samples,
+refits the open tail, and `capsuleBuffer.ts` uploads just that range
+(`addUpdateRange`; buffers double when full).
